@@ -1,0 +1,49 @@
+{
+  "name": "@agenr/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for the Agent Gateway Protocol (AGP) — let your AI agent interact with real-world businesses",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm run build"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.7.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agenr-ai/agenr.git",
+    "directory": "packages/sdk"
+  },
+  "homepage": "https://agenr.ai",
+  "keywords": [
+    "agp",
+    "ai-agents",
+    "agent-gateway",
+    "commerce",
+    "sdk",
+    "typescript",
+    "ai",
+    "llm"
+  ]
+}

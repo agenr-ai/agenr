@@ -1,0 +1,29 @@
+{
+  "platform": "mytime",
+  "version": "1.0",
+  "generated": "2026-02-08",
+  "method": "manual",
+  "capabilities": {
+    "discover": {
+      "operation": "discover",
+      "method": "GET",
+      "endpoint": "/api/mkp/v1/companies/{companyId}/locations",
+      "authRequired": false,
+      "description": "Fetch location info, services catalog, and business hours"
+    },
+    "query": {
+      "operation": "query",
+      "method": "GET",
+      "endpoint": "/api/mkp/v1/companies/{companyId}/deals",
+      "authRequired": false,
+      "description": "Query available services and pricing. Real-time slot availability requires partner API key."
+    },
+    "execute": {
+      "operation": "execute",
+      "method": "POST",
+      "endpoint": "/api/mkp/v1/bookings",
+      "authRequired": true,
+      "description": "Book an appointment. Currently unavailable — requires user auth and partner API key. Future: browser automation."
+    }
+  }
+}

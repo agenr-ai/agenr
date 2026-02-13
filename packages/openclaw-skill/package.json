@@ -1,0 +1,15 @@
+{
+  "name": "@agenr/openclaw-skill",
+  "version": "0.1.0",
+  "description": "OpenClaw skill for Agenr -- connect your agent to real-world businesses",
+  "license": "MIT",
+  "files": ["SKILL.md", "README.md"],
+  "keywords": [
+    "openclaw",
+    "skill",
+    "agenr",
+    "mcp",
+    "ai-agents",
+    "commerce"
+  ]
+}

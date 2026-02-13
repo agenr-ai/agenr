@@ -1,0 +1,15 @@
+{
+  "user": "staging-test",
+  "businesses": [
+    {
+      "id": "stripe-test",
+      "name": "Stripe Test Store",
+      "platform": "stripe",
+      "location": "Sandbox",
+      "preferences": {},
+      "stripe": {
+        "environment": "test"
+      }
+    }
+  ]
+}

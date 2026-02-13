@@ -1,0 +1,16 @@
+{
+  "llm": {
+    "provider": "codex",
+    "model": null,
+    "subscriptionToken": null,
+    "apiKeys": {
+      "anthropic": null,
+      "openai": null
+    },
+    "_note_apiKeys": "Set LLM API keys via ANTHROPIC_API_KEY and OPENAI_API_KEY env vars, or populate this file locally (it is gitignored)"
+  },
+  "generation": {
+    "maxIterations": 5,
+    "autoVerify": true
+  }
+}
