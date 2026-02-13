@@ -1,0 +1,29 @@
+{
+  "platform": "factor75",
+  "version": "1.0",
+  "generated": "2026-02-08",
+  "method": "manual",
+  "capabilities": {
+    "discover": {
+      "operation": "discover",
+      "method": "GET",
+      "endpoint": "/gw/my-deliveries/menu",
+      "authRequired": true,
+      "description": "Expose Factor service metadata and request shape"
+    },
+    "query": {
+      "operation": "query",
+      "method": "GET",
+      "endpoint": "/gw/my-deliveries/menu?week={week}",
+      "authRequired": true,
+      "description": "Fetch weekly menu and produce suggested picks"
+    },
+    "execute": {
+      "operation": "execute",
+      "method": "PUT",
+      "endpoint": "/gw/v1/carts/{week}",
+      "authRequired": true,
+      "description": "Save selected meal indexes to Factor cart"
+    }
+  }
+}

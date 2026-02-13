@@ -1,0 +1,29 @@
+{
+  "platform": "toast",
+  "version": "1.0",
+  "generated": "2026-02-09",
+  "method": "ai-generated",
+  "capabilities": {
+    "discover": {
+      "operation": "discover",
+      "method": "GET",
+      "endpoint": "/partners/v1/restaurants + /partners/v1/connectedRestaurants + /menus/v3/metadata + /menus/v3/menus",
+      "authRequired": true,
+      "description": "Discover accessible Toast restaurants and, when restaurant context is available, return menu metadata and a high-level menu overview."
+    },
+    "query": {
+      "operation": "query",
+      "method": "GET",
+      "endpoint": "/menus/v3/menus + /orders/v2/orders/{guid} + /orders/v2/ordersBulk",
+      "authRequired": true,
+      "description": "Query menu items (with optional search/filter), fetch a single order by GUID, or retrieve orders in bulk by time-window parameters."
+    },
+    "execute": {
+      "operation": "execute",
+      "method": "POST",
+      "endpoint": "/orders/v2/orders (+ /orders/v2/prices, /orders/v2/orders/{orderGuid}/void, /orders/v2/orders/{orderGuid}/checks/{checkGuid}/selections)",
+      "authRequired": true,
+      "description": "Execute order-related writes including create order, price preview, void order, and adding selections to an existing check."
+    }
+  }
+}

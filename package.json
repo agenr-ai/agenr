@@ -1,0 +1,44 @@
+{
+  "name": "agenr",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/*"],
+  "bin": {
+    "agenr": "./bin/agenr"
+  },
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "dev:local": "./scripts/dev.sh",
+    "start": "bun src/index.ts",
+    "typecheck": "tsc --noEmit && bun run --cwd packages/mcp typecheck",
+    "test": "bun test",
+    "seed:activity": "bun run src/scripts/seed-activity.ts",
+    "test:mcp": "bun test tests/integrations/mcp-tools.test.ts",
+    "test:db": "bun test tests/db/db-integration.test.ts",
+    "build:mcp": "bun run --cwd packages/mcp build",
+    "agenr": "bun src/cli.ts",
+    "deploy:staging": "./scripts/deploy-staging.sh",
+    "deploy:production": "./scripts/deploy-production.sh",
+    "deploy:site": "./scripts/deploy-site.sh"
+  },
+  "dependencies": {
+    "@agenr/sdk": "workspace:*",
+    "@aws-sdk/client-kms": "^3.987.0",
+    "@libsql/client": "^0.17.0",
+    "@mariozechner/pi-agent-core": "^0.52.9",
+    "@mariozechner/pi-ai": "^0.52.9",
+    "@sinclair/typebox": "^0.34.48",
+    "hono": "^4.10.4",
+    "zod": "^4.1.5"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.9.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agenr-ai/agenr.git"
+  },
+  "homepage": "https://agenr.ai"
+}

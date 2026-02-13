@@ -1,0 +1,45 @@
+{
+  "name": "@agenr/mcp",
+  "version": "0.1.0",
+  "description": "MCP server for Agenr -- connect any AI agent to real-world businesses",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "agenr-mcp": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "dev": "tsup src/index.ts --format esm --watch",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "bun run typecheck && bun run build"
+  },
+  "dependencies": {
+    "@agenr/sdk": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.12.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.7.0"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "agenr",
+    "agp",
+    "ai-agents",
+    "commerce",
+    "tools"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agenr-ai/agenr.git",
+    "directory": "packages/mcp"
+  },
+  "homepage": "https://agenr.ai"
+}

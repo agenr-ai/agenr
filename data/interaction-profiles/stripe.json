@@ -1,0 +1,29 @@
+{
+  "platform": "stripe",
+  "version": "1.0",
+  "generated": "2026-02-10",
+  "method": "ai-generated",
+  "capabilities": {
+    "discover": {
+      "operation": "discover",
+      "method": "GET",
+      "endpoint": "/v1/products + /v1/prices",
+      "authRequired": true,
+      "description": "Fetch Stripe product and price catalogs (first page) to provide business catalog overview and pricing metadata."
+    },
+    "query": {
+      "operation": "query",
+      "method": "GET",
+      "endpoint": "/v1/products + /v1/products/search + /v1/prices + /v1/customers + /v1/customers/{id} + /v1/customers/search",
+      "authRequired": true,
+      "description": "List/search/retrieve Stripe products, prices, and customers using list and search endpoints with pagination support."
+    },
+    "execute": {
+      "operation": "execute",
+      "method": "POST",
+      "endpoint": "/v1/payment_intents + /v1/refunds",
+      "authRequired": true,
+      "description": "Execute payment operations by creating PaymentIntents (recommended Stripe flow) and issuing refunds."
+    }
+  }
+}

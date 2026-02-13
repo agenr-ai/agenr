@@ -1,0 +1,29 @@
+{
+  "platform": "square",
+  "version": "1.0",
+  "generated": "2026-02-09",
+  "method": "ai-generated",
+  "capabilities": {
+    "discover": {
+      "operation": "discover",
+      "method": "GET",
+      "endpoint": "/v2/locations + /v2/catalog/list",
+      "authRequired": true,
+      "description": "Fetch locations and a catalog overview (items/categories) via Square SDK."
+    },
+    "query": {
+      "operation": "query",
+      "method": "POST",
+      "endpoint": "/v2/catalog/search + /v2/catalog/search-catalog-items",
+      "authRequired": true,
+      "description": "Search or list catalog items, with optional category filtering, variation details, and related objects."
+    },
+    "execute": {
+      "operation": "execute",
+      "method": "POST",
+      "endpoint": "/v2/orders",
+      "authRequired": true,
+      "description": "Create an order draft with line items and fulfillment details (pickup/shipment), without taking payment."
+    }
+  }
+}
