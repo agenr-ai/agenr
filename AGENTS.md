@@ -1,6 +1,21 @@
 # Agenr
 
-The trust and commerce layer between AI agents and real-world businesses. "Stripe for agent commerce."
+Context-efficient gateway for agent-to-world interaction. Replaces heavy MCP servers with lean adapters using progressive disclosure.
+
+## Current Direction
+
+Agenr is pivoting from agent commerce to solving **MCP context bloat** — the #1 pain point in the AI agent ecosystem. MCP servers dump 50K+ tokens of tool schemas into agent context before the agent says hello. Agenr reduces this to ~500 tokens via progressive disclosure.
+
+**What stays the same:**
+- The core pattern: **discover → query → execute** (progressive disclosure)
+- Adapter runtime, confirmation flows, credential management
+
+**What changed:**
+- Adapters call REST APIs directly via `fetch()` — no background MCP daemon needed
+- Agenr **replaces** MCP servers rather than just proxying them
+- Target user: agent developers (not business owners)
+
+See `docs/pivot/README.md` for the full strategic analysis.
 
 ## Prerequisites
 
@@ -68,7 +83,7 @@ src/
     adapter-paths.ts        # Runtime adapter path resolution (public/sandbox/rejected)
     logger.ts               # Structured JSON logger utility for runtime logs
     url-validation.ts       # HTTPS/localhost adapter URL validation helper
-  profiles/meal-selection-engine.ts # Heuristic keto meal picker
+  profiles/meal-selection-engine.ts # Heuristic meal selection engine
   cli/
     adapter-test.ts         # Adapter smoke test runner (discover/query/execute)
     demo-reset.ts           # Staging/demo DB reset utility for seeded demo users
@@ -285,7 +300,22 @@ fly secrets set KEY=value           # Set env vars
 - **Keep docs updated** — when you complete work, update `docs/TODO.md` (the single roadmap), this file, and `README.md`. Never add roadmap checkboxes to other docs.
 - **No browser automation** — adapters use APIs, not scraping. It's OK for an adapter to not support all 3 ops.
 - OpenAI-family reasoning models don't support `temperature`/`maxTokens` — pi-ai client strips them.
-- Commit after each meaningful change. Push to `master`.
+- Commit after each meaningful change.
+
+## Adapter Development
+
+Adapters are single `.ts` files in `data/adapters/`. Each adapter:
+
+- Imports from `"agenr:adapter-api"`
+- Implements the `AgpAdapter` interface: `discover`, `query`, `execute`
+- Calls REST APIs directly via `fetch()` — no background daemon
+
+**Auth:** Use `ctx.fetch()` for authenticated requests (handles credential injection automatically). For no-auth APIs (like Domino's), raw `fetch()` is fine.
+
+**Reference adapters:**
+- `echo.ts` — Test/demo adapter
+- `dominos.ts` — No-auth real API (proves the pattern)
+- `github.ts` — Authenticated API adapter (planned)
 
 ## Deeper Context
 
@@ -294,18 +324,11 @@ Read these when relevant:
 - `docs/AI-ADAPTER-GENERATION.md` — How adapter generation works (proven with Toast + Stripe)
 - `docs/DISCOVERY-TOOLS-V2.md` — Planned v2 discovery tools
 - `docs/TODO.md` — **THE roadmap and task list** (single source of truth — no roadmap checkboxes in other docs)
-- `data/interaction-profiles/` — Platform capability definitions (factor75, mytime, square, stripe, toast)
+- `data/interaction-profiles/` — Platform capability definitions (sample platform profiles)
 
-## Obsidian Docs
+## Active Pivot: Clean Breaks Are Fine
 
-Project docs also live in Jim's Obsidian vault via symlink:
-- `~/Obsidian/Main Vault/Projects/Agent Gateway/Repo Docs` → `~/Code/agora/docs`
-- Obsidian-native docs (Vision, POC Architecture, Adapter Test Results) stay in Obsidian
-- **Roadmap lives ONLY in `docs/TODO.md`** — other docs reference it, never duplicate it
-
-## Pre-Launch: No Backward Compatibility
-
-Agenr is not live yet. There are zero users and zero deployed integrations. Do NOT write backward-compatible code — no optional parameters for migration, no deprecated paths, no legacy fallbacks. If an interface changes, change it everywhere. Clean breaks only. This keeps the codebase tight and avoids accumulating dead code before we even ship.
+Agenr launched February 13, 2026 and is now in an active pivot (see Current Direction above). There are no external users or third-party integrations yet. Do NOT write backward-compatible code — no optional parameters for migration, no deprecated paths, no legacy fallbacks. If an interface changes, change it everywhere. Clean breaks only. This keeps the codebase tight during the transition.
 
 ## Git & PR Practices
 

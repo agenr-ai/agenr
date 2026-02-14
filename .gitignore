@@ -4,8 +4,8 @@ data/agenr.db*
 data/discovery-cache/*.json
 
 # Runtime adapter files (restored from DB at startup)
-data/adapters/*.ts
-!data/adapters/stripe.ts
+# data/adapters/*.ts
+# !data/adapters/stripe.ts
 # Sensitive local config - never commit real secrets
 data/agenr-config.json
 data/user-profile.json
@@ -23,4 +23,7 @@ packages/mcp/dist/
 # Runtime adapter files (written at startup, not source)
 data/runtime-adapters/*
 !data/runtime-adapters/.gitkeep
-docs/prompts/
+# docs/prompts/
+AGENTS.local.md
+CLAUDE.local.md
+# CODEX.local.md
