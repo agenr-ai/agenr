@@ -9,20 +9,20 @@ Thanks for your interest in contributing to AGENR! This guide will help you get 
 git clone https://github.com/agenr-ai/agenr.git
 cd agenr
 
-# Install dependencies (requires Bun >= 1.x)
-bun install
+# Install dependencies (requires Node.js >= 20)
+pnpm install
 
 # Copy environment template
 cp .env.example .env
 
 # Run the dev server
-bun dev
+pnpm run dev
 
 # Run tests
-bun test
+pnpm test
 
 # Typecheck
-bun run typecheck
+pnpm run typecheck
 ```
 
 The server starts on `http://localhost:3001` by default.
@@ -50,7 +50,7 @@ src/
 console/                # React SPA (Vite + Tailwind v4)
 packages/sdk/           # @agenr/sdk — TypeScript client library
 site/                   # Landing page (static HTML)
-tests/                  # Test suites (bun:test)
+tests/                  # Test suites (Vitest)
 docs/                   # Architecture docs, AGP spec, audit reports
 ```
 
@@ -98,13 +98,13 @@ Key rules:
 
 ```bash
 # All tests
-bun test
+pnpm test
 
 # Specific test file
-bun test tests/vault/encryption.test.ts
+pnpm exec vitest run tests/vault/encryption.test.ts
 
 # Watch mode
-bun test --watch
+pnpm run test:watch
 ```
 
 Tests use in-memory SQLite — no external services needed.
@@ -116,13 +116,13 @@ Tests use in-memory SQLite — no external services needed.
 - **Imports** — use `type` imports for type-only imports
 - **Errors** — use `internalServerError()` helper for 5xx responses; never expose internal details to clients
 - **Logging** — use the structured logger (`src/utils/logger.ts`), not `console.log`
-- **Dependencies** — prefer Bun built-ins over external packages
+- **Dependencies** — prefer Node.js built-ins over external packages
 
 ## Submitting Changes
 
 1. Fork the repo and create a feature branch from `master`
 2. Make your changes with clear, focused commits
-3. Run `bun run typecheck && bun test` — everything must pass
+3. Run `pnpm run typecheck && pnpm test` — everything must pass
 4. Write clear commit messages (conventional commits preferred: `feat:`, `fix:`, `docs:`, `chore:`)
 5. Open a PR against `master` with a description of what changed and why
 6. Address review feedback promptly

@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -183,7 +183,7 @@ describe("adapter routes", () => {
       ownerId: owner.record.id,
       filePath: ownerPublicSandboxPath,
     });
-    await Bun.write(publicPath, await readFile(ownerPublicSandboxPath, "utf8"));
+    await writeFile(publicPath, await readFile(ownerPublicSandboxPath, "utf8"));
     await markAdapterPublic({
       adapterId: (await getAdapterByPlatformOwner("stripe", owner.record.id))!.id,
       promotedBy: "admin",
@@ -230,7 +230,7 @@ describe("adapter routes", () => {
       ownerId: owner.record.id,
       filePath: sandboxPath,
     });
-    await Bun.write(publicPath, await readFile(sandboxPath, "utf8"));
+    await writeFile(publicPath, await readFile(sandboxPath, "utf8"));
     await markAdapterPublic({
       adapterId: (await getAdapterByPlatformOwner("manifest-meta", owner.record.id))!.id,
       promotedBy: "admin",
@@ -302,7 +302,7 @@ describe("adapter routes", () => {
       ownerId: owner.record.id,
       filePath: sandboxPath,
     });
-    await Bun.write(publicPath, await readFile(sandboxPath, "utf8"));
+    await writeFile(publicPath, await readFile(sandboxPath, "utf8"));
     await markAdapterPublic({
       adapterId: (await getAdapterByPlatformOwner("stripe", owner.record.id))!.id,
       promotedBy: "admin",
@@ -422,7 +422,7 @@ describe("adapter routes", () => {
       ownerId: ownerA.record.id,
       filePath: sandboxPath,
     });
-    await Bun.write(publicPath, await readFile(sandboxPath, "utf8"));
+    await writeFile(publicPath, await readFile(sandboxPath, "utf8"));
     await markAdapterPublic({
       adapterId: (await getAdapterByPlatformOwner("upload-public", ownerA.record.id))!.id,
       promotedBy: "admin",
@@ -756,7 +756,7 @@ describe("adapter routes", () => {
       ownerId: owner.record.id,
       filePath: sandboxPath,
     });
-    await Bun.write(publicPath, await readFile(sandboxPath, "utf8"));
+    await writeFile(publicPath, await readFile(sandboxPath, "utf8"));
     await markAdapterPublic({
       adapterId: (await getAdapterByPlatformOwner("stripe", owner.record.id))!.id,
       promotedBy: "admin",
@@ -826,7 +826,7 @@ describe("adapter routes", () => {
       ownerId: ownerA.record.id,
       filePath: oldPublicSandboxPath,
     });
-    await Bun.write(oldPublicPath, await readFile(oldPublicSandboxPath, "utf8"));
+    await writeFile(oldPublicPath, await readFile(oldPublicSandboxPath, "utf8"));
     await markAdapterPublic({
       adapterId: (await getAdapterByPlatformOwner("toast", ownerA.record.id))!.id,
       promotedBy: "admin",
@@ -866,7 +866,7 @@ describe("adapter routes", () => {
     const oldOwnerRow = await getAdapterByPlatformOwner("toast", ownerA.record.id);
     expect(oldOwnerRow?.status).toBe("rejected");
     expect(oldOwnerRow?.filePath.startsWith(path.join(testAdaptersDir, "_rejected"))).toBe(true);
-    expect(await Bun.file(oldOwnerRow!.filePath).exists()).toBe(true);
+    expect(existsSync(oldOwnerRow!.filePath)).toBe(true);
   });
 
   test("POST /adapters/:platform/promote returns 409 when multiple sandbox candidates and no owner_id", async () => {
@@ -902,7 +902,7 @@ describe("adapter routes", () => {
       ownerId: owner.record.id,
       filePath: sandboxPath,
     });
-    await Bun.write(publicPath, await readFile(sandboxPath, "utf8"));
+    await writeFile(publicPath, await readFile(sandboxPath, "utf8"));
     await markAdapterPublic({
       adapterId: (await getAdapterByPlatformOwner("stripe", owner.record.id))!.id,
       promotedBy: "admin",

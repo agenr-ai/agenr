@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createClient, type Client } from "@libsql/client";
 import { createHash } from "node:crypto";
 
@@ -89,9 +89,9 @@ describe("append-only credential audit log", () => {
 
   test("audit chain links entries correctly", async () => {
     await insertAuditEntry("user-2", "stripe");
-    await Bun.sleep(2);
+    await new Promise((resolve) => setTimeout(resolve, 2));
     await insertAuditEntry("user-2", "stripe");
-    await Bun.sleep(2);
+    await new Promise((resolve) => setTimeout(resolve, 2));
     await insertAuditEntry("user-2", "stripe");
 
     const entries = await loadOrderedEntries();
@@ -138,9 +138,9 @@ describe("append-only credential audit log", () => {
 
   test("verifyAuditChain detects tampering", async () => {
     await insertAuditEntry("user-5", "stripe");
-    await Bun.sleep(2);
+    await new Promise((resolve) => setTimeout(resolve, 2));
     await insertAuditEntry("user-5", "stripe");
-    await Bun.sleep(2);
+    await new Promise((resolve) => setTimeout(resolve, 2));
     await insertAuditEntry("user-5", "stripe");
 
     const clean = await verifyAuditChain();
@@ -165,7 +165,7 @@ describe("append-only credential audit log", () => {
 
   test("legacy entries without prev_hash are skipped", async () => {
     await insertLegacyAuditEntry("legacy-audit-1", "legacy-user", "stripe");
-    await Bun.sleep(2);
+    await new Promise((resolve) => setTimeout(resolve, 2));
     await insertAuditEntry("legacy-user", "stripe");
 
     const verification = await verifyAuditChain();

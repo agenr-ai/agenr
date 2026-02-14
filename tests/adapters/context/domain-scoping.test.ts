@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "vitest";
 
 import { AdapterContext, type AuthCredential } from "../../../src/adapters/context";
 import { DomainNotAllowedError } from "../../../src/adapters/domain-allowlist";

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -66,7 +66,7 @@ async function waitForJobStatus(
     if (job?.status === expectedStatus) {
       return;
     }
-    await Bun.sleep(20);
+    await new Promise((resolve) => setTimeout(resolve, 20));
   }
 
   throw new Error(`Timed out waiting for job '${jobId}' to reach status '${expectedStatus}'.`);

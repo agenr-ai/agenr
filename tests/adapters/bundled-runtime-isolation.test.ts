@@ -8,7 +8,7 @@
  * The fix: bundled source lives in data/adapters/ (read-only at runtime).
  * All runtime writes go to data/runtime-adapters/.
  */
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";

@@ -1,7 +1,8 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createClient, type Client } from "@libsql/client";
 import { Hono, type Context } from "hono";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -24,6 +25,43 @@ import { storeCredential } from "../../src/vault/credential-store";
 
 let testDb: Client | null = null;
 let tempRoot: string;
+
+async function createApiKeyEchoServer(): Promise<{
+  url: string;
+  stop: () => Promise<void>;
+}> {
+  const server = createServer((req, res) => {
+    const header = req.headers["x-api-key"];
+    const injectedApiKey = Array.isArray(header) ? (header[0] ?? null) : (header ?? null);
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ injectedApiKey }));
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.listen(0, "127.0.0.1", () => resolve());
+    server.once("error", reject);
+  });
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Failed to resolve local echo server address");
+  }
+
+  return {
+    url: `http://127.0.0.1:${address.port}/`,
+    stop: async () =>
+      new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+
+          resolve();
+        });
+      }),
+  };
+}
 
 function keyHeaders(rawKey: string): Record<string, string> {
   return { "x-api-key": rawKey };
@@ -142,7 +180,7 @@ async function createService(
   const profilePath = path.join(tempRoot, `user-profile-${crypto.randomUUID()}.json`);
   const interactionDir = path.join(tempRoot, `interaction-profiles-${crypto.randomUUID()}`);
   await mkdir(interactionDir, { recursive: true });
-  await Bun.write(
+  await writeFile(
     profilePath,
     JSON.stringify(
       {
@@ -302,14 +340,7 @@ describe("AGP business wiring", () => {
 
   test("credential resolution uses business ownerId instead of callerId", async () => {
     const registry = new AdapterRegistry();
-    const echoServer = Bun.serve({
-      port: 0,
-      fetch(request) {
-        return Response.json({
-          injectedApiKey: request.headers.get("x-api-key"),
-        });
-      },
-    });
+    const echoServer = await createApiKeyEchoServer();
 
     registry.registerPublic(
       "stripe",
@@ -357,7 +388,7 @@ describe("AGP business wiring", () => {
 
       expect(result.data).toEqual({ injectedApiKey: "owner-secret" });
     } finally {
-      await echoServer.stop(true);
+      await echoServer.stop();
     }
   });
 

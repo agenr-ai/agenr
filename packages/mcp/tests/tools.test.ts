@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import { AgenrError } from "@agenr/sdk";
 import { registerTools, type CreateClient } from "../src/tools";
 

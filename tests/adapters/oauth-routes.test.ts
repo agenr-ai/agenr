@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createClient, type Client } from "@libsql/client";
 import { Hono } from "hono";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import path from "node:path";
 import { tmpdir } from "node:os";
@@ -53,7 +53,7 @@ async function writeAdapter(platform: string, manifestSource: string): Promise<s
     "",
   ].join("\n");
 
-  await Bun.write(filePath, source);
+  await writeFile(filePath, source);
   return filePath;
 }
 

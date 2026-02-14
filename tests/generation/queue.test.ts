@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createClient, type Client } from "@libsql/client";
 
 import { getDb, setDb } from "../../src/db/client";
@@ -33,7 +33,7 @@ describe("generation queue", () => {
   test("createJob creates a queued job", async () => {
     const job = await createJob({ platform: "Toast" });
 
-    expect(job.id).toBeString();
+    expect(typeof job.id).toBe("string");
     expect(job.platform).toBe("toast");
     expect(job.status).toBe("queued");
     expect(job.logs).toEqual([]);

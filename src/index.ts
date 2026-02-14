@@ -1,3 +1,4 @@
+import { serve as serveNode } from "@hono/node-server";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { z } from "zod";
@@ -527,14 +528,28 @@ function logStartupWarnings(): void {
 }
 
 const port = parseInt(process.env.PORT || "3001", 10);
+const hostname = "0.0.0.0";
+const serverConfig = {
+  hostname,
+  port,
+  fetch: app.fetch,
+};
 
 logStartupWarnings();
 logger.info("startup_server_listening", {
   url: `http://localhost:${port}`,
   port,
 });
-export default {
-  hostname: "0.0.0.0",
-  port,
-  fetch: app.fetch,
+
+type BunLike = {
+  serve: (options: typeof serverConfig) => unknown;
 };
+
+const bunRuntime = (globalThis as typeof globalThis & { Bun?: BunLike }).Bun;
+if (bunRuntime?.serve) {
+  bunRuntime.serve(serverConfig);
+} else {
+  serveNode(serverConfig);
+}
+
+export default serverConfig;

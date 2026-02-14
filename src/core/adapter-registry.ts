@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   deleteAdapterById,
@@ -57,6 +57,9 @@ const VALID_AUTH_TYPES = new Set<AdapterManifest["auth"]["type"]>([
 const VALID_TOKEN_CONTENT_TYPES = new Set(["form", "json"]);
 const BUNDLED_ADAPTER_VERSION_REGEX = /defineManifest\([\s\S]*?version:\s*["']([^"']+)["']/;
 const BUNDLED_ADAPTER_NAME_REGEX = /defineManifest\([\s\S]*?name:\s*["']([^"']+)["']/;
+const ADAPTER_API_MODULE_URL = pathToFileURL(
+  path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "adapter-api.ts"),
+).href;
 
 interface BundledAdapterManifest {
   platform: string;
@@ -91,6 +94,10 @@ function extractBundledManifest(sourceCode: string): BundledAdapterManifest | nu
     platform,
     version,
   };
+}
+
+function rewriteAdapterApiSpecifier(sourceCode: string): string {
+  return sourceCode.replace(/(["'])agenr:adapter-api\1/g, `"${ADAPTER_API_MODULE_URL}"`);
 }
 
 function parseSemver(version: string): [number, number, number] {
@@ -1090,9 +1097,11 @@ export class AdapterRegistry {
     let loaded: Record<string, unknown>;
     let importPath = absolutePath;
     let temporaryImportPath: string | null = null;
-    if (bustCache) {
+    const sourceCode = fs.readFileSync(absolutePath, "utf8");
+    const rewrittenSourceCode = rewriteAdapterApiSpecifier(sourceCode);
+    if (bustCache || rewrittenSourceCode !== sourceCode) {
       temporaryImportPath = `${absolutePath}.hot-${Date.now()}-${++this.moduleReloadNonce}.ts`;
-      fs.copyFileSync(absolutePath, temporaryImportPath);
+      fs.writeFileSync(temporaryImportPath, rewrittenSourceCode, "utf8");
       importPath = temporaryImportPath;
     }
 

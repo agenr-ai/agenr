@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
 import { AgenrError } from "@agenr/sdk";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";

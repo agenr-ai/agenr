@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { createInterface } from "node:readline/promises";
@@ -822,25 +823,58 @@ export function shouldAcceptTypecheckResult(result: TypecheckResult): boolean {
   return result.hasTypeScriptDiagnostics && !result.hasAdapterDiagnostics;
 }
 
+const TYPECHECK_RUNNERS: Array<{ command: string; args: string[] }> = [
+  { command: "pnpm", args: ["run", "typecheck"] },
+  { command: "npm", args: ["run", "typecheck"] },
+  { command: "yarn", args: ["run", "typecheck"] },
+  { command: "bun", args: ["run", "typecheck"] },
+];
+
 function runTypecheck(projectRoot: string, adapterPath: string): TypecheckResult {
-  const result = Bun.spawnSync(["bun", "run", "typecheck"], {
-    cwd: projectRoot,
-    stdout: "pipe",
-    stderr: "pipe",
-    env: process.env,
-  });
+  for (const runner of TYPECHECK_RUNNERS) {
+    const result = spawnSync(runner.command, runner.args, {
+      cwd: projectRoot,
+      env: process.env,
+      encoding: "utf8",
+      stdio: "pipe",
+    });
+    const runnerMissing = (result.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
+    if (runnerMissing) {
+      continue;
+    }
 
-  const stdout = Buffer.from(result.stdout).toString("utf8").trim();
-  const stderr = Buffer.from(result.stderr).toString("utf8").trim();
-  const combined = [stdout, stderr].filter(Boolean).join("\n");
-  const analysis = analyzeTypecheckOutputForAdapter(combined, projectRoot, adapterPath);
-  const exitCode = typeof result.exitCode === "number" ? result.exitCode : 1;
-  const output = analysis.filteredOutput || analysis.rawOutput;
+    if (result.error) {
+      const combined = `Failed to run '${runner.command} ${runner.args.join(" ")}': ${result.error.message}`;
+      const analysis = analyzeTypecheckOutputForAdapter(combined, projectRoot, adapterPath);
+      return {
+        ok: false,
+        exitCode: 1,
+        output: analysis.filteredOutput || analysis.rawOutput,
+        ...analysis,
+      };
+    }
 
+    const stdout = (result.stdout ?? "").trim();
+    const stderr = (result.stderr ?? "").trim();
+    const combined = [stdout, stderr].filter(Boolean).join("\n");
+    const analysis = analyzeTypecheckOutputForAdapter(combined, projectRoot, adapterPath);
+    const exitCode = typeof result.status === "number" ? result.status : 1;
+
+    return {
+      ok: exitCode === 0,
+      exitCode,
+      output: analysis.filteredOutput || analysis.rawOutput,
+      ...analysis,
+    };
+  }
+
+  const missingRunnerOutput =
+    "Unable to run typecheck. Install one of: pnpm, npm, yarn, or bun.";
+  const analysis = analyzeTypecheckOutputForAdapter(missingRunnerOutput, projectRoot, adapterPath);
   return {
-    ok: exitCode === 0,
-    exitCode,
-    output,
+    ok: false,
+    exitCode: 1,
+    output: analysis.filteredOutput || analysis.rawOutput,
     ...analysis,
   };
 }

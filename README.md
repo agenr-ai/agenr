@@ -73,9 +73,11 @@ Full AGP lifecycle with human-in-the-loop confirmation. Zero signup.
 
 ### Connect a real business
 
+Requires Node.js >= 20. Works with pnpm, npm, yarn, or bun.
+
 ```bash
 git clone https://github.com/agenr-ai/agenr.git
-cd agenr && bun install && bun run dev:local
+cd agenr && pnpm install && pnpm run dev:local
 ```
 
 Open the console at `http://localhost:5173`, connect your Stripe test account,
@@ -183,7 +185,7 @@ Works with any agent framework — OpenAI, Anthropic, LangChain, CrewAI, OpenCla
 
 ```bash
 # One command — starts API server + developer console
-bun run dev:local
+pnpm run dev:local
 ```
 
 - **API** at `http://localhost:3001`

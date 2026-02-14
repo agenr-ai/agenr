@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import type { Context } from "hono";
 import { getCookie } from "hono/cookie";
 import { createMiddleware } from "hono/factory";
@@ -107,7 +108,7 @@ export const apiKeyAuthMiddleware = createMiddleware(async (c, next) => {
     c.req.header("x-api-key"),
   );
 
-  if (adminKey && presentedKey && adminKey.length === presentedKey.length && crypto.timingSafeEqual(Buffer.from(adminKey), Buffer.from(presentedKey))) {
+  if (adminKey && presentedKey && adminKey.length === presentedKey.length && timingSafeEqual(Buffer.from(adminKey), Buffer.from(presentedKey))) {
     setAdminContext(c);
     await next();
     return;

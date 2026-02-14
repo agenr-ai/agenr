@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
 import EchoAdapter from "../../data/adapters/echo";
 import { createMockContext } from "../helpers/mock-context";

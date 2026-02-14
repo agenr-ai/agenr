@@ -1,7 +1,8 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createClient, type Client } from "@libsql/client";
 import { Hono } from "hono";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -32,6 +33,43 @@ function resolveCallerId(c: { get(name: "apiKeyId"): string | undefined; get(nam
   return c.get("userId") ?? c.get("apiKeyId") ?? "admin";
 }
 
+async function createApiKeyEchoServer(): Promise<{
+  url: string;
+  stop: () => Promise<void>;
+}> {
+  const server = createServer((req, res) => {
+    const header = req.headers["x-api-key"];
+    const injectedApiKey = Array.isArray(header) ? (header[0] ?? null) : (header ?? null);
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ injectedApiKey }));
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.listen(0, "127.0.0.1", () => resolve());
+    server.once("error", reject);
+  });
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Failed to resolve local echo server address");
+  }
+
+  return {
+    url: `http://127.0.0.1:${address.port}/`,
+    stop: async () =>
+      new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+
+          resolve();
+        });
+      }),
+  };
+}
+
 async function createServiceWithAuthEchoAdapter(): Promise<{
   service: AgpService;
   stop: () => Promise<void>;
@@ -40,7 +78,7 @@ async function createServiceWithAuthEchoAdapter(): Promise<{
   const interactionDir = path.join(tempRoot, "interaction-profiles");
   await mkdir(interactionDir, { recursive: true });
 
-  await Bun.write(
+  await writeFile(
     profilePath,
     JSON.stringify(
       {
@@ -59,14 +97,7 @@ async function createServiceWithAuthEchoAdapter(): Promise<{
     ),
   );
 
-  const echoServer = Bun.serve({
-    port: 0,
-    fetch(request) {
-      return Response.json({
-        injectedApiKey: request.headers.get("x-api-key"),
-      });
-    },
-  });
+  const echoServer = await createApiKeyEchoServer();
 
   const registry = new AdapterRegistry();
   registry.registerPublic(
@@ -101,7 +132,7 @@ async function createServiceWithAuthEchoAdapter(): Promise<{
       registry,
     ),
     stop: async () => {
-      await echoServer.stop(true);
+      await echoServer.stop();
     },
   };
 }

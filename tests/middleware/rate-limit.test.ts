@@ -1,7 +1,5 @@
-import {
-  createApiKeyRateLimitMiddleware, afterEach, describe, expect, test } from "bun:test";
-import {
-  createApiKeyRateLimitMiddleware, Hono } from "hono";
+import { afterEach, describe, expect, test } from "vitest";
+import { Hono } from "hono";
 
 import {
   createApiKeyRateLimitMiddleware,
@@ -179,7 +177,7 @@ describe("rate-limit middleware", () => {
     });
     expect(blocked.status).toBe(429);
 
-    await Bun.sleep(130);
+    await new Promise((resolve) => setTimeout(resolve, 130));
 
     const afterWindow = await app.request("/test", {
       headers: { "fly-client-ip": "10.0.0.6" },

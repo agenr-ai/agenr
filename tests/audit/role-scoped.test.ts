@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createClient, type Client } from "@libsql/client";
 import { Hono } from "hono";
 
@@ -93,9 +93,9 @@ describe("role-scoped audit verification route", () => {
     const app = createTestApp();
 
     await insertAuditEntry("alice", "stripe");
-    await Bun.sleep(2);
+    await new Promise((resolve) => setTimeout(resolve, 2));
     await insertAuditEntry("bob", "square");
-    await Bun.sleep(2);
+    await new Promise((resolve) => setTimeout(resolve, 2));
     await insertAuditEntry("alice", "stripe", "credential_retrieved");
 
     const response = await app.request("/audit/verify", {
@@ -120,9 +120,9 @@ describe("role-scoped audit verification route", () => {
     const aliceSession = await createSession(alice.id);
 
     await insertAuditEntry(alice.id, "stripe");
-    await Bun.sleep(2);
+    await new Promise((resolve) => setTimeout(resolve, 2));
     await insertAuditEntry("bob-user", "square");
-    await Bun.sleep(2);
+    await new Promise((resolve) => setTimeout(resolve, 2));
     await insertAuditEntry(alice.id, "stripe", "credential_retrieved");
 
     const response = await app.request("/audit/verify", {
@@ -148,7 +148,7 @@ describe("role-scoped audit verification route", () => {
     const aliceSession = await createSession(alice.id);
 
     await insertLegacyAuditEntry(alice.id, "stripe");
-    await Bun.sleep(2);
+    await new Promise((resolve) => setTimeout(resolve, 2));
     await insertAuditEntry(alice.id, "stripe");
 
     const response = await app.request("/audit/verify", {

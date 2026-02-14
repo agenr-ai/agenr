@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -152,7 +152,7 @@ describe("adapter route db guards", () => {
       ownerId: ownerA.record.id,
       filePath: sandboxPath,
     });
-    await Bun.write(publicPath, await readFile(sandboxPath, "utf8"));
+    await writeFile(publicPath, await readFile(sandboxPath, "utf8"));
     await markAdapterPublic({
       adapterId: (await getAdapterByPlatformOwner("toast", ownerA.record.id))!.id,
       promotedBy: "admin",

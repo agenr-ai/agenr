@@ -22,7 +22,7 @@ interface SeedArgs {
 
 function usageMessage(): string {
   return [
-    "Usage: bun run src/scripts/seed-activity.ts [--user-id <id>] [--service <name>] [--count <n>]",
+    "Usage: pnpm run seed:activity -- [--user-id <id>] [--service <name>] [--count <n>]",
     "",
     "Defaults:",
     `  --user-id ${DEFAULT_USER_ID}`,

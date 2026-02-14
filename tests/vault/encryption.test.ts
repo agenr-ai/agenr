@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { randomBytes } from "node:crypto";
 
 import { decrypt, encrypt, zeroFill } from "../../src/vault/encryption";

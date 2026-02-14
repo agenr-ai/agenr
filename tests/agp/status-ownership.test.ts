@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createClient, type Client } from "@libsql/client";
 import { Hono } from "hono";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -27,7 +27,7 @@ async function createService(): Promise<AgpService> {
   const profilePath = path.join(tempRoot, "user-profile.json");
   const interactionDir = path.join(tempRoot, "interaction-profiles");
   await mkdir(interactionDir, { recursive: true });
-  await Bun.write(
+  await writeFile(
     profilePath,
     JSON.stringify(
       {
@@ -45,7 +45,7 @@ async function createService(): Promise<AgpService> {
       2,
     ),
   );
-  await Bun.write(
+  await writeFile(
     path.join(interactionDir, "stripe.json"),
     JSON.stringify(
       {

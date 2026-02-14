@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
 import { AgenrClient } from "../src/client";
 import { AgenrError } from "../src/errors";

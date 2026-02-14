@@ -1,7 +1,10 @@
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 
 function resolveProjectRoot(): string {
-  return path.resolve(import.meta.dir, "../..");
+  return path.resolve(currentDirectory, "../..");
 }
 
 function sanitizePathSegment(value: string): string {

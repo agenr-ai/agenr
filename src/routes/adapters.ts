@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { Hono } from "hono";
 import type { Context } from "hono";
+import ts from "typescript";
 import { z } from "zod";
 
 import type { AdapterEntry, AdapterRegistry } from "../core/adapter-registry";
@@ -86,7 +87,6 @@ const BANNED_IMPORT_PATTERN =
   /import[\s\S]*?from\s*["'](?:node:)?(?:fs|child_process|net|dgram|cluster|worker_threads)["']/i;
 const MANIFEST_EXPORT_PATTERN = /export\s+const\s+manifest\b|export\s*{\s*manifest(?:\s+as\s+\w+)?\s*}/;
 const DEFAULT_EXPORT_PATTERN = /export\s+default\b/;
-const tsTranspiler = new Bun.Transpiler({ loader: "ts" });
 
 function normalizePlatform(platform: string): string {
   return platform.trim().toLowerCase();
@@ -110,7 +110,20 @@ function validateUploadedSource(source: string): string | null {
   }
 
   try {
-    tsTranspiler.transformSync(source);
+    const transpileResult = ts.transpileModule(source, {
+      compilerOptions: {
+        target: ts.ScriptTarget.ESNext,
+        module: ts.ModuleKind.ESNext,
+      },
+      reportDiagnostics: true,
+    });
+
+    const hasErrorDiagnostic = transpileResult.diagnostics?.some(
+      (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error,
+    );
+    if (hasErrorDiagnostic) {
+      return "Adapter source failed TypeScript syntax validation.";
+    }
   } catch {
     return "Adapter source failed TypeScript syntax validation.";
   }

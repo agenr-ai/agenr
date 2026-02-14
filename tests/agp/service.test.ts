@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -17,6 +18,43 @@ import { storeCredential } from "../../src/vault/credential-store";
 
 let testDb: Client | null = null;
 let tempRoot: string;
+
+async function createAuthorizationEchoServer(): Promise<{
+  url: string;
+  stop: () => Promise<void>;
+}> {
+  const server = createServer((req, res) => {
+    const header = req.headers["authorization"];
+    const authorization = Array.isArray(header) ? (header[0] ?? null) : (header ?? null);
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ authorization }));
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.listen(0, "127.0.0.1", () => resolve());
+    server.once("error", reject);
+  });
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Failed to resolve local echo server address");
+  }
+
+  return {
+    url: `http://127.0.0.1:${address.port}/`,
+    stop: async () =>
+      new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+
+          resolve();
+        });
+      }),
+  };
+}
 
 beforeEach(async () => {
   testDb = createClient({ url: ":memory:" });
@@ -38,7 +76,7 @@ async function createServiceWithRegistry(registry: AdapterRegistry): Promise<Agp
   const profilePath = path.join(tempRoot, "user-profile.json");
   const interactionDir = path.join(tempRoot, "interaction-profiles");
   await mkdir(interactionDir, { recursive: true });
-  await Bun.write(
+  await writeFile(
     profilePath,
     JSON.stringify(
       {
@@ -57,7 +95,7 @@ async function createServiceWithRegistry(registry: AdapterRegistry): Promise<Agp
     ),
   );
 
-  await Bun.write(
+  await writeFile(
     path.join(interactionDir, "stripe.json"),
     JSON.stringify(
       {
@@ -217,14 +255,7 @@ describe("AgpService owner-aware adapter resolution", () => {
 describe("AgpService credential vault integration", () => {
   test("ctx.resolveCredential retrieves vault credential and logs retrieval", async () => {
     const registry = new AdapterRegistry();
-    const server = Bun.serve({
-      port: 0,
-      fetch(req) {
-        return Response.json({
-          authorization: req.headers.get("Authorization"),
-        });
-      },
-    });
+    const server = await createAuthorizationEchoServer();
 
     try {
       registry.registerScoped(
@@ -287,7 +318,7 @@ describe("AgpService credential vault integration", () => {
       expect(auditRow?.["action"]).toBe("credential_retrieved");
       expect(typeof auditRow?.["execution_id"]).toBe("string");
     } finally {
-      await server.stop(true);
+      await server.stop();
     }
   });
 
@@ -329,7 +360,7 @@ describe("AgpService dynamic adapter fallback (no static profile)", () => {
     const profilePath = path.join(tempRoot, "empty-profile.json");
     const interactionDir = path.join(tempRoot, "interaction-profiles-empty");
     await mkdir(interactionDir, { recursive: true });
-    await Bun.write(
+    await writeFile(
       profilePath,
       JSON.stringify({ user: "test-user", businesses: [] }, null, 2),
     );

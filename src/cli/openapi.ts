@@ -1,3 +1,5 @@
+import { parse as parseYaml } from "yaml";
+
 const OPENAPI_PATHS = [
   "/openapi.json",
   "/api/openapi.json",
@@ -104,12 +106,7 @@ function parseSpecDocument(raw: string): Record<string, unknown> {
     // Fall through to YAML parsing.
   }
 
-  const yamlParser = (Bun as unknown as { YAML?: { parse?: (input: string) => unknown } }).YAML?.parse;
-  if (typeof yamlParser !== "function") {
-    throw new Error("Failed to parse OpenAPI spec as JSON and Bun YAML parser is unavailable.");
-  }
-
-  const parsedYaml = yamlParser(trimmed);
+  const parsedYaml = parseYaml(trimmed);
   const record = asRecord(parsedYaml);
   if (!record) {
     throw new Error("Parsed YAML OpenAPI document was not an object.");

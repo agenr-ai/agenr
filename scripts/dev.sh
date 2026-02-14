@@ -19,11 +19,22 @@ fail()  { echo -e "${RED}[dev]${NC} $*" >&2; exit 1; }
 # ---------------------------------------------------------------------------
 # Pre-flight
 # ---------------------------------------------------------------------------
-command -v bun >/dev/null 2>&1 || fail "bun not found. Install: https://bun.sh"
+command -v node >/dev/null 2>&1 || fail "node not found. Install Node.js >= 20."
+
+PACKAGE_MANAGER=""
+if command -v pnpm >/dev/null 2>&1; then
+  PACKAGE_MANAGER="pnpm"
+elif command -v npm >/dev/null 2>&1; then
+  PACKAGE_MANAGER="npm"
+elif command -v yarn >/dev/null 2>&1; then
+  PACKAGE_MANAGER="yarn"
+else
+  fail "No supported package manager found. Install pnpm, npm, or yarn."
+fi
 
 # Kill any leftover dev processes from a previous run
 info "Cleaning up stale processes..."
-pkill -f "bun.*src/index.ts" 2>/dev/null || true
+pkill -f "tsx.*src/index.ts" 2>/dev/null || true
 pkill -f "node.*vite" 2>/dev/null || true
 sleep 1
 
@@ -34,9 +45,17 @@ rm -f data/adapters/*.hot-*.ts
 rm -f data/.dev-api-key
 
 if [ ! -d node_modules ]; then
-  info "Installing dependencies..."
-  bun install
+  info "Installing dependencies with $PACKAGE_MANAGER..."
+  if [ "$PACKAGE_MANAGER" = "pnpm" ]; then
+    pnpm install
+  elif [ "$PACKAGE_MANAGER" = "npm" ]; then
+    npm install
+  else
+    yarn install
+  fi
 fi
+
+[ -x "./node_modules/.bin/tsx" ] || fail "tsx not found in node_modules/.bin. Run your package manager install first."
 
 # Ensure .env exists
 if [ ! -f .env ]; then
@@ -78,7 +97,7 @@ trap cleanup EXIT INT TERM
 # ---------------------------------------------------------------------------
 info "Starting API server on port $PORT..."
 mkdir -p data
-bun src/index.ts &>/tmp/agenr-dev-server.log &
+./node_modules/.bin/tsx src/index.ts &>/tmp/agenr-dev-server.log &
 PIDS+=($!)
 
 # Wait for server to be ready
@@ -120,7 +139,7 @@ if [ ! -f "$DEV_KEY_FILE" ]; then
     -d '{"label":"local-dev","tier":"paid"}' \
     "http://localhost:$PORT/keys" 2>&1) || fail "Failed to create API key. Is AGENR_API_KEY set in .env?"
   
-  DEV_KEY=$(echo "$RESPONSE" | bun -e "const j=JSON.parse(await Bun.stdin.text()); console.log(j.key)")
+  DEV_KEY=$(echo "$RESPONSE" | node -e 'let data="";process.stdin.on("data",(chunk)=>{data+=chunk;});process.stdin.on("end",()=>{const parsed=JSON.parse(data);console.log(parsed.key);});')
   echo "$DEV_KEY" > "$DEV_KEY_FILE"
   ok "Dev API key created and saved to $DEV_KEY_FILE"
 fi
@@ -130,7 +149,13 @@ fi
 # ---------------------------------------------------------------------------
 info "Starting console on port 5173..."
 cd console
-VITE_API_URL="http://localhost:$PORT" bun run dev &>/tmp/agenr-dev-console.log &
+if [ "$PACKAGE_MANAGER" = "pnpm" ]; then
+  VITE_API_URL="http://localhost:$PORT" pnpm run dev &>/tmp/agenr-dev-console.log &
+elif [ "$PACKAGE_MANAGER" = "npm" ]; then
+  VITE_API_URL="http://localhost:$PORT" npm run dev &>/tmp/agenr-dev-console.log &
+else
+  VITE_API_URL="http://localhost:$PORT" yarn dev &>/tmp/agenr-dev-console.log &
+fi
 PIDS+=($!)
 cd "$ROOT"
 

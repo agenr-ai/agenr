@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createClient, type Client } from "@libsql/client";
 import { Hono } from "hono";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -29,7 +29,7 @@ async function createService(queryDelayMs: number): Promise<AgpService> {
   const profilePath = path.join(tempRoot, `user-profile-${queryDelayMs}.json`);
   const interactionDir = path.join(tempRoot, `interaction-profiles-${queryDelayMs}`);
   await mkdir(interactionDir, { recursive: true });
-  await Bun.write(
+  await writeFile(
     profilePath,
     JSON.stringify(
       {
@@ -47,7 +47,7 @@ async function createService(queryDelayMs: number): Promise<AgpService> {
       2,
     ),
   );
-  await Bun.write(
+  await writeFile(
     path.join(interactionDir, "stripe.json"),
     JSON.stringify(
       {
@@ -76,7 +76,7 @@ async function createService(queryDelayMs: number): Promise<AgpService> {
     () => ({
       discover: async () => ({ ok: true }),
       query: async () => {
-        await Bun.sleep(queryDelayMs);
+        await new Promise((resolve) => setTimeout(resolve, queryDelayMs));
         return { ok: true, queryDelayMs };
       },
       execute: async () => ({ ok: true }),

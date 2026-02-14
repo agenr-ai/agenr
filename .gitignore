@@ -14,8 +14,6 @@ data/.dev-api-key
 node_modules
 keychain:*
 # Internal docs (not for public repo)
-AGENTS.md
-CLAUDE.md
 docs/TODO.md
 docs/DISCOVERY-TOOLS-V2.md
 docs/SECURITY-AUDIT.md
