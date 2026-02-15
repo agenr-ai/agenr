@@ -45,6 +45,8 @@ The database is a local libsql/SQLite file. Migrations auto-apply on first run (
 4. Have an Anthropic API key? → `anthropic-api-key`
 5. Have a Claude.ai subscription? → `anthropic-oauth`
 
+> **Note:** Subscription-based auth methods (`openai-subscription`, `anthropic-token`, `anthropic-oauth`) discover credentials from your local CLI installations. Ensure your use of subscription credentials complies with your provider's terms of service.
+
 > **Remember:** Regardless of which auth method you pick for extraction, you still need `OPENAI_API_KEY` for embeddings.
 
 ## How `setup` Works
