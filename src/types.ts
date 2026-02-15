@@ -14,11 +14,15 @@ export const CONFIDENCE_LEVELS = ["high", "medium", "low"] as const;
 
 export const EXPIRY_LEVELS = ["core", "permanent", "temporary", "session-only"] as const;
 
+export const SCOPE_LEVELS = ["private", "personal", "public"] as const;
+
 export type KnowledgeType = (typeof KNOWLEDGE_TYPES)[number];
 
 export type ConfidenceLevel = (typeof CONFIDENCE_LEVELS)[number];
 
 export type Expiry = (typeof EXPIRY_LEVELS)[number];
+
+export type Scope = (typeof SCOPE_LEVELS)[number];
 
 export type AgenrProvider = "anthropic" | "openai" | "openai-codex";
 export type AgenrAuthMethod =
@@ -56,6 +60,7 @@ export interface KnowledgeEntry {
   subject: string;
   confidence: ConfidenceLevel;
   expiry: Expiry;
+  scope?: Scope;
   tags: string[];
   source: {
     file: string;
