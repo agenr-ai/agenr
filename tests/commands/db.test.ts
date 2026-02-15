@@ -1,12 +1,16 @@
 import { createClient, type Client } from "@libsql/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  runDbCheckCommand,
   runDbExportCommand,
   runDbPathCommand,
+  runDbRebuildIndexCommand,
   runDbResetCommand,
   runDbStatsCommand,
 } from "../../src/commands/db.js";
 import { initDb } from "../../src/db/client.js";
+import { hashText, storeEntries } from "../../src/db/store.js";
+import type { KnowledgeEntry } from "../../src/types.js";
 
 function makeDeps(client: Client) {
   return {
@@ -14,6 +18,35 @@ function makeDeps(client: Client) {
     getDbFn: vi.fn(() => client),
     initDbFn: vi.fn(async () => undefined),
     closeDbFn: vi.fn(() => undefined),
+  };
+}
+
+function to512(head: number[]): number[] {
+  return [...head, ...Array.from({ length: 509 }, () => 0)];
+}
+
+function vectorForText(text: string): number[] {
+  if (text.includes("vec-a")) return to512([1, 0, 0]);
+  if (text.includes("vec-b")) return to512([0.9, 0.1, 0]);
+  return to512([0.2, 0.2, 0.9]);
+}
+
+async function mockEmbed(texts: string[]): Promise<number[][]> {
+  return texts.map((text) => vectorForText(text));
+}
+
+function makeEntry(content: string): KnowledgeEntry {
+  return {
+    type: "fact",
+    subject: "Jim",
+    content,
+    confidence: "high",
+    expiry: "temporary",
+    tags: ["test"],
+    source: {
+      file: "db-command.test.ts",
+      context: "unit test",
+    },
   };
 }
 
@@ -141,5 +174,84 @@ describe("db command", () => {
     const dbPath = await runDbPathCommand({}, makeDeps(client));
     expect(dbPath).toBe(":memory:");
     expect(stdoutSpy).toHaveBeenCalled();
+  });
+
+  it("rebuild-index recreates missing vector index", async () => {
+    const client = createTestClient();
+    await initDb(client);
+
+    await storeEntries(client, [makeEntry("Item A vec-a"), makeEntry("Item B vec-b")], "sk-test", {
+      sourceFile: "db-command.test.ts",
+      ingestContentHash: hashText("rebuild-index"),
+      embedFn: mockEmbed,
+      force: true,
+    });
+
+    await client.execute("DROP INDEX IF EXISTS idx_entries_embedding");
+    await expect(
+      client.execute(`
+        SELECT count(*) AS count
+        FROM vector_top_k(
+          'idx_entries_embedding',
+          (SELECT embedding FROM entries WHERE embedding IS NOT NULL LIMIT 1),
+          1
+        )
+      `),
+    ).rejects.toBeTruthy();
+
+    const result = await runDbRebuildIndexCommand({}, makeDeps(client));
+    expect(result.entriesIndexed).toBe(2);
+
+    const verify = await client.execute(`
+      SELECT count(*) AS count
+      FROM vector_top_k(
+        'idx_entries_embedding',
+        (SELECT embedding FROM entries WHERE embedding IS NOT NULL LIMIT 1),
+        1
+      )
+    `);
+    expect(Number((verify.rows[0] as { count?: unknown } | undefined)?.count)).toBe(1);
+  });
+
+  it("db check passes on healthy database", async () => {
+    const client = createTestClient();
+    await initDb(client);
+
+    await storeEntries(client, [makeEntry("Item A vec-a")], "sk-test", {
+      sourceFile: "db-command.test.ts",
+      ingestContentHash: hashText("check-ok"),
+      embedFn: mockEmbed,
+      force: true,
+    });
+
+    const result = await runDbCheckCommand({}, makeDeps(client));
+    expect(result.quickCheckOk).toBe(true);
+    expect(result.vectorOk).toBe(true);
+    expect(result.entriesWithEmbedding).toBe(1);
+  });
+
+  it("db check fails when vector index is missing", async () => {
+    const client = createTestClient();
+    await initDb(client);
+
+    await storeEntries(client, [makeEntry("Item A vec-a")], "sk-test", {
+      sourceFile: "db-command.test.ts",
+      ingestContentHash: hashText("check-missing"),
+      embedFn: mockEmbed,
+      force: true,
+    });
+
+    await client.execute("DROP INDEX IF EXISTS idx_entries_embedding");
+    await expect(runDbCheckCommand({}, makeDeps(client))).rejects.toThrow(/vector/i);
+  });
+
+  it("db check succeeds on empty database", async () => {
+    const client = createTestClient();
+    await initDb(client);
+
+    const result = await runDbCheckCommand({}, makeDeps(client));
+    expect(result.quickCheckOk).toBe(true);
+    expect(result.vectorOk).toBe(true);
+    expect(result.entriesWithEmbedding).toBe(0);
   });
 });
