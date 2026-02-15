@@ -75,6 +75,32 @@ Default DB path:
 Schema source:
 - `src/db/schema.ts`
 
+
+### `entries` table columns
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | TEXT PK | UUID |
+| `type` | TEXT | Knowledge type: fact, decision, preference, todo, relationship, event, lesson |
+| `subject` | TEXT | Short subject line |
+| `content` | TEXT | Full entry content |
+| `confidence` | TEXT | high, medium, or low |
+| `expiry` | TEXT | core, permanent, temporary, or session-only |
+| `scope` | TEXT | private (default), personal, or public |
+| `source_file` | TEXT | Originating file path |
+| `source_context` | TEXT | Extraction context |
+| `embedding` | F32_BLOB(512) | 512-dimensional float32 vector |
+| `content_hash` | TEXT | Content hash for idempotency (v2) |
+| `created_at` | TEXT | ISO timestamp |
+| `updated_at` | TEXT | ISO timestamp |
+| `last_recalled_at` | TEXT | ISO timestamp of last recall |
+| `recall_count` | INTEGER | Times this entry has been recalled |
+| `confirmations` | INTEGER | Reinforcement count from dedup |
+| `contradictions` | INTEGER | Contradiction count |
+| `superseded_by` | TEXT FK | ID of superseding entry (soft delete) |
+| `merged_from` | INTEGER | Number of source entries merged (v3) |
+| `consolidated_at` | TEXT | ISO timestamp of last consolidation (v3) |
+
 Primary tables:
 - `entries`: core memory records, including metadata and `embedding F32_BLOB(512)`.
 - `tags`: normalized tag mapping (`entry_id`, `tag`).
@@ -83,7 +109,7 @@ Primary tables:
 - `entry_sources`: provenance snapshots for merged entries.
 
 Search/index objects:
-- Vector index: `idx_entries_embedding` using `libsql_vector_idx(... metric=cosine ...)`.
+- Vector index: `idx_entries_embedding` using `libsql_vector_idx(... metric=cosine (standard similarity metric for text embeddings) ...)`.
 - Full text index: `entries_fts` virtual table with insert/update/delete triggers.
 
 Migrations:
@@ -124,7 +150,7 @@ Stored entry metadata includes:
 Source: `src/embeddings/client.ts`
 
 - Model: `text-embedding-3-small`
-- Dimensions: `512`
+- Dimensions: `512` (cost/quality tradeoff — 512d is ~50% cheaper than 1536d with minimal quality loss for short text)
 - Batch size: `200`
 - Max concurrency: `3`
 - Input text format: `"<type>: <subject> - <content>"` (`composeEmbeddingText`)
@@ -163,7 +189,7 @@ Recall starts with vector top-k candidates from `idx_entries_embedding`, then ap
 
 Core components:
 - `vector`: cosine similarity (clamped 0..1, exponentiated by `0.7` in final score path)
-- `recency`: FSRS-style forgetting curve with expiry-specific half-life:
+- `recency`: FSRS-style forgetting curve (Free Spaced Repetition Scheduler — a spaced repetition algorithm) with expiry-specific half-life:
 - `core`: infinite
 - `permanent`: 365 days
 - `temporary`: 30 days
@@ -172,7 +198,7 @@ Core components:
 - `recall`: strength from `recall_count` and time since last recall
 - `fts`: +`0.15` boost if full-text match
 
-Final score (`scoreEntry`) is multiplicative with contradiction penalty:
+Final score (`scoreEntry`) is multiplicative (by design — one bad signal should tank the score, not just reduce it) with contradiction penalty:
 - `sim * (0.3 + 0.7 * recency) * max(confidence, recall_strength) * contradiction_penalty + fts`
 - contradiction penalty is `0.8` when `contradictions >= 2`, else `1.0`
 

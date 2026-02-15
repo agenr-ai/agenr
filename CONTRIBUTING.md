@@ -63,6 +63,17 @@ Before opening a PR:
 - how it was validated
 5. Ensure CI/test checks pass before requesting review.
 
+
+## Database Migrations
+
+Migrations auto-apply on first run after an upgrade. If you're upgrading to a version with schema changes, back up your database first:
+
+```bash
+cp ~/.agenr/knowledge.db ~/.agenr/knowledge.db.backup
+```
+
+Migration history is tracked in the `_migrations` table. See `src/db/schema.ts` for the full migration definitions.
+
 ## License
 
 By contributing, you agree your contributions are licensed under AGPL-3.0.
