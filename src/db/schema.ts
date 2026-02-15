@@ -5,17 +5,11 @@ export interface Migration {
   statements: readonly string[];
 }
 
-export const CREATE_IDX_ENTRIES_EMBEDDING_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_entries_embedding ON entries (
-    libsql_vector_idx(embedding, 'metric=cosine', 'compress_neighbors=float8', 'max_neighbors=50')
-  )
-  `;
-
 export const CREATE_MIGRATIONS_TABLE_SQL = `
-	CREATE TABLE IF NOT EXISTS _migrations (
-	  version INTEGER PRIMARY KEY,
-	  applied_at TEXT NOT NULL
-	)
+CREATE TABLE IF NOT EXISTS _migrations (
+  version INTEGER PRIMARY KEY,
+  applied_at TEXT NOT NULL
+)
 `;
 
 export const MIGRATION_V1_STATEMENTS: readonly string[] = [
@@ -71,7 +65,11 @@ export const MIGRATION_V1_STATEMENTS: readonly string[] = [
     duration_ms INTEGER NOT NULL
   )
   `,
-  CREATE_IDX_ENTRIES_EMBEDDING_SQL,
+  `
+  CREATE INDEX IF NOT EXISTS idx_entries_embedding ON entries (
+    libsql_vector_idx(embedding, 'metric=cosine', 'compress_neighbors=float8', 'max_neighbors=50')
+  )
+  `,
   `
   CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
     content, subject, content=entries, content_rowid=rowid

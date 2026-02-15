@@ -491,110 +491,36 @@ export async function findSimilar(
     return [];
   }
 
-  let vectorResult: { rows: Row[] };
-  let hasDistance = false;
-  try {
-    vectorResult = await db.execute({
-      sql: `
-        SELECT id, distance
-        FROM vector_top_k('idx_entries_embedding', vector32(?), ?)
-      `,
-      args: [JSON.stringify(embedding), limit],
-    });
-    hasDistance = true;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (!message.toLowerCase().includes("no such column: distance")) {
-      throw error;
-    }
-    vectorResult = await db.execute({
-      sql: `
-        SELECT id
-        FROM vector_top_k('idx_entries_embedding', vector32(?), ?)
-      `,
-      args: [JSON.stringify(embedding), limit],
-    });
-  }
-
-  const distancesByRowid = new Map<number, number>();
-  const rankByRowid = new Map<number, number>();
-  const rowids: number[] = [];
-  for (const row of vectorResult.rows) {
-    const rowid = toNumber(row.id);
-    if (!Number.isFinite(rowid)) {
-      continue;
-    }
-    if (rankByRowid.has(rowid)) {
-      continue;
-    }
-    if (hasDistance) {
-      const distance = toNumber((row as Row).distance);
-      if (Number.isFinite(distance)) {
-        distancesByRowid.set(rowid, distance);
-      }
-    }
-    rankByRowid.set(rowid, rowids.length);
-    rowids.push(rowid);
-  }
-
-  if (rowids.length === 0) {
-    return [];
-  }
-
-  const placeholders = rowids.map(() => "?").join(", ");
-  const entryResult = await db.execute({
+  const result = await db.execute({
     sql: `
       SELECT
-        rowid AS rowid,
-        id,
-        type,
-        subject,
-        content,
-        confidence,
-        expiry,
-        source_file,
-        source_context,
-        embedding,
-        created_at,
-        updated_at,
-        last_recalled_at,
-        recall_count,
-        confirmations,
-        contradictions,
-        superseded_by
-      FROM entries
-      WHERE rowid IN (${placeholders})
-        AND embedding IS NOT NULL
+        e.id,
+        e.type,
+        e.subject,
+        e.content,
+        e.confidence,
+        e.expiry,
+        e.source_file,
+        e.source_context,
+        e.embedding,
+        e.created_at,
+        e.updated_at,
+        e.last_recalled_at,
+        e.recall_count,
+        e.confirmations,
+        e.contradictions,
+        e.superseded_by
+      FROM vector_top_k('idx_entries_embedding', vector32(?), ?) AS v
+      JOIN entries AS e ON e.rowid = v.id
+      WHERE e.embedding IS NOT NULL
     `,
-    args: rowids,
+    args: [JSON.stringify(embedding), limit],
   });
 
-  const ranked = entryResult.rows
-    .map((row) => {
-      const rowid = toNumber(row.rowid);
-      if (!Number.isFinite(rowid)) {
-        return null;
-      }
-      const rank = rankByRowid.get(rowid);
-      if (rank === undefined) {
-        return null;
-      }
-      const distance = hasDistance ? distancesByRowid.get(rowid) ?? null : null;
-      return { row, rank, distance };
-    })
-    .filter((value): value is { row: Row; rank: number; distance: number | null } => value !== null);
-
-  ranked.sort((a, b) => {
-    if (a.distance !== null && b.distance !== null) {
-      return a.distance - b.distance;
-    }
-    return a.rank - b.rank;
-  });
-
-  const ids = ranked.map(({ row }) => toStringValue(row.id)).filter((id) => id.length > 0);
+  const ids = result.rows.map((row) => toStringValue(row.id)).filter((id) => id.length > 0);
   const tagsByEntryId = await getTagsForEntryIds(db, ids);
 
-  const similar = ranked.map(({ row }) => {
+  const similar = result.rows.map((row) => {
     const rowEmbedding = mapBufferToVector(row.embedding);
     const entryId = toStringValue(row.id);
     const entry = mapStoredEntry(row, tagsByEntryId.get(entryId) ?? []);
