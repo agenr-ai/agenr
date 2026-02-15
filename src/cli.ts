@@ -11,6 +11,7 @@ import {
   runDbResetCommand,
   runDbStatsCommand,
 } from "./commands/db.js";
+import { runConsolidateCommand } from "./commands/consolidate.js";
 import { runIngestCommand } from "./commands/ingest.js";
 import { runMcpCommand } from "./commands/mcp.js";
 import { runRecallCommand } from "./commands/recall.js";
@@ -26,6 +27,7 @@ import { expandInputFiles, parseTranscriptFile } from "./parser.js";
 import { runSetup } from "./setup.js";
 import { banner, formatError, formatLabel, formatSuccess, formatWarn, ui } from "./ui.js";
 import type { ExtractionReport, ExtractionStats } from "./types.js";
+import type { ConsolidateCommandOptions } from "./commands/consolidate.js";
 import type { IngestCommandOptions } from "./commands/ingest.js";
 import type { WatchCommandOptions } from "./commands/watch.js";
 
@@ -457,6 +459,19 @@ export function createProgram(): Command {
     .option("--force", "Re-process even if already ingested", false)
     .action(async (paths: string[], opts: IngestCommandOptions) => {
       const result = await runIngestCommand(paths, opts);
+      process.exitCode = result.exitCode;
+    });
+
+  program
+    .command("consolidate")
+    .description("Consolidate and clean up the knowledge database")
+    .option("--rules-only", "Only run rule-based cleanup (no LLM)", false)
+    .option("--dry-run", "Show what would happen without making changes", false)
+    .option("--verbose", "Show per-entry decisions", false)
+    .option("--json", "Output report as JSON", false)
+    .option("--db <path>", "Database path override")
+    .action(async (opts: ConsolidateCommandOptions) => {
+      const result = await runConsolidateCommand(opts);
       process.exitCode = result.exitCode;
     });
 
