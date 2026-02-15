@@ -475,6 +475,17 @@ export function createProgram(): Command {
     .description("Consolidate and clean up the knowledge database")
     .option("--rules-only", "Only run rule-based cleanup (no LLM)", false)
     .option("--dry-run", "Show what would happen without making changes", false)
+    .option("--min-cluster <n>", "Minimum cluster size for merge (default: 3)", (value: string) =>
+      Number.parseInt(value, 10),
+    )
+    .option("--sim-threshold <n>", "Similarity threshold for clustering (default: 0.85)", (value: string) =>
+      Number.parseFloat(value),
+    )
+    .option("--type <type>", "Only consolidate entries of this type")
+    .option("--show-flagged", "Show flagged merges awaiting review", false)
+    .option("--idempotency-days <n>", "Skip recently consolidated merged entries for N days (default: 7)", (value: string) =>
+      Number.parseInt(value, 10),
+    )
     .option("--verbose", "Show per-entry decisions", false)
     .option("--json", "Output report as JSON", false)
     .option("--db <path>", "Database path override")
