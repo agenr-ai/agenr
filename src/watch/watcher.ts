@@ -9,7 +9,7 @@ import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { extractKnowledgeFromChunks } from "../extractor.js";
 import { createLlmClient } from "../llm/client.js";
 import { parseTranscriptFile } from "../parser.js";
-import type { WatchState } from "../types.js";
+import type { KnowledgeEntry, WatchState } from "../types.js";
 import { createEmptyWatchState, getFileState, loadWatchState, saveWatchState, updateFileState } from "./state.js";
 
 export interface WatchCycleResult {
@@ -164,6 +164,22 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
     await resolvedDeps.initDbFn(db);
   }
 
+  let dbChain: Promise<void> = Promise.resolve();
+  const withDbLock = async <T>(fn: () => Promise<T>): Promise<T> => {
+    const previous = dbChain;
+    let release: (() => void) | null = null;
+    dbChain = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    await previous;
+    try {
+      return await fn();
+    } finally {
+      release?.();
+    }
+  };
+
   let cycles = 0;
   let totalEntriesStored = 0;
 
@@ -206,16 +222,14 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
               try {
                 await resolvedDeps.writeFileFn(tempFile, newContent, "utf8");
                 const parsed = await resolvedDeps.parseTranscriptFileFn(tempFile);
-                const extracted = await resolvedDeps.extractKnowledgeFromChunksFn({
-                  file: filePath,
-                  chunks: parsed.chunks,
-                  client,
-                  verbose: options.verbose,
-                });
-                const deduped = resolvedDeps.deduplicateEntriesFn(extracted.entries);
-                cycleResult.entriesExtracted = extracted.entries.length;
+                const processChunkEntries = async (chunkEntries: KnowledgeEntry[]): Promise<void> => {
+                  cycleResult.entriesExtracted += chunkEntries.length;
+                  const deduped = resolvedDeps.deduplicateEntriesFn(chunkEntries);
 
-                if (!options.dryRun && deduped.length > 0) {
+                  if (options.dryRun || deduped.length === 0) {
+                    return;
+                  }
+
                   if (!db) {
                     throw new Error("Database client is not initialized.");
                   }
@@ -223,10 +237,27 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
                     embeddingApiKey = resolvedDeps.resolveEmbeddingApiKeyFn(config, process.env);
                   }
 
-                  const storeResult = await resolvedDeps.storeEntriesFn(db, deduped, embeddingApiKey, {
-                    sourceFile: filePath,
-                  });
-                  cycleResult.entriesStored = storeResult.added + storeResult.updated;
+                  const storeResult = await withDbLock(() =>
+                    resolvedDeps.storeEntriesFn(db, deduped, embeddingApiKey ?? "", {
+                      sourceFile: filePath,
+                    }),
+                  );
+                  cycleResult.entriesStored += storeResult.added + storeResult.updated;
+                };
+
+                const extracted = await resolvedDeps.extractKnowledgeFromChunksFn({
+                  file: filePath,
+                  chunks: parsed.chunks,
+                  client,
+                  verbose: options.verbose,
+                  onChunkComplete: async (chunkResult) => {
+                    await processChunkEntries(chunkResult.entries);
+                  },
+                });
+
+                // Compatibility fallback for injected extractors that do not dispatch through onChunkComplete.
+                if (extracted.entries.length > 0) {
+                  await processChunkEntries(extracted.entries);
                 }
 
                 const latestState = getFileState(state, filePath);

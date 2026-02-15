@@ -469,6 +469,13 @@ export interface ExtractChunksResult {
   warnings: string[];
 }
 
+export interface ExtractChunkCompleteResult {
+  chunkIndex: number;
+  totalChunks: number;
+  entries: KnowledgeEntry[];
+  warnings: string[];
+}
+
 export async function extractKnowledgeFromChunks(params: {
   file: string;
   chunks: TranscriptChunk[];
@@ -476,6 +483,7 @@ export async function extractKnowledgeFromChunks(params: {
   verbose: boolean;
   onVerbose?: (line: string) => void;
   onStreamDelta?: (delta: string, kind: "text" | "thinking") => void;
+  onChunkComplete?: (result: ExtractChunkCompleteResult) => Promise<void>;
   streamSimpleImpl?: StreamSimpleFn;
   sleepImpl?: (ms: number) => Promise<void>;
   retryDelayMs?: (attempt: number) => number;
@@ -489,6 +497,7 @@ export async function extractKnowledgeFromChunks(params: {
   for (const chunk of params.chunks) {
     let chunkDone = false;
     let lastError: unknown = null;
+    let chunkResult: { entries: KnowledgeEntry[]; warnings: string[] } | null = null;
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
       if (params.verbose) {
@@ -498,7 +507,7 @@ export async function extractKnowledgeFromChunks(params: {
       }
 
       try {
-        const result = await extractChunkOnce({
+        chunkResult = await extractChunkOnce({
           file: params.file,
           chunk,
           model: params.client.resolvedModel.model,
@@ -509,8 +518,7 @@ export async function extractKnowledgeFromChunks(params: {
           streamSimpleImpl: params.streamSimpleImpl,
         });
 
-        entries.push(...result.entries);
-        warnings.push(...result.warnings);
+        warnings.push(...chunkResult.warnings);
         successfulChunks += 1;
         chunkDone = true;
         break;
@@ -536,6 +544,17 @@ export async function extractKnowledgeFromChunks(params: {
       warnings.push(
         `Chunk ${chunk.chunk_index + 1}: extraction failed (${lastError instanceof Error ? lastError.message : String(lastError)}).`,
       );
+    } else if (chunkResult) {
+      if (params.onChunkComplete) {
+        await params.onChunkComplete({
+          chunkIndex: chunk.chunk_index,
+          totalChunks: params.chunks.length,
+          entries: chunkResult.entries,
+          warnings: chunkResult.warnings,
+        });
+      } else {
+        entries.push(...chunkResult.entries);
+      }
     }
 
     if (params.onStreamDelta) {

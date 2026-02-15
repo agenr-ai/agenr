@@ -10,6 +10,7 @@ import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { extractKnowledgeFromChunks } from "../extractor.js";
 import { createLlmClient } from "../llm/client.js";
 import { expandInputFiles, parseTranscriptFile } from "../parser.js";
+import type { KnowledgeEntry } from "../types.js";
 import { banner, formatError, formatWarn, ui } from "../ui.js";
 
 const DEFAULT_GLOB = "**/*.{jsonl,md,txt}";
@@ -387,20 +388,16 @@ export async function runIngestCommand(
       }
 
       const parsed = await resolvedDeps.parseTranscriptFileFn(target.file);
-      const extracted = await resolvedDeps.extractKnowledgeFromChunksFn({
-        file: target.file,
-        chunks: parsed.chunks,
-        client,
-        verbose: false,
-      });
-      const deduped = resolvedDeps.deduplicateEntriesFn(extracted.entries);
+      const processChunkEntries = async (chunkEntries: KnowledgeEntry[]): Promise<void> => {
+        fileResult.entriesExtracted += chunkEntries.length;
+        totalEntriesExtracted += chunkEntries.length;
 
-      fileResult.entriesExtracted = extracted.entries.length;
-      totalEntriesExtracted += extracted.entries.length;
+        const deduped = resolvedDeps.deduplicateEntriesFn(chunkEntries);
+        if (dryRun || deduped.length === 0) {
+          return;
+        }
 
-      if (!dryRun) {
-        const requiresEmbedding = deduped.length > 0;
-        if (requiresEmbedding && !embeddingApiKey) {
+        if (!embeddingApiKey) {
           embeddingApiKey = resolvedDeps.resolveEmbeddingApiKeyFn(config, process.env);
         }
 
@@ -410,8 +407,24 @@ export async function runIngestCommand(
             ingestContentHash: fileHash,
           }),
         );
-        fileResult.entriesStored = storeResult.added + storeResult.updated;
-        totalEntriesStored += fileResult.entriesStored;
+        const stored = storeResult.added + storeResult.updated;
+        fileResult.entriesStored += stored;
+        totalEntriesStored += stored;
+      };
+
+      const extracted = await resolvedDeps.extractKnowledgeFromChunksFn({
+        file: target.file,
+        chunks: parsed.chunks,
+        client,
+        verbose: false,
+        onChunkComplete: async (chunkResult) => {
+          await processChunkEntries(chunkResult.entries);
+        },
+      });
+
+      // Compatibility fallback for injected extractors that do not dispatch through onChunkComplete.
+      if (extracted.entries.length > 0) {
+        await processChunkEntries(extracted.entries);
       }
 
       return fileResult;
