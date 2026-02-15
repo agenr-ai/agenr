@@ -120,6 +120,8 @@ export interface TranscriptChunk {
   message_end: number;
   text: string;
   context_hint: string;
+  index?: number;
+  totalChunks?: number;
 }
 
 export interface ParsedTranscript {
