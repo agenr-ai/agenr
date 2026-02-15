@@ -12,6 +12,7 @@ import {
   runDbStatsCommand,
 } from "./commands/db.js";
 import { runIngestCommand } from "./commands/ingest.js";
+import { runMcpCommand } from "./commands/mcp.js";
 import { runRecallCommand } from "./commands/recall.js";
 import { runStoreCommand } from "./commands/store.js";
 import { runWatchCommand } from "./commands/watch.js";
@@ -457,6 +458,15 @@ export function createProgram(): Command {
     .action(async (paths: string[], opts: IngestCommandOptions) => {
       const result = await runIngestCommand(paths, opts);
       process.exitCode = result.exitCode;
+    });
+
+  program
+    .command("mcp")
+    .description("Start MCP server for cross-tool AI memory")
+    .option("--db <path>", "Database path override")
+    .option("--verbose", "Log requests to stderr", false)
+    .action(async (opts: { db?: string; verbose?: boolean }) => {
+      await runMcpCommand(opts);
     });
 
   const dbCommand = program.command("db").description("Manage the local knowledge database");
