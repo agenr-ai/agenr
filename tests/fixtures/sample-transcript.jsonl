@@ -1,0 +1,6 @@
+{"type":"session","id":"sess-1","timestamp":"2026-02-14T00:00:00.000Z","cwd":"/tmp"}
+{"type":"message","id":"a1","parentId":null,"timestamp":"2026-02-14T00:00:01.000Z","message":{"role":"user","content":"Jim prefers pnpm over npm and yarn","timestamp":1700000000000}}
+{"type":"message","id":"a2","parentId":"a1","timestamp":"2026-02-14T00:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Noted. Jim also said Kevin is his brother."},{"type":"toolCall","name":"search","arguments":{}}],"timestamp":1700000001000}}
+{"type":"message","id":"a3","parentId":"a2","timestamp":"2026-02-14T00:00:03.000Z","message":{"role":"toolResult","content":[{"type":"text","text":"tool output"}],"timestamp":1700000002000}}
+{this is malformed json}
+{"type":"message","id":"a4","parentId":"a3","timestamp":"2026-02-14T00:00:04.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Decision: archive the old repo by Feb 14, 2026."}],"timestamp":1700000003000}}
