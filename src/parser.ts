@@ -10,8 +10,59 @@ function hasGlobChars(input: string): boolean {
   return /[*?[\]{}]/.test(input);
 }
 
-function globSegmentToRegExp(segment: string): RegExp {
-  let regex = "^";
+function escapeRegex(value: string): string {
+  return value.replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
+}
+
+function findMatchingBrace(segment: string, start: number): number {
+  let depth = 0;
+  for (let i = start; i < segment.length; i += 1) {
+    const char = segment[i];
+    if (char === "{") {
+      depth += 1;
+      continue;
+    }
+    if (char !== "}") {
+      continue;
+    }
+    depth -= 1;
+    if (depth === 0) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function splitBraceAlternatives(body: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+
+  for (let i = 0; i < body.length; i += 1) {
+    const char = body[i];
+    if (char === "{") {
+      depth += 1;
+      continue;
+    }
+    if (char === "}") {
+      if (depth > 0) {
+        depth -= 1;
+      }
+      continue;
+    }
+    if (char === "," && depth === 0) {
+      parts.push(body.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(body.slice(start));
+
+  return parts.map((part) => part.trim()).filter((part) => part.length > 0);
+}
+
+function globSegmentPatternToRegex(segment: string): string {
+  let regex = "";
+
   for (let i = 0; i < segment.length; i += 1) {
     const char = segment[i];
     if (char === "*") {
@@ -30,10 +81,26 @@ function globSegmentToRegExp(segment: string): RegExp {
         continue;
       }
     }
-    regex += char.replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
+    if (char === "{") {
+      const end = findMatchingBrace(segment, i);
+      if (end > i + 1) {
+        const body = segment.slice(i + 1, end);
+        const options = splitBraceAlternatives(body).map((option) => globSegmentPatternToRegex(option));
+        if (options.length > 0) {
+          regex += `(?:${options.join("|")})`;
+          i = end;
+          continue;
+        }
+      }
+    }
+    regex += escapeRegex(char ?? "");
   }
-  regex += "$";
-  return new RegExp(regex);
+
+  return regex;
+}
+
+function globSegmentToRegExp(segment: string): RegExp {
+  return new RegExp(`^${globSegmentPatternToRegex(segment)}$`);
 }
 
 async function expandGlobRecursive(baseDir: string, segments: string[]): Promise<string[]> {

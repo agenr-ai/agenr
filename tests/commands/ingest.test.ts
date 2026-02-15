@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runIngestCommand } from "../../src/commands/ingest.js";
 import { hashText } from "../../src/db/store.js";
+import { expandInputFiles } from "../../src/parser.js";
 import type { IngestCommandDeps } from "../../src/commands/ingest.js";
 import type { KnowledgeEntry, ParsedTranscript } from "../../src/types.js";
 
@@ -319,6 +320,59 @@ describe("ingest command", () => {
     expect(result.filesProcessed).toBe(1);
     expect(parseTranscriptFileFn).toHaveBeenCalledTimes(1);
     expect(parseTranscriptFileFn).toHaveBeenCalledWith(md);
+  });
+
+  it("resolveInputFiles with directory path finds files matching glob", async () => {
+    const dir = await makeTempDir();
+    const rootMd = path.join(dir, "root.md");
+    const rootTxt = path.join(dir, "root.txt");
+    const nestedMd = path.join(dir, "nested", "child.md");
+    const ignored = path.join(dir, "nested", "skip.png");
+    await fs.mkdir(path.dirname(nestedMd), { recursive: true });
+    await fs.writeFile(rootMd, "root", "utf8");
+    await fs.writeFile(rootTxt, "txt", "utf8");
+    await fs.writeFile(nestedMd, "nested", "utf8");
+    await fs.writeFile(ignored, "ignored", "utf8");
+
+    const parseTranscriptFileFn = vi.fn(async (filePath: string) => makeParsed(filePath));
+    const result = await runIngestCommand(
+      [dir],
+      {},
+      makeDeps({
+        expandInputFilesFn: expandInputFiles,
+        parseTranscriptFileFn,
+      }),
+    );
+
+    expect(result.filesProcessed).toBe(3);
+    expect(parseTranscriptFileFn).toHaveBeenCalledTimes(3);
+    expect(parseTranscriptFileFn).toHaveBeenCalledWith(rootMd);
+    expect(parseTranscriptFileFn).toHaveBeenCalledWith(rootTxt);
+    expect(parseTranscriptFileFn).toHaveBeenCalledWith(nestedMd);
+  });
+
+  it("resolveInputFiles with directory finds files in immediate directory with ** glob", async () => {
+    const dir = await makeTempDir();
+    const rootMd = path.join(dir, "root.md");
+    const nestedMd = path.join(dir, "nested", "child.md");
+    await fs.mkdir(path.dirname(nestedMd), { recursive: true });
+    await fs.writeFile(rootMd, "root", "utf8");
+    await fs.writeFile(nestedMd, "nested", "utf8");
+
+    const parseTranscriptFileFn = vi.fn(async (filePath: string) => makeParsed(filePath));
+    const result = await runIngestCommand(
+      [dir],
+      { glob: "**/*.md" },
+      makeDeps({
+        expandInputFilesFn: expandInputFiles,
+        parseTranscriptFileFn,
+      }),
+    );
+
+    expect(result.filesProcessed).toBe(2);
+    expect(parseTranscriptFileFn).toHaveBeenCalledTimes(2);
+    expect(parseTranscriptFileFn).toHaveBeenCalledWith(rootMd);
+    expect(parseTranscriptFileFn).toHaveBeenCalledWith(nestedMd);
   });
 
   it("processes files in ascending size order", async () => {
