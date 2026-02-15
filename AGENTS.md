@@ -1,5 +1,7 @@
 # AGENTS.md
 
+> CLAUDE.md is a symlink to this file. Edit AGENTS.md only.
+
 ## What is agenr?
 
 Local-first memory for AI agents. Extract structured knowledge from conversations, store with semantic dedup, recall with memory-aware ranking, consolidate over time.
