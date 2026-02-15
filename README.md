@@ -21,14 +21,14 @@ agenr recall "what package manager did we choose?"
 ```
 
 ```
-┌─ fact (0.94) ────────────────────────────────┐
+┌─ fact (0.94) ─────────────────────────────────┐
 │ Subject: project tooling                      │
 │ We switched this project to pnpm.             │
 │ Confirmed 3x · Last recalled 2 days ago       │
 └───────────────────────────────────────────────┘
 ```
 
-One local database. Works with Claude Code, Codex, Cursor, or anything that speaks MCP.
+One local database. Works with OpenClaw, Claude Code, Codex, Cursor, Windsurf, or anything that speaks MCP.
 
 ## Quick start
 
