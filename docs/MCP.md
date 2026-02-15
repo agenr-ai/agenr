@@ -28,8 +28,8 @@ Protocol details:
 
 ```toml
 [mcp_servers.agenr]
-command = "node"
-args = ["/absolute/path/to/agenr/dist/cli.js", "mcp", "--db", "/absolute/path/to/knowledge.db"]
+command = "npx"
+args = ["-y", "agenr", "mcp", "--db", "/path/to/knowledge.db"]
 env = { OPENAI_API_KEY = "your-key-here" }
 ```
 
@@ -43,8 +43,8 @@ Notes:
 {
   "mcpServers": {
     "agenr": {
-      "command": "node",
-      "args": ["/absolute/path/to/agenr/dist/cli.js", "mcp"],
+      "command": "npx",
+      "args": ["-y", "agenr", "mcp"],
       "env": {
         "OPENAI_API_KEY": "your-key-here"
       }
@@ -67,7 +67,7 @@ If your client supports stdio servers, configure:
 Equivalent shell command:
 
 ```bash
-OPENAI_API_KEY=your-key-here node /absolute/path/to/agenr/dist/cli.js mcp
+OPENAI_API_KEY=your-key-here npx -y agenr mcp
 ```
 
 ## Tool Reference
