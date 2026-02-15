@@ -7,10 +7,11 @@ import { acquireLock, releaseLock } from "../consolidate/lock.js";
 import { mergeCluster } from "../consolidate/merge.js";
 import { consolidateRules, type ConsolidationStats } from "../consolidate/rules.js";
 import { showFlaggedMerges } from "../consolidate/verify.js";
-import { closeDb, DEFAULT_DB_PATH, getDb } from "../db/client.js";
+import { closeDb, DEFAULT_DB_PATH, getDb, walCheckpoint } from "../db/client.js";
 import { runMigrations } from "../db/schema.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { createLlmClient } from "../llm/client.js";
+import { formatWarn } from "../ui.js";
 
 export interface ConsolidateCommandOptions {
   rulesOnly?: boolean;
@@ -95,6 +96,10 @@ function renderTextReport(stats: ConsolidateReport, dryRun: boolean): string {
   return lines.join("\n");
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export async function runConsolidateCommand(
   options: ConsolidateCommandOptions,
 ): Promise<{ exitCode: number }> {
@@ -166,6 +171,14 @@ export async function runConsolidateCommand(
         }
 
         report.phase2 = phase2;
+      }
+
+      if (!options.dryRun) {
+        try {
+          await walCheckpoint(db);
+        } catch (error) {
+          clack.log.warn(formatWarn(`WAL checkpoint failed: ${errorMessage(error)}`), clackOutput);
+        }
       }
 
       if (options.json) {

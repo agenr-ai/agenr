@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import * as clack from "@clack/prompts";
 import { readConfig } from "../config.js";
-import { closeDb, getDb, initDb } from "../db/client.js";
+import { closeDb, getDb, initDb, walCheckpoint } from "../db/client.js";
 import { hashText, storeEntries } from "../db/store.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { createLlmClient } from "../llm/client.js";
@@ -287,6 +287,14 @@ export async function runStoreCommand(
       relationsCreated += result.relations_created;
       durationMs += result.duration_ms;
       totalEntries = result.total_entries;
+    }
+
+    if (!options.dryRun) {
+      try {
+        await walCheckpoint(db);
+      } catch (error) {
+        clack.log.warn(formatWarn(`WAL checkpoint failed: ${error instanceof Error ? error.message : String(error)}`), clackOutput);
+      }
     }
 
     const finalResult: StoreResult = {

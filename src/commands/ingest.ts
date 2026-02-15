@@ -4,7 +4,7 @@ import type { Client } from "@libsql/client";
 import * as clack from "@clack/prompts";
 import { readConfig } from "../config.js";
 import { deduplicateEntries } from "../dedup.js";
-import { closeDb, getDb, initDb } from "../db/client.js";
+import { closeDb, getDb, initDb, walCheckpoint } from "../db/client.js";
 import { batchClassify, hashText, type BatchClassificationCandidate, type StoreEntryDecision, storeEntries } from "../db/store.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { extractKnowledgeFromChunks } from "../extractor.js";
@@ -560,6 +560,13 @@ export async function runIngestCommand(
     );
   } finally {
     clearProgressLine();
+    if (!dryRun) {
+      try {
+        await walCheckpoint(db);
+      } catch (error) {
+        clack.log.warn(formatWarn(`WAL checkpoint failed: ${errorMessage(error)}`), clackOutput);
+      }
+    }
     resolvedDeps.closeDbFn(db);
   }
 
