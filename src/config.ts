@@ -60,12 +60,19 @@ const AUTH_METHOD_SET = new Set<AgenrAuthMethod>(AUTH_METHOD_DEFINITIONS.map((it
 const PROVIDER_SET = new Set<AgenrProvider>(["anthropic", "openai", "openai-codex"]);
 const CONFIG_FILE_MODE = 0o600;
 const CONFIG_DIR_MODE = 0o700;
+const DEFAULT_EMBEDDING_PROVIDER = "openai";
+const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
+const DEFAULT_EMBEDDING_DIMENSIONS = 512;
 
 function resolveUserPath(inputPath: string): string {
   if (!inputPath.startsWith("~")) {
     return inputPath;
   }
   return path.join(os.homedir(), inputPath.slice(1));
+}
+
+function resolveDefaultKnowledgeDbPath(): string {
+  return path.join(os.homedir(), ".agenr", "knowledge.db");
 }
 
 export function resolveConfigPath(env: NodeJS.ProcessEnv = process.env): string {
@@ -123,13 +130,61 @@ function normalizeStoredCredentials(input: unknown): AgenrConfig["credentials"] 
   return Object.keys(normalized).length > 0 ? normalized : undefined;
 }
 
-function normalizeConfig(input: unknown): AgenrConfig {
+function normalizeEmbeddingConfig(input: unknown): NonNullable<AgenrConfig["embedding"]> {
+  const normalized: NonNullable<AgenrConfig["embedding"]> = {
+    provider: DEFAULT_EMBEDDING_PROVIDER,
+    model: DEFAULT_EMBEDDING_MODEL,
+    dimensions: DEFAULT_EMBEDDING_DIMENSIONS,
+  };
+
   if (!input || typeof input !== "object") {
-    return {};
+    return normalized;
   }
 
   const record = input as Record<string, unknown>;
-  const normalized: AgenrConfig = {};
+
+  if (record.provider === "openai") {
+    normalized.provider = record.provider;
+  }
+
+  if (typeof record.model === "string" && record.model.trim()) {
+    normalized.model = record.model.trim();
+  }
+
+  if (typeof record.dimensions === "number" && Number.isFinite(record.dimensions) && record.dimensions > 0) {
+    normalized.dimensions = Math.floor(record.dimensions);
+  }
+
+  if (typeof record.apiKey === "string" && record.apiKey.trim()) {
+    normalized.apiKey = record.apiKey.trim();
+  }
+
+  return normalized;
+}
+
+function normalizeDbConfig(input: unknown): NonNullable<AgenrConfig["db"]> {
+  const normalized: NonNullable<AgenrConfig["db"]> = {
+    path: resolveDefaultKnowledgeDbPath(),
+  };
+
+  if (!input || typeof input !== "object") {
+    return normalized;
+  }
+
+  const record = input as Record<string, unknown>;
+  if (typeof record.path === "string" && record.path.trim()) {
+    normalized.path = record.path.trim();
+  }
+
+  return normalized;
+}
+
+function normalizeConfig(input: unknown): AgenrConfig {
+  const record = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const normalized: AgenrConfig = {
+    embedding: normalizeEmbeddingConfig(record.embedding),
+    db: normalizeDbConfig(record.db),
+  };
 
   if (typeof record.auth === "string") {
     const auth = record.auth.trim();
@@ -224,6 +279,20 @@ export function mergeConfigPatch(current: AgenrConfig | null, patch: AgenrConfig
     if (Object.keys(merged.credentials).length === 0) {
       delete merged.credentials;
     }
+  }
+
+  if (current?.embedding || patch.embedding) {
+    merged.embedding = {
+      ...(current?.embedding ?? {}),
+      ...(patch.embedding ?? {}),
+    };
+  }
+
+  if (current?.db || patch.db) {
+    merged.db = {
+      ...(current?.db ?? {}),
+      ...(patch.db ?? {}),
+    };
   }
 
   return normalizeConfig(merged);

@@ -45,7 +45,13 @@ describe("config", () => {
     writeConfig(config, env);
     const loaded = readConfig(env);
 
-    expect(loaded).toEqual(config);
+    expect(loaded).toMatchObject(config);
+    expect(loaded?.embedding).toEqual({
+      provider: "openai",
+      model: "text-embedding-3-small",
+      dimensions: 512,
+    });
+    expect(loaded?.db?.path).toBe(path.join(os.homedir(), ".agenr", "knowledge.db"));
   });
 
   it("returns null when config does not exist", async () => {
@@ -94,6 +100,14 @@ describe("config", () => {
 
     const loaded = readConfig(env);
     expect(loaded).toEqual({
+      embedding: {
+        provider: "openai",
+        model: "text-embedding-3-small",
+        dimensions: 512,
+      },
+      db: {
+        path: path.join(os.homedir(), ".agenr", "knowledge.db"),
+      },
       provider: "anthropic",
       credentials: {
         anthropicApiKey: "sk-ant-test",

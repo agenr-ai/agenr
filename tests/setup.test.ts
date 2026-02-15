@@ -117,7 +117,7 @@ describe("runSetup", () => {
 
     expect(mocks.cancelMock).toHaveBeenCalledWith("Setup unchanged.");
     expect(mocks.selectMock).not.toHaveBeenCalled();
-    expect(readConfig(env)).toEqual(existing);
+    expect(readConfig(env)).toMatchObject(existing);
   });
 
   it("cancels gracefully when auth selection is cancelled", async () => {

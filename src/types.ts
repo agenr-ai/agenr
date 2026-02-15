@@ -12,7 +12,7 @@ export const KNOWLEDGE_TYPES = [
 
 export const CONFIDENCE_LEVELS = ["high", "medium", "low"] as const;
 
-export const EXPIRY_LEVELS = ["permanent", "temporary", "session-only"] as const;
+export const EXPIRY_LEVELS = ["core", "permanent", "temporary", "session-only"] as const;
 
 export type KnowledgeType = (typeof KNOWLEDGE_TYPES)[number];
 
@@ -39,6 +39,15 @@ export interface AgenrConfig {
   provider?: AgenrProvider;
   model?: string;
   credentials?: AgenrStoredCredentials;
+  embedding?: {
+    provider?: "openai";
+    model?: string;
+    dimensions?: number;
+    apiKey?: string;
+  };
+  db?: {
+    path?: string;
+  };
 }
 
 export interface KnowledgeEntry {
@@ -130,4 +139,68 @@ export interface LlmClient {
   auth: AgenrAuthMethod;
   resolvedModel: ResolvedModel;
   credentials: ResolvedCredentials;
+}
+
+export interface StoredEntry extends KnowledgeEntry {
+  id: string;
+  embedding?: number[];
+  created_at: string;
+  updated_at: string;
+  last_recalled_at?: string;
+  recall_count: number;
+  confirmations: number;
+  contradictions: number;
+  superseded_by?: string;
+}
+
+export interface StoreResult {
+  added: number;
+  updated: number;
+  skipped: number;
+  relations_created: number;
+  total_entries: number;
+  duration_ms: number;
+}
+
+export interface RecallResult {
+  entry: StoredEntry;
+  score: number;
+  scores: {
+    vector: number;
+    recency: number;
+    confidence: number;
+    recall: number;
+    fts: number;
+  };
+}
+
+export interface RecallQuery {
+  text: string;
+  limit?: number;
+  types?: KnowledgeType[];
+  tags?: string[];
+  minConfidence?: ConfidenceLevel;
+  since?: string;
+  expiry?: Expiry;
+  noBoost?: boolean;
+}
+
+export interface IngestLogEntry {
+  id: string;
+  file_path: string;
+  ingested_at: string;
+  entries_added: number;
+  entries_updated: number;
+  entries_skipped: number;
+  duration_ms: number;
+}
+
+export type RelationType = "supersedes" | "contradicts" | "elaborates" | "related";
+
+export interface EntryRelation {
+  id: string;
+  source_id: string;
+  target_id: string;
+  relation_type: RelationType;
+  created_at: string;
 }
