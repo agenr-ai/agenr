@@ -108,6 +108,20 @@ export const MIGRATION_V2_STATEMENTS: readonly string[] = [
   "CREATE UNIQUE INDEX IF NOT EXISTS idx_ingest_log_file_hash ON ingest_log(file_path, content_hash)",
 ];
 
+export const MIGRATION_V3_STATEMENTS: readonly string[] = [
+  `
+  CREATE TABLE IF NOT EXISTS entry_sources (
+    merged_entry_id TEXT NOT NULL REFERENCES entries(id),
+    source_entry_id TEXT NOT NULL REFERENCES entries(id),
+    original_confirmations INTEGER NOT NULL DEFAULT 0,
+    original_recall_count INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (merged_entry_id, source_entry_id)
+  )
+  `,
+  "ALTER TABLE entries ADD COLUMN merged_from INTEGER DEFAULT 0",
+  "ALTER TABLE entries ADD COLUMN consolidated_at TEXT",
+];
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
@@ -116,6 +130,10 @@ export const MIGRATIONS: readonly Migration[] = [
   {
     version: 2,
     statements: MIGRATION_V2_STATEMENTS,
+  },
+  {
+    version: 3,
+    statements: MIGRATION_V3_STATEMENTS,
   },
 ];
 

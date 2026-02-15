@@ -89,10 +89,10 @@ describe("db schema migrations", () => {
     await initDb(client);
 
     const migrationResult = await client.execute("SELECT version, applied_at FROM _migrations ORDER BY version ASC");
-    expect(migrationResult.rows.length).toBe(2);
+    expect(migrationResult.rows.length).toBe(3);
 
     for (const row of migrationResult.rows as Array<{ version?: unknown; applied_at?: unknown }>) {
-      expect([1, 2]).toContain(asNumber(row.version));
+      expect([1, 2, 3]).toContain(asNumber(row.version));
       expect(typeof row.applied_at).toBe("string");
       expect(Number.isNaN(Date.parse(String(row.applied_at)))).toBe(false);
     }
