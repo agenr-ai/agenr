@@ -101,10 +101,21 @@ export const MIGRATION_V1_STATEMENTS: readonly string[] = [
   "CREATE INDEX IF NOT EXISTS idx_relations_target ON relations(target_id)",
 ];
 
+export const MIGRATION_V2_STATEMENTS: readonly string[] = [
+  "ALTER TABLE entries ADD COLUMN content_hash TEXT",
+  "CREATE INDEX IF NOT EXISTS idx_entries_content_hash ON entries(content_hash)",
+  "ALTER TABLE ingest_log ADD COLUMN content_hash TEXT",
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_ingest_log_file_hash ON ingest_log(file_path, content_hash)",
+];
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
     statements: MIGRATION_V1_STATEMENTS,
+  },
+  {
+    version: 2,
+    statements: MIGRATION_V2_STATEMENTS,
   },
 ];
 
