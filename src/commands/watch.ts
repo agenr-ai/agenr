@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import * as clack from "@clack/prompts";
 import { readConfig } from "../config.js";
+import { warnIfLocked } from "../consolidate/lock.js";
 import { deduplicateEntries } from "../dedup.js";
 import { closeDb, getDb, initDb } from "../db/client.js";
 import { storeEntries } from "../db/store.js";
@@ -86,6 +87,8 @@ export async function runWatchCommand(
   options: WatchCommandOptions,
   deps?: Partial<WatchCommandDeps>,
 ): Promise<WatchCommandResult> {
+  warnIfLocked();
+
   const resolvedDeps: WatchCommandDeps = {
     readConfigFn: deps?.readConfigFn ?? readConfig,
     resolveEmbeddingApiKeyFn: deps?.resolveEmbeddingApiKeyFn ?? resolveEmbeddingApiKey,
