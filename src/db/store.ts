@@ -161,16 +161,30 @@ function isClassificationResult(value: unknown): value is ClassificationResult {
   return typeof value === "string" && CLASSIFICATION_VALUES.includes(value as ClassificationResult);
 }
 
-async function incrementConfirmations(db: Client, entryId: string): Promise<void> {
-  await db.execute({
-    sql: `
-      UPDATE entries
-      SET confirmations = COALESCE(confirmations, 0) + 1,
-          updated_at = ?
-      WHERE id = ?
-    `,
-    args: [new Date().toISOString(), entryId],
-  });
+async function incrementConfirmations(db: Client, entryId: string, newContentHash?: string): Promise<void> {
+  const now = new Date().toISOString();
+  if (newContentHash) {
+    await db.execute({
+      sql: `
+        UPDATE entries
+        SET confirmations = COALESCE(confirmations, 0) + 1,
+            content_hash = ?,
+            updated_at = ?
+        WHERE id = ?
+      `,
+      args: [newContentHash, now, entryId],
+    });
+  } else {
+    await db.execute({
+      sql: `
+        UPDATE entries
+        SET confirmations = COALESCE(confirmations, 0) + 1,
+            updated_at = ?
+        WHERE id = ?
+      `,
+      args: [now, entryId],
+    });
+  }
 }
 
 async function markSuperseded(db: Client, entryId: string, supersededBy: string): Promise<void> {
@@ -721,7 +735,7 @@ export async function batchClassify(
       const classification = results.get(index) ?? "UNRELATED";
 
       if (classification === "REINFORCING") {
-        await incrementConfirmations(db, candidate.matchEntry.id);
+        await incrementConfirmations(db, candidate.matchEntry.id, hashEntrySourceContent(candidate.newEntry));
         await deleteEntryById(db, candidate.newEntry.id);
         continue;
       }
@@ -819,7 +833,7 @@ export async function storeEntries(
         sameSubject &&
         sameType
       ) {
-        await incrementConfirmations(db, topMatch.entry.id);
+        await incrementConfirmations(db, topMatch.entry.id, contentHash);
         updated += 1;
         options.onDecision?.({
           entry,
@@ -850,7 +864,7 @@ export async function storeEntries(
         }
 
         if (classification === "REINFORCING") {
-          await incrementConfirmations(db, topMatch.entry.id);
+          await incrementConfirmations(db, topMatch.entry.id, contentHash);
           updated += 1;
           options.onDecision?.({
             entry,
