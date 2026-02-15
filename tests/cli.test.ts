@@ -339,3 +339,11 @@ describe("runExtractCommand", () => {
     expect(extractSpy.mock.calls[0]?.[0]?.onStreamDelta).toBeUndefined();
   });
 });
+
+describe("cli entrypoint", () => {
+  it("uses pathToFileURL for direct-run detection", async () => {
+    const source = await fs.readFile(path.resolve("src/cli.ts"), "utf8");
+    expect(source).toContain('import { pathToFileURL } from "node:url";');
+    expect(source).toContain("import.meta.url === pathToFileURL(process.argv[1]).href");
+  });
+});

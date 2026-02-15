@@ -40,4 +40,20 @@ describe("deduplicateEntries", () => {
     const output = deduplicateEntries(input);
     expect(output).toHaveLength(1);
   });
+
+  it("preserves original extraction order after deduplication", () => {
+    const input = [
+      entry({ subject: "Jim", content: "Jim uses pnpm for monorepos" }),
+      entry({ subject: "Acme", content: "Acme deploys on AWS" }),
+      entry({ subject: "Jim", content: "Jim uses zsh with oh-my-zsh" }),
+    ];
+
+    const output = deduplicateEntries(input);
+    expect(output).toHaveLength(3);
+    expect(output.map((item) => `${item.subject}:${item.content}`)).toEqual([
+      "Jim:Jim uses pnpm for monorepos",
+      "Acme:Acme deploys on AWS",
+      "Jim:Jim uses zsh with oh-my-zsh",
+    ]);
+  });
 });

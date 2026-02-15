@@ -62,26 +62,36 @@ function mergeEntries(existing: KnowledgeEntry, incoming: KnowledgeEntry): Knowl
   };
 }
 
+interface IndexedEntry {
+  entry: KnowledgeEntry;
+  firstIndex: number;
+}
+
 export function deduplicateEntries(entries: KnowledgeEntry[]): KnowledgeEntry[] {
-  const exact = new Map<string, KnowledgeEntry>();
+  const exact = new Map<string, IndexedEntry>();
   const orderedKeys: string[] = [];
 
-  for (const entry of entries) {
+  for (const [index, entry] of entries.entries()) {
     const exactKey = `${entry.type}|${normalize(entry.subject)}|${normalize(entry.content)}`;
     const existing = exact.get(exactKey);
     if (!existing) {
-      exact.set(exactKey, entry);
+      exact.set(exactKey, { entry, firstIndex: index });
       orderedKeys.push(exactKey);
       continue;
     }
-    exact.set(exactKey, mergeEntries(existing, entry));
+    exact.set(exactKey, {
+      entry: mergeEntries(existing.entry, entry),
+      firstIndex: Math.min(existing.firstIndex, index),
+    });
   }
 
-  const deduped = orderedKeys.map((key) => exact.get(key)).filter((entry): entry is KnowledgeEntry => !!entry);
+  const deduped = orderedKeys
+    .map((key) => exact.get(key))
+    .filter((item): item is IndexedEntry => !!item);
 
-  const grouped = new Map<string, KnowledgeEntry[]>();
-  for (const entry of deduped) {
-    const groupKey = `${entry.type}|${normalize(entry.subject)}`;
+  const grouped = new Map<string, IndexedEntry[]>();
+  for (const indexed of deduped) {
+    const groupKey = `${indexed.entry.type}|${normalize(indexed.entry.subject)}`;
     const current = grouped.get(groupKey) ?? [];
     let merged = false;
 
@@ -91,25 +101,29 @@ export function deduplicateEntries(entries: KnowledgeEntry[]): KnowledgeEntry[] 
         continue;
       }
 
-      const similarity = jaccard(trigrams(candidate.content), trigrams(entry.content));
+      const similarity = jaccard(trigrams(candidate.entry.content), trigrams(indexed.entry.content));
       if (similarity >= 0.85) {
-        current[i] = mergeEntries(candidate, entry);
+        current[i] = {
+          entry: mergeEntries(candidate.entry, indexed.entry),
+          firstIndex: Math.min(candidate.firstIndex, indexed.firstIndex),
+        };
         merged = true;
         break;
       }
     }
 
     if (!merged) {
-      current.push(entry);
+      current.push(indexed);
     }
 
     grouped.set(groupKey, current);
   }
 
-  const final: KnowledgeEntry[] = [];
+  const final: IndexedEntry[] = [];
   for (const key of grouped.keys()) {
     final.push(...(grouped.get(key) ?? []));
   }
 
-  return final;
+  final.sort((a, b) => a.firstIndex - b.firstIndex);
+  return final.map((item) => item.entry);
 }

@@ -75,6 +75,8 @@ describe("output", () => {
     expect(json).toContain('"files"');
     expect(json).toContain('"a/session.jsonl"');
     expect(markdown).toContain("## a/session.jsonl");
+    expect(markdown).toContain("_Stats: chunks=2/2 successful | failed=0 | raw=1 | entries=1 | dupes_removed=0 | warnings=0_");
+    expect(markdown).toContain("- Entries: 1 entries (0 duplicates removed)");
     expect(markdown).toContain("## Summary");
   });
 
