@@ -53,10 +53,13 @@ function fakeChunkAt(index: number): TranscriptChunk {
   };
 }
 
-function assistantMessage(text: string): AssistantMessage {
+function assistantMessageWithContent(
+  content: AssistantMessage["content"],
+  stopReason: AssistantMessage["stopReason"] = "stop",
+): AssistantMessage {
   return {
     role: "assistant",
-    content: [{ type: "text", text }],
+    content,
     api: "anthropic-messages",
     provider: "anthropic",
     model: "claude-opus-4-6",
@@ -68,9 +71,13 @@ function assistantMessage(text: string): AssistantMessage {
       totalTokens: 0,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
     },
-    stopReason: "stop",
+    stopReason,
     timestamp: Date.now(),
   };
+}
+
+function assistantMessage(text: string): AssistantMessage {
+  return assistantMessageWithContent([{ type: "text", text }]);
 }
 
 function streamWithResult(result: Promise<AssistantMessage>, events: AssistantMessageEvent[] = []) {
@@ -83,6 +90,145 @@ function streamWithResult(result: Promise<AssistantMessage>, events: AssistantMe
 }
 
 describe("extractKnowledgeFromChunks", () => {
+  it("extracts entries from submit_knowledge tool calls", async () => {
+    const streamSimpleImpl = (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) =>
+      streamWithResult(
+        Promise.resolve(
+          assistantMessageWithContent(
+            [
+              {
+                type: "toolCall",
+                id: "call_1",
+                name: "submit_knowledge",
+                arguments: {
+                  entries: [
+                    {
+                      type: "fact",
+                      content: "Jim prefers pnpm",
+                      subject: "Jim",
+                      confidence: "high",
+                      expiry: "permanent",
+                      tags: ["tooling"],
+                      source_context: "user discussed preferred package manager",
+                    },
+                  ],
+                },
+              },
+            ],
+            "toolUse",
+          ),
+        ),
+      );
+
+    const result = await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunk()],
+      client: fakeClient(),
+      verbose: false,
+      streamSimpleImpl,
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+    });
+
+    expect(result.entries).toHaveLength(1);
+    expect(result.entries[0]?.type).toBe("fact");
+    expect(result.entries[0]?.subject).toBe("Jim");
+    expect(result.entries[0]?.source.file).toBe("session.jsonl");
+    expect(result.entries[0]?.source.context).toBe("user discussed preferred package manager");
+  });
+
+  it("falls back to text parsing when no tool calls are present", async () => {
+    const streamSimpleImpl = (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) =>
+      streamWithResult(
+        Promise.resolve(
+          assistantMessage(
+            '[{"type":"fact","content":"Jim uses pnpm","subject":"Jim","confidence":"high","expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
+          ),
+        ),
+      );
+
+    const result = await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunk()],
+      client: fakeClient(),
+      verbose: false,
+      streamSimpleImpl,
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+    });
+
+    expect(result.successfulChunks).toBe(1);
+    expect(result.failedChunks).toBe(0);
+    expect(result.entries).toHaveLength(1);
+    expect(result.entries[0]?.content).toBe("Jim uses pnpm");
+  });
+
+  it("warns for unexpected tool names and still uses text fallback", async () => {
+    const streamSimpleImpl = (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) =>
+      streamWithResult(
+        Promise.resolve(
+          assistantMessageWithContent([
+            {
+              type: "toolCall",
+              id: "call_2",
+              name: "unexpected_tool",
+              arguments: { entries: [] },
+            },
+            {
+              type: "text",
+              text: '[{"type":"fact","content":"Jim uses pnpm","subject":"Jim","confidence":"high","expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
+            },
+          ]),
+        ),
+      );
+
+    const result = await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunk()],
+      client: fakeClient(),
+      verbose: false,
+      streamSimpleImpl,
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+    });
+
+    expect(result.entries).toHaveLength(1);
+    expect(result.warnings.some((w) => w.includes('unexpected tool call "unexpected_tool"'))).toBe(true);
+  });
+
+  it("warns when submit_knowledge tool call has no entries array", async () => {
+    const streamSimpleImpl = (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) =>
+      streamWithResult(
+        Promise.resolve(
+          assistantMessageWithContent([
+            {
+              type: "toolCall",
+              id: "call_3",
+              name: "submit_knowledge",
+              arguments: {},
+            },
+            {
+              type: "text",
+              text: '[{"type":"fact","content":"Jim uses pnpm","subject":"Jim","confidence":"high","expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
+            },
+          ]),
+        ),
+      );
+
+    const result = await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunk()],
+      client: fakeClient(),
+      verbose: false,
+      streamSimpleImpl,
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+    });
+
+    expect(result.entries).toHaveLength(1);
+    expect(result.warnings.some((w) => w.includes("tool call had no entries array"))).toBe(true);
+  });
+
   it("parses fenced JSON responses", async () => {
     const streamSimpleImpl = (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) =>
       streamWithResult(
@@ -330,7 +476,7 @@ describe("extractKnowledgeFromChunks", () => {
   });
 
   it("accepts plural type names (DECISIONS, PREFERENCES, EVENTS)", async () => {
-    const streamSimpleImpl = (_model, _context, _opts) =>
+    const streamSimpleImpl = (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) =>
       streamWithResult(
         Promise.resolve(
           assistantMessage(
@@ -356,7 +502,7 @@ describe("extractKnowledgeFromChunks", () => {
   });
 
   it("accepts knowledge instead of content", async () => {
-    const streamSimpleImpl = (_model, _context, _opts) =>
+    const streamSimpleImpl = (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) =>
       streamWithResult(
         Promise.resolve(
           assistantMessage(

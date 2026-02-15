@@ -53,6 +53,8 @@ export async function runSimpleStream(params: StreamRunParams): Promise<Assistan
       logVerbose(params, "[/thinking]");
     } else if (event.type === "text_delta") {
       params.onStreamDelta?.(event.delta, "text");
+    } else if (event.type === "toolcall_delta") {
+      params.onStreamDelta?.(event.delta, "text");
     } else if (event.type === "error") {
       logVerbose(params, `[error:${event.reason}] ${event.error.errorMessage ?? "unknown error"}`);
     }

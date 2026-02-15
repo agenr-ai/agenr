@@ -75,6 +75,7 @@ describe("runSimpleStream", () => {
         { type: "thinking_start" } as AssistantMessageEvent,
         { type: "thinking_delta", delta: "reasoning " } as AssistantMessageEvent,
         { type: "text_delta", delta: "answer" } as AssistantMessageEvent,
+        { type: "toolcall_delta", delta: "{\"entries\":[" } as AssistantMessageEvent,
         { type: "thinking_end" } as AssistantMessageEvent,
       ]),
       onVerbose: (line) => verboseLines.push(line),
@@ -84,6 +85,7 @@ describe("runSimpleStream", () => {
     expect(deltas).toEqual([
       { delta: "reasoning ", kind: "thinking" },
       { delta: "answer", kind: "text" },
+      { delta: "{\"entries\":[", kind: "text" },
     ]);
     expect(verboseLines).toEqual(["[thinking]", "[/thinking]"]);
   });

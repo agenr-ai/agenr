@@ -1,6 +1,7 @@
 import type { Api, AssistantMessage, Context, Model } from "@mariozechner/pi-ai";
 import type { KnowledgeEntry, LlmClient, TranscriptChunk } from "./types.js";
 import { runSimpleStream, type StreamSimpleFn } from "./llm/stream.js";
+import { SUBMIT_KNOWLEDGE_TOOL } from "./schema.js";
 
 const SYSTEM_PROMPT = `You are a knowledge extraction engine. Your job is to read conversation
 transcripts between a human and an AI assistant and extract structured
@@ -35,15 +36,14 @@ Rules:
 - Extract ONLY what is explicitly stated or strongly implied in the transcript
 - Do NOT infer, speculate, or add information not present in the conversation
 - Each entry should be self-contained and understandable without the transcript
-- Write content as clear, declarative statements
+- Call the submit_knowledge tool with all extracted entries
+- The type field must be exactly one of: fact, decision, preference, todo, relationship, event, lesson (lowercase, singular)
+- The content field must be a clear, declarative statement
 - For the subject field, use the most specific identifier (name, project name, etc.)
 - Assign confidence: high (explicitly stated), medium (strongly implied), low (weakly implied)
 - Assign expiry: permanent (biographical, preferences, lessons), temporary (current projects, recent events), session-only (immediate context unlikely to matter later)
 - Use specific, descriptive tags
-- source.context: one sentence, max 20 words. Describe WHERE in the conversation this came from (e.g., "user described deployment setup", "assistant listed auth options"). Do NOT quote the transcript.
-
-Output format: JSON array of KnowledgeEntry objects. No markdown wrapping,
-no explanation, just the JSON array.`;
+- source_context: one sentence, max 20 words. Describe WHERE in the conversation this came from (e.g., "user described deployment setup", "assistant listed auth options"). Do NOT quote the transcript.`;
 
 const MAX_ATTEMPTS = 3;
 
@@ -94,19 +94,8 @@ function buildUserPrompt(chunk: TranscriptChunk): string {
     chunk.text,
     "---",
     "",
-    "Return a JSON array of KnowledgeEntry objects.",
-    "Return strict JSON only.",
+    "Call submit_knowledge with all extracted knowledge entries.",
   ].join("\n");
-}
-
-function extractAssistantText(message: AssistantMessage): string {
-  const parts: string[] = [];
-  for (const block of message.content) {
-    if (block.type === "text") {
-      parts.push(block.text);
-    }
-  }
-  return parts.join("\n").trim();
 }
 
 function stripCodeFence(text: string): string {
@@ -153,7 +142,7 @@ function coerceTags(value: unknown): string[] {
   return Array.from(new Set(tags));
 }
 
-function firstString(
+function selectStringField(
   record: Record<string, unknown>,
   ...keys: string[]
 ): { value: string; key: string | null } {
@@ -187,7 +176,7 @@ function validateKnowledgeEntry(
     return null;
   }
 
-  const contentResult = firstString(
+  const contentResult = selectStringField(
     record,
     "content",
     "description",
@@ -205,7 +194,7 @@ function validateKnowledgeEntry(
     return null;
   }
 
-  const subjectResult = firstString(record, "subject", "name", "topic", "title", "entity");
+  const subjectResult = selectStringField(record, "subject", "name", "topic", "title", "entity");
   const subject = subjectResult.value;
   if (verbose && subjectResult.key && subjectResult.key !== "subject") {
     onVerbose?.(`[field-fallback] used "${subjectResult.key}" for subject`);
@@ -232,7 +221,7 @@ function validateKnowledgeEntry(
       ? (record.source as Record<string, unknown>)
       : null;
 
-  const contextResult = firstString(record, "source_context", "context");
+  const contextResult = selectStringField(record, "source_context", "context");
   const nestedContext =
     sourceRecord && typeof sourceRecord.context === "string" ? sourceRecord.context.trim() : "";
   const contextFromModel = nestedContext || contextResult.value;
@@ -255,6 +244,52 @@ function validateKnowledgeEntry(
     source: {
       file,
       context: contextFromModel || sourceString || chunk.context_hint || `chunk ${chunk.chunk_index + 1}`,
+    },
+  };
+}
+
+function mapSchemaEntry(
+  raw: unknown,
+  file: string,
+  chunk: TranscriptChunk,
+  warnings: string[],
+): KnowledgeEntry | null {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const record = raw as Record<string, unknown>;
+
+  const type = typeof record.type === "string" ? TYPE_ALIASES[record.type.toLowerCase()] ?? null : null;
+  if (!type) {
+    warnings.push(`Chunk ${chunk.chunk_index + 1}: invalid type "${String(record.type)}".`);
+    return null;
+  }
+
+  const content = typeof record.content === "string" ? record.content.trim() : "";
+  if (!content) {
+    warnings.push(`Chunk ${chunk.chunk_index + 1}: empty content.`);
+    return null;
+  }
+
+  const subject = typeof record.subject === "string" ? record.subject.trim() : "";
+  if (!subject) {
+    warnings.push(`Chunk ${chunk.chunk_index + 1}: empty subject.`);
+    return null;
+  }
+
+  return {
+    type,
+    content,
+    subject,
+    confidence: coerceConfidence(record.confidence) ?? "medium",
+    expiry: coerceExpiry(record.expiry) ?? "temporary",
+    tags: coerceTags(record.tags),
+    source: {
+      file,
+      context:
+        typeof record.source_context === "string" && record.source_context.trim().length > 0
+          ? record.source_context.trim()
+          : chunk.context_hint || `chunk ${chunk.chunk_index + 1}`,
     },
   };
 }
@@ -291,6 +326,57 @@ function parseKnowledgeEntries(
     const validated = validateKnowledgeEntry(item, file, chunk, warnings, verbose, onVerbose);
     if (validated) {
       entries.push(validated);
+    }
+  }
+
+  return entries;
+}
+
+function extractToolCallEntries(
+  message: AssistantMessage,
+  file: string,
+  chunk: TranscriptChunk,
+  warnings: string[],
+  verbose = false,
+  onVerbose?: (line: string) => void,
+): KnowledgeEntry[] {
+  const entries: KnowledgeEntry[] = [];
+
+  for (const block of message.content) {
+    if (block.type !== "toolCall") {
+      continue;
+    }
+
+    if (block.name !== "submit_knowledge") {
+      warnings.push(`Chunk ${chunk.chunk_index + 1}: unexpected tool call "${block.name}".`);
+      continue;
+    }
+
+    const args = block.arguments as { entries?: unknown[] };
+    if (!Array.isArray(args.entries)) {
+      warnings.push(`Chunk ${chunk.chunk_index + 1}: tool call had no entries array.`);
+      continue;
+    }
+
+    for (const raw of args.entries) {
+      const entry = mapSchemaEntry(raw, file, chunk, warnings);
+      if (entry) {
+        entries.push(entry);
+      }
+    }
+  }
+
+  if (verbose && entries.length > 0) {
+    onVerbose?.(`[raw-sample] ${JSON.stringify(entries[0])}`);
+  }
+
+  if (entries.length === 0) {
+    const textBlocks = message.content.filter((block): block is { type: "text"; text: string } => block.type === "text");
+    if (textBlocks.length > 0) {
+      const text = textBlocks.map((block) => block.text).join("\n").trim();
+      if (text.length > 0) {
+        return parseKnowledgeEntries(text, file, chunk, warnings, verbose, onVerbose);
+      }
     }
   }
 
@@ -342,6 +428,7 @@ async function extractChunkOnce(params: {
         timestamp: Date.now(),
       },
     ],
+    tools: [SUBMIT_KNOWLEDGE_TOOL],
   };
 
   const assistantMessage = await runSimpleStream({
@@ -357,16 +444,15 @@ async function extractChunkOnce(params: {
     streamSimpleImpl: params.streamSimpleImpl,
   });
 
-  const text = extractAssistantText(assistantMessage);
-  if (!text) {
-    throw new ParseResponseError(
-      `Chunk ${params.chunk.chunk_index + 1}: model response had no text blocks to parse.`,
+  if (assistantMessage.stopReason === "error" || assistantMessage.errorMessage) {
+    throw new Error(
+      `Chunk ${params.chunk.chunk_index + 1}: provider returned an error (${assistantMessage.errorMessage ?? "unknown error"}).`,
     );
   }
 
   const warnings: string[] = [];
-  const entries = parseKnowledgeEntries(
-    text,
+  const entries = extractToolCallEntries(
+    assistantMessage,
     params.file,
     params.chunk,
     warnings,
