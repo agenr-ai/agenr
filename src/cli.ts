@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import * as clack from "@clack/prompts";
 import { Command } from "commander";
 import { formatAuthSummary, getAuthStatus, getQuickStatus } from "./auth-status.js";
@@ -179,7 +180,7 @@ export async function runExtractCommand(
       try {
         const parsed = await resolvedDeps.parseTranscriptFileFn(file);
         clack.log.info(
-          `[parse] ${key}: messages=${parsed.messages.length}, chunks=${parsed.chunks.length}, warnings=${parsed.warnings.length}`,
+          `[parse] ${key}: messages=${parsed.messages.length}, chunks=${parsed.chunks.length}`,
           clackOutput,
         );
 
@@ -191,6 +192,7 @@ export async function runExtractCommand(
           onVerbose: (line) => clack.log.info(line, clackOutput),
           onStreamDelta: (delta) => process.stderr.write(delta),
         });
+        process.stderr.write("\n");
 
         const stats = recordSuccess({
           key,
@@ -267,7 +269,10 @@ export async function runExtractCommand(
     [
       formatLabel("Files", String(report.summary.files)),
       formatLabel("Chunks", `${report.summary.successful_chunks}/${report.summary.chunks} successful`),
-      formatLabel("Entries", `${report.summary.deduped_entries} deduped (${report.summary.raw_entries} raw)`),
+      formatLabel(
+        "Entries",
+        `${report.summary.deduped_entries} entries (${report.summary.raw_entries - report.summary.deduped_entries} duplicates removed)`,
+      ),
       report.summary.failed_chunks > 0 ? formatWarn(`${report.summary.failed_chunks} chunks failed`) : null,
       report.summary.warnings > 0 ? formatWarn(`${report.summary.warnings} warning(s)`) : null,
     ]
@@ -493,7 +498,7 @@ export function createProgram(): Command {
   return program;
 }
 
-const isDirectRun = process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href;
+const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (isDirectRun) {
   createProgram()

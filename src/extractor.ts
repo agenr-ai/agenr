@@ -40,7 +40,7 @@ Rules:
 - Assign confidence: high (explicitly stated), medium (strongly implied), low (weakly implied)
 - Assign expiry: permanent (biographical, preferences, lessons), temporary (current projects, recent events), session-only (immediate context unlikely to matter later)
 - Use specific, descriptive tags
-- Include a brief source context that helps locate this in the original transcript
+- source.context: one sentence, max 20 words. Describe WHERE in the conversation this came from (e.g., "user described deployment setup", "assistant listed auth options"). Do NOT quote the transcript.
 
 Output format: JSON array of KnowledgeEntry objects. No markdown wrapping,
 no explanation, just the JSON array.`;

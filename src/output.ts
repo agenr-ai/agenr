@@ -14,7 +14,8 @@ function summarizeStats(stats: {
     `chunks=${stats.successful_chunks}/${stats.chunks} successful`,
     `failed=${stats.failed_chunks}`,
     `raw=${stats.raw_entries}`,
-    `deduped=${stats.deduped_entries}`,
+    `entries=${stats.deduped_entries}`,
+    `dupes_removed=${stats.raw_entries - stats.deduped_entries}`,
     `warnings=${stats.warnings.length}`,
   ].join(" | ");
 }
@@ -76,7 +77,9 @@ export function formatMarkdown(report: ExtractionReport): string {
   lines.push(`- Files: ${report.summary.files}`);
   lines.push(`- Chunks: ${report.summary.successful_chunks}/${report.summary.chunks} successful`);
   lines.push(`- Failed Chunks: ${report.summary.failed_chunks}`);
-  lines.push(`- Entries: ${report.summary.deduped_entries} deduped (${report.summary.raw_entries} raw)`);
+  lines.push(
+    `- Entries: ${report.summary.deduped_entries} entries (${report.summary.raw_entries - report.summary.deduped_entries} duplicates removed)`,
+  );
   lines.push(`- Warnings: ${report.summary.warnings}`);
   lines.push("");
 
