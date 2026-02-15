@@ -76,6 +76,7 @@ function makeDeps(overrides?: Record<string, unknown>) {
     initDbFn: vi.fn(async () => undefined),
     closeDbFn: vi.fn(() => undefined),
     storeEntriesFn,
+    batchClassifyFn: vi.fn(async () => undefined),
     loadWatchStateFn: vi.fn(async () => ({ version: 1 as const, files: {} })),
     saveWatchStateFn: vi.fn(async (state: WatchState) => {
       saveSnapshots.push(JSON.parse(JSON.stringify(state)) as WatchState);
@@ -345,6 +346,73 @@ describe("watcher", () => {
     expect(cycleResults[0]).toEqual({ extracted: 2, stored: 2 });
     expect(extractKnowledgeFromChunksFn).toHaveBeenCalledTimes(1);
     expect(storeEntriesFn).toHaveBeenCalledTimes(2);
+  });
+
+  it("runs post-cycle batch classification when classify mode is enabled", async () => {
+    const filePath = "/tmp/watch.jsonl";
+    const storeEntriesFn = vi.fn(async (_db: unknown, entries: KnowledgeEntry[], _apiKey: string, options?: any) => {
+      options?.onDecision?.({
+        entry: entries[0],
+        action: "added",
+        reason: "new entry",
+        similarity: 0.85,
+        matchedEntryId: "old-1",
+        newEntryId: "new-1",
+        sameSubject: true,
+        matchedEntry: {
+          id: "old-1",
+          type: "fact",
+          subject: entries[0]?.subject ?? "Jim",
+          content: "existing",
+          confidence: "high",
+          expiry: "temporary",
+          tags: [],
+          source: { file: "source", context: "ctx" },
+          created_at: "2026-02-15T00:00:00.000Z",
+          updated_at: "2026-02-15T00:00:00.000Z",
+          recall_count: 0,
+          confirmations: 0,
+          contradictions: 0,
+        },
+      });
+
+      return {
+        added: entries.length,
+        updated: 0,
+        skipped: 0,
+        relations_created: 0,
+        total_entries: entries.length,
+        duration_ms: 5,
+      };
+    });
+    const batchClassifyFn = vi.fn(async () => undefined);
+    const deps = makeDeps({
+      statFileFn: vi.fn(async () => ({ size: 25, isFile: () => true })),
+      readFileFn: vi.fn(async () => Buffer.from("this content passes threshold")),
+      storeEntriesFn,
+      batchClassifyFn,
+      deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+    });
+
+    await runWatcher(
+      {
+        filePath,
+        intervalMs: 1,
+        minChunkChars: 5,
+        dryRun: false,
+        verbose: false,
+        once: true,
+        classify: true,
+      },
+      deps,
+    );
+
+    expect(batchClassifyFn).toHaveBeenCalledTimes(1);
+    const candidates = batchClassifyFn.mock.calls[0]?.[2];
+    expect(Array.isArray(candidates)).toBe(true);
+    expect(candidates[0]?.similarity).toBe(0.85);
+    expect(candidates[0]?.newEntry?.id).toBe("new-1");
+    expect(candidates[0]?.matchEntry?.id).toBe("old-1");
   });
 
   it("stops looping when shutdown flag is raised", async () => {

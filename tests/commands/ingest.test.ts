@@ -80,6 +80,7 @@ function makeDeps(overrides?: Partial<IngestCommandDeps> & { db?: { execute: Ret
         total_entries: entries.length,
         duration_ms: 5,
       })) as IngestCommandDeps["storeEntriesFn"]),
+    batchClassifyFn: overrides?.batchClassifyFn ?? (vi.fn(async () => undefined) as IngestCommandDeps["batchClassifyFn"]),
     hashTextFn: overrides?.hashTextFn ?? hashText,
     nowFn: overrides?.nowFn ?? (() => new Date("2026-02-15T00:00:00.000Z")),
   };
@@ -118,6 +119,7 @@ describe("ingest command", () => {
       "gpt-4o",
       "--provider",
       "openai",
+      "--classify",
       "--verbose",
       "--dry-run",
       "--json",
@@ -134,6 +136,7 @@ describe("ingest command", () => {
       db: "/tmp/db.sqlite",
       model: "gpt-4o",
       provider: "openai",
+      classify: true,
       verbose: true,
       dryRun: true,
       json: true,
@@ -299,6 +302,66 @@ describe("ingest command", () => {
     expect(storeEntriesFn).toHaveBeenCalledTimes(2);
     expect(storeEntriesFn.mock.calls[0]?.[1]).toHaveLength(1);
     expect(storeEntriesFn.mock.calls[1]?.[1]).toHaveLength(1);
+  });
+
+  it("runs post-file batch classification when classify mode is enabled", async () => {
+    const dir = await makeTempDir();
+    const filePath = path.join(dir, "a.txt");
+    await fs.writeFile(filePath, "hello", "utf8");
+
+    const storeEntriesFn = vi.fn(async (_db: unknown, entries: KnowledgeEntry[], _apiKey: string, options?: any) => {
+      options?.onDecision?.({
+        entry: entries[0],
+        action: "added",
+        reason: "new entry",
+        similarity: 0.85,
+        matchedEntryId: "old-1",
+        newEntryId: "new-1",
+        sameSubject: true,
+        matchedEntry: {
+          id: "old-1",
+          type: "fact",
+          subject: entries[0]?.subject ?? "Jim",
+          content: "existing",
+          confidence: "high",
+          expiry: "temporary",
+          tags: [],
+          source: { file: "source", context: "ctx" },
+          created_at: "2026-02-15T00:00:00.000Z",
+          updated_at: "2026-02-15T00:00:00.000Z",
+          recall_count: 0,
+          confirmations: 0,
+          contradictions: 0,
+        },
+      });
+      return {
+        added: entries.length,
+        updated: 0,
+        skipped: 0,
+        relations_created: 0,
+        total_entries: entries.length,
+        duration_ms: 5,
+      };
+    });
+    const batchClassifyFn = vi.fn(async () => undefined);
+
+    await runIngestCommand(
+      [dir],
+      { classify: true },
+      makeDeps({
+        expandInputFilesFn: vi.fn(async () => [filePath]),
+        deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries.slice(0, 1)),
+        storeEntriesFn: storeEntriesFn as IngestCommandDeps["storeEntriesFn"],
+        batchClassifyFn: batchClassifyFn as IngestCommandDeps["batchClassifyFn"],
+      }),
+    );
+
+    expect(batchClassifyFn).toHaveBeenCalledTimes(1);
+    const candidates = batchClassifyFn.mock.calls[0]?.[2];
+    expect(Array.isArray(candidates)).toBe(true);
+    expect(candidates[0]?.similarity).toBe(0.85);
+    expect(candidates[0]?.newEntry?.id).toBe("new-1");
+    expect(candidates[0]?.matchEntry?.id).toBe("old-1");
   });
 
   it("handles missing files gracefully", async () => {

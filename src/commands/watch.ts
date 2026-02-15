@@ -172,6 +172,7 @@ export async function runWatchCommand(
         dryRun,
         verbose,
         once,
+        classify: options.classify === true,
         model: options.model,
         provider: options.provider,
         dbPath: options.db,

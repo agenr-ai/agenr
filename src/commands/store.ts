@@ -5,6 +5,7 @@ import { readConfig } from "../config.js";
 import { closeDb, getDb, initDb } from "../db/client.js";
 import { hashText, storeEntries } from "../db/store.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
+import { createLlmClient } from "../llm/client.js";
 import { expandInputFiles } from "../parser.js";
 import { CONFIDENCE_LEVELS, EXPIRY_LEVELS, KNOWLEDGE_TYPES } from "../types.js";
 import type { ExtractionReport, KnowledgeEntry, StoreResult } from "../types.js";
@@ -15,6 +16,7 @@ export interface StoreCommandOptions {
   dryRun?: boolean;
   verbose?: boolean;
   force?: boolean;
+  classify?: boolean;
 }
 
 interface StoreInput {
@@ -29,6 +31,7 @@ export interface StoreCommandDeps {
   readStdinFn: () => Promise<string>;
   readConfigFn: typeof readConfig;
   resolveEmbeddingApiKeyFn: typeof resolveEmbeddingApiKey;
+  createLlmClientFn: typeof createLlmClient;
   getDbFn: typeof getDb;
   initDbFn: typeof initDb;
   closeDbFn: typeof closeDb;
@@ -177,6 +180,7 @@ export async function runStoreCommand(
     readStdinFn: deps?.readStdinFn ?? readStdin,
     readConfigFn: deps?.readConfigFn ?? readConfig,
     resolveEmbeddingApiKeyFn: deps?.resolveEmbeddingApiKeyFn ?? resolveEmbeddingApiKey,
+    createLlmClientFn: deps?.createLlmClientFn ?? createLlmClient,
     getDbFn: deps?.getDbFn ?? getDb,
     initDbFn: deps?.initDbFn ?? initDb,
     closeDbFn: deps?.closeDbFn ?? closeDb,
@@ -236,6 +240,7 @@ export async function runStoreCommand(
   const config = resolvedDeps.readConfigFn(process.env);
   const hasAnyEntries = totalInputEntries > 0;
   const apiKey = hasAnyEntries ? resolvedDeps.resolveEmbeddingApiKeyFn(config, process.env) : "";
+  const llmClient = options.classify && hasAnyEntries ? resolvedDeps.createLlmClientFn({ env: process.env }) : undefined;
 
   const dbPath = options.db?.trim() || config?.db?.path;
   const db = resolvedDeps.getDbFn(dbPath);
@@ -255,6 +260,8 @@ export async function runStoreCommand(
         dryRun: options.dryRun,
         force: options.force,
         verbose: options.verbose,
+        classify: options.classify,
+        llmClient,
         sourceFile: input.sourceFile,
         ingestContentHash: input.contentHash,
         onDecision: options.verbose
