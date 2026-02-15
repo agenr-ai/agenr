@@ -11,6 +11,7 @@ import {
   runDbResetCommand,
   runDbStatsCommand,
 } from "./commands/db.js";
+import { runIngestCommand } from "./commands/ingest.js";
 import { runRecallCommand } from "./commands/recall.js";
 import { runStoreCommand } from "./commands/store.js";
 import { runWatchCommand } from "./commands/watch.js";
@@ -24,6 +25,7 @@ import { expandInputFiles, parseTranscriptFile } from "./parser.js";
 import { runSetup } from "./setup.js";
 import { banner, formatError, formatLabel, formatSuccess, formatWarn, ui } from "./ui.js";
 import type { ExtractionReport, ExtractionStats } from "./types.js";
+import type { IngestCommandOptions } from "./commands/ingest.js";
 import type { WatchCommandOptions } from "./commands/watch.js";
 
 export interface ExtractCommandOptions {
@@ -435,6 +437,25 @@ export function createProgram(): Command {
     .option("--json", "Output JSON results", false)
     .action(async (file: string, opts: WatchCommandOptions) => {
       const result = await runWatchCommand(file, opts);
+      process.exitCode = result.exitCode;
+    });
+
+  program
+    .command("ingest")
+    .description("Bulk-ingest knowledge from files and directories")
+    .argument("<paths...>", "Files or directories to process")
+    .option("--glob <pattern>", "File filter glob", "**/*.{jsonl,md,txt}")
+    .option("--db <path>", "Database path override")
+    .option("--model <model>", "LLM model to use")
+    .option("--provider <name>", "LLM provider: anthropic, openai, openai-codex")
+    .option("--verbose", "Show per-file details", false)
+    .option("--dry-run", "Extract without storing", false)
+    .option("--json", "Output JSON results", false)
+    .option("--concurrency <n>", "Parallel extractions", "1")
+    .option("--skip-ingested", "Skip already-ingested files", true)
+    .option("--force", "Re-process even if already ingested", false)
+    .action(async (paths: string[], opts: IngestCommandOptions) => {
+      const result = await runIngestCommand(paths, opts);
       process.exitCode = result.exitCode;
     });
 

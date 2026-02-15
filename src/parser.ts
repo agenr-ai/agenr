@@ -226,7 +226,12 @@ export function chunkMessages(
     chunkIndex += 1;
   }
 
-  return chunks;
+  const totalChunks = chunks.length;
+  return chunks.map((chunk, index) => ({
+    ...chunk,
+    index,
+    totalChunks,
+  }));
 }
 
 function extractTextBlocks(content: unknown): string[] {
@@ -264,7 +269,39 @@ function extractTextBlocks(content: unknown): string[] {
   return out;
 }
 
-function parseOpenClawJsonl(raw: string, warnings: string[]): TranscriptMessage[] {
+function parseJsonlMessageRecord(record: Record<string, unknown>): { role: TranscriptMessage["role"]; content: unknown } | null {
+  if (
+    (record.role === "user" || record.role === "assistant" || record.role === "human" || record.role === "ai") &&
+    "content" in record
+  ) {
+    const role = record.role === "assistant" || record.role === "ai" ? "assistant" : "user";
+    return {
+      role,
+      content: record.content,
+    };
+  }
+
+  if (record.type !== "message") {
+    return null;
+  }
+
+  const messageRecord = record.message;
+  if (!messageRecord || typeof messageRecord !== "object") {
+    return null;
+  }
+
+  const message = messageRecord as Record<string, unknown>;
+  if (message.role !== "user" && message.role !== "assistant" && message.role !== "human" && message.role !== "ai") {
+    return null;
+  }
+
+  return {
+    role: message.role === "assistant" || message.role === "ai" ? "assistant" : "user",
+    content: message.content,
+  };
+}
+
+function parseJsonl(raw: string, warnings: string[]): TranscriptMessage[] {
   const messages: TranscriptMessage[] = [];
   const lines = raw.split(/\r?\n/);
   let index = 0;
@@ -288,22 +325,12 @@ function parseOpenClawJsonl(raw: string, warnings: string[]): TranscriptMessage[
     }
 
     const record = parsed as Record<string, unknown>;
-    if (record.type !== "message") {
+    const mapped = parseJsonlMessageRecord(record);
+    if (!mapped) {
       continue;
     }
 
-    const messageRecord = record.message;
-    if (!messageRecord || typeof messageRecord !== "object") {
-      continue;
-    }
-
-    const message = messageRecord as Record<string, unknown>;
-    const role = message.role;
-    if (role !== "user" && role !== "assistant") {
-      continue;
-    }
-
-    const textBlocks = extractTextBlocks(message.content);
+    const textBlocks = extractTextBlocks(mapped.content);
     const text = normalizeWhitespace(textBlocks.join("\n"));
     if (!text) {
       continue;
@@ -311,7 +338,7 @@ function parseOpenClawJsonl(raw: string, warnings: string[]): TranscriptMessage[
 
     messages.push({
       index,
-      role,
+      role: mapped.role,
       text,
     });
     index += 1;
@@ -320,66 +347,90 @@ function parseOpenClawJsonl(raw: string, warnings: string[]): TranscriptMessage[
   return messages;
 }
 
-function parsePlainText(raw: string): TranscriptMessage[] {
-  const messages: TranscriptMessage[] = [];
-  const lines = raw.split(/\r?\n/);
-  let index = 0;
+function chunkText(
+  raw: string,
+  targetChars = TARGET_CHUNK_CHARS,
+  overlapChars = OVERLAP_CHARS,
+): TranscriptChunk[] {
+  const text = raw.trim();
+  if (!text) {
+    return [];
+  }
 
+  const chunks: Array<{ text: string; start: number; end: number }> = [];
+  let start = 0;
+
+  while (start < text.length) {
+    const end = Math.min(text.length, start + targetChars);
+    const slice = text.slice(start, end).trim();
+
+    if (slice.length > 0) {
+      chunks.push({
+        text: slice,
+        start,
+        end,
+      });
+    }
+
+    if (end >= text.length) {
+      break;
+    }
+
+    const nextStart = Math.max(start + 1, end - overlapChars);
+    start = nextStart;
+  }
+
+  const totalChunks = chunks.length;
+  return chunks.map((chunk, index) => ({
+    chunk_index: index,
+    message_start: index,
+    message_end: index,
+    text: chunk.text,
+    context_hint: `text chunk ${index + 1}/${totalChunks} (${chunk.start}-${chunk.end})`,
+    index,
+    totalChunks,
+  }));
+}
+
+function parseFirstJsonLine(raw: string): Record<string, unknown> | null {
+  const lines = raw.split(/\r?\n/);
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed) {
       continue;
     }
-
-    const roleMatch = /^(user|assistant|human|ai)\s*:\s*(.+)$/i.exec(trimmed);
-    if (roleMatch) {
-      const role = roleMatch[1]?.toLowerCase();
-      const text = normalizeWhitespace(roleMatch[2] ?? "");
-      if (!text) {
-        continue;
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === "object") {
+        return parsed as Record<string, unknown>;
       }
-      messages.push({
-        index,
-        role: role === "assistant" || role === "ai" ? "assistant" : "user",
-        text,
-      });
-      index += 1;
-      continue;
+      return null;
+    } catch {
+      return null;
     }
-
-    messages.push({
-      index,
-      role: "user",
-      text: normalizeWhitespace(trimmed),
-    });
-    index += 1;
   }
+  return null;
+}
 
-  if (messages.length === 0) {
-    return [
-      {
-        index: 0,
-        role: "user",
-        text: "",
-      },
-    ];
+function looksLikeJsonl(raw: string): boolean {
+  const firstRecord = parseFirstJsonLine(raw);
+  if (!firstRecord) {
+    return false;
   }
-
-  return messages;
+  return parseJsonlMessageRecord(firstRecord) !== null;
 }
 
 function detectInputKind(filePath: string, raw: string): "jsonl" | "text" {
+  if (looksLikeJsonl(raw)) {
+    return "jsonl";
+  }
+
   const ext = path.extname(filePath).toLowerCase();
   if (ext === ".jsonl") {
     return "jsonl";
   }
   if (ext === ".txt" || ext === ".md" || ext === ".markdown") {
     return "text";
-  }
-
-  const firstLine = raw.split(/\r?\n/, 1)[0]?.trim() ?? "";
-  if (firstLine.startsWith("{") && firstLine.endsWith("}")) {
-    return "jsonl";
   }
 
   return "text";
@@ -390,11 +441,8 @@ export async function parseTranscriptFile(filePath: string): Promise<ParsedTrans
   const warnings: string[] = [];
   const kind = detectInputKind(filePath, raw);
 
-  const parsedMessages =
-    kind === "jsonl" ? parseOpenClawJsonl(raw, warnings) : parsePlainText(raw);
-
-  const messages = parsedMessages.filter((message) => message.text.trim().length > 0);
-  const chunks = chunkMessages(messages);
+  const messages = kind === "jsonl" ? parseJsonl(raw, warnings).filter((message) => message.text.trim().length > 0) : [];
+  const chunks = kind === "jsonl" ? chunkMessages(messages) : chunkText(raw);
 
   return {
     file: filePath,
