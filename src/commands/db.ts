@@ -3,7 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import * as clack from "@clack/prompts";
 import { readConfig } from "../config.js";
-import { closeDb, DEFAULT_DB_PATH, getDb, initDb } from "../db/client.js";
+import { closeDb, DEFAULT_DB_PATH, getDb, initDb, walCheckpoint } from "../db/client.js";
+import { CREATE_IDX_ENTRIES_EMBEDDING_SQL } from "../db/schema.js";
 import { banner, formatLabel, ui } from "../ui.js";
 
 interface DbRow {
@@ -22,6 +23,10 @@ export interface DbExportCommandOptions extends DbCommandCommonOptions {
 export interface DbResetCommandOptions extends DbCommandCommonOptions {
   confirm?: boolean;
 }
+
+export interface DbRebuildIndexCommandOptions extends DbCommandCommonOptions {}
+
+export interface DbCheckCommandOptions extends DbCommandCommonOptions {}
 
 export interface DbCommandDeps {
   readConfigFn: typeof readConfig;
@@ -75,6 +80,11 @@ function resolveEffectiveDbPath(inputPath: string | undefined): string {
     return resolveDbFilePath(inputPath.trim());
   }
   return resolveDbFilePath(DEFAULT_DB_PATH);
+}
+
+function getSingleColumnString(row: DbRow): string {
+  const value = row.quick_check ?? row.QUICK_CHECK ?? Object.values(row)[0];
+  return toStringValue(value);
 }
 
 async function getTagsByEntryId(db: ReturnType<typeof getDb>, ids: string[]): Promise<Map<string, string[]>> {
@@ -201,6 +211,147 @@ export async function runDbPathCommand(options: DbCommandCommonOptions, deps?: P
   const resolved = resolveEffectiveDbPath(configured);
   process.stdout.write(`${resolved}\n`);
   return resolved;
+}
+
+export async function runDbRebuildIndexCommand(
+  options: DbRebuildIndexCommandOptions,
+  deps?: Partial<DbCommandDeps>,
+): Promise<{ entriesIndexed: number; durationMs: number }> {
+  const resolvedDeps: DbCommandDeps = {
+    readConfigFn: deps?.readConfigFn ?? readConfig,
+    getDbFn: deps?.getDbFn ?? getDb,
+    initDbFn: deps?.initDbFn ?? initDb,
+    closeDbFn: deps?.closeDbFn ?? closeDb,
+  };
+
+  const config = resolvedDeps.readConfigFn(process.env);
+  const configured = options.db?.trim() || config?.db?.path || DEFAULT_DB_PATH;
+  const db = resolvedDeps.getDbFn(configured);
+
+  process.stderr.write("Rebuilding vector index...\n");
+  const startedAt = Date.now();
+
+  try {
+    await resolvedDeps.initDbFn(db);
+    await db.execute("DROP INDEX IF EXISTS idx_entries_embedding");
+    await db.execute(CREATE_IDX_ENTRIES_EMBEDDING_SQL);
+    await walCheckpoint(db);
+
+    const totalResult = await db.execute("SELECT COUNT(*) AS count FROM entries WHERE embedding IS NOT NULL");
+    const entriesIndexed = Number.isFinite(toNumber((totalResult.rows[0] as DbRow | undefined)?.count))
+      ? toNumber((totalResult.rows[0] as DbRow | undefined)?.count)
+      : 0;
+
+    if (entriesIndexed > 0) {
+      const verifyResult = await db.execute(`
+        SELECT count(*) AS count
+        FROM vector_top_k(
+          'idx_entries_embedding',
+          (SELECT embedding FROM entries WHERE embedding IS NOT NULL LIMIT 1),
+          1
+        )
+      `);
+      const verifyCount = Number.isFinite(toNumber((verifyResult.rows[0] as DbRow | undefined)?.count))
+        ? toNumber((verifyResult.rows[0] as DbRow | undefined)?.count)
+        : 0;
+      if (verifyCount !== 1) {
+        throw new Error(`Vector index verification failed (expected 1, got ${verifyCount}).`);
+      }
+    }
+
+    const durationMs = Date.now() - startedAt;
+    process.stderr.write(`Rebuilt index for ${entriesIndexed} entries (${durationMs}ms)\n`);
+    return { entriesIndexed, durationMs };
+  } finally {
+    resolvedDeps.closeDbFn(db);
+  }
+}
+
+export async function runDbCheckCommand(
+  options: DbCheckCommandOptions,
+  deps?: Partial<DbCommandDeps>,
+): Promise<{
+  quickCheckOk: boolean;
+  quickCheckMessages: string[];
+  entriesWithEmbedding: number;
+  vectorTopKCount: number;
+  vectorOk: boolean;
+}> {
+  const resolvedDeps: DbCommandDeps = {
+    readConfigFn: deps?.readConfigFn ?? readConfig,
+    getDbFn: deps?.getDbFn ?? getDb,
+    initDbFn: deps?.initDbFn ?? initDb,
+    closeDbFn: deps?.closeDbFn ?? closeDb,
+  };
+
+  const config = resolvedDeps.readConfigFn(process.env);
+  const configured = options.db?.trim() || config?.db?.path || DEFAULT_DB_PATH;
+  const db = resolvedDeps.getDbFn(configured);
+
+  try {
+    await resolvedDeps.initDbFn(db);
+
+    const quickCheckResult = await db.execute("PRAGMA quick_check");
+    const quickCheckMessages = quickCheckResult.rows
+      .map((row) => getSingleColumnString(row as DbRow))
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
+    const quickCheckOk = quickCheckMessages.length === 1 && quickCheckMessages[0] === "ok";
+    if (!quickCheckOk) {
+      throw new Error(`PRAGMA quick_check failed:\n${quickCheckMessages.join("\n")}`);
+    }
+
+    const totalResult = await db.execute("SELECT COUNT(*) AS count FROM entries WHERE embedding IS NOT NULL");
+    const entriesWithEmbedding = Number.isFinite(toNumber((totalResult.rows[0] as DbRow | undefined)?.count))
+      ? toNumber((totalResult.rows[0] as DbRow | undefined)?.count)
+      : 0;
+
+    if (entriesWithEmbedding === 0) {
+      process.stderr.write("DB check ok (empty)\n");
+      return {
+        quickCheckOk: true,
+        quickCheckMessages,
+        entriesWithEmbedding,
+        vectorTopKCount: 0,
+        vectorOk: true,
+      };
+    }
+
+    const k = entriesWithEmbedding + 1;
+    const vectorCountResult = await db.execute({
+      sql: `
+        SELECT count(*) AS count
+        FROM vector_top_k(
+          'idx_entries_embedding',
+          (SELECT embedding FROM entries WHERE embedding IS NOT NULL LIMIT 1),
+          ?
+        )
+      `,
+      args: [k],
+    });
+    const vectorTopKCount = Number.isFinite(toNumber((vectorCountResult.rows[0] as DbRow | undefined)?.count))
+      ? toNumber((vectorCountResult.rows[0] as DbRow | undefined)?.count)
+      : 0;
+    const vectorOk = vectorTopKCount === entriesWithEmbedding;
+    if (!vectorOk) {
+      throw new Error(
+        `Vector index count mismatch: entries(embedding IS NOT NULL)=${entriesWithEmbedding}, vector_top_k count=${vectorTopKCount}`,
+      );
+    }
+
+    process.stderr.write(
+      `DB check ok (quick_check=ok, entries_with_embedding=${entriesWithEmbedding}, vector_count=${vectorTopKCount})\n`,
+    );
+    return {
+      quickCheckOk: true,
+      quickCheckMessages,
+      entriesWithEmbedding,
+      vectorTopKCount,
+      vectorOk: true,
+    };
+  } finally {
+    resolvedDeps.closeDbFn(db);
+  }
 }
 
 export async function runDbStatsCommand(
