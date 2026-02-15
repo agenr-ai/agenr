@@ -1,236 +1,163 @@
 # agenr
 
-**AGENt memoRy** — persistent memory for AI tools. Extract, store, and recall knowledge across sessions, tools, and time.
+**/eɪ.dʒɛn.ɚ/** (AY-GEN-ER) — local-first memory for AI agents.
 
-agenr gives AI coding tools (Claude Code, Codex, Cursor, Windsurf) a shared, persistent memory. What one tool learns, every tool remembers. No more starting from scratch every session.
+You've had this conversation before. Your AI hasn't.
 
-## Why
+Every new session starts from zero — no memory of yesterday's decisions, last week's debugging session, or the architecture you spent an hour explaining. Most "memory" tools solve this by embedding text chunks and doing vector search. That's not memory. That's a search engine that doesn't forget.
 
-AI tools are brilliant but amnesiac. Every session starts at zero — no memory of yesterday's decisions, no recall of architectural patterns, no awareness of accumulated context.
+Real memory strengthens when reinforced, fades when irrelevant, and resolves contradictions. agenr does that. It extracts *structured* knowledge — typed entries with confidence, scope, and expiry — not raw text blobs. Entries that get recalled often grow stronger. Stale entries decay. Contradicted entries get penalized. And consolidation actually *cleans* the database over time, merging near-duplicates and expiring what's no longer relevant. The result is a knowledge base that gets healthier with use, not just bigger.
 
-agenr fixes this. It extracts structured knowledge from conversations, stores it locally, and makes it available to any MCP-compatible tool. One brain, many tools.
+One local database, shared across every tool that speaks MCP. Your memory stays on your machine.
 
-## Quick Start
+## What it does
 
 ```bash
-# Install
-npm install -g agenr
-
-# Configure (interactive)
-agenr setup
-
-# Extract knowledge from a transcript
-agenr extract session.jsonl
-
-# Store and recall
+# Extract knowledge from a conversation transcript
 agenr extract session.jsonl --json | agenr store
-agenr recall "what database are we using"
 
-# Bulk ingest files
-agenr ingest ./notes/ ./transcripts/
-
-# Watch a live session
-agenr watch session.jsonl --interval 120
-
-# Start MCP server (for Claude Code, Codex, etc.)
-agenr mcp
+# Later — in any tool, any session
+agenr recall "what package manager did we choose?"
 ```
 
-## MCP Server — Cross-Tool Memory
+```
+┌─ fact (0.94) ────────────────────────────────┐
+│ Subject: project tooling                      │
+│ We switched this project to pnpm.             │
+│ Confirmed 3x · Last recalled 2 days ago       │
+└───────────────────────────────────────────────┘
+```
 
-The killer feature. Add agenr as an MCP server and every AI tool shares one knowledge base:
+One local database. Works with Claude Code, Codex, Cursor, or anything that speaks MCP.
+
+## Quick start
+
+```bash
+git clone https://github.com/agenr-ai/agenr.git
+cd agenr && pnpm install && pnpm build
+
+# Interactive setup — picks your LLM provider and auth method
+pnpm exec agenr setup
+
+# Try it on a real transcript (or any text file)
+pnpm exec agenr extract your-transcript.txt --json | pnpm exec agenr store
+pnpm exec agenr recall "what did we decide about X?" --limit 5
+```
+
+> **Note:** agenr is not yet published to npm. Clone the repo for now.
+
+> **Important:** Embeddings always use OpenAI's API (`text-embedding-3-small`), regardless of which LLM provider you choose for extraction. You'll need an `OPENAI_API_KEY` even if you use Anthropic for everything else. Run `agenr setup` and it'll walk you through it.
+
+## How it works
+
+**Extract** — Feed any transcript or text file to an LLM. Out come structured entries: facts, decisions, preferences, todos, relationships, events, lessons.
+
+**Store** — Entries get embedded and compared against what's already in the database. Near-duplicates reinforce existing knowledge instead of piling up. New information gets inserted.
+
+**Recall** — Semantic search plus memory-aware ranking. Entries you recall often score higher. Stale entries decay. Contradicted entries get penalized. It's not just vector search — it's search that understands usage patterns.
+
+**Consolidate** — Over time, near-duplicates accumulate and temporary entries go stale. Consolidation cleans house: rule-based expiry and dedup first, then optional LLM-assisted merging for entries that say the same thing differently. Every merge gets verified before it touches the database.
+
+```text
+Extract → Store → Recall → Consolidate
+  LLM      dedup    semantic    cleanup
+  ↓        + embed  + memory    + merge
+entries    → DB     → ranked    → healthier DB
+```
+
+## Cross-tool memory via MCP
+
+The point of agenr is that your tools share one brain. Debug a production issue in Claude Code on Monday, and Codex already knows what you found on Wednesday.
+
+### Codex (`~/.codex/config.toml`)
+
+```toml
+[mcp_servers.agenr]
+command = "node"
+args = ["/path/to/agenr/dist/cli.js", "mcp"]
+env = { OPENAI_API_KEY = "your-key-here" }
+```
+
+### Claude Code (`.mcp.json`)
 
 ```json
 {
   "mcpServers": {
     "agenr": {
-      "command": "agenr",
-      "args": ["mcp"]
+      "command": "node",
+      "args": ["/path/to/agenr/dist/cli.js", "mcp"],
+      "env": { "OPENAI_API_KEY": "your-key-here" }
     }
   }
 }
 ```
 
-This works with Claude Code, Codex, Cursor, Windsurf, and any MCP-compatible client.
+### Teaching your AI to use agenr
 
-### MCP Tools
+Add this to your coding agent's instructions (e.g., `AGENTS.md` or system prompt):
 
-| Tool | Description |
-|------|-------------|
-| `agenr_recall` | Semantic search across stored knowledge |
-| `agenr_store` | Store new knowledge entries |
-| `agenr_extract` | Extract knowledge from raw text |
+```markdown
+## Memory (agenr)
 
-What Codex learns while building your feature, Claude Code remembers when debugging it. What Cursor learns about your codebase, Windsurf can recall. The knowledge compounds.
+You have access to persistent memory via the agenr MCP server.
+
+- On session start: call `agenr_recall` with context "session-start" to load relevant memories
+- During work: recall specific topics as needed
+- When you learn something important: store it with `agenr_store`
+- Types: fact, decision, preference, todo, relationship, event, lesson
+```
+
+Three MCP tools: `agenr_recall`, `agenr_store`, `agenr_extract`. See [docs/MCP.md](./docs/MCP.md) for the full reference.
 
 ## Commands
 
-### `agenr extract <files...>`
+| Command | Description |
+| --- | --- |
+| `agenr setup` | Interactive auth/provider/model configuration |
+| `agenr extract <files...>` | Extract structured knowledge from text |
+| `agenr store [files...]` | Store entries with semantic dedup |
+| `agenr recall [query]` | Semantic + memory-aware recall |
+| `agenr watch <file>` | Live-watch a growing transcript |
+| `agenr ingest <paths...>` | Bulk-ingest files and directories |
+| `agenr consolidate` | Rule-based + LLM-assisted knowledge cleanup |
+| `agenr mcp` | Start MCP server (stdio) |
+| `agenr db stats` | Database statistics |
+| `agenr auth status` | Check auth connectivity |
 
-Extract structured knowledge from transcript files (JSONL, markdown, plain text).
-
-```bash
-agenr extract session.jsonl
-agenr extract session.jsonl --json | agenr store
-```
-
-Extracts 7 entry types: **fact**, **decision**, **preference**, **todo**, **relationship**, **event**, **lesson**.
-
-### `agenr store`
-
-Store knowledge entries from stdin (pipe from `extract --json`).
-
-```bash
-agenr extract session.jsonl --json | agenr store
-```
-
-Smart deduplication with 3 cosine similarity bands:
-- **>0.98**: Exact duplicate, skip
-- **0.92-0.98**: Same knowledge, confirm/update existing entry
-- **<0.92**: New knowledge, insert
-
-### `agenr recall <query>`
-
-Semantic search with FSRS-based scoring.
-
-```bash
-agenr recall "what is Jim's preferred package manager"
-agenr recall "architecture decisions" --types decision --since 7d --limit 20
-agenr recall --context session-start  # Bootstrap a new session with key context
-```
-
-Scoring combines vector similarity, recency (power-law decay), Bayesian confidence, and full-text search boost.
-
-### `agenr ingest <paths...>`
-
-Bulk ingest knowledge from files and directories.
-
-```bash
-agenr ingest ./notes/ ./transcripts/ ./memory.md
-agenr ingest ./project/ --glob "**/*.md" --verbose
-agenr ingest ./sessions/ --dry-run  # Preview without storing
-```
-
-Supports JSONL transcripts, markdown, and plain text. Checks the ingest log to skip already-processed files.
-
-### `agenr watch <file>`
-
-Live file watcher. Monitors a file for changes and auto-extracts + stores new knowledge.
-
-```bash
-agenr watch ~/.openclaw/sessions/current.jsonl --interval 120
-```
-
-Perfect for monitoring active AI sessions — knowledge is captured as it happens.
-
-### `agenr mcp`
-
-Start the MCP server (stdio transport, JSON-RPC 2.0).
-
-```bash
-agenr mcp
-agenr mcp --verbose  # Log requests to stderr
-```
-
-### `agenr db <subcommand>`
-
-Database management.
-
-```bash
-agenr db stats    # Entry counts, type breakdown, top tags
-agenr db export   # Export all entries as JSON
-agenr db reset    # Clear all data (with confirmation)
-agenr db path     # Print database file path
-```
-
-### `agenr setup`
-
-Interactive configuration wizard. Sets provider, auth method, and model.
-
-### `agenr config show|set|set-key`
-
-Manage configuration directly.
-
-```bash
-agenr config show
-agenr config set provider openai
-agenr config set-key openai sk-proj-...
-```
-
-### `agenr auth status`
-
-Live authentication check against the configured provider.
-
-## How It Works
-
-### Knowledge Extraction
-
-agenr reads transcripts (AI conversations, meeting notes, plain text) and extracts structured knowledge entries using an LLM. Each entry has a type, subject, content, confidence level, expiry tier, and tags.
-
-### Storage
-
-Entries are stored in a local SQLite database (`~/.agenr/knowledge.db`) with vector embeddings for semantic search. Smart deduplication prevents redundant entries while allowing knowledge to evolve over time.
-
-### Recall
-
-Retrieval uses a multiplicative scoring formula grounded in cognitive science:
-
-- **Vector similarity** — semantic relevance to the query
-- **Recency** — FSRS power-law forgetting curve (recent knowledge scores higher)
-- **Confidence** — Bayesian confidence with prior decay toward uncertainty
-- **Recall strength** — entries that are recalled more often score higher (spacing effect)
-- **Full-text boost** — exact keyword matches get a bonus
-
-### Memory Tiers
-
-Entries have expiry tiers inspired by human memory:
-
-| Tier | Half-life | Example |
-|------|-----------|---------|
-| `permanent` | 365 days | Biographical facts, preferences |
-| `temporary` | 30 days | Current project decisions, recent events |
-| `session-only` | 3 days | Immediate context, ephemeral details |
-
-## Configuration
-
-Config is stored in `~/.agenr/config.json`. Run `agenr setup` for interactive configuration.
-
-### Supported Providers
-
-- **Anthropic** — OAuth, token, or API key
-- **OpenAI** — API key or Codex subscription
-
-### Environment Variables
-
-Secrets only (don't choose provider/model):
-
-- `ANTHROPIC_API_KEY`
-- `ANTHROPIC_OAUTH_TOKEN`
-- `OPENAI_API_KEY`
+Full flag reference: [docs/CLI.md](./docs/CLI.md)
 
 ## Architecture
 
-```
-agenr extract  →  LLM extracts structured entries from text
-agenr store    →  Dedup + embed + store in local SQLite
-agenr recall   →  Vector search + FSRS scoring
-agenr watch    →  File watcher → extract → store (loop)
-agenr ingest   →  Batch extract → store across files
-agenr mcp      →  JSON-RPC 2.0 server exposing recall/store/extract
-```
+- **Runtime:** Node.js 20+, TypeScript, ESM
+- **Storage:** libsql/SQLite (`~/.agenr/knowledge.db`)
+- **Embeddings:** OpenAI `text-embedding-3-small`, 512 dimensions
+- **Recall scoring:** Vector similarity × recency × confidence × recall strength, with contradiction penalties and full-text boosting
+- **Consolidation:** Two-tier — deterministic rules for cheap cleanup, LLM-assisted clustering for semantic merges, verification before every commit
 
-Everything runs locally. No cloud services, no data leaves your machine (except LLM API calls for extraction).
+Deep dive: [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) · [docs/CONSOLIDATION.md](./docs/CONSOLIDATION.md)
 
-## Development
+## Status
 
-```bash
-git clone https://github.com/agenr-ai/agenr.git
-cd agenr
-pnpm install
-pnpm build
-pnpm test
-```
+agenr is alpha software under active development. The core pipeline (extract → store → recall → consolidate) is stable and tested (222+ tests). We use it daily to manage ~3,000 knowledge entries across multiple AI tools.
+
+What works well: extraction, storage, recall, MCP integration, rules-based consolidation, LLM-assisted merging.
+
+What's next: entity resolution, auto-scheduled consolidation, local embeddings support. See the [kanban board](https://github.com/agenr-ai/agenr/issues) for current priorities.
+
+## Philosophy
+
+The big labs are building bigger brains. We're building better memory. Those are complementary.
+
+Current AI's bottleneck isn't intelligence — it's continuity. A slightly less brilliant model with accumulated context might be more useful than a brilliant amnesiac. What makes a senior engineer senior isn't raw IQ — it's patterns seen, mistakes remembered, approaches that worked. That's memory.
+
+agenr is local-first because your memory is yours. It's structured (not just vectors) because "what did we decide about X?" needs a real answer, not a similarity score. It's open source because memory infrastructure should be shared.
+
+We're not claiming to have solved AI memory. We're sharing an approach that works for us and seeing if it works for others too.
 
 ## License
 
-MIT
+AGPL-3.0 — [LICENSE](./LICENSE) · [LICENSE-FAQ](./LICENSE-FAQ.md)
+
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md).
