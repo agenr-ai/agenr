@@ -329,6 +329,56 @@ describe("extractKnowledgeFromChunks", () => {
     expect(result.entries[0]?.content).toBe("Jim prefers pnpm");
   });
 
+  it("accepts plural type names (DECISIONS, PREFERENCES, EVENTS)", async () => {
+    const streamSimpleImpl = (_model, _context, _opts) =>
+      streamWithResult(
+        Promise.resolve(
+          assistantMessage(
+            '[{"type":"DECISIONS","content":"Chose async queue","subject":"Architecture","confidence":"high","expiry":"temporary","tags":["arch"],"source":{"context":"m"}},{"type":"PREFERENCES","content":"Prefers keto","subject":"Jim","confidence":"high","expiry":"permanent","tags":["diet"],"source":{"context":"m"}},{"type":"EVENTS","content":"Launched v1","subject":"Agenr","confidence":"high","expiry":"temporary","tags":["launch"],"source":{"context":"m"}}]',
+          ),
+        ),
+      );
+
+    const result = await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunk()],
+      client: fakeClient(),
+      verbose: false,
+      streamSimpleImpl,
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+    });
+
+    expect(result.entries).toHaveLength(3);
+    expect(result.entries[0]?.type).toBe("decision");
+    expect(result.entries[1]?.type).toBe("preference");
+    expect(result.entries[2]?.type).toBe("event");
+  });
+
+  it("accepts knowledge instead of content", async () => {
+    const streamSimpleImpl = (_model, _context, _opts) =>
+      streamWithResult(
+        Promise.resolve(
+          assistantMessage(
+            '[{"type":"fact","knowledge":"Jim uses pnpm","subject":"Jim","confidence":"high","expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
+          ),
+        ),
+      );
+
+    const result = await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunk()],
+      client: fakeClient(),
+      verbose: false,
+      streamSimpleImpl,
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+    });
+
+    expect(result.entries).toHaveLength(1);
+    expect(result.entries[0]?.content).toBe("Jim uses pnpm");
+  });
+
   it("accepts name instead of subject", async () => {
     const streamSimpleImpl = (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) =>
       streamWithResult(

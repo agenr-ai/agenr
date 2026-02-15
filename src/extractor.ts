@@ -48,6 +48,13 @@ no explanation, just the JSON array.`;
 const MAX_ATTEMPTS = 3;
 
 const TYPE_ALIASES: Record<string, KnowledgeEntry["type"]> = {
+  facts: "fact",
+  decisions: "decision",
+  preferences: "preference",
+  todos: "todo",
+  relationships: "relationship",
+  events: "event",
+  lessons: "lesson",
   fact: "fact",
   decision: "decision",
   preference: "preference",
@@ -176,7 +183,7 @@ function validateKnowledgeEntry(
 
   const type = coerceType(record.type);
   if (!type) {
-    warnings.push(`Chunk ${chunk.chunk_index + 1}: dropped entry with invalid type.`);
+    warnings.push(`Chunk ${chunk.chunk_index + 1}: dropped entry with invalid type: "${String(record.type ?? "undefined")}"`);
     return null;
   }
 
@@ -187,7 +194,7 @@ function validateKnowledgeEntry(
     "detail",
     "text",
     "summary",
-    "value", "statement",
+    "value", "statement", "knowledge",
   );
   const content = contentResult.value;
   if (verbose && contentResult.key && contentResult.key !== "content") {
