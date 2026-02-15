@@ -19,6 +19,11 @@ export const KnowledgeEntrySchema = Type.Object({
     Type.Literal("temporary"),
     Type.Literal("session-only"),
   ]),
+  scope: Type.Optional(Type.Union([
+    Type.Literal("private"),
+    Type.Literal("personal"),
+    Type.Literal("public"),
+  ])),
   tags: Type.Array(Type.String()),
   source_context: Type.String(),
 });
