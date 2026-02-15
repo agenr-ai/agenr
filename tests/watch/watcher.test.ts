@@ -249,6 +249,104 @@ describe("watcher", () => {
     expect(deps.storeEntriesFn).not.toHaveBeenCalled();
   });
 
+  it("streams extraction chunks through callback and stores incrementally", async () => {
+    const filePath = "/tmp/watch.jsonl";
+    const parseTranscriptFileFn = vi.fn(async () => ({
+      file: "/tmp/delta.txt",
+      messages: [],
+      chunks: [
+        {
+          chunk_index: 0,
+          message_start: 0,
+          message_end: 0,
+          text: "chunk 0",
+          context_hint: "ctx 0",
+        },
+        {
+          chunk_index: 1,
+          message_start: 1,
+          message_end: 1,
+          text: "chunk 1",
+          context_hint: "ctx 1",
+        },
+      ],
+      warnings: [],
+    }));
+    const extractKnowledgeFromChunksFn = vi.fn(
+      async (params: {
+        onChunkComplete?: (result: {
+          chunkIndex: number;
+          totalChunks: number;
+          entries: KnowledgeEntry[];
+          warnings: string[];
+        }) => Promise<void>;
+      }) => {
+        if (!params.onChunkComplete) {
+          throw new Error("expected onChunkComplete callback");
+        }
+
+        await params.onChunkComplete({
+          chunkIndex: 0,
+          totalChunks: 2,
+          entries: [makeEntry("one")],
+          warnings: [],
+        });
+        await params.onChunkComplete({
+          chunkIndex: 1,
+          totalChunks: 2,
+          entries: [makeEntry("two")],
+          warnings: [],
+        });
+
+        return {
+          entries: [],
+          successfulChunks: 2,
+          failedChunks: 0,
+          warnings: [],
+        };
+      },
+    );
+    const storeEntriesFn = vi.fn(async (_db: unknown, entries: KnowledgeEntry[]) => ({
+      added: entries.length,
+      updated: 0,
+      skipped: 0,
+      relations_created: 0,
+      total_entries: entries.length,
+      duration_ms: 5,
+    }));
+    const deps = makeDeps({
+      statFileFn: vi.fn(async () => ({ size: 25, isFile: () => true })),
+      readFileFn: vi.fn(async () => Buffer.from("this content passes threshold")),
+      parseTranscriptFileFn,
+      extractKnowledgeFromChunksFn,
+      storeEntriesFn,
+      deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+    });
+
+    const cycleResults: Array<{ extracted: number; stored: number }> = [];
+    await runWatcher(
+      {
+        filePath,
+        intervalMs: 1,
+        minChunkChars: 5,
+        dryRun: false,
+        verbose: false,
+        once: true,
+        onCycle: (cycle) => {
+          cycleResults.push({
+            extracted: cycle.entriesExtracted,
+            stored: cycle.entriesStored,
+          });
+        },
+      },
+      deps,
+    );
+
+    expect(cycleResults[0]).toEqual({ extracted: 2, stored: 2 });
+    expect(extractKnowledgeFromChunksFn).toHaveBeenCalledTimes(1);
+    expect(storeEntriesFn).toHaveBeenCalledTimes(2);
+  });
+
   it("stops looping when shutdown flag is raised", async () => {
     const filePath = "/tmp/watch.jsonl";
     let shutdown = false;

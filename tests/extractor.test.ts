@@ -652,4 +652,146 @@ describe("extractKnowledgeFromChunks", () => {
       '[raw-sample] {"type":"fact","content":"Jim prefers pnpm","subject":"Jim","confidence":"high","expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}',
     ]);
   });
+
+  it("onChunkComplete receives entries per chunk", async () => {
+    let callCount = 0;
+    const chunkCallbacks: Array<{ chunkIndex: number; totalChunks: number; contents: string[] }> = [];
+    const streamSimpleImpl = (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) => {
+      const index = callCount;
+      callCount += 1;
+      return streamWithResult(
+        Promise.resolve(
+          assistantMessage(
+            JSON.stringify([
+              {
+                type: "fact",
+                content: `entry-${index}`,
+                subject: "Jim",
+                confidence: "high",
+                expiry: "permanent",
+                tags: ["tooling"],
+                source: { context: "m" },
+              },
+            ]),
+          ),
+        ),
+      );
+    };
+
+    await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunkAt(0), fakeChunkAt(1)],
+      client: fakeClient(),
+      verbose: false,
+      streamSimpleImpl,
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+      onChunkComplete: async (chunkResult) => {
+        chunkCallbacks.push({
+          chunkIndex: chunkResult.chunkIndex,
+          totalChunks: chunkResult.totalChunks,
+          contents: chunkResult.entries.map((entry) => entry.content),
+        });
+      },
+    });
+
+    expect(chunkCallbacks).toEqual([
+      { chunkIndex: 0, totalChunks: 2, contents: ["entry-0"] },
+      { chunkIndex: 1, totalChunks: 2, contents: ["entry-1"] },
+    ]);
+  });
+
+  it("onChunkComplete returns empty final entries array", async () => {
+    const streamSimpleImpl = (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) =>
+      streamWithResult(
+        Promise.resolve(
+          assistantMessage(
+            '[{"type":"fact","content":"Jim prefers pnpm","subject":"Jim","confidence":"high","expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
+          ),
+        ),
+      );
+
+    const result = await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunk()],
+      client: fakeClient(),
+      verbose: false,
+      streamSimpleImpl,
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+      onChunkComplete: async () => {},
+    });
+
+    expect(result.successfulChunks).toBe(1);
+    expect(result.failedChunks).toBe(0);
+    expect(result.entries).toEqual([]);
+  });
+
+  it("without onChunkComplete accumulates entries as before", async () => {
+    let callCount = 0;
+    const streamSimpleImpl = (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) => {
+      const index = callCount;
+      callCount += 1;
+      return streamWithResult(
+        Promise.resolve(
+          assistantMessage(
+            JSON.stringify([
+              {
+                type: "fact",
+                content: `entry-${index}`,
+                subject: "Jim",
+                confidence: "high",
+                expiry: "permanent",
+                tags: ["tooling"],
+                source: { context: "m" },
+              },
+            ]),
+          ),
+        ),
+      );
+    };
+
+    const result = await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunkAt(0), fakeChunkAt(1)],
+      client: fakeClient(),
+      verbose: false,
+      streamSimpleImpl,
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+    });
+
+    expect(result.entries.map((entry) => entry.content)).toEqual(["entry-0", "entry-1"]);
+  });
+
+  it("onChunkComplete error in callback propagates", async () => {
+    let callCount = 0;
+    const streamSimpleImpl = (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) => {
+      callCount += 1;
+      return streamWithResult(
+        Promise.resolve(
+          assistantMessage(
+            '[{"type":"fact","content":"Jim prefers pnpm","subject":"Jim","confidence":"high","expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
+          ),
+        ),
+      );
+    };
+
+    await expect(
+      extractKnowledgeFromChunks({
+        file: "session.jsonl",
+        chunks: [fakeChunkAt(0), fakeChunkAt(1)],
+        client: fakeClient(),
+        verbose: false,
+        streamSimpleImpl,
+        sleepImpl: async () => {},
+        retryDelayMs: () => 0,
+        onChunkComplete: async () => {
+          throw new Error("callback failed");
+        },
+      }),
+    ).rejects.toThrow("callback failed");
+
+    expect(callCount).toBe(1);
+  });
 });

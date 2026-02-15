@@ -239,6 +239,68 @@ describe("ingest command", () => {
     expect(storeEntriesFn).not.toHaveBeenCalled();
   });
 
+  it("streams extraction chunks through callback and stores each chunk incrementally", async () => {
+    const dir = await makeTempDir();
+    const filePath = path.join(dir, "a.txt");
+    await fs.writeFile(filePath, "hello", "utf8");
+
+    const deduplicateEntriesFn = vi.fn((entries: KnowledgeEntry[]) => entries.slice(0, 1));
+    const storeEntriesFn = vi.fn(async (_db: unknown, entries: KnowledgeEntry[]) => ({
+      added: entries.length,
+      updated: 0,
+      skipped: 0,
+      relations_created: 0,
+      total_entries: entries.length,
+      duration_ms: 5,
+    }));
+    const extractKnowledgeFromChunksFn = vi.fn(
+      async (params: Parameters<IngestCommandDeps["extractKnowledgeFromChunksFn"]>[0]) => {
+        if (!params.onChunkComplete) {
+          throw new Error("expected onChunkComplete callback");
+        }
+
+        await params.onChunkComplete({
+          chunkIndex: 0,
+          totalChunks: 2,
+          entries: [makeEntry("one"), makeEntry("one-dup")],
+          warnings: [],
+        });
+        await params.onChunkComplete({
+          chunkIndex: 1,
+          totalChunks: 2,
+          entries: [makeEntry("two")],
+          warnings: [],
+        });
+
+        return {
+          entries: [],
+          successfulChunks: 2,
+          failedChunks: 0,
+          warnings: [],
+        };
+      },
+    );
+
+    const result = await runIngestCommand(
+      [dir],
+      {},
+      makeDeps({
+        expandInputFilesFn: vi.fn(async () => [filePath]),
+        extractKnowledgeFromChunksFn: extractKnowledgeFromChunksFn as IngestCommandDeps["extractKnowledgeFromChunksFn"],
+        deduplicateEntriesFn,
+        storeEntriesFn: storeEntriesFn as IngestCommandDeps["storeEntriesFn"],
+      }),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.totalEntriesExtracted).toBe(3);
+    expect(result.totalEntriesStored).toBe(2);
+    expect(deduplicateEntriesFn).toHaveBeenCalledTimes(2);
+    expect(storeEntriesFn).toHaveBeenCalledTimes(2);
+    expect(storeEntriesFn.mock.calls[0]?.[1]).toHaveLength(1);
+    expect(storeEntriesFn.mock.calls[1]?.[1]).toHaveLength(1);
+  });
+
   it("handles missing files gracefully", async () => {
     const missing = path.join("/tmp", "agenr-ingest-missing-file.txt");
     const deps = makeDeps();
