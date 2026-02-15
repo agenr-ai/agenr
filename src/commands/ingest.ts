@@ -5,12 +5,12 @@ import * as clack from "@clack/prompts";
 import { readConfig } from "../config.js";
 import { deduplicateEntries } from "../dedup.js";
 import { closeDb, getDb, initDb } from "../db/client.js";
-import { hashText, storeEntries } from "../db/store.js";
+import { batchClassify, hashText, type BatchClassificationCandidate, type StoreEntryDecision, storeEntries } from "../db/store.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { extractKnowledgeFromChunks } from "../extractor.js";
 import { createLlmClient } from "../llm/client.js";
 import { expandInputFiles, parseTranscriptFile } from "../parser.js";
-import type { KnowledgeEntry } from "../types.js";
+import type { KnowledgeEntry, StoredEntry } from "../types.js";
 import { banner, formatError, formatWarn, ui } from "../ui.js";
 
 const DEFAULT_GLOB = "**/*.{jsonl,md,txt}";
@@ -26,6 +26,7 @@ export interface IngestCommandOptions {
   concurrency?: number | string;
   skipIngested?: boolean;
   force?: boolean;
+  classify?: boolean;
 }
 
 export interface IngestFileResult {
@@ -61,8 +62,25 @@ export interface IngestCommandDeps {
   initDbFn: typeof initDb;
   closeDbFn: typeof closeDb;
   storeEntriesFn: typeof storeEntries;
+  batchClassifyFn: typeof batchClassify;
   hashTextFn: typeof hashText;
   nowFn: () => Date;
+}
+
+function toStoredEntryFromDecision(decision: StoreEntryDecision): StoredEntry | null {
+  if (!decision.newEntryId) {
+    return null;
+  }
+  const now = new Date().toISOString();
+  return {
+    ...decision.entry,
+    id: decision.newEntryId,
+    created_at: now,
+    updated_at: now,
+    recall_count: 0,
+    confirmations: 0,
+    contradictions: 0,
+  };
 }
 
 function hasGlobChars(input: string): boolean {
@@ -258,6 +276,7 @@ export async function runIngestCommand(
     initDbFn: deps?.initDbFn ?? initDb,
     closeDbFn: deps?.closeDbFn ?? closeDb,
     storeEntriesFn: deps?.storeEntriesFn ?? storeEntries,
+    batchClassifyFn: deps?.batchClassifyFn ?? batchClassify,
     hashTextFn: deps?.hashTextFn ?? hashText,
     nowFn: deps?.nowFn ?? (() => new Date()),
   };
@@ -268,6 +287,7 @@ export async function runIngestCommand(
   const dryRun = options.dryRun === true;
   const json = options.json === true;
   const force = options.force === true;
+  const classify = options.classify === true;
   const skipIngested = force ? false : options.skipIngested !== false;
   const globPattern = options.glob?.trim() || DEFAULT_GLOB;
   const concurrency = parsePositiveInt(options.concurrency, 1, "--concurrency");
@@ -336,7 +356,7 @@ export async function runIngestCommand(
   let dbChain: Promise<void> = Promise.resolve();
   const withDbLock = async <T>(fn: () => Promise<T>): Promise<T> => {
     const previous = dbChain;
-    let release: (() => void) | null = null;
+    let release!: () => void;
     dbChain = new Promise<void>((resolve) => {
       release = resolve;
     });
@@ -345,7 +365,7 @@ export async function runIngestCommand(
     try {
       return await fn();
     } finally {
-      release?.();
+      release();
     }
   };
 
@@ -373,6 +393,7 @@ export async function runIngestCommand(
       skipped: false,
       durationMs: 0,
     };
+    const classifyCandidates: BatchClassificationCandidate[] = [];
 
     try {
       const rawContent = await fs.readFile(target.file, "utf8");
@@ -405,6 +426,37 @@ export async function runIngestCommand(
           resolvedDeps.storeEntriesFn(db, deduped, embeddingApiKey ?? "", {
             sourceFile: target.file,
             ingestContentHash: fileHash,
+            classify: false,
+            onDecision: classify
+              ? (decision) => {
+                  if (decision.action !== "added") {
+                    return;
+                  }
+                  if (decision.sameSubject !== true) {
+                    return;
+                  }
+                  if (typeof decision.similarity !== "number") {
+                    return;
+                  }
+                  if (decision.similarity < 0.8 || decision.similarity >= 0.92) {
+                    return;
+                  }
+                  if (!decision.matchedEntry) {
+                    return;
+                  }
+
+                  const newEntry = toStoredEntryFromDecision(decision);
+                  if (!newEntry) {
+                    return;
+                  }
+
+                  classifyCandidates.push({
+                    newEntry,
+                    matchEntry: decision.matchedEntry,
+                    similarity: decision.similarity,
+                  });
+                }
+              : undefined,
           }),
         );
         const stored = storeResult.added + storeResult.updated;
@@ -425,6 +477,10 @@ export async function runIngestCommand(
       // Compatibility fallback for injected extractors that do not dispatch through onChunkComplete.
       if (extracted.entries.length > 0) {
         await processChunkEntries(extracted.entries);
+      }
+
+      if (!dryRun && classify && classifyCandidates.length > 0) {
+        await withDbLock(() => resolvedDeps.batchClassifyFn(db, client, classifyCandidates));
       }
 
       return fileResult;

@@ -145,6 +145,25 @@ describe("db recall", () => {
     expect(highScore).toBeGreaterThan(lowScore);
   });
 
+  it("applies contradiction penalty only when contradictions >= 2", () => {
+    const now = new Date("2026-02-15T00:00:00.000Z");
+    const base = makeStoredEntry({
+      expiry: "core",
+      confidence: "low",
+      confirmations: 0,
+      recall_count: 1,
+    });
+
+    const score0 = scoreEntry({ ...base, contradictions: 0 }, 0.91, false, now);
+    const score1 = scoreEntry({ ...base, contradictions: 1 }, 0.91, false, now);
+    const score2 = scoreEntry({ ...base, contradictions: 2 }, 0.91, false, now);
+    const score5 = scoreEntry({ ...base, contradictions: 5 }, 0.91, false, now);
+
+    expect(score1).toBeCloseTo(score0, 10);
+    expect(score2).toBeCloseTo(score0 * 0.8, 10);
+    expect(score5).toBeCloseTo(score0 * 0.8, 10);
+  });
+
   it("recall pipeline ranks, filters, and excludes superseded entries", async () => {
     const client = makeClient();
     await initDb(client);

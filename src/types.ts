@@ -248,6 +248,7 @@ export interface WatchOptions {
   db?: string;
   model?: string;
   provider?: string;
+  classify?: boolean;
   verbose?: boolean;
   dryRun?: boolean;
   once?: boolean;

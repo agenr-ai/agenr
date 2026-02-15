@@ -358,7 +358,8 @@ export function scoreEntry(entry: StoredEntry, vectorSim: number, ftsMatch: bool
   const fts = ftsMatch ? 0.15 : 0;
 
   const memoryStrength = Math.max(conf, recall);
-  return sim * (0.3 + 0.7 * rec) * memoryStrength + fts;
+  const contradictionPenalty = entry.contradictions >= 2 ? 0.8 : 1.0;
+  return sim * (0.3 + 0.7 * rec) * memoryStrength * contradictionPenalty + fts;
 }
 
 export function shapeRecallText(text: string, context: string | undefined): string {

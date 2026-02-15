@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runStoreCommand } from "../../src/commands/store.js";
-import type { AgenrConfig, KnowledgeEntry, StoreResult } from "../../src/types.js";
+import type { AgenrConfig, KnowledgeEntry, LlmClient, StoreResult } from "../../src/types.js";
 
 const tempDirs: string[] = [];
 
@@ -116,5 +116,44 @@ describe("store command", () => {
     expect(storeEntriesSpy).toHaveBeenCalledTimes(1);
     expect(storeEntriesSpy.mock.calls[0]?.[1]).toEqual([]);
     expect(resolveEmbeddingApiKeySpy).not.toHaveBeenCalled();
+  });
+
+  it("creates LLM client and passes classify options when classify=true", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agenr-store-test-"));
+    tempDirs.push(dir);
+    const filePath = path.join(dir, "input.json");
+    await fs.writeFile(filePath, `${JSON.stringify([makeEntry()], null, 2)}\n`, "utf8");
+
+    const storeEntriesSpy = vi.fn(async () => fakeStoreResult());
+    const llmClient: LlmClient = {
+      auth: "openai-api-key",
+      resolvedModel: {
+        provider: "openai",
+        modelId: "gpt-4o",
+        model: {} as any,
+      },
+      credentials: { apiKey: "x", source: "test" },
+    };
+    const createLlmClientFn = vi.fn(() => llmClient);
+
+    await runStoreCommand([filePath], { classify: true }, {
+      expandInputFilesFn: vi.fn(async (inputs: string[]) => inputs),
+      readFileFn: vi.fn((target: string) => fs.readFile(target, "utf8")),
+      readStdinFn: vi.fn(async () => ""),
+      readConfigFn: vi.fn(() => ({ db: { path: ":memory:" } } satisfies AgenrConfig)),
+      resolveEmbeddingApiKeyFn: vi.fn(() => "sk-test"),
+      createLlmClientFn,
+      getDbFn: vi.fn(() => ({}) as any),
+      initDbFn: vi.fn(async () => undefined),
+      closeDbFn: vi.fn(() => undefined),
+      storeEntriesFn: storeEntriesSpy as any,
+    });
+
+    expect(createLlmClientFn).toHaveBeenCalledTimes(1);
+    expect(storeEntriesSpy).toHaveBeenCalledTimes(1);
+    expect(storeEntriesSpy.mock.calls[0]?.[3]).toMatchObject({
+      classify: true,
+      llmClient,
+    });
   });
 });

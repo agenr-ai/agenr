@@ -384,10 +384,16 @@ export function createProgram(): Command {
     .option("--dry-run", "Show what would be stored without writing", false)
     .option("--verbose", "Show per-entry dedup decisions", false)
     .option("--force", "Skip dedup and store all entries as new", false)
-    .action(async (files: string[], opts: { db?: string; dryRun?: boolean; verbose?: boolean; force?: boolean }) => {
+    .option("--classify", "Enable LLM classification for near-duplicates", false)
+    .action(
+      async (
+        files: string[],
+        opts: { db?: string; dryRun?: boolean; verbose?: boolean; force?: boolean; classify?: boolean },
+      ) => {
       const result = await runStoreCommand(files ?? [], opts);
       process.exitCode = result.exitCode;
-    });
+      },
+    );
 
   program
     .command("recall")
@@ -434,6 +440,7 @@ export function createProgram(): Command {
     .option("--db <path>", "Database path override")
     .option("--model <model>", "LLM model to use")
     .option("--provider <name>", "LLM provider: anthropic, openai, openai-codex")
+    .option("--classify", "Enable LLM classification for near-duplicates", false)
     .option("--verbose", "Show extraction progress", false)
     .option("--dry-run", "Extract without storing", false)
     .option("--once", "Run one cycle and exit", false)
@@ -451,6 +458,7 @@ export function createProgram(): Command {
     .option("--db <path>", "Database path override")
     .option("--model <model>", "LLM model to use")
     .option("--provider <name>", "LLM provider: anthropic, openai, openai-codex")
+    .option("--classify", "Enable LLM classification for near-duplicates", false)
     .option("--verbose", "Show per-file details", false)
     .option("--dry-run", "Extract without storing", false)
     .option("--json", "Output JSON results", false)

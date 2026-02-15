@@ -1,13 +1,58 @@
 import { createHash, randomUUID } from "node:crypto";
+import type { Context, Tool } from "@mariozechner/pi-ai";
 import type { Client, InValue, Row } from "@libsql/client";
+import { Type, type Static } from "@sinclair/typebox";
 import { composeEmbeddingText, embed } from "../embeddings/client.js";
 import { EmbeddingCache } from "../embeddings/cache.js";
-import type { ConfidenceLevel, Expiry, KnowledgeEntry, StoreResult, StoredEntry } from "../types.js";
+import { runSimpleStream } from "../llm/stream.js";
+import type { ConfidenceLevel, Expiry, KnowledgeEntry, LlmClient, StoreResult, StoredEntry } from "../types.js";
 import { createRelation } from "./relations.js";
 
 const AUTO_SKIP_THRESHOLD = 0.98;
 const SMART_DEDUP_THRESHOLD = 0.92;
+const CLASSIFY_LOW_THRESHOLD = 0.8;
 const DEFAULT_SIMILAR_LIMIT = 5;
+
+const CLASSIFICATION_VALUES = [
+  "REINFORCING",
+  "SUPERSEDING",
+  "CONTRADICTING",
+  "NUANCING",
+  "UNRELATED",
+] as const;
+
+export type ClassificationResult = (typeof CLASSIFICATION_VALUES)[number];
+
+const CLASSIFY_RELATIONSHIP_TOOL_SCHEMA = Type.Object({
+  classification: Type.Union(CLASSIFICATION_VALUES.map((value) => Type.Literal(value))),
+  reasoning: Type.String(),
+});
+
+type ClassifyRelationshipToolArgs = Static<typeof CLASSIFY_RELATIONSHIP_TOOL_SCHEMA>;
+
+const CLASSIFY_RELATIONSHIP_TOOL: Tool<typeof CLASSIFY_RELATIONSHIP_TOOL_SCHEMA> = {
+  name: "classify_relationship",
+  description: "Classify how a new knowledge entry relates to an existing entry.",
+  parameters: CLASSIFY_RELATIONSHIP_TOOL_SCHEMA,
+};
+
+const CLASSIFY_RELATIONSHIP_BATCH_TOOL_SCHEMA = Type.Object({
+  results: Type.Array(
+    Type.Object({
+      index: Type.Integer({ minimum: 0 }),
+      classification: Type.Union(CLASSIFICATION_VALUES.map((value) => Type.Literal(value))),
+      reasoning: Type.String(),
+    }),
+  ),
+});
+
+type ClassifyRelationshipBatchToolArgs = Static<typeof CLASSIFY_RELATIONSHIP_BATCH_TOOL_SCHEMA>;
+
+const CLASSIFY_RELATIONSHIP_BATCH_TOOL: Tool<typeof CLASSIFY_RELATIONSHIP_BATCH_TOOL_SCHEMA> = {
+  name: "classify_relationship_batch",
+  description: "Classify relationships for a batch of entry pairs.",
+  parameters: CLASSIFY_RELATIONSHIP_BATCH_TOOL_SCHEMA,
+};
 
 export interface StoreEntryDecision {
   entry: KnowledgeEntry;
@@ -15,6 +60,10 @@ export interface StoreEntryDecision {
   reason: string;
   similarity?: number;
   matchedEntryId?: string;
+  classification?: ClassificationResult;
+  newEntryId?: string;
+  matchedEntry?: StoredEntry;
+  sameSubject?: boolean;
 }
 
 export interface StoreEntriesOptions {
@@ -25,6 +74,19 @@ export interface StoreEntriesOptions {
   ingestContentHash?: string;
   onDecision?: (decision: StoreEntryDecision) => void;
   embedFn?: (texts: string[], apiKey: string) => Promise<number[][]>;
+  classify?: boolean;
+  llmClient?: LlmClient;
+  classifyFn?: (
+    client: LlmClient,
+    newEntry: KnowledgeEntry,
+    existingEntry: StoredEntry,
+  ) => Promise<ClassificationResult>;
+}
+
+export interface BatchClassificationCandidate {
+  newEntry: StoredEntry;
+  matchEntry: StoredEntry;
+  similarity: number;
 }
 
 function toNumber(value: InValue | undefined): number {
@@ -92,6 +154,150 @@ function cosineSimilarity(a: number[], b: number[]): number {
   }
 
   return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+function isClassificationResult(value: unknown): value is ClassificationResult {
+  return typeof value === "string" && CLASSIFICATION_VALUES.includes(value as ClassificationResult);
+}
+
+async function incrementConfirmations(db: Client, entryId: string): Promise<void> {
+  await db.execute({
+    sql: `
+      UPDATE entries
+      SET confirmations = COALESCE(confirmations, 0) + 1,
+          updated_at = ?
+      WHERE id = ?
+    `,
+    args: [new Date().toISOString(), entryId],
+  });
+}
+
+async function markSuperseded(db: Client, entryId: string, supersededBy: string): Promise<void> {
+  await db.execute({
+    sql: `
+      UPDATE entries
+      SET superseded_by = ?,
+          updated_at = ?
+      WHERE id = ?
+    `,
+    args: [supersededBy, new Date().toISOString(), entryId],
+  });
+}
+
+async function incrementContradictions(db: Client, entryId: string): Promise<void> {
+  await db.execute({
+    sql: `
+      UPDATE entries
+      SET contradictions = COALESCE(contradictions, 0) + 1,
+          updated_at = ?
+      WHERE id = ?
+    `,
+    args: [new Date().toISOString(), entryId],
+  });
+}
+
+async function deleteEntryById(db: Client, entryId: string): Promise<void> {
+  await db.execute({
+    sql: "DELETE FROM entries WHERE id = ?",
+    args: [entryId],
+  });
+}
+
+function buildClassificationContext(newEntry: KnowledgeEntry, existingEntry: StoredEntry): Context {
+  const systemPrompt = [
+    "You compare two knowledge entries about the same subject and classify their relationship.",
+    "",
+    "EXISTING entry (already stored):",
+    `- Type: ${existingEntry.type}`,
+    `- Subject: ${existingEntry.subject}`,
+    `- Content: ${existingEntry.content}`,
+    `- Confidence: ${existingEntry.confidence}`,
+    `- Confirmations: ${existingEntry.confirmations}`,
+    "",
+    "NEW entry (being stored):",
+    `- Type: ${newEntry.type}`,
+    `- Subject: ${newEntry.subject}`,
+    `- Content: ${newEntry.content}`,
+    `- Confidence: ${newEntry.confidence}`,
+    "",
+    "Classifications:",
+    "- REINFORCING: New entry says essentially the same thing as existing.",
+    "- SUPERSEDING: New entry replaces/updates the existing (newer info).",
+    "- CONTRADICTING: New entry directly conflicts with existing.",
+    "- NUANCING: New entry adds detail/context to existing without replacing it.",
+    "- UNRELATED: Despite similar embeddings, these are about different things.",
+    "",
+    "Call the classify_relationship tool with your decision.",
+  ].join("\n");
+
+  return {
+    systemPrompt,
+    messages: [
+      {
+        role: "user",
+        content: "Classify the relationship now.",
+        timestamp: Date.now(),
+      },
+    ],
+    tools: [CLASSIFY_RELATIONSHIP_TOOL],
+  };
+}
+
+function buildBatchClassificationContext(candidates: BatchClassificationCandidate[]): Context {
+  const pairLines: string[] = [];
+  for (let i = 0; i < candidates.length; i += 1) {
+    const candidate = candidates[i];
+    if (!candidate) {
+      continue;
+    }
+
+    pairLines.push(
+      [
+        `Pair ${i}:`,
+        `- Similarity: ${candidate.similarity.toFixed(4)}`,
+        "EXISTING entry (already stored):",
+        `  - Type: ${candidate.matchEntry.type}`,
+        `  - Subject: ${candidate.matchEntry.subject}`,
+        `  - Content: ${candidate.matchEntry.content}`,
+        `  - Confidence: ${candidate.matchEntry.confidence}`,
+        `  - Confirmations: ${candidate.matchEntry.confirmations}`,
+        "NEW entry (already inserted):",
+        `  - Type: ${candidate.newEntry.type}`,
+        `  - Subject: ${candidate.newEntry.subject}`,
+        `  - Content: ${candidate.newEntry.content}`,
+        `  - Confidence: ${candidate.newEntry.confidence}`,
+      ].join("\n"),
+    );
+  }
+
+  const systemPrompt = [
+    "You compare new and existing knowledge entries and classify each pair's relationship.",
+    "Return one result per pair index using classify_relationship_batch.",
+    "",
+    "Classifications:",
+    "- REINFORCING: New entry says essentially the same thing as existing.",
+    "- SUPERSEDING: New entry replaces/updates the existing (newer info).",
+    "- CONTRADICTING: New entry directly conflicts with existing.",
+    "- NUANCING: New entry adds detail/context to existing without replacing it.",
+    "- UNRELATED: Despite similar embeddings, these are about different things.",
+    "",
+    "Pairs:",
+    pairLines.join("\n\n"),
+    "",
+    "Call classify_relationship_batch with results[].index matching each pair index.",
+  ].join("\n");
+
+  return {
+    systemPrompt,
+    messages: [
+      {
+        role: "user",
+        content: "Classify every pair and return structured results.",
+        timestamp: Date.now(),
+      },
+    ],
+    tools: [CLASSIFY_RELATIONSHIP_BATCH_TOOL],
+  };
 }
 
 async function getTagsForEntryIds(db: Client, ids: string[]): Promise<Map<string, string[]>> {
@@ -377,12 +583,177 @@ export async function insertEntry(
   return id;
 }
 
+function extractClassificationFromToolCall(message: { content: Array<{ type: string; name?: string; arguments?: unknown }> }): ClassificationResult | null {
+  for (const block of message.content) {
+    if (block.type !== "toolCall" || block.name !== "classify_relationship") {
+      continue;
+    }
+    const args = block.arguments as Partial<ClassifyRelationshipToolArgs> | undefined;
+    const classification = args?.classification;
+    return isClassificationResult(classification) ? classification : null;
+  }
+  return null;
+}
+
+function extractBatchClassificationsFromToolCall(
+  message: { content: Array<{ type: string; name?: string; arguments?: unknown }> },
+  batchSize: number,
+): Map<number, ClassificationResult> {
+  for (const block of message.content) {
+    if (block.type !== "toolCall" || block.name !== "classify_relationship_batch") {
+      continue;
+    }
+
+    const args = block.arguments as Partial<ClassifyRelationshipBatchToolArgs> | undefined;
+    if (!Array.isArray(args?.results)) {
+      return new Map();
+    }
+
+    const map = new Map<number, ClassificationResult>();
+    for (const item of args.results) {
+      if (!item || typeof item !== "object") {
+        continue;
+      }
+
+      const index = (item as { index?: unknown }).index;
+      const classification = (item as { classification?: unknown }).classification;
+
+      if (!Number.isInteger(index) || typeof index !== "number") {
+        continue;
+      }
+      if (index < 0 || index >= batchSize) {
+        continue;
+      }
+      if (!isClassificationResult(classification)) {
+        continue;
+      }
+
+      map.set(index, classification);
+    }
+    return map;
+  }
+
+  return new Map();
+}
+
+export async function classifyRelationship(
+  client: LlmClient,
+  newEntry: KnowledgeEntry,
+  existingEntry: StoredEntry,
+): Promise<ClassificationResult> {
+  try {
+    const response = await runSimpleStream({
+      model: client.resolvedModel.model,
+      context: buildClassificationContext(newEntry, existingEntry),
+      options: {
+        apiKey: client.credentials.apiKey,
+      },
+      verbose: false,
+    });
+
+    if (response.stopReason === "error" || response.errorMessage) {
+      return "UNRELATED";
+    }
+
+    return extractClassificationFromToolCall(response) ?? "UNRELATED";
+  } catch {
+    return "UNRELATED";
+  }
+}
+
+async function classifyRelationshipBatch(
+  client: LlmClient,
+  candidates: BatchClassificationCandidate[],
+): Promise<Map<number, ClassificationResult>> {
+  const response = await runSimpleStream({
+    model: client.resolvedModel.model,
+    context: buildBatchClassificationContext(candidates),
+    options: {
+      apiKey: client.credentials.apiKey,
+    },
+    verbose: false,
+  });
+
+  if (response.stopReason === "error" || response.errorMessage) {
+    throw new Error(response.errorMessage ?? "classification batch failed");
+  }
+
+  return extractBatchClassificationsFromToolCall(response, candidates.length);
+}
+
+export async function batchClassify(
+  db: Client,
+  client: LlmClient,
+  candidates: BatchClassificationCandidate[],
+  options?: {
+    classifyBatchFn?: (
+      client: LlmClient,
+      candidates: BatchClassificationCandidate[],
+    ) => Promise<Map<number, ClassificationResult>>;
+  },
+): Promise<void> {
+  if (candidates.length === 0) {
+    return;
+  }
+
+  for (let offset = 0; offset < candidates.length; offset += 10) {
+    const batch = candidates.slice(offset, offset + 10);
+    if (batch.length === 0) {
+      continue;
+    }
+
+    let results: Map<number, ClassificationResult>;
+    try {
+      results = options?.classifyBatchFn
+        ? await options.classifyBatchFn(client, batch)
+        : await classifyRelationshipBatch(client, batch);
+    } catch {
+      results = new Map();
+    }
+
+    for (let index = 0; index < batch.length; index += 1) {
+      const candidate = batch[index];
+      if (!candidate) {
+        continue;
+      }
+
+      const classification = results.get(index) ?? "UNRELATED";
+
+      if (classification === "REINFORCING") {
+        await incrementConfirmations(db, candidate.matchEntry.id);
+        await deleteEntryById(db, candidate.newEntry.id);
+        continue;
+      }
+
+      if (classification === "SUPERSEDING") {
+        await markSuperseded(db, candidate.matchEntry.id, candidate.newEntry.id);
+        await createRelation(db, candidate.newEntry.id, candidate.matchEntry.id, "supersedes");
+        continue;
+      }
+
+      if (classification === "CONTRADICTING") {
+        await incrementContradictions(db, candidate.matchEntry.id);
+        await createRelation(db, candidate.newEntry.id, candidate.matchEntry.id, "contradicts");
+        continue;
+      }
+
+      if (classification === "NUANCING") {
+        await createRelation(db, candidate.newEntry.id, candidate.matchEntry.id, "elaborates");
+      }
+    }
+  }
+}
+
 export async function storeEntries(
   db: Client,
   entries: KnowledgeEntry[],
   apiKey: string,
   options: StoreEntriesOptions = {},
 ): Promise<StoreResult> {
+  if (options.classify && entries.length > 0 && !options.llmClient) {
+    throw new Error("storeEntries classify=true requires llmClient.");
+  }
+
   const startedAt = Date.now();
   const embedFn = options.embedFn ?? embed;
   const vectors = await resolveEmbeddings(entries, apiKey, embedFn);
@@ -415,26 +786,27 @@ export async function storeEntries(
 
       let topMatch: { entry: StoredEntry; similarity: number } | undefined;
       if (!options.force) {
-        const similar = await findSimilar(db, embedding, DEFAULT_SIMILAR_LIMIT);
+        const similar = await findSimilar(db, embedding, options.classify ? 10 : DEFAULT_SIMILAR_LIMIT);
         topMatch = similar[0];
       }
 
-      if (topMatch && topMatch.similarity > AUTO_SKIP_THRESHOLD) {
+      const similarity = topMatch?.similarity ?? 0;
+      const sameSubject = topMatch ? normalize(entry.subject) === normalize(topMatch.entry.subject) : false;
+      const sameType = topMatch ? entry.type === topMatch.entry.type : false;
+
+      if (topMatch && similarity > AUTO_SKIP_THRESHOLD) {
         skipped += 1;
         options.onDecision?.({
           entry,
           action: "skipped",
           reason: "near-exact semantic duplicate",
-          similarity: topMatch.similarity,
+          similarity,
           matchedEntryId: topMatch.entry.id,
+          matchedEntry: topMatch.entry,
+          sameSubject,
         });
         continue;
       }
-
-      const similarity = topMatch?.similarity ?? 0;
-      const sameSubject =
-        topMatch && normalize(entry.subject) === normalize(topMatch.entry.subject) ? true : false;
-      const sameType = topMatch && entry.type === topMatch.entry.type;
 
       if (
         !options.force &&
@@ -444,15 +816,7 @@ export async function storeEntries(
         sameSubject &&
         sameType
       ) {
-        await db.execute({
-          sql: `
-            UPDATE entries
-            SET confirmations = COALESCE(confirmations, 0) + 1,
-                updated_at = ?
-            WHERE id = ?
-          `,
-          args: [new Date().toISOString(), topMatch.entry.id],
-        });
+        await incrementConfirmations(db, topMatch.entry.id);
         updated += 1;
         options.onDecision?.({
           entry,
@@ -460,6 +824,110 @@ export async function storeEntries(
           reason: "reinforced existing entry (same subject+type)",
           similarity,
           matchedEntryId: topMatch.entry.id,
+          matchedEntry: topMatch.entry,
+          sameSubject,
+        });
+        continue;
+      }
+
+      if (
+        !options.force &&
+        options.classify &&
+        topMatch &&
+        similarity >= CLASSIFY_LOW_THRESHOLD &&
+        similarity < SMART_DEDUP_THRESHOLD &&
+        sameSubject
+      ) {
+        const classifyFn = options.classifyFn ?? classifyRelationship;
+        let classification: ClassificationResult = "UNRELATED";
+        try {
+          classification = await classifyFn(options.llmClient as LlmClient, entry, topMatch.entry);
+        } catch {
+          classification = "UNRELATED";
+        }
+
+        if (classification === "REINFORCING") {
+          await incrementConfirmations(db, topMatch.entry.id);
+          updated += 1;
+          options.onDecision?.({
+            entry,
+            action: "updated",
+            reason: "reinforced via LLM classification",
+            similarity,
+            matchedEntryId: topMatch.entry.id,
+            classification,
+            matchedEntry: topMatch.entry,
+            sameSubject,
+          });
+          continue;
+        }
+
+        const newEntryId = await insertEntry(db, entry, embedding, contentHash);
+        added += 1;
+
+        if (classification === "SUPERSEDING") {
+          await markSuperseded(db, topMatch.entry.id, newEntryId);
+          await createRelation(db, newEntryId, topMatch.entry.id, "supersedes");
+          relationsCreated += 1;
+          options.onDecision?.({
+            entry,
+            action: "added",
+            reason: "supersedes existing entry",
+            similarity,
+            matchedEntryId: topMatch.entry.id,
+            classification,
+            newEntryId,
+            matchedEntry: topMatch.entry,
+            sameSubject,
+          });
+          continue;
+        }
+
+        if (classification === "CONTRADICTING") {
+          await incrementContradictions(db, topMatch.entry.id);
+          await createRelation(db, newEntryId, topMatch.entry.id, "contradicts");
+          relationsCreated += 1;
+          options.onDecision?.({
+            entry,
+            action: "added",
+            reason: "contradicts existing entry",
+            similarity,
+            matchedEntryId: topMatch.entry.id,
+            classification,
+            newEntryId,
+            matchedEntry: topMatch.entry,
+            sameSubject,
+          });
+          continue;
+        }
+
+        if (classification === "NUANCING") {
+          await createRelation(db, newEntryId, topMatch.entry.id, "elaborates");
+          relationsCreated += 1;
+          options.onDecision?.({
+            entry,
+            action: "added",
+            reason: "nuances existing entry",
+            similarity,
+            matchedEntryId: topMatch.entry.id,
+            classification,
+            newEntryId,
+            matchedEntry: topMatch.entry,
+            sameSubject,
+          });
+          continue;
+        }
+
+        options.onDecision?.({
+          entry,
+          action: "added",
+          reason: "classified as unrelated",
+          similarity,
+          matchedEntryId: topMatch.entry.id,
+          classification,
+          newEntryId,
+          matchedEntry: topMatch.entry,
+          sameSubject,
         });
         continue;
       }
@@ -483,6 +951,9 @@ export async function storeEntries(
           reason: "added with related relation (same subject, different type)",
           similarity,
           matchedEntryId: topMatch.entry.id,
+          newEntryId,
+          matchedEntry: topMatch.entry,
+          sameSubject,
         });
         continue;
       }
@@ -491,8 +962,11 @@ export async function storeEntries(
         entry,
         action: "added",
         reason: options.force ? "force mode" : "new entry",
-        similarity: topMatch?.similarity,
+        similarity,
         matchedEntryId: topMatch?.entry.id,
+        newEntryId,
+        matchedEntry: topMatch?.entry,
+        sameSubject,
       });
     }
 
