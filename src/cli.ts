@@ -13,6 +13,7 @@ import {
 } from "./commands/db.js";
 import { runRecallCommand } from "./commands/recall.js";
 import { runStoreCommand } from "./commands/store.js";
+import { runWatchCommand } from "./commands/watch.js";
 import { describeAuth, maskSecret, readConfig, setConfigKey, setStoredCredential, writeConfig } from "./config.js";
 import { deduplicateEntries } from "./dedup.js";
 import { extractKnowledgeFromChunks } from "./extractor.js";
@@ -23,6 +24,7 @@ import { expandInputFiles, parseTranscriptFile } from "./parser.js";
 import { runSetup } from "./setup.js";
 import { banner, formatError, formatLabel, formatSuccess, formatWarn, ui } from "./ui.js";
 import type { ExtractionReport, ExtractionStats } from "./types.js";
+import type { WatchCommandOptions } from "./commands/watch.js";
 
 export interface ExtractCommandOptions {
   format: "json" | "markdown";
@@ -415,6 +417,24 @@ export function createProgram(): Command {
         noBoost: opts.noBoost === true,
         noUpdate: opts.noUpdate === true,
       });
+      process.exitCode = result.exitCode;
+    });
+
+  program
+    .command("watch")
+    .description("Watch a transcript file and auto-extract knowledge as it grows")
+    .argument("<file>", "Transcript file to watch (.jsonl, .md, .txt)")
+    .option("--interval <seconds>", "Polling interval in seconds", "300")
+    .option("--min-chunk <chars>", "Minimum new chars before extraction", "2000")
+    .option("--db <path>", "Database path override")
+    .option("--model <model>", "LLM model to use")
+    .option("--provider <name>", "LLM provider: anthropic, openai, openai-codex")
+    .option("--verbose", "Show extraction progress", false)
+    .option("--dry-run", "Extract without storing", false)
+    .option("--once", "Run one cycle and exit", false)
+    .option("--json", "Output JSON results", false)
+    .action(async (file: string, opts: WatchCommandOptions) => {
+      const result = await runWatchCommand(file, opts);
       process.exitCode = result.exitCode;
     });
 
