@@ -226,3 +226,28 @@ export interface EntryRelation {
   relation_type: RelationType;
   created_at: string;
 }
+
+export interface WatchFileState {
+  filePath: string;
+  byteOffset: number;
+  lastRunAt: string;
+  totalEntriesStored: number;
+  totalRunCount: number;
+}
+
+export interface WatchState {
+  version: 1;
+  files: Record<string, WatchFileState>;
+}
+
+export interface WatchOptions {
+  interval?: number | string;
+  minChunk?: number | string;
+  db?: string;
+  model?: string;
+  provider?: string;
+  verbose?: boolean;
+  dryRun?: boolean;
+  once?: boolean;
+  json?: boolean;
+}
