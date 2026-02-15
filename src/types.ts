@@ -180,19 +180,36 @@ export interface RecallResult {
 }
 
 export interface RecallQuery {
-  text: string;
+  text?: string;
   limit?: number;
   types?: KnowledgeType[];
   tags?: string[];
   minConfidence?: ConfidenceLevel;
   since?: string;
   expiry?: Expiry;
+  scope?: Scope;
+  context?: string;
+  budget?: number;
   noBoost?: boolean;
+  noUpdate?: boolean;
+}
+
+export interface RecallCommandResult extends RecallResult {
+  category?: "core" | "active" | "preferences" | "recent";
+}
+
+export interface RecallCommandResponse {
+  query: string;
+  results: RecallCommandResult[];
+  total: number;
+  budget_used?: number;
+  budget_limit?: number;
 }
 
 export interface IngestLogEntry {
   id: string;
   file_path: string;
+  content_hash?: string;
   ingested_at: string;
   entries_added: number;
   entries_updated: number;

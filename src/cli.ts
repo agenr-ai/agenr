@@ -5,6 +5,14 @@ import { pathToFileURL } from "node:url";
 import * as clack from "@clack/prompts";
 import { Command } from "commander";
 import { formatAuthSummary, getAuthStatus, getQuickStatus } from "./auth-status.js";
+import {
+  runDbExportCommand,
+  runDbPathCommand,
+  runDbResetCommand,
+  runDbStatsCommand,
+} from "./commands/db.js";
+import { runRecallCommand } from "./commands/recall.js";
+import { runStoreCommand } from "./commands/store.js";
 import { describeAuth, maskSecret, readConfig, setConfigKey, setStoredCredential, writeConfig } from "./config.js";
 import { deduplicateEntries } from "./dedup.js";
 import { extractKnowledgeFromChunks } from "./extractor.js";
@@ -18,6 +26,7 @@ import type { ExtractionReport, ExtractionStats } from "./types.js";
 
 export interface ExtractCommandOptions {
   format: "json" | "markdown";
+  json?: boolean;
   output?: string;
   split?: boolean;
   model?: string;
@@ -338,6 +347,7 @@ export function createProgram(): Command {
     .command("extract")
     .description("Extract structured knowledge from conversation transcripts")
     .argument("<files...>", "One or more transcript files (.jsonl, .md, .txt)")
+    .option("--json", "Output raw KnowledgeEntry[] JSON", false)
     .option("--format <type>", "Output format: json, markdown", "markdown")
     .option("--output <file>", "Write output to file (or directory with --split)")
     .option("--split", "Write one output file per input transcript", false)
@@ -345,7 +355,8 @@ export function createProgram(): Command {
     .option("--provider <name>", "LLM provider: anthropic, openai, openai-codex")
     .option("--verbose", "Show extraction progress and debug info", false)
     .action(async (files: string[], opts: ExtractCommandOptions) => {
-      const format = opts.format === "json" ? "json" : opts.format === "markdown" ? "markdown" : null;
+      const selectedFormat = opts.json ? "json" : opts.format;
+      const format = selectedFormat === "json" ? "json" : selectedFormat === "markdown" ? "markdown" : null;
       if (!format) {
         throw new Error("--format must be one of: json, markdown");
       }
@@ -356,6 +367,100 @@ export function createProgram(): Command {
       });
 
       process.exitCode = result.exitCode;
+    });
+
+  program
+    .command("store")
+    .description("Store extracted knowledge entries in the local database")
+    .argument("[files...]", "One or more extraction JSON files")
+    .option("--db <path>", "Database path override")
+    .option("--dry-run", "Show what would be stored without writing", false)
+    .option("--verbose", "Show per-entry dedup decisions", false)
+    .option("--force", "Skip dedup and store all entries as new", false)
+    .action(async (files: string[], opts: { db?: string; dryRun?: boolean; verbose?: boolean; force?: boolean }) => {
+      const result = await runStoreCommand(files ?? [], opts);
+      process.exitCode = result.exitCode;
+    });
+
+  program
+    .command("recall")
+    .description("Recall knowledge from the local database")
+    .argument("[query]", "Natural language query")
+    .option("--limit <n>", "Maximum number of results", "10")
+    .option("--type <types>", "Filter by comma-separated entry types")
+    .option("--tags <tags>", "Filter by comma-separated tags")
+    .option("--min-confidence <level>", "Minimum confidence: low|medium|high")
+    .option("--since <duration>", "Filter by recency (1h, 7d, 30d, 1y) or ISO timestamp")
+    .option("--expiry <level>", "Filter by expiry: core|permanent|temporary|session-only")
+    .option("--json", "Output JSON", false)
+    .option("--db <path>", "Database path override")
+    .option("--budget <tokens>", "Approximate token budget")
+    .option("--context <mode>", "Context mode: default|session-start|topic:<query>", "default")
+    .option("--scope <level>", "Visibility scope: private|personal|public", "private")
+    .option("--no-boost", "Disable scoring boosts and use raw vector similarity", false)
+    .option("--no-update", "Do not increment recall metadata", false)
+    .action(async (query: string | undefined, opts: Record<string, unknown>) => {
+      const result = await runRecallCommand(query, {
+        limit: opts.limit as string | number | undefined,
+        type: opts.type as string | undefined,
+        tags: opts.tags as string | undefined,
+        minConfidence: opts.minConfidence as string | undefined,
+        since: opts.since as string | undefined,
+        expiry: opts.expiry as string | undefined,
+        json: opts.json === true,
+        db: opts.db as string | undefined,
+        budget: opts.budget as string | number | undefined,
+        context: opts.context as string | undefined,
+        scope: opts.scope as string | undefined,
+        noBoost: opts.noBoost === true,
+        noUpdate: opts.noUpdate === true,
+      });
+      process.exitCode = result.exitCode;
+    });
+
+  const dbCommand = program.command("db").description("Manage the local knowledge database");
+
+  dbCommand
+    .command("stats")
+    .description("Show database statistics")
+    .option("--db <path>", "Database path override")
+    .action(async (opts: { db?: string }) => {
+      await runDbStatsCommand({ db: opts.db });
+      process.exitCode = 0;
+    });
+
+  dbCommand
+    .command("export")
+    .description("Export all non-superseded entries")
+    .option("--json", "Export JSON", false)
+    .option("--md", "Export markdown", false)
+    .option("--db <path>", "Database path override")
+    .action(async (opts: { db?: string; json?: boolean; md?: boolean }) => {
+      await runDbExportCommand({
+        db: opts.db,
+        json: opts.json,
+        md: opts.md,
+      });
+      process.exitCode = 0;
+    });
+
+  dbCommand
+    .command("reset")
+    .description("Drop all database objects and recreate schema")
+    .option("--confirm", "Required confirmation flag", false)
+    .option("--db <path>", "Database path override")
+    .action(async (opts: { db?: string; confirm?: boolean }) => {
+      await runDbResetCommand({ db: opts.db, confirm: opts.confirm });
+      process.exitCode = 0;
+    });
+
+  dbCommand
+    .command("path")
+    .description("Print the resolved database path")
+    .option("--db <path>", "Database path override")
+    .action(async (opts: { db?: string }) => {
+      await runDbPathCommand({ db: opts.db });
+      process.exitCode = 0;
     });
 
   program

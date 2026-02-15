@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { ExtractionReport } from "./types.js";
+import type { ExtractionReport, KnowledgeEntry } from "./types.js";
 
 function summarizeStats(stats: {
   chunks: number;
@@ -33,8 +33,16 @@ function formatEntryBullet(entry: {
   return `- [${entry.type}] **${entry.subject}**: ${entry.content} (confidence=${entry.confidence}, expiry=${entry.expiry}, tags=${tags}, source=${entry.source.context})`;
 }
 
+function flattenEntries(report: ExtractionReport): KnowledgeEntry[] {
+  const entries: KnowledgeEntry[] = [];
+  for (const payload of Object.values(report.files)) {
+    entries.push(...payload.entries);
+  }
+  return entries;
+}
+
 export function formatJson(report: ExtractionReport): string {
-  return `${JSON.stringify(report, null, 2)}\n`;
+  return `${JSON.stringify(flattenEntries(report), null, 2)}\n`;
 }
 
 export function formatMarkdown(report: ExtractionReport): string {

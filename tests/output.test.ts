@@ -71,9 +71,11 @@ describe("output", () => {
     const report = makeReport();
     const json = formatJson(report);
     const markdown = formatMarkdown(report);
+    const parsedJson = JSON.parse(json) as Array<{ type: string; subject: string }>;
 
-    expect(json).toContain('"files"');
-    expect(json).toContain('"a/session.jsonl"');
+    expect(Array.isArray(parsedJson)).toBe(true);
+    expect(parsedJson).toHaveLength(1);
+    expect(parsedJson[0]).toMatchObject({ type: "fact", subject: "Jim" });
     expect(markdown).toContain("## a/session.jsonl");
     expect(markdown).toContain("_Stats: chunks=2/2 successful | failed=0 | raw=1 | entries=1 | dupes_removed=0 | warnings=0_");
     expect(markdown).toContain("- Entries: 1 entries (0 duplicates removed)");
