@@ -5,6 +5,8 @@ import { runMigrations } from "./schema.js";
 
 export const DEFAULT_DB_PATH = path.join(os.homedir(), ".agenr", "knowledge.db");
 
+const walInitByClient = new WeakMap<Client, Promise<void>>();
+
 function resolveUserPath(inputPath: string): string {
   if (!inputPath.startsWith("~")) {
     return inputPath;
@@ -27,14 +29,22 @@ export function getDb(dbPath?: string): Client {
   }
 
   if (rawPath.startsWith("file:")) {
-    return createClient({ url: rawPath });
+    const client = createClient({ url: rawPath });
+    walInitByClient.set(client, client.execute("PRAGMA journal_mode=WAL").then(() => undefined));
+    return client;
   }
 
   const resolvedPath = resolveDbPath(rawPath);
-  return createClient({ url: `file:${resolvedPath}` });
+  const client = createClient({ url: `file:${resolvedPath}` });
+  walInitByClient.set(client, client.execute("PRAGMA journal_mode=WAL").then(() => undefined));
+  return client;
 }
 
 export async function initDb(client: Client): Promise<void> {
+  const walInit = walInitByClient.get(client);
+  if (walInit) {
+    await walInit;
+  }
   await runMigrations(client);
 }
 
