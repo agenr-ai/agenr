@@ -857,6 +857,18 @@ export function createMcpServer(
   }
 
   async function startServer(): Promise<void> {
+    // Fail fast: check for embedding API key on startup
+    try {
+      const startupConfig = await resolvedDeps.readConfigFn();
+      resolvedDeps.resolveEmbeddingApiKeyFn(startupConfig, env);
+    } catch {
+      log("[mcp] ERROR: OPENAI_API_KEY is required for embeddings but was not found.");
+      log("[mcp] Set it via environment variable or run: agenr setup");
+      log("[mcp] If using MCP, add it to your MCP server config env block.");
+      process.exitCode = 1;
+      return;
+    }
+
     lineReader = readline.createInterface({
       input,
       crlfDelay: Infinity,

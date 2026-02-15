@@ -514,7 +514,7 @@ export async function runRecallCommand(
       results: stripped,
       total: stripped.length,
       budget_used: budgetUsed,
-      budget_limit: budget,
+      budget_limit: budget ?? null,
     };
 
     const elapsedMs = Date.now() - startedAt;
