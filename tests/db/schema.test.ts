@@ -46,9 +46,11 @@ describe("db schema migrations", () => {
       "idx_entries_expiry",
       "idx_entries_created",
       "idx_entries_superseded",
+      "idx_entries_content_hash",
       "idx_tags_tag",
       "idx_relations_source",
       "idx_relations_target",
+      "idx_ingest_log_file_hash",
       "entries_ai",
       "entries_ad",
       "entries_au",
@@ -72,25 +74,40 @@ describe("db schema migrations", () => {
     await initDb(client);
     await initDb(client);
 
-    const migrationResult = await client.execute(
-      "SELECT COUNT(*) AS count FROM _migrations WHERE version = 1",
-    );
-    const count = asNumber(migrationResult.rows[0]?.count);
-    expect(count).toBe(1);
+    const migrationResult = await client.execute("SELECT version, COUNT(*) AS count FROM _migrations GROUP BY version");
+    const countsByVersion = new Map<number, number>();
+    for (const row of migrationResult.rows) {
+      countsByVersion.set(asNumber(row.version), asNumber(row.count));
+    }
+
+    expect(countsByVersion.get(1)).toBe(1);
+    expect(countsByVersion.get(2)).toBe(1);
   });
 
   it("tracks migration version and applied timestamp", async () => {
     const client = makeClient();
     await initDb(client);
 
-    const migrationResult = await client.execute(
-      "SELECT version, applied_at FROM _migrations WHERE version = 1",
-    );
+    const migrationResult = await client.execute("SELECT version, applied_at FROM _migrations ORDER BY version ASC");
+    expect(migrationResult.rows.length).toBe(2);
 
-    expect(migrationResult.rows.length).toBe(1);
-    const row = migrationResult.rows[0] as { version?: unknown; applied_at?: unknown };
-    expect(asNumber(row.version)).toBe(1);
-    expect(typeof row.applied_at).toBe("string");
-    expect(Number.isNaN(Date.parse(String(row.applied_at)))).toBe(false);
+    for (const row of migrationResult.rows as Array<{ version?: unknown; applied_at?: unknown }>) {
+      expect([1, 2]).toContain(asNumber(row.version));
+      expect(typeof row.applied_at).toBe("string");
+      expect(Number.isNaN(Date.parse(String(row.applied_at)))).toBe(false);
+    }
+  });
+
+  it("adds content hash columns in migration v2", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    const entriesInfo = await client.execute("PRAGMA table_info(entries)");
+    const ingestInfo = await client.execute("PRAGMA table_info(ingest_log)");
+    const entryColumns = new Set(entriesInfo.rows.map((row) => String(row.name)));
+    const ingestColumns = new Set(ingestInfo.rows.map((row) => String(row.name)));
+
+    expect(entryColumns.has("content_hash")).toBe(true);
+    expect(ingestColumns.has("content_hash")).toBe(true);
   });
 });

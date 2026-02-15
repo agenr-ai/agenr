@@ -1,0 +1,165 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { estimateEntryTokens, parseSinceToIso, runRecallCommand } from "../../src/commands/recall.js";
+import type { RecallResult, StoredEntry } from "../../src/types.js";
+
+function makeEntry(overrides: Partial<StoredEntry> = {}): StoredEntry {
+  return {
+    id: "entry-1",
+    type: "fact",
+    subject: "Jim",
+    content: "Default content",
+    confidence: "high",
+    expiry: "temporary",
+    scope: "private",
+    tags: ["default"],
+    source: {
+      file: "source.jsonl",
+      context: "test",
+    },
+    embedding: [0.1, 0.2, 0.3],
+    created_at: "2026-02-14T00:00:00.000Z",
+    updated_at: "2026-02-14T00:00:00.000Z",
+    recall_count: 0,
+    confirmations: 0,
+    contradictions: 0,
+    ...overrides,
+  };
+}
+
+function makeResult(overrides: Partial<RecallResult> = {}): RecallResult {
+  return {
+    entry: makeEntry(),
+    score: 0.8,
+    scores: {
+      vector: 0.9,
+      recency: 0.8,
+      confidence: 0.75,
+      recall: 0.2,
+      fts: 0.15,
+    },
+    ...overrides,
+  };
+}
+
+function makeDeps(overrides?: {
+  recallFn?: ReturnType<typeof vi.fn>;
+  updateRecallMetadataFn?: ReturnType<typeof vi.fn>;
+}) {
+  return {
+    readConfigFn: vi.fn(() => ({ db: { path: ":memory:" } })),
+    resolveEmbeddingApiKeyFn: vi.fn(() => "sk-test"),
+    getDbFn: vi.fn(() => ({}) as any),
+    initDbFn: vi.fn(async () => undefined),
+    closeDbFn: vi.fn(() => undefined),
+    recallFn: overrides?.recallFn ?? vi.fn(async () => [makeResult()]),
+    updateRecallMetadataFn: overrides?.updateRecallMetadataFn ?? vi.fn(async () => undefined),
+    nowFn: () => new Date("2026-02-15T00:00:00.000Z"),
+  };
+}
+
+describe("recall command", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("parses duration strings into ISO cutoffs", () => {
+    const now = new Date("2026-02-15T12:00:00.000Z");
+    const oneHour = parseSinceToIso("1h", now);
+    const sevenDays = parseSinceToIso("7d", now);
+    const oneYear = parseSinceToIso("1y", now);
+
+    expect(oneHour).toBe("2026-02-15T11:00:00.000Z");
+    expect(sevenDays).toBe("2026-02-08T12:00:00.000Z");
+    expect(oneYear).toBe("2025-02-15T12:00:00.000Z");
+  });
+
+  it("estimates token usage per entry", () => {
+    const tokens = estimateEntryTokens(
+      makeResult({
+        entry: makeEntry({
+          content: "Jim is working on recall and db commands",
+          tags: ["recall", "db", "phase-3"],
+        }),
+      }),
+    );
+    expect(tokens).toBeGreaterThan(5);
+  });
+
+  it("requires either a query or session-start context", async () => {
+    const deps = makeDeps();
+    await expect(runRecallCommand(undefined, { context: "default" }, deps)).rejects.toThrow(
+      "Provide a query or use --context session-start.",
+    );
+  });
+
+  it("outputs JSON envelope and strips entry embeddings", async () => {
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const deps = makeDeps();
+
+    const result = await runRecallCommand("work", { json: true, limit: 5 }, deps);
+
+    expect(result.payload.query).toBe("work");
+    expect(result.payload.total).toBe(1);
+    expect(result.payload.results[0]?.entry.embedding).toBeUndefined();
+
+    const jsonOutput = stdoutSpy.mock.calls.map((call) => String(call[0])).join("");
+    const parsed = JSON.parse(jsonOutput) as { query: string; results: Array<{ entry: { embedding?: number[] } }> };
+    expect(parsed.query).toBe("work");
+    expect(parsed.results[0]?.entry.embedding).toBeUndefined();
+  });
+
+  it("groups session-start output and includes category fields", async () => {
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const recallFn = vi.fn(async (_db: unknown, query: { expiry?: string }) => {
+      if (query.expiry === "core") {
+        return [
+          makeResult({
+            entry: makeEntry({
+              id: "core-1",
+              content: "Core identity",
+              expiry: "core",
+              type: "fact",
+              embedding: [1, 0, 0],
+            }),
+          }),
+        ];
+      }
+
+      return [
+        makeResult({
+          entry: makeEntry({ id: "todo-1", type: "todo", expiry: "temporary", content: "Active todo" }),
+          score: 0.92,
+        }),
+        makeResult({
+          entry: makeEntry({ id: "pref-1", type: "preference", expiry: "permanent", content: "Pref item" }),
+          score: 0.85,
+        }),
+        makeResult({
+          entry: makeEntry({ id: "recent-1", type: "event", expiry: "temporary", content: "Recent item" }),
+          score: 0.8,
+        }),
+      ];
+    });
+
+    const deps = makeDeps({ recallFn });
+    const output = await runRecallCommand(undefined, { context: "session-start", json: true, budget: 500 }, deps);
+
+    expect(output.payload.results[0]?.category).toBe("core");
+    expect(output.payload.results.some((row) => row.category === "active")).toBe(true);
+    expect(output.payload.results.some((row) => row.category === "preferences")).toBe(true);
+    expect(output.payload.results.some((row) => row.category === "recent")).toBe(true);
+
+    const jsonOutput = stdoutSpy.mock.calls.map((call) => String(call[0])).join("");
+    const parsed = JSON.parse(jsonOutput) as { results: Array<{ category?: string }> };
+    expect(parsed.results.some((item) => item.category === "core")).toBe(true);
+  });
+
+  it("shapes topic context text as [topic: value] <query>", async () => {
+    const recallFn = vi.fn(async () => []);
+    const deps = makeDeps({ recallFn });
+    await runRecallCommand("what is Jim's diet", { context: "topic:health", json: true }, deps);
+
+    const firstCallQuery = recallFn.mock.calls[0]?.[1] as { text?: string };
+    expect(firstCallQuery?.text).toBe("[topic: health] what is Jim's diet");
+  });
+});
