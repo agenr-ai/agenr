@@ -44,7 +44,11 @@ pnpm exec agenr extract your-transcript.txt --json | pnpm exec agenr store
 pnpm exec agenr recall "what did we decide about X?" --limit 5
 ```
 
-> **Note:** agenr is not yet published to npm. Clone the repo for now.
+```bash
+# Or install globally
+npm install -g agenr
+agenr setup
+```
 
 > **Important:** Embeddings always use OpenAI's API (`text-embedding-3-small`), regardless of which LLM provider you choose for extraction. You'll need an `OPENAI_API_KEY` even if you use Anthropic for everything else. Run `agenr setup` and it'll walk you through it.
 
@@ -82,8 +86,8 @@ The point of agenr is that your tools share one brain. Debug a production issue 
 
 ```toml
 [mcp_servers.agenr]
-command = "node"
-args = ["/path/to/agenr/dist/cli.js", "mcp"]
+command = "npx"
+args = ["-y", "agenr", "mcp"]
 env = { OPENAI_API_KEY = "your-key-here" }
 ```
 
@@ -93,8 +97,8 @@ env = { OPENAI_API_KEY = "your-key-here" }
 {
   "mcpServers": {
     "agenr": {
-      "command": "node",
-      "args": ["/path/to/agenr/dist/cli.js", "mcp"],
+      "command": "npx",
+      "args": ["-y", "agenr", "mcp"],
       "env": { "OPENAI_API_KEY": "your-key-here" }
     }
   }
