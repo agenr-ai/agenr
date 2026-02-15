@@ -493,3 +493,43 @@ $A db path
 ```text
 /Users/you/.agenr/knowledge.db
 ```
+
+---
+
+## Flag Deep Dives
+
+### `--scope` behavior
+
+The `--scope` flag on `recall` controls which entries are visible based on their scope level:
+
+- `--scope private` (default): returns entries with scope `private`, `personal`, or `public`
+- `--scope personal`: returns entries with scope `personal` or `public`
+- `--scope public`: returns only `public` entries
+
+Scope is assigned when entries are stored. The default scope for CLI-stored entries is `private`. The MCP `agenr_store` tool defaults to `personal`. You can set scope explicitly via the MCP store tool's `scope` parameter.
+
+### `--context` modes
+
+The `--context` flag changes how recall behaves:
+
+- **`default`** (or omitted): Standard semantic search. Requires a query string. Returns entries ranked by the full scoring model (vector similarity × recency × confidence × recall strength).
+
+- **`session-start`**: Designed for AI agents to load at the beginning of a session. No query required. Fetches recent entries (up to 500) without vector search and groups them into categories:
+  - **Core**: entries with `expiry=core` (always included, fetched separately)
+  - **Active**: open todos (non-session-only)
+  - **Preferences**: preferences and decisions
+  - **Recent**: everything else, sorted by recency
+  
+  When used with `--budget`, allocates tokens across categories (30% active, 30% preferences, remainder to recent) with overflow redistribution.
+
+- **`topic:<query>`**: Prepends `[topic: <query>]` to the search text before embedding, biasing results toward that topic. Useful for scoping recall to a specific area (e.g., `--context topic:authentication`).
+
+### `--budget` behavior
+
+The `--budget <tokens>` flag caps the total approximate token count of returned entries. Token estimation counts words in the entry's type, subject, content, confidence, expiry, and tags, then multiplies by 1.3.
+
+In **default** mode: entries are ranked by score, then consumed in order until the budget is exhausted.
+
+In **session-start** mode: the budget is split across categories (30% active, 30% preferences, remaining to recent). Each category consumes entries in score order until its quota is full. Leftover budget is redistributed to remaining entries across all categories.
+
+This is useful for keeping context windows manageable — e.g., `agenr recall --context session-start --budget 2000` loads ≈2000 tokens of the most relevant memories.

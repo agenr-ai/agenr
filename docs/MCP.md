@@ -2,7 +2,7 @@
 
 ## What MCP Is
 
-Model Context Protocol (MCP) is a standard for exposing tools over a consistent interface so LLM clients can call external capabilities (like memory retrieval and persistence) using structured tool calls instead of ad hoc prompts.
+[Model Context Protocol (MCP)](https://modelcontextprotocol.io) is a standard for exposing tools over a consistent interface so LLM clients can call external capabilities (like memory retrieval and persistence) using structured tool calls instead of ad hoc prompts.
 
 ## Why agenr + MCP
 

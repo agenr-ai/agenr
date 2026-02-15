@@ -48,6 +48,15 @@ pnpm exec agenr recall "what did we decide about X?" --limit 5
 
 > **Important:** Embeddings always use OpenAI's API (`text-embedding-3-small`), regardless of which LLM provider you choose for extraction. You'll need an `OPENAI_API_KEY` even if you use Anthropic for everything else. Run `agenr setup` and it'll walk you through it.
 
+## Configuration
+
+See [docs/CONFIGURATION.md](./docs/CONFIGURATION.md) for the full reference, including:
+- Environment variables (`OPENAI_API_KEY`)
+- Config file location and format
+- Auth method decision guide
+- Database path and `--db` flag
+- Migration/upgrade notes
+
 ## How it works
 
 **Extract** — Feed any transcript or text file to an LLM. Out come structured entries: facts, decisions, preferences, todos, relationships, events, lessons.
@@ -153,6 +162,16 @@ Current AI's bottleneck isn't intelligence — it's continuity. A slightly less 
 agenr is local-first because your memory is yours. It's structured (not just vectors) because "what did we decide about X?" needs a real answer, not a similarity score. It's open source because memory infrastructure should be shared.
 
 We're not claiming to have solved AI memory. We're sharing an approach that works for us and seeing if it works for others too.
+
+## Troubleshooting
+
+| Problem | Cause | Fix |
+|---|---|---|
+| Embeddings fail with API key error | Missing `OPENAI_API_KEY` | Set the env var or run `agenr config set-key openai <key>`. Required even with Anthropic auth. |
+| Database locked error | Consolidation is running | Wait for it to finish, or check for a stale lock file at `~/.agenr/consolidation.lock`. |
+| `--classify` fails but store works | LLM auth is broken (embeddings still work via `OPENAI_API_KEY`) | Run `agenr auth status` and fix your LLM provider credentials. |
+| `db reset` deleted everything | `db reset --confirm` is destructive and irreversible | Back up your DB first: `cp ~/.agenr/knowledge.db ~/.agenr/knowledge.db.backup` |
+| Extraction fails mid-file | LLM timeout or rate limit on large files | Partial results may have been extracted. Retry the file — dedup will skip already-stored entries. |
 
 ## License
 
