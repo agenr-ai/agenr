@@ -48,6 +48,10 @@ export async function initDb(client: Client): Promise<void> {
   await runMigrations(client);
 }
 
+export async function walCheckpoint(client: Client): Promise<void> {
+  await client.execute("PRAGMA wal_checkpoint(TRUNCATE)");
+}
+
 export function closeDb(client: Client): void {
   client.close();
 }

@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { Client } from "@libsql/client";
-import { closeDb, getDb, initDb } from "../../src/db/client.js";
+import { closeDb, getDb, initDb, walCheckpoint } from "../../src/db/client.js";
 
 describe("db client", () => {
   const clients: Client[] = [];
@@ -39,5 +39,25 @@ describe("db client", () => {
 
     expect(String(mode).toLowerCase()).toBe("wal");
   });
-});
 
+  it("can run a WAL checkpoint after writes", async () => {
+    tempDir = await mkdtemp(path.join(os.tmpdir(), "agenr-db-"));
+    const dbPath = path.join(tempDir, "knowledge.db");
+
+    const client = getDb(dbPath);
+    clients.push(client);
+    await initDb(client);
+
+    const modeResult = await client.execute("PRAGMA journal_mode");
+    const firstRow = modeResult.rows[0] as Record<string, unknown> | undefined;
+    const mode =
+      (firstRow?.journal_mode ?? firstRow?.["journal_mode"]) ??
+      (firstRow ? Object.values(firstRow)[0] : undefined);
+    expect(String(mode).toLowerCase()).toBe("wal");
+
+    await client.execute("CREATE TABLE IF NOT EXISTS wal_checkpoint_test (id INTEGER PRIMARY KEY, value TEXT)");
+    await client.execute({ sql: "INSERT INTO wal_checkpoint_test (value) VALUES (?)", args: ["ok"] });
+
+    await expect(walCheckpoint(client)).resolves.toBeUndefined();
+  });
+});
