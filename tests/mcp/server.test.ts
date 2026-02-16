@@ -69,6 +69,7 @@ interface TestHarness {
   initDbFn: ReturnType<typeof vi.fn>;
   closeDbFn: ReturnType<typeof vi.fn>;
   recallFn: ReturnType<typeof vi.fn>;
+  updateRecallMetadataFn: ReturnType<typeof vi.fn>;
   storeEntriesFn: ReturnType<typeof vi.fn>;
   parseTranscriptFileFn: ReturnType<typeof vi.fn>;
   extractKnowledgeFromChunksFn: ReturnType<typeof vi.fn>;
@@ -88,6 +89,7 @@ function makeHarness(): TestHarness {
   const closeDbFn = vi.fn(() => undefined);
 
   const recallFn = vi.fn(async () => [makeRecallResult()]);
+  const updateRecallMetadataFn = vi.fn(async () => undefined);
   const storeEntriesFn = vi.fn(async () => {
     const result: StoreResult = {
       added: 1,
@@ -153,6 +155,7 @@ function makeHarness(): TestHarness {
       initDbFn,
       closeDbFn,
       recallFn,
+      updateRecallMetadataFn,
       storeEntriesFn,
       parseTranscriptFileFn,
       extractKnowledgeFromChunksFn,
@@ -168,6 +171,7 @@ function makeHarness(): TestHarness {
     initDbFn,
     closeDbFn,
     recallFn,
+    updateRecallMetadataFn,
     storeEntriesFn,
     parseTranscriptFileFn,
     extractKnowledgeFromChunksFn,
@@ -304,8 +308,58 @@ describe("mcp server", () => {
     expect(recallQuery.types).toEqual(["preference", "fact"]);
   });
 
-  it("supports session-start context without query", async () => {
+  it("uses two-pass session-start recall and returns grouped ordering", async () => {
     const harness = makeHarness();
+    harness.recallFn.mockImplementation(async (_db: unknown, query: { expiry?: string }) => {
+      if (query.expiry === "core") {
+        return [
+          makeRecallResult({
+            score: 0.95,
+            entry: {
+              ...makeRecallResult().entry,
+              id: "core-1",
+              content: "Core profile",
+              expiry: "core",
+              type: "fact",
+            },
+          }),
+        ];
+      }
+
+      return [
+        makeRecallResult({
+          score: 0.99,
+          entry: {
+            ...makeRecallResult().entry,
+            id: "recent-1",
+            type: "event",
+            content: "Recent event",
+            expiry: "temporary",
+          },
+        }),
+        makeRecallResult({
+          score: 0.4,
+          entry: {
+            ...makeRecallResult().entry,
+            id: "todo-1",
+            type: "todo",
+            content: "Active todo",
+            expiry: "temporary",
+          },
+        }),
+        makeRecallResult({
+          score: 0.5,
+          entry: {
+            ...makeRecallResult().entry,
+            id: "pref-1",
+            type: "preference",
+            content: "Preference note",
+            expiry: "permanent",
+          },
+        }),
+      ];
+    });
+
     const responses = await runServer(
       [
         JSON.stringify({
@@ -316,7 +370,7 @@ describe("mcp server", () => {
             name: "agenr_recall",
             arguments: {
               context: "session-start",
-              limit: 3,
+              limit: 10,
             },
           },
         }),
@@ -325,13 +379,100 @@ describe("mcp server", () => {
     );
 
     const result = responses[0]?.result as { content?: Array<{ text?: string }> };
-    expect(result.content?.[0]?.text).toContain('Found 1 results for "session-start":');
-    expect(harness.recallFn).toHaveBeenCalledTimes(1);
+    const text = result.content?.[0]?.text ?? "";
+    expect(text).toContain('Found 4 results for "session-start":');
+    expect(harness.recallFn).toHaveBeenCalledTimes(2);
 
-    const recallQuery = harness.recallFn.mock.calls[0]?.[1] as { text?: string; context?: string; limit?: number };
-    expect(recallQuery.text).toBeUndefined();
-    expect(recallQuery.context).toBe("session-start");
-    expect(recallQuery.limit).toBe(3);
+    const firstCallQuery = harness.recallFn.mock.calls[0]?.[1] as { expiry?: string; limit?: number; noUpdate?: boolean };
+    expect(firstCallQuery.expiry).toBe("core");
+    expect(firstCallQuery.limit).toBe(5000);
+    expect(firstCallQuery.noUpdate).toBe(true);
+
+    const secondCallQuery = harness.recallFn.mock.calls[1]?.[1] as { expiry?: string; limit?: number; noUpdate?: boolean };
+    expect(secondCallQuery.expiry).toBeUndefined();
+    expect(secondCallQuery.limit).toBe(500);
+    expect(secondCallQuery.noUpdate).toBe(true);
+
+    const activePos = text.indexOf("Active todo");
+    const preferencePos = text.indexOf("Preference note");
+    const recentPos = text.indexOf("Recent event");
+    expect(activePos).toBeGreaterThan(-1);
+    expect(preferencePos).toBeGreaterThan(activePos);
+    expect(recentPos).toBeGreaterThan(preferencePos);
+  });
+
+  it("updates recall metadata only for returned session-start results", async () => {
+    const harness = makeHarness();
+    harness.recallFn.mockImplementation(async (_db: unknown, query: { expiry?: string }) => {
+      if (query.expiry === "core") {
+        return [
+          makeRecallResult({
+            score: 0.9,
+            entry: {
+              ...makeRecallResult().entry,
+              id: "core-1",
+              content: "Core profile",
+              expiry: "core",
+              type: "fact",
+            },
+          }),
+        ];
+      }
+
+      return [
+        makeRecallResult({
+          score: 0.8,
+          entry: {
+            ...makeRecallResult().entry,
+            id: "todo-1",
+            type: "todo",
+            content: "Selected todo",
+          },
+        }),
+        makeRecallResult({
+          score: 0.79,
+          entry: {
+            ...makeRecallResult().entry,
+            id: "todo-2",
+            type: "todo",
+            content: "Non-selected todo",
+          },
+        }),
+        makeRecallResult({
+          score: 0.78,
+          entry: {
+            ...makeRecallResult().entry,
+            id: "recent-1",
+            type: "event",
+            content: "Non-selected recent",
+          },
+        }),
+      ];
+    });
+
+    await runServer(
+      [
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 311,
+          method: "tools/call",
+          params: {
+            name: "agenr_recall",
+            arguments: {
+              context: "session-start",
+              limit: 1,
+            },
+          },
+        }),
+      ],
+      harness.deps,
+    );
+
+    expect(harness.updateRecallMetadataFn).toHaveBeenCalledTimes(1);
+    const updatedIds = harness.updateRecallMetadataFn.mock.calls[0]?.[1] as string[] | undefined;
+    expect(updatedIds).toEqual(["core-1", "todo-1"]);
+    expect(updatedIds).not.toContain("todo-2");
+    expect(updatedIds).not.toContain("recent-1");
   });
 
   it("rejects recall when both query and context are omitted", async () => {

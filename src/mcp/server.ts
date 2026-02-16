@@ -6,7 +6,8 @@ import { once } from "node:events";
 import type { Client } from "@libsql/client";
 import { readConfig } from "../config.js";
 import { closeDb, getDb, initDb } from "../db/client.js";
-import { recall } from "../db/recall.js";
+import { recall, updateRecallMetadata } from "../db/recall.js";
+import { sessionStartRecall } from "../db/session-start.js";
 import { storeEntries } from "../db/store.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { extractKnowledgeFromChunks } from "../extractor.js";
@@ -203,6 +204,7 @@ export interface McpServerDeps {
   initDbFn: typeof initDb;
   closeDbFn: typeof closeDb;
   recallFn: typeof recall;
+  updateRecallMetadataFn: typeof updateRecallMetadata;
   storeEntriesFn: typeof storeEntries;
   parseTranscriptFileFn: typeof parseTranscriptFile;
   extractKnowledgeFromChunksFn: typeof extractKnowledgeFromChunks;
@@ -625,6 +627,7 @@ export function createMcpServer(
     initDbFn: deps.initDbFn ?? initDb,
     closeDbFn: deps.closeDbFn ?? closeDb,
     recallFn: deps.recallFn ?? recall,
+    updateRecallMetadataFn: deps.updateRecallMetadataFn ?? updateRecallMetadata,
     storeEntriesFn: deps.storeEntriesFn ?? storeEntries,
     parseTranscriptFileFn: deps.parseTranscriptFileFn ?? parseTranscriptFile,
     extractKnowledgeFromChunksFn: deps.extractKnowledgeFromChunksFn ?? extractKnowledgeFromChunks,
@@ -695,29 +698,57 @@ export function createMcpServer(
 
     const limit = parsePositiveInt(args.limit, 10, "limit");
     const threshold = parseThreshold(args.threshold);
+    const now = resolvedDeps.nowFn();
     const types =
       typeof args.types === "string" && args.types.trim().length > 0 ? parseCsvTypes(args.types) : undefined;
     const since =
       typeof args.since === "string" && args.since.trim().length > 0
-        ? parseSinceToIso(args.since, resolvedDeps.nowFn())
+        ? parseSinceToIso(args.since, now)
         : undefined;
 
     const db = await ensureDb();
-    const apiKey = query ? resolvedDeps.resolveEmbeddingApiKeyFn(resolvedDeps.readConfigFn(env), env) : "";
+    let results: RecallResult[];
 
-    const results = await resolvedDeps.recallFn(
-      db,
-      {
-        text: query || undefined,
-        context,
-        limit,
-        types,
-        since,
-      },
-      apiKey,
-    );
+    if (context === "session-start") {
+      const grouped = await sessionStartRecall(db, {
+        query: {
+          context,
+          text: undefined,
+          limit,
+          types,
+          since,
+          noUpdate: true,
+        },
+        apiKey: "",
+        recallFn: resolvedDeps.recallFn,
+        nonCoreLimit: limit,
+      });
+      results = grouped.results;
+    } else {
+      const apiKey = resolvedDeps.resolveEmbeddingApiKeyFn(resolvedDeps.readConfigFn(env), env);
+      results = await resolvedDeps.recallFn(
+        db,
+        {
+          text: query || undefined,
+          context,
+          limit,
+          types,
+          since,
+        },
+        apiKey,
+      );
+    }
 
     const filtered = results.filter((result) => result.score >= threshold);
+    if (context === "session-start" && filtered.length > 0) {
+      const ids = filtered.map((result) => result.entry.id);
+      await resolvedDeps.updateRecallMetadataFn(db, ids, now);
+      const nowIso = now.toISOString();
+      for (const result of filtered) {
+        result.entry.recall_count += 1;
+        result.entry.last_recalled_at = nowIso;
+      }
+    }
     return formatRecallText(query || context, filtered);
   }
 
