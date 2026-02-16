@@ -12,6 +12,13 @@ import { createLlmClient } from "../llm/client.js";
 import { expandInputFiles, parseTranscriptFile } from "../parser.js";
 import type { KnowledgeEntry } from "../types.js";
 import { banner, formatError, formatWarn, ui } from "../ui.js";
+import {
+  createEmptyWatchState,
+  getFileState,
+  loadWatchState,
+  saveWatchState,
+  updateFileState,
+} from "../watch/state.js";
 
 const DEFAULT_GLOB = "**/*.{jsonl,md,txt}";
 
@@ -70,6 +77,8 @@ export interface IngestCommandDeps {
   closeDbFn: typeof closeDb;
   storeEntriesFn: typeof storeEntries;
   hashTextFn: typeof hashText;
+  loadWatchStateFn: typeof loadWatchState;
+  saveWatchStateFn: typeof saveWatchState;
   nowFn: () => Date;
 }
 
@@ -231,6 +240,10 @@ function formatDuration(durationMs: number): string {
   return `${minutes}m ${seconds}s`;
 }
 
+function isJsonlFile(filePath: string): boolean {
+  return path.extname(filePath).toLowerCase() === ".jsonl";
+}
+
 async function isAlreadyIngested(db: Client, filePath: string, contentHash: string): Promise<boolean> {
   const result = await db.execute({
     sql: "SELECT id FROM ingest_log WHERE file_path = ? AND content_hash = ? LIMIT 1",
@@ -338,6 +351,8 @@ export async function runIngestCommand(
     closeDbFn: deps?.closeDbFn ?? closeDb,
     storeEntriesFn: deps?.storeEntriesFn ?? storeEntries,
     hashTextFn: deps?.hashTextFn ?? hashText,
+    loadWatchStateFn: deps?.loadWatchStateFn ?? loadWatchState,
+    saveWatchStateFn: deps?.saveWatchStateFn ?? saveWatchState,
     nowFn: deps?.nowFn ?? (() => new Date()),
   };
 
@@ -427,6 +442,8 @@ export async function runIngestCommand(
   let forceDeletedEntrySourceRows = 0;
   let completed = 0;
   let embeddingApiKey: string | null = null;
+  let watchStateLoaded = false;
+  let watchState = createEmptyWatchState();
   let cursor = 0;
 
   let dbChain: Promise<void> = Promise.resolve();
@@ -460,6 +477,45 @@ export async function runIngestCommand(
     process.stderr.write(`${" ".repeat(80)}\r`);
   };
 
+  const syncWatchStateOffset = async (filePath: string, ingestByteOffset: number): Promise<void> => {
+    if (dryRun || !isJsonlFile(filePath)) {
+      return;
+    }
+
+    try {
+      if (!watchStateLoaded) {
+        try {
+          watchState = await resolvedDeps.loadWatchStateFn();
+        } catch (error) {
+          watchState = createEmptyWatchState();
+          clack.log.warn(
+            formatWarn(
+              `Watch state is invalid (${errorMessage(error)}). Resetting to fresh state before ingest offset sync.`,
+            ),
+            clackOutput,
+          );
+          await resolvedDeps.saveWatchStateFn(watchState);
+        }
+        watchStateLoaded = true;
+      }
+
+      const existingOffset = getFileState(watchState, filePath)?.byteOffset ?? 0;
+      if (!force && existingOffset > ingestByteOffset) {
+        return;
+      }
+
+      updateFileState(watchState, filePath, { byteOffset: ingestByteOffset });
+      await resolvedDeps.saveWatchStateFn(watchState);
+    } catch (error) {
+      clack.log.warn(
+        formatWarn(
+          `Failed to sync watch offset for ${path.basename(filePath)}: ${errorMessage(error)}`,
+        ),
+        clackOutput,
+      );
+    }
+  };
+
   const processTarget = async (target: IngestTarget): Promise<IngestFileResult> => {
     const fileStartedAt = resolvedDeps.nowFn();
     const fileResult: IngestFileResult = {
@@ -472,6 +528,7 @@ export async function runIngestCommand(
 
     try {
       const rawContent = await fs.readFile(target.file, "utf8");
+      const ingestByteOffset = Buffer.byteLength(rawContent, "utf8");
       const fileHash = resolvedDeps.hashTextFn(rawContent);
 
       if (skipIngested && !force) {
@@ -533,6 +590,8 @@ export async function runIngestCommand(
           await processChunkEntries(chunkResult.entries);
         },
       });
+
+      await withDbLock(() => syncWatchStateOffset(target.file, ingestByteOffset));
 
       return fileResult;
     } catch (error) {
