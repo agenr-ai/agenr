@@ -76,11 +76,12 @@ function makeDeps(overrides?: Partial<IngestCommandDeps> & { db?: { execute: Ret
         added: entries.length,
         updated: 0,
         skipped: 0,
+        superseded: 0,
+        llm_dedup_calls: 0,
         relations_created: 0,
         total_entries: entries.length,
         duration_ms: 5,
       })) as IngestCommandDeps["storeEntriesFn"]),
-    batchClassifyFn: overrides?.batchClassifyFn ?? (vi.fn(async () => undefined) as IngestCommandDeps["batchClassifyFn"]),
     hashTextFn: overrides?.hashTextFn ?? hashText,
     nowFn: overrides?.nowFn ?? (() => new Date("2026-02-15T00:00:00.000Z")),
   };
@@ -100,7 +101,7 @@ describe("ingest command", () => {
     const program = createProgram();
     const ingestCommand = program.commands.find((command) => command.name() === "ingest");
     const runIngestCommandMock = vi.fn(async (..._args: unknown[]) => undefined);
-    ingestCommand?.action(runIngestCommandMock as (...args: unknown[]) => unknown);
+    ingestCommand?.action(runIngestCommandMock as any);
 
     await program.parseAsync([
       "node",
@@ -116,7 +117,9 @@ describe("ingest command", () => {
       "gpt-4o",
       "--provider",
       "openai",
-      "--classify",
+      "--online-dedup",
+      "--dedup-threshold",
+      "0.75",
       "--verbose",
       "--dry-run",
       "--json",
@@ -134,7 +137,8 @@ describe("ingest command", () => {
       db: "/tmp/db.sqlite",
       model: "gpt-4o",
       provider: "openai",
-      classify: true,
+      onlineDedup: true,
+      dedupThreshold: "0.75",
       verbose: true,
       dryRun: true,
       json: true,
@@ -250,6 +254,8 @@ describe("ingest command", () => {
       added: entries.length,
       updated: 0,
       skipped: 0,
+      superseded: 0,
+      llm_dedup_calls: 0,
       relations_created: 0,
       total_entries: entries.length,
       duration_ms: 5,
@@ -302,68 +308,39 @@ describe("ingest command", () => {
     expect(storeEntriesFn.mock.calls[1]?.[1]).toHaveLength(1);
   });
 
-  it("runs post-file batch classification when classify mode is enabled", async () => {
+  it("passes online dedup options to store when enabled", async () => {
     const dir = await makeTempDir();
     const filePath = path.join(dir, "a.txt");
     await fs.writeFile(filePath, "hello", "utf8");
 
-    const storeEntriesFn = vi.fn(async (_db: unknown, entries: KnowledgeEntry[], _apiKey: string, options?: any) => {
-      options?.onDecision?.({
-        entry: entries[0],
-        action: "added",
-        reason: "new entry",
-        similarity: 0.85,
-        matchedEntryId: "old-1",
-        newEntryId: "new-1",
-        sameSubject: true,
-        matchedEntry: {
-          id: "old-1",
-          type: "fact",
-          subject: entries[0]?.subject ?? "Jim",
-          content: "existing",
-          importance: 8,
-          expiry: "temporary",
-          tags: [],
-          source: { file: "source", context: "ctx" },
-          created_at: "2026-02-15T00:00:00.000Z",
-          updated_at: "2026-02-15T00:00:00.000Z",
-          recall_count: 0,
-          confirmations: 0,
-          contradictions: 0,
-        },
-      });
+    const storeEntriesFn = vi.fn(async (_db: unknown, entries: KnowledgeEntry[]) => {
       return {
         added: entries.length,
         updated: 0,
         skipped: 0,
+        superseded: 0,
+        llm_dedup_calls: 1,
         relations_created: 0,
         total_entries: entries.length,
         duration_ms: 5,
       };
     });
-    const batchClassifyFn = vi.fn(async (..._args: unknown[]) => undefined);
 
     await runIngestCommand(
       [dir],
-      { classify: true },
+      { onlineDedup: true, dedupThreshold: 0.75 },
       makeDeps({
         expandInputFilesFn: vi.fn(async () => [filePath]),
         deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries.slice(0, 1)),
         storeEntriesFn: storeEntriesFn as IngestCommandDeps["storeEntriesFn"],
-        batchClassifyFn: batchClassifyFn as IngestCommandDeps["batchClassifyFn"],
       }),
     );
 
-    expect(batchClassifyFn).toHaveBeenCalledTimes(1);
-    const candidates = ((batchClassifyFn.mock.calls as unknown[][])[0]?.[2] ?? []) as Array<{
-      similarity: number;
-      newEntry?: { id?: string };
-      matchEntry?: { id?: string };
-    }>;
-    expect(Array.isArray(candidates)).toBe(true);
-    expect(candidates[0]?.similarity).toBe(0.85);
-    expect(candidates[0]?.newEntry?.id).toBe("new-1");
-    expect(candidates[0]?.matchEntry?.id).toBe("old-1");
+    expect(storeEntriesFn).toHaveBeenCalledTimes(1);
+    const optionsArg = (storeEntriesFn.mock.calls as unknown[][])[0]?.[3] as Record<string, unknown> | undefined;
+    expect(optionsArg?.onlineDedup).toBe(true);
+    expect(optionsArg?.dedupThreshold).toBe(0.75);
+    expect(optionsArg?.llmClient).toBeTruthy();
   });
 
   it("handles missing files gracefully", async () => {
@@ -562,6 +539,8 @@ describe("ingest command", () => {
       added: 1,
       updated: 1,
       skipped: 0,
+      superseded: 0,
+      llm_dedup_calls: 0,
       relations_created: 0,
       total_entries: 2,
       duration_ms: 3,

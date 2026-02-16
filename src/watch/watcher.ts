@@ -4,12 +4,12 @@ import path from "node:path";
 import { readConfig } from "../config.js";
 import { deduplicateEntries } from "../dedup.js";
 import { closeDb, getDb, initDb } from "../db/client.js";
-import { batchClassify, type BatchClassificationCandidate, type StoreEntryDecision, storeEntries } from "../db/store.js";
+import { storeEntries } from "../db/store.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { extractKnowledgeFromChunks } from "../extractor.js";
 import { createLlmClient } from "../llm/client.js";
 import { parseTranscriptFile } from "../parser.js";
-import type { KnowledgeEntry, StoredEntry, WatchState } from "../types.js";
+import type { KnowledgeEntry, WatchState } from "../types.js";
 import { createEmptyWatchState, getFileState, loadWatchState, saveWatchState, updateFileState } from "./state.js";
 
 export interface WatchCycleResult {
@@ -27,7 +27,7 @@ export interface WatcherOptions {
   dryRun: boolean;
   verbose: boolean;
   once: boolean;
-  classify?: boolean;
+  onlineDedup?: boolean;
   model?: string;
   provider?: string;
   dbPath?: string;
@@ -56,7 +56,6 @@ export interface WatcherDeps {
   initDbFn: typeof initDb;
   closeDbFn: typeof closeDb;
   storeEntriesFn: typeof storeEntries;
-  batchClassifyFn: typeof batchClassify;
   loadWatchStateFn: typeof loadWatchState;
   saveWatchStateFn: typeof saveWatchState;
   statFileFn: typeof fs.stat;
@@ -79,22 +78,6 @@ async function sleep(ms: number): Promise<void> {
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function toStoredEntryFromDecision(decision: StoreEntryDecision): StoredEntry | null {
-  if (!decision.newEntryId) {
-    return null;
-  }
-  const now = new Date().toISOString();
-  return {
-    ...decision.entry,
-    id: decision.newEntryId,
-    created_at: now,
-    updated_at: now,
-    recall_count: 0,
-    confirmations: 0,
-    contradictions: 0,
-  };
 }
 
 export async function readFileFromOffset(filePath: string, offset: number): Promise<Buffer> {
@@ -126,7 +109,6 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
     initDbFn: deps?.initDbFn ?? initDb,
     closeDbFn: deps?.closeDbFn ?? closeDb,
     storeEntriesFn: deps?.storeEntriesFn ?? storeEntries,
-    batchClassifyFn: deps?.batchClassifyFn ?? batchClassify,
     loadWatchStateFn: deps?.loadWatchStateFn ?? loadWatchState,
     saveWatchStateFn: deps?.saveWatchStateFn ?? saveWatchState,
     statFileFn: deps?.statFileFn ?? fs.stat,
@@ -236,7 +218,6 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
             if (newContent.length < options.minChunkChars) {
               cycleResult.skipped = true;
             } else {
-              const classifyCandidates: BatchClassificationCandidate[] = [];
               const tempDir = await resolvedDeps.mkdtempFn(path.join(os.tmpdir(), "agenr-watch-"));
               const tempFile = path.join(tempDir, "delta.txt");
               try {
@@ -260,40 +241,11 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
                   const storeResult = await withDbLock(() =>
                     resolvedDeps.storeEntriesFn(db, deduped, embeddingApiKey ?? "", {
                       sourceFile: filePath,
-                      classify: false,
-                      onDecision: options.classify
-                        ? (decision) => {
-                            if (decision.action !== "added") {
-                              return;
-                            }
-                            if (decision.sameSubject !== true) {
-                              return;
-                            }
-                            if (typeof decision.similarity !== "number") {
-                              return;
-                            }
-                            if (decision.similarity < 0.8 || decision.similarity >= 0.92) {
-                              return;
-                            }
-                            if (!decision.matchedEntry) {
-                              return;
-                            }
-
-                            const newEntry = toStoredEntryFromDecision(decision);
-                            if (!newEntry) {
-                              return;
-                            }
-
-                            classifyCandidates.push({
-                              newEntry,
-                              matchEntry: decision.matchedEntry,
-                              similarity: decision.similarity,
-                            });
-                          }
-                        : undefined,
+                      onlineDedup: options.onlineDedup !== false,
+                      llmClient: options.onlineDedup === false ? undefined : client,
                     }),
                   );
-                  cycleResult.entriesStored += storeResult.added + storeResult.updated;
+                  cycleResult.entriesStored += storeResult.added + storeResult.updated + storeResult.superseded;
                 };
 
                 const extracted = await resolvedDeps.extractKnowledgeFromChunksFn({
@@ -309,10 +261,6 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
                 // Compatibility fallback for injected extractors that do not dispatch through onChunkComplete.
                 if (extracted.entries.length > 0) {
                   await processChunkEntries(extracted.entries);
-                }
-
-                if (!options.dryRun && options.classify && db && classifyCandidates.length > 0) {
-                  await withDbLock(() => resolvedDeps.batchClassifyFn(db, client, classifyCandidates));
                 }
 
                 const latestState = getFileState(state, filePath);

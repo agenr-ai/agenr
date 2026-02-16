@@ -20,6 +20,8 @@ function fakeStoreResult(): StoreResult {
     added: 1,
     updated: 0,
     skipped: 0,
+    superseded: 0,
+    llm_dedup_calls: 0,
     relations_created: 0,
     total_entries: 1,
     duration_ms: 5,
@@ -50,7 +52,7 @@ describe("store command", () => {
 
     const storeEntriesSpy = vi.fn(async (..._args: unknown[]) => fakeStoreResult());
 
-    const result = await runStoreCommand([filePath], {}, {
+    const result = await runStoreCommand([filePath], { onlineDedup: false }, {
       expandInputFilesFn: vi.fn(async (inputs: string[]) => inputs),
       readFileFn: vi.fn((target: string) => fs.readFile(target, "utf8")),
       readStdinFn: vi.fn(async () => ""),
@@ -96,6 +98,8 @@ describe("store command", () => {
       added: 0,
       updated: 0,
       skipped: 0,
+      superseded: 0,
+      llm_dedup_calls: 0,
       relations_created: 0,
       total_entries: 0,
       duration_ms: 1,
@@ -120,7 +124,7 @@ describe("store command", () => {
     expect(resolveEmbeddingApiKeySpy).not.toHaveBeenCalled();
   });
 
-  it("creates LLM client and passes classify options when classify=true", async () => {
+  it("creates LLM client and passes onlineDedup options when enabled", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agenr-store-test-"));
     tempDirs.push(dir);
     const filePath = path.join(dir, "input.json");
@@ -138,7 +142,7 @@ describe("store command", () => {
     };
     const createLlmClientFn = vi.fn(() => llmClient);
 
-    await runStoreCommand([filePath], { classify: true }, {
+    await runStoreCommand([filePath], { onlineDedup: true, dedupThreshold: 0.75 }, {
       expandInputFilesFn: vi.fn(async (inputs: string[]) => inputs),
       readFileFn: vi.fn((target: string) => fs.readFile(target, "utf8")),
       readStdinFn: vi.fn(async () => ""),
@@ -153,11 +157,12 @@ describe("store command", () => {
 
     expect(createLlmClientFn).toHaveBeenCalledTimes(1);
     expect(storeEntriesSpy).toHaveBeenCalledTimes(1);
-    const classifyCall = (storeEntriesSpy.mock.calls as unknown[][])[0] as
+    const dedupCall = (storeEntriesSpy.mock.calls as unknown[][])[0] as
       | [unknown, unknown, unknown, Record<string, unknown>]
       | undefined;
-    expect(classifyCall?.[3]).toMatchObject({
-      classify: true,
+    expect(dedupCall?.[3]).toMatchObject({
+      onlineDedup: true,
+      dedupThreshold: 0.75,
       llmClient,
     });
   });

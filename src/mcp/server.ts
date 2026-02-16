@@ -562,8 +562,12 @@ function formatRecallText(query: string, results: RecallResult[]): string {
 }
 
 function formatStoreSummary(result: StoreResult): string {
-  const total = result.added + result.updated + result.skipped;
-  return `Stored ${total} entries (${result.added} new, ${result.updated} updated, ${result.skipped} duplicates skipped).`;
+  const total = result.added + result.updated + result.skipped + result.superseded;
+  const parts = [`${result.added} new`, `${result.updated} updated`, `${result.skipped} duplicates skipped`];
+  if (result.superseded > 0) {
+    parts.push(`${result.superseded} superseded`);
+  }
+  return `Stored ${total} entries (${parts.join(", ")}).`;
 }
 
 function formatExtractedText(entries: KnowledgeEntry[], stored?: StoreResult): string {
@@ -579,7 +583,9 @@ function formatExtractedText(entries: KnowledgeEntry[], stored?: StoreResult): s
 
   if (stored) {
     lines.push("");
-    lines.push(`Stored: ${stored.added} new, ${stored.updated} updated, ${stored.skipped} duplicates skipped.`);
+    lines.push(
+      `Stored: ${stored.added} new, ${stored.updated} updated, ${stored.skipped} duplicates skipped, ${stored.superseded} superseded.`,
+    );
   }
 
   return lines.join("\n");
@@ -760,9 +766,12 @@ export function createMcpServer(
     const entries = parseStoreEntries(args.entries);
     const db = await ensureDb();
     const config = resolvedDeps.readConfigFn(env);
+    const dedupClient = resolvedDeps.createLlmClientFn({ config, env });
     const apiKey = resolvedDeps.resolveEmbeddingApiKeyFn(config, env);
     const result = await resolvedDeps.storeEntriesFn(db, entries, apiKey, {
       sourceFile: "mcp:agenr_store",
+      onlineDedup: true,
+      llmClient: dedupClient,
     });
 
     return formatStoreSummary(result);
@@ -809,12 +818,16 @@ export function createMcpServer(
         const apiKey = resolvedDeps.resolveEmbeddingApiKeyFn(config, env);
         stored = await resolvedDeps.storeEntriesFn(db, extractedEntries, apiKey, {
           sourceFile: sourceLabel ?? "mcp:agenr_extract",
+          onlineDedup: true,
+          llmClient: client,
         });
       } else if (shouldStore) {
         stored = {
           added: 0,
           updated: 0,
           skipped: 0,
+          superseded: 0,
+          llm_dedup_calls: 0,
           relations_created: 0,
           total_entries: 0,
           duration_ms: 0,

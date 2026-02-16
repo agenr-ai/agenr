@@ -166,22 +166,29 @@ Embedding API key resolution order (`resolveEmbeddingApiKey`):
 
 Source: `src/db/store.ts`
 
-Similarity bands are cosine-based over embeddings:
+Store uses Mem0-style online dedup:
 
-1. `> 0.98` (`AUTO_SKIP_THRESHOLD`)
-- Action: skip as near-exact semantic duplicate.
+1. Content-hash fast path
+- If `content_hash` already exists, skip before embedding/vector work.
 
-2. `0.92 .. 0.98` (`SMART_DEDUP_THRESHOLD` to `AUTO_SKIP_THRESHOLD`), same subject + same type
-- Action: reinforce existing entry (`confirmations += 1`).
+2. Fast vector path
+- Find top-k similar active entries (`superseded_by IS NULL`).
+- `>= 0.98` + same type: skip as near-exact semantic duplicate.
+- `>= 0.92` + same subject + same type: reinforce existing entry (`confirmations += 1`).
 
-3. `0.80 .. 0.92` (`CLASSIFY_LOW_THRESHOLD` to `SMART_DEDUP_THRESHOLD`), same subject, `--classify` enabled
-- Action: LLM relationship classification (`REINFORCING`, `SUPERSEDING`, `CONTRADICTING`, `NUANCING`, `UNRELATED`) drives update/insert+relation behavior.
+3. Online LLM decision path
+- For remaining candidates above threshold (`dedupThreshold`, default `0.8`), LLM returns one of:
+- `ADD`: insert new entry.
+- `UPDATE`: update target content, re-embed via `composeEmbeddingText`, bump confirmations.
+- `SKIP`: skip insert, bump confirmations on target.
+- `SUPERSEDE`: insert new entry, mark target `superseded_by`, create `supersedes` relation.
 
-4. `< 0.80`
-- Action: insert new entry.
+4. Failure fallback
+- If LLM fails or returns invalid tool output, fallback to `ADD` (avoid data loss).
 
-Additional gating:
-- Content-hash idempotency (`content_hash`) can skip exact source-content duplicates before similarity logic.
+Transaction mode:
+- Online dedup enabled: per-entry `BEGIN IMMEDIATE`/`COMMIT` so LLM calls stay outside DB lock windows.
+- Online dedup disabled: single batch transaction for throughput.
 
 ## Recall Scoring Model
 

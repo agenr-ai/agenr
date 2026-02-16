@@ -1,8 +1,9 @@
 import { createClient, type Client } from "@libsql/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { initDb } from "../../src/db/client.js";
-import { batchClassify, hashText, storeEntries, type ClassificationResult } from "../../src/db/store.js";
-import type { KnowledgeEntry, LlmClient, StoredEntry } from "../../src/types.js";
+import { hashText, storeEntries } from "../../src/db/store.js";
+import { composeEmbeddingText } from "../../src/embeddings/client.js";
+import type { KnowledgeEntry, LlmClient } from "../../src/types.js";
 
 function asNumber(value: unknown): number {
   if (typeof value === "number") {
@@ -23,10 +24,11 @@ function to512(head: number[]): number[] {
 
 function vectorForText(text: string): number[] {
   if (text.includes("vec-base")) return to512([1, 0, 0]);
-  if (text.includes("vec-95")) return to512([0.95, Math.sqrt(1 - 0.95 ** 2), 0]);
+  if (text.includes("vec-86")) return to512([0.86, Math.sqrt(1 - 0.86 ** 2), 0]);
   if (text.includes("vec-85")) return to512([0.85, Math.sqrt(1 - 0.85 ** 2), 0]);
-  if (text.includes("vec-75")) return to512([0.75, Math.sqrt(1 - 0.75 ** 2), 0]);
-  if (text.includes("vec-45")) return to512([0.45, Math.sqrt(1 - 0.45 ** 2), 0]);
+  if (text.includes("vec-84")) return to512([0.84, Math.sqrt(1 - 0.84 ** 2), 0]);
+  if (text.includes("vec-95")) return to512([0.95, Math.sqrt(1 - 0.95 ** 2), 0]);
+  if (text.includes("vec-exact")) return to512([0.999, 0.01, 0]);
   return to512([0, 1, 0]);
 }
 
@@ -38,6 +40,7 @@ function makeEntry(params: {
   content: string;
   subject?: string;
   type?: KnowledgeEntry["type"];
+  sourceFile?: string;
 }): KnowledgeEntry {
   return {
     type: params.type ?? "fact",
@@ -47,7 +50,7 @@ function makeEntry(params: {
     expiry: "permanent",
     tags: [],
     source: {
-      file: "classify-test.jsonl",
+      file: params.sourceFile ?? "online-dedup-test.jsonl",
       context: "unit test",
     },
   };
@@ -73,40 +76,6 @@ async function countEntries(db: Client): Promise<number> {
   return asNumber(result.rows[0]?.count);
 }
 
-async function getEntryByContent(db: Client, content: string): Promise<{ id: string; confirmations: number; contradictions: number; supersededBy?: string } | null> {
-  const result = await db.execute({
-    sql: "SELECT id, confirmations, contradictions, superseded_by FROM entries WHERE content = ? LIMIT 1",
-    args: [content],
-  });
-  if (result.rows.length === 0) {
-    return null;
-  }
-  const row = result.rows[0];
-  if (!row) {
-    return null;
-  }
-  return {
-    id: String(row.id),
-    confirmations: asNumber(row.confirmations),
-    contradictions: asNumber(row.contradictions),
-    supersededBy: row.superseded_by ? String(row.superseded_by) : undefined,
-  };
-}
-
-async function relationCount(db: Client, type: string, sourceId: string, targetId: string): Promise<number> {
-  const result = await db.execute({
-    sql: `
-      SELECT COUNT(*) AS count
-      FROM relations
-      WHERE relation_type = ?
-        AND source_id = ?
-        AND target_id = ?
-    `,
-    args: [type, sourceId, targetId],
-  });
-  return asNumber(result.rows[0]?.count);
-}
-
 async function seedBaseEntry(db: Client): Promise<void> {
   await storeEntries(db, [makeEntry({ content: "seed vec-base" })], "sk-test", {
     sourceFile: "seed.jsonl",
@@ -115,26 +84,7 @@ async function seedBaseEntry(db: Client): Promise<void> {
   });
 }
 
-async function storeClassified(
-  db: Client,
-  classification: ClassificationResult,
-): Promise<void> {
-  await storeEntries(
-    db,
-    [makeEntry({ content: "incoming vec-85", subject: "Jim", type: "fact" })],
-    "sk-test",
-    {
-      sourceFile: "incoming.jsonl",
-      ingestContentHash: hashText(`incoming-${classification}`),
-      embedFn: mockEmbed,
-      classify: true,
-      llmClient: fakeLlmClient(),
-      classifyFn: vi.fn(async () => classification),
-    },
-  );
-}
-
-describe("db store classification", () => {
+describe("db online dedup", () => {
   const clients: Client[] = [];
 
   afterEach(() => {
@@ -150,243 +100,339 @@ describe("db store classification", () => {
     return client;
   }
 
-  it("handles REINFORCING by updating confirmations without inserting new entry", async () => {
+  it("adds new entry when no similar candidates pass threshold", async () => {
     const client = makeClient();
     await initDb(client);
-    await seedBaseEntry(client);
 
-    await storeClassified(client, "REINFORCING");
-
-    const seed = await getEntryByContent(client, "seed vec-base");
-    expect(seed?.confirmations).toBe(1);
-    expect(await getEntryByContent(client, "incoming vec-85")).toBeNull();
-    expect(await countEntries(client)).toBe(1);
-  });
-
-  it("handles SUPERSEDING by superseding old entry and linking relation", async () => {
-    const client = makeClient();
-    await initDb(client);
-    await seedBaseEntry(client);
-
-    await storeClassified(client, "SUPERSEDING");
-
-    const seed = await getEntryByContent(client, "seed vec-base");
-    const incoming = await getEntryByContent(client, "incoming vec-85");
-    expect(seed?.supersededBy).toBe(incoming?.id);
-    expect(await relationCount(client, "supersedes", incoming?.id ?? "", seed?.id ?? "")).toBe(1);
-  });
-
-  it("handles CONTRADICTING by incrementing contradictions and linking relation", async () => {
-    const client = makeClient();
-    await initDb(client);
-    await seedBaseEntry(client);
-
-    await storeClassified(client, "CONTRADICTING");
-
-    const seed = await getEntryByContent(client, "seed vec-base");
-    const incoming = await getEntryByContent(client, "incoming vec-85");
-    expect(seed?.contradictions).toBe(1);
-    expect(await relationCount(client, "contradicts", incoming?.id ?? "", seed?.id ?? "")).toBe(1);
-  });
-
-  it("handles NUANCING by creating elaborates relation", async () => {
-    const client = makeClient();
-    await initDb(client);
-    await seedBaseEntry(client);
-
-    await storeClassified(client, "NUANCING");
-
-    const seed = await getEntryByContent(client, "seed vec-base");
-    const incoming = await getEntryByContent(client, "incoming vec-85");
-    expect(await relationCount(client, "elaborates", incoming?.id ?? "", seed?.id ?? "")).toBe(1);
-  });
-
-  it("handles UNRELATED by inserting entry without relation", async () => {
-    const client = makeClient();
-    await initDb(client);
-    await seedBaseEntry(client);
-
-    await storeClassified(client, "UNRELATED");
-
-    const relationResult = await client.execute("SELECT COUNT(*) AS count FROM relations");
-    expect(asNumber(relationResult.rows[0]?.count)).toBe(0);
-    expect(await getEntryByContent(client, "incoming vec-85")).not.toBeNull();
-  });
-
-  it("falls back to UNRELATED when classification function throws", async () => {
-    const client = makeClient();
-    await initDb(client);
-    await seedBaseEntry(client);
-
-    await storeEntries(client, [makeEntry({ content: "incoming vec-85", subject: "Jim" })], "sk-test", {
+    const result = await storeEntries(client, [makeEntry({ content: "new fact vec-base" })], "sk-test", {
       sourceFile: "incoming.jsonl",
-      ingestContentHash: hashText("incoming-throw"),
+      ingestContentHash: hashText("incoming"),
       embedFn: mockEmbed,
-      classify: true,
+      onlineDedup: true,
       llmClient: fakeLlmClient(),
-      classifyFn: vi.fn(async () => {
-        throw new Error("LLM failure");
-      }),
+      onlineDedupFn: vi.fn(async () => ({
+        action: "SKIP",
+        target_id: "ignored",
+        merged_content: null,
+        reasoning: "should not be called",
+      })),
     });
 
-    expect(await getEntryByContent(client, "incoming vec-85")).not.toBeNull();
-    const relationResult = await client.execute("SELECT COUNT(*) AS count FROM relations");
-    expect(asNumber(relationResult.rows[0]?.count)).toBe(0);
+    expect(result.added).toBe(1);
+    expect(result.updated).toBe(0);
+    expect(result.skipped).toBe(0);
+    expect(result.superseded).toBe(0);
+    expect(result.llm_dedup_calls).toBe(0);
   });
 
-  it("keeps default behavior when classify is not passed", async () => {
+  it("skips semantic duplicate via online dedup SKIP and bumps confirmations", async () => {
     const client = makeClient();
     await initDb(client);
     await seedBaseEntry(client);
 
-    const classifyFn = vi.fn(async () => "REINFORCING" as const);
-    await storeEntries(client, [makeEntry({ content: "incoming vec-85", subject: "Jim" })], "sk-test", {
+    const result = await storeEntries(client, [makeEntry({ content: "same meaning vec-85" })], "sk-test", {
       sourceFile: "incoming.jsonl",
-      ingestContentHash: hashText("incoming-no-classify"),
+      ingestContentHash: hashText("incoming-skip"),
       embedFn: mockEmbed,
-      classifyFn,
+      onlineDedup: true,
+      llmClient: fakeLlmClient(),
+      onlineDedupFn: vi.fn(async (_client, _entry, candidates) => ({
+        action: "SKIP",
+        target_id: candidates[0]?.entry.id ?? null,
+        merged_content: null,
+        reasoning: "already captured",
+      })),
     });
 
-    expect(classifyFn).not.toHaveBeenCalled();
-    expect(await getEntryByContent(client, "incoming vec-85")).not.toBeNull();
+    expect(result.added).toBe(0);
+    expect(result.updated).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(result.superseded).toBe(0);
+
+    const confirmations = await client.execute({
+      sql: "SELECT confirmations FROM entries WHERE content = ?",
+      args: ["seed vec-base"],
+    });
+    expect(asNumber(confirmations.rows[0]?.confirmations)).toBe(1);
   });
 
-  it("skips classification outside 0.80-0.92 range", async () => {
+  it("updates existing entry content, re-embeds merged text, and bumps confirmations", async () => {
     const client = makeClient();
     await initDb(client);
     await seedBaseEntry(client);
 
-    const classifyFn = vi.fn(async () => "REINFORCING" as const);
+    const embeddedTexts: string[] = [];
+    const embedSpy = vi.fn(async (texts: string[]) => {
+      embeddedTexts.push(...texts);
+      return mockEmbed(texts);
+    });
 
-    await storeEntries(client, [makeEntry({ content: "low vec-75", subject: "Jim" })], "sk-test", {
+    const result = await storeEntries(client, [makeEntry({ content: "incoming update vec-85" })], "sk-test", {
+      sourceFile: "incoming.jsonl",
+      ingestContentHash: hashText("incoming-update"),
+      embedFn: embedSpy,
+      onlineDedup: true,
+      llmClient: fakeLlmClient(),
+      onlineDedupFn: vi.fn(async (_client, _entry, candidates) => ({
+        action: "UPDATE",
+        target_id: candidates[0]?.entry.id ?? null,
+        merged_content: "merged detail vec-95",
+        reasoning: "new detail",
+      })),
+    });
+
+    expect(result.added).toBe(0);
+    expect(result.updated).toBe(1);
+    expect(result.skipped).toBe(0);
+    expect(result.superseded).toBe(0);
+
+    const updatedRow = await client.execute({
+      sql: "SELECT content, confirmations FROM entries WHERE content = ? LIMIT 1",
+      args: ["merged detail vec-95"],
+    });
+    expect(updatedRow.rows.length).toBe(1);
+    expect(asNumber(updatedRow.rows[0]?.confirmations)).toBe(1);
+
+    const expectedMergedText = composeEmbeddingText({
+      ...makeEntry({ content: "merged detail vec-95" }),
+      subject: "Jim",
+      type: "fact",
+    });
+    expect(embeddedTexts).toContain(expectedMergedText);
+  });
+
+  it("supersedes existing entry and creates supersedes relation", async () => {
+    const client = makeClient();
+    await initDb(client);
+    await seedBaseEntry(client);
+
+    const result = await storeEntries(client, [makeEntry({ content: "replacement fact vec-85" })], "sk-test", {
+      sourceFile: "incoming.jsonl",
+      ingestContentHash: hashText("incoming-supersede"),
+      embedFn: mockEmbed,
+      onlineDedup: true,
+      llmClient: fakeLlmClient(),
+      onlineDedupFn: vi.fn(async (_client, _entry, candidates) => ({
+        action: "SUPERSEDE",
+        target_id: candidates[0]?.entry.id ?? null,
+        merged_content: null,
+        reasoning: "new fact supersedes old",
+      })),
+    });
+
+    expect(result.added).toBe(0);
+    expect(result.updated).toBe(0);
+    expect(result.skipped).toBe(0);
+    expect(result.superseded).toBe(1);
+    expect(result.relations_created).toBe(1);
+
+    const rows = await client.execute(
+      "SELECT id, content, superseded_by FROM entries ORDER BY created_at ASC",
+    );
+    const oldEntry = rows.rows.find((row) => String(row.content) === "seed vec-base");
+    const newEntry = rows.rows.find((row) => String(row.content) === "replacement fact vec-85");
+
+    expect(oldEntry).toBeTruthy();
+    expect(newEntry).toBeTruthy();
+    expect(String(oldEntry?.superseded_by)).toBe(String(newEntry?.id));
+
+    const relationCount = await client.execute({
+      sql: "SELECT COUNT(*) AS count FROM relations WHERE relation_type = 'supersedes' AND source_id = ? AND target_id = ?",
+      args: [String(newEntry?.id), String(oldEntry?.id)],
+    });
+    expect(asNumber(relationCount.rows[0]?.count)).toBe(1);
+  });
+
+  it("preserves content-hash fast path before embedding/LLM", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    const entry = makeEntry({ content: "hash-stable vec-base" });
+    await storeEntries(client, [entry], "sk-test", {
+      sourceFile: "incoming.jsonl",
+      ingestContentHash: hashText("hash-seed"),
+      embedFn: mockEmbed,
+      onlineDedup: true,
+      llmClient: fakeLlmClient(),
+      onlineDedupFn: vi.fn(async () => ({
+        action: "ADD",
+        target_id: null,
+        merged_content: null,
+        reasoning: "add",
+      })),
+    });
+
+    const embedSpy = vi.fn(async (texts: string[]) => mockEmbed(texts));
+    const dedupSpy = vi.fn(async () => ({
+      action: "ADD" as const,
+      target_id: null,
+      merged_content: null,
+      reasoning: "add",
+    }));
+
+    const second = await storeEntries(client, [entry], "sk-test", {
+      sourceFile: "incoming.jsonl",
+      ingestContentHash: hashText("hash-second"),
+      embedFn: embedSpy,
+      onlineDedup: true,
+      llmClient: fakeLlmClient(),
+      onlineDedupFn: dedupSpy,
+    });
+
+    expect(second.skipped).toBe(1);
+    expect(embedSpy).not.toHaveBeenCalled();
+    expect(dedupSpy).not.toHaveBeenCalled();
+  });
+
+  it("respects dedupThreshold boundaries for LLM invocation", async () => {
+    const clientLow = makeClient();
+    await initDb(clientLow);
+    await seedBaseEntry(clientLow);
+
+    const lowSpy = vi.fn(async (_client, _entry, candidates) => ({
+      action: "SKIP" as const,
+      target_id: candidates[0]?.entry.id ?? null,
+      merged_content: null,
+      reasoning: "skip",
+    }));
+
+    const lowResult = await storeEntries(clientLow, [makeEntry({ content: "below threshold vec-84" })], "sk-test", {
       sourceFile: "incoming-low.jsonl",
       ingestContentHash: hashText("incoming-low"),
       embedFn: mockEmbed,
-      classify: true,
+      onlineDedup: true,
+      dedupThreshold: 0.85,
       llmClient: fakeLlmClient(),
-      classifyFn,
+      onlineDedupFn: lowSpy,
     });
 
-    await storeEntries(client, [makeEntry({ content: "high vec-95", subject: "Jim", type: "fact" })], "sk-test", {
+    expect(lowResult.added).toBe(1);
+    expect(lowSpy).not.toHaveBeenCalled();
+
+    const clientHigh = makeClient();
+    await initDb(clientHigh);
+    await seedBaseEntry(clientHigh);
+
+    const highSpy = vi.fn(async (_client, _entry, candidates) => ({
+      action: "SKIP" as const,
+      target_id: candidates[0]?.entry.id ?? null,
+      merged_content: null,
+      reasoning: "skip",
+    }));
+
+    const highResult = await storeEntries(clientHigh, [makeEntry({ content: "above threshold vec-86" })], "sk-test", {
       sourceFile: "incoming-high.jsonl",
       ingestContentHash: hashText("incoming-high"),
       embedFn: mockEmbed,
-      classify: true,
+      onlineDedup: true,
+      dedupThreshold: 0.85,
       llmClient: fakeLlmClient(),
-      classifyFn,
+      onlineDedupFn: highSpy,
     });
 
-    expect(classifyFn).not.toHaveBeenCalled();
-    expect(await getEntryByContent(client, "low vec-75")).not.toBeNull();
-    const seed = await getEntryByContent(client, "seed vec-base");
-    expect(seed?.confirmations).toBe(1);
+    expect(highResult.skipped).toBe(1);
+    expect(highSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("applies batch classifications, including REINFORCING deletion semantics", async () => {
+  it("bypasses all dedup when force=true", async () => {
     const client = makeClient();
     await initDb(client);
 
-    const existingEntries = [
-      makeEntry({ content: "existing-0 vec-base", subject: "S0" }),
-      makeEntry({ content: "existing-1 vec-base", subject: "S1" }),
-      makeEntry({ content: "existing-2 vec-base", subject: "S2" }),
-      makeEntry({ content: "existing-3 vec-base", subject: "S3" }),
-      makeEntry({ content: "existing-4 vec-base", subject: "S4" }),
-    ];
-    const newEntries = [
-      makeEntry({ content: "new-0 vec-85", subject: "S0" }),
-      makeEntry({ content: "new-1 vec-85", subject: "S1" }),
-      makeEntry({ content: "new-2 vec-85", subject: "S2" }),
-      makeEntry({ content: "new-3 vec-85", subject: "S3" }),
-      makeEntry({ content: "new-4 vec-85", subject: "S4" }),
-    ];
-
-    await storeEntries(client, existingEntries, "sk-test", {
-      sourceFile: "existing.jsonl",
-      ingestContentHash: hashText("existing"),
+    const entry = makeEntry({ content: "force vec-base" });
+    await storeEntries(client, [entry], "sk-test", {
+      sourceFile: "seed.jsonl",
+      ingestContentHash: hashText("force-seed"),
       embedFn: mockEmbed,
-      force: true,
-    });
-    await storeEntries(client, newEntries, "sk-test", {
-      sourceFile: "new.jsonl",
-      ingestContentHash: hashText("new"),
-      embedFn: mockEmbed,
-      force: true,
     });
 
-    const byContent = new Map<string, StoredEntry>();
-    const rows = await client.execute(`
-      SELECT
-        id, type, subject, content, importance, expiry, source_file, source_context,
-        created_at, updated_at, recall_count, confirmations, contradictions, superseded_by
-      FROM entries
-    `);
-    for (const row of rows.rows) {
-      const entry: StoredEntry = {
-        id: String(row.id),
-        type: String(row.type) as StoredEntry["type"],
-        subject: String(row.subject),
-        content: String(row.content),
-        importance: asNumber(row.importance),
-        expiry: String(row.expiry) as StoredEntry["expiry"],
-        tags: [],
-        source: {
-          file: String(row.source_file ?? ""),
-          context: String(row.source_context ?? ""),
+    const dedupSpy = vi.fn(async () => ({
+      action: "SKIP" as const,
+      target_id: null,
+      merged_content: null,
+      reasoning: "should not run",
+    }));
+
+    const result = await storeEntries(client, [entry], "sk-test", {
+      sourceFile: "force.jsonl",
+      ingestContentHash: hashText("force-ingest"),
+      embedFn: mockEmbed,
+      force: true,
+      onlineDedup: true,
+      llmClient: fakeLlmClient(),
+      onlineDedupFn: dedupSpy,
+    });
+
+    expect(result.added).toBe(1);
+    expect(dedupSpy).not.toHaveBeenCalled();
+    expect(await countEntries(client)).toBe(2);
+  });
+
+  it("commits per entry when online dedup is enabled (partial progress survives failure)", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    const embedWithFailure = vi.fn(async (texts: string[]) => {
+      if (texts[0]?.includes("boom")) {
+        throw new Error("embed failure");
+      }
+      return mockEmbed(texts);
+    });
+
+    await expect(
+      storeEntries(
+        client,
+        [
+          makeEntry({ content: "first ok vec-base" }),
+          makeEntry({ content: "second boom vec-85" }),
+        ],
+        "sk-test",
+        {
+          sourceFile: "per-entry.jsonl",
+          ingestContentHash: hashText("per-entry"),
+          embedFn: embedWithFailure,
+          onlineDedup: true,
+          llmClient: fakeLlmClient(),
+          onlineDedupFn: vi.fn(async () => ({
+            action: "ADD",
+            target_id: null,
+            merged_content: null,
+            reasoning: "add",
+          })),
         },
-        created_at: String(row.created_at),
-        updated_at: String(row.updated_at),
-        recall_count: asNumber(row.recall_count),
-        confirmations: asNumber(row.confirmations),
-        contradictions: asNumber(row.contradictions),
-        superseded_by: row.superseded_by ? String(row.superseded_by) : undefined,
-      };
-      byContent.set(entry.content, entry);
-    }
-
-    const candidates = [
-      { newEntry: byContent.get("new-0 vec-85"), matchEntry: byContent.get("existing-0 vec-base"), similarity: 0.85 },
-      { newEntry: byContent.get("new-1 vec-85"), matchEntry: byContent.get("existing-1 vec-base"), similarity: 0.85 },
-      { newEntry: byContent.get("new-2 vec-85"), matchEntry: byContent.get("existing-2 vec-base"), similarity: 0.85 },
-      { newEntry: byContent.get("new-3 vec-85"), matchEntry: byContent.get("existing-3 vec-base"), similarity: 0.85 },
-      { newEntry: byContent.get("new-4 vec-85"), matchEntry: byContent.get("existing-4 vec-base"), similarity: 0.85 },
-    ]
-      .filter((item): item is { newEntry: StoredEntry; matchEntry: StoredEntry; similarity: number } => Boolean(item.newEntry && item.matchEntry));
-
-    await batchClassify(client, fakeLlmClient(), candidates, {
-      classifyBatchFn: vi.fn(async () =>
-        new Map<number, ClassificationResult>([
-          [0, "REINFORCING"],
-          [1, "SUPERSEDING"],
-          [2, "CONTRADICTING"],
-          [3, "NUANCING"],
-          [4, "UNRELATED"],
-        ]),
       ),
+    ).rejects.toThrow("embed failure");
+
+    expect(await countEntries(client)).toBe(1);
+  });
+
+  it("retains batch rollback behavior when online dedup is disabled", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    const embedWithFailure = vi.fn(async (texts: string[]) => {
+      if (texts[0]?.includes("boom")) {
+        throw new Error("embed failure");
+      }
+      return mockEmbed(texts);
     });
 
-    const existing0 = await getEntryByContent(client, "existing-0 vec-base");
-    expect(existing0?.confirmations).toBe(1);
-    expect(await getEntryByContent(client, "new-0 vec-85")).toBeNull();
+    await expect(
+      storeEntries(
+        client,
+        [
+          makeEntry({ content: "first ok vec-base" }),
+          makeEntry({ content: "second boom vec-85" }),
+        ],
+        "sk-test",
+        {
+          sourceFile: "batch.jsonl",
+          ingestContentHash: hashText("batch"),
+          embedFn: embedWithFailure,
+          onlineDedup: false,
+        },
+      ),
+    ).rejects.toThrow("embed failure");
 
-    const existing1 = await getEntryByContent(client, "existing-1 vec-base");
-    const new1 = await getEntryByContent(client, "new-1 vec-85");
-    expect(existing1?.supersededBy).toBe(new1?.id);
-    expect(await relationCount(client, "supersedes", new1?.id ?? "", existing1?.id ?? "")).toBe(1);
-
-    const existing2 = await getEntryByContent(client, "existing-2 vec-base");
-    const new2 = await getEntryByContent(client, "new-2 vec-85");
-    expect(existing2?.contradictions).toBe(1);
-    expect(await relationCount(client, "contradicts", new2?.id ?? "", existing2?.id ?? "")).toBe(1);
-
-    const existing3 = await getEntryByContent(client, "existing-3 vec-base");
-    const new3 = await getEntryByContent(client, "new-3 vec-85");
-    expect(await relationCount(client, "elaborates", new3?.id ?? "", existing3?.id ?? "")).toBe(1);
-
-    const relationForUnrelated = await client.execute({
-      sql: "SELECT COUNT(*) AS count FROM relations WHERE source_id = ?",
-      args: [(await getEntryByContent(client, "new-4 vec-85"))?.id ?? ""],
-    });
-    expect(asNumber(relationForUnrelated.rows[0]?.count)).toBe(0);
+    expect(await countEntries(client)).toBe(0);
   });
 });
