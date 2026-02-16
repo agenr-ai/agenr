@@ -534,6 +534,192 @@ describe("ingest command", () => {
     expect(result.results.find((item) => item.file === badFile)?.error).toBe("timeout");
   });
 
+  it("treats all-chunks-failed extraction as a file-level failure (no ingest_log entry)", async () => {
+    const dir = await makeTempDir();
+    const filePath = path.join(dir, "all-fail.md");
+    await fs.writeFile(filePath, "hello", "utf8");
+
+    const db = createClient({ url: ":memory:" });
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    try {
+      const extractKnowledgeFromChunksFn = vi.fn(async () => ({
+        entries: [],
+        successfulChunks: 0,
+        failedChunks: 5,
+        warnings: ["rate limited"],
+      }));
+
+      const result = await runIngestCommand(
+        [filePath],
+        {},
+        makeDeps({
+          getDbFn: vi.fn(() => db) as IngestCommandDeps["getDbFn"],
+          initDbFn: vi.fn(async () => initDb(db)),
+          closeDbFn: vi.fn(() => undefined),
+          expandInputFilesFn: vi.fn(async () => [filePath]),
+          extractKnowledgeFromChunksFn: extractKnowledgeFromChunksFn as IngestCommandDeps["extractKnowledgeFromChunksFn"],
+          deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+          resolveEmbeddingApiKeyFn: vi.fn(() => "sk-test"),
+        }),
+      );
+
+      expect(result.exitCode).toBe(2);
+      expect(result.filesProcessed).toBe(0);
+      expect(result.filesFailed).toBe(1);
+      expect(result.results[0]?.error).toContain("All chunks failed");
+
+      const ingestRows = await db.execute({
+        sql: "SELECT COUNT(*) AS count FROM ingest_log WHERE file_path = ?",
+        args: [path.resolve(filePath)],
+      });
+      expect(Number(ingestRows.rows[0]?.count)).toBe(0);
+
+      const output = stderrSpy.mock.calls.map((call) => String(call[0])).join("");
+      expect(output).toContain("All chunks failed");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("warns (but succeeds) when a majority of chunks fail", async () => {
+    const dir = await makeTempDir();
+    const filePath = path.join(dir, "mostly-fail.md");
+    await fs.writeFile(filePath, "hello", "utf8");
+
+    const db = createClient({ url: ":memory:" });
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    try {
+      const extractKnowledgeFromChunksFn = vi.fn(
+        async (params: Parameters<IngestCommandDeps["extractKnowledgeFromChunksFn"]>[0]) => {
+          await params.onChunkComplete?.({
+            chunkIndex: 0,
+            totalChunks: 10,
+            entries: [makeEntry("one")],
+            warnings: [],
+          });
+          await params.onChunkComplete?.({
+            chunkIndex: 1,
+            totalChunks: 10,
+            entries: [makeEntry("two")],
+            warnings: [],
+          });
+          return {
+            entries: [],
+            successfulChunks: 2,
+            failedChunks: 8,
+            warnings: ["timeout"],
+          };
+        },
+      );
+
+      const result = await runIngestCommand(
+        [filePath],
+        {},
+        makeDeps({
+          getDbFn: vi.fn(() => db) as IngestCommandDeps["getDbFn"],
+          initDbFn: vi.fn(async () => initDb(db)),
+          closeDbFn: vi.fn(() => undefined),
+          expandInputFilesFn: vi.fn(async () => [filePath]),
+          extractKnowledgeFromChunksFn: extractKnowledgeFromChunksFn as IngestCommandDeps["extractKnowledgeFromChunksFn"],
+          deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+          resolveEmbeddingApiKeyFn: vi.fn(() => "sk-test"),
+          storeEntriesFn: vi.fn(async (_db: unknown, entries: KnowledgeEntry[]) => ({
+            added: entries.length,
+            updated: 0,
+            skipped: 0,
+            superseded: 0,
+            llm_dedup_calls: 0,
+            relations_created: 0,
+            total_entries: entries.length,
+            duration_ms: 1,
+          })) as IngestCommandDeps["storeEntriesFn"],
+        }),
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.filesProcessed).toBe(1);
+      expect(result.filesFailed).toBe(0);
+
+      const ingestRows = await db.execute({
+        sql: "SELECT COUNT(*) AS count FROM ingest_log WHERE file_path = ?",
+        args: [path.resolve(filePath)],
+      });
+      expect(Number(ingestRows.rows[0]?.count)).toBe(1);
+
+      const output = stderrSpy.mock.calls.map((call) => String(call[0])).join("");
+      expect(output).toContain("warning");
+      expect(output).toContain("partial extraction");
+      expect(output).toContain("chunks failed");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("logs an info note (not a warning) when a minority of chunks fail", async () => {
+    const dir = await makeTempDir();
+    const filePath = path.join(dir, "minor-fail.md");
+    await fs.writeFile(filePath, "hello", "utf8");
+
+    const db = createClient({ url: ":memory:" });
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    try {
+      const extractKnowledgeFromChunksFn = vi.fn(
+        async (params: Parameters<IngestCommandDeps["extractKnowledgeFromChunksFn"]>[0]) => {
+          await params.onChunkComplete?.({
+            chunkIndex: 0,
+            totalChunks: 10,
+            entries: [makeEntry("one")],
+            warnings: [],
+          });
+          return {
+            entries: [],
+            successfulChunks: 8,
+            failedChunks: 2,
+            warnings: ["rate limit"],
+          };
+        },
+      );
+
+      const result = await runIngestCommand(
+        [filePath],
+        {},
+        makeDeps({
+          getDbFn: vi.fn(() => db) as IngestCommandDeps["getDbFn"],
+          initDbFn: vi.fn(async () => initDb(db)),
+          closeDbFn: vi.fn(() => undefined),
+          expandInputFilesFn: vi.fn(async () => [filePath]),
+          extractKnowledgeFromChunksFn: extractKnowledgeFromChunksFn as IngestCommandDeps["extractKnowledgeFromChunksFn"],
+          deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+          resolveEmbeddingApiKeyFn: vi.fn(() => "sk-test"),
+          storeEntriesFn: vi.fn(async (_db: unknown, entries: KnowledgeEntry[]) => ({
+            added: entries.length,
+            updated: 0,
+            skipped: 0,
+            superseded: 0,
+            llm_dedup_calls: 0,
+            relations_created: 0,
+            total_entries: entries.length,
+            duration_ms: 1,
+          })) as IngestCommandDeps["storeEntriesFn"],
+        }),
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.filesProcessed).toBe(1);
+      expect(result.filesFailed).toBe(0);
+
+      const output = stderrSpy.mock.calls.map((call) => String(call[0])).join("");
+      expect(output).toContain("partial extraction");
+      expect(output).toContain("chunks failed");
+      expect(output).not.toContain("warning");
+    } finally {
+      db.close();
+    }
+  });
+
   it("cleans up partial rows and avoids ingest_log for failed embedding files while continuing other files", async () => {
     const dir = await makeTempDir();
     const badFile = path.join(dir, "bad.jsonl");
