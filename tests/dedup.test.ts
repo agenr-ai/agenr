@@ -7,7 +7,7 @@ function entry(overrides: Partial<KnowledgeEntry>): KnowledgeEntry {
     type: "fact",
     content: "Jim prefers pnpm over npm",
     subject: "Jim",
-    confidence: "medium",
+    importance: 6,
     expiry: "permanent",
     tags: ["tooling"],
     source: { file: "a.jsonl", context: "line 1" },
@@ -16,15 +16,15 @@ function entry(overrides: Partial<KnowledgeEntry>): KnowledgeEntry {
 }
 
 describe("deduplicateEntries", () => {
-  it("deduplicates exact matches and keeps highest confidence", () => {
+  it("deduplicates exact matches and keeps highest importance", () => {
     const input = [
-      entry({ confidence: "low", tags: ["js"] }),
-      entry({ confidence: "high", tags: ["pnpm"] }),
+      entry({ importance: 4, tags: ["js"] }),
+      entry({ importance: 8, tags: ["pnpm"] }),
     ];
 
     const output = deduplicateEntries(input);
     expect(output).toHaveLength(1);
-    expect(output[0]?.confidence).toBe("high");
+    expect(output[0]?.importance).toBe(8);
     expect(output[0]?.tags).toEqual(["js", "pnpm"]);
   });
 

@@ -12,19 +12,18 @@ export const KnowledgeEntrySchema = Type.Object({
     Type.Literal("lesson"),
   ]),
   subject: Type.String({ minLength: 1 }),
-  content: Type.String({ minLength: 1 }),
-  confidence: Type.Union([Type.Literal("high"), Type.Literal("medium"), Type.Literal("low")]),
+  content: Type.String({ minLength: 20 }),
+  importance: Type.Integer({ minimum: 1, maximum: 10 }),
   expiry: Type.Union([
     Type.Literal("permanent"),
     Type.Literal("temporary"),
-    Type.Literal("session-only"),
   ]),
   scope: Type.Optional(Type.Union([
     Type.Literal("private"),
     Type.Literal("personal"),
     Type.Literal("public"),
   ])),
-  tags: Type.Array(Type.String()),
+  tags: Type.Array(Type.String(), { minItems: 1, maxItems: 4 }),
   source_context: Type.String(),
 });
 

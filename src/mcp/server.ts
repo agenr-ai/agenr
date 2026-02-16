@@ -146,11 +146,11 @@ const TOOL_DEFINITIONS: McpToolDefinition[] = [
                 type: "string",
                 enum: [...KNOWLEDGE_TYPES],
               },
-              confidence: {
-                type: "number",
-                minimum: 0,
-                maximum: 1,
-                default: 0.8,
+              importance: {
+                type: "integer",
+                minimum: 1,
+                maximum: 10,
+                default: 5,
               },
               source: { type: "string" },
               tags: {
@@ -453,14 +453,12 @@ function parseScope(value: unknown): Scope {
   return normalized as Scope;
 }
 
-function confidenceLevelFromScore(score: number): KnowledgeEntry["confidence"] {
-  if (score >= 0.8) {
-    return "high";
+function normalizeImportance(value: unknown): number {
+  const parsed = value === undefined ? 5 : Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 10) {
+    throw new RpcError(JSON_RPC_INVALID_PARAMS, "importance must be an integer between 1 and 10");
   }
-  if (score >= 0.5) {
-    return "medium";
-  }
-  return "low";
+  return parsed;
 }
 
 function inferSubject(content: string): string {
@@ -495,10 +493,16 @@ function parseStoreEntries(rawEntries: unknown): KnowledgeEntry[] {
       throw new RpcError(JSON_RPC_INVALID_PARAMS, `entries[${index}].content is required`);
     }
 
-    const confidenceRaw = raw.confidence === undefined ? 0.8 : Number(raw.confidence);
-    if (!Number.isFinite(confidenceRaw) || confidenceRaw < 0 || confidenceRaw > 1) {
-      throw new RpcError(JSON_RPC_INVALID_PARAMS, `entries[${index}].confidence must be between 0.0 and 1.0`);
-    }
+    const importance = (() => {
+      try {
+        return normalizeImportance(raw.importance);
+      } catch {
+        throw new RpcError(
+          JSON_RPC_INVALID_PARAMS,
+          `entries[${index}].importance must be an integer between 1 and 10`,
+        );
+      }
+    })();
 
     const source = typeof raw.source === "string" && raw.source.trim().length > 0 ? raw.source.trim() : "mcp:agenr_store";
     const subject =
@@ -509,7 +513,7 @@ function parseStoreEntries(rawEntries: unknown): KnowledgeEntry[] {
       type: type as KnowledgeEntry["type"],
       subject,
       content,
-      confidence: confidenceLevelFromScore(confidenceRaw),
+      importance,
       expiry: "temporary",
       tags: normalizeTags(raw.tags),
       scope,

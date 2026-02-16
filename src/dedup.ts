@@ -1,10 +1,4 @@
-import type { ConfidenceLevel, KnowledgeEntry } from "./types.js";
-
-const confidenceRank: Record<ConfidenceLevel, number> = {
-  high: 3,
-  medium: 2,
-  low: 1,
-};
+import type { KnowledgeEntry } from "./types.js";
 
 function normalize(value: string): string {
   return value
@@ -39,8 +33,7 @@ function jaccard(a: Set<string>, b: Set<string>): number {
 }
 
 function mergeEntries(existing: KnowledgeEntry, incoming: KnowledgeEntry): KnowledgeEntry {
-  const keepIncomingConfidence =
-    confidenceRank[incoming.confidence] > confidenceRank[existing.confidence];
+  const keepIncomingImportance = incoming.importance > existing.importance;
 
   const mergedTags = Array.from(new Set([...existing.tags, ...incoming.tags])).sort((a, b) =>
     a.localeCompare(b),
@@ -53,7 +46,7 @@ function mergeEntries(existing: KnowledgeEntry, incoming: KnowledgeEntry): Knowl
 
   return {
     ...existing,
-    confidence: keepIncomingConfidence ? incoming.confidence : existing.confidence,
+    importance: keepIncomingImportance ? incoming.importance : existing.importance,
     tags: mergedTags,
     source: {
       file: existing.source.file,

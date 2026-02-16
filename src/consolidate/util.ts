@@ -4,7 +4,7 @@ export interface ActiveEmbeddedEntry {
   subject: string;
   content: string;
   embedding: number[];
-  confidence?: string;
+  importance?: number;
   confirmations: number;
   recallCount: number;
   createdAt: string;

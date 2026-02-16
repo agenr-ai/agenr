@@ -53,7 +53,7 @@ function makeEntry(subject: string, content: string, type: KnowledgeEntry["type"
     type,
     subject,
     content,
-    confidence: "medium",
+    importance: 6,
     expiry: "permanent",
     tags: ["e2e"],
     source: {
@@ -94,7 +94,7 @@ describe("consolidate e2e", () => {
             content: "Merged cluster content",
             subject: "Tier2",
             type: "fact",
-            confidence: "high",
+            importance: 8,
             expiry: "permanent",
             tags: ["merged"],
             notes: "merged",

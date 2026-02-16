@@ -404,9 +404,9 @@ export function createProgram(): Command {
     .option("--limit <n>", "Maximum number of results", "10")
     .option("--type <types>", "Filter by comma-separated entry types")
     .option("--tags <tags>", "Filter by comma-separated tags")
-    .option("--min-confidence <level>", "Minimum confidence: low|medium|high")
+    .option("--min-importance <n>", "Minimum importance: 1-10")
     .option("--since <duration>", "Filter by recency (1h, 7d, 30d, 1y) or ISO timestamp")
-    .option("--expiry <level>", "Filter by expiry: core|permanent|temporary|session-only")
+    .option("--expiry <level>", "Filter by expiry: core|permanent|temporary")
     .option("--json", "Output JSON", false)
     .option("--db <path>", "Database path override")
     .option("--budget <tokens>", "Approximate token budget")
@@ -419,7 +419,7 @@ export function createProgram(): Command {
         limit: opts.limit as string | number | undefined,
         type: opts.type as string | undefined,
         tags: opts.tags as string | undefined,
-        minConfidence: opts.minConfidence as string | undefined,
+        minImportance: opts.minImportance as string | undefined,
         since: opts.since as string | undefined,
         expiry: opts.expiry as string | undefined,
         json: opts.json === true,

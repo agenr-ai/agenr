@@ -20,7 +20,7 @@ function makeEntry(): KnowledgeEntry {
     type: "fact",
     subject: "Jim",
     content: "Uses watch mode",
-    confidence: "high",
+    importance: 8,
     expiry: "temporary",
     tags: ["watch"],
     source: {
@@ -41,7 +41,7 @@ afterEach(async () => {
 
 describe("watch command", () => {
   it("wires CLI options into runWatchCommand", async () => {
-    const runWatchCommandMock = vi.fn(async () => ({ exitCode: 0 }));
+    const runWatchCommandMock = vi.fn(async (..._args: unknown[]) => ({ exitCode: 0 }));
     vi.doMock("../../src/commands/watch.js", () => ({
       runWatchCommand: runWatchCommandMock,
     }));
@@ -71,8 +71,9 @@ describe("watch command", () => {
     ]);
 
     expect(runWatchCommandMock).toHaveBeenCalledTimes(1);
-    expect(runWatchCommandMock.mock.calls[0]?.[0]).toBe("/tmp/session.jsonl");
-    expect(runWatchCommandMock.mock.calls[0]?.[1]).toMatchObject({
+    const firstCall = (runWatchCommandMock.mock.calls as unknown[][])[0] as [string, Record<string, unknown>] | undefined;
+    expect(firstCall?.[0]).toBe("/tmp/session.jsonl");
+    expect(firstCall?.[1]).toMatchObject({
       interval: "7",
       minChunk: "1500",
       db: "/tmp/db.sqlite",
@@ -144,7 +145,7 @@ describe("watch command", () => {
         storeEntriesFn: storeEntriesSpy as any,
         loadWatchStateFn: vi.fn(() => loadWatchState(configDir)),
         saveWatchStateFn: vi.fn((state) => saveWatchState(state, configDir)),
-        statFileFn: vi.fn((filePath: string) => fs.stat(filePath)),
+        statFileFn: vi.fn((filePath: string) => fs.stat(filePath)) as any,
         readFileFn: vi.fn((filePath: string, offset: number) => readFileFromOffset(filePath, offset)),
         nowFn: vi.fn(() => new Date("2026-02-15T00:00:00.000Z")),
       },

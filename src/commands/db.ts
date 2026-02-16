@@ -115,7 +115,7 @@ async function fetchExportEntries(db: ReturnType<typeof getDb>): Promise<Array<R
       type,
       subject,
       content,
-      confidence,
+      importance,
       expiry,
       scope,
       source_file,
@@ -143,7 +143,7 @@ async function fetchExportEntries(db: ReturnType<typeof getDb>): Promise<Array<R
       type: toStringValue(record.type),
       subject: toStringValue(record.subject),
       content: toStringValue(record.content),
-      confidence: toStringValue(record.confidence),
+      importance: toStringValue(record.importance),
       expiry: toStringValue(record.expiry),
       scope: toStringValue(record.scope) || "private",
       tags: tagsById.get(id) ?? [],
@@ -179,7 +179,7 @@ function renderMarkdownExport(entries: Array<Record<string, unknown>>): string {
       const tags = Array.isArray(row.tags) ? row.tags.join(", ") : "";
       lines.push(`- **${toStringValue(row.subject)}**: ${toStringValue(row.content)}`);
       lines.push(
-        `  - confidence=${toStringValue(row.confidence)} | expiry=${toStringValue(row.expiry)} | recalled=${toStringValue(row.recall_count) || "0"}`,
+        `  - importance=${toStringValue(row.importance)} | expiry=${toStringValue(row.expiry)} | recalled=${toStringValue(row.recall_count) || "0"}`,
       );
       lines.push(`  - tags: ${tags || "none"}`);
     }

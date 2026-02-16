@@ -46,7 +46,7 @@ function makeEntry(content: string): KnowledgeEntry {
     type: "fact",
     subject: "Merge Subject",
     content,
-    confidence: "medium",
+    importance: 6,
     expiry: "permanent",
     tags: ["merge"],
     source: {
@@ -81,7 +81,7 @@ function makeToolCallMessage(args: Record<string, unknown>) {
           content: "Merged canonical content",
           subject: "Merge Subject",
           type: "fact",
-          confidence: "high",
+          importance: 8,
           expiry: "permanent",
           tags: ["merged", "canonical"],
           notes: "merged",
@@ -107,7 +107,7 @@ describe("consolidate merge", () => {
             content: "Merged canonical content",
             subject: "Merge Subject",
             type: "fact",
-            confidence: "high",
+            importance: 8,
             expiry: "permanent",
             tags: ["merged", "canonical"],
             notes: "merged",
@@ -154,7 +154,7 @@ describe("consolidate merge", () => {
           type: "fact",
           subject: "Merge Subject",
           content: "source a",
-          confidence: "medium",
+          importance: 6,
           embedding: embeddingA,
           confirmations: 2,
           recallCount: 5,
@@ -165,7 +165,7 @@ describe("consolidate merge", () => {
           type: "fact",
           subject: "Merge Subject",
           content: "source b",
-          confidence: "high",
+          importance: 8,
           embedding: embeddingB,
           confirmations: 3,
           recallCount: 7,
@@ -226,7 +226,7 @@ describe("consolidate merge", () => {
         type: "fact",
         subject: "Long Subject",
         content: long,
-        confidence: "medium",
+        importance: 6,
         embedding: vector(0),
         confirmations: 1,
         recallCount: 1,
@@ -281,10 +281,10 @@ describe("extractMergeResultFromToolCall", () => {
     expect(result?.expiry).toBe("permanent");
   });
 
-  it("falls back to high when confidence is certain", () => {
-    const result = extractMergeResultFromToolCall(makeToolCallMessage({ confidence: "certain" }));
+  it("falls back to 5 when importance is non-numeric", () => {
+    const result = extractMergeResultFromToolCall(makeToolCallMessage({ importance: "certain" }));
     expect(result).not.toBeNull();
-    expect(result?.confidence).toBe("high");
+    expect(result?.importance).toBe(5);
   });
 
   it("falls back to fact when type is belief", () => {
@@ -318,14 +318,14 @@ describe("extractMergeResultFromToolCall", () => {
     const result = extractMergeResultFromToolCall(
       makeToolCallMessage({
         type: "event",
-        confidence: "medium",
+        importance: 6,
         expiry: "temporary",
       }),
     );
 
     expect(result).not.toBeNull();
     expect(result?.type).toBe("event");
-    expect(result?.confidence).toBe("medium");
+    expect(result?.importance).toBe(6);
     expect(result?.expiry).toBe("temporary");
   });
 });

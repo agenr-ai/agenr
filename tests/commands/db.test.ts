@@ -31,7 +31,7 @@ async function seedEntry(client: Client, params: {
   await client.execute({
     sql: `
       INSERT INTO entries (
-        id, type, subject, content, confidence, expiry, scope, source_file, source_context, created_at, updated_at, superseded_by
+        id, type, subject, content, importance, expiry, scope, source_file, source_context, created_at, updated_at, superseded_by
       )
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
@@ -75,7 +75,7 @@ async function seedEmbeddingEntry(client: Client, params: {
         type,
         subject,
         content,
-        confidence,
+        importance,
         expiry,
         scope,
         source_file,

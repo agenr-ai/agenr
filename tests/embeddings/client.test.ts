@@ -39,7 +39,7 @@ describe("embeddings client", () => {
       type: "preference",
       subject: "Jim",
       content: "prefers pnpm",
-      confidence: "high",
+      importance: 8,
       expiry: "permanent",
       tags: ["tooling"],
       source: {

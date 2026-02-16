@@ -5,13 +5,12 @@ import { createRelation } from "../db/relations.js";
 import { hashEntrySourceContent, insertEntry } from "../db/store.js";
 import { composeEmbeddingText, embed } from "../embeddings/client.js";
 import { runSimpleStream } from "../llm/stream.js";
-import { KNOWLEDGE_TYPES, type ConfidenceLevel, type Expiry, type KnowledgeEntry, type KnowledgeType, type LlmClient } from "../types.js";
+import { KNOWLEDGE_TYPES, type Expiry, type KnowledgeEntry, type KnowledgeType, type LlmClient } from "../types.js";
 import type { Cluster } from "./cluster.js";
 import { addToReviewQueue, verifyMerge } from "./verify.js";
 
 const KNOWLEDGE_TYPE_SET = new Set<string>(KNOWLEDGE_TYPES);
-const CONFIDENCE_SET = new Set<ConfidenceLevel>(["low", "medium", "high"]);
-const EXPIRY_SET = new Set<Expiry>(["core", "permanent", "temporary", "session-only"]);
+const EXPIRY_SET = new Set<Expiry>(["core", "permanent", "temporary"]);
 
 const MAX_TOTAL_TOKENS = 4096;
 const RESERVED_OVERHEAD_TOKENS = 1024;
@@ -22,12 +21,11 @@ const MERGE_RESULT_SCHEMA = Type.Object({
   content: Type.String(),
   subject: Type.String(),
   type: Type.Union(KNOWLEDGE_TYPES.map((value) => Type.Literal(value))),
-  confidence: Type.Union([Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")]),
+  importance: Type.Integer({ minimum: 1, maximum: 10 }),
   expiry: Type.Union([
     Type.Literal("core"),
     Type.Literal("permanent"),
     Type.Literal("temporary"),
-    Type.Literal("session-only"),
   ]),
   tags: Type.Array(Type.String()),
   notes: Type.String(),
@@ -45,7 +43,7 @@ export interface MergeResult {
   content: string;
   subject: string;
   type: KnowledgeType;
-  confidence: ConfidenceLevel;
+  importance: number;
   expiry: Expiry;
   tags: string[];
   notes: string;
@@ -89,7 +87,7 @@ function formatClusterEntries(cluster: Cluster, contentLimit?: number): string {
         `- id: ${entry.id}`,
         `- type: ${entry.type}`,
         `- subject: ${entry.subject}`,
-        `- confidence: ${entry.confidence ?? "medium"}`,
+        `- importance: ${entry.importance ?? 5}`,
         `- confirmations: ${entry.confirmations}`,
         `- created_at: ${entry.createdAt}`,
         `- content: ${content}`,
@@ -177,17 +175,11 @@ export function extractMergeResultFromToolCall(
       onLog(`[merge] LLM returned invalid type "${args.type}", falling back to "fact"`);
     }
 
-    const confidence =
-      typeof args.confidence === "string" && CONFIDENCE_SET.has(args.confidence as ConfidenceLevel)
-        ? (args.confidence as ConfidenceLevel)
-        : "high";
-    if (
-      verbose &&
-      typeof args.confidence === "string" &&
-      args.confidence.trim() &&
-      !CONFIDENCE_SET.has(args.confidence as ConfidenceLevel)
-    ) {
-      onLog(`[merge] LLM returned invalid confidence "${args.confidence}", falling back to "high"`);
+    const importanceRaw = typeof args.importance === "number" ? args.importance : Number(args.importance);
+    const importance =
+      Number.isInteger(importanceRaw) && importanceRaw >= 1 && importanceRaw <= 10 ? importanceRaw : 5;
+    if (verbose && Number.isFinite(importanceRaw) && importanceRaw !== importance) {
+      onLog(`[merge] LLM returned out-of-range importance "${String(args.importance)}", falling back to 5`);
     }
 
     const expiry =
@@ -209,7 +201,7 @@ export function extractMergeResultFromToolCall(
       content,
       subject,
       type,
-      confidence,
+      importance,
       expiry,
       tags,
       notes,
@@ -302,7 +294,7 @@ export async function mergeCluster(
     type: mergeResult.type,
     subject: mergeResult.subject,
     content: mergeResult.content,
-    confidence: mergeResult.confidence,
+    importance: mergeResult.importance,
     expiry: mergeResult.expiry,
     tags: mergeResult.tags,
     source: {

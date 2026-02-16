@@ -43,7 +43,7 @@ function makeEntry(params: {
     type: params.type ?? "fact",
     subject: params.subject ?? "Jim",
     content: params.content,
-    confidence: "high",
+    importance: 8,
     expiry: "permanent",
     tags: [],
     source: {
@@ -317,7 +317,7 @@ describe("db store classification", () => {
     const byContent = new Map<string, StoredEntry>();
     const rows = await client.execute(`
       SELECT
-        id, type, subject, content, confidence, expiry, source_file, source_context,
+        id, type, subject, content, importance, expiry, source_file, source_context,
         created_at, updated_at, recall_count, confirmations, contradictions, superseded_by
       FROM entries
     `);
@@ -327,7 +327,7 @@ describe("db store classification", () => {
         type: String(row.type) as StoredEntry["type"],
         subject: String(row.subject),
         content: String(row.content),
-        confidence: String(row.confidence) as StoredEntry["confidence"],
+        importance: asNumber(row.importance),
         expiry: String(row.expiry) as StoredEntry["expiry"],
         tags: [],
         source: {
@@ -355,7 +355,7 @@ describe("db store classification", () => {
 
     await batchClassify(client, fakeLlmClient(), candidates, {
       classifyBatchFn: vi.fn(async () =>
-        new Map([
+        new Map<number, ClassificationResult>([
           [0, "REINFORCING"],
           [1, "SUPERSEDING"],
           [2, "CONTRADICTING"],

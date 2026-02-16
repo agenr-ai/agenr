@@ -16,7 +16,7 @@ function makeEntry(type: KnowledgeEntry["type"], subject: string, content: strin
     type,
     subject,
     content,
-    confidence: "medium",
+    importance: 6,
     expiry: "permanent",
     tags: [],
     source: {

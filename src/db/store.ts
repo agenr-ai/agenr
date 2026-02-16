@@ -6,7 +6,7 @@ import { warnIfLocked } from "../consolidate/lock.js";
 import { composeEmbeddingText, embed } from "../embeddings/client.js";
 import { EmbeddingCache } from "../embeddings/cache.js";
 import { runSimpleStream } from "../llm/stream.js";
-import type { ConfidenceLevel, Expiry, KnowledgeEntry, LlmClient, StoreResult, StoredEntry } from "../types.js";
+import type { Expiry, KnowledgeEntry, LlmClient, StoreResult, StoredEntry } from "../types.js";
 import { createRelation } from "./relations.js";
 
 const AUTO_SKIP_THRESHOLD = 0.98;
@@ -226,14 +226,14 @@ function buildClassificationContext(newEntry: KnowledgeEntry, existingEntry: Sto
     `- Type: ${existingEntry.type}`,
     `- Subject: ${existingEntry.subject}`,
     `- Content: ${existingEntry.content}`,
-    `- Confidence: ${existingEntry.confidence}`,
+    `- Importance: ${existingEntry.importance}`,
     `- Confirmations: ${existingEntry.confirmations}`,
     "",
     "NEW entry (being stored):",
     `- Type: ${newEntry.type}`,
     `- Subject: ${newEntry.subject}`,
     `- Content: ${newEntry.content}`,
-    `- Confidence: ${newEntry.confidence}`,
+    `- Importance: ${newEntry.importance}`,
     "",
     "Classifications:",
     "- REINFORCING: New entry says essentially the same thing as existing.",
@@ -274,13 +274,13 @@ function buildBatchClassificationContext(candidates: BatchClassificationCandidat
         `  - Type: ${candidate.matchEntry.type}`,
         `  - Subject: ${candidate.matchEntry.subject}`,
         `  - Content: ${candidate.matchEntry.content}`,
-        `  - Confidence: ${candidate.matchEntry.confidence}`,
+        `  - Importance: ${candidate.matchEntry.importance}`,
         `  - Confirmations: ${candidate.matchEntry.confirmations}`,
         "NEW entry (already inserted):",
         `  - Type: ${candidate.newEntry.type}`,
         `  - Subject: ${candidate.newEntry.subject}`,
         `  - Content: ${candidate.newEntry.content}`,
-        `  - Confidence: ${candidate.newEntry.confidence}`,
+        `  - Importance: ${candidate.newEntry.importance}`,
       ].join("\n"),
     );
   }
@@ -346,12 +346,14 @@ async function getTagsForEntryIds(db: Client, ids: string[]): Promise<Map<string
 }
 
 function mapStoredEntry(row: Row, tags: string[]): StoredEntry {
+  const importanceRaw = toNumber(row.importance);
+  const importance = Number.isFinite(importanceRaw) ? Math.min(10, Math.max(1, Math.round(importanceRaw))) : 5;
   return {
     id: toStringValue(row.id),
     type: toStringValue(row.type) as StoredEntry["type"],
     subject: toStringValue(row.subject),
     content: toStringValue(row.content),
-    confidence: toStringValue(row.confidence) as ConfidenceLevel,
+    importance,
     expiry: toStringValue(row.expiry) as Expiry,
     tags,
     source: {
@@ -498,7 +500,7 @@ export async function findSimilar(
         e.type,
         e.subject,
         e.content,
-        e.confidence,
+        e.importance,
         e.expiry,
         e.source_file,
         e.source_context,
@@ -567,7 +569,7 @@ export async function insertEntry(
         type,
         subject,
         content,
-        confidence,
+        importance,
         expiry,
         source_file,
         source_context,
@@ -583,7 +585,7 @@ export async function insertEntry(
       entry.type,
       entry.subject,
       entry.content,
-      entry.confidence,
+      entry.importance,
       entry.expiry,
       entry.source.file,
       entry.source.context,
