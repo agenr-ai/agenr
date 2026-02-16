@@ -69,16 +69,16 @@ function fakeLlmClient(): LlmClient {
   };
 }
 
-function to512(head: number[]): number[] {
+function to1024(head: number[]): number[] {
   return [...head, ...Array.from({ length: 1021 }, () => 0)];
 }
 
 function vectorForText(text: string): number[] {
-  if (text.includes("vec-base")) return to512([1, 0, 0]);
-  if (text.includes("vec-mid")) return to512([0.94, 0.34, 0]);
-  if (text.includes("vec-85")) return to512([0.85, Math.sqrt(1 - 0.85 ** 2), 0]);
-  if (text.includes("vec-low")) return to512([0.7, 0.71, 0]);
-  return to512([0, 1, 0]);
+  if (text.includes("vec-base")) return to1024([1, 0, 0]);
+  if (text.includes("vec-mid")) return to1024([0.94, 0.34, 0]);
+  if (text.includes("vec-85")) return to1024([0.85, Math.sqrt(1 - 0.85 ** 2), 0]);
+  if (text.includes("vec-low")) return to1024([0.7, 0.71, 0]);
+  return to1024([0, 1, 0]);
 }
 
 async function mockEmbed(texts: string[]): Promise<number[][]> {
@@ -310,7 +310,7 @@ describe("ingest command", () => {
 
     const optionsArg = (storeEntriesFn.mock.calls as unknown[][])[0]?.[3] as Record<string, unknown> | undefined;
     expect(optionsArg?.onlineDedup).toBe(true);
-    expect(optionsArg?.skipLlmDedup).toBe(true);
+    expect(optionsArg?.skipLlmDedup).toBe(false);
     expect(optionsArg?.force).toBeUndefined();
   });
 
@@ -461,9 +461,9 @@ describe("ingest command", () => {
     expect(storeEntriesFn).toHaveBeenCalledTimes(1);
     const optionsArg = (storeEntriesFn.mock.calls as unknown[][])[0]?.[3] as Record<string, unknown> | undefined;
     expect(optionsArg?.onlineDedup).toBe(true);
-    expect(optionsArg?.skipLlmDedup).toBe(true);
+    expect(optionsArg?.skipLlmDedup).toBe(false);
     expect(optionsArg?.force).toBeUndefined();
-    expect(optionsArg?.llmClient).toBeUndefined();
+    expect(optionsArg?.llmClient).toBeTruthy();
   });
 
   it("handles missing files gracefully", async () => {
@@ -544,12 +544,12 @@ describe("ingest command", () => {
     const db = createClient({ url: ":memory:" });
     const storeEntriesFn: IngestCommandDeps["storeEntriesFn"] = async (client, entries, apiKey, options) =>
       storeEntries(client, entries, apiKey, {
-        ...options,
+        ...options, skipLlmDedup: true,
         embedFn: async (texts: string[]) => {
           if (texts.some((text) => text.includes("force-embed-fail"))) {
             throw new Error("OpenAI embeddings request failed (500)");
           }
-          return texts.map(() => to512([1, 0, 0]));
+          return texts.map(() => to1024([1, 0, 0]));
         },
       });
 
@@ -648,13 +648,13 @@ describe("ingest command", () => {
           if (texts.some((text) => text.includes("force-embed-fail"))) {
             throw new Error("OpenAI embeddings request failed (500)");
           }
-          return texts.map(() => to512([1, 0, 0]));
+          return texts.map(() => to1024([1, 0, 0]));
         },
       });
     const successStoreEntriesFn: IngestCommandDeps["storeEntriesFn"] = async (client, entries, apiKey, options) =>
       storeEntries(client, entries, apiKey, {
         ...options,
-        embedFn: async (texts: string[]) => texts.map(() => to512([1, 0, 0])),
+        embedFn: async (texts: string[]) => texts.map(() => to1024([1, 0, 0])),
       });
 
     try {
@@ -1073,7 +1073,7 @@ describe("ingest command", () => {
     }
   });
 
-  it("skips LLM online dedup band during ingest store path", async () => {
+  it("enables LLM online dedup band during ingest store path", async () => {
     const dir = await makeTempDir();
     const fileA = path.join(dir, "a.md");
     const fileB = path.join(dir, "b.md");
@@ -1085,7 +1085,7 @@ describe("ingest command", () => {
       action: "SKIP" as const,
       target_id: null,
       merged_content: null,
-      reasoning: "should not be called from ingest",
+      reasoning: "LLM dedup enabled for ingest",
     }));
     const storeEntriesFn: IngestCommandDeps["storeEntriesFn"] = async (client, entries, apiKey, options) =>
       storeEntries(client, entries, apiKey, {
@@ -1131,8 +1131,7 @@ describe("ingest command", () => {
       );
 
       expect(result.exitCode).toBe(0);
-      expect(result.dedupStats.dedup_llm_calls).toBe(0);
-      expect(onlineDedupFn).not.toHaveBeenCalled();
+      expect(onlineDedupFn).toHaveBeenCalled();
     } finally {
       db.close();
     }

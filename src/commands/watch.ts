@@ -12,6 +12,8 @@ import { createLlmClient } from "../llm/client.js";
 import { parseTranscriptFile } from "../parser.js";
 import type { WatchOptions } from "../types.js";
 import { banner, formatLabel, formatWarn } from "../ui.js";
+import { resolveAutoSession } from "../watch/resolvers/auto.js";
+import { detectWatchPlatform, getResolver, type WatchPlatform } from "../watch/resolvers/index.js";
 import { getFileState, loadWatchState, saveWatchState } from "../watch/state.js";
 import { readFileFromOffset, runWatcher } from "../watch/watcher.js";
 
@@ -52,6 +54,10 @@ function parsePositiveInt(value: number | string | undefined, fallback: number, 
   return Math.floor(parsed);
 }
 
+function formatSwitchLabel(filePath: string): string {
+  return path.resolve(filePath);
+}
+
 export interface WatchCommandOptions extends WatchOptions {
   interval?: number | string;
   minChunk?: number | string;
@@ -82,8 +88,108 @@ export interface WatchCommandResult {
   durationMs: number;
 }
 
+type WatchMode = "file" | "dir" | "auto";
+
+interface WatchModeConfig {
+  mode: WatchMode;
+  filePath: string | null;
+  sessionsDir: string | null;
+  platform: WatchPlatform | null;
+  resolver: ReturnType<typeof getResolver> | null;
+  autoPlatformCount?: number;
+}
+
+async function resolveWatchMode(
+  file: string | undefined,
+  options: WatchCommandOptions,
+  statFileFn: typeof fs.stat,
+): Promise<WatchModeConfig> {
+  const hasFile = typeof file === "string" && file.trim().length > 0;
+  const hasDir = typeof options.dir === "string" && options.dir.trim().length > 0;
+  const autoMode = options.auto === true;
+
+  const modeCount = Number(hasFile) + Number(hasDir) + Number(autoMode);
+  if (modeCount !== 1) {
+    throw new Error("Choose exactly one watch mode: <file> OR --dir <path> OR --auto.");
+  }
+
+  if (autoMode) {
+    if (options.platform && options.platform.trim().length > 0) {
+      throw new Error("--platform cannot be used with --auto.");
+    }
+
+    const autoProbe = await resolveAutoSession();
+    if (autoProbe.discoveredRoots.length === 0) {
+      throw new Error(
+        [
+          "No supported platform directories found for --auto mode.",
+          "Expected one of:",
+          "  - ~/.openclaw/agents/main/sessions",
+          "  - ~/.claude/projects",
+          "  - ~/.codex/sessions",
+        ].join("\n"),
+      );
+    }
+
+    return {
+      mode: "auto",
+      filePath: autoProbe.activeFile ? path.resolve(autoProbe.activeFile) : null,
+      sessionsDir: null,
+      platform: autoProbe.platform,
+      resolver: null,
+      autoPlatformCount: autoProbe.discoveredRoots.length,
+    };
+  }
+
+  if (hasDir) {
+    const sessionsDir = path.resolve(options.dir!.trim());
+    const stat = await statFileFn(sessionsDir).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new Error(`Sessions directory not found: ${sessionsDir}`);
+      }
+      throw error;
+    });
+
+    if (!stat.isDirectory()) {
+      throw new Error(`Input is not a directory: ${sessionsDir}`);
+    }
+
+    const platform = detectWatchPlatform(options.platform, sessionsDir);
+    const resolver = getResolver(options.platform, sessionsDir);
+    const resolvedFile = await resolver.resolveActiveSession(sessionsDir).catch(() => null);
+
+    return {
+      mode: "dir",
+      filePath: resolvedFile ? path.resolve(resolvedFile) : null,
+      sessionsDir,
+      platform,
+      resolver,
+    };
+  }
+
+  const filePath = path.resolve((file ?? "").trim());
+  const stat = await statFileFn(filePath).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error(`Transcript file not found: ${filePath}`);
+    }
+    throw error;
+  });
+
+  if (!stat.isFile()) {
+    throw new Error(`Input is not a file: ${filePath}`);
+  }
+
+  return {
+    mode: "file",
+    filePath,
+    sessionsDir: null,
+    platform: null,
+    resolver: null,
+  };
+}
+
 export async function runWatchCommand(
-  file: string,
+  file: string | undefined,
   options: WatchCommandOptions,
   deps?: Partial<WatchCommandDeps>,
 ): Promise<WatchCommandResult> {
@@ -113,17 +219,8 @@ export async function runWatchCommand(
   const verbose = options.verbose === true;
   const once = options.once === true;
   const json = options.json === true;
-  const filePath = path.resolve(file);
 
-  const stat = await resolvedDeps.statFileFn(filePath).catch((error: unknown) => {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      throw new Error(`Transcript file not found: ${filePath}`);
-    }
-    throw error;
-  });
-  if (!stat.isFile()) {
-    throw new Error(`Input is not a file: ${filePath}`);
-  }
+  const modeConfig = await resolveWatchMode(file, options, resolvedDeps.statFileFn);
 
   const clackOutput = { output: process.stderr };
   clack.intro(banner(), clackOutput);
@@ -138,12 +235,29 @@ export async function runWatchCommand(
     await resolvedDeps.saveWatchStateFn(state);
   }
 
-  const fileState = getFileState(state, filePath);
+  const fileState = modeConfig.filePath ? getFileState(state, modeConfig.filePath) : undefined;
   const offset = fileState?.byteOffset ?? 0;
   const config = resolvedDeps.readConfigFn(process.env);
   const dbPath = options.db?.trim() || config?.db?.path || "~/.agenr/knowledge.db";
 
-  clack.log.info(formatLabel("Watching", filePath), clackOutput);
+  if (modeConfig.mode === "file") {
+    clack.log.info(formatLabel("Watching", modeConfig.filePath ?? "(unknown)"), clackOutput);
+  } else if (modeConfig.mode === "dir") {
+    clack.log.info(formatLabel("Watching directory", modeConfig.sessionsDir ?? "(unknown)"), clackOutput);
+    clack.log.info(formatLabel("Platform", modeConfig.platform ?? "mtime"), clackOutput);
+    clack.log.info(
+      formatLabel("Active file", modeConfig.filePath ? formatSwitchLabel(modeConfig.filePath) : "(waiting for session file)"),
+      clackOutput,
+    );
+  } else {
+    clack.log.info(formatLabel("Watching", "auto mode"), clackOutput);
+    clack.log.info(formatLabel("Detected platforms", String(modeConfig.autoPlatformCount ?? 0)), clackOutput);
+    clack.log.info(
+      formatLabel("Active file", modeConfig.filePath ? formatSwitchLabel(modeConfig.filePath) : "(waiting for session file)"),
+      clackOutput,
+    );
+  }
+
   clack.log.info(
     `${formatLabel("Interval", formatInterval(intervalMs))} | ${formatLabel("Min chunk", `${minChunkChars} chars`)}`,
     clackOutput,
@@ -169,7 +283,12 @@ export async function runWatchCommand(
   try {
     const summary = await runWatcher(
       {
-        filePath,
+        filePath: modeConfig.filePath ?? undefined,
+        directoryMode: modeConfig.mode === "dir",
+        sessionsDir: modeConfig.sessionsDir ?? undefined,
+        resolver: modeConfig.resolver ?? undefined,
+        autoMode: modeConfig.mode === "auto",
+        platform: modeConfig.platform ?? undefined,
         intervalMs,
         minChunkChars,
         dryRun,
@@ -183,34 +302,40 @@ export async function runWatchCommand(
         onWarn: (message) => {
           clack.log.warn(formatWarn(message), clackOutput);
         },
+        onSwitch: (from, to, platform) => {
+          const fromLabel = from ? formatSwitchLabel(from) : "(none)";
+          const platformLabel = platform ? ` [${platform}]` : "";
+          clack.log.info(`Switched watch file${platformLabel}: ${fromLabel} -> ${formatSwitchLabel(to)}`, clackOutput);
+        },
         onCycle: (result) => {
           cycleCount += 1;
           const timestamp = formatClock(resolvedDeps.nowFn());
+          const fileLabel = result.filePath ? ` | file=${result.filePath}` : "";
 
           if (json) {
             process.stdout.write(`${JSON.stringify({ cycle: cycleCount, at: resolvedDeps.nowFn().toISOString(), ...result })}\n`);
           }
 
           if (result.error) {
-            clack.log.warn(formatWarn(`[${timestamp}] Cycle ${cycleCount}: ${result.error}`), clackOutput);
+            clack.log.warn(formatWarn(`[${timestamp}] Cycle ${cycleCount}: ${result.error}${fileLabel}`), clackOutput);
             return;
           }
 
           if (result.skipped) {
             if (result.bytesRead > 0) {
               clack.log.info(
-                `[${timestamp}] Cycle ${cycleCount}: +${formatBytes(result.bytesRead)} bytes (below threshold, skipping)`,
+                `[${timestamp}] Cycle ${cycleCount}: +${formatBytes(result.bytesRead)} bytes (below threshold, skipping)${fileLabel}`,
                 clackOutput,
               );
             } else if (once || verbose) {
-              clack.log.info(`[${timestamp}] Cycle ${cycleCount}: no new content`, clackOutput);
+              clack.log.info(`[${timestamp}] Cycle ${cycleCount}: no new content${fileLabel}`, clackOutput);
             }
             return;
           }
 
           if (dryRun) {
             clack.log.info(
-              `[${timestamp}] Cycle ${cycleCount}: +${formatBytes(result.bytesRead)} bytes | ${result.entriesExtracted} entries extracted (dry-run)`,
+              `[${timestamp}] Cycle ${cycleCount}: +${formatBytes(result.bytesRead)} bytes | ${result.entriesExtracted} entries extracted (dry-run)${fileLabel}`,
               clackOutput,
             );
             return;
@@ -218,7 +343,7 @@ export async function runWatchCommand(
 
           const deduped = Math.max(0, result.entriesExtracted - result.entriesStored);
           clack.log.info(
-            `[${timestamp}] Cycle ${cycleCount}: +${formatBytes(result.bytesRead)} bytes | ${result.entriesExtracted} entries extracted | ${result.entriesStored} stored, ${deduped} deduped`,
+            `[${timestamp}] Cycle ${cycleCount}: +${formatBytes(result.bytesRead)} bytes | ${result.entriesExtracted} entries extracted | ${result.entriesStored} stored, ${deduped} deduped${fileLabel}`,
             clackOutput,
           );
         },

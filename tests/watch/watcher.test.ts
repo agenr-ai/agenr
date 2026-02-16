@@ -553,4 +553,206 @@ describe("watcher", () => {
     expect(readOffsets).toEqual([0, 0]);
     expect(deps.saveSnapshots).toHaveLength(1);
   });
+
+  it("switches active files in directory mode and preserves per-file offsets", async () => {
+    const fileA = "/tmp/watch-a.jsonl";
+    const fileB = "/tmp/watch-b.jsonl";
+    let shutdown = false;
+    let resolveCalls = 0;
+
+    const state: WatchState = {
+      version: 1,
+      files: {
+        [fileA]: {
+          filePath: fileA,
+          byteOffset: 5,
+          lastRunAt: "2026-02-15T00:00:00.000Z",
+          totalEntriesStored: 0,
+          totalRunCount: 0,
+        },
+        [fileB]: {
+          filePath: fileB,
+          byteOffset: 2,
+          lastRunAt: "2026-02-15T00:00:00.000Z",
+          totalEntriesStored: 0,
+          totalRunCount: 0,
+        },
+      },
+    };
+
+    const resolver = {
+      filePattern: "*.jsonl",
+      resolveActiveSession: vi.fn(async () => {
+        resolveCalls += 1;
+        if (resolveCalls === 1) {
+          return fileA;
+        }
+        return fileB;
+      }),
+    };
+
+    const readOffsets: Record<string, number[]> = {
+      [fileA]: [],
+      [fileB]: [],
+    };
+
+    const deps = makeDeps({
+      loadWatchStateFn: vi.fn(async () => state),
+      statFileFn: vi.fn(async (target: string) => ({
+        size: target === fileA ? 10 : 8,
+        isFile: () => true,
+      })),
+      readFileFn: vi.fn(async (target: string, offset: number) => {
+        readOffsets[target]?.push(offset);
+        return Buffer.from(target === fileA ? "abcde" : "123456");
+      }),
+      extractKnowledgeFromChunksFn: vi.fn(async () => ({
+        entries: [],
+        successfulChunks: 1,
+        failedChunks: 0,
+        warnings: [],
+      })),
+      sleepFn: vi.fn(async () => undefined),
+      shouldShutdownFn: vi.fn(() => shutdown),
+    });
+
+    let cycles = 0;
+    await runWatcher(
+      {
+        intervalMs: 1,
+        minChunkChars: 1,
+        dryRun: true,
+        verbose: false,
+        once: false,
+        directoryMode: true,
+        sessionsDir: "/tmp/sessions",
+        resolver,
+        onCycle: () => {
+          cycles += 1;
+          if (cycles >= 3) {
+            shutdown = true;
+          }
+        },
+      },
+      deps,
+    );
+
+    expect(readOffsets[fileA]).toEqual([5]);
+    expect(readOffsets[fileB]).toEqual([2]);
+    expect(deps.saveSnapshots.some((snapshot) => snapshot.files[fileA]?.byteOffset === 10)).toBe(true);
+    expect(deps.saveSnapshots.some((snapshot) => snapshot.files[fileB]?.byteOffset === 8)).toBe(true);
+  });
+
+  it("keeps current file when resolver fails in directory mode", async () => {
+    const filePath = "/tmp/watch.jsonl";
+    const warnings: string[] = [];
+    const deps = makeDeps({
+      statFileFn: vi.fn(async () => ({ size: 15, isFile: () => true })),
+      readFileFn: vi.fn(async () => Buffer.from("this content passes threshold")),
+    });
+
+    await runWatcher(
+      {
+        filePath,
+        intervalMs: 1,
+        minChunkChars: 5,
+        dryRun: true,
+        verbose: false,
+        once: true,
+        directoryMode: true,
+        sessionsDir: "/tmp/sessions",
+        resolver: {
+          filePattern: "*.jsonl",
+          resolveActiveSession: vi.fn(async () => {
+            throw new Error("manifest temporarily unavailable");
+          }),
+        },
+        onWarn: (message) => warnings.push(message),
+      },
+      deps,
+    );
+
+    expect(warnings.some((warning) => warning.includes("Session resolution failed"))).toBe(true);
+    expect(deps.readFileFn).toHaveBeenCalledWith(filePath, 0);
+  });
+
+  it("supports immediate wake-up from fs.watch events", async () => {
+    const filePath = "/tmp/watch.jsonl";
+    let shutdown = false;
+    let cycleCount = 0;
+    let watchCallback: ((eventType: string, filename?: string) => void) | null = null;
+    const fakeWatcher = { close: vi.fn() };
+
+    const deps = makeDeps({
+      statFileFn: vi.fn(async () => ({ size: 0, isFile: () => true })),
+      sleepFn: vi.fn(() => new Promise<void>(() => undefined)),
+      shouldShutdownFn: vi.fn(() => shutdown),
+      watchFn: vi.fn((_target: string, _opts: unknown, callback: (eventType: string, filename?: string) => void) => {
+        watchCallback = callback;
+        return fakeWatcher as any;
+      }),
+    });
+
+    await runWatcher(
+      {
+        intervalMs: 1000,
+        minChunkChars: 5,
+        dryRun: true,
+        verbose: false,
+        once: false,
+        directoryMode: true,
+        sessionsDir: "/tmp/sessions",
+        resolver: {
+          filePattern: "*.jsonl",
+          resolveActiveSession: vi.fn(async () => filePath),
+        },
+        fsWatchDebounceMs: 0,
+        onCycle: () => {
+          cycleCount += 1;
+          if (cycleCount === 1) {
+            watchCallback?.("change", "session.jsonl");
+            return;
+          }
+          shutdown = true;
+        },
+      },
+      deps,
+    );
+
+    expect(cycleCount).toBe(2);
+    expect(fakeWatcher.close).toHaveBeenCalled();
+  });
+
+  it("falls back to polling when fs.watch hits EMFILE", async () => {
+    const warnings: string[] = [];
+    const watchError = new Error("too many files") as NodeJS.ErrnoException;
+    watchError.code = "EMFILE";
+
+    const deps = makeDeps({
+      watchFn: vi.fn(() => {
+        throw watchError;
+      }) as any,
+      statFileFn: vi.fn(async () => ({ size: 0, isFile: () => true })),
+    });
+
+    await runWatcher(
+      {
+        intervalMs: 1,
+        minChunkChars: 5,
+        dryRun: true,
+        verbose: false,
+        once: true,
+        directoryMode: true,
+        sessionsDir: "/tmp/sessions",
+        resolver: {
+          filePattern: "*.jsonl",
+          resolveActiveSession: vi.fn(async () => null),
+        },
+        onWarn: (message) => warnings.push(message),
+      },
+      deps,
+    );
+
+    expect(warnings.some((warning) => warning.includes("EMFILE"))).toBe(true);
+  });
 });

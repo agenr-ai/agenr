@@ -83,6 +83,56 @@ describe("watch command", () => {
     });
   });
 
+  it("wires directory mode options into runWatchCommand", async () => {
+    const { createProgram } = await import("../../src/cli.js");
+    const program = createProgram();
+    const watchCommand = program.commands.find((command) => command.name() === "watch");
+    const runWatchCommandMock = vi.fn(async (..._args: unknown[]) => undefined);
+    watchCommand?.action(runWatchCommandMock as any);
+
+    await program.parseAsync([
+      "node",
+      "agenr",
+      "watch",
+      "--dir",
+      "/tmp/sessions",
+      "--platform",
+      "codex",
+      "--once",
+    ]);
+
+    expect(runWatchCommandMock).toHaveBeenCalledTimes(1);
+    const firstCall = (runWatchCommandMock.mock.calls as unknown[][])[0] as [string | undefined, Record<string, unknown>] | undefined;
+    expect(firstCall?.[0]).toBeUndefined();
+    expect(firstCall?.[1]).toMatchObject({
+      dir: "/tmp/sessions",
+      platform: "codex",
+      once: true,
+    });
+  });
+
+  it("rejects when watch mode is ambiguous", async () => {
+    await expect(runWatchCommand("/tmp/session.jsonl", { dir: "/tmp/sessions" })).rejects.toThrow(
+      "Choose exactly one watch mode",
+    );
+  });
+
+  it("rejects when no watch mode is provided", async () => {
+    await expect(runWatchCommand(undefined, {})).rejects.toThrow("Choose exactly one watch mode");
+  });
+
+  it("validates --dir path existence", async () => {
+    const statFileFn = vi.fn(async () => {
+      const error = new Error("missing") as NodeJS.ErrnoException;
+      error.code = "ENOENT";
+      throw error;
+    });
+
+    await expect(
+      runWatchCommand(undefined, { dir: "/tmp/does-not-exist" }, { statFileFn: statFileFn as any }),
+    ).rejects.toThrow("Sessions directory not found");
+  });
+
   it("runs one cycle and stores extracted entries", async () => {
     const dir = await makeTempDir();
     const transcriptPath = path.join(dir, "session.txt");

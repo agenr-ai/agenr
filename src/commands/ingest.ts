@@ -684,7 +684,8 @@ export async function runIngestCommand(
             ingestContentHash: fileHash,
             skipIngestLog: true,
             onlineDedup: true,
-            skipLlmDedup: true,
+            skipLlmDedup: false,
+            llmClient: client,
           }),
         );
         const reinforced = storeResult.updated;
