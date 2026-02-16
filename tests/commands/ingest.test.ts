@@ -4,12 +4,15 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createClient, type Client } from "@libsql/client";
 import { runIngestCommand } from "../../src/commands/ingest.js";
+import { runWatchCommand } from "../../src/commands/watch.js";
 import { initDb } from "../../src/db/client.js";
 import { hashText } from "../../src/db/store.js";
 import { storeEntries } from "../../src/db/store.js";
 import { expandInputFiles } from "../../src/parser.js";
 import type { IngestCommandDeps } from "../../src/commands/ingest.js";
 import type { KnowledgeEntry, LlmClient, ParsedTranscript } from "../../src/types.js";
+import { createEmptyWatchState, loadWatchState, saveWatchState, updateFileState } from "../../src/watch/state.js";
+import { readFileFromOffset } from "../../src/watch/watcher.js";
 
 const tempDirs: string[] = [];
 
@@ -125,6 +128,8 @@ function makeDeps(overrides?: Partial<IngestCommandDeps> & { db?: { execute: Ret
         duration_ms: 5,
       })) as IngestCommandDeps["storeEntriesFn"]),
     hashTextFn: overrides?.hashTextFn ?? hashText,
+    loadWatchStateFn: overrides?.loadWatchStateFn ?? (vi.fn(async () => ({ version: 1 as const, files: {} }))),
+    saveWatchStateFn: overrides?.saveWatchStateFn ?? vi.fn(async () => undefined),
     nowFn: overrides?.nowFn ?? (() => new Date("2026-02-15T00:00:00.000Z")),
   };
 }
@@ -904,5 +909,196 @@ describe("ingest command", () => {
     } finally {
       db.close();
     }
+  });
+
+  it("syncs JSONL ingest byte offset into watch state", async () => {
+    const dir = await makeTempDir();
+    const configDir = path.join(dir, ".agenr");
+    const filePath = path.join(dir, "session.jsonl");
+    const rawContent = '{"role":"user","content":"hello"}\n';
+    await fs.writeFile(filePath, rawContent, "utf8");
+
+    const result = await runIngestCommand(
+      [filePath],
+      {},
+      makeDeps({
+        expandInputFilesFn: vi.fn(async () => [filePath]),
+        loadWatchStateFn: vi.fn(() => loadWatchState(configDir)),
+        saveWatchStateFn: vi.fn((state) => saveWatchState(state, configDir)),
+      }),
+    );
+
+    expect(result.exitCode).toBe(0);
+    const state = await loadWatchState(configDir);
+    expect(state.files[path.resolve(filePath)]?.byteOffset).toBe(Buffer.byteLength(rawContent, "utf8"));
+  });
+
+  it("does not overwrite a higher existing watch offset when not forced", async () => {
+    const dir = await makeTempDir();
+    const configDir = path.join(dir, ".agenr");
+    const filePath = path.join(dir, "session.jsonl");
+    const rawContent = '{"role":"user","content":"hello"}\n';
+    await fs.writeFile(filePath, rawContent, "utf8");
+
+    const state = createEmptyWatchState();
+    updateFileState(state, filePath, { byteOffset: 10_000 });
+    await saveWatchState(state, configDir);
+
+    const result = await runIngestCommand(
+      [filePath],
+      {},
+      makeDeps({
+        expandInputFilesFn: vi.fn(async () => [filePath]),
+        loadWatchStateFn: vi.fn(() => loadWatchState(configDir)),
+        saveWatchStateFn: vi.fn((next) => saveWatchState(next, configDir)),
+      }),
+    );
+
+    expect(result.exitCode).toBe(0);
+    const reloaded = await loadWatchState(configDir);
+    expect(reloaded.files[path.resolve(filePath)]?.byteOffset).toBe(10_000);
+  });
+
+  it("resets watch offset to new ingest byte offset when forced", async () => {
+    const dir = await makeTempDir();
+    const configDir = path.join(dir, ".agenr");
+    const filePath = path.join(dir, "session.jsonl");
+    const rawContent = '{"role":"user","content":"hello"}\n';
+    await fs.writeFile(filePath, rawContent, "utf8");
+
+    const state = createEmptyWatchState();
+    updateFileState(state, filePath, { byteOffset: 10_000 });
+    await saveWatchState(state, configDir);
+
+    const result = await runIngestCommand(
+      [filePath],
+      { force: true },
+      makeDeps({
+        expandInputFilesFn: vi.fn(async () => [filePath]),
+        loadWatchStateFn: vi.fn(() => loadWatchState(configDir)),
+        saveWatchStateFn: vi.fn((next) => saveWatchState(next, configDir)),
+      }),
+    );
+
+    expect(result.exitCode).toBe(0);
+    const reloaded = await loadWatchState(configDir);
+    expect(reloaded.files[path.resolve(filePath)]?.byteOffset).toBe(Buffer.byteLength(rawContent, "utf8"));
+  });
+
+  it("does not sync watch state for non-JSONL files", async () => {
+    const dir = await makeTempDir();
+    const configDir = path.join(dir, ".agenr");
+    const markdownPath = path.join(dir, "note.md");
+    const textPath = path.join(dir, "notes.txt");
+    await fs.writeFile(markdownPath, "# note\nhello\n", "utf8");
+    await fs.writeFile(textPath, "plain text\n", "utf8");
+
+    const result = await runIngestCommand(
+      [markdownPath, textPath],
+      {},
+      makeDeps({
+        expandInputFilesFn: vi.fn(async () => [markdownPath, textPath]),
+        loadWatchStateFn: vi.fn(() => loadWatchState(configDir)),
+        saveWatchStateFn: vi.fn((next) => saveWatchState(next, configDir)),
+      }),
+    );
+
+    expect(result.exitCode).toBe(0);
+    const state = await loadWatchState(configDir);
+    expect(state.files[path.resolve(markdownPath)]).toBeUndefined();
+    expect(state.files[path.resolve(textPath)]).toBeUndefined();
+  });
+
+  it("starts watch from ingest-synced offset instead of zero", async () => {
+    const dir = await makeTempDir();
+    const configDir = path.join(dir, ".agenr");
+    const filePath = path.join(dir, "session.jsonl");
+    const initialContent = '{"role":"user","content":"hello"}\n';
+    const appendedContent = '{"role":"assistant","content":"new content"}\n';
+    await fs.writeFile(filePath, initialContent, "utf8");
+
+    const ingestResult = await runIngestCommand(
+      [filePath],
+      {},
+      makeDeps({
+        expandInputFilesFn: vi.fn(async () => [filePath]),
+        loadWatchStateFn: vi.fn(() => loadWatchState(configDir)),
+        saveWatchStateFn: vi.fn((next) => saveWatchState(next, configDir)),
+      }),
+    );
+    expect(ingestResult.exitCode).toBe(0);
+
+    await fs.appendFile(filePath, appendedContent, "utf8");
+    const readOffsets: number[] = [];
+
+    const watchResult = await runWatchCommand(
+      filePath,
+      { once: true, interval: "1", minChunk: "1" },
+      {
+        readConfigFn: vi.fn(() => ({ db: { path: ":memory:" } })),
+        resolveEmbeddingApiKeyFn: vi.fn(() => "sk-test"),
+        parseTranscriptFileFn: vi.fn(async () => ({
+          file: filePath,
+          messages: [],
+          chunks: [
+            {
+              chunk_index: 0,
+              message_start: 0,
+              message_end: 0,
+              text: "chunk",
+              context_hint: "ctx",
+            },
+          ],
+          warnings: [],
+        })),
+        createLlmClientFn: vi.fn(() => ({ resolvedModel: { modelId: "test" }, credentials: { apiKey: "x" } } as any)),
+        extractKnowledgeFromChunksFn: vi.fn(async (params: {
+          onChunkComplete?: (result: {
+            chunkIndex: number;
+            totalChunks: number;
+            entries: KnowledgeEntry[];
+            warnings: string[];
+          }) => Promise<void>;
+        }) => {
+          await params.onChunkComplete?.({
+            chunkIndex: 0,
+            totalChunks: 1,
+            entries: [makeEntry("watch entry")],
+            warnings: [],
+          });
+          return {
+            entries: [],
+            successfulChunks: 1,
+            failedChunks: 0,
+            warnings: [],
+          };
+        }),
+        deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+        getDbFn: vi.fn(() => ({}) as any),
+        initDbFn: vi.fn(async () => undefined),
+        closeDbFn: vi.fn(() => undefined),
+        storeEntriesFn: vi.fn(async () => ({
+          added: 1,
+          updated: 0,
+          skipped: 0,
+          superseded: 0,
+          llm_dedup_calls: 0,
+          relations_created: 0,
+          total_entries: 1,
+          duration_ms: 5,
+        })) as any,
+        loadWatchStateFn: vi.fn(() => loadWatchState(configDir)),
+        saveWatchStateFn: vi.fn((next) => saveWatchState(next, configDir)),
+        statFileFn: vi.fn((target: string) => fs.stat(target)) as any,
+        readFileFn: vi.fn(async (target: string, offset: number) => {
+          readOffsets.push(offset);
+          return readFileFromOffset(target, offset);
+        }),
+        nowFn: vi.fn(() => new Date("2026-02-15T00:00:00.000Z")),
+      },
+    );
+
+    expect(watchResult.exitCode).toBe(0);
+    expect(readOffsets[0]).toBe(Buffer.byteLength(initialContent, "utf8"));
   });
 });
