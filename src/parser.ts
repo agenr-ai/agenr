@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import path from "node:path";
+import { detectAdapter } from "./adapters/registry.js";
 import type { ParsedTranscript, TranscriptChunk, TranscriptMessage } from "./types.js";
 
 const TARGET_CHUNK_CHARS = 12_000;
@@ -197,10 +198,6 @@ export async function expandInputFiles(inputs: string[]): Promise<string[]> {
   return Array.from(resolved).sort((a, b) => a.localeCompare(b));
 }
 
-function normalizeWhitespace(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
-}
-
 function renderTranscriptLine(message: TranscriptMessage): string {
   const index = String(message.index).padStart(5, "0");
   return `[m${index}][${message.role}] ${message.text}`;
@@ -257,8 +254,10 @@ export function chunkMessages(
     }
 
     const text = rendered.slice(start, endExclusive).join("");
-    const messageStart = messages[start]?.index ?? 0;
-    const messageEnd = messages[endExclusive - 1]?.index ?? messageStart;
+    const firstMessage = messages[start];
+    const lastMessage = messages[endExclusive - 1];
+    const messageStart = firstMessage?.index ?? 0;
+    const messageEnd = lastMessage?.index ?? messageStart;
 
     chunks.push({
       chunk_index: chunkIndex,
@@ -266,6 +265,8 @@ export function chunkMessages(
       message_end: messageEnd,
       text,
       context_hint: buildContextHint(messages, start, endExclusive - 1),
+      timestamp_start: firstMessage?.timestamp,
+      timestamp_end: lastMessage?.timestamp,
     });
 
     if (endExclusive >= messages.length) {
@@ -301,123 +302,11 @@ export function chunkMessages(
   }));
 }
 
-function extractTextBlocks(content: unknown): string[] {
-  if (typeof content === "string") {
-    const normalized = normalizeWhitespace(content);
-    return normalized ? [normalized] : [];
-  }
-
-  if (!Array.isArray(content)) {
-    return [];
-  }
-
-  const out: string[] = [];
-  let nonTextCount = 0;
-
-  for (const block of content) {
-    if (!block || typeof block !== "object") {
-      continue;
-    }
-    const record = block as Record<string, unknown>;
-    if (record.type === "text" && typeof record.text === "string") {
-      const normalized = normalizeWhitespace(record.text);
-      if (normalized) {
-        out.push(normalized);
-      }
-      continue;
-    }
-    nonTextCount += 1;
-  }
-
-  if (out.length === 0 && nonTextCount > 0) {
-    out.push(`[non-text content omitted: ${nonTextCount} block${nonTextCount === 1 ? "" : "s"}]`);
-  }
-
-  return out;
-}
-
-function parseJsonlMessageRecord(record: Record<string, unknown>): { role: TranscriptMessage["role"]; content: unknown } | null {
-  if (
-    (record.role === "user" || record.role === "assistant" || record.role === "human" || record.role === "ai") &&
-    "content" in record
-  ) {
-    const role = record.role === "assistant" || record.role === "ai" ? "assistant" : "user";
-    return {
-      role,
-      content: record.content,
-    };
-  }
-
-  if (record.type !== "message") {
-    return null;
-  }
-
-  const messageRecord = record.message;
-  if (!messageRecord || typeof messageRecord !== "object") {
-    return null;
-  }
-
-  const message = messageRecord as Record<string, unknown>;
-  if (message.role !== "user" && message.role !== "assistant" && message.role !== "human" && message.role !== "ai") {
-    return null;
-  }
-
-  return {
-    role: message.role === "assistant" || message.role === "ai" ? "assistant" : "user",
-    content: message.content,
-  };
-}
-
-function parseJsonl(raw: string, warnings: string[]): TranscriptMessage[] {
-  const messages: TranscriptMessage[] = [];
-  const lines = raw.split(/\r?\n/);
-  let index = 0;
-
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i]?.trim();
-    if (!line) {
-      continue;
-    }
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(line);
-    } catch {
-      warnings.push(`Skipped malformed JSONL line ${i + 1}`);
-      continue;
-    }
-
-    if (!parsed || typeof parsed !== "object") {
-      continue;
-    }
-
-    const record = parsed as Record<string, unknown>;
-    const mapped = parseJsonlMessageRecord(record);
-    if (!mapped) {
-      continue;
-    }
-
-    const textBlocks = extractTextBlocks(mapped.content);
-    const text = normalizeWhitespace(textBlocks.join("\n"));
-    if (!text) {
-      continue;
-    }
-
-    messages.push({
-      index,
-      role: mapped.role,
-      text,
-    });
-    index += 1;
-  }
-
-  return messages;
-}
-
 function chunkText(
   raw: string,
   targetChars = TARGET_CHUNK_CHARS,
   overlapChars = OVERLAP_CHARS,
+  fallbackTimestamp?: string,
 ): TranscriptChunk[] {
   const text = raw.trim();
   if (!text) {
@@ -456,65 +345,26 @@ function chunkText(
     context_hint: `text chunk ${index + 1}/${totalChunks} (${chunk.start}-${chunk.end})`,
     index,
     totalChunks,
+    timestamp_start: fallbackTimestamp,
+    timestamp_end: fallbackTimestamp,
   }));
 }
 
-function parseFirstJsonLine(raw: string): Record<string, unknown> | null {
-  const lines = raw.split(/\r?\n/);
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      continue;
-    }
-    try {
-      const parsed = JSON.parse(trimmed);
-      if (parsed && typeof parsed === "object") {
-        return parsed as Record<string, unknown>;
-      }
-      return null;
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
-
-function looksLikeJsonl(raw: string): boolean {
-  const firstRecord = parseFirstJsonLine(raw);
-  if (!firstRecord) {
-    return false;
-  }
-  return parseJsonlMessageRecord(firstRecord) !== null;
-}
-
-function detectInputKind(filePath: string, raw: string): "jsonl" | "text" {
-  if (looksLikeJsonl(raw)) {
-    return "jsonl";
-  }
-
-  const ext = path.extname(filePath).toLowerCase();
-  if (ext === ".jsonl") {
-    return "jsonl";
-  }
-  if (ext === ".txt" || ext === ".md" || ext === ".markdown") {
-    return "text";
-  }
-
-  return "text";
-}
-
 export async function parseTranscriptFile(filePath: string): Promise<ParsedTranscript> {
-  const raw = await fs.readFile(filePath, "utf8");
-  const warnings: string[] = [];
-  const kind = detectInputKind(filePath, raw);
+  const adapter = await detectAdapter(filePath);
+  const result = await adapter.parse(filePath);
 
-  const messages = kind === "jsonl" ? parseJsonl(raw, warnings).filter((message) => message.text.trim().length > 0) : [];
-  const chunks = kind === "jsonl" ? chunkMessages(messages) : chunkText(raw);
+  const messages = result.messages.filter((message) => message.text.trim().length > 0);
+  const chunks =
+    messages.length > 0
+      ? chunkMessages(messages)
+      : chunkText(await fs.readFile(filePath, "utf8"), TARGET_CHUNK_CHARS, OVERLAP_CHARS, result.metadata?.startedAt);
 
   return {
     file: filePath,
     messages,
     chunks,
-    warnings,
+    warnings: result.warnings,
+    metadata: result.metadata,
   };
 }

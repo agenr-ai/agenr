@@ -61,6 +61,7 @@ export interface KnowledgeEntry {
   expiry: Expiry;
   scope?: Scope;
   tags: string[];
+  created_at?: string;
   source: {
     file: string;
     context: string;
@@ -111,6 +112,7 @@ export interface TranscriptMessage {
   index: number;
   role: "user" | "assistant";
   text: string;
+  timestamp?: string;
 }
 
 export interface TranscriptChunk {
@@ -121,6 +123,8 @@ export interface TranscriptChunk {
   context_hint: string;
   index?: number;
   totalChunks?: number;
+  timestamp_start?: string;
+  timestamp_end?: string;
 }
 
 export interface ParsedTranscript {
@@ -128,6 +132,13 @@ export interface ParsedTranscript {
   messages: TranscriptMessage[];
   chunks: TranscriptChunk[];
   warnings: string[];
+  metadata?: {
+    sessionId?: string;
+    platform?: string;
+    startedAt?: string;
+    model?: string;
+    cwd?: string;
+  };
 }
 
 export interface ResolvedModel {

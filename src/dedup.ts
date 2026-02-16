@@ -44,10 +44,31 @@ function mergeEntries(existing: KnowledgeEntry, incoming: KnowledgeEntry): Knowl
       ? incoming.source.context
       : existing.source.context;
 
+  const parseCreatedAt = (value: string | undefined): string | undefined => {
+    if (!value || value.trim().length === 0) {
+      return undefined;
+    }
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      return undefined;
+    }
+    return parsed.toISOString();
+  };
+
+  const existingCreatedAt = parseCreatedAt(existing.created_at);
+  const incomingCreatedAt = parseCreatedAt(incoming.created_at);
+  const createdAt =
+    existingCreatedAt && incomingCreatedAt
+      ? new Date(existingCreatedAt).getTime() >= new Date(incomingCreatedAt).getTime()
+        ? existingCreatedAt
+        : incomingCreatedAt
+      : existingCreatedAt ?? incomingCreatedAt;
+
   return {
     ...existing,
     importance: keepIncomingImportance ? incoming.importance : existing.importance,
     tags: mergedTags,
+    created_at: createdAt,
     source: {
       file: existing.source.file,
       context: sourceContext,

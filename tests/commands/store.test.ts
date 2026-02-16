@@ -28,7 +28,7 @@ function fakeStoreResult(): StoreResult {
   };
 }
 
-function makeEntry(): KnowledgeEntry {
+function makeEntry(createdAt?: string): KnowledgeEntry {
   return {
     type: "fact",
     subject: "Jim",
@@ -36,6 +36,7 @@ function makeEntry(): KnowledgeEntry {
     importance: 8,
     expiry: "permanent",
     tags: ["tooling"],
+    created_at: createdAt,
     source: {
       file: "fixture.json",
       context: "test",
@@ -48,7 +49,7 @@ describe("store command", () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agenr-store-test-"));
     tempDirs.push(dir);
     const filePath = path.join(dir, "input.json");
-    await fs.writeFile(filePath, `${JSON.stringify([makeEntry()], null, 2)}\n`, "utf8");
+    await fs.writeFile(filePath, `${JSON.stringify([makeEntry("2026-02-01T10:00:00.000Z")], null, 2)}\n`, "utf8");
 
     const storeEntriesSpy = vi.fn(async (..._args: unknown[]) => fakeStoreResult());
 
@@ -72,6 +73,7 @@ describe("store command", () => {
       type: "fact",
       subject: "Jim",
       content: "Uses pnpm",
+      created_at: "2026-02-01T10:00:00.000Z",
     });
   });
 

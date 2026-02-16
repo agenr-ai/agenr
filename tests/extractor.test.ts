@@ -53,6 +53,18 @@ function fakeChunkAt(index: number): TranscriptChunk {
   };
 }
 
+function fakeChunkWithTimestamp(index: number, timestampEnd: string): TranscriptChunk {
+  return {
+    chunk_index: index,
+    message_start: index * 2,
+    message_end: index * 2 + 1,
+    text: `[m${String(index).padStart(5, "0")}][user] hello ${index}`,
+    context_hint: `m${String(index).padStart(5, "0")} hello ${index}`,
+    timestamp_start: timestampEnd,
+    timestamp_end: timestampEnd,
+  };
+}
+
 function assistantMessageWithContent(
   content: AssistantMessage["content"],
   stopReason: AssistantMessage["stopReason"] = "stop",
@@ -136,6 +148,161 @@ describe("extractKnowledgeFromChunks", () => {
     expect(result.entries[0]?.importance).toBe(8);
     expect(result.entries[0]?.source.file).toBe("session.jsonl");
     expect(result.entries[0]?.source.context).toBe("user discussed preferred package manager");
+  });
+
+  it("sets created_at from chunk timestamp when model does not provide it", async () => {
+    const streamSimpleImpl = (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) =>
+      streamWithResult(
+        Promise.resolve(
+          assistantMessageWithContent(
+            [
+              {
+                type: "toolCall",
+                id: "call_ts",
+                name: "submit_knowledge",
+                arguments: {
+                  entries: [
+                    {
+                      type: "fact",
+                      content: "The agenr extraction pipeline now preserves source timestamps end to end.",
+                      subject: "agenr extraction pipeline",
+                      importance: 8,
+                      expiry: "permanent",
+                      tags: ["agenr", "timestamps"],
+                      source_context: "timestamp discussion",
+                    },
+                  ],
+                },
+              },
+            ],
+            "toolUse",
+          ),
+        ),
+      );
+
+    const result = await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunkWithTimestamp(0, "2026-02-16T05:20:01.123Z")],
+      client: fakeClient(),
+      verbose: false,
+      streamSimpleImpl,
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+    });
+
+    expect(result.entries).toHaveLength(1);
+    expect(result.entries[0]?.created_at).toBe("2026-02-16T05:20:01.123Z");
+  });
+
+  it("preserves created_at through LLM dedup output when dedup entry omits timestamp", async () => {
+    let callCount = 0;
+    const streamSimpleImpl = (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) => {
+      callCount += 1;
+
+      if (callCount === 1) {
+        return streamWithResult(
+          Promise.resolve(
+            assistantMessageWithContent(
+              [
+                {
+                  type: "toolCall",
+                  id: "call_1",
+                  name: "submit_knowledge",
+                  arguments: {
+                    entries: [
+                      {
+                        type: "fact",
+                        content: "Agenr now supports source adapter parsing for OpenClaw transcripts with timestamps.",
+                        subject: "agenr source adapters",
+                        importance: 8,
+                        expiry: "temporary",
+                        tags: ["agenr", "adapters"],
+                        source_context: "chunk 1",
+                      },
+                    ],
+                  },
+                },
+              ],
+              "toolUse",
+            ),
+          ),
+        );
+      }
+
+      if (callCount === 2) {
+        return streamWithResult(
+          Promise.resolve(
+            assistantMessageWithContent(
+              [
+                {
+                  type: "toolCall",
+                  id: "call_2",
+                  name: "submit_knowledge",
+                  arguments: {
+                    entries: [
+                      {
+                        type: "fact",
+                        content: "Agenr source adapters preserve message timestamps and carry them through extraction.",
+                        subject: "agenr source adapters",
+                        importance: 8,
+                        expiry: "temporary",
+                        tags: ["agenr", "timestamps"],
+                        source_context: "chunk 2",
+                      },
+                    ],
+                  },
+                },
+              ],
+              "toolUse",
+            ),
+          ),
+        );
+      }
+
+      return streamWithResult(
+        Promise.resolve(
+          assistantMessageWithContent(
+            [
+              {
+                type: "toolCall",
+                id: "dedup_call",
+                name: "submit_deduped_knowledge",
+                arguments: {
+                  entries: [
+                    {
+                      type: "fact",
+                      content: "Agenr source adapters preserve transcript timestamps through parsing and extraction.",
+                      subject: "agenr source adapters",
+                      importance: 8,
+                      expiry: "temporary",
+                      tags: ["agenr", "timestamps"],
+                      source_context: "dedup merge",
+                    },
+                  ],
+                },
+              },
+            ],
+            "toolUse",
+          ),
+        ),
+      );
+    };
+
+    const result = await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [
+        fakeChunkWithTimestamp(0, "2026-02-15T05:20:01.123Z"),
+        fakeChunkWithTimestamp(1, "2026-02-16T05:20:01.123Z"),
+      ],
+      client: fakeClient(),
+      verbose: false,
+      streamSimpleImpl,
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+    });
+
+    expect(result.entries).toHaveLength(1);
+    expect(result.entries[0]?.created_at).toBe("2026-02-16T05:20:01.123Z");
   });
 
   it("falls back to text parsing when no tool calls are present", async () => {

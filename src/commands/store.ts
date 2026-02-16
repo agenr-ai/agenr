@@ -68,6 +68,19 @@ function normalizeTags(value: unknown): string[] {
   );
 }
 
+function normalizeCreatedAt(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return undefined;
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return undefined;
+  }
+
+  return parsed.toISOString();
+}
+
 function normalizeEntry(raw: unknown, fallbackFile: string): KnowledgeEntry {
   if (!raw || typeof raw !== "object") {
     throw new Error("Entry must be an object.");
@@ -115,6 +128,7 @@ function normalizeEntry(raw: unknown, fallbackFile: string): KnowledgeEntry {
     importance: importance as KnowledgeEntry["importance"],
     expiry: expiry as KnowledgeEntry["expiry"],
     tags: normalizeTags(record.tags),
+    created_at: normalizeCreatedAt(record.created_at),
     source: {
       file: sourceFile,
       context: sourceContext,
