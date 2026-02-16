@@ -70,7 +70,7 @@ function fakeLlmClient(): LlmClient {
 }
 
 function to512(head: number[]): number[] {
-  return [...head, ...Array.from({ length: 509 }, () => 0)];
+  return [...head, ...Array.from({ length: 1021 }, () => 0)];
 }
 
 function vectorForText(text: string): number[] {
@@ -412,7 +412,7 @@ describe("ingest command", () => {
 
     const result = await runIngestCommand(
       [dir],
-      {},
+      { verbose: true },
       makeDeps({
         expandInputFilesFn: vi.fn(async () => [filePath]),
         extractKnowledgeFromChunksFn: extractKnowledgeFromChunksFn as IngestCommandDeps["extractKnowledgeFromChunksFn"],
@@ -876,7 +876,7 @@ describe("ingest command", () => {
     expect(result.filesSkipped).toBe(1);
     expect(result.filesFailed).toBe(1);
     expect(result.totalEntriesExtracted).toBe(3);
-    expect(result.totalEntriesStored).toBe(2);
+    expect(result.totalEntriesStored).toBe(1);
     expect(result.dedupStats.entries_added).toBe(1);
     expect(result.dedupStats.entries_updated).toBe(0);
     expect(result.dedupStats.entries_reinforced).toBe(1);
@@ -888,6 +888,54 @@ describe("ingest command", () => {
     expect(output).toContain("Done: 1 succeeded, 1 failed, 1 skipped (already ingested)");
     expect(output).toContain("Failed files (will auto-retry on next run):");
     expect(output).toContain("fail.md - extract failed");
+  });
+
+  it("prints verbose dedup output with stored/skipped/reinforced separated", async () => {
+    const dir = await makeTempDir();
+    const filePath = path.join(dir, "a.md");
+    await fs.writeFile(filePath, "hello", "utf8");
+
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    const extractKnowledgeFromChunksFn = vi.fn(
+      async (params: Parameters<IngestCommandDeps["extractKnowledgeFromChunksFn"]>[0]) => {
+        await params.onChunkComplete?.({
+          chunkIndex: 0,
+          totalChunks: 1,
+          entries: [makeEntry("one"), makeEntry("two"), makeEntry("three")],
+          warnings: [],
+        });
+        return {
+          entries: [],
+          successfulChunks: 1,
+          failedChunks: 0,
+          warnings: [],
+        };
+      },
+    );
+
+    await runIngestCommand(
+      [dir],
+      { verbose: true },
+      makeDeps({
+        expandInputFilesFn: vi.fn(async () => [filePath]),
+        deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+        extractKnowledgeFromChunksFn: extractKnowledgeFromChunksFn as IngestCommandDeps["extractKnowledgeFromChunksFn"],
+        storeEntriesFn: vi.fn(async () => ({
+          added: 1,
+          updated: 1,
+          skipped: 2,
+          superseded: 0,
+          llm_dedup_calls: 0,
+          relations_created: 0,
+          total_entries: 1,
+          duration_ms: 1,
+        })) as IngestCommandDeps["storeEntriesFn"],
+      }),
+    );
+
+    const output = stderrSpy.mock.calls.map((call) => String(call[0])).join("");
+    expect(output).toContain("3 extracted, 1 stored, 2 skipped (duplicate), 1 reinforced");
   });
 
   it("prints only success summary when all files succeed", async () => {

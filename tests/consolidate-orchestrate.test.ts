@@ -24,7 +24,7 @@ function makeCluster(ids: string[]): Cluster {
       subject: "Subject",
       content: id,
       importance: 5,
-      embedding: [1, 0, 0, ...Array.from({ length: 509 }, () => 0)],
+      embedding: [1, 0, 0, ...Array.from({ length: 1021 }, () => 0)],
       confirmations: 1,
       recallCount: 1,
       createdAt: new Date(2026, 1, index + 1).toISOString(),

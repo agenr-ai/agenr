@@ -40,6 +40,8 @@ export interface IngestFileResult {
   file: string;
   entriesExtracted: number;
   entriesStored: number;
+  entriesSkippedDuplicate: number;
+  entriesReinforced: number;
   skipped: boolean;
   skipReason?: string;
   error?: string;
@@ -617,6 +619,8 @@ export async function runIngestCommand(
       file: target.file,
       entriesExtracted: 0,
       entriesStored: 0,
+      entriesSkippedDuplicate: 0,
+      entriesReinforced: 0,
       skipped: false,
       durationMs: 0,
     };
@@ -684,8 +688,10 @@ export async function runIngestCommand(
           }),
         );
         const reinforced = storeResult.updated;
-        const stored = storeResult.added + reinforced + storeResult.superseded;
+        const stored = storeResult.added + storeResult.superseded;
         fileResult.entriesStored += stored;
+        fileResult.entriesSkippedDuplicate += storeResult.skipped;
+        fileResult.entriesReinforced += reinforced;
         totalEntriesStored += stored;
         totalEntriesAdded += storeResult.added;
         totalEntriesUpdated += 0;
@@ -781,7 +787,7 @@ export async function runIngestCommand(
               clack.log.info(`${label} -- ${result.entriesExtracted} entries extracted (dry-run)`, clackOutput);
             } else {
               clack.log.info(
-                `${label} -- ${result.entriesExtracted} extracted, ${result.entriesStored} stored`,
+                `${label} -- ${result.entriesExtracted} extracted, ${result.entriesStored} stored, ${result.entriesSkippedDuplicate} skipped (duplicate), ${result.entriesReinforced} reinforced`,
                 clackOutput,
               );
             }

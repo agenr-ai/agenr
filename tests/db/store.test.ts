@@ -18,9 +18,11 @@ function asNumber(value: unknown): number {
 }
 
 function vectorForText(text: string): number[] {
-  const to512 = (head: number[]): number[] => [...head, ...Array.from({ length: 509 }, () => 0)];
+  const to512 = (head: number[]): number[] => [...head, ...Array.from({ length: 1021 }, () => 0)];
 
   if (text.includes("vec-base")) return to512([1, 0, 0]);
+  if (text.includes("vec-96")) return to512([0.96, Math.sqrt(1 - 0.96 ** 2), 0]);
+  if (text.includes("vec-89")) return to512([0.89, Math.sqrt(1 - 0.89 ** 2), 0]);
   if (text.includes("vec-exact")) return to512([0.999, 0.01, 0]);
   if (text.includes("vec-mid")) return to512([0.94, 0.34, 0]);
   if (text.includes("vec-low")) return to512([0.7, 0.71, 0]);
@@ -38,6 +40,7 @@ async function mockEmbed(texts: string[]): Promise<number[][]> {
 function makeEntry(params: {
   type?: KnowledgeEntry["type"];
   subject?: string;
+  canonicalKey?: string;
   content: string;
   sourceFile?: string;
   tags?: string[];
@@ -46,6 +49,7 @@ function makeEntry(params: {
   return {
     type: params.type ?? "fact",
     subject: params.subject ?? "Jim",
+    canonical_key: params.canonicalKey,
     content: params.content,
     importance: 8,
     expiry: "permanent",
@@ -155,7 +159,7 @@ describe("db store pipeline", () => {
     expect(createdAt).toBeLessThanOrEqual(after + 1_000);
   });
 
-  it("skips near-exact semantic duplicates above 0.98 similarity", async () => {
+  it("skips near-exact semantic duplicates at 0.95+ similarity", async () => {
     const client = makeClient();
     await initDb(client);
 
@@ -167,7 +171,7 @@ describe("db store pipeline", () => {
 
     const result = await storeEntries(
       client,
-      [makeEntry({ content: "incoming vec-exact", sourceFile: "incoming.jsonl", subject: "Different" })],
+      [makeEntry({ content: "incoming vec-96", sourceFile: "incoming.jsonl", subject: "Different" })],
       "sk-test",
       {
         sourceFile: "incoming.jsonl",
@@ -181,7 +185,7 @@ describe("db store pipeline", () => {
     expect(result.skipped).toBe(1);
   });
 
-  it("updates confirmations for 0.92-0.98 matches with same subject and type", async () => {
+  it("updates confirmations for 0.88-0.95 matches with same subject and type", async () => {
     const client = makeClient();
     await initDb(client);
 
@@ -193,7 +197,7 @@ describe("db store pipeline", () => {
 
     const result = await storeEntries(
       client,
-      [makeEntry({ content: "reinforcement vec-mid", sourceFile: "incoming.jsonl", subject: "Jim", type: "fact" })],
+      [makeEntry({ content: "reinforcement vec-89", sourceFile: "incoming.jsonl", subject: "Jim", type: "fact" })],
       "sk-test",
       {
         sourceFile: "incoming.jsonl",
@@ -213,7 +217,7 @@ describe("db store pipeline", () => {
     expect(asNumber(confirmations.rows[0]?.confirmations)).toBe(1);
   });
 
-  it("adds related relation for same-subject different-type match in 0.92-0.98 band", async () => {
+  it("adds related relation for same-subject different-type match in 0.88-0.95 band", async () => {
     const client = makeClient();
     await initDb(client);
 
@@ -227,7 +231,7 @@ describe("db store pipeline", () => {
       client,
       [
         makeEntry({
-          content: "preference variant vec-mid",
+          content: "preference variant vec-89",
           sourceFile: "incoming.jsonl",
           type: "preference",
           subject: "Jim",
@@ -253,13 +257,13 @@ describe("db store pipeline", () => {
         WHERE source_id = (SELECT id FROM entries WHERE content = ? LIMIT 1)
           AND target_id = (SELECT id FROM entries WHERE content = ? LIMIT 1)
       `,
-      args: ["preference variant vec-mid", "seed vec-base"],
+      args: ["preference variant vec-89", "seed vec-base"],
     });
     expect(relationResult.rows.length).toBe(1);
     expect(String(relationResult.rows[0]?.relation_type)).toBe("related");
   });
 
-  it("adds entries when similarity is below 0.92", async () => {
+  it("adds entries when similarity is below 0.88", async () => {
     const client = makeClient();
     await initDb(client);
 
@@ -283,5 +287,163 @@ describe("db store pipeline", () => {
     expect(result.added).toBe(1);
     expect(result.updated).toBe(0);
     expect(result.skipped).toBe(0);
+  });
+
+  it("treats fuzzy subject matches as same-subject for reinforcement", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    await storeEntries(
+      client,
+      [makeEntry({ content: "seed vec-base", sourceFile: "seed.jsonl", subject: "pnpm" })],
+      "sk-test",
+      {
+        sourceFile: "seed.jsonl",
+        ingestContentHash: hashText("seed"),
+        embedFn: mockEmbed,
+      },
+    );
+
+    const result = await storeEntries(
+      client,
+      [makeEntry({ content: "reinforcement vec-89", sourceFile: "incoming.jsonl", subject: "pnpm migration", type: "fact" })],
+      "sk-test",
+      {
+        sourceFile: "incoming.jsonl",
+        ingestContentHash: hashText("incoming"),
+        embedFn: mockEmbed,
+      },
+    );
+
+    expect(result.added).toBe(0);
+    expect(result.updated).toBe(1);
+    expect(result.skipped).toBe(0);
+  });
+
+  it("treats reordered subject words as same subject", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    await storeEntries(
+      client,
+      [makeEntry({ content: "seed vec-base", sourceFile: "seed.jsonl", subject: "openclaw gateway" })],
+      "sk-test",
+      {
+        sourceFile: "seed.jsonl",
+        ingestContentHash: hashText("seed"),
+        embedFn: mockEmbed,
+      },
+    );
+
+    const result = await storeEntries(
+      client,
+      [makeEntry({ content: "reinforcement vec-89", sourceFile: "incoming.jsonl", subject: "gateway openclaw", type: "fact" })],
+      "sk-test",
+      {
+        sourceFile: "incoming.jsonl",
+        ingestContentHash: hashText("incoming"),
+        embedFn: mockEmbed,
+      },
+    );
+
+    expect(result.added).toBe(0);
+    expect(result.updated).toBe(1);
+  });
+
+  it("does not over-match low-overlap subjects (auth vs authentication flow)", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    await storeEntries(
+      client,
+      [makeEntry({ content: "seed vec-base", sourceFile: "seed.jsonl", subject: "auth" })],
+      "sk-test",
+      {
+        sourceFile: "seed.jsonl",
+        ingestContentHash: hashText("seed"),
+        embedFn: mockEmbed,
+      },
+    );
+
+    const result = await storeEntries(
+      client,
+      [makeEntry({ content: "candidate vec-89", sourceFile: "incoming.jsonl", subject: "authentication flow", type: "fact" })],
+      "sk-test",
+      {
+        sourceFile: "incoming.jsonl",
+        ingestContentHash: hashText("incoming"),
+        embedFn: mockEmbed,
+      },
+    );
+
+    expect(result.added).toBe(1);
+    expect(result.updated).toBe(0);
+    expect(result.skipped).toBe(0);
+  });
+
+  it("reinforces by canonical key match before embedding dedup", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    await storeEntries(
+      client,
+      [makeEntry({ content: "seed vec-base", sourceFile: "seed.jsonl", canonicalKey: "preferred-package-manager" })],
+      "sk-test",
+      {
+        sourceFile: "seed.jsonl",
+        ingestContentHash: hashText("seed"),
+        embedFn: mockEmbed,
+      },
+    );
+
+    const result = await storeEntries(
+      client,
+      [
+        makeEntry({
+          content: "different wording vec-low",
+          sourceFile: "incoming.jsonl",
+          canonicalKey: "preferred-package-manager",
+          subject: "javascript tooling",
+          type: "fact",
+        }),
+      ],
+      "sk-test",
+      {
+        sourceFile: "incoming.jsonl",
+        ingestContentHash: hashText("incoming"),
+        embedFn: mockEmbed,
+      },
+    );
+
+    expect(result.added).toBe(0);
+    expect(result.updated).toBe(1);
+
+    const countRows = await client.execute("SELECT COUNT(*) AS count FROM entries");
+    expect(asNumber(countRows.rows[0]?.count)).toBe(1);
+  });
+
+  it("keeps embedding-based dedup behavior when canonical key is missing", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    await storeEntries(client, [makeEntry({ content: "seed vec-base", sourceFile: "seed.jsonl" })], "sk-test", {
+      sourceFile: "seed.jsonl",
+      ingestContentHash: hashText("seed"),
+      embedFn: mockEmbed,
+    });
+
+    const result = await storeEntries(
+      client,
+      [makeEntry({ content: "reinforcement vec-89", sourceFile: "incoming.jsonl", subject: "Jim", type: "fact" })],
+      "sk-test",
+      {
+        sourceFile: "incoming.jsonl",
+        ingestContentHash: hashText("incoming"),
+        embedFn: mockEmbed,
+      },
+    );
+
+    expect(result.added).toBe(0);
+    expect(result.updated).toBe(1);
   });
 });

@@ -12,6 +12,7 @@ export const KnowledgeEntrySchema = Type.Object({
     Type.Literal("lesson"),
   ]),
   subject: Type.String({ minLength: 1 }),
+  canonical_key: Type.Optional(Type.String()),
   content: Type.String({ minLength: 20 }),
   importance: Type.Integer({ minimum: 1, maximum: 10 }),
   expiry: Type.Union([

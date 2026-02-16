@@ -3,6 +3,7 @@ import { EmbeddingCache } from "../../src/embeddings/cache.js";
 import {
   composeEmbeddingText,
   EMBEDDING_BATCH_SIZE,
+  EMBEDDING_DIMENSIONS,
   EMBEDDING_MAX_CONCURRENCY,
   embed,
   resolveEmbeddingApiKey,
@@ -54,16 +55,19 @@ describe("embeddings client", () => {
   it("splits large input into batches and preserves output order", async () => {
     const inputs = Array.from({ length: 250 }, (_, index) => `item-${index}`);
     const batchSizes: number[] = [];
+    const seenDimensions: number[] = [];
 
     globalThis.fetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
-      const body = JSON.parse(String(init?.body)) as { input: string[] };
+      const body = JSON.parse(String(init?.body)) as { input: string[]; dimensions?: number };
       batchSizes.push(body.input.length);
+      seenDimensions.push(body.dimensions ?? -1);
       return makeEmbeddingResponse(body.input);
     }) as typeof fetch;
 
     const vectors = await embed(inputs, "sk-test");
 
     expect(batchSizes).toEqual([EMBEDDING_BATCH_SIZE, 50]);
+    expect(seenDimensions.every((value) => value === EMBEDDING_DIMENSIONS)).toBe(true);
     expect(vectors).toHaveLength(250);
     expect(vectors[0]).toEqual([0]);
     expect(vectors[125]).toEqual([125]);

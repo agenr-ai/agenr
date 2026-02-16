@@ -62,7 +62,7 @@ const CONFIG_FILE_MODE = 0o600;
 const CONFIG_DIR_MODE = 0o700;
 const DEFAULT_EMBEDDING_PROVIDER = "openai";
 const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
-const DEFAULT_EMBEDDING_DIMENSIONS = 512;
+const DEFAULT_EMBEDDING_DIMENSIONS = 1024;
 
 function resolveUserPath(inputPath: string): string {
   if (!inputPath.startsWith("~")) {

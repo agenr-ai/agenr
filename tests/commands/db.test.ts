@@ -66,7 +66,7 @@ async function seedEmbeddingEntry(client: Client, params: {
   content: string;
 }): Promise<void> {
   const now = "2026-02-14T00:00:00.000Z";
-  const embedding = Array.from({ length: 512 }, (_, i) => (i % 97) / 97);
+  const embedding = Array.from({ length: 1024 }, (_, i) => (i % 97) / 97);
 
   await client.execute({
     sql: `

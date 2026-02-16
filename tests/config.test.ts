@@ -49,7 +49,7 @@ describe("config", () => {
     expect(loaded?.embedding).toEqual({
       provider: "openai",
       model: "text-embedding-3-small",
-      dimensions: 512,
+      dimensions: 1024,
     });
     expect(loaded?.db?.path).toBe(path.join(os.homedir(), ".agenr", "knowledge.db"));
   });
@@ -103,7 +103,7 @@ describe("config", () => {
       embedding: {
         provider: "openai",
         model: "text-embedding-3-small",
-        dimensions: 512,
+        dimensions: 1024,
       },
       db: {
         path: path.join(os.homedir(), ".agenr", "knowledge.db"),

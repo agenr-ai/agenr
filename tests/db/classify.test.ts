@@ -19,7 +19,7 @@ function asNumber(value: unknown): number {
 }
 
 function to512(head: number[]): number[] {
-  return [...head, ...Array.from({ length: 509 }, () => 0)];
+  return [...head, ...Array.from({ length: 1021 }, () => 0)];
 }
 
 function vectorForText(text: string): number[] {
