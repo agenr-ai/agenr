@@ -2,9 +2,9 @@ import type { Client, InValue } from "@libsql/client";
 import { findSimilar } from "../db/store.js";
 import { UnionFind, cosineSim, type ActiveEmbeddedEntry, validateCluster } from "./util.js";
 
-const DEFAULT_SIMILARITY_THRESHOLD = 0.85;
+const DEFAULT_SIMILARITY_THRESHOLD = 0.82;
 const CROSS_TYPE_SUBJECT_THRESHOLD = 0.89;
-const DEFAULT_MIN_CLUSTER = 3;
+const DEFAULT_MIN_CLUSTER = 2;
 const DEFAULT_MAX_CLUSTER_SIZE = 12;
 const DEFAULT_IDEMPOTENCY_DAYS = 7;
 const DEFAULT_NEIGHBOR_LIMIT = 20;

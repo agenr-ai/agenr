@@ -53,6 +53,6 @@ describe("db schema migration v3", () => {
     await initDb(client);
 
     const migrationRows = await client.execute("SELECT version FROM _migrations ORDER BY version ASC");
-    expect(migrationRows.rows.map((row) => Number(row.version))).toEqual([1, 2, 3]);
+    expect(migrationRows.rows.map((row) => Number(row.version))).toEqual([1, 2, 3, 4]);
   });
 });

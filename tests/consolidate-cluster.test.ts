@@ -195,4 +195,14 @@ describe("consolidate cluster", () => {
     const clusters = await buildClusters(db, { minCluster: 3 });
     expect(clusters).toHaveLength(0);
   });
+
+  it("uses minCluster=2 by default so similar pairs can cluster", async () => {
+    const db = await makeDb();
+    await seed(db, { type: "fact", subject: "Pair", content: "a", angle: 0 });
+    await seed(db, { type: "fact", subject: "Pair", content: "b", angle: 8 });
+
+    const clusters = await buildClusters(db);
+    expect(clusters).toHaveLength(1);
+    expect(clusters[0]?.entries).toHaveLength(2);
+  });
 });

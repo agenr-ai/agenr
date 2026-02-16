@@ -124,6 +124,19 @@ export const MIGRATION_V3_STATEMENTS: readonly string[] = [
   "ALTER TABLE entries ADD COLUMN consolidated_at TEXT",
 ];
 
+export const MIGRATION_V4_STATEMENTS: readonly string[] = [
+  "ALTER TABLE entry_sources ADD COLUMN original_created_at TEXT",
+  `
+  UPDATE entry_sources
+  SET original_created_at = (
+    SELECT created_at
+    FROM entries
+    WHERE entries.id = entry_sources.source_entry_id
+  )
+  WHERE original_created_at IS NULL
+  `,
+];
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
@@ -136,6 +149,10 @@ export const MIGRATIONS: readonly Migration[] = [
   {
     version: 3,
     statements: MIGRATION_V3_STATEMENTS,
+  },
+  {
+    version: 4,
+    statements: MIGRATION_V4_STATEMENTS,
   },
 ];
 
