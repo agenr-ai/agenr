@@ -175,6 +175,7 @@ Store uses Mem0-style online dedup:
 - Find top-k similar active entries (`superseded_by IS NULL`).
 - `>= 0.98` + same type: skip as near-exact semantic duplicate.
 - `>= 0.92` + same subject + same type: reinforce existing entry (`confirmations += 1`).
+- `>= 0.92` + same subject + different type: insert new entry and create `related` relation.
 
 3. Online LLM decision path
 - For remaining candidates above threshold (`dedupThreshold`, default `0.8`), LLM returns one of:
@@ -185,6 +186,10 @@ Store uses Mem0-style online dedup:
 
 4. Failure fallback
 - If LLM fails or returns invalid tool output, fallback to `ADD` (avoid data loss).
+
+Ingest-specific behavior:
+- `ingest` always uses deterministic dedup (content hash + fast vector bands) and sets `skipLlmDedup=true`.
+- This keeps ingest free of online LLM dedup calls while still catching high-confidence duplicates.
 
 Transaction mode:
 - Online dedup enabled: per-entry `BEGIN IMMEDIATE`/`COMMIT` so LLM calls stay outside DB lock windows.

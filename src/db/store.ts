@@ -6,7 +6,7 @@ import { warnIfLocked } from "../consolidate/lock.js";
 import { composeEmbeddingText, embed } from "../embeddings/client.js";
 import { EmbeddingCache } from "../embeddings/cache.js";
 import { runSimpleStream } from "../llm/stream.js";
-import type { Expiry, KnowledgeEntry, LlmClient, StoreResult, StoredEntry } from "../types.js";
+import type { Expiry, KnowledgeEntry, LlmClient, RelationType, StoreResult, StoredEntry } from "../types.js";
 import { createRelation } from "./relations.js";
 
 const AUTO_SKIP_THRESHOLD = 0.98;
@@ -50,6 +50,7 @@ export interface StoreEntryDecision {
   sameSubject?: boolean;
   llm_action?: OnlineDedupAction;
   llm_reasoning?: string;
+  relation_type?: RelationType;
 }
 
 export interface StoreEntriesOptions {
@@ -61,6 +62,7 @@ export interface StoreEntriesOptions {
   onDecision?: (decision: StoreEntryDecision) => void;
   embedFn?: (texts: string[], apiKey: string) => Promise<number[][]>;
   onlineDedup?: boolean;
+  skipLlmDedup?: boolean;
   dedupThreshold?: number;
   llmClient?: LlmClient;
   onlineDedupFn?: (
@@ -71,7 +73,7 @@ export interface StoreEntriesOptions {
 }
 
 interface PlannedMutation {
-  kind: "none" | "add" | "reinforce" | "skip" | "update" | "supersede";
+  kind: "none" | "add" | "add_related" | "reinforce" | "skip" | "update" | "supersede";
   contentHash?: string;
   embedding?: number[];
   matchedEntry?: StoredEntry;
@@ -692,7 +694,7 @@ async function planEntryAction(
   contentHash: string,
   options: {
     force: boolean;
-    onlineDedup: boolean;
+    llmDedupEnabled: boolean;
     dedupThreshold: number;
     llmClient?: LlmClient;
     onlineDedupFn?: (
@@ -759,7 +761,28 @@ async function planEntryAction(
     };
   }
 
-  if (!options.onlineDedup) {
+  if (topMatch && similarity >= SMART_DEDUP_THRESHOLD && similarity < AUTO_SKIP_THRESHOLD && sameSubject && !sameType) {
+    return {
+      decision: {
+        entry,
+        action: "added",
+        reason: "added related entry (same subject+high similarity across types)",
+        similarity,
+        matchedEntryId: topMatch.entry.id,
+        matchedEntry: topMatch.entry,
+        sameSubject,
+      },
+      mutation: {
+        kind: "add_related",
+        embedding,
+        contentHash,
+        matchedEntry: topMatch.entry,
+        similarity,
+      },
+    };
+  }
+
+  if (!options.llmDedupEnabled) {
     return {
       decision: {
         entry,
@@ -975,6 +998,23 @@ async function applyEntryMutation(
     };
   }
 
+  if (mutation.kind === "add_related") {
+    const embedding = mutation.embedding;
+    const contentHash = mutation.contentHash;
+    const matchedEntry = mutation.matchedEntry;
+    if (!embedding || !contentHash || !matchedEntry) {
+      throw new Error("Invalid add_related mutation state.");
+    }
+
+    const newEntryId = await insertEntry(db, decision.entry, embedding, contentHash);
+    await createRelation(db, newEntryId, matchedEntry.id, "related");
+    return {
+      ...decision,
+      newEntryId,
+      relation_type: "related",
+    };
+  }
+
   if (mutation.kind === "reinforce") {
     if (!mutation.matchedEntry) {
       throw new Error("Invalid reinforce mutation state.");
@@ -1053,6 +1093,7 @@ async function applyEntryMutation(
   return {
     ...decision,
     newEntryId,
+    relation_type: "supersedes",
   };
 }
 
@@ -1089,8 +1130,9 @@ export async function storeEntries(
 
   const dedupThreshold = validateThreshold(options.dedupThreshold ?? DEFAULT_DEDUP_THRESHOLD);
   const onlineDedup = options.onlineDedup === true && options.force !== true;
-  if (onlineDedup && entries.length > 0 && !options.llmClient) {
-    throw new Error("storeEntries onlineDedup=true requires llmClient.");
+  const llmDedupEnabled = onlineDedup && options.skipLlmDedup !== true;
+  if (llmDedupEnabled && entries.length > 0 && !options.llmClient) {
+    throw new Error("storeEntries requires llmClient when LLM online dedup is enabled.");
   }
 
   const startedAt = Date.now();
@@ -1121,7 +1163,7 @@ export async function storeEntries(
     const embedding = await resolveEmbeddingForText(composeEmbeddingText(entry), apiKey, embedFn, cache);
     const processed = await planEntryAction(db, entry, embedding, contentHash, {
       force: options.force === true,
-      onlineDedup,
+      llmDedupEnabled,
       dedupThreshold,
       llmClient: options.llmClient,
       onlineDedupFn: options.onlineDedupFn,
@@ -1141,6 +1183,9 @@ export async function storeEntries(
         skipped += 1;
       } else if (applied.action === "superseded") {
         superseded += 1;
+      }
+
+      if (applied.relation_type) {
         relationsCreated += 1;
       }
 

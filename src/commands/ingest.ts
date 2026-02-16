@@ -26,8 +26,6 @@ export interface IngestCommandOptions {
   concurrency?: number | string;
   skipIngested?: boolean;
   force?: boolean;
-  onlineDedup?: boolean;
-  dedupThreshold?: number | string;
 }
 
 export interface IngestFileResult {
@@ -48,11 +46,12 @@ export interface IngestCommandResult {
   totalEntriesExtracted: number;
   totalEntriesStored: number;
   dedupStats: {
-    added: number;
-    updated: number;
-    skipped: number;
-    superseded: number;
-    llmDedupCalls: number;
+    entries_added: number;
+    entries_updated: number;
+    entries_skipped: number;
+    entries_reinforced: number;
+    entries_superseded: number;
+    dedup_llm_calls: number;
   };
   durationMs: number;
   results: IngestFileResult[];
@@ -209,17 +208,6 @@ function parsePositiveInt(value: number | string | undefined, fallback: number, 
   return Math.floor(parsed);
 }
 
-function parseDedupThreshold(value: number | string | undefined): number | undefined {
-  if (value === undefined || value === null || String(value).trim().length === 0) {
-    return undefined;
-  }
-  const parsed = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
-    throw new Error("--dedup-threshold must be between 0.0 and 1.0");
-  }
-  return parsed;
-}
-
 function formatBytes(bytes: number): string {
   if (bytes < 0 || !Number.isFinite(bytes)) {
     return "unknown size";
@@ -255,6 +243,77 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+interface ForceCleanupStats {
+  ingestLogRows: number;
+  entryRows: number;
+  entrySourceRows: number;
+}
+
+function countValue(value: unknown): number {
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "bigint"
+      ? Number(value)
+      : typeof value === "string" && value.trim().length > 0
+      ? Number(value)
+      : 0;
+
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+async function getForceCleanupStats(db: Client, filePath: string): Promise<ForceCleanupStats> {
+  const ingestLogRowsResult = await db.execute({
+    sql: "SELECT COUNT(*) AS count FROM ingest_log WHERE file_path = ?",
+    args: [filePath],
+  });
+  const entryRowsResult = await db.execute({
+    sql: "SELECT COUNT(*) AS count FROM entries WHERE source_file = ?",
+    args: [filePath],
+  });
+  const entrySourceRowsResult = await db.execute({
+    sql: `
+      SELECT COUNT(*) AS count
+      FROM entry_sources
+      WHERE merged_entry_id IN (SELECT id FROM entries WHERE source_file = ?)
+         OR source_entry_id IN (SELECT id FROM entries WHERE source_file = ?)
+    `,
+    args: [filePath, filePath],
+  });
+
+  return {
+    ingestLogRows: countValue(ingestLogRowsResult.rows[0]?.count),
+    entryRows: countValue(entryRowsResult.rows[0]?.count),
+    entrySourceRows: countValue(entrySourceRowsResult.rows[0]?.count),
+  };
+}
+
+async function cleanupForForceReingest(db: Client, filePath: string, dryRun: boolean): Promise<ForceCleanupStats> {
+  const stats = await getForceCleanupStats(db, filePath);
+  if (dryRun) {
+    return stats;
+  }
+
+  await db.execute({
+    sql: `
+      DELETE FROM entry_sources
+      WHERE merged_entry_id IN (SELECT id FROM entries WHERE source_file = ?)
+         OR source_entry_id IN (SELECT id FROM entries WHERE source_file = ?)
+    `,
+    args: [filePath, filePath],
+  });
+  await db.execute({
+    sql: "DELETE FROM ingest_log WHERE file_path = ?",
+    args: [filePath],
+  });
+  await db.execute({
+    sql: "DELETE FROM entries WHERE source_file = ?",
+    args: [filePath],
+  });
+
+  return stats;
+}
+
 interface IngestTarget {
   file: string;
   size: number;
@@ -288,8 +347,6 @@ export async function runIngestCommand(
   const dryRun = options.dryRun === true;
   const json = options.json === true;
   const force = options.force === true;
-  const onlineDedup = options.onlineDedup === true;
-  const dedupThreshold = parseDedupThreshold(options.dedupThreshold);
   const skipIngested = force ? false : options.skipIngested !== false;
   const globPattern = options.glob?.trim() || DEFAULT_GLOB;
   const concurrency = parsePositiveInt(options.concurrency, 1, "--concurrency");
@@ -326,11 +383,12 @@ export async function runIngestCommand(
       totalEntriesExtracted: 0,
       totalEntriesStored: 0,
       dedupStats: {
-        added: 0,
-        updated: 0,
-        skipped: 0,
-        superseded: 0,
-        llmDedupCalls: 0,
+        entries_added: 0,
+        entries_updated: 0,
+        entries_skipped: 0,
+        entries_reinforced: 0,
+        entries_superseded: 0,
+        dedup_llm_calls: 0,
       },
       durationMs: Math.max(0, resolvedDeps.nowFn().getTime() - startedAt.getTime()),
       results: [],
@@ -358,11 +416,15 @@ export async function runIngestCommand(
   let filesFailed = 0;
   let totalEntriesExtracted = 0;
   let totalEntriesStored = 0;
-  let totalAdded = 0;
-  let totalUpdated = 0;
-  let totalSkipped = 0;
-  let totalSuperseded = 0;
-  let totalLlmDedupCalls = 0;
+  let totalEntriesAdded = 0;
+  let totalEntriesUpdated = 0;
+  let totalEntriesSkipped = 0;
+  let totalEntriesReinforced = 0;
+  let totalEntriesSuperseded = 0;
+  let totalDedupLlmCalls = 0;
+  let forceDeletedIngestLogRows = 0;
+  let forceDeletedEntryRows = 0;
+  let forceDeletedEntrySourceRows = 0;
   let completed = 0;
   let embeddingApiKey: string | null = null;
   let cursor = 0;
@@ -421,6 +483,13 @@ export async function runIngestCommand(
         }
       }
 
+      if (force) {
+        const cleanupStats = await withDbLock(() => cleanupForForceReingest(db, target.file, dryRun));
+        forceDeletedIngestLogRows += cleanupStats.ingestLogRows;
+        forceDeletedEntryRows += cleanupStats.entryRows;
+        forceDeletedEntrySourceRows += cleanupStats.entrySourceRows;
+      }
+
       const parsed = await resolvedDeps.parseTranscriptFileFn(target.file);
       const processChunkEntries = async (chunkEntries: KnowledgeEntry[]): Promise<void> => {
         fileResult.entriesExtracted += chunkEntries.length;
@@ -439,20 +508,20 @@ export async function runIngestCommand(
           resolvedDeps.storeEntriesFn(db, deduped, embeddingApiKey ?? "", {
             sourceFile: target.file,
             ingestContentHash: fileHash,
-            force,
-            onlineDedup,
-            dedupThreshold,
-            llmClient: onlineDedup ? client : undefined,
+            onlineDedup: true,
+            skipLlmDedup: true,
           }),
         );
-        const stored = storeResult.added + storeResult.updated + storeResult.superseded;
+        const reinforced = storeResult.updated;
+        const stored = storeResult.added + reinforced + storeResult.superseded;
         fileResult.entriesStored += stored;
         totalEntriesStored += stored;
-        totalAdded += storeResult.added;
-        totalUpdated += storeResult.updated;
-        totalSkipped += storeResult.skipped;
-        totalSuperseded += storeResult.superseded;
-        totalLlmDedupCalls += storeResult.llm_dedup_calls;
+        totalEntriesAdded += storeResult.added;
+        totalEntriesUpdated += 0;
+        totalEntriesSkipped += storeResult.skipped;
+        totalEntriesReinforced += reinforced;
+        totalEntriesSuperseded += storeResult.superseded;
+        totalDedupLlmCalls += storeResult.llm_dedup_calls;
       };
 
       await resolvedDeps.extractKnowledgeFromChunksFn({
@@ -561,22 +630,28 @@ export async function runIngestCommand(
     totalEntriesExtracted,
     totalEntriesStored,
     dedupStats: {
-      added: totalAdded,
-      updated: totalUpdated,
-      skipped: totalSkipped,
-      superseded: totalSuperseded,
-      llmDedupCalls: totalLlmDedupCalls,
+      entries_added: totalEntriesAdded,
+      entries_updated: totalEntriesUpdated,
+      entries_skipped: totalEntriesSkipped,
+      entries_reinforced: totalEntriesReinforced,
+      entries_superseded: totalEntriesSuperseded,
+      dedup_llm_calls: totalDedupLlmCalls,
     },
     durationMs,
     results,
   };
 
-  const deduped = Math.max(0, totalEntriesExtracted - totalEntriesStored);
+  const forceCleanupLine = force
+    ? dryRun
+      ? `Force cleanup (dry-run): would delete ${forceDeletedIngestLogRows} ingest_log, ${forceDeletedEntryRows} entries, ${forceDeletedEntrySourceRows} entry_sources`
+      : `Force cleanup: deleted ${forceDeletedIngestLogRows} ingest_log, ${forceDeletedEntryRows} entries, ${forceDeletedEntrySourceRows} entry_sources`
+    : null;
   clack.note(
     [
       `Done: ${sortedTargets.length} files | ${filesProcessed} processed, ${filesSkipped} skipped, ${filesFailed} failed`,
-      `Entries: ${totalEntriesExtracted} extracted, ${totalEntriesStored} stored, ${deduped} deduped`,
-      `Dedup: ${totalAdded} added, ${totalUpdated} updated, ${totalSkipped} skipped, ${totalSuperseded} superseded, ${totalLlmDedupCalls} LLM calls`,
+      `Entries: ${totalEntriesExtracted} extracted, ${totalEntriesStored} stored, ${totalEntriesSkipped} skipped (duplicate), ${totalEntriesReinforced} reinforced`,
+      `Dedup: ${totalEntriesAdded} added, ${totalEntriesUpdated} updated, ${totalEntriesSkipped} skipped, ${totalEntriesReinforced} reinforced, ${totalEntriesSuperseded} superseded, ${totalDedupLlmCalls} LLM calls`,
+      forceCleanupLine,
       `Duration: ${formatDuration(durationMs)}`,
       dryRun ? formatWarn("dry-run: no changes persisted") : null,
     ]
