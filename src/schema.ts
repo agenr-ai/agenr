@@ -38,3 +38,9 @@ export const SUBMIT_KNOWLEDGE_TOOL: Tool<typeof KnowledgeEntriesSchema> = {
   description: "Submit extracted knowledge entries from the transcript. Call this once with all entries.",
   parameters: KnowledgeEntriesSchema,
 };
+
+export const SUBMIT_DEDUPED_KNOWLEDGE_TOOL: Tool<typeof KnowledgeEntriesSchema> = {
+  name: "submit_deduped_knowledge",
+  description: "Submit the deduplicated list of knowledge entries. Merge duplicates and keep unique entries.",
+  parameters: KnowledgeEntriesSchema,
+};
