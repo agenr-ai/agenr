@@ -60,12 +60,20 @@ function makeDeps(overrides?: Partial<IngestCommandDeps> & { db?: { execute: Ret
       (vi.fn(() => ({ resolvedModel: { provider: "openai", modelId: "gpt-4o" }, credentials: { apiKey: "x" } }) as any) as IngestCommandDeps["createLlmClientFn"]),
     extractKnowledgeFromChunksFn:
       overrides?.extractKnowledgeFromChunksFn ??
-      (vi.fn(async () => ({
-        entries: [makeEntry("one"), makeEntry("two")],
-        successfulChunks: 1,
-        failedChunks: 0,
-        warnings: [],
-      })) as IngestCommandDeps["extractKnowledgeFromChunksFn"]),
+      (vi.fn(async (params: Parameters<IngestCommandDeps["extractKnowledgeFromChunksFn"]>[0]) => {
+        await params.onChunkComplete?.({
+          chunkIndex: 0,
+          totalChunks: 1,
+          entries: [makeEntry("one"), makeEntry("two")],
+          warnings: [],
+        });
+        return {
+          entries: [],
+          successfulChunks: 1,
+          failedChunks: 0,
+          warnings: [],
+        };
+      }) as IngestCommandDeps["extractKnowledgeFromChunksFn"]),
     deduplicateEntriesFn: overrides?.deduplicateEntriesFn ?? (vi.fn((entries: KnowledgeEntry[]) => entries.slice(0, 1))),
     getDbFn: overrides?.getDbFn ?? (vi.fn(() => db as any) as IngestCommandDeps["getDbFn"]),
     initDbFn: overrides?.initDbFn ?? vi.fn(async () => undefined),
@@ -377,17 +385,25 @@ describe("ingest command", () => {
     await fs.writeFile(badFile, "bad", "utf8");
     await fs.writeFile(goodFile, "good", "utf8");
 
-    const extractKnowledgeFromChunksFn = vi.fn(async ({ file }: { file: string }) => {
-      if (file === badFile) {
-        throw new Error("timeout");
-      }
-      return {
-        entries: [makeEntry("ok")],
-        successfulChunks: 1,
-        failedChunks: 0,
-        warnings: [],
-      };
-    });
+    const extractKnowledgeFromChunksFn = vi.fn(
+      async (params: Parameters<IngestCommandDeps["extractKnowledgeFromChunksFn"]>[0]) => {
+        if (params.file === badFile) {
+          throw new Error("timeout");
+        }
+        await params.onChunkComplete?.({
+          chunkIndex: 0,
+          totalChunks: 1,
+          entries: [makeEntry("ok")],
+          warnings: [],
+        });
+        return {
+          entries: [],
+          successfulChunks: 1,
+          failedChunks: 0,
+          warnings: [],
+        };
+      },
+    );
 
     const result = await runIngestCommand(
       [dir],
@@ -522,17 +538,25 @@ describe("ingest command", () => {
       return { rows: [] };
     });
 
-    const extractKnowledgeFromChunksFn = vi.fn(async ({ file }: { file: string }) => {
-      if (file === fail) {
-        throw new Error("extract failed");
-      }
-      return {
-        entries: [makeEntry("one"), makeEntry("two"), makeEntry("three")],
-        successfulChunks: 1,
-        failedChunks: 0,
-        warnings: [],
-      };
-    });
+    const extractKnowledgeFromChunksFn = vi.fn(
+      async (params: Parameters<IngestCommandDeps["extractKnowledgeFromChunksFn"]>[0]) => {
+        if (params.file === fail) {
+          throw new Error("extract failed");
+        }
+        await params.onChunkComplete?.({
+          chunkIndex: 0,
+          totalChunks: 1,
+          entries: [makeEntry("one"), makeEntry("two"), makeEntry("three")],
+          warnings: [],
+        });
+        return {
+          entries: [],
+          successfulChunks: 1,
+          failedChunks: 0,
+          warnings: [],
+        };
+      },
+    );
 
     const deduplicateEntriesFn = vi.fn((entries: KnowledgeEntry[]) => entries.slice(0, 2));
     const storeEntriesFn = vi.fn(async () => ({

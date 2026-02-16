@@ -130,12 +130,29 @@ describe("watch command", () => {
           warnings: [],
         })),
         createLlmClientFn: vi.fn(() => ({ resolvedModel: { modelId: "test" }, credentials: { apiKey: "x" } } as any)),
-        extractKnowledgeFromChunksFn: vi.fn(async () => ({
-          entries: [makeEntry()],
-          successfulChunks: 1,
-          failedChunks: 0,
-          warnings: [],
-        })),
+        extractKnowledgeFromChunksFn: vi.fn(
+          async (params: {
+            onChunkComplete?: (result: {
+              chunkIndex: number;
+              totalChunks: number;
+              entries: KnowledgeEntry[];
+              warnings: string[];
+            }) => Promise<void>;
+          }) => {
+            await params.onChunkComplete?.({
+              chunkIndex: 0,
+              totalChunks: 1,
+              entries: [makeEntry()],
+              warnings: [],
+            });
+            return {
+              entries: [],
+              successfulChunks: 1,
+              failedChunks: 0,
+              warnings: [],
+            };
+          },
+        ),
         deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
         getDbFn: vi.fn(() => ({}) as any),
         initDbFn: vi.fn(async () => undefined),

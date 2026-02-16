@@ -1,7 +1,7 @@
 import { createClient, type Client } from "@libsql/client";
 import os from "node:os";
 import path from "node:path";
-import { runMigrations } from "./schema.js";
+import { initSchema } from "./schema.js";
 
 export const DEFAULT_DB_PATH = path.join(os.homedir(), ".agenr", "knowledge.db");
 
@@ -46,7 +46,7 @@ export async function initDb(client: Client): Promise<void> {
   if (walInit) {
     await walInit;
   }
-  await runMigrations(client);
+  await initSchema(client);
 
   // Probe vector index health (best-effort; do not block normal commands).
   try {

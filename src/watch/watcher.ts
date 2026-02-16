@@ -248,7 +248,7 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
                   cycleResult.entriesStored += storeResult.added + storeResult.updated + storeResult.superseded;
                 };
 
-                const extracted = await resolvedDeps.extractKnowledgeFromChunksFn({
+                await resolvedDeps.extractKnowledgeFromChunksFn({
                   file: filePath,
                   chunks: parsed.chunks,
                   client,
@@ -257,11 +257,6 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
                     await processChunkEntries(chunkResult.entries);
                   },
                 });
-
-                // Compatibility fallback for injected extractors that do not dispatch through onChunkComplete.
-                if (extracted.entries.length > 0) {
-                  await processChunkEntries(extracted.entries);
-                }
 
                 const latestState = getFileState(state, filePath);
                 updateFileState(state, filePath, {

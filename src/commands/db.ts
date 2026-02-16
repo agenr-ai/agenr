@@ -4,6 +4,7 @@ import path from "node:path";
 import * as clack from "@clack/prompts";
 import { readConfig } from "../config.js";
 import { closeDb, DEFAULT_DB_PATH, getDb, initDb, walCheckpoint } from "../db/client.js";
+import { initSchema } from "../db/schema.js";
 import { rebuildVectorIndex } from "../db/vector-index.js";
 import { banner, formatLabel, ui } from "../ui.js";
 
@@ -28,6 +29,7 @@ export interface DbCommandDeps {
   readConfigFn: typeof readConfig;
   getDbFn: typeof getDb;
   initDbFn: typeof initDb;
+  initSchemaFn: typeof initSchema;
   closeDbFn: typeof closeDb;
 }
 
@@ -194,6 +196,7 @@ export async function runDbPathCommand(options: DbCommandCommonOptions, deps?: P
     readConfigFn: deps?.readConfigFn ?? readConfig,
     getDbFn: deps?.getDbFn ?? getDb,
     initDbFn: deps?.initDbFn ?? initDb,
+    initSchemaFn: deps?.initSchemaFn ?? initSchema,
     closeDbFn: deps?.closeDbFn ?? closeDb,
   };
 
@@ -219,6 +222,7 @@ export async function runDbStatsCommand(
     readConfigFn: deps?.readConfigFn ?? readConfig,
     getDbFn: deps?.getDbFn ?? getDb,
     initDbFn: deps?.initDbFn ?? initDb,
+    initSchemaFn: deps?.initSchemaFn ?? initSchema,
     closeDbFn: deps?.closeDbFn ?? closeDb,
   };
 
@@ -321,6 +325,7 @@ export async function runDbExportCommand(
     readConfigFn: deps?.readConfigFn ?? readConfig,
     getDbFn: deps?.getDbFn ?? getDb,
     initDbFn: deps?.initDbFn ?? initDb,
+    initSchemaFn: deps?.initSchemaFn ?? initSchema,
     closeDbFn: deps?.closeDbFn ?? closeDb,
   };
 
@@ -359,6 +364,7 @@ export async function runDbResetCommand(
     readConfigFn: deps?.readConfigFn ?? readConfig,
     getDbFn: deps?.getDbFn ?? getDb,
     initDbFn: deps?.initDbFn ?? initDb,
+    initSchemaFn: deps?.initSchemaFn ?? initSchema,
     closeDbFn: deps?.closeDbFn ?? closeDb,
   };
 
@@ -406,8 +412,8 @@ export async function runDbResetCommand(
       }
     }
 
-    await resolvedDeps.initDbFn(db);
-    clack.log.success("Database reset and migrations reapplied.", clackOutput);
+    await resolvedDeps.initSchemaFn(db);
+    clack.log.success("Database reset and schema reinitialized.", clackOutput);
     clack.outro(undefined, clackOutput);
   } finally {
     resolvedDeps.closeDbFn(db);
@@ -422,6 +428,7 @@ export async function runDbRebuildIndexCommand(
     readConfigFn: deps?.readConfigFn ?? readConfig,
     getDbFn: deps?.getDbFn ?? getDb,
     initDbFn: deps?.initDbFn ?? initDb,
+    initSchemaFn: deps?.initSchemaFn ?? initSchema,
     closeDbFn: deps?.closeDbFn ?? closeDb,
   };
 
@@ -463,6 +470,7 @@ export async function runDbCheckCommand(
     readConfigFn: deps?.readConfigFn ?? readConfig,
     getDbFn: deps?.getDbFn ?? getDb,
     initDbFn: deps?.initDbFn ?? initDb,
+    initSchemaFn: deps?.initSchemaFn ?? initSchema,
     closeDbFn: deps?.closeDbFn ?? closeDb,
   };
 
