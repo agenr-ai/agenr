@@ -150,6 +150,8 @@ We switched this project to pnpm.
 
 Store structured entries in the memory DB.
 
+`agenr_store` runs online dedup against existing DB entries by default.
+
 Parameters:
 - `entries` (array, required)
 - Each entry supports:
@@ -214,7 +216,7 @@ Typical response text:
 Extracted 2 entries from text:
 
 [1] (decision) We moved to pnpm.
-Stored: 1 new, 0 updated, 1 duplicates skipped.
+Stored: 1 new, 0 updated, 1 duplicates skipped, 0 superseded.
 ```
 
 ## Teach Your AI to Use agenr

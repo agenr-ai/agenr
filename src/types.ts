@@ -163,6 +163,8 @@ export interface StoreResult {
   added: number;
   updated: number;
   skipped: number;
+  superseded: number;
+  llm_dedup_calls: number;
   relations_created: number;
   total_entries: number;
   duration_ms: number;
@@ -215,6 +217,8 @@ export interface IngestLogEntry {
   entries_added: number;
   entries_updated: number;
   entries_skipped: number;
+  entries_superseded: number;
+  dedup_llm_calls: number;
   duration_ms: number;
 }
 
@@ -247,7 +251,7 @@ export interface WatchOptions {
   db?: string;
   model?: string;
   provider?: string;
-  classify?: boolean;
+  onlineDedup?: boolean;
   verbose?: boolean;
   dryRun?: boolean;
   once?: boolean;

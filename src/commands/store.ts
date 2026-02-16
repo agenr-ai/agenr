@@ -16,7 +16,8 @@ export interface StoreCommandOptions {
   dryRun?: boolean;
   verbose?: boolean;
   force?: boolean;
-  classify?: boolean;
+  onlineDedup?: boolean;
+  dedupThreshold?: number | string;
 }
 
 interface StoreInput {
@@ -159,16 +160,30 @@ function parseInputJson(raw: string, sourceFile: string): KnowledgeEntry[] {
 
 function renderDecisionLine(params: {
   sourceFile: string;
-  action: "added" | "updated" | "skipped";
+  action: "added" | "updated" | "skipped" | "superseded";
   reason: string;
   entry: KnowledgeEntry;
   similarity?: number;
   matchedEntryId?: string;
+  llmReasoning?: string;
 }): string {
   const similarity =
     typeof params.similarity === "number" ? ` similarity=${params.similarity.toFixed(3)}` : "";
   const matched = params.matchedEntryId ? ` match=${params.matchedEntryId}` : "";
-  return `[${params.action}] ${params.sourceFile} ${params.entry.type}:${params.entry.subject} -- ${params.reason}${similarity}${matched}`;
+  const reasoning = params.llmReasoning ? ` llm="${params.llmReasoning.replace(/\\s+/g, " ").trim()}"` : "";
+  return `[${params.action}] ${params.sourceFile} ${params.entry.type}:${params.entry.subject} -- ${params.reason}${similarity}${matched}${reasoning}`;
+}
+
+function parseDedupThreshold(value: number | string | undefined): number | undefined {
+  if (value === undefined || value === null || String(value).trim().length === 0) {
+    return undefined;
+  }
+
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+    throw new Error("--dedup-threshold must be between 0.0 and 1.0");
+  }
+  return parsed;
 }
 
 export async function runStoreCommand(
@@ -242,7 +257,9 @@ export async function runStoreCommand(
   const config = resolvedDeps.readConfigFn(process.env);
   const hasAnyEntries = totalInputEntries > 0;
   const apiKey = hasAnyEntries ? resolvedDeps.resolveEmbeddingApiKeyFn(config, process.env) : "";
-  const llmClient = options.classify && hasAnyEntries ? resolvedDeps.createLlmClientFn({ env: process.env }) : undefined;
+  const onlineDedup = options.onlineDedup !== false;
+  const dedupThreshold = parseDedupThreshold(options.dedupThreshold);
+  const llmClient = onlineDedup && hasAnyEntries ? resolvedDeps.createLlmClientFn({ env: process.env }) : undefined;
 
   const dbPath = options.db?.trim() || config?.db?.path;
   const db = resolvedDeps.getDbFn(dbPath);
@@ -253,6 +270,8 @@ export async function runStoreCommand(
     let added = 0;
     let updated = 0;
     let skipped = 0;
+    let superseded = 0;
+    let llmDedupCalls = 0;
     let relationsCreated = 0;
     let durationMs = 0;
     let totalEntries = 0;
@@ -262,7 +281,8 @@ export async function runStoreCommand(
         dryRun: options.dryRun,
         force: options.force,
         verbose: options.verbose,
-        classify: options.classify,
+        onlineDedup,
+        dedupThreshold,
         llmClient,
         sourceFile: input.sourceFile,
         ingestContentHash: input.contentHash,
@@ -276,6 +296,7 @@ export async function runStoreCommand(
                   entry: decision.entry,
                   similarity: decision.similarity,
                   matchedEntryId: decision.matchedEntryId,
+                  llmReasoning: decision.llm_reasoning,
                 }),
                 clackOutput,
               );
@@ -286,6 +307,8 @@ export async function runStoreCommand(
       added += result.added;
       updated += result.updated;
       skipped += result.skipped;
+      superseded += result.superseded;
+      llmDedupCalls += result.llm_dedup_calls;
       relationsCreated += result.relations_created;
       durationMs += result.duration_ms;
       totalEntries = result.total_entries;
@@ -303,6 +326,8 @@ export async function runStoreCommand(
       added,
       updated,
       skipped,
+      superseded,
+      llm_dedup_calls: llmDedupCalls,
       relations_created: relationsCreated,
       total_entries: totalEntries,
       duration_ms: durationMs,
@@ -313,6 +338,8 @@ export async function runStoreCommand(
         formatLabel("New", `${finalResult.added} entries added`),
         formatLabel("Updated", `${finalResult.updated} entries updated`),
         formatLabel("Skipped", `${finalResult.skipped} duplicates`),
+        formatLabel("Superseded", `${finalResult.superseded} entries superseded`),
+        formatLabel("LLM Dedup", `${finalResult.llm_dedup_calls} calls`),
         formatLabel("Relations", `${finalResult.relations_created} created`),
         formatLabel("Database", `${finalResult.total_entries} total entries`),
         options.dryRun ? formatWarn("dry-run: no changes persisted") : null,

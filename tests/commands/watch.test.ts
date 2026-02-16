@@ -44,7 +44,7 @@ describe("watch command", () => {
     const program = createProgram();
     const watchCommand = program.commands.find((command) => command.name() === "watch");
     const runWatchCommandMock = vi.fn(async (..._args: unknown[]) => undefined);
-    watchCommand?.action(runWatchCommandMock as (...args: unknown[]) => unknown);
+    watchCommand?.action(runWatchCommandMock as any);
 
     await program.parseAsync([
       "node",
@@ -61,7 +61,6 @@ describe("watch command", () => {
       "gpt-4o",
       "--provider",
       "openai",
-      "--classify",
       "--verbose",
       "--dry-run",
       "--once",
@@ -77,7 +76,6 @@ describe("watch command", () => {
       db: "/tmp/db.sqlite",
       model: "gpt-4o",
       provider: "openai",
-      classify: true,
       verbose: true,
       dryRun: true,
       once: true,
@@ -100,6 +98,8 @@ describe("watch command", () => {
       added: 1,
       updated: 0,
       skipped: 0,
+      superseded: 0,
+      llm_dedup_calls: 0,
       relations_created: 0,
       total_entries: 1,
       duration_ms: 5,

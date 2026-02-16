@@ -174,7 +174,7 @@ describe("db store pipeline", () => {
     expect(asNumber(confirmations.rows[0]?.confirmations)).toBe(1);
   });
 
-  it("adds entry with related relation for 0.92-0.98 matches with same subject and different type", async () => {
+  it("adds entry without relation for same-subject different-type match when online dedup is disabled", async () => {
     const client = makeClient();
     await initDb(client);
 
@@ -205,23 +205,10 @@ describe("db store pipeline", () => {
     expect(result.added).toBe(1);
     expect(result.updated).toBe(0);
     expect(result.skipped).toBe(0);
-    expect(result.relations_created).toBe(1);
+    expect(result.relations_created).toBe(0);
 
-    const relationResult = await client.execute(
-      "SELECT source_id, target_id, relation_type FROM relations ORDER BY created_at DESC LIMIT 1",
-    );
-    expect(String(relationResult.rows[0]?.relation_type)).toBe("related");
-
-    const sourceType = await client.execute(
-      "SELECT type FROM entries WHERE id = ?",
-      [String(relationResult.rows[0]?.source_id)],
-    );
-    const targetType = await client.execute(
-      "SELECT type FROM entries WHERE id = ?",
-      [String(relationResult.rows[0]?.target_id)],
-    );
-    expect(String(sourceType.rows[0]?.type)).toBe("preference");
-    expect(String(targetType.rows[0]?.type)).toBe("fact");
+    const relationResult = await client.execute("SELECT COUNT(*) AS count FROM relations");
+    expect(asNumber(relationResult.rows[0]?.count)).toBe(0);
   });
 
   it("adds entries when similarity is below 0.92", async () => {

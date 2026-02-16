@@ -95,6 +95,8 @@ function makeHarness(): TestHarness {
       added: 1,
       updated: 0,
       skipped: 0,
+      superseded: 0,
+      llm_dedup_calls: 0,
       relations_created: 0,
       total_entries: 1,
       duration_ms: 1,
@@ -537,6 +539,8 @@ describe("mcp server", () => {
       added: 1,
       updated: 1,
       skipped: 0,
+      superseded: 0,
+      llm_dedup_calls: 2,
       relations_created: 0,
       total_entries: 2,
       duration_ms: 5,
@@ -574,6 +578,9 @@ describe("mcp server", () => {
     const result = responses[0]?.result as { content?: Array<{ text?: string }> };
     expect(result.content?.[0]?.text).toBe("Stored 2 entries (1 new, 1 updated, 0 duplicates skipped).");
     expect(harness.storeEntriesFn).toHaveBeenCalledTimes(1);
+    const storeOptions = harness.storeEntriesFn.mock.calls[0]?.[3] as { onlineDedup?: boolean; llmClient?: unknown } | undefined;
+    expect(storeOptions?.onlineDedup).toBe(true);
+    expect(storeOptions?.llmClient).toBeTruthy();
 
     const storedEntries = harness.storeEntriesFn.mock.calls[0]?.[1] as KnowledgeEntry[];
     expect(storedEntries).toHaveLength(2);
@@ -612,6 +619,8 @@ describe("mcp server", () => {
       added: 1,
       updated: 0,
       skipped: 1,
+      superseded: 0,
+      llm_dedup_calls: 1,
       relations_created: 0,
       total_entries: 3,
       duration_ms: 2,
@@ -638,7 +647,7 @@ describe("mcp server", () => {
 
     const result = responses[0]?.result as { content?: Array<{ text?: string }> };
     expect(result.content?.[0]?.text).toContain("Extracted 2 entries from text:");
-    expect(result.content?.[0]?.text).toContain("Stored: 1 new, 0 updated, 1 duplicates skipped.");
+    expect(result.content?.[0]?.text).toContain("Stored: 1 new, 0 updated, 1 duplicates skipped, 0 superseded.");
     expect(harness.mkdtempFn).toHaveBeenCalledTimes(1);
     expect(harness.writeFileFn).toHaveBeenCalledTimes(1);
     expect(harness.parseTranscriptFileFn).toHaveBeenCalledTimes(1);

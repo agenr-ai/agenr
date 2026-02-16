@@ -86,7 +86,9 @@ agenr store [options] [files...]
 - `--dry-run`: show write decisions without persisting.
 - `--verbose`: show per-entry dedup decisions.
 - `--force`: bypass dedup checks and insert all as new.
-- `--classify`: enable LLM classification for near-duplicates.
+- `--online-dedup`: enable online LLM dedup at write time (default `true`).
+- `--no-online-dedup`: disable online LLM dedup.
+- `--dedup-threshold <n>`: similarity threshold for online dedup (`0.0..1.0`, default `0.8`).
 
 ### Example
 
@@ -157,11 +159,12 @@ agenr watch [options] <file>
 - `--db <path>`: database path override.
 - `--model <model>`: override model.
 - `--provider <name>`: `anthropic|openai|openai-codex`.
-- `--classify`: enable near-duplicate classification.
 - `--verbose`: verbose progress.
 - `--dry-run`: extract only, do not store.
 - `--once`: run one cycle and exit.
 - `--json`: output per-cycle JSON.
+
+Watch mode always runs online dedup during store.
 
 ### Example
 
@@ -189,7 +192,9 @@ agenr ingest [options] <paths...>
 - `--db <path>`: database path override.
 - `--model <model>`: override model.
 - `--provider <name>`: `anthropic|openai|openai-codex`.
-- `--classify`: enable near-duplicate classification.
+- `--online-dedup`: enable online LLM dedup at write time (default `false`).
+- `--no-online-dedup`: disable online LLM dedup.
+- `--dedup-threshold <n>`: similarity threshold for online dedup (`0.0..1.0`, default `0.8`).
 - `--verbose`: per-file details.
 - `--dry-run`: extract without storing.
 - `--json`: emit JSON summary.

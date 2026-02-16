@@ -137,6 +137,11 @@ export const MIGRATION_V4_STATEMENTS: readonly string[] = [
   `,
 ];
 
+export const MIGRATION_V5_STATEMENTS: readonly string[] = [
+  "ALTER TABLE ingest_log ADD COLUMN entries_superseded INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE ingest_log ADD COLUMN dedup_llm_calls INTEGER NOT NULL DEFAULT 0",
+];
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
@@ -153,6 +158,10 @@ export const MIGRATIONS: readonly Migration[] = [
   {
     version: 4,
     statements: MIGRATION_V4_STATEMENTS,
+  },
+  {
+    version: 5,
+    statements: MIGRATION_V5_STATEMENTS,
   },
 ];
 

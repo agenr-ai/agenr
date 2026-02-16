@@ -60,6 +60,8 @@ function makeDeps(overrides?: Record<string, unknown>): any {
     added: 1,
     updated: 1,
     skipped: 0,
+    superseded: 0,
+    llm_dedup_calls: 0,
     relations_created: 0,
     total_entries: 2,
     duration_ms: 5,
@@ -76,7 +78,6 @@ function makeDeps(overrides?: Record<string, unknown>): any {
     initDbFn: vi.fn(async () => undefined),
     closeDbFn: vi.fn(() => undefined),
     storeEntriesFn,
-    batchClassifyFn: vi.fn(async () => undefined),
     loadWatchStateFn: vi.fn(async () => ({ version: 1 as const, files: {} })),
     saveWatchStateFn: vi.fn(async (state: WatchState) => {
       saveSnapshots.push(JSON.parse(JSON.stringify(state)) as WatchState);
@@ -311,6 +312,8 @@ describe("watcher", () => {
       added: entries.length,
       updated: 0,
       skipped: 0,
+      superseded: 0,
+      llm_dedup_calls: 0,
       relations_created: 0,
       total_entries: entries.length,
       duration_ms: 5,
@@ -348,49 +351,24 @@ describe("watcher", () => {
     expect(storeEntriesFn).toHaveBeenCalledTimes(2);
   });
 
-  it("runs post-cycle batch classification when classify mode is enabled", async () => {
+  it("passes online dedup options to store by default", async () => {
     const filePath = "/tmp/watch.jsonl";
-    const storeEntriesFn = vi.fn(async (_db: unknown, entries: KnowledgeEntry[], _apiKey: string, options?: any) => {
-      options?.onDecision?.({
-        entry: entries[0],
-        action: "added",
-        reason: "new entry",
-        similarity: 0.85,
-        matchedEntryId: "old-1",
-        newEntryId: "new-1",
-        sameSubject: true,
-        matchedEntry: {
-          id: "old-1",
-          type: "fact",
-          subject: entries[0]?.subject ?? "Jim",
-          content: "existing",
-          importance: 8,
-          expiry: "temporary",
-          tags: [],
-          source: { file: "source", context: "ctx" },
-          created_at: "2026-02-15T00:00:00.000Z",
-          updated_at: "2026-02-15T00:00:00.000Z",
-          recall_count: 0,
-          confirmations: 0,
-          contradictions: 0,
-        },
-      });
-
+    const storeEntriesFn = vi.fn(async (_db: unknown, entries: KnowledgeEntry[]) => {
       return {
         added: entries.length,
         updated: 0,
         skipped: 0,
+        superseded: 0,
+        llm_dedup_calls: 1,
         relations_created: 0,
         total_entries: entries.length,
         duration_ms: 5,
       };
     });
-    const batchClassifyFn = vi.fn(async (..._args: unknown[]) => undefined);
     const deps = makeDeps({
       statFileFn: vi.fn(async () => ({ size: 25, isFile: () => true })),
       readFileFn: vi.fn(async () => Buffer.from("this content passes threshold")),
       storeEntriesFn,
-      batchClassifyFn,
       deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
     });
 
@@ -402,21 +380,14 @@ describe("watcher", () => {
         dryRun: false,
         verbose: false,
         once: true,
-        classify: true,
       },
       deps,
     );
 
-    expect(batchClassifyFn).toHaveBeenCalledTimes(1);
-    const candidates = ((batchClassifyFn.mock.calls as unknown[][])[0]?.[2] ?? []) as Array<{
-      similarity: number;
-      newEntry?: { id?: string };
-      matchEntry?: { id?: string };
-    }>;
-    expect(Array.isArray(candidates)).toBe(true);
-    expect(candidates[0]?.similarity).toBe(0.85);
-    expect(candidates[0]?.newEntry?.id).toBe("new-1");
-    expect(candidates[0]?.matchEntry?.id).toBe("old-1");
+    expect(storeEntriesFn).toHaveBeenCalledTimes(1);
+    const optionsArg = (storeEntriesFn.mock.calls as unknown[][])[0]?.[3] as Record<string, unknown> | undefined;
+    expect(optionsArg?.onlineDedup).toBe(true);
+    expect(optionsArg?.llmClient).toBeTruthy();
   });
 
   it("stops looping when shutdown flag is raised", async () => {
@@ -523,6 +494,8 @@ describe("watcher", () => {
         added: 1,
         updated: 0,
         skipped: 0,
+        superseded: 0,
+        llm_dedup_calls: 0,
         relations_created: 0,
         total_entries: 1,
         duration_ms: 5,

@@ -11,60 +11,45 @@ import { createRelation } from "./relations.js";
 
 const AUTO_SKIP_THRESHOLD = 0.98;
 const SMART_DEDUP_THRESHOLD = 0.92;
-const CLASSIFY_LOW_THRESHOLD = 0.8;
+const DEFAULT_DEDUP_THRESHOLD = 0.8;
 const DEFAULT_SIMILAR_LIMIT = 5;
 
-const CLASSIFICATION_VALUES = [
-  "REINFORCING",
-  "SUPERSEDING",
-  "CONTRADICTING",
-  "NUANCING",
-  "UNRELATED",
-] as const;
+const ONLINE_DEDUP_ACTIONS = ["ADD", "UPDATE", "SKIP", "SUPERSEDE"] as const;
+export type OnlineDedupAction = (typeof ONLINE_DEDUP_ACTIONS)[number];
 
-export type ClassificationResult = (typeof CLASSIFICATION_VALUES)[number];
-
-const CLASSIFY_RELATIONSHIP_TOOL_SCHEMA = Type.Object({
-  classification: Type.Union(CLASSIFICATION_VALUES.map((value) => Type.Literal(value))),
+const ONLINE_DEDUP_TOOL_SCHEMA = Type.Object({
+  action: Type.Union(ONLINE_DEDUP_ACTIONS.map((value) => Type.Literal(value))),
+  target_id: Type.Union([Type.String(), Type.Null()]),
+  merged_content: Type.Union([Type.String(), Type.Null()]),
   reasoning: Type.String(),
 });
 
-type ClassifyRelationshipToolArgs = Static<typeof CLASSIFY_RELATIONSHIP_TOOL_SCHEMA>;
+type OnlineDedupToolArgs = Static<typeof ONLINE_DEDUP_TOOL_SCHEMA>;
 
-const CLASSIFY_RELATIONSHIP_TOOL: Tool<typeof CLASSIFY_RELATIONSHIP_TOOL_SCHEMA> = {
-  name: "classify_relationship",
-  description: "Classify how a new knowledge entry relates to an existing entry.",
-  parameters: CLASSIFY_RELATIONSHIP_TOOL_SCHEMA,
+const ONLINE_DEDUP_TOOL: Tool<typeof ONLINE_DEDUP_TOOL_SCHEMA> = {
+  name: "online_dedup_decision",
+  description: "Decide whether to ADD, UPDATE, SKIP, or SUPERSEDE for incoming knowledge.",
+  parameters: ONLINE_DEDUP_TOOL_SCHEMA,
 };
 
-const CLASSIFY_RELATIONSHIP_BATCH_TOOL_SCHEMA = Type.Object({
-  results: Type.Array(
-    Type.Object({
-      index: Type.Integer({ minimum: 0 }),
-      classification: Type.Union(CLASSIFICATION_VALUES.map((value) => Type.Literal(value))),
-      reasoning: Type.String(),
-    }),
-  ),
-});
-
-type ClassifyRelationshipBatchToolArgs = Static<typeof CLASSIFY_RELATIONSHIP_BATCH_TOOL_SCHEMA>;
-
-const CLASSIFY_RELATIONSHIP_BATCH_TOOL: Tool<typeof CLASSIFY_RELATIONSHIP_BATCH_TOOL_SCHEMA> = {
-  name: "classify_relationship_batch",
-  description: "Classify relationships for a batch of entry pairs.",
-  parameters: CLASSIFY_RELATIONSHIP_BATCH_TOOL_SCHEMA,
-};
+export interface OnlineDedupDecision {
+  action: OnlineDedupAction;
+  target_id: string | null;
+  merged_content: string | null;
+  reasoning: string;
+}
 
 export interface StoreEntryDecision {
   entry: KnowledgeEntry;
-  action: "added" | "updated" | "skipped";
+  action: "added" | "updated" | "skipped" | "superseded";
   reason: string;
   similarity?: number;
   matchedEntryId?: string;
-  classification?: ClassificationResult;
   newEntryId?: string;
   matchedEntry?: StoredEntry;
   sameSubject?: boolean;
+  llm_action?: OnlineDedupAction;
+  llm_reasoning?: string;
 }
 
 export interface StoreEntriesOptions {
@@ -75,19 +60,29 @@ export interface StoreEntriesOptions {
   ingestContentHash?: string;
   onDecision?: (decision: StoreEntryDecision) => void;
   embedFn?: (texts: string[], apiKey: string) => Promise<number[][]>;
-  classify?: boolean;
+  onlineDedup?: boolean;
+  dedupThreshold?: number;
   llmClient?: LlmClient;
-  classifyFn?: (
+  onlineDedupFn?: (
     client: LlmClient,
     newEntry: KnowledgeEntry,
-    existingEntry: StoredEntry,
-  ) => Promise<ClassificationResult>;
+    candidates: Array<{ entry: StoredEntry; similarity: number }>,
+  ) => Promise<OnlineDedupDecision>;
 }
 
-export interface BatchClassificationCandidate {
-  newEntry: StoredEntry;
-  matchEntry: StoredEntry;
-  similarity: number;
+interface PlannedMutation {
+  kind: "none" | "add" | "reinforce" | "skip" | "update" | "supersede";
+  contentHash?: string;
+  embedding?: number[];
+  matchedEntry?: StoredEntry;
+  similarity?: number;
+  llmDecision?: OnlineDedupDecision;
+  mergedContent?: string;
+}
+
+interface ProcessedEntry {
+  decision: StoreEntryDecision;
+  mutation: PlannedMutation;
 }
 
 function toNumber(value: InValue | undefined): number {
@@ -157,8 +152,8 @@ function cosineSimilarity(a: number[], b: number[]): number {
   return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
-function isClassificationResult(value: unknown): value is ClassificationResult {
-  return typeof value === "string" && CLASSIFICATION_VALUES.includes(value as ClassificationResult);
+function isOnlineDedupAction(value: unknown): value is OnlineDedupAction {
+  return typeof value === "string" && ONLINE_DEDUP_ACTIONS.includes(value as OnlineDedupAction);
 }
 
 async function incrementConfirmations(db: Client, entryId: string, newContentHash?: string): Promise<void> {
@@ -174,17 +169,18 @@ async function incrementConfirmations(db: Client, entryId: string, newContentHas
       `,
       args: [newContentHash, now, entryId],
     });
-  } else {
-    await db.execute({
-      sql: `
-        UPDATE entries
-        SET confirmations = COALESCE(confirmations, 0) + 1,
-            updated_at = ?
-        WHERE id = ?
-      `,
-      args: [now, entryId],
-    });
+    return;
   }
+
+  await db.execute({
+    sql: `
+      UPDATE entries
+      SET confirmations = COALESCE(confirmations, 0) + 1,
+          updated_at = ?
+      WHERE id = ?
+    `,
+    args: [now, entryId],
+  });
 }
 
 async function markSuperseded(db: Client, entryId: string, supersededBy: string): Promise<void> {
@@ -199,50 +195,75 @@ async function markSuperseded(db: Client, entryId: string, supersededBy: string)
   });
 }
 
-async function incrementContradictions(db: Client, entryId: string): Promise<void> {
+async function updateEntryForMerge(
+  db: Client,
+  entryId: string,
+  mergedContent: string,
+  embedding: number[],
+  contentHash: string,
+): Promise<void> {
   await db.execute({
     sql: `
       UPDATE entries
-      SET contradictions = COALESCE(contradictions, 0) + 1,
+      SET content = ?,
+          content_hash = ?,
+          embedding = vector32(?),
+          confirmations = COALESCE(confirmations, 0) + 1,
           updated_at = ?
       WHERE id = ?
     `,
-    args: [new Date().toISOString(), entryId],
+    args: [mergedContent, contentHash, JSON.stringify(embedding), new Date().toISOString(), entryId],
   });
 }
 
-async function deleteEntryById(db: Client, entryId: string): Promise<void> {
-  await db.execute({
-    sql: "DELETE FROM entries WHERE id = ?",
-    args: [entryId],
-  });
-}
+function buildOnlineDedupContext(
+  newEntry: KnowledgeEntry,
+  candidates: Array<{ entry: StoredEntry; similarity: number }>,
+): Context {
+  const similarLines = candidates
+    .map((candidate, index) => {
+      const entry = candidate.entry;
+      return [
+        `Candidate ${index + 1}:`,
+        `- id: ${entry.id}`,
+        `- similarity: ${candidate.similarity.toFixed(4)}`,
+        `- type: ${entry.type}`,
+        `- subject: ${entry.subject}`,
+        `- content: ${entry.content}`,
+        `- created_at: ${entry.created_at}`,
+      ].join("\n");
+    })
+    .join("\n\n");
 
-function buildClassificationContext(newEntry: KnowledgeEntry, existingEntry: StoredEntry): Context {
   const systemPrompt = [
-    "You compare two knowledge entries about the same subject and classify their relationship.",
+    "You perform online knowledge deduplication.",
+    "Given one new entry and similar existing entries, return exactly one action:",
+    "- ADD: new knowledge not already captured.",
+    "- UPDATE: merge new detail into one existing entry.",
+    "- SKIP: already captured by existing knowledge.",
+    "- SUPERSEDE: new entry makes one existing entry obsolete/incorrect.",
+    "When uncertain between ADD and SKIP, prefer SKIP.",
+    "Use temporal context: newer concrete info may justify UPDATE or SUPERSEDE.",
+    "Rules:",
+    "- For ADD, set target_id=null and merged_content=null.",
+    "- For UPDATE, set target_id to one existing id and provide merged_content.",
+    "- For SKIP, set target_id to one existing id and merged_content=null.",
+    "- For SUPERSEDE, set target_id to one existing id and merged_content=null.",
+    "Call online_dedup_decision with your final decision.",
+  ].join("\n");
+
+  const userPrompt = [
+    "NEW entry:",
+    `- type: ${newEntry.type}`,
+    `- subject: ${newEntry.subject}`,
+    `- content: ${newEntry.content}`,
+    `- importance: ${newEntry.importance}`,
+    `- tags: ${newEntry.tags.join(", ") || "(none)"}`,
     "",
-    "EXISTING entry (already stored):",
-    `- Type: ${existingEntry.type}`,
-    `- Subject: ${existingEntry.subject}`,
-    `- Content: ${existingEntry.content}`,
-    `- Importance: ${existingEntry.importance}`,
-    `- Confirmations: ${existingEntry.confirmations}`,
+    "SIMILAR existing entries:",
+    similarLines,
     "",
-    "NEW entry (being stored):",
-    `- Type: ${newEntry.type}`,
-    `- Subject: ${newEntry.subject}`,
-    `- Content: ${newEntry.content}`,
-    `- Importance: ${newEntry.importance}`,
-    "",
-    "Classifications:",
-    "- REINFORCING: New entry says essentially the same thing as existing.",
-    "- SUPERSEDING: New entry replaces/updates the existing (newer info).",
-    "- CONTRADICTING: New entry directly conflicts with existing.",
-    "- NUANCING: New entry adds detail/context to existing without replacing it.",
-    "- UNRELATED: Despite similar embeddings, these are about different things.",
-    "",
-    "Call the classify_relationship tool with your decision.",
+    "Return only via online_dedup_decision.",
   ].join("\n");
 
   return {
@@ -250,69 +271,89 @@ function buildClassificationContext(newEntry: KnowledgeEntry, existingEntry: Sto
     messages: [
       {
         role: "user",
-        content: "Classify the relationship now.",
+        content: userPrompt,
         timestamp: Date.now(),
       },
     ],
-    tools: [CLASSIFY_RELATIONSHIP_TOOL],
+    tools: [ONLINE_DEDUP_TOOL],
   };
 }
 
-function buildBatchClassificationContext(candidates: BatchClassificationCandidate[]): Context {
-  const pairLines: string[] = [];
-  for (let i = 0; i < candidates.length; i += 1) {
-    const candidate = candidates[i];
-    if (!candidate) {
+function extractOnlineDedupFromToolCall(
+  message: { content: Array<{ type: string; name?: string; arguments?: unknown }> },
+): OnlineDedupDecision | null {
+  for (const block of message.content) {
+    if (block.type !== "toolCall" || block.name !== "online_dedup_decision") {
       continue;
     }
 
-    pairLines.push(
-      [
-        `Pair ${i}:`,
-        `- Similarity: ${candidate.similarity.toFixed(4)}`,
-        "EXISTING entry (already stored):",
-        `  - Type: ${candidate.matchEntry.type}`,
-        `  - Subject: ${candidate.matchEntry.subject}`,
-        `  - Content: ${candidate.matchEntry.content}`,
-        `  - Importance: ${candidate.matchEntry.importance}`,
-        `  - Confirmations: ${candidate.matchEntry.confirmations}`,
-        "NEW entry (already inserted):",
-        `  - Type: ${candidate.newEntry.type}`,
-        `  - Subject: ${candidate.newEntry.subject}`,
-        `  - Content: ${candidate.newEntry.content}`,
-        `  - Importance: ${candidate.newEntry.importance}`,
-      ].join("\n"),
-    );
+    const args = block.arguments as Partial<OnlineDedupToolArgs> | undefined;
+    if (!args || !isOnlineDedupAction(args.action)) {
+      return null;
+    }
+
+    const targetId = typeof args.target_id === "string" && args.target_id.trim().length > 0 ? args.target_id.trim() : null;
+    const mergedContent =
+      typeof args.merged_content === "string" && args.merged_content.trim().length > 0
+        ? args.merged_content.trim()
+        : null;
+
+    const reasoning = typeof args.reasoning === "string" ? args.reasoning.trim() : "";
+
+    return {
+      action: args.action,
+      target_id: targetId,
+      merged_content: mergedContent,
+      reasoning,
+    };
   }
 
-  const systemPrompt = [
-    "You compare new and existing knowledge entries and classify each pair's relationship.",
-    "Return one result per pair index using classify_relationship_batch.",
-    "",
-    "Classifications:",
-    "- REINFORCING: New entry says essentially the same thing as existing.",
-    "- SUPERSEDING: New entry replaces/updates the existing (newer info).",
-    "- CONTRADICTING: New entry directly conflicts with existing.",
-    "- NUANCING: New entry adds detail/context to existing without replacing it.",
-    "- UNRELATED: Despite similar embeddings, these are about different things.",
-    "",
-    "Pairs:",
-    pairLines.join("\n\n"),
-    "",
-    "Call classify_relationship_batch with results[].index matching each pair index.",
-  ].join("\n");
+  return null;
+}
 
-  return {
-    systemPrompt,
-    messages: [
-      {
-        role: "user",
-        content: "Classify every pair and return structured results.",
-        timestamp: Date.now(),
+export async function classifyOnlineDedup(
+  client: LlmClient,
+  newEntry: KnowledgeEntry,
+  candidates: Array<{ entry: StoredEntry; similarity: number }>,
+): Promise<OnlineDedupDecision> {
+  try {
+    const response = await runSimpleStream({
+      model: client.resolvedModel.model,
+      context: buildOnlineDedupContext(newEntry, candidates),
+      options: {
+        apiKey: client.credentials.apiKey,
       },
-    ],
-    tools: [CLASSIFY_RELATIONSHIP_BATCH_TOOL],
-  };
+      verbose: false,
+    });
+
+    if (response.stopReason === "error" || response.errorMessage) {
+      return {
+        action: "ADD",
+        target_id: null,
+        merged_content: null,
+        reasoning: "LLM error during online dedup; defaulting to ADD.",
+      };
+    }
+
+    const parsed = extractOnlineDedupFromToolCall(response);
+    if (!parsed) {
+      return {
+        action: "ADD",
+        target_id: null,
+        merged_content: null,
+        reasoning: "Missing or invalid tool call; defaulting to ADD.",
+      };
+    }
+
+    return parsed;
+  } catch {
+    return {
+      action: "ADD",
+      target_id: null,
+      merged_content: null,
+      reasoning: "LLM exception during online dedup; defaulting to ADD.",
+    };
+  }
 }
 
 async function getTagsForEntryIds(db: Client, ids: string[]): Promise<Map<string, string[]>> {
@@ -371,6 +412,42 @@ function mapStoredEntry(row: Row, tags: string[]): StoredEntry {
   };
 }
 
+async function getStoredEntryById(db: Client, id: string): Promise<StoredEntry | null> {
+  const result = await db.execute({
+    sql: `
+      SELECT
+        id,
+        type,
+        subject,
+        content,
+        importance,
+        expiry,
+        source_file,
+        source_context,
+        embedding,
+        created_at,
+        updated_at,
+        last_recalled_at,
+        recall_count,
+        confirmations,
+        contradictions,
+        superseded_by
+      FROM entries
+      WHERE id = ?
+      LIMIT 1
+    `,
+    args: [id],
+  });
+
+  const row = result.rows[0];
+  if (!row) {
+    return null;
+  }
+
+  const tagsById = await getTagsForEntryIds(db, [id]);
+  return mapStoredEntry(row, tagsById.get(id) ?? []);
+}
+
 async function getTotalEntries(db: Client): Promise<number> {
   const result = await db.execute("SELECT COUNT(*) AS count FROM entries");
   const count = toNumber(result.rows[0]?.count);
@@ -385,57 +462,24 @@ async function hasContentHash(db: Client, contentHash: string): Promise<boolean>
   return result.rows.length > 0;
 }
 
-async function resolveEmbeddings(
-  entries: KnowledgeEntry[],
+async function resolveEmbeddingForText(
+  text: string,
   apiKey: string,
   embedFn: (texts: string[], key: string) => Promise<number[][]>,
-): Promise<number[][]> {
-  if (entries.length === 0) {
-    return [];
+  cache: EmbeddingCache,
+): Promise<number[]> {
+  const cached = cache.get(text);
+  if (cached) {
+    return cached;
   }
 
-  const cache = new EmbeddingCache();
-  const texts = entries.map((entry) => composeEmbeddingText(entry));
-
-  const missingTexts: string[] = [];
-  const missingSet = new Set<string>();
-  for (const text of texts) {
-    if (cache.get(text)) {
-      continue;
-    }
-    if (!missingSet.has(text)) {
-      missingSet.add(text);
-      missingTexts.push(text);
-    }
+  const vectors = await embedFn([text], apiKey);
+  if (vectors.length !== 1 || !vectors[0]) {
+    throw new Error("Embedding provider failed to return exactly one vector.");
   }
 
-  if (missingTexts.length > 0) {
-    const missingEmbeddings = await embedFn(missingTexts, apiKey);
-    if (missingEmbeddings.length !== missingTexts.length) {
-      throw new Error(
-        `Embedding provider returned ${missingEmbeddings.length} vectors for ${missingTexts.length} input texts.`,
-      );
-    }
-    for (let i = 0; i < missingTexts.length; i += 1) {
-      const text = missingTexts[i];
-      const vector = missingEmbeddings[i];
-      if (!text || !vector) {
-        continue;
-      }
-      cache.set(text, vector);
-    }
-  }
-
-  const vectors: number[][] = [];
-  for (const text of texts) {
-    const cached = cache.get(text);
-    if (!cached) {
-      throw new Error("Failed to resolve embedding for one or more entries.");
-    }
-    vectors.push(cached);
-  }
-
-  return vectors;
+  cache.set(text, vectors[0]);
+  return vectors[0];
 }
 
 async function insertIngestLog(
@@ -446,6 +490,8 @@ async function insertIngestLog(
     added: number;
     updated: number;
     skipped: number;
+    superseded: number;
+    llmDedupCalls: number;
     durationMs: number;
   },
 ): Promise<void> {
@@ -459,9 +505,11 @@ async function insertIngestLog(
         entries_added,
         entries_updated,
         entries_skipped,
+        entries_superseded,
+        dedup_llm_calls,
         duration_ms
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     args: [
       randomUUID(),
@@ -471,6 +519,8 @@ async function insertIngestLog(
       params.added,
       params.updated,
       params.skipped,
+      params.superseded,
+      params.llmDedupCalls,
       params.durationMs,
     ],
   });
@@ -515,6 +565,7 @@ export async function findSimilar(
       FROM vector_top_k('idx_entries_embedding', vector32(?), ?) AS v
       CROSS JOIN entries AS e ON e.rowid = v.id
       WHERE e.embedding IS NOT NULL
+        AND e.superseded_by IS NULL
     `,
     args: [JSON.stringify(embedding), limit],
   });
@@ -600,164 +651,417 @@ export async function insertEntry(
   return id;
 }
 
-function extractClassificationFromToolCall(message: { content: Array<{ type: string; name?: string; arguments?: unknown }> }): ClassificationResult | null {
-  for (const block of message.content) {
-    if (block.type !== "toolCall" || block.name !== "classify_relationship") {
-      continue;
-    }
-    const args = block.arguments as Partial<ClassifyRelationshipToolArgs> | undefined;
-    const classification = args?.classification;
-    return isClassificationResult(classification) ? classification : null;
-  }
-  return null;
+function resolveSameSubject(a: string, b: string): boolean {
+  return normalize(a) === normalize(b);
 }
 
-function extractBatchClassificationsFromToolCall(
-  message: { content: Array<{ type: string; name?: string; arguments?: unknown }> },
-  batchSize: number,
-): Map<number, ClassificationResult> {
-  for (const block of message.content) {
-    if (block.type !== "toolCall" || block.name !== "classify_relationship_batch") {
-      continue;
-    }
-
-    const args = block.arguments as Partial<ClassifyRelationshipBatchToolArgs> | undefined;
-    if (!Array.isArray(args?.results)) {
-      return new Map();
-    }
-
-    const map = new Map<number, ClassificationResult>();
-    for (const item of args.results) {
-      if (!item || typeof item !== "object") {
-        continue;
-      }
-
-      const index = (item as { index?: unknown }).index;
-      const classification = (item as { classification?: unknown }).classification;
-
-      if (!Number.isInteger(index) || typeof index !== "number") {
-        continue;
-      }
-      if (index < 0 || index >= batchSize) {
-        continue;
-      }
-      if (!isClassificationResult(classification)) {
-        continue;
-      }
-
-      map.set(index, classification);
-    }
-    return map;
-  }
-
-  return new Map();
+function buildFallbackAddDecision(reasoning: string): OnlineDedupDecision {
+  return {
+    action: "ADD",
+    target_id: null,
+    merged_content: null,
+    reasoning,
+  };
 }
 
-export async function classifyRelationship(
-  client: LlmClient,
-  newEntry: KnowledgeEntry,
-  existingEntry: StoredEntry,
-): Promise<ClassificationResult> {
-  try {
-    const response = await runSimpleStream({
-      model: client.resolvedModel.model,
-      context: buildClassificationContext(newEntry, existingEntry),
-      options: {
-        apiKey: client.credentials.apiKey,
-      },
-      verbose: false,
-    });
-
-    if (response.stopReason === "error" || response.errorMessage) {
-      return "UNRELATED";
-    }
-
-    return extractClassificationFromToolCall(response) ?? "UNRELATED";
-  } catch {
-    return "UNRELATED";
+function validateThreshold(value: number): number {
+  if (!Number.isFinite(value) || value < 0 || value > 1) {
+    throw new Error("dedupThreshold must be between 0.0 and 1.0.");
   }
+  return value;
 }
 
-async function classifyRelationshipBatch(
-  client: LlmClient,
-  candidates: BatchClassificationCandidate[],
-): Promise<Map<number, ClassificationResult>> {
-  const response = await runSimpleStream({
-    model: client.resolvedModel.model,
-    context: buildBatchClassificationContext(candidates),
-    options: {
-      apiKey: client.credentials.apiKey,
-    },
-    verbose: false,
-  });
-
-  if (response.stopReason === "error" || response.errorMessage) {
-    throw new Error(response.errorMessage ?? "classification batch failed");
-  }
-
-  return extractBatchClassificationsFromToolCall(response, candidates.length);
-}
-
-export async function batchClassify(
+async function planEntryAction(
   db: Client,
-  client: LlmClient,
-  candidates: BatchClassificationCandidate[],
-  options?: {
-    classifyBatchFn?: (
+  entry: KnowledgeEntry,
+  embedding: number[],
+  contentHash: string,
+  options: {
+    force: boolean;
+    onlineDedup: boolean;
+    dedupThreshold: number;
+    llmClient?: LlmClient;
+    onlineDedupFn?: (
       client: LlmClient,
-      candidates: BatchClassificationCandidate[],
-    ) => Promise<Map<number, ClassificationResult>>;
+      newEntry: KnowledgeEntry,
+      candidates: Array<{ entry: StoredEntry; similarity: number }>,
+    ) => Promise<OnlineDedupDecision>;
+    onLlmCall?: () => void;
   },
-): Promise<void> {
-  if (candidates.length === 0) {
-    return;
+): Promise<ProcessedEntry> {
+  if (options.force) {
+    return {
+      decision: {
+        entry,
+        action: "added",
+        reason: "force mode",
+      },
+      mutation: {
+        kind: "add",
+        embedding,
+        contentHash,
+      },
+    };
   }
 
-  for (let offset = 0; offset < candidates.length; offset += 10) {
-    const batch = candidates.slice(offset, offset + 10);
-    if (batch.length === 0) {
-      continue;
+  const similar = await findSimilar(db, embedding, DEFAULT_SIMILAR_LIMIT);
+  const topMatch = similar[0];
+  const similarity = topMatch?.similarity ?? 0;
+  const sameSubject = topMatch ? resolveSameSubject(entry.subject, topMatch.entry.subject) : false;
+  const sameType = topMatch ? entry.type === topMatch.entry.type : false;
+
+  if (topMatch && similarity >= AUTO_SKIP_THRESHOLD && sameType) {
+    return {
+      decision: {
+        entry,
+        action: "skipped",
+        reason: "near-exact semantic duplicate",
+        similarity,
+        matchedEntryId: topMatch.entry.id,
+        matchedEntry: topMatch.entry,
+        sameSubject,
+      },
+      mutation: { kind: "none" },
+    };
+  }
+
+  if (topMatch && similarity >= SMART_DEDUP_THRESHOLD && sameSubject && sameType) {
+    return {
+      decision: {
+        entry,
+        action: "updated",
+        reason: "reinforced existing entry (same subject+type)",
+        similarity,
+        matchedEntryId: topMatch.entry.id,
+        matchedEntry: topMatch.entry,
+        sameSubject,
+      },
+      mutation: {
+        kind: "reinforce",
+        contentHash,
+        matchedEntry: topMatch.entry,
+        similarity,
+      },
+    };
+  }
+
+  if (!options.onlineDedup) {
+    return {
+      decision: {
+        entry,
+        action: "added",
+        reason: "new entry",
+        similarity,
+        matchedEntryId: topMatch?.entry.id,
+        matchedEntry: topMatch?.entry,
+        sameSubject,
+      },
+      mutation: {
+        kind: "add",
+        embedding,
+        contentHash,
+        matchedEntry: topMatch?.entry,
+        similarity,
+      },
+    };
+  }
+
+  const dedupCandidates = similar.filter((candidate) => candidate.similarity >= options.dedupThreshold);
+  if (dedupCandidates.length === 0) {
+    return {
+      decision: {
+        entry,
+        action: "added",
+        reason: "no similar entries above online dedup threshold",
+        similarity,
+        matchedEntryId: topMatch?.entry.id,
+        matchedEntry: topMatch?.entry,
+        sameSubject,
+      },
+      mutation: {
+        kind: "add",
+        embedding,
+        contentHash,
+        matchedEntry: topMatch?.entry,
+        similarity,
+      },
+    };
+  }
+
+  const decisionFn = options.onlineDedupFn ?? classifyOnlineDedup;
+  options.onLlmCall?.();
+  let llmDecision = await decisionFn(options.llmClient as LlmClient, entry, dedupCandidates);
+
+  if (!isOnlineDedupAction(llmDecision.action)) {
+    llmDecision = buildFallbackAddDecision("Invalid LLM action; defaulting to ADD.");
+  }
+
+  const candidatesById = new Map(dedupCandidates.map((candidate) => [candidate.entry.id, candidate]));
+  const fallbackTop = dedupCandidates[0];
+
+  if (llmDecision.action === "ADD") {
+    return {
+      decision: {
+        entry,
+        action: "added",
+        reason: "online dedup decided ADD",
+        similarity: fallbackTop?.similarity,
+        matchedEntryId: undefined,
+        matchedEntry: undefined,
+        llm_action: llmDecision.action,
+        llm_reasoning: llmDecision.reasoning,
+      },
+      mutation: {
+        kind: "add",
+        embedding,
+        contentHash,
+        llmDecision,
+      },
+    };
+  }
+
+  const candidate = llmDecision.target_id ? candidatesById.get(llmDecision.target_id) : undefined;
+  if (!candidate) {
+    const fallback = buildFallbackAddDecision("LLM target_id missing/invalid; defaulting to ADD.");
+    return {
+      decision: {
+        entry,
+        action: "added",
+        reason: fallback.reasoning,
+        similarity: fallbackTop?.similarity,
+        llm_action: fallback.action,
+        llm_reasoning: fallback.reasoning,
+      },
+      mutation: {
+        kind: "add",
+        embedding,
+        contentHash,
+        llmDecision: fallback,
+      },
+    };
+  }
+
+  if (llmDecision.action === "UPDATE") {
+    if (!llmDecision.merged_content) {
+      const fallback = buildFallbackAddDecision("LLM UPDATE missing merged_content; defaulting to ADD.");
+      return {
+        decision: {
+          entry,
+          action: "added",
+          reason: fallback.reasoning,
+          similarity: candidate.similarity,
+          matchedEntryId: candidate.entry.id,
+          matchedEntry: candidate.entry,
+          sameSubject: resolveSameSubject(entry.subject, candidate.entry.subject),
+          llm_action: fallback.action,
+          llm_reasoning: fallback.reasoning,
+        },
+        mutation: {
+          kind: "add",
+          embedding,
+          contentHash,
+          llmDecision: fallback,
+        },
+      };
     }
 
-    let results: Map<number, ClassificationResult>;
+    return {
+      decision: {
+        entry,
+        action: "updated",
+        reason: "online dedup decided UPDATE",
+        similarity: candidate.similarity,
+        matchedEntryId: candidate.entry.id,
+        matchedEntry: candidate.entry,
+        sameSubject: resolveSameSubject(entry.subject, candidate.entry.subject),
+        llm_action: llmDecision.action,
+        llm_reasoning: llmDecision.reasoning,
+      },
+      mutation: {
+        kind: "update",
+        matchedEntry: candidate.entry,
+        similarity: candidate.similarity,
+        mergedContent: llmDecision.merged_content,
+        llmDecision,
+      },
+    };
+  }
+
+  if (llmDecision.action === "SKIP") {
+    return {
+      decision: {
+        entry,
+        action: "skipped",
+        reason: "online dedup decided SKIP",
+        similarity: candidate.similarity,
+        matchedEntryId: candidate.entry.id,
+        matchedEntry: candidate.entry,
+        sameSubject: resolveSameSubject(entry.subject, candidate.entry.subject),
+        llm_action: llmDecision.action,
+        llm_reasoning: llmDecision.reasoning,
+      },
+      mutation: {
+        kind: "skip",
+        matchedEntry: candidate.entry,
+        similarity: candidate.similarity,
+        contentHash,
+        llmDecision,
+      },
+    };
+  }
+
+  return {
+    decision: {
+      entry,
+      action: "superseded",
+      reason: "online dedup decided SUPERSEDE",
+      similarity: candidate.similarity,
+      matchedEntryId: candidate.entry.id,
+      matchedEntry: candidate.entry,
+      sameSubject: resolveSameSubject(entry.subject, candidate.entry.subject),
+      llm_action: llmDecision.action,
+      llm_reasoning: llmDecision.reasoning,
+    },
+    mutation: {
+      kind: "supersede",
+      matchedEntry: candidate.entry,
+      similarity: candidate.similarity,
+      embedding,
+      contentHash,
+      llmDecision,
+    },
+  };
+}
+
+async function applyEntryMutation(
+  db: Client,
+  processed: ProcessedEntry,
+  embedFn: (texts: string[], key: string) => Promise<number[][]>,
+  apiKey: string,
+  cache: EmbeddingCache,
+): Promise<StoreEntryDecision> {
+  const mutation = processed.mutation;
+  const decision = processed.decision;
+
+  if (mutation.kind === "none") {
+    return decision;
+  }
+
+  if (mutation.kind === "add") {
+    const embedding = mutation.embedding;
+    const contentHash = mutation.contentHash;
+    if (!embedding || !contentHash) {
+      throw new Error("Invalid add mutation state.");
+    }
+
+    const newEntryId = await insertEntry(db, decision.entry, embedding, contentHash);
+    return {
+      ...decision,
+      newEntryId,
+    };
+  }
+
+  if (mutation.kind === "reinforce") {
+    if (!mutation.matchedEntry) {
+      throw new Error("Invalid reinforce mutation state.");
+    }
+    await incrementConfirmations(db, mutation.matchedEntry.id, mutation.contentHash);
+    return decision;
+  }
+
+  if (mutation.kind === "skip") {
+    if (!mutation.matchedEntry) {
+      throw new Error("Invalid skip mutation state.");
+    }
+    await incrementConfirmations(db, mutation.matchedEntry.id, mutation.contentHash);
+    return decision;
+  }
+
+  if (mutation.kind === "update") {
+    if (!mutation.matchedEntry || !mutation.mergedContent) {
+      throw new Error("Invalid update mutation state.");
+    }
+
+    const currentTarget = await getStoredEntryById(db, mutation.matchedEntry.id);
+    if (!currentTarget) {
+      const fallbackEmbedding = await resolveEmbeddingForText(
+        composeEmbeddingText(decision.entry),
+        apiKey,
+        embedFn,
+        cache,
+      );
+      const fallbackHash = hashEntrySourceContent(decision.entry);
+      const newEntryId = await insertEntry(db, decision.entry, fallbackEmbedding, fallbackHash);
+      return {
+        ...decision,
+        action: "added",
+        reason: "online dedup UPDATE target missing; inserted new entry",
+        newEntryId,
+      };
+    }
+
+    const mergedEntry: KnowledgeEntry = {
+      type: currentTarget.type,
+      subject: currentTarget.subject,
+      content: mutation.mergedContent,
+      importance: currentTarget.importance,
+      expiry: currentTarget.expiry,
+      tags: currentTarget.tags,
+      source: currentTarget.source,
+    };
+    const mergedText = composeEmbeddingText(mergedEntry);
+    const mergedEmbedding = await resolveEmbeddingForText(mergedText, apiKey, embedFn, cache);
+    const mergedHash = hashEntrySourceContent(mergedEntry);
+
+    await updateEntryForMerge(db, currentTarget.id, mutation.mergedContent, mergedEmbedding, mergedHash);
+    return decision;
+  }
+
+  if (!mutation.matchedEntry || !mutation.embedding || !mutation.contentHash) {
+    throw new Error("Invalid supersede mutation state.");
+  }
+
+  const currentTarget = await getStoredEntryById(db, mutation.matchedEntry.id);
+  if (!currentTarget) {
+    const newEntryId = await insertEntry(db, decision.entry, mutation.embedding, mutation.contentHash);
+    return {
+      ...decision,
+      action: "added",
+      reason: "online dedup SUPERSEDE target missing; inserted new entry",
+      newEntryId,
+    };
+  }
+
+  const newEntryId = await insertEntry(db, decision.entry, mutation.embedding, mutation.contentHash);
+  await markSuperseded(db, currentTarget.id, newEntryId);
+  await createRelation(db, newEntryId, currentTarget.id, "supersedes");
+
+  return {
+    ...decision,
+    newEntryId,
+  };
+}
+
+async function runPerEntryTransaction(
+  db: Client,
+  dryRun: boolean,
+  fn: () => Promise<void>,
+): Promise<void> {
+  await db.execute("BEGIN IMMEDIATE");
+  try {
+    await fn();
+    if (dryRun) {
+      await db.execute("ROLLBACK");
+      return;
+    }
+    await db.execute("COMMIT");
+  } catch (error) {
     try {
-      results = options?.classifyBatchFn
-        ? await options.classifyBatchFn(client, batch)
-        : await classifyRelationshipBatch(client, batch);
+      await db.execute("ROLLBACK");
     } catch {
-      results = new Map();
+      // Ignore rollback failures.
     }
-
-    for (let index = 0; index < batch.length; index += 1) {
-      const candidate = batch[index];
-      if (!candidate) {
-        continue;
-      }
-
-      const classification = results.get(index) ?? "UNRELATED";
-
-      if (classification === "REINFORCING") {
-        await incrementConfirmations(db, candidate.matchEntry.id, hashEntrySourceContent(candidate.newEntry));
-        await deleteEntryById(db, candidate.newEntry.id);
-        continue;
-      }
-
-      if (classification === "SUPERSEDING") {
-        await markSuperseded(db, candidate.matchEntry.id, candidate.newEntry.id);
-        await createRelation(db, candidate.newEntry.id, candidate.matchEntry.id, "supersedes");
-        continue;
-      }
-
-      if (classification === "CONTRADICTING") {
-        await incrementContradictions(db, candidate.matchEntry.id);
-        await createRelation(db, candidate.newEntry.id, candidate.matchEntry.id, "contradicts");
-        continue;
-      }
-
-      if (classification === "NUANCING") {
-        await createRelation(db, candidate.newEntry.id, candidate.matchEntry.id, "elaborates");
-      }
-    }
+    throw error;
   }
 }
 
@@ -769,264 +1073,164 @@ export async function storeEntries(
 ): Promise<StoreResult> {
   warnIfLocked();
 
-  if (options.classify && entries.length > 0 && !options.llmClient) {
-    throw new Error("storeEntries classify=true requires llmClient.");
+  const dedupThreshold = validateThreshold(options.dedupThreshold ?? DEFAULT_DEDUP_THRESHOLD);
+  const onlineDedup = options.onlineDedup === true && options.force !== true;
+  if (onlineDedup && entries.length > 0 && !options.llmClient) {
+    throw new Error("storeEntries onlineDedup=true requires llmClient.");
   }
 
   const startedAt = Date.now();
   const embedFn = options.embedFn ?? embed;
-  const vectors = await resolveEmbeddings(entries, apiKey, embedFn);
-
   const totalBefore = await getTotalEntries(db);
+  const cache = new EmbeddingCache();
+
   let added = 0;
   let updated = 0;
   let skipped = 0;
+  let superseded = 0;
   let relationsCreated = 0;
+  let llmDedupCalls = 0;
 
-  await db.execute("BEGIN");
-  try {
-    for (let i = 0; i < entries.length; i += 1) {
-      const entry = entries[i];
-      const embedding = vectors[i];
-      if (!entry || !embedding) {
-        continue;
-      }
+  const processOne = async (entry: KnowledgeEntry): Promise<void> => {
+    const contentHash = hashEntrySourceContent(entry);
 
-      const contentHash = hashEntrySourceContent(entry);
-      if (!options.force && (await hasContentHash(db, contentHash))) {
-        skipped += 1;
-        options.onDecision?.({
-          entry,
-          action: "skipped",
-          reason: "idempotent content hash match",
-        });
-        continue;
-      }
-
-      let topMatch: { entry: StoredEntry; similarity: number } | undefined;
-      if (!options.force) {
-        const similar = await findSimilar(db, embedding, options.classify ? 10 : DEFAULT_SIMILAR_LIMIT);
-        topMatch = similar[0];
-      }
-
-      const similarity = topMatch?.similarity ?? 0;
-      const sameSubject = topMatch ? normalize(entry.subject) === normalize(topMatch.entry.subject) : false;
-      const sameType = topMatch ? entry.type === topMatch.entry.type : false;
-
-      if (topMatch && similarity > AUTO_SKIP_THRESHOLD) {
-        skipped += 1;
-        options.onDecision?.({
-          entry,
-          action: "skipped",
-          reason: "near-exact semantic duplicate",
-          similarity,
-          matchedEntryId: topMatch.entry.id,
-          matchedEntry: topMatch.entry,
-          sameSubject,
-        });
-        continue;
-      }
-
-      if (
-        !options.force &&
-        topMatch &&
-        similarity >= SMART_DEDUP_THRESHOLD &&
-        similarity <= AUTO_SKIP_THRESHOLD &&
-        sameSubject &&
-        sameType
-      ) {
-        await incrementConfirmations(db, topMatch.entry.id, contentHash);
-        updated += 1;
-        options.onDecision?.({
-          entry,
-          action: "updated",
-          reason: "reinforced existing entry (same subject+type)",
-          similarity,
-          matchedEntryId: topMatch.entry.id,
-          matchedEntry: topMatch.entry,
-          sameSubject,
-        });
-        continue;
-      }
-
-      if (
-        !options.force &&
-        options.classify &&
-        topMatch &&
-        similarity >= CLASSIFY_LOW_THRESHOLD &&
-        similarity < SMART_DEDUP_THRESHOLD &&
-        sameSubject
-      ) {
-        const classifyFn = options.classifyFn ?? classifyRelationship;
-        let classification: ClassificationResult = "UNRELATED";
-        try {
-          classification = await classifyFn(options.llmClient as LlmClient, entry, topMatch.entry);
-        } catch {
-          classification = "UNRELATED";
-        }
-
-        if (classification === "REINFORCING") {
-          await incrementConfirmations(db, topMatch.entry.id, contentHash);
-          updated += 1;
-          options.onDecision?.({
-            entry,
-            action: "updated",
-            reason: "reinforced via LLM classification",
-            similarity,
-            matchedEntryId: topMatch.entry.id,
-            classification,
-            matchedEntry: topMatch.entry,
-            sameSubject,
-          });
-          continue;
-        }
-
-        const newEntryId = await insertEntry(db, entry, embedding, contentHash);
-        added += 1;
-
-        if (classification === "SUPERSEDING") {
-          await markSuperseded(db, topMatch.entry.id, newEntryId);
-          await createRelation(db, newEntryId, topMatch.entry.id, "supersedes");
-          relationsCreated += 1;
-          options.onDecision?.({
-            entry,
-            action: "added",
-            reason: "supersedes existing entry",
-            similarity,
-            matchedEntryId: topMatch.entry.id,
-            classification,
-            newEntryId,
-            matchedEntry: topMatch.entry,
-            sameSubject,
-          });
-          continue;
-        }
-
-        if (classification === "CONTRADICTING") {
-          await incrementContradictions(db, topMatch.entry.id);
-          await createRelation(db, newEntryId, topMatch.entry.id, "contradicts");
-          relationsCreated += 1;
-          options.onDecision?.({
-            entry,
-            action: "added",
-            reason: "contradicts existing entry",
-            similarity,
-            matchedEntryId: topMatch.entry.id,
-            classification,
-            newEntryId,
-            matchedEntry: topMatch.entry,
-            sameSubject,
-          });
-          continue;
-        }
-
-        if (classification === "NUANCING") {
-          await createRelation(db, newEntryId, topMatch.entry.id, "elaborates");
-          relationsCreated += 1;
-          options.onDecision?.({
-            entry,
-            action: "added",
-            reason: "nuances existing entry",
-            similarity,
-            matchedEntryId: topMatch.entry.id,
-            classification,
-            newEntryId,
-            matchedEntry: topMatch.entry,
-            sameSubject,
-          });
-          continue;
-        }
-
-        options.onDecision?.({
-          entry,
-          action: "added",
-          reason: "classified as unrelated",
-          similarity,
-          matchedEntryId: topMatch.entry.id,
-          classification,
-          newEntryId,
-          matchedEntry: topMatch.entry,
-          sameSubject,
-        });
-        continue;
-      }
-
-      const newEntryId = await insertEntry(db, entry, embedding, contentHash);
-      added += 1;
-
-      if (
-        !options.force &&
-        topMatch &&
-        similarity >= SMART_DEDUP_THRESHOLD &&
-        similarity <= AUTO_SKIP_THRESHOLD &&
-        sameSubject &&
-        !sameType
-      ) {
-        await createRelation(db, newEntryId, topMatch.entry.id, "related");
-        relationsCreated += 1;
-        options.onDecision?.({
-          entry,
-          action: "added",
-          reason: "added with related relation (same subject, different type)",
-          similarity,
-          matchedEntryId: topMatch.entry.id,
-          newEntryId,
-          matchedEntry: topMatch.entry,
-          sameSubject,
-        });
-        continue;
-      }
-
+    if (!options.force && (await hasContentHash(db, contentHash))) {
+      skipped += 1;
       options.onDecision?.({
         entry,
-        action: "added",
-        reason: options.force ? "force mode" : "new entry",
-        similarity,
-        matchedEntryId: topMatch?.entry.id,
-        newEntryId,
-        matchedEntry: topMatch?.entry,
-        sameSubject,
+        action: "skipped",
+        reason: "idempotent content hash match",
       });
+      return;
     }
 
-    const durationMs = Date.now() - startedAt;
+    const embedding = await resolveEmbeddingForText(composeEmbeddingText(entry), apiKey, embedFn, cache);
+    const processed = await planEntryAction(db, entry, embedding, contentHash, {
+      force: options.force === true,
+      onlineDedup,
+      dedupThreshold,
+      llmClient: options.llmClient,
+      onlineDedupFn: options.onlineDedupFn,
+      onLlmCall: () => {
+        llmDedupCalls += 1;
+      },
+    });
+
+    const applyAndCount = async (): Promise<StoreEntryDecision> => {
+      const applied = await applyEntryMutation(db, processed, embedFn, apiKey, cache);
+
+      if (applied.action === "added") {
+        added += 1;
+      } else if (applied.action === "updated") {
+        updated += 1;
+      } else if (applied.action === "skipped") {
+        skipped += 1;
+      } else if (applied.action === "superseded") {
+        superseded += 1;
+        relationsCreated += 1;
+      }
+
+      return applied;
+    };
+
+    const decision =
+      onlineDedup
+        ? await (async () => {
+            let appliedDecision: StoreEntryDecision | undefined;
+            await runPerEntryTransaction(db, options.dryRun === true, async () => {
+              appliedDecision = await applyAndCount();
+            });
+            if (!appliedDecision) {
+              throw new Error("Failed to apply per-entry transaction decision.");
+            }
+            return appliedDecision;
+          })()
+        : await applyAndCount();
+
+    options.onDecision?.(decision);
+  };
+
+  if (!onlineDedup) {
+    await db.execute("BEGIN");
+    try {
+      for (const entry of entries) {
+        await processOne(entry);
+      }
+
+      const durationMs = Date.now() - startedAt;
+      if (options.dryRun) {
+        await db.execute("ROLLBACK");
+        return {
+          added,
+          updated,
+          skipped,
+          superseded,
+          llm_dedup_calls: llmDedupCalls,
+          relations_created: relationsCreated,
+          total_entries: totalBefore + added + superseded,
+          duration_ms: durationMs,
+        };
+      }
+
+      await insertIngestLog(db, {
+        filePath: options.sourceFile ?? entries[0]?.source.file ?? "<unknown>",
+        contentHash: options.ingestContentHash,
+        added,
+        updated,
+        skipped,
+        superseded,
+        llmDedupCalls,
+        durationMs,
+      });
+
+      await db.execute("COMMIT");
+
+      return {
+        added,
+        updated,
+        skipped,
+        superseded,
+        llm_dedup_calls: llmDedupCalls,
+        relations_created: relationsCreated,
+        total_entries: await getTotalEntries(db),
+        duration_ms: durationMs,
+      };
+    } catch (error) {
+      try {
+        await db.execute("ROLLBACK");
+      } catch {
+        // Ignore rollback failures.
+      }
+      throw error;
+    }
+  }
+
+  for (const entry of entries) {
+    await processOne(entry);
+  }
+
+  const durationMs = Date.now() - startedAt;
+  if (!options.dryRun) {
     await insertIngestLog(db, {
       filePath: options.sourceFile ?? entries[0]?.source.file ?? "<unknown>",
       contentHash: options.ingestContentHash,
       added,
       updated,
       skipped,
+      superseded,
+      llmDedupCalls,
       durationMs,
     });
-
-    if (options.dryRun) {
-      await db.execute("ROLLBACK");
-      return {
-        added,
-        updated,
-        skipped,
-        relations_created: relationsCreated,
-        total_entries: totalBefore + added,
-        duration_ms: durationMs,
-      };
-    }
-
-    await db.execute("COMMIT");
-
-    return {
-      added,
-      updated,
-      skipped,
-      relations_created: relationsCreated,
-      total_entries: await getTotalEntries(db),
-      duration_ms: durationMs,
-    };
-  } catch (error) {
-    try {
-      await db.execute("ROLLBACK");
-    } catch {
-      // Ignore rollback failures.
-    }
-    throw error;
   }
+
+  return {
+    added,
+    updated,
+    skipped,
+    superseded,
+    llm_dedup_calls: llmDedupCalls,
+    relations_created: relationsCreated,
+    total_entries: options.dryRun ? totalBefore + added + superseded : await getTotalEntries(db),
+    duration_ms: durationMs,
+  };
 }
