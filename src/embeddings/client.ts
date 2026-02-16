@@ -2,7 +2,7 @@ import type { AgenrConfig, KnowledgeEntry } from "../types.js";
 
 const OPENAI_EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings";
 export const EMBEDDING_MODEL = "text-embedding-3-small";
-export const EMBEDDING_DIMENSIONS = 512;
+export const EMBEDDING_DIMENSIONS = 1024;
 export const EMBEDDING_BATCH_SIZE = 200;
 export const EMBEDDING_MAX_CONCURRENCY = 3;
 

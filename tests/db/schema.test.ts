@@ -30,6 +30,7 @@ describe("db schema", () => {
       "entries_fts",
       "idx_entries_embedding",
       "idx_entries_type",
+      "idx_entries_type_canonical_key",
       "idx_entries_expiry",
       "idx_entries_scope",
       "idx_entries_created",
@@ -80,6 +81,7 @@ describe("db schema", () => {
         'entries_fts',
         'idx_entries_embedding',
         'idx_entries_type',
+        'idx_entries_type_canonical_key',
         'idx_entries_expiry',
         'idx_entries_scope',
         'idx_entries_created',
@@ -95,7 +97,7 @@ describe("db schema", () => {
       )
       GROUP BY name
     `);
-    expect(namesResult.rows).toHaveLength(20);
+    expect(namesResult.rows).toHaveLength(21);
     for (const row of namesResult.rows as Array<{ count?: unknown }>) {
       expect(Number(row.count)).toBe(1);
     }
@@ -113,6 +115,7 @@ describe("db schema", () => {
     const sourceColumns = new Set(sourceInfo.rows.map((row) => String(row.name)));
 
     expect(entryColumns.has("content_hash")).toBe(true);
+    expect(entryColumns.has("canonical_key")).toBe(true);
     expect(entryColumns.has("merged_from")).toBe(true);
     expect(entryColumns.has("consolidated_at")).toBe(true);
     expect(ingestColumns.has("content_hash")).toBe(true);

@@ -28,7 +28,7 @@ function vector(seed: number): number[] {
   const head = [1, seed, 0];
   const norm = Math.sqrt(head.reduce((sum, item) => sum + item * item, 0));
   const normalized = head.map((item) => item / norm);
-  return [...normalized, ...Array.from({ length: 509 }, () => 0)];
+  return [...normalized, ...Array.from({ length: 1021 }, () => 0)];
 }
 
 function makeEntry(content: string): KnowledgeEntry {

@@ -34,8 +34,8 @@ function asString(value: unknown): string {
 }
 
 function makeDummyEmbedding(seed = 0): number[] {
-  const vec = new Array(512).fill(0);
-  for (let i = 0; i < 512; i += 1) {
+  const vec = new Array(1024).fill(0);
+  for (let i = 0; i < 1024; i += 1) {
     vec[i] = Math.sin(seed * 0.1 + i * 0.01);
   }
   const norm = Math.sqrt(vec.reduce((sum, value) => sum + value * value, 0));

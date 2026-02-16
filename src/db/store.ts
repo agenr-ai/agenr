@@ -9,10 +9,11 @@ import { runSimpleStream } from "../llm/stream.js";
 import type { Expiry, KnowledgeEntry, LlmClient, RelationType, StoreResult, StoredEntry } from "../types.js";
 import { createRelation } from "./relations.js";
 
-const AUTO_SKIP_THRESHOLD = 0.98;
-const SMART_DEDUP_THRESHOLD = 0.92;
+const AUTO_SKIP_THRESHOLD = 0.95;
+const SMART_DEDUP_THRESHOLD = 0.88;
 const DEFAULT_DEDUP_THRESHOLD = 0.8;
 const DEFAULT_SIMILAR_LIMIT = 5;
+const CANONICAL_KEY_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+){2,4}$/;
 
 const ONLINE_DEDUP_ACTIONS = ["ADD", "UPDATE", "SKIP", "SUPERSEDE"] as const;
 export type OnlineDedupAction = (typeof ONLINE_DEDUP_ACTIONS)[number];
@@ -113,6 +114,23 @@ function toStringValue(value: InValue | undefined): string {
 
 function normalize(value: string): string {
   return value.trim().toLowerCase();
+}
+
+function normalizeCanonicalKey(value: string | undefined): string | undefined {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return undefined;
+  }
+
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[_\s]+/g, "-");
+
+  if (!CANONICAL_KEY_PATTERN.test(normalized)) {
+    return undefined;
+  }
+
+  return normalized;
 }
 
 function normalizeCreatedAt(value: string | undefined): string | undefined {
@@ -409,6 +427,7 @@ function mapStoredEntry(row: Row, tags: string[]): StoredEntry {
     id: toStringValue(row.id),
     type: toStringValue(row.type) as StoredEntry["type"],
     subject: toStringValue(row.subject),
+    canonical_key: normalizeCanonicalKey(toStringValue(row.canonical_key)),
     content: toStringValue(row.content),
     importance,
     expiry: toStringValue(row.expiry) as Expiry,
@@ -435,6 +454,7 @@ async function getStoredEntryById(db: Client, id: string): Promise<StoredEntry |
         id,
         type,
         subject,
+        canonical_key,
         content,
         importance,
         expiry,
@@ -565,6 +585,7 @@ export async function findSimilar(
         e.id,
         e.type,
         e.subject,
+        e.canonical_key,
         e.content,
         e.importance,
         e.expiry,
@@ -636,6 +657,7 @@ export async function insertEntry(
         id,
         type,
         subject,
+        canonical_key,
         content,
         importance,
         expiry,
@@ -646,12 +668,13 @@ export async function insertEntry(
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, vector32(?), ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, vector32(?), ?, ?)
     `,
     args: [
       id,
       entry.type,
       entry.subject,
+      normalizeCanonicalKey(entry.canonical_key) ?? null,
       entry.content,
       entry.importance,
       entry.expiry,
@@ -669,7 +692,75 @@ export async function insertEntry(
 }
 
 function resolveSameSubject(a: string, b: string): boolean {
-  return normalize(a) === normalize(b);
+  const na = normalize(a).replace(/\s+/g, " ");
+  const nb = normalize(b).replace(/\s+/g, " ");
+
+  if (!na || !nb) {
+    return false;
+  }
+  if (na === nb) {
+    return true;
+  }
+  const spacedA = ` ${na} `;
+  const spacedB = ` ${nb} `;
+  if (spacedA.includes(spacedB) || spacedB.includes(spacedA)) {
+    return true;
+  }
+
+  const wa = new Set(na.split(/\s+/).filter((word) => word.length > 0));
+  const wb = new Set(nb.split(/\s+/).filter((word) => word.length > 0));
+  let intersection = 0;
+  for (const word of wa) {
+    if (wb.has(word)) {
+      intersection += 1;
+    }
+  }
+  const union = wa.size + wb.size - intersection;
+  return union > 0 && intersection / union >= 0.5;
+}
+
+async function findEntryByTypeAndCanonicalKey(
+  db: Client,
+  type: KnowledgeEntry["type"],
+  canonicalKey: string,
+): Promise<StoredEntry | null> {
+  const result = await db.execute({
+    sql: `
+      SELECT
+        id,
+        type,
+        subject,
+        canonical_key,
+        content,
+        importance,
+        expiry,
+        source_file,
+        source_context,
+        embedding,
+        created_at,
+        updated_at,
+        last_recalled_at,
+        recall_count,
+        confirmations,
+        contradictions,
+        superseded_by
+      FROM entries
+      WHERE type = ?
+        AND canonical_key = ?
+        AND superseded_by IS NULL
+      LIMIT 1
+    `,
+    args: [type, canonicalKey],
+  });
+
+  const row = result.rows[0];
+  if (!row) {
+    return null;
+  }
+
+  const entryId = toStringValue(row.id);
+  const tagsById = await getTagsForEntryIds(db, [entryId]);
+  return mapStoredEntry(row, tagsById.get(entryId) ?? []);
 }
 
 function buildFallbackAddDecision(reasoning: string): OnlineDedupDecision {
@@ -1149,20 +1240,47 @@ export async function storeEntries(
   let llmDedupCalls = 0;
 
   const processOne = async (entry: KnowledgeEntry): Promise<void> => {
-    const contentHash = hashEntrySourceContent(entry);
+    const normalizedEntry: KnowledgeEntry = {
+      ...entry,
+      canonical_key: normalizeCanonicalKey(entry.canonical_key),
+    };
+    const contentHash = hashEntrySourceContent(normalizedEntry);
 
     if (!options.force && (await hasContentHash(db, contentHash))) {
       skipped += 1;
       options.onDecision?.({
-        entry,
+        entry: normalizedEntry,
         action: "skipped",
         reason: "idempotent content hash match",
       });
       return;
     }
 
-    const embedding = await resolveEmbeddingForText(composeEmbeddingText(entry), apiKey, embedFn, cache);
-    const processed = await planEntryAction(db, entry, embedding, contentHash, {
+    if (!options.force && normalizedEntry.canonical_key) {
+      const canonicalMatch = await findEntryByTypeAndCanonicalKey(db, normalizedEntry.type, normalizedEntry.canonical_key);
+      if (canonicalMatch) {
+        if (onlineDedup) {
+          await runPerEntryTransaction(db, options.dryRun === true, async () => {
+            await incrementConfirmations(db, canonicalMatch.id, contentHash);
+          });
+        } else {
+          await incrementConfirmations(db, canonicalMatch.id, contentHash);
+        }
+        updated += 1;
+        options.onDecision?.({
+          entry: normalizedEntry,
+          action: "updated",
+          reason: "reinforced existing entry (canonical key match)",
+          matchedEntryId: canonicalMatch.id,
+          matchedEntry: canonicalMatch,
+          sameSubject: resolveSameSubject(normalizedEntry.subject, canonicalMatch.subject),
+        });
+        return;
+      }
+    }
+
+    const embedding = await resolveEmbeddingForText(composeEmbeddingText(normalizedEntry), apiKey, embedFn, cache);
+    const processed = await planEntryAction(db, normalizedEntry, embedding, contentHash, {
       force: options.force === true,
       llmDedupEnabled,
       dedupThreshold,

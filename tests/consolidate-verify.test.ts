@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 function vector(head: [number, number, number]): number[] {
   const norm = Math.sqrt(head[0] ** 2 + head[1] ** 2 + head[2] ** 2);
   const normalized = head.map((item) => item / norm);
-  return [...normalized, ...Array.from({ length: 509 }, () => 0)];
+  return [...normalized, ...Array.from({ length: 1021 }, () => 0)];
 }
 
 describe("consolidate verify", () => {

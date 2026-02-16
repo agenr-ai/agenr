@@ -6,7 +6,7 @@ import { storeEntries } from "../../src/db/store.js";
 import type { KnowledgeEntry } from "../../src/types.js";
 
 function to512(head: number[]): number[] {
-  return [...head, ...Array.from({ length: 509 }, () => 0)];
+  return [...head, ...Array.from({ length: 1021 }, () => 0)];
 }
 
 function vectorForText(text: string): number[] {

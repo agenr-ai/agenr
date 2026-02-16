@@ -31,11 +31,11 @@ function asNumber(value: unknown): number {
 function vectorFromAngle(degrees: number): number[] {
   const radians = (degrees * Math.PI) / 180;
   const head = [Math.cos(radians), Math.sin(radians), 0];
-  return [...head, ...Array.from({ length: 509 }, () => 0)];
+  return [...head, ...Array.from({ length: 1021 }, () => 0)];
 }
 
 function vectorFromHead(head: [number, number, number]): number[] {
-  return [...head, ...Array.from({ length: 509 }, () => 0)];
+  return [...head, ...Array.from({ length: 1021 }, () => 0)];
 }
 
 function makeEntry(subject: string, content: string, type: KnowledgeEntry["type"] = "fact"): KnowledgeEntry {

@@ -8,7 +8,7 @@ import type { KnowledgeEntry } from "../src/types.js";
 function vectorFromAngle(degrees: number): number[] {
   const radians = (degrees * Math.PI) / 180;
   const head = [Math.cos(radians), Math.sin(radians), 0];
-  return [...head, ...Array.from({ length: 509 }, () => 0)];
+  return [...head, ...Array.from({ length: 1021 }, () => 0)];
 }
 
 function makeEntry(type: KnowledgeEntry["type"], subject: string, content: string): KnowledgeEntry {

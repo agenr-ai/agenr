@@ -81,6 +81,21 @@ function normalizeCreatedAt(value: unknown): string | undefined {
   return parsed.toISOString();
 }
 
+function normalizeCanonicalKey(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return undefined;
+  }
+
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[_\s]+/g, "-");
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+){2,4}$/.test(normalized)) {
+    return undefined;
+  }
+  return normalized;
+}
+
 function normalizeEntry(raw: unknown, fallbackFile: string): KnowledgeEntry {
   if (!raw || typeof raw !== "object") {
     throw new Error("Entry must be an object.");
@@ -124,6 +139,7 @@ function normalizeEntry(raw: unknown, fallbackFile: string): KnowledgeEntry {
   return {
     type: type as KnowledgeEntry["type"],
     subject,
+    canonical_key: normalizeCanonicalKey(record.canonical_key),
     content,
     importance: importance as KnowledgeEntry["importance"],
     expiry: expiry as KnowledgeEntry["expiry"],

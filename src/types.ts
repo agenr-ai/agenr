@@ -57,6 +57,7 @@ export interface KnowledgeEntry {
   type: KnowledgeType;
   content: string;
   subject: string;
+  canonical_key?: string;
   importance: number;
   expiry: Expiry;
   scope?: Scope;

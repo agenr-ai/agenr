@@ -75,7 +75,7 @@ FACT:
 {
   "type": "fact",
   "subject": "agenr knowledge database",
-  "content": "agenr stores knowledge in SQLite with sqlite-vec for vector search. Embeddings use OpenAI text-embedding-3-small at 512 dimensions.",
+  "content": "agenr stores knowledge in SQLite with sqlite-vec for vector search. Embeddings use OpenAI text-embedding-3-small at 1024 dimensions.",
   "importance": 8,
   "expiry": "permanent",
   "tags": ["agenr", "database", "embeddings"],
@@ -188,6 +188,7 @@ WHY: Routine execution. No durable knowledge, decisions, or lessons.
 - Empty array is expected and correct for most chunks.
 - Max 8 entries; prefer 0-3.
 - Each entry: self-contained, declarative, understandable without the transcript.
+- canonical_key: optional lowercase hyphenated 3-5 word identifier when clear (example: "preferred-package-manager")
 - content: clear declarative statement, not a quote. Min 20 chars.
 - source_context: one sentence, max 20 words.
 - tags: 1-4 lowercase descriptive tags.`;
@@ -271,6 +272,7 @@ function buildUserPrompt(chunk: TranscriptChunk): string {
 function toSchemaEntries(entries: KnowledgeEntry[]): Array<{
   type: KnowledgeEntry["type"];
   subject: string;
+  canonical_key?: string;
   content: string;
   importance: number;
   expiry: Exclude<KnowledgeEntry["expiry"], "core">;
@@ -281,6 +283,7 @@ function toSchemaEntries(entries: KnowledgeEntry[]): Array<{
   return entries.map((entry) => ({
     type: entry.type,
     subject: entry.subject,
+    canonical_key: entry.canonical_key,
     content: entry.content,
     importance: entry.importance,
     expiry: entry.expiry === "permanent" ? "permanent" : "temporary",
@@ -364,6 +367,23 @@ function coerceCreatedAt(value: unknown): string | undefined {
   }
 
   return parsed.toISOString();
+}
+
+function coerceCanonicalKey(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return undefined;
+  }
+
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[_\s]+/g, "-");
+
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+){2,4}$/.test(normalized)) {
+    return undefined;
+  }
+
+  return normalized;
 }
 
 function chunkCreatedAt(chunk: TranscriptChunk): string | undefined {
@@ -492,6 +512,7 @@ function validateKnowledgeEntry(
     type,
     content,
     subject,
+    canonical_key: coerceCanonicalKey(record.canonical_key),
     importance,
     expiry,
     tags: coerceTags(record.tags),
@@ -561,6 +582,7 @@ function mapSchemaEntry(
     type,
     content,
     subject,
+    canonical_key: coerceCanonicalKey(record.canonical_key),
     importance,
     expiry,
     tags: coerceTags(record.tags),
@@ -735,6 +757,7 @@ function mapDedupSchemaEntry(
     type,
     content,
     subject,
+    canonical_key: coerceCanonicalKey(record.canonical_key),
     importance,
     expiry,
     tags: coerceTags(record.tags),

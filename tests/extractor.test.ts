@@ -118,6 +118,7 @@ describe("extractKnowledgeFromChunks", () => {
                       type: "fact",
                       content: "Jim prefers pnpm for JavaScript monorepo package management",
                       subject: "Jim",
+                      canonical_key: "preferred-package-manager",
                       importance: 8,
                       expiry: "permanent",
                       tags: ["tooling"],
@@ -145,6 +146,7 @@ describe("extractKnowledgeFromChunks", () => {
     expect(result.entries).toHaveLength(1);
     expect(result.entries[0]?.type).toBe("fact");
     expect(result.entries[0]?.subject).toBe("Jim");
+    expect(result.entries[0]?.canonical_key).toBe("preferred-package-manager");
     expect(result.entries[0]?.importance).toBe(8);
     expect(result.entries[0]?.source.file).toBe("session.jsonl");
     expect(result.entries[0]?.source.context).toBe("user discussed preferred package manager");
@@ -214,6 +216,7 @@ describe("extractKnowledgeFromChunks", () => {
                         type: "fact",
                         content: "Agenr now supports source adapter parsing for OpenClaw transcripts with timestamps.",
                         subject: "agenr source adapters",
+                        canonical_key: "source-adapter-timestamp-preservation",
                         importance: 8,
                         expiry: "temporary",
                         tags: ["agenr", "adapters"],
@@ -244,6 +247,7 @@ describe("extractKnowledgeFromChunks", () => {
                         type: "fact",
                         content: "Agenr source adapters preserve message timestamps and carry them through extraction.",
                         subject: "agenr source adapters",
+                        canonical_key: "source-adapter-timestamp-preservation",
                         importance: 8,
                         expiry: "temporary",
                         tags: ["agenr", "timestamps"],
@@ -269,11 +273,12 @@ describe("extractKnowledgeFromChunks", () => {
                 name: "submit_deduped_knowledge",
                 arguments: {
                   entries: [
-                    {
-                      type: "fact",
-                      content: "Agenr source adapters preserve transcript timestamps through parsing and extraction.",
-                      subject: "agenr source adapters",
-                      importance: 8,
+                      {
+                        type: "fact",
+                        content: "Agenr source adapters preserve transcript timestamps through parsing and extraction.",
+                        subject: "agenr source adapters",
+                        canonical_key: "source-adapter-timestamp-preservation",
+                        importance: 8,
                       expiry: "temporary",
                       tags: ["agenr", "timestamps"],
                       source_context: "dedup merge",
@@ -303,6 +308,7 @@ describe("extractKnowledgeFromChunks", () => {
 
     expect(result.entries).toHaveLength(1);
     expect(result.entries[0]?.created_at).toBe("2026-02-16T05:20:01.123Z");
+    expect(result.entries[0]?.canonical_key).toBe("source-adapter-timestamp-preservation");
   });
 
   it("falls back to text parsing when no tool calls are present", async () => {
