@@ -105,6 +105,19 @@ env = { OPENAI_API_KEY = "your-key-here" }
 }
 ```
 
+### OpenClaw (via [mcporter](https://mcporter.dev))
+
+From your OpenClaw workspace:
+
+```bash
+mcporter config add agenr \
+  --stdio agenr \
+  --arg mcp \
+  --env OPENAI_API_KEY=your-key-here
+```
+
+Verify with `mcporter list agenr`. Your agent gets `agenr_recall`, `agenr_store`, and `agenr_extract` as native tools. See [docs/OPENCLAW.md](./docs/OPENCLAW.md) for the full guide.
+
 ### Teaching your AI to use agenr
 
 Add this to your coding agent's instructions (e.g., `AGENTS.md` or system prompt):

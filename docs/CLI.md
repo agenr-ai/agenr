@@ -533,3 +533,39 @@ In **default** mode: entries are ranked by score, then consumed in order until t
 In **session-start** mode: the budget is split across categories (30% active, 30% preferences, remaining to recent). Each category consumes entries in score order until its quota is full. Leftover budget is redistributed to remaining entries across all categories.
 
 This is useful for keeping context windows manageable — e.g., `agenr recall --context session-start --budget 2000` loads ≈2000 tokens of the most relevant memories.
+
+
+## Interrupted Processes and Data Safety
+
+### What's safe
+
+agenr uses SQLite transactions for all write operations. If a process is interrupted (ctrl+C, SIGTERM, OOM kill), uncommitted entries are rolled back cleanly by SQLite's WAL journal. No partial entries will be written.
+
+The `ingest_log` table is only updated after a file is fully processed and stored. If ingestion is killed mid-file, that file won't appear in the log, so `--skip-ingested` will correctly re-process it on the next run. Already-stored entries are deduplicated by content hash.
+
+### What's not safe
+
+The DiskANN vector index (used for semantic search) can become corrupted if a process is killed with SIGKILL during a write. This is a known limitation of libsql's vector index implementation.
+
+Symptoms of a corrupted index:
+- `agenr recall` returns no results or hangs
+- `agenr db check` reports index issues
+
+### Recovery
+
+```bash
+# Check database health
+agenr db check
+
+# Rebuild the vector index (drops and recreates)
+agenr db rebuild-index
+```
+
+Index rebuilds take 10-30 seconds depending on database size. All data is preserved - only the search index is rebuilt.
+
+### Best practices
+
+- Avoid killing agenr with `kill -9` (SIGKILL) during ingestion or consolidation
+- If you must force-kill, run `agenr db check` afterward
+- Use `ctrl+C` (SIGINT) when possible - agenr will attempt a clean shutdown
+- Long-running ingestion: consider running in a terminal directly rather than via tool timeouts
