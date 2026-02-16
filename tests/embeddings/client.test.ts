@@ -110,15 +110,56 @@ describe("embeddings client", () => {
   });
 
   it("throws a descriptive error for 429 responses", async () => {
-    globalThis.fetch = vi.fn(async () => {
-      return new Response(JSON.stringify({ error: { message: "slow down" } }), {
-        status: 429,
-        headers: { "Content-Type": "application/json" },
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn(async () => {
+        return new Response(JSON.stringify({ error: { message: "slow down" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        });
       });
-    }) as typeof fetch;
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    await expect(embed(["item-1"], "sk-test")).rejects.toThrow("429");
-    await expect(embed(["item-1"], "sk-test")).rejects.toThrow("rate limited");
+      const promise = embed(["item-1"], "sk-test");
+      const assertion = expect(promise).rejects.toThrow(/429.*rate limited/i);
+      await vi.runAllTimersAsync();
+      await assertion;
+      expect(fetchMock.mock.calls.length).toBe(5);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries embeddings on 429 and succeeds", async () => {
+    vi.useFakeTimers();
+    try {
+      const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+      let callCount = 0;
+
+      const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+        callCount += 1;
+        if (callCount === 1) {
+          return new Response(JSON.stringify({ error: { message: "slow down" } }), {
+            status: 429,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+
+        const body = JSON.parse(String(init?.body)) as { input: string[] };
+        return makeEmbeddingResponse(body.input);
+      });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const promise = embed(["item-12"], "sk-test");
+      await vi.runAllTimersAsync();
+      const vectors = await promise;
+
+      expect(callCount).toBe(2);
+      expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 2000);
+      expect(vectors).toEqual([[12]]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("throws on malformed success payloads", async () => {

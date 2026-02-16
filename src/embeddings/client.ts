@@ -5,6 +5,7 @@ export const EMBEDDING_MODEL = "text-embedding-3-small";
 export const EMBEDDING_DIMENSIONS = 1024;
 export const EMBEDDING_BATCH_SIZE = 200;
 export const EMBEDDING_MAX_CONCURRENCY = 3;
+const EMBEDDING_MAX_ATTEMPTS = 5;
 
 interface OpenAIEmbeddingItem {
   index: number;
@@ -63,30 +64,84 @@ function buildHttpError(status: number, body: string): Error {
   return new Error(`OpenAI embeddings request failed (${status}): ${detail}`);
 }
 
+function isRetryableStatus(status: number): boolean {
+  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+function isRetryableEmbeddingError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const message = error.message.toLowerCase();
+  return (
+    message.includes("429") ||
+    message.includes("500") ||
+    message.includes("502") ||
+    message.includes("503") ||
+    message.includes("504") ||
+    message.includes("timeout") ||
+    message.includes("network") ||
+    message.includes("connection")
+  );
+}
+
+async function sleepMs(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function embedBatch(texts: string[], apiKey: string): Promise<number[][]> {
-  let response: Response;
-  try {
-    response = await fetch(OPENAI_EMBEDDINGS_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: EMBEDDING_MODEL,
-        dimensions: EMBEDDING_DIMENSIONS,
-        input: texts,
-      }),
-    });
-  } catch (error) {
-    throw new Error(
-      `Failed to call OpenAI embeddings API: ${error instanceof Error ? error.message : String(error)}`,
-    );
+  let response: Response | null = null;
+  let rawBody = "";
+  let lastError: unknown = null;
+
+  for (let attempt = 1; attempt <= EMBEDDING_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      response = await fetch(OPENAI_EMBEDDINGS_URL, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: EMBEDDING_MODEL,
+          dimensions: EMBEDDING_DIMENSIONS,
+          input: texts,
+        }),
+      });
+      rawBody = await response.text();
+    } catch (error) {
+      lastError = new Error(
+        `Failed to call OpenAI embeddings API: ${error instanceof Error ? error.message : String(error)}`,
+      );
+
+      if (attempt < EMBEDDING_MAX_ATTEMPTS && isRetryableEmbeddingError(lastError)) {
+        const backoffMs = Math.min(2000 * 2 ** (attempt - 1), 60_000);
+        await sleepMs(backoffMs);
+        continue;
+      }
+
+      throw lastError;
+    }
+
+    if (!response.ok) {
+      const httpError = buildHttpError(response.status, rawBody);
+      lastError = httpError;
+
+      if (attempt < EMBEDDING_MAX_ATTEMPTS && isRetryableStatus(response.status)) {
+        const backoffMs = Math.min(2000 * 2 ** (attempt - 1), 60_000);
+        await sleepMs(backoffMs);
+        continue;
+      }
+
+      throw httpError;
+    }
+
+    lastError = null;
+    break;
   }
 
-  const rawBody = await response.text();
-  if (!response.ok) {
-    throw buildHttpError(response.status, rawBody);
+  if (!response || !response.ok) {
+    throw lastError instanceof Error ? lastError : new Error("OpenAI embeddings request failed.");
   }
 
   let parsed: OpenAIEmbeddingResponse;

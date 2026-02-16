@@ -715,6 +715,11 @@ export async function runIngestCommand(
         chunks: parsed.chunks,
         client,
         verbose: false,
+        onVerbose: verbose
+          ? (line) => {
+              clack.log.info(line, clackOutput);
+            }
+          : undefined,
         onChunkComplete: async (chunkResult) => {
           await processChunkEntries(chunkResult.entries);
         },

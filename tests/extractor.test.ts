@@ -522,7 +522,7 @@ describe("extractKnowledgeFromChunks", () => {
       retryDelayMs: () => 0,
     });
 
-    expect(callCount).toBe(3);
+    expect(callCount).toBe(5);
     expect(result.successfulChunks).toBe(0);
     expect(result.failedChunks).toBe(1);
     expect(result.entries).toHaveLength(0);
@@ -817,15 +817,142 @@ describe("extractKnowledgeFromChunks", () => {
       { delta: "\n", kind: "text" },
     ]);
     expect(verboseLines).toEqual([
-      "[chunk 1/2] attempt 1/3",
+      "[chunk 1/2] attempt 1/5",
       "[thinking]",
       "[/thinking]",
       '[raw-sample] {"type":"fact","content":"Jim prefers pnpm for JavaScript monorepo package management","subject":"Jim","importance":8,"expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}',
-      "[chunk 2/2] attempt 1/3",
+      "[chunk 2/2] attempt 1/5",
       "[thinking]",
       "[/thinking]",
       '[raw-sample] {"type":"fact","content":"Jim prefers pnpm for JavaScript monorepo package management","subject":"Jim","importance":8,"expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}',
     ]);
+  });
+
+  it("sleeps between chunks using the default inter-chunk delay and skips sleeping after the last chunk", async () => {
+    const sleepCalls: number[] = [];
+    const sleepImpl = async (ms: number) => {
+      sleepCalls.push(ms);
+    };
+
+    const streamSimpleImpl = (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) =>
+      streamWithResult(
+        Promise.resolve(
+          assistantMessage(
+            '[{"type":"fact","content":"Jim prefers pnpm for JavaScript monorepo package management","subject":"Jim","importance":8,"expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
+          ),
+        ),
+      );
+
+    await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunkAt(0), fakeChunkAt(1), fakeChunkAt(2)],
+      client: fakeClient(),
+      verbose: false,
+      noDedup: true,
+      streamSimpleImpl,
+      sleepImpl,
+      retryDelayMs: () => 0,
+    });
+
+    expect(sleepCalls).toEqual([150, 150]);
+  });
+
+  it("supports custom interChunkDelayMs", async () => {
+    const sleepCalls: number[] = [];
+    const sleepImpl = async (ms: number) => {
+      sleepCalls.push(ms);
+    };
+
+    const streamSimpleImpl = (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) =>
+      streamWithResult(
+        Promise.resolve(
+          assistantMessage(
+            '[{"type":"fact","content":"Jim prefers pnpm for JavaScript monorepo package management","subject":"Jim","importance":8,"expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
+          ),
+        ),
+      );
+
+    await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunkAt(0), fakeChunkAt(1), fakeChunkAt(2)],
+      client: fakeClient(),
+      verbose: false,
+      noDedup: true,
+      interChunkDelayMs: 50,
+      streamSimpleImpl,
+      sleepImpl,
+      retryDelayMs: () => 0,
+    });
+
+    expect(sleepCalls).toEqual([50, 50]);
+  });
+
+  it("adapts inter-chunk delay upward on 429 and decays back toward base after success", async () => {
+    let callCount = 0;
+    const sleepCalls: number[] = [];
+    const sleepImpl = async (ms: number) => {
+      sleepCalls.push(ms);
+    };
+
+    const streamSimpleImpl = (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) => {
+      callCount += 1;
+      if (callCount === 2) {
+        return streamWithResult(Promise.reject(new Error("429 rate limit")));
+      }
+      return streamWithResult(
+        Promise.resolve(
+          assistantMessage(
+            '[{"type":"fact","content":"Jim prefers pnpm for JavaScript monorepo package management","subject":"Jim","importance":8,"expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
+          ),
+        ),
+      );
+    };
+
+    await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunkAt(0), fakeChunkAt(1), fakeChunkAt(2)],
+      client: fakeClient(),
+      verbose: false,
+      noDedup: true,
+      streamSimpleImpl,
+      sleepImpl,
+      retryDelayMs: () => 0,
+    });
+
+    // sleep order: after chunk1 (base 150), retry backoff (0), after chunk2 (300*0.9 => 270)
+    expect(sleepCalls).toEqual([150, 0, 270]);
+  });
+
+  it("retries up to 5 attempts and succeeds on the 5th", async () => {
+    let callCount = 0;
+    const streamSimpleImpl = (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) => {
+      callCount += 1;
+      if (callCount < 5) {
+        return streamWithResult(Promise.reject(new Error("503 service unavailable")));
+      }
+      return streamWithResult(
+        Promise.resolve(
+          assistantMessage(
+            '[{"type":"fact","content":"Jim prefers pnpm for JavaScript monorepo package management","subject":"Jim","importance":8,"expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
+          ),
+        ),
+      );
+    };
+
+    const result = await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunk()],
+      client: fakeClient(),
+      verbose: false,
+      streamSimpleImpl,
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+    });
+
+    expect(callCount).toBe(5);
+    expect(result.successfulChunks).toBe(1);
+    expect(result.failedChunks).toBe(0);
+    expect(result.entries).toHaveLength(1);
   });
 
   it("onChunkComplete receives entries per chunk", async () => {

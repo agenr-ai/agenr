@@ -193,7 +193,8 @@ WHY: Routine execution. No durable knowledge, decisions, or lessons.
 - source_context: one sentence, max 20 words.
 - tags: 1-4 lowercase descriptive tags.`;
 
-const MAX_ATTEMPTS = 3;
+const MAX_ATTEMPTS = 5;
+const DEFAULT_INTER_CHUNK_DELAY_MS = 150;
 const DEDUP_BATCH_SIZE = 50;
 const DEDUP_BATCH_TRIGGER = 100;
 
@@ -1068,6 +1069,14 @@ function isRetryableError(error: unknown): boolean {
   );
 }
 
+function isRateLimitedError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const message = error.message.toLowerCase();
+  return message.includes("429") || message.includes("rate limit") || message.includes("rate limited");
+}
+
 async function sleepMs(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -1145,6 +1154,7 @@ export async function extractKnowledgeFromChunks(params: {
   client: LlmClient;
   verbose: boolean;
   noDedup?: boolean;
+  interChunkDelayMs?: number;
   onVerbose?: (line: string) => void;
   onStreamDelta?: (delta: string, kind: "text" | "thinking") => void;
   onChunkComplete?: (result: ExtractChunkCompleteResult) => Promise<void>;
@@ -1158,7 +1168,18 @@ export async function extractKnowledgeFromChunks(params: {
   let successfulChunks = 0;
   let failedChunks = 0;
 
-  for (const chunk of params.chunks) {
+  const baseDelay = Math.max(
+    0,
+    Number.isFinite(params.interChunkDelayMs ?? DEFAULT_INTER_CHUNK_DELAY_MS)
+      ? Math.trunc(params.interChunkDelayMs ?? DEFAULT_INTER_CHUNK_DELAY_MS)
+      : DEFAULT_INTER_CHUNK_DELAY_MS,
+  );
+  let dynamicDelay = baseDelay;
+  let lastThrottleNoticeDelayMs: number | null = null;
+  const sleep = params.sleepImpl ?? sleepMs;
+
+  for (let chunkIndex = 0; chunkIndex < params.chunks.length; chunkIndex += 1) {
+    const chunk = params.chunks[chunkIndex];
     let chunkDone = false;
     let lastError: unknown = null;
     let chunkResult: { entries: KnowledgeEntry[]; warnings: string[] } | null = null;
@@ -1190,11 +1211,23 @@ export async function extractKnowledgeFromChunks(params: {
         lastError = error;
 
         if (attempt < MAX_ATTEMPTS && isRetryableError(error)) {
-          const backoffMs = params.retryDelayMs?.(attempt) ?? 1000 * 2 ** (attempt - 1);
+          if (isRateLimitedError(error)) {
+            dynamicDelay = Math.min(5000, Math.max(baseDelay, dynamicDelay * 2));
+            if (
+              params.onVerbose &&
+              dynamicDelay >= baseDelay * 2 &&
+              lastThrottleNoticeDelayMs !== dynamicDelay
+            ) {
+              params.onVerbose(`Rate limited, backing off to ${dynamicDelay}ms between chunks`);
+              lastThrottleNoticeDelayMs = dynamicDelay;
+            }
+          }
+
+          const backoffMs =
+            params.retryDelayMs?.(attempt) ?? Math.min(2000 * 2 ** (attempt - 1), 60_000);
           warnings.push(
             `Chunk ${chunk.chunk_index + 1}: attempt ${attempt} failed (${error instanceof Error ? error.message : String(error)}), retrying in ${backoffMs}ms.`,
           );
-          const sleep = params.sleepImpl ?? sleepMs;
           await sleep(backoffMs);
           continue;
         }
@@ -1209,6 +1242,7 @@ export async function extractKnowledgeFromChunks(params: {
         `Chunk ${chunk.chunk_index + 1}: extraction failed (${lastError instanceof Error ? lastError.message : String(lastError)}).`,
       );
     } else if (chunkResult) {
+      dynamicDelay = Math.max(baseDelay, Math.floor(dynamicDelay * 0.9));
       if (params.onChunkComplete) {
         await params.onChunkComplete({
           chunkIndex: chunk.chunk_index,
@@ -1223,6 +1257,10 @@ export async function extractKnowledgeFromChunks(params: {
 
     if (params.onStreamDelta) {
       params.onStreamDelta("\n", "text");
+    }
+
+    if (chunkIndex < params.chunks.length - 1 && dynamicDelay > 0) {
+      await sleep(dynamicDelay);
     }
   }
 
