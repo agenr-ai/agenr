@@ -41,6 +41,7 @@ function makeEntry(params: {
   content: string;
   sourceFile?: string;
   tags?: string[];
+  createdAt?: string;
 }): KnowledgeEntry {
   return {
     type: params.type ?? "fact",
@@ -49,6 +50,7 @@ function makeEntry(params: {
     importance: 8,
     expiry: "permanent",
     tags: params.tags ?? [],
+    created_at: params.createdAt,
     source: {
       file: params.sourceFile ?? "source-a.jsonl",
       context: "unit test",
@@ -114,6 +116,43 @@ describe("db store pipeline", () => {
     expect(String(ingestLogs.rows[0]?.content_hash)).toBe(hashText("first"));
     expect(asNumber(ingestLogs.rows[0]?.entries_added)).toBe(5);
     expect(asNumber(ingestLogs.rows[1]?.entries_skipped)).toBe(5);
+  });
+
+  it("uses entry created_at when provided", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    await storeEntries(
+      client,
+      [makeEntry({ content: "seed vec-base", sourceFile: "seed.jsonl", createdAt: "2026-02-01T10:00:00.000Z" })],
+      "sk-test",
+      {
+        sourceFile: "seed.jsonl",
+        ingestContentHash: hashText("seed"),
+        embedFn: mockEmbed,
+      },
+    );
+
+    const rows = await client.execute({ sql: "SELECT created_at FROM entries WHERE source_file = ?", args: ["seed.jsonl"] });
+    expect(String(rows.rows[0]?.created_at)).toBe("2026-02-01T10:00:00.000Z");
+  });
+
+  it("falls back to now for created_at when missing", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    const before = Date.now();
+    await storeEntries(client, [makeEntry({ content: "seed vec-base", sourceFile: "seed.jsonl" })], "sk-test", {
+      sourceFile: "seed.jsonl",
+      ingestContentHash: hashText("seed"),
+      embedFn: mockEmbed,
+    });
+    const after = Date.now();
+
+    const rows = await client.execute({ sql: "SELECT created_at FROM entries WHERE source_file = ?", args: ["seed.jsonl"] });
+    const createdAt = new Date(String(rows.rows[0]?.created_at)).getTime();
+    expect(createdAt).toBeGreaterThanOrEqual(before);
+    expect(createdAt).toBeLessThanOrEqual(after + 1_000);
   });
 
   it("skips near-exact semantic duplicates above 0.98 similarity", async () => {

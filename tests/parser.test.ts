@@ -30,9 +30,13 @@ describe("parser", () => {
     expect(parsed.messages).toHaveLength(3);
     expect(parsed.messages.map((m) => m.role)).toEqual(["user", "assistant", "assistant"]);
     expect(parsed.warnings.some((w) => w.includes("Skipped malformed JSONL line"))).toBe(true);
+    expect(parsed.metadata?.platform).toBe("openclaw");
+    expect(parsed.metadata?.startedAt).toBe("2026-02-14T00:00:00.000Z");
     expect(parsed.chunks.length).toBeGreaterThan(0);
     expect(parsed.chunks[0]?.text).toContain("[m00000][user]");
     expect(parsed.chunks[0]?.text).toContain("[m00001][assistant]");
+    expect(parsed.chunks[0]?.timestamp_start).toBe("2026-02-14T00:00:01.000Z");
+    expect(parsed.chunks[0]?.timestamp_end).toBe("2026-02-14T00:00:04.000Z");
   });
 
   it("chunks by message boundaries with overlap and stable indexing", () => {
@@ -42,6 +46,7 @@ describe("parser", () => {
         index: i,
         role: i % 2 === 0 ? "user" : "assistant",
         text: `Message ${i} ` + "x".repeat(45),
+        timestamp: new Date(`2026-02-01T00:00:${String(i).padStart(2, "0")}.000Z`).toISOString(),
       });
     }
 
@@ -53,6 +58,8 @@ describe("parser", () => {
       const previous = chunks[i - 1];
       expect(current?.message_start).toBeLessThanOrEqual(previous?.message_end ?? 0);
       expect(current?.chunk_index).toBe(i);
+      expect(current?.timestamp_start).toBeTruthy();
+      expect(current?.timestamp_end).toBeTruthy();
     }
   });
 
@@ -65,6 +72,8 @@ describe("parser", () => {
     expect(parsed.chunks[0]?.text).toContain("Header");
     expect(parsed.chunks[0]?.chunk_index).toBe(0);
     expect(parsed.chunks[0]?.totalChunks).toBe(1);
+    expect(parsed.chunks[0]?.timestamp_start).toBe(parsed.metadata?.startedAt);
+    expect(parsed.chunks[0]?.timestamp_end).toBe(parsed.metadata?.startedAt);
   });
 
   it("parses plain text files into text chunks", async () => {

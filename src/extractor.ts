@@ -275,6 +275,7 @@ function toSchemaEntries(entries: KnowledgeEntry[]): Array<{
   importance: number;
   expiry: Exclude<KnowledgeEntry["expiry"], "core">;
   tags: string[];
+  created_at?: string;
   source_context: string;
 }> {
   return entries.map((entry) => ({
@@ -284,6 +285,7 @@ function toSchemaEntries(entries: KnowledgeEntry[]): Array<{
     importance: entry.importance,
     expiry: entry.expiry === "permanent" ? "permanent" : "temporary",
     tags: entry.tags.slice(0, 4),
+    created_at: entry.created_at,
     source_context: entry.source.context,
   }));
 }
@@ -349,6 +351,23 @@ function coerceTags(value: unknown): string[] {
     .map((item) => item.toLowerCase());
 
   return Array.from(new Set(tags));
+}
+
+function coerceCreatedAt(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return undefined;
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return undefined;
+  }
+
+  return parsed.toISOString();
+}
+
+function chunkCreatedAt(chunk: TranscriptChunk): string | undefined {
+  return coerceCreatedAt(chunk.timestamp_end) ?? coerceCreatedAt(chunk.timestamp_start);
 }
 
 export function validateEntry(entry: KnowledgeEntry): string | null {
@@ -467,6 +486,7 @@ function validateKnowledgeEntry(
   if (verbose && !contextFromModel && sourceString) {
     onVerbose?.('[field-fallback] used "source" string for source.context');
   }
+  const createdAt = coerceCreatedAt(record.created_at) ?? chunkCreatedAt(chunk);
 
   const entry: KnowledgeEntry = {
     type,
@@ -475,6 +495,7 @@ function validateKnowledgeEntry(
     importance,
     expiry,
     tags: coerceTags(record.tags),
+    created_at: createdAt,
     source: {
       file,
       context: contextFromModel || sourceString || chunk.context_hint || `chunk ${chunk.chunk_index + 1}`,
@@ -534,6 +555,7 @@ function mapSchemaEntry(
     warnings.push(`Chunk ${chunk.chunk_index + 1}: invalid expiry.`);
     return null;
   }
+  const createdAt = coerceCreatedAt(record.created_at) ?? chunkCreatedAt(chunk);
 
   const entry: KnowledgeEntry = {
     type,
@@ -542,6 +564,7 @@ function mapSchemaEntry(
     importance,
     expiry,
     tags: coerceTags(record.tags),
+    created_at: createdAt,
     source: {
       file,
       context:
@@ -715,6 +738,7 @@ function mapDedupSchemaEntry(
     importance,
     expiry,
     tags: coerceTags(record.tags),
+    created_at: coerceCreatedAt(record.created_at),
     source: {
       file,
       context: sourceContext,
@@ -830,6 +854,61 @@ function chunkEntries(entries: KnowledgeEntry[], size: number): KnowledgeEntry[]
   return chunks;
 }
 
+function normalizeForMatch(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function pickNewestCreatedAt(entries: KnowledgeEntry[]): string | undefined {
+  let newestMs = -1;
+  let newestIso: string | undefined;
+
+  for (const entry of entries) {
+    const iso = coerceCreatedAt(entry.created_at);
+    if (!iso) {
+      continue;
+    }
+
+    const ms = new Date(iso).getTime();
+    if (ms > newestMs) {
+      newestMs = ms;
+      newestIso = iso;
+    }
+  }
+
+  return newestIso;
+}
+
+function inferCreatedAt(entry: KnowledgeEntry, sourceEntries: KnowledgeEntry[]): string | undefined {
+  const exactMatches = sourceEntries.filter(
+    (candidate) =>
+      candidate.type === entry.type &&
+      normalizeForMatch(candidate.subject) === normalizeForMatch(entry.subject) &&
+      normalizeForMatch(candidate.content) === normalizeForMatch(entry.content),
+  );
+  const exactNewest = pickNewestCreatedAt(exactMatches);
+  if (exactNewest) {
+    return exactNewest;
+  }
+
+  const topicalMatches = sourceEntries.filter(
+    (candidate) =>
+      candidate.type === entry.type && normalizeForMatch(candidate.subject) === normalizeForMatch(entry.subject),
+  );
+  const topicalNewest = pickNewestCreatedAt(topicalMatches);
+  if (topicalNewest) {
+    return topicalNewest;
+  }
+
+  return pickNewestCreatedAt(sourceEntries);
+}
+
+function ensureCreatedAt(entries: KnowledgeEntry[], sourceEntries: KnowledgeEntry[]): KnowledgeEntry[] {
+  return entries.map((entry) => ({
+    ...entry,
+    created_at: coerceCreatedAt(entry.created_at) ?? inferCreatedAt(entry, sourceEntries),
+  }));
+}
+
 async function deduplicateBatchWithLlm(params: {
   file: string;
   entries: KnowledgeEntry[];
@@ -891,7 +970,7 @@ async function deduplicateBatchWithLlm(params: {
     return { entries: params.entries, warnings };
   }
 
-  return { entries: deduped, warnings };
+  return { entries: ensureCreatedAt(deduped, params.entries), warnings };
 }
 
 async function deduplicateEntriesWithLlm(params: {

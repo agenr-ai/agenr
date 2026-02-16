@@ -112,6 +112,19 @@ function normalize(value: string): string {
   return value.trim().toLowerCase();
 }
 
+function normalizeCreatedAt(value: string | undefined): string | undefined {
+  if (!value || value.trim().length === 0) {
+    return undefined;
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return undefined;
+  }
+
+  return parsed.toISOString();
+}
+
 function mapBufferToVector(value: InValue | undefined): number[] {
   if (value instanceof ArrayBuffer) {
     return Array.from(new Float32Array(value));
@@ -613,6 +626,7 @@ export async function insertEntry(
 ): Promise<string> {
   const id = randomUUID();
   const now = new Date().toISOString();
+  const createdAt = normalizeCreatedAt(entry.created_at) ?? now;
   await db.execute({
     sql: `
       INSERT INTO entries (
@@ -642,7 +656,7 @@ export async function insertEntry(
       entry.source.context,
       contentHash,
       JSON.stringify(embedding),
-      now,
+      createdAt,
       now,
     ],
   });

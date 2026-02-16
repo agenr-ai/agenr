@@ -24,6 +24,7 @@ export const KnowledgeEntrySchema = Type.Object({
     Type.Literal("public"),
   ])),
   tags: Type.Array(Type.String(), { minItems: 1, maxItems: 4 }),
+  created_at: Type.Optional(Type.String()),
   source_context: Type.String(),
 });
 
