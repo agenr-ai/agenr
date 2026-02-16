@@ -338,6 +338,39 @@ describe("runExtractCommand", () => {
     expect(extractSpy.mock.calls[0]?.[0]?.onVerbose).toBeUndefined();
     expect(extractSpy.mock.calls[0]?.[0]?.onStreamDelta).toBeUndefined();
   });
+
+  it("passes noDedup through to extractor params", async () => {
+    const extractSpy = vi.fn((_params) =>
+      Promise.resolve({
+        entries: [],
+        successfulChunks: 1,
+        failedChunks: 0,
+        warnings: [],
+      }),
+    );
+
+    const deps: Partial<CliDeps> = {
+      expandInputFilesFn: vi.fn().mockResolvedValue(["/tmp/a.jsonl"]),
+      assertReadableFileFn: vi.fn().mockResolvedValue(undefined),
+      createLlmClientFn: vi.fn().mockReturnValue(fakeClient()) as unknown as CliDeps["createLlmClientFn"],
+      parseTranscriptFileFn: vi.fn((file: string) => Promise.resolve(parsedTranscript(file))) as unknown as CliDeps["parseTranscriptFileFn"],
+      extractKnowledgeFromChunksFn: extractSpy as unknown as CliDeps["extractKnowledgeFromChunksFn"],
+      writeOutputFn: vi.fn(() => Promise.resolve([])) as unknown as CliDeps["writeOutputFn"],
+    };
+
+    await runExtractCommand(
+      ["/tmp/a.jsonl"],
+      {
+        format: "json",
+        provider: "anthropic",
+        model: "claude-opus-4-6",
+        noDedup: true,
+      },
+      deps,
+    );
+
+    expect(extractSpy.mock.calls[0]?.[0]?.noDedup).toBe(true);
+  });
 });
 
 describe("cli entrypoint", () => {

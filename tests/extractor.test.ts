@@ -1,5 +1,5 @@
 import type { Api, AssistantMessage, AssistantMessageEvent, Context, Model, SimpleStreamOptions } from "@mariozechner/pi-ai";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { extractKnowledgeFromChunks, validateEntry } from "../src/extractor.js";
 import type { LlmClient, TranscriptChunk } from "../src/types.js";
 
@@ -627,6 +627,7 @@ describe("extractKnowledgeFromChunks", () => {
       chunks: [fakeChunkAt(0), fakeChunkAt(1)],
       client: fakeClient(),
       verbose: true,
+      noDedup: true,
       streamSimpleImpl,
       onVerbose: (line) => verboseLines.push(line),
       onStreamDelta: (delta, kind) => deltas.push({ delta, kind }),
@@ -763,6 +764,7 @@ describe("extractKnowledgeFromChunks", () => {
       chunks: [fakeChunkAt(0), fakeChunkAt(1)],
       client: fakeClient(),
       verbose: false,
+      noDedup: true,
       streamSimpleImpl,
       sleepImpl: async () => {},
       retryDelayMs: () => 0,
@@ -800,6 +802,299 @@ describe("extractKnowledgeFromChunks", () => {
     ).rejects.toThrow("callback failed");
 
     expect(callCount).toBe(1);
+  });
+
+  it("runs post-extraction dedup and merges obvious duplicates", async () => {
+    let callCount = 0;
+    const streamSimpleImpl = (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) => {
+      callCount += 1;
+      if (callCount === 1) {
+        return streamWithResult(
+          Promise.resolve(
+            assistantMessage(
+              '[{"type":"fact","content":"Agenr skill server uses port 7373 in local development environments","subject":"agenr skill server port","importance":6,"expiry":"temporary","tags":["agenr","server"],"source":{"context":"m0"}}]',
+            ),
+          ),
+        );
+      }
+      if (callCount === 2) {
+        return streamWithResult(
+          Promise.resolve(
+            assistantMessage(
+              '[{"type":"fact","content":"Agenr server port configuration defaults to 7373 during local runs","subject":"agenr server port configuration","importance":7,"expiry":"temporary","tags":["agenr","config"],"source":{"context":"m1"}}]',
+            ),
+          ),
+        );
+      }
+
+      return streamWithResult(
+        Promise.resolve(
+          assistantMessageWithContent(
+            [
+              {
+                type: "toolCall",
+                id: "dedup_1",
+                name: "submit_deduped_knowledge",
+                arguments: {
+                  entries: [
+                    {
+                      type: "fact",
+                      content: "Agenr local server defaults to port 7373 unless explicitly overridden",
+                      subject: "agenr local server port",
+                      importance: 7,
+                      expiry: "temporary",
+                      tags: ["agenr", "server", "config"],
+                      source_context: "merged duplicate configuration notes",
+                    },
+                  ],
+                },
+              },
+            ],
+            "toolUse",
+          ),
+        ),
+      );
+    };
+
+    const result = await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunkAt(0), fakeChunkAt(1)],
+      client: fakeClient(),
+      verbose: false,
+      streamSimpleImpl,
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+    });
+
+    expect(callCount).toBe(3);
+    expect(result.entries).toHaveLength(1);
+    expect(result.entries[0]?.subject).toBe("agenr local server port");
+  });
+
+  it("preserves genuinely different entries during dedup", async () => {
+    let callCount = 0;
+    const streamSimpleImpl = (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) => {
+      callCount += 1;
+      if (callCount === 1) {
+        return streamWithResult(
+          Promise.resolve(
+            assistantMessage(
+              '[{"type":"fact","content":"Agenr stores vectors in sqlite-vec for semantic similarity queries","subject":"agenr vector storage","importance":8,"expiry":"permanent","tags":["agenr","vectors"],"source":{"context":"m0"}}]',
+            ),
+          ),
+        );
+      }
+      if (callCount === 2) {
+        return streamWithResult(
+          Promise.resolve(
+            assistantMessage(
+              '[{"type":"decision","content":"The project chose pnpm workspaces to manage monorepo dependencies","subject":"monorepo package manager","importance":8,"expiry":"temporary","tags":["pnpm","monorepo"],"source":{"context":"m1"}}]',
+            ),
+          ),
+        );
+      }
+
+      return streamWithResult(
+        Promise.resolve(
+          assistantMessageWithContent(
+            [
+              {
+                type: "toolCall",
+                id: "dedup_2",
+                name: "submit_deduped_knowledge",
+                arguments: {
+                  entries: [
+                    {
+                      type: "fact",
+                      content: "Agenr stores vectors in sqlite-vec for semantic similarity queries",
+                      subject: "agenr vector storage",
+                      importance: 8,
+                      expiry: "permanent",
+                      tags: ["agenr", "vectors"],
+                      source_context: "kept as independent fact",
+                    },
+                    {
+                      type: "decision",
+                      content: "The project chose pnpm workspaces to manage monorepo dependencies",
+                      subject: "monorepo package manager",
+                      importance: 8,
+                      expiry: "temporary",
+                      tags: ["pnpm", "monorepo"],
+                      source_context: "kept as independent decision",
+                    },
+                  ],
+                },
+              },
+            ],
+            "toolUse",
+          ),
+        ),
+      );
+    };
+
+    const result = await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunkAt(0), fakeChunkAt(1)],
+      client: fakeClient(),
+      verbose: false,
+      streamSimpleImpl,
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+    });
+
+    expect(result.entries).toHaveLength(2);
+    expect(result.entries.map((entry) => entry.subject)).toEqual([
+      "agenr vector storage",
+      "monorepo package manager",
+    ]);
+  });
+
+  it("preserves the highest importance when duplicates are merged", async () => {
+    let callCount = 0;
+    const streamSimpleImpl = (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) => {
+      callCount += 1;
+      if (callCount === 1) {
+        return streamWithResult(
+          Promise.resolve(
+            assistantMessage(
+              '[{"type":"fact","content":"Agenr extraction pipeline retries model calls on transient provider errors","subject":"agenr extraction retries","importance":6,"expiry":"temporary","tags":["agenr","retries"],"source":{"context":"m0"}}]',
+            ),
+          ),
+        );
+      }
+      if (callCount === 2) {
+        return streamWithResult(
+          Promise.resolve(
+            assistantMessage(
+              '[{"type":"fact","content":"Agenr extraction pipeline retries transient provider failures with exponential backoff","subject":"agenr extraction retries","importance":9,"expiry":"temporary","tags":["agenr","backoff"],"source":{"context":"m1"}}]',
+            ),
+          ),
+        );
+      }
+
+      return streamWithResult(
+        Promise.resolve(
+          assistantMessageWithContent(
+            [
+              {
+                type: "toolCall",
+                id: "dedup_3",
+                name: "submit_deduped_knowledge",
+                arguments: {
+                  entries: [
+                    {
+                      type: "fact",
+                      content: "Agenr extraction retries transient provider failures with exponential backoff",
+                      subject: "agenr extraction retries",
+                      importance: 9,
+                      expiry: "temporary",
+                      tags: ["agenr", "retries", "backoff"],
+                      source_context: "merged duplicate retry behavior notes",
+                    },
+                  ],
+                },
+              },
+            ],
+            "toolUse",
+          ),
+        ),
+      );
+    };
+
+    const result = await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunkAt(0), fakeChunkAt(1)],
+      client: fakeClient(),
+      verbose: false,
+      streamSimpleImpl,
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+    });
+
+    expect(result.entries).toHaveLength(1);
+    expect(result.entries[0]?.importance).toBe(9);
+  });
+
+  it("skips post-extraction dedup when noDedup is true", async () => {
+    let callCount = 0;
+    const streamSimpleImpl = (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) => {
+      callCount += 1;
+      if (callCount === 1) {
+        return streamWithResult(
+          Promise.resolve(
+            assistantMessage(
+              '[{"type":"fact","content":"Agenr watch mode stores extracted entries incrementally per chunk","subject":"agenr watch mode behavior","importance":7,"expiry":"temporary","tags":["agenr","watch"],"source":{"context":"m0"}}]',
+            ),
+          ),
+        );
+      }
+      if (callCount === 2) {
+        return streamWithResult(
+          Promise.resolve(
+            assistantMessage(
+              '[{"type":"fact","content":"Agenr watch mode persists chunk entries immediately after extraction","subject":"agenr watch mode behavior","importance":7,"expiry":"temporary","tags":["agenr","watch"],"source":{"context":"m1"}}]',
+            ),
+          ),
+        );
+      }
+      throw new Error("dedup should not run");
+    };
+
+    const result = await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunkAt(0), fakeChunkAt(1)],
+      client: fakeClient(),
+      verbose: false,
+      noDedup: true,
+      streamSimpleImpl,
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+    });
+
+    expect(callCount).toBe(2);
+    expect(result.entries).toHaveLength(2);
+  });
+
+  it("does not call dedup for empty or single-entry extraction results", async () => {
+    const singleCallStream = vi.fn((_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) =>
+      streamWithResult(
+        Promise.resolve(
+          assistantMessage(
+            '[{"type":"fact","content":"Agenr uses TypeScript with ESM modules and Node.js 20 runtime","subject":"agenr runtime stack","importance":7,"expiry":"permanent","tags":["typescript","node"],"source":{"context":"m0"}}]',
+          ),
+        ),
+      ),
+    );
+
+    const singleResult = await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunk()],
+      client: fakeClient(),
+      verbose: false,
+      streamSimpleImpl: singleCallStream,
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+    });
+
+    expect(singleResult.entries).toHaveLength(1);
+    expect(singleCallStream).toHaveBeenCalledTimes(1);
+
+    const emptyStream = vi.fn((_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) =>
+      streamWithResult(Promise.resolve(assistantMessage("[]"))),
+    );
+
+    const emptyResult = await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunk()],
+      client: fakeClient(),
+      verbose: false,
+      streamSimpleImpl: emptyStream,
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+    });
+
+    expect(emptyResult.entries).toHaveLength(0);
+    expect(emptyStream).toHaveBeenCalledTimes(1);
   });
 });
 

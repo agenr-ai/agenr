@@ -41,6 +41,7 @@ export interface ExtractCommandOptions {
   model?: string;
   provider?: string;
   verbose?: boolean;
+  noDedup?: boolean;
 }
 
 export interface CliDeps {
@@ -207,6 +208,7 @@ export async function runExtractCommand(
           chunks: parsed.chunks,
           client,
           verbose: true,
+          noDedup: options.noDedup === true,
           onVerbose: (line) => clack.log.info(line, clackOutput),
           onStreamDelta: (delta) => process.stderr.write(delta),
         });
@@ -239,6 +241,7 @@ export async function runExtractCommand(
               chunks: parsed.chunks,
               client,
               verbose: false,
+              noDedup: options.noDedup === true,
             });
 
             const stats = recordSuccess({
@@ -362,6 +365,7 @@ export function createProgram(): Command {
     .option("--split", "Write one output file per input transcript", false)
     .option("--model <model>", "LLM model to use")
     .option("--provider <name>", "LLM provider: anthropic, openai, openai-codex")
+    .option("--no-dedup", "Skip post-extraction LLM dedup pass", false)
     .option("--verbose", "Show extraction progress and debug info", false)
     .action(async (files: string[], opts: ExtractCommandOptions) => {
       const selectedFormat = opts.json ? "json" : opts.format;

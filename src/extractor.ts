@@ -1,7 +1,7 @@
 import type { Api, AssistantMessage, Context, Model } from "@mariozechner/pi-ai";
 import type { KnowledgeEntry, LlmClient, TranscriptChunk } from "./types.js";
 import { runSimpleStream, type StreamSimpleFn } from "./llm/stream.js";
-import { SUBMIT_KNOWLEDGE_TOOL } from "./schema.js";
+import { SUBMIT_DEDUPED_KNOWLEDGE_TOOL, SUBMIT_KNOWLEDGE_TOOL } from "./schema.js";
 
 const SYSTEM_PROMPT = `You are a selective memory extraction engine. Extract only knowledge worth remembering beyond the immediate step.
 
@@ -193,6 +193,18 @@ WHY: Routine execution. No durable knowledge, decisions, or lessons.
 - tags: 1-4 lowercase descriptive tags.`;
 
 const MAX_ATTEMPTS = 3;
+const DEDUP_BATCH_SIZE = 50;
+const DEDUP_BATCH_TRIGGER = 100;
+
+const DEDUP_SYSTEM_PROMPT = `You are deduplicating a list of extracted knowledge entries.
+
+Rules:
+- Merge entries that describe the same knowledge into exactly one entry
+- Keep the most complete and accurate version when merging
+- Preserve the highest importance score from merged entries
+- Combine tags from merged entries, deduplicated, max 4 tags
+- Keep genuinely different knowledge as separate entries
+- Return the final deduplicated list by calling submit_deduped_knowledge`;
 
 const TYPE_ALIASES: Record<string, KnowledgeEntry["type"]> = {
   facts: "fact",
@@ -253,6 +265,41 @@ function buildUserPrompt(chunk: TranscriptChunk): string {
     "---",
     "",
     "Call submit_knowledge once with {\"entries\": [...]} and use an empty array if nothing qualifies.",
+  ].join("\n");
+}
+
+function toSchemaEntries(entries: KnowledgeEntry[]): Array<{
+  type: KnowledgeEntry["type"];
+  subject: string;
+  content: string;
+  importance: number;
+  expiry: Exclude<KnowledgeEntry["expiry"], "core">;
+  tags: string[];
+  source_context: string;
+}> {
+  return entries.map((entry) => ({
+    type: entry.type,
+    subject: entry.subject,
+    content: entry.content,
+    importance: entry.importance,
+    expiry: entry.expiry === "permanent" ? "permanent" : "temporary",
+    tags: entry.tags.slice(0, 4),
+    source_context: entry.source.context,
+  }));
+}
+
+function buildDedupPrompt(entries: KnowledgeEntry[], batchIndex: number, totalBatches: number): string {
+  const batchLabel =
+    totalBatches > 1
+      ? `Batch ${batchIndex + 1}/${totalBatches} dedup input (${entries.length} entries):`
+      : `Input entries (${entries.length}):`;
+
+  return [
+    "Deduplicate these extracted knowledge entries.",
+    "Return the deduplicated list via submit_deduped_knowledge.",
+    "",
+    batchLabel,
+    JSON.stringify(toSchemaEntries(entries)),
   ].join("\n");
 }
 
@@ -604,6 +651,299 @@ function extractToolCallEntries(
   return entries;
 }
 
+function mapDedupSchemaEntry(
+  raw: unknown,
+  file: string,
+  warnings: string[],
+  warningLabel: string,
+  verbose = false,
+  onVerbose?: (line: string) => void,
+): KnowledgeEntry | null {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+
+  const record = raw as Record<string, unknown>;
+  const type = coerceType(record.type);
+  if (!type) {
+    warnings.push(`${warningLabel}: dropped entry with invalid type.`);
+    return null;
+  }
+
+  const content = typeof record.content === "string" ? record.content.trim() : "";
+  if (!content) {
+    warnings.push(`${warningLabel}: dropped entry with empty content.`);
+    return null;
+  }
+
+  const subject = typeof record.subject === "string" ? record.subject.trim() : "";
+  if (!subject) {
+    warnings.push(`${warningLabel}: dropped entry with empty subject.`);
+    return null;
+  }
+
+  const importance = coerceImportance(record.importance);
+  if (!importance) {
+    warnings.push(`${warningLabel}: dropped entry with invalid importance.`);
+    return null;
+  }
+
+  const expiry = coerceExpiry(record.expiry);
+  if (!expiry) {
+    warnings.push(`${warningLabel}: dropped entry with invalid expiry.`);
+    return null;
+  }
+
+  const sourceRecord =
+    record.source && typeof record.source === "object"
+      ? (record.source as Record<string, unknown>)
+      : null;
+  const sourceContext =
+    (typeof record.source_context === "string" && record.source_context.trim().length > 0
+      ? record.source_context.trim()
+      : "") ||
+    (sourceRecord && typeof sourceRecord.context === "string" && sourceRecord.context.trim().length > 0
+      ? sourceRecord.context.trim()
+      : "") ||
+    (typeof record.source === "string" && record.source.trim().length > 0 ? record.source.trim() : "") ||
+    "dedup pass";
+
+  const entry: KnowledgeEntry = {
+    type,
+    content,
+    subject,
+    importance,
+    expiry,
+    tags: coerceTags(record.tags),
+    source: {
+      file,
+      context: sourceContext,
+    },
+  };
+
+  const validationIssue = validateEntry(entry);
+  if (validationIssue) {
+    if (verbose) {
+      onVerbose?.(`[entry-drop] ${validationIssue}`);
+    }
+    return null;
+  }
+
+  return entry;
+}
+
+function parseDedupTextEntries(
+  rawText: string,
+  file: string,
+  warnings: string[],
+  warningLabel: string,
+  verbose = false,
+  onVerbose?: (line: string) => void,
+): KnowledgeEntry[] | null {
+  const stripped = stripCodeFence(rawText);
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(stripped);
+  } catch {
+    return null;
+  }
+
+  const rawEntries =
+    Array.isArray(parsed)
+      ? parsed
+      : parsed && typeof parsed === "object" && Array.isArray((parsed as { entries?: unknown[] }).entries)
+      ? (parsed as { entries: unknown[] }).entries
+      : null;
+  if (!rawEntries) {
+    return null;
+  }
+
+  const entries: KnowledgeEntry[] = [];
+  for (const raw of rawEntries) {
+    const entry = mapDedupSchemaEntry(raw, file, warnings, warningLabel, verbose, onVerbose);
+    if (entry) {
+      entries.push(entry);
+    }
+  }
+
+  return entries;
+}
+
+function extractDedupToolCallEntries(
+  message: AssistantMessage,
+  file: string,
+  warnings: string[],
+  warningLabel: string,
+  verbose = false,
+  onVerbose?: (line: string) => void,
+): KnowledgeEntry[] | null {
+  const entries: KnowledgeEntry[] = [];
+  let sawToolCall = false;
+
+  for (const block of message.content) {
+    if (block.type !== "toolCall") {
+      continue;
+    }
+
+    if (block.name !== "submit_deduped_knowledge" && block.name !== "submit_knowledge") {
+      continue;
+    }
+
+    sawToolCall = true;
+    const args = block.arguments as { entries?: unknown[] };
+    if (!Array.isArray(args.entries)) {
+      warnings.push(`${warningLabel}: dedup tool call had no entries array.`);
+      continue;
+    }
+
+    for (const raw of args.entries) {
+      const entry = mapDedupSchemaEntry(raw, file, warnings, warningLabel, verbose, onVerbose);
+      if (entry) {
+        entries.push(entry);
+      }
+    }
+  }
+
+  if (sawToolCall) {
+    return entries;
+  }
+
+  const text = message.content
+    .filter((block): block is { type: "text"; text: string } => block.type === "text")
+    .map((block) => block.text)
+    .join("\n")
+    .trim();
+
+  if (!text) {
+    return null;
+  }
+
+  return parseDedupTextEntries(text, file, warnings, warningLabel, verbose, onVerbose);
+}
+
+function chunkEntries(entries: KnowledgeEntry[], size: number): KnowledgeEntry[][] {
+  const chunks: KnowledgeEntry[][] = [];
+  for (let i = 0; i < entries.length; i += size) {
+    chunks.push(entries.slice(i, i + size));
+  }
+  return chunks;
+}
+
+async function deduplicateBatchWithLlm(params: {
+  file: string;
+  entries: KnowledgeEntry[];
+  batchIndex: number;
+  totalBatches: number;
+  model: Model<Api>;
+  apiKey: string;
+  verbose: boolean;
+  onVerbose?: (line: string) => void;
+  onStreamDelta?: (delta: string, kind: "text" | "thinking") => void;
+  streamSimpleImpl?: StreamSimpleFn;
+}): Promise<{ entries: KnowledgeEntry[]; warnings: string[] }> {
+  const warningLabel =
+    params.totalBatches > 1
+      ? `Dedup batch ${params.batchIndex + 1}/${params.totalBatches}`
+      : "Dedup";
+  const warnings: string[] = [];
+
+  const context: Context = {
+    systemPrompt: DEDUP_SYSTEM_PROMPT,
+    messages: [
+      {
+        role: "user",
+        content: buildDedupPrompt(params.entries, params.batchIndex, params.totalBatches),
+        timestamp: Date.now(),
+      },
+    ],
+    tools: [SUBMIT_DEDUPED_KNOWLEDGE_TOOL],
+  };
+
+  const assistantMessage = await runSimpleStream({
+    model: params.model,
+    context,
+    options: {
+      apiKey: params.apiKey,
+      reasoning: params.verbose ? "low" : undefined,
+    },
+    verbose: params.verbose,
+    onVerbose: params.onVerbose,
+    onStreamDelta: params.onStreamDelta,
+    streamSimpleImpl: params.streamSimpleImpl,
+  });
+
+  if (assistantMessage.stopReason === "error" || assistantMessage.errorMessage) {
+    throw new Error(assistantMessage.errorMessage ?? "unknown error");
+  }
+
+  const deduped = extractDedupToolCallEntries(
+    assistantMessage,
+    params.file,
+    warnings,
+    warningLabel,
+    params.verbose,
+    params.onVerbose,
+  );
+
+  if (!deduped || deduped.length === 0) {
+    warnings.push(`${warningLabel}: model returned no valid deduplicated entries; keeping original entries.`);
+    return { entries: params.entries, warnings };
+  }
+
+  return { entries: deduped, warnings };
+}
+
+async function deduplicateEntriesWithLlm(params: {
+  file: string;
+  entries: KnowledgeEntry[];
+  client: LlmClient;
+  verbose: boolean;
+  onVerbose?: (line: string) => void;
+  onStreamDelta?: (delta: string, kind: "text" | "thinking") => void;
+  streamSimpleImpl?: StreamSimpleFn;
+}): Promise<{ entries: KnowledgeEntry[]; warnings: string[] }> {
+  const batches =
+    params.entries.length > DEDUP_BATCH_TRIGGER
+      ? chunkEntries(params.entries, DEDUP_BATCH_SIZE)
+      : [params.entries];
+
+  const deduped: KnowledgeEntry[] = [];
+  const warnings: string[] = [];
+
+  for (const [batchIndex, batch] of batches.entries()) {
+    try {
+      const batchResult = await deduplicateBatchWithLlm({
+        file: params.file,
+        entries: batch,
+        batchIndex,
+        totalBatches: batches.length,
+        model: params.client.resolvedModel.model,
+        apiKey: params.client.credentials.apiKey,
+        verbose: params.verbose,
+        onVerbose: params.onVerbose,
+        onStreamDelta: params.onStreamDelta,
+        streamSimpleImpl: params.streamSimpleImpl,
+      });
+      deduped.push(...batchResult.entries);
+      warnings.push(...batchResult.warnings);
+    } catch (error) {
+      warnings.push(
+        `Dedup batch ${batchIndex + 1}/${batches.length}: failed (${error instanceof Error ? error.message : String(error)}), keeping original entries.`,
+      );
+      deduped.push(...batch);
+    }
+  }
+
+  if (params.verbose) {
+    params.onVerbose?.(
+      `Dedup: ${params.entries.length} entries -> ${deduped.length} entries (${Math.max(0, params.entries.length - deduped.length)} merged)`,
+    );
+  }
+
+  return { entries: deduped, warnings };
+}
+
 function isRetryableError(error: unknown): boolean {
   if (error instanceof ParseResponseError) {
     return true;
@@ -702,6 +1042,7 @@ export async function extractKnowledgeFromChunks(params: {
   chunks: TranscriptChunk[];
   client: LlmClient;
   verbose: boolean;
+  noDedup?: boolean;
   onVerbose?: (line: string) => void;
   onStreamDelta?: (delta: string, kind: "text" | "thinking") => void;
   onChunkComplete?: (result: ExtractChunkCompleteResult) => Promise<void>;
@@ -783,8 +1124,23 @@ export async function extractKnowledgeFromChunks(params: {
     }
   }
 
+  let finalEntries = entries;
+  if (!params.noDedup && finalEntries.length > 1) {
+    const dedupResult = await deduplicateEntriesWithLlm({
+      file: params.file,
+      entries: finalEntries,
+      client: params.client,
+      verbose: params.verbose,
+      onVerbose: params.onVerbose,
+      onStreamDelta: params.onStreamDelta,
+      streamSimpleImpl: params.streamSimpleImpl,
+    });
+    finalEntries = dedupResult.entries;
+    warnings.push(...dedupResult.warnings);
+  }
+
   return {
-    entries,
+    entries: finalEntries,
     successfulChunks,
     failedChunks,
     warnings,
