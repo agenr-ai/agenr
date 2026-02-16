@@ -245,7 +245,8 @@ describe("db recall", () => {
     const tagFiltered = await recall(
       client,
       {
-        text: "work",
+        text: "",
+        context: "session-start",
         limit: 10,
         tags: ["learn"],
       },
@@ -258,7 +259,8 @@ describe("db recall", () => {
     const sinceFiltered = await recall(
       client,
       {
-        text: "work",
+        text: "",
+        context: "session-start",
         limit: 10,
         since: "7d",
       },
@@ -270,7 +272,8 @@ describe("db recall", () => {
     const scopedPersonal = await recall(
       client,
       {
-        text: "work",
+        text: "",
+        context: "session-start",
         limit: 10,
         scope: "personal",
       },
