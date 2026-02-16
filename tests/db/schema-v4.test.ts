@@ -12,7 +12,7 @@ function toStringValue(value: unknown): string {
   return "";
 }
 
-describe("db schema migration v4", () => {
+describe("db schema entry_sources metadata", () => {
   const clients: Client[] = [];
 
   afterEach(() => {

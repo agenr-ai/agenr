@@ -149,6 +149,27 @@ describe("db command", () => {
     await expect(runDbResetCommand({ confirm: false }, makeDeps(client))).rejects.toThrow("--confirm");
   });
 
+  it("resets DB by dropping data and reinitializing schema", async () => {
+    const client = createTestClient();
+    await initDb(client);
+    await seedEntry(client, { id: "a", type: "fact", subject: "Jim", content: "A", tag: "alpha" });
+
+    await runDbResetCommand({ confirm: true }, makeDeps(client));
+
+    const entriesResult = await client.execute("SELECT COUNT(*) AS count FROM entries");
+    expect(Number((entriesResult.rows[0] as { count?: unknown } | undefined)?.count ?? 0)).toBe(0);
+
+    const schemaResult = await client.execute({
+      sql: "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (?, ?, ?)",
+      args: ["entries", "ingest_log", "entry_sources"],
+    });
+    expect(schemaResult.rows.map((row) => String((row as { name?: unknown }).name)).sort()).toEqual([
+      "entries",
+      "entry_sources",
+      "ingest_log",
+    ]);
+  });
+
   it("exports only non-superseded entries as json and markdown", async () => {
     const client = createTestClient();
     await initDb(client);

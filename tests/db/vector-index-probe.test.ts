@@ -24,7 +24,7 @@ describe("initDb vector index probe", () => {
     await mod.initDb(client);
   }
 
-  it("warns (but does not throw) when vector index is missing/corrupt", async () => {
+  it("warns (but does not throw) when vector index probe fails", async () => {
     const client = createClient({ url: ":memory:" });
     clients.push(client);
 
@@ -66,7 +66,14 @@ describe("initDb vector index probe", () => {
       ],
     });
 
-    await client.execute("DROP INDEX IF EXISTS idx_entries_embedding");
+    const originalExecute = client.execute.bind(client);
+    vi.spyOn(client, "execute").mockImplementation(async (statement) => {
+      const sql = typeof statement === "string" ? statement : String(statement.sql);
+      if (sql.includes("vector_top_k")) {
+        throw new Error("vector probe failed");
+      }
+      return originalExecute(statement as Parameters<Client["execute"]>[0]);
+    });
 
     const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     await expect(initDb(client)).resolves.toBeUndefined();

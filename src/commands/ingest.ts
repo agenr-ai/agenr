@@ -455,7 +455,7 @@ export async function runIngestCommand(
         totalLlmDedupCalls += storeResult.llm_dedup_calls;
       };
 
-      const extracted = await resolvedDeps.extractKnowledgeFromChunksFn({
+      await resolvedDeps.extractKnowledgeFromChunksFn({
         file: target.file,
         chunks: parsed.chunks,
         client,
@@ -464,11 +464,6 @@ export async function runIngestCommand(
           await processChunkEntries(chunkResult.entries);
         },
       });
-
-      // Compatibility fallback for injected extractors that do not dispatch through onChunkComplete.
-      if (extracted.entries.length > 0) {
-        await processChunkEntries(extracted.entries);
-      }
 
       return fileResult;
     } catch (error) {

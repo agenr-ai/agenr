@@ -5,7 +5,7 @@ import { readConfig } from "../config.js";
 import { runConsolidationOrchestrator, type ConsolidationOrchestratorReport } from "../consolidate/orchestrate.js";
 import { showFlaggedMerges } from "../consolidate/verify.js";
 import { closeDb, DEFAULT_DB_PATH, getDb } from "../db/client.js";
-import { runMigrations } from "../db/schema.js";
+import { initSchema } from "../db/schema.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { createLlmClient } from "../llm/client.js";
 import { formatWarn } from "../ui.js";
@@ -30,7 +30,7 @@ export interface ConsolidateCommandDeps {
   readConfigFn: typeof readConfig;
   getDbFn: typeof getDb;
   closeDbFn: typeof closeDb;
-  runMigrationsFn: typeof runMigrations;
+  initSchemaFn: typeof initSchema;
   createLlmClientFn: typeof createLlmClient;
   resolveEmbeddingApiKeyFn: typeof resolveEmbeddingApiKey;
   showFlaggedMergesFn: typeof showFlaggedMerges;
@@ -145,7 +145,7 @@ export async function runConsolidateCommand(
     readConfigFn: deps.readConfigFn ?? readConfig,
     getDbFn: deps.getDbFn ?? getDb,
     closeDbFn: deps.closeDbFn ?? closeDb,
-    runMigrationsFn: deps.runMigrationsFn ?? runMigrations,
+    initSchemaFn: deps.initSchemaFn ?? initSchema,
     createLlmClientFn: deps.createLlmClientFn ?? createLlmClient,
     resolveEmbeddingApiKeyFn: deps.resolveEmbeddingApiKeyFn ?? resolveEmbeddingApiKey,
     showFlaggedMergesFn: deps.showFlaggedMergesFn ?? showFlaggedMerges,
@@ -169,7 +169,7 @@ export async function runConsolidateCommand(
   const db = resolvedDeps.getDbFn(configuredPath);
 
   try {
-    await resolvedDeps.runMigrationsFn(db);
+    await resolvedDeps.initSchemaFn(db);
 
     const llmClient = options.rulesOnly ? undefined : resolvedDeps.createLlmClientFn({ env: process.env });
     const embeddingApiKey = options.rulesOnly ? undefined : resolvedDeps.resolveEmbeddingApiKeyFn(config, process.env);

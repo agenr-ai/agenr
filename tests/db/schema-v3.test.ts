@@ -12,7 +12,7 @@ function toStringValue(value: unknown): string {
   return "";
 }
 
-describe("db schema migration v3", () => {
+describe("db schema entry_sources", () => {
   const clients: Client[] = [];
 
   afterEach(() => {
@@ -47,12 +47,15 @@ describe("db schema migration v3", () => {
     expect(consolidatedAtColumn?.dflt_value ?? null).toBe(null);
   });
 
-  it("is idempotent when v3 migration runs more than once", async () => {
+  it("is idempotent when schema init runs more than once", async () => {
     const client = makeClient();
     await initDb(client);
     await initDb(client);
 
-    const migrationRows = await client.execute("SELECT version FROM _migrations ORDER BY version ASC");
-    expect(migrationRows.rows.map((row) => Number(row.version))).toEqual([1, 2, 3, 4, 5]);
+    const tableResult = await client.execute({
+      sql: "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = ?",
+      args: ["entry_sources"],
+    });
+    expect(Number(tableResult.rows[0]?.count ?? 0)).toBe(1);
   });
 });

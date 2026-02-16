@@ -1,24 +1,12 @@
-import type { Client, InValue, Row } from "@libsql/client";
-
-export interface Migration {
-  version: number;
-  statements: readonly string[];
-}
-
-export const CREATE_MIGRATIONS_TABLE_SQL = `
-CREATE TABLE IF NOT EXISTS _migrations (
-  version INTEGER PRIMARY KEY,
-  applied_at TEXT NOT NULL
-)
-`;
+import type { Client } from "@libsql/client";
 
 export const CREATE_IDX_ENTRIES_EMBEDDING_SQL = `
   CREATE INDEX IF NOT EXISTS idx_entries_embedding ON entries (
     libsql_vector_idx(embedding, 'metric=cosine', 'compress_neighbors=float8', 'max_neighbors=50')
   )
-  `;
+`;
 
-export const MIGRATION_V1_STATEMENTS: readonly string[] = [
+const SCHEMA_STATEMENTS: readonly string[] = [
   `
   CREATE TABLE IF NOT EXISTS entries (
     id TEXT PRIMARY KEY,
@@ -38,6 +26,9 @@ export const MIGRATION_V1_STATEMENTS: readonly string[] = [
     confirmations INTEGER DEFAULT 0,
     contradictions INTEGER DEFAULT 0,
     superseded_by TEXT,
+    content_hash TEXT,
+    merged_from INTEGER DEFAULT 0,
+    consolidated_at TEXT,
     FOREIGN KEY (superseded_by) REFERENCES entries(id)
   )
   `,
@@ -68,7 +59,20 @@ export const MIGRATION_V1_STATEMENTS: readonly string[] = [
     entries_added INTEGER NOT NULL,
     entries_updated INTEGER NOT NULL,
     entries_skipped INTEGER NOT NULL,
-    duration_ms INTEGER NOT NULL
+    duration_ms INTEGER NOT NULL,
+    content_hash TEXT,
+    entries_superseded INTEGER NOT NULL DEFAULT 0,
+    dedup_llm_calls INTEGER NOT NULL DEFAULT 0
+  )
+  `,
+  `
+  CREATE TABLE IF NOT EXISTS entry_sources (
+    merged_entry_id TEXT NOT NULL REFERENCES entries(id),
+    source_entry_id TEXT NOT NULL REFERENCES entries(id),
+    original_confirmations INTEGER NOT NULL DEFAULT 0,
+    original_recall_count INTEGER NOT NULL DEFAULT 0,
+    original_created_at TEXT,
+    PRIMARY KEY (merged_entry_id, source_entry_id)
   )
   `,
   CREATE_IDX_ENTRIES_EMBEDDING_SQL,
@@ -98,128 +102,15 @@ export const MIGRATION_V1_STATEMENTS: readonly string[] = [
   "CREATE INDEX IF NOT EXISTS idx_entries_scope ON entries(scope)",
   "CREATE INDEX IF NOT EXISTS idx_entries_created ON entries(created_at)",
   "CREATE INDEX IF NOT EXISTS idx_entries_superseded ON entries(superseded_by)",
+  "CREATE INDEX IF NOT EXISTS idx_entries_content_hash ON entries(content_hash)",
   "CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag)",
   "CREATE INDEX IF NOT EXISTS idx_relations_source ON relations(source_id)",
   "CREATE INDEX IF NOT EXISTS idx_relations_target ON relations(target_id)",
-];
-
-export const MIGRATION_V2_STATEMENTS: readonly string[] = [
-  "ALTER TABLE entries ADD COLUMN content_hash TEXT",
-  "CREATE INDEX IF NOT EXISTS idx_entries_content_hash ON entries(content_hash)",
-  "ALTER TABLE ingest_log ADD COLUMN content_hash TEXT",
   "CREATE UNIQUE INDEX IF NOT EXISTS idx_ingest_log_file_hash ON ingest_log(file_path, content_hash)",
 ];
 
-export const MIGRATION_V3_STATEMENTS: readonly string[] = [
-  `
-  CREATE TABLE IF NOT EXISTS entry_sources (
-    merged_entry_id TEXT NOT NULL REFERENCES entries(id),
-    source_entry_id TEXT NOT NULL REFERENCES entries(id),
-    original_confirmations INTEGER NOT NULL DEFAULT 0,
-    original_recall_count INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (merged_entry_id, source_entry_id)
-  )
-  `,
-  "ALTER TABLE entries ADD COLUMN merged_from INTEGER DEFAULT 0",
-  "ALTER TABLE entries ADD COLUMN consolidated_at TEXT",
-];
-
-export const MIGRATION_V4_STATEMENTS: readonly string[] = [
-  "ALTER TABLE entry_sources ADD COLUMN original_created_at TEXT",
-  `
-  UPDATE entry_sources
-  SET original_created_at = (
-    SELECT created_at
-    FROM entries
-    WHERE entries.id = entry_sources.source_entry_id
-  )
-  WHERE original_created_at IS NULL
-  `,
-];
-
-export const MIGRATION_V5_STATEMENTS: readonly string[] = [
-  "ALTER TABLE ingest_log ADD COLUMN entries_superseded INTEGER NOT NULL DEFAULT 0",
-  "ALTER TABLE ingest_log ADD COLUMN dedup_llm_calls INTEGER NOT NULL DEFAULT 0",
-];
-
-export const MIGRATIONS: readonly Migration[] = [
-  {
-    version: 1,
-    statements: MIGRATION_V1_STATEMENTS,
-  },
-  {
-    version: 2,
-    statements: MIGRATION_V2_STATEMENTS,
-  },
-  {
-    version: 3,
-    statements: MIGRATION_V3_STATEMENTS,
-  },
-  {
-    version: 4,
-    statements: MIGRATION_V4_STATEMENTS,
-  },
-  {
-    version: 5,
-    statements: MIGRATION_V5_STATEMENTS,
-  },
-];
-
-function parseVersion(value: InValue | undefined): number {
-  if (typeof value === "number") {
-    return value;
-  }
-  if (typeof value === "bigint") {
-    return Number(value);
-  }
-  if (typeof value === "string" && value.trim()) {
-    return Number(value);
-  }
-  return Number.NaN;
-}
-
-function getVersionFromRow(row: Row): number {
-  const value = row.version ?? row.VERSION ?? Object.values(row)[0];
-  return parseVersion(value);
-}
-
-export async function runMigrations(client: Client): Promise<void> {
-  await client.execute(CREATE_MIGRATIONS_TABLE_SQL);
-
-  const appliedResult = await client.execute("SELECT version FROM _migrations");
-  const applied = new Set<number>();
-
-  for (const row of appliedResult.rows) {
-    const version = getVersionFromRow(row);
-    if (Number.isFinite(version)) {
-      applied.add(version);
-    }
-  }
-
-  const pending = [...MIGRATIONS]
-    .sort((a, b) => a.version - b.version)
-    .filter((migration) => !applied.has(migration.version));
-
-  for (const migration of pending) {
-    try {
-      await client.execute("BEGIN");
-      for (const statement of migration.statements) {
-        await client.execute(statement);
-      }
-      await client.execute({
-        sql: "INSERT INTO _migrations (version, applied_at) VALUES (?, ?)",
-        args: [migration.version, new Date().toISOString()],
-      });
-      await client.execute("COMMIT");
-    } catch (error) {
-      try {
-        await client.execute("ROLLBACK");
-      } catch {
-        // Ignore rollback errors and throw the migration failure.
-      }
-      throw new Error(
-        `Failed to apply migration v${migration.version}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
+export async function initSchema(client: Client): Promise<void> {
+  for (const statement of SCHEMA_STATEMENTS) {
+    await client.execute(statement);
   }
 }

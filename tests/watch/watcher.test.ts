@@ -50,12 +50,25 @@ function makeDeps(overrides?: Record<string, unknown>): any {
     ],
     warnings: [],
   }));
-  const extractKnowledgeFromChunksFn = vi.fn(async () => ({
-    entries: [makeEntry("one"), makeEntry("two")],
-    successfulChunks: 1,
-    failedChunks: 0,
-    warnings: [],
-  }));
+  const extractKnowledgeFromChunksFn = vi.fn(async (params: { onChunkComplete?: (result: {
+    chunkIndex: number;
+    totalChunks: number;
+    entries: KnowledgeEntry[];
+    warnings: string[];
+  }) => Promise<void> }) => {
+    await params.onChunkComplete?.({
+      chunkIndex: 0,
+      totalChunks: 1,
+      entries: [makeEntry("one"), makeEntry("two")],
+      warnings: [],
+    });
+    return {
+      entries: [],
+      successfulChunks: 1,
+      failedChunks: 0,
+      warnings: [],
+    };
+  });
   const storeEntriesFn = vi.fn(async () => ({
     added: 1,
     updated: 1,
