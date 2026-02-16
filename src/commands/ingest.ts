@@ -542,6 +542,9 @@ export async function runIngestCommand(
   let watchStateLoaded = false;
   let watchState = createEmptyWatchState();
   let cursor = 0;
+  let totalChunksFailed = 0;
+  let filesWithChunkFailures = 0;
+  const chunkStatsByFile = new Map<string, { successfulChunks: number; failedChunks: number }>();
 
   let dbChain: Promise<void> = Promise.resolve();
   const withDbLock = async <T>(fn: () => Promise<T>): Promise<T> => {
@@ -707,7 +710,7 @@ export async function runIngestCommand(
         fileStoreStats.llmDedupCalls += storeResult.llm_dedup_calls;
       };
 
-      await resolvedDeps.extractKnowledgeFromChunksFn({
+      const extracted = await resolvedDeps.extractKnowledgeFromChunksFn({
         file: target.file,
         chunks: parsed.chunks,
         client,
@@ -716,6 +719,22 @@ export async function runIngestCommand(
           await processChunkEntries(chunkResult.entries);
         },
       });
+
+      const successfulChunks = extracted.successfulChunks ?? 0;
+      const failedChunks = extracted.failedChunks ?? 0;
+      const totalChunks = successfulChunks + failedChunks;
+      if (failedChunks > 0) {
+        chunkStatsByFile.set(target.file, { successfulChunks, failedChunks });
+        totalChunksFailed += failedChunks;
+        filesWithChunkFailures += 1;
+      }
+
+      if (failedChunks > 0 && successfulChunks === 0) {
+        const chunkLabel = totalChunks > 0 ? `${failedChunks}/${totalChunks}` : String(failedChunks);
+        throw new Error(
+          `All chunks failed during extraction (${chunkLabel}). This is often caused by API rate limits or timeouts; check provider limits/logs and re-run ingest.`,
+        );
+      }
 
       await withDbLock(() => syncWatchStateOffset(target.file, ingestByteOffset));
       if (!dryRun) {
@@ -787,10 +806,18 @@ export async function runIngestCommand(
             } else if (dryRun) {
               clack.log.info(`${label} -- ${result.entriesExtracted} entries extracted (dry-run)`, clackOutput);
             } else {
-              clack.log.info(
-                `${label} -- ${result.entriesExtracted} extracted, ${result.entriesStored} stored, ${result.entriesSkippedDuplicate} skipped (duplicate), ${result.entriesReinforced} reinforced`,
-                clackOutput,
-              );
+              const chunkStats = chunkStatsByFile.get(target.file);
+              const chunkFailureSuffix =
+                chunkStats && chunkStats.failedChunks > 0 ? ` (${chunkStats.failedChunks} chunks failed)` : "";
+              const totalChunks = chunkStats ? chunkStats.successfulChunks + chunkStats.failedChunks : 0;
+              const failureRate =
+                chunkStats && totalChunks > 0 ? chunkStats.failedChunks / totalChunks : 0;
+              const summary = `${result.entriesExtracted} extracted${chunkFailureSuffix}, ${result.entriesStored} stored, ${result.entriesSkippedDuplicate} skipped (duplicate), ${result.entriesReinforced} reinforced`;
+              if (chunkStats && chunkStats.failedChunks > 0 && failureRate > 0.5) {
+                clack.log.warn(`${label} -- ${formatWarn(summary)}`, clackOutput);
+              } else {
+                clack.log.info(`${label} -- ${summary}`, clackOutput);
+              }
             }
             continue;
           }
@@ -809,6 +836,20 @@ export async function runIngestCommand(
               clackOutput,
             );
             updateProgress();
+          } else {
+            const chunkStats = chunkStatsByFile.get(target.file);
+            if (chunkStats && chunkStats.failedChunks > 0) {
+              const totalChunks = chunkStats.successfulChunks + chunkStats.failedChunks;
+              const failureRate = totalChunks > 0 ? chunkStats.failedChunks / totalChunks : 1;
+              const msg = `[${target.index + 1}/${sortedTargets.length}] ${path.basename(target.file)} -- partial extraction: ${chunkStats.failedChunks}/${totalChunks} chunks failed`;
+              clearProgressLine();
+              if (failureRate > 0.5) {
+                clack.log.warn(formatWarn(msg), clackOutput);
+              } else {
+                clack.log.info(msg, clackOutput);
+              }
+              updateProgress();
+            }
           }
         }
       }),
@@ -856,6 +897,10 @@ export async function runIngestCommand(
   }
 
   const doneLine = `Done: ${filesProcessed} succeeded, ${filesFailed} failed, ${filesSkipped} skipped (already ingested)`;
+  const chunkFailureLine =
+    totalChunksFailed > 0
+      ? `${totalChunksFailed} chunks failed across ${filesWithChunkFailures} file(s) (partial extraction)`
+      : null;
   const failedFileLines =
     filesFailed > 0
       ? [
@@ -868,6 +913,7 @@ export async function runIngestCommand(
   clack.note(
     [
       doneLine,
+      chunkFailureLine,
       ...failedFileLines,
     ]
       .filter((line): line is string => Boolean(line))
