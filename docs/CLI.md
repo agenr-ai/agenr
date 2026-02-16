@@ -243,7 +243,7 @@ agenr ingest [options] <paths...>
 - `--skip-ingested`: skip already-ingested file/hash pairs (default `true`).
 - `--force`: clean re-ingest each matched file by deleting previous rows for that source file first.
 
-Ingest always runs deterministic online dedup (content hash + fast vector bands) and skips LLM dedup classification (`skipLlmDedup=true`).
+Ingest runs online dedup at store time (including LLM classification for ambiguous similarity bands).
 
 ### Example
 
