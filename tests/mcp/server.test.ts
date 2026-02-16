@@ -63,6 +63,8 @@ function makeRecallResult(overrides?: Partial<RecallResult>): RecallResult {
 
 interface TestHarness {
   deps: Partial<McpServerDeps>;
+  readConfigFn: ReturnType<typeof vi.fn>;
+  resolveEmbeddingApiKeyFn: ReturnType<typeof vi.fn>;
   getDbFn: ReturnType<typeof vi.fn>;
   initDbFn: ReturnType<typeof vi.fn>;
   closeDbFn: ReturnType<typeof vi.fn>;
@@ -139,11 +141,13 @@ function makeHarness(): TestHarness {
   const mkdtempFn = vi.fn(async () => "/tmp/agenr-mcp-test");
   const writeFileFn = vi.fn(async () => undefined);
   const rmFn = vi.fn(async () => undefined);
+  const readConfigFn = vi.fn(() => ({ db: { path: ":memory:" } }));
+  const resolveEmbeddingApiKeyFn = vi.fn(() => "sk-embed");
 
   return {
     deps: {
-      readConfigFn: vi.fn(() => ({ db: { path: ":memory:" } })),
-      resolveEmbeddingApiKeyFn: vi.fn(() => "sk-embed"),
+      readConfigFn,
+      resolveEmbeddingApiKeyFn,
       createLlmClientFn: vi.fn(() => makeLlmClient()),
       getDbFn: getDbFn as unknown as McpServerDeps["getDbFn"],
       initDbFn,
@@ -158,6 +162,8 @@ function makeHarness(): TestHarness {
       nowFn: () => new Date("2026-02-15T00:00:00.000Z"),
       tmpdirFn: () => "/tmp",
     },
+    readConfigFn,
+    resolveEmbeddingApiKeyFn,
     getDbFn,
     initDbFn,
     closeDbFn,
@@ -296,6 +302,92 @@ describe("mcp server", () => {
     expect(recallQuery.text).toBe("Jim's diet");
     expect(recallQuery.limit).toBe(5);
     expect(recallQuery.types).toEqual(["preference", "fact"]);
+  });
+
+  it("supports session-start context without query", async () => {
+    const harness = makeHarness();
+    const responses = await runServer(
+      [
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 31,
+          method: "tools/call",
+          params: {
+            name: "agenr_recall",
+            arguments: {
+              context: "session-start",
+              limit: 3,
+            },
+          },
+        }),
+      ],
+      harness.deps,
+    );
+
+    const result = responses[0]?.result as { content?: Array<{ text?: string }> };
+    expect(result.content?.[0]?.text).toContain('Found 1 results for "session-start":');
+    expect(harness.recallFn).toHaveBeenCalledTimes(1);
+
+    const recallQuery = harness.recallFn.mock.calls[0]?.[1] as { text?: string; context?: string; limit?: number };
+    expect(recallQuery.text).toBeUndefined();
+    expect(recallQuery.context).toBe("session-start");
+    expect(recallQuery.limit).toBe(3);
+  });
+
+  it("rejects recall when both query and context are omitted", async () => {
+    const harness = makeHarness();
+    const responses = await runServer(
+      [
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 32,
+          method: "tools/call",
+          params: {
+            name: "agenr_recall",
+            arguments: {},
+          },
+        }),
+      ],
+      harness.deps,
+    );
+
+    expect(responses[0]).toMatchObject({
+      jsonrpc: "2.0",
+      id: 32,
+      error: {
+        code: -32602,
+        message: "query is required unless context is session-start",
+      },
+    });
+  });
+
+  it("does not resolve embedding API key for session-start context", async () => {
+    const harness = makeHarness();
+    const server = createMcpServer(
+      {
+        serverVersion: "9.9.9-test",
+      },
+      harness.deps,
+    );
+
+    const response = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 33,
+      method: "tools/call",
+      params: {
+        name: "agenr_recall",
+        arguments: {
+          context: "session-start",
+        },
+      },
+    });
+
+    expect(response).toMatchObject({
+      jsonrpc: "2.0",
+      id: 33,
+    });
+    expect(harness.resolveEmbeddingApiKeyFn).not.toHaveBeenCalled();
+    await server.stop();
   });
 
   it("calls agenr_store and returns storage summary", async () => {
