@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readConfig, writeConfig } from "../src/config.js";
 import type { AgenrConfig } from "../src/types.js";
 
-const mocks = vi.hoisted(() => {
+function createMocks() {
   const cancelToken = Symbol("cancel");
   const introMock = vi.fn();
   const noteMock = vi.fn();
@@ -53,27 +53,37 @@ const mocks = vi.hoisted(() => {
     probeCredentialsMock,
     runConnectionTestMock,
   };
-});
+}
+
+type SetupMocks = ReturnType<typeof createMocks>;
+var mocks: SetupMocks | undefined;
+
+function getMocks(): SetupMocks {
+  if (!mocks) {
+    mocks = createMocks();
+  }
+  return mocks;
+}
 
 vi.mock("@clack/prompts", () => ({
-  intro: mocks.introMock,
-  note: mocks.noteMock,
-  confirm: mocks.confirmMock,
-  select: mocks.selectMock,
-  password: mocks.passwordMock,
-  cancel: mocks.cancelMock,
-  outro: mocks.outroMock,
-  spinner: mocks.spinnerMock,
-  log: mocks.logMock,
-  isCancel: (value: unknown) => value === mocks.cancelToken,
+  intro: getMocks().introMock,
+  note: getMocks().noteMock,
+  confirm: getMocks().confirmMock,
+  select: getMocks().selectMock,
+  password: getMocks().passwordMock,
+  cancel: getMocks().cancelMock,
+  outro: getMocks().outroMock,
+  spinner: getMocks().spinnerMock,
+  log: getMocks().logMock,
+  isCancel: (value: unknown) => value === getMocks().cancelToken,
 }));
 
 vi.mock("../src/llm/credentials.js", () => ({
-  probeCredentials: mocks.probeCredentialsMock,
+  probeCredentials: getMocks().probeCredentialsMock,
 }));
 
 vi.mock("../src/auth-status.js", () => ({
-  runConnectionTest: mocks.runConnectionTestMock,
+  runConnectionTest: getMocks().runConnectionTestMock,
 }));
 
 import { runSetup } from "../src/setup.js";
@@ -102,6 +112,7 @@ beforeEach(() => {
 
 describe("runSetup", () => {
   it("keeps existing config when user declines reconfigure", async () => {
+    const mocks = getMocks();
     const env = await makeTempConfigEnv();
     const existing: AgenrConfig = {
       auth: "openai-api-key",
@@ -121,6 +132,7 @@ describe("runSetup", () => {
   });
 
   it("cancels gracefully when auth selection is cancelled", async () => {
+    const mocks = getMocks();
     const env = await makeTempConfigEnv();
 
     mocks.selectMock.mockResolvedValueOnce(mocks.cancelToken);
@@ -132,6 +144,7 @@ describe("runSetup", () => {
   });
 
   it("cancels gracefully when model selection is cancelled", async () => {
+    const mocks = getMocks();
     const env = await makeTempConfigEnv();
 
     mocks.selectMock.mockResolvedValueOnce("openai-api-key").mockResolvedValueOnce(mocks.cancelToken);
@@ -153,6 +166,7 @@ describe("runSetup", () => {
   });
 
   it("stores entered credential, tests connection, and saves config", async () => {
+    const mocks = getMocks();
     const env = await makeTempConfigEnv();
 
     mocks.selectMock.mockResolvedValueOnce("openai-api-key").mockResolvedValueOnce("gpt-4o");
@@ -190,6 +204,7 @@ describe("runSetup", () => {
   });
 
   it("handles failed connection test and no-retry path", async () => {
+    const mocks = getMocks();
     const env = await makeTempConfigEnv();
 
     mocks.selectMock.mockResolvedValueOnce("openai-api-key").mockResolvedValueOnce("gpt-4o");
@@ -217,6 +232,7 @@ describe("runSetup", () => {
   });
 
   it("skips connection test when credentials remain unavailable", async () => {
+    const mocks = getMocks();
     const env = await makeTempConfigEnv();
 
     mocks.selectMock.mockResolvedValueOnce("anthropic-oauth").mockResolvedValueOnce("claude-opus-4-6");

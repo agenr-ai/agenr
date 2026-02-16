@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { registerApiProvider, unregisterApiProviders } from "@mariozechner/pi-ai";
 import { createClient, type Client } from "@libsql/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildClusters } from "../src/consolidate/cluster.js";
@@ -10,20 +11,9 @@ import { initDb } from "../src/db/client.js";
 import { hashText, insertEntry } from "../src/db/store.js";
 import type { KnowledgeEntry, LlmClient } from "../src/types.js";
 
-const runSimpleStreamMock = vi.hoisted(() => vi.fn());
-const embedMock = vi.hoisted(() => vi.fn());
-
-vi.mock("../src/llm/stream.js", () => ({
-  runSimpleStream: runSimpleStreamMock,
-}));
-
-vi.mock("../src/embeddings/client.js", async () => {
-  const actual = await vi.importActual<typeof import("../src/embeddings/client.js")>("../src/embeddings/client.js");
-  return {
-    ...actual,
-    embed: embedMock,
-  };
-});
+const MERGE_API = "merge-e2e-test-api";
+const MERGE_PROVIDER_SOURCE = "merge-e2e-test-provider";
+const runSimpleStreamMock = vi.fn();
 
 function asNumber(value: unknown): number {
   if (typeof value === "number") {
@@ -69,7 +59,14 @@ function makeLlmClient(): LlmClient {
     resolvedModel: {
       provider: "openai",
       modelId: "gpt-4o",
-      model: {} as any,
+      model: {
+        api: MERGE_API,
+        provider: "openai",
+        id: "gpt-4o",
+        maxTokens: 8192,
+        reasoning: false,
+        input: ["text"],
+      } as any,
     },
     credentials: {
       apiKey: "llm-key",
@@ -81,9 +78,11 @@ function makeLlmClient(): LlmClient {
 describe("consolidate e2e", () => {
   const clients: Client[] = [];
   const tempDirs: string[] = [];
+  let embeddingResult = vectorFromAngle(0);
 
   beforeEach(() => {
     vi.clearAllMocks();
+    embeddingResult = vectorFromAngle(0);
     runSimpleStreamMock.mockResolvedValue({
       stopReason: "stop",
       content: [
@@ -102,10 +101,53 @@ describe("consolidate e2e", () => {
         },
       ],
     });
-    embedMock.mockResolvedValue([vectorFromAngle(0)]);
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const rawBody = typeof init?.body === "string" ? init.body : "{}";
+      const parsed = JSON.parse(rawBody) as { input?: unknown[] };
+      const inputs = Array.isArray(parsed.input) ? parsed.input : [];
+      return new Response(
+        JSON.stringify({
+          data: inputs.map((_, index) => ({
+            index,
+            embedding: embeddingResult,
+          })),
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    });
+
+    unregisterApiProviders(MERGE_PROVIDER_SOURCE);
+    registerApiProvider(
+      {
+        api: MERGE_API as any,
+        stream: ((model: unknown, context: unknown, options: unknown) => {
+          const resultPromise = Promise.resolve(runSimpleStreamMock(model, context, options));
+          return {
+            async *[Symbol.asyncIterator]() {},
+            result: async () => resultPromise,
+          };
+        }) as any,
+        streamSimple: ((model: unknown, context: unknown, options: unknown) => {
+          const resultPromise = Promise.resolve(runSimpleStreamMock(model, context, options));
+          return {
+            async *[Symbol.asyncIterator]() {},
+            result: async () => resultPromise,
+          };
+        }) as any,
+      },
+      MERGE_PROVIDER_SOURCE,
+    );
   });
 
   afterEach(async () => {
+    unregisterApiProviders(MERGE_PROVIDER_SOURCE);
+    vi.restoreAllMocks();
     while (clients.length > 0) {
       clients.pop()?.close();
     }
@@ -191,7 +233,7 @@ describe("consolidate e2e", () => {
     expect(clusters).toHaveLength(1);
 
     // Force verification failure by embedding drift.
-    embedMock.mockResolvedValueOnce([vectorFromAngle(90)]);
+    embeddingResult = vectorFromAngle(90);
 
     const outcome = await mergeCluster(db, clusters[0], makeLlmClient(), "embed-key");
     expect(outcome.flagged).toBe(true);

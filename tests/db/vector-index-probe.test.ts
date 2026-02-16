@@ -3,17 +3,23 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 describe("initDb vector index probe", () => {
   const clients: Client[] = [];
+  const resetModules = () => {
+    if (typeof vi.resetModules === "function") {
+      vi.resetModules();
+    }
+  };
 
   afterEach(() => {
     while (clients.length > 0) {
       clients.pop()?.close();
     }
     vi.restoreAllMocks();
-    vi.resetModules();
+    resetModules();
   });
 
   async function initDb(client: Client): Promise<void> {
     // Import dynamically so `didWarnVectorIndexCorruption` is fresh per test.
+    resetModules();
     const mod = await import("../../src/db/client.js");
     await mod.initDb(client);
   }
@@ -49,7 +55,7 @@ describe("initDb vector index probe", () => {
         "fact",
         "S",
         "A",
-        "high",
+        8,
         "temporary",
         "private",
         "seed.jsonl",
@@ -70,4 +76,3 @@ describe("initDb vector index probe", () => {
     expect(stderr).toContain("agenr db rebuild-index");
   });
 });
-
