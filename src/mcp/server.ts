@@ -91,12 +91,16 @@ const TOOL_DEFINITIONS: McpToolDefinition[] = [
     inputSchema: {
       type: "object",
       additionalProperties: false,
-      required: ["query"],
       properties: {
         query: {
           type: "string",
           description: "What to search for.",
           minLength: 1,
+        },
+        context: {
+          type: "string",
+          description: "Recall context. Use 'session-start' for fast bootstrap without embedding (no query needed).",
+          enum: ["default", "session-start"],
         },
         limit: {
           type: "integer",
@@ -674,9 +678,15 @@ export function createMcpServer(
   }
 
   async function callRecallTool(args: Record<string, unknown>): Promise<string> {
+    const contextRaw = typeof args.context === "string" ? args.context.trim().toLowerCase() : "default";
+    const context = contextRaw || "default";
+    if (context !== "default" && context !== "session-start") {
+      throw new RpcError(JSON_RPC_INVALID_PARAMS, "context must be one of: default, session-start");
+    }
+
     const query = typeof args.query === "string" ? args.query.trim() : "";
-    if (!query) {
-      throw new RpcError(JSON_RPC_INVALID_PARAMS, "query is required");
+    if (!query && context !== "session-start") {
+      throw new RpcError(JSON_RPC_INVALID_PARAMS, "query is required unless context is session-start");
     }
 
     const limit = parsePositiveInt(args.limit, 10, "limit");
@@ -689,13 +699,13 @@ export function createMcpServer(
         : undefined;
 
     const db = await ensureDb();
-    const config = resolvedDeps.readConfigFn(env);
-    const apiKey = resolvedDeps.resolveEmbeddingApiKeyFn(config, env);
+    const apiKey = query ? resolvedDeps.resolveEmbeddingApiKeyFn(resolvedDeps.readConfigFn(env), env) : "";
 
     const results = await resolvedDeps.recallFn(
       db,
       {
-        text: query,
+        text: query || undefined,
+        context,
         limit,
         types,
         since,
@@ -704,7 +714,7 @@ export function createMcpServer(
     );
 
     const filtered = results.filter((result) => result.score >= threshold);
-    return formatRecallText(query, filtered);
+    return formatRecallText(query || context, filtered);
   }
 
   async function callStoreTool(args: Record<string, unknown>): Promise<string> {
