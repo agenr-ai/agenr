@@ -59,6 +59,7 @@ export interface StoreEntriesOptions {
   force?: boolean;
   sourceFile?: string;
   ingestContentHash?: string;
+  skipIngestLog?: boolean;
   onDecision?: (decision: StoreEntryDecision) => void;
   embedFn?: (texts: string[], apiKey: string) => Promise<number[][]>;
   onlineDedup?: boolean;
@@ -1231,16 +1232,18 @@ export async function storeEntries(
         };
       }
 
-      await insertIngestLog(db, {
-        filePath: options.sourceFile ?? entries[0]?.source.file ?? "<unknown>",
-        contentHash: options.ingestContentHash,
-        added,
-        updated,
-        skipped,
-        superseded,
-        llmDedupCalls,
-        durationMs,
-      });
+      if (!options.skipIngestLog) {
+        await insertIngestLog(db, {
+          filePath: options.sourceFile ?? entries[0]?.source.file ?? "<unknown>",
+          contentHash: options.ingestContentHash,
+          added,
+          updated,
+          skipped,
+          superseded,
+          llmDedupCalls,
+          durationMs,
+        });
+      }
 
       await db.execute("COMMIT");
 
@@ -1269,7 +1272,7 @@ export async function storeEntries(
   }
 
   const durationMs = Date.now() - startedAt;
-  if (!options.dryRun) {
+  if (!options.dryRun && !options.skipIngestLog) {
     await insertIngestLog(db, {
       filePath: options.sourceFile ?? entries[0]?.source.file ?? "<unknown>",
       contentHash: options.ingestContentHash,

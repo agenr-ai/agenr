@@ -472,7 +472,7 @@ describe("ingest command", () => {
 
     const result = await runIngestCommand([missing], {}, deps);
 
-    expect(result.exitCode).toBe(1);
+    expect(result.exitCode).toBe(2);
     expect(result.filesProcessed).toBe(0);
     expect(result.filesFailed).toBe(1);
     expect(result.results[0]?.error).toContain("no such file");
@@ -532,6 +532,180 @@ describe("ingest command", () => {
     expect(result.filesProcessed).toBe(1);
     expect(result.filesFailed).toBe(1);
     expect(result.results.find((item) => item.file === badFile)?.error).toBe("timeout");
+  });
+
+  it("cleans up partial rows and avoids ingest_log for failed embedding files while continuing other files", async () => {
+    const dir = await makeTempDir();
+    const badFile = path.join(dir, "bad.jsonl");
+    const goodFile = path.join(dir, "good.jsonl");
+    await fs.writeFile(badFile, '{"role":"user","content":"bad"}\n', "utf8");
+    await fs.writeFile(goodFile, '{"role":"user","content":"good"}\n', "utf8");
+
+    const db = createClient({ url: ":memory:" });
+    const storeEntriesFn: IngestCommandDeps["storeEntriesFn"] = async (client, entries, apiKey, options) =>
+      storeEntries(client, entries, apiKey, {
+        ...options,
+        embedFn: async (texts: string[]) => {
+          if (texts.some((text) => text.includes("force-embed-fail"))) {
+            throw new Error("OpenAI embeddings request failed (500)");
+          }
+          return texts.map(() => to512([1, 0, 0]));
+        },
+      });
+
+    try {
+      const extractKnowledgeFromChunksFn = vi.fn(
+        async (params: Parameters<IngestCommandDeps["extractKnowledgeFromChunksFn"]>[0]) => {
+          const entries =
+            params.file === badFile
+              ? [makeEntry("bad-one"), makeEntry("force-embed-fail")]
+              : [makeEntry("good-one")];
+          await params.onChunkComplete?.({
+            chunkIndex: 0,
+            totalChunks: 1,
+            entries,
+            warnings: [],
+          });
+          return {
+            entries: [],
+            successfulChunks: 1,
+            failedChunks: 0,
+            warnings: [],
+          };
+        },
+      );
+
+      const result = await runIngestCommand(
+        [dir],
+        {},
+        makeDeps({
+          getDbFn: vi.fn(() => db) as IngestCommandDeps["getDbFn"],
+          initDbFn: vi.fn(async () => initDb(db)),
+          closeDbFn: vi.fn(() => undefined),
+          createLlmClientFn: vi.fn(() => fakeLlmClient()) as IngestCommandDeps["createLlmClientFn"],
+          expandInputFilesFn: vi.fn(async () => [badFile, goodFile]),
+          extractKnowledgeFromChunksFn: extractKnowledgeFromChunksFn as IngestCommandDeps["extractKnowledgeFromChunksFn"],
+          deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+          resolveEmbeddingApiKeyFn: vi.fn(() => "sk-test"),
+          storeEntriesFn,
+        }),
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(result.filesProcessed).toBe(1);
+      expect(result.filesFailed).toBe(1);
+      expect(result.results.find((item) => item.file === badFile)?.error).toContain("OpenAI embeddings request failed (500)");
+
+      const badEntries = await db.execute({
+        sql: "SELECT COUNT(*) AS count FROM entries WHERE source_file = ?",
+        args: [badFile],
+      });
+      expect(Number(badEntries.rows[0]?.count)).toBe(0);
+
+      const badLog = await db.execute({
+        sql: "SELECT COUNT(*) AS count FROM ingest_log WHERE file_path = ?",
+        args: [badFile],
+      });
+      expect(Number(badLog.rows[0]?.count)).toBe(0);
+
+      const goodLog = await db.execute({
+        sql: "SELECT COUNT(*) AS count FROM ingest_log WHERE file_path = ?",
+        args: [goodFile],
+      });
+      expect(Number(goodLog.rows[0]?.count)).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("retries a failed file on the next run because failure leaves no ingest_log entry", async () => {
+    const dir = await makeTempDir();
+    const filePath = path.join(dir, "retry.jsonl");
+    await fs.writeFile(filePath, '{"role":"user","content":"retry"}\n', "utf8");
+
+    const db = createClient({ url: ":memory:" });
+    const extractKnowledgeFromChunksFn = vi.fn(
+      async (params: Parameters<IngestCommandDeps["extractKnowledgeFromChunksFn"]>[0]) => {
+        await params.onChunkComplete?.({
+          chunkIndex: 0,
+          totalChunks: 1,
+          entries: [makeEntry("first"), makeEntry("force-embed-fail")],
+          warnings: [],
+        });
+        return {
+          entries: [],
+          successfulChunks: 1,
+          failedChunks: 0,
+          warnings: [],
+        };
+      },
+    );
+
+    const failStoreEntriesFn: IngestCommandDeps["storeEntriesFn"] = async (client, entries, apiKey, options) =>
+      storeEntries(client, entries, apiKey, {
+        ...options,
+        embedFn: async (texts: string[]) => {
+          if (texts.some((text) => text.includes("force-embed-fail"))) {
+            throw new Error("OpenAI embeddings request failed (500)");
+          }
+          return texts.map(() => to512([1, 0, 0]));
+        },
+      });
+    const successStoreEntriesFn: IngestCommandDeps["storeEntriesFn"] = async (client, entries, apiKey, options) =>
+      storeEntries(client, entries, apiKey, {
+        ...options,
+        embedFn: async (texts: string[]) => texts.map(() => to512([1, 0, 0])),
+      });
+
+    try {
+      const sharedDeps = {
+        getDbFn: vi.fn(() => db) as IngestCommandDeps["getDbFn"],
+        initDbFn: vi.fn(async () => initDb(db)),
+        closeDbFn: vi.fn(() => undefined),
+        createLlmClientFn: vi.fn(() => fakeLlmClient()) as IngestCommandDeps["createLlmClientFn"],
+        expandInputFilesFn: vi.fn(async () => [filePath]),
+        extractKnowledgeFromChunksFn: extractKnowledgeFromChunksFn as IngestCommandDeps["extractKnowledgeFromChunksFn"],
+        deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+        resolveEmbeddingApiKeyFn: vi.fn(() => "sk-test"),
+      };
+
+      const firstRun = await runIngestCommand(
+        [filePath],
+        {},
+        makeDeps({
+          ...sharedDeps,
+          storeEntriesFn: failStoreEntriesFn,
+        }),
+      );
+
+      expect(firstRun.exitCode).toBe(2);
+      expect(firstRun.filesProcessed).toBe(0);
+      expect(firstRun.filesSkipped).toBe(0);
+      expect(firstRun.filesFailed).toBe(1);
+
+      const secondRun = await runIngestCommand(
+        [filePath],
+        {},
+        makeDeps({
+          ...sharedDeps,
+          storeEntriesFn: successStoreEntriesFn,
+        }),
+      );
+
+      expect(secondRun.exitCode).toBe(0);
+      expect(secondRun.filesProcessed).toBe(1);
+      expect(secondRun.filesSkipped).toBe(0);
+      expect(secondRun.filesFailed).toBe(0);
+
+      const ingestRows = await db.execute({
+        sql: "SELECT COUNT(*) AS count FROM ingest_log WHERE file_path = ?",
+        args: [filePath],
+      });
+      expect(Number(ingestRows.rows[0]?.count)).toBe(1);
+      expect(extractKnowledgeFromChunksFn).toHaveBeenCalledTimes(2);
+    } finally {
+      db.close();
+    }
   });
 
   it("applies glob filtering", async () => {
@@ -684,6 +858,7 @@ describe("ingest command", () => {
       total_entries: 2,
       duration_ms: 3,
     }));
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
     const result = await runIngestCommand(
       [dir],
@@ -709,9 +884,13 @@ describe("ingest command", () => {
     expect(result.dedupStats.entries_superseded).toBe(0);
     expect(result.dedupStats.dedup_llm_calls).toBe(0);
     expect(result.exitCode).toBe(1);
+    const output = stderrSpy.mock.calls.map((call) => String(call[0])).join("");
+    expect(output).toContain("Done: 1 succeeded, 1 failed, 1 skipped (already ingested)");
+    expect(output).toContain("Failed files (will auto-retry on next run):");
+    expect(output).toContain("fail.md - extract failed");
   });
 
-  it("prints summary with skipped duplicate and reinforced counts", async () => {
+  it("prints only success summary when all files succeed", async () => {
     const dir = await makeTempDir();
     const filePath = path.join(dir, "a.md");
     await fs.writeFile(filePath, "hello", "utf8");
@@ -738,8 +917,8 @@ describe("ingest command", () => {
     );
 
     const output = stderrSpy.mock.calls.map((call) => String(call[0])).join("");
-    expect(output).toContain("skipped (duplicate)");
-    expect(output).toContain("reinforced");
+    expect(output).toContain("Done: 1 succeeded, 0 failed, 0 skipped (already ingested)");
+    expect(output).not.toContain("Failed files (will auto-retry on next run):");
   });
 
   it("prints JSON output with result payload", async () => {

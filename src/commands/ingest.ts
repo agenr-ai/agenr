@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import type { Client } from "@libsql/client";
 import * as clack from "@clack/prompts";
 import { readConfig } from "../config.js";
@@ -230,16 +231,6 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1).replace(/\.0$/, "")}MB`;
 }
 
-function formatDuration(durationMs: number): string {
-  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  if (minutes === 0) {
-    return `${seconds}s`;
-  }
-  return `${minutes}m ${seconds}s`;
-}
-
 function isJsonlFile(filePath: string): boolean {
   return path.extname(filePath).toLowerCase() === ".jsonl";
 }
@@ -260,6 +251,14 @@ interface ForceCleanupStats {
   ingestLogRows: number;
   entryRows: number;
   entrySourceRows: number;
+}
+
+interface FileStoreStats {
+  added: number;
+  updated: number;
+  skipped: number;
+  superseded: number;
+  llmDedupCalls: number;
 }
 
 function countValue(value: unknown): number {
@@ -325,6 +324,102 @@ async function cleanupForForceReingest(db: Client, filePath: string, dryRun: boo
   });
 
   return stats;
+}
+
+async function getSourceEntryIds(db: Client, filePath: string): Promise<Set<string>> {
+  const result = await db.execute({
+    sql: "SELECT id FROM entries WHERE source_file = ?",
+    args: [filePath],
+  });
+  return new Set(
+    result.rows
+      .map((row) => {
+        const id = row.id;
+        if (typeof id === "string") {
+          return id;
+        }
+        if (typeof id === "number" || typeof id === "bigint") {
+          return String(id);
+        }
+        return "";
+      })
+      .filter((id) => id.length > 0),
+  );
+}
+
+async function cleanupFailedFileIngest(
+  db: Client,
+  filePath: string,
+  contentHash: string,
+  baselineEntryIds: Set<string>,
+  dryRun: boolean,
+): Promise<void> {
+  if (dryRun) {
+    return;
+  }
+
+  const currentIds = await getSourceEntryIds(db, filePath);
+  const newIds = [...currentIds].filter((id) => !baselineEntryIds.has(id));
+  if (newIds.length > 0) {
+    const placeholders = newIds.map(() => "?").join(", ");
+    await db.execute({
+      sql: `
+        DELETE FROM entry_sources
+        WHERE merged_entry_id IN (${placeholders})
+           OR source_entry_id IN (${placeholders})
+      `,
+      args: [...newIds, ...newIds],
+    });
+    await db.execute({
+      sql: `DELETE FROM entries WHERE id IN (${placeholders})`,
+      args: newIds,
+    });
+  }
+
+  await db.execute({
+    sql: "DELETE FROM ingest_log WHERE file_path = ? AND content_hash = ?",
+    args: [filePath, contentHash],
+  });
+}
+
+async function insertIngestLogForFile(
+  db: Client,
+  params: {
+    filePath: string;
+    contentHash: string;
+    storeStats: FileStoreStats;
+    durationMs: number;
+  },
+): Promise<void> {
+  await db.execute({
+    sql: `
+      INSERT OR REPLACE INTO ingest_log (
+        id,
+        file_path,
+        content_hash,
+        ingested_at,
+        entries_added,
+        entries_updated,
+        entries_skipped,
+        entries_superseded,
+        dedup_llm_calls,
+        duration_ms
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    args: [
+      randomUUID(),
+      params.filePath,
+      params.contentHash,
+      new Date().toISOString(),
+      params.storeStats.added,
+      params.storeStats.updated,
+      params.storeStats.skipped,
+      params.storeStats.superseded,
+      params.storeStats.llmDedupCalls,
+      params.durationMs,
+    ],
+  });
 }
 
 interface IngestTarget {
@@ -525,11 +620,20 @@ export async function runIngestCommand(
       skipped: false,
       durationMs: 0,
     };
+    let fileHash = "";
+    let baselineEntryIds = new Set<string>();
+    const fileStoreStats: FileStoreStats = {
+      added: 0,
+      updated: 0,
+      skipped: 0,
+      superseded: 0,
+      llmDedupCalls: 0,
+    };
 
     try {
       const rawContent = await fs.readFile(target.file, "utf8");
       const ingestByteOffset = Buffer.byteLength(rawContent, "utf8");
-      const fileHash = resolvedDeps.hashTextFn(rawContent);
+      fileHash = resolvedDeps.hashTextFn(rawContent);
 
       if (skipIngested && !force) {
         const alreadyIngested = await withDbLock(() => isAlreadyIngested(db, target.file, fileHash));
@@ -545,14 +649,23 @@ export async function runIngestCommand(
         forceDeletedIngestLogRows += cleanupStats.ingestLogRows;
         forceDeletedEntryRows += cleanupStats.entryRows;
         forceDeletedEntrySourceRows += cleanupStats.entrySourceRows;
+      } else {
+        baselineEntryIds = await withDbLock(() => getSourceEntryIds(db, target.file));
       }
 
       const parsed = await resolvedDeps.parseTranscriptFileFn(target.file);
       const processChunkEntries = async (chunkEntries: KnowledgeEntry[]): Promise<void> => {
-        fileResult.entriesExtracted += chunkEntries.length;
-        totalEntriesExtracted += chunkEntries.length;
+        const normalizedEntries = chunkEntries.map((entry) => ({
+          ...entry,
+          source: {
+            ...entry.source,
+            file: target.file,
+          },
+        }));
+        fileResult.entriesExtracted += normalizedEntries.length;
+        totalEntriesExtracted += normalizedEntries.length;
 
-        const deduped = resolvedDeps.deduplicateEntriesFn(chunkEntries);
+        const deduped = resolvedDeps.deduplicateEntriesFn(normalizedEntries);
         if (dryRun || deduped.length === 0) {
           return;
         }
@@ -565,6 +678,7 @@ export async function runIngestCommand(
           resolvedDeps.storeEntriesFn(db, deduped, embeddingApiKey ?? "", {
             sourceFile: target.file,
             ingestContentHash: fileHash,
+            skipIngestLog: true,
             onlineDedup: true,
             skipLlmDedup: true,
           }),
@@ -579,6 +693,11 @@ export async function runIngestCommand(
         totalEntriesReinforced += reinforced;
         totalEntriesSuperseded += storeResult.superseded;
         totalDedupLlmCalls += storeResult.llm_dedup_calls;
+        fileStoreStats.added += storeResult.added;
+        fileStoreStats.updated += storeResult.updated;
+        fileStoreStats.skipped += storeResult.skipped;
+        fileStoreStats.superseded += storeResult.superseded;
+        fileStoreStats.llmDedupCalls += storeResult.llm_dedup_calls;
       };
 
       await resolvedDeps.extractKnowledgeFromChunksFn({
@@ -592,9 +711,28 @@ export async function runIngestCommand(
       });
 
       await withDbLock(() => syncWatchStateOffset(target.file, ingestByteOffset));
+      if (!dryRun) {
+        const fileDurationMs = Math.max(0, resolvedDeps.nowFn().getTime() - fileStartedAt.getTime());
+        await withDbLock(() =>
+          insertIngestLogForFile(db, {
+            filePath: target.file,
+            contentHash: fileHash,
+            storeStats: fileStoreStats,
+            durationMs: fileDurationMs,
+          }),
+        );
+      }
 
       return fileResult;
     } catch (error) {
+      if (fileHash.length > 0) {
+        try {
+          await withDbLock(() => cleanupFailedFileIngest(db, target.file, fileHash, baselineEntryIds, dryRun));
+        } catch (cleanupError) {
+          fileResult.error = `${errorMessage(error)} | cleanup failed: ${errorMessage(cleanupError)}`;
+          return fileResult;
+        }
+      }
       fileResult.error = errorMessage(error);
       return fileResult;
     } finally {
@@ -681,8 +819,9 @@ export async function runIngestCommand(
   }
 
   const durationMs = Math.max(0, resolvedDeps.nowFn().getTime() - startedAt.getTime());
+  const allTargetsFailed = sortedTargets.length > 0 && filesFailed === sortedTargets.length;
   const finalResult: IngestCommandResult = {
-    exitCode: filesFailed > 0 ? 1 : 0,
+    exitCode: allTargetsFailed ? 2 : filesFailed > 0 ? 1 : 0,
     filesProcessed,
     filesSkipped,
     filesFailed,
@@ -705,14 +844,24 @@ export async function runIngestCommand(
       ? `Force cleanup (dry-run): would delete ${forceDeletedIngestLogRows} ingest_log, ${forceDeletedEntryRows} entries, ${forceDeletedEntrySourceRows} entry_sources`
       : `Force cleanup: deleted ${forceDeletedIngestLogRows} ingest_log, ${forceDeletedEntryRows} entries, ${forceDeletedEntrySourceRows} entry_sources`
     : null;
+  if (forceCleanupLine) {
+    clack.log.info(forceCleanupLine, clackOutput);
+  }
+
+  const doneLine = `Done: ${filesProcessed} succeeded, ${filesFailed} failed, ${filesSkipped} skipped (already ingested)`;
+  const failedFileLines =
+    filesFailed > 0
+      ? [
+          "Failed files (will auto-retry on next run):",
+          ...results
+            .filter((result): result is IngestFileResult => Boolean(result?.error))
+            .map((result) => `  ${path.basename(result.file)} - ${result.error ?? "Unknown error"}`),
+        ]
+      : [];
   clack.note(
     [
-      `Done: ${sortedTargets.length} files | ${filesProcessed} processed, ${filesSkipped} skipped, ${filesFailed} failed`,
-      `Entries: ${totalEntriesExtracted} extracted, ${totalEntriesStored} stored, ${totalEntriesSkipped} skipped (duplicate), ${totalEntriesReinforced} reinforced`,
-      `Dedup: ${totalEntriesAdded} added, ${totalEntriesUpdated} updated, ${totalEntriesSkipped} skipped, ${totalEntriesReinforced} reinforced, ${totalEntriesSuperseded} superseded, ${totalDedupLlmCalls} LLM calls`,
-      forceCleanupLine,
-      `Duration: ${formatDuration(durationMs)}`,
-      dryRun ? formatWarn("dry-run: no changes persisted") : null,
+      doneLine,
+      ...failedFileLines,
     ]
       .filter((line): line is string => Boolean(line))
       .join("\n"),
