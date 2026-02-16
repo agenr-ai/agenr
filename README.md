@@ -143,7 +143,8 @@ Three MCP tools: `agenr_recall`, `agenr_store`, `agenr_extract`. See [docs/MCP.m
 | `agenr extract <files...>` | Extract structured knowledge from text |
 | `agenr store [files...]` | Store entries with semantic dedup |
 | `agenr recall [query]` | Semantic + memory-aware recall |
-| `agenr watch <file>` | Live-watch a growing transcript |
+| `agenr watch [file]` | Live-watch a file, directory (`--dir`), or auto-detected sessions (`--auto`) |
+| `agenr daemon <subcommand>` | Install/manage watch daemon (`install`, `uninstall`, `status`, `logs`) |
 | `agenr ingest <paths...>` | Bulk-ingest files and directories |
 | `agenr consolidate` | Rule-based + LLM-assisted knowledge cleanup |
 | `agenr mcp` | Start MCP server (stdio) |
