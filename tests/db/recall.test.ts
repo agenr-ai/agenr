@@ -370,4 +370,76 @@ describe("db recall", () => {
     expect(results[2]?.entry.content).toContain("Low vector");
     expect(results.every((item) => item.scores.fts === 0)).toBe(true);
   });
+
+  it(
+    "keeps vector recall under 5s with many embedded entries",
+    async () => {
+      const client = makeClient();
+      await initDb(client);
+
+      const nowIso = "2026-02-15T00:00:00.000Z";
+      const totalEntries = 6000;
+      await client.execute("BEGIN");
+      try {
+        for (let i = 0; i < totalEntries; i += 1) {
+          const angle = (i % 360) * (Math.PI / 180);
+          const radial = ((i % 17) - 8) / 8;
+          const embedding = to512([Math.cos(angle), Math.sin(angle), radial]);
+          await client.execute({
+            sql: `
+              INSERT INTO entries (
+                id,
+                type,
+                subject,
+                content,
+                confidence,
+                expiry,
+                scope,
+                source_file,
+                source_context,
+                embedding,
+                created_at,
+                updated_at
+              )
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, vector32(?), ?, ?)
+            `,
+            args: [
+              `perf-${i}`,
+              "fact",
+              "Perf",
+              `Perf entry ${i}`,
+              "high",
+              "temporary",
+              "private",
+              "perf.jsonl",
+              "regression",
+              JSON.stringify(embedding),
+              nowIso,
+              nowIso,
+            ],
+          });
+        }
+        await client.execute("COMMIT");
+      } catch (error) {
+        await client.execute("ROLLBACK");
+        throw error;
+      }
+
+      const startMs = Date.now();
+      const results = await recall(
+        client,
+        {
+          text: "work",
+          limit: 20,
+        },
+        "sk-test",
+        { embedFn: mockEmbed, now: new Date(nowIso) },
+      );
+      const elapsedMs = Date.now() - startMs;
+
+      expect(results.length).toBeGreaterThan(0);
+      expect(elapsedMs).toBeLessThan(5000);
+    },
+    120000,
+  );
 });
