@@ -4,7 +4,7 @@ import path from "node:path";
 import * as clack from "@clack/prompts";
 import { readConfig } from "../config.js";
 import { closeDb, DEFAULT_DB_PATH, getDb, initDb, walCheckpoint } from "../db/client.js";
-import { CREATE_IDX_ENTRIES_EMBEDDING_SQL } from "../db/schema.js";
+import { rebuildVectorIndex } from "../db/vector-index.js";
 import { banner, formatLabel, ui } from "../ui.js";
 
 interface DbRow {
@@ -436,32 +436,10 @@ export async function runDbRebuildIndexCommand(
     await resolvedDeps.initDbFn(db);
 
     process.stderr.write("Rebuilding vector index...\n");
-    await db.execute("DROP INDEX IF EXISTS idx_entries_embedding");
-    await db.execute(CREATE_IDX_ENTRIES_EMBEDDING_SQL);
+    const rebuildResult = await rebuildVectorIndex(db);
     await walCheckpoint(db);
 
-    const embeddingsResult = await db.execute("SELECT COUNT(*) AS count FROM entries WHERE embedding IS NOT NULL");
-    embeddingCount = Number.isFinite(toNumber((embeddingsResult.rows[0] as DbRow | undefined)?.count))
-      ? toNumber((embeddingsResult.rows[0] as DbRow | undefined)?.count)
-      : 0;
-
-    if (embeddingCount > 0) {
-      const verifyResult = await db.execute(`
-        SELECT count(*) AS count
-        FROM vector_top_k(
-          'idx_entries_embedding',
-          (SELECT embedding FROM entries WHERE embedding IS NOT NULL LIMIT 1),
-          1
-        )
-      `);
-      const verifyCount = Number.isFinite(toNumber((verifyResult.rows[0] as DbRow | undefined)?.count))
-        ? toNumber((verifyResult.rows[0] as DbRow | undefined)?.count)
-        : 0;
-      if (verifyCount !== 1) {
-        process.stderr.write(`Vector index verification failed (expected 1, got ${verifyCount}).\n`);
-        return { exitCode: 1, embeddingCount, durationMs: Date.now() - start };
-      }
-    }
+    embeddingCount = rebuildResult.embeddingCount;
 
     const durationMs = Date.now() - start;
     process.stderr.write(`Rebuilt index for ${embeddingCount} entries (${durationMs}ms)\n`);

@@ -8,6 +8,7 @@ import { mergeCluster } from "../consolidate/merge.js";
 import { consolidateRules, type ConsolidationStats } from "../consolidate/rules.js";
 import { showFlaggedMerges } from "../consolidate/verify.js";
 import { closeDb, DEFAULT_DB_PATH, getDb, walCheckpoint } from "../db/client.js";
+import { rebuildVectorIndex } from "../db/vector-index.js";
 import { runMigrations } from "../db/schema.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { createLlmClient } from "../llm/client.js";
@@ -171,6 +172,19 @@ export async function runConsolidateCommand(
         }
 
         report.phase2 = phase2;
+
+        if (!options.dryRun) {
+          try {
+            await rebuildVectorIndex(db, {
+              onLog: options.verbose ? (message) => clack.log.info(message, clackOutput) : undefined,
+            });
+          } catch (error) {
+            clack.log.warn(
+              formatWarn(`Vector index rebuild failed: ${errorMessage(error)}`),
+              clackOutput,
+            );
+          }
+        }
       }
 
       if (!options.dryRun) {

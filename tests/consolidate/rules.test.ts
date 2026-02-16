@@ -118,6 +118,41 @@ describe("consolidate rules", () => {
     return id;
   }
 
+  async function insertRawEntry(db: Client, params: { id: string; content: string; createdAt?: string }): Promise<void> {
+    const now = params.createdAt ?? new Date().toISOString();
+    await db.execute({
+      sql: `
+        INSERT INTO entries (
+          id,
+          type,
+          subject,
+          content,
+          confidence,
+          expiry,
+          scope,
+          source_file,
+          source_context,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      args: [
+        params.id,
+        "fact",
+        "backup-subject",
+        params.content,
+        "medium",
+        "permanent",
+        "private",
+        "rules.test.jsonl",
+        "unit test",
+        now,
+        now,
+      ],
+    });
+  }
+
   async function getSupersededBy(id: string): Promise<string | null> {
     const result = await client.execute({
       sql: "SELECT superseded_by FROM entries WHERE id = ?",
@@ -400,6 +435,102 @@ describe("consolidate rules", () => {
 
     expect(stats.backupPath.startsWith(`${backupSourcePath}.pre-consolidate-`)).toBe(true);
     expect(backupStat.size).toBe(sourceStat.size);
+  });
+
+  it("creates a self-contained backup when DB uses WAL mode", async () => {
+    const dbDir = await fs.mkdtemp(path.join(os.tmpdir(), "agenr-consolidate-wal-"));
+    tempDirs.push(dbDir);
+    const dbPath = path.join(dbDir, "knowledge.db");
+    const fileClient = createClient({ url: `file:${dbPath}` });
+    clients.push(fileClient);
+    await initDb(fileClient);
+    await fileClient.execute("PRAGMA journal_mode=WAL");
+
+    await insertRawEntry(fileClient, { id: "wal-entry-1", content: "wal backup test 1" });
+    await insertRawEntry(fileClient, { id: "wal-entry-2", content: "wal backup test 2" });
+
+    const originalCountResult = await fileClient.execute("SELECT COUNT(*) AS count FROM entries");
+    const originalCount = asNumber(originalCountResult.rows[0]?.count);
+    expect(originalCount).toBe(2);
+
+    const stats = await consolidateRules(fileClient, dbPath);
+    const backupWalPath = `${stats.backupPath}-wal`;
+    const backupShmPath = `${stats.backupPath}-shm`;
+    await expect(fs.access(backupWalPath)).rejects.toThrow();
+    await expect(fs.access(backupShmPath)).rejects.toThrow();
+
+    const backupClient = createClient({ url: `file:${stats.backupPath}` });
+    clients.push(backupClient);
+    const backupCountResult = await backupClient.execute("SELECT COUNT(*) AS count FROM entries");
+    const backupCount = asNumber(backupCountResult.rows[0]?.count);
+    expect(backupCount).toBe(originalCount);
+  });
+
+  it("keeps vector index queries healthy after consolidation", async () => {
+    await insertTestEntry({
+      content: "vector dup A",
+      subject: "Vector Subject",
+      type: "fact",
+      seed: 601,
+    });
+    await insertTestEntry({
+      content: "vector dup B",
+      subject: "Vector Subject",
+      type: "fact",
+      seed: 601,
+    });
+    await insertTestEntry({
+      content: "vector stable",
+      subject: "Vector Subject",
+      type: "fact",
+      seed: 602,
+    });
+
+    await consolidateRules(client, backupSourcePath);
+
+    const vectorResult = await client.execute(`
+      SELECT count(*) AS count
+      FROM vector_top_k(
+        'idx_entries_embedding',
+        (SELECT embedding FROM entries WHERE embedding IS NOT NULL LIMIT 1),
+        1
+      )
+    `);
+    expect(asNumber(vectorResult.rows[0]?.count)).toBe(1);
+
+    const shadowColumns = await client.execute("PRAGMA table_info(idx_entries_embedding_shadow)");
+    const hasIdColumn = shadowColumns.rows.some((row) => asString(row.name) === "id");
+    const countExpression = hasIdColumn ? "COUNT(id)" : "COUNT(rowid)";
+    const shadowCounts = await client.execute(`
+      SELECT COUNT(*) AS star_count, ${countExpression} AS id_count
+      FROM idx_entries_embedding_shadow
+    `);
+    const starCount = asNumber(shadowCounts.rows[0]?.star_count);
+    const idCount = asNumber(shadowCounts.rows[0]?.id_count);
+    expect(starCount).toBe(idCount);
+  });
+
+  it("keeps only three most recent pre-consolidate backups", async () => {
+    const backupDir = path.dirname(backupSourcePath);
+    const backupBase = path.basename(backupSourcePath);
+    const prefix = `${backupBase}.pre-consolidate-`;
+    const staleBackups = [
+      `${prefix}2025-01-01T00-00-01`,
+      `${prefix}2025-01-01T00-00-02`,
+      `${prefix}2025-01-01T00-00-03`,
+      `${prefix}2025-01-01T00-00-04`,
+      `${prefix}2025-01-01T00-00-05`,
+    ];
+    for (const fileName of staleBackups) {
+      await fs.writeFile(path.join(backupDir, fileName), "stale-backup", "utf8");
+    }
+
+    const stats = await consolidateRules(client, backupSourcePath);
+    const files = await fs.readdir(backupDir);
+    const backups = files.filter((fileName) => fileName.startsWith(prefix)).sort().reverse();
+
+    expect(backups).toHaveLength(3);
+    expect(backups).toContain(path.basename(stats.backupPath));
   });
 
   it("returns correct stats shape", async () => {

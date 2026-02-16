@@ -1,5 +1,7 @@
 import fs from "node:fs/promises";
+import path from "node:path";
 import type { Client, InValue } from "@libsql/client";
+import { rebuildVectorIndex } from "../db/vector-index.js";
 import { recency } from "../db/recall.js";
 import { createRelation } from "../db/relations.js";
 import { findSimilar } from "../db/store.js";
@@ -411,6 +413,16 @@ export async function consolidateRules(
   const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, "-");
   const backupPath = `${dbPath}.pre-consolidate-${timestamp}`;
 
+  // Checkpoint WAL into main DB before backup so the copy is self-contained.
+  // Use TRUNCATE mode to reset the WAL file after checkpoint.
+  try {
+    await db.execute("PRAGMA wal_checkpoint(TRUNCATE)");
+  } catch {
+    if (verbose) {
+      onLog("[backup] WAL checkpoint before backup failed; backup may be incomplete");
+    }
+  }
+
   await fs.copyFile(dbPath, backupPath);
   if (verbose) {
     onLog(`[backup] ${backupPath}`);
@@ -443,6 +455,39 @@ export async function consolidateRules(
       }
       throw error;
     }
+  }
+
+  if (!dryRun) {
+    // Rebuild vector index to prevent corruption from bulk mutations.
+    try {
+      await rebuildVectorIndex(db, { onLog });
+    } catch (error) {
+      if (verbose) {
+        onLog(
+          `[consolidate] Vector index rebuild failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+  }
+
+  // Clean up old backups, keeping only the 3 most recent.
+  const backupDir = path.dirname(dbPath);
+  const backupBase = path.basename(dbPath);
+  const backupPrefix = `${backupBase}.pre-consolidate-`;
+  try {
+    const files = await fs.readdir(backupDir);
+    const backups = files
+      .filter((fileName) => fileName.startsWith(backupPrefix))
+      .sort()
+      .reverse();
+    for (const oldBackup of backups.slice(3)) {
+      await fs.unlink(path.join(backupDir, oldBackup));
+      if (verbose) {
+        onLog(`[backup] removed old backup: ${oldBackup}`);
+      }
+    }
+  } catch {
+    // Best-effort cleanup; ignore errors.
   }
 
   const entriesAfter = await countActiveEntries(db);
