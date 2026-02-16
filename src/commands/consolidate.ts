@@ -2,13 +2,9 @@ import os from "node:os";
 import path from "node:path";
 import * as clack from "@clack/prompts";
 import { readConfig } from "../config.js";
-import { buildClusters } from "../consolidate/cluster.js";
-import { acquireLock, releaseLock } from "../consolidate/lock.js";
-import { mergeCluster } from "../consolidate/merge.js";
-import { consolidateRules, type ConsolidationStats } from "../consolidate/rules.js";
+import { runConsolidationOrchestrator, type ConsolidationOrchestratorReport } from "../consolidate/orchestrate.js";
 import { showFlaggedMerges } from "../consolidate/verify.js";
-import { closeDb, DEFAULT_DB_PATH, getDb, walCheckpoint } from "../db/client.js";
-import { rebuildVectorIndex } from "../db/vector-index.js";
+import { closeDb, DEFAULT_DB_PATH, getDb } from "../db/client.js";
 import { runMigrations } from "../db/schema.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { createLlmClient } from "../llm/client.js";
@@ -22,22 +18,28 @@ export interface ConsolidateCommandOptions {
   db?: string;
   minCluster?: number;
   simThreshold?: number;
+  maxClusterSize?: number;
   type?: string;
   showFlagged?: boolean;
   idempotencyDays?: number;
+  batch?: number;
+  resume?: boolean;
 }
 
-interface Phase2Stats {
-  clustersFound: number;
-  clustersMerged: number;
-  mergesFlagged: number;
-  llmCalls: number;
-  entriesConsolidatedFrom: number;
-  canonicalEntriesCreated: number;
+export interface ConsolidateCommandDeps {
+  readConfigFn: typeof readConfig;
+  getDbFn: typeof getDb;
+  closeDbFn: typeof closeDb;
+  runMigrationsFn: typeof runMigrations;
+  createLlmClientFn: typeof createLlmClient;
+  resolveEmbeddingApiKeyFn: typeof resolveEmbeddingApiKey;
+  showFlaggedMergesFn: typeof showFlaggedMerges;
+  runConsolidationOrchestratorFn: typeof runConsolidationOrchestrator;
 }
 
-interface ConsolidateReport extends ConsolidationStats {
-  phase2?: Phase2Stats;
+interface ConsolidateLogger {
+  info: (message: string) => void;
+  warn: (message: string) => void;
 }
 
 function resolveUserPath(inputPath: string): string {
@@ -57,7 +59,11 @@ function resolveDbFilePath(rawPath: string): string {
   return resolveUserPath(rawPath);
 }
 
-function renderTextReport(stats: ConsolidateReport, dryRun: boolean): string {
+function formatNumber(value: number): string {
+  return value.toLocaleString("en-US");
+}
+
+function renderTextReport(stats: ConsolidationOrchestratorReport, dryRun: boolean): string {
   const header = dryRun
     ? "+--  AGENR -- Knowledge Consolidation (dry run -- no changes made)"
     : "+--  AGENR -- Knowledge Consolidation";
@@ -67,29 +73,47 @@ function renderTextReport(stats: ConsolidateReport, dryRun: boolean): string {
     "|",
     `|  Backup: ${stats.backupPath}`,
     "|",
-    "|  Phase 1: Rule-Based Cleanup",
-    `|  +- Expired entries pruned: ${stats.expiredCount}`,
-    `|  +- Near-exact duplicates merged: ${stats.mergedCount}`,
-    `|  +- Orphaned relations cleaned: ${stats.orphanedRelationsCleaned}`,
+    "|  Phase 0: Rule-Based Cleanup",
+    `|  +- Expired entries pruned: ${formatNumber(stats.expiredCount)}`,
+    `|  +- Near-exact duplicates merged: ${formatNumber(stats.mergedCount)}`,
+    `|  +- Orphaned relations cleaned: ${formatNumber(stats.orphanedRelationsCleaned)}`,
+    "|",
+    "|  Phase 1: Type-Scoped Consolidation",
+    `|  +- Clusters processed: ${formatNumber(stats.phase1.totals.clustersProcessed)} / ${formatNumber(stats.phase1.totals.clustersFound)}`,
+    `|  +- Clusters merged: ${formatNumber(stats.phase1.totals.clustersMerged)}`,
+    `|  +- Flagged for review: ${formatNumber(stats.phase1.totals.mergesFlagged)}`,
+    `|  +- LLM calls: ${formatNumber(stats.phase1.totals.llmCalls)}`,
   ];
+
+  for (const typeStats of stats.phase1.types) {
+    lines.push(
+      `|     * ${typeStats.type}: ${formatNumber(typeStats.clustersProcessed)}/${formatNumber(typeStats.clustersFound)} clusters processed`,
+    );
+  }
 
   if (stats.phase2) {
     lines.push(
       "|",
-      "|  Phase 2: LLM-Assisted Consolidation",
-      `|  +- Clusters found: ${stats.phase2.clustersFound}`,
-      `|  +- Clusters merged: ${stats.phase2.clustersMerged}`,
-      `|  +- Entries consolidated: ${stats.phase2.entriesConsolidatedFrom} -> ${stats.phase2.canonicalEntriesCreated} canonical entries`,
-      `|  +- Merges flagged for review: ${stats.phase2.mergesFlagged}`,
-      `|  +- LLM calls: ${stats.phase2.llmCalls}`,
+      "|  Phase 2: Cross-Subject Catch-All",
+      `|  +- Clusters processed: ${formatNumber(stats.phase2.clustersProcessed)} / ${formatNumber(stats.phase2.clustersFound)}`,
+      `|  +- Clusters merged: ${formatNumber(stats.phase2.clustersMerged)}`,
+      `|  +- Flagged for review: ${formatNumber(stats.phase2.mergesFlagged)}`,
+      `|  +- LLM calls: ${formatNumber(stats.phase2.llmCalls)}`,
     );
   }
 
   lines.push(
     "|",
     "|  Summary",
-    `|  +- Before: ${stats.entriesBefore} active entries`,
-    `|  +- After:  ${stats.entriesAfter} active entries`,
+    `|  +- Before: ${formatNumber(stats.entriesBefore)} active entries`,
+    `|  +- After rules: ${formatNumber(stats.entriesAfterRules)} active entries`,
+    `|  +- Final: ${formatNumber(stats.entriesAfter)} active entries`,
+    `|  +- Clusters estimated: ${formatNumber(stats.estimate.totalClusters)}`,
+    `|  +- Clusters processed this run: ${formatNumber(stats.progress.processedClusters)}`,
+    stats.progress.partial
+      ? `|  +- Status: partial (remaining ${formatNumber(stats.progress.remainingClusters)} clusters)`
+      : "|  +- Status: completed",
+    `|  +- Consolidated ${formatNumber(stats.entriesBefore)} -> ${formatNumber(stats.entriesAfter)} entries (${formatNumber(stats.summary.totalCanonicalEntriesCreated)} canonical entries created, ${formatNumber(stats.expiredCount)} expirations)`,
     "|",
     "+--  Done",
   );
@@ -97,19 +121,44 @@ function renderTextReport(stats: ConsolidateReport, dryRun: boolean): string {
   return lines.join("\n");
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function createLogger(jsonMode: boolean): ConsolidateLogger {
+  const useClack = process.stderr.isTTY && !jsonMode;
+  if (!useClack) {
+    return {
+      info: (message: string) => process.stderr.write(`${message}\n`),
+      warn: (message: string) => process.stderr.write(`${message}\n`),
+    };
+  }
+
+  const clackOutput = { output: process.stderr };
+  return {
+    info: (message: string) => clack.log.info(message, clackOutput),
+    warn: (message: string) => clack.log.warn(message, clackOutput),
+  };
 }
 
 export async function runConsolidateCommand(
   options: ConsolidateCommandOptions,
+  deps: Partial<ConsolidateCommandDeps> = {},
 ): Promise<{ exitCode: number }> {
+  const resolvedDeps: ConsolidateCommandDeps = {
+    readConfigFn: deps.readConfigFn ?? readConfig,
+    getDbFn: deps.getDbFn ?? getDb,
+    closeDbFn: deps.closeDbFn ?? closeDb,
+    runMigrationsFn: deps.runMigrationsFn ?? runMigrations,
+    createLlmClientFn: deps.createLlmClientFn ?? createLlmClient,
+    resolveEmbeddingApiKeyFn: deps.resolveEmbeddingApiKeyFn ?? resolveEmbeddingApiKey,
+    showFlaggedMergesFn: deps.showFlaggedMergesFn ?? showFlaggedMerges,
+    runConsolidationOrchestratorFn: deps.runConsolidationOrchestratorFn ?? runConsolidationOrchestrator,
+  };
+
   if (options.showFlagged) {
-    await showFlaggedMerges();
+    await resolvedDeps.showFlaggedMergesFn();
     return { exitCode: 0 };
   }
 
-  const config = readConfig(process.env);
+  const logger = createLogger(options.json === true);
+  const config = resolvedDeps.readConfigFn(process.env);
   const configuredPath = options.db?.trim() || config?.db?.path || DEFAULT_DB_PATH;
   const dbFilePath = resolveDbFilePath(configuredPath);
 
@@ -117,95 +166,37 @@ export async function runConsolidateCommand(
     throw new Error("Consolidation requires a file-backed database so a backup can be created.");
   }
 
-  const db = getDb(configuredPath);
-  const clackOutput = { output: process.stderr };
+  const db = resolvedDeps.getDbFn(configuredPath);
 
   try {
-    await runMigrations(db);
+    await resolvedDeps.runMigrationsFn(db);
 
-    acquireLock();
-    try {
-      const report: ConsolidateReport = await consolidateRules(db, dbFilePath, {
-        dryRun: options.dryRun,
-        verbose: options.verbose,
-        onLog: options.verbose ? (message) => clack.log.info(message, clackOutput) : undefined,
-      });
+    const llmClient = options.rulesOnly ? undefined : resolvedDeps.createLlmClientFn({ env: process.env });
+    const embeddingApiKey = options.rulesOnly ? undefined : resolvedDeps.resolveEmbeddingApiKeyFn(config, process.env);
 
-      if (!options.rulesOnly) {
-        const llmClient = createLlmClient({ env: process.env });
-        const embeddingApiKey = resolveEmbeddingApiKey(config, process.env);
+    const report = await resolvedDeps.runConsolidationOrchestratorFn(db, dbFilePath, llmClient, embeddingApiKey, {
+      rulesOnly: options.rulesOnly,
+      dryRun: options.dryRun,
+      verbose: options.verbose,
+      minCluster: options.minCluster,
+      simThreshold: options.simThreshold,
+      maxClusterSize: options.maxClusterSize,
+      type: options.type,
+      idempotencyDays: options.idempotencyDays,
+      batch: options.batch,
+      resume: options.resume,
+      onLog: (message) => logger.info(message),
+      onWarn: (message) => logger.warn(formatWarn(message)),
+    });
 
-        const clusters = await buildClusters(db, {
-          simThreshold: options.simThreshold,
-          minCluster: options.minCluster,
-          typeFilter: options.type,
-          idempotencyDays: options.idempotencyDays,
-          verbose: options.verbose,
-          onLog: options.verbose ? (message) => clack.log.info(message, clackOutput) : undefined,
-        });
-
-        const phase2: Phase2Stats = {
-          clustersFound: clusters.length,
-          clustersMerged: 0,
-          mergesFlagged: 0,
-          llmCalls: 0,
-          entriesConsolidatedFrom: 0,
-          canonicalEntriesCreated: 0,
-        };
-
-        for (const cluster of clusters) {
-          phase2.llmCalls += 1;
-          const outcome = await mergeCluster(db, cluster, llmClient, embeddingApiKey, {
-            dryRun: options.dryRun,
-            verbose: options.verbose,
-            onLog: options.verbose ? (message) => clack.log.info(message, clackOutput) : undefined,
-          });
-
-          if (outcome.flagged) {
-            phase2.mergesFlagged += 1;
-            continue;
-          }
-
-          phase2.clustersMerged += 1;
-          phase2.entriesConsolidatedFrom += cluster.entries.length;
-          phase2.canonicalEntriesCreated += 1;
-        }
-
-        report.phase2 = phase2;
-
-        if (!options.dryRun) {
-          try {
-            await rebuildVectorIndex(db, {
-              onLog: options.verbose ? (message) => clack.log.info(message, clackOutput) : undefined,
-            });
-          } catch (error) {
-            clack.log.warn(
-              formatWarn(`Vector index rebuild failed: ${errorMessage(error)}`),
-              clackOutput,
-            );
-          }
-        }
-      }
-
-      if (!options.dryRun) {
-        try {
-          await walCheckpoint(db);
-        } catch (error) {
-          clack.log.warn(formatWarn(`WAL checkpoint failed: ${errorMessage(error)}`), clackOutput);
-        }
-      }
-
-      if (options.json) {
-        process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-        return { exitCode: 0 };
-      }
-
-      clack.log.info(renderTextReport(report, options.dryRun === true), clackOutput);
+    if (options.json) {
+      process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
       return { exitCode: 0 };
-    } finally {
-      releaseLock();
     }
+
+    logger.info(renderTextReport(report, options.dryRun === true));
+    return { exitCode: 0 };
   } finally {
-    closeDb(db);
+    resolvedDeps.closeDbFn(db);
   }
 }

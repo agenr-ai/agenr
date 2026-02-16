@@ -265,7 +265,7 @@ describe("consolidate rules", () => {
 
     const sourceRows = await client.execute({
       sql: `
-        SELECT source_entry_id, original_confirmations, original_recall_count
+        SELECT source_entry_id, original_confirmations, original_recall_count, original_created_at
         FROM entry_sources
         WHERE merged_entry_id = ?
         ORDER BY source_entry_id ASC
@@ -279,6 +279,7 @@ describe("consolidate rules", () => {
         {
           confirmations: asNumber(row.original_confirmations),
           recallCount: asNumber(row.original_recall_count),
+          createdAt: asString(row.original_created_at),
         },
       ]),
     );
@@ -286,6 +287,8 @@ describe("consolidate rules", () => {
     expect(byId.get(id3)?.confirmations).toBe(0);
     expect(byId.get(id1)?.recallCount).toBe(0);
     expect(byId.get(id3)?.recallCount).toBe(0);
+    expect((byId.get(id1)?.createdAt ?? "").length).toBeGreaterThan(0);
+    expect((byId.get(id3)?.createdAt ?? "").length).toBeGreaterThan(0);
 
     const supersedesRelations = await client.execute({
       sql: "SELECT source_id, target_id FROM relations WHERE relation_type = 'supersedes' ORDER BY target_id ASC",

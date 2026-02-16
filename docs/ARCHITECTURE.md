@@ -107,6 +107,7 @@ Primary tables:
 - `relations`: inter-entry links (`supersedes`, `contradicts`, `elaborates`, `related`).
 - `ingest_log`: ingest idempotency and run history.
 - `entry_sources`: provenance snapshots for merged entries.
+- `entry_sources` columns include `original_confirmations`, `original_recall_count`, and `original_created_at`.
 
 Search/index objects:
 - Vector index: `idx_entries_embedding` using `libsql_vector_idx(... metric=cosine (standard similarity metric for text embeddings) ...)`.
@@ -116,6 +117,7 @@ Migrations:
 - V1: core tables + indexes + FTS.
 - V2: content-hash dedup columns/index.
 - V3: consolidation lineage columns (`merged_from`, `consolidated_at`) and `entry_sources`.
+- V4: adds `entry_sources.original_created_at` with backfill from source entry `created_at`.
 
 ## Entry Model
 

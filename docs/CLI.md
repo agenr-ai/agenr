@@ -223,11 +223,14 @@ agenr consolidate [options]
 ### Options
 - `--rules-only`: run only Tier 1 rule cleanup.
 - `--dry-run`: report actions without writing.
-- `--min-cluster <n>`: min cluster size for Tier 2 merge (default `3`).
-- `--sim-threshold <n>`: clustering threshold (default `0.85`).
+- `--min-cluster <n>`: min cluster size for LLM phases (default `2`).
+- `--sim-threshold <n>`: Phase 1 clustering threshold (default `0.82`). Phase 2 uses `max(value, 0.88)`.
+- `--max-cluster-size <n>`: max cluster size for LLM phases. Defaults: Phase 1 `8`, Phase 2 `6`.
 - `--type <type>`: restrict consolidation to one entry type.
 - `--show-flagged`: print flagged merges from review queue.
 - `--idempotency-days <n>`: skip recently consolidated merged entries (default `7`).
+- `--batch <n>`: process `n` clusters this run, then stop and save checkpoint.
+- `--no-resume`: ignore existing checkpoint and start fresh.
 - `--verbose`: detailed decisions.
 - `--json`: output JSON report.
 - `--db <path>`: database path override.

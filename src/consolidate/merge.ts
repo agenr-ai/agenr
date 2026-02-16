@@ -79,7 +79,18 @@ function truncateContent(value: string, maxChars?: number): string {
 }
 
 function formatClusterEntries(cluster: Cluster, contentLimit?: number): string {
-  return cluster.entries
+  const sortedEntries = [...cluster.entries].sort((a, b) => {
+    const createdA = Date.parse(a.createdAt);
+    const createdB = Date.parse(b.createdAt);
+    const safeA = Number.isFinite(createdA) ? createdA : Number.POSITIVE_INFINITY;
+    const safeB = Number.isFinite(createdB) ? createdB : Number.POSITIVE_INFINITY;
+    if (safeA !== safeB) {
+      return safeA - safeB;
+    }
+    return a.id.localeCompare(b.id);
+  });
+
+  return sortedEntries
     .map((entry, index) => {
       const content = truncateContent(entry.content, contentLimit);
       return [
@@ -364,11 +375,12 @@ export async function mergeCluster(
             merged_entry_id,
             source_entry_id,
             original_confirmations,
-            original_recall_count
+            original_recall_count,
+            original_created_at
           )
-          VALUES (?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?)
         `,
-        args: [mergedEntryId, source.id, source.confirmations, source.recallCount],
+        args: [mergedEntryId, source.id, source.confirmations, source.recallCount, source.createdAt],
       });
 
       await db.execute({

@@ -69,11 +69,31 @@ Sources:
 
 - Union-find based clustering over active embedded entries.
 - Default thresholds:
-- same-type threshold: `0.85` (`DEFAULT_SIMILARITY_THRESHOLD`)
+- same-type threshold: `0.82` (`DEFAULT_SIMILARITY_THRESHOLD`)
 - cross-type same-subject threshold: `0.89` (`CROSS_TYPE_SUBJECT_THRESHOLD`)
+- minimum cluster size: `2` (`DEFAULT_MIN_CLUSTER`)
 - max entries per validated cluster: `12` (`DEFAULT_MAX_CLUSTER_SIZE`)
 - Additional idempotency guard:
 - skips recently consolidated merged entries for `7` days by default (`DEFAULT_IDEMPOTENCY_DAYS`)
+
+### Orchestration
+
+`agenr consolidate` runs in phases:
+- Phase 0: rules-based cleanup (`consolidateRules`) with backup rotation.
+- Phase 1: type-scoped LLM consolidation in this fixed order:
+- `fact`, `decision`, `preference`, `lesson`, `event`, `todo`, `relationship`
+- Phase 2: cross-subject catch-all clustering (no type filter) with tighter threshold `0.88`.
+
+Phase defaults:
+- Phase 1 max cluster size: `8`
+- Phase 2 max cluster size: `6`
+
+If `--type` is provided:
+- only that type is processed in Phase 1
+- Phase 2 is skipped
+
+If `--rules-only` is provided:
+- only Phase 0 runs
 
 ### Merging
 
@@ -109,6 +129,7 @@ No source content is hard-deleted by Tier 2 merge.
 Source snapshot data is stored in `entry_sources`:
 - `original_confirmations`
 - `original_recall_count`
+- `original_created_at`
 
 This allows rollback/audit logic to reconstruct original support metrics for merged entries.
 
@@ -131,9 +152,26 @@ pnpm exec agenr consolidate --show-flagged
 Useful advanced flags:
 - `--min-cluster <n>`
 - `--sim-threshold <n>`
+- `--max-cluster-size <n>`
 - `--type <type>`
 - `--idempotency-days <n>`
+- `--batch <n>`
+- `--no-resume`
 - `--json`
+
+## Checkpoint and Resume
+
+Long-running consolidation is resumable:
+- checkpoint file: `~/.agenr/consolidation-checkpoint.json`
+- default behavior: auto-resume when checkpoint signatures match current db/options
+- `--no-resume`: discard checkpoint and start fresh
+- `--batch <n>`: process `n` clusters, persist checkpoint, and exit partial
+
+Checkpoint base fields include:
+- `phase`
+- `typeIndex`
+- `clusterIndex`
+- `startedAt`
 
 ## Calibration Data
 

@@ -82,6 +82,8 @@ describe("db schema migrations", () => {
 
     expect(countsByVersion.get(1)).toBe(1);
     expect(countsByVersion.get(2)).toBe(1);
+    expect(countsByVersion.get(3)).toBe(1);
+    expect(countsByVersion.get(4)).toBe(1);
   });
 
   it("tracks migration version and applied timestamp", async () => {
@@ -89,10 +91,10 @@ describe("db schema migrations", () => {
     await initDb(client);
 
     const migrationResult = await client.execute("SELECT version, applied_at FROM _migrations ORDER BY version ASC");
-    expect(migrationResult.rows.length).toBe(3);
+    expect(migrationResult.rows.length).toBe(4);
 
     for (const row of migrationResult.rows as Array<{ version?: unknown; applied_at?: unknown }>) {
-      expect([1, 2, 3]).toContain(asNumber(row.version));
+      expect([1, 2, 3, 4]).toContain(asNumber(row.version));
       expect(typeof row.applied_at).toBe("string");
       expect(Number.isNaN(Date.parse(String(row.applied_at)))).toBe(false);
     }

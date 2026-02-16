@@ -237,13 +237,14 @@ describe("consolidate merge", () => {
     expect(asNumber(merged.rows[0]?.recall_count)).toBe(12);
 
     const entrySources = await db.execute({
-      sql: "SELECT source_entry_id, original_confirmations, original_recall_count FROM entry_sources WHERE merged_entry_id = ? ORDER BY source_entry_id ASC",
+      sql: "SELECT source_entry_id, original_confirmations, original_recall_count, original_created_at FROM entry_sources WHERE merged_entry_id = ? ORDER BY source_entry_id ASC",
       args: [outcome.mergedEntryId],
     });
 
     expect(entrySources.rows).toHaveLength(2);
     expect(entrySources.rows.map((row) => asNumber(row.original_confirmations)).sort()).toEqual([2, 3]);
     expect(entrySources.rows.map((row) => asNumber(row.original_recall_count)).sort()).toEqual([5, 7]);
+    expect(entrySources.rows.every((row) => String(row.original_created_at ?? "").length > 0)).toBe(true);
 
     const superseded = await db.execute({
       sql: "SELECT id, superseded_by FROM entries WHERE id IN (?, ?) ORDER BY id ASC",
@@ -282,6 +283,48 @@ describe("consolidate merge", () => {
     const payload = String((call?.[1] as { messages?: Array<{ content?: string }> } | undefined)?.messages?.[0]?.content ?? "");
     expect(payload.includes("x".repeat(801))).toBe(false);
     expect(payload.includes("x".repeat(800))).toBe(true);
+  });
+
+  it("orders merge prompt entries by created_at ascending", async () => {
+    const db = await makeDb();
+    const cluster: Cluster = {
+      entries: [
+        {
+          id: "entry-new",
+          type: "fact",
+          subject: "Temporal Subject",
+          content: "new",
+          importance: 6,
+          embedding: vector(0),
+          confirmations: 1,
+          recallCount: 1,
+          createdAt: "2026-02-15T00:00:00.000Z",
+        },
+        {
+          id: "entry-old",
+          type: "fact",
+          subject: "Temporal Subject",
+          content: "old",
+          importance: 6,
+          embedding: vector(0),
+          confirmations: 1,
+          recallCount: 1,
+          createdAt: "2026-02-10T00:00:00.000Z",
+        },
+      ],
+    };
+
+    await mergeCluster(db, cluster, makeLlmClient(), "embed-key", { dryRun: true });
+
+    const call = runSimpleStreamMock.mock.calls[0];
+    const payload = String(
+      (call?.[1] as { messages?: Array<{ content?: string }> } | undefined)?.messages?.[0]?.content ?? "",
+    );
+    const oldIndex = payload.indexOf("- id: entry-old");
+    const newIndex = payload.indexOf("- id: entry-new");
+    expect(oldIndex).toBeGreaterThanOrEqual(0);
+    expect(newIndex).toBeGreaterThanOrEqual(0);
+    expect(oldIndex).toBeLessThan(newIndex);
   });
 
   it("dry-run performs no database writes", async () => {

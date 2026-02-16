@@ -28,6 +28,7 @@ export interface ConsolidateRulesOptions {
   dryRun?: boolean;
   verbose?: boolean;
   onLog?: (message: string) => void;
+  rebuildIndex?: boolean;
 }
 
 function toNumber(value: InValue | undefined): number {
@@ -305,11 +306,12 @@ async function mergeNearExactDuplicates(
             merged_entry_id,
             source_entry_id,
             original_confirmations,
-            original_recall_count
+            original_recall_count,
+            original_created_at
           )
-          VALUES (?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?)
         `,
-        args: [keeper.id, source.id, source.confirmations, source.recallCount],
+        args: [keeper.id, source.id, source.confirmations, source.recallCount, source.createdAt],
       });
 
       await db.execute({
@@ -409,6 +411,7 @@ export async function consolidateRules(
 ): Promise<ConsolidationStats> {
   const dryRun = options.dryRun === true;
   const verbose = options.verbose === true;
+  const rebuildIndex = options.rebuildIndex !== false;
   const onLog = options.onLog ?? (() => undefined);
   const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, "-");
   const backupPath = `${dbPath}.pre-consolidate-${timestamp}`;
@@ -457,7 +460,7 @@ export async function consolidateRules(
     }
   }
 
-  if (!dryRun) {
+  if (!dryRun && rebuildIndex) {
     // Rebuild vector index to prevent corruption from bulk mutations.
     try {
       await rebuildVectorIndex(db, { onLog });
