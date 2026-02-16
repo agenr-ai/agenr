@@ -36,17 +36,15 @@ afterEach(async () => {
   }
   tempDirs.length = 0;
   vi.restoreAllMocks();
-  vi.resetModules();
 });
 
 describe("watch command", () => {
   it("wires CLI options into runWatchCommand", async () => {
-    const runWatchCommandMock = vi.fn(async (..._args: unknown[]) => ({ exitCode: 0 }));
-    vi.doMock("../../src/commands/watch.js", () => ({
-      runWatchCommand: runWatchCommandMock,
-    }));
     const { createProgram } = await import("../../src/cli.js");
     const program = createProgram();
+    const watchCommand = program.commands.find((command) => command.name() === "watch");
+    const runWatchCommandMock = vi.fn(async (..._args: unknown[]) => undefined);
+    watchCommand?.action(runWatchCommandMock as (...args: unknown[]) => unknown);
 
     await program.parseAsync([
       "node",

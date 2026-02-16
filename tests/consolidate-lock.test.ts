@@ -6,11 +6,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 describe("consolidate lock", () => {
   const originalEnv = { ...process.env };
   const tempDirs: string[] = [];
+  const resetModules = () => {
+    if (typeof vi.resetModules === "function") {
+      vi.resetModules();
+    }
+  };
 
   afterEach(async () => {
     process.env = { ...originalEnv };
     vi.restoreAllMocks();
-    vi.resetModules();
+    resetModules();
     for (const dir of tempDirs) {
       await fs.rm(dir, { recursive: true, force: true });
     }
@@ -22,7 +27,7 @@ describe("consolidate lock", () => {
     tempDirs.push(home);
     process.env.HOME = home;
     process.env.USERPROFILE = home;
-    vi.resetModules();
+    resetModules();
     return import("../src/consolidate/lock.js");
   }
 

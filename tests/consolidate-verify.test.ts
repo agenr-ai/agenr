@@ -12,6 +12,11 @@ function vector(head: [number, number, number]): number[] {
 describe("consolidate verify", () => {
   const originalEnv = { ...process.env };
   const tempDirs: string[] = [];
+  const resetModules = () => {
+    if (typeof vi.resetModules === "function") {
+      vi.resetModules();
+    }
+  };
 
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -19,7 +24,7 @@ describe("consolidate verify", () => {
 
   afterEach(async () => {
     process.env = { ...originalEnv };
-    vi.resetModules();
+    resetModules();
     for (const dir of tempDirs) {
       await fs.rm(dir, { recursive: true, force: true });
     }
@@ -31,7 +36,7 @@ describe("consolidate verify", () => {
     tempDirs.push(home);
     process.env.HOME = home;
     process.env.USERPROFILE = home;
-    vi.resetModules();
+    resetModules();
     return import("../src/consolidate/verify.js");
   }
 

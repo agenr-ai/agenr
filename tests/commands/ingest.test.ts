@@ -92,18 +92,15 @@ afterEach(async () => {
   }
   tempDirs.length = 0;
   vi.restoreAllMocks();
-  vi.resetModules();
 });
 
 describe("ingest command", () => {
   it("wires CLI options into runIngestCommand", async () => {
-    const runIngestCommandMock = vi.fn(async (..._args: unknown[]) => ({ exitCode: 0 }));
-    vi.doMock("../../src/commands/ingest.js", () => ({
-      runIngestCommand: runIngestCommandMock,
-    }));
-
     const { createProgram } = await import("../../src/cli.js");
     const program = createProgram();
+    const ingestCommand = program.commands.find((command) => command.name() === "ingest");
+    const runIngestCommandMock = vi.fn(async (..._args: unknown[]) => undefined);
+    ingestCommand?.action(runIngestCommandMock as (...args: unknown[]) => unknown);
 
     await program.parseAsync([
       "node",

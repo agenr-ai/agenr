@@ -1,3 +1,4 @@
+import { registerApiProvider, unregisterApiProviders } from "@mariozechner/pi-ai";
 import { createClient, type Client } from "@libsql/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { extractMergeResultFromToolCall, mergeCluster } from "../src/consolidate/merge.js";
@@ -6,20 +7,9 @@ import { hashText, insertEntry } from "../src/db/store.js";
 import type { Cluster } from "../src/consolidate/cluster.js";
 import type { KnowledgeEntry, LlmClient } from "../src/types.js";
 
-const runSimpleStreamMock = vi.hoisted(() => vi.fn());
-const embedMock = vi.hoisted(() => vi.fn());
-
-vi.mock("../src/llm/stream.js", () => ({
-  runSimpleStream: runSimpleStreamMock,
-}));
-
-vi.mock("../src/embeddings/client.js", async () => {
-  const actual = await vi.importActual<typeof import("../src/embeddings/client.js")>("../src/embeddings/client.js");
-  return {
-    ...actual,
-    embed: embedMock,
-  };
-});
+const MERGE_API = "merge-test-api";
+const MERGE_PROVIDER_SOURCE = "merge-test-provider";
+const runSimpleStreamMock = vi.fn();
 
 function asNumber(value: unknown): number {
   if (typeof value === "number") {
@@ -62,7 +52,14 @@ function makeLlmClient(): LlmClient {
     resolvedModel: {
       provider: "openai",
       modelId: "gpt-4o",
-      model: {} as any,
+      model: {
+        api: MERGE_API,
+        provider: "openai",
+        id: "gpt-4o",
+        maxTokens: 8192,
+        reasoning: false,
+        input: ["text"],
+      } as any,
     },
     credentials: {
       apiKey: "llm-key",
@@ -94,9 +91,11 @@ function makeToolCallMessage(args: Record<string, unknown>) {
 
 describe("consolidate merge", () => {
   const clients: Client[] = [];
+  let embeddingResult = vector(0);
 
   beforeEach(() => {
     vi.clearAllMocks();
+    embeddingResult = vector(0);
     runSimpleStreamMock.mockResolvedValue({
       stopReason: "stop",
       content: [
@@ -115,10 +114,53 @@ describe("consolidate merge", () => {
         },
       ],
     });
-    embedMock.mockResolvedValue([vector(0)]);
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const rawBody = typeof init?.body === "string" ? init.body : "{}";
+      const parsed = JSON.parse(rawBody) as { input?: unknown[] };
+      const inputs = Array.isArray(parsed.input) ? parsed.input : [];
+      return new Response(
+        JSON.stringify({
+          data: inputs.map((_, index) => ({
+            index,
+            embedding: embeddingResult,
+          })),
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    });
+
+    unregisterApiProviders(MERGE_PROVIDER_SOURCE);
+    registerApiProvider(
+      {
+        api: MERGE_API as any,
+        stream: ((model: unknown, context: unknown, options: unknown) => {
+          const resultPromise = Promise.resolve(runSimpleStreamMock(model, context, options));
+          return {
+            async *[Symbol.asyncIterator]() {},
+            result: async () => resultPromise,
+          };
+        }) as any,
+        streamSimple: ((model: unknown, context: unknown, options: unknown) => {
+          const resultPromise = Promise.resolve(runSimpleStreamMock(model, context, options));
+          return {
+            async *[Symbol.asyncIterator]() {},
+            result: async () => resultPromise,
+          };
+        }) as any,
+      },
+      MERGE_PROVIDER_SOURCE,
+    );
   });
 
   afterEach(() => {
+    unregisterApiProviders(MERGE_PROVIDER_SOURCE);
+    vi.restoreAllMocks();
     while (clients.length > 0) {
       clients.pop()?.close();
     }
@@ -236,8 +278,8 @@ describe("consolidate merge", () => {
 
     await mergeCluster(db, cluster, makeLlmClient(), "embed-key", { dryRun: true });
 
-    const call = runSimpleStreamMock.mock.calls[0]?.[0];
-    const payload = String(call?.context?.messages?.[0]?.content ?? "");
+    const call = runSimpleStreamMock.mock.calls[0];
+    const payload = String((call?.[1] as { messages?: Array<{ content?: string }> } | undefined)?.messages?.[0]?.content ?? "");
     expect(payload.includes("x".repeat(801))).toBe(false);
     expect(payload.includes("x".repeat(800))).toBe(true);
   });
