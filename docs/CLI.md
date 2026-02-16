@@ -150,10 +150,13 @@ $A recall "which package manager did we choose?" --limit 3
 ### Syntax
 
 ```bash
-agenr watch [options] <file>
+agenr watch [file] [options]
 ```
 
 ### Options
+- `--dir <path>`: watch a sessions directory and auto-follow active session file.
+- `--platform <name>`: resolver selection (`openclaw|claude-code|codex|mtime`).
+- `--auto`: discover supported platform roots and follow the globally most-recent session.
 - `--interval <seconds>`: polling interval (default `300`).
 - `--min-chunk <chars>`: min appended chars before extract (default `2000`).
 - `--db <path>`: database path override.
@@ -164,7 +167,12 @@ agenr watch [options] <file>
 - `--once`: run one cycle and exit.
 - `--json`: output per-cycle JSON.
 
-Watch mode always runs online dedup during store.
+Pick exactly one mode:
+- file mode: `agenr watch <file>`
+- directory mode: `agenr watch --dir <path> [--platform ...]`
+- auto mode: `agenr watch --auto`
+
+Watch mode runs online dedup during store.
 
 ### Example
 
@@ -172,11 +180,47 @@ Watch mode always runs online dedup during store.
 $A watch ./session.txt --interval 60 --min-chunk 500 --once
 ```
 
+```bash
+$A watch --dir ~/.openclaw/agents/main/sessions --platform openclaw
+```
+
+```bash
+$A watch --auto --interval 120
+```
+
 ### Example Output
 
 ```text
-[18:00:00] Cycle 1: +87 bytes | 1 entries extracted | 1 stored, 0 deduped
+[18:00:00] Cycle 1: +87 bytes | 1 entries extracted | 1 stored, 0 deduped | file=/abs/path/session.jsonl
 Summary: 1 cycles | 1 entries stored | watched for 0s
+```
+
+## `daemon`
+
+### Syntax
+
+```bash
+agenr daemon <subcommand> [options]
+```
+
+### Subcommands
+- `install`: install + start watch daemon via launchd (macOS only).
+  - `--force`: overwrite existing plist.
+  - `--interval <seconds>`: watch interval (default `120`).
+- `uninstall`: stop + remove daemon plist.
+  - `--yes`: skip uninstall confirmation prompt.
+- `status`: show loaded/running status, current watched file, recent logs.
+  - `--lines <n>`: log lines to include (default `20`).
+- `logs`: print/follow daemon log output.
+  - `--lines <n>`: line count (default `100`).
+  - `--follow`: follow continuously (`tail -f` behavior).
+
+### Example
+
+```bash
+$A daemon install --force
+$A daemon status
+$A daemon logs --lines 50
 ```
 
 ## `ingest`

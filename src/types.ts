@@ -263,6 +263,9 @@ export interface WatchOptions {
   db?: string;
   model?: string;
   provider?: string;
+  dir?: string;
+  platform?: string;
+  auto?: boolean;
   onlineDedup?: boolean;
   verbose?: boolean;
   dryRun?: boolean;

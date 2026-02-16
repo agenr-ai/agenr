@@ -13,6 +13,12 @@ import {
   runDbResetCommand,
   runDbStatsCommand,
 } from "./commands/db.js";
+import {
+  runDaemonInstallCommand,
+  runDaemonLogsCommand,
+  runDaemonStatusCommand,
+  runDaemonUninstallCommand,
+} from "./commands/daemon.js";
 import { runConsolidateCommand } from "./commands/consolidate.js";
 import { runIngestCommand } from "./commands/ingest.js";
 import { runMcpCommand } from "./commands/mcp.js";
@@ -30,6 +36,7 @@ import { runSetup } from "./setup.js";
 import { banner, formatError, formatLabel, formatSuccess, formatWarn, ui } from "./ui.js";
 import type { ExtractionReport, ExtractionStats } from "./types.js";
 import type { ConsolidateCommandOptions } from "./commands/consolidate.js";
+import type { DaemonInstallOptions, DaemonLogsOptions, DaemonStatusOptions, DaemonUninstallOptions } from "./commands/daemon.js";
 import type { IngestCommandOptions } from "./commands/ingest.js";
 import type { WatchCommandOptions } from "./commands/watch.js";
 
@@ -449,7 +456,10 @@ export function createProgram(): Command {
   program
     .command("watch")
     .description("Watch a transcript file and auto-extract knowledge as it grows")
-    .argument("<file>", "Transcript file to watch (.jsonl, .md, .txt)")
+    .argument("[file]", "Transcript file to watch (.jsonl, .md, .txt)")
+    .option("--dir <path>", "Sessions directory to watch (resolver picks active file)")
+    .option("--platform <name>", "Session platform: openclaw, claude-code, codex, mtime")
+    .option("--auto", "Auto-detect installed platforms and watch the globally most active session", false)
     .option("--interval <seconds>", "Polling interval in seconds", "300")
     .option("--min-chunk <chars>", "Minimum new chars before extraction", "2000")
     .option("--db <path>", "Database path override")
@@ -459,7 +469,7 @@ export function createProgram(): Command {
     .option("--dry-run", "Extract without storing", false)
     .option("--once", "Run one cycle and exit", false)
     .option("--json", "Output JSON results", false)
-    .action(async (file: string, opts: WatchCommandOptions) => {
+    .action(async (file: string | undefined, opts: WatchCommandOptions) => {
       const result = await runWatchCommand(file, opts);
       process.exitCode = result.exitCode;
     });
@@ -521,6 +531,46 @@ export function createProgram(): Command {
     .option("--verbose", "Log requests to stderr", false)
     .action(async (opts: { db?: string; verbose?: boolean }) => {
       await runMcpCommand(opts);
+    });
+
+  const daemonCommand = program.command("daemon").description("Manage the agenr watch daemon");
+
+  daemonCommand
+    .command("install")
+    .description("Install and start the watch daemon (macOS launchd)")
+    .option("--force", "Overwrite existing launchd plist", false)
+    .option("--interval <seconds>", "Watch interval for daemon mode", "120")
+    .action(async (opts: DaemonInstallOptions) => {
+      const result = await runDaemonInstallCommand(opts);
+      process.exitCode = result.exitCode;
+    });
+
+  daemonCommand
+    .command("uninstall")
+    .description("Stop and remove the watch daemon")
+    .option("--yes", "Skip confirmation prompt", false)
+    .action(async (opts: DaemonUninstallOptions) => {
+      const result = await runDaemonUninstallCommand(opts);
+      process.exitCode = result.exitCode;
+    });
+
+  daemonCommand
+    .command("status")
+    .description("Show daemon status and recent logs")
+    .option("--lines <n>", "Number of log lines to include", "20")
+    .action(async (opts: DaemonStatusOptions) => {
+      const result = await runDaemonStatusCommand(opts);
+      process.exitCode = result.exitCode;
+    });
+
+  daemonCommand
+    .command("logs")
+    .description("Show or follow daemon logs")
+    .option("--lines <n>", "Number of log lines", "100")
+    .option("--follow", "Follow logs continuously", false)
+    .action(async (opts: DaemonLogsOptions) => {
+      const result = await runDaemonLogsCommand(opts);
+      process.exitCode = result.exitCode;
     });
 
   const dbCommand = program.command("db").description("Manage the local knowledge database");
