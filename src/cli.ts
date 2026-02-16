@@ -7,7 +7,9 @@ import { Command } from "commander";
 import { formatAuthSummary, getAuthStatus, getQuickStatus } from "./auth-status.js";
 import {
   runDbExportCommand,
+  runDbCheckCommand,
   runDbPathCommand,
+  runDbRebuildIndexCommand,
   runDbResetCommand,
   runDbStatsCommand,
 } from "./commands/db.js";
@@ -546,6 +548,24 @@ export function createProgram(): Command {
     .action(async (opts: { db?: string }) => {
       await runDbPathCommand({ db: opts.db });
       process.exitCode = 0;
+    });
+
+  dbCommand
+    .command("check")
+    .description("Run database integrity checks (including vector index)")
+    .option("--db <path>", "Database path override")
+    .action(async (opts: { db?: string }) => {
+      const result = await runDbCheckCommand({ db: opts.db });
+      process.exitCode = result.exitCode;
+    });
+
+  dbCommand
+    .command("rebuild-index")
+    .description("Drop and recreate the vector index")
+    .option("--db <path>", "Database path override")
+    .action(async (opts: { db?: string }) => {
+      const result = await runDbRebuildIndexCommand({ db: opts.db });
+      process.exitCode = result.exitCode;
     });
 
   program
