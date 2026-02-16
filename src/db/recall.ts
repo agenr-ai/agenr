@@ -407,7 +407,7 @@ async function fetchVectorCandidates(db: Client, queryEmbedding: number[], limit
         e.contradictions,
         e.superseded_by
       FROM vector_top_k('idx_entries_embedding', vector32(?), ?) AS v
-      JOIN entries AS e ON e.rowid = v.id
+      CROSS JOIN entries AS e ON e.rowid = v.id
       WHERE e.embedding IS NOT NULL
         AND e.superseded_by IS NULL
     `,

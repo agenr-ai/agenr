@@ -511,7 +511,7 @@ export async function findSimilar(
         e.contradictions,
         e.superseded_by
       FROM vector_top_k('idx_entries_embedding', vector32(?), ?) AS v
-      JOIN entries AS e ON e.rowid = v.id
+      CROSS JOIN entries AS e ON e.rowid = v.id
       WHERE e.embedding IS NOT NULL
     `,
     args: [JSON.stringify(embedding), limit],
