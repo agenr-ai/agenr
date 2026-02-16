@@ -3,7 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import * as clack from "@clack/prompts";
 import { readConfig } from "../config.js";
-import { closeDb, DEFAULT_DB_PATH, getDb, initDb } from "../db/client.js";
+import { closeDb, DEFAULT_DB_PATH, getDb, initDb, walCheckpoint } from "../db/client.js";
+import { CREATE_IDX_ENTRIES_EMBEDDING_SQL } from "../db/schema.js";
 import { banner, formatLabel, ui } from "../ui.js";
 
 interface DbRow {
@@ -408,6 +409,142 @@ export async function runDbResetCommand(
     await resolvedDeps.initDbFn(db);
     clack.log.success("Database reset and migrations reapplied.", clackOutput);
     clack.outro(undefined, clackOutput);
+  } finally {
+    resolvedDeps.closeDbFn(db);
+  }
+}
+
+export async function runDbRebuildIndexCommand(
+  options: DbCommandCommonOptions,
+  deps?: Partial<DbCommandDeps>,
+): Promise<{ exitCode: number; embeddingCount: number; durationMs: number }> {
+  const resolvedDeps: DbCommandDeps = {
+    readConfigFn: deps?.readConfigFn ?? readConfig,
+    getDbFn: deps?.getDbFn ?? getDb,
+    initDbFn: deps?.initDbFn ?? initDb,
+    closeDbFn: deps?.closeDbFn ?? closeDb,
+  };
+
+  const start = Date.now();
+  let embeddingCount = 0;
+
+  const config = resolvedDeps.readConfigFn(process.env);
+  const configured = options.db?.trim() || config?.db?.path || DEFAULT_DB_PATH;
+  const db = resolvedDeps.getDbFn(configured);
+
+  try {
+    await resolvedDeps.initDbFn(db);
+
+    process.stderr.write("Rebuilding vector index...\n");
+    await db.execute("DROP INDEX IF EXISTS idx_entries_embedding");
+    await db.execute(CREATE_IDX_ENTRIES_EMBEDDING_SQL);
+    await walCheckpoint(db);
+
+    const embeddingsResult = await db.execute("SELECT COUNT(*) AS count FROM entries WHERE embedding IS NOT NULL");
+    embeddingCount = Number.isFinite(toNumber((embeddingsResult.rows[0] as DbRow | undefined)?.count))
+      ? toNumber((embeddingsResult.rows[0] as DbRow | undefined)?.count)
+      : 0;
+
+    if (embeddingCount > 0) {
+      const verifyResult = await db.execute(`
+        SELECT count(*) AS count
+        FROM vector_top_k(
+          'idx_entries_embedding',
+          (SELECT embedding FROM entries WHERE embedding IS NOT NULL LIMIT 1),
+          1
+        )
+      `);
+      const verifyCount = Number.isFinite(toNumber((verifyResult.rows[0] as DbRow | undefined)?.count))
+        ? toNumber((verifyResult.rows[0] as DbRow | undefined)?.count)
+        : 0;
+      if (verifyCount !== 1) {
+        process.stderr.write(`Vector index verification failed (expected 1, got ${verifyCount}).\n`);
+        return { exitCode: 1, embeddingCount, durationMs: Date.now() - start };
+      }
+    }
+
+    const durationMs = Date.now() - start;
+    process.stderr.write(`Rebuilt index for ${embeddingCount} entries (${durationMs}ms)\n`);
+    return { exitCode: 0, embeddingCount, durationMs };
+  } catch (error) {
+    const durationMs = Date.now() - start;
+    process.stderr.write(
+      `Failed to rebuild vector index: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+    return { exitCode: 1, embeddingCount, durationMs };
+  } finally {
+    resolvedDeps.closeDbFn(db);
+  }
+}
+
+export async function runDbCheckCommand(
+  options: DbCommandCommonOptions,
+  deps?: Partial<DbCommandDeps>,
+): Promise<{ exitCode: number; embeddingCount: number }> {
+  const resolvedDeps: DbCommandDeps = {
+    readConfigFn: deps?.readConfigFn ?? readConfig,
+    getDbFn: deps?.getDbFn ?? getDb,
+    initDbFn: deps?.initDbFn ?? initDb,
+    closeDbFn: deps?.closeDbFn ?? closeDb,
+  };
+
+  let embeddingCount = 0;
+
+  const config = resolvedDeps.readConfigFn(process.env);
+  const configured = options.db?.trim() || config?.db?.path || DEFAULT_DB_PATH;
+  const db = resolvedDeps.getDbFn(configured);
+
+  try {
+    await resolvedDeps.initDbFn(db);
+
+    const quickCheckResult = await db.execute("PRAGMA quick_check");
+    const quickCheckMessages = quickCheckResult.rows
+      .map((row) => toStringValue((row as DbRow).quick_check ?? Object.values(row)[0]))
+      .filter((message) => message.length > 0);
+
+    const filteredQuickCheck = quickCheckMessages.filter(
+      (message) => !message.includes("wrong # of entries in index idx_entries_embedding"),
+    );
+
+    if (filteredQuickCheck.length !== 1 || filteredQuickCheck[0] !== "ok") {
+      process.stderr.write("DB quick_check failed:\n");
+      for (const message of filteredQuickCheck.length > 0 ? filteredQuickCheck : ["unknown error"]) {
+        process.stderr.write(`- ${message}\n`);
+      }
+      return { exitCode: 1, embeddingCount: 0 };
+    }
+
+    const embeddingsResult = await db.execute("SELECT COUNT(*) AS count FROM entries WHERE embedding IS NOT NULL");
+    embeddingCount = Number.isFinite(toNumber((embeddingsResult.rows[0] as DbRow | undefined)?.count))
+      ? toNumber((embeddingsResult.rows[0] as DbRow | undefined)?.count)
+      : 0;
+
+    if (embeddingCount <= 0) {
+      process.stdout.write("DB check ok (empty)\n");
+      return { exitCode: 0, embeddingCount: 0 };
+    }
+
+    try {
+      await db.execute(`
+        SELECT count(*) AS count
+        FROM vector_top_k(
+          'idx_entries_embedding',
+          (SELECT embedding FROM entries WHERE embedding IS NOT NULL LIMIT 1),
+          1
+        )
+      `);
+    } catch (error) {
+      process.stderr.write(
+        `Vector index check failed: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
+      return { exitCode: 1, embeddingCount };
+    }
+
+    process.stdout.write(`DB check ok (${embeddingCount} entries with embeddings)\n`);
+    return { exitCode: 0, embeddingCount };
+  } catch (error) {
+    process.stderr.write(`DB check failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    return { exitCode: 1, embeddingCount };
   } finally {
     resolvedDeps.closeDbFn(db);
   }

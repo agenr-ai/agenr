@@ -12,6 +12,12 @@ CREATE TABLE IF NOT EXISTS _migrations (
 )
 `;
 
+export const CREATE_IDX_ENTRIES_EMBEDDING_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_entries_embedding ON entries (
+    libsql_vector_idx(embedding, 'metric=cosine', 'compress_neighbors=float8', 'max_neighbors=50')
+  )
+  `;
+
 export const MIGRATION_V1_STATEMENTS: readonly string[] = [
   `
   CREATE TABLE IF NOT EXISTS entries (
@@ -65,11 +71,7 @@ export const MIGRATION_V1_STATEMENTS: readonly string[] = [
     duration_ms INTEGER NOT NULL
   )
   `,
-  `
-  CREATE INDEX IF NOT EXISTS idx_entries_embedding ON entries (
-    libsql_vector_idx(embedding, 'metric=cosine', 'compress_neighbors=float8', 'max_neighbors=50')
-  )
-  `,
+  CREATE_IDX_ENTRIES_EMBEDDING_SQL,
   `
   CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
     content, subject, content=entries, content_rowid=rowid
