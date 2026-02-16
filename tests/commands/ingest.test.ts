@@ -21,7 +21,7 @@ function makeEntry(content: string): KnowledgeEntry {
     type: "fact",
     subject: "Jim",
     content,
-    confidence: "high",
+    importance: 8,
     expiry: "temporary",
     tags: ["ingest"],
     source: {
@@ -97,7 +97,7 @@ afterEach(async () => {
 
 describe("ingest command", () => {
   it("wires CLI options into runIngestCommand", async () => {
-    const runIngestCommandMock = vi.fn(async () => ({ exitCode: 0 }));
+    const runIngestCommandMock = vi.fn(async (..._args: unknown[]) => ({ exitCode: 0 }));
     vi.doMock("../../src/commands/ingest.js", () => ({
       runIngestCommand: runIngestCommandMock,
     }));
@@ -130,8 +130,9 @@ describe("ingest command", () => {
     ]);
 
     expect(runIngestCommandMock).toHaveBeenCalledTimes(1);
-    expect(runIngestCommandMock.mock.calls[0]?.[0]).toEqual(["/tmp/one", "/tmp/two"]);
-    expect(runIngestCommandMock.mock.calls[0]?.[1]).toMatchObject({
+    const firstCall = (runIngestCommandMock.mock.calls as unknown[][])[0] as [string[], Record<string, unknown>] | undefined;
+    expect(firstCall?.[0]).toEqual(["/tmp/one", "/tmp/two"]);
+    expect(firstCall?.[1]).toMatchObject({
       glob: "**/*.md",
       db: "/tmp/db.sqlite",
       model: "gpt-4o",
@@ -323,7 +324,7 @@ describe("ingest command", () => {
           type: "fact",
           subject: entries[0]?.subject ?? "Jim",
           content: "existing",
-          confidence: "high",
+          importance: 8,
           expiry: "temporary",
           tags: [],
           source: { file: "source", context: "ctx" },
@@ -343,7 +344,7 @@ describe("ingest command", () => {
         duration_ms: 5,
       };
     });
-    const batchClassifyFn = vi.fn(async () => undefined);
+    const batchClassifyFn = vi.fn(async (..._args: unknown[]) => undefined);
 
     await runIngestCommand(
       [dir],
@@ -357,7 +358,11 @@ describe("ingest command", () => {
     );
 
     expect(batchClassifyFn).toHaveBeenCalledTimes(1);
-    const candidates = batchClassifyFn.mock.calls[0]?.[2];
+    const candidates = ((batchClassifyFn.mock.calls as unknown[][])[0]?.[2] ?? []) as Array<{
+      similarity: number;
+      newEntry?: { id?: string };
+      matchEntry?: { id?: string };
+    }>;
     expect(Array.isArray(candidates)).toBe(true);
     expect(candidates[0]?.similarity).toBe(0.85);
     expect(candidates[0]?.newEntry?.id).toBe("new-1");

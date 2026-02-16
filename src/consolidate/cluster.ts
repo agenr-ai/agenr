@@ -89,7 +89,7 @@ function mapActiveEmbeddedEntry(row: Record<string, InValue | undefined>): Activ
     type: toStringValue(row.type),
     subject: toStringValue(row.subject),
     content: toStringValue(row.content),
-    confidence: toStringValue(row.confidence),
+    importance: Number.isFinite(toNumber(row.importance)) ? toNumber(row.importance) : 5,
     embedding,
     confirmations: Number.isFinite(toNumber(row.confirmations)) ? toNumber(row.confirmations) : 0,
     recallCount: Number.isFinite(toNumber(row.recall_count)) ? toNumber(row.recall_count) : 0,
@@ -120,7 +120,7 @@ export async function buildClusters(db: Client, options: ClusterOptions = {}): P
   const onLog = options.onLog ?? (() => undefined);
 
   const result = await db.execute(`
-    SELECT id, type, subject, content, confidence, embedding, confirmations,
+    SELECT id, type, subject, content, importance, embedding, confirmations,
            recall_count, created_at, merged_from, consolidated_at
     FROM entries
     WHERE superseded_by IS NULL

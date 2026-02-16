@@ -125,7 +125,7 @@ async function expireDecayedEntries(
     SELECT id, content, expiry, created_at
     FROM entries
     WHERE superseded_by IS NULL
-      AND expiry IN ('session-only', 'temporary')
+      AND expiry = 'temporary'
   `);
 
   let expiredCount = 0;
@@ -376,7 +376,7 @@ async function ensureExpiredSentinel(db: Client): Promise<void> {
         type,
         subject,
         content,
-        confidence,
+        importance,
         expiry,
         source_file,
         source_context,
@@ -391,7 +391,7 @@ async function ensureExpiredSentinel(db: Client): Promise<void> {
       "fact",
       "System",
       "System sentinel for expired entries",
-      "low",
+      1,
       "core",
       "agenr",
       "consolidate-rules",

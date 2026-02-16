@@ -46,7 +46,7 @@ function makeEntry(params: {
     type: params.type ?? "fact",
     subject: params.subject ?? "Jim",
     content: params.content,
-    confidence: "high",
+    importance: 8,
     expiry: "permanent",
     tags: params.tags ?? [],
     source: {

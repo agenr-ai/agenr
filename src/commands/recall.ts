@@ -3,9 +3,8 @@ import { readConfig } from "../config.js";
 import { closeDb, getDb, initDb } from "../db/client.js";
 import { recall, shapeRecallText, updateRecallMetadata } from "../db/recall.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
-import { CONFIDENCE_LEVELS, EXPIRY_LEVELS, KNOWLEDGE_TYPES, SCOPE_LEVELS } from "../types.js";
+import { EXPIRY_LEVELS, IMPORTANCE_MAX, IMPORTANCE_MIN, KNOWLEDGE_TYPES, SCOPE_LEVELS } from "../types.js";
 import type {
-  ConfidenceLevel,
   Expiry,
   RecallCommandResponse,
   RecallCommandResult,
@@ -25,7 +24,7 @@ export interface RecallCommandOptions {
   limit?: number | string;
   type?: string;
   tags?: string;
-  minConfidence?: string;
+  minImportance?: string;
   since?: string;
   expiry?: string;
   json?: boolean;
@@ -121,7 +120,7 @@ export function estimateEntryTokens(result: RecallResult): number {
     result.entry.type,
     result.entry.subject,
     result.entry.content,
-    result.entry.confidence,
+    result.entry.importance,
     result.entry.expiry,
     tags,
   ]
@@ -147,7 +146,7 @@ function classifySessionCategory(result: RecallResult): SessionCategory {
     return "core";
   }
 
-  if (result.entry.type === "todo" && result.entry.expiry !== "session-only") {
+  if (result.entry.type === "todo") {
     return "active";
   }
 
@@ -342,7 +341,7 @@ function printHumanResults(results: RecallCommandResult[], elapsedMs: number, no
           clackOutput,
         );
         clack.log.info(
-          `   confidence=${result.entry.confidence} | ${formatAge(result.entry.created_at, now)} | ${formatRecallCount(result.entry.recall_count)}`,
+          `   importance=${result.entry.importance} | ${formatAge(result.entry.created_at, now)} | ${formatRecallCount(result.entry.recall_count)}`,
           clackOutput,
         );
         clack.log.info(`   tags: ${result.entry.tags.length > 0 ? result.entry.tags.join(", ") : "none"}`, clackOutput);
@@ -356,7 +355,7 @@ function printHumanResults(results: RecallCommandResult[], elapsedMs: number, no
   for (const result of results) {
     clack.log.info(`${index}. [${result.entry.type}] ${result.entry.subject}: ${result.entry.content}`, clackOutput);
     clack.log.info(
-      `   confidence=${result.entry.confidence} | ${formatAge(result.entry.created_at, now)} | ${formatRecallCount(result.entry.recall_count)}`,
+      `   importance=${result.entry.importance} | ${formatAge(result.entry.created_at, now)} | ${formatRecallCount(result.entry.recall_count)}`,
       clackOutput,
     );
     clack.log.info(`   tags: ${result.entry.tags.length > 0 ? result.entry.tags.join(", ") : "none"}`, clackOutput);
@@ -407,13 +406,13 @@ export async function runRecallCommand(
   const types = parsedTypes;
   const tags = parseCsv(options.tags);
 
-  let minConfidence: ConfidenceLevel | undefined;
-  if (options.minConfidence) {
-    const normalized = options.minConfidence.trim().toLowerCase();
-    if (!(CONFIDENCE_LEVELS as readonly string[]).includes(normalized)) {
-      throw new Error(`--min-confidence must be one of: ${CONFIDENCE_LEVELS.join(", ")}`);
+  let minImportance: number | undefined;
+  if (options.minImportance !== undefined && String(options.minImportance).trim().length > 0) {
+    const parsed = Number(options.minImportance);
+    if (!Number.isInteger(parsed) || parsed < IMPORTANCE_MIN || parsed > IMPORTANCE_MAX) {
+      throw new Error(`--min-importance must be an integer between ${IMPORTANCE_MIN} and ${IMPORTANCE_MAX}`);
     }
-    minConfidence = normalized as ConfidenceLevel;
+    minImportance = parsed;
   }
 
   let expiry: Expiry | undefined;
@@ -440,7 +439,7 @@ export async function runRecallCommand(
     limit: isSessionStart ? SESSION_CANDIDATE_LIMIT : limit,
     types: types.length > 0 ? (types as RecallQuery["types"]) : undefined,
     tags: tags.length > 0 ? tags : undefined,
-    minConfidence,
+    minImportance,
     since: sinceIso,
     expiry,
     scope: scope ?? "private",
@@ -491,11 +490,14 @@ export async function runRecallCommand(
       budgetUsed = grouped.budgetUsed;
     } else {
       const baseResults = await resolvedDeps.recallFn(db, queryForRecall, apiKey);
-      const consumed = budget === undefined ? null : consumeByBudget(baseResults, budget);
-      const budgeted = budget === undefined ? baseResults : consumed.selected;
-      budgetUsed =
-        budget === undefined ? budgeted.reduce((sum, item) => sum + estimateEntryTokens(item), 0) : consumed.used;
-      finalResults = budgeted.map((result) => ({ ...result }));
+      if (budget === undefined) {
+        budgetUsed = baseResults.reduce((sum, item) => sum + estimateEntryTokens(item), 0);
+        finalResults = baseResults.map((result) => ({ ...result }));
+      } else {
+        const consumed = consumeByBudget(baseResults, budget);
+        budgetUsed = consumed.used;
+        finalResults = consumed.selected.map((result) => ({ ...result }));
+      }
     }
 
     if (!options.noUpdate && finalResults.length > 0) {
@@ -514,7 +516,7 @@ export async function runRecallCommand(
       results: stripped,
       total: stripped.length,
       budget_used: budgetUsed,
-      budget_limit: budget ?? null,
+      budget_limit: budget,
     };
 
     const elapsedMs = Date.now() - startedAt;

@@ -3,47 +3,194 @@ import type { KnowledgeEntry, LlmClient, TranscriptChunk } from "./types.js";
 import { runSimpleStream, type StreamSimpleFn } from "./llm/stream.js";
 import { SUBMIT_KNOWLEDGE_TOOL } from "./schema.js";
 
-const SYSTEM_PROMPT = `You are a knowledge extraction engine. Your job is to read conversation
-transcripts between a human and an AI assistant and extract structured
-knowledge from them.
+const SYSTEM_PROMPT = `You are a selective memory extraction engine. Extract only knowledge worth remembering beyond the immediate step.
 
-You extract the following types of knowledge:
+Default action: SKIP. Most chunks should produce zero entries.
 
-FACTS - Concrete, verifiable information about people, places, things,
-systems, or concepts. Include biographical details, technical specifications,
-account information, configurations, and any stated truths.
+## Types
 
-DECISIONS - Choices that were made during the conversation. Include what was
-decided, why, what alternatives were considered, and any conditions or
-caveats.
+FACT — Verifiable information about a system, project, person, or concept.
+DECISION — A choice that constrains future options. Requires BOTH the choice AND the rationale. If rationale is missing, use fact or event instead.
+PREFERENCE — A stated or demonstrated preference that should influence future behavior.
+LESSON — An insight from experience that should change future behavior.
+EVENT — A significant milestone, launch, or completion. NOT "the assistant ran git status."
+RELATIONSHIP — A connection between named entities. Content must include both entities and the relation.
+TODO — A persistent future action not completed in this chunk and not a one-step session instruction.
 
-PREFERENCES - Stated or strongly implied preferences. Include what is
-preferred, what is not preferred, and in what context.
+## Durability Gate
 
-TODOS - Action items, tasks, things that need to be done. Include who needs
-to do it, any deadlines, and current status if mentioned.
+Only extract if useful in future conversations/tasks after the current immediate execution.
+If uncertain whether durable, skip.
 
-RELATIONSHIPS - Connections between people, systems, organizations, or
-concepts. Include the nature of the relationship and any relevant details.
+## Importance (1-10)
 
-EVENTS - Things that happened. Include when they happened, who was involved,
-and the significance.
+Emit only importance >= 5. Start every candidate at 5; raise only with clear justification.
 
-LESSONS - Insights, learnings, principles derived from experience. Include
-what was learned and what triggered the learning.
+8-10: biographical facts, durable strategic decisions, foundational architecture
+6-7: meaningful project facts, preferences, events that matter beyond this week
+5: borderline but still durable for days/weeks and actionable in future context
+1-4: noise — do not emit
 
-Rules:
-- Extract ONLY what is explicitly stated or strongly implied in the transcript
-- Do NOT infer, speculate, or add information not present in the conversation
-- Each entry should be self-contained and understandable without the transcript
-- Call the submit_knowledge tool with all extracted entries
-- The type field must be exactly one of: fact, decision, preference, todo, relationship, event, lesson (lowercase, singular)
-- The content field must be a clear, declarative statement
-- For the subject field, use the most specific identifier (name, project name, etc.)
-- Assign confidence: high (explicitly stated), medium (strongly implied), low (weakly implied)
-- Assign expiry: permanent (biographical, preferences, lessons), temporary (current projects, recent events), session-only (immediate context unlikely to matter later)
-- Use specific, descriptive tags
-- source_context: one sentence, max 20 words. Describe WHERE in the conversation this came from (e.g., "user described deployment setup", "assistant listed auth options"). Do NOT quote the transcript.`;
+Calibration:
+- Typical chunk: 0-3 entries. Most chunks: 0.
+- 8+ entries: usually 0-1 per chunk
+- If >30% of emitted entries are 8+, you are inflating
+
+## Subject (critical)
+
+Subject is the TOPIC, never the speaker, role, or conversation container.
+
+NEVER use as subject: user, assistant, human, ai, bot, developer, engineer, maintainer, team, we, the conversation, this session, the transcript, or any participant's name/handle unless the entry is a biographical fact ABOUT that person.
+
+Subject must be a domain/topic entity, not a role/person — unless the fact is biographical about that specific person.
+Good pattern: noun phrase, 2-6 words. Examples: "agenr extraction pipeline", "Tailscale SSH setup", "a person's full name" (only for biographical facts about that person).
+If you cannot name a concrete topic, skip the entry.
+
+## Anti-Patterns (do NOT extract)
+
+1. Assistant/user narration or process description
+2. Summaries about the conversation itself ("this session focused on…")
+3. Session-ephemeral instructions (read file, run command, check logs)
+4. Incremental debugging journey — extract only the final lesson/solution if durable
+5. Code-level implementation details likely to churn (unless architecture-level decision)
+6. One workflow split into multiple near-duplicate entries — merge into one
+7. Minor rephrases/duplicates of another extracted entry
+8. Greetings, acknowledgments, small talk
+9. Transient implementation status unless it represents a milestone, decision, or lesson
+
+## Pre-Emit Checklist
+
+Before emitting EACH entry, all four must be true:
+1. Subject is a topic (not actor/role/meta)
+2. Durable beyond the immediate step
+3. Non-duplicate of another entry in this batch
+4. Importance >= 5 with a concrete reason
+If any check fails, do not emit.
+
+## Few-Shot Examples
+
+### GOOD extractions
+
+FACT:
+{
+  "type": "fact",
+  "subject": "agenr knowledge database",
+  "content": "agenr stores knowledge in SQLite with sqlite-vec for vector search. Embeddings use OpenAI text-embedding-3-small at 512 dimensions.",
+  "importance": 8,
+  "expiry": "permanent",
+  "tags": ["agenr", "database", "embeddings"],
+  "source_context": "User described agenr database architecture"
+}
+
+PREFERENCE:
+{
+  "type": "preference",
+  "subject": "coding workflow preferences",
+  "content": "Prefers writing detailed specs before any coding begins. Wants to understand the full design before implementation.",
+  "importance": 8,
+  "expiry": "permanent",
+  "tags": ["workflow", "coding"],
+  "source_context": "User explained preferred development process"
+}
+
+DECISION:
+{
+  "type": "decision",
+  "subject": "agenr extraction prompt",
+  "content": "Decided to rewrite the extraction prompt after audit showed 73% noise. Rationale: bad subjects, meta-narration, and no importance scoring made recall useless.",
+  "importance": 8,
+  "expiry": "temporary",
+  "tags": ["agenr", "extraction", "quality"],
+  "source_context": "Discussion of brain audit findings"
+}
+
+LESSON:
+{
+  "type": "lesson",
+  "subject": "LLM extraction calibration",
+  "content": "Extraction prompts must include numeric importance scales with concrete anchors; without them LLMs default to extracting everything at high importance.",
+  "importance": 7,
+  "expiry": "permanent",
+  "tags": ["llm", "extraction", "prompting"],
+  "source_context": "Learned during brain audit of agenr knowledge base"
+}
+
+RELATIONSHIP:
+{
+  "type": "relationship",
+  "subject": "OpenClaw architecture",
+  "content": "OpenClaw gateway connects to agenr for long-term memory storage and recall during agent sessions.",
+  "importance": 7,
+  "expiry": "temporary",
+  "tags": ["openclaw", "agenr", "architecture"],
+  "source_context": "Architecture discussion about memory integration"
+}
+
+TODO:
+{
+  "type": "todo",
+  "subject": "agenr deduplication",
+  "content": "Implement semantic deduplication in agenr store pipeline to prevent near-duplicate entries from accumulating.",
+  "importance": 6,
+  "expiry": "temporary",
+  "tags": ["agenr", "dedup", "quality"],
+  "source_context": "Identified during knowledge base audit"
+}
+
+EVENT:
+{
+  "type": "event",
+  "subject": "agenr brain audit",
+  "content": "Completed full audit of agenr knowledge base. Found 73% noise, 550 bad subjects, 2500 meta-narration entries out of ~10k total.",
+  "importance": 7,
+  "expiry": "temporary",
+  "tags": ["agenr", "audit", "quality"],
+  "source_context": "Brain audit completed and findings documented"
+}
+
+### BORDERLINE — skip these
+
+SKIP: "The assistant read the config file and found the port was 3000."
+WHY: Assistant narration about process, not durable knowledge.
+
+SKIP: "User asked to check if the deployment succeeded."
+WHY: Session-ephemeral instruction. Subject would be actor.
+
+SKIP: "The team discussed several approaches to caching."
+WHY: Conversation summary. No concrete decision or fact emerged.
+
+### BAD extractions (never produce these)
+
+BAD: { "subject": "User", "content": "The user asked the assistant to check the logs" }
+WHY: Subject is actor, content is meta-narration, importance ~2.
+
+BAD: { "type": "todo", "subject": "user", "content": "Run codex from ~/Code/agenr" }
+WHY: Session instruction, not persistent task. Subject is actor.
+
+BAD: Five separate entries for steps 1-5 of one workflow.
+WHY: Merge into one entry describing the full workflow.
+
+### EMPTY output (expected and correct)
+
+Chunk: "Assistant: I'll read that file now. [reads file] Here's what I found — the function takes two args. User: OK, now run the tests. Assistant: Running tests... all 47 passed."
+Output: { "entries": [] }
+WHY: Routine execution. No durable knowledge, decisions, or lessons.
+
+## Expiry
+
+- **permanent:** Biographical facts, preferences, lessons, architecture decisions
+- **temporary:** Current project state, active work, recent events
+- If it only matters right now, don't extract it at all.
+
+## Output Rules
+
+- Call submit_knowledge with extracted entries.
+- Empty array is expected and correct for most chunks.
+- Max 8 entries; prefer 0-3.
+- Each entry: self-contained, declarative, understandable without the transcript.
+- content: clear declarative statement, not a quote. Min 20 chars.
+- source_context: one sentence, max 20 words.
+- tags: 1-4 lowercase descriptive tags.`;
 
 const MAX_ATTEMPTS = 3;
 
@@ -64,20 +211,31 @@ const TYPE_ALIASES: Record<string, KnowledgeEntry["type"]> = {
   lesson: "lesson",
 };
 
-const CONFIDENCE_ALIASES: Record<string, KnowledgeEntry["confidence"]> = {
-  high: "high",
-  medium: "medium",
-  med: "medium",
-  low: "low",
-};
-
 const EXPIRY_ALIASES: Record<string, KnowledgeEntry["expiry"]> = {
   permanent: "permanent",
   temporary: "temporary",
-  "session-only": "session-only",
-  session_only: "session-only",
-  session: "session-only",
 };
+
+export const BASE_BLOCKED_SUBJECTS = [
+  "user", "assistant", "the user", "the assistant",
+  "human", "ai", "bot", "system",
+  "developer", "engineer", "maintainer", "team", "we",
+  "the conversation", "this session", "the transcript",
+];
+
+export function buildBlockedSubjects(extraNames: string[] = []): Set<string> {
+  return new Set([...BASE_BLOCKED_SUBJECTS, ...extraNames.map((name) => name.toLowerCase())]);
+}
+
+export const BLOCKED_SUBJECTS = buildBlockedSubjects();
+
+export const META_PATTERNS = [
+  /^the (assistant|user|ai|bot|developer|engineer|team) (was |is |has been |should |decided to |suggested )/i,
+  /^(assistant|user|developer|engineer) (mentioned|stated|said|discussed|asked|instructed)/i,
+  /^in (the |this )?(conversation|session|transcript|discussion)/i,
+  /^the assistant (ran|executed|checked|looked at|opened)/i,
+  /^(the )?(conversation|session|discussion) (focused on|covered|was about|involved)/i,
+] as const;
 
 class ParseResponseError extends Error {}
 
@@ -87,14 +245,14 @@ function normalize(value: string): string {
 
 function buildUserPrompt(chunk: TranscriptChunk): string {
   return [
-    "Extract all knowledge from this conversation transcript.",
+    "Selectively extract durable knowledge from this conversation transcript.",
     "",
     "Transcript:",
     "---",
     chunk.text,
     "---",
     "",
-    "Call submit_knowledge with all extracted knowledge entries.",
+    "Call submit_knowledge once with {\"entries\": [...]} and use an empty array if nothing qualifies.",
   ].join("\n");
 }
 
@@ -114,11 +272,15 @@ function coerceType(value: unknown): KnowledgeEntry["type"] | null {
   return TYPE_ALIASES[normalize(value)] ?? null;
 }
 
-function coerceConfidence(value: unknown): KnowledgeEntry["confidence"] | null {
-  if (typeof value !== "string") {
+function coerceImportance(value: unknown): number | null {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isInteger(parsed)) {
     return null;
   }
-  return CONFIDENCE_ALIASES[normalize(value)] ?? null;
+  if (parsed < 1 || parsed > 10) {
+    return null;
+  }
+  return parsed;
 }
 
 function coerceExpiry(value: unknown): KnowledgeEntry["expiry"] | null {
@@ -140,6 +302,31 @@ function coerceTags(value: unknown): string[] {
     .map((item) => item.toLowerCase());
 
   return Array.from(new Set(tags));
+}
+
+export function validateEntry(entry: KnowledgeEntry): string | null {
+  const subjectLower = entry.subject.toLowerCase().trim();
+  if (BLOCKED_SUBJECTS.has(subjectLower)) {
+    return `blocked subject: "${entry.subject}"`;
+  }
+  for (const pattern of META_PATTERNS) {
+    if (pattern.test(entry.content)) {
+      return `meta-pattern: ${pattern}`;
+    }
+  }
+  if (entry.content.length < 20) {
+    return "content too short";
+  }
+  if (entry.importance < 5) {
+    return `importance ${entry.importance} < 5`;
+  }
+  if (!entry.tags || entry.tags.length < 1 || entry.tags.length > 4) {
+    return "tags must be 1-4";
+  }
+  if (entry.source.context && entry.source.context.split(/\s+/).length > 20) {
+    return "source_context > 20 words";
+  }
+  return null;
 }
 
 function selectStringField(
@@ -204,9 +391,9 @@ function validateKnowledgeEntry(
     return null;
   }
 
-  const confidence = coerceConfidence(record.confidence);
-  if (!confidence) {
-    warnings.push(`Chunk ${chunk.chunk_index + 1}: dropped entry with invalid confidence.`);
+  const importance = coerceImportance(record.importance);
+  if (!importance) {
+    warnings.push(`Chunk ${chunk.chunk_index + 1}: dropped entry with invalid importance.`);
     return null;
   }
 
@@ -234,11 +421,11 @@ function validateKnowledgeEntry(
     onVerbose?.('[field-fallback] used "source" string for source.context');
   }
 
-  return {
+  const entry: KnowledgeEntry = {
     type,
     content,
     subject,
-    confidence,
+    importance,
     expiry,
     tags: coerceTags(record.tags),
     source: {
@@ -246,6 +433,16 @@ function validateKnowledgeEntry(
       context: contextFromModel || sourceString || chunk.context_hint || `chunk ${chunk.chunk_index + 1}`,
     },
   };
+
+  const validationIssue = validateEntry(entry);
+  if (validationIssue) {
+    if (verbose) {
+      onVerbose?.(`[entry-drop] ${validationIssue}`);
+    }
+    return null;
+  }
+
+  return entry;
 }
 
 function mapSchemaEntry(
@@ -253,6 +450,8 @@ function mapSchemaEntry(
   file: string,
   chunk: TranscriptChunk,
   warnings: string[],
+  verbose = false,
+  onVerbose?: (line: string) => void,
 ): KnowledgeEntry | null {
   if (!raw || typeof raw !== "object") {
     return null;
@@ -277,12 +476,24 @@ function mapSchemaEntry(
     return null;
   }
 
-  return {
+  const importance = coerceImportance(record.importance);
+  if (!importance) {
+    warnings.push(`Chunk ${chunk.chunk_index + 1}: invalid importance.`);
+    return null;
+  }
+
+  const expiry = coerceExpiry(record.expiry);
+  if (!expiry) {
+    warnings.push(`Chunk ${chunk.chunk_index + 1}: invalid expiry.`);
+    return null;
+  }
+
+  const entry: KnowledgeEntry = {
     type,
     content,
     subject,
-    confidence: coerceConfidence(record.confidence) ?? "medium",
-    expiry: coerceExpiry(record.expiry) ?? "temporary",
+    importance,
+    expiry,
     tags: coerceTags(record.tags),
     source: {
       file,
@@ -292,6 +503,16 @@ function mapSchemaEntry(
           : chunk.context_hint || `chunk ${chunk.chunk_index + 1}`,
     },
   };
+
+  const validationIssue = validateEntry(entry);
+  if (validationIssue) {
+    if (verbose) {
+      onVerbose?.(`[entry-drop] ${validationIssue}`);
+    }
+    return null;
+  }
+
+  return entry;
 }
 
 function parseKnowledgeEntries(
@@ -359,7 +580,7 @@ function extractToolCallEntries(
     }
 
     for (const raw of args.entries) {
-      const entry = mapSchemaEntry(raw, file, chunk, warnings);
+      const entry = mapSchemaEntry(raw, file, chunk, warnings, verbose, onVerbose);
       if (entry) {
         entries.push(entry);
       }

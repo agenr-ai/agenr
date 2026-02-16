@@ -25,7 +25,7 @@ export const MIGRATION_V1_STATEMENTS: readonly string[] = [
     type TEXT NOT NULL,
     subject TEXT NOT NULL,
     content TEXT NOT NULL,
-    confidence TEXT NOT NULL,
+    importance INTEGER NOT NULL,
     expiry TEXT NOT NULL,
     scope TEXT DEFAULT 'private',
     source_file TEXT,

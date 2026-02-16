@@ -105,7 +105,7 @@ describe("runExtractCommand", () => {
               type: "fact",
               content: "Jim prefers pnpm",
               subject: "Jim",
-              confidence: "high",
+              importance: 8,
               expiry: "permanent",
               tags: ["tooling"],
               source: { file: "x", context: "m" },

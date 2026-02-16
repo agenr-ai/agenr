@@ -84,7 +84,7 @@ describe("consolidate rules", () => {
       type: params.type ?? "fact",
       subject: params.subject ?? "Jim Martin",
       content: params.content,
-      confidence: "medium",
+      importance: 6,
       expiry: params.expiry ?? "permanent",
       tags: params.tags ?? [],
       source: {
@@ -127,7 +127,7 @@ describe("consolidate rules", () => {
           type,
           subject,
           content,
-          confidence,
+          importance,
           expiry,
           scope,
           source_file,
@@ -142,7 +142,7 @@ describe("consolidate rules", () => {
         "fact",
         "backup-subject",
         params.content,
-        "medium",
+        6,
         "permanent",
         "private",
         "rules.test.jsonl",
@@ -163,11 +163,11 @@ describe("consolidate rules", () => {
     return text.length > 0 ? text : null;
   }
 
-  it("expires session-only entries older than 15 days", async () => {
+  it("expires temporary entries when heavily decayed", async () => {
     const id = await insertTestEntry({
       content: "stale session note",
-      expiry: "session-only",
-      daysOld: 6000,
+      expiry: "temporary",
+      daysOld: 60000,
       seed: 1,
     });
 
@@ -176,10 +176,10 @@ describe("consolidate rules", () => {
     expect(stats.expiredCount).toBe(1);
   });
 
-  it("does not expire session-only entries younger than 10 days", async () => {
+  it("does not expire temporary entries younger than 10 days", async () => {
     const id = await insertTestEntry({
       content: "fresh session note",
-      expiry: "session-only",
+      expiry: "temporary",
       daysOld: 10,
       seed: 2,
     });
@@ -390,8 +390,8 @@ describe("consolidate rules", () => {
   it("dry run makes no changes", async () => {
     const expiredId = await insertTestEntry({
       content: "expired candidate",
-      expiry: "session-only",
-      daysOld: 6000,
+      expiry: "temporary",
+      daysOld: 60000,
       seed: 60,
     });
     const dupA = await insertTestEntry({
@@ -536,7 +536,7 @@ describe("consolidate rules", () => {
   it("returns correct stats shape", async () => {
     await insertTestEntry({
       content: "expiring entry",
-      expiry: "session-only",
+      expiry: "temporary",
       daysOld: 20,
       seed: 90,
     });

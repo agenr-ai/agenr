@@ -1,7 +1,7 @@
 import { createClient, type Client } from "@libsql/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { initDb } from "../../src/db/client.js";
-import { confidenceScore, recall, recallStrength, recency, scoreEntry } from "../../src/db/recall.js";
+import { importanceScore, recall, recallStrength, recency, scoreEntry } from "../../src/db/recall.js";
 import { storeEntries } from "../../src/db/store.js";
 import type { KnowledgeEntry, StoredEntry } from "../../src/types.js";
 
@@ -42,14 +42,14 @@ function makeEntry(params: {
   content: string;
   type?: KnowledgeEntry["type"];
   tags?: string[];
-  confidence?: KnowledgeEntry["confidence"];
+  importance?: KnowledgeEntry["importance"];
   expiry?: KnowledgeEntry["expiry"];
 }): KnowledgeEntry {
   return {
     type: params.type ?? "fact",
     subject: "Jim",
     content: params.content,
-    confidence: params.confidence ?? "high",
+    importance: params.importance ?? 8,
     expiry: params.expiry ?? "temporary",
     tags: params.tags ?? [],
     source: {
@@ -65,7 +65,7 @@ function makeStoredEntry(overrides: Partial<StoredEntry> = {}): StoredEntry {
     type: "fact",
     subject: "Jim",
     content: "Test content",
-    confidence: "high",
+    importance: 8,
     expiry: "temporary",
     tags: [],
     source: { file: "x", context: "y" },
@@ -93,26 +93,21 @@ describe("db recall", () => {
     return client;
   }
 
-  it("recency keeps core at 1.0 and decays session-only faster than temporary", () => {
+  it("recency keeps core at 1.0 and decays temporary faster than permanent", () => {
     expect(recency(0, "core")).toBe(1);
     expect(recency(5000, "core")).toBe(1);
 
     const temporary = recency(10, "temporary");
-    const sessionOnly = recency(10, "session-only");
+    const permanent = recency(10, "permanent");
     expect(temporary).toBeLessThan(1);
-    expect(sessionOnly).toBeLessThan(temporary);
+    expect(temporary).toBeLessThan(permanent);
   });
 
-  it("confidenceScore behaves as Bayesian confidence with decay", () => {
-    expect(confidenceScore("high", 0, 0, 0)).toBeCloseTo(0.75, 5);
-
-    const reinforced = confidenceScore("medium", 3, 0, 0);
-    const contradicted = confidenceScore("medium", 0, 3, 0);
-    expect(reinforced).toBeGreaterThan(confidenceScore("medium", 0, 0, 0));
-    expect(contradicted).toBeLessThan(confidenceScore("medium", 0, 0, 0));
-
-    const decayed = confidenceScore("low", 8, 0, 1200);
-    expect(decayed).toBeCloseTo(0.5, 2);
+  it("importanceScore maps 1-10 to a bounded multiplier", () => {
+    expect(importanceScore(1)).toBeCloseTo(0.55, 5);
+    expect(importanceScore(10)).toBeCloseTo(1, 5);
+    expect(importanceScore(8)).toBeGreaterThan(importanceScore(5));
+    expect(importanceScore(5)).toBeGreaterThan(importanceScore(2));
   });
 
   it("recallStrength is zero for never recalled and has diminishing returns", () => {
@@ -127,21 +122,21 @@ describe("db recall", () => {
 
   it("scoreEntry uses multiplicative scaling for memory strength", () => {
     const now = new Date("2026-02-15T00:00:00.000Z");
-    const highConfidence = makeStoredEntry({
-      confidence: "high",
+    const highImportance = makeStoredEntry({
+      importance: 8,
       confirmations: 3,
       contradictions: 0,
       recall_count: 2,
     });
-    const lowConfidence = makeStoredEntry({
-      confidence: "low",
+    const lowImportance = makeStoredEntry({
+      importance: 4,
       confirmations: 0,
       contradictions: 4,
       recall_count: 0,
     });
 
-    const highScore = scoreEntry(highConfidence, 0.95, false, now);
-    const lowScore = scoreEntry(lowConfidence, 0.95, false, now);
+    const highScore = scoreEntry(highImportance, 0.95, false, now);
+    const lowScore = scoreEntry(lowImportance, 0.95, false, now);
     expect(highScore).toBeGreaterThan(lowScore);
   });
 
@@ -149,7 +144,7 @@ describe("db recall", () => {
     const now = new Date("2026-02-15T00:00:00.000Z");
     const base = makeStoredEntry({
       expiry: "core",
-      confidence: "low",
+      importance: 4,
       confirmations: 0,
       recall_count: 1,
     });
@@ -392,7 +387,7 @@ describe("db recall", () => {
                 type,
                 subject,
                 content,
-                confidence,
+                importance,
                 expiry,
                 scope,
                 source_file,
@@ -408,7 +403,7 @@ describe("db recall", () => {
               "fact",
               "Perf",
               `Perf entry ${i}`,
-              "high",
+              8,
               "temporary",
               "private",
               "perf.jsonl",

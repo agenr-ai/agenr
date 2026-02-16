@@ -1,6 +1,6 @@
 import type { Client, InValue, Row } from "@libsql/client";
 import { embed } from "../embeddings/client.js";
-import type { ConfidenceLevel, RecallQuery, RecallResult, Scope, StoredEntry } from "../types.js";
+import type { RecallQuery, RecallResult, Scope, StoredEntry } from "../types.js";
 
 const DEFAULT_VECTOR_CANDIDATE_LIMIT = 50;
 const DEFAULT_SESSION_CANDIDATE_LIMIT = 500;
@@ -111,13 +111,15 @@ function normalizeTags(tags: string[] | undefined): string[] {
 function mapStoredEntry(row: Row, tags: string[]): StoredEntry {
   const scopeRaw = toStringValue(row.scope);
   const scope = scopeRaw || "private";
+  const importanceRaw = toNumber(row.importance);
+  const importance = Number.isFinite(importanceRaw) ? Math.min(10, Math.max(1, Math.round(importanceRaw))) : 5;
 
   return {
     id: toStringValue(row.id),
     type: toStringValue(row.type) as StoredEntry["type"],
     subject: toStringValue(row.subject),
     content: toStringValue(row.content),
-    confidence: toStringValue(row.confidence) as StoredEntry["confidence"],
+    importance,
     expiry: toStringValue(row.expiry) as StoredEntry["expiry"],
     scope: scope as StoredEntry["scope"],
     tags,
@@ -167,14 +169,11 @@ async function getTagsForEntryIds(db: Client, ids: string[]): Promise<Map<string
   return tagsById;
 }
 
-function confidenceRank(level: ConfidenceLevel): number {
-  if (level === "high") {
-    return 3;
+function normalizeImportance(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 5;
   }
-  if (level === "medium") {
-    return 2;
-  }
-  return 1;
+  return Math.min(10, Math.max(1, Math.round(value)));
 }
 
 function resolveScopeSet(scope: Scope | undefined): Set<Scope> {
@@ -258,7 +257,7 @@ function passesFilters(
     return false;
   }
 
-  if (query.minConfidence && confidenceRank(entry.confidence) < confidenceRank(query.minConfidence)) {
+  if (query.minImportance !== undefined && normalizeImportance(entry.importance) < normalizeImportance(query.minImportance)) {
     return false;
   }
 
@@ -297,13 +296,13 @@ function parseDaysBetween(now: Date, pastIso: string | undefined): number {
   return Math.max(delta, 0);
 }
 
-function getScoreComponents(entry: StoredEntry, now: Date): { daysOld: number; rec: number; conf: number; recall: number } {
+function getScoreComponents(entry: StoredEntry, now: Date): { daysOld: number; rec: number; imp: number; recall: number } {
   const daysOld = parseDaysBetween(now, entry.created_at);
   const daysSinceRecall = entry.last_recalled_at ? parseDaysBetween(now, entry.last_recalled_at) : daysOld;
   const rec = recency(daysOld, entry.expiry);
-  const conf = confidenceScore(entry.confidence, entry.confirmations, entry.contradictions, daysOld);
+  const imp = importanceScore(entry.importance);
   const recall = recallStrength(entry.recall_count, daysSinceRecall, entry.expiry);
-  return { daysOld, rec, conf, recall };
+  return { daysOld, rec, imp, recall };
 }
 
 export function recency(daysOld: number, tier: string): number {
@@ -313,7 +312,6 @@ export function recency(daysOld: number, tier: string): number {
     core: Number.POSITIVE_INFINITY,
     permanent: 365,
     temporary: 30,
-    "session-only": 3,
   };
 
   const hl = halfLife[tier] ?? 30;
@@ -323,18 +321,9 @@ export function recency(daysOld: number, tier: string): number {
   return Math.pow(1 + (FACTOR * Math.max(daysOld, 0)) / hl, DECAY);
 }
 
-export function confidenceScore(
-  baseConfidence: string,
-  confirmations: number,
-  contradictions: number,
-  ageDays: number,
-): number {
-  const prior: Record<string, number> = { high: 3, medium: 2, low: 1 };
-  const p = prior[baseConfidence] ?? 2;
-  const decay = Math.exp(-0.01 * Math.max(ageDays, 0));
-  const alpha = 1 + (p - 1) * decay + Math.max(confirmations, 0) * decay;
-  const beta = 1 + Math.max(contradictions, 0) * decay;
-  return alpha / (alpha + beta);
+export function importanceScore(importance: number): number {
+  const normalized = normalizeImportance(importance);
+  return 0.55 + ((normalized - 1) / 9) * 0.45;
 }
 
 export function recallStrength(recallCount: number, daysSinceRecall: number, tier: string): number {
@@ -353,11 +342,11 @@ export function scoreEntry(entry: StoredEntry, vectorSim: number, ftsMatch: bool
 
   const sim = Math.pow(clamp01(vectorSim), 0.7);
   const rec = recency(daysOld, entry.expiry);
-  const conf = confidenceScore(entry.confidence, entry.confirmations, entry.contradictions, daysOld);
+  const imp = importanceScore(entry.importance);
   const recall = recallStrength(entry.recall_count, daysSinceRecall, entry.expiry);
   const fts = ftsMatch ? 0.15 : 0;
 
-  const memoryStrength = Math.max(conf, recall);
+  const memoryStrength = Math.max(imp, recall);
   const contradictionPenalty = entry.contradictions >= 2 ? 0.8 : 1.0;
   return sim * (0.3 + 0.7 * rec) * memoryStrength * contradictionPenalty + fts;
 }
@@ -393,7 +382,7 @@ async function fetchVectorCandidates(db: Client, queryEmbedding: number[], limit
         e.type,
         e.subject,
         e.content,
-        e.confidence,
+        e.importance,
         e.expiry,
         e.scope,
         e.source_file,
@@ -436,7 +425,7 @@ async function fetchSessionCandidates(db: Client, limit: number): Promise<Candid
         type,
         subject,
         content,
-        confidence,
+        importance,
         expiry,
         scope,
         source_file,
@@ -510,16 +499,16 @@ export async function updateRecallMetadata(db: Client, ids: string[], now: Date)
   });
 }
 
-function scoreSessionOnly(entry: StoredEntry, now: Date): { score: number; scores: RecallResult["scores"] } {
+function scoreSessionEntry(entry: StoredEntry, now: Date): { score: number; scores: RecallResult["scores"] } {
   const components = getScoreComponents(entry, now);
-  const memoryStrength = Math.max(components.conf, components.recall);
+  const memoryStrength = Math.max(components.imp, components.recall);
   const score = (0.3 + 0.7 * components.rec) * memoryStrength;
   return {
     score,
     scores: {
       vector: 1,
       recency: components.rec,
-      confidence: components.conf,
+      importance: components.imp,
       recall: components.recall,
       fts: 0,
     },
@@ -578,7 +567,7 @@ export async function recall(
     const ftsMatch = ftsMatches.has(candidate.entry.id);
 
     if (!text) {
-      const sessionScore = scoreSessionOnly(candidate.entry, now);
+      const sessionScore = scoreSessionEntry(candidate.entry, now);
       return {
         entry: candidate.entry,
         score: sessionScore.score,
@@ -594,7 +583,7 @@ export async function recall(
         scores: {
           vector: rawVector,
           recency: 0,
-          confidence: 0,
+          importance: 0,
           recall: 0,
           fts: 0,
         },
@@ -608,7 +597,7 @@ export async function recall(
       scores: {
         vector: clamp01(candidate.vectorSim),
         recency: components.rec,
-        confidence: components.conf,
+        importance: components.imp,
         recall: components.recall,
         fts: ftsMatch ? 0.15 : 0,
       },

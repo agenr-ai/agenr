@@ -23,7 +23,7 @@ describe("db relations", () => {
     await client.execute({
       sql: `
         INSERT INTO entries (
-          id, type, subject, content, confidence, expiry, source_file, source_context, created_at, updated_at
+          id, type, subject, content, importance, expiry, source_file, source_context, created_at, updated_at
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,

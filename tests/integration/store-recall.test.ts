@@ -40,7 +40,7 @@ function makeEntry(content: string, tags: string[]): KnowledgeEntry {
     type: "fact",
     subject: "Jim",
     content,
-    confidence: "high",
+    importance: 8,
     expiry: "temporary",
     tags,
     source: {

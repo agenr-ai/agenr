@@ -1,6 +1,6 @@
 import type { Api, AssistantMessage, AssistantMessageEvent, Context, Model, SimpleStreamOptions } from "@mariozechner/pi-ai";
 import { describe, expect, it } from "vitest";
-import { extractKnowledgeFromChunks } from "../src/extractor.js";
+import { extractKnowledgeFromChunks, validateEntry } from "../src/extractor.js";
 import type { LlmClient, TranscriptChunk } from "../src/types.js";
 
 function fakeModel(): Model<Api> {
@@ -104,9 +104,9 @@ describe("extractKnowledgeFromChunks", () => {
                   entries: [
                     {
                       type: "fact",
-                      content: "Jim prefers pnpm",
+                      content: "Jim prefers pnpm for JavaScript monorepo package management",
                       subject: "Jim",
-                      confidence: "high",
+                      importance: 8,
                       expiry: "permanent",
                       tags: ["tooling"],
                       source_context: "user discussed preferred package manager",
@@ -133,6 +133,7 @@ describe("extractKnowledgeFromChunks", () => {
     expect(result.entries).toHaveLength(1);
     expect(result.entries[0]?.type).toBe("fact");
     expect(result.entries[0]?.subject).toBe("Jim");
+    expect(result.entries[0]?.importance).toBe(8);
     expect(result.entries[0]?.source.file).toBe("session.jsonl");
     expect(result.entries[0]?.source.context).toBe("user discussed preferred package manager");
   });
@@ -142,7 +143,7 @@ describe("extractKnowledgeFromChunks", () => {
       streamWithResult(
         Promise.resolve(
           assistantMessage(
-            '[{"type":"fact","content":"Jim uses pnpm","subject":"Jim","confidence":"high","expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
+            '[{"type":"fact","content":"Jim uses pnpm for JavaScript monorepo package management","subject":"Jim","importance":8,"expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
           ),
         ),
       );
@@ -160,7 +161,7 @@ describe("extractKnowledgeFromChunks", () => {
     expect(result.successfulChunks).toBe(1);
     expect(result.failedChunks).toBe(0);
     expect(result.entries).toHaveLength(1);
-    expect(result.entries[0]?.content).toBe("Jim uses pnpm");
+    expect(result.entries[0]?.content).toBe("Jim uses pnpm for JavaScript monorepo package management");
   });
 
   it("warns for unexpected tool names and still uses text fallback", async () => {
@@ -176,7 +177,7 @@ describe("extractKnowledgeFromChunks", () => {
             },
             {
               type: "text",
-              text: '[{"type":"fact","content":"Jim uses pnpm","subject":"Jim","confidence":"high","expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
+              text: '[{"type":"fact","content":"Jim uses pnpm for JavaScript monorepo package management","subject":"Jim","importance":8,"expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
             },
           ]),
         ),
@@ -209,7 +210,7 @@ describe("extractKnowledgeFromChunks", () => {
             },
             {
               type: "text",
-              text: '[{"type":"fact","content":"Jim uses pnpm","subject":"Jim","confidence":"high","expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
+              text: '[{"type":"fact","content":"Jim uses pnpm for JavaScript monorepo package management","subject":"Jim","importance":8,"expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
             },
           ]),
         ),
@@ -234,7 +235,7 @@ describe("extractKnowledgeFromChunks", () => {
       streamWithResult(
         Promise.resolve(
           assistantMessage(
-            "```json\n[{\"type\":\"fact\",\"content\":\"Jim prefers pnpm\",\"subject\":\"Jim\",\"confidence\":\"high\",\"expiry\":\"permanent\",\"tags\":[\"tooling\"],\"source\":{\"file\":\"ignored\",\"context\":\"m00001\"}}]\n```",
+            "```json\n[{\"type\":\"fact\",\"content\":\"Jim prefers pnpm for JavaScript monorepo package management\",\"subject\":\"Jim\",\"importance\":8,\"expiry\":\"permanent\",\"tags\":[\"tooling\"],\"source\":{\"file\":\"ignored\",\"context\":\"m00001\"}}]\n```",
           ),
         ),
       );
@@ -263,9 +264,9 @@ describe("extractKnowledgeFromChunks", () => {
             JSON.stringify([
               {
                 type: "fact",
-                content: "Agenr launched.",
+                content: "Agenr launched a major release with validated memory extraction quality improvements.",
                 subject: "Agenr",
-                confidence: "high",
+                importance: 8,
                 expiry: "temporary",
                 tags: ["launch"],
                 source: { file: "ignored", context: "m00002" },
@@ -274,7 +275,7 @@ describe("extractKnowledgeFromChunks", () => {
                 type: "unsupported",
                 content: "bad",
                 subject: "bad",
-                confidence: "high",
+                importance: 8,
                 expiry: "permanent",
                 tags: [],
                 source: { file: "ignored", context: "x" },
@@ -308,7 +309,7 @@ describe("extractKnowledgeFromChunks", () => {
       return streamWithResult(
         Promise.resolve(
           assistantMessage(
-            '[{"type":"fact","content":"Jim uses pnpm","subject":"Jim","confidence":"high","expiry":"permanent","tags":["tooling"],"source":{"file":"x","context":"m"}}]',
+            '[{"type":"fact","content":"Jim uses pnpm for JavaScript monorepo package management","subject":"Jim","importance":8,"expiry":"permanent","tags":["tooling"],"source":{"file":"x","context":"m"}}]',
           ),
         ),
       );
@@ -360,7 +361,7 @@ describe("extractKnowledgeFromChunks", () => {
       streamWithResult(
         Promise.resolve(
           assistantMessage(
-            '[{"type":"fact","content":"Jim prefers pnpm","subject":"Jim","confidence":"high","expiry":"permanent","tags":["tooling"],"source_context":"flat context"}]',
+            '[{"type":"fact","content":"Jim prefers pnpm for JavaScript monorepo package management","subject":"Jim","importance":8,"expiry":"permanent","tags":["tooling"],"source_context":"flat context"}]',
           ),
         ),
       );
@@ -384,7 +385,7 @@ describe("extractKnowledgeFromChunks", () => {
       streamWithResult(
         Promise.resolve(
           assistantMessage(
-            '[{"type":"fact","content":"Jim prefers pnpm","subject":"Jim","confidence":"high","expiry":"permanent","tags":["tooling"],"source":"source as string"}]',
+            '[{"type":"fact","content":"Jim prefers pnpm for JavaScript monorepo package management","subject":"Jim","importance":8,"expiry":"permanent","tags":["tooling"],"source":"source as string"}]',
           ),
         ),
       );
@@ -408,7 +409,7 @@ describe("extractKnowledgeFromChunks", () => {
       streamWithResult(
         Promise.resolve(
           assistantMessage(
-            '[{"type":"fact","description":"Jim prefers pnpm","subject":"Jim","confidence":"high","expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
+            '[{"type":"fact","description":"Jim prefers pnpm for JavaScript monorepo package management","subject":"Jim","importance":8,"expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
           ),
         ),
       );
@@ -424,7 +425,7 @@ describe("extractKnowledgeFromChunks", () => {
     });
 
     expect(result.entries).toHaveLength(1);
-    expect(result.entries[0]?.content).toBe("Jim prefers pnpm");
+    expect(result.entries[0]?.content).toBe("Jim prefers pnpm for JavaScript monorepo package management");
   });
 
   it("accepts text instead of content", async () => {
@@ -432,7 +433,7 @@ describe("extractKnowledgeFromChunks", () => {
       streamWithResult(
         Promise.resolve(
           assistantMessage(
-            '[{"type":"fact","text":"Jim prefers pnpm","subject":"Jim","confidence":"high","expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
+            '[{"type":"fact","text":"Jim prefers pnpm for JavaScript monorepo package management","subject":"Jim","importance":8,"expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
           ),
         ),
       );
@@ -448,7 +449,7 @@ describe("extractKnowledgeFromChunks", () => {
     });
 
     expect(result.entries).toHaveLength(1);
-    expect(result.entries[0]?.content).toBe("Jim prefers pnpm");
+    expect(result.entries[0]?.content).toBe("Jim prefers pnpm for JavaScript monorepo package management");
   });
 
   it("accepts statement instead of content", async () => {
@@ -456,7 +457,7 @@ describe("extractKnowledgeFromChunks", () => {
       streamWithResult(
         Promise.resolve(
           assistantMessage(
-            '[{"type":"fact","statement":"Jim prefers pnpm","subject":"Jim","confidence":"high","expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
+            '[{"type":"fact","statement":"Jim prefers pnpm for JavaScript monorepo package management","subject":"Jim","importance":8,"expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
           ),
         ),
       );
@@ -472,7 +473,7 @@ describe("extractKnowledgeFromChunks", () => {
     });
 
     expect(result.entries).toHaveLength(1);
-    expect(result.entries[0]?.content).toBe("Jim prefers pnpm");
+    expect(result.entries[0]?.content).toBe("Jim prefers pnpm for JavaScript monorepo package management");
   });
 
   it("accepts plural type names (DECISIONS, PREFERENCES, EVENTS)", async () => {
@@ -480,7 +481,7 @@ describe("extractKnowledgeFromChunks", () => {
       streamWithResult(
         Promise.resolve(
           assistantMessage(
-            '[{"type":"DECISIONS","content":"Chose async queue","subject":"Architecture","confidence":"high","expiry":"temporary","tags":["arch"],"source":{"context":"m"}},{"type":"PREFERENCES","content":"Prefers keto","subject":"Jim","confidence":"high","expiry":"permanent","tags":["diet"],"source":{"context":"m"}},{"type":"EVENTS","content":"Launched v1","subject":"Agenr","confidence":"high","expiry":"temporary","tags":["launch"],"source":{"context":"m"}}]',
+            '[{"type":"DECISIONS","content":"Chose an async queue architecture for background job processing","subject":"Architecture","importance":8,"expiry":"temporary","tags":["arch"],"source":{"context":"m"}},{"type":"PREFERENCES","content":"Prefers a keto diet for weekly meal planning","subject":"Jim","importance":8,"expiry":"permanent","tags":["diet"],"source":{"context":"m"}},{"type":"EVENTS","content":"Launched version one of the product to production","subject":"Agenr","importance":8,"expiry":"temporary","tags":["launch"],"source":{"context":"m"}}]',
           ),
         ),
       );
@@ -506,7 +507,7 @@ describe("extractKnowledgeFromChunks", () => {
       streamWithResult(
         Promise.resolve(
           assistantMessage(
-            '[{"type":"fact","knowledge":"Jim uses pnpm","subject":"Jim","confidence":"high","expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
+            '[{"type":"fact","knowledge":"Jim uses pnpm for JavaScript monorepo package management","subject":"Jim","importance":8,"expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
           ),
         ),
       );
@@ -522,7 +523,7 @@ describe("extractKnowledgeFromChunks", () => {
     });
 
     expect(result.entries).toHaveLength(1);
-    expect(result.entries[0]?.content).toBe("Jim uses pnpm");
+    expect(result.entries[0]?.content).toBe("Jim uses pnpm for JavaScript monorepo package management");
   });
 
   it("accepts name instead of subject", async () => {
@@ -530,7 +531,7 @@ describe("extractKnowledgeFromChunks", () => {
       streamWithResult(
         Promise.resolve(
           assistantMessage(
-            '[{"type":"fact","content":"Jim prefers pnpm","name":"Jim","confidence":"high","expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
+            '[{"type":"fact","content":"Jim prefers pnpm for JavaScript monorepo package management","name":"Jim","importance":8,"expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
           ),
         ),
       );
@@ -554,7 +555,7 @@ describe("extractKnowledgeFromChunks", () => {
       streamWithResult(
         Promise.resolve(
           assistantMessage(
-            '[{"type":"fact","subject":"Jim","confidence":"high","expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
+            '[{"type":"fact","subject":"Jim","importance":8,"expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
           ),
         ),
       );
@@ -579,7 +580,7 @@ describe("extractKnowledgeFromChunks", () => {
       streamWithResult(
         Promise.resolve(
           assistantMessage(
-            '[{"type":"fact","description":"Jim prefers pnpm","name":"Jim","confidence":"high","expiry":"permanent","tags":["tooling"],"source_context":"flat context"}]',
+            '[{"type":"fact","description":"Jim prefers pnpm for JavaScript monorepo package management","name":"Jim","importance":8,"expiry":"permanent","tags":["tooling"],"source_context":"flat context"}]',
           ),
         ),
       );
@@ -610,7 +611,7 @@ describe("extractKnowledgeFromChunks", () => {
       streamWithResult(
         Promise.resolve(
           assistantMessage(
-            '[{"type":"fact","content":"Jim prefers pnpm","subject":"Jim","confidence":"high","expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
+            '[{"type":"fact","content":"Jim prefers pnpm for JavaScript monorepo package management","subject":"Jim","importance":8,"expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
           ),
         ),
         [
@@ -645,11 +646,11 @@ describe("extractKnowledgeFromChunks", () => {
       "[chunk 1/2] attempt 1/3",
       "[thinking]",
       "[/thinking]",
-      '[raw-sample] {"type":"fact","content":"Jim prefers pnpm","subject":"Jim","confidence":"high","expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}',
+      '[raw-sample] {"type":"fact","content":"Jim prefers pnpm for JavaScript monorepo package management","subject":"Jim","importance":8,"expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}',
       "[chunk 2/2] attempt 1/3",
       "[thinking]",
       "[/thinking]",
-      '[raw-sample] {"type":"fact","content":"Jim prefers pnpm","subject":"Jim","confidence":"high","expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}',
+      '[raw-sample] {"type":"fact","content":"Jim prefers pnpm for JavaScript monorepo package management","subject":"Jim","importance":8,"expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}',
     ]);
   });
 
@@ -665,9 +666,12 @@ describe("extractKnowledgeFromChunks", () => {
             JSON.stringify([
               {
                 type: "fact",
-                content: `entry-${index}`,
+                content:
+                  index === 0
+                    ? "Entry zero contains durable planning context"
+                    : "Entry one contains durable implementation context",
                 subject: "Jim",
-                confidence: "high",
+                importance: 8,
                 expiry: "permanent",
                 tags: ["tooling"],
                 source: { context: "m" },
@@ -696,8 +700,8 @@ describe("extractKnowledgeFromChunks", () => {
     });
 
     expect(chunkCallbacks).toEqual([
-      { chunkIndex: 0, totalChunks: 2, contents: ["entry-0"] },
-      { chunkIndex: 1, totalChunks: 2, contents: ["entry-1"] },
+      { chunkIndex: 0, totalChunks: 2, contents: ["Entry zero contains durable planning context"] },
+      { chunkIndex: 1, totalChunks: 2, contents: ["Entry one contains durable implementation context"] },
     ]);
   });
 
@@ -706,7 +710,7 @@ describe("extractKnowledgeFromChunks", () => {
       streamWithResult(
         Promise.resolve(
           assistantMessage(
-            '[{"type":"fact","content":"Jim prefers pnpm","subject":"Jim","confidence":"high","expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
+            '[{"type":"fact","content":"Jim prefers pnpm for JavaScript monorepo package management","subject":"Jim","importance":8,"expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
           ),
         ),
       );
@@ -738,9 +742,12 @@ describe("extractKnowledgeFromChunks", () => {
             JSON.stringify([
               {
                 type: "fact",
-                content: `entry-${index}`,
+                content:
+                  index === 0
+                    ? "Entry zero contains durable planning context"
+                    : "Entry one contains durable implementation context",
                 subject: "Jim",
-                confidence: "high",
+                importance: 8,
                 expiry: "permanent",
                 tags: ["tooling"],
                 source: { context: "m" },
@@ -761,7 +768,7 @@ describe("extractKnowledgeFromChunks", () => {
       retryDelayMs: () => 0,
     });
 
-    expect(result.entries.map((entry) => entry.content)).toEqual(["entry-0", "entry-1"]);
+    expect(result.entries.map((entry) => entry.content)).toEqual(["Entry zero contains durable planning context", "Entry one contains durable implementation context"]);
   });
 
   it("onChunkComplete error in callback propagates", async () => {
@@ -771,7 +778,7 @@ describe("extractKnowledgeFromChunks", () => {
       return streamWithResult(
         Promise.resolve(
           assistantMessage(
-            '[{"type":"fact","content":"Jim prefers pnpm","subject":"Jim","confidence":"high","expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
+            '[{"type":"fact","content":"Jim prefers pnpm for JavaScript monorepo package management","subject":"Jim","importance":8,"expiry":"permanent","tags":["tooling"],"source":{"context":"m"}}]',
           ),
         ),
       );
@@ -793,5 +800,59 @@ describe("extractKnowledgeFromChunks", () => {
     ).rejects.toThrow("callback failed");
 
     expect(callCount).toBe(1);
+  });
+});
+
+describe("validateEntry", () => {
+  it("rejects blocked subjects", () => {
+    const reason = validateEntry({
+      type: "fact",
+      subject: "assistant",
+      content: "Assistant preferences should not be extracted as durable memory.",
+      importance: 6,
+      expiry: "temporary",
+      tags: ["meta"],
+      source: { file: "x", context: "ctx" },
+    });
+
+    expect(reason).toContain("blocked subject");
+  });
+
+  it("rejects meta-pattern narration", () => {
+    const reason = validateEntry({
+      type: "fact",
+      subject: "deployment verification",
+      content: "The assistant ran the deployment checks and reported success.",
+      importance: 6,
+      expiry: "temporary",
+      tags: ["deployment"],
+      source: { file: "x", context: "ctx" },
+    });
+
+    expect(reason).toContain("meta-pattern");
+  });
+
+  it("enforces content length and importance floor", () => {
+    const shortReason = validateEntry({
+      type: "fact",
+      subject: "tooling preference",
+      content: "Too short.",
+      importance: 6,
+      expiry: "temporary",
+      tags: ["tooling"],
+      source: { file: "x", context: "ctx" },
+    });
+    const lowImportanceReason = validateEntry({
+      type: "fact",
+      subject: "tooling preference",
+      content: "Prefers pnpm for JavaScript monorepo package management across projects.",
+      importance: 4,
+      expiry: "temporary",
+      tags: ["tooling"],
+      source: { file: "x", context: "ctx" },
+    });
+
+    expect(shortReason).toBe("content too short");
+    expect(lowImportanceReason).toBe("importance 4 < 5");
   });
 });

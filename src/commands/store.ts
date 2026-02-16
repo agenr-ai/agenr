@@ -7,7 +7,7 @@ import { hashText, storeEntries } from "../db/store.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { createLlmClient } from "../llm/client.js";
 import { expandInputFiles } from "../parser.js";
-import { CONFIDENCE_LEVELS, EXPIRY_LEVELS, KNOWLEDGE_TYPES } from "../types.js";
+import { EXPIRY_LEVELS, IMPORTANCE_MAX, IMPORTANCE_MIN, KNOWLEDGE_TYPES } from "../types.js";
 import type { ExtractionReport, KnowledgeEntry, StoreResult } from "../types.js";
 import { banner, formatLabel, formatWarn, ui } from "../ui.js";
 
@@ -39,7 +39,6 @@ export interface StoreCommandDeps {
 }
 
 const KNOWLEDGE_TYPE_SET = new Set<string>(KNOWLEDGE_TYPES);
-const CONFIDENCE_LEVEL_SET = new Set<string>(CONFIDENCE_LEVELS);
 const EXPIRY_LEVEL_SET = new Set<string>(EXPIRY_LEVELS);
 
 function readStdin(): Promise<string> {
@@ -88,8 +87,11 @@ function normalizeEntry(raw: unknown, fallbackFile: string): KnowledgeEntry {
     throw new Error("Entry content is required.");
   }
 
-  const confidenceRaw = typeof record.confidence === "string" ? record.confidence.trim() : "medium";
-  const confidence = CONFIDENCE_LEVEL_SET.has(confidenceRaw) ? confidenceRaw : "medium";
+  const importanceRaw = typeof record.importance === "number" ? record.importance : Number(record.importance);
+  const importance =
+    Number.isInteger(importanceRaw) && importanceRaw >= IMPORTANCE_MIN && importanceRaw <= IMPORTANCE_MAX
+      ? importanceRaw
+      : 5;
 
   const expiryRaw = typeof record.expiry === "string" ? record.expiry.trim() : "temporary";
   const expiry = EXPIRY_LEVEL_SET.has(expiryRaw) ? expiryRaw : "temporary";
@@ -109,7 +111,7 @@ function normalizeEntry(raw: unknown, fallbackFile: string): KnowledgeEntry {
     type: type as KnowledgeEntry["type"],
     subject,
     content,
-    confidence: confidence as KnowledgeEntry["confidence"],
+    importance: importance as KnowledgeEntry["importance"],
     expiry: expiry as KnowledgeEntry["expiry"],
     tags: normalizeTags(record.tags),
     source: {

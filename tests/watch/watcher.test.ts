@@ -7,7 +7,7 @@ function makeEntry(content = "fact"): KnowledgeEntry {
     type: "fact",
     subject: "Jim",
     content,
-    confidence: "high",
+    importance: 8,
     expiry: "temporary",
     tags: [],
     source: {
@@ -32,9 +32,9 @@ function makeState(filePath: string, offset = 0): WatchState {
   };
 }
 
-function makeDeps(overrides?: Record<string, unknown>) {
+function makeDeps(overrides?: Record<string, unknown>): any {
   const saveSnapshots: WatchState[] = [];
-  const statFileFn = vi.fn(async () => ({ size: 0, isFile: () => true }));
+  const statFileFn = vi.fn(async () => ({ size: 0, isFile: () => true })) as any;
   const readFileFn = vi.fn(async () => Buffer.alloc(0));
   const parseTranscriptFileFn = vi.fn(async () => ({
     file: "/tmp/delta.txt",
@@ -364,7 +364,7 @@ describe("watcher", () => {
           type: "fact",
           subject: entries[0]?.subject ?? "Jim",
           content: "existing",
-          confidence: "high",
+          importance: 8,
           expiry: "temporary",
           tags: [],
           source: { file: "source", context: "ctx" },
@@ -385,7 +385,7 @@ describe("watcher", () => {
         duration_ms: 5,
       };
     });
-    const batchClassifyFn = vi.fn(async () => undefined);
+    const batchClassifyFn = vi.fn(async (..._args: unknown[]) => undefined);
     const deps = makeDeps({
       statFileFn: vi.fn(async () => ({ size: 25, isFile: () => true })),
       readFileFn: vi.fn(async () => Buffer.from("this content passes threshold")),
@@ -408,7 +408,11 @@ describe("watcher", () => {
     );
 
     expect(batchClassifyFn).toHaveBeenCalledTimes(1);
-    const candidates = batchClassifyFn.mock.calls[0]?.[2];
+    const candidates = ((batchClassifyFn.mock.calls as unknown[][])[0]?.[2] ?? []) as Array<{
+      similarity: number;
+      newEntry?: { id?: string };
+      matchEntry?: { id?: string };
+    }>;
     expect(Array.isArray(candidates)).toBe(true);
     expect(candidates[0]?.similarity).toBe(0.85);
     expect(candidates[0]?.newEntry?.id).toBe("new-1");

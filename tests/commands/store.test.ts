@@ -31,7 +31,7 @@ function makeEntry(): KnowledgeEntry {
     type: "fact",
     subject: "Jim",
     content: "Uses pnpm",
-    confidence: "high",
+    importance: 8,
     expiry: "permanent",
     tags: ["tooling"],
     source: {
@@ -48,7 +48,7 @@ describe("store command", () => {
     const filePath = path.join(dir, "input.json");
     await fs.writeFile(filePath, `${JSON.stringify([makeEntry()], null, 2)}\n`, "utf8");
 
-    const storeEntriesSpy = vi.fn(async () => fakeStoreResult());
+    const storeEntriesSpy = vi.fn(async (..._args: unknown[]) => fakeStoreResult());
 
     const result = await runStoreCommand([filePath], {}, {
       expandInputFilesFn: vi.fn(async (inputs: string[]) => inputs),
@@ -64,8 +64,9 @@ describe("store command", () => {
 
     expect(result.exitCode).toBe(0);
     expect(storeEntriesSpy).toHaveBeenCalledTimes(1);
-    expect(storeEntriesSpy.mock.calls[0]?.[1]).toHaveLength(1);
-    expect(storeEntriesSpy.mock.calls[0]?.[1]?.[0]).toMatchObject({
+    const firstCall = (storeEntriesSpy.mock.calls as unknown[][])[0] as [unknown, KnowledgeEntry[]] | undefined;
+    expect(firstCall?.[1]).toHaveLength(1);
+    expect(firstCall?.[1]?.[0]).toMatchObject({
       type: "fact",
       subject: "Jim",
       content: "Uses pnpm",
@@ -91,7 +92,7 @@ describe("store command", () => {
     await fs.writeFile(filePath, "[]\n", "utf8");
 
     const resolveEmbeddingApiKeySpy = vi.fn(() => "sk-test");
-    const storeEntriesSpy = vi.fn(async () => ({
+    const storeEntriesSpy = vi.fn(async (..._args: unknown[]) => ({
       added: 0,
       updated: 0,
       skipped: 0,
@@ -114,7 +115,8 @@ describe("store command", () => {
 
     expect(result.exitCode).toBe(0);
     expect(storeEntriesSpy).toHaveBeenCalledTimes(1);
-    expect(storeEntriesSpy.mock.calls[0]?.[1]).toEqual([]);
+    const emptyCall = (storeEntriesSpy.mock.calls as unknown[][])[0] as [unknown, KnowledgeEntry[]] | undefined;
+    expect(emptyCall?.[1]).toEqual([]);
     expect(resolveEmbeddingApiKeySpy).not.toHaveBeenCalled();
   });
 
@@ -124,7 +126,7 @@ describe("store command", () => {
     const filePath = path.join(dir, "input.json");
     await fs.writeFile(filePath, `${JSON.stringify([makeEntry()], null, 2)}\n`, "utf8");
 
-    const storeEntriesSpy = vi.fn(async () => fakeStoreResult());
+    const storeEntriesSpy = vi.fn(async (..._args: unknown[]) => fakeStoreResult());
     const llmClient: LlmClient = {
       auth: "openai-api-key",
       resolvedModel: {
@@ -151,7 +153,10 @@ describe("store command", () => {
 
     expect(createLlmClientFn).toHaveBeenCalledTimes(1);
     expect(storeEntriesSpy).toHaveBeenCalledTimes(1);
-    expect(storeEntriesSpy.mock.calls[0]?.[3]).toMatchObject({
+    const classifyCall = (storeEntriesSpy.mock.calls as unknown[][])[0] as
+      | [unknown, unknown, unknown, Record<string, unknown>]
+      | undefined;
+    expect(classifyCall?.[3]).toMatchObject({
       classify: true,
       llmClient,
     });

@@ -24,13 +24,13 @@ function formatEntryBullet(entry: {
   type: string;
   subject: string;
   content: string;
-  confidence: string;
+  importance: number;
   expiry: string;
   tags: string[];
   source: { context: string };
 }): string {
   const tags = entry.tags.length > 0 ? entry.tags.join(", ") : "none";
-  return `- [${entry.type}] **${entry.subject}**: ${entry.content} (confidence=${entry.confidence}, expiry=${entry.expiry}, tags=${tags}, source=${entry.source.context})`;
+  return `- [${entry.type}] **${entry.subject}**: ${entry.content} (importance=${entry.importance}, expiry=${entry.expiry}, tags=${tags}, source=${entry.source.context})`;
 }
 
 function flattenEntries(report: ExtractionReport): KnowledgeEntry[] {

@@ -33,7 +33,7 @@ describe("initDb vector index probe", () => {
           type,
           subject,
           content,
-          confidence,
+          importance,
           expiry,
           scope,
           source_file,

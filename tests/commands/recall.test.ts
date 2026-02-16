@@ -8,7 +8,7 @@ function makeEntry(overrides: Partial<StoredEntry> = {}): StoredEntry {
     type: "fact",
     subject: "Jim",
     content: "Default content",
-    confidence: "high",
+    importance: 8,
     expiry: "temporary",
     scope: "private",
     tags: ["default"],
@@ -33,7 +33,7 @@ function makeResult(overrides: Partial<RecallResult> = {}): RecallResult {
     scores: {
       vector: 0.9,
       recency: 0.8,
-      confidence: 0.75,
+      importance: 0.75,
       recall: 0.2,
       fts: 0.15,
     },
@@ -159,7 +159,8 @@ describe("recall command", () => {
     const deps = makeDeps({ recallFn });
     await runRecallCommand("what is Jim's diet", { context: "topic:health", json: true }, deps);
 
-    const firstCallQuery = recallFn.mock.calls[0]?.[1] as { text?: string };
+    const firstCall = (recallFn.mock.calls as unknown[][])[0] as [unknown, { text?: string }] | undefined;
+    const firstCallQuery = firstCall?.[1];
     expect(firstCallQuery?.text).toBe("[topic: health] what is Jim's diet");
   });
 });

@@ -10,15 +10,14 @@ export const KNOWLEDGE_TYPES = [
   "lesson",
 ] as const;
 
-export const CONFIDENCE_LEVELS = ["high", "medium", "low"] as const;
+export const IMPORTANCE_MIN = 1;
+export const IMPORTANCE_MAX = 10;
 
-export const EXPIRY_LEVELS = ["core", "permanent", "temporary", "session-only"] as const;
+export const EXPIRY_LEVELS = ["core", "permanent", "temporary"] as const;
 
 export const SCOPE_LEVELS = ["private", "personal", "public"] as const;
 
 export type KnowledgeType = (typeof KNOWLEDGE_TYPES)[number];
-
-export type ConfidenceLevel = (typeof CONFIDENCE_LEVELS)[number];
 
 export type Expiry = (typeof EXPIRY_LEVELS)[number];
 
@@ -58,7 +57,7 @@ export interface KnowledgeEntry {
   type: KnowledgeType;
   content: string;
   subject: string;
-  confidence: ConfidenceLevel;
+  importance: number;
   expiry: Expiry;
   scope?: Scope;
   tags: string[];
@@ -175,7 +174,7 @@ export interface RecallResult {
   scores: {
     vector: number;
     recency: number;
-    confidence: number;
+    importance: number;
     recall: number;
     fts: number;
   };
@@ -186,7 +185,7 @@ export interface RecallQuery {
   limit?: number;
   types?: KnowledgeType[];
   tags?: string[];
-  minConfidence?: ConfidenceLevel;
+  minImportance?: number;
   since?: string;
   expiry?: Expiry;
   scope?: Scope;
