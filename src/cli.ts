@@ -472,15 +472,12 @@ export function createProgram(): Command {
     .option("--db <path>", "Database path override")
     .option("--model <model>", "LLM model to use")
     .option("--provider <name>", "LLM provider: anthropic, openai, openai-codex")
-    .option("--online-dedup", "Enable online LLM dedup at write time", false)
-    .option("--no-online-dedup", "Disable online LLM dedup at write time")
-    .option("--dedup-threshold <n>", "Similarity threshold for online dedup (0.0-1.0)")
     .option("--verbose", "Show per-file details", false)
     .option("--dry-run", "Extract without storing", false)
     .option("--json", "Output JSON results", false)
     .option("--concurrency <n>", "Parallel extractions", "1")
     .option("--skip-ingested", "Skip already-ingested files", true)
-    .option("--force", "Re-process even if already ingested", false)
+    .option("--force", "Clean re-ingest: delete previous rows for each file before processing", false)
     .action(async (paths: string[], opts: IngestCommandOptions) => {
       const result = await runIngestCommand(paths, opts);
       process.exitCode = result.exitCode;

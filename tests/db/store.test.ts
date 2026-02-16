@@ -213,7 +213,7 @@ describe("db store pipeline", () => {
     expect(asNumber(confirmations.rows[0]?.confirmations)).toBe(1);
   });
 
-  it("adds entry without relation for same-subject different-type match when online dedup is disabled", async () => {
+  it("adds related relation for same-subject different-type match in 0.92-0.98 band", async () => {
     const client = makeClient();
     await initDb(client);
 
@@ -244,10 +244,19 @@ describe("db store pipeline", () => {
     expect(result.added).toBe(1);
     expect(result.updated).toBe(0);
     expect(result.skipped).toBe(0);
-    expect(result.relations_created).toBe(0);
+    expect(result.relations_created).toBe(1);
 
-    const relationResult = await client.execute("SELECT COUNT(*) AS count FROM relations");
-    expect(asNumber(relationResult.rows[0]?.count)).toBe(0);
+    const relationResult = await client.execute({
+      sql: `
+        SELECT relation_type
+        FROM relations
+        WHERE source_id = (SELECT id FROM entries WHERE content = ? LIMIT 1)
+          AND target_id = (SELECT id FROM entries WHERE content = ? LIMIT 1)
+      `,
+      args: ["preference variant vec-mid", "seed vec-base"],
+    });
+    expect(relationResult.rows.length).toBe(1);
+    expect(String(relationResult.rows[0]?.relation_type)).toBe("related");
   });
 
   it("adds entries when similarity is below 0.92", async () => {

@@ -2,11 +2,14 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createClient, type Client } from "@libsql/client";
 import { runIngestCommand } from "../../src/commands/ingest.js";
+import { initDb } from "../../src/db/client.js";
 import { hashText } from "../../src/db/store.js";
+import { storeEntries } from "../../src/db/store.js";
 import { expandInputFiles } from "../../src/parser.js";
 import type { IngestCommandDeps } from "../../src/commands/ingest.js";
-import type { KnowledgeEntry, ParsedTranscript } from "../../src/types.js";
+import type { KnowledgeEntry, LlmClient, ParsedTranscript } from "../../src/types.js";
 
 const tempDirs: string[] = [];
 
@@ -46,6 +49,37 @@ function makeParsed(filePath: string): ParsedTranscript {
     ],
     warnings: [],
   };
+}
+
+function fakeLlmClient(): LlmClient {
+  return {
+    auth: "openai-api-key",
+    resolvedModel: {
+      provider: "openai",
+      modelId: "gpt-4o",
+      model: {} as any,
+    },
+    credentials: {
+      apiKey: "test-key",
+      source: "test",
+    },
+  };
+}
+
+function to512(head: number[]): number[] {
+  return [...head, ...Array.from({ length: 509 }, () => 0)];
+}
+
+function vectorForText(text: string): number[] {
+  if (text.includes("vec-base")) return to512([1, 0, 0]);
+  if (text.includes("vec-mid")) return to512([0.94, 0.34, 0]);
+  if (text.includes("vec-85")) return to512([0.85, Math.sqrt(1 - 0.85 ** 2), 0]);
+  if (text.includes("vec-low")) return to512([0.7, 0.71, 0]);
+  return to512([0, 1, 0]);
+}
+
+async function mockEmbed(texts: string[]): Promise<number[][]> {
+  return texts.map((text) => vectorForText(text));
 }
 
 function makeDeps(overrides?: Partial<IngestCommandDeps> & { db?: { execute: ReturnType<typeof vi.fn> } }): IngestCommandDeps {
@@ -125,9 +159,6 @@ describe("ingest command", () => {
       "gpt-4o",
       "--provider",
       "openai",
-      "--online-dedup",
-      "--dedup-threshold",
-      "0.75",
       "--verbose",
       "--dry-run",
       "--json",
@@ -145,8 +176,6 @@ describe("ingest command", () => {
       db: "/tmp/db.sqlite",
       model: "gpt-4o",
       provider: "openai",
-      onlineDedup: true,
-      dedupThreshold: "0.75",
       verbose: true,
       dryRun: true,
       json: true,
@@ -231,6 +260,55 @@ describe("ingest command", () => {
     expect(parseTranscriptFileFn).toHaveBeenCalledTimes(1);
   });
 
+  it("deletes prior file-owned rows before storing when --force is enabled", async () => {
+    const dir = await makeTempDir();
+    const fileA = path.join(dir, "a.md");
+    await fs.writeFile(fileA, "alpha", "utf8");
+
+    const dbExecute = vi.fn(async (query: { sql?: string }) => {
+      const sql = query?.sql ?? "";
+      if (sql.includes("COUNT(*) AS count")) {
+        return { rows: [{ count: 1 }] };
+      }
+      return { rows: [] };
+    });
+    const storeEntriesFn = vi.fn(async () => ({
+      added: 1,
+      updated: 0,
+      skipped: 0,
+      superseded: 0,
+      llm_dedup_calls: 0,
+      relations_created: 0,
+      total_entries: 1,
+      duration_ms: 1,
+    }));
+
+    await runIngestCommand(
+      [dir],
+      { force: true },
+      makeDeps({
+        db: { execute: dbExecute },
+        expandInputFilesFn: vi.fn(async () => [fileA]),
+        storeEntriesFn: storeEntriesFn as IngestCommandDeps["storeEntriesFn"],
+      }),
+    );
+
+    expect(dbExecute).toHaveBeenCalledWith(
+      expect.objectContaining({ sql: expect.stringContaining("DELETE FROM entry_sources") }),
+    );
+    expect(dbExecute).toHaveBeenCalledWith(
+      expect.objectContaining({ sql: expect.stringContaining("DELETE FROM ingest_log") }),
+    );
+    expect(dbExecute).toHaveBeenCalledWith(
+      expect.objectContaining({ sql: expect.stringContaining("DELETE FROM entries WHERE source_file = ?") }),
+    );
+
+    const optionsArg = (storeEntriesFn.mock.calls as unknown[][])[0]?.[3] as Record<string, unknown> | undefined;
+    expect(optionsArg?.onlineDedup).toBe(true);
+    expect(optionsArg?.skipLlmDedup).toBe(true);
+    expect(optionsArg?.force).toBeUndefined();
+  });
+
   it("supports --dry-run by extracting without storing", async () => {
     const dir = await makeTempDir();
     const filePath = path.join(dir, "a.txt");
@@ -250,6 +328,37 @@ describe("ingest command", () => {
     expect(result.totalEntriesExtracted).toBeGreaterThan(0);
     expect(result.totalEntriesStored).toBe(0);
     expect(storeEntriesFn).not.toHaveBeenCalled();
+  });
+
+  it("does not delete rows during --force --dry-run and reports would-delete summary", async () => {
+    const dir = await makeTempDir();
+    const fileA = path.join(dir, "a.md");
+    await fs.writeFile(fileA, "alpha", "utf8");
+
+    const dbExecute = vi.fn(async (query: { sql?: string }) => {
+      const sql = query?.sql ?? "";
+      if (sql.includes("COUNT(*) AS count")) {
+        return { rows: [{ count: 2 }] };
+      }
+      if (sql.includes("DELETE FROM")) {
+        throw new Error("delete should not run in dry-run");
+      }
+      return { rows: [] };
+    });
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    const result = await runIngestCommand(
+      [dir],
+      { force: true, dryRun: true },
+      makeDeps({
+        db: { execute: dbExecute },
+        expandInputFilesFn: vi.fn(async () => [fileA]),
+      }),
+    );
+
+    const output = stderrSpy.mock.calls.map((call) => String(call[0])).join("");
+    expect(output).toContain("Force cleanup (dry-run): would delete");
+    expect(result.totalEntriesStored).toBe(0);
   });
 
   it("streams extraction chunks through callback and stores each chunk incrementally", async () => {
@@ -316,7 +425,7 @@ describe("ingest command", () => {
     expect(storeEntriesFn.mock.calls[1]?.[1]).toHaveLength(1);
   });
 
-  it("passes online dedup options to store when enabled", async () => {
+  it("always passes deterministic ingest dedup options to store", async () => {
     const dir = await makeTempDir();
     const filePath = path.join(dir, "a.txt");
     await fs.writeFile(filePath, "hello", "utf8");
@@ -336,7 +445,7 @@ describe("ingest command", () => {
 
     await runIngestCommand(
       [dir],
-      { onlineDedup: true, dedupThreshold: 0.75 },
+      {},
       makeDeps({
         expandInputFilesFn: vi.fn(async () => [filePath]),
         deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries.slice(0, 1)),
@@ -347,8 +456,9 @@ describe("ingest command", () => {
     expect(storeEntriesFn).toHaveBeenCalledTimes(1);
     const optionsArg = (storeEntriesFn.mock.calls as unknown[][])[0]?.[3] as Record<string, unknown> | undefined;
     expect(optionsArg?.onlineDedup).toBe(true);
-    expect(optionsArg?.dedupThreshold).toBe(0.75);
-    expect(optionsArg?.llmClient).toBeTruthy();
+    expect(optionsArg?.skipLlmDedup).toBe(true);
+    expect(optionsArg?.force).toBeUndefined();
+    expect(optionsArg?.llmClient).toBeUndefined();
   });
 
   it("handles missing files gracefully", async () => {
@@ -587,7 +697,44 @@ describe("ingest command", () => {
     expect(result.filesFailed).toBe(1);
     expect(result.totalEntriesExtracted).toBe(3);
     expect(result.totalEntriesStored).toBe(2);
+    expect(result.dedupStats.entries_added).toBe(1);
+    expect(result.dedupStats.entries_updated).toBe(0);
+    expect(result.dedupStats.entries_reinforced).toBe(1);
+    expect(result.dedupStats.entries_skipped).toBe(0);
+    expect(result.dedupStats.entries_superseded).toBe(0);
+    expect(result.dedupStats.dedup_llm_calls).toBe(0);
     expect(result.exitCode).toBe(1);
+  });
+
+  it("prints summary with skipped duplicate and reinforced counts", async () => {
+    const dir = await makeTempDir();
+    const filePath = path.join(dir, "a.md");
+    await fs.writeFile(filePath, "hello", "utf8");
+
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    await runIngestCommand(
+      [filePath],
+      {},
+      makeDeps({
+        expandInputFilesFn: vi.fn(async () => [filePath]),
+        deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries.slice(0, 1)),
+        storeEntriesFn: vi.fn(async () => ({
+          added: 0,
+          updated: 1,
+          skipped: 1,
+          superseded: 0,
+          llm_dedup_calls: 0,
+          relations_created: 0,
+          total_entries: 1,
+          duration_ms: 1,
+        })) as IngestCommandDeps["storeEntriesFn"],
+      }),
+    );
+
+    const output = stderrSpy.mock.calls.map((call) => String(call[0])).join("");
+    expect(output).toContain("skipped (duplicate)");
+    expect(output).toContain("reinforced");
   });
 
   it("prints JSON output with result payload", async () => {
@@ -627,5 +774,135 @@ describe("ingest command", () => {
 
     expect(readConfigFn).toHaveBeenCalledTimes(1);
     expect(expandInputFilesFn).toHaveBeenCalled();
+  });
+
+  it("deduplicates across files during ingest by reinforcing existing entries", async () => {
+    const dir = await makeTempDir();
+    const fileA = path.join(dir, "a.md");
+    const fileB = path.join(dir, "b.md");
+    await fs.writeFile(fileA, "a", "utf8");
+    await fs.writeFile(fileB, "b", "utf8");
+
+    const db = createClient({ url: ":memory:" });
+    const storeEntriesFn: IngestCommandDeps["storeEntriesFn"] = async (client, entries, apiKey, options) =>
+      storeEntries(client, entries, apiKey, {
+        ...options,
+        embedFn: mockEmbed,
+      });
+
+    try {
+      const extractKnowledgeFromChunksFn = vi.fn(
+        async (params: Parameters<IngestCommandDeps["extractKnowledgeFromChunksFn"]>[0]) => {
+          const entry =
+            params.file === fileA
+              ? makeEntry("prefers NFM financing vec-base")
+              : makeEntry("likes NFM financing option vec-mid");
+          await params.onChunkComplete?.({
+            chunkIndex: 0,
+            totalChunks: 1,
+            entries: [entry],
+            warnings: [],
+          });
+          return {
+            entries: [],
+            successfulChunks: 1,
+            failedChunks: 0,
+            warnings: [],
+          };
+        },
+      );
+
+      const result = await runIngestCommand(
+        [dir],
+        {},
+        makeDeps({
+          getDbFn: vi.fn(() => db) as IngestCommandDeps["getDbFn"],
+          initDbFn: vi.fn(async () => initDb(db)),
+          closeDbFn: vi.fn(() => undefined),
+          expandInputFilesFn: vi.fn(async () => [fileA, fileB]),
+          createLlmClientFn: vi.fn(() => fakeLlmClient()) as IngestCommandDeps["createLlmClientFn"],
+          extractKnowledgeFromChunksFn: extractKnowledgeFromChunksFn as IngestCommandDeps["extractKnowledgeFromChunksFn"],
+          deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+          resolveEmbeddingApiKeyFn: vi.fn(() => "sk-test"),
+          storeEntriesFn,
+        }),
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.dedupStats.entries_reinforced).toBe(1);
+      expect(result.dedupStats.entries_added).toBe(1);
+
+      const countRows = await db.execute("SELECT COUNT(*) AS count FROM entries");
+      expect(Number(countRows.rows[0]?.count)).toBe(1);
+      const confirmations = await db.execute("SELECT confirmations FROM entries LIMIT 1");
+      expect(Number(confirmations.rows[0]?.confirmations)).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("skips LLM online dedup band during ingest store path", async () => {
+    const dir = await makeTempDir();
+    const fileA = path.join(dir, "a.md");
+    const fileB = path.join(dir, "b.md");
+    await fs.writeFile(fileA, "a", "utf8");
+    await fs.writeFile(fileB, "b", "utf8");
+
+    const db = createClient({ url: ":memory:" });
+    const onlineDedupFn = vi.fn(async () => ({
+      action: "SKIP" as const,
+      target_id: null,
+      merged_content: null,
+      reasoning: "should not be called from ingest",
+    }));
+    const storeEntriesFn: IngestCommandDeps["storeEntriesFn"] = async (client, entries, apiKey, options) =>
+      storeEntries(client, entries, apiKey, {
+        ...options,
+        embedFn: mockEmbed,
+        llmClient: fakeLlmClient(),
+        onlineDedupFn,
+      });
+
+    try {
+      const extractKnowledgeFromChunksFn = vi.fn(
+        async (params: Parameters<IngestCommandDeps["extractKnowledgeFromChunksFn"]>[0]) => {
+          const entry = params.file === fileA ? makeEntry("seed vec-base") : makeEntry("candidate vec-85");
+          await params.onChunkComplete?.({
+            chunkIndex: 0,
+            totalChunks: 1,
+            entries: [entry],
+            warnings: [],
+          });
+          return {
+            entries: [],
+            successfulChunks: 1,
+            failedChunks: 0,
+            warnings: [],
+          };
+        },
+      );
+
+      const result = await runIngestCommand(
+        [dir],
+        {},
+        makeDeps({
+          getDbFn: vi.fn(() => db) as IngestCommandDeps["getDbFn"],
+          initDbFn: vi.fn(async () => initDb(db)),
+          closeDbFn: vi.fn(() => undefined),
+          expandInputFilesFn: vi.fn(async () => [fileA, fileB]),
+          createLlmClientFn: vi.fn(() => fakeLlmClient()) as IngestCommandDeps["createLlmClientFn"],
+          extractKnowledgeFromChunksFn: extractKnowledgeFromChunksFn as IngestCommandDeps["extractKnowledgeFromChunksFn"],
+          deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+          resolveEmbeddingApiKeyFn: vi.fn(() => "sk-test"),
+          storeEntriesFn,
+        }),
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.dedupStats.dedup_llm_calls).toBe(0);
+      expect(onlineDedupFn).not.toHaveBeenCalled();
+    } finally {
+      db.close();
+    }
   });
 });

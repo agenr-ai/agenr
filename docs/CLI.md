@@ -192,15 +192,14 @@ agenr ingest [options] <paths...>
 - `--db <path>`: database path override.
 - `--model <model>`: override model.
 - `--provider <name>`: `anthropic|openai|openai-codex`.
-- `--online-dedup`: enable online LLM dedup at write time (default `false`).
-- `--no-online-dedup`: disable online LLM dedup.
-- `--dedup-threshold <n>`: similarity threshold for online dedup (`0.0..1.0`, default `0.8`).
 - `--verbose`: per-file details.
 - `--dry-run`: extract without storing.
 - `--json`: emit JSON summary.
 - `--concurrency <n>`: parallel extraction workers (default `1`).
 - `--skip-ingested`: skip already-ingested file/hash pairs (default `true`).
-- `--force`: re-process even if ingested.
+- `--force`: clean re-ingest each matched file by deleting previous rows for that source file first.
+
+Ingest always runs deterministic online dedup (content hash + fast vector bands) and skips LLM dedup classification (`skipLlmDedup=true`).
 
 ### Example
 
@@ -213,7 +212,7 @@ $A ingest ./notes ./transcripts --glob "**/*.md" --concurrency 2
 ```text
 Ingest Complete
 Done: 3 files | 3 processed, 0 skipped, 0 failed
-Entries: 6 extracted, 3 stored, 3 deduped
+Entries: 6 extracted, 3 stored, 2 skipped (duplicate), 1 reinforced
 Duration: 0s
 ```
 
