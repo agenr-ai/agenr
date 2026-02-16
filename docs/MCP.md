@@ -70,6 +70,43 @@ Equivalent shell command:
 OPENAI_API_KEY=your-key-here npx -y agenr mcp
 ```
 
+## Per-Project Databases (Recommended for Coding Agents)
+
+By default, agenr uses a single global database (`~/.agenr/knowledge.db`). This works well for personal assistants, but coding agents should use a **separate database per project** to avoid cross-project memory pollution.
+
+Without per-project scoping, your coding agent might recall "use pnpm" in a Python project, or surface React architecture decisions while working on a Rust codebase.
+
+### Manual setup (v0.4)
+
+Pass `--db` to scope the MCP server to a project-local database:
+
+**Codex** (`~/.codex/config.toml`):
+```toml
+[mcp_servers.agenr]
+command = "npx"
+args = ["-y", "agenr", "mcp", "--db", ".agenr/knowledge.db"]
+env = { OPENAI_API_KEY = "your-key-here" }
+```
+
+**Claude Code** (`.mcp.json` in project root):
+```json
+{
+  "mcpServers": {
+    "agenr": {
+      "command": "npx",
+      "args": ["-y", "agenr", "mcp", "--db", ".agenr/knowledge.db"],
+      "env": { "OPENAI_API_KEY": "your-key-here" }
+    }
+  }
+}
+```
+
+Add `.agenr/knowledge.db` and `.agenr/knowledge.db-*` to your `.gitignore`.
+
+### Coming in v0.5
+
+Automatic project detection: `agenr init` will scaffold a `.agenr/` directory, and the MCP server will auto-detect project root by walking up from the working directory. No manual `--db` flag needed.
+
 ## Tool Reference
 
 Source of truth:
