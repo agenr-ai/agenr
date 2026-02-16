@@ -131,6 +131,8 @@ function makeDeps(overrides?: Partial<IngestCommandDeps> & { db?: { execute: Ret
     loadWatchStateFn: overrides?.loadWatchStateFn ?? (vi.fn(async () => ({ version: 1 as const, files: {} }))),
     saveWatchStateFn: overrides?.saveWatchStateFn ?? vi.fn(async () => undefined),
     nowFn: overrides?.nowFn ?? (() => new Date("2026-02-15T00:00:00.000Z")),
+    sleepFn: overrides?.sleepFn ?? (vi.fn(async () => undefined) as IngestCommandDeps["sleepFn"]),
+    shouldShutdownFn: overrides?.shouldShutdownFn ?? (vi.fn(() => false) as IngestCommandDeps["shouldShutdownFn"]),
   };
 }
 
@@ -170,6 +172,9 @@ describe("ingest command", () => {
       "--concurrency",
       "3",
       "--skip-ingested",
+      "--no-retry",
+      "--max-retries",
+      "5",
       "--force",
     ]);
 
@@ -186,6 +191,8 @@ describe("ingest command", () => {
       json: true,
       concurrency: "3",
       skipIngested: true,
+      retry: false,
+      maxRetries: "5",
       force: true,
     });
   });
@@ -810,85 +817,129 @@ describe("ingest command", () => {
     await fs.writeFile(filePath, '{"role":"user","content":"retry"}\n', "utf8");
 
     const db = createClient({ url: ":memory:" });
-    const extractKnowledgeFromChunksFn = vi.fn(
-      async (params: Parameters<IngestCommandDeps["extractKnowledgeFromChunksFn"]>[0]) => {
-        await params.onChunkComplete?.({
-          chunkIndex: 0,
-          totalChunks: 1,
-          entries: [makeEntry("first"), makeEntry("force-embed-fail")],
-          warnings: [],
-        });
-        return {
-          entries: [],
-          successfulChunks: 1,
-          failedChunks: 0,
-          warnings: [],
-        };
-      },
-    );
-
-    const failStoreEntriesFn: IngestCommandDeps["storeEntriesFn"] = async (client, entries, apiKey, options) =>
-      storeEntries(client, entries, apiKey, {
-        ...options,
-        embedFn: async (texts: string[]) => {
-          if (texts.some((text) => text.includes("force-embed-fail"))) {
-            throw new Error("OpenAI embeddings request failed (500)");
-          }
-          return texts.map(() => to1024([1, 0, 0]));
-        },
-      });
-    const successStoreEntriesFn: IngestCommandDeps["storeEntriesFn"] = async (client, entries, apiKey, options) =>
-      storeEntries(client, entries, apiKey, {
-        ...options,
-        embedFn: async (texts: string[]) => texts.map(() => to1024([1, 0, 0])),
-      });
+    const storeEntriesFn = vi.fn(async () => {
+      throw new Error("OpenAI embeddings request failed (500)");
+    });
+    // Fail once, then succeed on the first retry round.
+    storeEntriesFn.mockImplementationOnce(async () => {
+      throw new Error("OpenAI embeddings request failed (500)");
+    });
+    storeEntriesFn.mockImplementationOnce(async () => ({
+      added: 1,
+      updated: 0,
+      skipped: 0,
+      superseded: 0,
+      llm_dedup_calls: 0,
+      relations_created: 0,
+      total_entries: 1,
+      duration_ms: 1,
+    }));
 
     try {
-      const sharedDeps = {
-        getDbFn: vi.fn(() => db) as IngestCommandDeps["getDbFn"],
-        initDbFn: vi.fn(async () => initDb(db)),
-        closeDbFn: vi.fn(() => undefined),
-        createLlmClientFn: vi.fn(() => fakeLlmClient()) as IngestCommandDeps["createLlmClientFn"],
-        expandInputFilesFn: vi.fn(async () => [filePath]),
-        extractKnowledgeFromChunksFn: extractKnowledgeFromChunksFn as IngestCommandDeps["extractKnowledgeFromChunksFn"],
-        deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
-        resolveEmbeddingApiKeyFn: vi.fn(() => "sk-test"),
-      };
-
-      const firstRun = await runIngestCommand(
+      const result = await runIngestCommand(
         [filePath],
-        {},
+        { maxRetries: "3" },
         makeDeps({
-          ...sharedDeps,
-          storeEntriesFn: failStoreEntriesFn,
+          getDbFn: vi.fn(() => db) as IngestCommandDeps["getDbFn"],
+          initDbFn: vi.fn(async () => initDb(db)),
+          closeDbFn: vi.fn(() => undefined),
+          createLlmClientFn: vi.fn(() => fakeLlmClient()) as IngestCommandDeps["createLlmClientFn"],
+          expandInputFilesFn: vi.fn(async () => [filePath]),
+          deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+          resolveEmbeddingApiKeyFn: vi.fn(() => "sk-test"),
+          storeEntriesFn: storeEntriesFn as IngestCommandDeps["storeEntriesFn"],
+          sleepFn: vi.fn(async () => undefined),
         }),
       );
 
-      expect(firstRun.exitCode).toBe(2);
-      expect(firstRun.filesProcessed).toBe(0);
-      expect(firstRun.filesSkipped).toBe(0);
-      expect(firstRun.filesFailed).toBe(1);
-
-      const secondRun = await runIngestCommand(
-        [filePath],
-        {},
-        makeDeps({
-          ...sharedDeps,
-          storeEntriesFn: successStoreEntriesFn,
-        }),
-      );
-
-      expect(secondRun.exitCode).toBe(0);
-      expect(secondRun.filesProcessed).toBe(1);
-      expect(secondRun.filesSkipped).toBe(0);
-      expect(secondRun.filesFailed).toBe(0);
+      expect(result.exitCode).toBe(0);
+      expect(result.filesProcessed).toBe(1);
+      expect(result.filesFailed).toBe(0);
+      expect(storeEntriesFn).toHaveBeenCalledTimes(2);
 
       const ingestRows = await db.execute({
         sql: "SELECT COUNT(*) AS count FROM ingest_log WHERE file_path = ?",
         args: [filePath],
       });
       expect(Number(ingestRows.rows[0]?.count)).toBe(1);
-      expect(extractKnowledgeFromChunksFn).toHaveBeenCalledTimes(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("exhausts max retries for a permanently failing file and returns non-zero", async () => {
+    const dir = await makeTempDir();
+    const filePath = path.join(dir, "always-fail.jsonl");
+    await fs.writeFile(filePath, '{"role":"user","content":"retry"}\n', "utf8");
+
+    const db = createClient({ url: ":memory:" });
+    const storeEntriesFn = vi.fn(async () => {
+      throw new Error("OpenAI embeddings request failed (500)");
+    });
+    const sleepFn = vi.fn(async () => undefined);
+
+    try {
+      const result = await runIngestCommand(
+        [filePath],
+        { maxRetries: "3" },
+        makeDeps({
+          getDbFn: vi.fn(() => db) as IngestCommandDeps["getDbFn"],
+          initDbFn: vi.fn(async () => initDb(db)),
+          closeDbFn: vi.fn(() => undefined),
+          createLlmClientFn: vi.fn(() => fakeLlmClient()) as IngestCommandDeps["createLlmClientFn"],
+          expandInputFilesFn: vi.fn(async () => [filePath]),
+          deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+          resolveEmbeddingApiKeyFn: vi.fn(() => "sk-test"),
+          storeEntriesFn: storeEntriesFn as IngestCommandDeps["storeEntriesFn"],
+          sleepFn,
+        }),
+      );
+
+      expect(result.exitCode).toBe(2);
+      expect(result.filesProcessed).toBe(0);
+      expect(result.filesFailed).toBe(1);
+      // 1 initial attempt + 3 retry rounds
+      expect(storeEntriesFn).toHaveBeenCalledTimes(4);
+      expect(sleepFn).toHaveBeenCalledTimes(3);
+      expect(sleepFn.mock.calls.map((call) => call[0])).toEqual([10_000, 30_000, 60_000]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("--no-retry disables the retry loop", async () => {
+    const dir = await makeTempDir();
+    const filePath = path.join(dir, "no-retry.jsonl");
+    await fs.writeFile(filePath, '{"role":"user","content":"retry"}\n', "utf8");
+
+    const db = createClient({ url: ":memory:" });
+    const storeEntriesFn = vi.fn(async () => {
+      throw new Error("OpenAI embeddings request failed (500)");
+    });
+    const sleepFn = vi.fn(async () => undefined);
+
+    try {
+      const result = await runIngestCommand(
+        [filePath],
+        { retry: false, maxRetries: "3" },
+        makeDeps({
+          getDbFn: vi.fn(() => db) as IngestCommandDeps["getDbFn"],
+          initDbFn: vi.fn(async () => initDb(db)),
+          closeDbFn: vi.fn(() => undefined),
+          createLlmClientFn: vi.fn(() => fakeLlmClient()) as IngestCommandDeps["createLlmClientFn"],
+          expandInputFilesFn: vi.fn(async () => [filePath]),
+          deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+          resolveEmbeddingApiKeyFn: vi.fn(() => "sk-test"),
+          storeEntriesFn: storeEntriesFn as IngestCommandDeps["storeEntriesFn"],
+          sleepFn,
+        }),
+      );
+
+      expect(result.exitCode).toBe(2);
+      expect(result.filesProcessed).toBe(0);
+      expect(result.filesFailed).toBe(1);
+      expect(storeEntriesFn).toHaveBeenCalledTimes(1);
+      expect(sleepFn).not.toHaveBeenCalled();
     } finally {
       db.close();
     }
@@ -1071,8 +1122,12 @@ describe("ingest command", () => {
     expect(result.dedupStats.dedup_llm_calls).toBe(0);
     expect(result.exitCode).toBe(1);
     const output = stderrSpy.mock.calls.map((call) => String(call[0])).join("");
-    expect(output).toContain("Done: 1 succeeded, 1 failed, 1 skipped (already ingested)");
-    expect(output).toContain("Failed files (will auto-retry on next run):");
+    expect(output).toContain("Done: 1 succeeded, 0 succeeded on retry, 1 failed after retries");
+    expect(output).toContain("1 skipped");
+    expect(output).toContain("already ingested");
+    expect(output).toContain("Retries:");
+    expect(output).toContain("Retry round 1:");
+    expect(output).toContain("Failed files (after retries):");
     expect(output).toContain("fail.md - extract failed");
   });
 

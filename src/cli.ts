@@ -487,6 +487,8 @@ export function createProgram(): Command {
     .option("--json", "Output JSON results", false)
     .option("--concurrency <n>", "Parallel extractions", "1")
     .option("--skip-ingested", "Skip already-ingested files", true)
+    .option("--no-retry", "Disable auto-retry for failed files")
+    .option("--max-retries <n>", "Maximum auto-retry attempts (default: 3)", "3")
     .option("--force", "Clean re-ingest: delete previous rows for each file before processing", false)
     .action(async (paths: string[], opts: IngestCommandOptions) => {
       const result = await runIngestCommand(paths, opts);

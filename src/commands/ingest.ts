@@ -34,6 +34,8 @@ export interface IngestCommandOptions {
   concurrency?: number | string;
   skipIngested?: boolean;
   force?: boolean;
+  retry?: boolean;
+  maxRetries?: number | string;
 }
 
 export interface IngestFileResult {
@@ -83,6 +85,8 @@ export interface IngestCommandDeps {
   loadWatchStateFn: typeof loadWatchState;
   saveWatchStateFn: typeof saveWatchState;
   nowFn: () => Date;
+  sleepFn: (ms: number) => Promise<void>;
+  shouldShutdownFn: () => boolean;
 }
 
 function hasGlobChars(input: string): boolean {
@@ -218,6 +222,17 @@ function parsePositiveInt(value: number | string | undefined, fallback: number, 
     throw new Error(`${label} must be a positive number.`);
   }
   return Math.floor(parsed);
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function retryBackoffMs(attempt: number): number {
+  // attempt is 1-based (retry round, not including initial pass)
+  if (attempt <= 1) return 10_000;
+  if (attempt === 2) return 30_000;
+  return 60_000;
 }
 
 function formatBytes(bytes: number): string {
@@ -451,6 +466,8 @@ export async function runIngestCommand(
     loadWatchStateFn: deps?.loadWatchStateFn ?? loadWatchState,
     saveWatchStateFn: deps?.saveWatchStateFn ?? saveWatchState,
     nowFn: deps?.nowFn ?? (() => new Date()),
+    sleepFn: deps?.sleepFn ?? sleep,
+    shouldShutdownFn: deps?.shouldShutdownFn ?? (() => false),
   };
 
   const clackOutput = { output: process.stderr };
@@ -462,161 +479,162 @@ export async function runIngestCommand(
   const skipIngested = force ? false : options.skipIngested !== false;
   const globPattern = options.glob?.trim() || DEFAULT_GLOB;
   const concurrency = parsePositiveInt(options.concurrency, 1, "--concurrency");
+  const retryEnabled = options.retry !== false;
+  const maxRetries = retryEnabled ? parsePositiveInt(options.maxRetries, 3, "--max-retries") : 0;
+  const retrySummaries: string[] = [];
 
-  const files = await resolveInputFiles(inputPaths, globPattern, resolvedDeps.expandInputFilesFn);
-  const targetsWithSizes = await Promise.all(
-    files.map(async (filePath) => {
-      const stat = await fs.stat(filePath).catch(() => null);
-      return {
-        file: filePath,
-        size: stat?.isFile() ? stat.size : -1,
+    const files = await resolveInputFiles(inputPaths, globPattern, resolvedDeps.expandInputFilesFn);
+    const targetsWithSizes = await Promise.all(
+      files.map(async (filePath) => {
+        const stat = await fs.stat(filePath).catch(() => null);
+        return {
+          file: filePath,
+          size: stat?.isFile() ? stat.size : -1,
+        };
+      }),
+    );
+
+    const sortedTargets = targetsWithSizes
+      .sort((a, b) => a.size - b.size || a.file.localeCompare(b.file))
+      .map<IngestTarget>((item, index) => ({ ...item, index }));
+
+    clack.intro(banner(), clackOutput);
+    clack.log.info(
+      `Ingesting: ${ui.bold(String(sortedTargets.length))} file(s) | Glob: ${globPattern} | Skip ingested: ${skipIngested ? "yes" : "no"}`,
+      clackOutput,
+    );
+
+    if (sortedTargets.length === 0) {
+      clack.log.warn(formatWarn("No files matched input paths and glob filter."), clackOutput);
+      clack.outro(undefined, clackOutput);
+      const emptyResult: IngestCommandResult = {
+        exitCode: 0,
+        filesProcessed: 0,
+        filesSkipped: 0,
+        filesFailed: 0,
+        totalEntriesExtracted: 0,
+        totalEntriesStored: 0,
+        dedupStats: {
+          entries_added: 0,
+          entries_updated: 0,
+          entries_skipped: 0,
+          entries_reinforced: 0,
+          entries_superseded: 0,
+          dedup_llm_calls: 0,
+        },
+        durationMs: Math.max(0, resolvedDeps.nowFn().getTime() - startedAt.getTime()),
+        results: [],
       };
-    }),
-  );
-
-  const sortedTargets = targetsWithSizes
-    .sort((a, b) => a.size - b.size || a.file.localeCompare(b.file))
-    .map<IngestTarget>((item, index) => ({ ...item, index }));
-
-  clack.intro(banner(), clackOutput);
-  clack.log.info(
-    `Ingesting: ${ui.bold(String(sortedTargets.length))} file(s) | Glob: ${globPattern} | Skip ingested: ${skipIngested ? "yes" : "no"}`,
-    clackOutput,
-  );
-
-  if (sortedTargets.length === 0) {
-    clack.log.warn(formatWarn("No files matched input paths and glob filter."), clackOutput);
-    clack.outro(undefined, clackOutput);
-    const emptyResult: IngestCommandResult = {
-      exitCode: 0,
-      filesProcessed: 0,
-      filesSkipped: 0,
-      filesFailed: 0,
-      totalEntriesExtracted: 0,
-      totalEntriesStored: 0,
-      dedupStats: {
-        entries_added: 0,
-        entries_updated: 0,
-        entries_skipped: 0,
-        entries_reinforced: 0,
-        entries_superseded: 0,
-        dedup_llm_calls: 0,
-      },
-      durationMs: Math.max(0, resolvedDeps.nowFn().getTime() - startedAt.getTime()),
-      results: [],
-    };
-    if (json) {
-      process.stdout.write(`${JSON.stringify(emptyResult, null, 2)}\n`);
+      if (json) {
+        process.stdout.write(`${JSON.stringify(emptyResult, null, 2)}\n`);
+      }
+      return emptyResult;
     }
-    return emptyResult;
-  }
 
-  const config = resolvedDeps.readConfigFn(process.env);
-  const client = resolvedDeps.createLlmClientFn({
-    provider: options.provider,
-    model: options.model,
-    env: process.env,
-  });
-
-  const dbPath = options.db?.trim() || config?.db?.path;
-  const db = resolvedDeps.getDbFn(dbPath);
-  await resolvedDeps.initDbFn(db);
-
-  const results: IngestFileResult[] = new Array(sortedTargets.length);
-  let filesProcessed = 0;
-  let filesSkipped = 0;
-  let filesFailed = 0;
-  let totalEntriesExtracted = 0;
-  let totalEntriesStored = 0;
-  let totalEntriesAdded = 0;
-  let totalEntriesUpdated = 0;
-  let totalEntriesSkipped = 0;
-  let totalEntriesReinforced = 0;
-  let totalEntriesSuperseded = 0;
-  let totalDedupLlmCalls = 0;
-  let forceDeletedIngestLogRows = 0;
-  let forceDeletedEntryRows = 0;
-  let forceDeletedEntrySourceRows = 0;
-  let completed = 0;
-  let embeddingApiKey: string | null = null;
-  let watchStateLoaded = false;
-  let watchState = createEmptyWatchState();
-  let cursor = 0;
-  let totalChunksFailed = 0;
-  let filesWithChunkFailures = 0;
-  const chunkStatsByFile = new Map<string, { successfulChunks: number; failedChunks: number }>();
-
-  let dbChain: Promise<void> = Promise.resolve();
-  const withDbLock = async <T>(fn: () => Promise<T>): Promise<T> => {
-    const previous = dbChain;
-    let release!: () => void;
-    dbChain = new Promise<void>((resolve) => {
-      release = resolve;
+    const config = resolvedDeps.readConfigFn(process.env);
+    const client = resolvedDeps.createLlmClientFn({
+      provider: options.provider,
+      model: options.model,
+      env: process.env,
     });
 
-    await previous;
-    try {
-      return await fn();
-    } finally {
-      release();
-    }
-  };
+    const dbPath = options.db?.trim() || config?.db?.path;
+    const db = resolvedDeps.getDbFn(dbPath);
+    await resolvedDeps.initDbFn(db);
 
-  const updateProgress = (): void => {
-    if (verbose) {
-      return;
-    }
-    process.stderr.write(`\r${ui.dim(`Processing ${completed}/${sortedTargets.length}...`)}`);
-  };
+    const results: IngestFileResult[] = new Array(sortedTargets.length);
+    let totalEntriesExtracted = 0;
+    let totalEntriesStored = 0;
+    let totalEntriesAdded = 0;
+    let totalEntriesUpdated = 0;
+    let totalEntriesSkipped = 0;
+    let totalEntriesReinforced = 0;
+    let totalEntriesSuperseded = 0;
+    let totalDedupLlmCalls = 0;
+    let forceDeletedIngestLogRows = 0;
+    let forceDeletedEntryRows = 0;
+    let forceDeletedEntrySourceRows = 0;
+    let completed = 0;
+    let embeddingApiKey: string | null = null;
+    let watchStateLoaded = false;
+    let watchState = createEmptyWatchState();
+    let cursor = 0;
+    let totalChunksFailed = 0;
+    let filesWithChunkFailures = 0;
+    const chunkStatsByFile = new Map<string, { successfulChunks: number; failedChunks: number }>();
+    let firstPassFailedIndexSet = new Set<number>();
 
-  const clearProgressLine = (): void => {
-    if (verbose) {
-      return;
-    }
-    process.stderr.write("\r");
-    process.stderr.write(`${" ".repeat(80)}\r`);
-  };
+    let dbChain: Promise<void> = Promise.resolve();
+    const withDbLock = async <T>(fn: () => Promise<T>): Promise<T> => {
+      const previous = dbChain;
+      let release!: () => void;
+      dbChain = new Promise<void>((resolve) => {
+        release = resolve;
+      });
 
-  const syncWatchStateOffset = async (filePath: string, ingestByteOffset: number): Promise<void> => {
-    if (dryRun || !isJsonlFile(filePath)) {
-      return;
-    }
-
-    try {
-      if (!watchStateLoaded) {
-        try {
-          watchState = await resolvedDeps.loadWatchStateFn();
-        } catch (error) {
-          watchState = createEmptyWatchState();
-          clack.log.warn(
-            formatWarn(
-              `Watch state is invalid (${errorMessage(error)}). Resetting to fresh state before ingest offset sync.`,
-            ),
-            clackOutput,
-          );
-          await resolvedDeps.saveWatchStateFn(watchState);
-        }
-        watchStateLoaded = true;
+      await previous;
+      try {
+        return await fn();
+      } finally {
+        release();
       }
+    };
 
-      const existingOffset = getFileState(watchState, filePath)?.byteOffset ?? 0;
-      if (!force && existingOffset > ingestByteOffset) {
+    const updateProgress = (completedCount: number, totalCount: number, verb: string): void => {
+      if (verbose) {
+        return;
+      }
+      process.stderr.write(`\r${ui.dim(`${verb} ${completedCount}/${totalCount}...`)}`);
+    };
+
+    const clearProgressLine = (): void => {
+      if (verbose) {
+        return;
+      }
+      process.stderr.write("\r");
+      process.stderr.write(`${" ".repeat(80)}\r`);
+    };
+
+    const syncWatchStateOffset = async (filePath: string, ingestByteOffset: number): Promise<void> => {
+      if (dryRun || !isJsonlFile(filePath)) {
         return;
       }
 
-      updateFileState(watchState, filePath, { byteOffset: ingestByteOffset });
-      await resolvedDeps.saveWatchStateFn(watchState);
-    } catch (error) {
-      clack.log.warn(
-        formatWarn(
-          `Failed to sync watch offset for ${path.basename(filePath)}: ${errorMessage(error)}`,
-        ),
-        clackOutput,
-      );
-    }
-  };
+      try {
+        if (!watchStateLoaded) {
+          try {
+            watchState = await resolvedDeps.loadWatchStateFn();
+          } catch (error) {
+            watchState = createEmptyWatchState();
+            clack.log.warn(
+              formatWarn(
+                `Watch state is invalid (${errorMessage(error)}). Resetting to fresh state before ingest offset sync.`,
+              ),
+              clackOutput,
+            );
+            await resolvedDeps.saveWatchStateFn(watchState);
+          }
+          watchStateLoaded = true;
+        }
 
-  const processTarget = async (target: IngestTarget): Promise<IngestFileResult> => {
+        const existingOffset = getFileState(watchState, filePath)?.byteOffset ?? 0;
+        if (!force && existingOffset > ingestByteOffset) {
+          return;
+        }
+
+        updateFileState(watchState, filePath, { byteOffset: ingestByteOffset });
+        await resolvedDeps.saveWatchStateFn(watchState);
+      } catch (error) {
+        clack.log.warn(
+          formatWarn(
+            `Failed to sync watch offset for ${path.basename(filePath)}: ${errorMessage(error)}`,
+          ),
+          clackOutput,
+        );
+      }
+    };
+
+    const processTarget = async (target: IngestTarget): Promise<IngestFileResult> => {
     const fileStartedAt = resolvedDeps.nowFn();
     const fileResult: IngestFileResult = {
       file: target.file,
@@ -771,166 +789,232 @@ export async function runIngestCommand(
     }
   };
 
-  try {
-    const workerCount = Math.max(1, Math.min(concurrency, sortedTargets.length));
+    try {
+      const processTargets = async (targets: IngestTarget[], passVerb: string): Promise<void> => {
+      if (targets.length === 0) {
+        return;
+      }
 
-    await Promise.all(
-      Array.from({ length: workerCount }, async () => {
-        while (true) {
-          const currentIndex = cursor;
-          cursor += 1;
-          if (currentIndex >= sortedTargets.length) {
-            return;
-          }
+      cursor = 0;
+      completed = 0;
+      const total = targets.length;
+      const workerCount = Math.max(1, Math.min(concurrency, targets.length));
 
-          const target = sortedTargets[currentIndex];
-          if (!target) {
-            return;
-          }
+      await Promise.all(
+        Array.from({ length: workerCount }, async () => {
+          while (true) {
+            const currentIndex = cursor;
+            cursor += 1;
+            if (currentIndex >= targets.length) {
+              return;
+            }
 
-          const result = await processTarget(target);
-          results[currentIndex] = result;
+            const target = targets[currentIndex];
+            if (!target) {
+              return;
+            }
 
-          if (result.error) {
-            filesFailed += 1;
-          } else if (result.skipped) {
-            filesSkipped += 1;
-          } else {
-            filesProcessed += 1;
-          }
+            const result = await processTarget(target);
+            results[target.index] = result;
 
-          completed += 1;
-          updateProgress();
+            completed += 1;
+            updateProgress(completed, total, passVerb);
 
-          const label = `[${target.index + 1}/${sortedTargets.length}] ${path.basename(target.file)} (${formatBytes(target.size)})`;
-          if (verbose) {
+            const label = `[${target.index + 1}/${sortedTargets.length}] ${path.basename(target.file)} (${formatBytes(target.size)})`;
+            if (verbose) {
+              if (result.error) {
+                clack.log.warn(`${label} -- ${formatError(result.error)}`, clackOutput);
+              } else if (result.skipped) {
+                clack.log.info(`${label} -- skipped (${result.skipReason ?? "n/a"})`, clackOutput);
+              } else if (dryRun) {
+                clack.log.info(`${label} -- ${result.entriesExtracted} entries extracted (dry-run)`, clackOutput);
+              } else {
+                const chunkStats = chunkStatsByFile.get(target.file);
+                const chunkFailureSuffix =
+                  chunkStats && chunkStats.failedChunks > 0 ? ` (${chunkStats.failedChunks} chunks failed)` : "";
+                const totalChunks = chunkStats ? chunkStats.successfulChunks + chunkStats.failedChunks : 0;
+                const failureRate = chunkStats && totalChunks > 0 ? chunkStats.failedChunks / totalChunks : 0;
+                const summary = `${result.entriesExtracted} extracted${chunkFailureSuffix}, ${result.entriesStored} stored, ${result.entriesSkippedDuplicate} skipped (duplicate), ${result.entriesReinforced} reinforced`;
+                if (chunkStats && chunkStats.failedChunks > 0 && failureRate > 0.5) {
+                  clack.log.warn(`${label} -- ${formatWarn(summary)}`, clackOutput);
+                } else {
+                  clack.log.info(`${label} -- ${summary}`, clackOutput);
+                }
+              }
+              continue;
+            }
+
             if (result.error) {
-              clack.log.warn(`${label} -- ${formatError(result.error)}`, clackOutput);
+              clearProgressLine();
+              clack.log.warn(
+                `${formatWarn(`[${target.index + 1}/${sortedTargets.length}] ${path.basename(target.file)} failed (${formatBytes(target.size)}): ${result.error}`)}`,
+                clackOutput,
+              );
+              updateProgress(completed, total, passVerb);
             } else if (result.skipped) {
-              clack.log.info(`${label} -- skipped (${result.skipReason ?? "n/a"})`, clackOutput);
-            } else if (dryRun) {
-              clack.log.info(`${label} -- ${result.entriesExtracted} entries extracted (dry-run)`, clackOutput);
+              clearProgressLine();
+              clack.log.info(
+                `[${target.index + 1}/${sortedTargets.length}] ${path.basename(target.file)} -- skipped (${result.skipReason ?? "n/a"})`,
+                clackOutput,
+              );
+              updateProgress(completed, total, passVerb);
             } else {
               const chunkStats = chunkStatsByFile.get(target.file);
-              const chunkFailureSuffix =
-                chunkStats && chunkStats.failedChunks > 0 ? ` (${chunkStats.failedChunks} chunks failed)` : "";
-              const totalChunks = chunkStats ? chunkStats.successfulChunks + chunkStats.failedChunks : 0;
-              const failureRate =
-                chunkStats && totalChunks > 0 ? chunkStats.failedChunks / totalChunks : 0;
-              const summary = `${result.entriesExtracted} extracted${chunkFailureSuffix}, ${result.entriesStored} stored, ${result.entriesSkippedDuplicate} skipped (duplicate), ${result.entriesReinforced} reinforced`;
-              if (chunkStats && chunkStats.failedChunks > 0 && failureRate > 0.5) {
-                clack.log.warn(`${label} -- ${formatWarn(summary)}`, clackOutput);
-              } else {
-                clack.log.info(`${label} -- ${summary}`, clackOutput);
+              if (chunkStats && chunkStats.failedChunks > 0) {
+                const totalChunks = chunkStats.successfulChunks + chunkStats.failedChunks;
+                const failureRate = totalChunks > 0 ? chunkStats.failedChunks / totalChunks : 1;
+                const msg = `[${target.index + 1}/${sortedTargets.length}] ${path.basename(target.file)} -- partial extraction: ${chunkStats.failedChunks}/${totalChunks} chunks failed`;
+                clearProgressLine();
+                if (failureRate > 0.5) {
+                  clack.log.warn(formatWarn(msg), clackOutput);
+                } else {
+                  clack.log.info(msg, clackOutput);
+                }
+                updateProgress(completed, total, passVerb);
               }
             }
-            continue;
+          }
+        }),
+      );
+    };
+
+      await processTargets(sortedTargets, "Processing");
+
+      firstPassFailedIndexSet = new Set(
+        sortedTargets.filter((target) => Boolean(results[target.index]?.error)).map((target) => target.index),
+      );
+
+      if (retryEnabled && maxRetries > 0 && firstPassFailedIndexSet.size > 0) {
+        for (let attempt = 1; attempt <= maxRetries; attempt += 1) {
+          const remainingFailed = sortedTargets.filter((target) => Boolean(results[target.index]?.error));
+          if (remainingFailed.length === 0) {
+            break;
           }
 
-          if (result.error) {
-            clearProgressLine();
-            clack.log.warn(
-              `${formatWarn(`[${target.index + 1}/${sortedTargets.length}] ${path.basename(target.file)} failed (${formatBytes(target.size)}): ${result.error}`)}`,
-              clackOutput,
-            );
-            updateProgress();
-          } else if (result.skipped) {
-            clearProgressLine();
-            clack.log.info(
-              `[${target.index + 1}/${sortedTargets.length}] ${path.basename(target.file)} -- skipped (${result.skipReason ?? "n/a"})`,
-              clackOutput,
-            );
-            updateProgress();
-          } else {
-            const chunkStats = chunkStatsByFile.get(target.file);
-            if (chunkStats && chunkStats.failedChunks > 0) {
-              const totalChunks = chunkStats.successfulChunks + chunkStats.failedChunks;
-              const failureRate = totalChunks > 0 ? chunkStats.failedChunks / totalChunks : 1;
-              const msg = `[${target.index + 1}/${sortedTargets.length}] ${path.basename(target.file)} -- partial extraction: ${chunkStats.failedChunks}/${totalChunks} chunks failed`;
-              clearProgressLine();
-              if (failureRate > 0.5) {
-                clack.log.warn(formatWarn(msg), clackOutput);
-              } else {
-                clack.log.info(msg, clackOutput);
-              }
-              updateProgress();
-            }
+          if (resolvedDeps.shouldShutdownFn()) {
+            clack.log.warn(formatWarn("Shutdown requested; skipping remaining retries."), clackOutput);
+            break;
           }
+
+          const backoffMs = retryBackoffMs(attempt);
+          await resolvedDeps.sleepFn(backoffMs);
+
+          if (resolvedDeps.shouldShutdownFn()) {
+            clack.log.warn(formatWarn("Shutdown requested; skipping remaining retries."), clackOutput);
+            break;
+          }
+
+          clack.log.info(
+            `Retrying ${ui.bold(String(remainingFailed.length))} failed file(s) (attempt ${attempt}/${maxRetries})...`,
+            clackOutput,
+          );
+
+          const failedBefore = new Set(remainingFailed.map((target) => target.index));
+          await processTargets(remainingFailed, "Retrying");
+
+          const recovered = remainingFailed.filter((target) => {
+            if (!failedBefore.has(target.index)) return false;
+            const final = results[target.index];
+            return Boolean(final) && !final.error && !final.skipped;
+          }).length;
+          const stillFailing = remainingFailed.length - recovered;
+          retrySummaries.push(
+            `Retry round ${attempt}: ${recovered}/${remainingFailed.length} recovered, ${stillFailing} still failing`,
+          );
         }
-      }),
-    );
-  } finally {
-    clearProgressLine();
-    if (!dryRun) {
-      try {
-        await walCheckpoint(db);
-      } catch (error) {
-        clack.log.warn(formatWarn(`WAL checkpoint failed: ${errorMessage(error)}`), clackOutput);
       }
+    } finally {
+      clearProgressLine();
+      if (!dryRun) {
+        try {
+          await walCheckpoint(db);
+        } catch (error) {
+          clack.log.warn(formatWarn(`WAL checkpoint failed: ${errorMessage(error)}`), clackOutput);
+        }
+      }
+      resolvedDeps.closeDbFn(db);
     }
-    resolvedDeps.closeDbFn(db);
-  }
 
-  const durationMs = Math.max(0, resolvedDeps.nowFn().getTime() - startedAt.getTime());
-  const allTargetsFailed = sortedTargets.length > 0 && filesFailed === sortedTargets.length;
-  const finalResult: IngestCommandResult = {
-    exitCode: allTargetsFailed ? 2 : filesFailed > 0 ? 1 : 0,
-    filesProcessed,
-    filesSkipped,
-    filesFailed,
-    totalEntriesExtracted,
-    totalEntriesStored,
-    dedupStats: {
-      entries_added: totalEntriesAdded,
-      entries_updated: totalEntriesUpdated,
-      entries_skipped: totalEntriesSkipped,
-      entries_reinforced: totalEntriesReinforced,
-      entries_superseded: totalEntriesSuperseded,
-      dedup_llm_calls: totalDedupLlmCalls,
-    },
-    durationMs,
-    results,
-  };
+    const durationMs = Math.max(0, resolvedDeps.nowFn().getTime() - startedAt.getTime());
+    const finalFilesFailed = results.filter((result) => Boolean(result?.error)).length;
+    const finalFilesSkipped = results.filter((result) => Boolean(result?.skipped)).length;
+    const finalFilesProcessed = results.filter((result) => Boolean(result) && !result.error && !result.skipped).length;
 
-  const forceCleanupLine = force
-    ? dryRun
-      ? `Force cleanup (dry-run): would delete ${forceDeletedIngestLogRows} ingest_log, ${forceDeletedEntryRows} entries, ${forceDeletedEntrySourceRows} entry_sources`
-      : `Force cleanup: deleted ${forceDeletedIngestLogRows} ingest_log, ${forceDeletedEntryRows} entries, ${forceDeletedEntrySourceRows} entry_sources`
-    : null;
-  if (forceCleanupLine) {
-    clack.log.info(forceCleanupLine, clackOutput);
-  }
+    const succeededOnRetry = [...firstPassFailedIndexSet].filter((index) => {
+      const result = results[index];
+      return Boolean(result) && !result.error && !result.skipped;
+    }).length;
+    const succeededInitial = Math.max(0, finalFilesProcessed - succeededOnRetry);
 
-  const doneLine = `Done: ${filesProcessed} succeeded, ${filesFailed} failed, ${filesSkipped} skipped (already ingested)`;
-  const chunkFailureLine =
-    totalChunksFailed > 0
-      ? `${totalChunksFailed} chunks failed across ${filesWithChunkFailures} file(s) (partial extraction)`
+    const allTargetsFailed = sortedTargets.length > 0 && finalFilesFailed === sortedTargets.length;
+    const finalResult: IngestCommandResult = {
+      exitCode: allTargetsFailed ? 2 : finalFilesFailed > 0 ? 1 : 0,
+      filesProcessed: finalFilesProcessed,
+      filesSkipped: finalFilesSkipped,
+      filesFailed: finalFilesFailed,
+      totalEntriesExtracted,
+      totalEntriesStored,
+      dedupStats: {
+        entries_added: totalEntriesAdded,
+        entries_updated: totalEntriesUpdated,
+        entries_skipped: totalEntriesSkipped,
+        entries_reinforced: totalEntriesReinforced,
+        entries_superseded: totalEntriesSuperseded,
+        dedup_llm_calls: totalDedupLlmCalls,
+      },
+      durationMs,
+      results,
+    };
+
+    const forceCleanupLine = force
+      ? dryRun
+        ? `Force cleanup (dry-run): would delete ${forceDeletedIngestLogRows} ingest_log, ${forceDeletedEntryRows} entries, ${forceDeletedEntrySourceRows} entry_sources`
+        : `Force cleanup: deleted ${forceDeletedIngestLogRows} ingest_log, ${forceDeletedEntryRows} entries, ${forceDeletedEntrySourceRows} entry_sources`
       : null;
-  const failedFileLines =
-    filesFailed > 0
-      ? [
-          "Failed files (will auto-retry on next run):",
-          ...results
-            .filter((result): result is IngestFileResult => Boolean(result?.error))
-            .map((result) => `  ${path.basename(result.file)} - ${result.error ?? "Unknown error"}`),
-        ]
-      : [];
-  clack.note(
-    [
-      doneLine,
-      chunkFailureLine,
-      ...failedFileLines,
-    ]
-      .filter((line): line is string => Boolean(line))
-      .join("\n"),
-    "Ingest Complete",
-    clackOutput,
-  );
-  clack.outro(undefined, clackOutput);
+    if (forceCleanupLine) {
+      clack.log.info(forceCleanupLine, clackOutput);
+    }
 
-  if (json) {
-    process.stdout.write(`${JSON.stringify(finalResult, null, 2)}\n`);
-  }
+    const doneLine =
+      retrySummaries.length > 0
+        ? `Done: ${succeededInitial} succeeded, ${succeededOnRetry} succeeded on retry, ${finalFilesFailed} failed after retries, ${finalFilesSkipped} skipped (already ingested)`
+        : `Done: ${finalFilesProcessed} succeeded, ${finalFilesFailed} failed, ${finalFilesSkipped} skipped (already ingested)`;
+    const chunkFailureLine =
+      totalChunksFailed > 0
+        ? `${totalChunksFailed} chunks failed across ${filesWithChunkFailures} file(s) (partial extraction)`
+        : null;
+    const retryLines =
+      retrySummaries.length > 0 ? ["Retries:", ...retrySummaries.map((line) => `  ${line}`)] : [];
+    const failedFileLines =
+      finalFilesFailed > 0
+        ? [
+            retryEnabled && retrySummaries.length > 0
+              ? "Failed files (after retries):"
+              : retryEnabled
+              ? "Failed files (will retry on next run):"
+              : "Failed files (re-run ingest to retry):",
+            ...results
+              .filter((result): result is IngestFileResult => Boolean(result?.error))
+              .map((result) => `  ${path.basename(result.file)} - ${result.error ?? "Unknown error"}`),
+          ]
+        : [];
+    clack.note(
+      [
+        doneLine,
+        chunkFailureLine,
+        ...retryLines,
+        ...failedFileLines,
+      ]
+        .filter((line): line is string => Boolean(line))
+        .join("\n"),
+      "Ingest Complete",
+      clackOutput,
+    );
+    clack.outro(undefined, clackOutput);
+
+    if (json) {
+      process.stdout.write(`${JSON.stringify(finalResult, null, 2)}\n`);
+    }
 
   return finalResult;
 }
