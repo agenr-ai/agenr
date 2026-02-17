@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import * as clack from "@clack/prompts";
 import { readConfig } from "../config.js";
@@ -12,6 +13,7 @@ import { createLlmClient } from "../llm/client.js";
 import { parseTranscriptFile } from "../parser.js";
 import type { WatchOptions } from "../types.js";
 import { banner, formatLabel, formatWarn } from "../ui.js";
+import { generateContextFile } from "./context.js";
 import { resolveAutoSession } from "../watch/resolvers/auto.js";
 import { detectWatchPlatform, getResolver, type WatchPlatform } from "../watch/resolvers/index.js";
 import { getFileState, loadWatchState, saveWatchState } from "../watch/state.js";
@@ -79,6 +81,7 @@ export interface WatchCommandDeps {
   saveWatchStateFn: typeof saveWatchState;
   statFileFn: typeof fs.stat;
   readFileFn: (path: string, offset: number) => Promise<Buffer>;
+  generateContextFileFn: typeof generateContextFile;
   nowFn: () => Date;
 }
 
@@ -212,6 +215,7 @@ export async function runWatchCommand(
     saveWatchStateFn: deps?.saveWatchStateFn ?? saveWatchState,
     statFileFn: deps?.statFileFn ?? fs.stat,
     readFileFn: deps?.readFileFn ?? readFileFromOffset,
+    generateContextFileFn: deps?.generateContextFileFn ?? generateContextFile,
     nowFn: deps?.nowFn ?? (() => new Date()),
   };
 
@@ -273,6 +277,7 @@ export async function runWatchCommand(
   clack.log.info("Waiting for changes...", clackOutput);
 
   let cycleCount = 0;
+  let contextChain: Promise<void> = Promise.resolve();
   const summary = await runWatcher(
       {
         filePath: modeConfig.filePath ?? undefined,
@@ -304,7 +309,7 @@ export async function runWatchCommand(
           const platformLabel = platform ? ` [${platform}]` : "";
           clack.log.info(`Switched watch file${platformLabel}: ${fromLabel} -> ${formatSwitchLabel(to)}`, clackOutput);
         },
-        onCycle: (result) => {
+        onCycle: (result, ctx) => {
           cycleCount += 1;
           const timestamp = formatClock(resolvedDeps.nowFn());
           const fileLabel = result.filePath ? ` | file=${result.filePath}` : "";
@@ -343,6 +348,27 @@ export async function runWatchCommand(
             `[${timestamp}] Cycle ${cycleCount}: +${formatBytes(result.bytesRead)} bytes | ${result.entriesExtracted} entries extracted | ${result.entriesStored} stored, ${deduped} deduped${fileLabel}`,
             clackOutput,
           );
+
+          if (!dryRun && options.context && result.entriesStored > 0 && ctx.db) {
+            const contextPath = path.resolve(options.context.replace(/^~(?=$|\/)/, os.homedir()));
+            contextChain = contextChain
+              .then(async () => {
+                await resolvedDeps.generateContextFileFn(
+                  ctx.db!,
+                  ctx.apiKey,
+                  contextPath,
+                  { budget: 2000, limit: 10, json: false },
+                );
+              })
+              .catch((err: unknown) => {
+                if (verbose) {
+                  clack.log.warn(
+                    `Context refresh failed: ${err instanceof Error ? err.message : String(err)}`,
+                    clackOutput,
+                  );
+                }
+              });
+          }
         },
       },
       {
@@ -364,6 +390,9 @@ export async function runWatchCommand(
         shouldShutdownFn: isShutdownRequested,
       },
     );
+
+  // Best-effort: ensure any in-flight context refresh finishes before printing the final summary.
+  await contextChain.catch(() => undefined);
 
   clack.log.info(
     `Summary: ${summary.cycles} cycles | ${summary.entriesStored} entries stored | watched for ${formatDuration(summary.durationMs)}`,

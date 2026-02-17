@@ -272,4 +272,5 @@ export interface WatchOptions {
   dryRun?: boolean;
   once?: boolean;
   json?: boolean;
+  context?: string; // path to write CONTEXT.md after each cycle
 }

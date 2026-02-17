@@ -55,6 +55,8 @@ describe("watch command", () => {
       "7",
       "--min-chunk",
       "1500",
+      "--context",
+      "/tmp/CONTEXT.md",
       "--db",
       "/tmp/db.sqlite",
       "--model",
@@ -73,6 +75,7 @@ describe("watch command", () => {
     expect(firstCall?.[1]).toMatchObject({
       interval: "7",
       minChunk: "1500",
+      context: "/tmp/CONTEXT.md",
       db: "/tmp/db.sqlite",
       model: "gpt-4o",
       provider: "openai",
@@ -161,6 +164,7 @@ describe("watch command", () => {
         once: true,
         interval: "1",
         minChunk: "10",
+        context: path.join(dir, "CONTEXT.md"),
       },
       {
         readConfigFn: vi.fn(() => ({ db: { path: ":memory:" } })),
@@ -213,6 +217,7 @@ describe("watch command", () => {
         statFileFn: vi.fn((filePath: string) => fs.stat(filePath)) as any,
         readFileFn: vi.fn((filePath: string, offset: number) => readFileFromOffset(filePath, offset)),
         nowFn: vi.fn(() => new Date("2026-02-15T00:00:00.000Z")),
+        generateContextFileFn: vi.fn(async () => undefined) as any,
       },
     );
 
@@ -226,5 +231,129 @@ describe("watch command", () => {
     expect(saved?.byteOffset).toBeGreaterThan(0);
     expect(saved?.totalEntriesStored).toBe(1);
     expect(saved?.totalRunCount).toBe(1);
+  });
+
+  it("regenerates context only when entries were actually stored", async () => {
+    const dir = await makeTempDir();
+    const transcriptPath = path.join(dir, "session.txt");
+    const configDir = path.join(dir, ".agenr");
+    await fs.mkdir(configDir, { recursive: true });
+    await fs.writeFile(transcriptPath, "enough content for extraction\n", "utf8");
+
+    const generateContextFileFn = vi.fn(async () => undefined);
+    const storeEntriesSpy = vi.fn(async () => ({
+      added: 0,
+      updated: 0,
+      skipped: 1,
+      superseded: 0,
+      llm_dedup_calls: 0,
+      relations_created: 0,
+      total_entries: 0,
+      duration_ms: 5,
+    }));
+
+    const result = await runWatchCommand(
+      transcriptPath,
+      {
+        once: true,
+        interval: "1",
+        minChunk: "1",
+        context: path.join(dir, "CONTEXT.md"),
+      },
+      {
+        readConfigFn: vi.fn(() => ({ db: { path: ":memory:" } })),
+        resolveEmbeddingApiKeyFn: vi.fn(() => "sk-test"),
+        parseTranscriptFileFn: vi.fn(async () => ({
+          file: transcriptPath,
+          messages: [],
+          chunks: [{ chunk_index: 0, message_start: 0, message_end: 0, text: "chunk", context_hint: "ctx" }],
+          warnings: [],
+        })),
+        createLlmClientFn: vi.fn(() => ({ resolvedModel: { modelId: "test" }, credentials: { apiKey: "x" } } as any)),
+        extractKnowledgeFromChunksFn: vi.fn(async (params: any) => {
+          await params.onChunkComplete?.({ chunkIndex: 0, totalChunks: 1, entries: [makeEntry()], warnings: [] });
+          return { entries: [], successfulChunks: 1, failedChunks: 0, warnings: [] };
+        }),
+        deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+        getDbFn: vi.fn(() => ({}) as any),
+        initDbFn: vi.fn(async () => undefined),
+        closeDbFn: vi.fn(() => undefined),
+        storeEntriesFn: storeEntriesSpy as any,
+        loadWatchStateFn: vi.fn(() => loadWatchState(configDir)),
+        saveWatchStateFn: vi.fn((state) => saveWatchState(state, configDir)),
+        statFileFn: vi.fn((filePath: string) => fs.stat(filePath)) as any,
+        readFileFn: vi.fn((filePath: string, offset: number) => readFileFromOffset(filePath, offset)),
+        nowFn: vi.fn(() => new Date("2026-02-15T00:00:00.000Z")),
+        generateContextFileFn: generateContextFileFn as any,
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.entriesStored).toBe(0);
+    expect(generateContextFileFn).not.toHaveBeenCalled();
+  });
+
+  it("context generation failure does not kill the watch loop", async () => {
+    const dir = await makeTempDir();
+    const transcriptPath = path.join(dir, "session.txt");
+    const configDir = path.join(dir, ".agenr");
+    await fs.mkdir(configDir, { recursive: true });
+    await fs.writeFile(transcriptPath, "enough content for extraction\n", "utf8");
+
+    const generateContextFileFn = vi.fn(async () => {
+      throw new Error("context failed");
+    });
+
+    const storeEntriesSpy = vi.fn(async () => ({
+      added: 1,
+      updated: 0,
+      skipped: 0,
+      superseded: 0,
+      llm_dedup_calls: 0,
+      relations_created: 0,
+      total_entries: 1,
+      duration_ms: 5,
+    }));
+
+    const result = await runWatchCommand(
+      transcriptPath,
+      {
+        once: true,
+        interval: "1",
+        minChunk: "1",
+        context: path.join(dir, "CONTEXT.md"),
+        verbose: true,
+      },
+      {
+        readConfigFn: vi.fn(() => ({ db: { path: ":memory:" } })),
+        resolveEmbeddingApiKeyFn: vi.fn(() => "sk-test"),
+        parseTranscriptFileFn: vi.fn(async () => ({
+          file: transcriptPath,
+          messages: [],
+          chunks: [{ chunk_index: 0, message_start: 0, message_end: 0, text: "chunk", context_hint: "ctx" }],
+          warnings: [],
+        })),
+        createLlmClientFn: vi.fn(() => ({ resolvedModel: { modelId: "test" }, credentials: { apiKey: "x" } } as any)),
+        extractKnowledgeFromChunksFn: vi.fn(async (params: any) => {
+          await params.onChunkComplete?.({ chunkIndex: 0, totalChunks: 1, entries: [makeEntry()], warnings: [] });
+          return { entries: [], successfulChunks: 1, failedChunks: 0, warnings: [] };
+        }),
+        deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+        getDbFn: vi.fn(() => ({}) as any),
+        initDbFn: vi.fn(async () => undefined),
+        closeDbFn: vi.fn(() => undefined),
+        storeEntriesFn: storeEntriesSpy as any,
+        loadWatchStateFn: vi.fn(() => loadWatchState(configDir)),
+        saveWatchStateFn: vi.fn((state) => saveWatchState(state, configDir)),
+        statFileFn: vi.fn((filePath: string) => fs.stat(filePath)) as any,
+        readFileFn: vi.fn((filePath: string, offset: number) => readFileFromOffset(filePath, offset)),
+        nowFn: vi.fn(() => new Date("2026-02-15T00:00:00.000Z")),
+        generateContextFileFn: generateContextFileFn as any,
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.entriesStored).toBe(1);
+    expect(generateContextFileFn).toHaveBeenCalledTimes(1);
   });
 });
