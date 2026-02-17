@@ -76,3 +76,11 @@ export function isDbLocked(lockDir?: string): boolean {
   }
   return isPidAlive(pid);
 }
+
+export function warnIfLocked(): void {
+  if (!isDbLocked()) {
+    return;
+  }
+
+  console.warn("Another agenr process is writing to the database. Writes may be delayed.");
+}

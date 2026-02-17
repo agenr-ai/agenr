@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createClient, type Client } from "@libsql/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { consolidateRules } from "../../src/consolidate/rules.js";
 import { initDb } from "../../src/db/client.js";
 import { createRelation } from "../../src/db/relations.js";
@@ -467,6 +467,30 @@ describe("consolidate rules", () => {
     const backupCountResult = await backupClient.execute("SELECT COUNT(*) AS count FROM entries");
     const backupCount = asNumber(backupCountResult.rows[0]?.count);
     expect(backupCount).toBe(originalCount);
+  });
+
+  it("aborts consolidation when WAL checkpoint fails (non-dry-run)", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agenr-consolidate-checkpoint-fail-"));
+    tempDirs.push(dir);
+    const dbPath = path.join(dir, "knowledge.db");
+    await fs.writeFile(dbPath, "db-body", "utf8");
+    const originalBody = await fs.readFile(dbPath, "utf8");
+
+    const execute = vi.fn(async (sql: unknown) => {
+      if (sql === "PRAGMA wal_checkpoint(TRUNCATE)") {
+        throw new Error("database is locked");
+      }
+      throw new Error(`Unexpected execute(${String(sql)})`);
+    });
+
+    await expect(consolidateRules({ execute } as unknown as Client, dbPath)).rejects.toThrow(/WAL checkpoint failed/);
+
+    const files = await fs.readdir(dir);
+    const backups = files.filter((fileName) => fileName.startsWith("knowledge.db.pre-consolidate-"));
+    expect(backups).toHaveLength(0);
+
+    const afterBody = await fs.readFile(dbPath, "utf8");
+    expect(afterBody).toBe(originalBody);
   });
 
   it("keeps vector index queries healthy after consolidation", async () => {
