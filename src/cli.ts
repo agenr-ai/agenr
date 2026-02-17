@@ -21,6 +21,7 @@ import {
 } from "./commands/daemon.js";
 import { runConsolidateCommand } from "./commands/consolidate.js";
 import { runIngestCommand } from "./commands/ingest.js";
+import { runContextCommand } from "./commands/context.js";
 import { runMcpCommand } from "./commands/mcp.js";
 import { runRecallCommand } from "./commands/recall.js";
 import { runStoreCommand } from "./commands/store.js";
@@ -455,6 +456,29 @@ export function createProgram(): Command {
     });
 
   program
+    .command("context")
+    .description(
+      "Generate a context file for AI tool integration (session-start recall runs locally; no embedding API calls).",
+    )
+    .option("--output <path>", "Output file path", "~/.agenr/CONTEXT.md")
+    .option("--budget <tokens>", "Approximate token budget", "2000")
+    .option("--limit <n>", "Max entries per category", "10")
+    .option("--db <path>", "Database path override")
+    .option("--json", "Output JSON", false)
+    .option("--quiet", "Suppress stderr output", false)
+    .action(async (opts: { output?: string; budget?: string; limit?: string; db?: string; json?: boolean; quiet?: boolean }) => {
+      const result = await runContextCommand({
+        output: opts.output,
+        budget: opts.budget,
+        limit: opts.limit,
+        db: opts.db,
+        json: opts.json === true,
+        quiet: opts.quiet === true,
+      });
+      process.exitCode = result.exitCode;
+    });
+
+  program
     .command("watch")
     .description("Watch a transcript file and auto-extract knowledge as it grows")
     .argument("[file]", "Transcript file to watch (.jsonl, .md, .txt)")
@@ -463,6 +487,7 @@ export function createProgram(): Command {
     .option("--auto", "Auto-detect installed platforms and watch the globally most active session", false)
     .option("--interval <seconds>", "Polling interval in seconds", "300")
     .option("--min-chunk <chars>", "Minimum new chars before extraction", "2000")
+    .option("--context <path>", "Regenerate context file after each cycle")
     .option("--db <path>", "Database path override")
     .option("--model <model>", "LLM model to use")
     .option("--provider <name>", "LLM provider: anthropic, openai, openai-codex")
@@ -545,6 +570,7 @@ export function createProgram(): Command {
     .description("Install and start the watch daemon (macOS launchd)")
     .option("--force", "Overwrite existing launchd plist", false)
     .option("--interval <seconds>", "Watch interval for daemon mode", "120")
+    .option("--context <path>", "Regenerate context file after each cycle")
     .action(async (opts: DaemonInstallOptions) => {
       const result = await runDaemonInstallCommand(opts);
       process.exitCode = result.exitCode;

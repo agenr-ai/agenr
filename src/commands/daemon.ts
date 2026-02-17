@@ -13,6 +13,7 @@ const DEFAULT_LOG_LINES = 100;
 export interface DaemonInstallOptions {
   force?: boolean;
   interval?: number | string;
+  context?: string;
 }
 
 export interface DaemonUninstallOptions {
@@ -272,6 +273,11 @@ export async function runDaemonInstallCommand(
     "--interval",
     String(intervalSeconds),
   ];
+
+  if (options.context && options.context.trim().length > 0) {
+    const resolvedContext = options.context.replace(/^~(?=$|\/)/, homeDir);
+    programArguments.push("--context", resolvedContext);
+  }
 
   const plist = renderLaunchdPlist(programArguments, logPath);
   await resolvedDeps.writeFileFn(plistPath, plist, "utf8");

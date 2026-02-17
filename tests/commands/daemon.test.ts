@@ -60,6 +60,28 @@ describe("daemon commands", () => {
     ]);
   });
 
+  it("passes --context through to launchd watch arguments", async () => {
+    const home = await makeTempDir();
+
+    const result = await runDaemonInstallCommand(
+      { force: true, context: "/tmp/CONTEXT.md" },
+      {
+        platformFn: () => "darwin",
+        homedirFn: () => home,
+        uidFn: () => 501,
+        argvFn: () => ["node", "/tmp/dist/cli.js"],
+        execFileFn: vi.fn(async () => ({ stdout: "", stderr: "", exitCode: 0 })),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+
+    const plistPath = path.join(home, "Library", "LaunchAgents", "com.agenr.watch.plist");
+    const plist = await fs.readFile(plistPath, "utf8");
+    expect(plist).toContain("--context");
+    expect(plist).toContain("/tmp/CONTEXT.md");
+  });
+
   it("uninstalls daemon by bootout + plist removal", async () => {
     const home = await makeTempDir();
     const plistPath = path.join(home, "Library", "LaunchAgents", "com.agenr.watch.plist");

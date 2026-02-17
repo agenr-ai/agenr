@@ -2,6 +2,7 @@ import { watch as watchFs, type FSWatcher } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import type { Client } from "@libsql/client";
 import { readConfig } from "../config.js";
 import { deduplicateEntries } from "../dedup.js";
 import { closeDb, getDb, initDb, walCheckpoint } from "../db/client.js";
@@ -28,6 +29,11 @@ export interface WatchCycleResult {
   error?: string;
 }
 
+export interface WatchCycleContext {
+  db: Client | null;
+  apiKey: string;
+}
+
 export interface WatcherOptions {
   filePath?: string;
   directoryMode?: boolean;
@@ -46,7 +52,7 @@ export interface WatcherOptions {
   model?: string;
   provider?: string;
   dbPath?: string;
-  onCycle?: (result: WatchCycleResult) => void;
+  onCycle?: (result: WatchCycleResult, ctx: WatchCycleContext) => void;
   onWarn?: (message: string) => void;
   onSwitch?: (from: string | null, to: string, platform?: WatchPlatform | null) => void;
   configDir?: string;
@@ -580,7 +586,7 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
 
       cycles += 1;
       totalEntriesStored += cycleResult.entriesStored;
-      options.onCycle?.(cycleResult);
+      options.onCycle?.(cycleResult, { db, apiKey: embeddingApiKey ?? "" });
 
       if (options.once || resolvedDeps.shouldShutdownFn()) {
         break;
