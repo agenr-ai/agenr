@@ -6,7 +6,7 @@ import { openClawSessionResolver } from "./openclaw.js";
 
 export type WatchPlatform = "openclaw" | "claude-code" | "codex" | "mtime";
 
-function normalizePlatform(value: string): WatchPlatform | null {
+export function normalizePlatform(value: string): WatchPlatform | null {
   const normalized = value.trim().toLowerCase();
   if (normalized === "openclaw") {
     return "openclaw";
