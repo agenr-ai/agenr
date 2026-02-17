@@ -822,6 +822,8 @@ describe("watcher", () => {
       },
       makeDeps({
         walCheckpointFn,
+        statFileFn: vi.fn(async () => ({ size: 25, isFile: () => true })),
+        readFileFn: vi.fn(async () => Buffer.from("this content passes threshold")),
         shouldShutdownFn: vi.fn(() => shutdown),
       }),
     );
@@ -894,6 +896,8 @@ describe("watcher", () => {
       makeDeps({
         walCheckpointFn,
         shouldShutdownFn: vi.fn(() => shutdown),
+        statFileFn: vi.fn(async () => ({ size: 25, isFile: () => true })),
+        readFileFn: vi.fn(async () => Buffer.from("this content passes threshold")),
       }),
     );
 
