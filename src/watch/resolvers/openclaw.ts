@@ -52,7 +52,9 @@ const fallbackResolver = createMtimeResolver("*.jsonl", {
   includeFile: (filePath) => filePath.toLowerCase().endsWith(".jsonl"),
 });
 
-export const openClawSessionResolver: SessionResolver = {
+export const openClawSessionResolver: SessionResolver & {
+  findRenamedFile(originalPath: string): Promise<string | null>;
+} = {
   filePattern: "*.jsonl",
 
   async resolveActiveSession(dir: string): Promise<string | null> {
@@ -96,5 +98,25 @@ export const openClawSessionResolver: SessionResolver = {
     }
 
     return fallbackResolver.resolveActiveSession(resolvedDir);
+  },
+
+  async findRenamedFile(originalPath: string): Promise<string | null> {
+    const dir = path.dirname(originalPath);
+    const base = path.basename(originalPath);
+
+    let entries: string[];
+    try {
+      entries = await fs.readdir(dir);
+    } catch {
+      return null;
+    }
+
+    const prefix = `${base}.reset.`;
+    const candidates = entries
+      .filter((entry) => entry.startsWith(prefix))
+      .sort()
+      .reverse();
+
+    return candidates.length > 0 ? path.join(dir, candidates[0]) : null;
   },
 };

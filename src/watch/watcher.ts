@@ -16,6 +16,7 @@ import type { KnowledgeEntry, WatchState } from "../types.js";
 import type { SessionResolver } from "./session-resolver.js";
 import { resolveAutoSession, type AutoSessionResult, type AutoWatchTarget } from "./resolvers/auto.js";
 import type { WatchPlatform } from "./resolvers/index.js";
+import { openClawSessionResolver } from "./resolvers/openclaw.js";
 import { createEmptyWatchState, getFileState, loadWatchState, saveWatchState, updateFileState } from "./state.js";
 
 export interface WatchCycleResult {
@@ -191,6 +192,10 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
   const autoMode = options.autoMode === true;
   const realtimeEnabled = directoryMode || autoMode;
   const watchDebounceMs = options.fsWatchDebounceMs ?? 2500;
+
+  const findRenamed: ((originalPath: string) => Promise<string | null>) | null =
+    options.resolver?.findRenamedFile?.bind(options.resolver) ??
+    (directoryMode || autoMode ? openClawSessionResolver.findRenamedFile.bind(openClawSessionResolver) : null);
 
   if (!directoryMode && !autoMode) {
     if (!options.filePath || options.filePath.trim().length === 0) {
@@ -505,6 +510,55 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
   let totalEntriesStored = 0;
   let warnedNoAutoRoots = false;
 
+  // Drain orphaned OpenClaw reset files that may have been renamed while the watcher was offline.
+  if (findRenamed) {
+    for (const trackedPath of Object.keys(state.files)) {
+      if (path.basename(trackedPath).includes(".reset.")) {
+        continue;
+      }
+
+      try {
+        await resolvedDeps.statFileFn(trackedPath);
+      } catch (error) {
+        if (!isFileNotFound(error)) {
+          continue;
+        }
+
+        const renamedPath = await findRenamed(trackedPath);
+        if (!renamedPath) {
+          continue;
+        }
+
+        const oldState = getFileState(state, trackedPath);
+        if (oldState && oldState.byteOffset > 0) {
+          updateFileState(state, renamedPath, {
+            byteOffset: oldState.byteOffset,
+            lastRunAt: oldState.lastRunAt,
+            totalEntriesStored: oldState.totalEntriesStored ?? 0,
+            totalRunCount: oldState.totalRunCount ?? 0,
+          });
+        }
+
+        const orphanResult = await processFileCycle(renamedPath, true);
+        options.onCycle?.(orphanResult, { db, apiKey: embeddingApiKey ?? "" });
+
+        totalEntriesStored += orphanResult.entriesStored;
+
+        if (orphanResult.entriesStored > 0 && db) {
+          try {
+            await resolvedDeps.walCheckpointFn(db);
+          } catch (error) {
+            options.onWarn?.(`WAL checkpoint failed: ${formatError(error)}`);
+          }
+        }
+
+        delete state.files[path.resolve(trackedPath)];
+        delete state.files[path.resolve(renamedPath)];
+        await resolvedDeps.saveWatchStateFn(state, options.configDir);
+      }
+    }
+  }
+
   try {
     while (!resolvedDeps.shouldShutdownFn()) {
       let resolvedTargetPath: string | null = currentFilePath;
@@ -554,8 +608,39 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
 
       if (hasSwitch && currentFilePath && resolvedTargetPath) {
         cycleResult = await processFileCycle(currentFilePath, true);
-        cycleResult.switchedFrom = currentFilePath;
-        cycleResult.switchedTo = resolvedTargetPath;
+
+        // If old file vanished (e.g. OpenClaw .reset rename), find and drain the renamed copy.
+        if (cycleResult.error?.includes("file not found") && findRenamed) {
+          const renamedPath = await findRenamed(currentFilePath);
+          if (renamedPath) {
+            // Seed renamed file's state with old file's byte offset (same content, just renamed).
+            const oldState = getFileState(state, currentFilePath);
+            if (oldState && oldState.byteOffset > 0) {
+              updateFileState(state, renamedPath, {
+                byteOffset: oldState.byteOffset,
+                lastRunAt: oldState.lastRunAt,
+                totalEntriesStored: oldState.totalEntriesStored ?? 0,
+                totalRunCount: oldState.totalRunCount ?? 0,
+              });
+            }
+
+            const retryResult = await processFileCycle(renamedPath, true);
+            cycleResult = {
+              ...retryResult,
+              switchedFrom: currentFilePath,
+              switchedTo: resolvedTargetPath,
+            };
+
+            // Clean up state: remove both old and renamed keys (one-shot drain, not ongoing).
+            delete state.files[path.resolve(currentFilePath)];
+            delete state.files[path.resolve(renamedPath)];
+            await resolvedDeps.saveWatchStateFn(state, options.configDir);
+          }
+        }
+
+        // IMPORTANT: Keep the existing switchedFrom/switchedTo for the non-error path.
+        cycleResult.switchedFrom = cycleResult.switchedFrom ?? currentFilePath;
+        cycleResult.switchedTo = cycleResult.switchedTo ?? resolvedTargetPath;
 
         const previous = currentFilePath;
         currentFilePath = resolvedTargetPath;
@@ -580,6 +665,30 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
           };
         } else {
           cycleResult = await processFileCycle(currentFilePath, false);
+
+          // If current file vanished (renamed before sessions.json updated), try reset file.
+          if (cycleResult.error?.includes("file not found") && findRenamed) {
+            const renamedPath = await findRenamed(currentFilePath);
+            if (renamedPath) {
+              const oldState = getFileState(state, currentFilePath);
+              if (oldState && oldState.byteOffset > 0) {
+                updateFileState(state, renamedPath, {
+                  byteOffset: oldState.byteOffset,
+                  lastRunAt: oldState.lastRunAt,
+                  totalEntriesStored: oldState.totalEntriesStored ?? 0,
+                  totalRunCount: oldState.totalRunCount ?? 0,
+                });
+              }
+
+              cycleResult = await processFileCycle(renamedPath, true);
+
+              // Clean up state.
+              delete state.files[path.resolve(currentFilePath)];
+              delete state.files[path.resolve(renamedPath)];
+              await resolvedDeps.saveWatchStateFn(state, options.configDir);
+            }
+          }
+
           cycleResult.filePath = currentFilePath;
         }
       }

@@ -1,3 +1,6 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { KnowledgeEntry, WatchState } from "../../src/types.js";
 import { runWatcher } from "../../src/watch/watcher.js";
@@ -904,5 +907,199 @@ describe("watcher", () => {
     expect(result.cycles).toBe(1);
     expect(warnings.some((message) => message.includes("WAL checkpoint failed: checkpoint failed"))).toBe(true);
     expect(walCheckpointFn).toHaveBeenCalledTimes(2);
+  });
+
+  it("drains renamed file on session switch ENOENT", async () => {
+    const oldPath = "/tmp/watch-old.jsonl";
+    const newPath = "/tmp/watch-new.jsonl";
+    const renamedPath = "/tmp/watch-old.jsonl.reset.2026-02-17T19-52-05.323Z";
+
+    const deps = makeDeps({
+      loadWatchStateFn: vi.fn(async () => makeState(oldPath, 50)),
+      statFileFn: vi.fn(async (target: string) => {
+        if (target === oldPath) {
+          const err = new Error("missing") as NodeJS.ErrnoException;
+          err.code = "ENOENT";
+          throw err;
+        }
+        if (target === renamedPath) {
+          return { size: 200, isFile: () => true };
+        }
+        return { size: 0, isFile: () => true };
+      }),
+      readFileFn: vi.fn(async (target: string, offset: number) => {
+        expect(target).toBe(renamedPath);
+        expect(offset).toBe(50);
+        return Buffer.from("this content passes threshold");
+      }),
+    });
+
+    const resolver = {
+      filePattern: "*.jsonl",
+      resolveActiveSession: vi.fn(async () => newPath),
+      findRenamedFile: vi.fn(async () => renamedPath),
+    };
+
+    await runWatcher(
+      {
+        filePath: oldPath,
+        intervalMs: 1,
+        minChunkChars: 5,
+        dryRun: false,
+        verbose: false,
+        once: true,
+        directoryMode: true,
+        sessionsDir: "/tmp/sessions",
+        resolver,
+      },
+      deps,
+    );
+
+    expect(deps.extractKnowledgeFromChunksFn).toHaveBeenCalledTimes(1);
+    expect(deps.storeEntriesFn).toHaveBeenCalledTimes(1);
+    expect((deps.readFileFn as any).mock.calls[0]).toEqual([renamedPath, 50]);
+
+    const finalSnapshot = deps.saveSnapshots.at(-1) as WatchState | undefined;
+    expect(finalSnapshot?.files[oldPath]).toBeUndefined();
+    expect(finalSnapshot?.files[renamedPath]).toBeUndefined();
+  });
+
+  it("startup orphan scan drains missed reset files", async () => {
+    const oldPath = "/tmp/watch-orphan.jsonl";
+    const renamedPath = "/tmp/watch-orphan.jsonl.reset.2026-02-17T19-52-05.323Z";
+
+    const deps = makeDeps({
+      loadWatchStateFn: vi.fn(async () => makeState(oldPath, 10)),
+      statFileFn: vi.fn(async (target: string) => {
+        if (target === oldPath) {
+          const err = new Error("missing") as NodeJS.ErrnoException;
+          err.code = "ENOENT";
+          throw err;
+        }
+        if (target === renamedPath) {
+          return { size: 200, isFile: () => true };
+        }
+        return { size: 0, isFile: () => true };
+      }),
+      readFileFn: vi.fn(async (target: string, offset: number) => {
+        expect(target).toBe(renamedPath);
+        expect(offset).toBe(10);
+        return Buffer.from("this content passes threshold");
+      }),
+    });
+
+    const resolver = {
+      filePattern: "*.jsonl",
+      resolveActiveSession: vi.fn(async () => null),
+      findRenamedFile: vi.fn(async () => renamedPath),
+    };
+
+    await runWatcher(
+      {
+        intervalMs: 1,
+        minChunkChars: 5,
+        dryRun: false,
+        verbose: false,
+        once: true,
+        directoryMode: true,
+        sessionsDir: "/tmp/sessions",
+        resolver,
+      },
+      deps,
+    );
+
+    expect(deps.extractKnowledgeFromChunksFn).toHaveBeenCalledTimes(1);
+    expect(deps.storeEntriesFn).toHaveBeenCalledTimes(1);
+    expect((deps.readFileFn as any).mock.calls[0]).toEqual([renamedPath, 10]);
+
+    const finalSnapshot = deps.saveSnapshots.at(-1) as WatchState | undefined;
+    expect(finalSnapshot?.files[oldPath]).toBeUndefined();
+    expect(finalSnapshot?.files[renamedPath]).toBeUndefined();
+  });
+
+  it("no-op when findRenamedFile returns null", async () => {
+    const oldPath = "/tmp/watch-old-missing.jsonl";
+    const newPath = "/tmp/watch-new.jsonl";
+
+    const deps = makeDeps({
+      loadWatchStateFn: vi.fn(async () => makeState(oldPath, 50)),
+      statFileFn: vi.fn(async () => {
+        const err = new Error("missing") as NodeJS.ErrnoException;
+        err.code = "ENOENT";
+        throw err;
+      }),
+    });
+
+    const resolver = {
+      filePattern: "*.jsonl",
+      resolveActiveSession: vi.fn(async () => newPath),
+      findRenamedFile: vi.fn(async () => null),
+    };
+
+    const cycleResults: Array<{ error?: string }> = [];
+    await runWatcher(
+      {
+        filePath: oldPath,
+        intervalMs: 1,
+        minChunkChars: 5,
+        dryRun: false,
+        verbose: false,
+        once: true,
+        directoryMode: true,
+        sessionsDir: "/tmp/sessions",
+        resolver,
+        onCycle: (cycle) => cycleResults.push({ error: cycle.error }),
+      },
+      deps,
+    );
+
+    expect(cycleResults[0]?.error?.includes("file not found")).toBe(true);
+    expect(deps.extractKnowledgeFromChunksFn).not.toHaveBeenCalled();
+    expect(deps.storeEntriesFn).not.toHaveBeenCalled();
+  });
+
+  it("no-op when resolver has no findRenamedFile", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "agenr-watch-no-findrenamed-"));
+    try {
+      const oldPath = path.join(tempDir, "watch-old.jsonl");
+      const newPath = path.join(tempDir, "watch-new.jsonl");
+
+      const deps = makeDeps({
+        loadWatchStateFn: vi.fn(async () => makeState(oldPath, 50)),
+        statFileFn: vi.fn(async () => {
+          const err = new Error("missing") as NodeJS.ErrnoException;
+          err.code = "ENOENT";
+          throw err;
+        }),
+      });
+
+      const resolver = {
+        filePattern: "*.jsonl",
+        resolveActiveSession: vi.fn(async () => newPath),
+      };
+
+      const cycleResults: Array<{ error?: string }> = [];
+      await runWatcher(
+        {
+          filePath: oldPath,
+          intervalMs: 1,
+          minChunkChars: 5,
+          dryRun: false,
+          verbose: false,
+          once: true,
+          directoryMode: true,
+          sessionsDir: "/tmp/sessions",
+          resolver,
+          onCycle: (cycle) => cycleResults.push({ error: cycle.error }),
+        },
+        deps,
+      );
+
+      expect(cycleResults[0]?.error?.includes("file not found")).toBe(true);
+      expect(deps.extractKnowledgeFromChunksFn).not.toHaveBeenCalled();
+      expect(deps.storeEntriesFn).not.toHaveBeenCalled();
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
   });
 });
