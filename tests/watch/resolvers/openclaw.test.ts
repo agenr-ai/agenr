@@ -76,4 +76,59 @@ describe("openclaw session resolver", () => {
 
     expect(active).toBe(path.resolve(filePath));
   });
+
+  it("findRenamedFile returns null when no reset files exist", async () => {
+    const dir = await makeTempDir();
+    const original = path.join(dir, "abc123.jsonl");
+
+    const resolved = await openClawSessionResolver.findRenamedFile(original);
+
+    expect(resolved).toBeNull();
+  });
+
+  it("findRenamedFile finds the reset file matching the original filename", async () => {
+    const dir = await makeTempDir();
+    const original = path.join(dir, "abc123.jsonl");
+    const reset = path.join(dir, "abc123.jsonl.reset.2026-02-17T19-52-05.323Z");
+
+    await fs.writeFile(reset, "{}\n", "utf8");
+
+    const resolved = await openClawSessionResolver.findRenamedFile(original);
+
+    expect(resolved).toBe(reset);
+  });
+
+  it("findRenamedFile picks the most recent when multiple reset files exist", async () => {
+    const dir = await makeTempDir();
+    const original = path.join(dir, "abc123.jsonl");
+    const older = path.join(dir, "abc123.jsonl.reset.2026-02-17T19-52-05.323Z");
+    const newer = path.join(dir, "abc123.jsonl.reset.2026-02-17T19-52-06.323Z");
+
+    await fs.writeFile(older, "{}\n", "utf8");
+    await fs.writeFile(newer, "{}\n", "utf8");
+
+    const resolved = await openClawSessionResolver.findRenamedFile(original);
+
+    expect(resolved).toBe(newer);
+  });
+
+  it("findRenamedFile returns null when directory doesn't exist", async () => {
+    const original = "/tmp/agenr-openclaw-resolver-test-missing/abc123.jsonl";
+
+    const resolved = await openClawSessionResolver.findRenamedFile(original);
+
+    expect(resolved).toBeNull();
+  });
+
+  it("findRenamedFile ignores reset files for other sessions", async () => {
+    const dir = await makeTempDir();
+    const original = path.join(dir, "abc123.jsonl");
+    const otherReset = path.join(dir, "def456.jsonl.reset.2026-02-17T19-52-05.323Z");
+
+    await fs.writeFile(otherReset, "{}\n", "utf8");
+
+    const resolved = await openClawSessionResolver.findRenamedFile(original);
+
+    expect(resolved).toBeNull();
+  });
 });
