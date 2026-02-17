@@ -79,8 +79,6 @@ describe("consolidate orchestrator", () => {
     buildClustersFn: (typeFilter?: string, simThreshold?: number, minCluster?: number) => Cluster[];
     mergeThrows: boolean;
   }>) {
-    const acquireLockFn = vi.fn();
-    const releaseLockFn = vi.fn();
     const rebuildVectorIndexFn = vi.fn(async () => ({ embeddingCount: 0, durationMs: 1 }));
     const walCheckpointFn = vi.fn(async () => undefined);
 
@@ -104,8 +102,6 @@ describe("consolidate orchestrator", () => {
 
     return {
       deps: {
-        acquireLockFn,
-        releaseLockFn,
         consolidateRulesFn: vi.fn(async () => baseRulesStats),
         buildClustersFn,
         mergeClusterFn,
@@ -115,8 +111,6 @@ describe("consolidate orchestrator", () => {
         countActiveEmbeddedEntriesFn: vi.fn(async (_db: Client, type?: string) => (type ? 10 : 50)),
       },
       spies: {
-        acquireLockFn,
-        releaseLockFn,
         buildClustersFn,
         mergeClusterFn,
         rebuildVectorIndexFn,
@@ -241,26 +235,5 @@ describe("consolidate orchestrator", () => {
     await expect(fs.access(mod.CONSOLIDATION_CHECKPOINT_PATH)).rejects.toThrow();
   });
 
-  it("releases lock on merge failure and runs final rebuild/checkpoint only once per invocation", async () => {
-    const mod = await setupModule();
-    const { deps, spies } = makeDeps({
-      buildClustersFn: (typeFilter) => (typeFilter === "fact" ? [makeCluster(["a", "b"])] : []),
-      mergeThrows: true,
-    });
-
-    await expect(
-      mod.runConsolidationOrchestrator({} as Client, "/tmp/knowledge.db", makeLlmClient(), "embed-key", {}, deps),
-    ).rejects.toThrow("merge failed");
-    expect(spies.acquireLockFn).toHaveBeenCalledTimes(1);
-    expect(spies.releaseLockFn).toHaveBeenCalledTimes(1);
-    expect(spies.rebuildVectorIndexFn).toHaveBeenCalledTimes(0);
-    expect(spies.walCheckpointFn).toHaveBeenCalledTimes(0);
-
-    const success = makeDeps({
-      buildClustersFn: () => [],
-    });
-    await mod.runConsolidationOrchestrator({} as Client, "/tmp/knowledge.db", makeLlmClient(), "embed-key", {}, success.deps);
-    expect(success.spies.rebuildVectorIndexFn).toHaveBeenCalledTimes(1);
-    expect(success.spies.walCheckpointFn).toHaveBeenCalledTimes(1);
-  });
+  // Orchestrator no longer owns database locks - callers are responsible.
 });

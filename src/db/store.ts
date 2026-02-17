@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { Context, Tool } from "@mariozechner/pi-ai";
 import type { Client, InValue, Row } from "@libsql/client";
 import { Type, type Static } from "@sinclair/typebox";
-import { warnIfLocked } from "../consolidate/lock.js";
+import { warnIfLocked } from "./lockfile.js";
 import { composeEmbeddingText, embed } from "../embeddings/client.js";
 import { EmbeddingCache } from "../embeddings/cache.js";
 import { runSimpleStream } from "../llm/stream.js";

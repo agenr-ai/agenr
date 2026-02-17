@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import * as clack from "@clack/prompts";
 import { readConfig } from "../config.js";
-import { warnIfLocked } from "../consolidate/lock.js";
+import { warnIfLocked } from "../db/lockfile.js";
 import { deduplicateEntries } from "../dedup.js";
 import { closeDb, getDb, initDb } from "../db/client.js";
 import { storeEntries } from "../db/store.js";

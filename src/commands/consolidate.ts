@@ -202,10 +202,6 @@ export async function runConsolidateCommand(
         onLog: (message) => logger.info(message),
         onWarn: (message) => logger.warn(formatWarn(message)),
       },
-      {
-        acquireLockFn: () => undefined,
-        releaseLockFn: () => undefined,
-      },
     );
 
     if (options.json) {

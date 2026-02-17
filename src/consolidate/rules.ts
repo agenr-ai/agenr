@@ -420,9 +420,15 @@ export async function consolidateRules(
   // Use TRUNCATE mode to reset the WAL file after checkpoint.
   try {
     await db.execute("PRAGMA wal_checkpoint(TRUNCATE)");
-  } catch {
+  } catch (error) {
+    if (!dryRun) {
+      throw new Error(
+        `Cannot create safe backup: WAL checkpoint failed (${error instanceof Error ? error.message : String(error)}). ` +
+          "Close other agenr processes (watch, MCP) and retry.",
+      );
+    }
     if (verbose) {
-      onLog("[backup] WAL checkpoint before backup failed; backup may be incomplete");
+      onLog("[backup] WAL checkpoint failed (dry-run, continuing)");
     }
   }
 
