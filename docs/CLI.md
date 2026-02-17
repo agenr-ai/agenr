@@ -226,6 +226,9 @@ agenr daemon <subcommand> [options]
 
 ```bash
 $A daemon install --force
+$A daemon start
+$A daemon stop
+$A daemon restart
 $A daemon status
 $A daemon logs --lines 50
 ```

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import * as clack from "@clack/prompts";
 import { loadWatchState } from "../watch/state.js";
-import { detectWatchPlatform, type WatchPlatform } from "../watch/resolvers/index.js";
+import { detectWatchPlatform, normalizePlatform, type WatchPlatform } from "../watch/resolvers/index.js";
 
 const LAUNCH_LABEL = "com.agenr.watch";
 const DEFAULT_INTERVAL_SECONDS = 120;
@@ -260,26 +260,7 @@ export async function resolveStableNodePath(execPath: string, statFn: typeof fs.
   return execPath;
 }
 
-type SupportedInstallPlatform = "openclaw" | "codex" | "claude-code" | "mtime";
-
-function normalizeInstallPlatform(value: string): SupportedInstallPlatform | null {
-  const normalized = value.trim().toLowerCase();
-  if (normalized === "openclaw") {
-    return "openclaw";
-  }
-  if (normalized === "claude-code" || normalized === "claude") {
-    return "claude-code";
-  }
-  if (normalized === "codex") {
-    return "codex";
-  }
-  if (normalized === "mtime" || normalized === "generic") {
-    return "mtime";
-  }
-  return null;
-}
-
-function getDefaultSessionsDir(homeDir: string, platform: SupportedInstallPlatform): string | null {
+function getDefaultSessionsDir(homeDir: string, platform: WatchPlatform): string | null {
   if (platform === "openclaw") {
     return path.join(homeDir, ".openclaw", "agents", "main", "sessions");
   }
@@ -312,9 +293,10 @@ async function resolveInstallTarget(
   }
 
   if (hasPlatform) {
-    const normalized = normalizeInstallPlatform(options.platform!);
+    const normalized = normalizePlatform(options.platform!);
     if (!normalized) {
-      // Keep error messaging aligned with watch platform support.
+      // detectWatchPlatform throws with a descriptive error for unsupported platforms.
+      // The throw below is a defensive fallback (unreachable in practice).
       detectWatchPlatform(options.platform, undefined);
       throw new Error(`Unsupported platform: ${options.platform}`);
     }
@@ -332,7 +314,7 @@ async function resolveInstallTarget(
     return { sessionsDir: defaultDir, platform: normalized, detectionMessage: null };
   }
 
-  const candidates: Array<{ platform: SupportedInstallPlatform; dir: string; message: string }> = [
+  const candidates: Array<{ platform: WatchPlatform; dir: string; message: string }> = [
     {
       platform: "openclaw",
       dir: path.join(homeDir, ".openclaw", "agents", "main", "sessions"),
@@ -629,10 +611,7 @@ export async function runDaemonStatusCommand(
   }
 
   const { logPath } = getPaths(homeDir);
-  const statusResult = await runLaunchctl(resolvedDeps, ["print", `gui/${uid}/${LAUNCH_LABEL}`], false);
-  const loaded = statusResult.exitCode === 0;
-  const combined = `${statusResult.stdout}\n${statusResult.stderr}`;
-  const running = loaded && (/\bstate = running\b/.test(combined) || /\bpid = \d+\b/.test(combined));
+  const { loaded, running } = await getLaunchctlState(resolvedDeps, uid);
 
   let currentFile: string | null = null;
   try {
