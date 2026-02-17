@@ -8,6 +8,16 @@ It extracts structured knowledge from your OpenClaw conversation transcripts - f
 
 One local database. Your memory stays on your machine.
 
+## What you need
+
+agenr uses embeddings to make your memory searchable. The best setup we've found: an **OpenAI API key** with `text-embedding-3-small`. Embeddings cost fractions of a penny per operation - a full ingestion of 100+ session transcripts runs about $0.10 total.
+
+agenr also supports **OpenAI Pro subscriptions** and **Anthropic Claude subscriptions** (no API key needed) for the LLM extraction step. But for the best balance of speed, accuracy, and cost, we recommend `gpt-4o-mini` with an API key. `agenr setup` walks you through all of this.
+
+```bash
+export OPENAI_API_KEY=sk-...  # for embeddings + extraction
+```
+
 ## Setup
 
 ```bash
@@ -54,7 +64,6 @@ When you learn something important: call agenr_store.
 
 Done. Your agent now has persistent memory that survives compaction, session restarts, and everything in between.
 
-> **Note:** Embeddings use OpenAI's API (`text-embedding-3-small`) regardless of your LLM provider. You'll need an `OPENAI_API_KEY` even if you use Anthropic for extraction. `agenr setup` walks you through it.
 
 ## What happens when you ingest
 
