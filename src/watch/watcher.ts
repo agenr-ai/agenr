@@ -588,6 +588,14 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
       totalEntriesStored += cycleResult.entriesStored;
       options.onCycle?.(cycleResult, { db, apiKey: embeddingApiKey ?? "" });
 
+      if (cycleResult.entriesStored > 0 && db) {
+        try {
+          await resolvedDeps.walCheckpointFn(db);
+        } catch (error) {
+          options.onWarn?.(`WAL checkpoint failed: ${formatError(error)}`);
+        }
+      }
+
       if (options.once || resolvedDeps.shouldShutdownFn()) {
         break;
       }

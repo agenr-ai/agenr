@@ -7,13 +7,14 @@ import { readConfig } from "../config.js";
 import { deduplicateEntries } from "../dedup.js";
 import { closeDb, getDb, initDb, walCheckpoint } from "../db/client.js";
 import { hashText, storeEntries } from "../db/store.js";
+import { acquireDbLock, releaseDbLock } from "../db/lockfile.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { extractKnowledgeFromChunks } from "../extractor.js";
 import { createLlmClient } from "../llm/client.js";
 import { expandInputFiles, parseTranscriptFile } from "../parser.js";
 import type { KnowledgeEntry } from "../types.js";
 import { banner, formatError, formatWarn, ui } from "../ui.js";
-import { installSignalHandlers, isShutdownRequested } from "../shutdown.js";
+import { installSignalHandlers, isShutdownRequested, onShutdown } from "../shutdown.js";
 import {
   createEmptyWatchState,
   getFileState,
@@ -544,6 +545,13 @@ export async function runIngestCommand(
     });
 
     const dbPath = options.db?.trim() || config?.db?.path;
+    const shouldLockDb = dbPath !== ":memory:";
+    if (shouldLockDb) {
+      acquireDbLock();
+      onShutdown(async () => {
+        releaseDbLock();
+      });
+    }
     const db = resolvedDeps.getDbFn(dbPath);
     await resolvedDeps.initDbFn(db);
 
@@ -955,6 +963,9 @@ export async function runIngestCommand(
         } catch (error) {
           clack.log.warn(formatWarn(`WAL checkpoint failed: ${errorMessage(error)}`), clackOutput);
         }
+      }
+      if (shouldLockDb) {
+        releaseDbLock();
       }
       resolvedDeps.closeDbFn(db);
     }

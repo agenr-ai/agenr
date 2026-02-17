@@ -5,11 +5,12 @@ import { readConfig } from "../config.js";
 import { runConsolidationOrchestrator, type ConsolidationOrchestratorReport } from "../consolidate/orchestrate.js";
 import { showFlaggedMerges } from "../consolidate/verify.js";
 import { closeDb, DEFAULT_DB_PATH, getDb, walCheckpoint } from "../db/client.js";
+import { acquireDbLock, releaseDbLock } from "../db/lockfile.js";
 import { initSchema } from "../db/schema.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { createLlmClient } from "../llm/client.js";
 import { formatWarn } from "../ui.js";
-import { installSignalHandlers, isShutdownRequested } from "../shutdown.js";
+import { installSignalHandlers, isShutdownRequested, onShutdown } from "../shutdown.js";
 
 export interface ConsolidateCommandOptions {
   rulesOnly?: boolean;
@@ -169,6 +170,11 @@ export async function runConsolidateCommand(
     throw new Error("Consolidation requires a file-backed database so a backup can be created.");
   }
 
+  acquireDbLock();
+  onShutdown(async () => {
+    releaseDbLock();
+  });
+
   const db = resolvedDeps.getDbFn(configuredPath);
 
   try {
@@ -177,20 +183,30 @@ export async function runConsolidateCommand(
     const llmClient = options.rulesOnly ? undefined : resolvedDeps.createLlmClientFn({ env: process.env });
     const embeddingApiKey = options.rulesOnly ? undefined : resolvedDeps.resolveEmbeddingApiKeyFn(config, process.env);
 
-    const report = await resolvedDeps.runConsolidationOrchestratorFn(db, dbFilePath, llmClient, embeddingApiKey, {
-      rulesOnly: options.rulesOnly,
-      dryRun: options.dryRun,
-      verbose: options.verbose,
-      minCluster: options.minCluster,
-      simThreshold: options.simThreshold,
-      maxClusterSize: options.maxClusterSize,
-      type: options.type,
-      idempotencyDays: options.idempotencyDays,
-      batch: options.batch,
-      resume: options.resume,
-      onLog: (message) => logger.info(message),
-      onWarn: (message) => logger.warn(formatWarn(message)),
-    });
+    const report = await resolvedDeps.runConsolidationOrchestratorFn(
+      db,
+      dbFilePath,
+      llmClient,
+      embeddingApiKey,
+      {
+        rulesOnly: options.rulesOnly,
+        dryRun: options.dryRun,
+        verbose: options.verbose,
+        minCluster: options.minCluster,
+        simThreshold: options.simThreshold,
+        maxClusterSize: options.maxClusterSize,
+        type: options.type,
+        idempotencyDays: options.idempotencyDays,
+        batch: options.batch,
+        resume: options.resume,
+        onLog: (message) => logger.info(message),
+        onWarn: (message) => logger.warn(formatWarn(message)),
+      },
+      {
+        acquireLockFn: () => undefined,
+        releaseLockFn: () => undefined,
+      },
+    );
 
     if (options.json) {
       process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
@@ -200,6 +216,7 @@ export async function runConsolidateCommand(
     logger.info(renderTextReport(report, options.dryRun === true));
     return { exitCode: isShutdownRequested() ? 130 : 0 };
   } finally {
+    releaseDbLock();
     if (!options.dryRun) {
       try {
         await walCheckpoint(db);
