@@ -263,6 +263,7 @@ export interface WatchOptions {
   db?: string;
   model?: string;
   provider?: string;
+  raw?: boolean;
   dir?: string;
   platform?: string;
   auto?: boolean;

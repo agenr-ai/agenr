@@ -7,7 +7,7 @@ import {
   parseJsonlLines,
   resolveTimestampFallback,
 } from "./jsonl-base.js";
-import type { SourceAdapter } from "./types.js";
+import type { AdapterParseOptions, SourceAdapter } from "./types.js";
 import type { TranscriptMessage } from "../types.js";
 
 export const genericJsonlAdapter: SourceAdapter = {
@@ -33,7 +33,7 @@ export const genericJsonlAdapter: SourceAdapter = {
     }
   },
 
-  async parse(filePath: string) {
+  async parse(filePath: string, _options?: AdapterParseOptions) {
     const raw = await fs.readFile(filePath, "utf8");
     const warnings: string[] = [];
     const messages: TranscriptMessage[] = [];

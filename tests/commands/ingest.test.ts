@@ -1024,7 +1024,7 @@ describe("ingest command", () => {
 
     expect(result.filesProcessed).toBe(1);
     expect(parseTranscriptFileFn).toHaveBeenCalledTimes(1);
-    expect(parseTranscriptFileFn).toHaveBeenCalledWith(md);
+    expect(parseTranscriptFileFn).toHaveBeenCalledWith(md, { raw: false, verbose: false });
   });
 
   it("resolveInputFiles with directory path finds files matching glob", async () => {
@@ -1051,9 +1051,9 @@ describe("ingest command", () => {
 
     expect(result.filesProcessed).toBe(3);
     expect(parseTranscriptFileFn).toHaveBeenCalledTimes(3);
-    expect(parseTranscriptFileFn).toHaveBeenCalledWith(rootMd);
-    expect(parseTranscriptFileFn).toHaveBeenCalledWith(rootTxt);
-    expect(parseTranscriptFileFn).toHaveBeenCalledWith(nestedMd);
+    expect(parseTranscriptFileFn).toHaveBeenCalledWith(rootMd, { raw: false, verbose: false });
+    expect(parseTranscriptFileFn).toHaveBeenCalledWith(rootTxt, { raw: false, verbose: false });
+    expect(parseTranscriptFileFn).toHaveBeenCalledWith(nestedMd, { raw: false, verbose: false });
   });
 
   it("resolveInputFiles with directory finds files in immediate directory with ** glob", async () => {
@@ -1076,8 +1076,8 @@ describe("ingest command", () => {
 
     expect(result.filesProcessed).toBe(2);
     expect(parseTranscriptFileFn).toHaveBeenCalledTimes(2);
-    expect(parseTranscriptFileFn).toHaveBeenCalledWith(rootMd);
-    expect(parseTranscriptFileFn).toHaveBeenCalledWith(nestedMd);
+    expect(parseTranscriptFileFn).toHaveBeenCalledWith(rootMd, { raw: false, verbose: false });
+    expect(parseTranscriptFileFn).toHaveBeenCalledWith(nestedMd, { raw: false, verbose: false });
   });
 
   it("processes files in ascending size order", async () => {

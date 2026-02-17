@@ -40,6 +40,7 @@ export interface WatcherOptions {
   minChunkChars: number;
   dryRun: boolean;
   verbose: boolean;
+  raw: boolean;
   once: boolean;
   onlineDedup?: boolean;
   model?: string;
@@ -431,7 +432,12 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
       const tempFile = path.join(tempDir, "delta.txt");
       try {
         await resolvedDeps.writeFileFn(tempFile, newContent, "utf8");
-        const parsed = await resolvedDeps.parseTranscriptFileFn(tempFile);
+        const parsed = await resolvedDeps.parseTranscriptFileFn(tempFile, { raw: options.raw, verbose: options.verbose });
+        if (options.verbose && parsed.warnings.length > 0) {
+          for (const warning of parsed.warnings) {
+            options.onWarn?.(warning);
+          }
+        }
 
         const processChunkEntries = async (chunkEntries: KnowledgeEntry[]): Promise<void> => {
           cycleResult.entriesExtracted += chunkEntries.length;

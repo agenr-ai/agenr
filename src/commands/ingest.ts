@@ -30,6 +30,7 @@ export interface IngestCommandOptions {
   model?: string;
   provider?: string;
   verbose?: boolean;
+  raw?: boolean;
   dryRun?: boolean;
   json?: boolean;
   concurrency?: number | string;
@@ -682,7 +683,16 @@ export async function runIngestCommand(
         baselineEntryIds = await withDbLock(() => getSourceEntryIds(db, target.file));
       }
 
-      const parsed = await resolvedDeps.parseTranscriptFileFn(target.file);
+      const parsed = await resolvedDeps.parseTranscriptFileFn(target.file, { raw: options.raw === true, verbose });
+      if (verbose && parsed.warnings.length > 0) {
+        for (const warning of parsed.warnings) {
+          if (warning.startsWith("Filtered:")) {
+            clack.log.info(warning, clackOutput);
+          } else {
+            clack.log.warn(formatWarn(warning), clackOutput);
+          }
+        }
+      }
       const processChunkEntries = async (chunkEntries: KnowledgeEntry[]): Promise<void> => {
         const normalizedEntries = chunkEntries.map((entry) => ({
           ...entry,
