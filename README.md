@@ -41,9 +41,15 @@ Add this to your OpenClaw `AGENTS.md`:
 
 ```markdown
 ## Memory (agenr)
-- On session start: call agenr_recall with context "session-start" to load relevant memories
-- During work: recall specific topics as needed
-- When you learn something important: store it with agenr_store
+On every session start, run this BEFORE responding to the first message:
+  cd ~/Code/agenr && node dist/cli.js recall --context session-start --budget 2000
+IMPORTANT: use --budget 2000, not just --limit. Budget triggers balanced output:
+  - 20% active todos
+  - 30% preferences and decisions
+  - 50% recent facts and events
+Without --budget, score ranking skews toward old high-importance todos.
+For targeted queries during work: call agenr_recall with your question.
+When you learn something important: call agenr_store.
 ```
 
 Done. Your agent now has persistent memory that survives compaction, session restarts, and everything in between.
@@ -134,6 +140,7 @@ Verify with `mcporter list agenr`. See [docs/OPENCLAW.md](./docs/OPENCLAW.md) fo
 | `agenr watch [file]` | Live-watch files, directories, or auto-detect |
 | `agenr daemon install` | Install background watch daemon |
 | `agenr consolidate` | Clean up and merge near-duplicates |
+| `agenr context` | Generate context file for AI tool integration |
 | `agenr mcp` | Start MCP server (stdio) |
 | `agenr db stats` | Database statistics |
 
@@ -150,7 +157,7 @@ Deep dive: [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
 
 ## Status
 
-Alpha. The core pipeline is stable and tested (350+ tests). We use it daily managing thousands of knowledge entries across OpenClaw sessions.
+Alpha. The core pipeline is stable and tested (369 tests). We use it daily managing thousands of knowledge entries across OpenClaw sessions.
 
 What works: extraction, storage, recall, MCP integration, online dedup, consolidation, smart filtering, live watching, daemon mode.
 
