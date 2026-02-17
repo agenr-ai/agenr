@@ -1,7 +1,7 @@
 import { createClient, type Client } from "@libsql/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { initDb } from "../../src/db/client.js";
-import { importanceScore, recall, recallStrength, recency, scoreEntry } from "../../src/db/recall.js";
+import { importanceScore, recall, recallStrength, recency, scoreEntry, todoStaleness } from "../../src/db/recall.js";
 import { storeEntries } from "../../src/db/store.js";
 import type { KnowledgeEntry, StoredEntry } from "../../src/types.js";
 
@@ -118,6 +118,134 @@ describe("db recall", () => {
     expect(four).toBeGreaterThan(one);
     expect(four / one).toBeLessThan(4);
     expect(sixteen / four).toBeLessThan(4);
+  });
+
+  it("todoStaleness applies bracket multipliers based on updated_at", () => {
+    const now = new Date("2026-02-15T00:00:00.000Z");
+    const dayMs = 24 * 60 * 60 * 1000;
+    const isoDaysAgo = (days: number) => new Date(now.getTime() - days * dayMs).toISOString();
+
+    expect(todoStaleness(isoDaysAgo(0), now)).toBe(1.0);
+    expect(todoStaleness(isoDaysAgo(2), now)).toBe(1.0);
+    expect(todoStaleness(isoDaysAgo(3), now)).toBe(1.0);
+    expect(todoStaleness(isoDaysAgo(4), now)).toBe(0.6);
+    expect(todoStaleness(isoDaysAgo(7), now)).toBe(0.6);
+    expect(todoStaleness(isoDaysAgo(8), now)).toBe(0.3);
+    expect(todoStaleness(isoDaysAgo(14), now)).toBe(0.3);
+    expect(todoStaleness(isoDaysAgo(15), now)).toBe(0.1);
+    expect(todoStaleness(isoDaysAgo(30), now)).toBe(0.1);
+  });
+
+  it("session-start scoring penalizes stale todos but not other types", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    await storeEntries(
+      client,
+      [
+        makeEntry({ content: "Old todo vec-work-low", type: "todo", importance: 8 }),
+        makeEntry({ content: "Old fact vec-work-low", type: "fact", importance: 8 }),
+      ],
+      "sk-test",
+      {
+        sourceFile: "recall-test.jsonl",
+        ingestContentHash: "hash-session-todo-penalty",
+        embedFn: mockEmbed,
+        force: true,
+      },
+    );
+
+    const allRows = await client.execute("SELECT id, content FROM entries ORDER BY created_at ASC");
+    const byContent = new Map<string, string>();
+    for (const row of allRows.rows) {
+      byContent.set(String(row.content), String(row.id));
+    }
+
+    const todoId = byContent.get("Old todo vec-work-low");
+    const factId = byContent.get("Old fact vec-work-low");
+    expect(todoId).toBeTruthy();
+    expect(factId).toBeTruthy();
+
+    await client.execute({
+      sql: "UPDATE entries SET created_at = ?, updated_at = ? WHERE id IN (?, ?)",
+      args: ["2026-02-01T00:00:00.000Z", "2026-02-01T00:00:00.000Z", todoId as string, factId as string],
+    });
+
+    const now = new Date("2026-02-15T00:00:00.000Z");
+    const results = await recall(
+      client,
+      {
+        text: "",
+        context: "session-start",
+        limit: 10,
+      },
+      "sk-test",
+      { now },
+    );
+
+    const todo = results.find((item) => item.entry.id === todoId);
+    const fact = results.find((item) => item.entry.id === factId);
+    expect(todo).toBeTruthy();
+    expect(fact).toBeTruthy();
+    expect(fact!.score).toBeGreaterThan(todo!.score);
+  });
+
+  it("a stale importance-9 todo scores lower than a fresh importance-7 event in session-start", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    await storeEntries(
+      client,
+      [
+        makeEntry({ content: "Stale todo vec-work-low", type: "todo", importance: 9 }),
+        makeEntry({ content: "Fresh event vec-work-low", type: "event", importance: 7 }),
+      ],
+      "sk-test",
+      {
+        sourceFile: "recall-test.jsonl",
+        ingestContentHash: "hash-session-stale-vs-fresh",
+        embedFn: mockEmbed,
+        force: true,
+      },
+    );
+
+    const allRows = await client.execute("SELECT id, content FROM entries ORDER BY created_at ASC");
+    const byContent = new Map<string, string>();
+    for (const row of allRows.rows) {
+      byContent.set(String(row.content), String(row.id));
+    }
+
+    const staleTodoId = byContent.get("Stale todo vec-work-low");
+    const freshEventId = byContent.get("Fresh event vec-work-low");
+    expect(staleTodoId).toBeTruthy();
+    expect(freshEventId).toBeTruthy();
+
+    await client.execute({
+      sql: "UPDATE entries SET created_at = ?, updated_at = ? WHERE id = ?",
+      args: ["2026-02-01T00:00:00.000Z", "2026-02-01T00:00:00.000Z", staleTodoId as string],
+    });
+    await client.execute({
+      sql: "UPDATE entries SET created_at = ?, updated_at = ? WHERE id = ?",
+      args: ["2026-02-14T00:00:00.000Z", "2026-02-14T00:00:00.000Z", freshEventId as string],
+    });
+
+    const now = new Date("2026-02-15T00:00:00.000Z");
+    const results = await recall(
+      client,
+      {
+        text: "",
+        context: "session-start",
+        limit: 10,
+      },
+      "sk-test",
+      { now },
+    );
+
+    const todoIndex = results.findIndex((item) => item.entry.id === staleTodoId);
+    const eventIndex = results.findIndex((item) => item.entry.id === freshEventId);
+    expect(todoIndex).toBeGreaterThanOrEqual(0);
+    expect(eventIndex).toBeGreaterThanOrEqual(0);
+    expect(eventIndex).toBeLessThan(todoIndex);
   });
 
   it("scoreEntry uses multiplicative scaling for memory strength", () => {
