@@ -4,7 +4,7 @@
   "description": "AGENt memoRy -- Memory infrastructure for AI agents",
   "type": "module",
   "bin": {
-    "agenr": "./dist/cli.js"
+    "agenr": "dist/cli.js"
   },
   "scripts": {
     "build": "tsup src/cli.ts --format esm --dts",
@@ -32,7 +32,7 @@
   "license": "AGPL-3.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/agenr-ai/agenr.git"
+    "url": "git+https://github.com/agenr-ai/agenr.git"
   },
   "homepage": "https://agenr.ai",
   "keywords": [
