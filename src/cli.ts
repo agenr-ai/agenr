@@ -34,6 +34,7 @@ import { writeOutput } from "./output.js";
 import { expandInputFiles, parseTranscriptFile } from "./parser.js";
 import { runSetup } from "./setup.js";
 import { banner, formatError, formatLabel, formatSuccess, formatWarn, ui } from "./ui.js";
+import { APP_VERSION } from "./version.js";
 import type { ExtractionReport, ExtractionStats } from "./types.js";
 import type { ConsolidateCommandOptions } from "./commands/consolidate.js";
 import type { DaemonInstallOptions, DaemonLogsOptions, DaemonStatusOptions, DaemonUninstallOptions } from "./commands/daemon.js";
@@ -270,7 +271,7 @@ export async function runExtractCommand(
   }
 
   const report: ExtractionReport = {
-    version: "0.1.0",
+    version: APP_VERSION,
     extracted_at: new Date().toISOString(),
     provider: client.resolvedModel.provider,
     model: client.resolvedModel.modelId,
@@ -329,7 +330,7 @@ export function createProgram(): Command {
   program
     .name("agenr")
     .description("AGENt memoRy -- local-first memory extraction")
-    .version("0.1.0")
+    .version(APP_VERSION)
     .action(async () => {
       const quick = getQuickStatus(process.env);
 

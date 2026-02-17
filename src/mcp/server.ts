@@ -15,6 +15,7 @@ import { createLlmClient } from "../llm/client.js";
 import { parseTranscriptFile } from "../parser.js";
 import { KNOWLEDGE_TYPES, SCOPE_LEVELS } from "../types.js";
 import type { KnowledgeEntry, RecallResult, Scope, StoreResult } from "../types.js";
+import { APP_VERSION } from "../version.js";
 
 const MCP_PROTOCOL_VERSION = "2024-11-05";
 
@@ -623,7 +624,7 @@ export function createMcpServer(
   const errorOutput = options.errorOutput ?? process.stderr;
   const verbose = options.verbose === true;
   const env = options.env ?? process.env;
-  const serverVersion = options.serverVersion ?? "0.1.0";
+  const serverVersion = options.serverVersion ?? APP_VERSION;
 
   const resolvedDeps: McpServerDeps = {
     readConfigFn: deps.readConfigFn ?? readConfig,
@@ -648,7 +649,6 @@ export function createMcpServer(
 
   let dbClient: Client | null = null;
   let dbInitPromise: Promise<void> | null = null;
-  let isInitialized = false;
   let isStopped = false;
   let lineReader: readline.Interface | null = null;
 
@@ -889,7 +889,6 @@ export function createMcpServer(
         },
       };
     } else if (parsed.method === "notifications/initialized" || parsed.method === "initialized") {
-      isInitialized = true;
       if (!parsed.hasId) {
         return null;
       }
@@ -987,9 +986,6 @@ export function createMcpServer(
     } finally {
       lineReader?.close();
       lineReader = null;
-      if (isInitialized) {
-        // Kept for MCP lifecycle visibility and potential future hooks.
-      }
       closeDbIfOpen();
     }
   }

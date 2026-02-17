@@ -1,11 +1,12 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { writeConfig } from "../src/config.js";
 import { createLlmClient, resolveProviderAndModel } from "../src/llm/client.js";
 
 const tempDirs: string[] = [];
+let savedOpenAiApiKey: string | undefined;
 
 async function makeConfigEnv(): Promise<{ env: NodeJS.ProcessEnv; configPath: string }> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agenr-client-test-"));
@@ -20,7 +21,19 @@ async function makeConfigEnv(): Promise<{ env: NodeJS.ProcessEnv; configPath: st
   };
 }
 
+beforeEach(() => {
+  savedOpenAiApiKey = process.env.OPENAI_API_KEY;
+  delete process.env.OPENAI_API_KEY;
+});
+
 afterEach(async () => {
+  if (savedOpenAiApiKey === undefined) {
+    delete process.env.OPENAI_API_KEY;
+  } else {
+    process.env.OPENAI_API_KEY = savedOpenAiApiKey;
+  }
+  savedOpenAiApiKey = undefined;
+
   for (const dir of tempDirs) {
     await fs.rm(dir, { recursive: true, force: true });
   }

@@ -53,6 +53,7 @@ agenr extract [options] <files...>
 - `--format <type>`: `json|markdown` (default `markdown`).
 - `--output <file>`: write output file (or directory with `--split`).
 - `--split`: one output file per input transcript.
+- `--no-dedup`: skip post-extraction LLM dedup pass.
 - `--model <model>`: override model.
 - `--provider <name>`: `anthropic|openai|openai-codex`.
 - `--verbose`: detailed extraction progress.
@@ -119,9 +120,9 @@ agenr recall [options] [query]
 - `--limit <n>`: max results (default `10`).
 - `--type <types>`: comma-separated type filter.
 - `--tags <tags>`: comma-separated tags filter.
-- `--min-confidence <level>`: `low|medium|high`.
+- `--min-importance <n>`: minimum importance (1-10).
 - `--since <duration>`: recency filter (`1h`, `7d`, `30d`, `1y`, or ISO timestamp).
-- `--expiry <level>`: `core|permanent|temporary|session-only`.
+- `--expiry <level>`: `core|permanent|temporary`.
 - `--json`: emit JSON.
 - `--db <path>`: database path override.
 - `--budget <tokens>`: approximate token budget cap.
@@ -141,7 +142,7 @@ $A recall "which package manager did we choose?" --limit 3
 ```text
 1 results (46ms)
 1. [decision] project tooling: We switched this project to pnpm.
-   confidence=high | today | recalled 1 time
+   importance=7 | today | recalled 1 time
    tags: tooling, package-manager
 ```
 
@@ -239,8 +240,10 @@ agenr ingest [options] <paths...>
 - `--verbose`: per-file details.
 - `--dry-run`: extract without storing.
 - `--json`: emit JSON summary.
-- `--concurrency <n>`: parallel extraction workers (default `1`).
+- `--concurrency <n>`: parallel chunk extractions (default `5`).
 - `--skip-ingested`: skip already-ingested file/hash pairs (default `true`).
+- `--no-retry`: disable auto-retry for failed files.
+- `--max-retries <n>`: maximum auto-retry attempts (default `3`).
 - `--force`: clean re-ingest each matched file by deleting previous rows for that source file first.
 
 Ingest runs online dedup at store time (including LLM classification for ambiguous similarity bands).
@@ -321,7 +324,7 @@ $A mcp --db ~/.agenr/knowledge.db
 ### Example Output
 
 ```text
-[mcp] agenr MCP server started (protocol 2024-11-05, version 0.1.0)
+[mcp] agenr MCP server started (protocol 2024-11-05, version 0.4.0)
 ```
 
 ## `auth status`
@@ -563,11 +566,11 @@ Scope is assigned when entries are stored. The default scope for CLI-stored entr
 
 The `--context` flag changes how recall behaves:
 
-- **`default`** (or omitted): Standard semantic search. Requires a query string. Returns entries ranked by the full scoring model (vector similarity × recency × confidence × recall strength).
+- **`default`** (or omitted): Standard semantic search. Requires a query string. Returns entries ranked by the full scoring model (vector similarity × recency × memory strength, with contradiction penalties and optional full-text boost).
 
-- **`session-start`**: Designed for AI agents to load at the beginning of a session. No query required. Fetches recent entries (up to 500) without vector search and groups them into categories:
+  - **`session-start`**: Designed for AI agents to load at the beginning of a session. No query required. Fetches recent entries (up to 500) without vector search and groups them into categories:
   - **Core**: entries with `expiry=core` (always included, fetched separately)
-  - **Active**: open todos (non-session-only)
+  - **Active**: todos
   - **Preferences**: preferences and decisions
   - **Recent**: everything else, sorted by recency
   
@@ -577,7 +580,7 @@ The `--context` flag changes how recall behaves:
 
 ### `--budget` behavior
 
-The `--budget <tokens>` flag caps the total approximate token count of returned entries. Token estimation counts words in the entry's type, subject, content, confidence, expiry, and tags, then multiplies by 1.3.
+The `--budget <tokens>` flag caps the total approximate token count of returned entries. Token estimation counts words in the entry's type, subject, content, importance, expiry, and tags, then multiplies by 1.3.
 
 In **default** mode: entries are ranked by score, then consumed in order until the budget is exhausted.
 

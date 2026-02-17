@@ -62,16 +62,17 @@ agenr ingest ~/.openclaw/agents/main/sessions/ --glob '**/*.jsonl'
 ...
 ```
 
-Each entry has a type, subject, content, importance, and expiry. Near-duplicates are caught automatically - if you discussed the same decision in three sessions, you get one entry with higher confidence, not three copies.
+Each entry has a type, subject, content, importance, and expiry. Near-duplicates are caught automatically - if you discussed the same decision in three sessions, you get one entry with higher confirmations, not three copies.
 
 ```bash
 agenr recall "package manager"
 ```
 
-```
-fact (0.94) - project tooling
-We switched this project to pnpm.
-Confirmed 3x | Last recalled 2 days ago
+```text
+1 results (46ms)
+1. [decision] project tooling: We switched this project to pnpm.
+   importance=7 | today | recalled 3 times
+   tags: tooling, package-manager
 ```
 
 ## Live watching
@@ -143,7 +144,7 @@ Full reference: [docs/CLI.md](./docs/CLI.md) | [docs/CONFIGURATION.md](./docs/CO
 - **Runtime:** Node.js 20+, TypeScript, ESM
 - **Storage:** libsql/SQLite (`~/.agenr/knowledge.db`)
 - **Embeddings:** OpenAI `text-embedding-3-small`, 1024 dimensions
-- **Recall scoring:** Vector similarity x recency x confidence x recall strength, with contradiction penalties
+- **Recall scoring:** Vector similarity x recency x memory strength (max(importance, recall strength)), with contradiction penalties
 
 Deep dive: [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
 

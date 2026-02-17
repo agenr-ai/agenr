@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import { createMcpServer } from "../mcp/server.js";
+import { APP_VERSION } from "../version.js";
 
 export interface McpCommandOptions {
   db?: string;
@@ -28,7 +29,7 @@ async function readPackageVersion(
   } catch {
     // Fall back to a known-safe default if package metadata can't be read.
   }
-  return "0.1.0";
+  return APP_VERSION;
 }
 
 export async function runMcpCommand(options: McpCommandOptions, deps?: Partial<McpCommandDeps>): Promise<void> {

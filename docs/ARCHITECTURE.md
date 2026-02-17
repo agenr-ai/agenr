@@ -19,7 +19,7 @@ This document describes how agenr converts raw conversation text into durable, q
                                     v                            v
                           +---------+---------+         +--------+----------------+
                           | Embeddings Client |         | Store Pipeline          |
-                          | OpenAI 512d       |         | dedup + relations + log |
+                          | OpenAI 1024d      |         | dedup + relations + log |
                           +---------+---------+         +-----------+-------------+
                                     |                               |
                                     +---------------+---------------+
@@ -83,13 +83,14 @@ Schema source:
 | `id` | TEXT PK | UUID |
 | `type` | TEXT | Knowledge type: fact, decision, preference, todo, relationship, event, lesson |
 | `subject` | TEXT | Short subject line |
+| `canonical_key` | TEXT | Optional canonical key for stable identity |
 | `content` | TEXT | Full entry content |
-| `confidence` | TEXT | high, medium, or low |
-| `expiry` | TEXT | core, permanent, temporary, or session-only |
+| `importance` | INTEGER | 1-10 (higher means more important to remember) |
+| `expiry` | TEXT | core, permanent, temporary |
 | `scope` | TEXT | private (default), personal, or public |
 | `source_file` | TEXT | Originating file path |
 | `source_context` | TEXT | Extraction context |
-| `embedding` | F32_BLOB(512) | 512-dimensional float32 vector |
+| `embedding` | F32_BLOB(1024) | 1024-dimensional float32 vector |
 | `content_hash` | TEXT | Content hash for idempotency (v2) |
 | `created_at` | TEXT | ISO timestamp |
 | `updated_at` | TEXT | ISO timestamp |
@@ -102,7 +103,7 @@ Schema source:
 | `consolidated_at` | TEXT | ISO timestamp of last consolidation (v3) |
 
 Primary tables:
-- `entries`: core memory records, including metadata and `embedding F32_BLOB(512)`.
+- `entries`: core memory records, including metadata and `embedding F32_BLOB(1024)`.
 - `tags`: normalized tag mapping (`entry_id`, `tag`).
 - `relations`: inter-entry links (`supersedes`, `contradicts`, `elaborates`, `related`).
 - `ingest_log`: ingest idempotency and run history.
@@ -113,11 +114,8 @@ Search/index objects:
 - Vector index: `idx_entries_embedding` using `libsql_vector_idx(... metric=cosine (standard similarity metric for text embeddings) ...)`.
 - Full text index: `entries_fts` virtual table with insert/update/delete triggers.
 
-Migrations:
-- V1: core tables + indexes + FTS.
-- V2: content-hash dedup columns/index.
-- V3: consolidation lineage columns (`merged_from`, `consolidated_at`) and `entry_sources`.
-- V4: adds `entry_sources.original_created_at` with backfill from source entry `created_at`.
+Schema policy:
+- Pre-release, no migrations. The schema is defined as a single CREATE TABLE block in `src/db/schema.ts`.
 
 ## Entry Model
 
@@ -132,11 +130,11 @@ Knowledge types (7):
 - `event`
 - `lesson`
 
-Confidence levels:
-- `high`, `medium`, `low`
+Importance:
+- Integer `1..10` (see `src/schema.ts` and `src/types.ts`)
 
 Expiry levels:
-- `core`, `permanent`, `temporary`, `session-only`
+- `core`, `permanent`, `temporary`
 
 Scope levels:
 - `private`, `personal`, `public`
@@ -152,7 +150,7 @@ Stored entry metadata includes:
 Source: `src/embeddings/client.ts`
 
 - Model: `text-embedding-3-small`
-- Dimensions: `512` (cost/quality tradeoff — 512d is ~50% cheaper than 1536d with minimal quality loss for short text)
+- Dimensions: `1024`
 - Batch size: `200`
 - Max concurrency: `3`
 - Input text format: `"<type>: <subject> - <content>"` (`composeEmbeddingText`)
@@ -173,9 +171,9 @@ Store uses Mem0-style online dedup:
 
 2. Fast vector path
 - Find top-k similar active entries (`superseded_by IS NULL`).
-- `>= 0.98` + same type: skip as near-exact semantic duplicate.
-- `>= 0.92` + same subject + same type: reinforce existing entry (`confirmations += 1`).
-- `>= 0.92` + same subject + different type: insert new entry and create `related` relation.
+- `>= 0.95` + same type: skip as near-exact semantic duplicate.
+- `>= 0.88` + same subject + same type: reinforce existing entry (`confirmations += 1`).
+- `0.88..0.95` + same subject + different type: insert new entry and create `related` relation.
 
 3. Online LLM decision path
 - For remaining candidates above threshold (`dedupThreshold`, default `0.8`), LLM returns one of:
@@ -187,9 +185,8 @@ Store uses Mem0-style online dedup:
 4. Failure fallback
 - If LLM fails or returns invalid tool output, fallback to `ADD` (avoid data loss).
 
-Ingest-specific behavior:
-- `ingest` always uses deterministic dedup (content hash + fast vector bands) and sets `skipLlmDedup=true`.
-- This keeps ingest free of online LLM dedup calls while still catching high-confidence duplicates.
+Ingest behavior:
+- `ingest` uses the same online dedup path (including LLM decisions) as regular store writes.
 
 Transaction mode:
 - Online dedup enabled: per-entry `BEGIN IMMEDIATE`/`COMMIT` so LLM calls stay outside DB lock windows.
@@ -207,13 +204,12 @@ Core components:
 - `core`: infinite
 - `permanent`: 365 days
 - `temporary`: 30 days
-- `session-only`: 3 days
-- `confidence`: Bayesian update from base confidence + confirmations/contradictions with age decay
+- `importance`: importance score derived from `importance` (1-10)
 - `recall`: strength from `recall_count` and time since last recall
 - `fts`: +`0.15` boost if full-text match
 
 Final score (`scoreEntry`) is multiplicative (by design — one bad signal should tank the score, not just reduce it) with contradiction penalty:
-- `sim * (0.3 + 0.7 * recency) * max(confidence, recall_strength) * contradiction_penalty + fts`
+- `sim^0.7 * (0.3 + 0.7 * recency) * max(importance, recall_strength) * contradiction_penalty + fts`
 - contradiction penalty is `0.8` when `contradictions >= 2`, else `1.0`
 
 ## Consolidation Architecture
@@ -221,7 +217,7 @@ Final score (`scoreEntry`) is multiplicative (by design — one bad signal shoul
 Consolidation is a two-tier pipeline (`src/commands/consolidate.ts`).
 
 Tier 1 (rules-based):
-- Expires low-recency temporary/session-only entries.
+- Expires low-recency temporary entries.
 - Merges near-exact duplicates with structural safeguards.
 - Cleans orphaned non-`supersedes` relations.
 
