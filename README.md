@@ -1,8 +1,8 @@
-# agenr
+# AGENR
 
 **/eɪ.dʒɛn.ɚ/** (AY-GEN-ER) - local-first memory for AI agents.
 
-Your AI forgets everything between sessions. agenr fixes that.
+Your AI forgets everything between sessions. AGENR fixes that.
 
 It extracts structured knowledge from your OpenClaw conversation transcripts - facts, decisions, preferences, todos, relationships, events, lessons - and stores them in a local database with semantic search. Entries strengthen when reinforced, decay when stale, and resolve contradictions. It's not a search engine. It's memory that gets healthier with use.
 
@@ -10,9 +10,9 @@ One local database. Your memory stays on your machine.
 
 ## What you need
 
-agenr uses embeddings to make your memory searchable. The best setup we've found: an **OpenAI API key** with `text-embedding-3-small`. Embeddings cost fractions of a penny per operation - a full ingestion of 100+ session transcripts runs about $0.10 total.
+AGENR uses embeddings to make your memory searchable. The best setup we've found: an **OpenAI API key** with `text-embedding-3-small`. Embeddings cost fractions of a penny per operation - a full ingestion of 100+ session transcripts runs about $0.10 total.
 
-agenr also supports **OpenAI Pro subscriptions** and **Anthropic Claude subscriptions** (no API key needed) for the LLM extraction step. But for the best balance of speed, accuracy, and cost, we recommend `gpt-4o-mini` with an API key. `agenr setup` walks you through all of this.
+AGENR also supports **OpenAI Pro subscriptions** and **Anthropic Claude subscriptions** (no API key needed) for the LLM extraction step. But for the best balance of speed, accuracy, and cost, we recommend `gpt-4o-mini` with an API key. `agenr setup` walks you through all of this.
 
 ```bash
 export OPENAI_API_KEY=sk-...  # for embeddings + extraction
@@ -85,7 +85,7 @@ Done. Your agent now has persistent memory that survives compaction, session res
 
 ## What happens when you ingest
 
-agenr reads your OpenClaw session transcripts, filters out noise (tool calls, file dumps, boilerplate - about 80% of a typical session), and extracts structured knowledge entries:
+AGENR reads your OpenClaw session transcripts, filters out noise (tool calls, file dumps, boilerplate - about 80% of a typical session), and extracts structured knowledge entries:
 
 ```
 agenr ingest ~/.openclaw/agents/main/sessions/ --glob '**/*.jsonl'
@@ -150,7 +150,7 @@ Transcript -> Filter -> Extract -> Store -> Recall
 
 ## MCP integration
 
-agenr exposes three MCP tools: `agenr_recall`, `agenr_store`, `agenr_extract`. Any tool that speaks MCP can use your memory.
+AGENR exposes three MCP tools: `agenr_recall`, `agenr_store`, `agenr_extract`. Any tool that speaks MCP can use your memory.
 
 **OpenClaw** (via [mcporter](https://mcporter.dev)):
 ```bash
@@ -201,7 +201,7 @@ The big labs are building bigger brains. We're building better memory. Those are
 
 Current AI's bottleneck isn't intelligence - it's continuity. A slightly less brilliant model with accumulated context might be more useful than a brilliant amnesiac. What makes a senior engineer senior isn't raw IQ - it's patterns seen, mistakes remembered, approaches that worked. That's memory.
 
-agenr is local-first because your memory is yours. It's structured (not just vectors) because "what did we decide about X?" needs a real answer, not a similarity score. It's open source because memory infrastructure should be shared.
+AGENR is local-first because your memory is yours. It's structured (not just vectors) because "what did we decide about X?" needs a real answer, not a similarity score. It's open source because memory infrastructure should be shared.
 
 ## Troubleshooting
 
