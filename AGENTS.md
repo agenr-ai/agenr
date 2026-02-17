@@ -157,15 +157,18 @@ Two-tier system in `src/consolidate/`:
 - Keep functions focused - if it's doing two things, split it
 - No em-dashes - use hyphens
 
-## No backward compatibility
+## Backward compatibility
 
-This project is pre-release with zero users. Never write migration code, backward-compatible fallbacks, or deprecation shims. If the schema changes, update the schema definition directly. Old databases get wiped and re-created. This applies to:
-- Database schema (single CREATE TABLE block, no migrations)
-- Config file format
-- CLI flags and output format
-- File formats
+This project is live on npm. Existing users have databases and configs that must keep working:
+- Database schema changes need ALTER TABLE migrations in initSchema
+- Config format changes need fallbacks for old formats
+- CLI flag changes should be backward-compatible (add new flags, don't rename old ones)
+- Test migrations against databases created by previous versions
+- Update CHANGELOG.md with every user-facing change (added, changed, fixed, removed)
 
 ## Docs
+
+Keep these up to date when changing related code. If you add a CLI flag, update CLI.md. If you change scoring, update ARCHITECTURE.md. Stale docs are worse than no docs.
 
 - `docs/ARCHITECTURE.md` - system design, scoring formulas, schema
 - `docs/CLI.md` - full command/flag reference
@@ -173,6 +176,8 @@ This project is pre-release with zero users. Never write migration code, backwar
 - `docs/CONSOLIDATION.md` - two-tier consolidation design
 - `docs/CONFIGURATION.md` - env vars, auth methods, config file
 - `docs/OPENCLAW.md` - OpenClaw integration guide
+- `CHANGELOG.md` - user-facing changes by version
+- `README.md` - install, quickstart, feature overview
 
 ## Memory (agenr MCP)
 
