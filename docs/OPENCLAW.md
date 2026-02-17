@@ -90,7 +90,7 @@ You have persistent memory via agenr MCP tools (mcporter). This is your
 long-term brain - use it.
 
 ### Every session
-- On startup: `agenr_recall` with a broad context query to bootstrap
+- On startup: `agenr_recall` with context=session-start and budget=2000 to bootstrap (budget ensures category-balanced results, not just top-N by score)
 - Before answering from memory: recall the specific topic first
 - After important decisions or events: store them
 
@@ -110,7 +110,7 @@ long-term brain - use it.
 fact, decision, preference, todo, relationship, event, lesson
 
 ### Tools
-- `agenr_recall(query, limit, types, since, threshold)` - search memory
+- `agenr_recall(query, limit, budget, types, since, context, threshold)` - search memory
 - `agenr_store(entries)` - save new knowledge
 - `agenr_extract(text, store, source)` - extract entries from raw text
 ```
@@ -210,7 +210,7 @@ If you prefer not to use mcporter, OpenClaw agents can call agenr directly via s
 
 ```bash
 agenr recall "query" --limit 5
-agenr recall --context session-start --limit 10
+agenr recall --context session-start --budget 2000
 echo '[{"content":"...","type":"fact","subject":"...","importance":7}]' | agenr store
 ```
 
