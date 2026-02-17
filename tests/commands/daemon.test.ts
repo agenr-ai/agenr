@@ -371,14 +371,14 @@ describe("daemon restart", () => {
     ).rejects.toThrow("Daemon not installed.");
   });
 
-  it("restarts successfully (bootout + sleep + bootstrap)", async () => {
+  it("restarts successfully (bootout + poll until unloaded + bootstrap)", async () => {
     const home = await makeTempDir();
     const plistPath = path.join(home, "Library", "LaunchAgents", "com.agenr.watch.plist");
     await fs.mkdir(path.dirname(plistPath), { recursive: true });
     await fs.writeFile(plistPath, "test", "utf8");
 
     const calls: string[][] = [];
-    const sleeps: number[] = [];
+    let printCallCount = 0;
 
     const result = await runDaemonRestartCommand(
       {},
@@ -386,13 +386,19 @@ describe("daemon restart", () => {
         platformFn: () => "darwin",
         homedirFn: () => home,
         uidFn: () => 501,
-        sleepFn: async (ms: number) => {
-          sleeps.push(ms);
-        },
+        sleepFn: async () => {},
         execFileFn: vi.fn(async (_file: string, args: string[]) => {
           calls.push(args);
           if (args[0] === "bootout") {
             return { stdout: "", stderr: "not loaded", exitCode: 5 };
+          }
+          if (args[0] === "print") {
+            printCallCount++;
+            // Simulate: still loaded on first poll, unloaded on second
+            if (printCallCount <= 1) {
+              return { stdout: "state = stopped", stderr: "", exitCode: 0 };
+            }
+            return { stdout: "", stderr: "Could not find service", exitCode: 113 };
           }
           return { stdout: "", stderr: "", exitCode: 0 };
         }),
@@ -400,9 +406,10 @@ describe("daemon restart", () => {
     );
 
     expect(result.exitCode).toBe(0);
-    expect(sleeps).toEqual([500]);
     expect(calls).toEqual([
       ["bootout", "gui/501/com.agenr.watch"],
+      ["print", "gui/501/com.agenr.watch"],
+      ["print", "gui/501/com.agenr.watch"],
       ["bootstrap", "gui/501", plistPath],
     ]);
   });
