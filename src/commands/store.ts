@@ -10,6 +10,7 @@ import { expandInputFiles } from "../parser.js";
 import { EXPIRY_LEVELS, IMPORTANCE_MAX, IMPORTANCE_MIN, KNOWLEDGE_TYPES } from "../types.js";
 import type { ExtractionReport, KnowledgeEntry, StoreResult } from "../types.js";
 import { banner, formatLabel, formatWarn, ui } from "../ui.js";
+import { installSignalHandlers, isShutdownRequested } from "../shutdown.js";
 
 export interface StoreCommandOptions {
   db?: string;
@@ -37,6 +38,7 @@ export interface StoreCommandDeps {
   initDbFn: typeof initDb;
   closeDbFn: typeof closeDb;
   storeEntriesFn: typeof storeEntries;
+  shouldShutdownFn: () => boolean;
 }
 
 const KNOWLEDGE_TYPE_SET = new Set<string>(KNOWLEDGE_TYPES);
@@ -221,6 +223,8 @@ export async function runStoreCommand(
   options: StoreCommandOptions,
   deps?: Partial<StoreCommandDeps>,
 ): Promise<{ exitCode: number; result: StoreResult }> {
+  installSignalHandlers();
+
   const resolvedDeps: StoreCommandDeps = {
     expandInputFilesFn: deps?.expandInputFilesFn ?? expandInputFiles,
     readFileFn: deps?.readFileFn ?? ((filePath: string) => fs.readFile(filePath, "utf8")),
@@ -232,6 +236,7 @@ export async function runStoreCommand(
     initDbFn: deps?.initDbFn ?? initDb,
     closeDbFn: deps?.closeDbFn ?? closeDb,
     storeEntriesFn: deps?.storeEntriesFn ?? storeEntries,
+    shouldShutdownFn: deps?.shouldShutdownFn ?? isShutdownRequested,
   };
 
   const clackOutput = { output: process.stderr };
@@ -305,8 +310,13 @@ export async function runStoreCommand(
     let relationsCreated = 0;
     let durationMs = 0;
     let totalEntries = 0;
+    let stoppedForShutdown = false;
 
     for (const input of inputs) {
+      if (resolvedDeps.shouldShutdownFn()) {
+        stoppedForShutdown = true;
+        break;
+      }
       const result = await resolvedDeps.storeEntriesFn(db, input.entries, apiKey, {
         dryRun: options.dryRun,
         force: options.force,
@@ -372,6 +382,7 @@ export async function runStoreCommand(
         formatLabel("LLM Dedup", `${finalResult.llm_dedup_calls} calls`),
         formatLabel("Relations", `${finalResult.relations_created} created`),
         formatLabel("Database", `${finalResult.total_entries} total entries`),
+        stoppedForShutdown ? formatWarn("shutdown requested: stopped before processing all inputs") : null,
         options.dryRun ? formatWarn("dry-run: no changes persisted") : null,
       ]
         .filter((line): line is string => Boolean(line))
@@ -381,7 +392,7 @@ export async function runStoreCommand(
     );
 
     clack.outro(undefined, clackOutput);
-    return { exitCode: 0, result: finalResult };
+    return { exitCode: stoppedForShutdown ? 130 : 0, result: finalResult };
   } finally {
     resolvedDeps.closeDbFn(db);
   }

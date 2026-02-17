@@ -10,6 +10,7 @@ import { buildClusters, type Cluster } from "./cluster.js";
 import { acquireLock, releaseLock } from "./lock.js";
 import { mergeCluster } from "./merge.js";
 import { consolidateRules, type ConsolidationStats } from "./rules.js";
+import { isShutdownRequested } from "../shutdown.js";
 
 export const CONSOLIDATION_CHECKPOINT_PATH = path.join(os.homedir(), ".agenr", "consolidation-checkpoint.json");
 
@@ -397,6 +398,10 @@ async function processPhaseClusters(
   }
 
   for (const item of pending) {
+    if (isShutdownRequested()) {
+      params.context.batchReached = true;
+      break;
+    }
     if (params.context.batchLimit && params.context.processedClustersInRun >= params.context.batchLimit) {
       params.context.batchReached = true;
       break;
@@ -426,6 +431,11 @@ async function processPhaseClusters(
     params.checkpoint.clusterIndex = item.index + 1;
     params.checkpoint.processed = processedMapsToCheckpoint(params.context.processedPhase1, params.context.processedPhase2);
     await saveCheckpoint(params.checkpoint);
+
+    if (isShutdownRequested()) {
+      params.context.batchReached = true;
+      break;
+    }
   }
 
   return stats;
@@ -549,6 +559,13 @@ export async function runConsolidationOrchestrator(
 
   resolvedDeps.acquireLockFn();
   try {
+    if (isShutdownRequested()) {
+      onWarn("[consolidate] Shutdown requested; exiting before starting consolidation.");
+      context.batchReached = true;
+      await runFinalization(db, dryRun, onWarn, resolvedDeps);
+      return context.report;
+    }
+
     onLog("Phase 0: Rules-based cleanup...");
     const phase0Stats = await resolvedDeps.consolidateRulesFn(db, dbPath, {
       dryRun,
@@ -564,6 +581,15 @@ export async function runConsolidationOrchestrator(
     context.report.entriesAfterRules = phase0Stats.entriesAfter;
     context.report.entriesAfter = phase0Stats.entriesAfter;
 
+    if (isShutdownRequested()) {
+      onWarn("[consolidate] Shutdown requested; stopping after Phase 0.");
+      context.batchReached = true;
+      await runFinalization(db, dryRun, onWarn, resolvedDeps);
+      context.report.entriesAfter = await resolvedDeps.countActiveEntriesFn(db);
+      context.report.progress.partial = true;
+      return context.report;
+    }
+
     if (!rulesOnly) {
       if (!llmClient || !embeddingApiKey) {
         throw new Error("LLM client and embedding API key are required for non-rules-only consolidation.");
@@ -571,6 +597,10 @@ export async function runConsolidationOrchestrator(
 
       const phase1Plan: Array<{ type: string; entries: number; clusters: Cluster[] }> = [];
       for (const type of phase1Types) {
+        if (isShutdownRequested()) {
+          context.batchReached = true;
+          break;
+        }
         const entries = await resolvedDeps.countActiveEmbeddedEntriesFn(db, type);
         const clusters = await resolvedDeps.buildClustersFn(db, {
           simThreshold: phase1Threshold,
@@ -582,6 +612,13 @@ export async function runConsolidationOrchestrator(
           onLog: options.verbose ? onLog : undefined,
         });
         phase1Plan.push({ type, entries, clusters });
+      }
+
+      if (context.batchReached) {
+        await runFinalization(db, dryRun, onWarn, resolvedDeps);
+        context.report.entriesAfter = await resolvedDeps.countActiveEntriesFn(db);
+        context.report.progress.partial = true;
+        return context.report;
       }
 
       const shouldRunPhase2 = !options.type?.trim();
@@ -621,6 +658,10 @@ export async function runConsolidationOrchestrator(
       );
 
       for (let i = 0; i < phase1Plan.length; i += 1) {
+        if (isShutdownRequested()) {
+          context.batchReached = true;
+          break;
+        }
         const item = phase1Plan[i];
         const processedSet = context.processedPhase1.get(item.type) ?? new Set<string>();
         context.processedPhase1.set(item.type, processedSet);
@@ -651,6 +692,9 @@ export async function runConsolidationOrchestrator(
       }
 
       if (!context.batchReached && shouldRunPhase2) {
+        if (isShutdownRequested()) {
+          context.batchReached = true;
+        } else {
         onLog(`Phase 2: Cross-subject catch-all (${phase2Entries} entries, ${phase2Clusters.length} clusters)...`);
         const phase2Stats = await processPhaseClusters(
           {
@@ -669,6 +713,7 @@ export async function runConsolidationOrchestrator(
           resolvedDeps,
         );
         context.report.phase2 = phase2Stats;
+        }
       }
     }
 

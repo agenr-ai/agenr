@@ -631,7 +631,7 @@ export function createProgram(): Command {
 
   dbCommand
     .command("rebuild-index")
-    .description("Drop and recreate the vector index")
+    .description("Drop and recreate the vector index (run after forced kills like SIGKILL/power loss)")
     .option("--db <path>", "Database path override")
     .action(async (opts: { db?: string }) => {
       const result = await runDbRebuildIndexCommand({ db: opts.db });

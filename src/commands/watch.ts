@@ -16,6 +16,7 @@ import { resolveAutoSession } from "../watch/resolvers/auto.js";
 import { detectWatchPlatform, getResolver, type WatchPlatform } from "../watch/resolvers/index.js";
 import { getFileState, loadWatchState, saveWatchState } from "../watch/state.js";
 import { readFileFromOffset, runWatcher } from "../watch/watcher.js";
+import { installSignalHandlers, isShutdownRequested } from "../shutdown.js";
 
 function formatBytes(value: number): string {
   return value.toLocaleString("en-US");
@@ -194,6 +195,7 @@ export async function runWatchCommand(
   deps?: Partial<WatchCommandDeps>,
 ): Promise<WatchCommandResult> {
   warnIfLocked();
+  installSignalHandlers();
 
   const resolvedDeps: WatchCommandDeps = {
     readConfigFn: deps?.readConfigFn ?? readConfig,
@@ -270,18 +272,7 @@ export async function runWatchCommand(
   clack.log.info("Waiting for changes...", clackOutput);
 
   let cycleCount = 0;
-  let shuttingDown = false;
-  const onSigint = (): void => {
-    if (shuttingDown) {
-      return;
-    }
-    shuttingDown = true;
-    clack.log.info("Stopping watch...", clackOutput);
-  };
-  process.on("SIGINT", onSigint);
-
-  try {
-    const summary = await runWatcher(
+  const summary = await runWatcher(
       {
         filePath: modeConfig.filePath ?? undefined,
         directoryMode: modeConfig.mode === "dir",
@@ -364,23 +355,20 @@ export async function runWatchCommand(
         statFileFn: resolvedDeps.statFileFn,
         readFileFn: resolvedDeps.readFileFn,
         nowFn: resolvedDeps.nowFn,
-        shouldShutdownFn: () => shuttingDown,
+        shouldShutdownFn: isShutdownRequested,
       },
     );
 
-    clack.log.info(
-      `Summary: ${summary.cycles} cycles | ${summary.entriesStored} entries stored | watched for ${formatDuration(summary.durationMs)}`,
-      clackOutput,
-    );
-    clack.outro(undefined, clackOutput);
+  clack.log.info(
+    `Summary: ${summary.cycles} cycles | ${summary.entriesStored} entries stored | watched for ${formatDuration(summary.durationMs)}`,
+    clackOutput,
+  );
+  clack.outro(undefined, clackOutput);
 
-    return {
-      exitCode: 0,
-      cycles: summary.cycles,
-      entriesStored: summary.entriesStored,
-      durationMs: summary.durationMs,
-    };
-  } finally {
-    process.off("SIGINT", onSigint);
-  }
+  return {
+    exitCode: 0,
+    cycles: summary.cycles,
+    entriesStored: summary.entriesStored,
+    durationMs: summary.durationMs,
+  };
 }
