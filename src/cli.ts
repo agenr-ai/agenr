@@ -18,12 +18,14 @@ process.emit = function (event: string, ...args: unknown[]) {
 };
 
 import { pathToFileURL } from "node:url";
+import { realpathSync } from "node:fs";
 
 function stderrLine(message: string): void {
   process.stderr.write(`${message}\n`);
 }
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+const resolvedArgv = process.argv[1] ? pathToFileURL(realpathSync(process.argv[1])).href : "";
+const isDirectRun = process.argv[1] && (import.meta.url === resolvedArgv || import.meta.url === pathToFileURL(process.argv[1]).href);
 
 if (isDirectRun) {
   const { createProgram } = await import("./cli-main.js");
