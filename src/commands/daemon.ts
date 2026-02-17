@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import * as clack from "@clack/prompts";
 import { loadWatchState } from "../watch/state.js";
+import { detectWatchPlatform, type WatchPlatform } from "../watch/resolvers/index.js";
 
 const LAUNCH_LABEL = "com.agenr.watch";
 const DEFAULT_INTERVAL_SECONDS = 120;
@@ -14,11 +15,20 @@ export interface DaemonInstallOptions {
   force?: boolean;
   interval?: number | string;
   context?: string;
+  dir?: string;
+  platform?: string;
+  nodePath?: string;
 }
 
 export interface DaemonUninstallOptions {
   yes?: boolean;
 }
+
+export interface DaemonStartOptions {}
+
+export interface DaemonStopOptions {}
+
+export interface DaemonRestartOptions {}
 
 export interface DaemonStatusOptions {
   lines?: number | string;
@@ -50,6 +60,7 @@ export interface DaemonCommandDeps {
   readFileFn: typeof fs.readFile;
   loadWatchStateFn: typeof loadWatchState;
   confirmFn: (message: string) => Promise<boolean>;
+  sleepFn: (ms: number) => Promise<void>;
 }
 
 export interface DaemonCommandResult {
@@ -169,6 +180,7 @@ function resolveDeps(deps?: Partial<DaemonCommandDeps>): DaemonCommandDeps {
     rmFn: deps?.rmFn ?? fs.rm,
     readFileFn: deps?.readFileFn ?? fs.readFile,
     loadWatchStateFn: deps?.loadWatchStateFn ?? loadWatchState,
+    sleepFn: deps?.sleepFn ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms))),
     confirmFn:
       deps?.confirmFn ??
       (async (message: string) => {
@@ -203,6 +215,154 @@ function resolveCliPath(argv: string[]): string {
     return path.resolve(cliArg);
   }
   return path.resolve(process.cwd(), "dist", "cli.js");
+}
+
+async function dirExists(statFn: typeof fs.stat, targetPath: string): Promise<boolean> {
+  try {
+    const stat = await statFn(targetPath);
+    return stat.isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+async function isExecutableFile(statFn: typeof fs.stat, filePath: string): Promise<boolean> {
+  try {
+    const stat = await statFn(filePath);
+    return stat.isFile() && (stat.mode & 0o111) !== 0;
+  } catch {
+    return false;
+  }
+}
+
+function looksVersionedNodePath(execPath: string): boolean {
+  const normalized = execPath.replace(/\\/g, "/");
+  return (
+    normalized.includes("/Cellar/") ||
+    normalized.includes("/versions/node/v") ||
+    normalized.includes("/tools/image/node/")
+  );
+}
+
+export async function resolveStableNodePath(execPath: string, statFn: typeof fs.stat): Promise<string> {
+  if (!looksVersionedNodePath(execPath)) {
+    return execPath;
+  }
+
+  const candidates = ["/opt/homebrew/bin/node", "/usr/local/bin/node"];
+  for (const candidate of candidates) {
+    // Homebrew installs typically maintain stable symlinks here.
+    if (await isExecutableFile(statFn, candidate)) {
+      return candidate;
+    }
+  }
+
+  return execPath;
+}
+
+type SupportedInstallPlatform = "openclaw" | "codex" | "claude-code" | "mtime";
+
+function normalizeInstallPlatform(value: string): SupportedInstallPlatform | null {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "openclaw") {
+    return "openclaw";
+  }
+  if (normalized === "claude-code" || normalized === "claude") {
+    return "claude-code";
+  }
+  if (normalized === "codex") {
+    return "codex";
+  }
+  if (normalized === "mtime" || normalized === "generic") {
+    return "mtime";
+  }
+  return null;
+}
+
+function getDefaultSessionsDir(homeDir: string, platform: SupportedInstallPlatform): string | null {
+  if (platform === "openclaw") {
+    return path.join(homeDir, ".openclaw", "agents", "main", "sessions");
+  }
+  if (platform === "codex") {
+    return path.join(homeDir, ".codex", "sessions");
+  }
+  if (platform === "claude-code") {
+    return path.join(homeDir, ".claude", "projects");
+  }
+  return null;
+}
+
+async function resolveInstallTarget(
+  options: DaemonInstallOptions,
+  deps: DaemonCommandDeps,
+  homeDir: string,
+): Promise<{ sessionsDir: string; platform: WatchPlatform; detectionMessage: string | null }> {
+  const hasDir = typeof options.dir === "string" && options.dir.trim().length > 0;
+  const hasPlatform = typeof options.platform === "string" && options.platform.trim().length > 0;
+
+  if (hasDir) {
+    const resolvedDir = path.resolve(options.dir!.replace(/^~(?=$|\/)/, homeDir));
+    const exists = await dirExists(deps.statFn, resolvedDir);
+    if (!exists) {
+      throw new Error(`Sessions directory not found: ${resolvedDir}`);
+    }
+
+    const platform = detectWatchPlatform(options.platform, resolvedDir);
+    return { sessionsDir: resolvedDir, platform, detectionMessage: null };
+  }
+
+  if (hasPlatform) {
+    const normalized = normalizeInstallPlatform(options.platform!);
+    if (!normalized) {
+      // Keep error messaging aligned with watch platform support.
+      detectWatchPlatform(options.platform, undefined);
+      throw new Error(`Unsupported platform: ${options.platform}`);
+    }
+
+    const defaultDir = getDefaultSessionsDir(homeDir, normalized);
+    if (!defaultDir) {
+      throw new Error(`--platform ${normalized} requires --dir <path>.`);
+    }
+
+    const exists = await dirExists(deps.statFn, defaultDir);
+    if (!exists) {
+      throw new Error(`Sessions directory not found: ${defaultDir}`);
+    }
+
+    return { sessionsDir: defaultDir, platform: normalized, detectionMessage: null };
+  }
+
+  const candidates: Array<{ platform: SupportedInstallPlatform; dir: string; message: string }> = [
+    {
+      platform: "openclaw",
+      dir: path.join(homeDir, ".openclaw", "agents", "main", "sessions"),
+      message: "Detected OpenClaw sessions directory. Installing watcher for OpenClaw.",
+    },
+    {
+      platform: "codex",
+      dir: path.join(homeDir, ".codex", "sessions"),
+      message: "Detected Codex sessions directory. Installing watcher for Codex.",
+    },
+    {
+      platform: "claude-code",
+      dir: path.join(homeDir, ".claude", "projects"),
+      message: "Detected Claude Code projects directory. Installing watcher for Claude Code.",
+    },
+  ];
+
+  for (const candidate of candidates) {
+    if (await dirExists(deps.statFn, candidate.dir)) {
+      return {
+        sessionsDir: candidate.dir,
+        platform: candidate.platform,
+        detectionMessage: candidate.message,
+      };
+    }
+  }
+
+  throw new Error(
+    "No supported platform detected. Use --dir <path> --platform <name> to specify manually.",
+  );
 }
 
 async function readLastLines(
@@ -264,12 +424,25 @@ export async function runDaemonInstallCommand(
   await resolvedDeps.mkdirFn(launchAgentsDir, { recursive: true });
   await resolvedDeps.mkdirFn(logDir, { recursive: true });
 
+  const target = await resolveInstallTarget(options, resolvedDeps, homeDir);
+  if (target.detectionMessage) {
+    clack.log.info(target.detectionMessage);
+  }
+
   const cliPath = resolveCliPath(resolvedDeps.argvFn());
+  const nodePath =
+    typeof options.nodePath === "string" && options.nodePath.trim().length > 0
+      ? path.resolve(options.nodePath.replace(/^~(?=$|\/)/, homeDir))
+      : await resolveStableNodePath(process.execPath, resolvedDeps.statFn);
+
   const programArguments = [
-    process.execPath,
+    nodePath,
     cliPath,
     "watch",
-    "--auto",
+    "--dir",
+    target.sessionsDir,
+    "--platform",
+    target.platform,
     "--interval",
     String(intervalSeconds),
   ];
@@ -287,6 +460,113 @@ export async function runDaemonInstallCommand(
 
   clack.log.success(`Installed daemon plist: ${plistPath}`);
   clack.log.info(`Log file: ${logPath}`);
+  return { exitCode: 0 };
+}
+
+async function getLaunchctlState(
+  deps: DaemonCommandDeps,
+  uid: number,
+): Promise<{ loaded: boolean; running: boolean; raw: string }> {
+  const statusResult = await runLaunchctl(deps, ["print", `gui/${uid}/${LAUNCH_LABEL}`], false);
+  const loaded = statusResult.exitCode === 0;
+  const combined = `${statusResult.stdout}\n${statusResult.stderr}`;
+  const running = loaded && (/\bstate = running\b/.test(combined) || /\bpid = \d+\b/.test(combined));
+  return { loaded, running, raw: combined };
+}
+
+async function requireInstalledPlist(deps: DaemonCommandDeps, homeDir: string, message: string): Promise<string> {
+  const { plistPath } = getPaths(homeDir);
+  const exists = await fileExists(deps.statFn, plistPath);
+  if (!exists) {
+    throw new Error(message);
+  }
+  return plistPath;
+}
+
+export async function runDaemonStartCommand(
+  _options: DaemonStartOptions = {},
+  deps?: Partial<DaemonCommandDeps>,
+): Promise<DaemonCommandResult> {
+  const resolvedDeps = resolveDeps(deps);
+  ensureSupportedPlatform(resolvedDeps.platformFn());
+
+  const homeDir = resolvedDeps.homedirFn();
+  const uid = resolvedDeps.uidFn();
+  if (uid < 0) {
+    throw new Error("Unable to resolve current user ID for launchctl.");
+  }
+
+  const plistPath = await requireInstalledPlist(
+    resolvedDeps,
+    homeDir,
+    "Daemon not installed. Run `agenr daemon install` first.",
+  );
+
+  const state = await getLaunchctlState(resolvedDeps, uid);
+  if (state.loaded && state.running) {
+    clack.log.info("Daemon is already running.");
+    return { exitCode: 0 };
+  }
+
+  if (state.loaded && !state.running) {
+    await runLaunchctl(resolvedDeps, ["bootout", `gui/${uid}/${LAUNCH_LABEL}`], false);
+  }
+
+  await runLaunchctl(resolvedDeps, ["bootstrap", `gui/${uid}`, plistPath], true);
+  clack.log.success("Daemon started.");
+  return { exitCode: 0 };
+}
+
+export async function runDaemonStopCommand(
+  _options: DaemonStopOptions = {},
+  deps?: Partial<DaemonCommandDeps>,
+): Promise<DaemonCommandResult> {
+  const resolvedDeps = resolveDeps(deps);
+  ensureSupportedPlatform(resolvedDeps.platformFn());
+
+  const homeDir = resolvedDeps.homedirFn();
+  const uid = resolvedDeps.uidFn();
+  if (uid < 0) {
+    throw new Error("Unable to resolve current user ID for launchctl.");
+  }
+
+  await requireInstalledPlist(
+    resolvedDeps,
+    homeDir,
+    "Daemon not installed. Run `agenr daemon install` first.",
+  );
+
+  const state = await getLaunchctlState(resolvedDeps, uid);
+  if (!state.loaded || !state.running) {
+    clack.log.info("Daemon is not running.");
+    return { exitCode: 0 };
+  }
+
+  await runLaunchctl(resolvedDeps, ["bootout", `gui/${uid}/${LAUNCH_LABEL}`], true);
+  clack.log.success("Daemon stopped.");
+  return { exitCode: 0 };
+}
+
+export async function runDaemonRestartCommand(
+  _options: DaemonRestartOptions = {},
+  deps?: Partial<DaemonCommandDeps>,
+): Promise<DaemonCommandResult> {
+  const resolvedDeps = resolveDeps(deps);
+  ensureSupportedPlatform(resolvedDeps.platformFn());
+
+  const homeDir = resolvedDeps.homedirFn();
+  const uid = resolvedDeps.uidFn();
+  if (uid < 0) {
+    throw new Error("Unable to resolve current user ID for launchctl.");
+  }
+
+  const plistPath = await requireInstalledPlist(resolvedDeps, homeDir, "Daemon not installed.");
+
+  await runLaunchctl(resolvedDeps, ["bootout", `gui/${uid}/${LAUNCH_LABEL}`], false);
+  await resolvedDeps.sleepFn(500);
+  await runLaunchctl(resolvedDeps, ["bootstrap", `gui/${uid}`, plistPath], true);
+
+  clack.log.success("Daemon restarted.");
   return { exitCode: 0 };
 }
 

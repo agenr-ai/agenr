@@ -5,9 +5,13 @@
 ### Added
 - `_meta` table with schema version stamp for future migrations
 - `agenr db version` command to print schema version metadata
+- `agenr daemon start|stop|restart` commands
+- `agenr daemon install --dir/--platform/--node-path` options for explicit daemon configuration
 
 ### Changed
 - `agenr db stats` output now includes schema version
+- `agenr daemon install` now uses smart platform defaults and writes `watch --dir <path> --platform <name>` instead of `watch --auto`
+- `agenr daemon install` now prefers stable node symlinks (Homebrew) when `process.execPath` is version-specific; use `--node-path` to override
 
 ## 0.4.1 (2026-02-17)
 

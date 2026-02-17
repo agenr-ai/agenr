@@ -16,7 +16,10 @@ import {
 import {
   runDaemonInstallCommand,
   runDaemonLogsCommand,
+  runDaemonRestartCommand,
+  runDaemonStartCommand,
   runDaemonStatusCommand,
+  runDaemonStopCommand,
   runDaemonUninstallCommand,
 } from "./commands/daemon.js";
 import { runConsolidateCommand } from "./commands/consolidate.js";
@@ -579,9 +582,36 @@ export function createProgram(): Command {
     .description("Install and start the watch daemon (macOS launchd)")
     .option("--force", "Overwrite existing launchd plist", false)
     .option("--interval <seconds>", "Watch interval for daemon mode", parseIntOption, 120)
+    .option("--dir <path>", "Sessions directory to watch (overrides auto-detection)")
+    .option("--platform <name>", "Platform name (openclaw, codex, claude-code)")
+    .option("--node-path <path>", "Node binary path override for launchd")
     .option("--context <path>", "Regenerate context file after each cycle")
     .action(async (opts: DaemonInstallOptions) => {
       const result = await runDaemonInstallCommand(opts);
+      process.exitCode = result.exitCode;
+    });
+
+  daemonCommand
+    .command("start")
+    .description("Start the watch daemon if installed")
+    .action(async () => {
+      const result = await runDaemonStartCommand({});
+      process.exitCode = result.exitCode;
+    });
+
+  daemonCommand
+    .command("stop")
+    .description("Stop the watch daemon without uninstalling")
+    .action(async () => {
+      const result = await runDaemonStopCommand({});
+      process.exitCode = result.exitCode;
+    });
+
+  daemonCommand
+    .command("restart")
+    .description("Restart the watch daemon")
+    .action(async () => {
+      const result = await runDaemonRestartCommand({});
       process.exitCode = result.exitCode;
     });
 
