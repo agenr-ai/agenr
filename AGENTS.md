@@ -179,6 +179,30 @@ Keep these up to date when changing related code. If you add a CLI flag, update 
 - `CHANGELOG.md` - user-facing changes by version
 - `README.md` - install, quickstart, feature overview
 
+## Repo Workflow
+
+This is a public open-source repo. Follow this flow for all changes:
+
+1. **Issue first** - Every feature/bug gets a GitHub Issue before work starts
+2. **Branch from master** - Branch naming convention:
+   - `feat/` - new features (`feat/daemon-commands`)
+   - `fix/` - bug fixes (`fix/reset-file-drain`)
+   - `chore/` - maintenance, docs, refactoring
+   - `hotfix/` - urgent production fixes
+3. **Commit message references issue** - Include "Closes #N" in the commit message or PR body
+4. **Push and create PR** - Push your branch and open a PR via `gh` CLI or the GitHub web UI.
+5. **CodeRabbit reviews** - Automated code review on every PR. Address actionable findings before merge.
+6. **Approve and merge** - Rebase merge only (linear history). Branch protection requires 1 approval.
+7. **Clean up** - Delete branch after merge (local and remote)
+
+**Branch protection (master):**
+- Require PR before merging (1 approval)
+- Rebase merge only
+- No force pushes, no deletions
+
+**Labels:** `enhancement`, `bug`, `good first issue`
+**Milestones:** Group issues by release (v0.5, etc.)
+
 ## Memory (agenr MCP)
 
 If you have agenr MCP configured, use it:
