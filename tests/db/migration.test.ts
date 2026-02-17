@@ -1,6 +1,7 @@
 import { createClient, type Client } from "@libsql/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { initSchema } from "../../src/db/schema.js";
+import { APP_VERSION } from "../../src/version.js";
 
 function toStringValue(value: unknown): string {
   if (typeof value === "string") {
@@ -50,6 +51,101 @@ describe("db schema migrations", () => {
     expect(ingest.has("content_hash")).toBe(true);
     expect(ingest.has("entries_superseded")).toBe(true);
     expect(ingest.has("dedup_llm_calls")).toBe(true);
+  });
+
+  it("fresh DB gets schema version stamp", async () => {
+    const client = makeClient();
+    await initSchema(client);
+
+    const metaInfo = await client.execute("PRAGMA table_info(_meta)");
+    expect(columnNames(metaInfo.rows as Array<{ name?: unknown }>).has("key")).toBe(true);
+
+    const versionRow = await client.execute({
+      sql: "SELECT value FROM _meta WHERE key = ?",
+      args: ["schema_version"],
+    });
+    const stamped = toStringValue((versionRow.rows[0] as { value?: unknown } | undefined)?.value);
+    expect(stamped).toBe(APP_VERSION);
+
+    const createdRow = await client.execute({
+      sql: "SELECT value FROM _meta WHERE key = ?",
+      args: ["db_created_at"],
+    });
+    expect(toStringValue((createdRow.rows[0] as { value?: unknown } | undefined)?.value)).toBeTruthy();
+  });
+
+  it("upgrade stamps schema version on existing _meta", async () => {
+    const client = makeClient();
+
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS _meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+    await client.execute({
+      sql: "INSERT INTO _meta (key, value, updated_at) VALUES (?, ?, ?)",
+      args: ["schema_version", "0.1.0", "1999-01-01 00:00:00"],
+    });
+
+    await initSchema(client);
+
+    const row = await client.execute({
+      sql: "SELECT value, updated_at FROM _meta WHERE key = ?",
+      args: ["schema_version"],
+    });
+    const value = toStringValue((row.rows[0] as { value?: unknown } | undefined)?.value);
+    const updatedAt = toStringValue((row.rows[0] as { updated_at?: unknown } | undefined)?.updated_at);
+    expect(value).toBe(APP_VERSION);
+    expect(updatedAt).not.toBe("1999-01-01 00:00:00");
+  });
+
+  it("pre-existing DB without _meta table gets _meta created and stamped", async () => {
+    const client = makeClient();
+
+    await client.execute(`
+      CREATE TABLE entries (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        content TEXT NOT NULL,
+        importance INTEGER NOT NULL,
+        expiry TEXT NOT NULL,
+        source_file TEXT,
+        source_context TEXT,
+        embedding F32_BLOB(1024),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        last_recalled_at TEXT,
+        recall_count INTEGER DEFAULT 0,
+        confirmations INTEGER DEFAULT 0,
+        contradictions INTEGER DEFAULT 0,
+        superseded_by TEXT,
+        FOREIGN KEY (superseded_by) REFERENCES entries(id)
+      )
+    `);
+    await client.execute({
+      sql: "INSERT INTO entries (id, type, subject, content, importance, expiry, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      args: ["x", "fact", "S", "C", 5, "temporary", "2026-02-14T00:00:00.000Z", "2026-02-14T00:00:00.000Z"],
+    });
+
+    await initSchema(client);
+
+    const metaMaster = await client.execute({
+      sql: "SELECT name FROM sqlite_master WHERE type = 'table' AND name = '_meta' LIMIT 1",
+      args: [],
+    });
+    expect(metaMaster.rows.length).toBe(1);
+
+    const versionRow = await client.execute({
+      sql: "SELECT value FROM _meta WHERE key = ?",
+      args: ["schema_version"],
+    });
+    expect(toStringValue((versionRow.rows[0] as { value?: unknown } | undefined)?.value)).toBe(APP_VERSION);
+
+    const count = await client.execute("SELECT COUNT(*) AS count FROM entries");
+    expect(Number((count.rows[0] as { count?: unknown } | undefined)?.count ?? 0)).toBe(1);
   });
 
   it("old schema gets migrated (ALTER TABLE)", async () => {
@@ -168,4 +264,3 @@ describe("db schema migrations", () => {
     expect(entries.has("canonical_key")).toBe(true);
   });
 });
-

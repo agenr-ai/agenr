@@ -11,6 +11,7 @@ import {
   runDbRebuildIndexCommand,
   runDbResetCommand,
   runDbStatsCommand,
+  runDbVersionCommand,
 } from "./commands/db.js";
 import {
   runDaemonInstallCommand,
@@ -620,6 +621,15 @@ export function createProgram(): Command {
     .option("--db <path>", "Database path override")
     .action(async (opts: { db?: string }) => {
       await runDbStatsCommand({ db: opts.db });
+      process.exitCode = 0;
+    });
+
+  dbCommand
+    .command("version")
+    .description("Show database schema version information")
+    .option("--db <path>", "Database path override")
+    .action(async (opts: { db?: string }) => {
+      await runDbVersionCommand({ db: opts.db });
       process.exitCode = 0;
     });
 

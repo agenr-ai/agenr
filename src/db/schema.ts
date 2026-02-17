@@ -1,4 +1,5 @@
 import type { Client } from "@libsql/client";
+import { APP_VERSION } from "../version.js";
 
 export const CREATE_IDX_ENTRIES_EMBEDDING_SQL = `
   CREATE INDEX IF NOT EXISTS idx_entries_embedding ON entries (
@@ -9,6 +10,13 @@ export const CREATE_IDX_ENTRIES_EMBEDDING_SQL = `
 type ColumnMigration = { table: string; column: string; sql: string };
 
 const CREATE_TABLE_AND_TRIGGER_STATEMENTS: readonly string[] = [
+  `
+  CREATE TABLE IF NOT EXISTS _meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )
+  `,
   `
   CREATE TABLE IF NOT EXISTS entries (
     id TEXT PRIMARY KEY,
@@ -183,4 +191,23 @@ export async function initSchema(client: Client): Promise<void> {
   for (const statement of CREATE_INDEX_STATEMENTS) {
     await client.execute(statement);
   }
+
+  // Version stamp for schema-aware migrations.
+  await client.execute({
+    sql: `
+      INSERT INTO _meta (key, value, updated_at)
+      VALUES ('db_created_at', datetime('now'), datetime('now'))
+      ON CONFLICT(key) DO NOTHING
+    `,
+    args: [],
+  });
+
+  await client.execute({
+    sql: `
+      INSERT INTO _meta (key, value, updated_at)
+      VALUES ('schema_version', ?, datetime('now'))
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+    `,
+    args: [APP_VERSION],
+  });
 }

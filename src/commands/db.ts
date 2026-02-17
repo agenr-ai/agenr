@@ -7,6 +7,7 @@ import { closeDb, DEFAULT_DB_PATH, getDb, initDb, walCheckpoint } from "../db/cl
 import { initSchema } from "../db/schema.js";
 import { rebuildVectorIndex } from "../db/vector-index.js";
 import { banner, formatLabel, ui } from "../ui.js";
+import { APP_VERSION } from "../version.js";
 
 interface DbRow {
   [key: string]: unknown;
@@ -78,6 +79,34 @@ function resolveEffectiveDbPath(inputPath: string | undefined): string {
     return resolveDbFilePath(inputPath.trim());
   }
   return resolveDbFilePath(DEFAULT_DB_PATH);
+}
+
+async function hasMetaTable(db: ReturnType<typeof getDb>): Promise<boolean> {
+  const result = await db.execute({
+    sql: "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_meta' LIMIT 1",
+    args: [],
+  });
+  return result.rows.length > 0;
+}
+
+async function readMetaRow(
+  db: ReturnType<typeof getDb>,
+  key: string,
+): Promise<{ value: string; updatedAt: string } | null> {
+  const result = await db.execute({
+    sql: "SELECT value, updated_at FROM _meta WHERE key = ? LIMIT 1",
+    args: [key],
+  });
+  const row = result.rows[0] as DbRow | undefined;
+  if (!row) {
+    return null;
+  }
+  const value = toStringValue(row.value);
+  const updatedAt = toStringValue(row.updated_at);
+  if (!value && !updatedAt) {
+    return null;
+  }
+  return { value, updatedAt };
 }
 
 async function getTagsByEntryId(db: ReturnType<typeof getDb>, ids: string[]): Promise<Map<string, string[]>> {
@@ -237,6 +266,14 @@ export async function runDbStatsCommand(
   try {
     await resolvedDeps.initDbFn(db);
 
+    let schemaVersionLabel = "unknown (pre-0.4.0)";
+    if (await hasMetaTable(db)) {
+      const versionRow = await readMetaRow(db, "schema_version");
+      if (versionRow?.value) {
+        schemaVersionLabel = versionRow.value;
+      }
+    }
+
     const totalResult = await db.execute("SELECT COUNT(*) AS count FROM entries WHERE superseded_by IS NULL");
     const total = Number.isFinite(toNumber((totalResult.rows[0] as DbRow | undefined)?.count))
       ? toNumber((totalResult.rows[0] as DbRow | undefined)?.count)
@@ -288,6 +325,7 @@ export async function runDbStatsCommand(
     clack.note(
       [
         formatLabel("Database", resolvedPath),
+        formatLabel("Schema Version", schemaVersionLabel),
         formatLabel("Entries", String(total)),
         formatLabel("File Size", fileSizeBytes === null ? "n/a" : `${fileSizeBytes} bytes`),
         formatLabel("Oldest", oldest ?? "n/a"),
@@ -312,6 +350,56 @@ export async function runDbStatsCommand(
       newest,
       fileSizeBytes,
     };
+  } finally {
+    resolvedDeps.closeDbFn(db);
+  }
+}
+
+export async function runDbVersionCommand(
+  options: DbCommandCommonOptions,
+  deps?: Partial<DbCommandDeps>,
+): Promise<{ schemaVersion: string | null; dbCreatedAt: string | null; lastMigrationAt: string | null }> {
+  const resolvedDeps: DbCommandDeps = {
+    readConfigFn: deps?.readConfigFn ?? readConfig,
+    getDbFn: deps?.getDbFn ?? getDb,
+    initDbFn: deps?.initDbFn ?? initDb,
+    initSchemaFn: deps?.initSchemaFn ?? initSchema,
+    closeDbFn: deps?.closeDbFn ?? closeDb,
+  };
+
+  const config = resolvedDeps.readConfigFn(process.env);
+  const configured = options.db?.trim() || config?.db?.path || DEFAULT_DB_PATH;
+  const db = resolvedDeps.getDbFn(configured);
+
+  try {
+    const hasMeta = await hasMetaTable(db);
+    if (!hasMeta) {
+      const lines = [
+        `agenr v${APP_VERSION}`,
+        "Database schema version: unknown (pre-0.4.0)",
+        "Database created: unknown",
+        "Last migration: unknown",
+      ];
+      process.stdout.write(`${lines.join("\n")}\n`);
+      return { schemaVersion: null, dbCreatedAt: null, lastMigrationAt: null };
+    }
+
+    const schemaRow = await readMetaRow(db, "schema_version");
+    const createdRow = await readMetaRow(db, "db_created_at");
+
+    const schemaVersion = schemaRow?.value ?? null;
+    const dbCreatedAt = createdRow?.value ?? null;
+    const lastMigrationAt = schemaRow?.updatedAt ?? null;
+
+    const lines = [
+      `agenr v${APP_VERSION}`,
+      `Database schema version: ${schemaVersion ?? "unknown (pre-0.4.0)"}`,
+      `Database created: ${dbCreatedAt ?? "unknown"}`,
+      `Last migration: ${lastMigrationAt ?? "unknown"}`,
+    ];
+    process.stdout.write(`${lines.join("\n")}\n`);
+
+    return { schemaVersion, dbCreatedAt, lastMigrationAt };
   } finally {
     resolvedDeps.closeDbFn(db);
   }
