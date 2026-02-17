@@ -487,7 +487,7 @@ export function createProgram(): Command {
     .option("--raw", "Bypass adapter filtering (pass transcripts through unmodified)", false)
     .option("--dry-run", "Extract without storing", false)
     .option("--json", "Output JSON results", false)
-    .option("--concurrency <n>", "Parallel extractions", "1")
+    .option("--concurrency <n>", "Parallel chunk extractions", "5")
     .option("--skip-ingested", "Skip already-ingested files", true)
     .option("--no-retry", "Disable auto-retry for failed files")
     .option("--max-retries <n>", "Maximum auto-retry attempts (default: 3)", "3")
