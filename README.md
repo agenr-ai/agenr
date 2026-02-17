@@ -20,6 +20,8 @@ export OPENAI_API_KEY=sk-...  # for embeddings + extraction
 
 ## Setup
 
+### 1. Install and ingest your history
+
 ```bash
 # Install
 npm install -g agenr
@@ -34,18 +36,24 @@ agenr ingest ~/.openclaw/agents/main/sessions/ --glob '**/*.jsonl'
 agenr recall "what did we decide about the database schema?"
 ```
 
-Now hook it up to your agent via MCP so it can actually use the memory:
+### 2. Keep it fresh
+
+Start the watcher so new conversations get captured automatically:
 
 ```bash
-# Add to OpenClaw (via mcporter)
-mcporter config add agenr --stdio agenr --arg mcp --env OPENAI_API_KEY=your-key-here
+# Watch your current session file
+agenr watch ~/.openclaw/agents/main/sessions/current.jsonl --interval 120
 
-# Start watching for new sessions (keeps memory up to date automatically)
+# Or watch a whole directory
 agenr watch --dir ~/.openclaw/agents/main/sessions/
 
 # Or install as a background daemon so it runs on its own
 agenr daemon install
 ```
+
+### 3. Give your agent memory
+
+**Option A: CLI in AGENTS.md (no MCP needed, works everywhere)**
 
 Add this to your OpenClaw `AGENTS.md`:
 
@@ -58,12 +66,22 @@ IMPORTANT: use --budget 2000, not just --limit. Budget triggers balanced output:
   - 30% preferences and decisions
   - 50% recent facts and events
 Without --budget, score ranking skews toward old high-importance todos.
-For targeted queries during work: call agenr_recall with your question.
-When you learn something important: call agenr_store.
 ```
 
-Done. Your agent now has persistent memory that survives compaction, session restarts, and everything in between.
+Your agent runs the command on startup and gets its memory back. No MCP, no extra config.
 
+**Option B: MCP server (richer integration)**
+
+If your tool supports MCP (OpenClaw via mcporter, Claude Code, Codex, Cursor):
+
+```bash
+# Add to OpenClaw (via mcporter)
+mcporter config add agenr --stdio agenr --arg mcp --env OPENAI_API_KEY=your-key-here
+```
+
+This gives your agent `agenr_recall`, `agenr_store`, and `agenr_extract` as tools it can call anytime - not just on startup.
+
+Done. Your agent now has persistent memory that survives compaction, session restarts, and everything in between.
 
 ## What happens when you ingest
 
@@ -92,7 +110,7 @@ agenr recall "package manager"
 
 ## Live watching
 
-Don't want to batch-ingest? Watch your sessions in real-time:
+The watcher keeps your memory current as you work. It tails your session files, extracts new knowledge every few minutes, and stores it. If you ingested history first, watch resumes right where ingest left off - no re-processing.
 
 ```bash
 # Watch your OpenClaw sessions directory
@@ -107,7 +125,11 @@ agenr daemon status
 agenr daemon logs
 ```
 
-New sessions are picked up automatically. If you ingested first, watch resumes right where ingest left off - no re-processing.
+You can also auto-refresh a context file that AI tools read on startup:
+
+```bash
+agenr watch --auto --context ~/.agenr/CONTEXT.md
+```
 
 ## How it works
 
