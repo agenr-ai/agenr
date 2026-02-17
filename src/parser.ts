@@ -350,9 +350,12 @@ function chunkText(
   }));
 }
 
-export async function parseTranscriptFile(filePath: string): Promise<ParsedTranscript> {
+export async function parseTranscriptFile(
+  filePath: string,
+  options?: import("./adapters/types.js").AdapterParseOptions,
+): Promise<ParsedTranscript> {
   const adapter = await detectAdapter(filePath);
-  const result = await adapter.parse(filePath);
+  const result = await adapter.parse(filePath, options);
 
   const messages = result.messages.filter((message) => message.text.trim().length > 0);
   const chunks =

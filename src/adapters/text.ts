@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import { firstNonEmptyLine, looksLikeTranscriptJsonLine, resolveTimestampFallback } from "./jsonl-base.js";
 import { detectJsonlAdapter } from "./jsonl-registry.js";
-import type { SourceAdapter } from "./types.js";
+import type { AdapterParseOptions, SourceAdapter } from "./types.js";
 
 export const textAdapter: SourceAdapter = {
   name: "text",
@@ -15,13 +15,13 @@ export const textAdapter: SourceAdapter = {
     return true;
   },
 
-  async parse(filePath: string) {
+  async parse(filePath: string, options?: AdapterParseOptions) {
     const raw = await fs.readFile(filePath, "utf8");
     const firstLine = firstNonEmptyLine(raw);
 
     if (firstLine && looksLikeTranscriptJsonLine(firstLine)) {
       const delegated = detectJsonlAdapter(filePath, firstLine);
-      return delegated.parse(filePath);
+      return delegated.parse(filePath, options);
     }
 
     return {

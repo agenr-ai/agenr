@@ -8,7 +8,7 @@ import {
   parseJsonlLines,
   resolveTimestampFallback,
 } from "./jsonl-base.js";
-import type { SourceAdapter } from "./types.js";
+import type { AdapterParseOptions, SourceAdapter } from "./types.js";
 import type { TranscriptMessage } from "../types.js";
 
 function looksLikeCodexSessionMeta(record: Record<string, unknown>): boolean {
@@ -52,7 +52,7 @@ export const codexAdapter: SourceAdapter = {
     return looksLikeCodexSessionMeta(parsed);
   },
 
-  async parse(filePath: string) {
+  async parse(filePath: string, _options?: AdapterParseOptions) {
     const raw = await fs.readFile(filePath, "utf8");
     const warnings: string[] = [];
     const messages: TranscriptMessage[] = [];

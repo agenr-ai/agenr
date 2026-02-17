@@ -221,6 +221,7 @@ export async function runWatchCommand(
   const verbose = options.verbose === true;
   const once = options.once === true;
   const json = options.json === true;
+  const raw = options.raw === true;
 
   const modeConfig = await resolveWatchMode(file, options, resolvedDeps.statFileFn);
 
@@ -284,6 +285,7 @@ export async function runWatchCommand(
         minChunkChars,
         dryRun,
         verbose,
+        raw,
         once,
         onlineDedup: options.onlineDedup !== false,
         model: options.model,
@@ -291,6 +293,10 @@ export async function runWatchCommand(
         dbPath: options.db,
         initialState: state,
         onWarn: (message) => {
+          if (message.startsWith("Filtered:")) {
+            clack.log.info(message, clackOutput);
+            return;
+          }
           clack.log.warn(formatWarn(message), clackOutput);
         },
         onSwitch: (from, to, platform) => {

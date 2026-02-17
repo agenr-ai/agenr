@@ -1,5 +1,5 @@
 import { parsePlaudFilenameTimestamp, resolveTimestampFallback } from "./jsonl-base.js";
-import type { SourceAdapter } from "./types.js";
+import type { AdapterParseOptions, SourceAdapter } from "./types.js";
 
 export const plaudAdapter: SourceAdapter = {
   name: "plaud",
@@ -13,7 +13,7 @@ export const plaudAdapter: SourceAdapter = {
     return parsePlaudFilenameTimestamp(filePath) !== undefined;
   },
 
-  async parse(filePath: string) {
+  async parse(filePath: string, _options?: AdapterParseOptions) {
     const filenameTimestamp = parsePlaudFilenameTimestamp(filePath);
 
     return {

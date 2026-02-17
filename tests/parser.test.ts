@@ -23,18 +23,19 @@ async function makeTempFile(name: string, content: string): Promise<string> {
 }
 
 describe("parser", () => {
-  it("parses OpenClaw JSONL, drops toolResult entries, and warns on malformed lines", async () => {
+  it("parses OpenClaw JSONL, keeps filtered toolResult entries, and warns on malformed lines", async () => {
     const fixture = path.resolve("tests/fixtures/sample-transcript.jsonl");
     const parsed = await parseTranscriptFile(fixture);
 
-    expect(parsed.messages).toHaveLength(3);
-    expect(parsed.messages.map((m) => m.role)).toEqual(["user", "assistant", "assistant"]);
+    expect(parsed.messages).toHaveLength(4);
+    expect(parsed.messages.map((m) => m.role)).toEqual(["user", "assistant", "assistant", "assistant"]);
     expect(parsed.warnings.some((w) => w.includes("Skipped malformed JSONL line"))).toBe(true);
     expect(parsed.metadata?.platform).toBe("openclaw");
     expect(parsed.metadata?.startedAt).toBe("2026-02-14T00:00:00.000Z");
     expect(parsed.chunks.length).toBeGreaterThan(0);
     expect(parsed.chunks[0]?.text).toContain("[m00000][user]");
     expect(parsed.chunks[0]?.text).toContain("[m00001][assistant]");
+    expect(parsed.chunks[0]?.text).toContain("[m00002][assistant]");
     expect(parsed.chunks[0]?.timestamp_start).toBe("2026-02-14T00:00:01.000Z");
     expect(parsed.chunks[0]?.timestamp_end).toBe("2026-02-14T00:00:04.000Z");
   });

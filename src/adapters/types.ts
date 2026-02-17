@@ -1,5 +1,17 @@
 import type { TranscriptMessage } from "../types.js";
 
+export interface AdapterParseOptions {
+  /**
+   * When true, bypass adapter filtering and truncation and preserve tool results
+   * and other noisy blocks as much as possible.
+   */
+  raw?: boolean;
+  /**
+   * When true, adapters may add verbose diagnostics to parse warnings.
+   */
+  verbose?: boolean;
+}
+
 export interface ParseMetadata {
   sessionId?: string;
   platform?: string;
@@ -17,5 +29,5 @@ export interface ParseResult {
 export interface SourceAdapter {
   name: string;
   canHandle(filePath: string, firstLine?: string): boolean;
-  parse(filePath: string): Promise<ParseResult>;
+  parse(filePath: string, options?: AdapterParseOptions): Promise<ParseResult>;
 }
