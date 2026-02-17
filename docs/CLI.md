@@ -208,6 +208,12 @@ agenr daemon <subcommand> [options]
 - `install`: install + start watch daemon via launchd (macOS only).
   - `--force`: overwrite existing plist.
   - `--interval <seconds>`: watch interval (default `120`).
+  - `--dir <path>`: sessions directory to watch (overrides auto-detection).
+  - `--platform <name>`: platform name (`openclaw|codex|claude-code`). If provided without `--dir`, uses the platform default directory.
+  - `--node-path <path>`: node binary path override (useful for nvm/fnm/volta setups without stable symlinks).
+- `start`: start the daemon if installed.
+- `stop`: stop the daemon without uninstalling (plist remains on disk).
+- `restart`: restart the daemon.
 - `uninstall`: stop + remove daemon plist.
   - `--yes`: skip uninstall confirmation prompt.
 - `status`: show loaded/running status, current watched file, recent logs.
