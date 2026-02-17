@@ -134,7 +134,7 @@ function buildSessionStartResults(
     return { results, budgetUsed };
   }
 
-  const activeQuota = Math.floor(budget * 0.3);
+  const activeQuota = Math.floor(budget * 0.2);
   const preferencesQuota = Math.floor(budget * 0.3);
   const recentQuota = Math.max(0, budget - activeQuota - preferencesQuota);
 
@@ -210,6 +210,8 @@ export async function sessionStartRecall(db: Client, options: SessionStartRecall
       ...baseQuery,
       limit: options.nonCoreCandidateLimit ?? DEFAULT_SESSION_CANDIDATE_LIMIT,
       expiry: undefined,
+      since:
+        baseQuery.since ?? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
     },
     options.apiKey,
   );

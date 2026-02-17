@@ -296,6 +296,14 @@ function parseDaysBetween(now: Date, pastIso: string | undefined): number {
   return Math.max(delta, 0);
 }
 
+export function todoStaleness(updatedAt: string, now: Date): number {
+  const days = parseDaysBetween(now, updatedAt);
+  if (days <= 3) return 1.0;
+  if (days <= 7) return 0.6;
+  if (days <= 14) return 0.3;
+  return 0.1;
+}
+
 function getScoreComponents(entry: StoredEntry, now: Date): { daysOld: number; rec: number; imp: number; recall: number } {
   const daysOld = parseDaysBetween(now, entry.created_at);
   const daysSinceRecall = entry.last_recalled_at ? parseDaysBetween(now, entry.last_recalled_at) : daysOld;
@@ -502,7 +510,8 @@ export async function updateRecallMetadata(db: Client, ids: string[], now: Date)
 function scoreSessionEntry(entry: StoredEntry, now: Date): { score: number; scores: RecallResult["scores"] } {
   const components = getScoreComponents(entry, now);
   const memoryStrength = Math.max(components.imp, components.recall);
-  const score = (0.3 + 0.7 * components.rec) * memoryStrength;
+  const baseScore = (0.3 + 0.7 * components.rec) * memoryStrength;
+  const score = entry.type === "todo" ? baseScore * todoStaleness(entry.updated_at, now) : baseScore;
   return {
     score,
     scores: {
