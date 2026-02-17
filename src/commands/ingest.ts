@@ -482,7 +482,7 @@ export async function runIngestCommand(
   const force = options.force === true;
   const skipIngested = force ? false : options.skipIngested !== false;
   const globPattern = options.glob?.trim() || DEFAULT_GLOB;
-  const concurrency = parsePositiveInt(options.concurrency, 1, "--concurrency");
+  const llmConcurrency = parsePositiveInt(options.concurrency, 5, "--concurrency");
   const retryEnabled = options.retry !== false;
     const maxRetries = retryEnabled ? parsePositiveInt(options.maxRetries, 3, "--max-retries") : 0;
   const retrySummaries: string[] = [];
@@ -505,7 +505,7 @@ export async function runIngestCommand(
 
     clack.intro(banner(), clackOutput);
     clack.log.info(
-      `Ingesting: ${ui.bold(String(sortedTargets.length))} file(s) | Glob: ${globPattern} | Skip ingested: ${skipIngested ? "yes" : "no"}`,
+      `Ingesting: ${ui.bold(String(sortedTargets.length))} file(s) | Glob: ${globPattern} | Chunk concurrency: ${ui.bold(String(llmConcurrency))} | Skip ingested: ${skipIngested ? "yes" : "no"}`,
       clackOutput,
     );
 
@@ -589,7 +589,8 @@ export async function runIngestCommand(
       if (verbose) {
         return;
       }
-      process.stderr.write(`\r${ui.dim(`${verb} ${completedCount}/${totalCount}...`)}`);
+      const suffix = llmConcurrency > 1 ? ` (${llmConcurrency} chunks active)...` : "...";
+      process.stderr.write(`\r${ui.dim(`${verb} ${completedCount}/${totalCount}${suffix}`)}`);
     };
 
     const clearProgressLine = (): void => {
@@ -747,6 +748,7 @@ export async function runIngestCommand(
         chunks: parsed.chunks,
         client,
         verbose: false,
+        llmConcurrency,
         onVerbose: verbose
           ? (line) => {
               clack.log.info(line, clackOutput);
@@ -812,7 +814,7 @@ export async function runIngestCommand(
       cursor = 0;
       completed = 0;
       const total = targets.length;
-      const workerCount = Math.max(1, Math.min(concurrency, targets.length));
+      const workerCount = 1;
 
       await Promise.all(
         Array.from({ length: workerCount }, async () => {

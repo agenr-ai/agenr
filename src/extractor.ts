@@ -2,6 +2,7 @@ import type { Api, AssistantMessage, Context, Model } from "@mariozechner/pi-ai"
 import type { KnowledgeEntry, LlmClient, TranscriptChunk } from "./types.js";
 import { runSimpleStream, type StreamSimpleFn } from "./llm/stream.js";
 import { SUBMIT_DEDUPED_KNOWLEDGE_TOOL, SUBMIT_KNOWLEDGE_TOOL } from "./schema.js";
+import { isShutdownRequested } from "./shutdown.js";
 
 const SYSTEM_PROMPT = `You are a selective memory extraction engine. Extract only knowledge worth remembering beyond the immediate step.
 
@@ -1139,6 +1140,8 @@ export interface ExtractChunksResult {
   successfulChunks: number;
   failedChunks: number;
   warnings: string[];
+  aborted?: boolean;
+  skippedChunks?: number;
 }
 
 export interface ExtractChunkCompleteResult {
@@ -1155,6 +1158,7 @@ export async function extractKnowledgeFromChunks(params: {
   verbose: boolean;
   noDedup?: boolean;
   interChunkDelayMs?: number;
+  llmConcurrency?: number;
   onVerbose?: (line: string) => void;
   onStreamDelta?: (delta: string, kind: "text" | "thinking") => void;
   onChunkComplete?: (result: ExtractChunkCompleteResult) => Promise<void>;
@@ -1167,6 +1171,7 @@ export async function extractKnowledgeFromChunks(params: {
 
   let successfulChunks = 0;
   let failedChunks = 0;
+  let startedChunks = 0;
 
   const baseDelay = Math.max(
     0,
@@ -1178,94 +1183,144 @@ export async function extractKnowledgeFromChunks(params: {
   let lastThrottleNoticeDelayMs: number | null = null;
   const sleep = params.sleepImpl ?? sleepMs;
 
-  for (let chunkIndex = 0; chunkIndex < params.chunks.length; chunkIndex += 1) {
-    const chunk = params.chunks[chunkIndex];
-    let chunkDone = false;
-    let lastError: unknown = null;
-    let chunkResult: { entries: KnowledgeEntry[]; warnings: string[] } | null = null;
+  const llmConcurrency = Math.max(1, Math.trunc(params.llmConcurrency ?? 1));
+  const bufferStreamDeltas = llmConcurrency > 1 && Boolean(params.onStreamDelta);
+  let cursor = 0;
 
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
-      if (params.verbose) {
-        params.onVerbose?.(
-          `[chunk ${chunk.chunk_index + 1}/${params.chunks.length}] attempt ${attempt}/${MAX_ATTEMPTS}`,
-        );
-      }
-
-      try {
-        chunkResult = await extractChunkOnce({
-          file: params.file,
-          chunk,
-          model: params.client.resolvedModel.model,
-          apiKey: params.client.credentials.apiKey,
-          verbose: params.verbose,
-          onVerbose: params.onVerbose,
-          onStreamDelta: params.onStreamDelta,
-          streamSimpleImpl: params.streamSimpleImpl,
-        });
-
-        warnings.push(...chunkResult.warnings);
-        successfulChunks += 1;
-        chunkDone = true;
-        break;
-      } catch (error) {
-        lastError = error;
-
-        if (attempt < MAX_ATTEMPTS && isRetryableError(error)) {
-          if (isRateLimitedError(error)) {
-            dynamicDelay = Math.min(5000, Math.max(baseDelay, dynamicDelay * 2));
-            if (
-              params.onVerbose &&
-              dynamicDelay >= baseDelay * 2 &&
-              lastThrottleNoticeDelayMs !== dynamicDelay
-            ) {
-              params.onVerbose(`Rate limited, backing off to ${dynamicDelay}ms between chunks`);
-              lastThrottleNoticeDelayMs = dynamicDelay;
-            }
-          }
-
-          const backoffMs =
-            params.retryDelayMs?.(attempt) ?? Math.min(2000 * 2 ** (attempt - 1), 60_000);
-          warnings.push(
-            `Chunk ${chunk.chunk_index + 1}: attempt ${attempt} failed (${error instanceof Error ? error.message : String(error)}), retrying in ${backoffMs}ms.`,
-          );
-          await sleep(backoffMs);
-          continue;
+  const workerCount = Math.max(1, Math.min(llmConcurrency, params.chunks.length));
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (true) {
+        if (isShutdownRequested()) {
+          return;
         }
 
-        break;
+        const currentIndex = cursor;
+        cursor += 1;
+        if (currentIndex >= params.chunks.length) {
+          return;
+        }
+
+        startedChunks += 1;
+        const chunk = params.chunks[currentIndex];
+        if (!chunk) {
+          return;
+        }
+
+        let chunkDone = false;
+        let lastError: unknown = null;
+        let chunkResult: { entries: KnowledgeEntry[]; warnings: string[] } | null = null;
+        let streamBuffer: Array<{ delta: string; kind: "text" | "thinking" }> = [];
+
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+          if (params.verbose) {
+            params.onVerbose?.(
+              `[chunk ${chunk.chunk_index + 1}/${params.chunks.length}] attempt ${attempt}/${MAX_ATTEMPTS}`,
+            );
+          }
+
+          if (bufferStreamDeltas) {
+            streamBuffer = [];
+          }
+
+          try {
+            chunkResult = await extractChunkOnce({
+              file: params.file,
+              chunk,
+              model: params.client.resolvedModel.model,
+              apiKey: params.client.credentials.apiKey,
+              verbose: params.verbose,
+              onVerbose: params.onVerbose,
+              onStreamDelta: bufferStreamDeltas
+                ? (delta, kind) => {
+                    streamBuffer.push({ delta, kind });
+                  }
+                : params.onStreamDelta,
+              streamSimpleImpl: params.streamSimpleImpl,
+            });
+
+            warnings.push(...chunkResult.warnings);
+            successfulChunks += 1;
+            chunkDone = true;
+            break;
+          } catch (error) {
+            lastError = error;
+
+            if (attempt < MAX_ATTEMPTS && isRetryableError(error)) {
+              if (isRateLimitedError(error)) {
+                dynamicDelay = Math.min(5000, Math.max(baseDelay, dynamicDelay * 2));
+                if (
+                  params.onVerbose &&
+                  dynamicDelay >= baseDelay * 2 &&
+                  lastThrottleNoticeDelayMs !== dynamicDelay
+                ) {
+                  params.onVerbose(`Rate limited, backing off to ${dynamicDelay}ms between chunks`);
+                  lastThrottleNoticeDelayMs = dynamicDelay;
+                }
+              }
+
+              const backoffMs =
+                params.retryDelayMs?.(attempt) ?? Math.min(2000 * 2 ** (attempt - 1), 60_000);
+              warnings.push(
+                `Chunk ${chunk.chunk_index + 1}: attempt ${attempt} failed (${error instanceof Error ? error.message : String(error)}), retrying in ${backoffMs}ms.`,
+              );
+              await sleep(backoffMs);
+              continue;
+            }
+
+            break;
+          }
+        }
+
+        if (!chunkDone) {
+          failedChunks += 1;
+          warnings.push(
+            `Chunk ${chunk.chunk_index + 1}: extraction failed (${lastError instanceof Error ? lastError.message : String(lastError)}).`,
+          );
+        } else if (chunkResult) {
+          dynamicDelay = Math.max(baseDelay, Math.floor(dynamicDelay * 0.9));
+          if (params.onChunkComplete) {
+            await params.onChunkComplete({
+              chunkIndex: chunk.chunk_index,
+              totalChunks: params.chunks.length,
+              entries: chunkResult.entries,
+              warnings: chunkResult.warnings,
+            });
+          } else {
+            entries.push(...chunkResult.entries);
+          }
+        }
+
+        if (params.onStreamDelta) {
+          if (bufferStreamDeltas) {
+            for (const item of streamBuffer) {
+              params.onStreamDelta(item.delta, item.kind);
+            }
+          }
+          params.onStreamDelta("\n", "text");
+        }
+
+        if (dynamicDelay > 0 && cursor < params.chunks.length && !isShutdownRequested()) {
+          if (llmConcurrency > 1) {
+            const jitterMs = Math.max(0, Math.trunc(dynamicDelay * (0.5 + Math.random())));
+            await sleep(jitterMs);
+          } else if (currentIndex < params.chunks.length - 1) {
+            // Preserve existing (serial) delay behavior.
+            await sleep(dynamicDelay);
+          }
+        }
       }
-    }
+    }),
+  );
 
-    if (!chunkDone) {
-      failedChunks += 1;
-      warnings.push(
-        `Chunk ${chunk.chunk_index + 1}: extraction failed (${lastError instanceof Error ? lastError.message : String(lastError)}).`,
-      );
-    } else if (chunkResult) {
-      dynamicDelay = Math.max(baseDelay, Math.floor(dynamicDelay * 0.9));
-      if (params.onChunkComplete) {
-        await params.onChunkComplete({
-          chunkIndex: chunk.chunk_index,
-          totalChunks: params.chunks.length,
-          entries: chunkResult.entries,
-          warnings: chunkResult.warnings,
-        });
-      } else {
-        entries.push(...chunkResult.entries);
-      }
-    }
-
-    if (params.onStreamDelta) {
-      params.onStreamDelta("\n", "text");
-    }
-
-    if (chunkIndex < params.chunks.length - 1 && dynamicDelay > 0) {
-      await sleep(dynamicDelay);
-    }
+  const skippedChunks = Math.max(0, params.chunks.length - startedChunks);
+  const aborted = skippedChunks > 0 && isShutdownRequested();
+  if (aborted) {
+    warnings.push(`Shutdown requested; skipped ${skippedChunks} chunk(s).`);
   }
 
   let finalEntries = entries;
-  if (!params.noDedup && finalEntries.length > 1) {
+  if (!aborted && !params.noDedup && finalEntries.length > 1) {
     const dedupResult = await deduplicateEntriesWithLlm({
       file: params.file,
       entries: finalEntries,
@@ -1284,5 +1339,7 @@ export async function extractKnowledgeFromChunks(params: {
     successfulChunks,
     failedChunks,
     warnings,
+    aborted: aborted ? true : undefined,
+    skippedChunks: aborted ? skippedChunks : undefined,
   };
 }

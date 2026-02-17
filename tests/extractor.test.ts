@@ -1,6 +1,7 @@
 import type { Api, AssistantMessage, AssistantMessageEvent, Context, Model, SimpleStreamOptions } from "@mariozechner/pi-ai";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { extractKnowledgeFromChunks, validateEntry } from "../src/extractor.js";
+import { requestShutdown, resetShutdownForTests } from "../src/shutdown.js";
 import type { LlmClient, TranscriptChunk } from "../src/types.js";
 
 function fakeModel(): Model<Api> {
@@ -102,6 +103,10 @@ function streamWithResult(result: Promise<AssistantMessage>, events: AssistantMe
 }
 
 describe("extractKnowledgeFromChunks", () => {
+  afterEach(() => {
+    resetShutdownForTests();
+  });
+
   it("extracts entries from submit_knowledge tool calls", async () => {
     const streamSimpleImpl = (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) =>
       streamWithResult(
@@ -1395,6 +1400,249 @@ describe("extractKnowledgeFromChunks", () => {
 
     expect(emptyResult.entries).toHaveLength(0);
     expect(emptyStream).toHaveBeenCalledTimes(1);
+  });
+
+  it("caps concurrent LLM calls based on llmConcurrency", async () => {
+    type Deferred<T> = {
+      promise: Promise<T>;
+      resolve: (value: T) => void;
+      reject: (error: unknown) => void;
+    };
+
+    const deferred = <T,>(): Deferred<T> => {
+      let resolve!: (value: T) => void;
+      let reject!: (error: unknown) => void;
+      const promise = new Promise<T>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+      return { promise, resolve, reject };
+    };
+
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const deferreds: Array<Deferred<AssistantMessage>> = [];
+
+    const streamSimpleImpl = (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+
+      const d = deferred<AssistantMessage>();
+      deferreds.push(d);
+      return streamWithResult(
+        d.promise.finally(() => {
+          inFlight = Math.max(0, inFlight - 1);
+        }),
+      );
+    };
+
+    const runPromise = extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: Array.from({ length: 10 }, (_, index) => fakeChunkAt(index)),
+      client: fakeClient(),
+      verbose: false,
+      noDedup: true,
+      llmConcurrency: 3,
+      streamSimpleImpl,
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+    });
+
+    while (deferreds.length < 3) {
+      await Promise.resolve();
+    }
+
+    expect(maxInFlight).toBe(3);
+
+    for (let i = 0; i < 10; i += 1) {
+      while (deferreds.length <= i) {
+        await Promise.resolve();
+      }
+      deferreds[i]?.resolve(assistantMessage("[]"));
+    }
+
+    const result = await runPromise;
+    expect(result.successfulChunks).toBe(10);
+    expect(result.failedChunks).toBe(0);
+    expect(maxInFlight).toBeLessThanOrEqual(3);
+  });
+
+  it("allows onChunkComplete to fire out of order under concurrency", async () => {
+    type Deferred<T> = {
+      promise: Promise<T>;
+      resolve: (value: T) => void;
+      reject: (error: unknown) => void;
+    };
+
+    const deferred = <T,>(): Deferred<T> => {
+      let resolve!: (value: T) => void;
+      let reject!: (error: unknown) => void;
+      const promise = new Promise<T>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+      return { promise, resolve, reject };
+    };
+
+    const deferreds: Array<Deferred<AssistantMessage>> = [];
+    const streamSimpleImpl = (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) => {
+      const d = deferred<AssistantMessage>();
+      deferreds.push(d);
+      return streamWithResult(d.promise);
+    };
+
+    const chunkOrder: number[] = [];
+    const runPromise = extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunkAt(0), fakeChunkAt(1)],
+      client: fakeClient(),
+      verbose: false,
+      noDedup: true,
+      llmConcurrency: 2,
+      streamSimpleImpl,
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+      onChunkComplete: async (chunkResult) => {
+        chunkOrder.push(chunkResult.chunkIndex);
+      },
+    });
+
+    while (deferreds.length < 2) {
+      await Promise.resolve();
+    }
+
+    deferreds[1]?.resolve(assistantMessage("[]"));
+    while (chunkOrder.length < 1) {
+      await Promise.resolve();
+    }
+    deferreds[0]?.resolve(assistantMessage("[]"));
+
+    await runPromise;
+    expect(chunkOrder).toEqual([1, 0]);
+  });
+
+  it("isolates chunk failures so other chunks still complete", async () => {
+    const completed: number[] = [];
+    const streamSimpleImpl = (_model: Model<Api>, context: Context, _opts?: SimpleStreamOptions) => {
+      const userText = String(context.messages[0]?.content ?? "");
+      if (userText.includes("hello 2")) {
+        return streamWithResult(Promise.reject(new Error("400 bad request")));
+      }
+      return streamWithResult(Promise.resolve(assistantMessage("[]")));
+    };
+
+    const result = await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: Array.from({ length: 5 }, (_, index) => fakeChunkAt(index)),
+      client: fakeClient(),
+      verbose: false,
+      noDedup: true,
+      llmConcurrency: 3,
+      streamSimpleImpl,
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+      onChunkComplete: async (chunkResult) => {
+        completed.push(chunkResult.chunkIndex);
+      },
+    });
+
+    expect(result.successfulChunks).toBe(4);
+    expect(result.failedChunks).toBe(1);
+    expect(completed.sort((a, b) => a - b)).toEqual([0, 1, 3, 4]);
+  });
+
+  it("drains in-flight chunks and skips remaining work when shutdown is requested", async () => {
+    resetShutdownForTests();
+
+    type Deferred<T> = {
+      promise: Promise<T>;
+      resolve: (value: T) => void;
+      reject: (error: unknown) => void;
+    };
+
+    const deferred = <T,>(): Deferred<T> => {
+      let resolve!: (value: T) => void;
+      let reject!: (error: unknown) => void;
+      const promise = new Promise<T>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+      return { promise, resolve, reject };
+    };
+
+    const deferreds: Array<Deferred<AssistantMessage>> = [];
+    const streamSimpleImpl = (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) => {
+      const d = deferred<AssistantMessage>();
+      deferreds.push(d);
+      return streamWithResult(d.promise);
+    };
+
+    let shutdownSet = false;
+    const runPromise = extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: Array.from({ length: 10 }, (_, index) => fakeChunkAt(index)),
+      client: fakeClient(),
+      verbose: false,
+      noDedup: true,
+      llmConcurrency: 3,
+      streamSimpleImpl,
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+      onChunkComplete: async () => {
+        if (!shutdownSet) {
+          shutdownSet = true;
+          requestShutdown();
+        }
+      },
+    });
+
+    while (deferreds.length < 3) {
+      await Promise.resolve();
+    }
+
+    deferreds[0]?.resolve(assistantMessage("[]"));
+    await Promise.resolve();
+
+    deferreds[1]?.resolve(assistantMessage("[]"));
+    deferreds[2]?.resolve(assistantMessage("[]"));
+
+    const result = await runPromise;
+    expect(deferreds).toHaveLength(3);
+    expect(result.aborted).toBe(true);
+    expect(result.skippedChunks).toBe(7);
+    expect(result.successfulChunks).toBe(3);
+    expect(result.failedChunks).toBe(0);
+  });
+
+  it("adds jitter to inter-chunk sleeps when llmConcurrency > 1", async () => {
+    const sleepCalls: number[] = [];
+    const sleepImpl = async (ms: number) => {
+      sleepCalls.push(ms);
+    };
+
+    const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
+    try {
+      const streamSimpleImpl = (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) =>
+        streamWithResult(Promise.resolve(assistantMessage("[]")));
+
+      await extractKnowledgeFromChunks({
+        file: "session.jsonl",
+        chunks: [fakeChunkAt(0), fakeChunkAt(1), fakeChunkAt(2)],
+        client: fakeClient(),
+        verbose: false,
+        noDedup: true,
+        llmConcurrency: 2,
+        interChunkDelayMs: 100,
+        streamSimpleImpl,
+        sleepImpl,
+        retryDelayMs: () => 0,
+      });
+    } finally {
+      randomSpy.mockRestore();
+    }
+
+    expect(sleepCalls.length).toBeGreaterThan(0);
+    expect(sleepCalls.every((ms) => ms === 50)).toBe(true);
   });
 });
 
