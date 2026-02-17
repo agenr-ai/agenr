@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- `_meta` table with schema version stamp for future migrations
+- `agenr db version` command to print schema version metadata
+
+### Changed
+- `agenr db stats` output now includes schema version
+
 ## 0.4.0
 
 ### Added
@@ -41,4 +50,3 @@
 - `agenr setup` - interactive configuration
 - `agenr auth status` - live connection testing
 - `agenr config` - configuration management
-

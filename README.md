@@ -152,6 +152,7 @@ Verify with `mcporter list agenr`. See [docs/OPENCLAW.md](./docs/OPENCLAW.md) fo
 | `agenr context` | Generate context file for AI tool integration |
 | `agenr mcp` | Start MCP server (stdio) |
 | `agenr db stats` | Database statistics |
+| `agenr db version` | Database schema version |
 
 Full reference: [docs/CLI.md](./docs/CLI.md) | [docs/CONFIGURATION.md](./docs/CONFIGURATION.md)
 

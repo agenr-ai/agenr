@@ -463,12 +463,39 @@ $A db stats
 ```text
 DB Stats
 Database: /Users/you/.agenr/knowledge.db
+Schema Version: 0.4.0
 Entries: 42
 By Type
 - decision: 10
 - fact: 9
 Top Tags
 - tooling: 6
+```
+
+## `db version`
+
+### Syntax
+
+```bash
+agenr db version [options]
+```
+
+### Options
+- `--db <path>`: database path override.
+
+### Example
+
+```bash
+$A db version
+```
+
+### Example Output
+
+```text
+agenr v0.4.0
+Database schema version: 0.4.0
+Database created: 2026-02-14 00:00:00
+Last migration: 2026-02-17 00:00:00
 ```
 
 ## `db export`

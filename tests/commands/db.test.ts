@@ -7,8 +7,10 @@ import {
   runDbRebuildIndexCommand,
   runDbResetCommand,
   runDbStatsCommand,
+  runDbVersionCommand,
 } from "../../src/commands/db.js";
 import { initDb } from "../../src/db/client.js";
+import { APP_VERSION } from "../../src/version.js";
 
 function makeDeps(client: Client) {
   return {
@@ -208,6 +210,50 @@ describe("db command", () => {
     const dbPath = await runDbPathCommand({}, makeDeps(client));
     expect(dbPath).toBe(":memory:");
     expect(stdoutSpy).toHaveBeenCalled();
+  });
+
+  it("prints db version info when _meta exists", async () => {
+    const client = createTestClient();
+    await initDb(client);
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    const info = await runDbVersionCommand({}, makeDeps(client));
+    const output = stdoutSpy.mock.calls.map((call) => String(call[0])).join("");
+
+    expect(info.schemaVersion).toBe(APP_VERSION);
+    expect(output).toContain(`agenr v${APP_VERSION}`);
+    expect(output).toContain(`Database schema version: ${APP_VERSION}`);
+    expect(output).toContain("Database created:");
+    expect(output).toContain("Last migration:");
+  });
+
+  it("prints unknown version for pre-0.4.0 DB without _meta", async () => {
+    const client = createTestClient();
+    await client.execute(`
+      CREATE TABLE entries (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        content TEXT NOT NULL,
+        importance INTEGER NOT NULL,
+        expiry TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const info = await runDbVersionCommand({}, makeDeps(client));
+    const output = stdoutSpy.mock.calls.map((call) => String(call[0])).join("");
+
+    expect(info.schemaVersion).toBeNull();
+    expect(output).toContain("Database schema version: unknown (pre-0.4.0)");
+
+    const master = await client.execute({
+      sql: "SELECT name FROM sqlite_master WHERE type = 'table' AND name = '_meta' LIMIT 1",
+      args: [],
+    });
+    expect(master.rows.length).toBe(0);
   });
 
   it("rebuild-index recreates a dropped index and returns embedding count", async () => {
