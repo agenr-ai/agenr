@@ -1,201 +1,181 @@
 # agenr
 
-**/eɪ.dʒɛn.ɚ/** (AY-GEN-ER) — local-first memory for AI agents.
+**/eɪ.dʒɛn.ɚ/** (AY-GEN-ER) - local-first memory for AI agents.
 
-You've had this conversation before. Your AI hasn't.
+Your AI forgets everything between sessions. agenr fixes that.
 
-Every new session starts from zero — no memory of yesterday's decisions, last week's debugging session, or the architecture you spent an hour explaining. Most "memory" tools solve this by embedding text chunks and doing vector search. That's not memory. That's a search engine that doesn't forget.
+It extracts structured knowledge from your OpenClaw conversation transcripts - facts, decisions, preferences, todos, relationships, events, lessons - and stores them in a local database with semantic search. Entries strengthen when reinforced, decay when stale, and resolve contradictions. It's not a search engine. It's memory that gets healthier with use.
 
-Real memory strengthens when reinforced, fades when irrelevant, and resolves contradictions. agenr does that. It extracts *structured* knowledge — typed entries with confidence, scope, and expiry — not raw text blobs. Entries that get recalled often grow stronger. Stale entries decay. Contradicted entries get penalized. And consolidation actually *cleans* the database over time, merging near-duplicates and expiring what's no longer relevant. The result is a knowledge base that gets healthier with use, not just bigger.
+One local database. Your memory stays on your machine.
 
-One local database, shared across every tool that speaks MCP. Your memory stays on your machine.
-
-## What it does
+## Setup
 
 ```bash
-# Extract knowledge from a conversation transcript
-agenr extract session.jsonl --json | agenr store
-
-# Later — in any tool, any session
-agenr recall "what package manager did we choose?"
-```
-
-```
-┌─ fact (0.94) ─────────────────────────────────┐
-│ Subject: project tooling                      │
-│ We switched this project to pnpm.             │
-│ Confirmed 3x · Last recalled 2 days ago       │
-└───────────────────────────────────────────────┘
-```
-
-One local database. Works with OpenClaw, Claude Code, Codex, Cursor, Windsurf, or anything that speaks MCP.
-
-## Quick start
-
-```bash
-git clone https://github.com/agenr-ai/agenr.git
-cd agenr && pnpm install && pnpm build
-
-# Interactive setup — picks your LLM provider and auth method
-pnpm exec agenr setup
-
-# Try it on a real transcript (or any text file)
-pnpm exec agenr extract your-transcript.txt --json | pnpm exec agenr store
-pnpm exec agenr recall "what did we decide about X?" --limit 5
-```
-
-```bash
-# Or install globally
+# Install
 npm install -g agenr
+
+# Configure (picks your LLM provider, walks you through auth)
 agenr setup
+
+# Ingest all your OpenClaw sessions
+agenr ingest ~/.openclaw/agents/main/sessions/ --glob '**/*.jsonl'
+
+# Query your memory
+agenr recall "what did we decide about the database schema?"
 ```
 
-> **Important:** Embeddings always use OpenAI's API (`text-embedding-3-small`), regardless of which LLM provider you choose for extraction. You'll need an `OPENAI_API_KEY` even if you use Anthropic for everything else. Run `agenr setup` and it'll walk you through it.
-
-## Configuration
-
-See [docs/CONFIGURATION.md](./docs/CONFIGURATION.md) for the full reference, including:
-- Environment variables (`OPENAI_API_KEY`)
-- Config file location and format
-- Auth method decision guide
-- Database path and `--db` flag
-- Migration/upgrade notes
-
-## How it works
-
-**Extract** — Feed any transcript or text file to an LLM. Out come structured entries: facts, decisions, preferences, todos, relationships, events, lessons.
-
-**Store** — Entries get embedded and compared against what's already in the database. Near-duplicates reinforce existing knowledge instead of piling up. New information gets inserted.
-
-**Recall** — Semantic search plus memory-aware ranking. Entries you recall often score higher. Stale entries decay. Contradicted entries get penalized. It's not just vector search — it's search that understands usage patterns.
-
-**Consolidate** — Over time, near-duplicates accumulate and temporary entries go stale. Consolidation cleans house: rule-based expiry and dedup first, then optional LLM-assisted merging for entries that say the same thing differently. Every merge gets verified before it touches the database.
-
-```text
-Extract → Store → Recall → Consolidate
-  LLM      dedup    semantic    cleanup
-  ↓        + embed  + memory    + merge
-entries    → DB     → ranked    → healthier DB
-```
-
-## Cross-tool memory via MCP
-
-The point of agenr is that your tools share one brain. Debug a production issue in Claude Code on Monday, and Codex already knows what you found on Wednesday.
-
-### Codex (`~/.codex/config.toml`)
-
-```toml
-[mcp_servers.agenr]
-command = "npx"
-args = ["-y", "agenr", "mcp"]
-env = { OPENAI_API_KEY = "your-key-here" }
-```
-
-### Claude Code (`.mcp.json`)
-
-```json
-{
-  "mcpServers": {
-    "agenr": {
-      "command": "npx",
-      "args": ["-y", "agenr", "mcp"],
-      "env": { "OPENAI_API_KEY": "your-key-here" }
-    }
-  }
-}
-```
-
-### OpenClaw (via [mcporter](https://mcporter.dev))
-
-From your OpenClaw workspace:
+Now hook it up to your agent via MCP so it can actually use the memory:
 
 ```bash
-mcporter config add agenr \
-  --stdio agenr \
-  --arg mcp \
-  --env OPENAI_API_KEY=your-key-here
+# Add to OpenClaw (via mcporter)
+mcporter config add agenr --stdio agenr --arg mcp --env OPENAI_API_KEY=your-key-here
+
+# Start watching for new sessions (keeps memory up to date automatically)
+agenr watch --dir ~/.openclaw/agents/main/sessions/
+
+# Or install as a background daemon so it runs on its own
+agenr daemon install
 ```
 
-Verify with `mcporter list agenr`. Your agent gets `agenr_recall`, `agenr_store`, and `agenr_extract` as native tools. See [docs/OPENCLAW.md](./docs/OPENCLAW.md) for the full guide.
-
-### Teaching your AI to use agenr
-
-Add this to your coding agent's instructions (e.g., `AGENTS.md` or system prompt):
+Add this to your OpenClaw `AGENTS.md`:
 
 ```markdown
 ## Memory (agenr)
-
-You have access to persistent memory via the agenr MCP server.
-
-- On session start: call `agenr_recall` with context "session-start" to load relevant memories
+- On session start: call agenr_recall with context "session-start" to load relevant memories
 - During work: recall specific topics as needed
-- When you learn something important: store it with `agenr_store`
-- Types: fact, decision, preference, todo, relationship, event, lesson
+- When you learn something important: store it with agenr_store
 ```
 
-Three MCP tools: `agenr_recall`, `agenr_store`, `agenr_extract`. See [docs/MCP.md](./docs/MCP.md) for the full reference.
+Done. Your agent now has persistent memory that survives compaction, session restarts, and everything in between.
+
+> **Note:** Embeddings use OpenAI's API (`text-embedding-3-small`) regardless of your LLM provider. You'll need an `OPENAI_API_KEY` even if you use Anthropic for extraction. `agenr setup` walks you through it.
+
+## What happens when you ingest
+
+agenr reads your OpenClaw session transcripts, filters out noise (tool calls, file dumps, boilerplate - about 80% of a typical session), and extracts structured knowledge entries:
+
+```
+agenr ingest ~/.openclaw/agents/main/sessions/ --glob '**/*.jsonl'
+
+[1/108] session-abc123.jsonl (1.2MB) - 12 extracted, 10 stored, 1 skipped (duplicate), 1 reinforced
+[2/108] session-def456.jsonl (800KB) - 8 extracted, 7 stored, 0 skipped, 1 reinforced
+...
+```
+
+Each entry has a type, subject, content, importance, and expiry. Near-duplicates are caught automatically - if you discussed the same decision in three sessions, you get one entry with higher confidence, not three copies.
+
+```bash
+agenr recall "package manager"
+```
+
+```
+fact (0.94) - project tooling
+We switched this project to pnpm.
+Confirmed 3x | Last recalled 2 days ago
+```
+
+## Live watching
+
+Don't want to batch-ingest? Watch your sessions in real-time:
+
+```bash
+# Watch your OpenClaw sessions directory
+agenr watch --dir ~/.openclaw/agents/main/sessions/
+
+# Auto-detect your session directory
+agenr watch --auto
+
+# Install as a background daemon (macOS launchd)
+agenr daemon install
+agenr daemon status
+agenr daemon logs
+```
+
+New sessions are picked up automatically. If you ingested first, watch resumes right where ingest left off - no re-processing.
+
+## How it works
+
+**Extract** - An LLM reads your transcripts and pulls out structured entries: facts, decisions, preferences, todos, relationships, events, lessons. Smart filtering removes noise (tool calls, file contents, boilerplate) before the LLM ever sees it.
+
+**Store** - Entries get embedded and compared against what's already in the database. Near-duplicates reinforce existing knowledge. New information gets inserted. Online dedup catches copies in real-time.
+
+**Recall** - Semantic search plus memory-aware ranking. Entries you recall often score higher. Stale entries decay. Contradicted entries get penalized.
+
+**Consolidate** - Periodic cleanup: rule-based expiry first, then optional LLM-assisted merging for entries that say the same thing differently.
+
+```
+Transcript -> Filter -> Extract -> Store -> Recall
+               80%       LLM      dedup    semantic
+               noise     typed    + embed  + memory-
+               removed   entries  + dedup    aware
+```
+
+## MCP integration
+
+agenr exposes three MCP tools: `agenr_recall`, `agenr_store`, `agenr_extract`. Any tool that speaks MCP can use your memory.
+
+**OpenClaw** (via [mcporter](https://mcporter.dev)):
+```bash
+mcporter config add agenr --stdio agenr --arg mcp --env OPENAI_API_KEY=your-key-here
+```
+
+Verify with `mcporter list agenr`. See [docs/OPENCLAW.md](./docs/OPENCLAW.md) for the full guide.
 
 ## Commands
 
-| Command | Description |
+| Command | What it does |
 | --- | --- |
-| `agenr setup` | Interactive auth/provider/model configuration |
-| `agenr extract <files...>` | Extract structured knowledge from text |
+| `agenr setup` | Interactive configuration |
+| `agenr ingest <paths...>` | Bulk-ingest files and directories |
+| `agenr extract <files...>` | Extract knowledge from text |
 | `agenr store [files...]` | Store entries with semantic dedup |
 | `agenr recall [query]` | Semantic + memory-aware recall |
-| `agenr watch [file]` | Live-watch a file, directory (`--dir`), or auto-detected sessions (`--auto`) |
-| `agenr daemon <subcommand>` | Install/manage watch daemon (`install`, `uninstall`, `status`, `logs`) |
-| `agenr ingest <paths...>` | Bulk-ingest files and directories |
-| `agenr consolidate` | Rule-based + LLM-assisted knowledge cleanup |
+| `agenr watch [file]` | Live-watch files, directories, or auto-detect |
+| `agenr daemon install` | Install background watch daemon |
+| `agenr consolidate` | Clean up and merge near-duplicates |
 | `agenr mcp` | Start MCP server (stdio) |
 | `agenr db stats` | Database statistics |
-| `agenr auth status` | Check auth connectivity |
 
-Full flag reference: [docs/CLI.md](./docs/CLI.md)
+Full reference: [docs/CLI.md](./docs/CLI.md) | [docs/CONFIGURATION.md](./docs/CONFIGURATION.md)
 
 ## Architecture
 
 - **Runtime:** Node.js 20+, TypeScript, ESM
 - **Storage:** libsql/SQLite (`~/.agenr/knowledge.db`)
-- **Embeddings:** OpenAI `text-embedding-3-small`, 512 dimensions
-- **Recall scoring:** Vector similarity × recency × confidence × recall strength, with contradiction penalties and full-text boosting
-- **Consolidation:** Two-tier — deterministic rules for cheap cleanup, LLM-assisted clustering for semantic merges, verification before every commit
+- **Embeddings:** OpenAI `text-embedding-3-small`, 1024 dimensions
+- **Recall scoring:** Vector similarity x recency x confidence x recall strength, with contradiction penalties
 
-Deep dive: [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) · [docs/CONSOLIDATION.md](./docs/CONSOLIDATION.md)
+Deep dive: [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
 
 ## Status
 
-agenr is alpha software under active development. The core pipeline (extract → store → recall → consolidate) is stable and tested (222+ tests). We use it daily to manage ~3,000 knowledge entries across multiple AI tools.
+Alpha. The core pipeline is stable and tested (350+ tests). We use it daily managing thousands of knowledge entries across OpenClaw sessions.
 
-What works well: extraction, storage, recall, MCP integration, rules-based consolidation, LLM-assisted merging.
+What works: extraction, storage, recall, MCP integration, online dedup, consolidation, smart filtering, live watching, daemon mode.
 
-What's next: entity resolution, auto-scheduled consolidation, local embeddings support. See the [kanban board](https://github.com/agenr-ai/agenr/issues) for current priorities.
+What's next: local embeddings support, entity resolution, auto-scheduled consolidation.
 
 ## Philosophy
 
 The big labs are building bigger brains. We're building better memory. Those are complementary.
 
-Current AI's bottleneck isn't intelligence — it's continuity. A slightly less brilliant model with accumulated context might be more useful than a brilliant amnesiac. What makes a senior engineer senior isn't raw IQ — it's patterns seen, mistakes remembered, approaches that worked. That's memory.
+Current AI's bottleneck isn't intelligence - it's continuity. A slightly less brilliant model with accumulated context might be more useful than a brilliant amnesiac. What makes a senior engineer senior isn't raw IQ - it's patterns seen, mistakes remembered, approaches that worked. That's memory.
 
 agenr is local-first because your memory is yours. It's structured (not just vectors) because "what did we decide about X?" needs a real answer, not a similarity score. It's open source because memory infrastructure should be shared.
 
-We're not claiming to have solved AI memory. We're sharing an approach that works for us and seeing if it works for others too.
-
 ## Troubleshooting
 
-| Problem | Cause | Fix |
-|---|---|---|
-| Embeddings fail with API key error | Missing `OPENAI_API_KEY` | Set the env var or run `agenr config set-key openai <key>`. Required even with Anthropic auth. |
-| Database locked error | Consolidation is running | Wait for it to finish, or check for a stale lock file at `~/.agenr/consolidation.lock`. |
-| `recall` returns no results or hangs after force-kill | Vector index corruption (SIGKILL/`kill -9`, power loss, OOM) | Run `agenr db check`, then `agenr db rebuild-index`. |
-| `--classify` fails but store works | LLM auth is broken (embeddings still work via `OPENAI_API_KEY`) | Run `agenr auth status` and fix your LLM provider credentials. |
-| `db reset` deleted everything | `db reset --confirm` is destructive and irreversible | Back up your DB first: `cp ~/.agenr/knowledge.db ~/.agenr/knowledge.db.backup` |
-| Extraction fails mid-file | LLM timeout or rate limit on large files | Partial results may have been extracted. Retry the file — dedup will skip already-stored entries. |
+| Problem | Fix |
+|---|---|
+| Embeddings fail | Set `OPENAI_API_KEY` env var or `agenr config set-key openai <key>` |
+| Database locked | Wait for consolidation to finish, or check `~/.agenr/consolidation.lock` |
+| Recall returns nothing after force-kill | `agenr db rebuild-index` (vector index corruption) |
+| Extraction fails mid-file | Retry - dedup skips already-stored entries |
 
 ## License
 
-AGPL-3.0 — [LICENSE](./LICENSE) · [LICENSE-FAQ](./LICENSE-FAQ.md)
+AGPL-3.0 - [LICENSE](./LICENSE)
 
 ## Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md).
+See [CONTRIBUTING.md](./CONTRIBUTING.md)
