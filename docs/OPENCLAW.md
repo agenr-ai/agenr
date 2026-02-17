@@ -211,7 +211,7 @@ If you prefer not to use mcporter, OpenClaw agents can call agenr directly via s
 ```bash
 agenr recall "query" --limit 5
 agenr recall --context session-start --limit 10
-echo '[{"content":"...","type":"fact","confidence":"high","tags":[]}]' | agenr store
+echo '[{"content":"...","type":"fact","subject":"...","importance":7}]' | agenr store
 ```
 
 This works but the agent needs explicit instructions (in AGENTS.md) to know the commands. The MCP approach is cleaner because the agent discovers the tools automatically.

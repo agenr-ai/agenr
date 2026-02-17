@@ -54,7 +54,7 @@ This document describes how agenr converts raw conversation text into durable, q
 - Types/enums are defined in `src/types.ts`.
 
 4. Embedding generation
-- `embed()` in `src/embeddings/client.ts` calls OpenAI embeddings API with `text-embedding-3-small` and `dimensions=512`.
+- `embed()` in `src/embeddings/client.ts` calls OpenAI embeddings API with `text-embedding-3-small` and `dimensions=1024`.
 
 5. Storage and dedup
 - `storeEntries()` in `src/db/store.ts` performs similarity search, dedup decisions, relation creation, and writes to DB.
@@ -200,7 +200,7 @@ Recall starts with vector top-k candidates from `idx_entries_embedding`, then ap
 
 Core components:
 - `vector`: cosine similarity (clamped 0..1, exponentiated by `0.7` in final score path)
-- `recency`: FSRS-style forgetting curve (Free Spaced Repetition Scheduler — a spaced repetition algorithm) with expiry-specific half-life:
+- `recency`: FSRS-style forgetting curve (Free Spaced Repetition Scheduler - a spaced repetition algorithm) with expiry-specific half-life:
 - `core`: infinite
 - `permanent`: 365 days
 - `temporary`: 30 days
@@ -208,7 +208,7 @@ Core components:
 - `recall`: strength from `recall_count` and time since last recall
 - `fts`: +`0.15` boost if full-text match
 
-Final score (`scoreEntry`) is multiplicative (by design — one bad signal should tank the score, not just reduce it) with contradiction penalty:
+Final score (`scoreEntry`) is multiplicative (by design - one bad signal should tank the score, not just reduce it) with contradiction penalty:
 - `sim^0.7 * (0.3 + 0.7 * recency) * max(importance, recall_strength) * contradiction_penalty + fts`
 - contradiction penalty is `0.8` when `contradictions >= 2`, else `1.0`
 

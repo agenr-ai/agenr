@@ -1,6 +1,6 @@
 # AGENR
 
-**/eɪ.dʒɛn.ɚ/** (AY-GEN-ER) - Human memory for AI agents.
+**AY-JEN-ER** - Human memory for AI agents.
 
 Your AI forgets everything between sessions. AGENR fixes that.
 
@@ -164,6 +164,8 @@ Verify with `mcporter list agenr`. See [docs/OPENCLAW.md](./docs/OPENCLAW.md) fo
 | Command | What it does |
 | --- | --- |
 | `agenr setup` | Interactive configuration |
+| `agenr config` | Show and update agenr configuration |
+| `agenr auth` | Authentication status and diagnostics |
 | `agenr ingest <paths...>` | Bulk-ingest files and directories |
 | `agenr extract <files...>` | Extract knowledge from text |
 | `agenr store [files...]` | Store entries with semantic dedup |
@@ -173,8 +175,7 @@ Verify with `mcporter list agenr`. See [docs/OPENCLAW.md](./docs/OPENCLAW.md) fo
 | `agenr consolidate` | Clean up and merge near-duplicates |
 | `agenr context` | Generate context file for AI tool integration |
 | `agenr mcp` | Start MCP server (stdio) |
-| `agenr db stats` | Database statistics |
-| `agenr db version` | Database schema version |
+| `agenr db <cmd>` | Database management (stats, version, export, reset, path, check, rebuild-index). Run `agenr db --help` for all subcommands. |
 
 Full reference: [docs/CLI.md](./docs/CLI.md) | [docs/CONFIGURATION.md](./docs/CONFIGURATION.md)
 
@@ -201,7 +202,7 @@ The big labs are building bigger brains. We're building better memory. Those are
 
 Current AI's bottleneck isn't intelligence - it's continuity. A slightly less brilliant model with accumulated context might be more useful than a brilliant amnesiac. What makes a senior engineer senior isn't raw IQ - it's patterns seen, mistakes remembered, approaches that worked. That's memory.
 
-AGENR is local-first because your memory is yours. It's structured (not just vectors) because "what did we decide about X?" needs a real answer, not a similarity score. It's open source because memory infrastructure should be shared.
+AGENR keeps your memory on your machine because it is yours. It's structured (not just vectors) because "what did we decide about X?" needs a real answer, not a similarity score. It's open source because memory infrastructure should be shared.
 
 ## Troubleshooting
 

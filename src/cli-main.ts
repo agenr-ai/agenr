@@ -330,7 +330,7 @@ export function createProgram(): Command {
 
   program
     .name("agenr")
-    .description("AGENt memoRy -- local-first memory extraction")
+    .description("Memory infrastructure for AI agents")
     .version(APP_VERSION)
     .action(async () => {
       const quick = getQuickStatus(process.env);
