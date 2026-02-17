@@ -1,6 +1,6 @@
 # AGENR
 
-**/eɪ.dʒɛn.ɚ/** (AY-GEN-ER) - local-first memory for AI agents.
+**/eɪ.dʒɛn.ɚ/** (AY-GEN-ER) - Human memory for AI agents.
 
 Your AI forgets everything between sessions. AGENR fixes that.
 
