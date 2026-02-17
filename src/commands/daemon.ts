@@ -563,7 +563,17 @@ export async function runDaemonRestartCommand(
   const plistPath = await requireInstalledPlist(resolvedDeps, homeDir, "Daemon not installed.");
 
   await runLaunchctl(resolvedDeps, ["bootout", `gui/${uid}/${LAUNCH_LABEL}`], false);
-  await resolvedDeps.sleepFn(500);
+
+  // Wait for launchd to fully release the service before re-bootstrapping.
+  const maxWaitMs = 10_000;
+  const pollMs = 500;
+  const start = Date.now();
+  while (Date.now() - start < maxWaitMs) {
+    await resolvedDeps.sleepFn(pollMs);
+    const check = await getLaunchctlState(resolvedDeps, uid);
+    if (!check.loaded) break;
+  }
+
   await runLaunchctl(resolvedDeps, ["bootstrap", `gui/${uid}`, plistPath], true);
 
   clack.log.success("Daemon restarted.");
