@@ -101,6 +101,7 @@ function makeDeps(overrides?: Record<string, unknown>): any {
     mkdtempFn: vi.fn(async () => "/tmp/agenr-watch-test"),
     writeFileFn: vi.fn(async () => undefined),
     rmFn: vi.fn(async () => undefined),
+    walCheckpointFn: vi.fn(async () => undefined),
     nowFn: vi.fn(() => new Date("2026-02-15T00:00:00.000Z")),
     sleepFn: vi.fn(async () => undefined),
     shouldShutdownFn: vi.fn(() => false),
@@ -799,5 +800,105 @@ describe("watcher", () => {
     expect(result.cycles).toBe(1);
     expect(fakeWatcher.close).toHaveBeenCalled();
     expect(deps.walCheckpointFn).toHaveBeenCalled();
+  });
+
+  it("checkpoints WAL after cycles that stored entries", async () => {
+    const walCheckpointFn = vi.fn(async () => undefined);
+    let shutdown = false;
+
+    const result = await runWatcher(
+      {
+        filePath: "/tmp/watch.jsonl",
+        intervalMs: 1,
+        minChunkChars: 5,
+        dryRun: false,
+        verbose: false,
+        once: false,
+        onCycle: (cycle) => {
+          expect(cycle.entriesStored).toBeGreaterThan(0);
+          expect(walCheckpointFn).toHaveBeenCalledTimes(0);
+          shutdown = true;
+        },
+      },
+      makeDeps({
+        walCheckpointFn,
+        shouldShutdownFn: vi.fn(() => shutdown),
+      }),
+    );
+
+    expect(result.cycles).toBe(1);
+    expect(walCheckpointFn).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not checkpoint WAL per-cycle when no entries were stored", async () => {
+    const walCheckpointFn = vi.fn(async () => undefined);
+    let shutdown = false;
+    const storeEntriesFn = vi.fn(async () => ({
+      added: 0,
+      updated: 0,
+      skipped: 0,
+      superseded: 0,
+      llm_dedup_calls: 0,
+      relations_created: 0,
+      total_entries: 1,
+      duration_ms: 5,
+    }));
+
+    const result = await runWatcher(
+      {
+        filePath: "/tmp/watch.jsonl",
+        intervalMs: 1,
+        minChunkChars: 5,
+        dryRun: false,
+        verbose: false,
+        once: false,
+        onCycle: (cycle) => {
+          expect(cycle.entriesStored).toBe(0);
+          expect(walCheckpointFn).toHaveBeenCalledTimes(0);
+          shutdown = true;
+        },
+      },
+      makeDeps({
+        walCheckpointFn,
+        storeEntriesFn,
+        shouldShutdownFn: vi.fn(() => shutdown),
+      }),
+    );
+
+    expect(result.cycles).toBe(1);
+    expect(walCheckpointFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not crash if per-cycle WAL checkpoint fails", async () => {
+    const walCheckpointFn = vi.fn(async () => {
+      throw new Error("checkpoint failed");
+    });
+    const warnings: string[] = [];
+    let shutdown = false;
+
+    const result = await runWatcher(
+      {
+        filePath: "/tmp/watch.jsonl",
+        intervalMs: 1,
+        minChunkChars: 5,
+        dryRun: false,
+        verbose: false,
+        once: false,
+        onCycle: () => {
+          shutdown = true;
+        },
+        onWarn: (message) => {
+          warnings.push(message);
+        },
+      },
+      makeDeps({
+        walCheckpointFn,
+        shouldShutdownFn: vi.fn(() => shutdown),
+      }),
+    );
+
+    expect(result.cycles).toBe(1);
+    expect(warnings.some((message) => message.includes("WAL checkpoint failed: checkpoint failed"))).toBe(true);
+    expect(walCheckpointFn).toHaveBeenCalledTimes(2);
   });
 });

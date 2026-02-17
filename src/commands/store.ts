@@ -4,13 +4,14 @@ import * as clack from "@clack/prompts";
 import { readConfig } from "../config.js";
 import { closeDb, getDb, initDb, walCheckpoint } from "../db/client.js";
 import { hashText, storeEntries } from "../db/store.js";
+import { acquireDbLock, releaseDbLock } from "../db/lockfile.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { createLlmClient } from "../llm/client.js";
 import { expandInputFiles } from "../parser.js";
 import { EXPIRY_LEVELS, IMPORTANCE_MAX, IMPORTANCE_MIN, KNOWLEDGE_TYPES } from "../types.js";
 import type { ExtractionReport, KnowledgeEntry, StoreResult } from "../types.js";
 import { banner, formatLabel, formatWarn, ui } from "../ui.js";
-import { installSignalHandlers, isShutdownRequested } from "../shutdown.js";
+import { installSignalHandlers, isShutdownRequested, onShutdown } from "../shutdown.js";
 
 export interface StoreCommandOptions {
   db?: string;
@@ -297,6 +298,13 @@ export async function runStoreCommand(
   const llmClient = onlineDedup && hasAnyEntries ? resolvedDeps.createLlmClientFn({ env: process.env }) : undefined;
 
   const dbPath = options.db?.trim() || config?.db?.path;
+  const shouldLockDb = dbPath !== ":memory:";
+  if (shouldLockDb) {
+    acquireDbLock();
+    onShutdown(async () => {
+      releaseDbLock();
+    });
+  }
   const db = resolvedDeps.getDbFn(dbPath);
 
   try {
@@ -394,6 +402,9 @@ export async function runStoreCommand(
     clack.outro(undefined, clackOutput);
     return { exitCode: stoppedForShutdown ? 130 : 0, result: finalResult };
   } finally {
+    if (shouldLockDb) {
+      releaseDbLock();
+    }
     resolvedDeps.closeDbFn(db);
   }
 }
