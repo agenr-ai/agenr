@@ -40,7 +40,7 @@ Source:
 
 ### 1) Expired entry pruning
 
-- Applies to active entries with expiry `session-only` or `temporary`.
+- Applies to active entries with expiry `temporary`.
 - Computes recency score using `recency()` from `src/db/recall.ts`.
 - Marks entry as expired when score drops below `0.05` (`EXPIRE_THRESHOLD`).
 - Expiration is non-destructive: `superseded_by = 'EXPIRED'` sentinel.
@@ -98,7 +98,7 @@ If `--rules-only` is provided:
 ### Merging
 
 - For each cluster, model is prompted to call tool `merge_entries` with one canonical entry.
-- Merge payload includes canonical `content`, `subject`, `type`, `confidence`, `expiry`, `tags`, and notes.
+- Merge payload includes canonical `content`, `subject`, `type`, `importance`, `expiry`, `tags`, and notes.
 - Type is forced to dominant source-cluster type (`chooseDominantType`) to reduce ontology drift.
 
 ### Verification

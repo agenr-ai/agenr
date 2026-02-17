@@ -157,7 +157,7 @@ Parameters:
 - Each entry supports:
 - `content` (string, required)
 - `type` (enum, required): `fact|decision|preference|todo|relationship|event|lesson`
-- `confidence` (number, optional, `0.0..1.0`, default `0.8`)
+- `importance` (integer, optional, `1..10`, default `5`)
 - `source` (string, optional)
 - `tags` (string[], optional)
 - `scope` (enum, optional, default `personal`): `private|personal|public`
@@ -172,7 +172,7 @@ Example call payload:
       {
         "type": "decision",
         "content": "Use pnpm for this repository.",
-        "confidence": 0.9,
+        "importance": 7,
         "tags": ["tooling", "package-manager"],
         "source": "standup-2026-02-15",
         "scope": "personal"
@@ -263,4 +263,4 @@ Symptoms:
 Fix:
 - Match exact schema types from this doc and `src/mcp/server.ts`.
 - Keep `types` as comma-separated string for `agenr_recall`, not array.
-- Keep `confidence` within `0..1` for `agenr_store`.
+- Keep `importance` within `1..10` for `agenr_store`.

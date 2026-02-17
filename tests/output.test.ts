@@ -4,12 +4,13 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { formatJson, formatMarkdown, writeOutput } from "../src/output.js";
 import type { ExtractionReport } from "../src/types.js";
+import { APP_VERSION } from "../src/version.js";
 
 const tempDirs: string[] = [];
 
 function makeReport(): ExtractionReport {
   return {
-    version: "0.1.0",
+    version: APP_VERSION,
     extracted_at: "2026-02-14T00:00:00.000Z",
     provider: "anthropic",
     model: "claude-opus-4-6",
