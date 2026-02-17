@@ -4,12 +4,13 @@ import os from "node:os";
 import path from "node:path";
 import { readConfig } from "../config.js";
 import { deduplicateEntries } from "../dedup.js";
-import { closeDb, getDb, initDb } from "../db/client.js";
+import { closeDb, getDb, initDb, walCheckpoint } from "../db/client.js";
 import { storeEntries } from "../db/store.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { extractKnowledgeFromChunks } from "../extractor.js";
 import { createLlmClient } from "../llm/client.js";
 import { parseTranscriptFile } from "../parser.js";
+import { installSignalHandlers, isShutdownRequested } from "../shutdown.js";
 import type { KnowledgeEntry, WatchState } from "../types.js";
 import type { SessionResolver } from "./session-resolver.js";
 import { resolveAutoSession, type AutoSessionResult, type AutoWatchTarget } from "./resolvers/auto.js";
@@ -69,6 +70,7 @@ export interface WatcherDeps {
   getDbFn: typeof getDb;
   initDbFn: typeof initDb;
   closeDbFn: typeof closeDb;
+  walCheckpointFn: typeof walCheckpoint;
   storeEntriesFn: typeof storeEntries;
   loadWatchStateFn: typeof loadWatchState;
   saveWatchStateFn: typeof saveWatchState;
@@ -150,6 +152,8 @@ export async function readFileFromOffset(filePath: string, offset: number): Prom
 }
 
 export async function runWatcher(options: WatcherOptions, deps?: Partial<WatcherDeps>): Promise<WatchRunSummary> {
+  installSignalHandlers();
+
   const resolvedDeps: WatcherDeps = {
     readConfigFn: deps?.readConfigFn ?? readConfig,
     resolveEmbeddingApiKeyFn: deps?.resolveEmbeddingApiKeyFn ?? resolveEmbeddingApiKey,
@@ -160,6 +164,7 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
     getDbFn: deps?.getDbFn ?? getDb,
     initDbFn: deps?.initDbFn ?? initDb,
     closeDbFn: deps?.closeDbFn ?? closeDb,
+    walCheckpointFn: deps?.walCheckpointFn ?? walCheckpoint,
     storeEntriesFn: deps?.storeEntriesFn ?? storeEntries,
     loadWatchStateFn: deps?.loadWatchStateFn ?? loadWatchState,
     saveWatchStateFn: deps?.saveWatchStateFn ?? saveWatchState,
@@ -172,7 +177,7 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
     resolveAutoSessionFn: deps?.resolveAutoSessionFn ?? resolveAutoSession,
     nowFn: deps?.nowFn ?? (() => new Date()),
     sleepFn: deps?.sleepFn ?? sleep,
-    shouldShutdownFn: deps?.shouldShutdownFn ?? (() => false),
+    shouldShutdownFn: deps?.shouldShutdownFn ?? isShutdownRequested,
   };
 
   const directoryMode = options.directoryMode === true;
@@ -580,6 +585,11 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
   } finally {
     closeAllWatchers();
     if (db) {
+      try {
+        await resolvedDeps.walCheckpointFn(db);
+      } catch (error) {
+        options.onWarn?.(`WAL checkpoint failed: ${formatError(error)}`);
+      }
       resolvedDeps.closeDbFn(db);
     }
   }

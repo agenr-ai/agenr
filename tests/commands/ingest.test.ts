@@ -13,6 +13,7 @@ import type { IngestCommandDeps } from "../../src/commands/ingest.js";
 import type { KnowledgeEntry, LlmClient, ParsedTranscript } from "../../src/types.js";
 import { createEmptyWatchState, loadWatchState, saveWatchState, updateFileState } from "../../src/watch/state.js";
 import { readFileFromOffset } from "../../src/watch/watcher.js";
+import { isShutdownRequested, requestShutdown, resetShutdownForTests } from "../../src/shutdown.js";
 
 const tempDirs: string[] = [];
 
@@ -141,6 +142,7 @@ afterEach(async () => {
     await fs.rm(dir, { recursive: true, force: true });
   }
   tempDirs.length = 0;
+  resetShutdownForTests();
   vi.restoreAllMocks();
 });
 
@@ -250,6 +252,63 @@ describe("ingest command", () => {
     expect(result.filesSkipped).toBe(1);
     expect(result.filesFailed).toBe(0);
     expect(result.results.find((item) => item.file === fileA)?.skipped).toBe(true);
+  });
+
+  it("stops scheduling new files after shutdown is requested (finishes current file)", async () => {
+    const dir = await makeTempDir();
+    const fileA = path.join(dir, "a.md");
+    const fileB = path.join(dir, "b.md");
+    await fs.writeFile(fileA, "alpha", "utf8");
+    await fs.writeFile(fileB, "beta", "utf8");
+
+    const dbExecute = vi.fn(async () => ({ rows: [] }));
+    let storeCalls = 0;
+    const deps = makeDeps({
+      db: { execute: dbExecute },
+      expandInputFilesFn: vi.fn(async (inputs: string[]) => {
+        if (inputs[0]?.includes("**/*.{jsonl,md,txt}")) {
+          return [fileA, fileB];
+        }
+        return inputs;
+      }),
+      storeEntriesFn: vi.fn(async (_db: Client, entries: KnowledgeEntry[]) => {
+        storeCalls += 1;
+        const result = {
+          added: entries.length,
+          updated: 0,
+          skipped: 0,
+          superseded: 0,
+          llm_dedup_calls: 0,
+          relations_created: 0,
+          total_entries: entries.length,
+          duration_ms: 5,
+        };
+        if (storeCalls === 1) {
+          requestShutdown();
+          expect(isShutdownRequested()).toBe(true);
+        }
+        return result;
+      }) as any,
+      shouldShutdownFn: isShutdownRequested,
+    });
+
+    const result = await runIngestCommand([dir], { concurrency: 1 }, deps);
+
+    expect(result.exitCode).toBe(130);
+    expect(result.filesProcessed).toBe(1);
+    expect(result.filesFailed).toBe(0);
+    expect(result.filesSkipped).toBe(0);
+
+    const ingestLogInserts = dbExecute.mock.calls.filter((call) => {
+      const arg = call[0] as any;
+      return Boolean(arg?.sql) && String(arg.sql).includes("INTO ingest_log");
+    });
+    expect(ingestLogInserts).toHaveLength(1);
+    const storedFiles = result.results
+      .filter((item) => Boolean(item) && !(item as any).skipped && !(item as any).error)
+      .map((item) => (item as any).file);
+    expect(storedFiles).toHaveLength(1);
+    expect((ingestLogInserts[0]?.[0] as any).args?.[1]).toBe(storedFiles[0]);
   });
 
   it("re-processes already-ingested files with --force", async () => {

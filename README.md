@@ -187,6 +187,7 @@ We're not claiming to have solved AI memory. We're sharing an approach that work
 |---|---|---|
 | Embeddings fail with API key error | Missing `OPENAI_API_KEY` | Set the env var or run `agenr config set-key openai <key>`. Required even with Anthropic auth. |
 | Database locked error | Consolidation is running | Wait for it to finish, or check for a stale lock file at `~/.agenr/consolidation.lock`. |
+| `recall` returns no results or hangs after force-kill | Vector index corruption (SIGKILL/`kill -9`, power loss, OOM) | Run `agenr db check`, then `agenr db rebuild-index`. |
 | `--classify` fails but store works | LLM auth is broken (embeddings still work via `OPENAI_API_KEY`) | Run `agenr auth status` and fix your LLM provider credentials. |
 | `db reset` deleted everything | `db reset --confirm` is destructive and irreversible | Back up your DB first: `cp ~/.agenr/knowledge.db ~/.agenr/knowledge.db.backup` |
 | Extraction fails mid-file | LLM timeout or rate limit on large files | Partial results may have been extracted. Retry the file — dedup will skip already-stored entries. |

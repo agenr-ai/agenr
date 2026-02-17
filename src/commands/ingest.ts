@@ -13,6 +13,7 @@ import { createLlmClient } from "../llm/client.js";
 import { expandInputFiles, parseTranscriptFile } from "../parser.js";
 import type { KnowledgeEntry } from "../types.js";
 import { banner, formatError, formatWarn, ui } from "../ui.js";
+import { installSignalHandlers, isShutdownRequested } from "../shutdown.js";
 import {
   createEmptyWatchState,
   getFileState,
@@ -450,6 +451,8 @@ export async function runIngestCommand(
   options: IngestCommandOptions,
   deps?: Partial<IngestCommandDeps>,
 ): Promise<IngestCommandResult> {
+  installSignalHandlers();
+
   const resolvedDeps: IngestCommandDeps = {
     readConfigFn: deps?.readConfigFn ?? readConfig,
     resolveEmbeddingApiKeyFn: deps?.resolveEmbeddingApiKeyFn ?? resolveEmbeddingApiKey,
@@ -467,7 +470,7 @@ export async function runIngestCommand(
     saveWatchStateFn: deps?.saveWatchStateFn ?? saveWatchState,
     nowFn: deps?.nowFn ?? (() => new Date()),
     sleepFn: deps?.sleepFn ?? sleep,
-    shouldShutdownFn: deps?.shouldShutdownFn ?? (() => false),
+    shouldShutdownFn: deps?.shouldShutdownFn ?? isShutdownRequested,
   };
 
   const clackOutput = { output: process.stderr };
@@ -480,8 +483,9 @@ export async function runIngestCommand(
   const globPattern = options.glob?.trim() || DEFAULT_GLOB;
   const concurrency = parsePositiveInt(options.concurrency, 1, "--concurrency");
   const retryEnabled = options.retry !== false;
-  const maxRetries = retryEnabled ? parsePositiveInt(options.maxRetries, 3, "--max-retries") : 0;
+    const maxRetries = retryEnabled ? parsePositiveInt(options.maxRetries, 3, "--max-retries") : 0;
   const retrySummaries: string[] = [];
+  let stoppedForShutdown = false;
 
     const files = await resolveInputFiles(inputPaths, globPattern, resolvedDeps.expandInputFilesFn);
     const targetsWithSizes = await Promise.all(
@@ -803,6 +807,10 @@ export async function runIngestCommand(
       await Promise.all(
         Array.from({ length: workerCount }, async () => {
           while (true) {
+            if (resolvedDeps.shouldShutdownFn()) {
+              stoppedForShutdown = true;
+              return;
+            }
             const currentIndex = cursor;
             cursor += 1;
             if (currentIndex >= targets.length) {
@@ -884,6 +892,10 @@ export async function runIngestCommand(
         sortedTargets.filter((target) => Boolean(results[target.index]?.error)).map((target) => target.index),
       );
 
+      if (resolvedDeps.shouldShutdownFn()) {
+        stoppedForShutdown = true;
+      }
+
       if (retryEnabled && maxRetries > 0 && firstPassFailedIndexSet.size > 0) {
         for (let attempt = 1; attempt <= maxRetries; attempt += 1) {
           const remainingFailed = sortedTargets.filter((target) => Boolean(results[target.index]?.error));
@@ -940,6 +952,15 @@ export async function runIngestCommand(
     const finalFilesSkipped = results.filter((result) => Boolean(result?.skipped)).length;
     const finalFilesProcessed = results.filter((result) => Boolean(result) && !result.error && !result.skipped).length;
 
+    if (stoppedForShutdown) {
+      clack.log.warn(
+        formatWarn(
+          `Shutdown requested; stopping after ${finalFilesProcessed + finalFilesSkipped + finalFilesFailed}/${sortedTargets.length} file(s).`,
+        ),
+        clackOutput,
+      );
+    }
+
     const succeededOnRetry = [...firstPassFailedIndexSet].filter((index) => {
       const result = results[index];
       return Boolean(result) && !result.error && !result.skipped;
@@ -948,7 +969,7 @@ export async function runIngestCommand(
 
     const allTargetsFailed = sortedTargets.length > 0 && finalFilesFailed === sortedTargets.length;
     const finalResult: IngestCommandResult = {
-      exitCode: allTargetsFailed ? 2 : finalFilesFailed > 0 ? 1 : 0,
+      exitCode: stoppedForShutdown ? 130 : allTargetsFailed ? 2 : finalFilesFailed > 0 ? 1 : 0,
       filesProcessed: finalFilesProcessed,
       filesSkipped: finalFilesSkipped,
       filesFailed: finalFilesFailed,

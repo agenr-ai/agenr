@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { KnowledgeEntry, WatchState } from "../../src/types.js";
 import { runWatcher } from "../../src/watch/watcher.js";
+import { isShutdownRequested, requestShutdown, resetShutdownForTests } from "../../src/shutdown.js";
 
 function makeEntry(content = "fact"): KnowledgeEntry {
   return {
@@ -111,6 +112,7 @@ function makeDeps(overrides?: Record<string, unknown>): any {
 }
 
 afterEach(() => {
+  resetShutdownForTests();
   vi.restoreAllMocks();
 });
 
@@ -754,5 +756,48 @@ describe("watcher", () => {
     );
 
     expect(warnings.some((warning) => warning.includes("EMFILE"))).toBe(true);
+  });
+
+  it("closes fs.watch handles and exits when shutdown is requested", async () => {
+    const filePath = "/tmp/watch.jsonl";
+    const fakeWatcher = { close: vi.fn() };
+    let cycleCount = 0;
+
+    const deps = makeDeps({
+      statFileFn: vi.fn(async () => ({ size: 0, isFile: () => true })),
+      sleepFn: vi.fn(async () => undefined),
+      shouldShutdownFn: isShutdownRequested,
+      watchFn: vi.fn((_target: string, _opts: unknown, _callback: (eventType: string, filename?: string) => void) => {
+        return fakeWatcher as any;
+      }),
+      walCheckpointFn: vi.fn(async () => undefined),
+    });
+
+    const result = await runWatcher(
+      {
+        intervalMs: 1,
+        minChunkChars: 5,
+        dryRun: false,
+        verbose: false,
+        once: false,
+        directoryMode: true,
+        sessionsDir: "/tmp/sessions",
+        resolver: {
+          filePattern: "*.jsonl",
+          resolveActiveSession: vi.fn(async () => filePath),
+        },
+        onCycle: () => {
+          cycleCount += 1;
+          if (cycleCount === 1) {
+            requestShutdown();
+          }
+        },
+      },
+      deps,
+    );
+
+    expect(result.cycles).toBe(1);
+    expect(fakeWatcher.close).toHaveBeenCalled();
+    expect(deps.walCheckpointFn).toHaveBeenCalled();
   });
 });

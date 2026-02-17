@@ -4,11 +4,12 @@ import * as clack from "@clack/prompts";
 import { readConfig } from "../config.js";
 import { runConsolidationOrchestrator, type ConsolidationOrchestratorReport } from "../consolidate/orchestrate.js";
 import { showFlaggedMerges } from "../consolidate/verify.js";
-import { closeDb, DEFAULT_DB_PATH, getDb } from "../db/client.js";
+import { closeDb, DEFAULT_DB_PATH, getDb, walCheckpoint } from "../db/client.js";
 import { initSchema } from "../db/schema.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { createLlmClient } from "../llm/client.js";
 import { formatWarn } from "../ui.js";
+import { installSignalHandlers, isShutdownRequested } from "../shutdown.js";
 
 export interface ConsolidateCommandOptions {
   rulesOnly?: boolean;
@@ -141,6 +142,8 @@ export async function runConsolidateCommand(
   options: ConsolidateCommandOptions,
   deps: Partial<ConsolidateCommandDeps> = {},
 ): Promise<{ exitCode: number }> {
+  installSignalHandlers();
+
   const resolvedDeps: ConsolidateCommandDeps = {
     readConfigFn: deps.readConfigFn ?? readConfig,
     getDbFn: deps.getDbFn ?? getDb,
@@ -191,12 +194,19 @@ export async function runConsolidateCommand(
 
     if (options.json) {
       process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-      return { exitCode: 0 };
+      return { exitCode: isShutdownRequested() ? 130 : 0 };
     }
 
     logger.info(renderTextReport(report, options.dryRun === true));
-    return { exitCode: 0 };
+    return { exitCode: isShutdownRequested() ? 130 : 0 };
   } finally {
+    if (!options.dryRun) {
+      try {
+        await walCheckpoint(db);
+      } catch (error) {
+        logger.warn(`[consolidate] WAL checkpoint failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
     resolvedDeps.closeDbFn(db);
   }
 }
