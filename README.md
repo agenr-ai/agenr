@@ -42,7 +42,7 @@ Add this to your OpenClaw `AGENTS.md`:
 ```markdown
 ## Memory (agenr)
 On every session start, run this BEFORE responding to the first message:
-  cd ~/Code/agenr && node dist/cli.js recall --context session-start --budget 2000
+  agenr recall --context session-start --budget 2000
 IMPORTANT: use --budget 2000, not just --limit. Budget triggers balanced output:
   - 20% active todos
   - 30% preferences and decisions

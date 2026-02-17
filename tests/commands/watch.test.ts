@@ -40,7 +40,7 @@ afterEach(async () => {
 
 describe("watch command", () => {
   it("wires CLI options into runWatchCommand", async () => {
-    const { createProgram } = await import("../../src/cli.js");
+    const { createProgram } = await import("../../src/cli-main.js");
     const program = createProgram();
     const watchCommand = program.commands.find((command) => command.name() === "watch");
     const runWatchCommandMock = vi.fn(async (..._args: unknown[]) => undefined);
@@ -73,8 +73,8 @@ describe("watch command", () => {
     const firstCall = (runWatchCommandMock.mock.calls as unknown[][])[0] as [string, Record<string, unknown>] | undefined;
     expect(firstCall?.[0]).toBe("/tmp/session.jsonl");
     expect(firstCall?.[1]).toMatchObject({
-      interval: "7",
-      minChunk: "1500",
+      interval: 7,
+      minChunk: 1500,
       context: "/tmp/CONTEXT.md",
       db: "/tmp/db.sqlite",
       model: "gpt-4o",
@@ -87,7 +87,7 @@ describe("watch command", () => {
   });
 
   it("wires directory mode options into runWatchCommand", async () => {
-    const { createProgram } = await import("../../src/cli.js");
+    const { createProgram } = await import("../../src/cli-main.js");
     const program = createProgram();
     const watchCommand = program.commands.find((command) => command.name() === "watch");
     const runWatchCommandMock = vi.fn(async (..._args: unknown[]) => undefined);

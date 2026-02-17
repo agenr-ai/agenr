@@ -3,8 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { writeConfig } from "../src/config.js";
-import { runExtractCommand } from "../src/cli.js";
-import type { CliDeps } from "../src/cli.js";
+import { runExtractCommand } from "../src/cli-main.js";
+import type { CliDeps } from "../src/cli-main.js";
 import type { LlmClient, ParsedTranscript } from "../src/types.js";
 
 const tempDirs: string[] = [];
