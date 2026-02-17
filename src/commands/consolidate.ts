@@ -216,7 +216,6 @@ export async function runConsolidateCommand(
     logger.info(renderTextReport(report, options.dryRun === true));
     return { exitCode: isShutdownRequested() ? 130 : 0 };
   } finally {
-    releaseDbLock();
     if (!options.dryRun) {
       try {
         await walCheckpoint(db);
@@ -224,6 +223,7 @@ export async function runConsolidateCommand(
         logger.warn(`[consolidate] WAL checkpoint failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
+    releaseDbLock();
     resolvedDeps.closeDbFn(db);
   }
 }
