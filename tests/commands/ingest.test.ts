@@ -148,7 +148,7 @@ afterEach(async () => {
 
 describe("ingest command", () => {
   it("wires CLI options into runIngestCommand", async () => {
-    const { createProgram } = await import("../../src/cli.js");
+    const { createProgram } = await import("../../src/cli-main.js");
     const program = createProgram();
     const ingestCommand = program.commands.find((command) => command.name() === "ingest");
     const runIngestCommandMock = vi.fn(async (..._args: unknown[]) => undefined);
@@ -191,10 +191,10 @@ describe("ingest command", () => {
       verbose: true,
       dryRun: true,
       json: true,
-      concurrency: "3",
+      concurrency: 3,
       skipIngested: true,
       retry: false,
-      maxRetries: "5",
+      maxRetries: 5,
       force: true,
     });
   });

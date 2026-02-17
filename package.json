@@ -7,8 +7,8 @@
     "agenr": "dist/cli.js"
   },
   "scripts": {
-    "build": "tsup src/cli.ts --format esm --dts",
-    "dev": "tsup src/cli.ts --format esm --watch",
+    "build": "tsup src/cli.ts src/cli-main.ts --format esm --dts",
+    "dev": "tsup src/cli.ts src/cli-main.ts --format esm --watch",
     "test": "vitest",
     "typecheck": "tsc --noEmit"
   },
@@ -49,6 +49,7 @@
   ],
   "files": [
     "dist",
+    "CHANGELOG.md",
     "LICENSE",
     "README.md"
   ],
