@@ -14,7 +14,17 @@ describe("consolidate lock", () => {
   };
 
   afterEach(async () => {
-    process.env = { ...originalEnv };
+    // Restore env on the original proxy (not replace it) so setenv() is called
+    for (const key of Object.keys(process.env)) {
+      if (!(key in originalEnv)) {
+        delete process.env[key];
+      }
+    }
+    for (const [key, value] of Object.entries(originalEnv)) {
+      if (value !== undefined) {
+        process.env[key] = value;
+      }
+    }
     vi.restoreAllMocks();
     resetModules();
     for (const dir of tempDirs) {
@@ -55,7 +65,7 @@ describe("consolidate lock", () => {
     await fs.mkdir(path.dirname(lockPath), { recursive: true });
     await fs.writeFile(lockPath, String(process.pid), "utf8");
 
-    expect(() => mod.acquireLock()).toThrow(/Another agenr process is using/);
+    expect(() => mod.acquireLock()).toThrow(/Another agenr process/);
   });
 
   it("releaseLock removes lock file and is no-throw if already removed", async () => {

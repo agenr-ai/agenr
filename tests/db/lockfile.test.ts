@@ -109,8 +109,8 @@ describe("db lockfile", () => {
   it("prevents TOCTOU races with atomic create checks", async () => {
     const lockDir = await makeLockDir();
     const settled = await Promise.allSettled([
-      Promise.resolve(acquireDbLock(lockDir)),
-      Promise.resolve(acquireDbLock(lockDir)),
+      (() => { try { acquireDbLock(lockDir); return Promise.resolve(); } catch(e) { return Promise.reject(e); } })(),
+      (() => { try { acquireDbLock(lockDir); return Promise.resolve(); } catch(e) { return Promise.reject(e); } })(),
     ]);
 
     const fulfilled = settled.filter((item) => item.status === "fulfilled");
