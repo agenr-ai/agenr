@@ -24,6 +24,7 @@ export interface WatchCycleResult {
   entriesExtracted: number;
   entriesStored: number;
   skipped: boolean;
+  notFound?: boolean;
   filePath?: string;
   switchedFrom?: string;
   switchedTo?: string;
@@ -398,14 +399,14 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
     }
   };
 
-  const processFileCycle = async (targetFilePath: string, forceProcessSmallChunk: boolean): Promise<WatchCycleResult> => {
-    const cycleResult: WatchCycleResult = {
-      bytesRead: 0,
-      entriesExtracted: 0,
-      entriesStored: 0,
-      skipped: false,
-      filePath: targetFilePath,
-    };
+	  const processFileCycle = async (targetFilePath: string, forceProcessSmallChunk: boolean): Promise<WatchCycleResult> => {
+	    const cycleResult: WatchCycleResult = {
+	      bytesRead: 0,
+	      entriesExtracted: 0,
+	      entriesStored: 0,
+	      skipped: false,
+	      filePath: targetFilePath,
+	    };
 
     try {
       const stat = await resolvedDeps.statFileFn(targetFilePath);
@@ -497,24 +498,58 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
         await resolvedDeps.rmFn(tempDir, { recursive: true, force: true });
       }
 
-      return cycleResult;
-    } catch (error) {
-      cycleResult.error = isFileNotFound(error)
-        ? `file not found during watch cycle: ${targetFilePath}`
-        : formatError(error);
-      return cycleResult;
-    }
-  };
+	      return cycleResult;
+	    } catch (error) {
+	      if (isFileNotFound(error)) {
+	        cycleResult.notFound = true;
+	        cycleResult.error = `file not found during watch cycle: ${targetFilePath}`;
+	      } else {
+	        cycleResult.error = formatError(error);
+	      }
+	      return cycleResult;
+	    }
+	  };
 
-  let cycles = 0;
-  let totalEntriesStored = 0;
-  let warnedNoAutoRoots = false;
+	  const drainedPaths = new Set<string>();
+
+	  async function drainRenamedFile(originalPath: string): Promise<WatchCycleResult | null> {
+	    if (!findRenamed) {
+	      return null;
+	    }
+
+	    const renamedPath = await findRenamed(originalPath);
+	    if (!renamedPath) {
+	      return null;
+	    }
+
+	    const oldState = getFileState(state, originalPath);
+	    if (oldState && oldState.byteOffset > 0) {
+	      updateFileState(state, renamedPath, {
+	        byteOffset: oldState.byteOffset,
+	        lastRunAt: oldState.lastRunAt,
+	        totalEntriesStored: oldState.totalEntriesStored ?? 0,
+	        totalRunCount: oldState.totalRunCount ?? 0,
+	      });
+	    }
+
+	    const result = await processFileCycle(renamedPath, true);
+
+	    delete state.files[path.resolve(originalPath)];
+	    delete state.files[path.resolve(renamedPath)];
+	    await resolvedDeps.saveWatchStateFn(state, options.configDir);
+
+	    return result;
+	  }
+
+	  let cycles = 0;
+	  let totalEntriesStored = 0;
+	  let warnedNoAutoRoots = false;
 
   // Drain orphaned OpenClaw reset files that may have been renamed while the watcher was offline.
-  if (findRenamed) {
-    for (const trackedPath of Object.keys(state.files)) {
-      if (path.basename(trackedPath).includes(".reset.")) {
-        continue;
+	  if (findRenamed) {
+	    for (const trackedPath of Object.keys(state.files)) {
+	      if (path.basename(trackedPath).includes(".reset.")) {
+	        continue;
       }
 
       try {
@@ -524,40 +559,25 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
           continue;
         }
 
-        const renamedPath = await findRenamed(trackedPath);
-        if (!renamedPath) {
-          continue;
-        }
+	        const orphanResult = await drainRenamedFile(trackedPath);
+	        if (!orphanResult) {
+	          continue;
+	        }
+	        options.onCycle?.(orphanResult, { db, apiKey: embeddingApiKey ?? "" });
 
-        const oldState = getFileState(state, trackedPath);
-        if (oldState && oldState.byteOffset > 0) {
-          updateFileState(state, renamedPath, {
-            byteOffset: oldState.byteOffset,
-            lastRunAt: oldState.lastRunAt,
-            totalEntriesStored: oldState.totalEntriesStored ?? 0,
-            totalRunCount: oldState.totalRunCount ?? 0,
-          });
-        }
+	        totalEntriesStored += orphanResult.entriesStored;
+	        drainedPaths.add(path.resolve(trackedPath));
 
-        const orphanResult = await processFileCycle(renamedPath, true);
-        options.onCycle?.(orphanResult, { db, apiKey: embeddingApiKey ?? "" });
-
-        totalEntriesStored += orphanResult.entriesStored;
-
-        if (orphanResult.entriesStored > 0 && db) {
-          try {
-            await resolvedDeps.walCheckpointFn(db);
+	        if (orphanResult.entriesStored > 0 && db) {
+	          try {
+	            await resolvedDeps.walCheckpointFn(db);
           } catch (error) {
-            options.onWarn?.(`WAL checkpoint failed: ${formatError(error)}`);
-          }
-        }
-
-        delete state.files[path.resolve(trackedPath)];
-        delete state.files[path.resolve(renamedPath)];
-        await resolvedDeps.saveWatchStateFn(state, options.configDir);
-      }
-    }
-  }
+	            options.onWarn?.(`WAL checkpoint failed: ${formatError(error)}`);
+	          }
+	        }
+	      }
+	    }
+	  }
 
   try {
     while (!resolvedDeps.shouldShutdownFn()) {
@@ -606,37 +626,20 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
           path.resolve(resolvedTargetPath) !== path.resolve(currentFilePath),
       );
 
-      if (hasSwitch && currentFilePath && resolvedTargetPath) {
-        cycleResult = await processFileCycle(currentFilePath, true);
+	      if (hasSwitch && currentFilePath && resolvedTargetPath) {
+	        cycleResult = await processFileCycle(currentFilePath, true);
 
-        // If old file vanished (e.g. OpenClaw .reset rename), find and drain the renamed copy.
-        if (cycleResult.error?.includes("file not found") && findRenamed) {
-          const renamedPath = await findRenamed(currentFilePath);
-          if (renamedPath) {
-            // Seed renamed file's state with old file's byte offset (same content, just renamed).
-            const oldState = getFileState(state, currentFilePath);
-            if (oldState && oldState.byteOffset > 0) {
-              updateFileState(state, renamedPath, {
-                byteOffset: oldState.byteOffset,
-                lastRunAt: oldState.lastRunAt,
-                totalEntriesStored: oldState.totalEntriesStored ?? 0,
-                totalRunCount: oldState.totalRunCount ?? 0,
-              });
-            }
-
-            const retryResult = await processFileCycle(renamedPath, true);
-            cycleResult = {
-              ...retryResult,
-              switchedFrom: currentFilePath,
-              switchedTo: resolvedTargetPath,
-            };
-
-            // Clean up state: remove both old and renamed keys (one-shot drain, not ongoing).
-            delete state.files[path.resolve(currentFilePath)];
-            delete state.files[path.resolve(renamedPath)];
-            await resolvedDeps.saveWatchStateFn(state, options.configDir);
-          }
-        }
+	        // If old file vanished (e.g. OpenClaw .reset rename), find and drain the renamed copy.
+	        if (cycleResult.notFound && !drainedPaths.has(path.resolve(currentFilePath))) {
+	          const retryResult = await drainRenamedFile(currentFilePath);
+	          if (retryResult) {
+	            cycleResult = {
+	              ...retryResult,
+	              switchedFrom: currentFilePath,
+	              switchedTo: resolvedTargetPath,
+	            };
+	          }
+	        }
 
         // IMPORTANT: Keep the existing switchedFrom/switchedTo for the non-error path.
         cycleResult.switchedFrom = cycleResult.switchedFrom ?? currentFilePath;
@@ -663,34 +666,19 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
             skipped: true,
             filePath: undefined,
           };
-        } else {
-          cycleResult = await processFileCycle(currentFilePath, false);
+	        } else {
+	          cycleResult = await processFileCycle(currentFilePath, false);
 
-          // If current file vanished (renamed before sessions.json updated), try reset file.
-          if (cycleResult.error?.includes("file not found") && findRenamed) {
-            const renamedPath = await findRenamed(currentFilePath);
-            if (renamedPath) {
-              const oldState = getFileState(state, currentFilePath);
-              if (oldState && oldState.byteOffset > 0) {
-                updateFileState(state, renamedPath, {
-                  byteOffset: oldState.byteOffset,
-                  lastRunAt: oldState.lastRunAt,
-                  totalEntriesStored: oldState.totalEntriesStored ?? 0,
-                  totalRunCount: oldState.totalRunCount ?? 0,
-                });
-              }
+	          // If current file vanished (renamed before sessions.json updated), try reset file.
+	          if (cycleResult.notFound && !drainedPaths.has(path.resolve(currentFilePath))) {
+	            const retryResult = await drainRenamedFile(currentFilePath);
+	            if (retryResult) {
+	              cycleResult = retryResult;
+	            }
+	          }
 
-              cycleResult = await processFileCycle(renamedPath, true);
-
-              // Clean up state.
-              delete state.files[path.resolve(currentFilePath)];
-              delete state.files[path.resolve(renamedPath)];
-              await resolvedDeps.saveWatchStateFn(state, options.configDir);
-            }
-          }
-
-          cycleResult.filePath = currentFilePath;
-        }
+	          cycleResult.filePath = currentFilePath;
+	        }
       }
 
       cycles += 1;
