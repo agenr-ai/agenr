@@ -1,3 +1,4 @@
+import type { Stats } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -332,6 +333,36 @@ describe("daemon stop", () => {
     expect(calls).toEqual([["print", "gui/501/com.agenr.watch"]]);
   });
 
+  it("bootouts loaded-but-not-running service", async () => {
+    const home = await makeTempDir();
+    const plistPath = path.join(home, "Library", "LaunchAgents", "com.agenr.watch.plist");
+    await fs.mkdir(path.dirname(plistPath), { recursive: true });
+    await fs.writeFile(plistPath, "test", "utf8");
+
+    const calls: string[][] = [];
+    const result = await runDaemonStopCommand(
+      {},
+      {
+        platformFn: () => "darwin",
+        homedirFn: () => home,
+        uidFn: () => 501,
+        execFileFn: vi.fn(async (_file: string, args: string[]) => {
+          calls.push(args);
+          if (args[0] === "print") {
+            return { stdout: "state = stopped\n", stderr: "", exitCode: 0 };
+          }
+          return { stdout: "", stderr: "", exitCode: 0 };
+        }),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(calls).toEqual([
+      ["print", "gui/501/com.agenr.watch"],
+      ["bootout", "gui/501/com.agenr.watch"],
+    ]);
+  });
+
   it("stops via bootout when running", async () => {
     const home = await makeTempDir();
     const plistPath = path.join(home, "Library", "LaunchAgents", "com.agenr.watch.plist");
@@ -389,14 +420,11 @@ describe("daemon restart", () => {
         sleepFn: async () => {},
         execFileFn: vi.fn(async (_file: string, args: string[]) => {
           calls.push(args);
-          if (args[0] === "bootout") {
-            return { stdout: "", stderr: "not loaded", exitCode: 5 };
-          }
           if (args[0] === "print") {
             printCallCount++;
             // Simulate: still loaded on first poll, unloaded on second
             if (printCallCount <= 1) {
-              return { stdout: "state = stopped", stderr: "", exitCode: 0 };
+              return { stdout: "state = running\npid = 123\n", stderr: "", exitCode: 0 };
             }
             return { stdout: "", stderr: "Could not find service", exitCode: 113 };
           }
@@ -410,8 +438,50 @@ describe("daemon restart", () => {
       ["bootout", "gui/501/com.agenr.watch"],
       ["print", "gui/501/com.agenr.watch"],
       ["print", "gui/501/com.agenr.watch"],
+      ["print", "gui/501/com.agenr.watch"],
       ["bootstrap", "gui/501", plistPath],
     ]);
+  });
+
+  it("continues to bootstrap even when daemon never unloads (timeout path)", async () => {
+    const home = await makeTempDir();
+    const plistPath = path.join(home, "Library", "LaunchAgents", "com.agenr.watch.plist");
+    await fs.mkdir(path.dirname(plistPath), { recursive: true });
+    await fs.writeFile(plistPath, "test", "utf8");
+
+    let now = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+
+    const calls: string[][] = [];
+    const sleeps: number[] = [];
+
+    const result = await runDaemonRestartCommand(
+      {},
+      {
+        platformFn: () => "darwin",
+        homedirFn: () => home,
+        uidFn: () => 501,
+        sleepFn: async (ms: number) => {
+          sleeps.push(ms);
+          now += ms;
+        },
+        execFileFn: vi.fn(async (_file: string, args: string[]) => {
+          calls.push(args);
+          if (args[0] === "print") {
+            return { stdout: "state = running\npid = 123\n", stderr: "", exitCode: 0 };
+          }
+          return { stdout: "", stderr: "", exitCode: 0 };
+        }),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(calls[0]).toEqual(["bootout", "gui/501/com.agenr.watch"]);
+    expect(calls[calls.length - 1]).toEqual(["bootstrap", "gui/501", plistPath]);
+
+    const prints = calls.filter((call) => call[0] === "print");
+    expect(prints.length).toBeGreaterThan(1);
+    expect(sleeps.length).toBeGreaterThan(1);
   });
 });
 
@@ -419,9 +489,9 @@ describe("resolveStableNodePath", () => {
   it("returns original path when no version-specific segment detected", async () => {
     const statFn = vi.fn(async () => {
       throw new Error("should not be called");
-    });
+    }) as unknown as typeof fs.stat;
 
-    await expect(resolveStableNodePath("/usr/local/bin/node", statFn as any)).resolves.toBe("/usr/local/bin/node");
+    await expect(resolveStableNodePath("/usr/local/bin/node", statFn)).resolves.toBe("/usr/local/bin/node");
     expect(statFn).not.toHaveBeenCalled();
   });
 
@@ -432,23 +502,23 @@ describe("resolveStableNodePath", () => {
           isFile: () => true,
           isDirectory: () => false,
           mode: 0o755,
-        } as any;
+        } as unknown as Stats;
       }
       throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
-    });
+    }) as unknown as typeof fs.stat;
 
     await expect(
-      resolveStableNodePath("/opt/homebrew/Cellar/node/25.5.0/bin/node", statFn as any),
+      resolveStableNodePath("/opt/homebrew/Cellar/node/25.5.0/bin/node", statFn),
     ).resolves.toBe("/opt/homebrew/bin/node");
   });
 
   it("falls back to original when stable path doesn't exist", async () => {
     const statFn = vi.fn(async () => {
       throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
-    });
+    }) as unknown as typeof fs.stat;
 
     await expect(
-      resolveStableNodePath("/opt/homebrew/Cellar/node/25.5.0/bin/node", statFn as any),
+      resolveStableNodePath("/opt/homebrew/Cellar/node/25.5.0/bin/node", statFn),
     ).resolves.toBe("/opt/homebrew/Cellar/node/25.5.0/bin/node");
   });
 
