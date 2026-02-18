@@ -633,8 +633,9 @@ export function createProgram(): Command {
   program
     .command("health")
     .description("Show database health and forgetting candidates")
-    .action(async () => {
-      const result = await runHealthCommand();
+    .option("--db <path>", "Database path override")
+    .action(async (opts: { db?: string }) => {
+      const result = await runHealthCommand(opts);
       process.exitCode = result.exitCode;
     });
 

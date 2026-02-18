@@ -6,7 +6,7 @@ import { readConfig } from "../config.js";
 import { warnIfLocked } from "../db/lockfile.js";
 import { deduplicateEntries } from "../dedup.js";
 import { closeDb, getDb, initDb } from "../db/client.js";
-import { mapStoredEntry, scoreEntry } from "../db/recall.js";
+import { mapStoredEntry, scoreEntryWithBreakdown } from "../db/recall.js";
 import { estimateEntryTokens } from "../db/session-start.js";
 import { storeEntries } from "../db/store.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
@@ -71,20 +71,18 @@ function truncateContextContent(content: string, max = 200): string {
   return `${content.slice(0, Math.max(0, max - 3))}...`;
 }
 
+const ENTRY_SELECT_COLUMNS = `
+        id, type, subject, canonical_key, content, importance, expiry, scope,
+        platform, project, source_file, source_context, embedding,
+        created_at, updated_at, last_recalled_at, recall_count, confirmations, contradictions, superseded_by
+`;
+
 function toRecallResult(entry: StoredEntry, now: Date): RecallResult {
-  const score = scoreEntry(entry, 1, false, now);
+  const breakdown = scoreEntryWithBreakdown(entry, 1, false, now);
   return {
     entry,
-    score,
-    scores: {
-      vector: 1,
-      recency: 0,
-      importance: 0,
-      recall: 0,
-      freshness: 1,
-      todoPenalty: 1,
-      fts: 0,
-    },
+    score: breakdown.score,
+    scores: breakdown.scores,
   };
 }
 
@@ -174,9 +172,7 @@ export async function writeContextVariants(
   const allRows = await db.execute({
     sql: `
       SELECT
-        id, type, subject, canonical_key, content, importance, expiry, scope,
-        platform, project, source_file, source_context, embedding,
-        created_at, updated_at, last_recalled_at, recall_count, confirmations, contradictions, superseded_by
+${ENTRY_SELECT_COLUMNS}
       FROM entries
       WHERE superseded_by IS NULL
       ORDER BY updated_at DESC
@@ -196,9 +192,7 @@ export async function writeContextVariants(
   const hotRows = await db.execute({
     sql: `
       SELECT
-        id, type, subject, canonical_key, content, importance, expiry, scope,
-        platform, project, source_file, source_context, embedding,
-        created_at, updated_at, last_recalled_at, recall_count, confirmations, contradictions, superseded_by
+${ENTRY_SELECT_COLUMNS}
       FROM entries
       WHERE superseded_by IS NULL
         AND importance >= 7

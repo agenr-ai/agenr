@@ -18,7 +18,7 @@ Stores:
 - `model` — model name for extraction
 - `credentials` — stored API keys (encrypted at rest)
 - `labelProjectMap` — optional mapping from normalized session labels to project names
-- `forgetting` — optional forgetting policy (`protect`, `scoreThreshold`, `maxAgeDays`, `enabled`)
+- `forgetting` — optional forgetting policy (`enabled`, `protect`, `scoreThreshold`, `maxAgeDays`). `enabled` defaults to `true`; when set to `false`, all forgetting behavior is disabled and `protect`/`scoreThreshold`/`maxAgeDays` are ignored.
 
 ### Example (~/.agenr/config.json)
 
@@ -31,20 +31,22 @@ Stores:
 }
 ```
 
-```yaml
-# forgetting:
-#   protect:
-#     - "EJA identity"
-#     - "project-*"
-#   scoreThreshold: 0.05
-#   maxAgeDays: 60
+```json
+{
+  "forgetting": {
+    "enabled": true,
+    "protect": ["EJA identity", "project-*"],
+    "scoreThreshold": 0.05,
+    "maxAgeDays": 60
+  }
+}
 ```
 
 ## Database
 
 Default path: `~/.agenr/knowledge.db`
 
-Override with the `--db <path>` flag on any command that touches the database (`store`, `recall`, `consolidate`, `mcp`, `db stats`, etc.).
+Override with the `--db <path>` flag on any command that touches the database (`store`, `recall`, `consolidate`, `health`, `mcp`, `db stats`, etc.).
 
 The database is a local libsql/SQLite file. Migrations auto-apply on first run (see [Migrations](#migrations)).
 

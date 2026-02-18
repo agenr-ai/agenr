@@ -9,6 +9,12 @@
 - feat(consolidate): `--report` pre-run consolidation stats mode (and report-only behavior with `--dry-run`)
 - feat(watch): `context-mini.md` and `context-hot.md` context variants on watch context refresh
 
+### Fixed
+- fix(health): initialize schema before health queries and support `--db` path override
+- fix(health): reduce scan memory usage by omitting `content` from health stats query
+- fix(consolidate): batch forgetting deletes, reuse assessed candidates, and avoid synchronous full `VACUUM`
+- fix(watch): use real recall score breakdown in generated context variants
+
 ## [0.5.3] - 2026-02-18
 
 ### Added
