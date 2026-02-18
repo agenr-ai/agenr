@@ -24,17 +24,20 @@ export function detectProjectFromCwd(
   },
 ): string | null {
   const resolved = path.resolve(cwd);
-  const home = path.resolve(os.homedir());
+  const homeDir = path.resolve(os.homedir());
 
   if (resolved === path.parse(resolved).root) {
     return null;
   }
-  if (resolved === home) {
+  if (resolved === homeDir) {
     return null;
   }
 
   let current = resolved;
   while (true) {
+    if (current === homeDir) {
+      break;
+    }
     const gitPath = path.join(current, ".git");
     const stat = statFn(gitPath);
     if (stat && (stat.isDirectory() || stat.isFile())) {
@@ -127,8 +130,4 @@ export function buildProjectFilter(params: {
     clause: `AND ${clauses.join(" AND ")}`,
     args,
   };
-}
-
-export function parseProjectItems(input: string | string[] | undefined): string[] {
-  return parseProjectList(input);
 }

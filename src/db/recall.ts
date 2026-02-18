@@ -1,10 +1,10 @@
 import type { Client, InValue, Row } from "@libsql/client";
 import { embed } from "../embeddings/client.js";
 import { buildProjectFilter, parseProjectList } from "../project.js";
+import { DEFAULT_SESSION_CANDIDATE_LIMIT } from "./session-start.js";
 import type { KnowledgePlatform, RecallQuery, RecallResult, Scope, StoredEntry } from "../types.js";
 
 const DEFAULT_VECTOR_CANDIDATE_LIMIT = 50;
-const DEFAULT_SESSION_CANDIDATE_LIMIT = 500;
 const DEFAULT_LIMIT = 10;
 const MILLISECONDS_PER_DAY = 1000 * 60 * 60 * 24;
 
