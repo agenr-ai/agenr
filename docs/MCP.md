@@ -70,13 +70,15 @@ Equivalent shell command:
 OPENAI_API_KEY=your-key-here npx -y agenr mcp
 ```
 
-## Per-Project Databases (Recommended for Coding Agents)
+## Project Scoping (Recommended for Coding Agents)
 
-By default, agenr uses a single global database (`~/.agenr/knowledge.db`). This works well for personal assistants, but coding agents should use a **separate database per project** to avoid cross-project memory pollution.
+By default, agenr uses a single global database (`~/.agenr/knowledge.db`). This works well for personal assistants, but coding agents typically want to avoid cross-project memory pollution (for example, recalling "use pnpm" in a Python repo).
 
-Without per-project scoping, your coding agent might recall "use pnpm" in a Python project, or surface React architecture decisions while working on a Rust codebase.
+agenr supports two approaches:
+- **Project tagging (single DB):** entries have an optional `project` tag (`entries.project`). Use the MCP `project` parameter (or CLI `--project`) to filter reads and keep a single database cleanly scoped.
+- **Per-project databases:** pass `--db` to run MCP against a project-local database (for stricter isolation).
 
-### Manual setup (v0.4)
+### Manual setup (per-project DB)
 
 Pass `--db` to scope the MCP server to a project-local database:
 
@@ -103,9 +105,7 @@ env = { OPENAI_API_KEY = "your-key-here" }
 
 Add `.agenr/knowledge.db` and `.agenr/knowledge.db-*` to your `.gitignore`.
 
-### Coming in v0.5
-
-Automatic project detection: `agenr init` will scaffold a `.agenr/` directory, and the MCP server will auto-detect project root by walking up from the working directory. No manual `--db` flag needed.
+Project tagging and filtering can be used alongside `--db`. For example, teams can share one DB per monorepo while still filtering memories per package.
 
 ## Tool Reference
 
@@ -123,6 +123,7 @@ Parameters:
 - `since` (string, optional): ISO date or relative (`7d`, `24h`, `1m`, `1y`)
 - `threshold` (number, optional, default `0`): minimum score `0.0..1.0`
 - `platform` (string, optional): platform filter (`openclaw`, `claude-code`, `codex`)
+- `project` (string, optional): project filter (comma-separated for multiple: `agenr,openclaw`)
 
 Example call payload:
 
@@ -156,6 +157,7 @@ Store structured entries in the memory DB.
 Parameters:
 - `entries` (array, required)
 - `platform` (string, optional): platform tag applied to all stored entries (`openclaw`, `claude-code`, `codex`)
+- `project` (string, optional): project tag applied to all stored entries (lowercase)
 - Each entry supports:
 - `content` (string, required)
 - `type` (enum, required): `fact|decision|preference|todo|relationship|event|lesson`

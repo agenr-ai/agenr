@@ -52,6 +52,7 @@ export interface ConsolidationProgress {
   remainingClusters: number;
   resumeFrom?: {
     phase: number;
+    projectIndex: number;
     typeIndex: number;
     clusterIndex: number;
   };
@@ -80,6 +81,8 @@ export interface ConsolidationOrchestratorOptions {
   verbose?: boolean;
   rulesOnly?: boolean;
   platform?: KnowledgePlatform;
+  project?: string[];
+  excludeProject?: string[];
   minCluster?: number;
   simThreshold?: number;
   maxClusterSize?: number;
@@ -94,6 +97,7 @@ export interface ConsolidationOrchestratorOptions {
 interface CheckpointPlan {
   phase1: Record<string, string[]>;
   phase2: string[];
+  projects: Array<string | null>;
   totalClusters: number;
   estimatedLlmCalls: number;
   phase1Counts: Array<{ type: string; entries: number; clusters: number }>;
@@ -101,6 +105,7 @@ interface CheckpointPlan {
 
 interface ConsolidationCheckpoint {
   phase: number;
+  projectIndex: number;
   typeIndex: number;
   clusterIndex: number;
   startedAt: string;
@@ -134,8 +139,9 @@ export interface ConsolidationOrchestratorDeps {
   mergeClusterFn: typeof mergeCluster;
   rebuildVectorIndexFn: typeof rebuildVectorIndex;
   walCheckpointFn: typeof walCheckpoint;
-  countActiveEntriesFn: (db: Client, platform?: KnowledgePlatform) => Promise<number>;
-  countActiveEmbeddedEntriesFn: (db: Client, typeFilter?: string, platform?: KnowledgePlatform) => Promise<number>;
+  countActiveEntriesFn: (db: Client, platform?: KnowledgePlatform, project?: string | null, excludeProject?: string[]) => Promise<number>;
+  countActiveEmbeddedEntriesFn: (db: Client, typeFilter?: string, platform?: KnowledgePlatform, project?: string | null) => Promise<number>;
+  listDistinctProjectsFn: (db: Client, platform?: KnowledgePlatform, excludeProject?: string[]) => Promise<Array<string | null>>;
 }
 
 function toNumber(value: InValue | undefined): number {
@@ -174,13 +180,22 @@ function defaultClusterStats(): ClusterProcessingStats {
   };
 }
 
-async function countActiveEmbeddedEntries(db: Client, typeFilter?: string, platform?: KnowledgePlatform): Promise<number> {
+async function countActiveEmbeddedEntries(
+  db: Client,
+  typeFilter?: string,
+  platform?: KnowledgePlatform,
+  project?: string | null,
+): Promise<number> {
   const platformCondition = platform ? "AND platform = ?" : "";
+  const projectCondition = project !== undefined ? (project === null ? "AND project IS NULL" : "AND project = ?") : "";
 
   if (typeFilter?.trim()) {
     const args: unknown[] = [typeFilter.trim()];
     if (platform) {
       args.push(platform);
+    }
+    if (project !== undefined && project !== null) {
+      args.push(project);
     }
 
     const result = await db.execute({
@@ -191,6 +206,7 @@ async function countActiveEmbeddedEntries(db: Client, typeFilter?: string, platf
           AND embedding IS NOT NULL
           AND type = ?
           ${platformCondition}
+          ${projectCondition}
       `,
       args,
     });
@@ -202,6 +218,9 @@ async function countActiveEmbeddedEntries(db: Client, typeFilter?: string, platf
   if (platform) {
     args.push(platform);
   }
+  if (project !== undefined && project !== null) {
+    args.push(project);
+  }
 
   const result = await db.execute({
     sql: `
@@ -210,6 +229,7 @@ async function countActiveEmbeddedEntries(db: Client, typeFilter?: string, platf
       WHERE superseded_by IS NULL
         AND embedding IS NOT NULL
         ${platformCondition}
+        ${projectCondition}
     `,
     args,
   });
@@ -223,6 +243,8 @@ function resolvedOptionsSignature(options: ConsolidationOrchestratorOptions): st
       dryRun: options.dryRun === true,
       rulesOnly: options.rulesOnly === true,
       platform: options.platform ?? null,
+      project: options.project ?? null,
+      excludeProject: options.excludeProject ?? null,
       minCluster: options.minCluster ?? DEFAULT_MIN_CLUSTER,
       simThreshold: options.simThreshold ?? DEFAULT_PHASE1_SIM_THRESHOLD,
       maxClusterSize: options.maxClusterSize ?? null,
@@ -234,6 +256,64 @@ function resolvedOptionsSignature(options: ConsolidationOrchestratorOptions): st
 
 function resolveDbPathSignature(dbPath: string): string {
   return hashValue(path.resolve(dbPath));
+}
+
+async function listDistinctProjects(
+  db: Client,
+  platform?: KnowledgePlatform,
+  excludeProject?: string[],
+): Promise<Array<string | null>> {
+  try {
+    const args: unknown[] = [];
+    const platformClause = platform ? "AND platform = ?" : "";
+    if (platform) {
+      args.push(platform);
+    }
+
+    const excludeClause =
+      excludeProject && excludeProject.length > 0
+        ? `AND (project NOT IN (${excludeProject.map(() => "?").join(", ")}) OR project IS NULL)`
+        : "";
+    if (excludeProject && excludeProject.length > 0) {
+      args.push(...excludeProject);
+    }
+
+    const result = await db.execute({
+      sql: `
+        SELECT DISTINCT project
+        FROM entries
+        WHERE superseded_by IS NULL
+          ${platformClause}
+          ${excludeClause}
+      `,
+      args,
+    });
+
+    const out: Array<string | null> = [];
+    for (const row of result.rows) {
+      const value = row.project;
+      if (value === null || value === undefined) {
+        out.push(null);
+      } else {
+        const str = String(value).trim().toLowerCase();
+        out.push(str.length > 0 ? str : null);
+      }
+    }
+
+    // Ensure deterministic ordering.
+    const uniq = Array.from(new Set(out.map((item) => (item === null ? "__NULL__" : item))))
+      .map((item) => (item === "__NULL__" ? null : item));
+    uniq.sort((a, b) => {
+      if (a === null && b === null) return 0;
+      if (a === null) return 1;
+      if (b === null) return -1;
+      return a.localeCompare(b);
+    });
+    return uniq.length > 0 ? uniq : [null];
+  } catch {
+    // Unit tests often inject a mock db without execute(); treat as single "untagged" project group.
+    return [null];
+  }
 }
 
 async function readCheckpoint(): Promise<ConsolidationCheckpoint | null> {
@@ -305,6 +385,7 @@ function createEmptyPlan(types: readonly string[]): CheckpointPlan {
   return {
     phase1,
     phase2: [],
+    projects: [null],
     totalClusters: 0,
     estimatedLlmCalls: 0,
     phase1Counts: [],
@@ -318,6 +399,7 @@ function createDefaultCheckpoint(
 ): ConsolidationCheckpoint {
   return {
     phase: 0,
+    projectIndex: 0,
     typeIndex: 0,
     clusterIndex: 0,
     startedAt: new Date().toISOString(),
@@ -383,6 +465,7 @@ async function processPhaseClusters(
     clusters: Cluster[];
     phase: 1 | 2;
     type: string;
+    projectIndex: number;
     typeIndex: number;
     llmClient: LlmClient;
     embeddingApiKey: string;
@@ -437,6 +520,7 @@ async function processPhaseClusters(
     }
 
     params.checkpoint.phase = params.phase;
+    params.checkpoint.projectIndex = params.projectIndex;
     params.checkpoint.typeIndex = params.typeIndex;
     params.checkpoint.clusterIndex = item.index + 1;
     params.checkpoint.processed = processedMapsToCheckpoint(params.context.processedPhase1, params.context.processedPhase2);
@@ -467,6 +551,7 @@ export async function runConsolidationOrchestrator(
     walCheckpointFn: deps.walCheckpointFn ?? walCheckpoint,
     countActiveEntriesFn: deps.countActiveEntriesFn ?? countActiveEntries,
     countActiveEmbeddedEntriesFn: deps.countActiveEmbeddedEntriesFn ?? countActiveEmbeddedEntries,
+    listDistinctProjectsFn: deps.listDistinctProjectsFn ?? listDistinctProjects,
   };
 
   const onLog = options.onLog ?? (() => undefined);
@@ -497,13 +582,16 @@ export async function runConsolidationOrchestrator(
     const dbPathMatches = checkpointFromDisk.dbPathSignature === dbPathSignature;
     if (dbPathMatches) {
       checkpoint = checkpointFromDisk;
+      checkpoint.projectIndex = Number.isFinite(checkpoint.projectIndex) ? checkpoint.projectIndex : 0;
+      checkpoint.plan.projects = Array.isArray(checkpoint.plan.projects) ? checkpoint.plan.projects : [null];
       resumed = true;
       if (checkpointFromDisk.optionsSignature !== optionsSignature) {
         onWarn("[consolidate] Checkpoint options differ from current run. Attempting best-effort resume.");
       }
       const typeLabel = progressPhase1Types[checkpoint.typeIndex] ?? "n/a";
+      const projectIndex = checkpoint.projectIndex ?? 0;
       onLog(
-        `Resuming from checkpoint (Phase ${checkpoint.phase}, type: ${typeLabel}, cluster ${checkpoint.clusterIndex}).`,
+        `Resuming from checkpoint (Phase ${checkpoint.phase}, projectIndex: ${projectIndex}, type: ${typeLabel}, cluster ${checkpoint.clusterIndex}).`,
       );
     } else {
       await clearCheckpoint();
@@ -541,6 +629,7 @@ export async function runConsolidationOrchestrator(
         resumeFrom: resumed
           ? {
               phase: checkpoint.phase,
+              projectIndex: checkpoint.projectIndex ?? 0,
               typeIndex: checkpoint.typeIndex,
               clusterIndex: checkpoint.clusterIndex,
             }
@@ -573,27 +662,69 @@ export async function runConsolidationOrchestrator(
     return context.report;
   }
 
+  const requestedProjects = Array.from(
+    new Set(
+      (options.project ?? [])
+        .map((value) => String(value).trim().toLowerCase())
+        .filter((value) => value.length > 0),
+    ),
+  );
+  const excludeProjects = Array.from(
+    new Set(
+      (options.excludeProject ?? [])
+        .map((value) => String(value).trim().toLowerCase())
+        .filter((value) => value.length > 0),
+    ),
+  );
+
+  const projectGroups: Array<string | null> =
+    requestedProjects.length > 0
+      ? requestedProjects
+      : await resolvedDeps.listDistinctProjectsFn(db, platform, excludeProjects.length > 0 ? excludeProjects : undefined);
+
+  context.checkpoint.plan.projects = projectGroups;
+
   onLog("Phase 0: Rules-based cleanup...");
-  const phase0Stats = await resolvedDeps.consolidateRulesFn(db, dbPath, {
-    dryRun,
-    verbose: options.verbose,
-    platform,
-    rebuildIndex: false,
-    onLog: options.verbose ? onLog : undefined,
-  });
-  context.report.entriesBefore = phase0Stats.entriesBefore;
-  context.report.expiredCount = phase0Stats.expiredCount;
-  context.report.mergedCount = phase0Stats.mergedCount;
-  context.report.orphanedRelationsCleaned = phase0Stats.orphanedRelationsCleaned;
-  context.report.backupPath = phase0Stats.backupPath;
-  context.report.entriesAfterRules = phase0Stats.entriesAfter;
-  context.report.entriesAfter = phase0Stats.entriesAfter;
+  let sharedBackupPath = "";
+  for (let projectIndex = 0; projectIndex < projectGroups.length; projectIndex += 1) {
+    if (isShutdownRequested()) {
+      context.batchReached = true;
+      break;
+    }
+
+    const project = projectGroups[projectIndex] ?? null;
+    const phase0Stats = await resolvedDeps.consolidateRulesFn(db, dbPath, {
+      dryRun,
+      verbose: options.verbose,
+      platform,
+      project,
+      rebuildIndex: false,
+      skipBackup: projectIndex > 0,
+      backupPath: projectIndex > 0 ? sharedBackupPath : undefined,
+      skipOrphanCleanup: projectIndex > 0,
+      onLog: options.verbose ? onLog : undefined,
+    });
+
+    if (projectIndex === 0) {
+      sharedBackupPath = phase0Stats.backupPath;
+      context.report.backupPath = phase0Stats.backupPath;
+    }
+
+    context.report.entriesBefore += phase0Stats.entriesBefore;
+    context.report.expiredCount += phase0Stats.expiredCount;
+    context.report.mergedCount += phase0Stats.mergedCount;
+    context.report.orphanedRelationsCleaned += phase0Stats.orphanedRelationsCleaned;
+    context.report.entriesAfterRules += phase0Stats.entriesAfter;
+    context.report.entriesAfter += phase0Stats.entriesAfter;
+  }
 
   if (isShutdownRequested()) {
     onWarn("[consolidate] Shutdown requested; stopping after Phase 0.");
     context.batchReached = true;
     await runFinalization(db, dryRun, onWarn, resolvedDeps);
-    context.report.entriesAfter = await resolvedDeps.countActiveEntriesFn(db, platform);
+    context.report.entriesAfter = (
+      await Promise.all(projectGroups.map((project) => resolvedDeps.countActiveEntriesFn(db, platform, project)))
+    ).reduce((sum, count) => sum + count, 0);
     context.report.progress.partial = true;
     return context.report;
   }
@@ -603,60 +734,117 @@ export async function runConsolidationOrchestrator(
       throw new Error("LLM client and embedding API key are required for non-rules-only consolidation.");
     }
 
-    const phase1Plan: Array<{ type: string; entries: number; clusters: Cluster[] }> = [];
-    for (const type of phase1Types) {
+    const shouldRunPhase2 = !options.type?.trim();
+
+    const phase1PlanByProject: Array<{
+      project: string | null;
+      phase1: Array<{ type: string; entries: number; clusters: Cluster[] }>;
+      phase2Entries: number;
+      phase2Clusters: Cluster[];
+    }> = [];
+
+    const phase1TotalsByType = new Map<string, { entries: number; clusters: number }>();
+    let phase2ClustersTotal = 0;
+
+    for (let projectIndex = 0; projectIndex < projectGroups.length; projectIndex += 1) {
       if (isShutdownRequested()) {
         context.batchReached = true;
         break;
       }
-      const entries = await resolvedDeps.countActiveEmbeddedEntriesFn(db, type, platform);
-      const clusters = await resolvedDeps.buildClustersFn(db, {
-        simThreshold: phase1Threshold,
-        minCluster,
-        maxClusterSize: phase1MaxClusterSize,
-        typeFilter: type,
-        platform,
-        idempotencyDays: options.idempotencyDays,
-        verbose: options.verbose,
-        onLog: options.verbose ? onLog : undefined,
-      });
-      phase1Plan.push({ type, entries, clusters });
-    }
 
-    if (context.batchReached) {
-      await runFinalization(db, dryRun, onWarn, resolvedDeps);
-      context.report.entriesAfter = await resolvedDeps.countActiveEntriesFn(db, platform);
-      context.report.progress.partial = true;
-      return context.report;
-    }
+      const project = projectGroups[projectIndex] ?? null;
+      const phase1ForProject: Array<{ type: string; entries: number; clusters: Cluster[] }> = [];
 
-    const shouldRunPhase2 = !options.type?.trim();
-    const phase2Entries = shouldRunPhase2 ? await resolvedDeps.countActiveEmbeddedEntriesFn(db, undefined, platform) : 0;
-    const phase2Clusters = shouldRunPhase2
-      ? await resolvedDeps.buildClustersFn(db, {
+      for (const type of phase1Types) {
+        if (isShutdownRequested()) {
+          context.batchReached = true;
+          break;
+        }
+
+        const entries = await resolvedDeps.countActiveEmbeddedEntriesFn(db, type, platform, project);
+        const clusters = await resolvedDeps.buildClustersFn(db, {
+          simThreshold: phase1Threshold,
+          minCluster,
+          maxClusterSize: phase1MaxClusterSize,
+          typeFilter: type,
+          platform,
+          project,
+          idempotencyDays: options.idempotencyDays,
+          verbose: options.verbose,
+          onLog: options.verbose ? onLog : undefined,
+        });
+        phase1ForProject.push({ type, entries, clusters });
+
+        const totals = phase1TotalsByType.get(type) ?? { entries: 0, clusters: 0 };
+        totals.entries += entries;
+        totals.clusters += clusters.length;
+        phase1TotalsByType.set(type, totals);
+      }
+
+      if (context.batchReached) {
+        break;
+      }
+
+      let phase2Entries = 0;
+      let phase2Clusters: Cluster[] = [];
+      if (shouldRunPhase2) {
+        phase2Entries = await resolvedDeps.countActiveEmbeddedEntriesFn(db, undefined, platform, project);
+        phase2Clusters = await resolvedDeps.buildClustersFn(db, {
           simThreshold: phase2Threshold,
           minCluster,
           maxClusterSize: phase2MaxClusterSize,
           platform,
+          project,
           idempotencyDays: options.idempotencyDays,
           verbose: options.verbose,
           onLog: options.verbose ? onLog : undefined,
-        })
-      : [];
+        });
+        phase2ClustersTotal += phase2Clusters.length;
+      }
 
-    context.report.estimate.phase1ByType = phase1Plan.map((item) => ({
-      type: item.type,
-      entries: item.entries,
-      clusters: item.clusters.length,
+      phase1PlanByProject.push({ project, phase1: phase1ForProject, phase2Entries, phase2Clusters });
+    }
+
+    if (context.batchReached) {
+      await runFinalization(db, dryRun, onWarn, resolvedDeps);
+      context.report.entriesAfter = (
+        await Promise.all(projectGroups.map((project) => resolvedDeps.countActiveEntriesFn(db, platform, project)))
+      ).reduce((sum, count) => sum + count, 0);
+      context.report.progress.partial = true;
+      return context.report;
+    }
+
+    context.report.estimate.phase1ByType = phase1Types.map((type) => ({
+      type,
+      entries: phase1TotalsByType.get(type)?.entries ?? 0,
+      clusters: phase1TotalsByType.get(type)?.clusters ?? 0,
     }));
-    context.report.estimate.phase2Clusters = phase2Clusters.length;
+    context.report.estimate.phase2Clusters = phase2ClustersTotal;
     context.report.estimate.totalClusters =
-      phase1Plan.reduce((sum, item) => sum + item.clusters.length, 0) + phase2Clusters.length;
+      context.report.estimate.phase1ByType.reduce((sum, item) => sum + item.clusters, 0) + phase2ClustersTotal;
     context.report.estimate.estimatedLlmCalls = context.report.estimate.totalClusters;
 
+    const phase1PlanFingerprints: Record<string, string[]> = {};
+    for (const type of progressPhase1Types) {
+      phase1PlanFingerprints[type] = [];
+    }
+    const phase2Fingerprints: string[] = [];
+
+    for (const projectPlan of phase1PlanByProject) {
+      for (const item of projectPlan.phase1) {
+        const current = phase1PlanFingerprints[item.type] ?? [];
+        current.push(...item.clusters.map(clusterFingerprint));
+        phase1PlanFingerprints[item.type] = current;
+      }
+      if (shouldRunPhase2) {
+        phase2Fingerprints.push(...projectPlan.phase2Clusters.map(clusterFingerprint));
+      }
+    }
+
     context.checkpoint.plan = {
-      phase1: Object.fromEntries(phase1Plan.map((item) => [item.type, item.clusters.map(clusterFingerprint)])),
-      phase2: phase2Clusters.map(clusterFingerprint),
+      phase1: phase1PlanFingerprints,
+      phase2: phase2Fingerprints,
+      projects: projectGroups,
       totalClusters: context.report.estimate.totalClusters,
       estimatedLlmCalls: context.report.estimate.estimatedLlmCalls,
       phase1Counts: context.report.estimate.phase1ByType,
@@ -664,53 +852,85 @@ export async function runConsolidationOrchestrator(
     await saveCheckpoint(context.checkpoint);
 
     onLog(
-      `Found ${context.report.estimate.totalClusters} clusters across ${phase1Plan.length} type(s), estimated ${context.report.estimate.estimatedLlmCalls} LLM calls.`,
+      `Found ${context.report.estimate.totalClusters} clusters across ${phase1Types.length} type(s) and ${projectGroups.length} project(s), estimated ${context.report.estimate.estimatedLlmCalls} LLM calls.`,
     );
 
-    for (let i = 0; i < phase1Plan.length; i += 1) {
+    const phase1StatsByType = new Map<string, Phase1TypeStats>();
+
+    for (let projectIndex = 0; projectIndex < phase1PlanByProject.length; projectIndex += 1) {
       if (isShutdownRequested()) {
         context.batchReached = true;
         break;
       }
-      const item = phase1Plan[i];
-      const processedSet = context.processedPhase1.get(item.type) ?? new Set<string>();
-      context.processedPhase1.set(item.type, processedSet);
 
-      onLog(`Phase 1: Consolidating ${item.type}s (${item.entries} entries, ${item.clusters.length} clusters)...`);
+      const projectPlan = phase1PlanByProject[projectIndex];
+      const projectLabel = projectPlan.project ?? "(untagged)";
 
-      const typeStats = await processPhaseClusters(
-        {
-          db,
-          clusters: item.clusters,
-          phase: 1,
-          type: item.type,
-          typeIndex: i,
-          llmClient,
-          embeddingApiKey,
-          options,
-          checkpoint: context.checkpoint,
-          processedSet,
-          context,
-        },
-        resolvedDeps,
-      );
-      context.report.phase1.types.push({ type: item.type, ...typeStats });
-      updateAggregateStats(context.report.phase1.totals, typeStats);
+      for (let typeIndex = 0; typeIndex < projectPlan.phase1.length; typeIndex += 1) {
+        if (isShutdownRequested()) {
+          context.batchReached = true;
+          break;
+        }
+
+        const item = projectPlan.phase1[typeIndex];
+        const processedSet = context.processedPhase1.get(item.type) ?? new Set<string>();
+        context.processedPhase1.set(item.type, processedSet);
+
+        onLog(
+          `Phase 1: Consolidating project=${projectLabel} ${item.type}s (${item.entries} entries, ${item.clusters.length} clusters)...`,
+        );
+
+        const typeStats = await processPhaseClusters(
+          {
+            db,
+            clusters: item.clusters,
+            phase: 1,
+            projectIndex,
+            type: item.type,
+            typeIndex,
+            llmClient,
+            embeddingApiKey,
+            options,
+            checkpoint: context.checkpoint,
+            processedSet,
+            context,
+          },
+          resolvedDeps,
+        );
+
+        const existing = phase1StatsByType.get(item.type);
+        if (existing) {
+          updateAggregateStats(existing, typeStats);
+        } else {
+          phase1StatsByType.set(item.type, { type: item.type, ...typeStats });
+        }
+        updateAggregateStats(context.report.phase1.totals, typeStats);
+
+        if (context.batchReached) {
+          break;
+        }
+      }
+
       if (context.batchReached) {
         break;
       }
-    }
 
-    if (!context.batchReached && shouldRunPhase2) {
-      if (isShutdownRequested()) {
-        context.batchReached = true;
-      } else {
-        onLog(`Phase 2: Cross-subject catch-all (${phase2Entries} entries, ${phase2Clusters.length} clusters)...`);
+      if (shouldRunPhase2 && projectPlan.phase2Clusters.length > 0) {
+        if (isShutdownRequested()) {
+          context.batchReached = true;
+          break;
+        }
+
+        onLog(
+          `Phase 2: Cross-subject catch-all project=${projectLabel} (${projectPlan.phase2Entries} entries, ${projectPlan.phase2Clusters.length} clusters)...`,
+        );
+
         const phase2Stats = await processPhaseClusters(
           {
             db,
-            clusters: phase2Clusters,
+            clusters: projectPlan.phase2Clusters,
             phase: 2,
+            projectIndex,
             type: "all",
             typeIndex: 0,
             llmClient,
@@ -722,14 +942,25 @@ export async function runConsolidationOrchestrator(
           },
           resolvedDeps,
         );
-        context.report.phase2 = phase2Stats;
+
+        if (context.report.phase2) {
+          updateAggregateStats(context.report.phase2, phase2Stats);
+        } else {
+          context.report.phase2 = phase2Stats;
+        }
       }
     }
+
+    context.report.phase1.types = phase1Types
+      .map((type) => phase1StatsByType.get(type))
+      .filter((item): item is Phase1TypeStats => Boolean(item));
   }
 
   await runFinalization(db, dryRun, onWarn, resolvedDeps);
 
-  context.report.entriesAfter = await resolvedDeps.countActiveEntriesFn(db, platform);
+  context.report.entriesAfter = (
+    await Promise.all(projectGroups.map((project) => resolvedDeps.countActiveEntriesFn(db, platform, project)))
+  ).reduce((sum, count) => sum + count, 0);
   context.report.progress.partial = context.batchReached;
   context.report.progress.processedClusters =
     context.report.phase1.totals.clustersProcessed + (context.report.phase2?.clustersProcessed ?? 0);

@@ -148,6 +148,18 @@ describe("db command", () => {
     expect(stats.byPlatform.some((row) => row.platform === "(untagged)" && row.count === 1)).toBe(true);
   });
 
+  it("reports project breakdown in stats", async () => {
+    const client = createTestClient();
+    await initDb(client);
+    await seedEntry(client, { id: "a", type: "fact", subject: "Jim", content: "A", tag: "alpha" });
+    await seedEntry(client, { id: "b", type: "decision", subject: "Jim", content: "B", tag: "beta" });
+    await client.execute({ sql: "UPDATE entries SET project = ? WHERE id = ?", args: ["agenr", "a"] });
+
+    const stats = await runDbStatsCommand({}, makeDeps(client));
+    expect(stats.byProject.some((row) => row.project === "agenr" && row.count === 1)).toBe(true);
+    expect(stats.byProject.some((row) => row.project === "(untagged)" && row.count === 1)).toBe(true);
+  });
+
   it("db stats supports --platform filter", async () => {
     const client = createTestClient();
     await initDb(client);
@@ -169,6 +181,26 @@ describe("db command", () => {
       ]),
     );
     expect(stats.topTags).toEqual([{ tag: "openclaw-tag", count: 1 }]);
+  });
+
+  it("db stats supports --project filter (includes NULL entries by default)", async () => {
+    const client = createTestClient();
+    await initDb(client);
+    await seedEntry(client, { id: "agenr-1", type: "fact", subject: "Jim", content: "Agenr", tag: "agenr-tag" });
+    await seedEntry(client, { id: "openclaw-1", type: "fact", subject: "Jim", content: "OpenClaw", tag: "openclaw-tag" });
+    await seedEntry(client, { id: "untagged-1", type: "fact", subject: "Jim", content: "Untagged", tag: "untagged-tag" });
+    await client.execute({ sql: "UPDATE entries SET project = ? WHERE id = ?", args: ["agenr", "agenr-1"] });
+    await client.execute({ sql: "UPDATE entries SET project = ? WHERE id = ?", args: ["openclaw", "openclaw-1"] });
+
+    const stats = await runDbStatsCommand({ project: "agenr" }, makeDeps(client));
+    expect(stats.total).toBe(2);
+    expect(stats.byType).toEqual([{ type: "fact", count: 2 }]);
+    expect(stats.topTags).toEqual(
+      expect.arrayContaining([
+        { tag: "agenr-tag", count: 1 },
+        { tag: "untagged-tag", count: 1 },
+      ]),
+    );
   });
 
   it("reports zero stats for empty database", async () => {

@@ -3,6 +3,7 @@ export interface ActiveEmbeddedEntry {
   type: string;
   subject: string;
   content: string;
+  project?: string | null;
   embedding: number[];
   importance?: number;
   confirmations: number;

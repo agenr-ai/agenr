@@ -209,6 +209,48 @@ describe("context command", () => {
     expect(call?.[1]?.query?.platform).toBe("codex");
   });
 
+  it("passes --project into session-start recall when provided", async () => {
+    const sessionStartRecallFn = vi.fn(async () => ({ results: [], budgetUsed: 0 }));
+    await runContextCommand(
+      { output: "/tmp/agenr-context-test.md", quiet: true, project: "agenr,openclaw" },
+      {
+        readConfigFn: vi.fn(() => ({ db: { path: ":memory:" } })),
+        getDbFn: vi.fn(() => ({}) as any),
+        initDbFn: vi.fn(async () => undefined),
+        closeDbFn: vi.fn(() => undefined),
+        sessionStartRecallFn: sessionStartRecallFn as any,
+        mkdirFn: vi.fn(async () => undefined) as any,
+        writeFileFn: vi.fn(async () => undefined) as any,
+        renameFn: vi.fn(async () => undefined) as any,
+        nowFn: () => new Date("2026-02-17T00:00:00.000Z"),
+      },
+    );
+
+    const call = (sessionStartRecallFn.mock.calls as any[][])[0] as any[] | undefined;
+    expect(call?.[1]?.query?.project).toEqual(["agenr", "openclaw"]);
+  });
+
+  it("sets projectStrict when --strict is used with --project", async () => {
+    const sessionStartRecallFn = vi.fn(async () => ({ results: [], budgetUsed: 0 }));
+    await runContextCommand(
+      { output: "/tmp/agenr-context-test.md", quiet: true, project: "agenr", strict: true },
+      {
+        readConfigFn: vi.fn(() => ({ db: { path: ":memory:" } })),
+        getDbFn: vi.fn(() => ({}) as any),
+        initDbFn: vi.fn(async () => undefined),
+        closeDbFn: vi.fn(() => undefined),
+        sessionStartRecallFn: sessionStartRecallFn as any,
+        mkdirFn: vi.fn(async () => undefined) as any,
+        writeFileFn: vi.fn(async () => undefined) as any,
+        renameFn: vi.fn(async () => undefined) as any,
+        nowFn: () => new Date("2026-02-17T00:00:00.000Z"),
+      },
+    );
+
+    const call = (sessionStartRecallFn.mock.calls as any[][])[0] as any[] | undefined;
+    expect(call?.[1]?.query?.projectStrict).toBe(true);
+  });
+
   it("works with an empty DB (no entries, no error)", async () => {
     const dir = await makeTempDir();
     const outPath = path.join(dir, "CONTEXT.md");

@@ -20,6 +20,7 @@ export interface ClusterOptions {
   idempotencyDays?: number;
   neighborLimit?: number;
   platform?: KnowledgePlatform;
+  project?: string | null;
   verbose?: boolean;
   onLog?: (message: string) => void;
 }
@@ -86,11 +87,15 @@ function mapActiveEmbeddedEntry(row: Record<string, InValue | undefined>): Activ
     return null;
   }
 
+  const projectRaw = toStringValue(row.project);
+  const project = projectRaw.trim().length > 0 ? projectRaw.trim().toLowerCase() : null;
+
   return {
     id,
     type: toStringValue(row.type),
     subject: toStringValue(row.subject),
     content: toStringValue(row.content),
+    project,
     importance: Number.isFinite(toNumber(row.importance)) ? toNumber(row.importance) : 5,
     embedding,
     confirmations: Number.isFinite(toNumber(row.confirmations)) ? toNumber(row.confirmations) : 0,
@@ -120,21 +125,27 @@ export async function buildClusters(db: Client, options: ClusterOptions = {}): P
   const neighborLimit = Math.max(2, options.neighborLimit ?? DEFAULT_NEIGHBOR_LIMIT);
   const typeFilter = options.typeFilter?.trim();
   const platform = options.platform;
+  const project = options.project;
   const onLog = options.onLog ?? (() => undefined);
 
   const args: unknown[] = [];
   if (platform) {
     args.push(platform);
   }
+  const projectCondition = project !== undefined ? (project === null ? "AND project IS NULL" : "AND project = ?") : "";
+  if (project !== undefined && project !== null) {
+    args.push(project);
+  }
 
   const result = await db.execute({
     sql: `
-    SELECT id, type, subject, content, importance, embedding, confirmations,
+    SELECT id, type, subject, content, project, importance, embedding, confirmations,
            recall_count, created_at, merged_from, consolidated_at
     FROM entries
     WHERE superseded_by IS NULL
       AND embedding IS NOT NULL
       ${platform ? "AND platform = ?" : ""}
+      ${projectCondition}
     `,
     args,
   });

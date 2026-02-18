@@ -115,6 +115,8 @@ function mapStoredEntry(row: Row, tags: string[]): StoredEntry {
   const importance = Number.isFinite(importanceRaw) ? Math.min(10, Math.max(1, Math.round(importanceRaw))) : 5;
   const platformRaw = toStringValue(row.platform);
   const platform = platformRaw.trim().length > 0 ? platformRaw : undefined;
+  const projectRaw = toStringValue(row.project);
+  const project = projectRaw.trim().length > 0 ? projectRaw.trim().toLowerCase() : undefined;
 
   return {
     id: toStringValue(row.id),
@@ -125,6 +127,7 @@ function mapStoredEntry(row: Row, tags: string[]): StoredEntry {
     expiry: toStringValue(row.expiry) as StoredEntry["expiry"],
     scope: scope as StoredEntry["scope"],
     ...(platform ? { platform: platform as KnowledgePlatform } : {}),
+    ...(project ? { project } : {}),
     tags,
     source: {
       file: toStringValue(row.source_file),
@@ -385,13 +388,86 @@ export function shapeRecallText(text: string, context: string | undefined): stri
   return `[topic: ${topic}] ${trimmedText}`;
 }
 
+function parseProjectValues(value: string | string[] | undefined): string[] {
+  if (!value) {
+    return [];
+  }
+
+  const raw = Array.isArray(value) ? value : [value];
+  const expanded = raw.flatMap((item) =>
+    String(item)
+      .split(",")
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0),
+  );
+
+  return Array.from(new Set(expanded.map((item) => item.toLowerCase()).filter((item) => item.length > 0)));
+}
+
+function buildInList(values: string[]): { placeholders: string; args: string[] } {
+  const unique = Array.from(new Set(values.map((value) => value.trim().toLowerCase()).filter((v) => v.length > 0)));
+  return {
+    placeholders: unique.map(() => "?").join(", "),
+    args: unique,
+  };
+}
+
+function buildProjectSql(params: {
+  column: string;
+  include?: string[];
+  exclude?: string[];
+  strict?: boolean;
+}): { clause: string; args: unknown[] } {
+  const include = params.include ?? [];
+  const exclude = params.exclude ?? [];
+  const args: unknown[] = [];
+  const clauses: string[] = [];
+
+  if (include.length > 0) {
+    const { placeholders, args: includeArgs } = buildInList(include);
+    args.push(...includeArgs);
+    if (params.strict) {
+      clauses.push(`${params.column} IN (${placeholders})`);
+    } else {
+      clauses.push(`(${params.column} IN (${placeholders}) OR ${params.column} IS NULL)`);
+    }
+  }
+
+  if (exclude.length > 0) {
+    const { placeholders, args: excludeArgs } = buildInList(exclude);
+    args.push(...excludeArgs);
+    clauses.push(`(${params.column} NOT IN (${placeholders}) OR ${params.column} IS NULL)`);
+  }
+
+  if (clauses.length === 0) {
+    return { clause: "", args: [] };
+  }
+
+  return {
+    clause: `AND ${clauses.join(" AND ")}`,
+    args,
+  };
+}
+
 async function fetchVectorCandidates(
   db: Client,
   queryEmbedding: number[],
   limit: number,
   platform?: KnowledgePlatform,
+  project?: string | string[],
+  excludeProject?: string | string[],
+  projectStrict?: boolean,
 ): Promise<CandidateRow[]> {
-  const args: unknown[] = [JSON.stringify(queryEmbedding), limit];
+  const normalizedProject = parseProjectValues(project);
+  const normalizedExclude = parseProjectValues(excludeProject);
+  const projectSql = buildProjectSql({
+    column: "e.project",
+    include: normalizedProject,
+    exclude: normalizedExclude,
+    strict: Boolean(projectStrict && normalizedProject.length > 0),
+  });
+
+  const args: unknown[] = [JSON.stringify(queryEmbedding), limit, ...projectSql.args];
   if (platform) {
     args.push(platform);
   }
@@ -407,6 +483,7 @@ async function fetchVectorCandidates(
         e.expiry,
         e.scope,
         e.platform,
+        e.project,
         e.source_file,
         e.source_context,
         e.embedding,
@@ -421,6 +498,7 @@ async function fetchVectorCandidates(
       CROSS JOIN entries AS e ON e.rowid = v.id
       WHERE e.embedding IS NOT NULL
         AND e.superseded_by IS NULL
+        ${projectSql.clause}
         ${platform ? "AND e.platform = ?" : ""}
     `,
     args,
@@ -440,11 +518,28 @@ async function fetchVectorCandidates(
   });
 }
 
-async function fetchSessionCandidates(db: Client, limit: number, platform?: KnowledgePlatform): Promise<CandidateRow[]> {
-  const args: unknown[] = [limit];
+async function fetchSessionCandidates(
+  db: Client,
+  limit: number,
+  platform?: KnowledgePlatform,
+  project?: string | string[],
+  excludeProject?: string | string[],
+  projectStrict?: boolean,
+): Promise<CandidateRow[]> {
+  const normalizedProject = parseProjectValues(project);
+  const normalizedExclude = parseProjectValues(excludeProject);
+  const projectSql = buildProjectSql({
+    column: "project",
+    include: normalizedProject,
+    exclude: normalizedExclude,
+    strict: Boolean(projectStrict && normalizedProject.length > 0),
+  });
+
+  const args: unknown[] = [...projectSql.args];
   if (platform) {
-    args.unshift(platform);
+    args.push(platform);
   }
+  args.push(limit);
 
   const result = await db.execute({
     sql: `
@@ -457,6 +552,7 @@ async function fetchSessionCandidates(db: Client, limit: number, platform?: Know
         expiry,
         scope,
         platform,
+        project,
         source_file,
         source_context,
         embedding,
@@ -469,6 +565,7 @@ async function fetchSessionCandidates(db: Client, limit: number, platform?: Know
         superseded_by
       FROM entries
       WHERE superseded_by IS NULL
+        ${projectSql.clause}
         ${platform ? "AND platform = ?" : ""}
       ORDER BY updated_at DESC
       LIMIT ?
@@ -488,13 +585,29 @@ async function fetchSessionCandidates(db: Client, limit: number, platform?: Know
   });
 }
 
-async function runFts(db: Client, text: string, platform?: KnowledgePlatform): Promise<Set<string>> {
+async function runFts(
+  db: Client,
+  text: string,
+  platform?: KnowledgePlatform,
+  project?: string | string[],
+  excludeProject?: string | string[],
+  projectStrict?: boolean,
+): Promise<Set<string>> {
   if (!text.trim()) {
     return new Set();
   }
 
   try {
-    const args: unknown[] = [text];
+    const normalizedProject = parseProjectValues(project);
+    const normalizedExclude = parseProjectValues(excludeProject);
+    const projectSql = buildProjectSql({
+      column: "e.project",
+      include: normalizedProject,
+      exclude: normalizedExclude,
+      strict: Boolean(projectStrict && normalizedProject.length > 0),
+    });
+
+    const args: unknown[] = [text, ...projectSql.args];
     if (platform) {
       args.push(platform);
     }
@@ -506,6 +619,7 @@ async function runFts(db: Client, text: string, platform?: KnowledgePlatform): P
         JOIN entries AS e ON e.rowid = entries_fts.rowid
         WHERE entries_fts MATCH ?
           AND e.superseded_by IS NULL
+          ${projectSql.clause}
           ${platform ? "AND e.platform = ?" : ""}
         LIMIT 250
       `,
@@ -562,6 +676,9 @@ export async function recall(
   const text = query.text?.trim() ?? "";
   const context = query.context?.trim() ?? "default";
   const platform = query.platform;
+  const project = query.project;
+  const excludeProject = query.excludeProject;
+  const projectStrict = query.projectStrict === true;
 
   if (!text && context !== "session-start") {
     throw new Error("Query text is required unless --context session-start is used.");
@@ -591,9 +708,19 @@ export async function recall(
       queryEmbedding,
       options.vectorCandidateLimit ?? DEFAULT_VECTOR_CANDIDATE_LIMIT,
       platform,
+      project,
+      excludeProject,
+      projectStrict,
     );
   } else {
-    candidates = await fetchSessionCandidates(db, options.sessionCandidateLimit ?? DEFAULT_SESSION_CANDIDATE_LIMIT, platform);
+    candidates = await fetchSessionCandidates(
+      db,
+      options.sessionCandidateLimit ?? DEFAULT_SESSION_CANDIDATE_LIMIT,
+      platform,
+      project,
+      excludeProject,
+      projectStrict,
+    );
   }
 
   const filtered = candidates.filter((candidate) =>
@@ -604,7 +731,10 @@ export async function recall(
     return [];
   }
 
-  const ftsMatches = text && !query.noBoost ? await runFts(db, effectiveText, platform) : new Set<string>();
+  const ftsMatches =
+    text && !query.noBoost
+      ? await runFts(db, effectiveText, platform, project, excludeProject, projectStrict)
+      : new Set<string>();
 
   const scored: RecallResult[] = filtered.map((candidate) => {
     const ftsMatch = ftsMatches.has(candidate.entry.id);

@@ -40,6 +40,8 @@ function makeDeps(overrides?: Record<string, unknown>): any {
   const saveSnapshots: WatchState[] = [];
   const statFileFn = vi.fn(async () => ({ size: 0, isFile: () => true })) as any;
   const readFileFn = vi.fn(async () => Buffer.alloc(0));
+  const readFileHeadFn = vi.fn(async () => Buffer.alloc(0));
+  const detectProjectFn = vi.fn((_cwd: string) => null);
   const parseTranscriptFileFn = vi.fn(async () => ({
     file: "/tmp/delta.txt",
     messages: [],
@@ -101,6 +103,8 @@ function makeDeps(overrides?: Record<string, unknown>): any {
     }),
     statFileFn,
     readFileFn,
+    readFileHeadFn,
+    detectProjectFn,
     mkdtempFn: vi.fn(async () => "/tmp/agenr-watch-test"),
     writeFileFn: vi.fn(async () => undefined),
     rmFn: vi.fn(async () => undefined),
@@ -121,6 +125,105 @@ afterEach(() => {
 });
 
 describe("watcher", () => {
+  it("auto-detects project from transcript cwd and caches it per file path", async () => {
+    const filePath = "/tmp/watch.jsonl";
+    let cycles = 0;
+
+    const statFileFn = vi
+      .fn()
+      .mockResolvedValueOnce({ size: 30, isFile: () => true })
+      .mockResolvedValueOnce({ size: 60, isFile: () => true })
+      .mockResolvedValue({ size: 60, isFile: () => true });
+
+    const readFileFn = vi.fn(async (_target: string, offset: number) => {
+      if (offset === 0) {
+        return Buffer.from("012345678901234567890123456789");
+      }
+      if (offset === 30) {
+        return Buffer.from("abcdefghijklmnopqrstuvwxyz1234");
+      }
+      return Buffer.alloc(0);
+    });
+
+    const readFileHeadFn = vi.fn(async () => Buffer.from(`{"cwd":"/Users/jmartin/Code/agenr"}\n`));
+    const detectProjectFn = vi.fn(() => "agenr");
+
+    const parseTranscriptFileFn = vi.fn(async (target: string) => {
+      if (target.includes("head")) {
+        return {
+          file: target,
+          messages: [],
+          chunks: [],
+          warnings: [],
+          metadata: { cwd: "/Users/jmartin/Code/agenr" },
+        };
+      }
+
+      return {
+        file: target,
+        messages: [],
+        chunks: [
+          {
+            chunk_index: 0,
+            message_start: 0,
+            message_end: 0,
+            text: "chunk text",
+            context_hint: "ctx",
+          },
+        ],
+        warnings: [],
+      };
+    });
+
+    const storedEntries: KnowledgeEntry[] = [];
+    const storeEntriesFn = vi.fn(async (_db: unknown, entries: KnowledgeEntry[]) => {
+      storedEntries.push(...entries);
+      return {
+        added: entries.length,
+        updated: 0,
+        skipped: 0,
+        superseded: 0,
+        llm_dedup_calls: 0,
+        relations_created: 0,
+        total_entries: entries.length,
+        duration_ms: 1,
+      };
+    });
+
+    const deps = makeDeps({
+      statFileFn,
+      readFileFn,
+      readFileHeadFn,
+      detectProjectFn,
+      parseTranscriptFileFn,
+      storeEntriesFn,
+      deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+      sleepFn: vi.fn(async () => undefined),
+      shouldShutdownFn: vi.fn(() => cycles >= 2),
+    });
+
+    await runWatcher(
+      {
+        filePath,
+        intervalMs: 1,
+        minChunkChars: 5,
+        dryRun: false,
+        verbose: false,
+        raw: false,
+        once: false,
+        onCycle: () => {
+          cycles += 1;
+        },
+      },
+      deps,
+    );
+
+    expect(readFileHeadFn).toHaveBeenCalledTimes(1);
+    expect(detectProjectFn).toHaveBeenCalledTimes(1);
+    expect(storedEntries.length).toBeGreaterThan(0);
+    expect(storedEntries.every((entry) => entry.project === "agenr")).toBe(true);
+  });
+
   it("skips cycles when new content is below threshold", async () => {
     const filePath = "/tmp/watch.jsonl";
     const deps = makeDeps({

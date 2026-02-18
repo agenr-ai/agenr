@@ -8,6 +8,7 @@ import { closeDb, getDb, initDb } from "../db/client.js";
 import { sessionStartRecall } from "../db/session-start.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
+import { normalizeProject } from "../project.js";
 import { KNOWLEDGE_PLATFORMS } from "../types.js";
 import type { RecallCommandResult, RecallQuery } from "../types.js";
 import type { KnowledgePlatform } from "../types.js";
@@ -22,6 +23,9 @@ export interface ContextCommandOptions {
   budget?: number | string;
   limit?: number | string;
   platform?: string;
+  project?: string;
+  excludeProject?: string;
+  strict?: boolean;
   db?: string;
   json?: boolean;
   quiet?: boolean;
@@ -85,6 +89,28 @@ function truncateContent(content: string): string {
   }
   const sliceLength = Math.max(0, MAX_CONTENT_CHARS - 3);
   return `${content.slice(0, sliceLength)}...`;
+}
+
+function parseProjectList(input: string | undefined, flagName: string): string[] | undefined {
+  const raw = input?.trim() ?? "";
+  if (!raw) {
+    return undefined;
+  }
+
+  const parts = raw
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+
+  const normalized = parts
+    .map((value) => normalizeProject(value))
+    .filter((value): value is string => Boolean(value));
+
+  if (parts.length > 0 && normalized.length === 0) {
+    throw new Error(`${flagName} must be a non-empty string (or comma-separated list).`);
+  }
+
+  return Array.from(new Set(normalized));
 }
 
 function toLineItem(result: RecallCommandResult): ContextLineItem {
@@ -161,6 +187,9 @@ export interface GenerateContextFileOptions {
   json: boolean;
   now?: Date;
   platform?: KnowledgePlatform;
+  project?: string | string[];
+  excludeProject?: string | string[];
+  projectStrict?: boolean;
 }
 
 export async function generateContextFile(
@@ -188,6 +217,9 @@ export async function generateContextFile(
     scope: "private",
     budget,
     platform: options.platform,
+    project: options.project,
+    excludeProject: options.excludeProject,
+    projectStrict: options.projectStrict,
   };
 
   const grouped = await resolvedDeps.sessionStartRecallFn(db, {
@@ -244,6 +276,10 @@ export async function runContextCommand(
     throw new Error(`--platform must be one of: ${KNOWLEDGE_PLATFORMS.join(", ")}`);
   }
 
+  const project = parseProjectList(options.project, "--project");
+  const excludeProject = parseProjectList(options.excludeProject, "--exclude-project");
+  const projectStrict = options.strict === true && Boolean(project && project.length > 0);
+
   // Suppress clack output when explicitly quiet, or when stderr is not a TTY.
   const suppressClack = options.quiet === true || !process.stderr.isTTY;
   const suppressStderr = options.quiet === true;
@@ -273,7 +309,16 @@ export async function runContextCommand(
       db,
       apiKey,
       outputPath,
-      { budget, limit, json, now: resolvedDeps.nowFn(), platform: platform ?? undefined },
+      {
+        budget,
+        limit,
+        json,
+        now: resolvedDeps.nowFn(),
+        platform: platform ?? undefined,
+        project,
+        excludeProject,
+        projectStrict: projectStrict ? true : undefined,
+      },
       {
         sessionStartRecallFn: resolvedDeps.sessionStartRecallFn,
         writeFileFn: resolvedDeps.writeFileFn,
