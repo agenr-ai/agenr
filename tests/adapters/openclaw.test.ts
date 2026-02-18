@@ -16,6 +16,10 @@ async function cleanupTempDir(dir: string): Promise<void> {
   await fs.rm(dir, { recursive: true, force: true });
 }
 
+function jsonLine(record: unknown): string {
+  return JSON.stringify(record);
+}
+
 describe("openclaw adapter", () => {
   it("extracts messages and timestamps from OpenClaw JSONL", async () => {
     const fixture = path.resolve("tests/fixtures/sample-transcript.jsonl");
@@ -191,6 +195,104 @@ describe("openclaw adapter", () => {
       expect(parsed.messages[1]?.text.includes("[tool result from")).toBe(false);
     } finally {
       await cleanupTempDir(dir);
+    }
+  });
+
+  it("extracts and normalizes conversation_label from fenced metadata blocks", async () => {
+    const metadataBlock = [
+      "session metadata",
+      "```json",
+      "{\"conversation_label\":\"Agenr-Dev\",\"cwd\":\"/tmp/project\"}",
+      "```",
+    ].join("\n");
+
+    const { file, dir } = await writeTempJsonl([
+      jsonLine({ type: "session", id: "sess-label", timestamp: "2026-02-14T00:00:00.000Z", cwd: "/tmp" }),
+      jsonLine({
+        type: "message",
+        timestamp: "2026-02-14T00:00:01.000Z",
+        message: { role: "user", content: metadataBlock },
+      }),
+    ]);
+
+    try {
+      const parsed = await openClawAdapter.parse(file);
+      expect(parsed.metadata?.sessionLabel).toBe("agenr-dev");
+    } finally {
+      await cleanupTempDir(dir);
+    }
+  });
+
+  it("leaves sessionLabel undefined when conversation_label is missing or empty", async () => {
+    const missingLabelBlock = [
+      "```json",
+      "{\"cwd\":\"/tmp/project\"}",
+      "```",
+    ].join("\n");
+    const emptyLabelBlock = [
+      "```json",
+      "{\"conversation_label\":\"\"}",
+      "```",
+    ].join("\n");
+
+    const { file: missingFile, dir: missingDir } = await writeTempJsonl([
+      jsonLine({ type: "session", id: "sess-missing", timestamp: "2026-02-14T00:00:00.000Z" }),
+      jsonLine({
+        type: "message",
+        timestamp: "2026-02-14T00:00:01.000Z",
+        message: { role: "user", content: missingLabelBlock },
+      }),
+    ]);
+
+    const { file: emptyFile, dir: emptyDir } = await writeTempJsonl([
+      jsonLine({ type: "session", id: "sess-empty", timestamp: "2026-02-14T00:00:00.000Z" }),
+      jsonLine({
+        type: "message",
+        timestamp: "2026-02-14T00:00:01.000Z",
+        message: { role: "user", content: emptyLabelBlock },
+      }),
+    ]);
+
+    try {
+      const missing = await openClawAdapter.parse(missingFile);
+      const empty = await openClawAdapter.parse(emptyFile);
+      expect(missing.metadata?.sessionLabel).toBeUndefined();
+      expect(empty.metadata?.sessionLabel).toBeUndefined();
+    } finally {
+      await cleanupTempDir(missingDir);
+      await cleanupTempDir(emptyDir);
+    }
+  });
+
+  it("normalizes conversation_label variants", async () => {
+    const cases: Array<{ input: string; expected: string }> = [
+      { input: "AGENR_DEV", expected: "agenr-dev" },
+      { input: "agenr dev", expected: "agenr-dev" },
+      { input: "  agenr  ", expected: "agenr" },
+    ];
+
+    for (const testCase of cases) {
+      const block = [
+        "```json",
+        JSON.stringify({ conversation_label: testCase.input }),
+        "```",
+      ].join("\n");
+
+      const { file, dir } = await writeTempJsonl([
+        jsonLine({ type: "session", id: `sess-${testCase.expected}`, timestamp: "2026-02-14T00:00:00.000Z" }),
+        jsonLine({
+          type: "message",
+          timestamp: "2026-02-14T00:00:01.000Z",
+          message: { role: "user", content: block },
+        }),
+      ]);
+
+      try {
+        const parsed = await openClawAdapter.parse(file);
+        expect(parsed.metadata?.sessionLabel).toBe(testCase.expected);
+      } finally {
+        await cleanupTempDir(dir);
+      }
     }
   });
 });

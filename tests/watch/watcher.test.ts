@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { KnowledgeEntry, WatchState } from "../../src/types.js";
+import type { AgenrConfig, KnowledgeEntry, WatchState } from "../../src/types.js";
 import { runWatcher } from "../../src/watch/watcher.js";
 import { isShutdownRequested, requestShutdown, resetShutdownForTests } from "../../src/shutdown.js";
 
@@ -36,12 +36,13 @@ function makeState(filePath: string, offset = 0): WatchState {
   };
 }
 
-function makeDeps(overrides?: Record<string, unknown>): any {
+function makeDeps(overrides?: Record<string, unknown>, configOverride?: AgenrConfig | null): any {
   const saveSnapshots: WatchState[] = [];
   const statFileFn = vi.fn(async () => ({ size: 0, isFile: () => true })) as any;
   const readFileFn = vi.fn(async () => Buffer.alloc(0));
   const readFileHeadFn = vi.fn(async () => Buffer.alloc(0));
   const detectProjectFn = vi.fn((_cwd: string) => null);
+  const config: AgenrConfig = configOverride ?? { db: { path: ":memory:" } };
   const parseTranscriptFileFn = vi.fn(async () => ({
     file: "/tmp/delta.txt",
     messages: [],
@@ -87,7 +88,7 @@ function makeDeps(overrides?: Record<string, unknown>): any {
   }));
 
   const deps = {
-    readConfigFn: vi.fn(() => ({ db: { path: ":memory:" } })),
+    readConfigFn: vi.fn(() => config),
     resolveEmbeddingApiKeyFn: vi.fn(() => "sk-test"),
     parseTranscriptFileFn,
     createLlmClientFn: vi.fn(() => ({ resolvedModel: { modelId: "test" }, credentials: { apiKey: "x" } } as any)),
@@ -222,6 +223,328 @@ describe("watcher", () => {
     expect(detectProjectFn).toHaveBeenCalledTimes(1);
     expect(storedEntries.length).toBeGreaterThan(0);
     expect(storedEntries.every((entry) => entry.project === "agenr")).toBe(true);
+  });
+
+  it("maps sessionLabel to project when cwd detection is unavailable", async () => {
+    const filePath = "/tmp/watch-label-project.jsonl";
+    const storedEntries: KnowledgeEntry[] = [];
+
+    const parseTranscriptFileFn = vi.fn(async (target: string) => {
+      if (target.includes("head")) {
+        return {
+          file: target,
+          messages: [],
+          chunks: [],
+          warnings: [],
+          metadata: { sessionLabel: "agenr-dev" },
+        };
+      }
+
+      return {
+        file: target,
+        messages: [],
+        chunks: [
+          {
+            chunk_index: 0,
+            message_start: 0,
+            message_end: 0,
+            text: "chunk text",
+            context_hint: "ctx",
+          },
+        ],
+        warnings: [],
+      };
+    });
+
+    const storeEntriesFn = vi.fn(async (_db: unknown, entries: KnowledgeEntry[]) => {
+      storedEntries.push(...entries);
+      return {
+        added: entries.length,
+        updated: 0,
+        skipped: 0,
+        superseded: 0,
+        llm_dedup_calls: 0,
+        relations_created: 0,
+        total_entries: entries.length,
+        duration_ms: 1,
+      };
+    });
+
+    const detectProjectFn = vi.fn((_cwd: string) => null);
+    const deps = makeDeps(
+      {
+        statFileFn: vi.fn(async () => ({ size: 40, isFile: () => true })),
+        readFileFn: vi.fn(async () => Buffer.from("this content passes threshold")),
+        readFileHeadFn: vi.fn(async () => Buffer.from("header")),
+        parseTranscriptFileFn,
+        detectProjectFn,
+        storeEntriesFn,
+        deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+      },
+      {
+        db: { path: ":memory:" },
+        labelProjectMap: { "agenr-dev": "agenr" },
+      },
+    );
+
+    await runWatcher(
+      {
+        filePath,
+        intervalMs: 1,
+        minChunkChars: 5,
+        dryRun: false,
+        verbose: false,
+        raw: false,
+        once: true,
+      },
+      deps,
+    );
+
+    expect(detectProjectFn).not.toHaveBeenCalled();
+    expect(storedEntries.length).toBeGreaterThan(0);
+    expect(storedEntries.every((entry) => entry.project === "agenr")).toBe(true);
+  });
+
+  it("prefers cwd-based detection over sessionLabel mapping", async () => {
+    const filePath = "/tmp/watch-cwd-priority.jsonl";
+    const storedEntries: KnowledgeEntry[] = [];
+
+    const parseTranscriptFileFn = vi.fn(async (target: string) => {
+      if (target.includes("head")) {
+        return {
+          file: target,
+          messages: [],
+          chunks: [],
+          warnings: [],
+          metadata: {
+            cwd: "/Users/jmartin/Code/agenr",
+            sessionLabel: "something-else",
+          },
+        };
+      }
+
+      return {
+        file: target,
+        messages: [],
+        chunks: [
+          {
+            chunk_index: 0,
+            message_start: 0,
+            message_end: 0,
+            text: "chunk text",
+            context_hint: "ctx",
+          },
+        ],
+        warnings: [],
+      };
+    });
+
+    const storeEntriesFn = vi.fn(async (_db: unknown, entries: KnowledgeEntry[]) => {
+      storedEntries.push(...entries);
+      return {
+        added: entries.length,
+        updated: 0,
+        skipped: 0,
+        superseded: 0,
+        llm_dedup_calls: 0,
+        relations_created: 0,
+        total_entries: entries.length,
+        duration_ms: 1,
+      };
+    });
+
+    const detectProjectFn = vi.fn((_cwd: string) => "agenr");
+    const deps = makeDeps(
+      {
+        statFileFn: vi.fn(async () => ({ size: 40, isFile: () => true })),
+        readFileFn: vi.fn(async () => Buffer.from("this content passes threshold")),
+        readFileHeadFn: vi.fn(async () => Buffer.from("header")),
+        parseTranscriptFileFn,
+        detectProjectFn,
+        storeEntriesFn,
+        deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+      },
+      {
+        db: { path: ":memory:" },
+        labelProjectMap: { "something-else": "other-project" },
+      },
+    );
+
+    await runWatcher(
+      {
+        filePath,
+        intervalMs: 1,
+        minChunkChars: 5,
+        dryRun: false,
+        verbose: false,
+        raw: false,
+        once: true,
+      },
+      deps,
+    );
+
+    expect(detectProjectFn).toHaveBeenCalledTimes(1);
+    expect(storedEntries.length).toBeGreaterThan(0);
+    expect(storedEntries.every((entry) => entry.project === "agenr")).toBe(true);
+  });
+
+  it("keeps project null when sessionLabel is unknown", async () => {
+    const filePath = "/tmp/watch-unknown-label.jsonl";
+    const storedEntries: KnowledgeEntry[] = [];
+
+    const parseTranscriptFileFn = vi.fn(async (target: string) => {
+      if (target.includes("head")) {
+        return {
+          file: target,
+          messages: [],
+          chunks: [],
+          warnings: [],
+          metadata: { sessionLabel: "my-random-chat" },
+        };
+      }
+
+      return {
+        file: target,
+        messages: [],
+        chunks: [
+          {
+            chunk_index: 0,
+            message_start: 0,
+            message_end: 0,
+            text: "chunk text",
+            context_hint: "ctx",
+          },
+        ],
+        warnings: [],
+      };
+    });
+
+    const storeEntriesFn = vi.fn(async (_db: unknown, entries: KnowledgeEntry[]) => {
+      storedEntries.push(...entries);
+      return {
+        added: entries.length,
+        updated: 0,
+        skipped: 0,
+        superseded: 0,
+        llm_dedup_calls: 0,
+        relations_created: 0,
+        total_entries: entries.length,
+        duration_ms: 1,
+      };
+    });
+
+    const detectProjectFn = vi.fn((_cwd: string) => null);
+    const deps = makeDeps(
+      {
+        statFileFn: vi.fn(async () => ({ size: 40, isFile: () => true })),
+        readFileFn: vi.fn(async () => Buffer.from("this content passes threshold")),
+        readFileHeadFn: vi.fn(async () => Buffer.from("header")),
+        parseTranscriptFileFn,
+        detectProjectFn,
+        storeEntriesFn,
+        deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+      },
+      {
+        db: { path: ":memory:" },
+        labelProjectMap: { "agenr-dev": "agenr" },
+      },
+    );
+
+    await runWatcher(
+      {
+        filePath,
+        intervalMs: 1,
+        minChunkChars: 5,
+        dryRun: false,
+        verbose: false,
+        raw: false,
+        once: true,
+      },
+      deps,
+    );
+
+    expect(detectProjectFn).not.toHaveBeenCalled();
+    expect(storedEntries.length).toBeGreaterThan(0);
+    expect(storedEntries.every((entry) => entry.project === undefined)).toBe(true);
+  });
+
+  it("handles missing labelProjectMap without throwing", async () => {
+    const filePath = "/tmp/watch-missing-label-map.jsonl";
+    const storedEntries: KnowledgeEntry[] = [];
+
+    const parseTranscriptFileFn = vi.fn(async (target: string) => {
+      if (target.includes("head")) {
+        return {
+          file: target,
+          messages: [],
+          chunks: [],
+          warnings: [],
+          metadata: { sessionLabel: "agenr-dev" },
+        };
+      }
+
+      return {
+        file: target,
+        messages: [],
+        chunks: [
+          {
+            chunk_index: 0,
+            message_start: 0,
+            message_end: 0,
+            text: "chunk text",
+            context_hint: "ctx",
+          },
+        ],
+        warnings: [],
+      };
+    });
+
+    const storeEntriesFn = vi.fn(async (_db: unknown, entries: KnowledgeEntry[]) => {
+      storedEntries.push(...entries);
+      return {
+        added: entries.length,
+        updated: 0,
+        skipped: 0,
+        superseded: 0,
+        llm_dedup_calls: 0,
+        relations_created: 0,
+        total_entries: entries.length,
+        duration_ms: 1,
+      };
+    });
+
+    const deps = makeDeps(
+      {
+        statFileFn: vi.fn(async () => ({ size: 40, isFile: () => true })),
+        readFileFn: vi.fn(async () => Buffer.from("this content passes threshold")),
+        readFileHeadFn: vi.fn(async () => Buffer.from("header")),
+        parseTranscriptFileFn,
+        detectProjectFn: vi.fn((_cwd: string) => null),
+        storeEntriesFn,
+        deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+      },
+      {
+        db: { path: ":memory:" },
+      },
+    );
+
+    await expect(
+      runWatcher(
+        {
+          filePath,
+          intervalMs: 1,
+          minChunkChars: 5,
+          dryRun: false,
+          verbose: false,
+          raw: false,
+          once: true,
+        },
+        deps,
+      ),
+    ).resolves.toBeTruthy();
+
+    expect(storedEntries.length).toBeGreaterThan(0);
+    expect(storedEntries.every((entry) => entry.project === undefined)).toBe(true);
   });
 
   it("skips cycles when new content is below threshold", async () => {

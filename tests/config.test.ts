@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { readConfig, resolveConfigPath, writeConfig } from "../src/config.js";
+import { normalizeConfig, readConfig, resolveConfigPath, writeConfig } from "../src/config.js";
 import type { AgenrConfig } from "../src/types.js";
 
 const tempDirs: string[] = [];
@@ -112,6 +112,18 @@ describe("config", () => {
       credentials: {
         anthropicApiKey: "sk-ant-test",
       },
+    });
+  });
+
+  it("preserves labelProjectMap through normalizeConfig", () => {
+    const normalized = normalizeConfig({
+      labelProjectMap: {
+        agenr: "agenr",
+      },
+    });
+
+    expect(normalized.labelProjectMap).toEqual({
+      agenr: "agenr",
     });
   });
 });

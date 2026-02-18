@@ -481,8 +481,21 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
             const headFile = path.join(tempDir, `head${ext}`);
             await resolvedDeps.writeFileFn(headFile, headBytes.toString("utf8"), "utf8");
             const headParsed = await resolvedDeps.parseTranscriptFileFn(headFile, { raw: options.raw, verbose: false });
+
+            // Priority 1: cwd-based detection.
             const cwd = headParsed.metadata?.cwd;
-            cachedProject = typeof cwd === "string" && cwd.trim().length > 0 ? resolvedDeps.detectProjectFn(cwd) : null;
+            if (typeof cwd === "string" && cwd.trim().length > 0) {
+              cachedProject = resolvedDeps.detectProjectFn(cwd);
+            }
+
+            // Priority 2: session label -> project mapping.
+            if (cachedProject === null) {
+              const label = headParsed.metadata?.sessionLabel;
+              const labelMap = config?.labelProjectMap ?? {};
+              if (label && labelMap[label]) {
+                cachedProject = labelMap[label];
+              }
+            }
           }
           projectCache.set(cacheKey, cachedProject);
         }

@@ -1,6 +1,6 @@
 import type { Api, AssistantMessage, AssistantMessageEvent, Context, Model, SimpleStreamOptions } from "@mariozechner/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { extractKnowledgeFromChunks, validateEntry } from "../src/extractor.js";
+import { SYSTEM_PROMPT, extractKnowledgeFromChunks, validateEntry } from "../src/extractor.js";
 import { requestShutdown, resetShutdownForTests } from "../src/shutdown.js";
 import type { LlmClient, TranscriptChunk } from "../src/types.js";
 
@@ -101,6 +101,20 @@ function streamWithResult(result: Promise<AssistantMessage>, events: AssistantMe
     result: () => result,
   };
 }
+
+describe("SYSTEM_PROMPT", () => {
+  it("includes explicit memory request guidance and trigger phrases", () => {
+    expect(SYSTEM_PROMPT).toContain("Explicit Memory Requests");
+    expect(SYSTEM_PROMPT).toContain("\"remember this\"");
+    expect(SYSTEM_PROMPT).toContain("\"remember that\"");
+    expect(SYSTEM_PROMPT).not.toContain('- "important:"');
+  });
+
+  it("documents assistant-side 'remember this' as a non-trigger (prompt-only)", () => {
+    // This suite uses mocked model outputs, so we validate policy text in the prompt itself.
+    expect(SYSTEM_PROMPT).toContain("Assistant messages don't constitute memory requests.");
+  });
+});
 
 describe("extractKnowledgeFromChunks", () => {
   afterEach(() => {

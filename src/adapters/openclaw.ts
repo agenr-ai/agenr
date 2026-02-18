@@ -58,6 +58,81 @@ function getString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value : undefined;
 }
 
+function normalizeSessionLabel(value: string): string | undefined {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function extractTextBlocks(content: unknown): string[] {
+  if (typeof content === "string") {
+    return [content];
+  }
+
+  if (!Array.isArray(content)) {
+    return [];
+  }
+
+  const out: string[] = [];
+  for (const block of content) {
+    const rec = asRecord(block);
+    if (!rec) continue;
+
+    if (typeof rec.text === "string") {
+      out.push(rec.text);
+      continue;
+    }
+
+    const type = typeof rec.type === "string" ? rec.type.trim().toLowerCase() : "";
+    if (
+      typeof rec.content === "string" &&
+      (type === "input_text" || type === "output_text" || type === "text")
+    ) {
+      out.push(rec.content);
+    }
+  }
+
+  return out;
+}
+
+function extractConversationLabel(content: unknown): string | undefined {
+  const textBlocks = extractTextBlocks(content);
+
+  for (const block of textBlocks) {
+    const matches = block.matchAll(/```(?:json)?\s*([\s\S]*?)\s*```/gi);
+    for (const match of matches) {
+      const candidate = match[1];
+      if (!candidate) {
+        continue;
+      }
+
+      try {
+        const parsed = JSON.parse(candidate);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          continue;
+        }
+
+        const rawLabel = (parsed as Record<string, unknown>).conversation_label;
+        if (typeof rawLabel !== "string") {
+          continue;
+        }
+
+        const normalized = normalizeSessionLabel(rawLabel);
+        if (normalized) {
+          return normalized;
+        }
+      } catch {
+        // Ignore malformed metadata blocks.
+      }
+    }
+  }
+
+  return undefined;
+}
+
 function truncateInline(value: string, max: number): string {
   if (value.length <= max) return value;
   return value.slice(0, max);
@@ -290,6 +365,7 @@ export const openClawAdapter: SourceAdapter = {
     let cwd: string | undefined;
     let model: string | undefined;
     let sessionTimestamp: string | undefined;
+    let sessionLabel: string | undefined;
 
     const pendingToolCalls: ToolCallContext[] = [];
     const pendingToolCallsById = new Map<string, ToolCallContext>();
@@ -369,6 +445,10 @@ export const openClawAdapter: SourceAdapter = {
         cwd = typeof record.cwd === "string" ? record.cwd : cwd;
         model = typeof record.model === "string" ? record.model : model;
         sessionTimestamp = extractTimestamp(record) ?? sessionTimestamp;
+        const normalizedSessionLabel = normalizeSessionLabel(getString(record.conversation_label) ?? "");
+        if (normalizedSessionLabel) {
+          sessionLabel = normalizedSessionLabel;
+        }
         return;
       }
 
@@ -394,6 +474,11 @@ export const openClawAdapter: SourceAdapter = {
       const timestamp = extractTimestamp(record) ?? extractTimestamp(message);
 
       if (role === "user") {
+        const extractedSessionLabel = extractConversationLabel(message.content);
+        if (extractedSessionLabel) {
+          sessionLabel = extractedSessionLabel;
+        }
+
         const text = normalizeMessageText(message.content);
         if (!text) {
           return;
@@ -523,6 +608,7 @@ export const openClawAdapter: SourceAdapter = {
         sessionId,
         cwd,
         model,
+        sessionLabel,
         startedAt: sessionTimestamp ?? messages[0]?.timestamp ?? fallbackTimestamp,
       },
     };
