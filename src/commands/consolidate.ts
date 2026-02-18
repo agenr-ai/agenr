@@ -9,12 +9,14 @@ import { showFlaggedMerges } from "../consolidate/verify.js";
 import { closeDb, DEFAULT_DB_PATH, getDb, walCheckpoint } from "../db/client.js";
 import { acquireDbLock, releaseDbLock } from "../db/lockfile.js";
 import { initSchema } from "../db/schema.js";
+import { mapRawStoredEntry } from "../db/stored-entry.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { createLlmClient } from "../llm/client.js";
 import { formatWarn } from "../ui.js";
 import { installSignalHandlers, isShutdownRequested, onShutdown } from "../shutdown.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
 import { buildProjectFilter, hasAnyProjectParts, parseProjectList } from "../project.js";
+import { parseDaysBetween, toNumber, toStringValue } from "../utils/entry-utils.js";
 import { KNOWLEDGE_PLATFORMS } from "../types.js";
 import type { KnowledgePlatform, StoredEntry } from "../types.js";
 
@@ -84,6 +86,7 @@ interface ForgettingAssessment {
   estimatedFreedBytes: number;
   threshold: number;
   shouldRun: boolean;
+  candidates: ForgettingCandidate[];
 }
 
 export interface ForgettingTriggerMetrics {
@@ -120,41 +123,6 @@ function formatNumber(value: number): string {
   return value.toLocaleString("en-US");
 }
 
-function toNumber(value: unknown): number {
-  if (typeof value === "number") {
-    return value;
-  }
-  if (typeof value === "bigint") {
-    return Number(value);
-  }
-  if (typeof value === "string" && value.trim()) {
-    return Number(value);
-  }
-  return Number.NaN;
-}
-
-function toStringValue(value: unknown): string {
-  if (typeof value === "string") {
-    return value;
-  }
-  if (typeof value === "number" || typeof value === "bigint") {
-    return String(value);
-  }
-  return "";
-}
-
-function parseDaysBetween(now: Date, pastIso: string): number {
-  const parsed = new Date(pastIso);
-  if (Number.isNaN(parsed.getTime())) {
-    return 0;
-  }
-  const days = (now.getTime() - parsed.getTime()) / (1000 * 60 * 60 * 24);
-  if (!Number.isFinite(days)) {
-    return 0;
-  }
-  return Math.max(days, 0);
-}
-
 function formatApproxMb(bytes: number): string {
   const mb = Math.max(0, bytes) / MB;
   if (mb < 1) {
@@ -171,36 +139,7 @@ function estimateFreedBytes(candidateCount: number, activeCount: number, fileSiz
 }
 
 function mapRowToStoredEntry(row: Record<string, unknown>): StoredEntry {
-  const canonicalKey = toStringValue(row.canonical_key).trim();
-  const platform = toStringValue(row.platform).trim();
-  const project = toStringValue(row.project).trim();
-  const scopeRaw = toStringValue(row.scope).trim();
-  const importanceRaw = toNumber(row.importance);
-
-  return {
-    id: toStringValue(row.id),
-    type: toStringValue(row.type) as StoredEntry["type"],
-    subject: toStringValue(row.subject),
-    content: toStringValue(row.content),
-    ...(canonicalKey ? { canonical_key: canonicalKey } : {}),
-    ...(platform ? { platform: platform as KnowledgePlatform } : {}),
-    ...(project ? { project: project.toLowerCase() } : {}),
-    importance: Number.isFinite(importanceRaw) ? Math.min(10, Math.max(1, Math.round(importanceRaw))) : 5,
-    expiry: toStringValue(row.expiry) as StoredEntry["expiry"],
-    scope: (scopeRaw || "private") as StoredEntry["scope"],
-    tags: [],
-    source: {
-      file: toStringValue(row.source_file),
-      context: toStringValue(row.source_context),
-    },
-    created_at: toStringValue(row.created_at),
-    updated_at: toStringValue(row.updated_at),
-    last_recalled_at: toStringValue(row.last_recalled_at) || undefined,
-    recall_count: Number.isFinite(toNumber(row.recall_count)) ? toNumber(row.recall_count) : 0,
-    confirmations: Number.isFinite(toNumber(row.confirmations)) ? toNumber(row.confirmations) : 0,
-    contradictions: Number.isFinite(toNumber(row.contradictions)) ? toNumber(row.contradictions) : 0,
-    superseded_by: toStringValue(row.superseded_by) || undefined,
-  };
+  return mapRawStoredEntry(row, { tags: [] });
 }
 
 function renderPreRunReport(stats: ConsolidatePreRunStats): string {
@@ -555,13 +494,44 @@ async function assessForgetting(
     estimatedFreedBytes: estimateFreedBytes(candidateCount, activeEntryCount, dbFileSizeBytes),
     threshold,
     shouldRun: shouldAutoTriggerForgetting(trigger),
+    candidates,
   };
+}
+
+const DELETE_BATCH_SIZE = 900;
+const INCREMENTAL_VACUUM_STEPS = 200;
+const MAX_INCREMENTAL_VACUUM_LOOPS = 20;
+
+async function runIncrementalVacuumIfEnabled(db: ReturnType<typeof getDb>, logger?: ConsolidateLogger): Promise<void> {
+  const autoVacuumResult = await db.execute("PRAGMA auto_vacuum");
+  const autoVacuumMode = Number.isFinite(toNumber(autoVacuumResult.rows[0]?.auto_vacuum))
+    ? toNumber(autoVacuumResult.rows[0]?.auto_vacuum)
+    : toNumber(Object.values(autoVacuumResult.rows[0] ?? {})[0]);
+
+  // SQLite: 0=NONE, 1=FULL, 2=INCREMENTAL.
+  if (autoVacuumMode !== 2) {
+    logger?.info("Auto-vacuum is not incremental; skipping VACUUM in this command. Run maintenance vacuum separately.");
+    return;
+  }
+
+  for (let loop = 0; loop < MAX_INCREMENTAL_VACUUM_LOOPS; loop += 1) {
+    const freelistResult = await db.execute("PRAGMA freelist_count");
+    const freePages = Number.isFinite(toNumber(freelistResult.rows[0]?.freelist_count))
+      ? toNumber(freelistResult.rows[0]?.freelist_count)
+      : toNumber(Object.values(freelistResult.rows[0] ?? {})[0]);
+    if (freePages <= 0) {
+      break;
+    }
+    const pages = Math.min(INCREMENTAL_VACUUM_STEPS, freePages);
+    await db.execute(`PRAGMA incremental_vacuum(${pages})`);
+  }
 }
 
 async function runForgettingDeletion(
   db: ReturnType<typeof getDb>,
   dbFilePath: string,
   candidates: ForgettingCandidate[],
+  logger?: ConsolidateLogger,
 ): Promise<void> {
   const deletable = candidates.filter((item) => !item.protected);
   if (deletable.length === 0) {
@@ -573,12 +543,16 @@ async function runForgettingDeletion(
   await db.execute("PRAGMA wal_checkpoint(TRUNCATE)");
   await db.execute("BEGIN");
   try {
-    for (const candidate of deletable) {
+    for (let i = 0; i < deletable.length; i += DELETE_BATCH_SIZE) {
+      const chunk = deletable.slice(i, i + DELETE_BATCH_SIZE);
+      for (const candidate of chunk) {
+        process.stdout.write(`[forget] [${candidate.entry.type}] ${candidate.entry.subject}\n`);
+      }
+      const placeholders = chunk.map(() => "?").join(", ");
       await db.execute({
-        sql: "DELETE FROM entries WHERE id = ?",
-        args: [candidate.entry.id],
+        sql: `DELETE FROM entries WHERE id IN (${placeholders})`,
+        args: chunk.map((candidate) => candidate.entry.id),
       });
-      process.stdout.write(`[forget] [${candidate.entry.type}] ${candidate.entry.subject}\n`);
     }
     await db.execute("COMMIT");
   } catch (error) {
@@ -590,7 +564,7 @@ async function runForgettingDeletion(
     throw error;
   }
 
-  await db.execute("PRAGMA vacuum");
+  await runIncrementalVacuumIfEnabled(db, logger);
   const afterBytes = await getDbFileSizeBytes(dbFilePath);
   const freedBytes =
     typeof beforeBytes === "number" && typeof afterBytes === "number"
@@ -740,18 +714,9 @@ export async function runConsolidateCommand(
 
     const runForgetting = options.forget === true || (forgettingEnabled && forgettingAssessment.shouldRun);
     if (runForgetting) {
-      const candidates = await collectForgettingCandidates(
-        db,
-        now,
-        scoreThreshold,
-        maxAgeDays,
-        protectPatterns,
-        platform,
-        project,
-        excludeProject,
-      );
+      const candidates = forgettingAssessment.candidates;
       if (options.forget === true && options.dryRun !== true) {
-        await runForgettingDeletion(db, dbFilePath, candidates);
+        await runForgettingDeletion(db, dbFilePath, candidates, logger);
       } else {
         logger.info(
           `Forgetting candidates: ${formatNumber(candidates.filter((candidate) => !candidate.protected).length)} entries (score < ${scoreThreshold})`,

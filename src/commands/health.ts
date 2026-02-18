@@ -2,8 +2,9 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { readConfig } from "../config.js";
-import { forgettingScore, isProtected } from "../consolidate/rules.js";
-import { closeDb, DEFAULT_DB_PATH, getDb } from "../db/client.js";
+import { forgettingScore, isProtected, parseDaysBetween } from "../consolidate/rules.js";
+import { closeDb, DEFAULT_DB_PATH, getDb, initDb } from "../db/client.js";
+import { mapRawStoredEntry } from "../db/stored-entry.js";
 import type { StoredEntry } from "../types.js";
 
 export interface HealthCommandOptions {
@@ -14,6 +15,7 @@ export interface HealthCommandDeps {
   readConfigFn: typeof readConfig;
   getDbFn: typeof getDb;
   closeDbFn: typeof closeDb;
+  initDbFn: typeof initDb;
   statFn: typeof fs.stat;
   nowFn: () => Date;
 }
@@ -49,29 +51,7 @@ interface HealthStats {
 }
 
 const MB = 1024 * 1024;
-
-function toNumber(value: unknown): number {
-  if (typeof value === "number") {
-    return value;
-  }
-  if (typeof value === "bigint") {
-    return Number(value);
-  }
-  if (typeof value === "string" && value.trim()) {
-    return Number(value);
-  }
-  return Number.NaN;
-}
-
-function toStringValue(value: unknown): string {
-  if (typeof value === "string") {
-    return value;
-  }
-  if (typeof value === "number" || typeof value === "bigint") {
-    return String(value);
-  }
-  return "";
-}
+const KB = 1024;
 
 function resolveUserPath(inputPath: string): string {
   if (!inputPath.startsWith("~")) {
@@ -90,48 +70,8 @@ function resolveDbFilePath(rawPath: string): string {
   return resolveUserPath(rawPath);
 }
 
-function parseDaysBetween(now: Date, pastIso: string): number {
-  const parsed = new Date(pastIso);
-  if (Number.isNaN(parsed.getTime())) {
-    return 0;
-  }
-  const days = (now.getTime() - parsed.getTime()) / (1000 * 60 * 60 * 24);
-  if (!Number.isFinite(days)) {
-    return 0;
-  }
-  return Math.max(days, 0);
-}
-
 function asStoredEntry(row: Record<string, unknown>): StoredEntry {
-  const scopeRaw = toStringValue(row.scope).trim();
-  const platformRaw = toStringValue(row.platform).trim();
-  const projectRaw = toStringValue(row.project).trim();
-  const canonicalKey = toStringValue(row.canonical_key).trim();
-
-  return {
-    id: toStringValue(row.id),
-    type: toStringValue(row.type) as StoredEntry["type"],
-    subject: toStringValue(row.subject),
-    content: toStringValue(row.content),
-    ...(canonicalKey ? { canonical_key: canonicalKey } : {}),
-    importance: Number.isFinite(toNumber(row.importance)) ? Math.max(1, Math.min(10, Math.round(toNumber(row.importance)))) : 5,
-    expiry: toStringValue(row.expiry) as StoredEntry["expiry"],
-    scope: (scopeRaw || "private") as StoredEntry["scope"],
-    ...(platformRaw ? { platform: platformRaw as StoredEntry["platform"] } : {}),
-    ...(projectRaw ? { project: projectRaw.toLowerCase() } : {}),
-    tags: [],
-    source: {
-      file: toStringValue(row.source_file),
-      context: toStringValue(row.source_context),
-    },
-    created_at: toStringValue(row.created_at),
-    updated_at: toStringValue(row.updated_at),
-    last_recalled_at: toStringValue(row.last_recalled_at) || undefined,
-    recall_count: Number.isFinite(toNumber(row.recall_count)) ? toNumber(row.recall_count) : 0,
-    confirmations: Number.isFinite(toNumber(row.confirmations)) ? toNumber(row.confirmations) : 0,
-    contradictions: Number.isFinite(toNumber(row.contradictions)) ? toNumber(row.contradictions) : 0,
-    superseded_by: toStringValue(row.superseded_by) || undefined,
-  };
+  return mapRawStoredEntry(row, { tags: [] });
 }
 
 function formatInt(value: number): string {
@@ -152,7 +92,10 @@ function formatFileSize(bytes: number | null): string {
   if (bytes <= 0) {
     return "0MB";
   }
-  return `${Math.round(bytes / MB)}MB`;
+  if (bytes < MB) {
+    return `${Math.round(bytes / KB)}KB`;
+  }
+  return `${(bytes / MB).toFixed(1)}MB`;
 }
 
 function formatDateLabel(iso: string | null, now: Date): string {
@@ -205,7 +148,6 @@ async function collectHealthStats(
         type,
         subject,
         canonical_key,
-        content,
         importance,
         expiry,
         scope,
@@ -372,6 +314,7 @@ export async function runHealthCommand(
     readConfigFn: deps.readConfigFn ?? readConfig,
     getDbFn: deps.getDbFn ?? getDb,
     closeDbFn: deps.closeDbFn ?? closeDb,
+    initDbFn: deps.initDbFn ?? initDb,
     statFn: deps.statFn ?? fs.stat,
     nowFn: deps.nowFn ?? (() => new Date()),
   };
@@ -388,6 +331,7 @@ export async function runHealthCommand(
   const db = resolvedDeps.getDbFn(configuredPath);
 
   try {
+    await resolvedDeps.initDbFn(db);
     const fileSizeBytes = await getFileSizeBytes(resolvedDeps.statFn, dbFilePath);
     const stats = await collectHealthStats(
       db,
@@ -403,4 +347,3 @@ export async function runHealthCommand(
     resolvedDeps.closeDbFn(db);
   }
 }
-
