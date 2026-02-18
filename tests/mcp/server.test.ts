@@ -1,6 +1,7 @@
 import { PassThrough } from "node:stream";
-import type { Client } from "@libsql/client";
+import { createClient, type Client } from "@libsql/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { initDb } from "../../src/db/client.js";
 import { createMcpServer } from "../../src/mcp/server.js";
 import type { McpServerDeps } from "../../src/mcp/server.js";
 import type { KnowledgeEntry, LlmClient, RecallResult, StoreResult, TranscriptChunk } from "../../src/types.js";
@@ -222,6 +223,19 @@ async function runServer(
     .map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
+async function seedTodo(client: Client, params: { id: string; subject: string; content: string; importance?: number }): Promise<void> {
+  const now = "2026-02-14T00:00:00.000Z";
+  await client.execute({
+    sql: `
+      INSERT INTO entries (
+        id, type, subject, content, importance, expiry, scope, source_file, source_context, created_at, updated_at
+      )
+      VALUES (?, 'todo', ?, ?, ?, 'temporary', 'private', 'seed.jsonl', 'test', ?, ?)
+    `,
+    args: [params.id, params.subject, params.content, params.importance ?? 5, now, now],
+  });
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -274,8 +288,127 @@ describe("mcp server", () => {
     const result = responses[0]?.result as { tools?: Array<{ name: string; inputSchema?: { type?: string } }> };
     const toolNames = (result.tools ?? []).map((tool) => tool.name).sort();
 
-    expect(toolNames).toEqual(["agenr_extract", "agenr_recall", "agenr_store"]);
+    expect(toolNames).toEqual(["agenr_done", "agenr_extract", "agenr_recall", "agenr_store"]);
     expect(result.tools?.every((tool) => tool.inputSchema?.type === "object")).toBe(true);
+  });
+
+  it("agenr_done with confirm=true marks matching todo as done", async () => {
+    const harness = makeHarness();
+    const client = createClient({ url: ":memory:" });
+    await initDb(client);
+    await seedTodo(client, { id: "todo-1", subject: "fix client test", content: "Fix flaky test", importance: 9 });
+
+    harness.deps.getDbFn = vi.fn(() => client) as unknown as McpServerDeps["getDbFn"];
+    harness.deps.initDbFn = vi.fn(async () => undefined);
+    harness.deps.closeDbFn = vi.fn(() => undefined);
+
+    const server = createMcpServer({ serverVersion: "9.9.9-test" }, harness.deps);
+    const response = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 200,
+      method: "tools/call",
+      params: {
+        name: "agenr_done",
+        arguments: {
+          subject: "fix client test",
+          confirm: true,
+        },
+      },
+    });
+
+    expect(response).toMatchObject({
+      jsonrpc: "2.0",
+      id: 200,
+      result: {
+        content: [{ type: "text", text: "Marked done: fix client test" }],
+      },
+    });
+
+    const row = await client.execute({
+      sql: "SELECT superseded_by FROM entries WHERE id = ?",
+      args: ["todo-1"],
+    });
+    expect(String(row.rows[0]?.superseded_by)).toBe("todo-1");
+
+    await server.stop();
+    client.close();
+  });
+
+  it("agenr_done with confirm=false and multiple matches returns candidates without mutation", async () => {
+    const harness = makeHarness();
+    const client = createClient({ url: ":memory:" });
+    await initDb(client);
+    await seedTodo(client, { id: "todo-1", subject: "fix client test", content: "Fix flaky test", importance: 9 });
+    await seedTodo(client, { id: "todo-2", subject: "fix client auth", content: "Fix auth flow", importance: 8 });
+
+    harness.deps.getDbFn = vi.fn(() => client) as unknown as McpServerDeps["getDbFn"];
+    harness.deps.initDbFn = vi.fn(async () => undefined);
+    harness.deps.closeDbFn = vi.fn(() => undefined);
+
+    const server = createMcpServer({ serverVersion: "9.9.9-test" }, harness.deps);
+    const response = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 201,
+      method: "tools/call",
+      params: {
+        name: "agenr_done",
+        arguments: {
+          subject: "client",
+        },
+      },
+    });
+
+    const result = (response as { result?: { content?: Array<{ text?: string }> } }).result;
+    const text = result?.content?.[0]?.text ?? "";
+    expect(text).toContain('Multiple active todos match "client":');
+    expect(text).toContain("fix client test");
+    expect(text).toContain("fix client auth");
+
+    const rows = await client.execute({
+      sql: "SELECT id, superseded_by FROM entries WHERE id IN ('todo-1', 'todo-2') ORDER BY id ASC",
+      args: [],
+    });
+    expect(rows.rows[0]?.superseded_by).toBeNull();
+    expect(rows.rows[1]?.superseded_by).toBeNull();
+
+    await server.stop();
+    client.close();
+  });
+
+  it("agenr_done with no match returns tool error payload", async () => {
+    const harness = makeHarness();
+    const client = createClient({ url: ":memory:" });
+    await initDb(client);
+    await seedTodo(client, { id: "todo-1", subject: "fix client test", content: "Fix flaky test" });
+
+    harness.deps.getDbFn = vi.fn(() => client) as unknown as McpServerDeps["getDbFn"];
+    harness.deps.initDbFn = vi.fn(async () => undefined);
+    harness.deps.closeDbFn = vi.fn(() => undefined);
+
+    const server = createMcpServer({ serverVersion: "9.9.9-test" }, harness.deps);
+    const response = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 202,
+      method: "tools/call",
+      params: {
+        name: "agenr_done",
+        arguments: {
+          subject: "nonexistent",
+        },
+      },
+    });
+
+    expect(response).toMatchObject({
+      jsonrpc: "2.0",
+      id: 202,
+      result: {
+        content: [{ type: "text", text: "No active todo matching: nonexistent" }],
+        isError: true,
+      },
+    });
+
+    await server.stop();
+    client.close();
   });
 
   it("calls agenr_recall and formats results", async () => {

@@ -518,6 +518,142 @@ describe("db store pipeline", () => {
     expect(asNumber(countRows.rows[0]?.count)).toBe(1);
   });
 
+  it("auto-supersedes canonical-key todo when event content signals completion", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    await storeEntries(
+      client,
+      [
+        makeEntry({
+          type: "todo",
+          subject: "fix client test",
+          canonicalKey: "client-test-fix",
+          content: "Fix client test flake vec-base",
+          sourceFile: "seed.jsonl",
+        }),
+      ],
+      "sk-test",
+      {
+        sourceFile: "seed.jsonl",
+        ingestContentHash: hashText("seed-todo"),
+        embedFn: mockEmbed,
+      },
+    );
+
+    await storeEntries(
+      client,
+      [
+        makeEntry({
+          type: "event",
+          subject: "fix client test",
+          canonicalKey: "client-test-fix",
+          content: "Fix client test is resolved and fixed vec-low",
+          sourceFile: "event.jsonl",
+        }),
+      ],
+      "sk-test",
+      {
+        sourceFile: "event.jsonl",
+        ingestContentHash: hashText("event"),
+        embedFn: mockEmbed,
+      },
+    );
+
+    const row = await client.execute({
+      sql: "SELECT id, superseded_by FROM entries WHERE type = 'todo' AND canonical_key = ?",
+      args: ["client-test-fix"],
+    });
+    expect(String(row.rows[0]?.superseded_by)).toBe(String(row.rows[0]?.id));
+  });
+
+  it("does not auto-supersede canonical-key todo when completion signal is missing", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    await storeEntries(
+      client,
+      [
+        makeEntry({
+          type: "todo",
+          subject: "fix client test",
+          canonicalKey: "client-test-fix",
+          content: "Fix client test flake vec-base",
+          sourceFile: "seed.jsonl",
+        }),
+      ],
+      "sk-test",
+      {
+        sourceFile: "seed.jsonl",
+        ingestContentHash: hashText("seed-todo"),
+        embedFn: mockEmbed,
+      },
+    );
+
+    await storeEntries(
+      client,
+      [
+        makeEntry({
+          type: "event",
+          subject: "fix client test",
+          canonicalKey: "client-test-fix",
+          content: "Work on fix client test is in progress vec-low",
+          sourceFile: "event.jsonl",
+        }),
+      ],
+      "sk-test",
+      {
+        sourceFile: "event.jsonl",
+        ingestContentHash: hashText("event"),
+        embedFn: mockEmbed,
+      },
+    );
+
+    const row = await client.execute({
+      sql: "SELECT superseded_by FROM entries WHERE type = 'todo' AND canonical_key = ?",
+      args: ["client-test-fix"],
+    });
+    expect(row.rows[0]?.superseded_by).toBeNull();
+  });
+
+  it("keeps same-type canonical key reinforcement behavior", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    await storeEntries(
+      client,
+      [makeEntry({ content: "seed vec-base", sourceFile: "seed.jsonl", canonicalKey: "preferred-package-manager" })],
+      "sk-test",
+      {
+        sourceFile: "seed.jsonl",
+        ingestContentHash: hashText("seed"),
+        embedFn: mockEmbed,
+      },
+    );
+
+    const result = await storeEntries(
+      client,
+      [
+        makeEntry({
+          content: "different wording vec-low",
+          sourceFile: "incoming.jsonl",
+          canonicalKey: "preferred-package-manager",
+          subject: "javascript tooling",
+          type: "fact",
+        }),
+      ],
+      "sk-test",
+      {
+        sourceFile: "incoming.jsonl",
+        ingestContentHash: hashText("incoming"),
+        embedFn: mockEmbed,
+      },
+    );
+
+    expect(result.added).toBe(0);
+    expect(result.updated).toBe(1);
+  });
+
   it("keeps embedding-based dedup behavior when canonical key is missing", async () => {
     const client = makeClient();
     await initDb(client);

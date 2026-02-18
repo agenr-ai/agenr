@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.4] - 2026-02-18
+
+### Added
+- feat(todo): `agenr todo done` command to immediately retire resolved todos
+- feat(mcp): `agenr_done` MCP tool for agent-driven todo retirement
+- feat(extractor): todo completion detection in `SYSTEM_PROMPT`
+
+### Fixed
+- fix(store): cross-type canonical_key superseding allows events to retire todos
+
 ## [0.5.3] - 2026-02-18
 
 ### Added

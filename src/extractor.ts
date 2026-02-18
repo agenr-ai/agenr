@@ -18,6 +18,22 @@ EVENT — A significant milestone, launch, or completion. NOT "the assistant ran
 RELATIONSHIP — A connection between named entities. Content must include both entities and the relation.
 TODO — A persistent future action not completed in this chunk and not a one-step session instruction.
 
+## Todo Completion Detection
+
+When a todo, task, or action item is explicitly completed in the transcript:
+- Emit an "event" entry describing the completion
+- Use the same subject as the original todo (for example, if the todo was "fix client test", use subject "fix client test")
+- Set the same canonical_key as the original todo if you can infer it
+- Include in content: what was done and that it is now resolved
+- Do NOT re-emit the original todo as a new todo entry
+
+Examples of completion signals: "that's done", "it's fixed", "completed", "we shipped it", "all tests passing", "merged", "resolved", "closed", "out of the oven", "in the oven" (task started = progress, not done), "deployed", "published".
+
+Do NOT emit a completion event for:
+- Tasks that are started but not finished ("working on it", "in progress", "in the oven")
+- Ambiguous past tense ("we did some work on X")
+- Partial completions ("partially fixed")
+
 ## Durability Gate
 
 Only extract if useful in future conversations/tasks after the current immediate execution.

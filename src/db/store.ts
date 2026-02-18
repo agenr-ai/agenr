@@ -14,6 +14,8 @@ const SMART_DEDUP_THRESHOLD = 0.88;
 const DEFAULT_DEDUP_THRESHOLD = 0.8;
 const DEFAULT_SIMILAR_LIMIT = 5;
 const CANONICAL_KEY_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+){2,4}$/;
+const CROSS_TYPE_TODO_SUPERSEDE_TYPES = new Set<KnowledgeEntry["type"]>(["event", "fact", "decision"]);
+const TODO_COMPLETION_SIGNALS = ["done", "fixed", "resolved", "completed", "shipped", "closed", "merged"] as const;
 
 const ONLINE_DEDUP_ACTIONS = ["ADD", "UPDATE", "SKIP", "SUPERSEDE"] as const;
 export type OnlineDedupAction = (typeof ONLINE_DEDUP_ACTIONS)[number];
@@ -723,6 +725,20 @@ function resolveSameSubject(a: string, b: string): boolean {
   return union > 0 && intersection / union >= 0.5;
 }
 
+function subjectsContainEachOther(a: string, b: string): boolean {
+  const left = normalize(a).replace(/\s+/g, " ");
+  const right = normalize(b).replace(/\s+/g, " ");
+  if (!left || !right) {
+    return false;
+  }
+  return left.includes(right) || right.includes(left);
+}
+
+function hasTodoCompletionSignal(content: string): boolean {
+  const normalized = content.toLowerCase();
+  return TODO_COMPLETION_SIGNALS.some((signal) => normalized.includes(signal));
+}
+
 async function findEntryByTypeAndCanonicalKey(
   db: Client,
   type: KnowledgeEntry["type"],
@@ -755,6 +771,46 @@ async function findEntryByTypeAndCanonicalKey(
       LIMIT 1
     `,
     args: [type, canonicalKey],
+  });
+
+  const row = result.rows[0];
+  if (!row) {
+    return null;
+  }
+
+  const entryId = toStringValue(row.id);
+  const tagsById = await getTagsForEntryIds(db, [entryId]);
+  return mapStoredEntry(row, tagsById.get(entryId) ?? []);
+}
+
+async function findActiveTodoByCanonicalKey(db: Client, canonicalKey: string): Promise<StoredEntry | null> {
+  const result = await db.execute({
+    sql: `
+      SELECT
+        id,
+        type,
+        subject,
+        canonical_key,
+        content,
+        importance,
+        expiry,
+        source_file,
+        source_context,
+        embedding,
+        created_at,
+        updated_at,
+        last_recalled_at,
+        recall_count,
+        confirmations,
+        contradictions,
+        superseded_by
+      FROM entries
+      WHERE canonical_key = ?
+        AND superseded_by IS NULL
+        AND type = 'todo'
+      LIMIT 1
+    `,
+    args: [canonicalKey],
   });
 
   const row = result.rows[0];
@@ -1280,6 +1336,41 @@ export async function storeEntries(
           sameSubject: resolveSameSubject(normalizedEntry.subject, canonicalMatch.subject),
         });
         return;
+      }
+
+      if (CROSS_TYPE_TODO_SUPERSEDE_TYPES.has(normalizedEntry.type)) {
+        const todoCanonicalMatch = await findActiveTodoByCanonicalKey(db, normalizedEntry.canonical_key);
+        if (todoCanonicalMatch) {
+          const applySupersede = async () => {
+            await markSuperseded(db, todoCanonicalMatch.id, todoCanonicalMatch.id);
+          };
+
+          const shouldAutoSupersede =
+            hasTodoCompletionSignal(normalizedEntry.content) &&
+            subjectsContainEachOther(normalizedEntry.subject, todoCanonicalMatch.subject);
+
+          if (shouldAutoSupersede) {
+            if (onlineDedup) {
+              await runPerEntryTransaction(db, options.dryRun === true, applySupersede);
+            } else {
+              await applySupersede();
+            }
+          } else if (llmDedupEnabled) {
+            const decisionFn = options.onlineDedupFn ?? classifyOnlineDedup;
+            llmDedupCalls += 1;
+            const decision = await decisionFn(options.llmClient as LlmClient, normalizedEntry, [
+              { entry: todoCanonicalMatch, similarity: 1 },
+            ]);
+
+            if (decision.action === "SUPERSEDE") {
+              if (onlineDedup) {
+                await runPerEntryTransaction(db, options.dryRun === true, applySupersede);
+              } else {
+                await applySupersede();
+              }
+            }
+          }
+        }
       }
     }
 
