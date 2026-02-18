@@ -126,10 +126,12 @@ export async function saveWatchState(state: WatchState, configDir?: string): Pro
     normalized.files[resolvedPath] = sanitizeFileState(resolvedPath, fileState);
   }
 
-  await fs.writeFile(statePath, `${JSON.stringify(normalized, null, 2)}\n`, {
+  const tmpPath = `${statePath}.tmp`;
+  await fs.writeFile(tmpPath, `${JSON.stringify(normalized, null, 2)}\n`, {
     encoding: "utf8",
     mode: CONFIG_FILE_MODE,
   });
+  await fs.rename(tmpPath, statePath);
 
   try {
     await fs.chmod(statePath, CONFIG_FILE_MODE);

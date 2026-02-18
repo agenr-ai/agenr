@@ -545,7 +545,7 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
 
         const latestState = getFileState(state, targetFilePath);
         updateFileState(state, targetFilePath, {
-          byteOffset: stat.size,
+          byteOffset: byteOffset + newBytes.byteLength,
           lastRunAt: resolvedDeps.nowFn().toISOString(),
           totalEntriesStored: (latestState?.totalEntriesStored ?? 0) + cycleResult.entriesStored,
           totalRunCount: (latestState?.totalRunCount ?? 0) + 1,
