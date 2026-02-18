@@ -4,8 +4,9 @@ import path from "node:path";
 import type { Client } from "@libsql/client";
 import { readConfig } from "../config.js";
 import { closeDb, getDb, initDb } from "../db/client.js";
-import { getTagsForEntryIds, mapStoredEntry, scoreEntry } from "../db/recall.js";
+import { getTagsForEntryIds, mapStoredEntry, recall, scoreEntry } from "../db/recall.js";
 import { sessionStartRecall } from "../db/session-start.js";
+import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import type { StoredEntry } from "../types.js";
 import { APP_VERSION } from "../version.js";
 
@@ -33,9 +34,11 @@ export interface EvalRecallCommandOptions {
 
 export interface EvalRecallCommandDeps {
   readConfigFn: typeof readConfig;
+  resolveEmbeddingApiKeyFn: typeof resolveEmbeddingApiKey;
   getDbFn: typeof getDb;
   initDbFn: typeof initDb;
   closeDbFn: typeof closeDb;
+  recallFn: typeof recall;
   sessionStartRecallFn: typeof sessionStartRecall;
   scoreEntryFn: typeof scoreEntry;
   readFileFn: typeof fs.readFile;
@@ -71,10 +74,10 @@ interface EvalBaseline {
 
 const DEFAULT_QUERIES: EvalRecallQuery[] = [
   { id: "session-start", query: "session context startup recall" },
-  { id: "recent-decisions", query: "decisions made recently" },
-  { id: "active-todos", query: "active todos and tasks" },
-  { id: "preferences", query: "user preferences and configuration" },
-  { id: "architecture", query: "architecture and technical decisions" },
+  { id: "recent-decisions", query: "recent decisions" },
+  { id: "active-todos", query: "active todos tasks" },
+  { id: "preferences", query: "user preferences configuration" },
+  { id: "architecture", query: "architecture technical decisions" },
 ];
 
 function parsePositiveInt(value: number | string | undefined, fallback: number, label: string): number {
@@ -160,12 +163,18 @@ async function loadQueries(
   return queries.length > 0 ? queries : DEFAULT_QUERIES;
 }
 
-async function runFtsEval(db: Client, text: string, now: Date, limit: number, scoreEntryFn: typeof scoreEntry): Promise<EvalResultRow[]> {
-  const trimmed = text.trim();
-  if (!trimmed) {
-    return [];
-  }
-
+async function runTypedEval(
+  db: Client,
+  params: {
+    type: "decision" | "todo";
+    orderBy: "created_at_desc" | "importance_created_desc";
+    now: Date;
+    limit: number;
+    scoreEntryFn: typeof scoreEntry;
+  },
+): Promise<EvalResultRow[]> {
+  const orderClause =
+    params.orderBy === "created_at_desc" ? "e.created_at DESC" : "e.importance DESC, e.created_at DESC";
   const result = await db.execute({
     sql: `
       SELECT
@@ -188,13 +197,13 @@ async function runFtsEval(db: Client, text: string, now: Date, limit: number, sc
         e.confirmations,
         e.contradictions,
         e.superseded_by
-      FROM entries_fts
-      JOIN entries AS e ON e.rowid = entries_fts.rowid
-      WHERE entries_fts MATCH ?
+      FROM entries AS e
+      WHERE e.type = ?
         AND e.superseded_by IS NULL
-      LIMIT 250
+      ORDER BY ${orderClause}
+      LIMIT ?
     `,
-    args: [trimmed],
+    args: [params.type, params.limit],
   });
 
   const ids = result.rows.map((row) => toStringValue((row as DbRow).id)).filter((id) => id.length > 0);
@@ -202,10 +211,40 @@ async function runFtsEval(db: Client, text: string, now: Date, limit: number, sc
 
   const scored = result.rows
     .map((row) => mapStoredEntry(row, tagsById.get(toStringValue((row as DbRow).id)) ?? []))
-    .map((entry) => ({ entry, score: scoreEntryFn(entry, 1.0, true, now) }))
+    .map((entry) => ({ entry, score: params.scoreEntryFn(entry, 1.0, false, params.now) }))
     .sort((a, b) => b.score - a.score);
 
-  return scored.slice(0, limit);
+  return scored;
+}
+
+async function runSemanticEval(
+  db: Client,
+  text: string,
+  params: {
+    now: Date;
+    limit: number;
+    apiKey: string;
+    recallFn: typeof recall;
+  },
+): Promise<EvalResultRow[]> {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return [];
+  }
+
+  const rows = await params.recallFn(
+    db,
+    {
+      text: trimmed,
+      context: "default",
+      scope: "private",
+      noUpdate: true,
+      limit: params.limit,
+    },
+    params.apiKey,
+    { now: params.now },
+  );
+  return rows.map((row) => ({ entry: row.entry, score: row.score }));
 }
 
 async function runSessionStartEval(
@@ -350,9 +389,11 @@ export async function runEvalRecallCommand(
 
   const resolvedDeps: EvalRecallCommandDeps = {
     readConfigFn: deps?.readConfigFn ?? readConfig,
+    resolveEmbeddingApiKeyFn: deps?.resolveEmbeddingApiKeyFn ?? resolveEmbeddingApiKey,
     getDbFn: deps?.getDbFn ?? getDb,
     initDbFn: deps?.initDbFn ?? initDb,
     closeDbFn: deps?.closeDbFn ?? closeDb,
+    recallFn: deps?.recallFn ?? recall,
     sessionStartRecallFn: deps?.sessionStartRecallFn ?? sessionStartRecall,
     scoreEntryFn: deps?.scoreEntryFn ?? scoreEntry,
     readFileFn: deps?.readFileFn ?? fs.readFile,
@@ -379,12 +420,52 @@ export async function runEvalRecallCommand(
     await resolvedDeps.initDbFn(db);
 
     const resultsByQueryId = new Map<string, EvalResultRow[]>();
+    const needsSemanticRecall = queries.some((q) => !["session-start", "recent-decisions", "active-todos"].includes(q.id));
+    const semanticApiKey = needsSemanticRecall ? resolvedDeps.resolveEmbeddingApiKeyFn(config, process.env) : "";
+
     for (const q of queries) {
       if (q.id === "session-start") {
         resultsByQueryId.set(q.id, await runSessionStartEval(db, now, limit, budget, resolvedDeps));
-      } else {
-        resultsByQueryId.set(q.id, await runFtsEval(db, q.query, now, limit, resolvedDeps.scoreEntryFn));
+        continue;
       }
+
+      if (q.id === "recent-decisions") {
+        resultsByQueryId.set(
+          q.id,
+          await runTypedEval(db, {
+            type: "decision",
+            orderBy: "created_at_desc",
+            now,
+            limit,
+            scoreEntryFn: resolvedDeps.scoreEntryFn,
+          }),
+        );
+        continue;
+      }
+
+      if (q.id === "active-todos") {
+        resultsByQueryId.set(
+          q.id,
+          await runTypedEval(db, {
+            type: "todo",
+            orderBy: "importance_created_desc",
+            now,
+            limit,
+            scoreEntryFn: resolvedDeps.scoreEntryFn,
+          }),
+        );
+        continue;
+      }
+
+      resultsByQueryId.set(
+        q.id,
+        await runSemanticEval(db, q.query, {
+          now,
+          limit,
+          apiKey: semanticApiKey,
+          recallFn: resolvedDeps.recallFn,
+        }),
+      );
     }
 
     if (options.compare) {
