@@ -30,8 +30,8 @@ export interface RecallCommandOptions {
   since?: string;
   expiry?: string;
   platform?: string;
-  project?: string;
-  excludeProject?: string;
+  project?: string | string[];
+  excludeProject?: string | string[];
   strict?: boolean;
   json?: boolean;
   db?: string;
@@ -79,16 +79,20 @@ function parseCsv(input: string | undefined): string[] {
   );
 }
 
-function parseProjectList(input: string | undefined, flagName: string): string[] | undefined {
-  const raw = input?.trim() ?? "";
-  if (!raw) {
+function parseProjectList(input: string | string[] | undefined, flagName: string): string[] | undefined {
+  const rawItems = Array.isArray(input) ? input : input ? [input] : [];
+  const parts = rawItems
+    .flatMap((value) =>
+      String(value)
+        .split(",")
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0),
+    )
+    .filter((value) => value.length > 0);
+
+  if (parts.length === 0) {
     return undefined;
   }
-
-  const parts = raw
-    .split(",")
-    .map((value) => value.trim())
-    .filter((value) => value.length > 0);
 
   const normalized = parts
     .map((value) => normalizeProject(value))

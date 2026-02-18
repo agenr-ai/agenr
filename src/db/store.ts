@@ -681,7 +681,7 @@ export async function insertEntry(
       entry.importance,
       entry.expiry,
       entry.platform ?? null,
-      entry.project ?? null,
+      entry.project?.toLowerCase() ?? null,
       entry.source.file,
       entry.source.context,
       contentHash,

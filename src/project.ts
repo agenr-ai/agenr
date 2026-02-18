@@ -7,7 +7,7 @@ export type StatLike = { isFile(): boolean; isDirectory(): boolean };
 /**
  * Derive a project name from a working directory path.
  * Walks up from cwd looking for a .git/ directory (file or dir - works with worktrees/submodules).
- * Returns the git root's basename (lowercase), or the cwd basename as fallback.
+ * Returns the git root's basename (lowercase).
  * Returns null if cwd is a home directory or root.
  */
 export function detectProjectFromCwd(
@@ -48,11 +48,10 @@ export function detectProjectFromCwd(
     current = parent;
   }
 
-  return path.basename(resolved).toLowerCase();
+  return null;
 }
 
 export function normalizeProject(value: string): string | null {
   const normalized = value.trim().toLowerCase();
   return normalized.length > 0 ? normalized : null;
 }
-

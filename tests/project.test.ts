@@ -26,8 +26,8 @@ describe("project detection", () => {
     expect(detectProjectFromCwd(os.homedir(), () => null)).toBe(null);
   });
 
-  it("detectProjectFromCwd falls back to cwd basename when no git root is found", () => {
-    expect(detectProjectFromCwd("/tmp/MyProject", () => null)).toBe("myproject");
+  it("detectProjectFromCwd returns null when no git root is found", () => {
+    expect(detectProjectFromCwd("/tmp/MyProject", () => null)).toBe(null);
   });
 
   it("normalizeProject trims and lowercases (and returns null for empty)", () => {
@@ -36,4 +36,3 @@ describe("project detection", () => {
     expect(normalizeProject("   ")).toBe(null);
   });
 });
-
