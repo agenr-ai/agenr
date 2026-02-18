@@ -173,4 +173,24 @@ describe("recall command", () => {
     const firstCall = (recallFn.mock.calls as unknown[][])[0] as [unknown, { platform?: string }] | undefined;
     expect(firstCall?.[1]?.platform).toBe("openclaw");
   });
+
+  it("passes --project into recall query when provided", async () => {
+    const recallFn = vi.fn(async () => []);
+    const deps = makeDeps({ recallFn });
+
+    await runRecallCommand("work", { context: "default", json: true, project: "agenr,openclaw" }, deps);
+
+    const firstCall = (recallFn.mock.calls as unknown[][])[0] as [unknown, { project?: string[] }] | undefined;
+    expect(firstCall?.[1]?.project).toEqual(["agenr", "openclaw"]);
+  });
+
+  it("sets projectStrict when --strict is used with --project", async () => {
+    const recallFn = vi.fn(async () => []);
+    const deps = makeDeps({ recallFn });
+
+    await runRecallCommand("work", { context: "default", json: true, project: "agenr", strict: true }, deps);
+
+    const firstCall = (recallFn.mock.calls as unknown[][])[0] as [unknown, { projectStrict?: boolean }] | undefined;
+    expect(firstCall?.[1]?.projectStrict).toBe(true);
+  });
 });

@@ -63,6 +63,7 @@ export interface KnowledgeEntry {
   subject: string;
   canonical_key?: string;
   platform?: KnowledgePlatform;
+  project?: string;
   importance: number;
   expiry: Expiry;
   scope?: Scope;
@@ -213,6 +214,9 @@ export interface RecallQuery {
   noBoost?: boolean;
   noUpdate?: boolean;
   platform?: KnowledgePlatform;
+  project?: string | string[];
+  excludeProject?: string | string[];
+  projectStrict?: boolean;
 }
 
 export interface RecallCommandResult extends RecallResult {

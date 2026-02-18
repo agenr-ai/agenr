@@ -12,6 +12,7 @@ import { createLlmClient } from "../llm/client.js";
 import { formatWarn } from "../ui.js";
 import { installSignalHandlers, isShutdownRequested, onShutdown } from "../shutdown.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
+import { normalizeProject } from "../project.js";
 import { KNOWLEDGE_PLATFORMS } from "../types.js";
 import type { KnowledgePlatform } from "../types.js";
 
@@ -22,6 +23,8 @@ export interface ConsolidateCommandOptions {
   json?: boolean;
   db?: string;
   platform?: string;
+  project?: string;
+  excludeProject?: string;
   minCluster?: number;
   simThreshold?: number;
   maxClusterSize?: number;
@@ -143,6 +146,28 @@ function createLogger(jsonMode: boolean): ConsolidateLogger {
   };
 }
 
+function parseProjectList(input: string | undefined, flagName: string): string[] | undefined {
+  const raw = input?.trim() ?? "";
+  if (!raw) {
+    return undefined;
+  }
+
+  const parts = raw
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+
+  const normalized = parts
+    .map((value) => normalizeProject(value))
+    .filter((value): value is string => Boolean(value));
+
+  if (parts.length > 0 && normalized.length === 0) {
+    throw new Error(`${flagName} must be a non-empty string (or comma-separated list).`);
+  }
+
+  return Array.from(new Set(normalized));
+}
+
 export async function runConsolidateCommand(
   options: ConsolidateCommandOptions,
   deps: Partial<ConsolidateCommandDeps> = {},
@@ -175,6 +200,12 @@ export async function runConsolidateCommand(
     throw new Error(`--platform must be one of: ${KNOWLEDGE_PLATFORMS.join(", ")}`);
   }
 
+  const project = parseProjectList(options.project, "--project");
+  const excludeProject = parseProjectList(options.excludeProject, "--exclude-project");
+  if (project && excludeProject) {
+    throw new Error("Use either --project or --exclude-project, not both.");
+  }
+
   if (dbFilePath === ":memory:") {
     throw new Error("Consolidation requires a file-backed database so a backup can be created.");
   }
@@ -202,6 +233,8 @@ export async function runConsolidateCommand(
         dryRun: options.dryRun,
         verbose: options.verbose,
         platform: platform ?? undefined,
+        project,
+        excludeProject,
         minCluster: options.minCluster,
         simThreshold: options.simThreshold,
         maxClusterSize: options.maxClusterSize,

@@ -8,6 +8,7 @@ import { acquireDbLock, releaseDbLock } from "../db/lockfile.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { createLlmClient } from "../llm/client.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
+import { normalizeProject } from "../project.js";
 import { expandInputFiles } from "../parser.js";
 import { EXPIRY_LEVELS, IMPORTANCE_MAX, IMPORTANCE_MIN, KNOWLEDGE_PLATFORMS, KNOWLEDGE_TYPES } from "../types.js";
 import type { ExtractionReport, KnowledgeEntry, StoreResult } from "../types.js";
@@ -20,6 +21,7 @@ export interface StoreCommandOptions {
   verbose?: boolean;
   force?: boolean;
   platform?: string;
+  project?: string;
   onlineDedup?: boolean;
   dedupThreshold?: number | string;
 }
@@ -299,6 +301,12 @@ export async function runStoreCommand(
     throw new Error(`--platform must be one of: ${KNOWLEDGE_PLATFORMS.join(", ")}`);
   }
 
+  const projectRaw = options.project?.trim();
+  const project = projectRaw ? normalizeProject(projectRaw) : null;
+  if (projectRaw && !project) {
+    throw new Error("--project must be a non-empty string.");
+  }
+
   const hasAnyEntries = totalInputEntries > 0;
   const apiKey = hasAnyEntries ? resolvedDeps.resolveEmbeddingApiKeyFn(config, process.env) : "";
   const onlineDedup = options.onlineDedup !== false;
@@ -334,7 +342,14 @@ export async function runStoreCommand(
         break;
       }
 
-      const entries: KnowledgeEntry[] = platform ? input.entries.map((entry) => ({ ...entry, platform })) : input.entries;
+      const entries: KnowledgeEntry[] =
+        platform || project
+          ? input.entries.map((entry) => ({
+              ...entry,
+              ...(platform ? { platform } : {}),
+              ...(project ? { project } : {}),
+            }))
+          : input.entries;
 
       const result = await resolvedDeps.storeEntriesFn(db, entries, apiKey, {
         dryRun: options.dryRun,

@@ -13,6 +13,7 @@ import { extractKnowledgeFromChunks } from "../extractor.js";
 import { createLlmClient } from "../llm/client.js";
 import { expandInputFiles, parseTranscriptFile } from "../parser.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
+import { normalizeProject } from "../project.js";
 import { KNOWLEDGE_PLATFORMS } from "../types.js";
 import type { KnowledgeEntry } from "../types.js";
 import { banner, formatError, formatWarn, ui } from "../ui.js";
@@ -37,6 +38,7 @@ export interface IngestCommandOptions {
   dryRun?: boolean;
   json?: boolean;
   platform?: string;
+  project?: string;
   concurrency?: number | string;
   skipIngested?: boolean;
   force?: boolean;
@@ -494,6 +496,11 @@ export async function runIngestCommand(
   if (platformRaw && !platform) {
     throw new Error(`--platform must be one of: ${KNOWLEDGE_PLATFORMS.join(", ")}`);
   }
+  const projectRaw = options.project?.trim();
+  const project = projectRaw ? normalizeProject(projectRaw) : null;
+  if (projectRaw && !project) {
+    throw new Error("--project must be a non-empty string.");
+  }
   const retrySummaries: string[] = [];
   let stoppedForShutdown = false;
 
@@ -714,6 +721,7 @@ export async function runIngestCommand(
         const normalizedEntries = chunkEntries.map((entry) => ({
           ...entry,
           ...(platform ? { platform } : {}),
+          ...(project ? { project } : {}),
           source: {
             ...entry.source,
             file: target.file,

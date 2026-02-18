@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- `entries.project` column (with index) to tag knowledge by source project/repo (NULL for legacy entries)
+- Project auto-detection from transcript CWD in watch mode (tags entries at write time)
+- `--project` and `--exclude-project` filters/tags across commands:
+  - `agenr recall --project/--exclude-project [--strict]`
+  - `agenr context --project/--exclude-project [--strict]`
+  - `agenr store --project`
+  - `agenr ingest --project`
+  - `agenr consolidate --project/--exclude-project` (never merges across projects)
+  - `agenr db stats --project/--exclude-project`
+  - `agenr db export --project/--exclude-project`
+- MCP tool support for project:
+  - `agenr_recall` accepts optional `project` filter (comma-separated for multiple)
+  - `agenr_store` accepts optional `project` tag
+
 ## 0.5.0 (2026-02-17)
 
 ### Added

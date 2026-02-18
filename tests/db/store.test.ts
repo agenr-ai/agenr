@@ -197,6 +197,44 @@ describe("db store pipeline", () => {
     expect(byFile.get("seed2.jsonl")).toBe(null);
   });
 
+  it("stores project when provided (and NULL when missing)", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    await storeEntries(
+      client,
+      [{ ...makeEntry({ content: "seed vec-base", sourceFile: "seed.jsonl" }), project: "agenr" }],
+      "sk-test",
+      {
+        sourceFile: "seed.jsonl",
+        ingestContentHash: hashText("seed-project"),
+        embedFn: mockEmbed,
+        force: true,
+      },
+    );
+
+    await storeEntries(
+      client,
+      [makeEntry({ content: "seed vec-v2", sourceFile: "seed2.jsonl" })],
+      "sk-test",
+      {
+        sourceFile: "seed2.jsonl",
+        ingestContentHash: hashText("seed-project-2"),
+        embedFn: mockEmbed,
+        force: true,
+      },
+    );
+
+    const rows = await client.execute({
+      sql: "SELECT source_file, project FROM entries ORDER BY source_file ASC",
+      args: [],
+    });
+
+    const byFile = new Map(rows.rows.map((row) => [String(row.source_file), row.project]));
+    expect(byFile.get("seed.jsonl")).toBe("agenr");
+    expect(byFile.get("seed2.jsonl")).toBe(null);
+  });
+
   it("skips near-exact semantic duplicates at 0.95+ similarity", async () => {
     const client = makeClient();
     await initDb(client);

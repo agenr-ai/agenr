@@ -88,6 +88,7 @@ agenr store [options] [files...]
 - `--verbose`: show per-entry dedup decisions.
 - `--force`: bypass dedup checks and insert all as new.
 - `--platform <name>`: platform tag (`openclaw|claude-code|claude|codex`).
+- `--project <name>`: project tag (lowercase).
 - `--online-dedup`: enable online LLM dedup at write time (default `true`).
 - `--no-online-dedup`: disable online LLM dedup.
 - `--dedup-threshold <n>`: similarity threshold for online dedup (`0.0..1.0`, default `0.8`).
@@ -125,6 +126,9 @@ agenr recall [options] [query]
 - `--since <duration>`: recency filter (`1h`, `7d`, `30d`, `1y`, or ISO timestamp).
 - `--expiry <level>`: `core|permanent|temporary`.
 - `--platform <name>`: platform filter (`openclaw|claude-code|claude|codex`).
+- `--project <name>`: project filter (comma-separated for multiple).
+- `--exclude-project <name>`: exclude entries from project (comma-separated for multiple).
+- `--strict`: when used with `--project`, excludes NULL-project entries from results.
 - `--json`: emit JSON.
 - `--db <path>`: database path override.
 - `--budget <tokens>`: approximate token budget cap.
@@ -146,6 +150,40 @@ $A recall "which package manager did we choose?" --limit 3
 1. [decision] project tooling: We switched this project to pnpm.
    importance=7 | today | recalled 1 time
    tags: tooling, package-manager
+```
+
+## `context`
+
+Generate a context file for AI tool integration using session-start recall (no embedding API calls).
+
+### Syntax
+
+```bash
+agenr context [options]
+```
+
+### Options
+- `--output <path>`: output file path (default `~/.agenr/CONTEXT.md`).
+- `--budget <tokens>`: approximate token budget (default `2000`).
+- `--limit <n>`: max entries per category (default `10`).
+- `--db <path>`: database path override.
+- `--platform <name>`: platform filter (`openclaw|claude-code|claude|codex`).
+- `--project <name>`: project filter (comma-separated for multiple).
+- `--exclude-project <name>`: exclude entries from project (comma-separated for multiple).
+- `--strict`: when used with `--project`, excludes NULL-project entries from results.
+- `--json`: output JSON.
+- `--quiet`: suppress stderr output.
+
+### Example
+
+```bash
+$A context --output ~/.agenr/CONTEXT.md
+```
+
+### Example Output
+
+```text
+Wrote ~/.agenr/CONTEXT.md
 ```
 
 ## `watch`
@@ -249,6 +287,7 @@ agenr ingest [options] <paths...>
 - `--model <model>`: override model.
 - `--provider <name>`: `anthropic|openai|openai-codex`.
 - `--platform <name>`: platform tag (`openclaw|claude-code|claude|codex`).
+- `--project <name>`: project tag (lowercase).
 - `--verbose`: per-file details.
 - `--dry-run`: extract without storing.
 - `--json`: emit JSON summary.
@@ -287,6 +326,8 @@ agenr consolidate [options]
 - `--rules-only`: run only Tier 1 rule cleanup.
 - `--dry-run`: report actions without writing.
 - `--platform <name>`: scope consolidation to platform (`openclaw|claude-code|claude|codex`).
+- `--project <name>`: scope consolidation to project (comma-separated for multiple).
+- `--exclude-project <name>`: exclude entries from project (comma-separated for multiple).
 - `--min-cluster <n>`: min cluster size for LLM phases (default `2`).
 - `--sim-threshold <n>`: Phase 1 clustering threshold (default `0.82`). Phase 2 uses `max(value, 0.88)`.
 - `--max-cluster-size <n>`: max cluster size for LLM phases. Defaults: Phase 1 `8`, Phase 2 `6`.
@@ -465,6 +506,8 @@ agenr db stats [options]
 ### Options
 - `--db <path>`: database path override.
 - `--platform <name>`: filter stats by platform (`openclaw|claude-code|claude|codex`).
+- `--project <name>`: filter stats by project (comma-separated for multiple).
+- `--exclude-project <name>`: exclude entries from project (comma-separated for multiple).
 
 ### Example
 
@@ -477,7 +520,7 @@ $A db stats
 ```text
 DB Stats
 Database: /Users/you/.agenr/knowledge.db
-Schema Version: 0.4.0
+Schema Version: 0.5.0
 Entries: 42
 By Type
 - decision: 10
@@ -487,6 +530,10 @@ By Platform
 - claude-code: 12
 - codex: 3
 - (untagged): 7
+By Project
+- repo-a: 18
+- repo-b: 10
+- (untagged): 14
 Top Tags
 - tooling: 6
 ```
@@ -530,6 +577,8 @@ agenr db export [options]
 - `--md`: export markdown.
 - `--db <path>`: database path override.
 - `--platform <name>`: platform filter (`openclaw|claude-code|claude|codex`).
+- `--project <name>`: project filter (comma-separated for multiple).
+- `--exclude-project <name>`: exclude entries from project (comma-separated for multiple).
 
 Exactly one of `--json` or `--md` is required.
 

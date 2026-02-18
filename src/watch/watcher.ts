@@ -12,6 +12,7 @@ import { extractKnowledgeFromChunks } from "../extractor.js";
 import { createLlmClient } from "../llm/client.js";
 import { parseTranscriptFile } from "../parser.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
+import { detectProjectFromCwd } from "../project.js";
 import { installSignalHandlers, isShutdownRequested } from "../shutdown.js";
 import type { KnowledgeEntry, KnowledgePlatform, WatchState } from "../types.js";
 import type { SessionResolver } from "./session-resolver.js";
@@ -90,6 +91,8 @@ export interface WatcherDeps {
   saveWatchStateFn: typeof saveWatchState;
   statFileFn: typeof fs.stat;
   readFileFn: (filePath: string, offset: number) => Promise<Buffer>;
+  readFileHeadFn: (filePath: string, maxBytes: number) => Promise<Buffer>;
+  detectProjectFn: (cwd: string) => string | null;
   mkdtempFn: typeof fs.mkdtemp;
   writeFileFn: typeof fs.writeFile;
   rmFn: typeof fs.rm;
@@ -164,6 +167,23 @@ export async function readFileFromOffset(filePath: string, offset: number): Prom
   }
 }
 
+async function readFileHead(filePath: string, maxBytes: number): Promise<Buffer> {
+  const handle = await fs.open(filePath, "r");
+  try {
+    const stat = await handle.stat();
+    if (stat.size <= 0 || maxBytes <= 0) {
+      return Buffer.alloc(0);
+    }
+
+    const toRead = Math.min(stat.size, maxBytes);
+    const buffer = Buffer.alloc(toRead);
+    const readResult = await handle.read(buffer, 0, toRead, 0);
+    return buffer.subarray(0, readResult.bytesRead);
+  } finally {
+    await handle.close();
+  }
+}
+
 export async function runWatcher(options: WatcherOptions, deps?: Partial<WatcherDeps>): Promise<WatchRunSummary> {
   installSignalHandlers();
 
@@ -183,6 +203,8 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
     saveWatchStateFn: deps?.saveWatchStateFn ?? saveWatchState,
     statFileFn: deps?.statFileFn ?? fs.stat,
     readFileFn: deps?.readFileFn ?? readFileFromOffset,
+    readFileHeadFn: deps?.readFileHeadFn ?? readFileHead,
+    detectProjectFn: deps?.detectProjectFn ?? ((cwd) => detectProjectFromCwd(cwd)),
     mkdtempFn: deps?.mkdtempFn ?? fs.mkdtemp,
     writeFileFn: deps?.writeFileFn ?? fs.writeFile,
     rmFn: deps?.rmFn ?? fs.rm,
@@ -306,6 +328,7 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
   const watchers = new Map<string, FSWatcher>();
   let fsWatchDisabled = false;
   let debounceTimer: NodeJS.Timeout | null = null;
+  const projectCache = new Map<string, string | null>();
 
   const clearDebounce = (): void => {
     if (debounceTimer) {
@@ -445,6 +468,25 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
       const tempDir = await resolvedDeps.mkdtempFn(path.join(os.tmpdir(), "agenr-watch-"));
       const tempFile = path.join(tempDir, "delta.txt");
       try {
+        let cachedProject: string | null = null;
+        const cacheKey = path.resolve(targetFilePath);
+        if (projectCache.has(cacheKey)) {
+          cachedProject = projectCache.get(cacheKey) ?? null;
+        } else {
+          // Metadata (cwd) is typically in the original transcript header, which may not be in the delta.
+          // Parse a small head slice of the ORIGINAL file through the normal adapter path.
+          const headBytes = await resolvedDeps.readFileHeadFn(targetFilePath, 128 * 1024);
+          if (headBytes.byteLength > 0) {
+            const ext = path.extname(targetFilePath) || ".jsonl";
+            const headFile = path.join(tempDir, `head${ext}`);
+            await resolvedDeps.writeFileFn(headFile, headBytes.toString("utf8"), "utf8");
+            const headParsed = await resolvedDeps.parseTranscriptFileFn(headFile, { raw: options.raw, verbose: false });
+            const cwd = headParsed.metadata?.cwd;
+            cachedProject = typeof cwd === "string" && cwd.trim().length > 0 ? resolvedDeps.detectProjectFn(cwd) : null;
+          }
+          projectCache.set(cacheKey, cachedProject);
+        }
+
         await resolvedDeps.writeFileFn(tempFile, newContent, "utf8");
         const parsed = await resolvedDeps.parseTranscriptFileFn(tempFile, { raw: options.raw, verbose: options.verbose });
         if (options.verbose && parsed.warnings.length > 0) {
@@ -458,7 +500,14 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
             currentPlatform && currentPlatform !== "mtime"
               ? normalizeKnowledgePlatform(currentPlatform) ?? undefined
               : undefined;
-          const taggedEntries = platformTag ? chunkEntries.map((entry) => ({ ...entry, platform: platformTag })) : chunkEntries;
+          const taggedEntries =
+            platformTag || cachedProject
+              ? chunkEntries.map((entry) => ({
+                  ...entry,
+                  ...(platformTag ? { platform: platformTag } : {}),
+                  ...(cachedProject ? { project: cachedProject } : {}),
+                }))
+              : chunkEntries;
 
           cycleResult.entriesExtracted += taggedEntries.length;
           const deduped = resolvedDeps.deduplicateEntriesFn(taggedEntries);

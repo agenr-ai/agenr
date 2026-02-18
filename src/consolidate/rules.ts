@@ -29,8 +29,13 @@ export interface ConsolidateRulesOptions {
   dryRun?: boolean;
   verbose?: boolean;
   platform?: KnowledgePlatform;
+  project?: string | null;
+  excludeProject?: string[];
   onLog?: (message: string) => void;
   rebuildIndex?: boolean;
+  skipBackup?: boolean;
+  backupPath?: string;
+  skipOrphanCleanup?: boolean;
 }
 
 function toNumber(value: InValue | undefined): number {
@@ -95,11 +100,48 @@ function parseDaysOld(now: Date, createdAt: string): number {
   return Math.max(days, 0);
 }
 
-export async function countActiveEntries(db: Client, platform?: KnowledgePlatform): Promise<number> {
+function buildProjectCondition(
+  project: string | null | undefined,
+  excludeProject: string[] | undefined,
+  column = "project",
+): { clause: string; args: unknown[] } {
+  const args: unknown[] = [];
+  const clauses: string[] = [];
+
+  if (project !== undefined) {
+    if (project === null) {
+      clauses.push(`${column} IS NULL`);
+    } else {
+      clauses.push(`${column} = ?`);
+      args.push(project);
+    }
+  }
+
+  if (excludeProject && excludeProject.length > 0) {
+    const placeholders = excludeProject.map(() => "?").join(", ");
+    clauses.push(`(${column} NOT IN (${placeholders}) OR ${column} IS NULL)`);
+    args.push(...excludeProject);
+  }
+
+  if (clauses.length === 0) {
+    return { clause: "", args: [] };
+  }
+
+  return { clause: `AND ${clauses.join(" AND ")}`, args };
+}
+
+export async function countActiveEntries(
+  db: Client,
+  platform?: KnowledgePlatform,
+  project?: string | null,
+  excludeProject?: string[],
+): Promise<number> {
   const args: unknown[] = [];
   if (platform) {
     args.push(platform);
   }
+  const projectSql = buildProjectCondition(project, excludeProject);
+  args.push(...projectSql.args);
 
   const result = await db.execute({
     sql: `
@@ -107,6 +149,7 @@ export async function countActiveEntries(db: Client, platform?: KnowledgePlatfor
       FROM entries
       WHERE superseded_by IS NULL
         ${platform ? "AND platform = ?" : ""}
+        ${projectSql.clause}
     `,
     args,
   });
@@ -138,6 +181,8 @@ async function expireDecayedEntries(
     dryRun: boolean;
     verbose: boolean;
     platform?: KnowledgePlatform;
+    project?: string | null;
+    excludeProject?: string[];
     onLog: (message: string) => void;
   },
 ): Promise<number> {
@@ -145,6 +190,8 @@ async function expireDecayedEntries(
   if (options.platform) {
     args.push(options.platform);
   }
+  const projectSql = buildProjectCondition(options.project, options.excludeProject);
+  args.push(...projectSql.args);
 
   const result = await db.execute({
     sql: `
@@ -153,6 +200,7 @@ async function expireDecayedEntries(
     WHERE superseded_by IS NULL
       AND expiry = 'temporary'
       ${options.platform ? "AND platform = ?" : ""}
+      ${projectSql.clause}
     `,
     args,
   });
@@ -210,6 +258,8 @@ async function mergeNearExactDuplicates(
     dryRun: boolean;
     verbose: boolean;
     platform?: KnowledgePlatform;
+    project?: string | null;
+    excludeProject?: string[];
     onLog: (message: string) => void;
   },
 ): Promise<number> {
@@ -217,6 +267,8 @@ async function mergeNearExactDuplicates(
   if (options.platform) {
     countArgs.push(options.platform);
   }
+  const projectSqlForCount = buildProjectCondition(options.project, options.excludeProject);
+  countArgs.push(...projectSqlForCount.args);
 
   const countResult = await db.execute({
     sql: `
@@ -225,6 +277,7 @@ async function mergeNearExactDuplicates(
     WHERE superseded_by IS NULL
       AND embedding IS NOT NULL
       ${options.platform ? "AND platform = ?" : ""}
+      ${projectSqlForCount.clause}
     `,
     args: countArgs,
   });
@@ -242,14 +295,17 @@ async function mergeNearExactDuplicates(
   if (options.platform) {
     args.push(options.platform);
   }
+  const projectSql = buildProjectCondition(options.project, options.excludeProject);
+  args.push(...projectSql.args);
 
   const result = await db.execute({
     sql: `
-    SELECT id, type, subject, content, embedding, confirmations, recall_count, created_at
+    SELECT id, type, subject, content, project, embedding, confirmations, recall_count, created_at
     FROM entries
     WHERE superseded_by IS NULL
       AND embedding IS NOT NULL
       ${options.platform ? "AND platform = ?" : ""}
+      ${projectSql.clause}
     `,
     args,
   });
@@ -260,6 +316,10 @@ async function mergeNearExactDuplicates(
       type: toStringValue(row.type),
       subject: toStringValue(row.subject),
       content: toStringValue(row.content),
+      project: (() => {
+        const raw = toStringValue(row.project);
+        return raw.trim().length > 0 ? raw.trim().toLowerCase() : null;
+      })(),
       embedding: mapBufferToVector(row.embedding),
       confirmations: Number.isFinite(toNumber(row.confirmations)) ? toNumber(row.confirmations) : 0,
       recallCount: Number.isFinite(toNumber(row.recall_count)) ? toNumber(row.recall_count) : 0,
@@ -298,6 +358,9 @@ async function mergeNearExactDuplicates(
         continue;
       }
       if (normalizeSubject(entry.subject) !== normalizeSubject(candidate.subject)) {
+        continue;
+      }
+      if ((entry.project ?? null) !== (candidate.project ?? null)) {
         continue;
       }
 
@@ -464,31 +527,38 @@ export async function consolidateRules(
   const rebuildIndex = options.rebuildIndex !== false;
   const onLog = options.onLog ?? (() => undefined);
   const platform = options.platform;
+  const project = options.project;
+  const excludeProject = options.excludeProject;
+  const skipBackup = options.skipBackup === true;
+  const skipOrphanCleanup = options.skipOrphanCleanup === true;
+
   const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, "-");
-  const backupPath = `${dbPath}.pre-consolidate-${timestamp}`;
+  const backupPath = skipBackup ? (options.backupPath ?? "") : `${dbPath}.pre-consolidate-${timestamp}`;
 
-  // Checkpoint WAL into main DB before backup so the copy is self-contained.
-  // Use TRUNCATE mode to reset the WAL file after checkpoint.
-  try {
-    await db.execute("PRAGMA wal_checkpoint(TRUNCATE)");
-  } catch (error) {
-    if (!dryRun) {
-      throw new Error(
-        `Cannot create safe backup: WAL checkpoint failed (${error instanceof Error ? error.message : String(error)}). ` +
-          "Close other agenr processes (watch, MCP) and retry.",
-      );
+  if (!skipBackup) {
+    // Checkpoint WAL into main DB before backup so the copy is self-contained.
+    // Use TRUNCATE mode to reset the WAL file after checkpoint.
+    try {
+      await db.execute("PRAGMA wal_checkpoint(TRUNCATE)");
+    } catch (error) {
+      if (!dryRun) {
+        throw new Error(
+          `Cannot create safe backup: WAL checkpoint failed (${error instanceof Error ? error.message : String(error)}). ` +
+            "Close other agenr processes (watch, MCP) and retry.",
+        );
+      }
+      if (verbose) {
+        onLog("[backup] WAL checkpoint failed (dry-run, continuing)");
+      }
     }
+
+    await fs.copyFile(dbPath, backupPath);
     if (verbose) {
-      onLog("[backup] WAL checkpoint failed (dry-run, continuing)");
+      onLog(`[backup] ${backupPath}`);
     }
   }
 
-  await fs.copyFile(dbPath, backupPath);
-  if (verbose) {
-    onLog(`[backup] ${backupPath}`);
-  }
-
-  const entriesBefore = await countActiveEntries(db, platform);
+  const entriesBefore = await countActiveEntries(db, platform, project, excludeProject);
   const now = new Date();
 
   let expiredCount = 0;
@@ -496,16 +566,16 @@ export async function consolidateRules(
   let orphanedRelationsCleaned = 0;
 
   if (dryRun) {
-    expiredCount = await expireDecayedEntries(db, now, { dryRun, verbose, onLog, platform });
-    mergedCount = await mergeNearExactDuplicates(db, { dryRun, verbose, onLog, platform });
-    orphanedRelationsCleaned = await cleanOrphanedRelations(db, true);
+    expiredCount = await expireDecayedEntries(db, now, { dryRun, verbose, onLog, platform, project, excludeProject });
+    mergedCount = await mergeNearExactDuplicates(db, { dryRun, verbose, onLog, platform, project, excludeProject });
+    orphanedRelationsCleaned = skipOrphanCleanup ? 0 : await cleanOrphanedRelations(db, true);
   } else {
     await db.execute("BEGIN");
     try {
       await ensureExpiredSentinel(db);
-      expiredCount = await expireDecayedEntries(db, now, { dryRun, verbose, onLog, platform });
-      mergedCount = await mergeNearExactDuplicates(db, { dryRun, verbose, onLog, platform });
-      orphanedRelationsCleaned = await cleanOrphanedRelations(db, false);
+      expiredCount = await expireDecayedEntries(db, now, { dryRun, verbose, onLog, platform, project, excludeProject });
+      mergedCount = await mergeNearExactDuplicates(db, { dryRun, verbose, onLog, platform, project, excludeProject });
+      orphanedRelationsCleaned = skipOrphanCleanup ? 0 : await cleanOrphanedRelations(db, false);
       await db.execute("COMMIT");
     } catch (error) {
       try {
@@ -530,27 +600,29 @@ export async function consolidateRules(
     }
   }
 
-  // Clean up old backups, keeping only the 3 most recent.
-  const backupDir = path.dirname(dbPath);
-  const backupBase = path.basename(dbPath);
-  const backupPrefix = `${backupBase}.pre-consolidate-`;
-  try {
-    const files = await fs.readdir(backupDir);
-    const backups = files
-      .filter((fileName) => fileName.startsWith(backupPrefix))
-      .sort()
-      .reverse();
-    for (const oldBackup of backups.slice(3)) {
-      await fs.unlink(path.join(backupDir, oldBackup));
-      if (verbose) {
-        onLog(`[backup] removed old backup: ${oldBackup}`);
+  if (!skipBackup) {
+    // Clean up old backups, keeping only the 3 most recent.
+    const backupDir = path.dirname(dbPath);
+    const backupBase = path.basename(dbPath);
+    const backupPrefix = `${backupBase}.pre-consolidate-`;
+    try {
+      const files = await fs.readdir(backupDir);
+      const backups = files
+        .filter((fileName) => fileName.startsWith(backupPrefix))
+        .sort()
+        .reverse();
+      for (const oldBackup of backups.slice(3)) {
+        await fs.unlink(path.join(backupDir, oldBackup));
+        if (verbose) {
+          onLog(`[backup] removed old backup: ${oldBackup}`);
+        }
       }
+    } catch {
+      // Best-effort cleanup; ignore errors.
     }
-  } catch {
-    // Best-effort cleanup; ignore errors.
   }
 
-  const entriesAfter = await countActiveEntries(db, platform);
+  const entriesAfter = await countActiveEntries(db, platform, project, excludeProject);
 
   return {
     entriesBefore,

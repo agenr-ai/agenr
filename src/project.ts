@@ -1,0 +1,58 @@
+import os from "node:os";
+import path from "node:path";
+import fs from "node:fs";
+
+export type StatLike = { isFile(): boolean; isDirectory(): boolean };
+
+/**
+ * Derive a project name from a working directory path.
+ * Walks up from cwd looking for a .git/ directory (file or dir - works with worktrees/submodules).
+ * Returns the git root's basename (lowercase), or the cwd basename as fallback.
+ * Returns null if cwd is a home directory or root.
+ */
+export function detectProjectFromCwd(
+  cwd: string,
+  statFn: (p: string) => StatLike | null = (p) => {
+    try {
+      return fs.statSync(p);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return null;
+      }
+      return null;
+    }
+  },
+): string | null {
+  const resolved = path.resolve(cwd);
+  const home = path.resolve(os.homedir());
+
+  if (resolved === path.parse(resolved).root) {
+    return null;
+  }
+  if (resolved === home) {
+    return null;
+  }
+
+  let current = resolved;
+  while (true) {
+    const gitPath = path.join(current, ".git");
+    const stat = statFn(gitPath);
+    if (stat && (stat.isDirectory() || stat.isFile())) {
+      return path.basename(current).toLowerCase();
+    }
+
+    const parent = path.dirname(current);
+    if (parent === current) {
+      break;
+    }
+    current = parent;
+  }
+
+  return path.basename(resolved).toLowerCase();
+}
+
+export function normalizeProject(value: string): string | null {
+  const normalized = value.trim().toLowerCase();
+  return normalized.length > 0 ? normalized : null;
+}
+

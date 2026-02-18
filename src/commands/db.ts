@@ -9,6 +9,7 @@ import { rebuildVectorIndex } from "../db/vector-index.js";
 import { banner, formatLabel, ui } from "../ui.js";
 import { APP_VERSION } from "../version.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
+import { normalizeProject } from "../project.js";
 import { KNOWLEDGE_PLATFORMS } from "../types.js";
 import type { KnowledgePlatform } from "../types.js";
 
@@ -24,10 +25,14 @@ export interface DbExportCommandOptions extends DbCommandCommonOptions {
   json?: boolean;
   md?: boolean;
   platform?: string;
+  project?: string;
+  excludeProject?: string;
 }
 
 export interface DbStatsCommandOptions extends DbCommandCommonOptions {
   platform?: string;
+  project?: string;
+  excludeProject?: string;
 }
 
 export interface DbResetCommandOptions extends DbCommandCommonOptions {
@@ -87,6 +92,51 @@ function resolveEffectiveDbPath(inputPath: string | undefined): string {
     return resolveDbFilePath(inputPath.trim());
   }
   return resolveDbFilePath(DEFAULT_DB_PATH);
+}
+
+function parseProjectList(input: string | undefined, flagName: string): string[] | undefined {
+  const raw = input?.trim() ?? "";
+  if (!raw) {
+    return undefined;
+  }
+
+  const parts = raw
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+
+  const normalized = parts
+    .map((value) => normalizeProject(value))
+    .filter((value): value is string => Boolean(value));
+
+  if (parts.length > 0 && normalized.length === 0) {
+    throw new Error(`${flagName} must be a non-empty string (or comma-separated list).`);
+  }
+
+  return Array.from(new Set(normalized));
+}
+
+function buildProjectClause(params: { column: string; project?: string[]; excludeProject?: string[] }): { clause: string; args: unknown[] } {
+  const args: unknown[] = [];
+  const clauses: string[] = [];
+
+  if (params.project && params.project.length > 0) {
+    const placeholders = params.project.map(() => "?").join(", ");
+    args.push(...params.project);
+    clauses.push(`(${params.column} IN (${placeholders}) OR ${params.column} IS NULL)`);
+  }
+
+  if (params.excludeProject && params.excludeProject.length > 0) {
+    const placeholders = params.excludeProject.map(() => "?").join(", ");
+    args.push(...params.excludeProject);
+    clauses.push(`(${params.column} NOT IN (${placeholders}) OR ${params.column} IS NULL)`);
+  }
+
+  if (clauses.length === 0) {
+    return { clause: "", args: [] };
+  }
+
+  return { clause: `AND ${clauses.join(" AND ")}`, args };
 }
 
 async function hasMetaTable(db: ReturnType<typeof getDb>): Promise<boolean> {
@@ -150,11 +200,15 @@ async function getTagsByEntryId(db: ReturnType<typeof getDb>, ids: string[]): Pr
 async function fetchExportEntries(
   db: ReturnType<typeof getDb>,
   platform?: KnowledgePlatform,
+  project?: string[],
+  excludeProject?: string[],
 ): Promise<Array<Record<string, unknown>>> {
   const args: unknown[] = [];
   if (platform) {
     args.push(platform);
   }
+  const projectSql = buildProjectClause({ column: "project", project, excludeProject });
+  args.push(...projectSql.args);
 
   const result = await db.execute({
     sql: `
@@ -167,6 +221,7 @@ async function fetchExportEntries(
       expiry,
       scope,
       platform,
+      project,
       source_file,
       source_context,
       created_at,
@@ -179,6 +234,7 @@ async function fetchExportEntries(
     FROM entries
     WHERE superseded_by IS NULL
       ${platform ? "AND platform = ?" : ""}
+      ${projectSql.clause}
     ORDER BY created_at ASC
     `,
     args,
@@ -199,6 +255,7 @@ async function fetchExportEntries(
       expiry: toStringValue(record.expiry),
       scope: toStringValue(record.scope) || "private",
       platform: toStringValue(record.platform) || null,
+      project: toStringValue(record.project) || null,
       tags: tagsById.get(id) ?? [],
       source_file: toStringValue(record.source_file),
       source_context: toStringValue(record.source_context),
@@ -265,6 +322,7 @@ export async function runDbStatsCommand(
   total: number;
   byType: Array<{ type: string; count: number }>;
   byPlatform: Array<{ platform: string; count: number }>;
+  byProject: Array<{ project: string; count: number }>;
   topTags: Array<{ tag: string; count: number }>;
   oldest: string | null;
   newest: string | null;
@@ -290,8 +348,13 @@ export async function runDbStatsCommand(
   if (platformRaw && !platform) {
     throw new Error(`--platform must be one of: ${KNOWLEDGE_PLATFORMS.join(", ")}`);
   }
+  const project = parseProjectList(options.project, "--project");
+  const excludeProject = parseProjectList(options.excludeProject, "--exclude-project");
   const platformClause = platform ? "AND platform = ?" : "";
   const platformArgs = platform ? [platform] : [];
+  const projectFilter = buildProjectClause({ column: "project", project, excludeProject });
+  const filterArgs = [...platformArgs, ...projectFilter.args];
+  const filterClause = `${platformClause} ${projectFilter.clause}`.trim();
 
   try {
     await resolvedDeps.initDbFn(db);
@@ -305,8 +368,8 @@ export async function runDbStatsCommand(
     }
 
     const totalResult = await db.execute({
-      sql: `SELECT COUNT(*) AS count FROM entries WHERE superseded_by IS NULL ${platformClause}`,
-      args: platformArgs,
+      sql: `SELECT COUNT(*) AS count FROM entries WHERE superseded_by IS NULL ${filterClause ? `${filterClause}` : ""}`,
+      args: filterArgs,
     });
     const total = Number.isFinite(toNumber((totalResult.rows[0] as DbRow | undefined)?.count))
       ? toNumber((totalResult.rows[0] as DbRow | undefined)?.count)
@@ -317,11 +380,11 @@ export async function runDbStatsCommand(
       SELECT type, COUNT(*) AS count
       FROM entries
       WHERE superseded_by IS NULL
-        ${platformClause}
+        ${filterClause}
       GROUP BY type
       ORDER BY count DESC, type ASC
     `,
-      args: platformArgs,
+      args: filterArgs,
     });
     const byType = byTypeResult.rows.map((row) => ({
       type: toStringValue((row as DbRow).type),
@@ -347,6 +410,25 @@ export async function runDbStatsCommand(
       };
     });
 
+    const byProjectResult = await db.execute({
+      sql: `
+      SELECT project, COUNT(*) AS count
+      FROM entries
+      WHERE superseded_by IS NULL
+      GROUP BY project
+      ORDER BY count DESC
+    `,
+      args: [],
+    });
+    const byProject = byProjectResult.rows.map((row) => {
+      const raw = (row as DbRow).project;
+      const projectValue = toStringValue(raw);
+      return {
+        project: projectValue.trim().length > 0 ? projectValue : "(untagged)",
+        count: Number.isFinite(toNumber((row as DbRow).count)) ? toNumber((row as DbRow).count) : 0,
+      };
+    });
+
     const tagsResult = await db.execute({
       sql: `
       SELECT t.tag, COUNT(*) AS count
@@ -354,11 +436,12 @@ export async function runDbStatsCommand(
       JOIN entries e ON e.id = t.entry_id
       WHERE e.superseded_by IS NULL
         ${platform ? "AND e.platform = ?" : ""}
+        ${buildProjectClause({ column: "e.project", project, excludeProject }).clause}
       GROUP BY t.tag
       ORDER BY count DESC, t.tag ASC
       LIMIT 20
     `,
-      args: platformArgs,
+      args: [...platformArgs, ...buildProjectClause({ column: "e.project", project, excludeProject }).args],
     });
     const topTags = tagsResult.rows.map((row) => ({
       tag: toStringValue((row as DbRow).tag),
@@ -370,9 +453,9 @@ export async function runDbStatsCommand(
       SELECT MIN(created_at) AS oldest, MAX(created_at) AS newest
       FROM entries
       WHERE superseded_by IS NULL
-        ${platformClause}
+        ${filterClause}
     `,
-      args: platformArgs,
+      args: filterArgs,
     });
     const oldest = toStringValue((rangeResult.rows[0] as DbRow | undefined)?.oldest) || null;
     const newest = toStringValue((rangeResult.rows[0] as DbRow | undefined)?.newest) || null;
@@ -401,6 +484,9 @@ export async function runDbStatsCommand(
         ui.bold("By Platform"),
         ...(byPlatform.length > 0 ? byPlatform.map((row) => `- ${row.platform}: ${row.count}`) : ["- none"]),
         "",
+        ui.bold("By Project"),
+        ...(byProject.length > 0 ? byProject.map((row) => `- ${row.project}: ${row.count}`) : ["- none"]),
+        "",
         ui.bold("Top Tags"),
         ...(topTags.length > 0 ? topTags.map((row) => `- ${row.tag}: ${row.count}`) : ["- none"]),
       ].join("\n"),
@@ -413,6 +499,7 @@ export async function runDbStatsCommand(
       total,
       byType,
       byPlatform,
+      byProject,
       topTags,
       oldest,
       newest,
@@ -500,10 +587,12 @@ export async function runDbExportCommand(
   if (platformRaw && !platform) {
     throw new Error(`--platform must be one of: ${KNOWLEDGE_PLATFORMS.join(", ")}`);
   }
+  const project = parseProjectList(options.project, "--project");
+  const excludeProject = parseProjectList(options.excludeProject, "--exclude-project");
 
   try {
     await resolvedDeps.initDbFn(db);
-    const entries = await fetchExportEntries(db, platform ?? undefined);
+    const entries = await fetchExportEntries(db, platform ?? undefined, project, excludeProject);
 
     if (options.md) {
       process.stdout.write(renderMarkdownExport(entries));

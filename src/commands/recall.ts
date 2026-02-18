@@ -6,6 +6,7 @@ import { estimateEntryTokens, sessionStartRecall } from "../db/session-start.js"
 import type { SessionCategory } from "../db/session-start.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
+import { normalizeProject } from "../project.js";
 import { EXPIRY_LEVELS, IMPORTANCE_MAX, IMPORTANCE_MIN, KNOWLEDGE_PLATFORMS, KNOWLEDGE_TYPES, SCOPE_LEVELS } from "../types.js";
 import type {
   Expiry,
@@ -29,6 +30,9 @@ export interface RecallCommandOptions {
   since?: string;
   expiry?: string;
   platform?: string;
+  project?: string;
+  excludeProject?: string;
+  strict?: boolean;
   json?: boolean;
   db?: string;
   budget?: number | string;
@@ -73,6 +77,28 @@ function parseCsv(input: string | undefined): string[] {
         .filter((value) => value.length > 0),
     ),
   );
+}
+
+function parseProjectList(input: string | undefined, flagName: string): string[] | undefined {
+  const raw = input?.trim() ?? "";
+  if (!raw) {
+    return undefined;
+  }
+
+  const parts = raw
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+
+  const normalized = parts
+    .map((value) => normalizeProject(value))
+    .filter((value): value is string => Boolean(value));
+
+  if (parts.length > 0 && normalized.length === 0) {
+    throw new Error(`${flagName} must be a non-empty string (or comma-separated list).`);
+  }
+
+  return Array.from(new Set(normalized));
 }
 
 export function parseSinceToIso(since: string | undefined, now = new Date()): string | undefined {
@@ -299,6 +325,10 @@ export async function runRecallCommand(
     platform = normalized;
   }
 
+  const project = parseProjectList(options.project, "--project");
+  const excludeProject = parseProjectList(options.excludeProject, "--exclude-project");
+  const projectStrict = options.strict === true && Boolean(project && project.length > 0);
+
   const sinceIso = parseSinceToIso(options.since, now);
   const queryForRecall: RecallQuery = {
     text: queryText ? shapeRecallText(queryText, context) : undefined,
@@ -310,6 +340,9 @@ export async function runRecallCommand(
     expiry,
     scope: scope ?? "private",
     platform,
+    project,
+    excludeProject,
+    projectStrict: projectStrict ? true : undefined,
     noBoost: options.noBoost === true,
     noUpdate: true,
     context,

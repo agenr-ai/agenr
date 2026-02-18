@@ -298,6 +298,119 @@ describe("db recall", () => {
     expect(all.map((row) => row.entry.content).sort()).toEqual(["Codex fact vec-work-strong", "OpenClaw fact vec-work-strong"]);
   });
 
+  it("filters by project (includes NULL by default, strict excludes NULL)", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    await storeEntries(
+      client,
+      [
+        { ...makeEntry({ content: "Agenr fact vec-work-strong" }), project: "agenr" },
+        { ...makeEntry({ content: "OpenClaw fact vec-work-strong" }), project: "openclaw" },
+        makeEntry({ content: "Untagged fact vec-work-strong" }),
+      ],
+      "sk-test",
+      {
+        sourceFile: "recall-test.jsonl",
+        ingestContentHash: "hash-project-filter",
+        embedFn: mockEmbed,
+        force: true,
+      },
+    );
+
+    const now = new Date("2026-02-15T00:00:00.000Z");
+    const agenrPlusNull = await recall(
+      client,
+      {
+        text: "",
+        context: "session-start",
+        limit: 10,
+        project: "agenr",
+      },
+      "sk-test",
+      { now },
+    );
+
+    expect(agenrPlusNull).toHaveLength(2);
+    expect(agenrPlusNull.map((row) => row.entry.content).sort()).toEqual([
+      "Agenr fact vec-work-strong",
+      "Untagged fact vec-work-strong",
+    ]);
+
+    const agenrStrict = await recall(
+      client,
+      {
+        text: "",
+        context: "session-start",
+        limit: 10,
+        project: "agenr",
+        projectStrict: true,
+      },
+      "sk-test",
+      { now },
+    );
+
+    expect(agenrStrict).toHaveLength(1);
+    expect(agenrStrict[0]?.entry.content).toBe("Agenr fact vec-work-strong");
+  });
+
+  it("supports multi-project queries and excludeProject", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    await storeEntries(
+      client,
+      [
+        { ...makeEntry({ content: "Agenr fact vec-work-strong" }), project: "agenr" },
+        { ...makeEntry({ content: "OpenClaw fact vec-work-strong" }), project: "openclaw" },
+        { ...makeEntry({ content: "Kanban fact vec-work-strong" }), project: "kanban" },
+        makeEntry({ content: "Untagged fact vec-work-strong" }),
+      ],
+      "sk-test",
+      {
+        sourceFile: "recall-test.jsonl",
+        ingestContentHash: "hash-project-multi",
+        embedFn: mockEmbed,
+        force: true,
+      },
+    );
+
+    const now = new Date("2026-02-15T00:00:00.000Z");
+    const multi = await recall(
+      client,
+      {
+        text: "",
+        context: "session-start",
+        limit: 10,
+        project: "agenr,openclaw",
+      },
+      "sk-test",
+      { now },
+    );
+    expect(multi.map((row) => row.entry.content).sort()).toEqual([
+      "Agenr fact vec-work-strong",
+      "OpenClaw fact vec-work-strong",
+      "Untagged fact vec-work-strong",
+    ]);
+
+    const excluded = await recall(
+      client,
+      {
+        text: "",
+        context: "session-start",
+        limit: 10,
+        excludeProject: "kanban",
+      },
+      "sk-test",
+      { now },
+    );
+    expect(excluded.map((row) => row.entry.content).sort()).toEqual([
+      "Agenr fact vec-work-strong",
+      "OpenClaw fact vec-work-strong",
+      "Untagged fact vec-work-strong",
+    ]);
+  });
+
   it("scoreEntry uses multiplicative scaling for memory strength", () => {
     const now = new Date("2026-02-15T00:00:00.000Z");
     const highImportance = makeStoredEntry({

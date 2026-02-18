@@ -17,6 +17,7 @@ import { KNOWLEDGE_PLATFORMS, KNOWLEDGE_TYPES, SCOPE_LEVELS } from "../types.js"
 import type { KnowledgeEntry, RecallResult, Scope, StoreResult } from "../types.js";
 import { APP_VERSION } from "../version.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
+import { normalizeProject } from "../project.js";
 
 const MCP_PROTOCOL_VERSION = "2024-11-05";
 
@@ -130,6 +131,10 @@ const TOOL_DEFINITIONS: McpToolDefinition[] = [
           type: "string",
           description: "Optional platform filter: openclaw, claude-code, codex.",
         },
+        project: {
+          type: "string",
+          description: "Project filter. Comma-separated for multiple: 'agenr,openclaw'. Omit for all projects.",
+        },
       },
     },
   },
@@ -144,6 +149,10 @@ const TOOL_DEFINITIONS: McpToolDefinition[] = [
         platform: {
           type: "string",
           description: "Optional platform tag for all entries: openclaw, claude-code, codex.",
+        },
+        project: {
+          type: "string",
+          description: "Optional project tag for all entries (lowercase).",
         },
         entries: {
           type: "array",
@@ -729,6 +738,21 @@ export function createMcpServer(
       );
     }
 
+    const projectRaw = typeof args.project === "string" ? args.project.trim() : "";
+    const project = projectRaw
+      ? Array.from(
+          new Set(
+            projectRaw
+              .split(",")
+              .map((value) => normalizeProject(value))
+              .filter((value): value is string => Boolean(value)),
+          ),
+        )
+      : undefined;
+    if (projectRaw && project && project.length === 0) {
+      throw new RpcError(JSON_RPC_INVALID_PARAMS, "project must be a non-empty string");
+    }
+
     const db = await ensureDb();
     let results: RecallResult[];
 
@@ -741,6 +765,7 @@ export function createMcpServer(
           types,
           since,
           platform: platform ?? undefined,
+          project,
           noUpdate: true,
         },
         apiKey: "",
@@ -759,6 +784,7 @@ export function createMcpServer(
           types,
           since,
           platform: platform ?? undefined,
+          project,
         },
         apiKey,
       );
@@ -791,8 +817,21 @@ export function createMcpServer(
       );
     }
 
+    const projectRaw = typeof args.project === "string" ? args.project.trim() : "";
+    const project = projectRaw ? normalizeProject(projectRaw) : null;
+    if (projectRaw && !project) {
+      throw new RpcError(JSON_RPC_INVALID_PARAMS, "project must be a non-empty string");
+    }
+
     const parsed = parseStoreEntries(args.entries);
-    const entries = platform ? parsed.map((entry) => ({ ...entry, platform })) : parsed;
+    const entries =
+      platform || project
+        ? parsed.map((entry) => ({
+            ...entry,
+            ...(platform ? { platform } : {}),
+            ...(project ? { project } : {}),
+          }))
+        : parsed;
     const db = await ensureDb();
     const config = resolvedDeps.readConfigFn(env);
     const dedupClient = resolvedDeps.createLlmClientFn({ config, env });

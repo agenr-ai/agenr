@@ -48,6 +48,7 @@ describe("db schema migrations", () => {
     expect(entries.has("merged_from")).toBe(true);
     expect(entries.has("consolidated_at")).toBe(true);
     expect(entries.has("platform")).toBe(true);
+    expect(entries.has("project")).toBe(true);
 
     expect(ingest.has("content_hash")).toBe(true);
     expect(ingest.has("entries_superseded")).toBe(true);
@@ -198,6 +199,7 @@ describe("db schema migrations", () => {
     const mergedFrom = entriesColumns.find((row) => toStringValue(row.name) === "merged_from");
     const consolidatedAt = entriesColumns.find((row) => toStringValue(row.name) === "consolidated_at");
     const platform = entriesColumns.find((row) => toStringValue(row.name) === "platform");
+    const project = entriesColumns.find((row) => toStringValue(row.name) === "project");
 
     expect(canonicalKey).toBeTruthy();
     expect(scope).toBeTruthy();
@@ -207,6 +209,7 @@ describe("db schema migrations", () => {
     expect(toStringValue(mergedFrom?.dflt_value)).toBe("0");
     expect(consolidatedAt).toBeTruthy();
     expect(platform).toBeTruthy();
+    expect(project).toBeTruthy();
 
     const ingestInfo = await client.execute("PRAGMA table_info(ingest_log)");
     const ingestColumns = ingestInfo.rows as Array<{ name?: unknown; dflt_value?: unknown }>;
@@ -258,6 +261,44 @@ describe("db schema migrations", () => {
     expect(row.rows.length).toBeGreaterThan(0);
     expect(row.rows[0]).toBeDefined();
     expect((row.rows[0] as { platform?: unknown } | undefined)?.platform ?? null).toBe(null);
+  });
+
+  it("existing entries keep NULL project after migration", async () => {
+    const client = makeClient();
+
+    await client.execute(`
+      CREATE TABLE entries (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        content TEXT NOT NULL,
+        importance INTEGER NOT NULL,
+        expiry TEXT NOT NULL,
+        source_file TEXT,
+        source_context TEXT,
+        embedding F32_BLOB(1024),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        last_recalled_at TEXT,
+        recall_count INTEGER DEFAULT 0,
+        confirmations INTEGER DEFAULT 0,
+        contradictions INTEGER DEFAULT 0,
+        superseded_by TEXT,
+        FOREIGN KEY (superseded_by) REFERENCES entries(id)
+      )
+    `);
+
+    await client.execute({
+      sql: "INSERT INTO entries (id, type, subject, content, importance, expiry, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      args: ["legacy-2", "fact", "S", "C", 5, "temporary", "2026-02-14T00:00:00.000Z", "2026-02-14T00:00:00.000Z"],
+    });
+
+    await initSchema(client);
+
+    const row = await client.execute({ sql: "SELECT project FROM entries WHERE id = ?", args: ["legacy-2"] });
+    expect(row.rows.length).toBeGreaterThan(0);
+    expect(row.rows[0]).toBeDefined();
+    expect((row.rows[0] as { project?: unknown } | undefined)?.project ?? null).toBe(null);
   });
 
   it("migration is idempotent (safe to run twice)", async () => {

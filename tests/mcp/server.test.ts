@@ -317,6 +317,31 @@ describe("mcp server", () => {
     expect(recallQuery.platform).toBe("openclaw");
   });
 
+  it("passes project filter through agenr_recall when provided", async () => {
+    const harness = makeHarness();
+    await runServer(
+      [
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 34,
+          method: "tools/call",
+          params: {
+            name: "agenr_recall",
+            arguments: {
+              query: "Jim's diet",
+              project: "agenr,openclaw",
+            },
+          },
+        }),
+      ],
+      harness.deps,
+    );
+
+    expect(harness.recallFn).toHaveBeenCalledTimes(1);
+    const recallQuery = harness.recallFn.mock.calls[0]?.[1] as { project?: string[] };
+    expect(recallQuery.project).toEqual(["agenr", "openclaw"]);
+  });
+
   it("uses two-pass session-start recall and returns grouped ordering", async () => {
     const harness = makeHarness();
     harness.recallFn.mockImplementation(async (_db: unknown, query: { expiry?: string }) => {
@@ -634,6 +659,47 @@ describe("mcp server", () => {
     const storedEntries = harness.storeEntriesFn.mock.calls[0]?.[1] as KnowledgeEntry[];
     expect(storedEntries).toHaveLength(1);
     expect(storedEntries[0]?.platform).toBe("codex");
+  });
+
+  it("agenr_store tags entries with project when provided", async () => {
+    const harness = makeHarness();
+    harness.storeEntriesFn.mockResolvedValueOnce({
+      added: 1,
+      updated: 0,
+      skipped: 0,
+      superseded: 0,
+      llm_dedup_calls: 0,
+      relations_created: 0,
+      total_entries: 1,
+      duration_ms: 1,
+    } satisfies StoreResult);
+
+    await runServer(
+      [
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 100,
+          method: "tools/call",
+          params: {
+            name: "agenr_store",
+            arguments: {
+              project: "Agenr",
+              entries: [
+                {
+                  type: "fact",
+                  content: "Tagged project entry.",
+                },
+              ],
+            },
+          },
+        }),
+      ],
+      harness.deps,
+    );
+
+    const storedEntries = harness.storeEntriesFn.mock.calls[0]?.[1] as KnowledgeEntry[];
+    expect(storedEntries).toHaveLength(1);
+    expect(storedEntries[0]?.project).toBe("agenr");
   });
 
   it("calls agenr_extract and optionally stores extracted entries", async () => {

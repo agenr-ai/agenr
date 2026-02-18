@@ -269,6 +269,16 @@ export async function mergeCluster(
     };
   }
 
+  const expectedProject = cluster.entries[0]?.project ?? null;
+  for (const entry of cluster.entries) {
+    const actual = entry.project ?? null;
+    if (actual !== expectedProject) {
+      throw new Error(
+        `[consolidate] Refusing to merge across projects: expected project=${String(expectedProject)}, got project=${String(actual)}.`,
+      );
+    }
+  }
+
   let mergeResult: MergeResult | null = null;
   try {
     const response = await runSimpleStream({
@@ -308,6 +318,7 @@ export async function mergeCluster(
     importance: mergeResult.importance,
     expiry: mergeResult.expiry,
     tags: mergeResult.tags,
+    ...(expectedProject ? { project: expectedProject } : {}),
     source: {
       file: "agenr",
       context: "consolidate-merge",
