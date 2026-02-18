@@ -114,23 +114,18 @@ async function countActiveEntries(db: Client, platform?: KnowledgePlatform): Pro
   return Number.isFinite(count) ? count : 0;
 }
 
-async function countOrphanedRelations(db: Client, platform?: KnowledgePlatform): Promise<number> {
-  const args: unknown[] = [];
-  if (platform) {
-    args.push(platform, platform);
-  }
-
+async function countOrphanedRelations(db: Client): Promise<number> {
   const result = await db.execute({
     sql: `
-    SELECT COUNT(*) AS count
-    FROM relations
-    WHERE relation_type <> 'supersedes'
-      AND (
-        source_id IN (SELECT id FROM entries WHERE superseded_by IS NOT NULL ${platform ? "AND platform = ?" : ""})
-        OR target_id IN (SELECT id FROM entries WHERE superseded_by IS NOT NULL ${platform ? "AND platform = ?" : ""})
-      )
-    `,
-    args,
+	    SELECT COUNT(*) AS count
+	    FROM relations
+	    WHERE relation_type <> 'supersedes'
+	      AND (
+	        source_id IN (SELECT id FROM entries WHERE superseded_by IS NOT NULL)
+	        OR target_id IN (SELECT id FROM entries WHERE superseded_by IS NOT NULL)
+	      )
+	    `,
+    args: [],
   });
   const count = toNumber(result.rows[0]?.count);
   return Number.isFinite(count) ? count : 0;
@@ -399,27 +394,22 @@ async function mergeNearExactDuplicates(
   return mergedCount;
 }
 
-async function cleanOrphanedRelations(db: Client, dryRun: boolean, platform?: KnowledgePlatform): Promise<number> {
-  const orphanedCount = await countOrphanedRelations(db, platform);
+async function cleanOrphanedRelations(db: Client, dryRun: boolean): Promise<number> {
+  const orphanedCount = await countOrphanedRelations(db);
   if (dryRun || orphanedCount === 0) {
     return orphanedCount;
   }
 
-  const args: unknown[] = [];
-  if (platform) {
-    args.push(platform, platform);
-  }
-
   await db.execute({
     sql: `
-    DELETE FROM relations
-    WHERE relation_type <> 'supersedes'
-      AND (
-        source_id IN (SELECT id FROM entries WHERE superseded_by IS NOT NULL ${platform ? "AND platform = ?" : ""})
-        OR target_id IN (SELECT id FROM entries WHERE superseded_by IS NOT NULL ${platform ? "AND platform = ?" : ""})
-      )
-    `,
-    args,
+	    DELETE FROM relations
+	    WHERE relation_type <> 'supersedes'
+	      AND (
+	        source_id IN (SELECT id FROM entries WHERE superseded_by IS NOT NULL)
+	        OR target_id IN (SELECT id FROM entries WHERE superseded_by IS NOT NULL)
+	      )
+	    `,
+    args: [],
   });
 
   return orphanedCount;
@@ -508,14 +498,14 @@ export async function consolidateRules(
   if (dryRun) {
     expiredCount = await expireDecayedEntries(db, now, { dryRun, verbose, onLog, platform });
     mergedCount = await mergeNearExactDuplicates(db, { dryRun, verbose, onLog, platform });
-    orphanedRelationsCleaned = await cleanOrphanedRelations(db, true, platform);
+    orphanedRelationsCleaned = await cleanOrphanedRelations(db, true);
   } else {
     await db.execute("BEGIN");
     try {
       await ensureExpiredSentinel(db);
       expiredCount = await expireDecayedEntries(db, now, { dryRun, verbose, onLog, platform });
       mergedCount = await mergeNearExactDuplicates(db, { dryRun, verbose, onLog, platform });
-      orphanedRelationsCleaned = await cleanOrphanedRelations(db, false, platform);
+      orphanedRelationsCleaned = await cleanOrphanedRelations(db, false);
       await db.execute("COMMIT");
     } catch (error) {
       try {

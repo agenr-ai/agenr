@@ -84,6 +84,7 @@ agenr store [options] [files...]
 
 ### Options
 - `--db <path>`: database path override.
+- `--platform <name>`: filter stats by platform.
 - `--dry-run`: show write decisions without persisting.
 - `--verbose`: show per-entry dedup decisions.
 - `--force`: bypass dedup checks and insert all as new.

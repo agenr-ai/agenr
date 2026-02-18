@@ -658,8 +658,9 @@ export function createProgram(): Command {
     .command("stats")
     .description("Show database statistics")
     .option("--db <path>", "Database path override")
-    .action(async (opts: { db?: string }) => {
-      await runDbStatsCommand({ db: opts.db });
+    .option("--platform <name>", "Filter stats by platform")
+    .action(async (opts: { db?: string; platform?: string }) => {
+      await runDbStatsCommand({ db: opts.db, platform: opts.platform });
       process.exitCode = 0;
     });
 

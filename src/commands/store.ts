@@ -328,19 +328,20 @@ export async function runStoreCommand(
     let totalEntries = 0;
     let stoppedForShutdown = false;
 
-	    for (const input of inputs) {
-	      if (resolvedDeps.shouldShutdownFn()) {
-	        stoppedForShutdown = true;
-	        break;
-	      }
-	      const entries: KnowledgeEntry[] = platform
-	        ? input.entries.map((entry) => ({ ...entry, platform: platform as KnowledgePlatform }))
-	        : input.entries;
+    for (const input of inputs) {
+      if (resolvedDeps.shouldShutdownFn()) {
+        stoppedForShutdown = true;
+        break;
+      }
 
-	      const result = await resolvedDeps.storeEntriesFn(db, entries, apiKey, {
-	        dryRun: options.dryRun,
-	        force: options.force,
-	        verbose: options.verbose,
+      const entries: KnowledgeEntry[] = platform
+        ? input.entries.map((entry) => ({ ...entry, platform: platform as KnowledgePlatform }))
+        : input.entries;
+
+      const result = await resolvedDeps.storeEntriesFn(db, entries, apiKey, {
+        dryRun: options.dryRun,
+        force: options.force,
+        verbose: options.verbose,
         onlineDedup,
         dedupThreshold,
         llmClient,
