@@ -11,6 +11,7 @@ import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { extractKnowledgeFromChunks } from "../extractor.js";
 import { createLlmClient } from "../llm/client.js";
 import { parseTranscriptFile } from "../parser.js";
+import { normalizeKnowledgePlatform } from "../platform.js";
 import { installSignalHandlers, isShutdownRequested } from "../shutdown.js";
 import type { KnowledgeEntry, KnowledgePlatform, WatchState } from "../types.js";
 import type { SessionResolver } from "./session-resolver.js";
@@ -454,7 +455,9 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
 
         const processChunkEntries = async (chunkEntries: KnowledgeEntry[]): Promise<void> => {
           const platformTag: KnowledgePlatform | undefined =
-            currentPlatform && currentPlatform !== "mtime" ? (currentPlatform as KnowledgePlatform) : undefined;
+            currentPlatform && currentPlatform !== "mtime"
+              ? normalizeKnowledgePlatform(currentPlatform) ?? undefined
+              : undefined;
           const taggedEntries = platformTag ? chunkEntries.map((entry) => ({ ...entry, platform: platformTag })) : chunkEntries;
 
           cycleResult.entriesExtracted += taggedEntries.length;

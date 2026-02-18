@@ -9,8 +9,8 @@ import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { createLlmClient } from "../llm/client.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
 import { expandInputFiles } from "../parser.js";
-import { EXPIRY_LEVELS, IMPORTANCE_MAX, IMPORTANCE_MIN, KNOWLEDGE_TYPES } from "../types.js";
-import type { ExtractionReport, KnowledgeEntry, KnowledgePlatform, StoreResult } from "../types.js";
+import { EXPIRY_LEVELS, IMPORTANCE_MAX, IMPORTANCE_MIN, KNOWLEDGE_PLATFORMS, KNOWLEDGE_TYPES } from "../types.js";
+import type { ExtractionReport, KnowledgeEntry, StoreResult } from "../types.js";
 import { banner, formatLabel, formatWarn, ui } from "../ui.js";
 import { installSignalHandlers, isShutdownRequested, onShutdown } from "../shutdown.js";
 
@@ -296,7 +296,7 @@ export async function runStoreCommand(
   const platformRaw = options.platform?.trim();
   const platform = platformRaw ? normalizeKnowledgePlatform(platformRaw) : null;
   if (platformRaw && !platform) {
-    throw new Error("--platform must be one of: openclaw, claude-code, codex");
+    throw new Error(`--platform must be one of: ${KNOWLEDGE_PLATFORMS.join(", ")}`);
   }
 
   const hasAnyEntries = totalInputEntries > 0;
@@ -334,9 +334,7 @@ export async function runStoreCommand(
         break;
       }
 
-      const entries: KnowledgeEntry[] = platform
-        ? input.entries.map((entry) => ({ ...entry, platform: platform as KnowledgePlatform }))
-        : input.entries;
+      const entries: KnowledgeEntry[] = platform ? input.entries.map((entry) => ({ ...entry, platform })) : input.entries;
 
       const result = await resolvedDeps.storeEntriesFn(db, entries, apiKey, {
         dryRun: options.dryRun,

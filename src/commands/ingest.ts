@@ -13,8 +13,8 @@ import { extractKnowledgeFromChunks } from "../extractor.js";
 import { createLlmClient } from "../llm/client.js";
 import { expandInputFiles, parseTranscriptFile } from "../parser.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
+import { KNOWLEDGE_PLATFORMS } from "../types.js";
 import type { KnowledgeEntry } from "../types.js";
-import type { KnowledgePlatform } from "../types.js";
 import { banner, formatError, formatWarn, ui } from "../ui.js";
 import { installSignalHandlers, isShutdownRequested, onShutdown } from "../shutdown.js";
 import {
@@ -492,7 +492,7 @@ export async function runIngestCommand(
   const platformRaw = options.platform?.trim();
   const platform = platformRaw ? normalizeKnowledgePlatform(platformRaw) : null;
   if (platformRaw && !platform) {
-    throw new Error("--platform must be one of: openclaw, claude-code, codex");
+    throw new Error(`--platform must be one of: ${KNOWLEDGE_PLATFORMS.join(", ")}`);
   }
   const retrySummaries: string[] = [];
   let stoppedForShutdown = false;
@@ -713,7 +713,7 @@ export async function runIngestCommand(
       const processChunkEntries = async (chunkEntries: KnowledgeEntry[]): Promise<void> => {
         const normalizedEntries = chunkEntries.map((entry) => ({
           ...entry,
-          ...(platform ? { platform: platform as KnowledgePlatform } : {}),
+          ...(platform ? { platform } : {}),
           source: {
             ...entry.source,
             file: target.file,

@@ -190,7 +190,7 @@ Deep dive: [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
 
 ## Status
 
-Alpha. The core pipeline is stable and tested (369 tests). We use it daily managing thousands of knowledge entries across OpenClaw sessions.
+Alpha. The core pipeline is stable and tested (445 tests). We use it daily managing thousands of knowledge entries across OpenClaw sessions.
 
 What works: extraction, storage, recall, MCP integration, online dedup, consolidation, smart filtering, live watching, daemon mode.
 

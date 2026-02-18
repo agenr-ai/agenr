@@ -21,6 +21,7 @@
 
 ### Changed
 - `agenr db stats` output now includes schema version
+- `agenr db stats` now includes per-platform breakdown
 - `agenr daemon install` now uses smart platform defaults and writes `watch --dir <path> --platform <name>` instead of `watch --auto`
 - `agenr daemon install` now prefers stable node symlinks (Homebrew) when `process.execPath` is version-specific; use `--node-path` to override
 - `agenr watch --auto` is deprecated; `agenr watch --platform <name>` is now the standard invocation and auto-resolves the default platform directory when `--dir` is omitted

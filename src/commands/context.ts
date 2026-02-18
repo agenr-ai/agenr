@@ -8,6 +8,7 @@ import { closeDb, getDb, initDb } from "../db/client.js";
 import { sessionStartRecall } from "../db/session-start.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
+import { KNOWLEDGE_PLATFORMS } from "../types.js";
 import type { RecallCommandResult, RecallQuery } from "../types.js";
 import type { KnowledgePlatform } from "../types.js";
 
@@ -240,7 +241,7 @@ export async function runContextCommand(
   const platformRaw = options.platform?.trim();
   const platform = platformRaw ? normalizeKnowledgePlatform(platformRaw) : null;
   if (platformRaw && !platform) {
-    throw new Error("--platform must be one of: openclaw, claude-code, codex");
+    throw new Error(`--platform must be one of: ${KNOWLEDGE_PLATFORMS.join(", ")}`);
   }
 
   // Suppress clack output when explicitly quiet, or when stderr is not a TTY.

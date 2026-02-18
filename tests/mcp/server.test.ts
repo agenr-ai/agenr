@@ -305,11 +305,16 @@ describe("mcp server", () => {
     expect(harness.initDbFn).toHaveBeenCalledTimes(1);
     expect(harness.recallFn).toHaveBeenCalledTimes(1);
 
-    const recallQuery = harness.recallFn.mock.calls[0]?.[1] as { text?: string; types?: string[]; limit?: number };
+    const recallQuery = harness.recallFn.mock.calls[0]?.[1] as {
+      text?: string;
+      types?: string[];
+      limit?: number;
+      platform?: string;
+    };
     expect(recallQuery.text).toBe("Jim's diet");
     expect(recallQuery.limit).toBe(5);
     expect(recallQuery.types).toEqual(["preference", "fact"]);
-    expect((recallQuery as any).platform).toBe("openclaw");
+    expect(recallQuery.platform).toBe("openclaw");
   });
 
   it("uses two-pass session-start recall and returns grouped ordering", async () => {
@@ -628,7 +633,7 @@ describe("mcp server", () => {
 
     const storedEntries = harness.storeEntriesFn.mock.calls[0]?.[1] as KnowledgeEntry[];
     expect(storedEntries).toHaveLength(1);
-    expect((storedEntries[0] as any).platform).toBe("codex");
+    expect(storedEntries[0]?.platform).toBe("codex");
   });
 
   it("calls agenr_extract and optionally stores extracted entries", async () => {

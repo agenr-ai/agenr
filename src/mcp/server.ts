@@ -13,7 +13,7 @@ import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { extractKnowledgeFromChunks } from "../extractor.js";
 import { createLlmClient } from "../llm/client.js";
 import { parseTranscriptFile } from "../parser.js";
-import { KNOWLEDGE_TYPES, SCOPE_LEVELS } from "../types.js";
+import { KNOWLEDGE_PLATFORMS, KNOWLEDGE_TYPES, SCOPE_LEVELS } from "../types.js";
 import type { KnowledgeEntry, RecallResult, Scope, StoreResult } from "../types.js";
 import { APP_VERSION } from "../version.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
@@ -723,7 +723,10 @@ export function createMcpServer(
     const platformRaw = typeof args.platform === "string" ? args.platform.trim() : "";
     const platform = platformRaw ? normalizeKnowledgePlatform(platformRaw) : null;
     if (platformRaw && !platform) {
-      throw new RpcError(JSON_RPC_INVALID_PARAMS, "--platform must be one of: openclaw, claude-code, codex");
+      throw new RpcError(
+        JSON_RPC_INVALID_PARAMS,
+        `platform must be one of: ${KNOWLEDGE_PLATFORMS.join(", ")}`,
+      );
     }
 
     const db = await ensureDb();
@@ -782,7 +785,10 @@ export function createMcpServer(
     const platformRaw = typeof args.platform === "string" ? args.platform.trim() : "";
     const platform = platformRaw ? normalizeKnowledgePlatform(platformRaw) : null;
     if (platformRaw && !platform) {
-      throw new RpcError(JSON_RPC_INVALID_PARAMS, "--platform must be one of: openclaw, claude-code, codex");
+      throw new RpcError(
+        JSON_RPC_INVALID_PARAMS,
+        `platform must be one of: ${KNOWLEDGE_PLATFORMS.join(", ")}`,
+      );
     }
 
     const parsed = parseStoreEntries(args.entries);
