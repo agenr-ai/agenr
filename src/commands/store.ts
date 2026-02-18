@@ -8,7 +8,7 @@ import { acquireDbLock, releaseDbLock } from "../db/lockfile.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { createLlmClient } from "../llm/client.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
-import { normalizeProject } from "../project.js";
+import { parseProjectList } from "../project.js";
 import { expandInputFiles } from "../parser.js";
 import { EXPIRY_LEVELS, IMPORTANCE_MAX, IMPORTANCE_MIN, KNOWLEDGE_PLATFORMS, KNOWLEDGE_TYPES } from "../types.js";
 import type { ExtractionReport, KnowledgeEntry, StoreResult } from "../types.js";
@@ -302,22 +302,21 @@ export async function runStoreCommand(
   }
 
   const projectItems = Array.isArray(options.project) ? options.project : options.project ? [options.project] : [];
-  const projectParts = projectItems
-    .flatMap((value) =>
-      String(value)
-        .split(",")
-        .map((item) => item.trim())
-        .filter((item) => item.length > 0),
-    )
-    .filter((item) => item.length > 0);
+  const rawProjectPartCount =
+    projectItems.length === 1
+      ? String(projectItems[0])
+          .split(",")
+          .map((item) => item.trim())
+          .filter((item) => item.length > 0).length
+      : 0;
 
-  if (projectParts.length > 1) {
+  if (projectItems.length > 1 || rawProjectPartCount > 1) {
     throw new Error("--project may only be specified once for the store command.");
   }
 
-  const projectRaw = projectParts[0];
-  const project = projectRaw ? normalizeProject(projectRaw) : null;
-  if (projectRaw && !project) {
+  const parsedProject = parseProjectList(options.project);
+  const project = parsedProject[0] ?? null;
+  if (rawProjectPartCount > 0 && parsedProject.length === 0) {
     throw new Error("--project must be a non-empty string.");
   }
 

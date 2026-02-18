@@ -1,5 +1,6 @@
 import type { Client, InValue, Row } from "@libsql/client";
 import { embed } from "../embeddings/client.js";
+import { parseProjectList } from "../project.js";
 import type { KnowledgePlatform, RecallQuery, RecallResult, Scope, StoredEntry } from "../types.js";
 
 const DEFAULT_VECTOR_CANDIDATE_LIMIT = 50;
@@ -389,23 +390,12 @@ export function shapeRecallText(text: string, context: string | undefined): stri
 }
 
 function parseProjectValues(value: string | string[] | undefined): string[] {
-  if (!value) {
-    return [];
-  }
-
-  const raw = Array.isArray(value) ? value : [value];
-  const expanded = raw.flatMap((item) =>
-    String(item)
-      .split(",")
-      .map((part) => part.trim())
-      .filter((part) => part.length > 0),
-  );
-
-  return Array.from(new Set(expanded.map((item) => item.toLowerCase()).filter((item) => item.length > 0)));
+  return parseProjectList(value);
 }
 
 function buildInList(values: string[]): { placeholders: string; args: string[] } {
-  const unique = Array.from(new Set(values.map((value) => value.trim().toLowerCase()).filter((v) => v.length > 0)));
+  // Expects pre-normalized values (trimmed + lowercased).
+  const unique = Array.from(new Set(values.filter((v) => v.length > 0)));
   return {
     placeholders: unique.map(() => "?").join(", "),
     args: unique,
@@ -467,6 +457,7 @@ async function fetchVectorCandidates(
     strict: Boolean(projectStrict && normalizedProject.length > 0),
   });
 
+  // args order: JSON.stringify(queryEmbedding) (vector32(?)), limit, ...projectSql.args, platform (if present)
   const args: unknown[] = [JSON.stringify(queryEmbedding), limit, ...projectSql.args];
   if (platform) {
     args.push(platform);

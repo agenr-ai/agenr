@@ -235,6 +235,26 @@ describe("db store pipeline", () => {
     expect(byFile.get("seed2.jsonl")).toBe(null);
   });
 
+  it("normalizes mixed-case project values to lowercase on store", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    await storeEntries(
+      client,
+      [{ ...makeEntry({ content: "seed vec-base", sourceFile: "seed.jsonl" }), project: "AgenR" }],
+      "sk-test",
+      {
+        sourceFile: "seed.jsonl",
+        ingestContentHash: hashText("seed-project-case"),
+        embedFn: mockEmbed,
+        force: true,
+      },
+    );
+
+    const rows = await client.execute({ sql: "SELECT project FROM entries WHERE source_file = ?", args: ["seed.jsonl"] });
+    expect(rows.rows[0]?.project).toBe("agenr");
+  });
+
   it("skips near-exact semantic duplicates at 0.95+ similarity", async () => {
     const client = makeClient();
     await initDb(client);

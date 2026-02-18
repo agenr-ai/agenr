@@ -5,7 +5,7 @@ import path from "node:path";
 export function defaultLockDir(): string {
   // Prefer env-derived home so tests (and some environments) can override reliably.
   const homeFromEnv = process.env.HOME?.trim() || process.env.USERPROFILE?.trim();
-  const home = homeFromEnv && homeFromEnv.length > 0 ? homeFromEnv : os.homedir();
+  const home = homeFromEnv || os.homedir();
   return path.join(home, ".agenr");
 }
 

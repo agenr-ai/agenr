@@ -13,7 +13,7 @@ import { extractKnowledgeFromChunks } from "../extractor.js";
 import { createLlmClient } from "../llm/client.js";
 import { expandInputFiles, parseTranscriptFile } from "../parser.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
-import { normalizeProject } from "../project.js";
+import { parseProjectList } from "../project.js";
 import { KNOWLEDGE_PLATFORMS } from "../types.js";
 import type { KnowledgeEntry } from "../types.js";
 import { banner, formatError, formatWarn, ui } from "../ui.js";
@@ -496,23 +496,23 @@ export async function runIngestCommand(
   if (platformRaw && !platform) {
     throw new Error(`--platform must be one of: ${KNOWLEDGE_PLATFORMS.join(", ")}`);
   }
-  const projectItems = Array.isArray(options.project) ? options.project : options.project ? [options.project] : [];
-  const projectParts = projectItems
-    .flatMap((value) =>
-      String(value)
-        .split(",")
-        .map((item) => item.trim())
-        .filter((item) => item.length > 0),
-    )
-    .filter((item) => item.length > 0);
 
-  if (projectParts.length > 1) {
+  const projectItems = Array.isArray(options.project) ? options.project : options.project ? [options.project] : [];
+  const rawProjectPartCount =
+    projectItems.length === 1
+      ? String(projectItems[0])
+          .split(",")
+          .map((item) => item.trim())
+          .filter((item) => item.length > 0).length
+      : 0;
+
+  if (projectItems.length > 1 || rawProjectPartCount > 1) {
     throw new Error("--project may only be specified once for the ingest command.");
   }
 
-  const projectRaw = projectParts[0];
-  const project = projectRaw ? normalizeProject(projectRaw) : null;
-  if (projectRaw && !project) {
+  const parsedProject = parseProjectList(options.project);
+  const project = parsedProject[0] ?? null;
+  if (rawProjectPartCount > 0 && parsedProject.length === 0) {
     throw new Error("--project must be a non-empty string.");
   }
   const retrySummaries: string[] = [];

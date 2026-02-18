@@ -263,6 +263,8 @@ async function listDistinctProjects(
   platform?: KnowledgePlatform,
   excludeProject?: string[],
 ): Promise<Array<string | null>> {
+  const NULL_SENTINEL = Symbol("null-project");
+
   try {
     const args: unknown[] = [];
     const platformClause = platform ? "AND platform = ?" : "";
@@ -301,8 +303,9 @@ async function listDistinctProjects(
     }
 
     // Ensure deterministic ordering.
-    const uniq = Array.from(new Set(out.map((item) => (item === null ? "__NULL__" : item))))
-      .map((item) => (item === "__NULL__" ? null : item));
+    const uniq = Array.from(new Set(out.map((item) => (item === null ? NULL_SENTINEL : item)))).map((item) =>
+      item === NULL_SENTINEL ? null : item,
+    );
     uniq.sort((a, b) => {
       if (a === null && b === null) return 0;
       if (a === null) return 1;
@@ -310,8 +313,9 @@ async function listDistinctProjects(
       return a.localeCompare(b);
     });
     return uniq.length > 0 ? uniq : [null];
-  } catch {
+  } catch (err) {
     // Unit tests often inject a mock db without execute(); treat as single "untagged" project group.
+    console.warn("[agenr] listDistinctProjects failed:", err);
     return [null];
   }
 }
