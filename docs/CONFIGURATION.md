@@ -19,20 +19,15 @@ Stores:
 - `credentials` — stored API keys (encrypted at rest)
 - `labelProjectMap` — optional mapping from normalized session labels to project names
 
-Default config example:
+### Example (~/.agenr/config.json)
 
-```yaml
-# labelProjectMap:
-#   agenr: agenr
-#   openclaw: openclaw
-```
-
-Config schema example:
-
-```yaml
-# labelProjectMap:
-#   agenr: agenr
-#   openclaw: openclaw
+```json
+{
+  "labelProjectMap": {
+    "agenr-dev": "agenr",
+    "openclaw": "openclaw"
+  }
+}
 ```
 
 ## Database

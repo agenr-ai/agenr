@@ -10,6 +10,7 @@ import {
 } from "./jsonl-base.js";
 import type { AdapterParseOptions, SourceAdapter } from "./types.js";
 import type { TranscriptMessage } from "../types.js";
+import { normalizeLabel } from "../utils/string.js";
 
 type OpenClawRole = "user" | "assistant" | "toolResult" | "system" | "unknown";
 
@@ -59,15 +60,11 @@ function getString(value: unknown): string | undefined {
 }
 
 function normalizeSessionLabel(value: string): string | undefined {
-  const normalized = value
-    .trim()
-    .toLowerCase()
-    .replace(/[\s_-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+  const normalized = normalizeLabel(value);
   return normalized.length > 0 ? normalized : undefined;
 }
 
-function extractTextBlocks(content: unknown): string[] {
+function extractRawTextBlocks(content: unknown): string[] {
   if (typeof content === "string") {
     return [content];
   }
@@ -99,7 +96,7 @@ function extractTextBlocks(content: unknown): string[] {
 }
 
 function extractConversationLabel(content: unknown): string | undefined {
-  const textBlocks = extractTextBlocks(content);
+  const textBlocks = extractRawTextBlocks(content);
 
   for (const block of textBlocks) {
     const matches = block.matchAll(/```(?:json)?\s*([\s\S]*?)\s*```/gi);
