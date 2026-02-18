@@ -380,11 +380,11 @@ export async function runDbStatsCommand(
       SELECT project, COUNT(*) AS count
       FROM entries
       WHERE superseded_by IS NULL
-        ${projectFilter.clause}
+        ${filterClause}
       GROUP BY project
       ORDER BY count DESC
     `,
-      args: projectFilter.args,
+      args: filterArgs,
     });
     const byProject = byProjectResult.rows.map((row) => {
       const raw = (row as DbRow).project;

@@ -5,6 +5,7 @@ import path from "node:path";
 import type { Client, InValue } from "@libsql/client";
 import { walCheckpoint } from "../db/client.js";
 import { rebuildVectorIndex } from "../db/vector-index.js";
+import { buildProjectFilter } from "../project.js";
 import type { KnowledgePlatform, LlmClient } from "../types.js";
 import { buildClusters, type Cluster } from "./cluster.js";
 import { mergeCluster } from "./merge.js";
@@ -147,7 +148,12 @@ export interface ConsolidationOrchestratorDeps {
     project?: string | null,
     excludeProject?: string[],
   ) => Promise<number>;
-  listDistinctProjectsFn: (db: Client, platform?: KnowledgePlatform, excludeProject?: string[]) => Promise<Array<string | null>>;
+  listDistinctProjectsFn: (
+    db: Client,
+    platform?: KnowledgePlatform,
+    excludeProject?: string[],
+    onWarn?: (message: string) => void,
+  ) => Promise<Array<string | null>>;
 }
 
 function toNumber(value: InValue | undefined): number {
@@ -194,23 +200,20 @@ async function countActiveEmbeddedEntries(
   excludeProject?: string[],
 ): Promise<number> {
   const platformCondition = platform ? "AND platform = ?" : "";
-  const projectCondition = project !== undefined ? (project === null ? "AND project IS NULL" : "AND project = ?") : "";
-  const excludeCondition =
-    excludeProject && excludeProject.length > 0
-      ? `AND (project NOT IN (${excludeProject.map(() => "?").join(", ")}) OR project IS NULL)`
-      : "";
+  const projectSql = buildProjectFilter({
+    column: "project",
+    project: project === undefined ? undefined : project === null ? null : [project],
+    excludeProject,
+    strict: project !== undefined && project !== null,
+  });
+  const trimmedTypeFilter = typeFilter?.trim();
 
-  if (typeFilter?.trim()) {
-    const args: unknown[] = [typeFilter.trim()];
+  if (trimmedTypeFilter) {
+    const args: unknown[] = [trimmedTypeFilter];
     if (platform) {
       args.push(platform);
     }
-    if (project !== undefined && project !== null) {
-      args.push(project);
-    }
-    if (excludeProject && excludeProject.length > 0) {
-      args.push(...excludeProject);
-    }
+    args.push(...projectSql.args);
 
     const result = await db.execute({
       sql: `
@@ -220,8 +223,7 @@ async function countActiveEmbeddedEntries(
           AND embedding IS NOT NULL
           AND type = ?
           ${platformCondition}
-          ${projectCondition}
-          ${excludeCondition}
+          ${projectSql.clause}
       `,
       args,
     });
@@ -233,12 +235,7 @@ async function countActiveEmbeddedEntries(
   if (platform) {
     args.push(platform);
   }
-  if (project !== undefined && project !== null) {
-    args.push(project);
-  }
-  if (excludeProject && excludeProject.length > 0) {
-    args.push(...excludeProject);
-  }
+  args.push(...projectSql.args);
 
   const result = await db.execute({
     sql: `
@@ -247,8 +244,7 @@ async function countActiveEmbeddedEntries(
       WHERE superseded_by IS NULL
         AND embedding IS NOT NULL
         ${platformCondition}
-        ${projectCondition}
-        ${excludeCondition}
+        ${projectSql.clause}
     `,
     args,
   });
@@ -281,9 +277,8 @@ async function listDistinctProjects(
   db: Client,
   platform?: KnowledgePlatform,
   excludeProject?: string[],
+  onWarn?: (message: string) => void,
 ): Promise<Array<string | null>> {
-  const NULL_SENTINEL = Symbol("null-project");
-
   try {
     const args: unknown[] = [];
     const platformClause = platform ? "AND platform = ?" : "";
@@ -322,9 +317,7 @@ async function listDistinctProjects(
     }
 
     // Ensure deterministic ordering.
-    const uniq = Array.from(new Set(out.map((item) => (item === null ? NULL_SENTINEL : item)))).map((item) =>
-      item === NULL_SENTINEL ? null : item,
-    );
+    const uniq = Array.from(new Set(out));
     uniq.sort((a, b) => {
       if (a === null && b === null) return 0;
       if (a === null) return 1;
@@ -334,7 +327,7 @@ async function listDistinctProjects(
     return uniq.length > 0 ? uniq : [null];
   } catch (err) {
     // Unit tests often inject a mock db without execute(); treat as single "untagged" project group.
-    console.warn("[agenr] listDistinctProjects failed:", err);
+    onWarn?.(`[agenr] listDistinctProjects failed: ${err instanceof Error ? err.message : String(err)}`);
     return [null];
   }
 }
@@ -703,7 +696,12 @@ export async function runConsolidationOrchestrator(
   const projectGroups: Array<string | null> =
     requestedProjects.length > 0
       ? requestedProjects
-      : await resolvedDeps.listDistinctProjectsFn(db, platform, excludeProjects.length > 0 ? excludeProjects : undefined);
+      : await resolvedDeps.listDistinctProjectsFn(
+          db,
+          platform,
+          excludeProjects.length > 0 ? excludeProjects : undefined,
+          onWarn,
+        );
 
   context.checkpoint.plan.projects = projectGroups;
 

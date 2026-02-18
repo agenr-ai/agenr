@@ -532,25 +532,26 @@ export async function consolidateRules(
   const backupPath = skipBackup ? (options.backupPath ?? "") : `${dbPath}.pre-consolidate-${timestamp}`;
 
   if (!skipBackup) {
-    // Checkpoint WAL into main DB before backup so the copy is self-contained.
-    // Use TRUNCATE mode to reset the WAL file after checkpoint.
-    try {
-      await db.execute("PRAGMA wal_checkpoint(TRUNCATE)");
-    } catch (error) {
-      if (!dryRun) {
+    if (dryRun) {
+      if (verbose) {
+        onLog(`[backup] (dry-run) would checkpoint WAL and copy ${dbPath} -> ${backupPath}`);
+      }
+    } else {
+      // Checkpoint WAL into main DB before backup so the copy is self-contained.
+      // Use TRUNCATE mode to reset the WAL file after checkpoint.
+      try {
+        await db.execute("PRAGMA wal_checkpoint(TRUNCATE)");
+      } catch (error) {
         throw new Error(
           `Cannot create safe backup: WAL checkpoint failed (${error instanceof Error ? error.message : String(error)}). ` +
             "Close other agenr processes (watch, MCP) and retry.",
         );
       }
-      if (verbose) {
-        onLog("[backup] WAL checkpoint failed (dry-run, continuing)");
-      }
-    }
 
-    await fs.copyFile(dbPath, backupPath);
-    if (verbose) {
-      onLog(`[backup] ${backupPath}`);
+      await fs.copyFile(dbPath, backupPath);
+      if (verbose) {
+        onLog(`[backup] ${backupPath}`);
+      }
     }
   }
 
@@ -596,7 +597,7 @@ export async function consolidateRules(
     }
   }
 
-  if (!skipBackup) {
+  if (!skipBackup && !dryRun) {
     // Clean up old backups, keeping only the 3 most recent.
     const backupDir = path.dirname(dbPath);
     const backupBase = path.basename(dbPath);
