@@ -7,3 +7,6 @@ docs/prompts/
 node_modules
 
 docs/internal/
+
+# Sandbox environment
+sandbox/
