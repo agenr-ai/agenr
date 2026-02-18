@@ -287,6 +287,238 @@ describe("watcher", () => {
     expect(deps.saveSnapshots.at(-1)?.files[filePath]?.byteOffset).toBe(20);
   });
 
+  it("advances offset using actual bytes read when file grows during read", async () => {
+    const filePath = "/tmp/watch-grow-mid-read.jsonl";
+    const resolvedFilePath = path.resolve(filePath);
+    const state: WatchState = { version: 1, files: {} };
+    const readOffsets: number[] = [];
+    const statFileFn = vi
+      .fn()
+      .mockResolvedValueOnce({ size: 80, isFile: () => true })
+      .mockResolvedValueOnce({ size: 80, isFile: () => true })
+      .mockResolvedValueOnce({ size: 120, isFile: () => true })
+      .mockResolvedValueOnce({ size: 120, isFile: () => true });
+    const readFileFn = vi.fn(async (_target: string, offset: number) => {
+      readOffsets.push(offset);
+      if (offset === 0) {
+        return Buffer.alloc(100, "a");
+      }
+      if (offset === 100) {
+        return Buffer.alloc(20, "b");
+      }
+      return Buffer.alloc(0);
+    });
+
+    const deps = makeDeps({
+      loadWatchStateFn: vi.fn(async () => state),
+      statFileFn,
+      readFileFn,
+    });
+
+    await runWatcher(
+      {
+        filePath,
+        intervalMs: 1,
+        minChunkChars: 5,
+        dryRun: true,
+        verbose: false,
+        once: true,
+      },
+      deps,
+    );
+    expect(deps.saveSnapshots.at(-1)?.files[resolvedFilePath]?.byteOffset).toBe(100);
+
+    await runWatcher(
+      {
+        filePath,
+        intervalMs: 1,
+        minChunkChars: 5,
+        dryRun: true,
+        verbose: false,
+        once: true,
+      },
+      deps,
+    );
+
+    expect(readOffsets).toEqual([0, 100]);
+  });
+
+  it("avoids double-processing when file grows beyond outer stat size", async () => {
+    const filePath = "/tmp/watch-growth-no-overlap.jsonl";
+    const resolvedFilePath = path.resolve(filePath);
+    const state: WatchState = { version: 1, files: {} };
+    const readOffsets: number[] = [];
+    const statFileFn = vi
+      .fn()
+      .mockResolvedValueOnce({ size: 500, isFile: () => true })
+      .mockResolvedValueOnce({ size: 500, isFile: () => true })
+      .mockResolvedValueOnce({ size: 540, isFile: () => true })
+      .mockResolvedValueOnce({ size: 540, isFile: () => true });
+    const readFileFn = vi.fn(async (_target: string, offset: number) => {
+      readOffsets.push(offset);
+      if (offset === 0) {
+        return Buffer.alloc(520, "a");
+      }
+      if (offset === 520) {
+        return Buffer.alloc(20, "b");
+      }
+      return Buffer.alloc(0);
+    });
+
+    const deps = makeDeps({
+      loadWatchStateFn: vi.fn(async () => state),
+      statFileFn,
+      readFileFn,
+    });
+
+    await runWatcher(
+      {
+        filePath,
+        intervalMs: 1,
+        minChunkChars: 5,
+        dryRun: true,
+        verbose: false,
+        once: true,
+      },
+      deps,
+    );
+    expect(deps.saveSnapshots.at(-1)?.files[resolvedFilePath]?.byteOffset).toBe(520);
+
+    await runWatcher(
+      {
+        filePath,
+        intervalMs: 1,
+        minChunkChars: 5,
+        dryRun: true,
+        verbose: false,
+        once: true,
+      },
+      deps,
+    );
+
+    expect(readOffsets).toEqual([0, 520]);
+    expect(deps.saveSnapshots.at(-1)?.files[resolvedFilePath]?.byteOffset).toBe(540);
+  });
+
+  it("processes large single-line files without requiring newlines", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "agenr-watch-single-line-"));
+    try {
+      const filePath = path.join(tempDir, "session.txt");
+      const content = "x".repeat(50 * 1024);
+      await fs.writeFile(filePath, content, "utf8");
+
+      const state: WatchState = { version: 1, files: {} };
+      const cycleResults: Array<{ skipped: boolean; bytesRead: number }> = [];
+      const deps = makeDeps({
+        loadWatchStateFn: vi.fn(async () => state),
+        statFileFn: vi.fn(async (target: string) => fs.stat(target)),
+        readFileFn: vi.fn(async (target: string, offset: number) => {
+          const raw = await fs.readFile(target);
+          return raw.subarray(offset);
+        }),
+      });
+
+      await runWatcher(
+        {
+          filePath,
+          intervalMs: 1,
+          minChunkChars: 10,
+          dryRun: true,
+          verbose: false,
+          once: true,
+          onCycle: (cycle) => cycleResults.push({ skipped: cycle.skipped, bytesRead: cycle.bytesRead }),
+        },
+        deps,
+      );
+
+      expect(cycleResults[0]?.skipped).toBe(false);
+      expect(cycleResults[0]?.bytesRead).toBe(50 * 1024);
+      expect(deps.saveSnapshots.at(-1)?.files[path.resolve(filePath)]?.byteOffset).toBe(50 * 1024);
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("accumulates offsets across multiple growth cycles without overlap", async () => {
+    const filePath = "/tmp/watch-growth-three-cycles.jsonl";
+    const resolvedFilePath = path.resolve(filePath);
+    const state: WatchState = { version: 1, files: {} };
+    const readWindows: Array<{ start: number; end: number }> = [];
+    const statFileFn = vi
+      .fn()
+      .mockResolvedValueOnce({ size: 1000, isFile: () => true })
+      .mockResolvedValueOnce({ size: 1000, isFile: () => true })
+      .mockResolvedValueOnce({ size: 1500, isFile: () => true })
+      .mockResolvedValueOnce({ size: 1500, isFile: () => true })
+      .mockResolvedValueOnce({ size: 2200, isFile: () => true })
+      .mockResolvedValueOnce({ size: 2200, isFile: () => true });
+    const readFileFn = vi.fn(async (_target: string, offset: number) => {
+      if (offset === 0) {
+        const chunk = Buffer.alloc(1000, "a");
+        readWindows.push({ start: offset, end: offset + chunk.byteLength });
+        return chunk;
+      }
+      if (offset === 1000) {
+        const chunk = Buffer.alloc(500, "b");
+        readWindows.push({ start: offset, end: offset + chunk.byteLength });
+        return chunk;
+      }
+      if (offset === 1500) {
+        const chunk = Buffer.alloc(700, "c");
+        readWindows.push({ start: offset, end: offset + chunk.byteLength });
+        return chunk;
+      }
+      return Buffer.alloc(0);
+    });
+
+    const deps = makeDeps({
+      loadWatchStateFn: vi.fn(async () => state),
+      statFileFn,
+      readFileFn,
+    });
+
+    await runWatcher(
+      {
+        filePath,
+        intervalMs: 1,
+        minChunkChars: 5,
+        dryRun: true,
+        verbose: false,
+        once: true,
+      },
+      deps,
+    );
+    await runWatcher(
+      {
+        filePath,
+        intervalMs: 1,
+        minChunkChars: 5,
+        dryRun: true,
+        verbose: false,
+        once: true,
+      },
+      deps,
+    );
+    await runWatcher(
+      {
+        filePath,
+        intervalMs: 1,
+        minChunkChars: 5,
+        dryRun: true,
+        verbose: false,
+        once: true,
+      },
+      deps,
+    );
+
+    expect(readWindows).toEqual([
+      { start: 0, end: 1000 },
+      { start: 1000, end: 1500 },
+      { start: 1500, end: 2200 },
+    ]);
+    expect(deps.saveSnapshots.at(-1)?.files[resolvedFilePath]?.byteOffset).toBe(2200);
+  });
+
   it("tags stored entries with platform in directory mode", async () => {
     const filePath = "/tmp/watch.jsonl";
     const deps = makeDeps({
@@ -355,7 +587,7 @@ describe("watcher", () => {
     );
 
     expect(deps.saveSnapshots[0]?.files[filePath]?.byteOffset).toBe(0);
-    expect(deps.saveSnapshots.at(-1)?.files[filePath]?.byteOffset).toBe(50);
+    expect(deps.saveSnapshots.at(-1)?.files[filePath]?.byteOffset).toBe(19);
   });
 
   it("honors once mode and exits after a single cycle", async () => {

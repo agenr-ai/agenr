@@ -25,6 +25,8 @@
   - Session-start permanent window widened to 30 days (temporary remains shorter)
   - Dynamic budget allocation based on available categories
   - Recency tiebreaking within a 0.05 score dead-band applied to the recent category only
+- Watch ingestion now advances `byteOffset` by bytes actually read in each cycle, preventing duplicate processing when files grow during read.
+- Watch state saves are now atomic (temp file + rename), preventing partial-write corruption on process crashes.
 
 ## 0.5.0 (2026-02-17)
 
