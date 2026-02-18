@@ -9,6 +9,7 @@ import { rebuildVectorIndex } from "../db/vector-index.js";
 import { banner, formatLabel, ui } from "../ui.js";
 import { APP_VERSION } from "../version.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
+import { KNOWLEDGE_PLATFORMS } from "../types.js";
 import type { KnowledgePlatform } from "../types.js";
 
 interface DbRow {
@@ -287,7 +288,7 @@ export async function runDbStatsCommand(
   const platformRaw = options.platform?.trim();
   const platform = platformRaw ? normalizeKnowledgePlatform(platformRaw) : null;
   if (platformRaw && !platform) {
-    throw new Error("--platform must be one of: openclaw, claude-code, codex");
+    throw new Error(`--platform must be one of: ${KNOWLEDGE_PLATFORMS.join(", ")}`);
   }
   const platformClause = platform ? "AND platform = ?" : "";
   const platformArgs = platform ? [platform] : [];
@@ -332,11 +333,10 @@ export async function runDbStatsCommand(
       SELECT platform, COUNT(*) AS count
       FROM entries
       WHERE superseded_by IS NULL
-        ${platformClause}
       GROUP BY platform
       ORDER BY count DESC
     `,
-      args: platformArgs,
+      args: [],
     });
     const byPlatform = byPlatformResult.rows.map((row) => {
       const raw = (row as DbRow).platform;
@@ -358,7 +358,7 @@ export async function runDbStatsCommand(
       ORDER BY count DESC, t.tag ASC
       LIMIT 20
     `,
-      args: platform ? [platform] : [],
+      args: platformArgs,
     });
     const topTags = tagsResult.rows.map((row) => ({
       tag: toStringValue((row as DbRow).tag),
@@ -498,7 +498,7 @@ export async function runDbExportCommand(
   const platformRaw = options.platform?.trim();
   const platform = platformRaw ? normalizeKnowledgePlatform(platformRaw) : null;
   if (platformRaw && !platform) {
-    throw new Error("--platform must be one of: openclaw, claude-code, codex");
+    throw new Error(`--platform must be one of: ${KNOWLEDGE_PLATFORMS.join(", ")}`);
   }
 
   try {

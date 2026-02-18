@@ -6,7 +6,7 @@ import { estimateEntryTokens, sessionStartRecall } from "../db/session-start.js"
 import type { SessionCategory } from "../db/session-start.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
-import { EXPIRY_LEVELS, IMPORTANCE_MAX, IMPORTANCE_MIN, KNOWLEDGE_TYPES, SCOPE_LEVELS } from "../types.js";
+import { EXPIRY_LEVELS, IMPORTANCE_MAX, IMPORTANCE_MIN, KNOWLEDGE_PLATFORMS, KNOWLEDGE_TYPES, SCOPE_LEVELS } from "../types.js";
 import type {
   Expiry,
   KnowledgePlatform,
@@ -294,7 +294,7 @@ export async function runRecallCommand(
   if (options.platform) {
     const normalized = normalizeKnowledgePlatform(options.platform);
     if (!normalized) {
-      throw new Error("--platform must be one of: openclaw, claude-code, codex");
+      throw new Error(`--platform must be one of: ${KNOWLEDGE_PLATFORMS.join(", ")}`);
     }
     platform = normalized;
   }

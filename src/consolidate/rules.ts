@@ -95,7 +95,7 @@ function parseDaysOld(now: Date, createdAt: string): number {
   return Math.max(days, 0);
 }
 
-async function countActiveEntries(db: Client, platform?: KnowledgePlatform): Promise<number> {
+export async function countActiveEntries(db: Client, platform?: KnowledgePlatform): Promise<number> {
   const args: unknown[] = [];
   if (platform) {
     args.push(platform);
@@ -117,14 +117,14 @@ async function countActiveEntries(db: Client, platform?: KnowledgePlatform): Pro
 async function countOrphanedRelations(db: Client): Promise<number> {
   const result = await db.execute({
     sql: `
-	    SELECT COUNT(*) AS count
-	    FROM relations
-	    WHERE relation_type <> 'supersedes'
-	      AND (
-	        source_id IN (SELECT id FROM entries WHERE superseded_by IS NOT NULL)
-	        OR target_id IN (SELECT id FROM entries WHERE superseded_by IS NOT NULL)
-	      )
-	    `,
+      SELECT COUNT(*) AS count
+      FROM relations
+      WHERE relation_type <> 'supersedes'
+        AND (
+          source_id IN (SELECT id FROM entries WHERE superseded_by IS NOT NULL)
+          OR target_id IN (SELECT id FROM entries WHERE superseded_by IS NOT NULL)
+        )
+    `,
     args: [],
   });
   const count = toNumber(result.rows[0]?.count);
@@ -402,13 +402,13 @@ async function cleanOrphanedRelations(db: Client, dryRun: boolean): Promise<numb
 
   await db.execute({
     sql: `
-	    DELETE FROM relations
-	    WHERE relation_type <> 'supersedes'
-	      AND (
-	        source_id IN (SELECT id FROM entries WHERE superseded_by IS NOT NULL)
-	        OR target_id IN (SELECT id FROM entries WHERE superseded_by IS NOT NULL)
-	      )
-	    `,
+      DELETE FROM relations
+      WHERE relation_type <> 'supersedes'
+        AND (
+          source_id IN (SELECT id FROM entries WHERE superseded_by IS NOT NULL)
+          OR target_id IN (SELECT id FROM entries WHERE superseded_by IS NOT NULL)
+        )
+    `,
     args: [],
   });
 

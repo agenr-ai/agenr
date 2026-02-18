@@ -160,7 +160,14 @@ describe("db command", () => {
     const stats = await runDbStatsCommand({ platform: "openclaw" }, makeDeps(client));
     expect(stats.total).toBe(1);
     expect(stats.byType).toEqual([{ type: "fact", count: 1 }]);
-    expect(stats.byPlatform).toEqual([{ platform: "openclaw", count: 1 }]);
+    expect(stats.byPlatform).toHaveLength(3);
+    expect(stats.byPlatform).toEqual(
+      expect.arrayContaining([
+        { platform: "openclaw", count: 1 },
+        { platform: "codex", count: 1 },
+        { platform: "(untagged)", count: 1 },
+      ]),
+    );
     expect(stats.topTags).toEqual([{ tag: "openclaw-tag", count: 1 }]);
   });
 

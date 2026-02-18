@@ -2,7 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import type { WatchPlatform } from "./resolvers/index.js";
 
-export function getDefaultPlatformDir(platform: WatchPlatform, homeDir = os.homedir()): string {
+export function getDefaultPlatformDir(platform: Exclude<WatchPlatform, "mtime">, homeDir = os.homedir()): string {
   if (platform === "openclaw") {
     return path.join(homeDir, ".openclaw", "agents", "main", "sessions");
   }
@@ -15,4 +15,3 @@ export function getDefaultPlatformDir(platform: WatchPlatform, homeDir = os.home
 
   throw new Error(`No default directory for platform: ${platform}`);
 }
-

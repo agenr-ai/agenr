@@ -113,7 +113,7 @@ function mapStoredEntry(row: Row, tags: string[]): StoredEntry {
   const scope = scopeRaw || "private";
   const importanceRaw = toNumber(row.importance);
   const importance = Number.isFinite(importanceRaw) ? Math.min(10, Math.max(1, Math.round(importanceRaw))) : 5;
-  const platformRaw = toStringValue((row as Row & { platform?: unknown }).platform);
+  const platformRaw = toStringValue(row.platform);
   const platform = platformRaw.trim().length > 0 ? platformRaw : undefined;
 
   return {

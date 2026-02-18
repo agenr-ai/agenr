@@ -12,5 +12,10 @@ describe("platform defaults", () => {
     expect(getDefaultPlatformDir("codex", home)).toBe(path.join(home, ".codex", "sessions"));
     expect(getDefaultPlatformDir("claude-code", home)).toBe(path.join(home, ".claude", "projects"));
   });
-});
 
+  it("throws for an unsupported platform", () => {
+    expect(() => getDefaultPlatformDir("unknown-platform" as never)).toThrow(
+      "No default directory for platform: unknown-platform",
+    );
+  });
+});

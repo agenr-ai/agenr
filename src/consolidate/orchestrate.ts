@@ -8,7 +8,7 @@ import { rebuildVectorIndex } from "../db/vector-index.js";
 import type { KnowledgePlatform, LlmClient } from "../types.js";
 import { buildClusters, type Cluster } from "./cluster.js";
 import { mergeCluster } from "./merge.js";
-import { consolidateRules, type ConsolidationStats } from "./rules.js";
+import { consolidateRules, countActiveEntries, type ConsolidationStats } from "./rules.js";
 import { isShutdownRequested } from "../shutdown.js";
 
 export const CONSOLIDATION_CHECKPOINT_PATH = path.join(os.homedir(), ".agenr", "consolidation-checkpoint.json");
@@ -172,25 +172,6 @@ function defaultClusterStats(): ClusterProcessingStats {
     entriesConsolidatedFrom: 0,
     canonicalEntriesCreated: 0,
   };
-}
-
-async function countActiveEntries(db: Client, platform?: KnowledgePlatform): Promise<number> {
-  const args: unknown[] = [];
-  if (platform) {
-    args.push(platform);
-  }
-
-  const result = await db.execute({
-    sql: `
-      SELECT COUNT(*) AS count
-      FROM entries
-      WHERE superseded_by IS NULL
-        ${platform ? "AND platform = ?" : ""}
-    `,
-    args,
-  });
-  const count = toNumber(result.rows[0]?.count);
-  return Number.isFinite(count) ? count : 0;
 }
 
 async function countActiveEmbeddedEntries(db: Client, typeFilter?: string, platform?: KnowledgePlatform): Promise<number> {

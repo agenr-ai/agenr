@@ -122,6 +122,7 @@ Parameters:
 - `types` (string, optional): comma-separated entry types
 - `since` (string, optional): ISO date or relative (`7d`, `24h`, `1m`, `1y`)
 - `threshold` (number, optional, default `0`): minimum score `0.0..1.0`
+- `platform` (string, optional): platform filter (`openclaw`, `claude-code`, `codex`)
 
 Example call payload:
 
@@ -154,6 +155,7 @@ Store structured entries in the memory DB.
 
 Parameters:
 - `entries` (array, required)
+- `platform` (string, optional): platform tag applied to all stored entries (`openclaw`, `claude-code`, `codex`)
 - Each entry supports:
 - `content` (string, required)
 - `type` (enum, required): `fact|decision|preference|todo|relationship|event|lesson`

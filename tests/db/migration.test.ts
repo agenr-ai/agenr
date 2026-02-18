@@ -255,6 +255,8 @@ describe("db schema migrations", () => {
     await initSchema(client);
 
     const row = await client.execute({ sql: "SELECT platform FROM entries WHERE id = ?", args: ["legacy-1"] });
+    expect(row.rows.length).toBeGreaterThan(0);
+    expect(row.rows[0]).toBeDefined();
     expect((row.rows[0] as { platform?: unknown } | undefined)?.platform ?? null).toBe(null);
   });
 

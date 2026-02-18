@@ -84,11 +84,10 @@ agenr store [options] [files...]
 
 ### Options
 - `--db <path>`: database path override.
-- `--platform <name>`: filter stats by platform.
 - `--dry-run`: show write decisions without persisting.
 - `--verbose`: show per-entry dedup decisions.
 - `--force`: bypass dedup checks and insert all as new.
-- `--platform <name>`: platform tag (`openclaw|claude-code|codex`).
+- `--platform <name>`: platform tag (`openclaw|claude-code|claude|codex`).
 - `--online-dedup`: enable online LLM dedup at write time (default `true`).
 - `--no-online-dedup`: disable online LLM dedup.
 - `--dedup-threshold <n>`: similarity threshold for online dedup (`0.0..1.0`, default `0.8`).
@@ -125,7 +124,7 @@ agenr recall [options] [query]
 - `--min-importance <n>`: minimum importance (1-10).
 - `--since <duration>`: recency filter (`1h`, `7d`, `30d`, `1y`, or ISO timestamp).
 - `--expiry <level>`: `core|permanent|temporary`.
-- `--platform <name>`: platform filter (`openclaw|claude-code|codex`).
+- `--platform <name>`: platform filter (`openclaw|claude-code|claude|codex`).
 - `--json`: emit JSON.
 - `--db <path>`: database path override.
 - `--budget <tokens>`: approximate token budget cap.
@@ -159,7 +158,7 @@ agenr watch [file] [options]
 
 ### Options
 - `--dir <path>`: watch a sessions directory and auto-follow active session file.
-- `--platform <name>`: resolver selection (`openclaw|claude-code|codex|mtime`). When used without `--dir`, agenr resolves the platform default directory automatically.
+- `--platform <name>`: resolver selection (`openclaw|claude-code|claude|codex|mtime`). When used without `--dir`, agenr resolves the platform default directory automatically.
 - `--auto`: deprecated. Equivalent to `--platform openclaw` (prints a warning).
 - `--interval <seconds>`: polling interval (default `300`).
 - `--min-chunk <chars>`: min appended chars before extract (default `2000`).
@@ -212,7 +211,7 @@ agenr daemon <subcommand> [options]
   - `--force`: overwrite existing plist.
   - `--interval <seconds>`: watch interval (default `120`).
   - `--dir <path>`: sessions directory to watch (overrides auto-detection).
-  - `--platform <name>`: platform name (`openclaw|codex|claude-code`). If provided without `--dir`, uses the platform default directory.
+  - `--platform <name>`: platform name (`openclaw|claude-code|claude|codex`). If provided without `--dir`, uses the platform default directory.
   - `--node-path <path>`: node binary path override (useful for nvm/fnm/volta setups without stable symlinks).
 - `start`: start the daemon if installed.
 - `stop`: stop the daemon without uninstalling (plist remains on disk).
@@ -249,7 +248,7 @@ agenr ingest [options] <paths...>
 - `--db <path>`: database path override.
 - `--model <model>`: override model.
 - `--provider <name>`: `anthropic|openai|openai-codex`.
-- `--platform <name>`: platform tag (`openclaw|claude-code|codex`).
+- `--platform <name>`: platform tag (`openclaw|claude-code|claude|codex`).
 - `--verbose`: per-file details.
 - `--dry-run`: extract without storing.
 - `--json`: emit JSON summary.
@@ -287,7 +286,7 @@ agenr consolidate [options]
 ### Options
 - `--rules-only`: run only Tier 1 rule cleanup.
 - `--dry-run`: report actions without writing.
-- `--platform <name>`: scope consolidation to platform (`openclaw|claude-code|codex`).
+- `--platform <name>`: scope consolidation to platform (`openclaw|claude-code|claude|codex`).
 - `--min-cluster <n>`: min cluster size for LLM phases (default `2`).
 - `--sim-threshold <n>`: Phase 1 clustering threshold (default `0.82`). Phase 2 uses `max(value, 0.88)`.
 - `--max-cluster-size <n>`: max cluster size for LLM phases. Defaults: Phase 1 `8`, Phase 2 `6`.
@@ -465,6 +464,7 @@ agenr db stats [options]
 
 ### Options
 - `--db <path>`: database path override.
+- `--platform <name>`: filter stats by platform (`openclaw|claude-code|claude|codex`).
 
 ### Example
 
@@ -482,6 +482,11 @@ Entries: 42
 By Type
 - decision: 10
 - fact: 9
+By Platform
+- openclaw: 20
+- claude-code: 12
+- codex: 3
+- (untagged): 7
 Top Tags
 - tooling: 6
 ```
@@ -524,7 +529,7 @@ agenr db export [options]
 - `--json`: export JSON.
 - `--md`: export markdown.
 - `--db <path>`: database path override.
-- `--platform <name>`: platform filter (`openclaw|claude-code|codex`).
+- `--platform <name>`: platform filter (`openclaw|claude-code|claude|codex`).
 
 Exactly one of `--json` or `--md` is required.
 

@@ -12,6 +12,7 @@ import { createLlmClient } from "../llm/client.js";
 import { formatWarn } from "../ui.js";
 import { installSignalHandlers, isShutdownRequested, onShutdown } from "../shutdown.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
+import { KNOWLEDGE_PLATFORMS } from "../types.js";
 import type { KnowledgePlatform } from "../types.js";
 
 export interface ConsolidateCommandOptions {
@@ -171,7 +172,7 @@ export async function runConsolidateCommand(
   const platformRaw = options.platform?.trim();
   const platform = platformRaw ? normalizeKnowledgePlatform(platformRaw) : null;
   if (platformRaw && !platform) {
-    throw new Error("--platform must be one of: openclaw, claude-code, codex");
+    throw new Error(`--platform must be one of: ${KNOWLEDGE_PLATFORMS.join(", ")}`);
   }
 
   if (dbFilePath === ":memory:") {
@@ -200,7 +201,7 @@ export async function runConsolidateCommand(
         rulesOnly: options.rulesOnly,
         dryRun: options.dryRun,
         verbose: options.verbose,
-        platform: (platform ?? undefined) as KnowledgePlatform | undefined,
+        platform: platform ?? undefined,
         minCluster: options.minCluster,
         simThreshold: options.simThreshold,
         maxClusterSize: options.maxClusterSize,
