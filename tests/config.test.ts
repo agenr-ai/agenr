@@ -126,4 +126,30 @@ describe("config", () => {
       agenr: "agenr",
     });
   });
+
+  it("drops non-object labelProjectMap values", () => {
+    expect(normalizeConfig({ labelProjectMap: null }).labelProjectMap).toBeUndefined();
+    expect(normalizeConfig({ labelProjectMap: "agenr" }).labelProjectMap).toBeUndefined();
+    expect(normalizeConfig({ labelProjectMap: ["agenr"] }).labelProjectMap).toBeUndefined();
+  });
+
+  it("keeps only string-valued entries in labelProjectMap", () => {
+    const normalized = normalizeConfig({
+      labelProjectMap: {
+        " Agenr_dev ": "agenr",
+        openclaw: " openclaw ",
+        badNumber: 123,
+        badObject: { project: "agenr" },
+      },
+    });
+
+    expect(normalized.labelProjectMap).toEqual({
+      "agenr-dev": "agenr",
+      openclaw: "openclaw",
+    });
+  });
+
+  it("drops empty labelProjectMap objects", () => {
+    expect(normalizeConfig({ labelProjectMap: {} }).labelProjectMap).toBeUndefined();
+  });
 });

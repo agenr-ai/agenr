@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { resolveModel } from "./llm/models.js";
 import type { AgenrAuthMethod, AgenrConfig, AgenrProvider } from "./types.js";
+import { normalizeLabel } from "./utils/string.js";
 
 export type ConfigSetKey = "provider" | "model" | "auth";
 export type StoredCredentialKeyName = "anthropic" | "anthropic-token" | "openai";
@@ -190,11 +191,7 @@ function normalizeLabelProjectMap(input: unknown): Record<string, string> | unde
       continue;
     }
 
-    const label = rawLabel
-      .trim()
-      .toLowerCase()
-      .replace(/[\s_-]+/g, "-")
-      .replace(/^-+|-+$/g, "");
+    const label = normalizeLabel(rawLabel);
     const project = rawProject.trim();
 
     if (!label || !project) {
