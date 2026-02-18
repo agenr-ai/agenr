@@ -38,7 +38,7 @@ function makeResult(category: RecallCommandResult["category"], overrides: Partia
   return {
     entry: makeEntry(overrides),
     score: 0.8,
-    scores: { vector: 0, recency: 0, importance: 0, recall: 0, fts: 0 },
+    scores: { vector: 0, recency: 0, importance: 0, recall: 0, freshness: 1, todoPenalty: 1, fts: 0 },
     category,
   };
 }

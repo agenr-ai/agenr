@@ -91,8 +91,8 @@ describe("db session-start", () => {
   });
 
   it("session-start respects explicit --since and does not override default windows", async () => {
-    const seen: Array<{ expiry: string | undefined; since: string | undefined }> = [];
-    const recallFn = async (_db: Client, query: { expiry?: string; since?: string }, _apiKey: string): Promise<RecallResult[]> => {
+    const seen: Array<{ expiry: string | string[] | undefined; since: string | undefined }> = [];
+    const recallFn: NonNullable<Parameters<typeof sessionStartRecall>[1]["recallFn"]> = async (_db, query, _apiKey) => {
       seen.push({ expiry: query.expiry, since: query.since });
       return [];
     };
@@ -101,13 +101,14 @@ describe("db session-start", () => {
       query: { text: "", since: "30d" },
       apiKey: "sk-test",
       nonCoreLimit: 10,
-      recallFn: recallFn as any,
+      recallFn,
     });
 
-    expect(seen.length).toBe(3);
+    expect(seen.length).toBe(2);
     expect(seen.some((call) => call.expiry === "core" && call.since === "30d")).toBe(true);
-    expect(seen.some((call) => call.expiry === "permanent" && call.since === "30d")).toBe(true);
-    expect(seen.some((call) => call.expiry === "temporary" && call.since === "30d")).toBe(true);
+    const nonCoreCall = seen.find((call) => Array.isArray(call.expiry));
+    expect(nonCoreCall?.since).toBe("30d");
+    expect(Array.isArray(nonCoreCall?.expiry) ? [...nonCoreCall.expiry].sort().join(",") : "").toBe("permanent,temporary");
   });
 
   it("dynamic budget allocation: zero todos yields zero active budget", () => {

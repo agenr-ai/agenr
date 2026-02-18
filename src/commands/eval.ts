@@ -4,7 +4,7 @@ import path from "node:path";
 import type { Client } from "@libsql/client";
 import { readConfig } from "../config.js";
 import { closeDb, getDb, initDb } from "../db/client.js";
-import { scoreEntry } from "../db/recall.js";
+import { getTagsForEntryIds, mapStoredEntry, scoreEntry } from "../db/recall.js";
 import { sessionStartRecall } from "../db/session-start.js";
 import type { StoredEntry } from "../types.js";
 import { APP_VERSION } from "../version.js";
@@ -159,67 +159,6 @@ async function loadQueries(
   return queries.length > 0 ? queries : DEFAULT_QUERIES;
 }
 
-async function getTagsByEntryIds(db: Client, ids: string[]): Promise<Map<string, string[]>> {
-  if (ids.length === 0) {
-    return new Map();
-  }
-
-  const placeholders = ids.map(() => "?").join(", ");
-  const result = await db.execute({
-    sql: `SELECT entry_id, tag FROM tags WHERE entry_id IN (${placeholders})`,
-    args: ids,
-  });
-
-  const tagsById = new Map<string, string[]>();
-  for (const row of result.rows) {
-    const entryId = toStringValue((row as DbRow).entry_id);
-    const tag = toStringValue((row as DbRow).tag);
-    if (!entryId || !tag) continue;
-    const tags = tagsById.get(entryId) ?? [];
-    tags.push(tag.toLowerCase());
-    tagsById.set(entryId, tags);
-  }
-
-  for (const [entryId, tags] of tagsById.entries()) {
-    tagsById.set(entryId, Array.from(new Set(tags)));
-  }
-
-  return tagsById;
-}
-
-function mapStoredEntry(row: DbRow, tags: string[]): StoredEntry {
-  const importance = Number.isFinite(toNumber(row.importance)) ? toNumber(row.importance) : 5;
-  const scope = (toStringValue(row.scope) || "private") as StoredEntry["scope"];
-  const platform = toStringValue(row.platform).trim();
-  const project = toStringValue(row.project).trim();
-  const canonicalKey = toStringValue(row.canonical_key).trim();
-
-  return {
-    id: toStringValue(row.id),
-    type: toStringValue(row.type) as StoredEntry["type"],
-    subject: toStringValue(row.subject),
-    content: toStringValue(row.content),
-    ...(canonicalKey ? { canonical_key: canonicalKey } : {}),
-    importance,
-    expiry: toStringValue(row.expiry) as StoredEntry["expiry"],
-    scope,
-    ...(platform ? { platform: platform as StoredEntry["platform"] } : {}),
-    ...(project ? { project: project.toLowerCase() } : {}),
-    tags,
-    source: {
-      file: toStringValue(row.source_file) || "",
-      context: toStringValue(row.source_context) || "",
-    },
-    created_at: toStringValue(row.created_at),
-    updated_at: toStringValue(row.updated_at),
-    last_recalled_at: toStringValue(row.last_recalled_at) || undefined,
-    recall_count: Number.isFinite(toNumber(row.recall_count)) ? toNumber(row.recall_count) : 0,
-    confirmations: Number.isFinite(toNumber(row.confirmations)) ? toNumber(row.confirmations) : 0,
-    contradictions: Number.isFinite(toNumber(row.contradictions)) ? toNumber(row.contradictions) : 0,
-    superseded_by: toStringValue(row.superseded_by) || undefined,
-  };
-}
-
 async function runFtsEval(db: Client, text: string, now: Date, limit: number, scoreEntryFn: typeof scoreEntry): Promise<EvalResultRow[]> {
   const trimmed = text.trim();
   if (!trimmed) {
@@ -258,10 +197,10 @@ async function runFtsEval(db: Client, text: string, now: Date, limit: number, sc
   });
 
   const ids = result.rows.map((row) => toStringValue((row as DbRow).id)).filter((id) => id.length > 0);
-  const tagsById = await getTagsByEntryIds(db, ids);
+  const tagsById = await getTagsForEntryIds(db, ids);
 
   const scored = result.rows
-    .map((row) => mapStoredEntry(row as DbRow, tagsById.get(toStringValue((row as DbRow).id)) ?? []))
+    .map((row) => mapStoredEntry(row, tagsById.get(toStringValue((row as DbRow).id)) ?? []))
     .map((entry) => ({ entry, score: scoreEntryFn(entry, 1.0, true, now) }))
     .sort((a, b) => b.score - a.score);
 
@@ -287,7 +226,7 @@ async function runSessionStartEval(
     query,
     apiKey: "",
     budget,
-    nonCoreLimit: Math.max(limit * 3, limit),
+    nonCoreLimit: limit * 3,
     coreCandidateLimit: limit,
   });
 

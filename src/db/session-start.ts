@@ -76,7 +76,9 @@ export function computeBudgetSplit(
   let prefsFrac = Math.max(MIN_PREFS, Math.min(MAX_PREFS, counts.preferences / total));
   let recentFrac = 1.0 - activeFrac - prefsFrac;
 
-  // If recentFrac goes below 0.20, steal from prefs (not active)
+  // Defensive clamp: with current constants (MAX_ACTIVE=0.30, MAX_PREFS=0.40),
+  // recentFrac is always >= 0.30, so this is currently unreachable. Keep it in
+  // case those bounds change and we want "recent" to retain a minimum budget.
   if (recentFrac < 0.20) {
     recentFrac = 0.20;
     prefsFrac = 1.0 - activeFrac - recentFrac;
@@ -235,10 +237,9 @@ export async function sessionStartRecall(db: Client, options: SessionStartRecall
     noUpdate: true,
   };
 
-  const permanentSince =
-    baseQuery.since ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-  const temporarySince =
-    baseQuery.since ?? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const hasExplicitSince = Boolean(baseQuery.since && baseQuery.since.trim().length > 0);
+  const permanentSince = hasExplicitSince ? baseQuery.since : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const temporarySince = hasExplicitSince ? baseQuery.since : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
   const coreResults = await recallFn(
     db,
@@ -250,29 +251,30 @@ export async function sessionStartRecall(db: Client, options: SessionStartRecall
     options.apiKey,
   );
 
-  const permanentResults = await recallFn(
+  let nonCoreResults = await recallFn(
     db,
     {
       ...baseQuery,
       limit: options.nonCoreCandidateLimit ?? DEFAULT_SESSION_CANDIDATE_LIMIT,
-      expiry: "permanent",
+      expiry: ["permanent", "temporary"],
       since: permanentSince,
     },
     options.apiKey,
   );
 
-  const temporaryResults = await recallFn(
-    db,
-    {
-      ...baseQuery,
-      limit: options.nonCoreCandidateLimit ?? DEFAULT_SESSION_CANDIDATE_LIMIT,
-      expiry: "temporary",
-      since: temporarySince,
-    },
-    options.apiKey,
-  );
-
-  const nonCoreResults = [...permanentResults, ...temporaryResults];
+  // Preserve the shorter default "temporary" window without doubling DB work.
+  if (!hasExplicitSince) {
+    const cutoff = Date.parse(temporarySince);
+    if (Number.isFinite(cutoff)) {
+      nonCoreResults = nonCoreResults.filter((item) => {
+        if (item.entry.expiry !== "temporary") {
+          return true;
+        }
+        const created = Date.parse(item.entry.created_at);
+        return Number.isFinite(created) && created >= cutoff;
+      });
+    }
+  }
 
   const coreIds = new Set(coreResults.map((item) => item.entry.id));
   const filteredNonCore = nonCoreResults.filter((item) => item.entry.expiry !== "core" && !coreIds.has(item.entry.id));
