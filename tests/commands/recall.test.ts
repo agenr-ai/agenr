@@ -62,6 +62,20 @@ describe("recall command", () => {
     vi.restoreAllMocks();
   });
 
+  it("captures repeated --project flags as an array", async () => {
+    const { createProgram } = await import("../../src/cli-main.js");
+    const program = createProgram();
+    const recallCommand = program.commands.find((command) => command.name() === "recall");
+    const actionMock = vi.fn(async () => undefined);
+    recallCommand?.action(actionMock as any);
+
+    await program.parseAsync(["node", "agenr", "recall", "query", "--project", "foo", "--project", "bar"]);
+
+    expect(actionMock).toHaveBeenCalledTimes(1);
+    const firstCall = (actionMock.mock.calls as unknown[][])[0] as [string, Record<string, unknown>] | undefined;
+    expect(firstCall?.[1].project).toEqual(["foo", "bar"]);
+  });
+
   it("parses duration strings into ISO cutoffs", () => {
     const now = new Date("2026-02-15T12:00:00.000Z");
     const oneHour = parseSinceToIso("1h", now);

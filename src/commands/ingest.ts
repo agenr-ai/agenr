@@ -38,7 +38,7 @@ export interface IngestCommandOptions {
   dryRun?: boolean;
   json?: boolean;
   platform?: string;
-  project?: string;
+  project?: string | string[];
   concurrency?: number | string;
   skipIngested?: boolean;
   force?: boolean;
@@ -496,7 +496,21 @@ export async function runIngestCommand(
   if (platformRaw && !platform) {
     throw new Error(`--platform must be one of: ${KNOWLEDGE_PLATFORMS.join(", ")}`);
   }
-  const projectRaw = options.project?.trim();
+  const projectItems = Array.isArray(options.project) ? options.project : options.project ? [options.project] : [];
+  const projectParts = projectItems
+    .flatMap((value) =>
+      String(value)
+        .split(",")
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0),
+    )
+    .filter((item) => item.length > 0);
+
+  if (projectParts.length > 1) {
+    throw new Error("--project may only be specified once for the ingest command.");
+  }
+
+  const projectRaw = projectParts[0];
   const project = projectRaw ? normalizeProject(projectRaw) : null;
   if (projectRaw && !project) {
     throw new Error("--project must be a non-empty string.");

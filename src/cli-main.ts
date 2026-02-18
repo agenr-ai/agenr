@@ -403,7 +403,7 @@ export function createProgram(): Command {
     .option("--verbose", "Show per-entry dedup decisions", false)
     .option("--force", "Skip dedup and store all entries as new", false)
     .option("--platform <name>", "Platform tag: openclaw, claude-code, codex")
-    .option("--project <name>", "Project tag (lowercase).")
+    .option("--project <name>", "Project tag (lowercase).", (val, prev) => [...(prev ?? []), val], [])
     .option("--online-dedup", "Enable online LLM dedup at write time", true)
     .option("--no-online-dedup", "Disable online LLM dedup at write time")
     .option("--dedup-threshold <n>", "Similarity threshold for online dedup (0.0-1.0)")
@@ -416,7 +416,7 @@ export function createProgram(): Command {
           verbose?: boolean;
           force?: boolean;
           platform?: string;
-          project?: string;
+          project?: string | string[];
           onlineDedup?: boolean;
           dedupThreshold?: string;
         },
@@ -437,8 +437,8 @@ export function createProgram(): Command {
     .option("--since <duration>", "Filter by recency (1h, 7d, 30d, 1y) or ISO timestamp")
     .option("--expiry <level>", "Filter by expiry: core|permanent|temporary")
     .option("--platform <name>", "Filter by platform: openclaw, claude-code, codex")
-    .option("--project <name>", "Filter by project (comma-separated for multiple)")
-    .option("--exclude-project <name>", "Exclude entries from project (comma-separated)")
+    .option("--project <name>", "Filter by project (repeatable)", (val, prev) => [...(prev ?? []), val], [])
+    .option("--exclude-project <name>", "Exclude entries from project (repeatable)", (val, prev) => [...(prev ?? []), val], [])
     .option("--strict", "Exclude NULL-project entries from results", false)
     .option("--json", "Output JSON", false)
     .option("--db <path>", "Database path override")
@@ -456,8 +456,8 @@ export function createProgram(): Command {
         since: opts.since as string | undefined,
         expiry: opts.expiry as string | undefined,
         platform: opts.platform as string | undefined,
-        project: opts.project as string | undefined,
-        excludeProject: opts.excludeProject as string | undefined,
+        project: opts.project as string | string[] | undefined,
+        excludeProject: opts.excludeProject as string | string[] | undefined,
         strict: opts.strict === true,
         json: opts.json === true,
         db: opts.db as string | undefined,
@@ -480,8 +480,8 @@ export function createProgram(): Command {
     .option("--limit <n>", "Max entries per category", parseIntOption, 10)
     .option("--db <path>", "Database path override")
     .option("--platform <name>", "Filter by platform: openclaw, claude-code, codex")
-    .option("--project <name>", "Filter by project (comma-separated for multiple)")
-    .option("--exclude-project <name>", "Exclude entries from project (comma-separated)")
+    .option("--project <name>", "Filter by project (repeatable)", (val, prev) => [...(prev ?? []), val], [])
+    .option("--exclude-project <name>", "Exclude entries from project (repeatable)", (val, prev) => [...(prev ?? []), val], [])
     .option("--strict", "Exclude NULL-project entries from results", false)
     .option("--json", "Output JSON", false)
     .option("--quiet", "Suppress stderr output", false)
@@ -492,8 +492,8 @@ export function createProgram(): Command {
         limit?: number;
         db?: string;
         platform?: string;
-        project?: string;
-        excludeProject?: string;
+        project?: string | string[];
+        excludeProject?: string | string[];
         strict?: boolean;
         json?: boolean;
         quiet?: boolean;
@@ -546,7 +546,7 @@ export function createProgram(): Command {
     .option("--model <model>", "LLM model to use")
     .option("--provider <name>", "LLM provider: anthropic, openai, openai-codex")
     .option("--platform <name>", "Platform tag: openclaw, claude-code, codex")
-    .option("--project <name>", "Project tag (lowercase).")
+    .option("--project <name>", "Project tag (lowercase).", (val, prev) => [...(prev ?? []), val], [])
     .option("--verbose", "Show per-file details", false)
     .option("--raw", "Bypass adapter filtering (pass transcripts through unmodified)", false)
     .option("--dry-run", "Extract without storing", false)
@@ -567,8 +567,8 @@ export function createProgram(): Command {
     .option("--rules-only", "Only run rule-based cleanup (no LLM)", false)
     .option("--dry-run", "Show what would happen without making changes", false)
     .option("--platform <name>", "Scope consolidation to platform: openclaw, claude-code, codex")
-    .option("--project <name>", "Scope consolidation to project (comma-separated for multiple)")
-    .option("--exclude-project <name>", "Exclude entries from project (comma-separated)")
+    .option("--project <name>", "Scope consolidation to project (repeatable)", (val, prev) => [...(prev ?? []), val], [])
+    .option("--exclude-project <name>", "Exclude entries from project (repeatable)", (val, prev) => [...(prev ?? []), val], [])
     .option("--min-cluster <n>", "Minimum cluster size for merge (default: 2)", (value: string) =>
       Number.parseInt(value, 10),
     )
@@ -679,9 +679,9 @@ export function createProgram(): Command {
     .description("Show database statistics")
     .option("--db <path>", "Database path override")
     .option("--platform <name>", "Filter stats by platform")
-    .option("--project <name>", "Filter by project (comma-separated for multiple)")
-    .option("--exclude-project <name>", "Exclude entries from project (comma-separated)")
-    .action(async (opts: { db?: string; platform?: string; project?: string; excludeProject?: string }) => {
+    .option("--project <name>", "Filter by project (repeatable)", (val, prev) => [...(prev ?? []), val], [])
+    .option("--exclude-project <name>", "Exclude entries from project (repeatable)", (val, prev) => [...(prev ?? []), val], [])
+    .action(async (opts: { db?: string; platform?: string; project?: string | string[]; excludeProject?: string | string[] }) => {
       await runDbStatsCommand({ db: opts.db, platform: opts.platform, project: opts.project, excludeProject: opts.excludeProject });
       process.exitCode = 0;
     });
@@ -702,9 +702,9 @@ export function createProgram(): Command {
     .option("--md", "Export markdown", false)
     .option("--db <path>", "Database path override")
     .option("--platform <name>", "Filter by platform: openclaw, claude-code, codex")
-    .option("--project <name>", "Filter by project (comma-separated for multiple)")
-    .option("--exclude-project <name>", "Exclude entries from project (comma-separated)")
-    .action(async (opts: { db?: string; json?: boolean; md?: boolean; platform?: string; project?: string; excludeProject?: string }) => {
+    .option("--project <name>", "Filter by project (repeatable)", (val, prev) => [...(prev ?? []), val], [])
+    .option("--exclude-project <name>", "Exclude entries from project (repeatable)", (val, prev) => [...(prev ?? []), val], [])
+    .action(async (opts: { db?: string; json?: boolean; md?: boolean; platform?: string; project?: string | string[]; excludeProject?: string | string[] }) => {
       await runDbExportCommand({
         db: opts.db,
         json: opts.json,

@@ -411,6 +411,39 @@ describe("db recall", () => {
     ]);
   });
 
+  it("matches project filters regardless of stored project casing", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    await storeEntries(
+      client,
+      [{ ...makeEntry({ content: "Mixed-case project vec-work-strong" }), project: "MyProject" }],
+      "sk-test",
+      {
+        sourceFile: "recall-test.jsonl",
+        ingestContentHash: "hash-project-case",
+        embedFn: mockEmbed,
+        force: true,
+      },
+    );
+
+    const now = new Date("2026-02-15T00:00:00.000Z");
+    const results = await recall(
+      client,
+      {
+        text: "",
+        context: "session-start",
+        limit: 10,
+        project: "myproject",
+      },
+      "sk-test",
+      { now },
+    );
+
+    expect(results).toHaveLength(1);
+    expect(results[0]?.entry.content).toBe("Mixed-case project vec-work-strong");
+  });
+
   it("scoreEntry uses multiplicative scaling for memory strength", () => {
     const now = new Date("2026-02-15T00:00:00.000Z");
     const highImportance = makeStoredEntry({
