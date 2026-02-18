@@ -33,6 +33,7 @@ const CREATE_ENTRIES_FTS_TRIGGER_AU_SQL = `
 `;
 
 const REBUILD_ENTRIES_FTS_SQL = "INSERT INTO entries_fts(entries_fts) VALUES ('rebuild')";
+const LEGACY_IMPORTANCE_BACKFILL_META_KEY = "legacy_importance_backfill_from_confidence_v1";
 
 type ColumnMigration = { table: string; column: string; sql: string };
 
@@ -214,7 +215,14 @@ export async function initSchema(client: Client): Promise<void> {
   try {
     const earlyEntriesInfo = await client.execute("PRAGMA table_info(entries)");
     const earlyColumns = new Set(earlyEntriesInfo.rows.map((row) => String((row as { name?: unknown }).name)));
-    willRunLegacyBackfill = earlyColumns.has("confidence");
+    if (earlyColumns.has("confidence")) {
+      const sentinel = await client.execute({
+        sql: "SELECT 1 AS found FROM _meta WHERE key = ? LIMIT 1",
+        args: [LEGACY_IMPORTANCE_BACKFILL_META_KEY],
+      });
+      const alreadyBackfilled = sentinel.rows.length > 0;
+      willRunLegacyBackfill = !alreadyBackfilled;
+    }
   } catch {
     // Best-effort. If PRAGMA fails, fall back to the safe default (run the rebuild when needed).
   }
@@ -246,7 +254,12 @@ export async function initSchema(client: Client): Promise<void> {
   // If both columns exist, backfill importance from confidence for rows still at the default.
   const entriesInfo = await client.execute("PRAGMA table_info(entries)");
   const entryColumns = new Set(entriesInfo.rows.map((row) => String((row as { name?: unknown }).name)));
-  if (entryColumns.has("confidence") && entryColumns.has("importance")) {
+  const backfillSentinel = await client.execute({
+    sql: "SELECT 1 AS found FROM _meta WHERE key = ? LIMIT 1",
+    args: [LEGACY_IMPORTANCE_BACKFILL_META_KEY],
+  });
+  const legacyBackfillDone = backfillSentinel.rows.length > 0;
+  if (entryColumns.has("confidence") && entryColumns.has("importance") && !legacyBackfillDone) {
     // Backfill can fire FTS triggers. On legacy schemas where FTS was created after rows existed,
     // the delete+insert trigger sequence can error. Use a rebuild-safe path.
     try {
@@ -279,6 +292,20 @@ export async function initSchema(client: Client): Promise<void> {
       await client.execute(CREATE_ENTRIES_FTS_TRIGGER_AD_SQL);
       await client.execute(CREATE_ENTRIES_FTS_TRIGGER_AU_SQL);
       await client.execute(REBUILD_ENTRIES_FTS_SQL);
+    } catch {
+      // best-effort
+    }
+
+    // Ensure the expensive drop/recreate path only runs once per database.
+    try {
+      await client.execute({
+        sql: `
+          INSERT INTO _meta (key, value, updated_at)
+          VALUES (?, datetime('now'), datetime('now'))
+          ON CONFLICT(key) DO NOTHING
+        `,
+        args: [LEGACY_IMPORTANCE_BACKFILL_META_KEY],
+      });
     } catch {
       // best-effort
     }
