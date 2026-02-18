@@ -6,7 +6,7 @@ import { estimateEntryTokens, sessionStartRecall } from "../db/session-start.js"
 import type { SessionCategory } from "../db/session-start.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
-import { normalizeProject } from "../project.js";
+import { parseProjectList } from "../project.js";
 import { EXPIRY_LEVELS, IMPORTANCE_MAX, IMPORTANCE_MIN, KNOWLEDGE_PLATFORMS, KNOWLEDGE_TYPES, SCOPE_LEVELS } from "../types.js";
 import type {
   Expiry,
@@ -79,30 +79,9 @@ function parseCsv(input: string | undefined): string[] {
   );
 }
 
-function parseProjectList(input: string | string[] | undefined, flagName: string): string[] | undefined {
+function hasAnyProjectParts(input: string | string[] | undefined): boolean {
   const rawItems = Array.isArray(input) ? input : input ? [input] : [];
-  const parts = rawItems
-    .flatMap((value) =>
-      String(value)
-        .split(",")
-        .map((item) => item.trim())
-        .filter((item) => item.length > 0),
-    )
-    .filter((value) => value.length > 0);
-
-  if (parts.length === 0) {
-    return undefined;
-  }
-
-  const normalized = parts
-    .map((value) => normalizeProject(value))
-    .filter((value): value is string => Boolean(value));
-
-  if (parts.length > 0 && normalized.length === 0) {
-    throw new Error(`${flagName} must be a non-empty string (or comma-separated list).`);
-  }
-
-  return Array.from(new Set(normalized));
+  return rawItems.some((value) => String(value).split(",").some((part) => part.trim().length > 0));
 }
 
 export function parseSinceToIso(since: string | undefined, now = new Date()): string | undefined {
@@ -329,8 +308,17 @@ export async function runRecallCommand(
     platform = normalized;
   }
 
-  const project = parseProjectList(options.project, "--project");
-  const excludeProject = parseProjectList(options.excludeProject, "--exclude-project");
+  const parsedProject = parseProjectList(options.project);
+  const parsedExcludeProject = parseProjectList(options.excludeProject);
+  if (hasAnyProjectParts(options.project) && parsedProject.length === 0) {
+    throw new Error("--project must be a non-empty string (or comma-separated list).");
+  }
+  if (hasAnyProjectParts(options.excludeProject) && parsedExcludeProject.length === 0) {
+    throw new Error("--exclude-project must be a non-empty string (or comma-separated list).");
+  }
+
+  const project = parsedProject.length > 0 ? parsedProject : undefined;
+  const excludeProject = parsedExcludeProject.length > 0 ? parsedExcludeProject : undefined;
   const projectStrict = options.strict === true && Boolean(project && project.length > 0);
 
   const sinceIso = parseSinceToIso(options.since, now);

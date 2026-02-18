@@ -55,3 +55,22 @@ export function normalizeProject(value: string): string | null {
   const normalized = value.trim().toLowerCase();
   return normalized.length > 0 ? normalized : null;
 }
+
+export function parseProjectList(input: string | string[] | undefined): string[] {
+  const rawItems = Array.isArray(input) ? input : input ? [input] : [];
+  const parts = rawItems.flatMap((value) =>
+    String(value)
+      .split(",")
+      .map((item) => item.trim()),
+  );
+
+  const normalized = parts
+    .map((value) => normalizeProject(value))
+    .filter((value): value is string => Boolean(value));
+
+  return Array.from(new Set(normalized));
+}
+
+export function parseProjectItems(input: string | string[] | undefined): string[] {
+  return parseProjectList(input);
+}

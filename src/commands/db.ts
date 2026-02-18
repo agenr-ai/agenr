@@ -9,7 +9,7 @@ import { rebuildVectorIndex } from "../db/vector-index.js";
 import { banner, formatLabel, ui } from "../ui.js";
 import { APP_VERSION } from "../version.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
-import { normalizeProject } from "../project.js";
+import { parseProjectList } from "../project.js";
 import { KNOWLEDGE_PLATFORMS } from "../types.js";
 import type { KnowledgePlatform } from "../types.js";
 
@@ -94,30 +94,9 @@ function resolveEffectiveDbPath(inputPath: string | undefined): string {
   return resolveDbFilePath(DEFAULT_DB_PATH);
 }
 
-function parseProjectList(input: string | string[] | undefined, flagName: string): string[] | undefined {
+function hasAnyProjectParts(input: string | string[] | undefined): boolean {
   const rawItems = Array.isArray(input) ? input : input ? [input] : [];
-  const parts = rawItems
-    .flatMap((value) =>
-      String(value)
-        .split(",")
-        .map((item) => item.trim())
-        .filter((item) => item.length > 0),
-    )
-    .filter((value) => value.length > 0);
-
-  if (parts.length === 0) {
-    return undefined;
-  }
-
-  const normalized = parts
-    .map((value) => normalizeProject(value))
-    .filter((value): value is string => Boolean(value));
-
-  if (parts.length > 0 && normalized.length === 0) {
-    throw new Error(`${flagName} must be a non-empty string (or comma-separated list).`);
-  }
-
-  return Array.from(new Set(normalized));
+  return rawItems.some((value) => String(value).split(",").some((part) => part.trim().length > 0));
 }
 
 function buildProjectClause(params: { column: string; project?: string[]; excludeProject?: string[] }): { clause: string; args: unknown[] } {
@@ -352,8 +331,18 @@ export async function runDbStatsCommand(
   if (platformRaw && !platform) {
     throw new Error(`--platform must be one of: ${KNOWLEDGE_PLATFORMS.join(", ")}`);
   }
-  const project = parseProjectList(options.project, "--project");
-  const excludeProject = parseProjectList(options.excludeProject, "--exclude-project");
+
+  const parsedProject = parseProjectList(options.project);
+  const parsedExcludeProject = parseProjectList(options.excludeProject);
+  if (hasAnyProjectParts(options.project) && parsedProject.length === 0) {
+    throw new Error("--project must be a non-empty string (or comma-separated list).");
+  }
+  if (hasAnyProjectParts(options.excludeProject) && parsedExcludeProject.length === 0) {
+    throw new Error("--exclude-project must be a non-empty string (or comma-separated list).");
+  }
+
+  const project = parsedProject.length > 0 ? parsedProject : undefined;
+  const excludeProject = parsedExcludeProject.length > 0 ? parsedExcludeProject : undefined;
   const platformClause = platform ? "AND platform = ?" : "";
   const platformArgs = platform ? [platform] : [];
   const projectFilter = buildProjectClause({ column: "project", project, excludeProject });
@@ -433,19 +422,21 @@ export async function runDbStatsCommand(
       };
     });
 
+    const projectClause = buildProjectClause({ column: "e.project", project, excludeProject });
     const tagsResult = await db.execute({
+      // Capture once so SQL and args stay in sync.
       sql: `
       SELECT t.tag, COUNT(*) AS count
       FROM tags t
       JOIN entries e ON e.id = t.entry_id
       WHERE e.superseded_by IS NULL
         ${platform ? "AND e.platform = ?" : ""}
-        ${buildProjectClause({ column: "e.project", project, excludeProject }).clause}
+        ${projectClause.clause}
       GROUP BY t.tag
       ORDER BY count DESC, t.tag ASC
       LIMIT 20
     `,
-      args: [...platformArgs, ...buildProjectClause({ column: "e.project", project, excludeProject }).args],
+      args: [...platformArgs, ...projectClause.args],
     });
     const topTags = tagsResult.rows.map((row) => ({
       tag: toStringValue((row as DbRow).tag),
@@ -591,8 +582,18 @@ export async function runDbExportCommand(
   if (platformRaw && !platform) {
     throw new Error(`--platform must be one of: ${KNOWLEDGE_PLATFORMS.join(", ")}`);
   }
-  const project = parseProjectList(options.project, "--project");
-  const excludeProject = parseProjectList(options.excludeProject, "--exclude-project");
+
+  const parsedProject = parseProjectList(options.project);
+  const parsedExcludeProject = parseProjectList(options.excludeProject);
+  if (hasAnyProjectParts(options.project) && parsedProject.length === 0) {
+    throw new Error("--project must be a non-empty string (or comma-separated list).");
+  }
+  if (hasAnyProjectParts(options.excludeProject) && parsedExcludeProject.length === 0) {
+    throw new Error("--exclude-project must be a non-empty string (or comma-separated list).");
+  }
+
+  const project = parsedProject.length > 0 ? parsedProject : undefined;
+  const excludeProject = parsedExcludeProject.length > 0 ? parsedExcludeProject : undefined;
 
   try {
     await resolvedDeps.initDbFn(db);

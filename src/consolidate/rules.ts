@@ -61,6 +61,11 @@ function toStringValue(value: InValue | undefined): string {
   return "";
 }
 
+function toProjectValue(value: InValue | undefined): string | null {
+  const s = toStringValue(value).trim();
+  return s ? s.toLowerCase() : null;
+}
+
 function mapBufferToVector(value: InValue | undefined): number[] {
   if (value instanceof ArrayBuffer) {
     return Array.from(new Float32Array(value));
@@ -316,10 +321,7 @@ async function mergeNearExactDuplicates(
       type: toStringValue(row.type),
       subject: toStringValue(row.subject),
       content: toStringValue(row.content),
-      project: (() => {
-        const raw = toStringValue(row.project);
-        return raw.trim().length > 0 ? raw.trim().toLowerCase() : null;
-      })(),
+      project: toProjectValue(row.project),
       embedding: mapBufferToVector(row.embedding),
       confirmations: Number.isFinite(toNumber(row.confirmations)) ? toNumber(row.confirmations) : 0,
       recallCount: Number.isFinite(toNumber(row.recall_count)) ? toNumber(row.recall_count) : 0,

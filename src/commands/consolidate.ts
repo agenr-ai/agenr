@@ -12,7 +12,7 @@ import { createLlmClient } from "../llm/client.js";
 import { formatWarn } from "../ui.js";
 import { installSignalHandlers, isShutdownRequested, onShutdown } from "../shutdown.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
-import { normalizeProject } from "../project.js";
+import { parseProjectList } from "../project.js";
 import { KNOWLEDGE_PLATFORMS } from "../types.js";
 import type { KnowledgePlatform } from "../types.js";
 
@@ -146,30 +146,9 @@ function createLogger(jsonMode: boolean): ConsolidateLogger {
   };
 }
 
-function parseProjectList(input: string | string[] | undefined, flagName: string): string[] | undefined {
+function hasAnyProjectParts(input: string | string[] | undefined): boolean {
   const rawItems = Array.isArray(input) ? input : input ? [input] : [];
-  const parts = rawItems
-    .flatMap((value) =>
-      String(value)
-        .split(",")
-        .map((item) => item.trim())
-        .filter((item) => item.length > 0),
-    )
-    .filter((value) => value.length > 0);
-
-  if (parts.length === 0) {
-    return undefined;
-  }
-
-  const normalized = parts
-    .map((value) => normalizeProject(value))
-    .filter((value): value is string => Boolean(value));
-
-  if (parts.length > 0 && normalized.length === 0) {
-    throw new Error(`${flagName} must be a non-empty string (or comma-separated list).`);
-  }
-
-  return Array.from(new Set(normalized));
+  return rawItems.some((value) => String(value).split(",").some((part) => part.trim().length > 0));
 }
 
 export async function runConsolidateCommand(
@@ -204,8 +183,20 @@ export async function runConsolidateCommand(
     throw new Error(`--platform must be one of: ${KNOWLEDGE_PLATFORMS.join(", ")}`);
   }
 
-  const project = parseProjectList(options.project, "--project");
-  const excludeProject = parseProjectList(options.excludeProject, "--exclude-project");
+  const parsedProject = parseProjectList(options.project);
+  const parsedExcludeProject = parseProjectList(options.excludeProject);
+
+  if (hasAnyProjectParts(options.project) && parsedProject.length === 0) {
+    throw new Error("--project must be a non-empty string (or comma-separated list).");
+  }
+  if (hasAnyProjectParts(options.excludeProject) && parsedExcludeProject.length === 0) {
+    throw new Error("--exclude-project must be a non-empty string (or comma-separated list).");
+  }
+
+  const project = parsedProject.length > 0 ? parsedProject : undefined;
+  const excludeProject = parsedExcludeProject.length > 0 ? parsedExcludeProject : undefined;
+
+  // Consolidation operates on a single resolved project set; combining include + exclude is ambiguous.
   if (project && excludeProject) {
     throw new Error("Use either --project or --exclude-project, not both.");
   }
