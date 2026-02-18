@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.3] - 2026-02-18
+
+### Added
+- Explicit memory requests: "remember this/that" triggers importance >= 7, deterministic capture
+- Session label → project mapping via `labelProjectMap` config field
+- `normalizeLabel` utility for deterministic label normalization
+- `SYSTEM_PROMPT` exported from `src/extractor.ts` for testability
+
+### Fixed
+- `agenr eval recall` now returns correct results for all 5 query categories (was returning zero for 4 of 5 due to FTS literal match; replaced with SQL type filters and hybrid vector+FTS recall)
+
 ## Unreleased
 
 ### Added
