@@ -71,6 +71,64 @@ export function parseProjectList(input: string | string[] | undefined): string[]
   return Array.from(new Set(normalized));
 }
 
+export function hasAnyProjectParts(input: string | string[] | undefined): boolean {
+  const rawItems = Array.isArray(input) ? input : input ? [input] : [];
+  return rawItems.some((value) =>
+    String(value)
+      .split(",")
+      .some((part) => part.trim().length > 0),
+  );
+}
+
+export function buildProjectFilter(params: {
+  column: string;
+  project?: string[] | null;
+  excludeProject?: string[];
+  strict?: boolean;
+}): { clause: string; args: unknown[] } {
+  const clauses: string[] = [];
+  const args: unknown[] = [];
+
+  const include = params.project;
+  const exclude = params.excludeProject ?? [];
+  const strict = Boolean(params.strict);
+
+  if (include !== undefined) {
+    if (include === null) {
+      clauses.push(`${params.column} IS NULL`);
+    } else {
+      const uniqueInclude = Array.from(new Set(include.filter((value) => value.trim().length > 0)));
+      if (uniqueInclude.length > 0) {
+        const placeholders = uniqueInclude.map(() => "?").join(", ");
+        args.push(...uniqueInclude);
+        if (strict) {
+          clauses.push(`${params.column} IN (${placeholders})`);
+        } else {
+          clauses.push(`(${params.column} IN (${placeholders}) OR ${params.column} IS NULL)`);
+        }
+      }
+    }
+  }
+
+  if (exclude.length > 0) {
+    const uniqueExclude = Array.from(new Set(exclude.filter((value) => value.trim().length > 0)));
+    if (uniqueExclude.length > 0) {
+      const placeholders = uniqueExclude.map(() => "?").join(", ");
+      clauses.push(`(${params.column} NOT IN (${placeholders}) OR ${params.column} IS NULL)`);
+      args.push(...uniqueExclude);
+    }
+  }
+
+  if (clauses.length === 0) {
+    return { clause: "", args: [] };
+  }
+
+  return {
+    clause: `AND ${clauses.join(" AND ")}`,
+    args,
+  };
+}
+
 export function parseProjectItems(input: string | string[] | undefined): string[] {
   return parseProjectList(input);
 }

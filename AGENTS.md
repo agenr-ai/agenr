@@ -103,7 +103,7 @@ pnpm exec agenr        # Run CLI from source
 
 ## Testing
 
-- Run `pnpm test -- --run` before committing
+- Run `pnpm test -- --run` before committing (NOT `bun test` -- bun's fake timer implementation hangs on retry tests)
 - Tests use in-memory SQLite (`:memory:`) - no external deps needed
 - Test files live in `tests/` and mirror `src/` structure
 - When fixing a bug, add a regression test that would have caught it

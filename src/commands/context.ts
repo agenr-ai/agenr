@@ -8,7 +8,7 @@ import { closeDb, getDb, initDb } from "../db/client.js";
 import { sessionStartRecall } from "../db/session-start.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
-import { parseProjectList } from "../project.js";
+import { hasAnyProjectParts, parseProjectList } from "../project.js";
 import { KNOWLEDGE_PLATFORMS } from "../types.js";
 import type { RecallCommandResult, RecallQuery } from "../types.js";
 import type { KnowledgePlatform } from "../types.js";
@@ -89,11 +89,6 @@ function truncateContent(content: string): string {
   }
   const sliceLength = Math.max(0, MAX_CONTENT_CHARS - 3);
   return `${content.slice(0, sliceLength)}...`;
-}
-
-function hasAnyProjectParts(input: string | string[] | undefined): boolean {
-  const rawItems = Array.isArray(input) ? input : input ? [input] : [];
-  return rawItems.some((value) => String(value).split(",").some((part) => part.trim().length > 0));
 }
 
 function toLineItem(result: RecallCommandResult): ContextLineItem {

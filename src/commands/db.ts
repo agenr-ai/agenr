@@ -9,7 +9,7 @@ import { rebuildVectorIndex } from "../db/vector-index.js";
 import { banner, formatLabel, ui } from "../ui.js";
 import { APP_VERSION } from "../version.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
-import { parseProjectList } from "../project.js";
+import { buildProjectFilter, hasAnyProjectParts, parseProjectList } from "../project.js";
 import { KNOWLEDGE_PLATFORMS } from "../types.js";
 import type { KnowledgePlatform } from "../types.js";
 
@@ -94,34 +94,6 @@ function resolveEffectiveDbPath(inputPath: string | undefined): string {
   return resolveDbFilePath(DEFAULT_DB_PATH);
 }
 
-function hasAnyProjectParts(input: string | string[] | undefined): boolean {
-  const rawItems = Array.isArray(input) ? input : input ? [input] : [];
-  return rawItems.some((value) => String(value).split(",").some((part) => part.trim().length > 0));
-}
-
-function buildProjectClause(params: { column: string; project?: string[]; excludeProject?: string[] }): { clause: string; args: unknown[] } {
-  const args: unknown[] = [];
-  const clauses: string[] = [];
-
-  if (params.project && params.project.length > 0) {
-    const placeholders = params.project.map(() => "?").join(", ");
-    args.push(...params.project);
-    clauses.push(`(${params.column} IN (${placeholders}) OR ${params.column} IS NULL)`);
-  }
-
-  if (params.excludeProject && params.excludeProject.length > 0) {
-    const placeholders = params.excludeProject.map(() => "?").join(", ");
-    args.push(...params.excludeProject);
-    clauses.push(`(${params.column} NOT IN (${placeholders}) OR ${params.column} IS NULL)`);
-  }
-
-  if (clauses.length === 0) {
-    return { clause: "", args: [] };
-  }
-
-  return { clause: `AND ${clauses.join(" AND ")}`, args };
-}
-
 async function hasMetaTable(db: ReturnType<typeof getDb>): Promise<boolean> {
   const result = await db.execute({
     sql: "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_meta' LIMIT 1",
@@ -190,7 +162,7 @@ async function fetchExportEntries(
   if (platform) {
     args.push(platform);
   }
-  const projectSql = buildProjectClause({ column: "project", project, excludeProject });
+  const projectSql = buildProjectFilter({ column: "project", project, excludeProject });
   args.push(...projectSql.args);
 
   const result = await db.execute({
@@ -345,7 +317,7 @@ export async function runDbStatsCommand(
   const excludeProject = parsedExcludeProject.length > 0 ? parsedExcludeProject : undefined;
   const platformClause = platform ? "AND platform = ?" : "";
   const platformArgs = platform ? [platform] : [];
-  const projectFilter = buildProjectClause({ column: "project", project, excludeProject });
+  const projectFilter = buildProjectFilter({ column: "project", project, excludeProject });
   const filterArgs = [...platformArgs, ...projectFilter.args];
   const filterClause = `${platformClause} ${projectFilter.clause}`.trim();
 
@@ -408,10 +380,11 @@ export async function runDbStatsCommand(
       SELECT project, COUNT(*) AS count
       FROM entries
       WHERE superseded_by IS NULL
+        ${projectFilter.clause}
       GROUP BY project
       ORDER BY count DESC
     `,
-      args: [],
+      args: projectFilter.args,
     });
     const byProject = byProjectResult.rows.map((row) => {
       const raw = (row as DbRow).project;
@@ -422,7 +395,7 @@ export async function runDbStatsCommand(
       };
     });
 
-    const projectClause = buildProjectClause({ column: "e.project", project, excludeProject });
+    const projectClause = buildProjectFilter({ column: "e.project", project, excludeProject });
     const tagsResult = await db.execute({
       // Capture once so SQL and args stay in sync.
       sql: `
