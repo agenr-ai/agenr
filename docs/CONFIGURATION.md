@@ -17,6 +17,23 @@ Stores:
 - `provider` — LLM provider (`anthropic` or `openai`)
 - `model` — model name for extraction
 - `credentials` — stored API keys (encrypted at rest)
+- `labelProjectMap` — optional mapping from normalized session labels to project names
+
+Default config example:
+
+```yaml
+# labelProjectMap:
+#   agenr: agenr
+#   openclaw: openclaw
+```
+
+Config schema example:
+
+```yaml
+# labelProjectMap:
+#   agenr: agenr
+#   openclaw: openclaw
+```
 
 ## Database
 

@@ -4,7 +4,7 @@ import { runSimpleStream, type StreamSimpleFn } from "./llm/stream.js";
 import { SUBMIT_DEDUPED_KNOWLEDGE_TOOL, SUBMIT_KNOWLEDGE_TOOL } from "./schema.js";
 import { isShutdownRequested } from "./shutdown.js";
 
-const SYSTEM_PROMPT = `You are a selective memory extraction engine. Extract only knowledge worth remembering beyond the immediate step.
+export const SYSTEM_PROMPT = `You are a selective memory extraction engine. Extract only knowledge worth remembering beyond the immediate step.
 
 Default action: SKIP. Most chunks should produce zero entries.
 
@@ -59,13 +59,47 @@ If you cannot name a concrete topic, skip the entry.
 8. Greetings, acknowledgments, small talk
 9. Transient implementation status unless it represents a milestone, decision, or lesson
 
+## Explicit Memory Requests
+
+When the USER (not the assistant) explicitly says "remember this" or "remember that"
+about a non-ephemeral piece of information, always extract it and set importance >= 7.
+
+Triggers (user message only):
+- "remember this"
+- "remember that"
+- Close variants: "make sure to remember this", "don't forget this"
+
+NOT triggers:
+- "remember to do X" → extract as todo at normal importance, not boosted
+- Any of the above in an ASSISTANT message → not a memory request, ignore
+- Vague emphasis words: "important:", "note that", "keep in mind" → NOT triggers;
+  these appear in normal conversation and do not justify importance boosting
+
+When triggered:
+- Extract the fact/preference/decision at importance >= 7
+- If the entry would naturally be importance >= 7 anyway, do not double-boost
+- In the content field, describe the knowledge itself (same as any other entry)
+- Do NOT write "User explicitly requested..." in the content field - this pollutes
+  vector search. The source_context or tags can note the explicit request if needed.
+
+Few-shot examples:
+  User: "remember this - we always use pnpm not npm in this project"
+  → Extract: preference, "package manager preference: pnpm", importance=7
+
+  User: "remember to run pnpm test before committing"
+  → Extract: todo, "run pnpm test before committing", importance=5 (normal todo)
+
+  Assistant: "remember this pattern for future reference"
+  → Do NOT boost. Assistant messages don't constitute memory requests.
+
 ## Pre-Emit Checklist
 
-Before emitting EACH entry, all four must be true:
+Before emitting EACH entry, all five must be true:
 1. Subject is a topic (not actor/role/meta)
 2. Durable beyond the immediate step
 3. Non-duplicate of another entry in this batch
 4. Importance >= 5 with a concrete reason
+5. Explicit user "remember this/that" requests justify importance >= 7 regardless of content type
 If any check fails, do not emit.
 
 ## Few-Shot Examples

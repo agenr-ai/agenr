@@ -28,6 +28,12 @@
 - Watch ingestion now advances `byteOffset` by bytes actually read in each cycle, preventing duplicate processing when files grow during read.
 - Watch state saves are now atomic (temp file + rename), preventing partial-write corruption on process crashes.
 
+## 0.6.0 (2026-02-18)
+
+### Added
+- feat(extractor): explicit "remember this/that" intent detection, importance >= 7
+- feat(watch): session label -> project mapping via `config.labelProjectMap`
+
 ## 0.5.0 (2026-02-17)
 
 ### Added

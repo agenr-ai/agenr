@@ -179,7 +179,35 @@ function normalizeDbConfig(input: unknown): NonNullable<AgenrConfig["db"]> {
   return normalized;
 }
 
-function normalizeConfig(input: unknown): AgenrConfig {
+function normalizeLabelProjectMap(input: unknown): Record<string, string> | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return undefined;
+  }
+
+  const out: Record<string, string> = {};
+  for (const [rawLabel, rawProject] of Object.entries(input as Record<string, unknown>)) {
+    if (typeof rawProject !== "string") {
+      continue;
+    }
+
+    const label = rawLabel
+      .trim()
+      .toLowerCase()
+      .replace(/[\s_-]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    const project = rawProject.trim();
+
+    if (!label || !project) {
+      continue;
+    }
+
+    out[label] = project;
+  }
+
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+export function normalizeConfig(input: unknown): AgenrConfig {
   const record = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
   const normalized: AgenrConfig = {
     embedding: normalizeEmbeddingConfig(record.embedding),
@@ -207,6 +235,11 @@ function normalizeConfig(input: unknown): AgenrConfig {
   const credentials = normalizeStoredCredentials(record.credentials);
   if (credentials) {
     normalized.credentials = credentials;
+  }
+
+  const labelProjectMap = normalizeLabelProjectMap(record.labelProjectMap);
+  if (labelProjectMap) {
+    normalized.labelProjectMap = labelProjectMap;
   }
 
   return normalized;

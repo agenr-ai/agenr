@@ -45,6 +45,7 @@ export interface AgenrConfig {
   auth?: AgenrAuthMethod;
   provider?: AgenrProvider;
   model?: string;
+  labelProjectMap?: Record<string, string>;
   credentials?: AgenrStoredCredentials;
   embedding?: {
     provider?: "openai";
@@ -145,6 +146,7 @@ export interface ParsedTranscript {
     startedAt?: string;
     model?: string;
     cwd?: string;
+    sessionLabel?: string;
   };
 }
 

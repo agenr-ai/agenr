@@ -18,6 +18,7 @@ export interface ParseMetadata {
   startedAt?: string;
   model?: string;
   cwd?: string;
+  sessionLabel?: string;
 }
 
 export interface ParseResult {
