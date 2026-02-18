@@ -7,6 +7,33 @@ export const CREATE_IDX_ENTRIES_EMBEDDING_SQL = `
   )
 `;
 
+const CREATE_ENTRIES_FTS_TABLE_SQL = `
+  CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
+    content, subject, content=entries, content_rowid=rowid
+  )
+`;
+
+const CREATE_ENTRIES_FTS_TRIGGER_AI_SQL = `
+  CREATE TRIGGER IF NOT EXISTS entries_ai AFTER INSERT ON entries BEGIN
+    INSERT INTO entries_fts(rowid, content, subject) VALUES (new.rowid, new.content, new.subject);
+  END
+`;
+
+const CREATE_ENTRIES_FTS_TRIGGER_AD_SQL = `
+  CREATE TRIGGER IF NOT EXISTS entries_ad AFTER DELETE ON entries BEGIN
+    INSERT INTO entries_fts(entries_fts, rowid, content, subject) VALUES ('delete', old.rowid, old.content, old.subject);
+  END
+`;
+
+const CREATE_ENTRIES_FTS_TRIGGER_AU_SQL = `
+  CREATE TRIGGER IF NOT EXISTS entries_au AFTER UPDATE ON entries BEGIN
+    INSERT INTO entries_fts(entries_fts, rowid, content, subject) VALUES ('delete', old.rowid, old.content, old.subject);
+    INSERT INTO entries_fts(rowid, content, subject) VALUES (new.rowid, new.content, new.subject);
+  END
+`;
+
+const REBUILD_ENTRIES_FTS_SQL = "INSERT INTO entries_fts(entries_fts) VALUES ('rebuild')";
+
 type ColumnMigration = { table: string; column: string; sql: string };
 
 const CREATE_TABLE_AND_TRIGGER_STATEMENTS: readonly string[] = [
@@ -88,27 +115,10 @@ const CREATE_TABLE_AND_TRIGGER_STATEMENTS: readonly string[] = [
     PRIMARY KEY (merged_entry_id, source_entry_id)
   )
   `,
-  `
-  CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
-    content, subject, content=entries, content_rowid=rowid
-  )
-  `,
-  `
-  CREATE TRIGGER IF NOT EXISTS entries_ai AFTER INSERT ON entries BEGIN
-    INSERT INTO entries_fts(rowid, content, subject) VALUES (new.rowid, new.content, new.subject);
-  END
-  `,
-  `
-  CREATE TRIGGER IF NOT EXISTS entries_ad AFTER DELETE ON entries BEGIN
-    INSERT INTO entries_fts(entries_fts, rowid, content, subject) VALUES ('delete', old.rowid, old.content, old.subject);
-  END
-  `,
-  `
-  CREATE TRIGGER IF NOT EXISTS entries_au AFTER UPDATE ON entries BEGIN
-    INSERT INTO entries_fts(entries_fts, rowid, content, subject) VALUES ('delete', old.rowid, old.content, old.subject);
-    INSERT INTO entries_fts(rowid, content, subject) VALUES (new.rowid, new.content, new.subject);
-  END
-  `,
+  CREATE_ENTRIES_FTS_TABLE_SQL,
+  CREATE_ENTRIES_FTS_TRIGGER_AI_SQL,
+  CREATE_ENTRIES_FTS_TRIGGER_AD_SQL,
+  CREATE_ENTRIES_FTS_TRIGGER_AU_SQL,
 ];
 
 const CREATE_INDEX_STATEMENTS: readonly string[] = [
@@ -206,7 +216,7 @@ export async function initSchema(client: Client): Promise<void> {
     const ftsCountResult = await client.execute("SELECT COUNT(*) AS count FROM entries_fts");
     const ftsCount = Number((ftsCountResult.rows[0] as { count?: unknown } | undefined)?.count ?? 0);
     if (entriesCount > 0 && ftsCount === 0) {
-      await client.execute("INSERT INTO entries_fts(entries_fts) VALUES ('rebuild')");
+      await client.execute(REBUILD_ENTRIES_FTS_SQL);
     }
   } catch {
     // Best-effort. If FTS is unavailable/corrupted, commands should still be able to run.
@@ -253,28 +263,11 @@ export async function initSchema(client: Client): Promise<void> {
     `);
 
     try {
-      await client.execute(`
-        CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
-          content, subject, content=entries, content_rowid=rowid
-        )
-      `);
-      await client.execute(`
-        CREATE TRIGGER IF NOT EXISTS entries_ai AFTER INSERT ON entries BEGIN
-          INSERT INTO entries_fts(rowid, content, subject) VALUES (new.rowid, new.content, new.subject);
-        END
-      `);
-      await client.execute(`
-        CREATE TRIGGER IF NOT EXISTS entries_ad AFTER DELETE ON entries BEGIN
-          INSERT INTO entries_fts(entries_fts, rowid, content, subject) VALUES ('delete', old.rowid, old.content, old.subject);
-        END
-      `);
-      await client.execute(`
-        CREATE TRIGGER IF NOT EXISTS entries_au AFTER UPDATE ON entries BEGIN
-          INSERT INTO entries_fts(entries_fts, rowid, content, subject) VALUES ('delete', old.rowid, old.content, old.subject);
-          INSERT INTO entries_fts(rowid, content, subject) VALUES (new.rowid, new.content, new.subject);
-        END
-      `);
-      await client.execute("INSERT INTO entries_fts(entries_fts) VALUES ('rebuild')");
+      await client.execute(CREATE_ENTRIES_FTS_TABLE_SQL);
+      await client.execute(CREATE_ENTRIES_FTS_TRIGGER_AI_SQL);
+      await client.execute(CREATE_ENTRIES_FTS_TRIGGER_AD_SQL);
+      await client.execute(CREATE_ENTRIES_FTS_TRIGGER_AU_SQL);
+      await client.execute(REBUILD_ENTRIES_FTS_SQL);
     } catch {
       // best-effort
     }

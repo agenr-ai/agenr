@@ -196,6 +196,8 @@ export interface RecallResult {
     recency: number;
     importance: number;
     recall: number;
+    freshness: number;
+    todoPenalty: number;
     fts: number;
   };
 }
@@ -207,7 +209,7 @@ export interface RecallQuery {
   tags?: string[];
   minImportance?: number;
   since?: string;
-  expiry?: Expiry;
+  expiry?: Expiry | Expiry[];
   scope?: Scope;
   context?: string;
   budget?: number;

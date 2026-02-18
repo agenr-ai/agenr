@@ -109,7 +109,7 @@ function normalizeTags(tags: string[] | undefined): string[] {
   );
 }
 
-function mapStoredEntry(row: Row, tags: string[]): StoredEntry {
+export function mapStoredEntry(row: Row, tags: string[]): StoredEntry {
   const scopeRaw = toStringValue(row.scope);
   const scope = scopeRaw || "private";
   const importanceRaw = toNumber(row.importance);
@@ -118,12 +118,14 @@ function mapStoredEntry(row: Row, tags: string[]): StoredEntry {
   const platform = platformRaw.trim().length > 0 ? platformRaw : undefined;
   const projectTrimmed = toStringValue(row.project).trim();
   const project = projectTrimmed.length > 0 ? projectTrimmed.toLowerCase() : undefined;
+  const canonicalKeyTrimmed = toStringValue(row.canonical_key).trim();
 
   return {
     id: toStringValue(row.id),
     type: toStringValue(row.type) as StoredEntry["type"],
     subject: toStringValue(row.subject),
     content: toStringValue(row.content),
+    ...(canonicalKeyTrimmed ? { canonical_key: canonicalKeyTrimmed } : {}),
     importance,
     expiry: toStringValue(row.expiry) as StoredEntry["expiry"],
     scope: scope as StoredEntry["scope"],
@@ -145,7 +147,7 @@ function mapStoredEntry(row: Row, tags: string[]): StoredEntry {
   };
 }
 
-async function getTagsForEntryIds(db: Client, ids: string[]): Promise<Map<string, string[]>> {
+export async function getTagsForEntryIds(db: Client, ids: string[]): Promise<Map<string, string[]>> {
   if (ids.length === 0) {
     return new Map();
   }
@@ -260,8 +262,14 @@ function passesFilters(
     return false;
   }
 
-  if (query.expiry && entry.expiry !== query.expiry) {
-    return false;
+  if (query.expiry) {
+    if (Array.isArray(query.expiry)) {
+      if (!query.expiry.includes(entry.expiry)) {
+        return false;
+      }
+    } else if (entry.expiry !== query.expiry) {
+      return false;
+    }
   }
 
   if (query.minImportance !== undefined && normalizeImportance(entry.importance) < normalizeImportance(query.minImportance)) {
@@ -604,6 +612,8 @@ export async function updateRecallMetadata(db: Client, ids: string[], now: Date)
 function scoreSessionEntry(entry: StoredEntry, now: Date): { score: number; scores: RecallResult["scores"] } {
   const components = getScoreComponents(entry, now);
   const score = scoreEntry(entry, 1.0, false, now);
+  const fresh = freshnessBoost(entry, now);
+  const todoPenalty = entry.type === "todo" ? todoStaleness(entry, now) : 1.0;
   return {
     score,
     scores: {
@@ -611,6 +621,8 @@ function scoreSessionEntry(entry: StoredEntry, now: Date): { score: number; scor
       recency: components.rec,
       importance: components.imp,
       recall: components.recall,
+      freshness: fresh,
+      todoPenalty,
       fts: 0,
     },
   };
@@ -708,12 +720,16 @@ export async function recall(
           recency: 0,
           importance: 0,
           recall: 0,
+          freshness: 1,
+          todoPenalty: 1,
           fts: 0,
         },
       };
     }
 
     const components = getScoreComponents(candidate.entry, now);
+    const fresh = freshnessBoost(candidate.entry, now);
+    const todoPenalty = candidate.entry.type === "todo" ? todoStaleness(candidate.entry, now) : 1.0;
     return {
       entry: candidate.entry,
       score: scoreEntry(candidate.entry, candidate.vectorSim, ftsMatch, now),
@@ -722,6 +738,8 @@ export async function recall(
         recency: components.rec,
         importance: components.imp,
         recall: components.recall,
+        freshness: fresh,
+        todoPenalty,
         fts: ftsMatch ? 0.15 : 0,
       },
     };

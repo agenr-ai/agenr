@@ -6,6 +6,8 @@ import { runEvalRecallCommand } from "../../src/commands/eval.js";
 import { closeDb, getDb, initDb } from "../../src/db/client.js";
 import { scoreEntry } from "../../src/db/recall.js";
 import { sessionStartRecall } from "../../src/db/session-start.js";
+import { storeEntries } from "../../src/db/store.js";
+import type { KnowledgeEntry } from "../../src/types.js";
 
 const tempDirs: string[] = [];
 
@@ -40,6 +42,22 @@ function makeDeps(homeDir: string) {
   };
 }
 
+async function mockEmbed(texts: string[]): Promise<number[][]> {
+  return texts.map(() => Array.from({ length: 1024 }, () => 0));
+}
+
+function makeEntry(params: { content: string; type?: KnowledgeEntry["type"] }): KnowledgeEntry {
+  return {
+    type: params.type ?? "todo",
+    subject: "Jim",
+    content: params.content,
+    importance: 7,
+    expiry: "temporary",
+    tags: [],
+    source: { file: "eval.test.ts", context: "seed" },
+  };
+}
+
 describe("eval recall command", () => {
   it("runs without error on empty DB", async () => {
     const home = await makeTempDir();
@@ -68,12 +86,38 @@ describe("eval recall command", () => {
     const home = await makeTempDir();
     const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
 
-    await runEvalRecallCommand({ saveBaseline: true, limit: 3 }, makeDeps(home));
-    const compareResult = await runEvalRecallCommand({ compare: true, limit: 3 }, makeDeps(home));
+    const dbPath = path.join(home, "agenr-eval.sqlite");
+    const deps = {
+      ...makeDeps(home),
+      readConfigFn: vi.fn(() => ({ db: { path: dbPath } })),
+    };
+
+    const db = getDb(dbPath);
+    await initDb(db);
+    await storeEntries(db, [makeEntry({ content: "Seed todo 1" })], "sk-test", {
+      sourceFile: "eval.test.ts",
+      ingestContentHash: "hash-eval-baseline",
+      embedFn: mockEmbed,
+      force: true,
+    });
+    await closeDb(db);
+
+    await runEvalRecallCommand({ saveBaseline: true, limit: 3 }, deps);
+
+    const db2 = getDb(dbPath);
+    await initDb(db2);
+    await storeEntries(db2, [makeEntry({ content: "Seed todo 2" })], "sk-test", {
+      sourceFile: "eval.test.ts",
+      ingestContentHash: "hash-eval-compare",
+      embedFn: mockEmbed,
+      force: true,
+    });
+    await closeDb(db2);
+
+    const compareResult = await runEvalRecallCommand({ compare: true, limit: 3 }, deps);
 
     expect(compareResult.exitCode).toBe(0);
     const output = stdoutSpy.mock.calls.map((call) => String(call[0])).join("");
-    expect(output).toContain("across");
+    expect(output).toContain("1 new");
   });
 });
-

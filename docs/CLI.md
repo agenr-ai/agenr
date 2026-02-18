@@ -694,7 +694,7 @@ The `--context` flag changes how recall behaves:
   - **Preferences**: preferences and decisions
   - **Recent**: everything else, sorted by recency
   
-  When used with `--budget`, allocates tokens across categories (30% active, 30% preferences, remainder to recent) with overflow redistribution.
+  When used with `--budget`, allocates tokens across categories dynamically via `computeBudgetSplit()` based on category counts: active receives ~10-30%, preferences ~20-40%, and the remainder goes to recent (with a minimum 20% floor for recent), with overflow redistribution.
 
 - **`topic:<query>`**: Prepends `[topic: <query>]` to the search text before embedding, biasing results toward that topic. Useful for scoping recall to a specific area (e.g., `--context topic:authentication`).
 
@@ -704,7 +704,7 @@ The `--budget <tokens>` flag caps the total approximate token count of returned 
 
 In **default** mode: entries are ranked by score, then consumed in order until the budget is exhausted.
 
-In **session-start** mode: the budget is split across categories (30% active, 30% preferences, remaining to recent). Each category consumes entries in score order until its quota is full. Leftover budget is redistributed to remaining entries across all categories.
+In **session-start** mode: the budget is split across categories dynamically via `computeBudgetSplit()` based on category counts (active ~10-30%, preferences ~20-40%, remainder to recent with a 20% minimum floor for recent). Each category consumes entries in score order until its quota is full. Leftover budget is redistributed to remaining entries across all categories.
 
 This is useful for keeping context windows manageable — e.g., `agenr recall --context session-start --budget 2000` loads ≈2000 tokens of the most relevant memories.
 

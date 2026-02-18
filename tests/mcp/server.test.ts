@@ -39,6 +39,8 @@ function makeRecallResult(overrides?: Partial<RecallResult>): RecallResult {
       recency: 0.8,
       importance: 0.8,
       recall: 0.3,
+      freshness: 1,
+      todoPenalty: 1,
       fts: 0,
     },
     entry: {
@@ -344,7 +346,7 @@ describe("mcp server", () => {
 
   it("uses two-pass session-start recall and returns grouped ordering", async () => {
     const harness = makeHarness();
-    harness.recallFn.mockImplementation(async (_db: unknown, query: { expiry?: string }) => {
+    harness.recallFn.mockImplementation(async (_db: unknown, query: { expiry?: string | string[] }) => {
       if (query.expiry === "core") {
         return [
           makeRecallResult({
@@ -360,7 +362,7 @@ describe("mcp server", () => {
         ];
       }
 
-      if (query.expiry === "permanent") {
+      if (Array.isArray(query.expiry)) {
         return [
           makeRecallResult({
             score: 0.5,
@@ -372,31 +374,30 @@ describe("mcp server", () => {
               expiry: "permanent",
             },
           }),
+          makeRecallResult({
+            score: 0.99,
+            entry: {
+              ...makeRecallResult().entry,
+              id: "recent-1",
+              type: "event",
+              content: "Recent event",
+              expiry: "temporary",
+            },
+          }),
+          makeRecallResult({
+            score: 0.4,
+            entry: {
+              ...makeRecallResult().entry,
+              id: "todo-1",
+              type: "todo",
+              content: "Active todo",
+              expiry: "temporary",
+            },
+          }),
         ];
       }
 
-      return [
-        makeRecallResult({
-          score: 0.99,
-          entry: {
-            ...makeRecallResult().entry,
-            id: "recent-1",
-            type: "event",
-            content: "Recent event",
-            expiry: "temporary",
-          },
-        }),
-        makeRecallResult({
-          score: 0.4,
-          entry: {
-            ...makeRecallResult().entry,
-            id: "todo-1",
-            type: "todo",
-            content: "Active todo",
-            expiry: "temporary",
-          },
-        }),
-      ];
+      return [];
     });
 
     const responses = await runServer(
@@ -420,22 +421,18 @@ describe("mcp server", () => {
     const result = responses[0]?.result as { content?: Array<{ text?: string }> };
     const text = result.content?.[0]?.text ?? "";
     expect(text).toContain('Found 4 results for "session-start":');
-    expect(harness.recallFn).toHaveBeenCalledTimes(3);
+    expect(harness.recallFn).toHaveBeenCalledTimes(2);
 
     const firstCallQuery = harness.recallFn.mock.calls[0]?.[1] as { expiry?: string; limit?: number; noUpdate?: boolean };
     expect(firstCallQuery.expiry).toBe("core");
     expect(firstCallQuery.limit).toBe(5000);
     expect(firstCallQuery.noUpdate).toBe(true);
 
-    const secondCallQuery = harness.recallFn.mock.calls[1]?.[1] as { expiry?: string; limit?: number; noUpdate?: boolean };
-    expect(secondCallQuery.expiry).toBe("permanent");
+    const secondCallQuery = harness.recallFn.mock.calls[1]?.[1] as { expiry?: string | string[]; limit?: number; noUpdate?: boolean };
+    expect(Array.isArray(secondCallQuery.expiry)).toBe(true);
+    expect((secondCallQuery.expiry as string[]).sort().join(",")).toBe("permanent,temporary");
     expect(secondCallQuery.limit).toBe(500);
     expect(secondCallQuery.noUpdate).toBe(true);
-
-    const thirdCallQuery = harness.recallFn.mock.calls[2]?.[1] as { expiry?: string; limit?: number; noUpdate?: boolean };
-    expect(thirdCallQuery.expiry).toBe("temporary");
-    expect(thirdCallQuery.limit).toBe(500);
-    expect(thirdCallQuery.noUpdate).toBe(true);
 
     const activePos = text.indexOf("Active todo");
     const preferencePos = text.indexOf("Preference note");
@@ -447,7 +444,7 @@ describe("mcp server", () => {
 
   it("updates recall metadata only for returned session-start results", async () => {
     const harness = makeHarness();
-    harness.recallFn.mockImplementation(async (_db: unknown, query: { expiry?: string }) => {
+    harness.recallFn.mockImplementation(async (_db: unknown, query: { expiry?: string | string[] }) => {
       if (query.expiry === "core") {
         return [
           makeRecallResult({
@@ -463,35 +460,39 @@ describe("mcp server", () => {
         ];
       }
 
-      return [
-        makeRecallResult({
-          score: 0.8,
-          entry: {
-            ...makeRecallResult().entry,
-            id: "todo-1",
-            type: "todo",
-            content: "Selected todo",
-          },
-        }),
-        makeRecallResult({
-          score: 0.79,
-          entry: {
-            ...makeRecallResult().entry,
-            id: "todo-2",
-            type: "todo",
-            content: "Non-selected todo",
-          },
-        }),
-        makeRecallResult({
-          score: 0.78,
-          entry: {
-            ...makeRecallResult().entry,
-            id: "recent-1",
-            type: "event",
-            content: "Non-selected recent",
-          },
-        }),
-      ];
+      if (Array.isArray(query.expiry)) {
+        return [
+          makeRecallResult({
+            score: 0.8,
+            entry: {
+              ...makeRecallResult().entry,
+              id: "todo-1",
+              type: "todo",
+              content: "Selected todo",
+            },
+          }),
+          makeRecallResult({
+            score: 0.79,
+            entry: {
+              ...makeRecallResult().entry,
+              id: "todo-2",
+              type: "todo",
+              content: "Non-selected todo",
+            },
+          }),
+          makeRecallResult({
+            score: 0.78,
+            entry: {
+              ...makeRecallResult().entry,
+              id: "recent-1",
+              type: "event",
+              content: "Non-selected recent",
+            },
+          }),
+        ];
+      }
+
+      return [];
     });
 
     await runServer(
