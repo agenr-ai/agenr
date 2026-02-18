@@ -1,9 +1,9 @@
 import { createClient, type Client } from "@libsql/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { initDb } from "../../src/db/client.js";
-import { sessionStartRecall, estimateEntryTokens } from "../../src/db/session-start.js";
+import { computeBudgetSplit, sessionStartRecall } from "../../src/db/session-start.js";
 import { storeEntries } from "../../src/db/store.js";
-import type { KnowledgeEntry, RecallResult, StoredEntry } from "../../src/types.js";
+import type { KnowledgeEntry, RecallResult } from "../../src/types.js";
 
 async function mockEmbed(texts: string[]): Promise<number[][]> {
   return texts.map(() => Array.from({ length: 1024 }, () => 0));
@@ -18,39 +18,6 @@ function makeEntry(params: { content: string; type?: KnowledgeEntry["type"]; imp
     expiry: "temporary",
     tags: [],
     source: { file: "session-start-test.jsonl", context: "unit test" },
-  };
-}
-
-function makeStoredEntry(overrides: Partial<StoredEntry> = {}): StoredEntry {
-  return {
-    id: "entry-1",
-    type: "fact",
-    subject: "Jim",
-    content: "Test content",
-    importance: 7,
-    expiry: "temporary",
-    tags: [],
-    source: { file: "x", context: "y" },
-    created_at: "2026-02-10T00:00:00.000Z",
-    updated_at: "2026-02-10T00:00:00.000Z",
-    recall_count: 0,
-    confirmations: 0,
-    contradictions: 0,
-    ...overrides,
-  };
-}
-
-function makeRecallResult(entry: StoredEntry, score: number): RecallResult {
-  return {
-    entry,
-    score,
-    scores: {
-      vector: 1,
-      recency: 1,
-      importance: 1,
-      recall: 0,
-      fts: 0,
-    },
   };
 }
 
@@ -70,7 +37,7 @@ describe("db session-start", () => {
     return client;
   }
 
-  it("session-start default since filters out entries older than 7 days", async () => {
+  it("session-start uses a 30-day window for permanent entries and shorter window for temporary entries", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-02-15T12:00:00.000Z"));
 
@@ -79,7 +46,10 @@ describe("db session-start", () => {
 
     await storeEntries(
       client,
-      [makeEntry({ content: "Old item", type: "fact" }), makeEntry({ content: "New item", type: "fact" })],
+      [
+        { ...makeEntry({ content: "Permanent item", type: "fact" }), expiry: "permanent" },
+        { ...makeEntry({ content: "Temporary item", type: "fact" }), expiry: "temporary" },
+      ],
       "sk-test",
       {
         sourceFile: "session-start-test.jsonl",
@@ -94,19 +64,19 @@ describe("db session-start", () => {
     for (const row of allRows.rows) {
       byContent.set(String(row.content), String(row.id));
     }
-    const oldId = byContent.get("Old item");
-    const newId = byContent.get("New item");
-    expect(oldId).toBeTruthy();
-    expect(newId).toBeTruthy();
+    const permanentId = byContent.get("Permanent item");
+    const temporaryId = byContent.get("Temporary item");
+    expect(permanentId).toBeTruthy();
+    expect(temporaryId).toBeTruthy();
 
     // created_at drives the --since cutoff, but updated_at drives session candidate selection.
     await client.execute({
       sql: "UPDATE entries SET created_at = ?, updated_at = ? WHERE id = ?",
-      args: ["2026-02-05T12:00:00.000Z", "2026-02-15T12:00:00.000Z", oldId as string],
+      args: ["2026-02-07T12:00:00.000Z", "2026-02-15T12:00:00.000Z", permanentId as string],
     });
     await client.execute({
       sql: "UPDATE entries SET created_at = ?, updated_at = ? WHERE id = ?",
-      args: ["2026-02-14T12:00:00.000Z", "2026-02-15T12:00:00.000Z", newId as string],
+      args: ["2026-01-15T12:00:00.000Z", "2026-02-15T12:00:00.000Z", temporaryId as string],
     });
 
     const result = await sessionStartRecall(client, {
@@ -116,11 +86,11 @@ describe("db session-start", () => {
     });
 
     const contents = result.results.map((item) => item.entry.content);
-    expect(contents).toContain("New item");
-    expect(contents).not.toContain("Old item");
+    expect(contents).toContain("Permanent item");
+    expect(contents).not.toContain("Temporary item");
   });
 
-  it("session-start respects explicit --since and does not override it with the 7d fallback", async () => {
+  it("session-start respects explicit --since and does not override default windows", async () => {
     const seen: Array<{ expiry: string | undefined; since: string | undefined }> = [];
     const recallFn = async (_db: Client, query: { expiry?: string; since?: string }, _apiKey: string): Promise<RecallResult[]> => {
       seen.push({ expiry: query.expiry, since: query.since });
@@ -134,52 +104,31 @@ describe("db session-start", () => {
       recallFn: recallFn as any,
     });
 
-    expect(seen.length).toBe(2);
+    expect(seen.length).toBe(3);
     expect(seen.some((call) => call.expiry === "core" && call.since === "30d")).toBe(true);
-    expect(seen.some((call) => call.expiry === undefined && call.since === "30d")).toBe(true);
+    expect(seen.some((call) => call.expiry === "permanent" && call.since === "30d")).toBe(true);
+    expect(seen.some((call) => call.expiry === "temporary" && call.since === "30d")).toBe(true);
   });
 
-  it("session-start budget allocation is ~20% active, ~30% preferences, ~50% recent", async () => {
-    const coreResults: RecallResult[] = [];
+  it("dynamic budget allocation: zero todos yields zero active budget", () => {
+    const split = computeBudgetSplit({ active: 0, preferences: 20, recent: 80 }, 1000);
+    expect(split.activeBudget).toBe(0);
+    expect(split.activeBudget + split.preferencesBudget + split.recentBudget).toBe(1000);
+  });
 
-    const active = Array.from({ length: 40 }, (_, idx) =>
-      makeRecallResult(makeStoredEntry({ id: `active-${idx}`, type: "todo", content: `active ${idx}` }), 1 - idx / 1000),
-    );
-    const preferences = Array.from({ length: 40 }, (_, idx) =>
-      makeRecallResult(
-        makeStoredEntry({ id: `pref-${idx}`, type: "decision", content: `pref ${idx}` }),
-        1 - idx / 1000,
-      ),
-    );
-    const recent = Array.from({ length: 80 }, (_, idx) =>
-      makeRecallResult(makeStoredEntry({ id: `recent-${idx}`, type: "event", content: `recent ${idx}` }), 1 - idx / 1000),
-    );
+  it("dynamic budget allocation: all todos caps active at 30% of total", () => {
+    const split = computeBudgetSplit({ active: 100, preferences: 0, recent: 0 }, 1000);
+    expect(split.activeBudget).toBe(300);
+    expect(split.activeBudget + split.preferencesBudget + split.recentBudget).toBe(1000);
+  });
 
-    const sampleTokens = estimateEntryTokens(active[0]!);
-    const budget = sampleTokens * 100;
-
-    const recallFn = async (_db: Client, query: { expiry?: string }, _apiKey: string): Promise<RecallResult[]> => {
-      if (query.expiry === "core") {
-        return coreResults;
-      }
-      return [...active, ...preferences, ...recent];
-    };
-
-    const result = await sessionStartRecall({} as unknown as Client, {
-      query: { text: "" },
-      apiKey: "sk-test",
-      nonCoreLimit: 1000,
-      budget,
-      recallFn: recallFn as any,
-    });
-
-    const activeCount = result.results.filter((item) => item.category === "active").length;
-    const preferencesCount = result.results.filter((item) => item.category === "preferences").length;
-    const recentCount = result.results.filter((item) => item.category === "recent").length;
-
-    expect(activeCount).toBe(20);
-    expect(preferencesCount).toBe(30);
-    expect(recentCount).toBe(50);
+  it("dynamic budget allocation: mixed counts stay within min/max bounds and fully allocate", () => {
+    const split = computeBudgetSplit({ active: 5, preferences: 25, recent: 70 }, 1000);
+    expect(split.activeBudget).toBeGreaterThanOrEqual(100);
+    expect(split.activeBudget).toBeLessThanOrEqual(300);
+    expect(split.preferencesBudget).toBeGreaterThanOrEqual(200);
+    expect(split.preferencesBudget).toBeLessThanOrEqual(400);
+    expect(split.activeBudget + split.preferencesBudget + split.recentBudget).toBe(1000);
   });
 
   it("empty and single-entry DB do not crash on session-start", async () => {

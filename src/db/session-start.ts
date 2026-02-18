@@ -57,15 +57,51 @@ function classifySessionCategory(result: RecallResult): SessionCategory {
   return "recent";
 }
 
-function compareResults(a: RecallResult, b: RecallResult, category: SessionCategory): number {
-  if (b.score !== a.score) {
-    return b.score - a.score;
+export function computeBudgetSplit(
+  counts: { active: number; preferences: number; recent: number },
+  totalBudget: number,
+): { activeBudget: number; preferencesBudget: number; recentBudget: number } {
+  const total = counts.active + counts.preferences + counts.recent;
+  if (total === 0) {
+    return { activeBudget: 0, preferencesBudget: 0, recentBudget: totalBudget };
   }
 
+  const MIN_ACTIVE = 0.10;
+  const MAX_ACTIVE = 0.30;
+  const MIN_PREFS = 0.20;
+  const MAX_PREFS = 0.40;
+
+  let activeFrac =
+    counts.active > 0 ? Math.max(MIN_ACTIVE, Math.min(MAX_ACTIVE, counts.active / total)) : 0;
+  let prefsFrac = Math.max(MIN_PREFS, Math.min(MAX_PREFS, counts.preferences / total));
+  let recentFrac = 1.0 - activeFrac - prefsFrac;
+
+  // If recentFrac goes below 0.20, steal from prefs (not active)
+  if (recentFrac < 0.20) {
+    recentFrac = 0.20;
+    prefsFrac = 1.0 - activeFrac - recentFrac;
+  }
+
+  const activeBudget = Math.floor(totalBudget * activeFrac);
+  const preferencesBudget = Math.floor(totalBudget * prefsFrac);
+  const recentBudget = Math.max(0, totalBudget - activeBudget - preferencesBudget);
+
+  return { activeBudget, preferencesBudget, recentBudget };
+}
+
+function compareByRecency(a: RecallResult, b: RecallResult): number {
+  const scoreDiff = b.score - a.score;
+  if (Math.abs(scoreDiff) > 0.05) return scoreDiff;
+  return Date.parse(b.entry.updated_at) - Date.parse(a.entry.updated_at);
+}
+
+function compareResults(a: RecallResult, b: RecallResult, category: SessionCategory): number {
   if (category === "recent") {
-    const aUpdated = Date.parse(a.entry.updated_at);
-    const bUpdated = Date.parse(b.entry.updated_at);
-    return (Number.isFinite(bUpdated) ? bUpdated : 0) - (Number.isFinite(aUpdated) ? aUpdated : 0);
+    return compareByRecency(a, b);
+  }
+
+  if (b.score !== a.score) {
+    return b.score - a.score;
   }
 
   return 0;
@@ -134,13 +170,18 @@ function buildSessionStartResults(
     return { results, budgetUsed };
   }
 
-  const activeQuota = Math.floor(budget * 0.2);
-  const preferencesQuota = Math.floor(budget * 0.3);
-  const recentQuota = Math.max(0, budget - activeQuota - preferencesQuota);
+  const split = computeBudgetSplit(
+    {
+      active: grouped.active.length,
+      preferences: grouped.preferences.length,
+      recent: grouped.recent.length,
+    },
+    budget,
+  );
 
-  const activePass = consumeByBudget(grouped.active, activeQuota);
-  const preferencesPass = consumeByBudget(grouped.preferences, preferencesQuota);
-  const recentPass = consumeByBudget(grouped.recent, recentQuota);
+  const activePass = consumeByBudget(grouped.active, split.activeBudget);
+  const preferencesPass = consumeByBudget(grouped.preferences, split.preferencesBudget);
+  const recentPass = consumeByBudget(grouped.recent, split.recentBudget);
 
   const selectedIds = new Set<string>([
     ...activePass.selected.map((item) => item.entry.id),
@@ -194,6 +235,11 @@ export async function sessionStartRecall(db: Client, options: SessionStartRecall
     noUpdate: true,
   };
 
+  const permanentSince =
+    baseQuery.since ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const temporarySince =
+    baseQuery.since ?? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
   const coreResults = await recallFn(
     db,
     {
@@ -204,17 +250,29 @@ export async function sessionStartRecall(db: Client, options: SessionStartRecall
     options.apiKey,
   );
 
-  const nonCoreResults = await recallFn(
+  const permanentResults = await recallFn(
     db,
     {
       ...baseQuery,
       limit: options.nonCoreCandidateLimit ?? DEFAULT_SESSION_CANDIDATE_LIMIT,
-      expiry: undefined,
-      since:
-        baseQuery.since ?? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+      expiry: "permanent",
+      since: permanentSince,
     },
     options.apiKey,
   );
+
+  const temporaryResults = await recallFn(
+    db,
+    {
+      ...baseQuery,
+      limit: options.nonCoreCandidateLimit ?? DEFAULT_SESSION_CANDIDATE_LIMIT,
+      expiry: "temporary",
+      since: temporarySince,
+    },
+    options.apiKey,
+  );
+
+  const nonCoreResults = [...permanentResults, ...temporaryResults];
 
   const coreIds = new Set(coreResults.map((item) => item.entry.id));
   const filteredNonCore = nonCoreResults.filter((item) => item.entry.expiry !== "core" && !coreIds.has(item.entry.id));

@@ -1,7 +1,7 @@
 import { createClient, type Client } from "@libsql/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { initDb } from "../../src/db/client.js";
-import { importanceScore, recall, recallStrength, recency, scoreEntry, todoStaleness } from "../../src/db/recall.js";
+import { freshnessBoost, importanceScore, recall, recallStrength, recency, scoreEntry, todoStaleness } from "../../src/db/recall.js";
 import { storeEntries } from "../../src/db/store.js";
 import type { KnowledgeEntry, StoredEntry } from "../../src/types.js";
 
@@ -120,20 +120,42 @@ describe("db recall", () => {
     expect(sixteen / four).toBeLessThan(4);
   });
 
-  it("todoStaleness applies bracket multipliers based on updated_at", () => {
+  it("freshnessBoost gates on importance and boosts very recent entries", () => {
+    const now = new Date("2026-02-15T00:00:00.000Z");
+    const hourMs = 60 * 60 * 1000;
+    const isoHoursAgo = (hours: number) => new Date(now.getTime() - hours * hourMs).toISOString();
+
+    expect(freshnessBoost(makeStoredEntry({ importance: 5, created_at: isoHoursAgo(0.1) }), now)).toBe(1.0);
+    expect(freshnessBoost(makeStoredEntry({ importance: 5, created_at: isoHoursAgo(100) }), now)).toBe(1.0);
+
+    expect(freshnessBoost(makeStoredEntry({ importance: 6, created_at: isoHoursAgo(0.5) }), now)).toBe(1.5);
+    expect(freshnessBoost(makeStoredEntry({ importance: 6, created_at: isoHoursAgo(2) }), now)).toBe(1.25);
+    expect(freshnessBoost(makeStoredEntry({ importance: 6, created_at: isoHoursAgo(12) }), now)).toBe(1.1);
+    expect(freshnessBoost(makeStoredEntry({ importance: 6, created_at: isoHoursAgo(30) }), now)).toBe(1.0);
+  });
+
+  it("todoStaleness decays smoothly with half-life 7 days (with floors)", () => {
     const now = new Date("2026-02-15T00:00:00.000Z");
     const dayMs = 24 * 60 * 60 * 1000;
     const isoDaysAgo = (days: number) => new Date(now.getTime() - days * dayMs).toISOString();
 
-    expect(todoStaleness(isoDaysAgo(0), now)).toBe(1.0);
-    expect(todoStaleness(isoDaysAgo(2), now)).toBe(1.0);
-    expect(todoStaleness(isoDaysAgo(3), now)).toBe(1.0);
-    expect(todoStaleness(isoDaysAgo(4), now)).toBe(0.6);
-    expect(todoStaleness(isoDaysAgo(7), now)).toBe(0.6);
-    expect(todoStaleness(isoDaysAgo(8), now)).toBe(0.3);
-    expect(todoStaleness(isoDaysAgo(14), now)).toBe(0.3);
-    expect(todoStaleness(isoDaysAgo(15), now)).toBe(0.1);
-    expect(todoStaleness(isoDaysAgo(30), now)).toBe(0.1);
+    const base = makeStoredEntry({ type: "todo", importance: 7 });
+    expect(todoStaleness({ ...base, updated_at: isoDaysAgo(0) }, now)).toBeCloseTo(1.0, 8);
+    expect(todoStaleness({ ...base, updated_at: isoDaysAgo(3) }, now)).toBeCloseTo(Math.pow(0.5, 3 / 7), 8);
+    expect(todoStaleness({ ...base, updated_at: isoDaysAgo(7) }, now)).toBeCloseTo(0.5, 8);
+    expect(todoStaleness({ ...base, updated_at: isoDaysAgo(14) }, now)).toBeCloseTo(0.25, 8);
+    expect(todoStaleness({ ...base, updated_at: isoDaysAgo(30) }, now)).toBeCloseTo(0.10, 8);
+    expect(todoStaleness({ ...base, updated_at: isoDaysAgo(60) }, now)).toBeCloseTo(0.10, 8);
+
+    const highImportance = makeStoredEntry({ type: "todo", importance: 8 });
+    expect(todoStaleness({ ...highImportance, updated_at: isoDaysAgo(60) }, now)).toBeCloseTo(0.40, 8);
+
+    let prev = todoStaleness({ ...base, updated_at: isoDaysAgo(0) }, now);
+    for (let day = 1; day <= 60; day += 1) {
+      const next = todoStaleness({ ...base, updated_at: isoDaysAgo(day) }, now);
+      expect(Math.abs(prev - next)).toBeLessThanOrEqual(0.10 + 1e-9);
+      prev = next;
+    }
   });
 
   it("session-start scoring penalizes stale todos but not other types", async () => {

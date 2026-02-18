@@ -360,6 +360,21 @@ describe("mcp server", () => {
         ];
       }
 
+      if (query.expiry === "permanent") {
+        return [
+          makeRecallResult({
+            score: 0.5,
+            entry: {
+              ...makeRecallResult().entry,
+              id: "pref-1",
+              type: "preference",
+              content: "Preference note",
+              expiry: "permanent",
+            },
+          }),
+        ];
+      }
+
       return [
         makeRecallResult({
           score: 0.99,
@@ -379,16 +394,6 @@ describe("mcp server", () => {
             type: "todo",
             content: "Active todo",
             expiry: "temporary",
-          },
-        }),
-        makeRecallResult({
-          score: 0.5,
-          entry: {
-            ...makeRecallResult().entry,
-            id: "pref-1",
-            type: "preference",
-            content: "Preference note",
-            expiry: "permanent",
           },
         }),
       ];
@@ -415,7 +420,7 @@ describe("mcp server", () => {
     const result = responses[0]?.result as { content?: Array<{ text?: string }> };
     const text = result.content?.[0]?.text ?? "";
     expect(text).toContain('Found 4 results for "session-start":');
-    expect(harness.recallFn).toHaveBeenCalledTimes(2);
+    expect(harness.recallFn).toHaveBeenCalledTimes(3);
 
     const firstCallQuery = harness.recallFn.mock.calls[0]?.[1] as { expiry?: string; limit?: number; noUpdate?: boolean };
     expect(firstCallQuery.expiry).toBe("core");
@@ -423,9 +428,14 @@ describe("mcp server", () => {
     expect(firstCallQuery.noUpdate).toBe(true);
 
     const secondCallQuery = harness.recallFn.mock.calls[1]?.[1] as { expiry?: string; limit?: number; noUpdate?: boolean };
-    expect(secondCallQuery.expiry).toBeUndefined();
+    expect(secondCallQuery.expiry).toBe("permanent");
     expect(secondCallQuery.limit).toBe(500);
     expect(secondCallQuery.noUpdate).toBe(true);
+
+    const thirdCallQuery = harness.recallFn.mock.calls[2]?.[1] as { expiry?: string; limit?: number; noUpdate?: boolean };
+    expect(thirdCallQuery.expiry).toBe("temporary");
+    expect(thirdCallQuery.limit).toBe(500);
+    expect(thirdCallQuery.noUpdate).toBe(true);
 
     const activePos = text.indexOf("Active todo");
     const preferencePos = text.indexOf("Preference note");
