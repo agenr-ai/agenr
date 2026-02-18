@@ -280,30 +280,25 @@ async function listDistinctProjects(
   onWarn?: (message: string) => void,
 ): Promise<Array<string | null>> {
   try {
-    const args: unknown[] = [];
-    const platformClause = platform ? "AND platform = ?" : "";
-    if (platform) {
-      args.push(platform);
-    }
+	    const args: unknown[] = [];
+	    const platformClause = platform ? "AND platform = ?" : "";
+	    if (platform) {
+	      args.push(platform);
+	    }
 
-    const excludeClause =
-      excludeProject && excludeProject.length > 0
-        ? `AND (project NOT IN (${excludeProject.map(() => "?").join(", ")}) OR project IS NULL)`
-        : "";
-    if (excludeProject && excludeProject.length > 0) {
-      args.push(...excludeProject);
-    }
+	    const projectFilter = buildProjectFilter({ column: "project", excludeProject });
+	    args.push(...projectFilter.args);
 
-    const result = await db.execute({
-      sql: `
-        SELECT DISTINCT project
-        FROM entries
-        WHERE superseded_by IS NULL
-          ${platformClause}
-          ${excludeClause}
-      `,
-      args,
-    });
+	    const result = await db.execute({
+	      sql: `
+	        SELECT DISTINCT project
+	        FROM entries
+	        WHERE superseded_by IS NULL
+	          ${platformClause}
+	          ${projectFilter.clause}
+	      `,
+	      args,
+	    });
 
     const out: Array<string | null> = [];
     for (const row of result.rows) {
