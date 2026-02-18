@@ -25,6 +25,10 @@ export interface DbExportCommandOptions extends DbCommandCommonOptions {
   platform?: string;
 }
 
+export interface DbStatsCommandOptions extends DbCommandCommonOptions {
+  platform?: string;
+}
+
 export interface DbResetCommandOptions extends DbCommandCommonOptions {
   confirm?: boolean;
 }
@@ -254,7 +258,7 @@ export async function runDbPathCommand(options: DbCommandCommonOptions, deps?: P
 }
 
 export async function runDbStatsCommand(
-  options: DbCommandCommonOptions,
+  options: DbStatsCommandOptions,
   deps?: Partial<DbCommandDeps>,
 ): Promise<{
   total: number;
@@ -280,6 +284,13 @@ export async function runDbStatsCommand(
   const configured = options.db?.trim() || config?.db?.path || DEFAULT_DB_PATH;
   const resolvedPath = resolveEffectiveDbPath(configured);
   const db = resolvedDeps.getDbFn(configured);
+  const platformRaw = options.platform?.trim();
+  const platform = platformRaw ? normalizeKnowledgePlatform(platformRaw) : null;
+  if (platformRaw && !platform) {
+    throw new Error("--platform must be one of: openclaw, claude-code, codex");
+  }
+  const platformClause = platform ? "AND platform = ?" : "";
+  const platformArgs = platform ? [platform] : [];
 
   try {
     await resolvedDeps.initDbFn(db);
@@ -292,30 +303,41 @@ export async function runDbStatsCommand(
       }
     }
 
-    const totalResult = await db.execute("SELECT COUNT(*) AS count FROM entries WHERE superseded_by IS NULL");
+    const totalResult = await db.execute({
+      sql: `SELECT COUNT(*) AS count FROM entries WHERE superseded_by IS NULL ${platformClause}`,
+      args: platformArgs,
+    });
     const total = Number.isFinite(toNumber((totalResult.rows[0] as DbRow | undefined)?.count))
       ? toNumber((totalResult.rows[0] as DbRow | undefined)?.count)
       : 0;
 
-    const byTypeResult = await db.execute(`
+    const byTypeResult = await db.execute({
+      sql: `
       SELECT type, COUNT(*) AS count
       FROM entries
       WHERE superseded_by IS NULL
+        ${platformClause}
       GROUP BY type
       ORDER BY count DESC, type ASC
-    `);
+    `,
+      args: platformArgs,
+    });
     const byType = byTypeResult.rows.map((row) => ({
       type: toStringValue((row as DbRow).type),
       count: Number.isFinite(toNumber((row as DbRow).count)) ? toNumber((row as DbRow).count) : 0,
     }));
 
-    const byPlatformResult = await db.execute(`
+    const byPlatformResult = await db.execute({
+      sql: `
       SELECT platform, COUNT(*) AS count
       FROM entries
       WHERE superseded_by IS NULL
+        ${platformClause}
       GROUP BY platform
       ORDER BY count DESC
-    `);
+    `,
+      args: platformArgs,
+    });
     const byPlatform = byPlatformResult.rows.map((row) => {
       const raw = (row as DbRow).platform;
       const platformValue = toStringValue(raw);
@@ -325,25 +347,33 @@ export async function runDbStatsCommand(
       };
     });
 
-    const tagsResult = await db.execute(`
+    const tagsResult = await db.execute({
+      sql: `
       SELECT t.tag, COUNT(*) AS count
       FROM tags t
       JOIN entries e ON e.id = t.entry_id
       WHERE e.superseded_by IS NULL
+        ${platform ? "AND e.platform = ?" : ""}
       GROUP BY t.tag
       ORDER BY count DESC, t.tag ASC
       LIMIT 20
-    `);
+    `,
+      args: platform ? [platform] : [],
+    });
     const topTags = tagsResult.rows.map((row) => ({
       tag: toStringValue((row as DbRow).tag),
       count: Number.isFinite(toNumber((row as DbRow).count)) ? toNumber((row as DbRow).count) : 0,
     }));
 
-    const rangeResult = await db.execute(`
+    const rangeResult = await db.execute({
+      sql: `
       SELECT MIN(created_at) AS oldest, MAX(created_at) AS newest
       FROM entries
       WHERE superseded_by IS NULL
-    `);
+        ${platformClause}
+    `,
+      args: platformArgs,
+    });
     const oldest = toStringValue((rangeResult.rows[0] as DbRow | undefined)?.oldest) || null;
     const newest = toStringValue((rangeResult.rows[0] as DbRow | undefined)?.newest) || null;
 

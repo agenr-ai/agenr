@@ -1,9 +1,6 @@
 *.log
 .DS_Store
 dist
-docs/design/
-docs/plans/
-docs/prompts/
 node_modules
 
 docs/internal/

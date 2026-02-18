@@ -148,6 +148,22 @@ describe("db command", () => {
     expect(stats.byPlatform.some((row) => row.platform === "(untagged)" && row.count === 1)).toBe(true);
   });
 
+  it("db stats supports --platform filter", async () => {
+    const client = createTestClient();
+    await initDb(client);
+    await seedEntry(client, { id: "open-1", type: "fact", subject: "Jim", content: "OpenClaw", tag: "openclaw-tag" });
+    await seedEntry(client, { id: "codex-1", type: "decision", subject: "Jim", content: "Codex", tag: "codex-tag" });
+    await seedEntry(client, { id: "untagged-1", type: "fact", subject: "Jim", content: "Untagged", tag: "untagged-tag" });
+    await client.execute({ sql: "UPDATE entries SET platform = ? WHERE id = ?", args: ["openclaw", "open-1"] });
+    await client.execute({ sql: "UPDATE entries SET platform = ? WHERE id = ?", args: ["codex", "codex-1"] });
+
+    const stats = await runDbStatsCommand({ platform: "openclaw" }, makeDeps(client));
+    expect(stats.total).toBe(1);
+    expect(stats.byType).toEqual([{ type: "fact", count: 1 }]);
+    expect(stats.byPlatform).toEqual([{ platform: "openclaw", count: 1 }]);
+    expect(stats.topTags).toEqual([{ tag: "openclaw-tag", count: 1 }]);
+  });
+
   it("reports zero stats for empty database", async () => {
     const client = createTestClient();
     await initDb(client);
