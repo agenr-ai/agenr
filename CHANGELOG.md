@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 (2026-02-17)
 
 ### Added
 - `_meta` table with schema version stamp for future migrations
