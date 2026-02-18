@@ -301,6 +301,48 @@ describe("db schema migrations", () => {
     expect((row.rows[0] as { project?: unknown } | undefined)?.project ?? null).toBe(null);
   });
 
+  it("legacy confidence schema gets importance column and backfills from confidence levels", async () => {
+    const client = makeClient();
+
+    await client.execute(`
+      CREATE TABLE entries (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        content TEXT NOT NULL,
+        confidence TEXT NOT NULL,
+        expiry TEXT NOT NULL,
+        scope TEXT DEFAULT 'private',
+        source_file TEXT,
+        source_context TEXT,
+        embedding F32_BLOB(512),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        last_recalled_at TEXT,
+        recall_count INTEGER DEFAULT 0,
+        confirmations INTEGER DEFAULT 0,
+        contradictions INTEGER DEFAULT 0,
+        superseded_by TEXT,
+        FOREIGN KEY (superseded_by) REFERENCES entries(id)
+      )
+    `);
+
+    await client.execute({
+      sql: "INSERT INTO entries (id, type, subject, content, confidence, expiry, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      args: ["legacy-confidence-1", "fact", "S", "C", "high", "temporary", "2026-02-14T00:00:00.000Z", "2026-02-14T00:00:00.000Z"],
+    });
+
+    await initSchema(client);
+
+    const info = await client.execute("PRAGMA table_info(entries)");
+    const columns = columnNames(info.rows as Array<{ name?: unknown }>);
+    expect(columns.has("importance")).toBe(true);
+
+    const row = await client.execute({ sql: "SELECT importance FROM entries WHERE id = ?", args: ["legacy-confidence-1"] });
+    const importance = Number((row.rows[0] as { importance?: unknown } | undefined)?.importance ?? 0);
+    expect(importance).toBe(8);
+  });
+
   it("migration is idempotent (safe to run twice)", async () => {
     const client = makeClient();
 

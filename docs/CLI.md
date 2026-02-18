@@ -152,6 +152,29 @@ $A recall "which package manager did we choose?" --limit 3
    tags: tooling, package-manager
 ```
 
+## `eval recall`
+
+Behavioral regression testing for the current recall scoring algorithm. This command is read-only and does not make model calls.
+
+### Syntax
+
+```bash
+agenr eval recall [options]
+```
+
+### Options
+- `--save-baseline`: save current results to `~/.agenr/eval-baseline.json`.
+- `--compare`: compare current results against the saved baseline.
+- `--queries <path>`: custom query set JSON path (default `~/.agenr/eval-queries.json`).
+- `--limit <n>`: results per query (default `10`).
+- `--budget <n>`: token budget passed to session-start recall (default `2000`).
+
+### Example
+
+```bash
+$A eval recall --limit 5
+```
+
 ## `context`
 
 Generate a context file for AI tool integration using session-start recall (no embedding API calls).

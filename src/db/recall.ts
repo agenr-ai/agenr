@@ -303,12 +303,21 @@ function parseDaysBetween(now: Date, pastIso: string | undefined): number {
   return Math.max(delta, 0);
 }
 
-export function todoStaleness(updatedAt: string, now: Date): number {
-  const days = parseDaysBetween(now, updatedAt);
-  if (days <= 3) return 1.0;
-  if (days <= 7) return 0.6;
-  if (days <= 14) return 0.3;
-  return 0.1;
+export function freshnessBoost(entry: StoredEntry, now: Date): number {
+  if (entry.importance < 6) return 1.0;
+  const hoursOld = parseDaysBetween(now, entry.created_at) * 24;
+  if (hoursOld < 1) return 1.5;
+  if (hoursOld < 6) return 1.25;
+  if (hoursOld < 24) return 1.1;
+  return 1.0;
+}
+
+export function todoStaleness(entry: StoredEntry, now: Date): number {
+  const days = parseDaysBetween(now, entry.updated_at);
+  // Exponential decay: half-life 7 days, with a floor to avoid starving old but still-relevant todos.
+  const raw = Math.pow(0.5, days / 7);
+  const floor = entry.importance >= 8 ? 0.40 : 0.10;
+  return Math.max(raw, floor);
 }
 
 function getScoreComponents(entry: StoredEntry, now: Date): { daysOld: number; rec: number; imp: number; recall: number } {
@@ -361,9 +370,11 @@ export function scoreEntry(entry: StoredEntry, vectorSim: number, ftsMatch: bool
   const recall = recallStrength(entry.recall_count, daysSinceRecall, entry.expiry);
   const fts = ftsMatch ? 0.15 : 0;
 
-  const memoryStrength = Math.max(imp, recall);
+  const fresh = freshnessBoost(entry, now);
+  const memoryStrength = Math.min(Math.max(imp, recall) * fresh, 1.0);
+  const todoPenalty = entry.type === "todo" ? todoStaleness(entry, now) : 1.0;
   const contradictionPenalty = entry.contradictions >= 2 ? 0.8 : 1.0;
-  return sim * (0.3 + 0.7 * rec) * memoryStrength * contradictionPenalty + fts;
+  return sim * (0.3 + 0.7 * rec) * memoryStrength * todoPenalty * contradictionPenalty + fts;
 }
 
 export function shapeRecallText(text: string, context: string | undefined): string {
@@ -592,9 +603,7 @@ export async function updateRecallMetadata(db: Client, ids: string[], now: Date)
 
 function scoreSessionEntry(entry: StoredEntry, now: Date): { score: number; scores: RecallResult["scores"] } {
   const components = getScoreComponents(entry, now);
-  const memoryStrength = Math.max(components.imp, components.recall);
-  const baseScore = (0.3 + 0.7 * components.rec) * memoryStrength;
-  const score = entry.type === "todo" ? baseScore * todoStaleness(entry.updated_at, now) : baseScore;
+  const score = scoreEntry(entry, 1.0, false, now);
   return {
     score,
     scores: {

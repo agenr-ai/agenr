@@ -133,6 +133,11 @@ const CREATE_INDEX_STATEMENTS: readonly string[] = [
 const COLUMN_MIGRATIONS: readonly ColumnMigration[] = [
   {
     table: "entries",
+    column: "importance",
+    sql: "ALTER TABLE entries ADD COLUMN importance INTEGER NOT NULL DEFAULT 5",
+  },
+  {
+    table: "entries",
     column: "canonical_key",
     sql: "ALTER TABLE entries ADD COLUMN canonical_key TEXT",
   },
@@ -193,12 +198,85 @@ export async function initSchema(client: Client): Promise<void> {
     await client.execute(statement);
   }
 
+  // If the FTS table was created after entries already existed (legacy DBs),
+  // UPDATE triggers that issue FTS delete operations can error unless the index is rebuilt first.
+  try {
+    const entriesCountResult = await client.execute("SELECT COUNT(*) AS count FROM entries");
+    const entriesCount = Number((entriesCountResult.rows[0] as { count?: unknown } | undefined)?.count ?? 0);
+    const ftsCountResult = await client.execute("SELECT COUNT(*) AS count FROM entries_fts");
+    const ftsCount = Number((ftsCountResult.rows[0] as { count?: unknown } | undefined)?.count ?? 0);
+    if (entriesCount > 0 && ftsCount === 0) {
+      await client.execute("INSERT INTO entries_fts(entries_fts) VALUES ('rebuild')");
+    }
+  } catch {
+    // Best-effort. If FTS is unavailable/corrupted, commands should still be able to run.
+  }
+
   // Apply column migrations before creating any indexes that reference those columns.
   for (const migration of COLUMN_MIGRATIONS) {
     const info = await client.execute(`PRAGMA table_info(${migration.table})`);
     const hasColumn = info.rows.some((row) => String((row as { name?: unknown }).name) === migration.column);
     if (!hasColumn) {
       await client.execute(migration.sql);
+    }
+  }
+
+  // Legacy DB compatibility: pre-importance schemas stored confidence as low/medium/high text.
+  // If both columns exist, backfill importance from confidence for rows still at the default.
+  const entriesInfo = await client.execute("PRAGMA table_info(entries)");
+  const entryColumns = new Set(entriesInfo.rows.map((row) => String((row as { name?: unknown }).name)));
+  if (entryColumns.has("confidence") && entryColumns.has("importance")) {
+    // Backfill can fire FTS triggers. On legacy schemas where FTS was created after rows existed,
+    // the delete+insert trigger sequence can error. Use a rebuild-safe path.
+    try {
+      await client.execute("DROP TRIGGER IF EXISTS entries_ai");
+      await client.execute("DROP TRIGGER IF EXISTS entries_ad");
+      await client.execute("DROP TRIGGER IF EXISTS entries_au");
+      await client.execute("DROP TABLE IF EXISTS entries_fts");
+    } catch {
+      // best-effort
+    }
+
+    await client.execute(`
+      UPDATE entries
+      SET importance = CASE lower(trim(confidence))
+        WHEN 'low' THEN 3
+        WHEN 'medium' THEN 6
+        WHEN 'high' THEN 8
+        ELSE
+          CASE
+            WHEN CAST(confidence AS INTEGER) BETWEEN 1 AND 10 THEN CAST(confidence AS INTEGER)
+            ELSE 5
+          END
+      END
+      WHERE importance IS NULL OR importance = 5
+    `);
+
+    try {
+      await client.execute(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
+          content, subject, content=entries, content_rowid=rowid
+        )
+      `);
+      await client.execute(`
+        CREATE TRIGGER IF NOT EXISTS entries_ai AFTER INSERT ON entries BEGIN
+          INSERT INTO entries_fts(rowid, content, subject) VALUES (new.rowid, new.content, new.subject);
+        END
+      `);
+      await client.execute(`
+        CREATE TRIGGER IF NOT EXISTS entries_ad AFTER DELETE ON entries BEGIN
+          INSERT INTO entries_fts(entries_fts, rowid, content, subject) VALUES ('delete', old.rowid, old.content, old.subject);
+        END
+      `);
+      await client.execute(`
+        CREATE TRIGGER IF NOT EXISTS entries_au AFTER UPDATE ON entries BEGIN
+          INSERT INTO entries_fts(entries_fts, rowid, content, subject) VALUES ('delete', old.rowid, old.content, old.subject);
+          INSERT INTO entries_fts(rowid, content, subject) VALUES (new.rowid, new.content, new.subject);
+        END
+      `);
+      await client.execute("INSERT INTO entries_fts(entries_fts) VALUES ('rebuild')");
+    } catch {
+      // best-effort
     }
   }
 

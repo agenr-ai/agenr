@@ -16,6 +16,15 @@
 - MCP tool support for project:
   - `agenr_recall` accepts optional `project` filter (comma-separated for multiple)
   - `agenr_store` accepts optional `project` tag
+- `agenr eval recall` command for scoring regression checks (baseline save and compare)
+
+### Fixed
+- Recall scoring and session-start recall:
+  - Freshness boost for importance >= 6 (clamped to avoid amplifying noisy entries)
+  - Smooth exponential todo staleness decay (half-life 7 days; floors at 0.10 or 0.40 for importance >= 8)
+  - Session-start permanent window widened to 30 days (temporary remains shorter)
+  - Dynamic budget allocation based on available categories
+  - Recency tiebreaking within a 0.05 score dead-band applied to the recent category only
 
 ## 0.5.0 (2026-02-17)
 
