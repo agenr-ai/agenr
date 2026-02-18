@@ -51,6 +51,7 @@ export interface DaemonCommandDeps {
   homedirFn: () => string;
   uidFn: () => number;
   argvFn: () => string[];
+  execPathFn: () => string;
   execFileFn: (file: string, args: string[]) => Promise<CommandResult>;
   spawnFn: typeof spawn;
   statFn: typeof fs.stat;
@@ -172,6 +173,7 @@ function resolveDeps(deps?: Partial<DaemonCommandDeps>): DaemonCommandDeps {
     homedirFn: deps?.homedirFn ?? (() => os.homedir()),
     uidFn: deps?.uidFn ?? (() => (typeof process.getuid === "function" ? process.getuid() : -1)),
     argvFn: deps?.argvFn ?? (() => process.argv),
+    execPathFn: deps?.execPathFn ?? (() => process.execPath),
     execFileFn: deps?.execFileFn ?? defaultExecFile,
     spawnFn: deps?.spawnFn ?? spawn,
     statFn: deps?.statFn ?? fs.stat,
@@ -239,6 +241,7 @@ function looksVersionedNodePath(execPath: string): boolean {
   const normalized = execPath.replace(/\\/g, "/");
   return (
     normalized.includes("/Cellar/") ||
+    normalized.includes("/node-versions/v") ||
     normalized.includes("/versions/node/v") ||
     normalized.includes("/tools/image/node/")
   );
@@ -298,6 +301,7 @@ async function resolveInstallTarget(
       // detectWatchPlatform throws with a descriptive error for unsupported platforms.
       // The throw below is a defensive fallback (unreachable in practice).
       detectWatchPlatform(options.platform, undefined);
+      // unreachable: detectWatchPlatform throws for unsupported platforms, kept as defensive fallback
       throw new Error(`Unsupported platform: ${options.platform}`);
     }
 
@@ -415,7 +419,7 @@ export async function runDaemonInstallCommand(
   const nodePath =
     typeof options.nodePath === "string" && options.nodePath.trim().length > 0
       ? path.resolve(options.nodePath.replace(/^~(?=$|\/)/, homeDir))
-      : await resolveStableNodePath(process.execPath, resolvedDeps.statFn);
+      : await resolveStableNodePath(resolvedDeps.execPathFn(), resolvedDeps.statFn);
 
   const programArguments = [
     nodePath,
@@ -519,8 +523,8 @@ export async function runDaemonStopCommand(
   );
 
   const state = await getLaunchctlState(resolvedDeps, uid);
-  if (!state.loaded || !state.running) {
-    clack.log.info("Daemon is not running.");
+  if (!state.loaded) {
+    clack.log.info("Daemon is not loaded.");
     return { exitCode: 0 };
   }
 
@@ -554,6 +558,12 @@ export async function runDaemonRestartCommand(
     await resolvedDeps.sleepFn(pollMs);
     const check = await getLaunchctlState(resolvedDeps, uid);
     if (!check.loaded) break;
+  }
+
+  // Warn if timed out
+  const finalState = await getLaunchctlState(resolvedDeps, uid);
+  if (finalState.loaded) {
+    clack.log.warn("Daemon did not unload within 10s - attempting bootstrap anyway.");
   }
 
   await runLaunchctl(resolvedDeps, ["bootstrap", `gui/${uid}`, plistPath], true);
