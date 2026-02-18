@@ -368,11 +368,17 @@ export function recallStrength(recallCount: number, daysSinceRecall: number, tie
   return Math.min(Math.pow(recallCount, 0.7) / 5, 1.0) * recency(daysSinceRecall, tier);
 }
 
-export function scoreEntry(entry: StoredEntry, vectorSim: number, ftsMatch: boolean, now: Date): number {
+function scoreEntryWithBreakdown(
+  entry: StoredEntry,
+  vectorSim: number,
+  ftsMatch: boolean,
+  now: Date,
+): { score: number; scores: RecallResult["scores"] } {
   const daysOld = parseDaysBetween(now, entry.created_at);
   const daysSinceRecall = entry.last_recalled_at ? parseDaysBetween(now, entry.last_recalled_at) : daysOld;
 
-  const sim = Math.pow(clamp01(vectorSim), 0.7);
+  const rawVector = clamp01(vectorSim);
+  const sim = Math.pow(rawVector, 0.7);
   const rec = recency(daysOld, entry.expiry);
   const imp = importanceScore(entry.importance);
   const recall = recallStrength(entry.recall_count, daysSinceRecall, entry.expiry);
@@ -382,7 +388,23 @@ export function scoreEntry(entry: StoredEntry, vectorSim: number, ftsMatch: bool
   const memoryStrength = Math.min(Math.max(imp, recall) * fresh, 1.0);
   const todoPenalty = entry.type === "todo" ? todoStaleness(entry, now) : 1.0;
   const contradictionPenalty = entry.contradictions >= 2 ? 0.8 : 1.0;
-  return sim * (0.3 + 0.7 * rec) * memoryStrength * todoPenalty * contradictionPenalty + fts;
+  const score = sim * (0.3 + 0.7 * rec) * memoryStrength * todoPenalty * contradictionPenalty + fts;
+  return {
+    score,
+    scores: {
+      vector: rawVector,
+      recency: rec,
+      importance: imp,
+      recall,
+      freshness: fresh,
+      todoPenalty,
+      fts,
+    },
+  };
+}
+
+export function scoreEntry(entry: StoredEntry, vectorSim: number, ftsMatch: boolean, now: Date): number {
+  return scoreEntryWithBreakdown(entry, vectorSim, ftsMatch, now).score;
 }
 
 export function shapeRecallText(text: string, context: string | undefined): string {
@@ -438,6 +460,7 @@ async function fetchVectorCandidates(
         e.id,
         e.type,
         e.subject,
+        e.canonical_key,
         e.content,
         e.importance,
         e.expiry,
@@ -507,6 +530,7 @@ async function fetchSessionCandidates(
         id,
         type,
         subject,
+        canonical_key,
         content,
         importance,
         expiry,
@@ -610,22 +634,7 @@ export async function updateRecallMetadata(db: Client, ids: string[], now: Date)
 }
 
 function scoreSessionEntry(entry: StoredEntry, now: Date): { score: number; scores: RecallResult["scores"] } {
-  const components = getScoreComponents(entry, now);
-  const score = scoreEntry(entry, 1.0, false, now);
-  const fresh = freshnessBoost(entry, now);
-  const todoPenalty = entry.type === "todo" ? todoStaleness(entry, now) : 1.0;
-  return {
-    score,
-    scores: {
-      vector: 1,
-      recency: components.rec,
-      importance: components.imp,
-      recall: components.recall,
-      freshness: fresh,
-      todoPenalty,
-      fts: 0,
-    },
-  };
+  return scoreEntryWithBreakdown(entry, 1.0, false, now);
 }
 
 export async function recall(
@@ -727,21 +736,11 @@ export async function recall(
       };
     }
 
-    const components = getScoreComponents(candidate.entry, now);
-    const fresh = freshnessBoost(candidate.entry, now);
-    const todoPenalty = candidate.entry.type === "todo" ? todoStaleness(candidate.entry, now) : 1.0;
+    const detailed = scoreEntryWithBreakdown(candidate.entry, candidate.vectorSim, ftsMatch, now);
     return {
       entry: candidate.entry,
-      score: scoreEntry(candidate.entry, candidate.vectorSim, ftsMatch, now),
-      scores: {
-        vector: clamp01(candidate.vectorSim),
-        recency: components.rec,
-        importance: components.imp,
-        recall: components.recall,
-        freshness: fresh,
-        todoPenalty,
-        fts: ftsMatch ? 0.15 : 0,
-      },
+      score: detailed.score,
+      scores: detailed.scores,
     };
   });
 

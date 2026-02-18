@@ -99,13 +99,6 @@ function toStringValue(value: unknown): string {
   return "";
 }
 
-function toNumber(value: unknown): number {
-  if (typeof value === "number") return value;
-  if (typeof value === "bigint") return Number(value);
-  if (typeof value === "string" && value.trim()) return Number(value);
-  return Number.NaN;
-}
-
 function formatPreview(entry: StoredEntry): string {
   const blob = `${entry.subject}: ${entry.content}`.replace(/\s+/g, " ").trim();
   if (blob.length <= 120) return blob;
@@ -138,7 +131,15 @@ async function loadQueries(
   }
 
   const content = await deps.readFileFn(resolved, "utf8");
-  const parsed = JSON.parse(content) as unknown;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content) as unknown;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`Failed to parse --queries JSON at ${resolved}: ${message}`, {
+      cause: err,
+    });
+  }
   if (!Array.isArray(parsed)) {
     throw new Error("--queries must be a JSON array of { id, query }.");
   }
@@ -392,7 +393,29 @@ export async function runEvalRecallCommand(
         throw new Error(`Baseline not found: ${baselinePath}`);
       }
       const baselineRaw = await resolvedDeps.readFileFn(baselinePath, "utf8");
-      const baseline = JSON.parse(baselineRaw) as EvalBaseline;
+      let baselineParsed: unknown;
+      try {
+        baselineParsed = JSON.parse(baselineRaw) as unknown;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        throw new Error(`Failed to parse baseline JSON at ${baselinePath}: ${message}`, {
+          cause: err,
+        });
+      }
+
+      if (!baselineParsed || typeof baselineParsed !== "object") {
+        throw new Error(
+          `Invalid baseline at ${baselinePath}: expected an EvalBaseline baseline object. Cannot build baselineById from baselineRaw.`,
+        );
+      }
+      const baselineQueries = (baselineParsed as Record<string, unknown>).queries;
+      if (!Array.isArray(baselineQueries)) {
+        throw new Error(
+          `Invalid baseline at ${baselinePath}: expected EvalBaseline baseline.queries to be an array. Cannot build baselineById from baselineRaw.`,
+        );
+      }
+
+      const baseline = baselineParsed as EvalBaseline;
       const baselineById = new Map(baseline.queries.map((q) => [q.id, q] as const));
 
       let totalUp = 0;
