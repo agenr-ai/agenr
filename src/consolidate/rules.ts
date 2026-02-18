@@ -8,6 +8,7 @@ import { findSimilar } from "../db/store.js";
 import { buildProjectFilter } from "../project.js";
 import { UnionFind, cosineSim, type ActiveEmbeddedEntry, validateCluster } from "./util.js";
 import type { KnowledgePlatform } from "../types.js";
+import type { StoredEntry } from "../types.js";
 
 const EXPIRE_THRESHOLD = 0.05;
 const MERGE_SIMILARITY_THRESHOLD = 0.95;
@@ -104,6 +105,57 @@ function parseDaysOld(now: Date, createdAt: string): number {
     return 0;
   }
   return Math.max(days, 0);
+}
+
+function parseDaysBetween(now: Date, pastIso: string | undefined): number {
+  if (!pastIso) {
+    return 0;
+  }
+
+  const parsed = new Date(pastIso);
+  if (Number.isNaN(parsed.getTime())) {
+    return 0;
+  }
+
+  const delta = (now.getTime() - parsed.getTime()) / MILLISECONDS_PER_DAY;
+  if (!Number.isFinite(delta)) {
+    return 0;
+  }
+
+  return Math.max(delta, 0);
+}
+
+export function forgettingScore(entry: StoredEntry, now: Date): number {
+  const ageDays = parseDaysBetween(now, entry.created_at);
+  const recallCount = entry.recall_count ?? 0;
+
+  const halfLife = entry.type === "todo" ? 30 : 90;
+  const ageDecay = Math.pow(0.5, ageDays / halfLife);
+  const recallBonus = Math.min(recallCount * 0.05, 0.3);
+
+  const importanceFloor =
+    entry.importance >= 8
+      ? 0.4
+      : entry.importance >= 6
+        ? 0.15
+        : 0;
+
+  const raw = ageDecay + recallBonus;
+  return Math.max(raw, importanceFloor);
+}
+
+export function matchesPattern(subject: string, pattern: string): boolean {
+  if (pattern.endsWith("*")) {
+    return subject.toLowerCase().startsWith(pattern.slice(0, -1).toLowerCase());
+  }
+  return subject.toLowerCase() === pattern.toLowerCase();
+}
+
+export function isProtected(entry: StoredEntry, protectPatterns: string[]): boolean {
+  if (entry.importance >= 10) {
+    return true;
+  }
+  return protectPatterns.some((pattern) => matchesPattern(entry.subject, pattern));
 }
 
 export async function countActiveEntries(

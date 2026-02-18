@@ -46,6 +46,12 @@ export interface AgenrConfig {
   provider?: AgenrProvider;
   model?: string;
   labelProjectMap?: Record<string, string>;
+  forgetting?: {
+    protect?: string[];
+    scoreThreshold?: number;
+    maxAgeDays?: number;
+    enabled?: boolean;
+  };
   credentials?: AgenrStoredCredentials;
   embedding?: {
     provider?: "openai";

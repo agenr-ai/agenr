@@ -1,14 +1,13 @@
 # Changelog
 
-## [0.5.4] - 2026-02-18
+## [0.6.0] - 2026-02-18
 
 ### Added
-- feat(todo): `agenr todo done` command to immediately retire resolved todos
-- feat(mcp): `agenr_done` MCP tool for agent-driven todo retirement
-- feat(extractor): todo completion detection in `SYSTEM_PROMPT`
-
-### Fixed
-- fix(store): cross-type canonical_key superseding allows events to retire todos
+- feat(consolidate): forgettingScore, protected subject patterns, and active forgetting pass with `--forget` deletion gate
+- feat(config): `forgetting.protect` never-forget registry plus `scoreThreshold`/`maxAgeDays`/`enabled` config defaults
+- feat(health): new `agenr health` command with read-only DB health and forgetting candidate summaries
+- feat(consolidate): `--report` pre-run consolidation stats mode (and report-only behavior with `--dry-run`)
+- feat(watch): `context-mini.md` and `context-hot.md` context variants on watch context refresh
 
 ## [0.5.3] - 2026-02-18
 
@@ -48,12 +47,6 @@
   - Recency tiebreaking within a 0.05 score dead-band applied to the recent category only
 - Watch ingestion now advances `byteOffset` by bytes actually read in each cycle, preventing duplicate processing when files grow during read.
 - Watch state saves are now atomic (temp file + rename), preventing partial-write corruption on process crashes.
-
-## 0.6.0 (2026-02-18)
-
-### Added
-- feat(extractor): explicit "remember this/that" intent detection, importance >= 7
-- feat(watch): session label -> project mapping via `config.labelProjectMap`
 
 ## 0.5.0 (2026-02-17)
 

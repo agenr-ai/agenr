@@ -24,6 +24,7 @@ import {
 } from "./commands/daemon.js";
 import { runConsolidateCommand } from "./commands/consolidate.js";
 import { runEvalRecallCommand } from "./commands/eval.js";
+import { runHealthCommand } from "./commands/health.js";
 import { runIngestCommand } from "./commands/ingest.js";
 import { runContextCommand } from "./commands/context.js";
 import { runMcpCommand } from "./commands/mcp.js";
@@ -598,6 +599,8 @@ export function createProgram(): Command {
     .description("Consolidate and clean up the knowledge database")
     .option("--rules-only", "Only run rule-based cleanup (no LLM)", false)
     .option("--dry-run", "Show what would happen without making changes", false)
+    .option("--forget", "Delete forgetting candidates after consolidation", false)
+    .option("--report", "Print pre-run stats report (with --dry-run: report only)", false)
     .option("--platform <name>", "Scope consolidation to platform: openclaw, claude-code, codex")
     .option("--project <name>", "Scope consolidation to project (repeatable)", (val: string, prev: string[]) => [...prev, val], [] as string[])
     .option("--exclude-project <name>", "Exclude entries from project (repeatable)", (val: string, prev: string[]) => [...prev, val], [] as string[])
@@ -624,6 +627,14 @@ export function createProgram(): Command {
     .option("--db <path>", "Database path override")
     .action(async (opts: ConsolidateCommandOptions) => {
       const result = await runConsolidateCommand(opts);
+      process.exitCode = result.exitCode;
+    });
+
+  program
+    .command("health")
+    .description("Show database health and forgetting candidates")
+    .action(async () => {
+      const result = await runHealthCommand();
       process.exitCode = result.exitCode;
     });
 
