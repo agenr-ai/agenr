@@ -223,6 +223,37 @@ describe("ingest command", () => {
     expect(result.totalEntriesStored).toBe(3);
   });
 
+  it("tags stored entries with --platform when provided", async () => {
+    const dir = await makeTempDir();
+    const filePath = path.join(dir, "a.txt");
+    await fs.writeFile(filePath, "plain text\n", "utf8");
+
+    const storeEntriesFn = vi.fn(async (_db: unknown, entries: KnowledgeEntry[]) => ({
+      added: entries.length,
+      updated: 0,
+      skipped: 0,
+      superseded: 0,
+      llm_dedup_calls: 0,
+      relations_created: 0,
+      total_entries: entries.length,
+      duration_ms: 1,
+    }));
+
+    const deps = makeDeps({
+      storeEntriesFn: storeEntriesFn as any,
+      deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+      getDbFn: vi.fn(() => ({ execute: vi.fn(async () => ({ rows: [] })) }) as any),
+    });
+
+    const result = await runIngestCommand([filePath], { platform: "codex", concurrency: 1 }, deps);
+    expect(result.exitCode).toBe(0);
+
+    const call = (storeEntriesFn.mock.calls as unknown[][])[0] as [unknown, KnowledgeEntry[]] | undefined;
+    const stored = call?.[1] ?? [];
+    expect(stored.length).toBeGreaterThan(0);
+    expect(stored.every((entry) => entry.platform === "codex")).toBe(true);
+  });
+
   it("skips already-ingested files by checking ingest_log", async () => {
     const dir = await makeTempDir();
     const fileA = path.join(dir, "a.md");

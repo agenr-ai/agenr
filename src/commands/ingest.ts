@@ -12,7 +12,9 @@ import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { extractKnowledgeFromChunks } from "../extractor.js";
 import { createLlmClient } from "../llm/client.js";
 import { expandInputFiles, parseTranscriptFile } from "../parser.js";
+import { normalizeKnowledgePlatform } from "../platform.js";
 import type { KnowledgeEntry } from "../types.js";
+import type { KnowledgePlatform } from "../types.js";
 import { banner, formatError, formatWarn, ui } from "../ui.js";
 import { installSignalHandlers, isShutdownRequested, onShutdown } from "../shutdown.js";
 import {
@@ -34,6 +36,7 @@ export interface IngestCommandOptions {
   raw?: boolean;
   dryRun?: boolean;
   json?: boolean;
+  platform?: string;
   concurrency?: number | string;
   skipIngested?: boolean;
   force?: boolean;
@@ -486,6 +489,11 @@ export async function runIngestCommand(
   const llmConcurrency = parsePositiveInt(options.concurrency, 5, "--concurrency");
   const retryEnabled = options.retry !== false;
     const maxRetries = retryEnabled ? parsePositiveInt(options.maxRetries, 3, "--max-retries") : 0;
+  const platformRaw = options.platform?.trim();
+  const platform = platformRaw ? normalizeKnowledgePlatform(platformRaw) : null;
+  if (platformRaw && !platform) {
+    throw new Error("--platform must be one of: openclaw, claude-code, codex");
+  }
   const retrySummaries: string[] = [];
   let stoppedForShutdown = false;
 
@@ -705,6 +713,7 @@ export async function runIngestCommand(
       const processChunkEntries = async (chunkEntries: KnowledgeEntry[]): Promise<void> => {
         const normalizedEntries = chunkEntries.map((entry) => ({
           ...entry,
+          ...(platform ? { platform: platform as KnowledgePlatform } : {}),
           source: {
             ...entry.source,
             file: target.file,

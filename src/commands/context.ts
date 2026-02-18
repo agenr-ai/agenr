@@ -7,7 +7,9 @@ import { readConfig } from "../config.js";
 import { closeDb, getDb, initDb } from "../db/client.js";
 import { sessionStartRecall } from "../db/session-start.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
+import { normalizeKnowledgePlatform } from "../platform.js";
 import type { RecallCommandResult, RecallQuery } from "../types.js";
+import type { KnowledgePlatform } from "../types.js";
 
 const DEFAULT_OUTPUT_PATH = "~/.agenr/CONTEXT.md";
 const DEFAULT_BUDGET = 2000;
@@ -18,6 +20,7 @@ export interface ContextCommandOptions {
   output?: string;
   budget?: number | string;
   limit?: number | string;
+  platform?: string;
   db?: string;
   json?: boolean;
   quiet?: boolean;
@@ -156,6 +159,7 @@ export interface GenerateContextFileOptions {
   limit: number;
   json: boolean;
   now?: Date;
+  platform?: KnowledgePlatform;
 }
 
 export async function generateContextFile(
@@ -182,6 +186,7 @@ export async function generateContextFile(
     noUpdate: true,
     scope: "private",
     budget,
+    platform: options.platform,
   };
 
   const grouped = await resolvedDeps.sessionStartRecallFn(db, {
@@ -232,6 +237,11 @@ export async function runContextCommand(
   const budget = parsePositiveInt(options.budget, DEFAULT_BUDGET, "--budget");
   const limit = parsePositiveInt(options.limit, DEFAULT_LIMIT, "--limit");
   const json = options.json === true;
+  const platformRaw = options.platform?.trim();
+  const platform = platformRaw ? normalizeKnowledgePlatform(platformRaw) : null;
+  if (platformRaw && !platform) {
+    throw new Error("--platform must be one of: openclaw, claude-code, codex");
+  }
 
   // Suppress clack output when explicitly quiet, or when stderr is not a TTY.
   const suppressClack = options.quiet === true || !process.stderr.isTTY;
@@ -262,7 +272,7 @@ export async function runContextCommand(
       db,
       apiKey,
       outputPath,
-      { budget, limit, json, now: resolvedDeps.nowFn() },
+      { budget, limit, json, now: resolvedDeps.nowFn(), platform: platform ?? undefined },
       {
         sessionStartRecallFn: resolvedDeps.sessionStartRecallFn,
         writeFileFn: resolvedDeps.writeFileFn,
@@ -291,4 +301,3 @@ export async function runContextCommand(
     resolvedDeps.closeDbFn(db);
   }
 }
-

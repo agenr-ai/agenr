@@ -7,11 +7,23 @@
 - `agenr db version` command to print schema version metadata
 - `agenr daemon start|stop|restart` commands
 - `agenr daemon install --dir/--platform/--node-path` options for explicit daemon configuration
+- `entries.platform` column (with index) to tag knowledge by platform (`openclaw|claude-code|codex`, NULL for legacy entries)
+- `--platform` filters/tags across commands:
+  - `agenr recall --platform`
+  - `agenr context --platform`
+  - `agenr store --platform`
+  - `agenr ingest --platform`
+  - `agenr consolidate --platform`
+  - `agenr db export --platform`
+- MCP tool support for platform:
+  - `agenr_recall` accepts optional `platform` filter
+  - `agenr_store` accepts optional `platform` tag
 
 ### Changed
 - `agenr db stats` output now includes schema version
 - `agenr daemon install` now uses smart platform defaults and writes `watch --dir <path> --platform <name>` instead of `watch --auto`
 - `agenr daemon install` now prefers stable node symlinks (Homebrew) when `process.execPath` is version-specific; use `--node-path` to override
+- `agenr watch --auto` is deprecated; `agenr watch --platform <name>` is now the standard invocation and auto-resolves the default platform directory when `--dir` is omitted
 
 ## 0.4.1 (2026-02-17)
 

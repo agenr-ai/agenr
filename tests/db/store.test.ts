@@ -159,6 +159,44 @@ describe("db store pipeline", () => {
     expect(createdAt).toBeLessThanOrEqual(after + 1_000);
   });
 
+  it("stores platform when provided (and NULL when missing)", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    await storeEntries(
+      client,
+      [{ ...makeEntry({ content: "seed vec-base", sourceFile: "seed.jsonl" }), platform: "openclaw" as const }],
+      "sk-test",
+      {
+        sourceFile: "seed.jsonl",
+        ingestContentHash: hashText("seed-platform"),
+        embedFn: mockEmbed,
+        force: true,
+      },
+    );
+
+    await storeEntries(
+      client,
+      [makeEntry({ content: "seed vec-v2", sourceFile: "seed2.jsonl" })],
+      "sk-test",
+      {
+        sourceFile: "seed2.jsonl",
+        ingestContentHash: hashText("seed-platform-2"),
+        embedFn: mockEmbed,
+        force: true,
+      },
+    );
+
+    const rows = await client.execute({
+      sql: "SELECT source_file, platform FROM entries ORDER BY source_file ASC",
+      args: [],
+    });
+
+    const byFile = new Map(rows.rows.map((row) => [String(row.source_file), row.platform]));
+    expect(byFile.get("seed.jsonl")).toBe("openclaw");
+    expect(byFile.get("seed2.jsonl")).toBe(null);
+  });
+
   it("skips near-exact semantic duplicates at 0.95+ similarity", async () => {
     const client = makeClient();
     await initDb(client);

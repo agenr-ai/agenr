@@ -33,6 +33,7 @@ describe("db schema", () => {
       "idx_entries_type_canonical_key",
       "idx_entries_expiry",
       "idx_entries_scope",
+      "idx_entries_platform",
       "idx_entries_created",
       "idx_entries_superseded",
       "idx_entries_content_hash",
@@ -84,6 +85,7 @@ describe("db schema", () => {
         'idx_entries_type_canonical_key',
         'idx_entries_expiry',
         'idx_entries_scope',
+        'idx_entries_platform',
         'idx_entries_created',
         'idx_entries_superseded',
         'idx_entries_content_hash',
@@ -97,7 +99,7 @@ describe("db schema", () => {
       )
       GROUP BY name
     `);
-    expect(namesResult.rows).toHaveLength(21);
+    expect(namesResult.rows).toHaveLength(22);
     for (const row of namesResult.rows as Array<{ count?: unknown }>) {
       expect(Number(row.count)).toBe(1);
     }
@@ -118,6 +120,7 @@ describe("db schema", () => {
     expect(entryColumns.has("canonical_key")).toBe(true);
     expect(entryColumns.has("merged_from")).toBe(true);
     expect(entryColumns.has("consolidated_at")).toBe(true);
+    expect(entryColumns.has("platform")).toBe(true);
     expect(ingestColumns.has("content_hash")).toBe(true);
     expect(ingestColumns.has("entries_superseded")).toBe(true);
     expect(ingestColumns.has("dedup_llm_calls")).toBe(true);

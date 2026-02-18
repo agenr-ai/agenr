@@ -188,6 +188,27 @@ describe("context command", () => {
     expect(options?.coreCandidateLimit).toBe(7);
   });
 
+  it("passes --platform into session-start recall when provided", async () => {
+    const sessionStartRecallFn = vi.fn(async () => ({ results: [], budgetUsed: 0 }));
+    await runContextCommand(
+      { output: "/tmp/agenr-context-test.md", quiet: true, platform: "codex" },
+      {
+        readConfigFn: vi.fn(() => ({ db: { path: ":memory:" } })),
+        getDbFn: vi.fn(() => ({}) as any),
+        initDbFn: vi.fn(async () => undefined),
+        closeDbFn: vi.fn(() => undefined),
+        sessionStartRecallFn: sessionStartRecallFn as any,
+        mkdirFn: vi.fn(async () => undefined) as any,
+        writeFileFn: vi.fn(async () => undefined) as any,
+        renameFn: vi.fn(async () => undefined) as any,
+        nowFn: () => new Date("2026-02-17T00:00:00.000Z"),
+      },
+    );
+
+    const call = (sessionStartRecallFn.mock.calls as any[][])[0] as any[] | undefined;
+    expect(call?.[1]?.query?.platform).toBe("codex");
+  });
+
   it("works with an empty DB (no entries, no error)", async () => {
     const dir = await makeTempDir();
     const outPath = path.join(dir, "CONTEXT.md");

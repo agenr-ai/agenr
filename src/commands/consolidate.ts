@@ -11,6 +11,8 @@ import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { createLlmClient } from "../llm/client.js";
 import { formatWarn } from "../ui.js";
 import { installSignalHandlers, isShutdownRequested, onShutdown } from "../shutdown.js";
+import { normalizeKnowledgePlatform } from "../platform.js";
+import type { KnowledgePlatform } from "../types.js";
 
 export interface ConsolidateCommandOptions {
   rulesOnly?: boolean;
@@ -18,6 +20,7 @@ export interface ConsolidateCommandOptions {
   verbose?: boolean;
   json?: boolean;
   db?: string;
+  platform?: string;
   minCluster?: number;
   simThreshold?: number;
   maxClusterSize?: number;
@@ -165,6 +168,11 @@ export async function runConsolidateCommand(
   const config = resolvedDeps.readConfigFn(process.env);
   const configuredPath = options.db?.trim() || config?.db?.path || DEFAULT_DB_PATH;
   const dbFilePath = resolveDbFilePath(configuredPath);
+  const platformRaw = options.platform?.trim();
+  const platform = platformRaw ? normalizeKnowledgePlatform(platformRaw) : null;
+  if (platformRaw && !platform) {
+    throw new Error("--platform must be one of: openclaw, claude-code, codex");
+  }
 
   if (dbFilePath === ":memory:") {
     throw new Error("Consolidation requires a file-backed database so a backup can be created.");
@@ -192,6 +200,7 @@ export async function runConsolidateCommand(
         rulesOnly: options.rulesOnly,
         dryRun: options.dryRun,
         verbose: options.verbose,
+        platform: (platform ?? undefined) as KnowledgePlatform | undefined,
         minCluster: options.minCluster,
         simThreshold: options.simThreshold,
         maxClusterSize: options.maxClusterSize,

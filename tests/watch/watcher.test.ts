@@ -184,6 +184,38 @@ describe("watcher", () => {
     expect(deps.saveSnapshots.at(-1)?.files[filePath]?.byteOffset).toBe(20);
   });
 
+  it("tags stored entries with platform in directory mode", async () => {
+    const filePath = "/tmp/watch.jsonl";
+    const deps = makeDeps({
+      statFileFn: vi.fn(async () => ({ size: 25, isFile: () => true })),
+      readFileFn: vi.fn(async () => Buffer.from("this content passes threshold")),
+    });
+
+    const resolver = {
+      resolveActiveSession: vi.fn(async () => filePath),
+    };
+
+    await runWatcher(
+      {
+        directoryMode: true,
+        sessionsDir: "/tmp/sessions",
+        resolver: resolver as any,
+        platform: "openclaw",
+        intervalMs: 1,
+        minChunkChars: 1,
+        dryRun: false,
+        verbose: false,
+        once: true,
+      },
+      deps,
+    );
+
+    expect(deps.storeEntriesFn).toHaveBeenCalledTimes(1);
+    const call = (deps.storeEntriesFn as any).mock.calls[0] as any[] | undefined;
+    const storedEntries = call?.[1] as Array<{ platform?: string }> | undefined;
+    expect(storedEntries?.every((entry) => entry.platform === "openclaw")).toBe(true);
+  });
+
   it("resets offset when file is truncated", async () => {
     const filePath = "/tmp/watch.jsonl";
     const state = makeState(filePath, 100);

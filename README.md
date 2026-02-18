@@ -113,10 +113,10 @@ agenr recall "package manager"
 The watcher keeps your memory current as you work. It tails your session files, extracts new knowledge every few minutes, and stores it. If you ingested history first, watch resumes right where ingest left off - no re-processing.
 
 ```bash
-# Watch your OpenClaw sessions directory
-agenr watch --dir ~/.openclaw/agents/main/sessions/
+# Watch your OpenClaw sessions directory (auto-resolves the default path)
+agenr watch --platform openclaw
 
-# Auto-detect your session directory
+# Deprecated: --auto still works (defaults to OpenClaw) but will be removed in a future version
 agenr watch --auto
 
 # Install as a background daemon (macOS launchd)
@@ -128,7 +128,7 @@ agenr daemon logs
 You can also auto-refresh a context file that AI tools read on startup:
 
 ```bash
-agenr watch --auto --context ~/.agenr/CONTEXT.md
+agenr watch --platform openclaw --context ~/.agenr/CONTEXT.md
 ```
 
 ## How it works

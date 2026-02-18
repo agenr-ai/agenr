@@ -16,6 +16,7 @@ import { parseTranscriptFile } from "../parser.js";
 import { KNOWLEDGE_TYPES, SCOPE_LEVELS } from "../types.js";
 import type { KnowledgeEntry, RecallResult, Scope, StoreResult } from "../types.js";
 import { APP_VERSION } from "../version.js";
+import { normalizeKnowledgePlatform } from "../platform.js";
 
 const MCP_PROTOCOL_VERSION = "2024-11-05";
 
@@ -125,6 +126,10 @@ const TOOL_DEFINITIONS: McpToolDefinition[] = [
           maximum: 1,
           default: 0,
         },
+        platform: {
+          type: "string",
+          description: "Optional platform filter: openclaw, claude-code, codex.",
+        },
       },
     },
   },
@@ -136,6 +141,10 @@ const TOOL_DEFINITIONS: McpToolDefinition[] = [
       additionalProperties: false,
       required: ["entries"],
       properties: {
+        platform: {
+          type: "string",
+          description: "Optional platform tag for all entries: openclaw, claude-code, codex.",
+        },
         entries: {
           type: "array",
           items: {
@@ -711,6 +720,11 @@ export function createMcpServer(
       typeof args.since === "string" && args.since.trim().length > 0
         ? parseSinceToIso(args.since, now)
         : undefined;
+    const platformRaw = typeof args.platform === "string" ? args.platform.trim() : "";
+    const platform = platformRaw ? normalizeKnowledgePlatform(platformRaw) : null;
+    if (platformRaw && !platform) {
+      throw new RpcError(JSON_RPC_INVALID_PARAMS, "--platform must be one of: openclaw, claude-code, codex");
+    }
 
     const db = await ensureDb();
     let results: RecallResult[];
@@ -723,6 +737,7 @@ export function createMcpServer(
           limit,
           types,
           since,
+          platform: platform ?? undefined,
           noUpdate: true,
         },
         apiKey: "",
@@ -740,6 +755,7 @@ export function createMcpServer(
           limit,
           types,
           since,
+          platform: platform ?? undefined,
         },
         apiKey,
       );
@@ -763,7 +779,14 @@ export function createMcpServer(
       throw new RpcError(JSON_RPC_INVALID_PARAMS, "entries is required");
     }
 
-    const entries = parseStoreEntries(args.entries);
+    const platformRaw = typeof args.platform === "string" ? args.platform.trim() : "";
+    const platform = platformRaw ? normalizeKnowledgePlatform(platformRaw) : null;
+    if (platformRaw && !platform) {
+      throw new RpcError(JSON_RPC_INVALID_PARAMS, "--platform must be one of: openclaw, claude-code, codex");
+    }
+
+    const parsed = parseStoreEntries(args.entries);
+    const entries = platform ? parsed.map((entry) => ({ ...entry, platform })) : parsed;
     const db = await ensureDb();
     const config = resolvedDeps.readConfigFn(env);
     const dedupClient = resolvedDeps.createLlmClientFn({ config, env });

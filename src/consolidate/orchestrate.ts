@@ -5,7 +5,7 @@ import path from "node:path";
 import type { Client, InValue } from "@libsql/client";
 import { walCheckpoint } from "../db/client.js";
 import { rebuildVectorIndex } from "../db/vector-index.js";
-import type { LlmClient } from "../types.js";
+import type { KnowledgePlatform, LlmClient } from "../types.js";
 import { buildClusters, type Cluster } from "./cluster.js";
 import { mergeCluster } from "./merge.js";
 import { consolidateRules, type ConsolidationStats } from "./rules.js";
@@ -79,6 +79,7 @@ export interface ConsolidationOrchestratorOptions {
   dryRun?: boolean;
   verbose?: boolean;
   rulesOnly?: boolean;
+  platform?: KnowledgePlatform;
   minCluster?: number;
   simThreshold?: number;
   maxClusterSize?: number;
@@ -133,8 +134,8 @@ export interface ConsolidationOrchestratorDeps {
   mergeClusterFn: typeof mergeCluster;
   rebuildVectorIndexFn: typeof rebuildVectorIndex;
   walCheckpointFn: typeof walCheckpoint;
-  countActiveEntriesFn: (db: Client) => Promise<number>;
-  countActiveEmbeddedEntriesFn: (db: Client, typeFilter?: string) => Promise<number>;
+  countActiveEntriesFn: (db: Client, platform?: KnowledgePlatform) => Promise<number>;
+  countActiveEmbeddedEntriesFn: (db: Client, typeFilter?: string, platform?: KnowledgePlatform) => Promise<number>;
 }
 
 function toNumber(value: InValue | undefined): number {
@@ -173,14 +174,34 @@ function defaultClusterStats(): ClusterProcessingStats {
   };
 }
 
-async function countActiveEntries(db: Client): Promise<number> {
-  const result = await db.execute("SELECT COUNT(*) AS count FROM entries WHERE superseded_by IS NULL");
+async function countActiveEntries(db: Client, platform?: KnowledgePlatform): Promise<number> {
+  const args: unknown[] = [];
+  if (platform) {
+    args.push(platform);
+  }
+
+  const result = await db.execute({
+    sql: `
+      SELECT COUNT(*) AS count
+      FROM entries
+      WHERE superseded_by IS NULL
+        ${platform ? "AND platform = ?" : ""}
+    `,
+    args,
+  });
   const count = toNumber(result.rows[0]?.count);
   return Number.isFinite(count) ? count : 0;
 }
 
-async function countActiveEmbeddedEntries(db: Client, typeFilter?: string): Promise<number> {
+async function countActiveEmbeddedEntries(db: Client, typeFilter?: string, platform?: KnowledgePlatform): Promise<number> {
+  const platformCondition = platform ? "AND platform = ?" : "";
+
   if (typeFilter?.trim()) {
+    const args: unknown[] = [typeFilter.trim()];
+    if (platform) {
+      args.push(platform);
+    }
+
     const result = await db.execute({
       sql: `
         SELECT COUNT(*) AS count
@@ -188,19 +209,29 @@ async function countActiveEmbeddedEntries(db: Client, typeFilter?: string): Prom
         WHERE superseded_by IS NULL
           AND embedding IS NOT NULL
           AND type = ?
+          ${platformCondition}
       `,
-      args: [typeFilter.trim()],
+      args,
     });
     const count = toNumber(result.rows[0]?.count);
     return Number.isFinite(count) ? count : 0;
   }
 
-  const result = await db.execute(`
-    SELECT COUNT(*) AS count
-    FROM entries
-    WHERE superseded_by IS NULL
-      AND embedding IS NOT NULL
-  `);
+  const args: unknown[] = [];
+  if (platform) {
+    args.push(platform);
+  }
+
+  const result = await db.execute({
+    sql: `
+      SELECT COUNT(*) AS count
+      FROM entries
+      WHERE superseded_by IS NULL
+        AND embedding IS NOT NULL
+        ${platformCondition}
+    `,
+    args,
+  });
   const count = toNumber(result.rows[0]?.count);
   return Number.isFinite(count) ? count : 0;
 }
@@ -210,6 +241,7 @@ function resolvedOptionsSignature(options: ConsolidationOrchestratorOptions): st
     JSON.stringify({
       dryRun: options.dryRun === true,
       rulesOnly: options.rulesOnly === true,
+      platform: options.platform ?? null,
       minCluster: options.minCluster ?? DEFAULT_MIN_CLUSTER,
       simThreshold: options.simThreshold ?? DEFAULT_PHASE1_SIM_THRESHOLD,
       maxClusterSize: options.maxClusterSize ?? null,
@@ -460,6 +492,7 @@ export async function runConsolidationOrchestrator(
   const onWarn = options.onWarn ?? onLog;
   const dryRun = options.dryRun === true;
   const rulesOnly = options.rulesOnly === true;
+  const platform = options.platform;
   const minCluster = options.minCluster ?? DEFAULT_MIN_CLUSTER;
   const phase1Threshold = options.simThreshold ?? DEFAULT_PHASE1_SIM_THRESHOLD;
   const phase2Threshold = Math.max(options.simThreshold ?? DEFAULT_PHASE1_SIM_THRESHOLD, DEFAULT_PHASE2_SIM_THRESHOLD);
@@ -563,6 +596,7 @@ export async function runConsolidationOrchestrator(
   const phase0Stats = await resolvedDeps.consolidateRulesFn(db, dbPath, {
     dryRun,
     verbose: options.verbose,
+    platform,
     rebuildIndex: false,
     onLog: options.verbose ? onLog : undefined,
   });
@@ -578,7 +612,7 @@ export async function runConsolidationOrchestrator(
     onWarn("[consolidate] Shutdown requested; stopping after Phase 0.");
     context.batchReached = true;
     await runFinalization(db, dryRun, onWarn, resolvedDeps);
-    context.report.entriesAfter = await resolvedDeps.countActiveEntriesFn(db);
+    context.report.entriesAfter = await resolvedDeps.countActiveEntriesFn(db, platform);
     context.report.progress.partial = true;
     return context.report;
   }
@@ -594,12 +628,13 @@ export async function runConsolidationOrchestrator(
         context.batchReached = true;
         break;
       }
-      const entries = await resolvedDeps.countActiveEmbeddedEntriesFn(db, type);
+      const entries = await resolvedDeps.countActiveEmbeddedEntriesFn(db, type, platform);
       const clusters = await resolvedDeps.buildClustersFn(db, {
         simThreshold: phase1Threshold,
         minCluster,
         maxClusterSize: phase1MaxClusterSize,
         typeFilter: type,
+        platform,
         idempotencyDays: options.idempotencyDays,
         verbose: options.verbose,
         onLog: options.verbose ? onLog : undefined,
@@ -609,18 +644,19 @@ export async function runConsolidationOrchestrator(
 
     if (context.batchReached) {
       await runFinalization(db, dryRun, onWarn, resolvedDeps);
-      context.report.entriesAfter = await resolvedDeps.countActiveEntriesFn(db);
+      context.report.entriesAfter = await resolvedDeps.countActiveEntriesFn(db, platform);
       context.report.progress.partial = true;
       return context.report;
     }
 
     const shouldRunPhase2 = !options.type?.trim();
-    const phase2Entries = shouldRunPhase2 ? await resolvedDeps.countActiveEmbeddedEntriesFn(db) : 0;
+    const phase2Entries = shouldRunPhase2 ? await resolvedDeps.countActiveEmbeddedEntriesFn(db, undefined, platform) : 0;
     const phase2Clusters = shouldRunPhase2
       ? await resolvedDeps.buildClustersFn(db, {
           simThreshold: phase2Threshold,
           minCluster,
           maxClusterSize: phase2MaxClusterSize,
+          platform,
           idempotencyDays: options.idempotencyDays,
           verbose: options.verbose,
           onLog: options.verbose ? onLog : undefined,
@@ -712,7 +748,7 @@ export async function runConsolidationOrchestrator(
 
   await runFinalization(db, dryRun, onWarn, resolvedDeps);
 
-  context.report.entriesAfter = await resolvedDeps.countActiveEntriesFn(db);
+  context.report.entriesAfter = await resolvedDeps.countActiveEntriesFn(db, platform);
   context.report.progress.partial = context.batchReached;
   context.report.progress.processedClusters =
     context.report.phase1.totals.clustersProcessed + (context.report.phase2?.clustersProcessed ?? 0);
