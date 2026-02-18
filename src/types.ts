@@ -17,11 +17,15 @@ export const EXPIRY_LEVELS = ["core", "permanent", "temporary"] as const;
 
 export const SCOPE_LEVELS = ["private", "personal", "public"] as const;
 
+export const KNOWLEDGE_PLATFORMS = ["openclaw", "claude-code", "codex"] as const;
+
 export type KnowledgeType = (typeof KNOWLEDGE_TYPES)[number];
 
 export type Expiry = (typeof EXPIRY_LEVELS)[number];
 
 export type Scope = (typeof SCOPE_LEVELS)[number];
+
+export type KnowledgePlatform = (typeof KNOWLEDGE_PLATFORMS)[number];
 
 export type AgenrProvider = "anthropic" | "openai" | "openai-codex";
 export type AgenrAuthMethod =
@@ -58,6 +62,7 @@ export interface KnowledgeEntry {
   content: string;
   subject: string;
   canonical_key?: string;
+  platform?: KnowledgePlatform;
   importance: number;
   expiry: Expiry;
   scope?: Scope;
@@ -207,6 +212,7 @@ export interface RecallQuery {
   budget?: number;
   noBoost?: boolean;
   noUpdate?: boolean;
+  platform?: KnowledgePlatform;
 }
 
 export interface RecallCommandResult extends RecallResult {

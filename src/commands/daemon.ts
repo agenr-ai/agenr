@@ -5,6 +5,7 @@ import path from "node:path";
 import * as clack from "@clack/prompts";
 import { loadWatchState } from "../watch/state.js";
 import { detectWatchPlatform, normalizePlatform, type WatchPlatform } from "../watch/resolvers/index.js";
+import { getDefaultPlatformDir } from "../watch/platform-defaults.js";
 
 const LAUNCH_LABEL = "com.agenr.watch";
 const DEFAULT_INTERVAL_SECONDS = 120;
@@ -263,19 +264,6 @@ export async function resolveStableNodePath(execPath: string, statFn: typeof fs.
   return execPath;
 }
 
-function getDefaultSessionsDir(homeDir: string, platform: WatchPlatform): string | null {
-  if (platform === "openclaw") {
-    return path.join(homeDir, ".openclaw", "agents", "main", "sessions");
-  }
-  if (platform === "codex") {
-    return path.join(homeDir, ".codex", "sessions");
-  }
-  if (platform === "claude-code") {
-    return path.join(homeDir, ".claude", "projects");
-  }
-  return null;
-}
-
 async function resolveInstallTarget(
   options: DaemonInstallOptions,
   deps: DaemonCommandDeps,
@@ -305,11 +293,11 @@ async function resolveInstallTarget(
       throw new Error(`Unsupported platform: ${options.platform}`);
     }
 
-    const defaultDir = getDefaultSessionsDir(homeDir, normalized);
-    if (!defaultDir) {
+    if (normalized === "mtime") {
       throw new Error(`--platform ${normalized} requires --dir <path>.`);
     }
 
+    const defaultDir = getDefaultPlatformDir(normalized, homeDir);
     const exists = await dirExists(deps.statFn, defaultDir);
     if (!exists) {
       throw new Error(`Sessions directory not found: ${defaultDir}`);
@@ -321,17 +309,17 @@ async function resolveInstallTarget(
   const candidates: Array<{ platform: WatchPlatform; dir: string; message: string }> = [
     {
       platform: "openclaw",
-      dir: path.join(homeDir, ".openclaw", "agents", "main", "sessions"),
+      dir: getDefaultPlatformDir("openclaw", homeDir),
       message: "Detected OpenClaw sessions directory. Installing watcher for OpenClaw.",
     },
     {
       platform: "codex",
-      dir: path.join(homeDir, ".codex", "sessions"),
+      dir: getDefaultPlatformDir("codex", homeDir),
       message: "Detected Codex sessions directory. Installing watcher for Codex.",
     },
     {
       platform: "claude-code",
-      dir: path.join(homeDir, ".claude", "projects"),
+      dir: getDefaultPlatformDir("claude-code", homeDir),
       message: "Detected Claude Code projects directory. Installing watcher for Claude Code.",
     },
   ];

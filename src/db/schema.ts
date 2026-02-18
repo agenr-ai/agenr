@@ -27,6 +27,7 @@ const CREATE_TABLE_AND_TRIGGER_STATEMENTS: readonly string[] = [
     importance INTEGER NOT NULL,
     expiry TEXT NOT NULL,
     scope TEXT DEFAULT 'private',
+    platform TEXT DEFAULT NULL,
     source_file TEXT,
     source_context TEXT,
     embedding F32_BLOB(1024),
@@ -115,6 +116,7 @@ const CREATE_INDEX_STATEMENTS: readonly string[] = [
   "CREATE INDEX IF NOT EXISTS idx_entries_type_canonical_key ON entries(type, canonical_key)",
   "CREATE INDEX IF NOT EXISTS idx_entries_expiry ON entries(expiry)",
   "CREATE INDEX IF NOT EXISTS idx_entries_scope ON entries(scope)",
+  "CREATE INDEX IF NOT EXISTS idx_entries_platform ON entries(platform)",
   "CREATE INDEX IF NOT EXISTS idx_entries_created ON entries(created_at)",
   "CREATE INDEX IF NOT EXISTS idx_entries_superseded ON entries(superseded_by)",
   "CREATE INDEX IF NOT EXISTS idx_entries_content_hash ON entries(content_hash)",
@@ -151,6 +153,11 @@ const COLUMN_MIGRATIONS: readonly ColumnMigration[] = [
     table: "entries",
     column: "consolidated_at",
     sql: "ALTER TABLE entries ADD COLUMN consolidated_at TEXT",
+  },
+  {
+    table: "entries",
+    column: "platform",
+    sql: "ALTER TABLE entries ADD COLUMN platform TEXT DEFAULT NULL",
   },
   {
     table: "ingest_log",

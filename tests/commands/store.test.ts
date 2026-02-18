@@ -77,6 +77,30 @@ describe("store command", () => {
     });
   });
 
+  it("tags stored entries with --platform when provided", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agenr-store-test-"));
+    tempDirs.push(dir);
+    const filePath = path.join(dir, "input.json");
+    await fs.writeFile(filePath, `${JSON.stringify([makeEntry()], null, 2)}\n`, "utf8");
+
+    const storeEntriesSpy = vi.fn(async (..._args: unknown[]) => fakeStoreResult());
+
+    await runStoreCommand([filePath], { onlineDedup: false, platform: "openclaw" }, {
+      expandInputFilesFn: vi.fn(async (inputs: string[]) => inputs),
+      readFileFn: vi.fn((target: string) => fs.readFile(target, "utf8")),
+      readStdinFn: vi.fn(async () => ""),
+      readConfigFn: vi.fn(() => ({ db: { path: ":memory:" } } satisfies AgenrConfig)),
+      resolveEmbeddingApiKeyFn: vi.fn(() => "sk-test"),
+      getDbFn: vi.fn(() => ({}) as any),
+      initDbFn: vi.fn(async () => undefined),
+      closeDbFn: vi.fn(() => undefined),
+      storeEntriesFn: storeEntriesSpy as any,
+    });
+
+    const firstCall = (storeEntriesSpy.mock.calls as unknown[][])[0] as [unknown, KnowledgeEntry[]] | undefined;
+    expect(firstCall?.[1]?.[0]?.platform).toBe("openclaw");
+  });
+
   it("handles missing file with a clear error", async () => {
     await expect(
       runStoreCommand(["/tmp/does-not-exist.json"], {}, {

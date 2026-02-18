@@ -248,6 +248,56 @@ describe("db recall", () => {
     expect(eventIndex).toBeLessThan(todoIndex);
   });
 
+  it("filters session-start candidates by platform when provided", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    await storeEntries(
+      client,
+      [
+        { ...makeEntry({ content: "OpenClaw fact vec-work-strong" }), platform: "openclaw" as const },
+        { ...makeEntry({ content: "Codex fact vec-work-strong" }), platform: "codex" as const },
+      ],
+      "sk-test",
+      {
+        sourceFile: "recall-test.jsonl",
+        ingestContentHash: "hash-platform-filter",
+        embedFn: mockEmbed,
+        force: true,
+      },
+    );
+
+    const now = new Date("2026-02-15T00:00:00.000Z");
+    const openclawOnly = await recall(
+      client,
+      {
+        text: "",
+        context: "session-start",
+        limit: 10,
+        platform: "openclaw",
+      },
+      "sk-test",
+      { now },
+    );
+
+    expect(openclawOnly.length).toBe(1);
+    expect(openclawOnly[0]?.entry.content).toContain("OpenClaw fact");
+
+    const all = await recall(
+      client,
+      {
+        text: "",
+        context: "session-start",
+        limit: 10,
+      },
+      "sk-test",
+      { now },
+    );
+
+    expect(all.length).toBe(2);
+    expect(all.map((row) => row.entry.content).sort()).toEqual(["Codex fact vec-work-strong", "OpenClaw fact vec-work-strong"]);
+  });
+
   it("scoreEntry uses multiplicative scaling for memory strength", () => {
     const now = new Date("2026-02-15T00:00:00.000Z");
     const highImportance = makeStoredEntry({

@@ -7,9 +7,10 @@ import { hashText, storeEntries } from "../db/store.js";
 import { acquireDbLock, releaseDbLock } from "../db/lockfile.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { createLlmClient } from "../llm/client.js";
+import { normalizeKnowledgePlatform } from "../platform.js";
 import { expandInputFiles } from "../parser.js";
 import { EXPIRY_LEVELS, IMPORTANCE_MAX, IMPORTANCE_MIN, KNOWLEDGE_TYPES } from "../types.js";
-import type { ExtractionReport, KnowledgeEntry, StoreResult } from "../types.js";
+import type { ExtractionReport, KnowledgeEntry, KnowledgePlatform, StoreResult } from "../types.js";
 import { banner, formatLabel, formatWarn, ui } from "../ui.js";
 import { installSignalHandlers, isShutdownRequested, onShutdown } from "../shutdown.js";
 
@@ -18,6 +19,7 @@ export interface StoreCommandOptions {
   dryRun?: boolean;
   verbose?: boolean;
   force?: boolean;
+  platform?: string;
   onlineDedup?: boolean;
   dedupThreshold?: number | string;
 }
@@ -291,6 +293,12 @@ export async function runStoreCommand(
   );
 
   const config = resolvedDeps.readConfigFn(process.env);
+  const platformRaw = options.platform?.trim();
+  const platform = platformRaw ? normalizeKnowledgePlatform(platformRaw) : null;
+  if (platformRaw && !platform) {
+    throw new Error("--platform must be one of: openclaw, claude-code, codex");
+  }
+
   const hasAnyEntries = totalInputEntries > 0;
   const apiKey = hasAnyEntries ? resolvedDeps.resolveEmbeddingApiKeyFn(config, process.env) : "";
   const onlineDedup = options.onlineDedup !== false;
@@ -320,15 +328,19 @@ export async function runStoreCommand(
     let totalEntries = 0;
     let stoppedForShutdown = false;
 
-    for (const input of inputs) {
-      if (resolvedDeps.shouldShutdownFn()) {
-        stoppedForShutdown = true;
-        break;
-      }
-      const result = await resolvedDeps.storeEntriesFn(db, input.entries, apiKey, {
-        dryRun: options.dryRun,
-        force: options.force,
-        verbose: options.verbose,
+	    for (const input of inputs) {
+	      if (resolvedDeps.shouldShutdownFn()) {
+	        stoppedForShutdown = true;
+	        break;
+	      }
+	      const entries: KnowledgeEntry[] = platform
+	        ? input.entries.map((entry) => ({ ...entry, platform: platform as KnowledgePlatform }))
+	        : input.entries;
+
+	      const result = await resolvedDeps.storeEntriesFn(db, entries, apiKey, {
+	        dryRun: options.dryRun,
+	        force: options.force,
+	        verbose: options.verbose,
         onlineDedup,
         dedupThreshold,
         llmClient,

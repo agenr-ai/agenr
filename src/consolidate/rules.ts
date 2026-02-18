@@ -6,6 +6,7 @@ import { recency } from "../db/recall.js";
 import { createRelation } from "../db/relations.js";
 import { findSimilar } from "../db/store.js";
 import { UnionFind, cosineSim, type ActiveEmbeddedEntry, validateCluster } from "./util.js";
+import type { KnowledgePlatform } from "../types.js";
 
 const EXPIRE_THRESHOLD = 0.05;
 const MERGE_SIMILARITY_THRESHOLD = 0.95;
@@ -27,6 +28,7 @@ export interface ConsolidationStats {
 export interface ConsolidateRulesOptions {
   dryRun?: boolean;
   verbose?: boolean;
+  platform?: KnowledgePlatform;
   onLog?: (message: string) => void;
   rebuildIndex?: boolean;
 }
@@ -93,22 +95,43 @@ function parseDaysOld(now: Date, createdAt: string): number {
   return Math.max(days, 0);
 }
 
-async function countActiveEntries(db: Client): Promise<number> {
-  const result = await db.execute("SELECT COUNT(*) AS count FROM entries WHERE superseded_by IS NULL");
+async function countActiveEntries(db: Client, platform?: KnowledgePlatform): Promise<number> {
+  const args: unknown[] = [];
+  if (platform) {
+    args.push(platform);
+  }
+
+  const result = await db.execute({
+    sql: `
+      SELECT COUNT(*) AS count
+      FROM entries
+      WHERE superseded_by IS NULL
+        ${platform ? "AND platform = ?" : ""}
+    `,
+    args,
+  });
   const count = toNumber(result.rows[0]?.count);
   return Number.isFinite(count) ? count : 0;
 }
 
-async function countOrphanedRelations(db: Client): Promise<number> {
-  const result = await db.execute(`
+async function countOrphanedRelations(db: Client, platform?: KnowledgePlatform): Promise<number> {
+  const args: unknown[] = [];
+  if (platform) {
+    args.push(platform, platform);
+  }
+
+  const result = await db.execute({
+    sql: `
     SELECT COUNT(*) AS count
     FROM relations
     WHERE relation_type <> 'supersedes'
       AND (
-        source_id IN (SELECT id FROM entries WHERE superseded_by IS NOT NULL)
-        OR target_id IN (SELECT id FROM entries WHERE superseded_by IS NOT NULL)
+        source_id IN (SELECT id FROM entries WHERE superseded_by IS NOT NULL ${platform ? "AND platform = ?" : ""})
+        OR target_id IN (SELECT id FROM entries WHERE superseded_by IS NOT NULL ${platform ? "AND platform = ?" : ""})
       )
-  `);
+    `,
+    args,
+  });
   const count = toNumber(result.rows[0]?.count);
   return Number.isFinite(count) ? count : 0;
 }
@@ -119,15 +142,25 @@ async function expireDecayedEntries(
   options: {
     dryRun: boolean;
     verbose: boolean;
+    platform?: KnowledgePlatform;
     onLog: (message: string) => void;
   },
 ): Promise<number> {
-  const result = await db.execute(`
+  const args: unknown[] = [];
+  if (options.platform) {
+    args.push(options.platform);
+  }
+
+  const result = await db.execute({
+    sql: `
     SELECT id, content, expiry, created_at
     FROM entries
     WHERE superseded_by IS NULL
       AND expiry = 'temporary'
-  `);
+      ${options.platform ? "AND platform = ?" : ""}
+    `,
+    args,
+  });
 
   let expiredCount = 0;
   for (const row of result.rows) {
@@ -181,15 +214,25 @@ async function mergeNearExactDuplicates(
   options: {
     dryRun: boolean;
     verbose: boolean;
+    platform?: KnowledgePlatform;
     onLog: (message: string) => void;
   },
 ): Promise<number> {
-  const countResult = await db.execute(`
+  const countArgs: unknown[] = [];
+  if (options.platform) {
+    countArgs.push(options.platform);
+  }
+
+  const countResult = await db.execute({
+    sql: `
     SELECT COUNT(*) AS count
     FROM entries
     WHERE superseded_by IS NULL
       AND embedding IS NOT NULL
-  `);
+      ${options.platform ? "AND platform = ?" : ""}
+    `,
+    args: countArgs,
+  });
   const activeEmbeddedCount = toNumber(countResult.rows[0]?.count);
   const activeEmbedded = Number.isFinite(activeEmbeddedCount) ? activeEmbeddedCount : 0;
 
@@ -200,12 +243,21 @@ async function mergeNearExactDuplicates(
     return 0;
   }
 
-  const result = await db.execute(`
+  const args: unknown[] = [];
+  if (options.platform) {
+    args.push(options.platform);
+  }
+
+  const result = await db.execute({
+    sql: `
     SELECT id, type, subject, content, embedding, confirmations, recall_count, created_at
     FROM entries
     WHERE superseded_by IS NULL
       AND embedding IS NOT NULL
-  `);
+      ${options.platform ? "AND platform = ?" : ""}
+    `,
+    args,
+  });
 
   const entries: ActiveEmbeddedEntry[] = result.rows
     .map((row) => ({
@@ -347,20 +399,28 @@ async function mergeNearExactDuplicates(
   return mergedCount;
 }
 
-async function cleanOrphanedRelations(db: Client, dryRun: boolean): Promise<number> {
-  const orphanedCount = await countOrphanedRelations(db);
+async function cleanOrphanedRelations(db: Client, dryRun: boolean, platform?: KnowledgePlatform): Promise<number> {
+  const orphanedCount = await countOrphanedRelations(db, platform);
   if (dryRun || orphanedCount === 0) {
     return orphanedCount;
   }
 
-  await db.execute(`
+  const args: unknown[] = [];
+  if (platform) {
+    args.push(platform, platform);
+  }
+
+  await db.execute({
+    sql: `
     DELETE FROM relations
     WHERE relation_type <> 'supersedes'
       AND (
-        source_id IN (SELECT id FROM entries WHERE superseded_by IS NOT NULL)
-        OR target_id IN (SELECT id FROM entries WHERE superseded_by IS NOT NULL)
+        source_id IN (SELECT id FROM entries WHERE superseded_by IS NOT NULL ${platform ? "AND platform = ?" : ""})
+        OR target_id IN (SELECT id FROM entries WHERE superseded_by IS NOT NULL ${platform ? "AND platform = ?" : ""})
       )
-  `);
+    `,
+    args,
+  });
 
   return orphanedCount;
 }
@@ -413,6 +473,7 @@ export async function consolidateRules(
   const verbose = options.verbose === true;
   const rebuildIndex = options.rebuildIndex !== false;
   const onLog = options.onLog ?? (() => undefined);
+  const platform = options.platform;
   const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, "-");
   const backupPath = `${dbPath}.pre-consolidate-${timestamp}`;
 
@@ -437,7 +498,7 @@ export async function consolidateRules(
     onLog(`[backup] ${backupPath}`);
   }
 
-  const entriesBefore = await countActiveEntries(db);
+  const entriesBefore = await countActiveEntries(db, platform);
   const now = new Date();
 
   let expiredCount = 0;
@@ -445,16 +506,16 @@ export async function consolidateRules(
   let orphanedRelationsCleaned = 0;
 
   if (dryRun) {
-    expiredCount = await expireDecayedEntries(db, now, { dryRun, verbose, onLog });
-    mergedCount = await mergeNearExactDuplicates(db, { dryRun, verbose, onLog });
-    orphanedRelationsCleaned = await cleanOrphanedRelations(db, true);
+    expiredCount = await expireDecayedEntries(db, now, { dryRun, verbose, onLog, platform });
+    mergedCount = await mergeNearExactDuplicates(db, { dryRun, verbose, onLog, platform });
+    orphanedRelationsCleaned = await cleanOrphanedRelations(db, true, platform);
   } else {
     await db.execute("BEGIN");
     try {
       await ensureExpiredSentinel(db);
-      expiredCount = await expireDecayedEntries(db, now, { dryRun, verbose, onLog });
-      mergedCount = await mergeNearExactDuplicates(db, { dryRun, verbose, onLog });
-      orphanedRelationsCleaned = await cleanOrphanedRelations(db, false);
+      expiredCount = await expireDecayedEntries(db, now, { dryRun, verbose, onLog, platform });
+      mergedCount = await mergeNearExactDuplicates(db, { dryRun, verbose, onLog, platform });
+      orphanedRelationsCleaned = await cleanOrphanedRelations(db, false, platform);
       await db.execute("COMMIT");
     } catch (error) {
       try {
@@ -499,7 +560,7 @@ export async function consolidateRules(
     // Best-effort cleanup; ignore errors.
   }
 
-  const entriesAfter = await countActiveEntries(db);
+  const entriesAfter = await countActiveEntries(db, platform);
 
   return {
     entriesBefore,

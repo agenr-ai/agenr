@@ -661,6 +661,7 @@ export async function insertEntry(
         content,
         importance,
         expiry,
+        platform,
         source_file,
         source_context,
         content_hash,
@@ -668,7 +669,7 @@ export async function insertEntry(
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, vector32(?), ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, vector32(?), ?, ?)
     `,
     args: [
       id,
@@ -678,6 +679,7 @@ export async function insertEntry(
       entry.content,
       entry.importance,
       entry.expiry,
+      entry.platform ?? null,
       entry.source.file,
       entry.source.context,
       contentHash,

@@ -1,6 +1,6 @@
 import type { Client, InValue, Row } from "@libsql/client";
 import { embed } from "../embeddings/client.js";
-import type { RecallQuery, RecallResult, Scope, StoredEntry } from "../types.js";
+import type { KnowledgePlatform, RecallQuery, RecallResult, Scope, StoredEntry } from "../types.js";
 
 const DEFAULT_VECTOR_CANDIDATE_LIMIT = 50;
 const DEFAULT_SESSION_CANDIDATE_LIMIT = 500;
@@ -113,6 +113,8 @@ function mapStoredEntry(row: Row, tags: string[]): StoredEntry {
   const scope = scopeRaw || "private";
   const importanceRaw = toNumber(row.importance);
   const importance = Number.isFinite(importanceRaw) ? Math.min(10, Math.max(1, Math.round(importanceRaw))) : 5;
+  const platformRaw = toStringValue((row as Row & { platform?: unknown }).platform);
+  const platform = platformRaw.trim().length > 0 ? platformRaw : undefined;
 
   return {
     id: toStringValue(row.id),
@@ -122,6 +124,7 @@ function mapStoredEntry(row: Row, tags: string[]): StoredEntry {
     importance,
     expiry: toStringValue(row.expiry) as StoredEntry["expiry"],
     scope: scope as StoredEntry["scope"],
+    ...(platform ? { platform: platform as KnowledgePlatform } : {}),
     tags,
     source: {
       file: toStringValue(row.source_file),
@@ -382,7 +385,17 @@ export function shapeRecallText(text: string, context: string | undefined): stri
   return `[topic: ${topic}] ${trimmedText}`;
 }
 
-async function fetchVectorCandidates(db: Client, queryEmbedding: number[], limit: number): Promise<CandidateRow[]> {
+async function fetchVectorCandidates(
+  db: Client,
+  queryEmbedding: number[],
+  limit: number,
+  platform?: KnowledgePlatform,
+): Promise<CandidateRow[]> {
+  const args: unknown[] = [JSON.stringify(queryEmbedding), limit];
+  if (platform) {
+    args.push(platform);
+  }
+
   const result = await db.execute({
     sql: `
       SELECT
@@ -393,6 +406,7 @@ async function fetchVectorCandidates(db: Client, queryEmbedding: number[], limit
         e.importance,
         e.expiry,
         e.scope,
+        e.platform,
         e.source_file,
         e.source_context,
         e.embedding,
@@ -407,8 +421,9 @@ async function fetchVectorCandidates(db: Client, queryEmbedding: number[], limit
       CROSS JOIN entries AS e ON e.rowid = v.id
       WHERE e.embedding IS NOT NULL
         AND e.superseded_by IS NULL
+        ${platform ? "AND e.platform = ?" : ""}
     `,
-    args: [JSON.stringify(queryEmbedding), limit],
+    args,
   });
 
   const ids = result.rows.map((row) => toStringValue(row.id)).filter((id) => id.length > 0);
@@ -425,7 +440,12 @@ async function fetchVectorCandidates(db: Client, queryEmbedding: number[], limit
   });
 }
 
-async function fetchSessionCandidates(db: Client, limit: number): Promise<CandidateRow[]> {
+async function fetchSessionCandidates(db: Client, limit: number, platform?: KnowledgePlatform): Promise<CandidateRow[]> {
+  const args: unknown[] = [limit];
+  if (platform) {
+    args.unshift(platform);
+  }
+
   const result = await db.execute({
     sql: `
       SELECT
@@ -436,6 +456,7 @@ async function fetchSessionCandidates(db: Client, limit: number): Promise<Candid
         importance,
         expiry,
         scope,
+        platform,
         source_file,
         source_context,
         embedding,
@@ -448,10 +469,11 @@ async function fetchSessionCandidates(db: Client, limit: number): Promise<Candid
         superseded_by
       FROM entries
       WHERE superseded_by IS NULL
+        ${platform ? "AND platform = ?" : ""}
       ORDER BY updated_at DESC
       LIMIT ?
     `,
-    args: [limit],
+    args,
   });
 
   const ids = result.rows.map((row) => toStringValue(row.id)).filter((id) => id.length > 0);
@@ -466,12 +488,17 @@ async function fetchSessionCandidates(db: Client, limit: number): Promise<Candid
   });
 }
 
-async function runFts(db: Client, text: string): Promise<Set<string>> {
+async function runFts(db: Client, text: string, platform?: KnowledgePlatform): Promise<Set<string>> {
   if (!text.trim()) {
     return new Set();
   }
 
   try {
+    const args: unknown[] = [text];
+    if (platform) {
+      args.push(platform);
+    }
+
     const result = await db.execute({
       sql: `
         SELECT e.id
@@ -479,9 +506,10 @@ async function runFts(db: Client, text: string): Promise<Set<string>> {
         JOIN entries AS e ON e.rowid = entries_fts.rowid
         WHERE entries_fts MATCH ?
           AND e.superseded_by IS NULL
+          ${platform ? "AND e.platform = ?" : ""}
         LIMIT 250
       `,
-      args: [text],
+      args,
     });
 
     return new Set(result.rows.map((row) => toStringValue(row.id)).filter((id) => id.length > 0));
@@ -533,6 +561,7 @@ export async function recall(
   const now = options.now ?? new Date();
   const text = query.text?.trim() ?? "";
   const context = query.context?.trim() ?? "default";
+  const platform = query.platform;
 
   if (!text && context !== "session-start") {
     throw new Error("Query text is required unless --context session-start is used.");
@@ -557,9 +586,14 @@ export async function recall(
     if (!queryEmbedding) {
       throw new Error("Embedding provider returned no vector for recall query.");
     }
-    candidates = await fetchVectorCandidates(db, queryEmbedding, options.vectorCandidateLimit ?? DEFAULT_VECTOR_CANDIDATE_LIMIT);
+    candidates = await fetchVectorCandidates(
+      db,
+      queryEmbedding,
+      options.vectorCandidateLimit ?? DEFAULT_VECTOR_CANDIDATE_LIMIT,
+      platform,
+    );
   } else {
-    candidates = await fetchSessionCandidates(db, options.sessionCandidateLimit ?? DEFAULT_SESSION_CANDIDATE_LIMIT);
+    candidates = await fetchSessionCandidates(db, options.sessionCandidateLimit ?? DEFAULT_SESSION_CANDIDATE_LIMIT, platform);
   }
 
   const filtered = candidates.filter((candidate) =>
@@ -570,7 +604,7 @@ export async function recall(
     return [];
   }
 
-  const ftsMatches = text && !query.noBoost ? await runFts(db, effectiveText) : new Set<string>();
+  const ftsMatches = text && !query.noBoost ? await runFts(db, effectiveText, platform) : new Set<string>();
 
   const scored: RecallResult[] = filtered.map((candidate) => {
     const ftsMatch = ftsMatches.has(candidate.entry.id);

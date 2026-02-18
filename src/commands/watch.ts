@@ -14,8 +14,8 @@ import { parseTranscriptFile } from "../parser.js";
 import type { WatchOptions } from "../types.js";
 import { banner, formatLabel, formatWarn } from "../ui.js";
 import { generateContextFile } from "./context.js";
-import { resolveAutoSession } from "../watch/resolvers/auto.js";
 import { detectWatchPlatform, getResolver, type WatchPlatform } from "../watch/resolvers/index.js";
+import { getDefaultPlatformDir } from "../watch/platform-defaults.js";
 import { getFileState, loadWatchState, saveWatchState } from "../watch/state.js";
 import { readFileFromOffset, runWatcher } from "../watch/watcher.js";
 import { installSignalHandlers, isShutdownRequested } from "../shutdown.js";
@@ -92,7 +92,7 @@ export interface WatchCommandResult {
   durationMs: number;
 }
 
-type WatchMode = "file" | "dir" | "auto";
+type WatchMode = "file" | "dir";
 
 interface WatchModeConfig {
   mode: WatchMode;
@@ -100,7 +100,7 @@ interface WatchModeConfig {
   sessionsDir: string | null;
   platform: WatchPlatform | null;
   resolver: ReturnType<typeof getResolver> | null;
-  autoPlatformCount?: number;
+  warnings: string[];
 }
 
 async function resolveWatchMode(
@@ -111,84 +111,96 @@ async function resolveWatchMode(
   const hasFile = typeof file === "string" && file.trim().length > 0;
   const hasDir = typeof options.dir === "string" && options.dir.trim().length > 0;
   const autoMode = options.auto === true;
+  const hasPlatform = typeof options.platform === "string" && options.platform.trim().length > 0;
 
-  const modeCount = Number(hasFile) + Number(hasDir) + Number(autoMode);
-  if (modeCount !== 1) {
-    throw new Error("Choose exactly one watch mode: <file> OR --dir <path> OR --auto.");
-  }
+  const warnings: string[] = [];
+  let effectivePlatform = options.platform;
 
   if (autoMode) {
-    if (options.platform && options.platform.trim().length > 0) {
-      throw new Error("--platform cannot be used with --auto.");
-    }
+    warnings.push(
+      "Warning: --auto is deprecated. Use --platform <name> instead. --auto will be removed in a future version.",
+    );
 
-    const autoProbe = await resolveAutoSession();
-    if (autoProbe.discoveredRoots.length === 0) {
-      throw new Error(
-        [
-          "No supported platform directories found for --auto mode.",
-          "Expected one of:",
-          "  - ~/.openclaw/agents/main/sessions",
-          "  - ~/.claude/projects",
-          "  - ~/.codex/sessions",
-        ].join("\n"),
+    if (!hasPlatform) {
+      effectivePlatform = "openclaw";
+      warnings.push(
+        "Defaulting to --platform openclaw. Specify --platform explicitly to suppress this warning.",
       );
     }
-
-    return {
-      mode: "auto",
-      filePath: autoProbe.activeFile ? path.resolve(autoProbe.activeFile) : null,
-      sessionsDir: null,
-      platform: autoProbe.platform,
-      resolver: null,
-      autoPlatformCount: autoProbe.discoveredRoots.length,
-    };
   }
 
-  if (hasDir) {
-    const sessionsDir = path.resolve(options.dir!.trim());
-    const stat = await statFileFn(sessionsDir).catch((error: unknown) => {
+  if (hasFile && hasDir) {
+    throw new Error("Choose exactly one watch mode: <file> OR --dir <path> OR --platform <name>.");
+  }
+
+  if (hasFile) {
+    const filePath = path.resolve((file ?? "").trim());
+    const stat = await statFileFn(filePath).catch((error: unknown) => {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        throw new Error(`Sessions directory not found: ${sessionsDir}`);
+        throw new Error(`Transcript file not found: ${filePath}`);
       }
       throw error;
     });
 
-    if (!stat.isDirectory()) {
-      throw new Error(`Input is not a directory: ${sessionsDir}`);
+    if (!stat.isFile()) {
+      throw new Error(`Input is not a file: ${filePath}`);
     }
 
-    const platform = detectWatchPlatform(options.platform, sessionsDir);
-    const resolver = getResolver(options.platform, sessionsDir);
-    const resolvedFile = await resolver.resolveActiveSession(sessionsDir).catch(() => null);
-
+    const platform = detectWatchPlatform(effectivePlatform, filePath);
     return {
-      mode: "dir",
-      filePath: resolvedFile ? path.resolve(resolvedFile) : null,
-      sessionsDir,
+      mode: "file",
+      filePath,
+      sessionsDir: null,
       platform,
-      resolver,
+      resolver: null,
+      warnings,
     };
   }
 
-  const filePath = path.resolve((file ?? "").trim());
-  const stat = await statFileFn(filePath).catch((error: unknown) => {
+  // Directory mode: explicit --dir, or implicit via --platform defaults.
+  let sessionsDir: string | null = null;
+  if (hasDir) {
+    sessionsDir = path.resolve(options.dir!.trim());
+  } else if (typeof effectivePlatform === "string" && effectivePlatform.trim().length > 0) {
+    const platform = detectWatchPlatform(effectivePlatform, undefined);
+    if (platform === "mtime") {
+      throw new Error("--platform mtime requires --dir <path>.");
+    }
+    sessionsDir = path.resolve(getDefaultPlatformDir(platform));
+  }
+
+  if (!sessionsDir) {
+    throw new Error("Choose exactly one watch mode: <file> OR --dir <path> OR --platform <name>.");
+  }
+
+  const stat = await statFileFn(sessionsDir).catch((error: unknown) => {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      throw new Error(`Transcript file not found: ${filePath}`);
+      if (!hasDir && typeof effectivePlatform === "string" && effectivePlatform.trim().length > 0) {
+        const platform = detectWatchPlatform(effectivePlatform, undefined);
+        if (platform !== "mtime") {
+          throw new Error(`Platform directory not found: ${sessionsDir}. Is ${platform} installed?`);
+        }
+      }
+      throw new Error(`Sessions directory not found: ${sessionsDir}`);
     }
     throw error;
   });
 
-  if (!stat.isFile()) {
-    throw new Error(`Input is not a file: ${filePath}`);
+  if (!stat.isDirectory()) {
+    throw new Error(`Input is not a directory: ${sessionsDir}`);
   }
 
+  const platform = detectWatchPlatform(effectivePlatform, sessionsDir);
+  const resolver = getResolver(effectivePlatform, sessionsDir);
+  const resolvedFile = await resolver.resolveActiveSession(sessionsDir).catch(() => null);
+
   return {
-    mode: "file",
-    filePath,
-    sessionsDir: null,
-    platform: null,
-    resolver: null,
+    mode: "dir",
+    filePath: resolvedFile ? path.resolve(resolvedFile) : null,
+    sessionsDir,
+    platform,
+    resolver,
+    warnings,
   };
 }
 
@@ -232,6 +244,10 @@ export async function runWatchCommand(
   const clackOutput = { output: process.stderr };
   clack.intro(banner(), clackOutput);
 
+  for (const warning of modeConfig.warnings) {
+    process.stderr.write(`${warning}\n`);
+  }
+
   let stateWarning: string | null = null;
   let state = await resolvedDeps.loadWatchStateFn().catch((error: unknown) => {
     stateWarning = `State file is invalid (${error instanceof Error ? error.message : String(error)}). Resetting.`;
@@ -252,13 +268,6 @@ export async function runWatchCommand(
   } else if (modeConfig.mode === "dir") {
     clack.log.info(formatLabel("Watching directory", modeConfig.sessionsDir ?? "(unknown)"), clackOutput);
     clack.log.info(formatLabel("Platform", modeConfig.platform ?? "mtime"), clackOutput);
-    clack.log.info(
-      formatLabel("Active file", modeConfig.filePath ? formatSwitchLabel(modeConfig.filePath) : "(waiting for session file)"),
-      clackOutput,
-    );
-  } else {
-    clack.log.info(formatLabel("Watching", "auto mode"), clackOutput);
-    clack.log.info(formatLabel("Detected platforms", String(modeConfig.autoPlatformCount ?? 0)), clackOutput);
     clack.log.info(
       formatLabel("Active file", modeConfig.filePath ? formatSwitchLabel(modeConfig.filePath) : "(waiting for session file)"),
       clackOutput,
@@ -284,7 +293,6 @@ export async function runWatchCommand(
         directoryMode: modeConfig.mode === "dir",
         sessionsDir: modeConfig.sessionsDir ?? undefined,
         resolver: modeConfig.resolver ?? undefined,
-        autoMode: modeConfig.mode === "auto",
         platform: modeConfig.platform ?? undefined,
         intervalMs,
         minChunkChars,

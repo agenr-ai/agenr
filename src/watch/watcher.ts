@@ -12,12 +12,17 @@ import { extractKnowledgeFromChunks } from "../extractor.js";
 import { createLlmClient } from "../llm/client.js";
 import { parseTranscriptFile } from "../parser.js";
 import { installSignalHandlers, isShutdownRequested } from "../shutdown.js";
-import type { KnowledgeEntry, WatchState } from "../types.js";
+import type { KnowledgeEntry, KnowledgePlatform, WatchState } from "../types.js";
 import type { SessionResolver } from "./session-resolver.js";
-import { resolveAutoSession, type AutoSessionResult, type AutoWatchTarget } from "./resolvers/auto.js";
 import type { WatchPlatform } from "./resolvers/index.js";
 import { openClawSessionResolver } from "./resolvers/openclaw.js";
 import { createEmptyWatchState, getFileState, loadWatchState, saveWatchState, updateFileState } from "./state.js";
+
+interface WatchTarget {
+  dir: string;
+  platform: WatchPlatform;
+  recursive?: boolean;
+}
 
 export interface WatchCycleResult {
   bytesRead: number;
@@ -41,7 +46,6 @@ export interface WatcherOptions {
   directoryMode?: boolean;
   sessionsDir?: string;
   resolver?: SessionResolver;
-  autoMode?: boolean;
   platform?: WatchPlatform;
   fsWatchDebounceMs?: number;
   intervalMs: number;
@@ -89,7 +93,6 @@ export interface WatcherDeps {
   writeFileFn: typeof fs.writeFile;
   rmFn: typeof fs.rm;
   watchFn: typeof watchFs;
-  resolveAutoSessionFn: () => Promise<AutoSessionResult>;
   nowFn: () => Date;
   sleepFn: (ms: number) => Promise<void>;
   shouldShutdownFn: () => boolean;
@@ -119,7 +122,7 @@ function normalizeWatchDir(input: string): string {
   return path.resolve(input);
 }
 
-function watchTargetKey(target: AutoWatchTarget): string {
+function watchTargetKey(target: WatchTarget): string {
   return `${target.platform}:${normalizeWatchDir(target.dir)}`;
 }
 
@@ -183,24 +186,22 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
     writeFileFn: deps?.writeFileFn ?? fs.writeFile,
     rmFn: deps?.rmFn ?? fs.rm,
     watchFn: deps?.watchFn ?? watchFs,
-    resolveAutoSessionFn: deps?.resolveAutoSessionFn ?? resolveAutoSession,
     nowFn: deps?.nowFn ?? (() => new Date()),
     sleepFn: deps?.sleepFn ?? sleep,
     shouldShutdownFn: deps?.shouldShutdownFn ?? isShutdownRequested,
   };
 
   const directoryMode = options.directoryMode === true;
-  const autoMode = options.autoMode === true;
-  const realtimeEnabled = directoryMode || autoMode;
+  const realtimeEnabled = directoryMode;
   const watchDebounceMs = options.fsWatchDebounceMs ?? 2500;
 
   const findRenamed: ((originalPath: string) => Promise<string | null>) | null =
     options.resolver?.findRenamedFile?.bind(options.resolver) ??
-    (directoryMode || autoMode ? openClawSessionResolver.findRenamedFile.bind(openClawSessionResolver) : null);
+    (directoryMode ? openClawSessionResolver.findRenamedFile.bind(openClawSessionResolver) : null);
 
-  if (!directoryMode && !autoMode) {
+  if (!directoryMode) {
     if (!options.filePath || options.filePath.trim().length === 0) {
-      throw new Error("Watcher filePath is required unless directoryMode or autoMode is enabled.");
+      throw new Error("Watcher filePath is required unless directoryMode is enabled.");
     }
   }
 
@@ -223,7 +224,7 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
     }
   }
 
-  if (!directoryMode && !autoMode && fixedFilePath) {
+  if (!directoryMode && fixedFilePath) {
     let initialStat: Awaited<ReturnType<typeof resolvedDeps.statFileFn>>;
     try {
       initialStat = await resolvedDeps.statFileFn(fixedFilePath);
@@ -333,7 +334,7 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
     watchers.clear();
   };
 
-  const registerWatcher = (target: AutoWatchTarget, recursive: boolean): void => {
+  const registerWatcher = (target: WatchTarget, recursive: boolean): void => {
     const resolvedDir = normalizeWatchDir(target.dir);
     const key = watchTargetKey({ ...target, dir: resolvedDir });
     if (watchers.has(key) || fsWatchDisabled) {
@@ -372,14 +373,14 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
     }
   };
 
-  const refreshWatchers = (targets: AutoWatchTarget[]): void => {
+  const refreshWatchers = (targets: WatchTarget[]): void => {
     if (!realtimeEnabled || fsWatchDisabled) {
       return;
     }
 
-    const desired = new Map<string, AutoWatchTarget>();
+    const desired = new Map<string, WatchTarget>();
     for (const target of targets) {
-      const normalized: AutoWatchTarget = {
+      const normalized: WatchTarget = {
         ...target,
         dir: normalizeWatchDir(target.dir),
       };
@@ -452,8 +453,12 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
         }
 
         const processChunkEntries = async (chunkEntries: KnowledgeEntry[]): Promise<void> => {
-          cycleResult.entriesExtracted += chunkEntries.length;
-          const deduped = resolvedDeps.deduplicateEntriesFn(chunkEntries);
+          const platformTag: KnowledgePlatform | undefined =
+            currentPlatform && currentPlatform !== "mtime" ? (currentPlatform as KnowledgePlatform) : undefined;
+          const taggedEntries = platformTag ? chunkEntries.map((entry) => ({ ...entry, platform: platformTag })) : chunkEntries;
+
+          cycleResult.entriesExtracted += taggedEntries.length;
+          const deduped = resolvedDeps.deduplicateEntriesFn(taggedEntries);
 
           if (options.dryRun || deduped.length === 0) {
             return;
@@ -543,8 +548,6 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
 
 	  let cycles = 0;
 	  let totalEntriesStored = 0;
-	  let warnedNoAutoRoots = false;
-
   // Drain orphaned OpenClaw reset files that may have been renamed while the watcher was offline.
 	  if (findRenamed) {
 	    for (const trackedPath of Object.keys(state.files)) {
@@ -585,21 +588,7 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
       let resolvedPlatform: WatchPlatform | null = currentPlatform;
 
       try {
-        if (autoMode) {
-          const autoResult = await resolvedDeps.resolveAutoSessionFn();
-          resolvedTargetPath = autoResult.activeFile ? path.resolve(autoResult.activeFile) : null;
-          resolvedPlatform = autoResult.platform;
-          refreshWatchers(autoResult.watchTargets);
-
-          if (autoResult.discoveredRoots.length === 0 && !warnedNoAutoRoots) {
-            warnedNoAutoRoots = true;
-            options.onWarn?.(
-              "No supported platform directories found for --auto mode. Expected one of: ~/.openclaw/agents/main/sessions, ~/.claude/projects, ~/.codex/sessions",
-            );
-          } else if (autoResult.discoveredRoots.length > 0) {
-            warnedNoAutoRoots = false;
-          }
-        } else if (directoryMode) {
+        if (directoryMode) {
           if (!options.sessionsDir || !options.resolver) {
             throw new Error("directoryMode requires sessionsDir and resolver.");
           }
@@ -610,7 +599,7 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
             {
               dir: path.resolve(options.sessionsDir),
               platform: options.platform ?? "mtime",
-              recursive: options.platform === "codex",
+              recursive: options.platform === "codex" || options.platform === "claude-code",
             },
           ]);
         }

@@ -291,6 +291,7 @@ describe("mcp server", () => {
               limit: 5,
               types: "preference,fact",
               threshold: 0.5,
+              platform: "openclaw",
             },
           },
         }),
@@ -308,6 +309,7 @@ describe("mcp server", () => {
     expect(recallQuery.text).toBe("Jim's diet");
     expect(recallQuery.limit).toBe(5);
     expect(recallQuery.types).toEqual(["preference", "fact"]);
+    expect((recallQuery as any).platform).toBe("openclaw");
   });
 
   it("uses two-pass session-start recall and returns grouped ordering", async () => {
@@ -586,6 +588,47 @@ describe("mcp server", () => {
     expect(storedEntries).toHaveLength(2);
     expect(storedEntries[0]?.scope).toBe("personal");
     expect(storedEntries[0]?.source.file).toBe("chat-1");
+  });
+
+  it("agenr_store tags entries with platform when provided", async () => {
+    const harness = makeHarness();
+    harness.storeEntriesFn.mockResolvedValueOnce({
+      added: 1,
+      updated: 0,
+      skipped: 0,
+      superseded: 0,
+      llm_dedup_calls: 0,
+      relations_created: 0,
+      total_entries: 1,
+      duration_ms: 1,
+    } satisfies StoreResult);
+
+    await runServer(
+      [
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 99,
+          method: "tools/call",
+          params: {
+            name: "agenr_store",
+            arguments: {
+              platform: "codex",
+              entries: [
+                {
+                  type: "fact",
+                  content: "Tagged entry.",
+                },
+              ],
+            },
+          },
+        }),
+      ],
+      harness.deps,
+    );
+
+    const storedEntries = harness.storeEntriesFn.mock.calls[0]?.[1] as KnowledgeEntry[];
+    expect(storedEntries).toHaveLength(1);
+    expect((storedEntries[0] as any).platform).toBe("codex");
   });
 
   it("calls agenr_extract and optionally stores extracted entries", async () => {

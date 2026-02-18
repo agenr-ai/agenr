@@ -8,6 +8,8 @@ import { initSchema } from "../db/schema.js";
 import { rebuildVectorIndex } from "../db/vector-index.js";
 import { banner, formatLabel, ui } from "../ui.js";
 import { APP_VERSION } from "../version.js";
+import { normalizeKnowledgePlatform } from "../platform.js";
+import type { KnowledgePlatform } from "../types.js";
 
 interface DbRow {
   [key: string]: unknown;
@@ -20,6 +22,7 @@ export interface DbCommandCommonOptions {
 export interface DbExportCommandOptions extends DbCommandCommonOptions {
   json?: boolean;
   md?: boolean;
+  platform?: string;
 }
 
 export interface DbResetCommandOptions extends DbCommandCommonOptions {
@@ -139,8 +142,17 @@ async function getTagsByEntryId(db: ReturnType<typeof getDb>, ids: string[]): Pr
   return tags;
 }
 
-async function fetchExportEntries(db: ReturnType<typeof getDb>): Promise<Array<Record<string, unknown>>> {
-  const result = await db.execute(`
+async function fetchExportEntries(
+  db: ReturnType<typeof getDb>,
+  platform?: KnowledgePlatform,
+): Promise<Array<Record<string, unknown>>> {
+  const args: unknown[] = [];
+  if (platform) {
+    args.push(platform);
+  }
+
+  const result = await db.execute({
+    sql: `
     SELECT
       id,
       type,
@@ -149,6 +161,7 @@ async function fetchExportEntries(db: ReturnType<typeof getDb>): Promise<Array<R
       importance,
       expiry,
       scope,
+      platform,
       source_file,
       source_context,
       created_at,
@@ -160,8 +173,11 @@ async function fetchExportEntries(db: ReturnType<typeof getDb>): Promise<Array<R
       superseded_by
     FROM entries
     WHERE superseded_by IS NULL
+      ${platform ? "AND platform = ?" : ""}
     ORDER BY created_at ASC
-  `);
+    `,
+    args,
+  });
 
   const ids = result.rows.map((row) => toStringValue((row as DbRow).id)).filter((id) => id.length > 0);
   const tagsById = await getTagsByEntryId(db, ids);
@@ -177,6 +193,7 @@ async function fetchExportEntries(db: ReturnType<typeof getDb>): Promise<Array<R
       importance: toStringValue(record.importance),
       expiry: toStringValue(record.expiry),
       scope: toStringValue(record.scope) || "private",
+      platform: toStringValue(record.platform) || null,
       tags: tagsById.get(id) ?? [],
       source_file: toStringValue(record.source_file),
       source_context: toStringValue(record.source_context),
@@ -242,6 +259,7 @@ export async function runDbStatsCommand(
 ): Promise<{
   total: number;
   byType: Array<{ type: string; count: number }>;
+  byPlatform: Array<{ platform: string; count: number }>;
   topTags: Array<{ tag: string; count: number }>;
   oldest: string | null;
   newest: string | null;
@@ -291,6 +309,22 @@ export async function runDbStatsCommand(
       count: Number.isFinite(toNumber((row as DbRow).count)) ? toNumber((row as DbRow).count) : 0,
     }));
 
+    const byPlatformResult = await db.execute(`
+      SELECT platform, COUNT(*) AS count
+      FROM entries
+      WHERE superseded_by IS NULL
+      GROUP BY platform
+      ORDER BY count DESC
+    `);
+    const byPlatform = byPlatformResult.rows.map((row) => {
+      const raw = (row as DbRow).platform;
+      const platformValue = toStringValue(raw);
+      return {
+        platform: platformValue.trim().length > 0 ? platformValue : "(untagged)",
+        count: Number.isFinite(toNumber((row as DbRow).count)) ? toNumber((row as DbRow).count) : 0,
+      };
+    });
+
     const tagsResult = await db.execute(`
       SELECT t.tag, COUNT(*) AS count
       FROM tags t
@@ -334,6 +368,9 @@ export async function runDbStatsCommand(
         ui.bold("By Type"),
         ...(byType.length > 0 ? byType.map((row) => `- ${row.type}: ${row.count}`) : ["- none"]),
         "",
+        ui.bold("By Platform"),
+        ...(byPlatform.length > 0 ? byPlatform.map((row) => `- ${row.platform}: ${row.count}`) : ["- none"]),
+        "",
         ui.bold("Top Tags"),
         ...(topTags.length > 0 ? topTags.map((row) => `- ${row.tag}: ${row.count}`) : ["- none"]),
       ].join("\n"),
@@ -345,6 +382,7 @@ export async function runDbStatsCommand(
     return {
       total,
       byType,
+      byPlatform,
       topTags,
       oldest,
       newest,
@@ -427,10 +465,15 @@ export async function runDbExportCommand(
   const config = resolvedDeps.readConfigFn(process.env);
   const configured = options.db?.trim() || config?.db?.path || DEFAULT_DB_PATH;
   const db = resolvedDeps.getDbFn(configured);
+  const platformRaw = options.platform?.trim();
+  const platform = platformRaw ? normalizeKnowledgePlatform(platformRaw) : null;
+  if (platformRaw && !platform) {
+    throw new Error("--platform must be one of: openclaw, claude-code, codex");
+  }
 
   try {
     await resolvedDeps.initDbFn(db);
-    const entries = await fetchExportEntries(db);
+    const entries = await fetchExportEntries(db, platform ?? undefined);
 
     if (options.md) {
       process.stdout.write(renderMarkdownExport(entries));

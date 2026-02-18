@@ -1,6 +1,7 @@
 import type { Client, InValue } from "@libsql/client";
 import { findSimilar } from "../db/store.js";
 import { UnionFind, cosineSim, type ActiveEmbeddedEntry, validateCluster } from "./util.js";
+import type { KnowledgePlatform } from "../types.js";
 
 const DEFAULT_SIMILARITY_THRESHOLD = 0.82;
 const CROSS_TYPE_SUBJECT_THRESHOLD = 0.89;
@@ -18,6 +19,7 @@ export interface ClusterOptions {
   typeFilter?: string;
   idempotencyDays?: number;
   neighborLimit?: number;
+  platform?: KnowledgePlatform;
   verbose?: boolean;
   onLog?: (message: string) => void;
 }
@@ -117,15 +119,25 @@ export async function buildClusters(db: Client, options: ClusterOptions = {}): P
   const idempotencyDays = options.idempotencyDays ?? DEFAULT_IDEMPOTENCY_DAYS;
   const neighborLimit = Math.max(2, options.neighborLimit ?? DEFAULT_NEIGHBOR_LIMIT);
   const typeFilter = options.typeFilter?.trim();
+  const platform = options.platform;
   const onLog = options.onLog ?? (() => undefined);
 
-  const result = await db.execute(`
+  const args: unknown[] = [];
+  if (platform) {
+    args.push(platform);
+  }
+
+  const result = await db.execute({
+    sql: `
     SELECT id, type, subject, content, importance, embedding, confirmations,
            recall_count, created_at, merged_from, consolidated_at
     FROM entries
     WHERE superseded_by IS NULL
       AND embedding IS NOT NULL
-  `);
+      ${platform ? "AND platform = ?" : ""}
+    `,
+    args,
+  });
 
   const now = new Date();
   const candidates = result.rows

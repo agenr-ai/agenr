@@ -163,4 +163,14 @@ describe("recall command", () => {
     const firstCallQuery = firstCall?.[1];
     expect(firstCallQuery?.text).toBe("[topic: health] what is Jim's diet");
   });
+
+  it("passes --platform into recall query when provided", async () => {
+    const recallFn = vi.fn(async () => []);
+    const deps = makeDeps({ recallFn });
+
+    await runRecallCommand("work", { context: "default", json: true, platform: "openclaw" }, deps);
+
+    const firstCall = (recallFn.mock.calls as unknown[][])[0] as [unknown, { platform?: string }] | undefined;
+    expect(firstCall?.[1]?.platform).toBe("openclaw");
+  });
 });

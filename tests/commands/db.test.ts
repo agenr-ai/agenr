@@ -130,9 +130,22 @@ describe("db command", () => {
     const stats = await runDbStatsCommand({}, makeDeps(client));
     expect(stats.total).toBe(2);
     expect(stats.byType.some((row) => row.type === "fact" && row.count === 1)).toBe(true);
+    expect(stats.byPlatform.some((row) => row.platform === "(untagged)" && row.count === 2)).toBe(true);
     expect(stats.topTags.some((row) => row.tag === "alpha")).toBe(true);
     expect(stats.oldest).toBeTruthy();
     expect(stats.newest).toBeTruthy();
+  });
+
+  it("reports platform breakdown in stats", async () => {
+    const client = createTestClient();
+    await initDb(client);
+    await seedEntry(client, { id: "a", type: "fact", subject: "Jim", content: "A", tag: "alpha" });
+    await seedEntry(client, { id: "b", type: "decision", subject: "Jim", content: "B", tag: "beta" });
+    await client.execute({ sql: "UPDATE entries SET platform = ? WHERE id = ?", args: ["openclaw", "a"] });
+
+    const stats = await runDbStatsCommand({}, makeDeps(client));
+    expect(stats.byPlatform.some((row) => row.platform === "openclaw" && row.count === 1)).toBe(true);
+    expect(stats.byPlatform.some((row) => row.platform === "(untagged)" && row.count === 1)).toBe(true);
   });
 
   it("reports zero stats for empty database", async () => {
@@ -200,6 +213,25 @@ describe("db command", () => {
     expect(mdOutput).toContain("# Agenr Knowledge Export");
     expect(mdOutput).toContain("Keep me");
     expect(mdOutput).not.toContain("Superseded");
+  });
+
+  it("db export supports --platform filter", async () => {
+    const client = createTestClient();
+    await initDb(client);
+    await seedEntry(client, { id: "open-1", type: "fact", subject: "Jim", content: "OpenClaw", tag: "keep" });
+    await seedEntry(client, { id: "codex-1", type: "fact", subject: "Jim", content: "Codex", tag: "keep" });
+    await client.execute({ sql: "UPDATE entries SET platform = ? WHERE id = ?", args: ["openclaw", "open-1"] });
+    await client.execute({ sql: "UPDATE entries SET platform = ? WHERE id = ?", args: ["codex", "codex-1"] });
+
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const exported = await runDbExportCommand({ json: true, platform: "openclaw" }, makeDeps(client));
+
+    expect(exported).toHaveLength(1);
+    expect(exported[0]?.content).toBe("OpenClaw");
+
+    const jsonOutput = stdoutSpy.mock.calls.map((call) => String(call[0])).join("");
+    expect(jsonOutput).toContain("OpenClaw");
+    expect(jsonOutput).not.toContain("Codex");
   });
 
   it("prints resolved db path", async () => {
