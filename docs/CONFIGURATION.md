@@ -18,6 +18,7 @@ Stores:
 - `model` — model name for extraction
 - `credentials` — stored API keys (encrypted at rest)
 - `labelProjectMap` — optional mapping from normalized session labels to project names
+- `forgetting` — optional forgetting policy (`protect`, `scoreThreshold`, `maxAgeDays`, `enabled`)
 
 ### Example (~/.agenr/config.json)
 
@@ -28,6 +29,15 @@ Stores:
     "openclaw": "openclaw"
   }
 }
+```
+
+```yaml
+# forgetting:
+#   protect:
+#     - "EJA identity"
+#     - "project-*"
+#   scoreThreshold: 0.05
+#   maxAgeDays: 60
 ```
 
 ## Database

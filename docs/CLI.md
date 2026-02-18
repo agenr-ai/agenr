@@ -237,6 +237,10 @@ Pick exactly one mode:
 - platform mode: `agenr watch --platform <name>`
 
 Watch mode runs online dedup during store.
+When `--context <path>` is configured and entries are stored, watch refreshes:
+- the primary context file at `--context`
+- `context-mini.md` in the same directory (top 20 by recall score, ~500 token budget)
+- `context-hot.md` in the same directory (updated in last 10m, importance >= 7, writes empty file when none qualify)
 
 ### Example
 
@@ -348,6 +352,8 @@ agenr consolidate [options]
 ### Options
 - `--rules-only`: run only Tier 1 rule cleanup.
 - `--dry-run`: report actions without writing.
+- `--forget`: delete forgetting candidates (without this flag, forgetting pass is dry-run report only).
+- `--report`: print pre-run stats before consolidation; with `--dry-run`, this runs report-only mode.
 - `--platform <name>`: scope consolidation to platform (`openclaw|claude-code|claude|codex`).
 - `--project <name>`: scope consolidation to project (comma-separated for multiple).
 - `--exclude-project <name>`: exclude entries from project (comma-separated for multiple).
@@ -379,6 +385,19 @@ $A consolidate --dry-run --verbose
 |  +- Orphaned relations cleaned: 3
 +--  Done
 ```
+
+## `health`
+
+Read-only database health summary.
+
+### Syntax
+
+```bash
+agenr health
+```
+
+### Options
+- None.
 
 ## `mcp`
 

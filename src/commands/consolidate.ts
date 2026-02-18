@@ -1,7 +1,9 @@
+import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import * as clack from "@clack/prompts";
 import { readConfig } from "../config.js";
+import { forgettingScore, isProtected } from "../consolidate/rules.js";
 import { runConsolidationOrchestrator, type ConsolidationOrchestratorReport } from "../consolidate/orchestrate.js";
 import { showFlaggedMerges } from "../consolidate/verify.js";
 import { closeDb, DEFAULT_DB_PATH, getDb, walCheckpoint } from "../db/client.js";
@@ -12,13 +14,15 @@ import { createLlmClient } from "../llm/client.js";
 import { formatWarn } from "../ui.js";
 import { installSignalHandlers, isShutdownRequested, onShutdown } from "../shutdown.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
-import { hasAnyProjectParts, parseProjectList } from "../project.js";
+import { buildProjectFilter, hasAnyProjectParts, parseProjectList } from "../project.js";
 import { KNOWLEDGE_PLATFORMS } from "../types.js";
-import type { KnowledgePlatform } from "../types.js";
+import type { KnowledgePlatform, StoredEntry } from "../types.js";
 
 export interface ConsolidateCommandOptions {
   rulesOnly?: boolean;
   dryRun?: boolean;
+  forget?: boolean;
+  report?: boolean;
   verbose?: boolean;
   json?: boolean;
   db?: string;
@@ -51,6 +55,50 @@ interface ConsolidateLogger {
   warn: (message: string) => void;
 }
 
+interface TodoAgeBuckets {
+  d0To7: number;
+  d7To30: number;
+  d30To90: number;
+  d90Plus: number;
+}
+
+interface ConsolidatePreRunStats {
+  todoAges: TodoAgeBuckets;
+  neverRecalled: number;
+  contradictionBySubject: Array<{ subject: string; count: number }>;
+  estimatedLlmTokens: number;
+  estimatedLlmCostUsd: number;
+}
+
+interface ForgettingCandidate {
+  entry: StoredEntry;
+  score: number;
+  ageDays: number;
+  protected: boolean;
+}
+
+interface ForgettingAssessment {
+  trigger: ForgettingTriggerMetrics;
+  candidateCount: number;
+  protectedCount: number;
+  estimatedFreedBytes: number;
+  threshold: number;
+  shouldRun: boolean;
+}
+
+export interface ForgettingTriggerMetrics {
+  dbFileSizeBytes: number | null;
+  activeEntryCount: number;
+  lowScoreOldEntryCount: number;
+}
+
+const MB = 1024 * 1024;
+const FORGETTING_FILE_SIZE_TRIGGER_BYTES = 200 * MB;
+const FORGETTING_ACTIVE_ENTRY_TRIGGER = 10_000;
+const FORGETTING_LOW_SCORE_TRIGGER_COUNT = 50;
+const ESTIMATED_TOKENS_PER_CLUSTER = 3500;
+const ESTIMATED_USD_PER_1M_TOKENS = 10;
+
 function resolveUserPath(inputPath: string): string {
   if (!inputPath.startsWith("~")) {
     return inputPath;
@@ -70,6 +118,316 @@ function resolveDbFilePath(rawPath: string): string {
 
 function formatNumber(value: number): string {
   return value.toLocaleString("en-US");
+}
+
+function toNumber(value: unknown): number {
+  if (typeof value === "number") {
+    return value;
+  }
+  if (typeof value === "bigint") {
+    return Number(value);
+  }
+  if (typeof value === "string" && value.trim()) {
+    return Number(value);
+  }
+  return Number.NaN;
+}
+
+function toStringValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "bigint") {
+    return String(value);
+  }
+  return "";
+}
+
+function parseDaysBetween(now: Date, pastIso: string): number {
+  const parsed = new Date(pastIso);
+  if (Number.isNaN(parsed.getTime())) {
+    return 0;
+  }
+  const days = (now.getTime() - parsed.getTime()) / (1000 * 60 * 60 * 24);
+  if (!Number.isFinite(days)) {
+    return 0;
+  }
+  return Math.max(days, 0);
+}
+
+function formatApproxMb(bytes: number): string {
+  const mb = Math.max(0, bytes) / MB;
+  if (mb < 1) {
+    return "<1MB";
+  }
+  return `${Math.round(mb)}MB`;
+}
+
+function estimateFreedBytes(candidateCount: number, activeCount: number, fileSizeBytes: number | null): number {
+  if (!fileSizeBytes || fileSizeBytes <= 0 || activeCount <= 0 || candidateCount <= 0) {
+    return 0;
+  }
+  return Math.round(fileSizeBytes * (candidateCount / activeCount));
+}
+
+function mapRowToStoredEntry(row: Record<string, unknown>): StoredEntry {
+  const canonicalKey = toStringValue(row.canonical_key).trim();
+  const platform = toStringValue(row.platform).trim();
+  const project = toStringValue(row.project).trim();
+  const scopeRaw = toStringValue(row.scope).trim();
+  const importanceRaw = toNumber(row.importance);
+
+  return {
+    id: toStringValue(row.id),
+    type: toStringValue(row.type) as StoredEntry["type"],
+    subject: toStringValue(row.subject),
+    content: toStringValue(row.content),
+    ...(canonicalKey ? { canonical_key: canonicalKey } : {}),
+    ...(platform ? { platform: platform as KnowledgePlatform } : {}),
+    ...(project ? { project: project.toLowerCase() } : {}),
+    importance: Number.isFinite(importanceRaw) ? Math.min(10, Math.max(1, Math.round(importanceRaw))) : 5,
+    expiry: toStringValue(row.expiry) as StoredEntry["expiry"],
+    scope: (scopeRaw || "private") as StoredEntry["scope"],
+    tags: [],
+    source: {
+      file: toStringValue(row.source_file),
+      context: toStringValue(row.source_context),
+    },
+    created_at: toStringValue(row.created_at),
+    updated_at: toStringValue(row.updated_at),
+    last_recalled_at: toStringValue(row.last_recalled_at) || undefined,
+    recall_count: Number.isFinite(toNumber(row.recall_count)) ? toNumber(row.recall_count) : 0,
+    confirmations: Number.isFinite(toNumber(row.confirmations)) ? toNumber(row.confirmations) : 0,
+    contradictions: Number.isFinite(toNumber(row.contradictions)) ? toNumber(row.contradictions) : 0,
+    superseded_by: toStringValue(row.superseded_by) || undefined,
+  };
+}
+
+function renderPreRunReport(stats: ConsolidatePreRunStats): string {
+  const lines: string[] = [
+    "Consolidation Report (pre-run)",
+    `- Todos by age: 0-7d=${formatNumber(stats.todoAges.d0To7)}, 7-30d=${formatNumber(stats.todoAges.d7To30)}, 30-90d=${formatNumber(stats.todoAges.d30To90)}, 90d+=${formatNumber(stats.todoAges.d90Plus)}`,
+    `- Entries never recalled: ${formatNumber(stats.neverRecalled)}`,
+    "- Contradictions by subject:",
+  ];
+
+  if (stats.contradictionBySubject.length === 0) {
+    lines.push("  (none)");
+  } else {
+    for (const row of stats.contradictionBySubject.slice(0, 10)) {
+      lines.push(`  ${row.subject}: ${formatNumber(row.count)}`);
+    }
+  }
+
+  lines.push(
+    `- Estimated LLM cost (full run): ~${formatNumber(stats.estimatedLlmTokens)} tokens x $${ESTIMATED_USD_PER_1M_TOKENS.toFixed(2)}/1M ~= $${stats.estimatedLlmCostUsd.toFixed(2)}`,
+  );
+  return lines.join("\n");
+}
+
+function buildScopedFilter(
+  platform: KnowledgePlatform | null,
+  project?: string[],
+  excludeProject?: string[],
+): { clause: string; args: unknown[] } {
+  const projectSql = buildProjectFilter({ column: "project", project, excludeProject });
+  const args: unknown[] = [];
+  if (platform) {
+    args.push(platform);
+  }
+  args.push(...projectSql.args);
+  const clause = `${platform ? "AND platform = ?" : ""} ${projectSql.clause}`.trim();
+  return { clause: clause ? ` ${clause}` : "", args };
+}
+
+async function getDbFileSizeBytes(dbFilePath: string): Promise<number | null> {
+  if (dbFilePath === ":memory:") {
+    return null;
+  }
+  try {
+    const stat = await fs.stat(dbFilePath);
+    return stat.size;
+  } catch {
+    return null;
+  }
+}
+
+export function shouldAutoTriggerForgetting(metrics: ForgettingTriggerMetrics): boolean {
+  return (
+    (metrics.dbFileSizeBytes ?? 0) > FORGETTING_FILE_SIZE_TRIGGER_BYTES ||
+    metrics.activeEntryCount > FORGETTING_ACTIVE_ENTRY_TRIGGER ||
+    metrics.lowScoreOldEntryCount > FORGETTING_LOW_SCORE_TRIGGER_COUNT
+  );
+}
+
+async function collectPreRunStats(
+  db: ReturnType<typeof getDb>,
+  platform: KnowledgePlatform | null,
+  project?: string[],
+  excludeProject?: string[],
+  activeEntryCount?: number,
+): Promise<ConsolidatePreRunStats> {
+  const scoped = buildScopedFilter(platform, project, excludeProject);
+  const now = new Date();
+
+  const todosResult = await db.execute({
+    sql: `
+      SELECT created_at
+      FROM entries
+      WHERE superseded_by IS NULL
+        AND type = 'todo'
+        ${scoped.clause}
+    `,
+    args: scoped.args,
+  });
+
+  const todoAges: TodoAgeBuckets = {
+    d0To7: 0,
+    d7To30: 0,
+    d30To90: 0,
+    d90Plus: 0,
+  };
+  for (const row of todosResult.rows) {
+    const age = parseDaysBetween(now, toStringValue(row.created_at));
+    if (age <= 7) {
+      todoAges.d0To7 += 1;
+    } else if (age <= 30) {
+      todoAges.d7To30 += 1;
+    } else if (age <= 90) {
+      todoAges.d30To90 += 1;
+    } else {
+      todoAges.d90Plus += 1;
+    }
+  }
+
+  const neverRecalledResult = await db.execute({
+    sql: `
+      SELECT COUNT(*) AS count
+      FROM entries
+      WHERE superseded_by IS NULL
+        AND COALESCE(recall_count, 0) = 0
+        ${scoped.clause}
+    `,
+    args: scoped.args,
+  });
+  const neverRecalled = Number.isFinite(toNumber(neverRecalledResult.rows[0]?.count))
+    ? toNumber(neverRecalledResult.rows[0]?.count)
+    : 0;
+
+  const contradictionsResult = await db.execute({
+    sql: `
+      SELECT subject, COUNT(*) AS count
+      FROM entries
+      WHERE superseded_by IS NULL
+        AND contradictions > 0
+        ${scoped.clause}
+      GROUP BY subject
+      ORDER BY count DESC, subject ASC
+      LIMIT 20
+    `,
+    args: scoped.args,
+  });
+
+  const contradictionBySubject = contradictionsResult.rows
+    .map((row) => ({
+      subject: toStringValue(row.subject),
+      count: Number.isFinite(toNumber(row.count)) ? toNumber(row.count) : 0,
+    }))
+    .filter((row) => row.subject.length > 0 && row.count > 0);
+
+  let activeCount = activeEntryCount ?? 0;
+  if (activeEntryCount === undefined) {
+    const activeResult = await db.execute({
+      sql: `
+        SELECT COUNT(*) AS count
+        FROM entries
+        WHERE superseded_by IS NULL
+          ${scoped.clause}
+      `,
+      args: scoped.args,
+    });
+    activeCount = Number.isFinite(toNumber(activeResult.rows[0]?.count))
+      ? toNumber(activeResult.rows[0]?.count)
+      : 0;
+  }
+
+  const estimatedClusters = Math.ceil(activeCount / 6);
+  const estimatedLlmTokens = estimatedClusters * ESTIMATED_TOKENS_PER_CLUSTER;
+  const estimatedLlmCostUsd = (estimatedLlmTokens / 1_000_000) * ESTIMATED_USD_PER_1M_TOKENS;
+
+  return {
+    todoAges,
+    neverRecalled,
+    contradictionBySubject,
+    estimatedLlmTokens,
+    estimatedLlmCostUsd,
+  };
+}
+
+async function collectForgettingCandidates(
+  db: ReturnType<typeof getDb>,
+  now: Date,
+  threshold: number,
+  maxAgeDays: number,
+  protectPatterns: string[],
+  platform: KnowledgePlatform | null,
+  project?: string[],
+  excludeProject?: string[],
+): Promise<ForgettingCandidate[]> {
+  const scoped = buildScopedFilter(platform, project, excludeProject);
+  const result = await db.execute({
+    sql: `
+      SELECT
+        id,
+        type,
+        subject,
+        canonical_key,
+        content,
+        importance,
+        expiry,
+        scope,
+        platform,
+        project,
+        source_file,
+        source_context,
+        created_at,
+        updated_at,
+        last_recalled_at,
+        recall_count,
+        confirmations,
+        contradictions,
+        superseded_by
+      FROM entries
+      WHERE superseded_by IS NULL
+        ${scoped.clause}
+    `,
+    args: scoped.args,
+  });
+
+  const candidates: ForgettingCandidate[] = [];
+  for (const row of result.rows) {
+    const entry = mapRowToStoredEntry(row as Record<string, unknown>);
+    const ageDays = parseDaysBetween(now, entry.created_at);
+    if (ageDays <= maxAgeDays) {
+      continue;
+    }
+
+    const score = forgettingScore(entry, now);
+    if (score >= threshold) {
+      continue;
+    }
+
+    const protectedEntry = isProtected(entry, protectPatterns);
+    candidates.push({
+      entry,
+      score,
+      ageDays,
+      protected: protectedEntry,
+    });
+  }
+
+  candidates.sort((a, b) => a.score - b.score || b.ageDays - a.ageDays);
+  return candidates;
 }
 
 function renderTextReport(stats: ConsolidationOrchestratorReport, dryRun: boolean): string {
@@ -146,6 +504,101 @@ function createLogger(jsonMode: boolean): ConsolidateLogger {
   };
 }
 
+async function assessForgetting(
+  db: ReturnType<typeof getDb>,
+  dbFilePath: string,
+  now: Date,
+  threshold: number,
+  maxAgeDays: number,
+  protectPatterns: string[],
+  platform: KnowledgePlatform | null,
+  project?: string[],
+  excludeProject?: string[],
+): Promise<ForgettingAssessment> {
+  const scoped = buildScopedFilter(platform, project, excludeProject);
+  const activeResult = await db.execute({
+    sql: `
+      SELECT COUNT(*) AS count
+      FROM entries
+      WHERE superseded_by IS NULL
+      ${scoped.clause}
+    `,
+    args: scoped.args,
+  });
+
+  const activeEntryCount = Number.isFinite(toNumber(activeResult.rows[0]?.count))
+    ? toNumber(activeResult.rows[0]?.count)
+    : 0;
+  const dbFileSizeBytes = await getDbFileSizeBytes(dbFilePath);
+  const candidates = await collectForgettingCandidates(
+    db,
+    now,
+    threshold,
+    maxAgeDays,
+    protectPatterns,
+    platform,
+    project,
+    excludeProject,
+  );
+  const protectedCount = candidates.filter((item) => item.protected).length;
+  const lowScoreOldEntryCount = candidates.length;
+  const trigger: ForgettingTriggerMetrics = {
+    dbFileSizeBytes,
+    activeEntryCount,
+    lowScoreOldEntryCount,
+  };
+  const candidateCount = candidates.filter((item) => !item.protected).length;
+  return {
+    trigger,
+    candidateCount,
+    protectedCount,
+    estimatedFreedBytes: estimateFreedBytes(candidateCount, activeEntryCount, dbFileSizeBytes),
+    threshold,
+    shouldRun: shouldAutoTriggerForgetting(trigger),
+  };
+}
+
+async function runForgettingDeletion(
+  db: ReturnType<typeof getDb>,
+  dbFilePath: string,
+  candidates: ForgettingCandidate[],
+): Promise<void> {
+  const deletable = candidates.filter((item) => !item.protected);
+  if (deletable.length === 0) {
+    process.stdout.write("Deleted 0 entries, freed ~0MB\n");
+    return;
+  }
+
+  const beforeBytes = await getDbFileSizeBytes(dbFilePath);
+  await db.execute("PRAGMA wal_checkpoint(TRUNCATE)");
+  await db.execute("BEGIN");
+  try {
+    for (const candidate of deletable) {
+      await db.execute({
+        sql: "DELETE FROM entries WHERE id = ?",
+        args: [candidate.entry.id],
+      });
+      process.stdout.write(`[forget] [${candidate.entry.type}] ${candidate.entry.subject}\n`);
+    }
+    await db.execute("COMMIT");
+  } catch (error) {
+    try {
+      await db.execute("ROLLBACK");
+    } catch {
+      // Ignore rollback failures and rethrow the root error.
+    }
+    throw error;
+  }
+
+  await db.execute("PRAGMA vacuum");
+  const afterBytes = await getDbFileSizeBytes(dbFilePath);
+  const freedBytes =
+    typeof beforeBytes === "number" && typeof afterBytes === "number"
+      ? Math.max(0, beforeBytes - afterBytes)
+      : 0;
+  process.stdout.write(`Deleted ${formatNumber(deletable.length)} entries, freed ~${formatApproxMb(freedBytes)}\n`);
+}
+
 export async function runConsolidateCommand(
   options: ConsolidateCommandOptions,
   deps: Partial<ConsolidateCommandDeps> = {},
@@ -170,6 +623,12 @@ export async function runConsolidateCommand(
 
   const logger = createLogger(options.json === true);
   const config = resolvedDeps.readConfigFn(process.env);
+  const forgettingConfig = config?.forgetting ?? {
+    protect: [],
+    scoreThreshold: 0.05,
+    maxAgeDays: 60,
+    enabled: true,
+  };
   const configuredPath = options.db?.trim() || config?.db?.path || DEFAULT_DB_PATH;
   const dbFilePath = resolveDbFilePath(configuredPath);
   const platformRaw = options.platform?.trim();
@@ -210,6 +669,29 @@ export async function runConsolidateCommand(
   try {
     await resolvedDeps.initSchemaFn(db);
 
+    const scoped = buildScopedFilter(platform, project, excludeProject);
+    const activeBeforeResult = await db.execute({
+      sql: `
+        SELECT COUNT(*) AS count
+        FROM entries
+        WHERE superseded_by IS NULL
+        ${scoped.clause}
+      `,
+      args: scoped.args,
+    });
+    const activeBefore = Number.isFinite(toNumber(activeBeforeResult.rows[0]?.count))
+      ? toNumber(activeBeforeResult.rows[0]?.count)
+      : 0;
+
+    if (options.report) {
+      const preRun = await collectPreRunStats(db, platform, project, excludeProject, activeBefore);
+      logger.info(renderPreRunReport(preRun));
+
+      if (options.dryRun) {
+        return { exitCode: isShutdownRequested() ? 130 : 0 };
+      }
+    }
+
     const llmClient = options.rulesOnly ? undefined : resolvedDeps.createLlmClientFn({ env: process.env });
     const embeddingApiKey = options.rulesOnly ? undefined : resolvedDeps.resolveEmbeddingApiKeyFn(config, process.env);
 
@@ -236,6 +718,48 @@ export async function runConsolidateCommand(
         onWarn: (message) => logger.warn(formatWarn(message)),
       },
     );
+
+    const now = new Date();
+    const scoreThreshold =
+      typeof forgettingConfig.scoreThreshold === "number" ? forgettingConfig.scoreThreshold : 0.05;
+    const maxAgeDays = typeof forgettingConfig.maxAgeDays === "number" ? forgettingConfig.maxAgeDays : 60;
+    const protectPatterns = Array.isArray(forgettingConfig.protect) ? forgettingConfig.protect : [];
+    const forgettingEnabled = forgettingConfig.enabled !== false;
+
+    const forgettingAssessment = await assessForgetting(
+      db,
+      dbFilePath,
+      now,
+      scoreThreshold,
+      maxAgeDays,
+      protectPatterns,
+      platform,
+      project,
+      excludeProject,
+    );
+
+    const runForgetting = options.forget === true || (forgettingEnabled && forgettingAssessment.shouldRun);
+    if (runForgetting) {
+      const candidates = await collectForgettingCandidates(
+        db,
+        now,
+        scoreThreshold,
+        maxAgeDays,
+        protectPatterns,
+        platform,
+        project,
+        excludeProject,
+      );
+      if (options.forget === true && options.dryRun !== true) {
+        await runForgettingDeletion(db, dbFilePath, candidates);
+      } else {
+        logger.info(
+          `Forgetting candidates: ${formatNumber(candidates.filter((candidate) => !candidate.protected).length)} entries (score < ${scoreThreshold})`,
+        );
+        logger.info(`Would free ~${formatApproxMb(forgettingAssessment.estimatedFreedBytes)}`);
+        logger.info("Run with --forget to delete");
+      }
+    }
 
     if (options.json) {
       process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
