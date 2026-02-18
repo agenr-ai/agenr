@@ -1,12 +1,13 @@
 import type { Client, InValue, Row } from "@libsql/client";
+import { mapRawStoredEntry } from "./stored-entry.js";
 import { embed } from "../embeddings/client.js";
 import { buildProjectFilter, parseProjectList } from "../project.js";
+import { MILLISECONDS_PER_DAY, parseDaysBetween, toNumber, toStringValue } from "../utils/entry-utils.js";
 import { DEFAULT_SESSION_CANDIDATE_LIMIT } from "./session-start.js";
 import type { KnowledgePlatform, RecallQuery, RecallResult, Scope, StoredEntry } from "../types.js";
 
 const DEFAULT_VECTOR_CANDIDATE_LIMIT = 50;
 const DEFAULT_LIMIT = 10;
-const MILLISECONDS_PER_DAY = 1000 * 60 * 60 * 24;
 
 interface CandidateRow {
   entry: StoredEntry;
@@ -18,29 +19,6 @@ export interface RecallOptions {
   now?: Date;
   vectorCandidateLimit?: number;
   sessionCandidateLimit?: number;
-}
-
-function toNumber(value: InValue | undefined): number {
-  if (typeof value === "number") {
-    return value;
-  }
-  if (typeof value === "bigint") {
-    return Number(value);
-  }
-  if (typeof value === "string" && value.trim()) {
-    return Number(value);
-  }
-  return Number.NaN;
-}
-
-function toStringValue(value: InValue | undefined): string {
-  if (typeof value === "string") {
-    return value;
-  }
-  if (typeof value === "number" || typeof value === "bigint") {
-    return String(value);
-  }
-  return "";
 }
 
 function mapBufferToVector(value: InValue | undefined): number[] {
@@ -110,41 +88,10 @@ function normalizeTags(tags: string[] | undefined): string[] {
 }
 
 export function mapStoredEntry(row: Row, tags: string[]): StoredEntry {
-  const scopeRaw = toStringValue(row.scope);
-  const scope = scopeRaw || "private";
-  const importanceRaw = toNumber(row.importance);
-  const importance = Number.isFinite(importanceRaw) ? Math.min(10, Math.max(1, Math.round(importanceRaw))) : 5;
-  const platformRaw = toStringValue(row.platform);
-  const platform = platformRaw.trim().length > 0 ? platformRaw : undefined;
-  const projectTrimmed = toStringValue(row.project).trim();
-  const project = projectTrimmed.length > 0 ? projectTrimmed.toLowerCase() : undefined;
-  const canonicalKeyTrimmed = toStringValue(row.canonical_key).trim();
-
-  return {
-    id: toStringValue(row.id),
-    type: toStringValue(row.type) as StoredEntry["type"],
-    subject: toStringValue(row.subject),
-    content: toStringValue(row.content),
-    ...(canonicalKeyTrimmed ? { canonical_key: canonicalKeyTrimmed } : {}),
-    importance,
-    expiry: toStringValue(row.expiry) as StoredEntry["expiry"],
-    scope: scope as StoredEntry["scope"],
-    ...(platform ? { platform: platform as KnowledgePlatform } : {}),
-    ...(project ? { project } : {}),
+  return mapRawStoredEntry(row as Record<string, unknown>, {
     tags,
-    source: {
-      file: toStringValue(row.source_file),
-      context: toStringValue(row.source_context),
-    },
     embedding: mapBufferToVector(row.embedding),
-    created_at: toStringValue(row.created_at),
-    updated_at: toStringValue(row.updated_at),
-    last_recalled_at: toStringValue(row.last_recalled_at) || undefined,
-    recall_count: Number.isFinite(toNumber(row.recall_count)) ? toNumber(row.recall_count) : 0,
-    confirmations: Number.isFinite(toNumber(row.confirmations)) ? toNumber(row.confirmations) : 0,
-    contradictions: Number.isFinite(toNumber(row.contradictions)) ? toNumber(row.contradictions) : 0,
-    superseded_by: toStringValue(row.superseded_by) || undefined,
-  };
+  });
 }
 
 export async function getTagsForEntryIds(db: Client, ids: string[]): Promise<Map<string, string[]>> {
@@ -296,21 +243,6 @@ function passesFilters(
   return true;
 }
 
-function parseDaysBetween(now: Date, pastIso: string | undefined): number {
-  if (!pastIso) {
-    return 0;
-  }
-  const parsed = new Date(pastIso);
-  if (Number.isNaN(parsed.getTime())) {
-    return 0;
-  }
-  const delta = (now.getTime() - parsed.getTime()) / MILLISECONDS_PER_DAY;
-  if (!Number.isFinite(delta)) {
-    return 0;
-  }
-  return Math.max(delta, 0);
-}
-
 export function freshnessBoost(entry: StoredEntry, now: Date): number {
   if (entry.importance < 6) return 1.0;
   const hoursOld = parseDaysBetween(now, entry.created_at) * 24;
@@ -368,7 +300,7 @@ export function recallStrength(recallCount: number, daysSinceRecall: number, tie
   return Math.min(Math.pow(recallCount, 0.7) / 5, 1.0) * recency(daysSinceRecall, tier);
 }
 
-function scoreEntryWithBreakdown(
+export function scoreEntryWithBreakdown(
   entry: StoredEntry,
   vectorSim: number,
   ftsMatch: boolean,

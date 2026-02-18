@@ -415,11 +415,30 @@ Read-only database health summary.
 ### Syntax
 
 ```bash
-agenr health
+agenr health [options]
 ```
 
 ### Options
-- None.
+- `--db <path>`: database path override.
+
+### Example
+
+```bash
+$A health --db ~/.agenr/knowledge.db
+```
+
+### Example Output
+
+```text
+DB Health ────────────────────────────────
+Entries: 1,842 total | 194 todos | 122 preferences
+File size: 46.1MB
+Oldest: 2025-11-02 | Newest: today
+
+Forgetting Candidates
+- score < 0.05:  61 entries (would free ~1.5MB)
+- Protected:      9 entries
+```
 
 ## `mcp`
 

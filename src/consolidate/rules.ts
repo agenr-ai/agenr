@@ -6,6 +6,7 @@ import { recency } from "../db/recall.js";
 import { createRelation } from "../db/relations.js";
 import { findSimilar } from "../db/store.js";
 import { buildProjectFilter } from "../project.js";
+import { parseDaysBetween, toNumber, toStringValue } from "../utils/entry-utils.js";
 import { UnionFind, cosineSim, type ActiveEmbeddedEntry, validateCluster } from "./util.js";
 import type { KnowledgePlatform } from "../types.js";
 import type { StoredEntry } from "../types.js";
@@ -16,7 +17,6 @@ const MAX_ACTIVE_EMBEDDED_ENTRIES = 20_000;
 const MERGE_NEIGHBOR_LIMIT = 50;
 const MAX_CLUSTER_SIZE = 12;
 const DIAMETER_FLOOR = MERGE_SIMILARITY_THRESHOLD - 0.02; // 0.93 for Tier 1
-const MILLISECONDS_PER_DAY = 1000 * 60 * 60 * 24;
 
 export interface ConsolidationStats {
   entriesBefore: number;
@@ -38,29 +38,6 @@ export interface ConsolidateRulesOptions {
   skipBackup?: boolean;
   backupPath?: string;
   skipOrphanCleanup?: boolean;
-}
-
-function toNumber(value: InValue | undefined): number {
-  if (typeof value === "number") {
-    return value;
-  }
-  if (typeof value === "bigint") {
-    return Number(value);
-  }
-  if (typeof value === "string" && value.trim()) {
-    return Number(value);
-  }
-  return Number.NaN;
-}
-
-function toStringValue(value: InValue | undefined): string {
-  if (typeof value === "string") {
-    return value;
-  }
-  if (typeof value === "number" || typeof value === "bigint") {
-    return String(value);
-  }
-  return "";
 }
 
 function toProjectValue(value: InValue | undefined): string | null {
@@ -96,34 +73,10 @@ function collapsePreview(text: string, maxLength = 80): string {
 }
 
 function parseDaysOld(now: Date, createdAt: string): number {
-  const parsed = new Date(createdAt);
-  if (Number.isNaN(parsed.getTime())) {
-    return 0;
-  }
-  const days = (now.getTime() - parsed.getTime()) / MILLISECONDS_PER_DAY;
-  if (!Number.isFinite(days)) {
-    return 0;
-  }
-  return Math.max(days, 0);
+  return parseDaysBetween(now, createdAt);
 }
 
-function parseDaysBetween(now: Date, pastIso: string | undefined): number {
-  if (!pastIso) {
-    return 0;
-  }
-
-  const parsed = new Date(pastIso);
-  if (Number.isNaN(parsed.getTime())) {
-    return 0;
-  }
-
-  const delta = (now.getTime() - parsed.getTime()) / MILLISECONDS_PER_DAY;
-  if (!Number.isFinite(delta)) {
-    return 0;
-  }
-
-  return Math.max(delta, 0);
-}
+export { parseDaysBetween };
 
 export function forgettingScore(entry: StoredEntry, now: Date): number {
   const ageDays = parseDaysBetween(now, entry.created_at);
