@@ -116,8 +116,8 @@ function mapStoredEntry(row: Row, tags: string[]): StoredEntry {
   const importance = Number.isFinite(importanceRaw) ? Math.min(10, Math.max(1, Math.round(importanceRaw))) : 5;
   const platformRaw = toStringValue(row.platform);
   const platform = platformRaw.trim().length > 0 ? platformRaw : undefined;
-  const projectRaw = toStringValue(row.project);
-  const project = projectRaw.trim().length > 0 ? projectRaw.trim().toLowerCase() : undefined;
+  const projectTrimmed = toStringValue(row.project).trim();
+  const project = projectTrimmed.length > 0 ? projectTrimmed.toLowerCase() : undefined;
 
   return {
     id: toStringValue(row.id),

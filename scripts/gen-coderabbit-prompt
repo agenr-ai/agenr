@@ -44,7 +44,7 @@ if [[ -f "pnpm-lock.yaml" ]]; then
   TEST_CMD="pnpm test"
 elif [[ -f "yarn.lock" ]]; then
   TEST_CMD="yarn test"
-elif [[ -f "bun.lockb" ]]; then
+elif [[ -f "bun.lock" ]] || [[ -f "bun.lockb" ]]; then
   TEST_CMD="bun test"
 else
   TEST_CMD="npm test"
@@ -57,17 +57,15 @@ if [[ -z "$OUTPUT_FILE" ]]; then
   OUTPUT_FILE="${OUTPUT_DIR}/codex-pr${PR}-coderabbit.md"
 fi
 
-echo "Fetching PR #${PR} details..." >&2
+echo "Fetching PR #${PR} details and latest CodeRabbit review..." >&2
 
-# Pull PR metadata
-PR_META="$(gh pr view "$PR" --json title,headRefName,baseRefName)"
-PR_TITLE="$(echo "$PR_META" | jq -r '.title')"
-PR_BRANCH="$(echo "$PR_META" | jq -r '.headRefName')"
-
-echo "Fetching latest CodeRabbit review..." >&2
+# Single API call for both metadata and reviews.
+PR_JSON="$(gh pr view "$PR" --json title,headRefName,baseRefName,reviews)"
+PR_TITLE="$(echo "$PR_JSON" | jq -r '.title')"
+PR_BRANCH="$(echo "$PR_JSON" | jq -r '.headRefName')"
 
 # Pull latest CodeRabbit review - handles both 'coderabbitai' and 'coderabbitai[bot]'
-REVIEW_BODY="$(gh pr view "$PR" --json reviews --jq '
+REVIEW_BODY="$(echo "$PR_JSON" | jq -r '
   .reviews
   | map(select(.author.login | test("coderabbitai"; "i")))
   | last
@@ -80,7 +78,10 @@ if [[ -z "$REVIEW_BODY" ]]; then
   exit 1
 fi
 
-cat > "$OUTPUT_FILE" <<EOF
+{
+  # Use a delimiter that's unlikely to appear in prompt text, and append the review body separately
+  # so it can never terminate the heredoc early.
+  cat <<__AGENR_CODEX_PROMPT_EOF__
 # Codex Task: Fix CodeRabbit feedback on PR #${PR}
 
 **PR:** #${PR} - ${PR_TITLE}
@@ -102,8 +103,10 @@ After fixing:
 
 ## CodeRabbit Review
 
-${REVIEW_BODY}
-EOF
+__AGENR_CODEX_PROMPT_EOF__
+
+  printf '%s\n' "$REVIEW_BODY"
+} > "$OUTPUT_FILE"
 
 echo "Generated: ${OUTPUT_FILE}" >&2
 echo "$OUTPUT_FILE"

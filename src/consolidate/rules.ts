@@ -254,14 +254,14 @@ async function mergeNearExactDuplicates(
   if (options.platform) {
     countArgs.push(options.platform);
   }
-  const projectSqlForCount = buildProjectFilter({
+  const projectSql = buildProjectFilter({
     column: "project",
     project:
       options.project === undefined ? undefined : options.project === null ? null : [options.project],
     excludeProject: options.excludeProject,
     strict: options.project !== undefined && options.project !== null,
   });
-  countArgs.push(...projectSqlForCount.args);
+  countArgs.push(...projectSql.args);
 
   const countResult = await db.execute({
     sql: `
@@ -270,7 +270,7 @@ async function mergeNearExactDuplicates(
     WHERE superseded_by IS NULL
       AND embedding IS NOT NULL
       ${options.platform ? "AND platform = ?" : ""}
-      ${projectSqlForCount.clause}
+      ${projectSql.clause}
     `,
     args: countArgs,
   });
@@ -288,13 +288,6 @@ async function mergeNearExactDuplicates(
   if (options.platform) {
     args.push(options.platform);
   }
-  const projectSql = buildProjectFilter({
-    column: "project",
-    project:
-      options.project === undefined ? undefined : options.project === null ? null : [options.project],
-    excludeProject: options.excludeProject,
-    strict: options.project !== undefined && options.project !== null,
-  });
   args.push(...projectSql.args);
 
   const result = await db.execute({

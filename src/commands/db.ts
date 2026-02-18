@@ -332,10 +332,10 @@ export async function runDbStatsCommand(
       }
     }
 
-    const totalResult = await db.execute({
-      sql: `SELECT COUNT(*) AS count FROM entries WHERE superseded_by IS NULL ${filterClause ? `${filterClause}` : ""}`,
-      args: filterArgs,
-    });
+	    const totalResult = await db.execute({
+	      sql: `SELECT COUNT(*) AS count FROM entries WHERE superseded_by IS NULL ${filterClause}`,
+	      args: filterArgs,
+	    });
     const total = Number.isFinite(toNumber((totalResult.rows[0] as DbRow | undefined)?.count))
       ? toNumber((totalResult.rows[0] as DbRow | undefined)?.count)
       : 0;
