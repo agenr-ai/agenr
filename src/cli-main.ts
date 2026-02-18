@@ -29,6 +29,7 @@ import { runContextCommand } from "./commands/context.js";
 import { runMcpCommand } from "./commands/mcp.js";
 import { runRecallCommand } from "./commands/recall.js";
 import { runStoreCommand } from "./commands/store.js";
+import { runTodoCommand } from "./commands/todo.js";
 import { runWatchCommand } from "./commands/watch.js";
 import { describeAuth, maskSecret, readConfig, setConfigKey, setStoredCredential, writeConfig } from "./config.js";
 import { deduplicateEntries } from "./dedup.js";
@@ -556,6 +557,15 @@ export function createProgram(): Command {
     .option("--json", "Output JSON results", false)
     .action(async (file: string | undefined, opts: WatchCommandOptions) => {
       const result = await runWatchCommand(file, opts);
+      process.exitCode = result.exitCode;
+    });
+
+  program
+    .command("todo <subcommand> <subject>")
+    .description("Manage todos in the knowledge base")
+    .option("--db <path>", "Path to database file")
+    .action(async (subcommand: string, subject: string, opts: { db?: string }) => {
+      const result = await runTodoCommand(subcommand, subject, { db: opts.db });
       process.exitCode = result.exitCode;
     });
 

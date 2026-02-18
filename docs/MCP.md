@@ -22,7 +22,7 @@ Protocol details:
 - transport: stdio
 - JSON-RPC: 2.0
 - MCP protocol version: `2024-11-05`
-- tools: `agenr_recall`, `agenr_store`, `agenr_extract`
+- tools: `agenr_recall`, `agenr_store`, `agenr_done`, `agenr_extract`
 
 ## Codex Setup (`~/.codex/config.toml`)
 
@@ -221,6 +221,32 @@ Extracted 2 entries from text:
 
 [1] (decision) We moved to pnpm.
 Stored: 1 new, 0 updated, 1 duplicates skipped, 0 superseded.
+```
+
+### `agenr_done`
+
+Mark a todo as completed and remove it from active recall.
+
+Parameters:
+- `subject` (string, required): todo subject to match (partial/fuzzy matching supported)
+- `confirm` (boolean, optional, default `false`): if `true`, immediately marks the top match done when multiple candidates exist
+
+Example call payload:
+
+```json
+{
+  "name": "agenr_done",
+  "arguments": {
+    "subject": "fix client test",
+    "confirm": true
+  }
+}
+```
+
+Typical response text:
+
+```text
+Marked done: fix client test
 ```
 
 ## Teach Your AI to Use agenr

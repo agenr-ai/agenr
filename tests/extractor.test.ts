@@ -114,6 +114,21 @@ describe("SYSTEM_PROMPT", () => {
     // This suite uses mocked model outputs, so we validate policy text in the prompt itself.
     expect(SYSTEM_PROMPT).toContain("Assistant messages don't constitute memory requests.");
   });
+
+  it("includes Todo Completion Detection guidance", () => {
+    expect(SYSTEM_PROMPT).toContain("Todo Completion Detection");
+    expect(SYSTEM_PROMPT).toContain("Emit an \"event\" entry describing the completion");
+  });
+
+  it("lists expected todo completion keywords", () => {
+    expect(SYSTEM_PROMPT).toMatch(/\bdone\b/i);
+    expect(SYSTEM_PROMPT).toMatch(/\bfixed\b/i);
+    expect(SYSTEM_PROMPT).toMatch(/\bresolved\b/i);
+    expect(SYSTEM_PROMPT).toMatch(/\bcompleted\b/i);
+    expect(SYSTEM_PROMPT).toMatch(/\bshipped\b/i);
+    expect(SYSTEM_PROMPT).toMatch(/\bclosed\b/i);
+    expect(SYSTEM_PROMPT).toMatch(/\bmerged\b/i);
+  });
 });
 
 describe("extractKnowledgeFromChunks", () => {

@@ -259,6 +259,28 @@ $A watch --platform openclaw --interval 120
 Summary: 1 cycles | 1 entries stored | watched for 0s
 ```
 
+## `todo`
+
+Manage todo entries in the knowledge base.
+
+### Syntax
+
+```bash
+agenr todo <subcommand> <subject> [options]
+```
+
+### Options
+- `--db <path>`: database path override.
+
+### Subcommands
+- `done <subject>`: fuzzy-match active todos by subject and retire one by setting `superseded_by = id`.
+
+### Example
+
+```bash
+$A todo done "fix client test"
+```
+
 ## `daemon`
 
 ### Syntax
