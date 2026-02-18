@@ -1,6 +1,6 @@
 import * as clack from "@clack/prompts";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runConsolidateCommand } from "../../src/commands/consolidate.js";
+import { runConsolidateCommand, shouldAutoTriggerForgetting } from "../../src/commands/consolidate.js";
 import type { ConsolidationOrchestratorReport } from "../../src/consolidate/orchestrate.js";
 
 function reportFixture(): ConsolidationOrchestratorReport {
@@ -65,9 +65,19 @@ describe("consolidate command", () => {
   });
 
   function makeDeps() {
+    const db = {
+      execute: vi.fn(async (stmt: unknown) => {
+        const sql = typeof stmt === "string" ? stmt : String((stmt as { sql?: unknown }).sql ?? "");
+        if (sql.includes("COUNT(*)")) {
+          return { rows: [{ count: 0 }] };
+        }
+        return { rows: [] };
+      }),
+    };
+
     return {
       readConfigFn: vi.fn(() => ({ db: { path: "/tmp/knowledge.db" } })),
-      getDbFn: vi.fn(() => ({}) as any),
+      getDbFn: vi.fn(() => db as any),
       closeDbFn: vi.fn(() => undefined),
       initSchemaFn: vi.fn(async () => undefined),
       createLlmClientFn: vi.fn(() => ({} as any)),
@@ -121,5 +131,50 @@ describe("consolidate command", () => {
     const output = stderrSpy.mock.calls.map((call) => String(call[0])).join("");
     expect(output).toContain("Knowledge Consolidation");
     expect(output.includes("\u001b[")).toBe(false);
+  });
+
+  it("supports --report with --dry-run as report-only mode", async () => {
+    const deps = makeDeps();
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    await runConsolidateCommand({ report: true, dryRun: true }, deps);
+
+    expect(deps.runConsolidationOrchestratorFn).not.toHaveBeenCalled();
+    const output = stderrSpy.mock.calls.map((call) => String(call[0])).join("");
+    expect(output).toContain("Consolidation Report (pre-run)");
+  });
+
+  it("evaluates forgetting auto-trigger thresholds", () => {
+    expect(
+      shouldAutoTriggerForgetting({
+        dbFileSizeBytes: 100 * 1024 * 1024,
+        activeEntryCount: 1_000,
+        lowScoreOldEntryCount: 20,
+      }),
+    ).toBe(false);
+
+    expect(
+      shouldAutoTriggerForgetting({
+        dbFileSizeBytes: 201 * 1024 * 1024,
+        activeEntryCount: 1_000,
+        lowScoreOldEntryCount: 20,
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldAutoTriggerForgetting({
+        dbFileSizeBytes: 100 * 1024 * 1024,
+        activeEntryCount: 10_001,
+        lowScoreOldEntryCount: 20,
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldAutoTriggerForgetting({
+        dbFileSizeBytes: 100 * 1024 * 1024,
+        activeEntryCount: 1_000,
+        lowScoreOldEntryCount: 51,
+      }),
+    ).toBe(true);
   });
 });

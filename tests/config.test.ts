@@ -52,6 +52,12 @@ describe("config", () => {
       dimensions: 1024,
     });
     expect(loaded?.db?.path).toBe(path.join(os.homedir(), ".agenr", "knowledge.db"));
+    expect(loaded?.forgetting).toEqual({
+      protect: [],
+      scoreThreshold: 0.05,
+      maxAgeDays: 60,
+      enabled: true,
+    });
   });
 
   it("returns null when config does not exist", async () => {
@@ -108,10 +114,44 @@ describe("config", () => {
       db: {
         path: path.join(os.homedir(), ".agenr", "knowledge.db"),
       },
+      forgetting: {
+        protect: [],
+        scoreThreshold: 0.05,
+        maxAgeDays: 60,
+        enabled: true,
+      },
       provider: "anthropic",
       credentials: {
         anthropicApiKey: "sk-ant-test",
       },
+    });
+  });
+
+  it("preserves forgetting config through normalizeConfig", () => {
+    const normalized = normalizeConfig({
+      forgetting: {
+        protect: ["EJA identity", "project-*"],
+        scoreThreshold: 0.04,
+        maxAgeDays: 45,
+        enabled: true,
+      },
+    });
+
+    expect(normalized.forgetting).toEqual({
+      protect: ["EJA identity", "project-*"],
+      scoreThreshold: 0.04,
+      maxAgeDays: 45,
+      enabled: true,
+    });
+  });
+
+  it("applies forgetting defaults when missing", () => {
+    const normalized = normalizeConfig({});
+    expect(normalized.forgetting).toEqual({
+      protect: [],
+      scoreThreshold: 0.05,
+      maxAgeDays: 60,
+      enabled: true,
     });
   });
 

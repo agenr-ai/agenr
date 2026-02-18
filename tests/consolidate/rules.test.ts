@@ -4,11 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { createClient, type Client } from "@libsql/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { consolidateRules } from "../../src/consolidate/rules.js";
+import { consolidateRules, forgettingScore, isProtected } from "../../src/consolidate/rules.js";
 import { initDb } from "../../src/db/client.js";
 import { createRelation } from "../../src/db/relations.js";
 import { hashText, insertEntry } from "../../src/db/store.js";
-import type { Expiry, KnowledgeEntry, KnowledgeType } from "../../src/types.js";
+import type { Expiry, KnowledgeEntry, KnowledgeType, StoredEntry } from "../../src/types.js";
 
 function asNumber(value: unknown): number {
   if (typeof value === "number") {
@@ -117,6 +117,65 @@ describe("consolidate rules", () => {
 
     return id;
   }
+
+  function makeStoredEntry(overrides: Partial<StoredEntry> = {}): StoredEntry {
+    return {
+      id: "entry-1",
+      type: "fact",
+      subject: "subject",
+      content: "content",
+      importance: 5,
+      expiry: "permanent",
+      scope: "private",
+      tags: [],
+      source: {
+        file: "rules.test.jsonl",
+        context: "unit test",
+      },
+      created_at: "2026-02-18T00:00:00.000Z",
+      updated_at: "2026-02-18T00:00:00.000Z",
+      recall_count: 0,
+      confirmations: 0,
+      contradictions: 0,
+      ...overrides,
+    };
+  }
+
+  it("computes forgetting score with age, recall bonus, and importance floor", () => {
+    const now = new Date("2026-02-18T00:00:00.000Z");
+
+    const fresh = makeStoredEntry({ created_at: "2026-02-18T00:00:00.000Z", importance: 5, recall_count: 0 });
+    expect(forgettingScore(fresh, now)).toBeCloseTo(1, 2);
+
+    const ninetyDays = makeStoredEntry({ created_at: "2025-11-20T00:00:00.000Z", importance: 5, recall_count: 0 });
+    expect(forgettingScore(ninetyDays, now)).toBeCloseTo(0.5, 1);
+
+    const oneEightyDays = makeStoredEntry({ created_at: "2025-08-22T00:00:00.000Z", importance: 5, recall_count: 0 });
+    expect(forgettingScore(oneEightyDays, now)).toBeCloseTo(0.25, 1);
+
+    const recalled = makeStoredEntry({ created_at: "2025-08-22T00:00:00.000Z", importance: 5, recall_count: 6 });
+    expect(forgettingScore(recalled, now)).toBeGreaterThan(forgettingScore(oneEightyDays, now));
+
+    const important = makeStoredEntry({ created_at: "2025-08-22T00:00:00.000Z", importance: 8, recall_count: 0 });
+    expect(forgettingScore(important, now)).toBeGreaterThanOrEqual(0.4);
+
+    const old = makeStoredEntry({ created_at: "2024-11-25T00:00:00.000Z", importance: 4, recall_count: 0 });
+    expect(forgettingScore(old, now)).toBeLessThan(0.05);
+  });
+
+  it("protects high-importance and configured subject patterns from forgetting", () => {
+    const topImportance = makeStoredEntry({ importance: 10, subject: "anything" });
+    expect(isProtected(topImportance, [])).toBe(true);
+
+    const exact = makeStoredEntry({ importance: 6, subject: "EJA identity" });
+    expect(isProtected(exact, ["EJA identity"])).toBe(true);
+
+    const wildcard = makeStoredEntry({ importance: 6, subject: "project-agenr" });
+    expect(isProtected(wildcard, ["project-*"])).toBe(true);
+
+    const unprotected = makeStoredEntry({ importance: 6, subject: "random fact" });
+    expect(isProtected(unprotected, ["EJA identity"])).toBe(false);
+  });
 
   async function insertRawEntry(db: Client, params: { id: string; content: string; createdAt?: string }): Promise<void> {
     const now = params.createdAt ?? new Date().toISOString();

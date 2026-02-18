@@ -64,6 +64,8 @@ const CONFIG_DIR_MODE = 0o700;
 const DEFAULT_EMBEDDING_PROVIDER = "openai";
 const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
 const DEFAULT_EMBEDDING_DIMENSIONS = 1024;
+const DEFAULT_FORGETTING_SCORE_THRESHOLD = 0.05;
+const DEFAULT_FORGETTING_MAX_AGE_DAYS = 60;
 
 function resolveUserPath(inputPath: string): string {
   if (!inputPath.startsWith("~")) {
@@ -180,6 +182,51 @@ function normalizeDbConfig(input: unknown): NonNullable<AgenrConfig["db"]> {
   return normalized;
 }
 
+function normalizeForgettingConfig(input: unknown): NonNullable<AgenrConfig["forgetting"]> {
+  const normalized: NonNullable<AgenrConfig["forgetting"]> = {
+    protect: [],
+    scoreThreshold: DEFAULT_FORGETTING_SCORE_THRESHOLD,
+    maxAgeDays: DEFAULT_FORGETTING_MAX_AGE_DAYS,
+    enabled: true,
+  };
+
+  if (!input || typeof input !== "object") {
+    return normalized;
+  }
+
+  const record = input as Record<string, unknown>;
+
+  if (Array.isArray(record.protect)) {
+    normalized.protect = record.protect
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+  }
+
+  if (
+    typeof record.scoreThreshold === "number" &&
+    Number.isFinite(record.scoreThreshold) &&
+    record.scoreThreshold >= 0 &&
+    record.scoreThreshold <= 1
+  ) {
+    normalized.scoreThreshold = record.scoreThreshold;
+  }
+
+  if (
+    typeof record.maxAgeDays === "number" &&
+    Number.isFinite(record.maxAgeDays) &&
+    record.maxAgeDays >= 0
+  ) {
+    normalized.maxAgeDays = Math.floor(record.maxAgeDays);
+  }
+
+  if (typeof record.enabled === "boolean") {
+    normalized.enabled = record.enabled;
+  }
+
+  return normalized;
+}
+
 function normalizeLabelProjectMap(input: unknown): Record<string, string> | undefined {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     return undefined;
@@ -209,6 +256,7 @@ export function normalizeConfig(input: unknown): AgenrConfig {
   const normalized: AgenrConfig = {
     embedding: normalizeEmbeddingConfig(record.embedding),
     db: normalizeDbConfig(record.db),
+    forgetting: normalizeForgettingConfig(record.forgetting),
   };
 
   if (typeof record.auth === "string") {
@@ -322,6 +370,13 @@ export function mergeConfigPatch(current: AgenrConfig | null, patch: AgenrConfig
     merged.db = {
       ...(current?.db ?? {}),
       ...(patch.db ?? {}),
+    };
+  }
+
+  if (current?.forgetting || patch.forgetting) {
+    merged.forgetting = {
+      ...(current?.forgetting ?? {}),
+      ...(patch.forgetting ?? {}),
     };
   }
 

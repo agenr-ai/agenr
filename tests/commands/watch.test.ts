@@ -1,9 +1,11 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createClient, type Client } from "@libsql/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runWatchCommand } from "../../src/commands/watch.js";
+import { runWatchCommand, writeContextVariants } from "../../src/commands/watch.js";
 import type { KnowledgeEntry } from "../../src/types.js";
+import { initDb } from "../../src/db/client.js";
 import { loadWatchState, saveWatchState } from "../../src/watch/state.js";
 import { readFileFromOffset } from "../../src/watch/watcher.js";
 
@@ -37,6 +39,40 @@ afterEach(async () => {
   tempDirs.length = 0;
   vi.restoreAllMocks();
 });
+
+async function seedContextEntry(client: Client, params: {
+  id: string;
+  type: string;
+  subject: string;
+  content: string;
+  importance: number;
+  createdAt: string;
+  updatedAt: string;
+  recallCount?: number;
+}): Promise<void> {
+  await client.execute({
+    sql: `
+      INSERT INTO entries (
+        id, type, subject, content, importance, expiry, scope, source_file, source_context, created_at, updated_at, recall_count
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    args: [
+      params.id,
+      params.type,
+      params.subject,
+      params.content,
+      params.importance,
+      "permanent",
+      "private",
+      "watch.test.jsonl",
+      "test",
+      params.createdAt,
+      params.updatedAt,
+      params.recallCount ?? 0,
+    ],
+  });
+}
 
 describe("watch command", () => {
   it("wires CLI options into runWatchCommand", async () => {
@@ -355,5 +391,99 @@ describe("watch command", () => {
     expect(result.exitCode).toBe(0);
     expect(result.entriesStored).toBe(1);
     expect(generateContextFileFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("writes context-mini.md with at most 20 entries", async () => {
+    const dir = await makeTempDir();
+    const contextPath = path.join(dir, "CONTEXT.md");
+    const client = createClient({ url: ":memory:" });
+    await initDb(client);
+
+    try {
+      for (let i = 0; i < 30; i += 1) {
+        await seedContextEntry(client, {
+          id: `mini-${i}`,
+          type: "fact",
+          subject: `Subject ${i}`,
+          content: `Content ${i} ${"x ".repeat(20)}`.trim(),
+          importance: 6,
+          createdAt: "2026-02-10T00:00:00.000Z",
+          updatedAt: "2026-02-18T00:00:00.000Z",
+          recallCount: i % 7,
+        });
+      }
+
+      await writeContextVariants(client as any, contextPath, new Date("2026-02-18T00:00:00.000Z"));
+      const miniPath = path.join(dir, "context-mini.md");
+      const content = await fs.readFile(miniPath, "utf8");
+      const entries = content
+        .split("\n")
+        .filter((line) => line.startsWith("- ["));
+
+      expect(entries.length).toBeLessThanOrEqual(20);
+    } finally {
+      client.close();
+    }
+  });
+
+  it("writes context-hot.md with only recent high-importance entries and writes empty file when none qualify", async () => {
+    const dir = await makeTempDir();
+    const contextPath = path.join(dir, "CONTEXT.md");
+    const now = new Date("2026-02-18T00:00:00.000Z");
+
+    const client = createClient({ url: ":memory:" });
+    await initDb(client);
+    try {
+      await seedContextEntry(client, {
+        id: "hot-1",
+        type: "fact",
+        subject: "Hot eligible",
+        content: "eligible",
+        importance: 8,
+        createdAt: "2026-02-17T23:50:00.000Z",
+        updatedAt: "2026-02-17T23:55:00.000Z",
+        recallCount: 1,
+      });
+      await seedContextEntry(client, {
+        id: "hot-2",
+        type: "fact",
+        subject: "Too old",
+        content: "too old",
+        importance: 8,
+        createdAt: "2026-02-17T22:00:00.000Z",
+        updatedAt: "2026-02-17T23:40:00.000Z",
+        recallCount: 1,
+      });
+      await seedContextEntry(client, {
+        id: "hot-3",
+        type: "fact",
+        subject: "Low importance",
+        content: "low importance",
+        importance: 6,
+        createdAt: "2026-02-17T23:55:00.000Z",
+        updatedAt: "2026-02-17T23:56:00.000Z",
+        recallCount: 1,
+      });
+
+      await writeContextVariants(client as any, contextPath, now);
+      const hotPath = path.join(dir, "context-hot.md");
+      const hot = await fs.readFile(hotPath, "utf8");
+      expect(hot).toContain("Hot eligible");
+      expect(hot).not.toContain("Too old");
+      expect(hot).not.toContain("Low importance");
+    } finally {
+      client.close();
+    }
+
+    const emptyClient = createClient({ url: ":memory:" });
+    await initDb(emptyClient);
+    try {
+      await writeContextVariants(emptyClient as any, contextPath, now);
+      const hotPath = path.join(dir, "context-hot.md");
+      const hot = await fs.readFile(hotPath, "utf8");
+      expect(hot).toBe("");
+    } finally {
+      emptyClient.close();
+    }
   });
 });
