@@ -341,6 +341,35 @@ describe("db schema migrations", () => {
     const row = await client.execute({ sql: "SELECT importance FROM entries WHERE id = ?", args: ["legacy-confidence-1"] });
     const importance = Number((row.rows[0] as { importance?: unknown } | undefined)?.importance ?? 0);
     expect(importance).toBe(8);
+
+    const triggers1 = await client.execute(`
+      SELECT rowid, name
+      FROM sqlite_master
+      WHERE type = 'trigger' AND name IN ('entries_ai', 'entries_ad', 'entries_au')
+    `);
+    const triggerIds1 = new Map(triggers1.rows.map((r) => [String((r as { name?: unknown }).name), Number((r as { rowid?: unknown }).rowid)]));
+    expect(triggerIds1.size).toBe(3);
+
+    const sentinel1 = await client.execute({
+      sql: "SELECT value FROM _meta WHERE key = ?",
+      args: ["legacy_importance_backfill_from_confidence_v1"],
+    });
+    expect(sentinel1.rows.length).toBe(1);
+
+    // Running initSchema twice should not re-run the expensive legacy FTS drop/recreate path.
+    await initSchema(client);
+
+    const triggers2 = await client.execute(`
+      SELECT rowid, name
+      FROM sqlite_master
+      WHERE type = 'trigger' AND name IN ('entries_ai', 'entries_ad', 'entries_au')
+    `);
+    const triggerIds2 = new Map(triggers2.rows.map((r) => [String((r as { name?: unknown }).name), Number((r as { rowid?: unknown }).rowid)]));
+    expect(triggerIds2.size).toBe(3);
+
+    for (const [name, rowid] of triggerIds1) {
+      expect(triggerIds2.get(name)).toBe(rowid);
+    }
   });
 
   it("migration is idempotent (safe to run twice)", async () => {
