@@ -1,6 +1,6 @@
 import type { Client, InValue, Row } from "@libsql/client";
 import { embed } from "../embeddings/client.js";
-import { parseProjectList } from "../project.js";
+import { buildProjectFilter, parseProjectList } from "../project.js";
 import type { KnowledgePlatform, RecallQuery, RecallResult, Scope, StoredEntry } from "../types.js";
 
 const DEFAULT_VECTOR_CANDIDATE_LIMIT = 50;
@@ -389,56 +389,6 @@ export function shapeRecallText(text: string, context: string | undefined): stri
   return `[topic: ${topic}] ${trimmedText}`;
 }
 
-function parseProjectValues(value: string | string[] | undefined): string[] {
-  return parseProjectList(value);
-}
-
-function buildInList(values: string[]): { placeholders: string; args: string[] } {
-  // Expects pre-normalized values (trimmed + lowercased).
-  const unique = Array.from(new Set(values.filter((v) => v.length > 0)));
-  return {
-    placeholders: unique.map(() => "?").join(", "),
-    args: unique,
-  };
-}
-
-function buildProjectSql(params: {
-  column: string;
-  include?: string[];
-  exclude?: string[];
-  strict?: boolean;
-}): { clause: string; args: unknown[] } {
-  const include = params.include ?? [];
-  const exclude = params.exclude ?? [];
-  const args: unknown[] = [];
-  const clauses: string[] = [];
-
-  if (include.length > 0) {
-    const { placeholders, args: includeArgs } = buildInList(include);
-    args.push(...includeArgs);
-    if (params.strict) {
-      clauses.push(`${params.column} IN (${placeholders})`);
-    } else {
-      clauses.push(`(${params.column} IN (${placeholders}) OR ${params.column} IS NULL)`);
-    }
-  }
-
-  if (exclude.length > 0) {
-    const { placeholders, args: excludeArgs } = buildInList(exclude);
-    args.push(...excludeArgs);
-    clauses.push(`(${params.column} NOT IN (${placeholders}) OR ${params.column} IS NULL)`);
-  }
-
-  if (clauses.length === 0) {
-    return { clause: "", args: [] };
-  }
-
-  return {
-    clause: `AND ${clauses.join(" AND ")}`,
-    args,
-  };
-}
-
 async function fetchVectorCandidates(
   db: Client,
   queryEmbedding: number[],
@@ -448,13 +398,13 @@ async function fetchVectorCandidates(
   excludeProject?: string | string[],
   projectStrict?: boolean,
 ): Promise<CandidateRow[]> {
-  const normalizedProject = parseProjectValues(project);
-  const normalizedExclude = parseProjectValues(excludeProject);
-  const projectSql = buildProjectSql({
+  const normalizedProject = parseProjectList(project);
+  const normalizedExclude = parseProjectList(excludeProject);
+  const projectSql = buildProjectFilter({
     column: "e.project",
-    include: normalizedProject,
-    exclude: normalizedExclude,
     strict: Boolean(projectStrict && normalizedProject.length > 0),
+    project: normalizedProject.length > 0 ? normalizedProject : undefined,
+    excludeProject: normalizedExclude.length > 0 ? normalizedExclude : undefined,
   });
 
   // args order: JSON.stringify(queryEmbedding) (vector32(?)), limit, ...projectSql.args, platform (if present)
@@ -517,13 +467,13 @@ async function fetchSessionCandidates(
   excludeProject?: string | string[],
   projectStrict?: boolean,
 ): Promise<CandidateRow[]> {
-  const normalizedProject = parseProjectValues(project);
-  const normalizedExclude = parseProjectValues(excludeProject);
-  const projectSql = buildProjectSql({
+  const normalizedProject = parseProjectList(project);
+  const normalizedExclude = parseProjectList(excludeProject);
+  const projectSql = buildProjectFilter({
     column: "project",
-    include: normalizedProject,
-    exclude: normalizedExclude,
     strict: Boolean(projectStrict && normalizedProject.length > 0),
+    project: normalizedProject.length > 0 ? normalizedProject : undefined,
+    excludeProject: normalizedExclude.length > 0 ? normalizedExclude : undefined,
   });
 
   const args: unknown[] = [...projectSql.args];
@@ -589,13 +539,13 @@ async function runFts(
   }
 
   try {
-    const normalizedProject = parseProjectValues(project);
-    const normalizedExclude = parseProjectValues(excludeProject);
-    const projectSql = buildProjectSql({
+    const normalizedProject = parseProjectList(project);
+    const normalizedExclude = parseProjectList(excludeProject);
+    const projectSql = buildProjectFilter({
       column: "e.project",
-      include: normalizedProject,
-      exclude: normalizedExclude,
       strict: Boolean(projectStrict && normalizedProject.length > 0),
+      project: normalizedProject.length > 0 ? normalizedProject : undefined,
+      excludeProject: normalizedExclude.length > 0 ? normalizedExclude : undefined,
     });
 
     const args: unknown[] = [text, ...projectSql.args];

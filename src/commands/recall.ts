@@ -6,7 +6,7 @@ import { estimateEntryTokens, sessionStartRecall } from "../db/session-start.js"
 import type { SessionCategory } from "../db/session-start.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
-import { parseProjectList } from "../project.js";
+import { hasAnyProjectParts, parseProjectList } from "../project.js";
 import { EXPIRY_LEVELS, IMPORTANCE_MAX, IMPORTANCE_MIN, KNOWLEDGE_PLATFORMS, KNOWLEDGE_TYPES, SCOPE_LEVELS } from "../types.js";
 import type {
   Expiry,
@@ -77,11 +77,6 @@ function parseCsv(input: string | undefined): string[] {
         .filter((value) => value.length > 0),
     ),
   );
-}
-
-function hasAnyProjectParts(input: string | string[] | undefined): boolean {
-  const rawItems = Array.isArray(input) ? input : input ? [input] : [];
-  return rawItems.some((value) => String(value).split(",").some((part) => part.trim().length > 0));
 }
 
 export function parseSinceToIso(since: string | undefined, now = new Date()): string | undefined {

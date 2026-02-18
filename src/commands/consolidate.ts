@@ -12,7 +12,7 @@ import { createLlmClient } from "../llm/client.js";
 import { formatWarn } from "../ui.js";
 import { installSignalHandlers, isShutdownRequested, onShutdown } from "../shutdown.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
-import { parseProjectList } from "../project.js";
+import { hasAnyProjectParts, parseProjectList } from "../project.js";
 import { KNOWLEDGE_PLATFORMS } from "../types.js";
 import type { KnowledgePlatform } from "../types.js";
 
@@ -144,11 +144,6 @@ function createLogger(jsonMode: boolean): ConsolidateLogger {
     info: (message: string) => clack.log.info(message, clackOutput),
     warn: (message: string) => clack.log.warn(message, clackOutput),
   };
-}
-
-function hasAnyProjectParts(input: string | string[] | undefined): boolean {
-  const rawItems = Array.isArray(input) ? input : input ? [input] : [];
-  return rawItems.some((value) => String(value).split(",").some((part) => part.trim().length > 0));
 }
 
 export async function runConsolidateCommand(

@@ -140,7 +140,13 @@ export interface ConsolidationOrchestratorDeps {
   rebuildVectorIndexFn: typeof rebuildVectorIndex;
   walCheckpointFn: typeof walCheckpoint;
   countActiveEntriesFn: (db: Client, platform?: KnowledgePlatform, project?: string | null, excludeProject?: string[]) => Promise<number>;
-  countActiveEmbeddedEntriesFn: (db: Client, typeFilter?: string, platform?: KnowledgePlatform, project?: string | null) => Promise<number>;
+  countActiveEmbeddedEntriesFn: (
+    db: Client,
+    typeFilter?: string,
+    platform?: KnowledgePlatform,
+    project?: string | null,
+    excludeProject?: string[],
+  ) => Promise<number>;
   listDistinctProjectsFn: (db: Client, platform?: KnowledgePlatform, excludeProject?: string[]) => Promise<Array<string | null>>;
 }
 
@@ -185,9 +191,14 @@ async function countActiveEmbeddedEntries(
   typeFilter?: string,
   platform?: KnowledgePlatform,
   project?: string | null,
+  excludeProject?: string[],
 ): Promise<number> {
   const platformCondition = platform ? "AND platform = ?" : "";
   const projectCondition = project !== undefined ? (project === null ? "AND project IS NULL" : "AND project = ?") : "";
+  const excludeCondition =
+    excludeProject && excludeProject.length > 0
+      ? `AND (project NOT IN (${excludeProject.map(() => "?").join(", ")}) OR project IS NULL)`
+      : "";
 
   if (typeFilter?.trim()) {
     const args: unknown[] = [typeFilter.trim()];
@@ -196,6 +207,9 @@ async function countActiveEmbeddedEntries(
     }
     if (project !== undefined && project !== null) {
       args.push(project);
+    }
+    if (excludeProject && excludeProject.length > 0) {
+      args.push(...excludeProject);
     }
 
     const result = await db.execute({
@@ -207,6 +221,7 @@ async function countActiveEmbeddedEntries(
           AND type = ?
           ${platformCondition}
           ${projectCondition}
+          ${excludeCondition}
       `,
       args,
     });
@@ -221,6 +236,9 @@ async function countActiveEmbeddedEntries(
   if (project !== undefined && project !== null) {
     args.push(project);
   }
+  if (excludeProject && excludeProject.length > 0) {
+    args.push(...excludeProject);
+  }
 
   const result = await db.execute({
     sql: `
@@ -230,6 +248,7 @@ async function countActiveEmbeddedEntries(
         AND embedding IS NOT NULL
         ${platformCondition}
         ${projectCondition}
+        ${excludeCondition}
     `,
     args,
   });
@@ -702,6 +721,7 @@ export async function runConsolidationOrchestrator(
       verbose: options.verbose,
       platform,
       project,
+      excludeProject: excludeProjects.length > 0 ? excludeProjects : undefined,
       rebuildIndex: false,
       skipBackup: projectIndex > 0,
       backupPath: projectIndex > 0 ? sharedBackupPath : undefined,
@@ -719,7 +739,6 @@ export async function runConsolidationOrchestrator(
     context.report.mergedCount += phase0Stats.mergedCount;
     context.report.orphanedRelationsCleaned += phase0Stats.orphanedRelationsCleaned;
     context.report.entriesAfterRules += phase0Stats.entriesAfter;
-    context.report.entriesAfter += phase0Stats.entriesAfter;
   }
 
   if (isShutdownRequested()) {
@@ -765,7 +784,13 @@ export async function runConsolidationOrchestrator(
           break;
         }
 
-        const entries = await resolvedDeps.countActiveEmbeddedEntriesFn(db, type, platform, project);
+        const entries = await resolvedDeps.countActiveEmbeddedEntriesFn(
+          db,
+          type,
+          platform,
+          project,
+          excludeProjects.length > 0 ? excludeProjects : undefined,
+        );
         const clusters = await resolvedDeps.buildClustersFn(db, {
           simThreshold: phase1Threshold,
           minCluster,
@@ -792,7 +817,13 @@ export async function runConsolidationOrchestrator(
       let phase2Entries = 0;
       let phase2Clusters: Cluster[] = [];
       if (shouldRunPhase2) {
-        phase2Entries = await resolvedDeps.countActiveEmbeddedEntriesFn(db, undefined, platform, project);
+        phase2Entries = await resolvedDeps.countActiveEmbeddedEntriesFn(
+          db,
+          undefined,
+          platform,
+          project,
+          excludeProjects.length > 0 ? excludeProjects : undefined,
+        );
         phase2Clusters = await resolvedDeps.buildClustersFn(db, {
           simThreshold: phase2Threshold,
           minCluster,

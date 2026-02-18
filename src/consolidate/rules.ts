@@ -5,6 +5,7 @@ import { rebuildVectorIndex } from "../db/vector-index.js";
 import { recency } from "../db/recall.js";
 import { createRelation } from "../db/relations.js";
 import { findSimilar } from "../db/store.js";
+import { buildProjectFilter } from "../project.js";
 import { UnionFind, cosineSim, type ActiveEmbeddedEntry, validateCluster } from "./util.js";
 import type { KnowledgePlatform } from "../types.js";
 
@@ -105,36 +106,6 @@ function parseDaysOld(now: Date, createdAt: string): number {
   return Math.max(days, 0);
 }
 
-function buildProjectCondition(
-  project: string | null | undefined,
-  excludeProject: string[] | undefined,
-  column = "project",
-): { clause: string; args: unknown[] } {
-  const args: unknown[] = [];
-  const clauses: string[] = [];
-
-  if (project !== undefined) {
-    if (project === null) {
-      clauses.push(`${column} IS NULL`);
-    } else {
-      clauses.push(`${column} = ?`);
-      args.push(project);
-    }
-  }
-
-  if (excludeProject && excludeProject.length > 0) {
-    const placeholders = excludeProject.map(() => "?").join(", ");
-    clauses.push(`(${column} NOT IN (${placeholders}) OR ${column} IS NULL)`);
-    args.push(...excludeProject);
-  }
-
-  if (clauses.length === 0) {
-    return { clause: "", args: [] };
-  }
-
-  return { clause: `AND ${clauses.join(" AND ")}`, args };
-}
-
 export async function countActiveEntries(
   db: Client,
   platform?: KnowledgePlatform,
@@ -145,7 +116,12 @@ export async function countActiveEntries(
   if (platform) {
     args.push(platform);
   }
-  const projectSql = buildProjectCondition(project, excludeProject);
+  const projectSql = buildProjectFilter({
+    column: "project",
+    project: project === undefined ? undefined : project === null ? null : [project],
+    excludeProject,
+    strict: project !== undefined && project !== null,
+  });
   args.push(...projectSql.args);
 
   const result = await db.execute({
@@ -195,7 +171,13 @@ async function expireDecayedEntries(
   if (options.platform) {
     args.push(options.platform);
   }
-  const projectSql = buildProjectCondition(options.project, options.excludeProject);
+  const projectSql = buildProjectFilter({
+    column: "project",
+    project:
+      options.project === undefined ? undefined : options.project === null ? null : [options.project],
+    excludeProject: options.excludeProject,
+    strict: options.project !== undefined && options.project !== null,
+  });
   args.push(...projectSql.args);
 
   const result = await db.execute({
@@ -272,7 +254,13 @@ async function mergeNearExactDuplicates(
   if (options.platform) {
     countArgs.push(options.platform);
   }
-  const projectSqlForCount = buildProjectCondition(options.project, options.excludeProject);
+  const projectSqlForCount = buildProjectFilter({
+    column: "project",
+    project:
+      options.project === undefined ? undefined : options.project === null ? null : [options.project],
+    excludeProject: options.excludeProject,
+    strict: options.project !== undefined && options.project !== null,
+  });
   countArgs.push(...projectSqlForCount.args);
 
   const countResult = await db.execute({
@@ -300,7 +288,13 @@ async function mergeNearExactDuplicates(
   if (options.platform) {
     args.push(options.platform);
   }
-  const projectSql = buildProjectCondition(options.project, options.excludeProject);
+  const projectSql = buildProjectFilter({
+    column: "project",
+    project:
+      options.project === undefined ? undefined : options.project === null ? null : [options.project],
+    excludeProject: options.excludeProject,
+    strict: options.project !== undefined && options.project !== null,
+  });
   args.push(...projectSql.args);
 
   const result = await db.execute({
