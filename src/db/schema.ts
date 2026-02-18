@@ -208,6 +208,17 @@ export async function initSchema(client: Client): Promise<void> {
     await client.execute(statement);
   }
 
+  // Detect legacy schema early so the pre-migration FTS rebuild can be skipped when
+  // the legacy backfill (which drops and recreates FTS anyway) is about to run.
+  let willRunLegacyBackfill = false;
+  try {
+    const earlyEntriesInfo = await client.execute("PRAGMA table_info(entries)");
+    const earlyColumns = new Set(earlyEntriesInfo.rows.map((row) => String((row as { name?: unknown }).name)));
+    willRunLegacyBackfill = earlyColumns.has("confidence");
+  } catch {
+    // Best-effort. If PRAGMA fails, fall back to the safe default (run the rebuild when needed).
+  }
+
   // If the FTS table was created after entries already existed (legacy DBs),
   // UPDATE triggers that issue FTS delete operations can error unless the index is rebuilt first.
   try {
@@ -215,7 +226,7 @@ export async function initSchema(client: Client): Promise<void> {
     const entriesCount = Number((entriesCountResult.rows[0] as { count?: unknown } | undefined)?.count ?? 0);
     const ftsCountResult = await client.execute("SELECT COUNT(*) AS count FROM entries_fts");
     const ftsCount = Number((ftsCountResult.rows[0] as { count?: unknown } | undefined)?.count ?? 0);
-    if (entriesCount > 0 && ftsCount === 0) {
+    if (entriesCount > 0 && ftsCount === 0 && !willRunLegacyBackfill) {
       await client.execute(REBUILD_ENTRIES_FTS_SQL);
     }
   } catch {
@@ -259,7 +270,7 @@ export async function initSchema(client: Client): Promise<void> {
             ELSE 5
           END
       END
-      WHERE importance IS NULL OR importance = 5
+      WHERE importance = 5
     `);
 
     try {
