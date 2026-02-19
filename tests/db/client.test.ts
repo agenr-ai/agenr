@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { Client } from "@libsql/client";
-import { closeDb, getDb, initDb, walCheckpoint } from "../../src/db/client.js";
+import { backupDb, closeDb, getDb, initDb, walCheckpoint } from "../../src/db/client.js";
 
 describe("db client", () => {
   const clients: Client[] = [];
@@ -59,5 +59,52 @@ describe("db client", () => {
     await client.execute({ sql: "INSERT INTO wal_checkpoint_test (value) VALUES (?)", args: ["ok"] });
 
     await expect(walCheckpoint(client)).resolves.toBeUndefined();
+  });
+
+  it("creates a pre-reset backup file for file-backed databases", async () => {
+    tempDir = await mkdtemp(path.join(os.tmpdir(), "agenr-db-"));
+    const dbPath = path.join(tempDir, "knowledge.db");
+
+    const client = getDb(dbPath);
+    clients.push(client);
+    await initDb(client);
+
+    await client.execute({
+      sql: `
+        INSERT INTO entries (
+          id, type, subject, content, importance, expiry, scope, source_file, source_context, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      args: [
+        "entry-1",
+        "fact",
+        "subject",
+        "content",
+        5,
+        "temporary",
+        "private",
+        "seed.jsonl",
+        "test",
+        "2026-02-19T00:00:00.000Z",
+        "2026-02-19T00:00:00.000Z",
+      ],
+    });
+
+    const backupPath = await backupDb(dbPath);
+    const backupStat = await stat(backupPath);
+    expect(backupStat.isFile()).toBe(true);
+    expect(path.dirname(backupPath)).toBe(tempDir);
+    expect(path.basename(backupPath)).toMatch(/^knowledge\.db\.backup-pre-reset-.+Z$/);
+
+    const backupClient = getDb(backupPath);
+    clients.push(backupClient);
+    const rowResult = await backupClient.execute("SELECT COUNT(*) AS count FROM entries");
+    const count = Number((rowResult.rows[0] as { count?: unknown } | undefined)?.count ?? 0);
+    expect(count).toBe(1);
+  });
+
+  it("rejects backupDb for in-memory databases", async () => {
+    await expect(backupDb(":memory:")).rejects.toThrow("in-memory");
   });
 });

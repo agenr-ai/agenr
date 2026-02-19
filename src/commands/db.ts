@@ -4,13 +4,14 @@ import path from "node:path";
 import * as clack from "@clack/prompts";
 import { readConfig } from "../config.js";
 import { closeDb, DEFAULT_DB_PATH, getDb, initDb, walCheckpoint } from "../db/client.js";
-import { initSchema } from "../db/schema.js";
+import { initSchema, resetDb } from "../db/schema.js";
 import { rebuildVectorIndex } from "../db/vector-index.js";
 import { banner, formatLabel, ui } from "../ui.js";
 import { APP_VERSION } from "../version.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
 import { buildProjectFilter, hasAnyProjectParts, parseProjectList } from "../project.js";
 import { KNOWLEDGE_PLATFORMS } from "../types.js";
+import { runResetCommand } from "./reset.js";
 import type { KnowledgePlatform } from "../types.js";
 
 interface DbRow {
@@ -37,6 +38,8 @@ export interface DbStatsCommandOptions extends DbCommandCommonOptions {
 
 export interface DbResetCommandOptions extends DbCommandCommonOptions {
   confirm?: boolean;
+  full?: boolean;
+  confirmReset?: boolean;
 }
 
 export interface DbCommandDeps {
@@ -587,7 +590,7 @@ export async function runDbExportCommand(
 export async function runDbResetCommand(
   options: DbResetCommandOptions,
   deps?: Partial<DbCommandDeps>,
-): Promise<void> {
+): Promise<{ exitCode: number }> {
   const resolvedDeps: DbCommandDeps = {
     readConfigFn: deps?.readConfigFn ?? readConfig,
     getDbFn: deps?.getDbFn ?? getDb,
@@ -595,6 +598,19 @@ export async function runDbResetCommand(
     initSchemaFn: deps?.initSchemaFn ?? initSchema,
     closeDbFn: deps?.closeDbFn ?? closeDb,
   };
+
+  if (options.full) {
+    return runResetCommand(
+      { db: options.db, confirmReset: options.confirmReset },
+      {
+        resolveDbPathFn: (resetOptions) =>
+          resetOptions.db?.trim() || resolvedDeps.readConfigFn(process.env)?.db?.path || DEFAULT_DB_PATH,
+        getDbFn: resolvedDeps.getDbFn,
+        closeDbFn: resolvedDeps.closeDbFn,
+        resetDbFn: resetDb,
+      },
+    );
+  }
 
   if (!options.confirm) {
     throw new Error("Refusing to reset database without --confirm.");
@@ -608,41 +624,10 @@ export async function runDbResetCommand(
   const db = resolvedDeps.getDbFn(configured);
 
   try {
-    await db.execute("PRAGMA foreign_keys=OFF");
-
-    const schemaObjects = await db.execute(`
-      SELECT type, name
-      FROM sqlite_master
-      WHERE name NOT LIKE 'sqlite_%'
-      ORDER BY
-        CASE type
-          WHEN 'trigger' THEN 1
-          WHEN 'index' THEN 2
-          WHEN 'table' THEN 3
-          ELSE 4
-        END,
-        name
-    `);
-
-    for (const row of schemaObjects.rows) {
-      const type = toStringValue((row as DbRow).type);
-      const name = toStringValue((row as DbRow).name);
-      if (!type || !name) {
-        continue;
-      }
-
-      if (type === "trigger") {
-        await db.execute(`DROP TRIGGER IF EXISTS "${name}"`);
-      } else if (type === "index") {
-        await db.execute(`DROP INDEX IF EXISTS "${name}"`);
-      } else if (type === "table") {
-        await db.execute(`DROP TABLE IF EXISTS "${name}"`);
-      }
-    }
-
-    await resolvedDeps.initSchemaFn(db);
+    await resetDb(db);
     clack.log.success("Database reset and schema reinitialized.", clackOutput);
     clack.outro(undefined, clackOutput);
+    return { exitCode: 0 };
   } finally {
     resolvedDeps.closeDbFn(db);
   }

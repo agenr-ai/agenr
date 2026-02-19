@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.6.2.1
+
+### Added
+- agenr db reset --full --confirm-reset: full clean-slate reset
+  - Deletes watch-state.json and review-queue.json after DB schema reset
+  - Creates a pre-reset DB backup before any destructive operation
+  - Prints backup path to stdout
+  - Dry-run mode when --confirm-reset is omitted
+- Extracted resetDb() into src/db/schema.ts (shared by db reset and db reset --full)
+- Added backupDb() helper in src/db/client.ts
+
 ## [0.6.2] - 2026-02-19
 
 ### Added

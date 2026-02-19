@@ -7,7 +7,7 @@ const WATCH_STATE_FILE = "watch-state.json";
 const CONFIG_DIR_MODE = 0o700;
 const CONFIG_FILE_MODE = 0o600;
 
-function resolveConfigDir(configDir?: string): string {
+export function resolveConfigDir(configDir?: string): string {
   if (configDir && configDir.trim().length > 0) {
     return configDir;
   }

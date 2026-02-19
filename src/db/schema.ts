@@ -375,3 +375,43 @@ export async function initSchema(client: Client): Promise<void> {
     args: [APP_VERSION],
   });
 }
+
+export async function resetDb(db: Client): Promise<void> {
+  await db.execute("PRAGMA foreign_keys=OFF");
+
+  const schemaObjects = await db.execute(`
+    SELECT type, name
+    FROM sqlite_master
+    WHERE name NOT LIKE 'sqlite_%'
+    ORDER BY
+      CASE type
+        WHEN 'trigger' THEN 1
+        WHEN 'index' THEN 2
+        WHEN 'table' THEN 3
+        ELSE 4
+      END,
+      name
+  `);
+
+  for (const row of schemaObjects.rows) {
+    const type = String((row as { type?: unknown }).type ?? "");
+    const name = String((row as { name?: unknown }).name ?? "");
+    if (!type || !name) {
+      continue;
+    }
+
+    if (type === "trigger") {
+      await db.execute(`DROP TRIGGER IF EXISTS "${name}"`);
+      continue;
+    }
+    if (type === "index") {
+      await db.execute(`DROP INDEX IF EXISTS "${name}"`);
+      continue;
+    }
+    if (type === "table") {
+      await db.execute(`DROP TABLE IF EXISTS "${name}"`);
+    }
+  }
+
+  await initSchema(db);
+}
