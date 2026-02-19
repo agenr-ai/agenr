@@ -163,6 +163,64 @@ describe("consolidate rules", () => {
     expect(forgettingScore(old, now)).toBeLessThan(0.05);
   });
 
+  it("uses a 30-day half-life for todo entries", () => {
+    const now = new Date("2026-02-18T00:00:00.000Z");
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const todo = makeStoredEntry({
+      type: "todo",
+      importance: 5,
+      recall_count: 0,
+      created_at: thirtyDaysAgo,
+    });
+
+    expect(forgettingScore(todo, now)).toBeCloseTo(0.5, 1);
+  });
+
+  it("uses a 90-day half-life for fact entries", () => {
+    const now = new Date("2026-02-18T00:00:00.000Z");
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const fact = makeStoredEntry({
+      type: "fact",
+      importance: 5,
+      recall_count: 0,
+      created_at: thirtyDaysAgo,
+    });
+
+    expect(forgettingScore(fact, now)).toBeCloseTo(0.79, 1);
+  });
+
+  it("decays todo faster than fact at the same age", () => {
+    const now = new Date("2026-02-18T00:00:00.000Z");
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const todo = makeStoredEntry({
+      type: "todo",
+      importance: 5,
+      recall_count: 0,
+      created_at: thirtyDaysAgo,
+    });
+    const fact = makeStoredEntry({
+      type: "fact",
+      importance: 5,
+      recall_count: 0,
+      created_at: thirtyDaysAgo,
+    });
+
+    expect(forgettingScore(todo, now)).toBeLessThan(forgettingScore(fact, now));
+  });
+
+  it("todo reaches ~0.25 after 60 days (two half-lives)", () => {
+    const now = new Date("2026-02-18T00:00:00.000Z");
+    const sixtyDaysAgo = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000).toISOString();
+    const todo = makeStoredEntry({
+      type: "todo",
+      importance: 5,
+      recall_count: 0,
+      created_at: sixtyDaysAgo,
+    });
+
+    expect(forgettingScore(todo, now)).toBeCloseTo(0.25, 1);
+  });
+
   it("protects high-importance and configured subject patterns from forgetting", () => {
     const topImportance = makeStoredEntry({ importance: 10, subject: "anything" });
     expect(isProtected(topImportance, [])).toBe(true);
