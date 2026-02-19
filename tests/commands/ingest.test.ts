@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import * as clack from "@clack/prompts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createClient, type Client } from "@libsql/client";
 import { runIngestCommand } from "../../src/commands/ingest.js";
@@ -207,7 +208,7 @@ describe("ingest command", () => {
 
     const isWatcherRunningFn = vi.fn(async () => true) as IngestCommandDeps["isWatcherRunningFn"];
     const expandInputFilesFn = vi.fn(async () => [filePath]);
-    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const errorSpy = vi.spyOn(clack.log, "error").mockImplementation(() => undefined);
 
     const result = await runIngestCommand(
       [filePath],
@@ -218,12 +219,14 @@ describe("ingest command", () => {
       }),
     );
 
-    const output = stderrSpy.mock.calls.map((call) => String(call[0])).join("");
     expect(isWatcherRunningFn).toHaveBeenCalledTimes(1);
     expect(expandInputFilesFn).not.toHaveBeenCalled();
-    expect(output).toContain("watcher is running");
-    expect(output).toContain("PID file:");
-    expect(output).toContain("To stop:");
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const [message] = (errorSpy.mock.calls[0] ?? []) as [string | undefined];
+    const loggedMessage = message ?? "";
+    expect(loggedMessage).toContain("watcher is running");
+    expect(loggedMessage).toContain("PID file:");
+    expect(loggedMessage).toContain("To stop:");
     expect(result.exitCode).toBe(1);
     expect(result.filesProcessed).toBe(0);
     expect(result.filesSkipped).toBe(0);

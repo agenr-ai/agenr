@@ -481,14 +481,19 @@ export async function runIngestCommand(
     sleepFn: deps?.sleepFn ?? sleep,
     shouldShutdownFn: deps?.shouldShutdownFn ?? isShutdownRequested,
   };
+  const clackOutput = { output: process.stderr };
+  clack.intro(banner(), clackOutput);
 
   if (await resolvedDeps.isWatcherRunningFn()) {
     const pid = await readWatcherPid();
     const pidFile = resolveWatcherPidPath();
-    process.stderr.write(
-      `Error: agenr watcher is running (PID ${pid ?? "unknown"}). Stop the watcher before running ingest.\n` +
-        `  PID file: ${pidFile}\n` +
-        `  To stop: send SIGINT to PID ${pid ?? "unknown"}, or kill the watcher tmux session.\n`,
+    clack.log.error(
+      formatError(
+        `agenr watcher is running (PID ${pid ?? "unknown"}). Stop the watcher before running ingest.\n` +
+          `  PID file: ${pidFile}\n` +
+          `  To stop: send SIGINT to PID ${pid ?? "unknown"}, or kill the watcher tmux session.`,
+      ),
+      clackOutput,
     );
     return {
       exitCode: 1,
@@ -512,7 +517,6 @@ export async function runIngestCommand(
 
   installSignalHandlers();
 
-  const clackOutput = { output: process.stderr };
   const startedAt = resolvedDeps.nowFn();
   const verbose = options.verbose === true;
   const dryRun = options.dryRun === true;
@@ -565,7 +569,6 @@ export async function runIngestCommand(
       .sort((a, b) => a.size - b.size || a.file.localeCompare(b.file))
       .map<IngestTarget>((item, index) => ({ ...item, index }));
 
-    clack.intro(banner(), clackOutput);
     clack.log.info(
       `Ingesting: ${ui.bold(String(sortedTargets.length))} file(s) | Glob: ${globPattern} | Chunk concurrency: ${ui.bold(String(llmConcurrency))} | Skip ingested: ${skipIngested ? "yes" : "no"}`,
       clackOutput,
