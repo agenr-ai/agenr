@@ -446,6 +446,14 @@ export async function runWatchCommand(
   clack.log.info("", clackOutput);
   clack.log.info("Waiting for changes...", clackOutput);
 
+  const emitWatchWarning = (message: string): void => {
+    if (message.startsWith("Filtered:")) {
+      clack.log.info(message, clackOutput);
+      return;
+    }
+    clack.log.warn(formatWarn(message), clackOutput);
+  };
+
   let cycleCount = 0;
   let contextChain: Promise<void> = Promise.resolve();
   let contextDb: ReturnType<typeof getDb> | null = null;
@@ -468,13 +476,7 @@ export async function runWatchCommand(
         provider: options.provider,
         dbPath: options.db,
         initialState: state,
-        onWarn: (message) => {
-          if (message.startsWith("Filtered:")) {
-            clack.log.info(message, clackOutput);
-            return;
-          }
-          clack.log.warn(formatWarn(message), clackOutput);
-        },
+        onWarn: emitWatchWarning,
         onSwitch: (from, to, platform) => {
           const fromLabel = from ? formatSwitchLabel(from) : "(none)";
           const platformLabel = platform ? ` [${platform}]` : "";
@@ -534,12 +536,8 @@ export async function runWatchCommand(
                 await writeContextVariants(ctx.db!, contextPath, resolvedDeps.nowFn());
               })
               .catch((err: unknown) => {
-                if (verbose) {
-                  clack.log.warn(
-                    `Context refresh failed: ${err instanceof Error ? err.message : String(err)}`,
-                    clackOutput,
-                  );
-                }
+                const msg = `Context refresh failed: ${err instanceof Error ? err.message : String(err)}`;
+                emitWatchWarning(msg);
               });
           }
         },

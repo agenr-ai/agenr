@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createClient, type Client } from "@libsql/client";
+import * as clack from "@clack/prompts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runWatchCommand, writeContextVariants } from "../../src/commands/watch.js";
 import type { KnowledgeEntry } from "../../src/types.js";
@@ -399,6 +400,69 @@ describe("watch command", () => {
     expect(result.exitCode).toBe(0);
     expect(result.entriesStored).toBe(1);
     expect(generateContextFileFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("emits onWarn when context write fails (regardless of verbose)", async () => {
+    const dir = await makeTempDir();
+    const transcriptPath = path.join(dir, "session.txt");
+    const configDir = path.join(dir, ".agenr");
+    await fs.mkdir(configDir, { recursive: true });
+    await fs.writeFile(transcriptPath, "enough content for extraction\n", "utf8");
+
+    const generateContextFileFn = vi.fn(async () => {
+      throw new Error("context failed");
+    });
+    const warnSpy = vi.spyOn(clack.log, "warn");
+
+    await runWatchCommand(
+      transcriptPath,
+      {
+        once: true,
+        interval: "1",
+        minChunk: "1",
+        context: path.join(dir, "CONTEXT.md"),
+        verbose: false,
+      },
+      {
+        readConfigFn: vi.fn(() => ({ db: { path: ":memory:" } })),
+        resolveEmbeddingApiKeyFn: vi.fn(() => "sk-test"),
+        parseTranscriptFileFn: vi.fn(async () => ({
+          file: transcriptPath,
+          messages: [],
+          chunks: [{ chunk_index: 0, message_start: 0, message_end: 0, text: "chunk", context_hint: "ctx" }],
+          warnings: [],
+        })),
+        createLlmClientFn: vi.fn(() => ({ resolvedModel: { modelId: "test" }, credentials: { apiKey: "x" } } as any)),
+        extractKnowledgeFromChunksFn: vi.fn(async (params: any) => {
+          await params.onChunkComplete?.({ chunkIndex: 0, totalChunks: 1, entries: [makeEntry()], warnings: [] });
+          return { entries: [], successfulChunks: 1, failedChunks: 0, warnings: [] };
+        }),
+        deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+        getDbFn: vi.fn(() => ({}) as any),
+        initDbFn: vi.fn(async () => undefined),
+        closeDbFn: vi.fn(() => undefined),
+        storeEntriesFn: vi.fn(async () => ({
+          added: 1,
+          updated: 0,
+          skipped: 0,
+          superseded: 0,
+          llm_dedup_calls: 0,
+          relations_created: 0,
+          total_entries: 1,
+          duration_ms: 5,
+        })) as any,
+        loadWatchStateFn: vi.fn(() => loadWatchState(configDir)),
+        saveWatchStateFn: vi.fn((state) => saveWatchState(state, configDir)),
+        statFileFn: vi.fn((filePath: string) => fs.stat(filePath)) as any,
+        readFileFn: vi.fn((filePath: string, offset: number) => readFileFromOffset(filePath, offset)),
+        nowFn: vi.fn(() => new Date("2026-02-15T00:00:00.000Z")),
+        generateContextFileFn: generateContextFileFn as any,
+      },
+    );
+
+    expect(
+      warnSpy.mock.calls.some((call) => String(call[0]).includes("Context refresh failed")),
+    ).toBe(true);
   });
 
   it("keeps DB open for context refresh and writes context variants", async () => {
