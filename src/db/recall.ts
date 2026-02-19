@@ -265,24 +265,6 @@ export function todoStaleness(entry: StoredEntry, now: Date): number {
   return Math.max(raw, floor);
 }
 
-function getScoreComponents(
-  entry: StoredEntry,
-  now: Date,
-): { daysOld: number; rec: number; imp: number; recall: number; spacing: number } {
-  const daysOld = parseDaysBetween(now, entry.created_at);
-  const daysSinceRecall = entry.last_recalled_at ? parseDaysBetween(now, entry.last_recalled_at) : daysOld;
-  const rec = recency(daysOld, entry.expiry);
-  const imp = importanceScore(entry.importance);
-  const recall = recallStrength(entry.recall_count, daysSinceRecall, entry.expiry);
-  const spacing = computeSpacingFactor(
-    entry.recall_intervals ?? [],
-    entry.recall_count,
-    entry.created_at,
-    entry.last_recalled_at,
-  );
-  return { daysOld, rec, imp, recall, spacing };
-}
-
 export function recency(daysOld: number, tier: string): number {
   const FACTOR = 19 / 81;
   const DECAY = -0.5;
@@ -336,9 +318,10 @@ export function computeSpacingFactor(
     const createdMs = Date.parse(createdAt);
     const lastMs = Date.parse(lastRecalledAt);
     if (Number.isFinite(createdMs) && Number.isFinite(lastMs) && lastMs > createdMs) {
-      const syntheticGapMs = (lastMs - createdMs) / recallCount;
-      for (let i = 0; i < recallCount; i += 1) {
-        timestamps.push(Math.round((createdMs + syntheticGapMs * i) / 1000));
+      const gapMs = (lastMs - createdMs) / recallCount;
+      timestamps.push(Math.round(createdMs / 1000));
+      for (let i = 1; i <= recallCount; i += 1) {
+        timestamps.push(Math.round((createdMs + gapMs * i) / 1000));
       }
     }
   }
@@ -394,7 +377,8 @@ export function scoreEntryWithBreakdown(
   const fts = ftsMatch ? 0.15 : 0;
 
   const fresh = freshnessBoost(entry, now);
-  const memoryStrength = Math.min(Math.max(imp, recallBase) * fresh * spacingFactor, 1.0);
+  const spacedRecallBase = Math.min(recallBase * spacingFactor, 1.0);
+  const memoryStrength = Math.min(Math.max(imp, spacedRecallBase) * fresh, 1.0);
   const todoPenalty = entry.type === "todo" ? todoStaleness(entry, now) : 1.0;
   const contradictionPenalty = entry.contradictions >= 2 ? 0.8 : 1.0;
   const score = sim * (0.3 + 0.7 * rec) * memoryStrength * todoPenalty * contradictionPenalty + fts;
@@ -652,6 +636,10 @@ export async function updateRecallMetadata(db: Client, ids: string[], now: Date)
   }
 
   const placeholders = ids.map(() => "?").join(", ");
+  // TODO: cap recall_intervals to the 100 most recent entries to bound storage
+  // growth. computeSpacingFactor only needs maxGapDays, not the full history.
+  // Consider storing max_gap_days as a separate field instead.
+  // See: https://github.com/agenr-ai/agenr/issues/39
   const epochSecs = Math.floor(now.getTime() / 1000);
   await db.execute({
     sql: `

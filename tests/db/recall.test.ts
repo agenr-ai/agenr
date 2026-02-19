@@ -803,6 +803,50 @@ describe("db recall", () => {
     expect(asNumber(afterPassive.rows[0]?.recall_count)).toBe(1);
   });
 
+  it("updates returned entry recall_intervals in-memory after active recall", async () => {
+    const client = makeClient();
+    await initDb(client);
+    await storeEntries(
+      client,
+      [makeEntry({ content: "Interval append vec-work-strong", type: "fact", tags: ["intervals"] })],
+      "sk-test",
+      {
+        sourceFile: "recall-test.jsonl",
+        ingestContentHash: "hash-interval-append",
+        embedFn: mockEmbed,
+      },
+    );
+
+    const row = await client.execute({
+      sql: "SELECT id FROM entries WHERE content = ?",
+      args: ["Interval append vec-work-strong"],
+    });
+    const entryId = String(row.rows[0]?.id ?? "");
+    expect(entryId).toBeTruthy();
+
+    const existingIntervals = [1700000000, 1700600000];
+    await client.execute({
+      sql: "UPDATE entries SET recall_intervals = json(?), recall_count = ?, last_recalled_at = ? WHERE id = ?",
+      args: [JSON.stringify(existingIntervals), 2, "2026-02-10T00:00:00.000Z", entryId],
+    });
+
+    const now = new Date();
+    const results = await recall(
+      client,
+      { text: "work", limit: 1 },
+      "sk-test",
+      {
+        embedFn: mockEmbed,
+        now,
+      },
+    );
+
+    const updatedIntervals = results[0]?.entry.recall_intervals ?? [];
+    expect(updatedIntervals).toHaveLength(existingIntervals.length + 1);
+    const expectedEpochSecs = Math.round(Date.now() / 1000);
+    expect(Math.abs((updatedIntervals.at(-1) ?? 0) - expectedEpochSecs)).toBeLessThanOrEqual(2);
+  });
+
   it("supports no-boost raw vector ranking", async () => {
     const client = makeClient();
     await initDb(client);
@@ -837,6 +881,7 @@ describe("db recall", () => {
     expect(results[0]?.entry.content).toContain("Top vector");
     expect(results[2]?.entry.content).toContain("Low vector");
     expect(results.every((item) => item.scores.fts === 0)).toBe(true);
+    expect(results.every((item) => item.scores.spacing === 1.0)).toBe(true);
   });
 
   it(

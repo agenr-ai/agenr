@@ -5,14 +5,15 @@
 ### Added
 - feat(recall): spaced repetition recall strength via recall_intervals tracking
 - feat(recall): computeSpacingFactor() rewards entries with proven long inter-recall gaps
-- feat(recall): spacingFactor applied at memoryStrength level, benefiting both high-importance and high-recall entries
 - feat(schema): recall_intervals column (TEXT/JSON) added via COLUMN_MIGRATIONS
 - feat(types): recall_intervals field on StoredEntry, spacing field on RecallResult.scores
 
 ### Fixed
-- fix(recall): legacy entries (recall_count > 0, recall_intervals NULL) impute synthetic intervals from lifetime span to prevent permanent ranking distortion after migration
+- fix(recall): legacy spacing imputation now anchors at created_at and lands exactly on last_recalled_at (including recall_count=1), restoring expected spacing bonuses
+- fix(recall): spacingFactor now applies to the recall-base component before importance comparison, preventing early saturation while keeping memoryStrength clamped to <= 1.0
 - fix(recall): updateRecallMetadata uses json_insert SQLite built-in for atomic array append, avoiding read-modify-write concurrency race
 - fix(recall): recall_intervals timestamps stored as Unix integer seconds (not ISO string) to prevent x1000 unit error in gap calculations
+- fix(recall): removed unused getScoreComponents() refactor artifact to avoid divergence from the active scoring path
 - fix(db): VACUUM database after db reset to reclaim freed pages immediately
 
 ## [0.6.3] - 2026-02-19
