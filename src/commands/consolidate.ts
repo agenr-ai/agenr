@@ -314,6 +314,7 @@ async function collectForgettingCandidates(
   excludeProject?: string[],
 ): Promise<ForgettingCandidate[]> {
   const scoped = buildScopedFilter(platform, project, excludeProject);
+  const cutoffDate = new Date(now.getTime() - maxAgeDays * 86_400_000).toISOString();
   const result = await db.execute({
     sql: `
       SELECT
@@ -338,9 +339,10 @@ async function collectForgettingCandidates(
         superseded_by
       FROM entries
       WHERE superseded_by IS NULL
+        AND created_at <= ?
         ${scoped.clause}
     `,
-    args: scoped.args,
+    args: [cutoffDate, ...scoped.args],
   });
 
   const candidates: ForgettingCandidate[] = [];
@@ -722,7 +724,11 @@ export async function runConsolidateCommand(
           `Forgetting candidates: ${formatNumber(candidates.filter((candidate) => !candidate.protected).length)} entries (score < ${scoreThreshold})`,
         );
         logger.info(`Would free ~${formatApproxMb(forgettingAssessment.estimatedFreedBytes)}`);
-        logger.info("Run with --forget to delete");
+        if (options.forget === true && options.dryRun === true) {
+          logger.info("Run without --dry-run to delete");
+        } else {
+          logger.info("Run with --forget to delete");
+        }
       }
     }
 

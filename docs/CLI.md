@@ -227,6 +227,7 @@ agenr watch [file] [options]
 - `--model <model>`: override model.
 - `--provider <name>`: `anthropic|openai|openai-codex`.
 - `--verbose`: verbose progress.
+- `--context <path>`: write or refresh context files (`--context` path, `context-mini.md`, and `context-hot.md`) after successful stores.
 - `--dry-run`: extract only, do not store.
 - `--once`: run one cycle and exit.
 - `--json`: output per-cycle JSON.
@@ -240,7 +241,7 @@ Watch mode runs online dedup during store.
 When `--context <path>` is configured and entries are stored, watch refreshes:
 - the primary context file at `--context`
 - `context-mini.md` in the same directory (top 20 by recall score, ~500 token budget)
-- `context-hot.md` in the same directory (updated in last 10m, importance >= 7, writes empty file when none qualify)
+- `context-hot.md` in the same directory (top entries from last 10m, importance >= 7, ~200 token budget, writes empty file when none qualify)
 
 ### Example
 
@@ -435,9 +436,24 @@ Entries: 1,842 total | 194 todos | 122 preferences
 File size: 46.1MB
 Oldest: 2025-11-02 | Newest: today
 
+Recency Distribution
+- Last 7 days:  123 entries (7%)
+- Last 30 days: 456 entries (25%)
+- 30-90 days:   789 entries (43%)
+- 90+ days:     474 entries (25%)
+
+Recall Activity
+- Never recalled: 120 entries (7%)
+- Recalled 1-5x:  1,050 entries (57%)
+- Recalled 5+x:   672 entries (36%)
+
 Forgetting Candidates
 - score < 0.05:  61 entries (would free ~1.5MB)
 - Protected:      9 entries
+
+Consolidation Health
+- Contradiction flags: 4 entries
+- Stale todos (>30d old, not recalled): 18
 ```
 
 ## `mcp`

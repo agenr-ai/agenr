@@ -37,6 +37,9 @@ export function mapRawStoredEntry(
   const project = toStringValue(row.project).trim();
   const scopeRaw = toStringValue(row.scope).trim();
   const importanceRaw = toNumber(row.importance);
+  const recallCountRaw = toNumber(row.recall_count);
+  const confirmationsRaw = toNumber(row.confirmations);
+  const contradictionsRaw = toNumber(row.contradictions);
 
   const entry: StoredEntry = {
     id: toStringValue(row.id),
@@ -57,9 +60,9 @@ export function mapRawStoredEntry(
     created_at: toStringValue(row.created_at),
     updated_at: toStringValue(row.updated_at),
     last_recalled_at: toStringValue(row.last_recalled_at) || undefined,
-    recall_count: Number.isFinite(toNumber(row.recall_count)) ? toNumber(row.recall_count) : 0,
-    confirmations: Number.isFinite(toNumber(row.confirmations)) ? toNumber(row.confirmations) : 0,
-    contradictions: Number.isFinite(toNumber(row.contradictions)) ? toNumber(row.contradictions) : 0,
+    recall_count: Number.isFinite(recallCountRaw) ? recallCountRaw : 0,
+    confirmations: Number.isFinite(confirmationsRaw) ? confirmationsRaw : 0,
+    contradictions: Number.isFinite(contradictionsRaw) ? contradictionsRaw : 0,
     superseded_by: toStringValue(row.superseded_by) || undefined,
   };
 
