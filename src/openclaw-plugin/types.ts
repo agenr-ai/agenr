@@ -2,8 +2,14 @@
 // These mirror the shapes in openclaw/dist/plugin-sdk/ without creating a dependency.
 
 export type BeforeAgentStartEvent = {
-  sessionKey?: string;
   prompt?: string;
+  messages?: unknown[];
+  [key: string]: unknown;
+};
+
+export type PluginHookAgentContext = {
+  sessionKey?: string;
+  workspaceDir?: string;
   [key: string]: unknown;
 };
 
@@ -27,7 +33,8 @@ export type PluginApi = {
   on: (
     hook: "before_agent_start",
     handler: (
-      event: BeforeAgentStartEvent
+      event: BeforeAgentStartEvent,
+      ctx: PluginHookAgentContext
     ) => Promise<BeforeAgentStartResult | undefined> | BeforeAgentStartResult | undefined
   ) => void;
 };

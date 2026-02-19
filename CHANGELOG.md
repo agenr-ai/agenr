@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.9] - 2026-02-19
+
+### Fixed
+- OpenClaw plugin: session-seen guard prevents recall firing on every turn (fires once per session)
+- OpenClaw plugin: sessionKey now read from ctx (second handler arg) instead of event
+- OpenClaw plugin: DEFAULT_AGENR_PATH uses correct 2-level relative path to dist/cli.js
+- OpenClaw plugin: spawn strategy detects .js vs executable binary
+
+### Added
+- OpenClaw plugin: writes AGENR.md to ctx.workspaceDir after successful recall (fire-and-forget)
+
 ## [0.6.8] - 2026-02-19
 
 ### Fixed

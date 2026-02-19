@@ -1,13 +1,22 @@
-import { formatRecallAsMarkdown, resolveAgenrPath, resolveBudget, runRecall } from "./recall.js";
+import {
+  formatRecallAsSummary,
+  formatRecallAsMarkdown,
+  resolveAgenrPath,
+  resolveBudget,
+  runRecall,
+  writeAgenrMd,
+} from "./recall.js";
 import type {
   AgenrPluginConfig,
   BeforeAgentStartEvent,
   BeforeAgentStartResult,
   PluginApi,
+  PluginHookAgentContext,
 } from "./types.js";
 
 // Session key substrings that indicate non-interactive sessions to skip.
 const SKIP_SESSION_PATTERNS = [":subagent:", ":cron:"];
+const seenSessions = new Set<string>();
 
 function shouldSkipSession(sessionKey: string): boolean {
   return SKIP_SESSION_PATTERNS.some((pattern) => sessionKey.includes(pattern));
@@ -21,11 +30,20 @@ const plugin = {
   register(api: PluginApi): void {
     api.on(
       "before_agent_start",
-      async (event: BeforeAgentStartEvent): Promise<BeforeAgentStartResult | undefined> => {
+      async (
+        _event: BeforeAgentStartEvent,
+        ctx: PluginHookAgentContext
+      ): Promise<BeforeAgentStartResult | undefined> => {
         try {
-          const sessionKey = event.sessionKey ?? "";
+          const sessionKey = ctx.sessionKey ?? "";
           if (shouldSkipSession(sessionKey)) {
             return;
+          }
+          if (sessionKey && seenSessions.has(sessionKey)) {
+            return;
+          }
+          if (sessionKey) {
+            seenSessions.add(sessionKey);
           }
 
           const config = api.pluginConfig as AgenrPluginConfig | undefined;
@@ -44,6 +62,14 @@ const plugin = {
           const markdown = formatRecallAsMarkdown(result);
           if (!markdown.trim()) {
             return;
+          }
+
+          const workspaceDir =
+            typeof ctx.workspaceDir === "string" ? ctx.workspaceDir.trim() : "";
+          if (workspaceDir) {
+            const now = new Date();
+            const timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+            void writeAgenrMd(formatRecallAsSummary(result, timestamp), workspaceDir);
           }
 
           return { prependContext: markdown };
