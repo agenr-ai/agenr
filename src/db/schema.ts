@@ -232,6 +232,11 @@ const COLUMN_MIGRATIONS: readonly ColumnMigration[] = [
     column: "original_created_at",
     sql: "ALTER TABLE entry_sources ADD COLUMN original_created_at TEXT",
   },
+  {
+    table: "entries",
+    column: "recall_intervals",
+    sql: "ALTER TABLE entries ADD COLUMN recall_intervals TEXT DEFAULT NULL",
+  },
 ];
 
 export async function initSchema(client: Client): Promise<void> {

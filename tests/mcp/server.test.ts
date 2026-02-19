@@ -42,6 +42,7 @@ function makeRecallResult(overrides?: Partial<RecallResult>): RecallResult {
       freshness: 1,
       todoPenalty: 1,
       fts: 0,
+      spacing: 1,
     },
     entry: {
       id: "entry-1",

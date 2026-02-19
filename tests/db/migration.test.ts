@@ -44,6 +44,7 @@ describe("db schema migrations", () => {
     expect(entries.has("retired_at")).toBe(true);
     expect(entries.has("retired_reason")).toBe(true);
     expect(entries.has("suppressed_contexts")).toBe(true);
+    expect(entries.has("recall_intervals")).toBe(true);
 
     expect(ingest.has("content_hash")).toBe(true);
     expect(ingest.has("entries_superseded")).toBe(true);
@@ -199,6 +200,7 @@ describe("db schema migrations", () => {
     const retiredAt = entriesColumns.find((row) => toStringValue(row.name) === "retired_at");
     const retiredReason = entriesColumns.find((row) => toStringValue(row.name) === "retired_reason");
     const suppressedContexts = entriesColumns.find((row) => toStringValue(row.name) === "suppressed_contexts");
+    const recallIntervals = entriesColumns.find((row) => toStringValue(row.name) === "recall_intervals");
 
     expect(canonicalKey).toBeTruthy();
     expect(scope).toBeTruthy();
@@ -214,6 +216,7 @@ describe("db schema migrations", () => {
     expect(retiredAt).toBeTruthy();
     expect(retiredReason).toBeTruthy();
     expect(suppressedContexts).toBeTruthy();
+    expect(recallIntervals).toBeTruthy();
 
     const ingestInfo = await client.execute("PRAGMA table_info(ingest_log)");
     const ingestColumns = ingestInfo.rows as Array<{ name?: unknown; dflt_value?: unknown }>;
