@@ -18,6 +18,7 @@ import { KNOWLEDGE_PLATFORMS } from "../types.js";
 import type { KnowledgeEntry } from "../types.js";
 import { banner, formatError, formatWarn, ui } from "../ui.js";
 import { installSignalHandlers, isShutdownRequested, onShutdown } from "../shutdown.js";
+import { isWatcherRunning, readWatcherPid, resolveWatcherPidPath } from "../watch/pid.js";
 import {
   createEmptyWatchState,
   getFileState,
@@ -93,6 +94,7 @@ export interface IngestCommandDeps {
   hashTextFn: typeof hashText;
   loadWatchStateFn: typeof loadWatchState;
   saveWatchStateFn: typeof saveWatchState;
+  isWatcherRunningFn: () => Promise<boolean>;
   nowFn: () => Date;
   sleepFn: (ms: number) => Promise<void>;
   shouldShutdownFn: () => boolean;
@@ -459,8 +461,6 @@ export async function runIngestCommand(
   options: IngestCommandOptions,
   deps?: Partial<IngestCommandDeps>,
 ): Promise<IngestCommandResult> {
-  installSignalHandlers();
-
   const resolvedDeps: IngestCommandDeps = {
     readConfigFn: deps?.readConfigFn ?? readConfig,
     resolveEmbeddingApiKeyFn: deps?.resolveEmbeddingApiKeyFn ?? resolveEmbeddingApiKey,
@@ -476,10 +476,41 @@ export async function runIngestCommand(
     hashTextFn: deps?.hashTextFn ?? hashText,
     loadWatchStateFn: deps?.loadWatchStateFn ?? loadWatchState,
     saveWatchStateFn: deps?.saveWatchStateFn ?? saveWatchState,
+    isWatcherRunningFn: deps?.isWatcherRunningFn ?? isWatcherRunning,
     nowFn: deps?.nowFn ?? (() => new Date()),
     sleepFn: deps?.sleepFn ?? sleep,
     shouldShutdownFn: deps?.shouldShutdownFn ?? isShutdownRequested,
   };
+
+  if (await resolvedDeps.isWatcherRunningFn()) {
+    const pid = await readWatcherPid();
+    const pidFile = resolveWatcherPidPath();
+    process.stderr.write(
+      `Error: agenr watcher is running (PID ${pid ?? "unknown"}). Stop the watcher before running ingest.\n` +
+        `  PID file: ${pidFile}\n` +
+        `  To stop: send SIGINT to PID ${pid ?? "unknown"}, or kill the watcher tmux session.\n`,
+    );
+    return {
+      exitCode: 1,
+      filesProcessed: 0,
+      filesSkipped: 0,
+      filesFailed: 0,
+      totalEntriesExtracted: 0,
+      totalEntriesStored: 0,
+      dedupStats: {
+        entries_added: 0,
+        entries_updated: 0,
+        entries_skipped: 0,
+        entries_reinforced: 0,
+        entries_superseded: 0,
+        dedup_llm_calls: 0,
+      },
+      durationMs: 0,
+      results: [],
+    };
+  }
+
+  installSignalHandlers();
 
   const clackOutput = { output: process.stderr };
   const startedAt = resolvedDeps.nowFn();

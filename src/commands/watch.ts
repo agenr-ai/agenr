@@ -17,10 +17,11 @@ import type { WatchOptions } from "../types.js";
 import { banner, formatLabel, formatWarn } from "../ui.js";
 import { generateContextFile } from "./context.js";
 import { detectWatchPlatform, getResolver, type WatchPlatform } from "../watch/resolvers/index.js";
+import { deleteWatcherPid, writeWatcherPid } from "../watch/pid.js";
 import { getDefaultPlatformDir } from "../watch/platform-defaults.js";
 import { getFileState, loadWatchState, saveWatchState } from "../watch/state.js";
 import { readFileFromOffset, runWatcher } from "../watch/watcher.js";
-import { installSignalHandlers, isShutdownRequested } from "../shutdown.js";
+import { installSignalHandlers, isShutdownRequested, onShutdown } from "../shutdown.js";
 import type { RecallResult, StoredEntry } from "../types.js";
 
 function formatBytes(value: number): string {
@@ -242,6 +243,8 @@ export interface WatchCommandDeps {
   statFileFn: typeof fs.stat;
   readFileFn: (path: string, offset: number) => Promise<Buffer>;
   generateContextFileFn: typeof generateContextFile;
+  writeWatcherPidFn: () => Promise<void>;
+  deleteWatcherPidFn: () => Promise<void>;
   nowFn: () => Date;
 }
 
@@ -369,9 +372,6 @@ export async function runWatchCommand(
   options: WatchCommandOptions,
   deps?: Partial<WatchCommandDeps>,
 ): Promise<WatchCommandResult> {
-  warnIfLocked();
-  installSignalHandlers();
-
   const resolvedDeps: WatchCommandDeps = {
     readConfigFn: deps?.readConfigFn ?? readConfig,
     resolveEmbeddingApiKeyFn: deps?.resolveEmbeddingApiKeyFn ?? resolveEmbeddingApiKey,
@@ -388,76 +388,101 @@ export async function runWatchCommand(
     statFileFn: deps?.statFileFn ?? fs.stat,
     readFileFn: deps?.readFileFn ?? readFileFromOffset,
     generateContextFileFn: deps?.generateContextFileFn ?? generateContextFile,
+    writeWatcherPidFn: deps?.writeWatcherPidFn ?? writeWatcherPid,
+    deleteWatcherPidFn: deps?.deleteWatcherPidFn ?? deleteWatcherPid,
     nowFn: deps?.nowFn ?? (() => new Date()),
   };
-
-  const intervalMs = parsePositiveInt(options.interval, 300, "--interval") * 1000;
-  const minChunkChars = parsePositiveInt(options.minChunk, 2000, "--min-chunk");
-  const dryRun = options.dryRun === true;
-  const verbose = options.verbose === true;
-  const once = options.once === true;
-  const json = options.json === true;
-  const raw = options.raw === true;
-  const contextEnabled = Boolean(options.context);
-
-  const modeConfig = await resolveWatchMode(file, options, resolvedDeps.statFileFn);
-
   const clackOutput = { output: process.stderr };
-  clack.intro(banner(), clackOutput);
-
-  for (const warning of modeConfig.warnings) {
-    process.stderr.write(`${warning}\n`);
-  }
-
-  let stateWarning: string | null = null;
-  let state = await resolvedDeps.loadWatchStateFn().catch((error: unknown) => {
-    stateWarning = `State file is invalid (${error instanceof Error ? error.message : String(error)}). Resetting.`;
-    return { version: 1 as const, files: {} };
-  });
-  if (stateWarning) {
-    clack.log.warn(formatWarn(stateWarning), clackOutput);
-    await resolvedDeps.saveWatchStateFn(state);
-  }
-
-  const fileState = modeConfig.filePath ? getFileState(state, modeConfig.filePath) : undefined;
-  const offset = fileState?.byteOffset ?? 0;
-  const config = resolvedDeps.readConfigFn(process.env);
-  const dbPath = options.db?.trim() || config?.db?.path || "~/.agenr/knowledge.db";
-
-  if (modeConfig.mode === "file") {
-    clack.log.info(formatLabel("Watching", modeConfig.filePath ?? "(unknown)"), clackOutput);
-  } else if (modeConfig.mode === "dir") {
-    clack.log.info(formatLabel("Watching directory", modeConfig.sessionsDir ?? "(unknown)"), clackOutput);
-    clack.log.info(formatLabel("Platform", modeConfig.platform ?? "mtime"), clackOutput);
-    clack.log.info(
-      formatLabel("Active file", modeConfig.filePath ? formatSwitchLabel(modeConfig.filePath) : "(waiting for session file)"),
+  warnIfLocked();
+  installSignalHandlers();
+  try {
+    await resolvedDeps.writeWatcherPidFn();
+  } catch (error: unknown) {
+    clack.log.error(
+      formatWarn(`Failed to write watcher PID file: ${error instanceof Error ? error.message : String(error)}`),
       clackOutput,
     );
+    return {
+      exitCode: 1,
+      cycles: 0,
+      entriesStored: 0,
+      durationMs: 0,
+    };
   }
+  onShutdown(async () => {
+    await resolvedDeps.deleteWatcherPidFn();
+  });
 
-  clack.log.info(
-    `${formatLabel("Interval", formatInterval(intervalMs))} | ${formatLabel("Min chunk", `${minChunkChars} chars`)}`,
-    clackOutput,
-  );
-  clack.log.info(
-    `${formatLabel("Offset", `${formatBytes(offset)} bytes (${fileState ? "resume" : "fresh"})`)} | ${formatLabel("DB", dbPath)}`,
-    clackOutput,
-  );
-  clack.log.info("", clackOutput);
-  clack.log.info("Waiting for changes...", clackOutput);
+  try {
+    const intervalMs = parsePositiveInt(options.interval, 300, "--interval") * 1000;
+    const minChunkChars = parsePositiveInt(options.minChunk, 2000, "--min-chunk");
+    const dryRun = options.dryRun === true;
+    const verbose = options.verbose === true;
+    const once = options.once === true;
+    const json = options.json === true;
+    const raw = options.raw === true;
+    const contextEnabled = Boolean(options.context);
 
-  const emitWatchWarning = (message: string): void => {
-    if (message.startsWith("Filtered:")) {
-      clack.log.info(message, clackOutput);
-      return;
+    const modeConfig = await resolveWatchMode(file, options, resolvedDeps.statFileFn);
+
+    clack.intro(banner(), clackOutput);
+
+    for (const warning of modeConfig.warnings) {
+      process.stderr.write(`${warning}\n`);
     }
-    clack.log.warn(formatWarn(message), clackOutput);
-  };
 
-  let cycleCount = 0;
-  let contextChain: Promise<void> = Promise.resolve();
-  let contextDb: ReturnType<typeof getDb> | null = null;
-  const summary = await runWatcher(
+    let stateWarning: string | null = null;
+    let state = await resolvedDeps.loadWatchStateFn().catch((error: unknown) => {
+      stateWarning = `State file is invalid (${error instanceof Error ? error.message : String(error)}). Resetting.`;
+      return { version: 1 as const, files: {} };
+    });
+    if (stateWarning) {
+      clack.log.warn(formatWarn(stateWarning), clackOutput);
+      await resolvedDeps.saveWatchStateFn(state);
+    }
+
+    const fileState = modeConfig.filePath ? getFileState(state, modeConfig.filePath) : undefined;
+    const offset = fileState?.byteOffset ?? 0;
+    const config = resolvedDeps.readConfigFn(process.env);
+    const dbPath = options.db?.trim() || config?.db?.path || "~/.agenr/knowledge.db";
+
+    if (modeConfig.mode === "file") {
+      clack.log.info(formatLabel("Watching", modeConfig.filePath ?? "(unknown)"), clackOutput);
+    } else if (modeConfig.mode === "dir") {
+      clack.log.info(formatLabel("Watching directory", modeConfig.sessionsDir ?? "(unknown)"), clackOutput);
+      clack.log.info(formatLabel("Platform", modeConfig.platform ?? "mtime"), clackOutput);
+      clack.log.info(
+        formatLabel(
+          "Active file",
+          modeConfig.filePath ? formatSwitchLabel(modeConfig.filePath) : "(waiting for session file)",
+        ),
+        clackOutput,
+      );
+    }
+
+    clack.log.info(
+      `${formatLabel("Interval", formatInterval(intervalMs))} | ${formatLabel("Min chunk", `${minChunkChars} chars`)}`,
+      clackOutput,
+    );
+    clack.log.info(
+      `${formatLabel("Offset", `${formatBytes(offset)} bytes (${fileState ? "resume" : "fresh"})`)} | ${formatLabel("DB", dbPath)}`,
+      clackOutput,
+    );
+    clack.log.info("", clackOutput);
+    clack.log.info("Waiting for changes...", clackOutput);
+
+    const emitWatchWarning = (message: string): void => {
+      if (message.startsWith("Filtered:")) {
+        clack.log.info(message, clackOutput);
+        return;
+      }
+      clack.log.warn(formatWarn(message), clackOutput);
+    };
+
+    let cycleCount = 0;
+    let contextChain: Promise<void> = Promise.resolve();
+    let contextDb: ReturnType<typeof getDb> | null = null;
+    const summary = await runWatcher(
       {
         filePath: modeConfig.filePath ?? undefined,
         directoryMode: modeConfig.mode === "dir",
@@ -488,7 +513,9 @@ export async function runWatchCommand(
           const fileLabel = result.filePath ? ` | file=${result.filePath}` : "";
 
           if (json) {
-            process.stdout.write(`${JSON.stringify({ cycle: cycleCount, at: resolvedDeps.nowFn().toISOString(), ...result })}\n`);
+            process.stdout.write(
+              `${JSON.stringify({ cycle: cycleCount, at: resolvedDeps.nowFn().toISOString(), ...result })}\n`,
+            );
           }
 
           if (result.error) {
@@ -562,26 +589,29 @@ export async function runWatchCommand(
       },
     );
 
-  // Best-effort: ensure any in-flight context refresh finishes before printing the final summary.
-  await contextChain.catch(() => undefined);
-  if (contextEnabled && contextDb) {
-    try {
-      resolvedDeps.closeDbFn(contextDb);
-    } catch {
-      // ignore
+    // Best-effort: ensure any in-flight context refresh finishes before printing the final summary.
+    await contextChain.catch(() => undefined);
+    if (contextEnabled && contextDb) {
+      try {
+        resolvedDeps.closeDbFn(contextDb);
+      } catch {
+        // ignore
+      }
     }
+
+    clack.log.info(
+      `Summary: ${summary.cycles} cycles | ${summary.entriesStored} entries stored | watched for ${formatDuration(summary.durationMs)}`,
+      clackOutput,
+    );
+    clack.outro(undefined, clackOutput);
+
+    return {
+      exitCode: 0,
+      cycles: summary.cycles,
+      entriesStored: summary.entriesStored,
+      durationMs: summary.durationMs,
+    };
+  } finally {
+    await resolvedDeps.deleteWatcherPidFn();
   }
-
-  clack.log.info(
-    `Summary: ${summary.cycles} cycles | ${summary.entriesStored} entries stored | watched for ${formatDuration(summary.durationMs)}`,
-    clackOutput,
-  );
-  clack.outro(undefined, clackOutput);
-
-  return {
-    exitCode: 0,
-    cycles: summary.cycles,
-    entriesStored: summary.entriesStored,
-    durationMs: summary.durationMs,
-  };
 }

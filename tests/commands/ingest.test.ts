@@ -131,6 +131,7 @@ function makeDeps(overrides?: Partial<IngestCommandDeps> & { db?: { execute: Ret
     hashTextFn: overrides?.hashTextFn ?? hashText,
     loadWatchStateFn: overrides?.loadWatchStateFn ?? (vi.fn(async () => ({ version: 1 as const, files: {} }))),
     saveWatchStateFn: overrides?.saveWatchStateFn ?? vi.fn(async () => undefined),
+    isWatcherRunningFn: overrides?.isWatcherRunningFn ?? (vi.fn(async () => false) as IngestCommandDeps["isWatcherRunningFn"]),
     nowFn: overrides?.nowFn ?? (() => new Date("2026-02-15T00:00:00.000Z")),
     sleepFn: overrides?.sleepFn ?? (vi.fn(async () => undefined) as IngestCommandDeps["sleepFn"]),
     shouldShutdownFn: overrides?.shouldShutdownFn ?? (vi.fn(() => false) as IngestCommandDeps["shouldShutdownFn"]),
@@ -197,6 +198,77 @@ describe("ingest command", () => {
       maxRetries: 5,
       force: true,
     });
+  });
+
+  it("blocks ingest when watcher is running", async () => {
+    const dir = await makeTempDir();
+    const filePath = path.join(dir, "a.txt");
+    await fs.writeFile(filePath, "hello", "utf8");
+
+    const isWatcherRunningFn = vi.fn(async () => true) as IngestCommandDeps["isWatcherRunningFn"];
+    const expandInputFilesFn = vi.fn(async () => [filePath]);
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    const result = await runIngestCommand(
+      [filePath],
+      { force: true },
+      makeDeps({
+        isWatcherRunningFn,
+        expandInputFilesFn,
+      }),
+    );
+
+    const output = stderrSpy.mock.calls.map((call) => String(call[0])).join("");
+    expect(isWatcherRunningFn).toHaveBeenCalledTimes(1);
+    expect(expandInputFilesFn).not.toHaveBeenCalled();
+    expect(output).toContain("watcher is running");
+    expect(output).toContain("PID file:");
+    expect(output).toContain("To stop:");
+    expect(result.exitCode).toBe(1);
+    expect(result.filesProcessed).toBe(0);
+    expect(result.filesSkipped).toBe(0);
+    expect(result.filesFailed).toBe(0);
+    expect(result.totalEntriesExtracted).toBe(0);
+    expect(result.totalEntriesStored).toBe(0);
+    expect(result.dedupStats.entries_added).toBe(0);
+  });
+
+  it("proceeds when watcher is not running", async () => {
+    const dir = await makeTempDir();
+    const filePath = path.join(dir, "a.txt");
+    await fs.writeFile(filePath, "hello", "utf8");
+
+    const isWatcherRunningFn = vi.fn(async () => false) as IngestCommandDeps["isWatcherRunningFn"];
+    const deps = makeDeps({
+      isWatcherRunningFn,
+      expandInputFilesFn: vi.fn(async () => [filePath]),
+    });
+
+    const result = await runIngestCommand([filePath], {}, deps);
+
+    expect(isWatcherRunningFn).toHaveBeenCalledTimes(1);
+    expect(result.exitCode).toBe(0);
+    expect(result.filesProcessed).toBe(1);
+    expect(result.filesFailed).toBe(0);
+  });
+
+  it("proceeds when watcher PID is stale", async () => {
+    const dir = await makeTempDir();
+    const filePath = path.join(dir, "a.txt");
+    await fs.writeFile(filePath, "hello", "utf8");
+
+    const isWatcherRunningFn = vi.fn(async () => false) as IngestCommandDeps["isWatcherRunningFn"];
+    const deps = makeDeps({
+      isWatcherRunningFn,
+      expandInputFilesFn: vi.fn(async () => [filePath]),
+    });
+
+    const result = await runIngestCommand([filePath], { force: true }, deps);
+
+    expect(isWatcherRunningFn).toHaveBeenCalledTimes(1);
+    expect(result.exitCode).toBe(0);
+    expect(result.filesProcessed).toBe(1);
+    expect(result.filesFailed).toBe(0);
   });
 
   it("processes a directory with mixed file types", async () => {

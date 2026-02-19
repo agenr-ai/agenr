@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.5] - 2026-02-19
+
+### Added
+- feat(watch): watcher writes watcher.pid on start and deletes on exit
+- feat(ingest): ingest exits 1 with clear error if watcher is running
+- feat(watch): isWatcherRunning() helper with stale-PID detection in src/watch/pid.ts
+- feat(watch): deleteWatcherPid registered via onShutdown() as v0.6.6 graceful shutdown hook point
+
+### Fixed
+- fix(ingest): write conflicts between ingest and watcher are now blocked at the ingest entry point
+
 ## [0.6.4] - 2026-02-19
 
 ### Added

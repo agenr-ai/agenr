@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { runWatchCommand, writeContextVariants } from "../../src/commands/watch.js";
 import type { KnowledgeEntry } from "../../src/types.js";
 import { initDb } from "../../src/db/client.js";
+import { resetShutdownForTests } from "../../src/shutdown.js";
 import { loadWatchState, saveWatchState } from "../../src/watch/state.js";
 import { readFileFromOffset } from "../../src/watch/watcher.js";
 
@@ -38,6 +39,7 @@ afterEach(async () => {
     await fs.rm(dir, { recursive: true, force: true });
   }
   tempDirs.length = 0;
+  resetShutdownForTests();
   vi.restoreAllMocks();
 });
 
@@ -179,6 +181,131 @@ describe("watch command", () => {
     await expect(
       runWatchCommand(undefined, { dir: "/tmp/does-not-exist" }, { statFileFn: statFileFn as any }),
     ).rejects.toThrow("Sessions directory not found");
+  });
+
+  it("writes watcher PID file before watch loop starts", async () => {
+    const dir = await makeTempDir();
+    const transcriptPath = path.join(dir, "session.txt");
+    const configDir = path.join(dir, ".agenr");
+    await fs.mkdir(configDir, { recursive: true });
+    await fs.writeFile(transcriptPath, "watch content\n", "utf8");
+
+    const writeWatcherPidFn = vi.fn(async () => undefined);
+    const deleteWatcherPidFn = vi.fn(async () => undefined);
+    const readFileFn = vi.fn(async (filePath: string, offset: number) => readFileFromOffset(filePath, offset));
+
+    const result = await runWatchCommand(
+      transcriptPath,
+      { once: true, interval: "1", minChunk: "1" },
+      {
+        readConfigFn: vi.fn(() => ({ db: { path: ":memory:" } })),
+        resolveEmbeddingApiKeyFn: vi.fn(() => "sk-test"),
+        parseTranscriptFileFn: vi.fn(async () => ({
+          file: transcriptPath,
+          messages: [],
+          chunks: [{ chunk_index: 0, message_start: 0, message_end: 0, text: "chunk", context_hint: "ctx" }],
+          warnings: [],
+        })),
+        createLlmClientFn: vi.fn(() => ({ resolvedModel: { modelId: "test" }, credentials: { apiKey: "x" } } as any)),
+        extractKnowledgeFromChunksFn: vi.fn(async (params: any) => {
+          await params.onChunkComplete?.({ chunkIndex: 0, totalChunks: 1, entries: [makeEntry()], warnings: [] });
+          return { entries: [], successfulChunks: 1, failedChunks: 0, warnings: [] };
+        }),
+        deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+        getDbFn: vi.fn(() => ({}) as any),
+        initDbFn: vi.fn(async () => undefined),
+        closeDbFn: vi.fn(() => undefined),
+        storeEntriesFn: vi.fn(async () => ({
+          added: 1,
+          updated: 0,
+          skipped: 0,
+          superseded: 0,
+          llm_dedup_calls: 0,
+          relations_created: 0,
+          total_entries: 1,
+          duration_ms: 1,
+        })) as any,
+        loadWatchStateFn: vi.fn(() => loadWatchState(configDir)),
+        saveWatchStateFn: vi.fn((state) => saveWatchState(state, configDir)),
+        statFileFn: vi.fn((filePath: string) => fs.stat(filePath)) as any,
+        readFileFn: readFileFn as any,
+        generateContextFileFn: vi.fn(async () => undefined) as any,
+        writeWatcherPidFn,
+        deleteWatcherPidFn,
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(writeWatcherPidFn).toHaveBeenCalledTimes(1);
+    const writeOrder = writeWatcherPidFn.mock.invocationCallOrder[0] ?? 0;
+    const readOrder = readFileFn.mock.invocationCallOrder[0] ?? 0;
+    expect(writeOrder).toBeGreaterThan(0);
+    expect(readOrder).toBeGreaterThan(0);
+    expect(writeOrder).toBeLessThan(readOrder);
+  });
+
+  it("deletes watcher PID file on normal exit and error exit", async () => {
+    const dir = await makeTempDir();
+    const transcriptPath = path.join(dir, "session.txt");
+    const configDir = path.join(dir, ".agenr");
+    await fs.mkdir(configDir, { recursive: true });
+    await fs.writeFile(transcriptPath, "watch content\n", "utf8");
+
+    const deleteWatcherPidFn = vi.fn(async () => undefined);
+
+    const successResult = await runWatchCommand(
+      transcriptPath,
+      { once: true, interval: "1", minChunk: "1" },
+      {
+        readConfigFn: vi.fn(() => ({ db: { path: ":memory:" } })),
+        resolveEmbeddingApiKeyFn: vi.fn(() => "sk-test"),
+        parseTranscriptFileFn: vi.fn(async () => ({
+          file: transcriptPath,
+          messages: [],
+          chunks: [{ chunk_index: 0, message_start: 0, message_end: 0, text: "chunk", context_hint: "ctx" }],
+          warnings: [],
+        })),
+        createLlmClientFn: vi.fn(() => ({ resolvedModel: { modelId: "test" }, credentials: { apiKey: "x" } } as any)),
+        extractKnowledgeFromChunksFn: vi.fn(async (params: any) => {
+          await params.onChunkComplete?.({ chunkIndex: 0, totalChunks: 1, entries: [makeEntry()], warnings: [] });
+          return { entries: [], successfulChunks: 1, failedChunks: 0, warnings: [] };
+        }),
+        deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+        getDbFn: vi.fn(() => ({}) as any),
+        initDbFn: vi.fn(async () => undefined),
+        closeDbFn: vi.fn(() => undefined),
+        storeEntriesFn: vi.fn(async () => ({
+          added: 1,
+          updated: 0,
+          skipped: 0,
+          superseded: 0,
+          llm_dedup_calls: 0,
+          relations_created: 0,
+          total_entries: 1,
+          duration_ms: 1,
+        })) as any,
+        loadWatchStateFn: vi.fn(() => loadWatchState(configDir)),
+        saveWatchStateFn: vi.fn((state) => saveWatchState(state, configDir)),
+        statFileFn: vi.fn((filePath: string) => fs.stat(filePath)) as any,
+        readFileFn: vi.fn((filePath: string, offset: number) => readFileFromOffset(filePath, offset)),
+        generateContextFileFn: vi.fn(async () => undefined) as any,
+        writeWatcherPidFn: vi.fn(async () => undefined),
+        deleteWatcherPidFn,
+      },
+    );
+
+    expect(successResult.exitCode).toBe(0);
+
+    const errorDeleteWatcherPidFn = vi.fn(async () => undefined);
+    await expect(
+      runWatchCommand(undefined, {}, {
+        writeWatcherPidFn: vi.fn(async () => undefined),
+        deleteWatcherPidFn: errorDeleteWatcherPidFn,
+      }),
+    ).rejects.toThrow("Choose exactly one watch mode");
+
+    expect(deleteWatcherPidFn).toHaveBeenCalledTimes(1);
+    expect(errorDeleteWatcherPidFn).toHaveBeenCalledTimes(1);
   });
 
   it("runs one cycle and stores extracted entries", async () => {
