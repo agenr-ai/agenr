@@ -967,6 +967,65 @@ describe("watcher", () => {
     expect(healthArg.lastHeartbeat.length).toBeGreaterThan(0);
   });
 
+  it("writes startup heartbeat before any cycle with sessionsWatched=0", async () => {
+    const filePath = "/tmp/watch-startup-health.jsonl";
+    const writes: WatcherHealth[] = [];
+    let cycleCount = 0;
+    const deps = makeDeps({
+      statFileFn: vi.fn(async () => ({ size: 0, isFile: () => true })),
+      writeHealthFileFn: vi.fn(async (health: WatcherHealth) => {
+        writes.push(health);
+      }),
+    });
+
+    await runWatcher(
+      {
+        filePath,
+        intervalMs: 1,
+        minChunkChars: 5,
+        dryRun: true,
+        verbose: false,
+        once: true,
+        onCycle: () => {
+          cycleCount += 1;
+        },
+      },
+      deps,
+    );
+
+    // First write must have fired before any cycle (sessionsWatched=0, entriesStored=0)
+    expect(writes.length).toBeGreaterThanOrEqual(1);
+    expect(writes[0].sessionsWatched).toBe(0);
+    expect(writes[0].entriesStored).toBe(0);
+    expect(writes[0].pid).toBe(process.pid);
+  });
+
+  it("calls onWarn when health file write fails", async () => {
+    const filePath = "/tmp/watch-health-warn.jsonl";
+    const warns: string[] = [];
+    const deps = makeDeps({
+      statFileFn: vi.fn(async () => ({ size: 0, isFile: () => true })),
+      writeHealthFileFn: vi.fn(async () => {
+        throw new Error("disk full");
+      }),
+    });
+
+    await runWatcher(
+      {
+        filePath,
+        intervalMs: 1,
+        minChunkChars: 5,
+        dryRun: true,
+        verbose: false,
+        once: true,
+        onWarn: (msg) => warns.push(msg),
+      },
+      deps,
+    );
+
+    expect(warns.some((w) => w.includes("Health file write failed") && w.includes("disk full"))).toBe(true);
+  });
+
   it("extracts in dry-run mode without storing", async () => {
     const filePath = "/tmp/watch.jsonl";
     const deps = makeDeps({
