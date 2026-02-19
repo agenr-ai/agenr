@@ -432,6 +432,82 @@ describe("ingest command", () => {
     expect(storeEntriesFn).not.toHaveBeenCalled();
   });
 
+  it("ingest skips pre-fetch deps when noPreFetch=true", async () => {
+    const dir = await makeTempDir();
+    const filePath = path.join(dir, "a.txt");
+    await fs.writeFile(filePath, "hello", "utf8");
+
+    const resolveEmbeddingApiKeyFn = vi.fn(() => "sk-test");
+    const extractKnowledgeFromChunksFn = vi.fn(
+      async (params: Parameters<IngestCommandDeps["extractKnowledgeFromChunksFn"]>[0]) => {
+        await params.onChunkComplete?.({
+          chunkIndex: 0,
+          totalChunks: 1,
+          entries: [makeEntry("one")],
+          warnings: [],
+        });
+        return {
+          entries: [],
+          successfulChunks: 1,
+          failedChunks: 0,
+          warnings: [],
+        };
+      },
+    );
+
+    await runIngestCommand(
+      [dir],
+      { dryRun: true, noPreFetch: true },
+      makeDeps({
+        expandInputFilesFn: vi.fn(async () => [filePath]),
+        resolveEmbeddingApiKeyFn: resolveEmbeddingApiKeyFn as IngestCommandDeps["resolveEmbeddingApiKeyFn"],
+        extractKnowledgeFromChunksFn: extractKnowledgeFromChunksFn as IngestCommandDeps["extractKnowledgeFromChunksFn"],
+      }),
+    );
+
+    expect(resolveEmbeddingApiKeyFn).not.toHaveBeenCalled();
+    expect(extractKnowledgeFromChunksFn).toHaveBeenCalledTimes(1);
+    expect(extractKnowledgeFromChunksFn.mock.calls[0]?.[0]?.noPreFetch).toBe(true);
+  });
+
+  it("ingest resolves embedding key eagerly when noPreFetch=false", async () => {
+    const dir = await makeTempDir();
+    const filePath = path.join(dir, "a.txt");
+    await fs.writeFile(filePath, "hello", "utf8");
+
+    const resolveEmbeddingApiKeyFn = vi.fn(() => "test-key");
+    const extractKnowledgeFromChunksFn = vi.fn(
+      async (params: Parameters<IngestCommandDeps["extractKnowledgeFromChunksFn"]>[0]) => {
+        await params.onChunkComplete?.({
+          chunkIndex: 0,
+          totalChunks: 1,
+          entries: [makeEntry("one")],
+          warnings: [],
+        });
+        return {
+          entries: [],
+          successfulChunks: 1,
+          failedChunks: 0,
+          warnings: [],
+        };
+      },
+    );
+
+    await runIngestCommand(
+      [dir],
+      { dryRun: true },
+      makeDeps({
+        expandInputFilesFn: vi.fn(async () => [filePath]),
+        resolveEmbeddingApiKeyFn: resolveEmbeddingApiKeyFn as IngestCommandDeps["resolveEmbeddingApiKeyFn"],
+        extractKnowledgeFromChunksFn: extractKnowledgeFromChunksFn as IngestCommandDeps["extractKnowledgeFromChunksFn"],
+      }),
+    );
+
+    expect(resolveEmbeddingApiKeyFn).toHaveBeenCalledTimes(1);
+    expect(extractKnowledgeFromChunksFn).toHaveBeenCalledTimes(1);
+    expect(extractKnowledgeFromChunksFn.mock.calls[0]?.[0]?.embeddingApiKey).toBe("test-key");
+  });
+
   it("does not delete rows during --force --dry-run and reports would-delete summary", async () => {
     const dir = await makeTempDir();
     const fileA = path.join(dir, "a.md");

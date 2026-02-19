@@ -385,6 +385,8 @@ describe("runExtractCommand", () => {
     const getDbFn = vi.fn(() => {
       throw new Error("db should not be initialized");
     });
+    const initDbFn = vi.fn(async () => undefined);
+    const closeDbFn = vi.fn();
 
     const deps: Partial<CliDeps> = {
       expandInputFilesFn: vi.fn().mockResolvedValue(["/tmp/a.jsonl"]),
@@ -393,11 +395,11 @@ describe("runExtractCommand", () => {
       parseTranscriptFileFn: vi.fn((file: string) => Promise.resolve(parsedTranscript(file))) as unknown as CliDeps["parseTranscriptFileFn"],
       extractKnowledgeFromChunksFn: extractSpy as unknown as CliDeps["extractKnowledgeFromChunksFn"],
       writeOutputFn: vi.fn(() => Promise.resolve([])) as unknown as CliDeps["writeOutputFn"],
-      readConfigFn: vi.fn(() => null) as unknown as CliDeps["readConfigFn"],
+      readConfigFn: vi.fn(() => ({ db: { path: "/tmp/test.db" } })) as unknown as CliDeps["readConfigFn"],
       resolveEmbeddingApiKeyFn: resolveEmbeddingApiKeyFn as unknown as CliDeps["resolveEmbeddingApiKeyFn"],
       getDbFn: getDbFn as unknown as CliDeps["getDbFn"],
-      initDbFn: vi.fn(async () => undefined) as unknown as CliDeps["initDbFn"],
-      closeDbFn: vi.fn() as unknown as CliDeps["closeDbFn"],
+      initDbFn: initDbFn as unknown as CliDeps["initDbFn"],
+      closeDbFn: closeDbFn as unknown as CliDeps["closeDbFn"],
     };
 
     await runExtractCommand(
@@ -413,7 +415,57 @@ describe("runExtractCommand", () => {
 
     expect(resolveEmbeddingApiKeyFn).not.toHaveBeenCalled();
     expect(getDbFn).not.toHaveBeenCalled();
+    expect(initDbFn).not.toHaveBeenCalled();
+    expect(closeDbFn).not.toHaveBeenCalled();
     expect(extractSpy.mock.calls[0]?.[0]?.noPreFetch).toBe(true);
+  });
+
+  it("initializes pre-fetch dependencies when noPreFetch is false", async () => {
+    const extractSpy = vi.fn((_params) =>
+      Promise.resolve({
+        entries: [],
+        successfulChunks: 1,
+        failedChunks: 0,
+        warnings: [],
+      }),
+    );
+    const dbClient = {} as unknown;
+    const resolveEmbeddingApiKeyFn = vi.fn(() => "sk-test");
+    const getDbFn = vi.fn(() => dbClient);
+    const initDbFn = vi.fn(async () => undefined);
+    const closeDbFn = vi.fn();
+
+    const deps: Partial<CliDeps> = {
+      expandInputFilesFn: vi.fn().mockResolvedValue(["/tmp/a.jsonl"]),
+      assertReadableFileFn: vi.fn().mockResolvedValue(undefined),
+      createLlmClientFn: vi.fn().mockReturnValue(fakeClient()) as unknown as CliDeps["createLlmClientFn"],
+      parseTranscriptFileFn: vi.fn((file: string) => Promise.resolve(parsedTranscript(file))) as unknown as CliDeps["parseTranscriptFileFn"],
+      extractKnowledgeFromChunksFn: extractSpy as unknown as CliDeps["extractKnowledgeFromChunksFn"],
+      writeOutputFn: vi.fn(() => Promise.resolve([])) as unknown as CliDeps["writeOutputFn"],
+      readConfigFn: vi.fn(() => ({ db: { path: "/tmp/test.db" } })) as unknown as CliDeps["readConfigFn"],
+      resolveEmbeddingApiKeyFn: resolveEmbeddingApiKeyFn as unknown as CliDeps["resolveEmbeddingApiKeyFn"],
+      getDbFn: getDbFn as unknown as CliDeps["getDbFn"],
+      initDbFn: initDbFn as unknown as CliDeps["initDbFn"],
+      closeDbFn: closeDbFn as unknown as CliDeps["closeDbFn"],
+    };
+
+    await runExtractCommand(
+      ["/tmp/a.jsonl"],
+      {
+        format: "json",
+        provider: "anthropic",
+        model: "claude-opus-4-6",
+      },
+      deps,
+    );
+
+    expect(resolveEmbeddingApiKeyFn).toHaveBeenCalledTimes(1);
+    expect(getDbFn).toHaveBeenCalledTimes(1);
+    expect(initDbFn).toHaveBeenCalledTimes(1);
+    expect(extractSpy.mock.calls[0]?.[0]?.db).toBe(dbClient);
+    expect(extractSpy.mock.calls[0]?.[0]?.embeddingApiKey).toBe("sk-test");
+    expect(closeDbFn).toHaveBeenCalledTimes(1);
+    expect(closeDbFn).toHaveBeenCalledWith(dbClient);
   });
 });
 

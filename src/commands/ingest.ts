@@ -602,8 +602,16 @@ export async function runIngestCommand(
     if (!options.noPreFetch) {
       try {
         embeddingApiKey = resolvedDeps.resolveEmbeddingApiKeyFn(config, process.env);
-      } catch {
+      } catch (error) {
         embeddingApiKey = null;
+        if (verbose) {
+          clack.log.warn(
+            formatWarn(
+              `Pre-fetch disabled - embedding API key not available: ${error instanceof Error ? error.message : String(error)}`,
+            ),
+            clackOutput,
+          );
+        }
       }
     }
     let watchStateLoaded = false;
