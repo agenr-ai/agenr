@@ -2,9 +2,10 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { readConfig } from "../config.js";
-import { forgettingScore, isProtected, parseDaysBetween } from "../consolidate/rules.js";
+import { forgettingScore, isProtected } from "../consolidate/rules.js";
 import { closeDb, DEFAULT_DB_PATH, getDb, initDb } from "../db/client.js";
 import { mapRawStoredEntry } from "../db/stored-entry.js";
+import { parseDaysBetween } from "../utils/entry-utils.js";
 import type { StoredEntry } from "../types.js";
 
 export interface HealthCommandOptions {
