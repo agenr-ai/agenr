@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.6.3
+## [0.6.3] - 2026-02-19
 
 ### Added
 - agenr db reset --full --confirm-reset: full clean-slate reset
@@ -69,7 +69,14 @@
 ### Fixed
 - `agenr eval recall` now returns correct results for all 5 query categories (was returning zero for 4 of 5 due to FTS literal match; replaced with SQL type filters and hybrid vector+FTS recall)
 
-## Unreleased
+## [0.5.4] - 2026-02-18
+
+### Added
+- feat(todos): `agenr todo done` command to mark todos complete via CLI
+- feat(mcp): `agenr_done` MCP tool for completing todos from AI tools
+- feat(store): cross-type superseding - new entries can supersede entries of any type, not just same-type
+
+## [0.5.2] - 2026-02-18
 
 ### Added
 - `entries.project` column (with index) to tag knowledge by source project/repo (NULL for legacy entries)
