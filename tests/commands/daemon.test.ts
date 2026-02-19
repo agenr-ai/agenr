@@ -298,6 +298,7 @@ describe("daemon commands", () => {
 
   it("handles readHealthFileFn errors gracefully", async () => {
     const home = await makeTempDir();
+    const warns: string[] = [];
 
     const result = await runDaemonStatusCommand(
       {},
@@ -314,11 +315,13 @@ describe("daemon commands", () => {
         readHealthFileFn: vi.fn(async () => {
           throw new Error("health read failed");
         }),
+        onWarnFn: (msg: string) => warns.push(msg),
       },
     );
 
     expect(result.health).toBeNull();
     expect(result.exitCode).toBe(0);
+    expect(warns.some((w) => w.includes("Failed to read watcher health") && w.includes("health read failed"))).toBe(true);
   });
 
   it("supports non-follow log output with --lines", async () => {

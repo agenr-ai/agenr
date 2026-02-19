@@ -62,6 +62,12 @@ export async function readHealthFile(configDir?: string): Promise<WatcherHealth 
     if (typeof record.lastHeartbeat !== "string") {
       return null;
     }
+    if (typeof record.sessionsWatched !== "number") {
+      return null;
+    }
+    if (typeof record.entriesStored !== "number") {
+      return null;
+    }
 
     return parsed as WatcherHealth;
   } catch (error) {
