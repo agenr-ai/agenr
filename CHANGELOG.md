@@ -21,6 +21,9 @@
 - fix(consolidate): batch forgetting deletes, reuse assessed candidates, and avoid synchronous full `VACUUM`
 - fix(watch): use real recall score breakdown in generated context variants
 
+### Removed
+- agenr_done MCP tool removed (breaking change) -- use agenr_retire instead. agenr_retire accepts an entry ID from agenr_recall output and works on all entry types, not just todos.
+
 ## [0.5.3] - 2026-02-18
 
 ### Added

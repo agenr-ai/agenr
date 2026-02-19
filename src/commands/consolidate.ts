@@ -214,6 +214,7 @@ async function collectPreRunStats(
       SELECT created_at
       FROM entries
       WHERE superseded_by IS NULL
+        AND (retired IS NULL OR retired = 0)
         AND type = 'todo'
         ${scoped.clause}
     `,
@@ -244,6 +245,7 @@ async function collectPreRunStats(
       SELECT COUNT(*) AS count
       FROM entries
       WHERE superseded_by IS NULL
+        AND (retired IS NULL OR retired = 0)
         AND COALESCE(recall_count, 0) = 0
         ${scoped.clause}
     `,
@@ -258,6 +260,7 @@ async function collectPreRunStats(
       SELECT subject, COUNT(*) AS count
       FROM entries
       WHERE superseded_by IS NULL
+        AND (retired IS NULL OR retired = 0)
         AND contradictions > 0
         ${scoped.clause}
       GROUP BY subject
@@ -278,11 +281,12 @@ async function collectPreRunStats(
   if (activeEntryCount === undefined) {
     const activeResult = await db.execute({
       sql: `
-        SELECT COUNT(*) AS count
-        FROM entries
-        WHERE superseded_by IS NULL
-          ${scoped.clause}
-      `,
+      SELECT COUNT(*) AS count
+      FROM entries
+      WHERE superseded_by IS NULL
+        AND (retired IS NULL OR retired = 0)
+        ${scoped.clause}
+    `,
       args: scoped.args,
     });
     activeCount = Number.isFinite(toNumber(activeResult.rows[0]?.count))
@@ -339,6 +343,7 @@ async function collectForgettingCandidates(
         superseded_by
       FROM entries
       WHERE superseded_by IS NULL
+        AND (retired IS NULL OR retired = 0)
         AND created_at <= ?
         ${scoped.clause}
     `,
@@ -457,15 +462,16 @@ async function assessForgetting(
   excludeProject?: string[],
 ): Promise<ForgettingAssessment> {
   const scoped = buildScopedFilter(platform, project, excludeProject);
-  const activeResult = await db.execute({
-    sql: `
-      SELECT COUNT(*) AS count
-      FROM entries
-      WHERE superseded_by IS NULL
-      ${scoped.clause}
-    `,
-    args: scoped.args,
-  });
+    const activeResult = await db.execute({
+      sql: `
+        SELECT COUNT(*) AS count
+        FROM entries
+        WHERE superseded_by IS NULL
+        AND (retired IS NULL OR retired = 0)
+        ${scoped.clause}
+      `,
+      args: scoped.args,
+    });
 
   const activeEntryCount = Number.isFinite(toNumber(activeResult.rows[0]?.count))
     ? toNumber(activeResult.rows[0]?.count)
@@ -555,14 +561,13 @@ async function runForgettingDeletion(
       const now = new Date().toISOString();
       await db.execute({
         sql: `
-        UPDATE entries
-        SET retired = 1,
-            retired_at = ?,
-            retired_reason = ?,
-            updated_at = ?
-        WHERE id IN (${placeholders})
-      `,
-        args: [now, retirementReason, now, ...chunk.map((candidate) => candidate.entry.id)],
+          UPDATE entries
+          SET retired = 1,
+              retired_at = ?,
+              retired_reason = ?
+          WHERE id IN (${placeholders})
+        `,
+        args: [now, retirementReason, ...chunk.map((candidate) => candidate.entry.id)],
       });
     }
     await db.execute("COMMIT");
@@ -662,7 +667,8 @@ export async function runConsolidateCommand(
         SELECT COUNT(*) AS count
         FROM entries
         WHERE superseded_by IS NULL
-        ${scoped.clause}
+          AND (retired IS NULL OR retired = 0)
+          ${scoped.clause}
       `,
       args: scoped.args,
     });

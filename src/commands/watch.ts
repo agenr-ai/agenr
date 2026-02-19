@@ -73,7 +73,7 @@ function truncateContextContent(content: string, max = 200): string {
 
 const ENTRY_SELECT_COLUMNS = `
         id, type, subject, canonical_key, content, importance, expiry, scope,
-        platform, project, source_file, source_context, embedding,
+        platform, project, source_file, source_context, embedding, retired,
         created_at, updated_at, last_recalled_at, recall_count, confirmations, contradictions, superseded_by
 `;
 
@@ -178,6 +178,7 @@ export async function writeContextVariants(
 ${ENTRY_SELECT_COLUMNS}
       FROM entries
       WHERE superseded_by IS NULL
+        AND (retired IS NULL OR retired = 0)
       ORDER BY updated_at DESC
       LIMIT 500
     `,
@@ -198,6 +199,7 @@ ${ENTRY_SELECT_COLUMNS}
 ${ENTRY_SELECT_COLUMNS}
       FROM entries
       WHERE superseded_by IS NULL
+        AND (retired IS NULL OR retired = 0)
         AND importance >= 7
         AND updated_at >= ?
       ORDER BY updated_at DESC

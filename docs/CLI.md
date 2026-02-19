@@ -456,6 +456,29 @@ Consolidation Health
 - Stale todos (>30d old, not recalled): 18
 ```
 
+## `retire`
+
+Retire a stale entry from active recall. The entry is hidden from recall but not deleted from the database.
+
+```bash
+agenr retire <subject> [options]
+```
+
+Arguments:
+  subject    Subject to match (exact match by default)
+
+Options:
+  --contains         Use substring matching instead of exact match
+  --dry-run          Preview matches without retiring
+  --persist          Write to retirements ledger so retirement survives re-ingest
+  --reason <text>    Reason for retirement
+  --db <path>        Path to database file
+
+Examples:
+  agenr retire "AGENR platform" --persist --reason "project killed"
+  agenr retire "old project" --contains --dry-run
+
+
 ## `mcp`
 
 ### Syntax
