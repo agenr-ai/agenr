@@ -38,6 +38,20 @@ export async function writeHealthFile(health: WatcherHealth, configDir?: string)
   }
 }
 
+function isWatcherHealth(value: unknown): value is WatcherHealth {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.pid === "number" &&
+    typeof record.startedAt === "string" &&
+    typeof record.lastHeartbeat === "string" &&
+    typeof record.sessionsWatched === "number" &&
+    typeof record.entriesStored === "number"
+  );
+}
+
 export async function readHealthFile(configDir?: string): Promise<WatcherHealth | null> {
   try {
     const raw = await fs.readFile(resolveHealthPath(configDir), "utf8");
@@ -47,29 +61,10 @@ export async function readHealthFile(configDir?: string): Promise<WatcherHealth 
     } catch {
       return null;
     }
-
-    if (!parsed || typeof parsed !== "object") {
+    if (!isWatcherHealth(parsed)) {
       return null;
     }
-
-    const record = parsed as Record<string, unknown>;
-    if (typeof record.pid !== "number") {
-      return null;
-    }
-    if (typeof record.startedAt !== "string") {
-      return null;
-    }
-    if (typeof record.lastHeartbeat !== "string") {
-      return null;
-    }
-    if (typeof record.sessionsWatched !== "number") {
-      return null;
-    }
-    if (typeof record.entriesStored !== "number") {
-      return null;
-    }
-
-    return parsed as WatcherHealth;
+    return parsed;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return null;

@@ -649,7 +649,11 @@ export async function runDaemonStatusCommand(
     `Log file: ${logPath}`,
   ];
 
-  const ageSecs = health ? Math.max(0, Math.floor((nowMs - Date.parse(health.lastHeartbeat)) / 1000)) : null;
+  const heartbeatMs = health ? Date.parse(health.lastHeartbeat) : NaN;
+  const ageSecs =
+    health && !Number.isNaN(heartbeatMs)
+      ? Math.max(0, Math.floor((nowMs - heartbeatMs) / 1000))
+      : null;
 
   const stalledWarning =
     health !== null && !isHealthy(health, new Date(nowMs)) ? "[!] watcher may be stalled" : null;
@@ -657,7 +661,7 @@ export async function runDaemonStatusCommand(
   const watcherLines: string[] = health
     ? [
         "-- Watcher --",
-        `Heartbeat: ${ageSecs}s ago`,
+        `Heartbeat: ${ageSecs !== null ? `${ageSecs}s ago` : "invalid timestamp"}`,
         ...(stalledWarning ? [stalledWarning] : []),
         `Sessions watched: ${health.sessionsWatched}`,
         `Entries stored: ${health.entriesStored}`,
