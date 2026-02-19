@@ -22,6 +22,8 @@ import { createEmptyWatchState, getFileState, loadWatchState, saveWatchState, up
 import type { WatcherHealth } from "./health.js";
 import { writeHealthFile } from "./health.js";
 
+const DEFAULT_WAL_CHECKPOINT_INTERVAL_MS = 30_000;
+
 interface WatchTarget {
   dir: string;
   platform: WatchPlatform;
@@ -791,7 +793,7 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
       writeHeartbeat();
 
       const nowAt = resolvedDeps.nowFn();
-      const intervalMs = options.walCheckpointIntervalMs ?? 30000;
+      const intervalMs = options.walCheckpointIntervalMs ?? DEFAULT_WAL_CHECKPOINT_INTERVAL_MS;
       const shouldCheckpoint =
         intervalMs <= 0 || (nowAt.getTime() - lastCheckpointAt.getTime()) >= intervalMs;
 
