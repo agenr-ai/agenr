@@ -771,7 +771,7 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
       await waitForNextCycle();
     }
   } finally {
-    onWake(() => undefined);
+    onWake(null);
     closeAllWatchers();
     if (db) {
       try {
