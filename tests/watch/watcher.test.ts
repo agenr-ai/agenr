@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgenrConfig, KnowledgeEntry, WatchState } from "../../src/types.js";
+import type { WatcherHealth } from "../../src/watch/health.js";
 import { runWatcher } from "../../src/watch/watcher.js";
 import { isShutdownRequested, onWake, requestShutdown, resetShutdownForTests } from "../../src/shutdown.js";
 
@@ -102,6 +103,7 @@ function makeDeps(overrides?: Record<string, unknown>, configOverride?: AgenrCon
     saveWatchStateFn: vi.fn(async (state: WatchState) => {
       saveSnapshots.push(JSON.parse(JSON.stringify(state)) as WatchState);
     }),
+    writeHealthFileFn: vi.fn(async () => undefined),
     statFileFn,
     readFileFn,
     readFileHeadFn,
@@ -935,6 +937,34 @@ describe("watcher", () => {
 
     expect(result.cycles).toBe(1);
     expect(statFileFn).toHaveBeenCalledTimes(2);
+  });
+
+  it("calls writeHealthFileFn after each cycle", async () => {
+    const filePath = "/tmp/watch-health.jsonl";
+    const writeHealthFileFn = vi.fn(async (_health: WatcherHealth) => undefined);
+    const deps = makeDeps({
+      statFileFn: vi.fn(async () => ({ size: 0, isFile: () => true })),
+      writeHealthFileFn,
+    });
+
+    await runWatcher(
+      {
+        filePath,
+        intervalMs: 1,
+        minChunkChars: 5,
+        dryRun: true,
+        verbose: false,
+        once: true,
+      },
+      deps,
+    );
+
+    expect(writeHealthFileFn.mock.calls.length).toBeGreaterThanOrEqual(1);
+    const lastCall = writeHealthFileFn.mock.calls[writeHealthFileFn.mock.calls.length - 1];
+    const healthArg = lastCall[0] as WatcherHealth;
+    expect(healthArg.pid).toBe(process.pid);
+    expect(typeof healthArg.lastHeartbeat).toBe("string");
+    expect(healthArg.lastHeartbeat.length).toBeGreaterThan(0);
   });
 
   it("extracts in dry-run mode without storing", async () => {
