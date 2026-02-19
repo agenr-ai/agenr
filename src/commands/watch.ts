@@ -398,6 +398,7 @@ export async function runWatchCommand(
   const once = options.once === true;
   const json = options.json === true;
   const raw = options.raw === true;
+  const contextEnabled = Boolean(options.context);
 
   const modeConfig = await resolveWatchMode(file, options, resolvedDeps.statFileFn);
 
@@ -447,6 +448,7 @@ export async function runWatchCommand(
 
   let cycleCount = 0;
   let contextChain: Promise<void> = Promise.resolve();
+  let contextDb: ReturnType<typeof getDb> | null = null;
   const summary = await runWatcher(
       {
         filePath: modeConfig.filePath ?? undefined,
@@ -518,6 +520,7 @@ export async function runWatchCommand(
           );
 
           if (!dryRun && options.context && result.entriesStored > 0 && ctx.db) {
+            contextDb = ctx.db;
             const contextPath = path.resolve(options.context.replace(/^~(?=$|\/)/, os.homedir()));
             contextChain = contextChain
               .then(async () => {
@@ -549,7 +552,7 @@ export async function runWatchCommand(
         deduplicateEntriesFn: resolvedDeps.deduplicateEntriesFn,
         getDbFn: resolvedDeps.getDbFn,
         initDbFn: resolvedDeps.initDbFn,
-        closeDbFn: resolvedDeps.closeDbFn,
+        closeDbFn: contextEnabled ? () => {} : resolvedDeps.closeDbFn,
         storeEntriesFn: resolvedDeps.storeEntriesFn,
         loadWatchStateFn: resolvedDeps.loadWatchStateFn,
         saveWatchStateFn: resolvedDeps.saveWatchStateFn,
@@ -562,6 +565,13 @@ export async function runWatchCommand(
 
   // Best-effort: ensure any in-flight context refresh finishes before printing the final summary.
   await contextChain.catch(() => undefined);
+  if (contextEnabled && contextDb) {
+    try {
+      resolvedDeps.closeDbFn(contextDb);
+    } catch {
+      // ignore
+    }
+  }
 
   clack.log.info(
     `Summary: ${summary.cycles} cycles | ${summary.entriesStored} entries stored | watched for ${formatDuration(summary.durationMs)}`,

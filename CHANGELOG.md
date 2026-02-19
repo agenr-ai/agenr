@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.1] - 2026-02-19
+
+### Fixed
+- fix(watch): context file generation failed with CLIENT_CLOSED when context path is configured
+- fix(mcp): remove agenr_done tool (was not removed in v0.6.0 as intended)
+
 ## [0.6.0] - 2026-02-18
 
 ### Added
@@ -22,7 +28,7 @@
 - fix(watch): use real recall score breakdown in generated context variants
 
 ### Removed
-- agenr_done MCP tool removed (breaking change) -- use agenr_retire instead. agenr_retire accepts an entry ID from agenr_recall output and works on all entry types, not just todos.
+- `agenr_done` MCP tool removed; use `agenr_retire` instead (supports all entry types, not just todos)
 
 ## [0.5.3] - 2026-02-18
 

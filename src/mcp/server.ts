@@ -190,27 +190,6 @@ const TOOL_DEFINITIONS: McpToolDefinition[] = [
     },
   },
   {
-    name: "agenr_done",
-    description:
-      "Mark a todo as completed and remove it from active recall. Use when you have resolved a task or confirmed something is no longer needed. Fuzzy-matches by subject.",
-    inputSchema: {
-      type: "object",
-      additionalProperties: false,
-      required: ["subject"],
-      properties: {
-        subject: {
-          type: "string",
-          description: "The subject of the todo to mark as done. Partial/fuzzy match is supported.",
-        },
-        confirm: {
-          type: "boolean",
-          description: "If true, skip confirmation prompt and mark done immediately. Default false.",
-          default: false,
-        },
-      },
-    },
-  },
-  {
     name: "agenr_extract",
     description: "Extract knowledge entries from raw text.",
     inputSchema: {
@@ -659,39 +638,6 @@ function formatExtractedText(entries: KnowledgeEntry[], stored?: StoreResult): s
   return lines.join("\n");
 }
 
-interface ActiveTodoEntry {
-  id: string;
-  subject: string;
-  content: string;
-}
-
-function toActiveTodoRows(rows: Array<Record<string, unknown>>): ActiveTodoEntry[] {
-  return rows.map((row) => ({
-    id: typeof row.id === "string" ? row.id : String(row.id ?? ""),
-    subject: typeof row.subject === "string" ? row.subject : String(row.subject ?? ""),
-    content: typeof row.content === "string" ? row.content : String(row.content ?? ""),
-  }));
-}
-
-function findTodoMatches(rows: ActiveTodoEntry[], subject: string): ActiveTodoEntry[] {
-  const normalizedSubject = subject.trim().toLowerCase();
-  return rows.filter((row) => {
-    const normalizedRow = row.subject.toLowerCase();
-    return normalizedRow.includes(normalizedSubject) || normalizedSubject.includes(normalizedRow);
-  });
-}
-
-function formatDoneCandidates(subject: string, candidates: ActiveTodoEntry[]): string {
-  const lines = [`Multiple active todos match "${subject}":`, ""];
-  for (let i = 0; i < candidates.length; i += 1) {
-    const candidate = candidates[i];
-    lines.push(`${i + 1}. ${candidate.subject}`);
-  }
-  lines.push("");
-  lines.push("Re-run with confirm=true to mark the top match.");
-  return lines.join("\n");
-}
-
 function extractIdForError(raw: unknown): JsonRpcId {
   if (!isRecord(raw) || !hasOwn(raw, "id")) {
     return null;
@@ -929,57 +875,6 @@ export function createMcpServer(
     return formatStoreSummary(result);
   }
 
-  async function callDoneTool(
-    args: { subject?: unknown; confirm?: unknown },
-  ): Promise<ToolCallResult> {
-    const subject = typeof args.subject === "string" ? args.subject.trim() : "";
-    if (!subject) {
-      throw new RpcError(JSON_RPC_INVALID_PARAMS, "subject is required");
-    }
-
-    if (args.confirm !== undefined && typeof args.confirm !== "boolean") {
-      throw new RpcError(JSON_RPC_INVALID_PARAMS, "confirm must be a boolean");
-    }
-    const confirm = args.confirm === true;
-
-    const db = await ensureDb();
-    const result = await db.execute({
-      sql: `
-        SELECT id, subject, content
-        FROM entries
-        WHERE type = 'todo' AND superseded_by IS NULL
-        ORDER BY importance DESC, created_at DESC, subject ASC
-      `,
-      args: [],
-    });
-
-    const todos = toActiveTodoRows(result.rows as Array<Record<string, unknown>>);
-    const matches = findTodoMatches(todos, subject);
-
-    if (matches.length === 0) {
-      return {
-        content: [{ type: "text", text: `No active todo matching: ${subject}` }],
-        isError: true,
-      };
-    }
-
-    if (matches.length > 1 && !confirm) {
-      return {
-        content: [{ type: "text", text: formatDoneCandidates(subject, matches.slice(0, 5)) }],
-      };
-    }
-
-    const selected = matches[0] as ActiveTodoEntry;
-    await db.execute({
-      sql: "UPDATE entries SET superseded_by = id, updated_at = datetime('now') WHERE id = ?",
-      args: [selected.id],
-    });
-
-    return {
-      content: [{ type: "text", text: `Marked done: ${selected.subject}` }],
-    };
-  }
-
   async function callExtractTool(args: Record<string, unknown>): Promise<string> {
     const text = typeof args.text === "string" ? args.text : "";
     if (!text.trim()) {
@@ -1104,10 +999,6 @@ export function createMcpServer(
         return {
           content: [{ type: "text", text: await callStoreTool(params.args) }],
         };
-      }
-
-      if (params.name === "agenr_done") {
-        return callDoneTool(params.args as { subject: string; confirm?: boolean });
       }
 
       if (params.name === "agenr_extract") {
