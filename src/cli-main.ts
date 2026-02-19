@@ -163,11 +163,16 @@ export async function runExtractCommand(
     const config = resolvedDeps.readConfigFn(process.env);
     const dbPath = options.db?.trim() || config?.db?.path?.trim();
     if (dbPath) {
+      let preFetchDb: Client | undefined;
       try {
         embeddingApiKey = resolvedDeps.resolveEmbeddingApiKeyFn(config, process.env);
-        db = resolvedDeps.getDbFn(dbPath);
-        await resolvedDeps.initDbFn(db);
+        preFetchDb = resolvedDeps.getDbFn(dbPath);
+        await resolvedDeps.initDbFn(preFetchDb);
+        db = preFetchDb;
       } catch (error) {
+        if (preFetchDb) {
+          resolvedDeps.closeDbFn(preFetchDb);
+        }
         db = undefined;
         embeddingApiKey = undefined;
         if (verbose) {
@@ -436,13 +441,13 @@ export function createProgram(): Command {
     .option("--no-dedup", "Skip post-extraction LLM dedup pass", false)
     .option("--no-pre-fetch", "Disable elaborative encoding pre-fetch")
     .option("--verbose", "Show extraction progress and debug info", false)
-    .action(async (files: string[], opts: ExtractCommandOptions & { preFetch?: boolean }) => {
+    .action(async (files: string[], opts: ExtractCommandOptions) => {
       const selectedFormat = opts.json ? "json" : opts.format;
       const format = selectedFormat === "json" ? "json" : selectedFormat === "markdown" ? "markdown" : null;
       if (!format) {
         throw new Error("--format must be one of: json, markdown");
       }
-      const noPreFetch = opts.noPreFetch === true || opts.preFetch === false;
+      const noPreFetch = opts.noPreFetch === true;
 
       const result = await runExtractCommand(files, {
         ...opts,
@@ -632,10 +637,10 @@ export function createProgram(): Command {
     .option("--dry-run", "Extract without storing", false)
     .option("--once", "Run one cycle and exit", false)
     .option("--json", "Output JSON results", false)
-    .action(async (file: string | undefined, opts: WatchCommandOptions & { preFetch?: boolean }) => {
+    .action(async (file: string | undefined, opts: WatchCommandOptions) => {
       const result = await runWatchCommand(file, {
         ...opts,
-        noPreFetch: opts.noPreFetch === true || opts.preFetch === false,
+        noPreFetch: opts.noPreFetch === true,
       });
       process.exitCode = result.exitCode;
     });
@@ -669,10 +674,10 @@ export function createProgram(): Command {
     .option("--no-pre-fetch", "Disable elaborative encoding pre-fetch")
     .option("--max-retries <n>", "Maximum auto-retry attempts", parseIntOption, 3)
     .option("--force", "Clean re-ingest: delete previous rows for each file before processing", false)
-    .action(async (paths: string[], opts: IngestCommandOptions & { preFetch?: boolean }) => {
+    .action(async (paths: string[], opts: IngestCommandOptions) => {
       const result = await runIngestCommand(paths, {
         ...opts,
-        noPreFetch: opts.noPreFetch === true || opts.preFetch === false,
+        noPreFetch: opts.noPreFetch === true,
       });
       process.exitCode = result.exitCode;
     });
