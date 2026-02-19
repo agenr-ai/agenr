@@ -9,6 +9,7 @@ import { EmbeddingCache } from "../embeddings/cache.js";
 import { runSimpleStream } from "../llm/stream.js";
 import type { Expiry, KnowledgeEntry, LlmClient, RelationType, StoreResult, StoredEntry } from "../types.js";
 import { createRelation } from "./relations.js";
+import { toNumber, toStringValue } from "../utils/entry-utils.js";
 
 const AUTO_SKIP_THRESHOLD = 0.95;
 const SMART_DEDUP_THRESHOLD = 0.88;
@@ -97,29 +98,6 @@ interface PlannedMutation {
 interface ProcessedEntry {
   decision: StoreEntryDecision;
   mutation: PlannedMutation;
-}
-
-function toNumber(value: InValue | undefined): number {
-  if (typeof value === "number") {
-    return value;
-  }
-  if (typeof value === "bigint") {
-    return Number(value);
-  }
-  if (typeof value === "string" && value.trim()) {
-    return Number(value);
-  }
-  return Number.NaN;
-}
-
-function toStringValue(value: InValue | undefined): string {
-  if (typeof value === "string") {
-    return value;
-  }
-  if (typeof value === "number" || typeof value === "bigint") {
-    return String(value);
-  }
-  return "";
 }
 
 function normalize(value: string): string {

@@ -1044,7 +1044,7 @@ export function createMcpServer(
     }
   }
 
-  async function callRetireTool(args: Record<string, unknown>): Promise<ToolCallResult> {
+  async function callRetireTool(args: Record<string, unknown>): Promise<string> {
     const entryId = typeof args.entry_id === "string" ? args.entry_id.trim() : "";
     if (!entryId) {
       throw new RpcError(JSON_RPC_INVALID_PARAMS, "entry_id is required");
@@ -1067,10 +1067,7 @@ export function createMcpServer(
 
     const row = lookup.rows[0] as { subject?: unknown; type?: unknown } | undefined;
     if (!row) {
-      return {
-        content: [{ type: "text", text: `No active entry found with id: ${entryId}` }],
-        isError: true,
-      };
+      throw new RpcError(JSON_RPC_INVALID_PARAMS, `No active entry found with id: ${entryId}`);
     }
 
     const subject = typeof row.subject === "string" ? row.subject : String(row.subject ?? "");
@@ -1087,17 +1084,12 @@ export function createMcpServer(
     });
 
     if (retired.count === 0) {
-      return {
-        content: [{ type: "text", text: `No active entry found with id: ${entryId}` }],
-        isError: true,
-      };
+      throw new RpcError(JSON_RPC_INVALID_PARAMS, `No active entry found with id: ${entryId}`);
     }
 
     const messageBase = `Retired: ${subject} (type: ${type}). Entry is hidden from session-start recall but can still be found with explicit queries.`;
     const text = persist ? `${messageBase} Retirement will survive database re-ingest.` : messageBase;
-    return {
-      content: [{ type: "text", text }],
-    };
+    return text;
   }
 
   async function dispatchToolCall(params: ToolCallParams): Promise<ToolCallResult> {
@@ -1125,7 +1117,9 @@ export function createMcpServer(
       }
 
       if (params.name === "agenr_retire") {
-        return await callRetireTool(params.args);
+        return {
+          content: [{ type: "text", text: await callRetireTool(params.args) }],
+        };
       }
 
       throw new RpcError(JSON_RPC_INVALID_PARAMS, `Unknown tool: ${params.name}`);

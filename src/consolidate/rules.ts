@@ -76,7 +76,7 @@ export function forgettingScore(entry: StoredEntry, now: Date): number {
   const ageDays = parseDaysBetween(now, entry.created_at);
   const recallCount = entry.recall_count ?? 0;
 
-  const halfLife = entry.type === "todo" ? 30 : 90;
+  const halfLife = 90;
   const ageDecay = Math.pow(0.5, ageDays / halfLife);
   const recallBonus = Math.min(recallCount * 0.05, 0.3);
 
@@ -91,6 +91,12 @@ export function forgettingScore(entry: StoredEntry, now: Date): number {
   return Math.max(raw, importanceFloor);
 }
 
+/**
+ * Matches subject against a protect pattern.
+ * Only trailing wildcard is supported (e.g. "project-*" matches "project-agenr").
+ * Mid-string and prefix globs (e.g. "*suffix", "foo*bar") are NOT supported.
+ * Matching is case-insensitive.
+ */
 export function matchesPattern(subject: string, pattern: string): boolean {
   if (pattern.endsWith("*")) {
     return subject.toLowerCase().startsWith(pattern.slice(0, -1).toLowerCase());
