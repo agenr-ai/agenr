@@ -45,7 +45,7 @@ export type PluginApi = {
 };
 
 export type AgenrPluginConfig = {
-  /** Path to agenr CLI entry point (dist/cli.js). Defaults to AGENR_BIN env or ~/Code/agenr-local/dist/cli.js */
+  /** Path to agenr CLI entry point (dist/cli.js). Defaults to AGENR_BIN env or bundled dist/cli.js */
   agenrPath?: string;
   /** Token budget for recall (default: 2000) */
   budget?: number;

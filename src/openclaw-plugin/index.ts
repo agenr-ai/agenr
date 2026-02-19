@@ -58,10 +58,9 @@ const plugin = {
           return;
         }
 
-        // Push synthetic bootstrap file - cast name to any since "AGENR.md" is not
-        // in the WorkspaceBootstrapFileName union but runtime does not validate it.
+        // Push synthetic bootstrap file containing recalled memory context.
         const file: BootstrapFile = {
-          name: "AGENR.md" as unknown as never,
+          name: "AGENR.md",
           path: AGENR_CONTEXT_PATH,
           content: markdown,
           missing: false,
