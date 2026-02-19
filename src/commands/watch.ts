@@ -149,8 +149,9 @@ function selectWithinTokenBudget(results: RecallResult[], tokenBudget: number, m
       break;
     }
     const tokens = estimateEntryTokens(result);
+    // Keep top-scored entries contiguous: stop at first over-budget item once budget has started.
     if (selected.length > 0 && used + tokens > tokenBudget) {
-      continue;
+      break;
     }
     selected.push(result.entry);
     used += tokens;

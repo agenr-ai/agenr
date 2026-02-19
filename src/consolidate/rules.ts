@@ -72,12 +72,6 @@ function collapsePreview(text: string, maxLength = 80): string {
   return `${collapsed.slice(0, maxLength - 3)}...`;
 }
 
-function parseDaysOld(now: Date, createdAt: string): number {
-  return parseDaysBetween(now, createdAt);
-}
-
-export { parseDaysBetween };
-
 export function forgettingScore(entry: StoredEntry, now: Date): number {
   const ageDays = parseDaysBetween(now, entry.created_at);
   const recallCount = entry.recall_count ?? 0;
@@ -207,7 +201,7 @@ async function expireDecayedEntries(
       continue;
     }
 
-    const daysOld = parseDaysOld(now, createdAt);
+    const daysOld = parseDaysBetween(now, createdAt);
     const score = recency(daysOld, expiry);
     if (score >= EXPIRE_THRESHOLD) {
       continue;
