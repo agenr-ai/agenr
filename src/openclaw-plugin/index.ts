@@ -1,16 +1,10 @@
-import os from "node:os";
-import path from "node:path";
 import { formatRecallAsMarkdown, resolveAgenrPath, resolveBudget, runRecall } from "./recall.js";
 import type {
   AgenrPluginConfig,
-  BootstrapFile,
-  BootstrapHookContext,
-  HookEvent,
+  BeforeAgentStartEvent,
+  BeforeAgentStartResult,
   PluginApi,
 } from "./types.js";
-
-// Path used as the ## header in Project Context for the injected memory block.
-const AGENR_CONTEXT_PATH = path.join(os.homedir(), ".agenr", "AGENR.md");
 
 // Session key substrings that indicate non-interactive sessions to skip.
 const SKIP_SESSION_PATTERNS = [":subagent:", ":cron:"];
@@ -22,55 +16,43 @@ function shouldSkipSession(sessionKey: string): boolean {
 const plugin = {
   id: "agenr",
   name: "agenr memory context",
-  description: "Injects agenr long-term memory into every agent session via agent:bootstrap",
+  description: "Injects agenr long-term memory into every agent session via before_agent_start",
 
   register(api: PluginApi): void {
-    api.registerHook("agent:bootstrap", async (event: HookEvent): Promise<void> => {
-      try {
-        const ctx = event.context as BootstrapHookContext;
-        if (!Array.isArray(ctx.bootstrapFiles)) {
+    api.on(
+      "before_agent_start",
+      async (event: BeforeAgentStartEvent): Promise<BeforeAgentStartResult | undefined> => {
+        try {
+          const sessionKey = event.sessionKey ?? "";
+          if (shouldSkipSession(sessionKey)) {
+            return;
+          }
+
+          const config = api.pluginConfig as AgenrPluginConfig | undefined;
+          if (config?.enabled === false) {
+            return;
+          }
+
+          const agenrPath = resolveAgenrPath(config);
+          const budget = resolveBudget(config);
+
+          const result = await runRecall(agenrPath, budget);
+          if (!result) {
+            return;
+          }
+
+          const markdown = formatRecallAsMarkdown(result);
+          if (!markdown.trim()) {
+            return;
+          }
+
+          return { prependContext: markdown };
+        } catch {
+          // Never block session start - swallow all errors silently.
           return;
         }
-
-        // Check session key from both event root and context.
-        const sessionKey = ctx.sessionKey ?? event.sessionKey ?? "";
-
-        // Skip non-interactive sessions.
-        if (shouldSkipSession(sessionKey)) {
-          return;
-        }
-
-        const config = api.pluginConfig as AgenrPluginConfig | undefined;
-        if (config?.enabled === false) {
-          return;
-        }
-
-        const agenrPath = resolveAgenrPath(config);
-        const budget = resolveBudget(config);
-
-        const result = await runRecall(agenrPath, budget);
-        if (!result) {
-          return;
-        }
-
-        const markdown = formatRecallAsMarkdown(result);
-        if (!markdown.trim()) {
-          return;
-        }
-
-        // Push synthetic bootstrap file containing recalled memory context.
-        const file: BootstrapFile = {
-          name: "AGENR.md",
-          path: AGENR_CONTEXT_PATH,
-          content: markdown,
-          missing: false,
-        };
-
-        ctx.bootstrapFiles.push(file);
-      } catch {
-        // Never block session start - swallow all errors silently.
       }
-    }, { name: "agenr-memory", description: "Inject agenr memory context at session start" });
+    );
   },
 };
 

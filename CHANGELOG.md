@@ -1,3 +1,8 @@
+## [0.6.8] - 2026-02-19
+
+### Fixed
+- fix(openclaw-plugin): OpenClaw plugin now uses api.on("before_agent_start") instead of api.registerHook("agent:bootstrap"). The previous approach registered the handler in the gateway bundle's internal handlers map, which is a different module instance from the embedded agent runner. The typed hook system (api.on) uses the shared global plugin registry and works correctly across both bundles.
+
 ## [0.6.7] - 2026-02-19
 
 ### Fixed

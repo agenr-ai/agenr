@@ -1,6 +1,5 @@
-import os from "node:os";
-import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import type { BeforeAgentStartEvent, BeforeAgentStartResult } from "../../src/openclaw-plugin/types.js";
 
 describe("agenr OpenClaw plugin", () => {
   it("exports a default object with id 'agenr' and a register function", async () => {
@@ -10,27 +9,26 @@ describe("agenr OpenClaw plugin", () => {
     expect(typeof plugin.register).toBe("function");
   });
 
-  it("register calls api.registerHook with 'agent:bootstrap'", async () => {
+  it("register calls api.on with 'before_agent_start'", async () => {
     const mod = await import("../../src/openclaw-plugin/index.js");
     const plugin = mod.default;
 
-    const registeredEvents: string[] = [];
+    const registeredHooks: string[] = [];
     const mockApi = {
       id: "agenr",
       name: "agenr",
       pluginConfig: undefined,
       logger: { warn: vi.fn(), error: vi.fn() },
-      registerHook: (events: string | string[], _handler: unknown) => {
-        const list = Array.isArray(events) ? events : [events];
-        registeredEvents.push(...list);
+      on: (hook: string, _handler: unknown) => {
+        registeredHooks.push(hook);
       },
     };
 
     await plugin.register(mockApi as never);
-    expect(registeredEvents).toContain("agent:bootstrap");
+    expect(registeredHooks).toContain("before_agent_start");
   });
 
-  it("bootstrap handler pushes exactly one file when recall returns valid content", async () => {
+  it("before_agent_start handler returns prependContext when recall returns valid content", async () => {
     vi.resetModules();
     vi.doMock("../../src/openclaw-plugin/recall.js", () => ({
       resolveAgenrPath: vi.fn(() => "/tmp/agenr-cli.js"),
@@ -50,49 +48,18 @@ describe("agenr OpenClaw plugin", () => {
     const mod = await import("../../src/openclaw-plugin/index.js");
     const plugin = mod.default;
 
-    let capturedHandler: ((event: unknown) => Promise<void>) | null = null;
+    let capturedHandler:
+      | ((event: BeforeAgentStartEvent) => Promise<BeforeAgentStartResult | undefined>)
+      | null = null;
     const mockApi = {
       id: "agenr",
       name: "agenr",
       pluginConfig: undefined,
       logger: { warn: vi.fn(), error: vi.fn() },
-      registerHook: (_events: unknown, handler: (event: unknown) => Promise<void>) => {
-        capturedHandler = handler;
-      },
-    };
-
-    await plugin.register(mockApi as never);
-
-    const bootstrapFiles: Array<{ path?: string; name?: string; content?: string }> = [];
-    await capturedHandler?.({
-      type: "agent",
-      action: "bootstrap",
-      sessionKey: "agent:main:interactive",
-      context: { bootstrapFiles, sessionKey: "agent:main:interactive" },
-      timestamp: new Date(),
-      messages: [],
-    });
-
-    expect(bootstrapFiles).toHaveLength(1);
-    expect(bootstrapFiles[0]?.name).toBe("AGENR.md");
-    expect(bootstrapFiles[0]?.path).toBe(path.join(os.homedir(), ".agenr", "AGENR.md"));
-    expect(bootstrapFiles[0]?.content).toContain("## agenr Memory Context");
-
-    vi.doUnmock("../../src/openclaw-plugin/recall.js");
-    vi.resetModules();
-  });
-
-  it("bootstrap handler does not push to bootstrapFiles for subagent sessions", async () => {
-    const mod = await import("../../src/openclaw-plugin/index.js");
-    const plugin = mod.default;
-
-    let capturedHandler: ((event: unknown) => Promise<void>) | null = null;
-    const mockApi = {
-      id: "agenr",
-      name: "agenr",
-      pluginConfig: { agenrPath: "/nonexistent/cli.js" },
-      logger: { warn: vi.fn(), error: vi.fn() },
-      registerHook: (_events: unknown, handler: (event: unknown) => Promise<void>) => {
+      on: (
+        _hook: string,
+        handler: (event: BeforeAgentStartEvent) => Promise<BeforeAgentStartResult | undefined>
+      ) => {
         capturedHandler = handler;
       },
     };
@@ -100,114 +67,125 @@ describe("agenr OpenClaw plugin", () => {
     await plugin.register(mockApi as never);
     expect(capturedHandler).not.toBeNull();
 
-    const bootstrapFiles: unknown[] = [];
-    await capturedHandler?.({
-      type: "agent",
-      action: "bootstrap",
-      sessionKey: "agent:main:subagent:abc123",
-      context: {
-        bootstrapFiles,
-        sessionKey: "agent:main:subagent:abc123",
-      },
-      timestamp: new Date(),
-      messages: [],
+    const result = await capturedHandler?.({
+      sessionKey: "agent:main:interactive",
+      prompt: "test prompt",
     });
+    expect(result?.prependContext).toContain("## agenr Memory Context");
 
-    expect(bootstrapFiles).toHaveLength(0);
+    vi.doUnmock("../../src/openclaw-plugin/recall.js");
+    vi.resetModules();
   });
 
-  it("bootstrap handler does not push to bootstrapFiles for cron sessions", async () => {
+  it("before_agent_start handler returns undefined for subagent sessions", async () => {
     const mod = await import("../../src/openclaw-plugin/index.js");
     const plugin = mod.default;
 
-    let capturedHandler: ((event: unknown) => Promise<void>) | null = null;
+    let capturedHandler:
+      | ((event: BeforeAgentStartEvent) => Promise<BeforeAgentStartResult | undefined>)
+      | null = null;
     const mockApi = {
       id: "agenr",
       name: "agenr",
       pluginConfig: { agenrPath: "/nonexistent/cli.js" },
       logger: { warn: vi.fn(), error: vi.fn() },
-      registerHook: (_events: unknown, handler: (event: unknown) => Promise<void>) => {
+      on: (
+        _hook: string,
+        handler: (event: BeforeAgentStartEvent) => Promise<BeforeAgentStartResult | undefined>
+      ) => {
+        capturedHandler = handler;
+      },
+    };
+
+    await plugin.register(mockApi as never);
+    expect(capturedHandler).not.toBeNull();
+
+    const result = await capturedHandler?.({
+      sessionKey: "agent:main:subagent:abc123",
+    });
+    expect(result).toBeUndefined();
+  });
+
+  it("before_agent_start handler returns undefined for cron sessions", async () => {
+    const mod = await import("../../src/openclaw-plugin/index.js");
+    const plugin = mod.default;
+
+    let capturedHandler:
+      | ((event: BeforeAgentStartEvent) => Promise<BeforeAgentStartResult | undefined>)
+      | null = null;
+    const mockApi = {
+      id: "agenr",
+      name: "agenr",
+      pluginConfig: { agenrPath: "/nonexistent/cli.js" },
+      logger: { warn: vi.fn(), error: vi.fn() },
+      on: (
+        _hook: string,
+        handler: (event: BeforeAgentStartEvent) => Promise<BeforeAgentStartResult | undefined>
+      ) => {
         capturedHandler = handler;
       },
     };
 
     await plugin.register(mockApi as never);
 
-    const bootstrapFiles: unknown[] = [];
-    await capturedHandler?.({
-      type: "agent",
-      action: "bootstrap",
+    const result = await capturedHandler?.({
       sessionKey: "agent:main:cron:heartbeat",
-      context: {
-        bootstrapFiles,
-        sessionKey: "agent:main:cron:heartbeat",
-      },
-      timestamp: new Date(),
-      messages: [],
     });
 
-    expect(bootstrapFiles).toHaveLength(0);
+    expect(result).toBeUndefined();
   });
 
-  it("bootstrap handler does not push when config.enabled is false", async () => {
+  it("before_agent_start handler returns undefined when config.enabled is false", async () => {
     const mod = await import("../../src/openclaw-plugin/index.js");
     const plugin = mod.default;
 
-    let capturedHandler: ((event: unknown) => Promise<void>) | null = null;
+    let capturedHandler:
+      | ((event: BeforeAgentStartEvent) => Promise<BeforeAgentStartResult | undefined>)
+      | null = null;
     const mockApi = {
       id: "agenr",
       name: "agenr",
       pluginConfig: { enabled: false },
       logger: { warn: vi.fn(), error: vi.fn() },
-      registerHook: (_events: unknown, handler: (event: unknown) => Promise<void>) => {
+      on: (
+        _hook: string,
+        handler: (event: BeforeAgentStartEvent) => Promise<BeforeAgentStartResult | undefined>
+      ) => {
         capturedHandler = handler;
       },
     };
 
     await plugin.register(mockApi as never);
 
-    const bootstrapFiles: unknown[] = [];
-    await capturedHandler?.({
-      type: "agent",
-      action: "bootstrap",
+    const result = await capturedHandler?.({
       sessionKey: "agent:main",
-      context: { bootstrapFiles, sessionKey: "agent:main" },
-      timestamp: new Date(),
-      messages: [],
     });
 
-    expect(bootstrapFiles).toHaveLength(0);
+    expect(result).toBeUndefined();
   });
 
-  it("bootstrap handler resolves without throwing when agenr path does not exist", async () => {
+  it("before_agent_start handler resolves without throwing when agenr path does not exist", async () => {
     const mod = await import("../../src/openclaw-plugin/index.js");
     const plugin = mod.default;
 
-    let capturedHandler: ((event: unknown) => Promise<void>) | null = null;
+    let capturedHandler:
+      | ((event: BeforeAgentStartEvent) => Promise<BeforeAgentStartResult | undefined>)
+      | null = null;
     const mockApi = {
       id: "agenr",
       name: "agenr",
       pluginConfig: { agenrPath: "/nonexistent/path/that/does/not/exist/cli.js" },
       logger: { warn: vi.fn(), error: vi.fn() },
-      registerHook: (_events: unknown, handler: (event: unknown) => Promise<void>) => {
+      on: (
+        _hook: string,
+        handler: (event: BeforeAgentStartEvent) => Promise<BeforeAgentStartResult | undefined>
+      ) => {
         capturedHandler = handler;
       },
     };
 
     await plugin.register(mockApi as never);
 
-    const bootstrapFiles: unknown[] = [];
-    await expect(
-      capturedHandler?.({
-        type: "agent",
-        action: "bootstrap",
-        sessionKey: "agent:main",
-        context: { bootstrapFiles, sessionKey: "agent:main" },
-        timestamp: new Date(),
-        messages: [],
-      })
-    ).resolves.toBeUndefined();
-
-    expect(bootstrapFiles).toHaveLength(0);
+    await expect(capturedHandler?.({ sessionKey: "agent:main" })).resolves.toBeUndefined();
   });
 });
