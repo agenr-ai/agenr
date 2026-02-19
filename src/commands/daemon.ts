@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import * as clack from "@clack/prompts";
+import { isHealthy, readHealthFile, type WatcherHealth } from "../watch/health.js";
 import { loadWatchState } from "../watch/state.js";
 import { detectWatchPlatform, normalizePlatform, type WatchPlatform } from "../watch/resolvers/index.js";
 import { getDefaultPlatformDir } from "../watch/platform-defaults.js";
@@ -60,9 +61,12 @@ export interface DaemonCommandDeps {
   writeFileFn: typeof fs.writeFile;
   rmFn: typeof fs.rm;
   readFileFn: typeof fs.readFile;
+  readHealthFileFn: (configDir?: string) => Promise<WatcherHealth | null>;
   loadWatchStateFn: typeof loadWatchState;
+  noteFn: (message: string, title?: string) => void;
   confirmFn: (message: string) => Promise<boolean>;
   sleepFn: (ms: number) => Promise<void>;
+  nowFn: () => number;
 }
 
 export interface DaemonCommandResult {
@@ -73,6 +77,7 @@ export interface DaemonStatusResult extends DaemonCommandResult {
   loaded: boolean;
   running: boolean;
   currentFile: string | null;
+  health: WatcherHealth | null;
   logTail: string[];
 }
 
@@ -182,8 +187,11 @@ function resolveDeps(deps?: Partial<DaemonCommandDeps>): DaemonCommandDeps {
     writeFileFn: deps?.writeFileFn ?? fs.writeFile,
     rmFn: deps?.rmFn ?? fs.rm,
     readFileFn: deps?.readFileFn ?? fs.readFile,
+    readHealthFileFn: deps?.readHealthFileFn ?? readHealthFile,
     loadWatchStateFn: deps?.loadWatchStateFn ?? loadWatchState,
+    noteFn: deps?.noteFn ?? clack.note,
     sleepFn: deps?.sleepFn ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms))),
+    nowFn: deps?.nowFn ?? (() => Date.now()),
     confirmFn:
       deps?.confirmFn ??
       (async (message: string) => {
@@ -610,6 +618,14 @@ export async function runDaemonStatusCommand(
 
   const { logPath } = getPaths(homeDir);
   const { loaded, running } = await getLaunchctlState(resolvedDeps, uid);
+  let health: WatcherHealth | null = null;
+  try {
+    health = await resolvedDeps.readHealthFileFn(options.configDir);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    clack.log.warn(`Failed to read watcher health: ${message}`);
+    health = null;
+  }
 
   let currentFile: string | null = null;
   try {
@@ -621,16 +637,32 @@ export async function runDaemonStatusCommand(
 
   const lineCount = parsePositiveInt(options.lines, DEFAULT_STATUS_LOG_LINES, "--lines");
   const logTail = await readLastLines(resolvedDeps.readFileFn, logPath, lineCount);
+  const nowMs = resolvedDeps.nowFn();
 
-  clack.note(
-    [
-      `Loaded: ${loaded ? "yes" : "no"}`,
-      `Running: ${running ? "yes" : "no"}`,
-      `Current file: ${currentFile ?? "(none)"}`,
-      `Log file: ${logPath}`,
-    ].join("\n"),
-    "Daemon Status",
-  );
+  const daemonLines = [
+    "-- Daemon --",
+    `Loaded: ${loaded ? "yes" : "no"}`,
+    `Running: ${running ? "yes" : "no"}`,
+    `Current file: ${currentFile ?? "(none)"}`,
+    `Log file: ${logPath}`,
+  ];
+
+  const ageSecs = health ? Math.floor((nowMs - Date.parse(health.lastHeartbeat)) / 1000) : null;
+
+  const stalledWarning =
+    health !== null && !isHealthy(health, new Date(nowMs)) ? "[!] watcher may be stalled" : null;
+
+  const watcherLines: string[] = health
+    ? [
+        "-- Watcher --",
+        `Heartbeat: ${ageSecs}s ago`,
+        ...(stalledWarning ? [stalledWarning] : []),
+        `Sessions watched: ${health.sessionsWatched}`,
+        `Entries stored: ${health.entriesStored}`,
+      ]
+    : ["-- Watcher --", "Heartbeat: no data"];
+
+  resolvedDeps.noteFn([...daemonLines, "", ...watcherLines].join("\n"), "Status");
 
   if (logTail.length > 0) {
     clack.log.info(`Last ${logTail.length} log lines:`);
@@ -642,6 +674,7 @@ export async function runDaemonStatusCommand(
     loaded,
     running,
     currentFile,
+    health,
     logTail,
   };
 }

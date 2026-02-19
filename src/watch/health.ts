@@ -4,14 +4,14 @@ import { resolveConfigDir } from "./state.js";
 
 export interface WatcherHealth {
   pid: number;
-  startedAt: string;
-  lastHeartbeat: string;
+  startedAt: string; // ISO timestamp
+  lastHeartbeat: string; // ISO timestamp
   sessionsWatched: number;
   entriesStored: number;
 }
 
 const HEALTH_FILE = "watcher.health.json";
-const HEALTH_STALE_MS = 5 * 60 * 1000;
+const HEALTH_STALE_MS = 5 * 60 * 1000; // 5 minutes
 
 export function resolveHealthPath(configDir?: string): string {
   return path.join(resolveConfigDir(configDir), HEALTH_FILE);
@@ -29,28 +29,13 @@ export async function writeHealthFile(health: WatcherHealth, configDir?: string)
     await handle.close();
     handle = null;
     await fs.rename(tmpPath, healthPath);
-  } catch (error: unknown) {
+  } catch (error) {
     if (handle) {
       await handle.close().catch(() => undefined);
     }
     await fs.unlink(tmpPath).catch(() => undefined);
     throw error;
   }
-}
-
-function isWatcherHealth(value: unknown): value is WatcherHealth {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-
-  const record = value as Record<string, unknown>;
-  return (
-    typeof record.pid === "number" &&
-    typeof record.startedAt === "string" &&
-    typeof record.lastHeartbeat === "string" &&
-    typeof record.sessionsWatched === "number" &&
-    typeof record.entriesStored === "number"
-  );
 }
 
 export async function readHealthFile(configDir?: string): Promise<WatcherHealth | null> {
@@ -62,11 +47,24 @@ export async function readHealthFile(configDir?: string): Promise<WatcherHealth 
     } catch {
       return null;
     }
-    if (!isWatcherHealth(parsed)) {
+
+    if (!parsed || typeof parsed !== "object") {
       return null;
     }
-    return parsed;
-  } catch (error: unknown) {
+
+    const record = parsed as Record<string, unknown>;
+    if (typeof record.pid !== "number") {
+      return null;
+    }
+    if (typeof record.startedAt !== "string") {
+      return null;
+    }
+    if (typeof record.lastHeartbeat !== "string") {
+      return null;
+    }
+
+    return parsed as WatcherHealth;
+  } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return null;
     }
@@ -74,10 +72,10 @@ export async function readHealthFile(configDir?: string): Promise<WatcherHealth 
   }
 }
 
-export function isHealthy(health: WatcherHealth, now = new Date()): boolean {
-  const heartbeatTs = Date.parse(health.lastHeartbeat);
-  if (Number.isNaN(heartbeatTs)) {
+export function isHealthy(health: WatcherHealth, now?: Date): boolean {
+  const ms = Date.parse(health.lastHeartbeat);
+  if (Number.isNaN(ms)) {
     return false;
   }
-  return now.getTime() - heartbeatTs < HEALTH_STALE_MS;
+  return (now ?? new Date()).getTime() - ms < HEALTH_STALE_MS;
 }

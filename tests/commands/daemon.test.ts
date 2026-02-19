@@ -13,6 +13,7 @@ import {
   runDaemonUninstallCommand,
   resolveStableNodePath,
 } from "../../src/commands/daemon.js";
+import type { WatcherHealth } from "../../src/watch/health.js";
 
 const tempDirs: string[] = [];
 
@@ -155,6 +156,7 @@ describe("daemon commands", () => {
             },
           },
         })),
+        readHealthFileFn: vi.fn(async () => null),
       },
     );
 
@@ -162,6 +164,161 @@ describe("daemon commands", () => {
     expect(result.running).toBe(true);
     expect(result.currentFile).toBe("/tmp/b.jsonl");
     expect(result.logTail).toEqual(["two", "three"]);
+  });
+
+  it("returns health data from status", async () => {
+    const home = await makeTempDir();
+    const health: WatcherHealth = {
+      pid: 123,
+      startedAt: "2026-02-19T00:00:00.000Z",
+      lastHeartbeat: new Date().toISOString(),
+      sessionsWatched: 5,
+      entriesStored: 42,
+    };
+
+    const result = await runDaemonStatusCommand(
+      {},
+      {
+        platformFn: () => "darwin",
+        homedirFn: () => home,
+        uidFn: () => 501,
+        execFileFn: vi.fn(async () => ({
+          stdout: "state = running\npid = 123\n",
+          stderr: "",
+          exitCode: 0,
+        })),
+        loadWatchStateFn: vi.fn(async () => ({ version: 1 as const, files: {} })),
+        readHealthFileFn: vi.fn(async () => health),
+      },
+    );
+
+    expect(result.health).not.toBeNull();
+    expect(result.health).toBe(health);
+    if (result.health === null) {
+      throw new Error("Expected health in status result");
+    }
+    expect(result.health.sessionsWatched).toBe(5);
+    expect(result.exitCode).toBe(0);
+  });
+
+  it("returns null health when health file is missing", async () => {
+    const home = await makeTempDir();
+
+    const result = await runDaemonStatusCommand(
+      {},
+      {
+        platformFn: () => "darwin",
+        homedirFn: () => home,
+        uidFn: () => 501,
+        execFileFn: vi.fn(async () => ({
+          stdout: "state = running\npid = 123\n",
+          stderr: "",
+          exitCode: 0,
+        })),
+        loadWatchStateFn: vi.fn(async () => ({ version: 1 as const, files: {} })),
+        readHealthFileFn: vi.fn(async () => null),
+      },
+    );
+
+    expect(result.health).toBeNull();
+    expect(result.exitCode).toBe(0);
+  });
+
+  it("shows deterministic heartbeat age in status note", async () => {
+    const home = await makeTempDir();
+    const nowMs = Date.parse("2026-02-19T12:00:00.000Z");
+    const health: WatcherHealth = {
+      pid: 123,
+      startedAt: "2026-02-19T11:50:00.000Z",
+      lastHeartbeat: new Date(nowMs - 90_000).toISOString(),
+      sessionsWatched: 1,
+      entriesStored: 3,
+    };
+    let noteText = "";
+
+    const result = await runDaemonStatusCommand(
+      {},
+      {
+        platformFn: () => "darwin",
+        homedirFn: () => home,
+        uidFn: () => 501,
+        execFileFn: vi.fn(async () => ({
+          stdout: "state = running\npid = 123\n",
+          stderr: "",
+          exitCode: 0,
+        })),
+        loadWatchStateFn: vi.fn(async () => ({ version: 1 as const, files: {} })),
+        readHealthFileFn: vi.fn(async () => health),
+        nowFn: () => nowMs,
+        noteFn: (message: string) => {
+          noteText = message;
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(noteText).toContain("Heartbeat: 90s ago");
+  });
+
+  it("shows watcher stalled warning for stale heartbeat", async () => {
+    const home = await makeTempDir();
+    const nowMs = Date.parse("2026-02-19T12:00:00.000Z");
+    const health: WatcherHealth = {
+      pid: 123,
+      startedAt: "2026-02-19T11:00:00.000Z",
+      lastHeartbeat: new Date(nowMs - 10 * 60 * 1000).toISOString(),
+      sessionsWatched: 1,
+      entriesStored: 3,
+    };
+    let noteText = "";
+
+    const result = await runDaemonStatusCommand(
+      {},
+      {
+        platformFn: () => "darwin",
+        homedirFn: () => home,
+        uidFn: () => 501,
+        execFileFn: vi.fn(async () => ({
+          stdout: "state = running\npid = 123\n",
+          stderr: "",
+          exitCode: 0,
+        })),
+        loadWatchStateFn: vi.fn(async () => ({ version: 1 as const, files: {} })),
+        readHealthFileFn: vi.fn(async () => health),
+        nowFn: () => nowMs,
+        noteFn: (message: string) => {
+          noteText = message;
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(noteText).toContain("[!] watcher may be stalled");
+  });
+
+  it("handles readHealthFileFn errors gracefully", async () => {
+    const home = await makeTempDir();
+
+    const result = await runDaemonStatusCommand(
+      {},
+      {
+        platformFn: () => "darwin",
+        homedirFn: () => home,
+        uidFn: () => 501,
+        execFileFn: vi.fn(async () => ({
+          stdout: "state = running\npid = 123\n",
+          stderr: "",
+          exitCode: 0,
+        })),
+        loadWatchStateFn: vi.fn(async () => ({ version: 1 as const, files: {} })),
+        readHealthFileFn: vi.fn(async () => {
+          throw new Error("health read failed");
+        }),
+      },
+    );
+
+    expect(result.health).toBeNull();
+    expect(result.exitCode).toBe(0);
   });
 
   it("supports non-follow log output with --lines", async () => {

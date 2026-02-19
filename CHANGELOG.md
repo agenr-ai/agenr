@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.13] - 2026-02-19
+
+### Added
+- feat(daemon): `agenr daemon status` now includes watcher health details from `watcher.health.json` (heartbeat age, stalled warning, sessions watched, entries stored)
+
+### Changed
+- test(daemon): added daemon status health coverage for fresh/missing/stale/error health scenarios and deterministic heartbeat age output
+
+### Fixed
+- fix(consolidate): corrected `@libsql/client` arg typing in scoped filter paths by using `InValue[]` for SQL args
+- fix(daemon): status command now handles health read failures gracefully and still exits successfully
+
 ## [0.6.12] - 2026-02-19
 
 ### Added

@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import type { InValue } from "@libsql/client";
 import * as clack from "@clack/prompts";
 import { readConfig } from "../config.js";
 import { forgettingScore, isProtected } from "../consolidate/rules.js";
@@ -168,13 +169,13 @@ function buildScopedFilter(
   platform: KnowledgePlatform | null,
   project?: string[],
   excludeProject?: string[],
-): { clause: string; args: unknown[] } {
+): { clause: string; args: InValue[] } {
   const projectSql = buildProjectFilter({ column: "project", project, excludeProject });
-  const args: unknown[] = [];
+  const args: InValue[] = [];
   if (platform) {
     args.push(platform);
   }
-  args.push(...projectSql.args);
+  args.push(...(projectSql.args as InValue[]));
   const clause = `${platform ? "AND platform = ?" : ""} ${projectSql.clause}`.trim();
   return { clause: clause ? ` ${clause}` : "", args };
 }
@@ -319,6 +320,7 @@ async function collectForgettingCandidates(
 ): Promise<ForgettingCandidate[]> {
   const scoped = buildScopedFilter(platform, project, excludeProject);
   const cutoffDate = new Date(now.getTime() - maxAgeDays * 86_400_000).toISOString();
+  const args: InValue[] = [cutoffDate as InValue, ...scoped.args];
   const result = await db.execute({
     sql: `
       SELECT
@@ -347,7 +349,7 @@ async function collectForgettingCandidates(
         AND created_at <= ?
         ${scoped.clause}
     `,
-    args: [cutoffDate, ...scoped.args],
+    args,
   });
 
   const candidates: ForgettingCandidate[] = [];
