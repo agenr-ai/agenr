@@ -1,3 +1,5 @@
+# Changelog
+
 ## [0.6.8] - 2026-02-19
 
 ### Fixed
@@ -7,8 +9,6 @@
 
 ### Fixed
 - fix(openclaw-plugin): add name and description to registerHook opts to resolve OpenClaw hook registration warning
-
-# Changelog
 
 ## [0.6.6] - 2026-02-19
 

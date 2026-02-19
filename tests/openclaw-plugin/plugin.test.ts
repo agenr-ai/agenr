@@ -66,8 +66,11 @@ describe("agenr OpenClaw plugin", () => {
 
     await plugin.register(mockApi as never);
     expect(capturedHandler).not.toBeNull();
+    if (!capturedHandler) {
+      throw new Error("Expected before_agent_start handler to be registered");
+    }
 
-    const result = await capturedHandler?.({
+    const result = await capturedHandler({
       sessionKey: "agent:main:interactive",
       prompt: "test prompt",
     });
@@ -99,8 +102,11 @@ describe("agenr OpenClaw plugin", () => {
 
     await plugin.register(mockApi as never);
     expect(capturedHandler).not.toBeNull();
+    if (!capturedHandler) {
+      throw new Error("Expected before_agent_start handler to be registered");
+    }
 
-    const result = await capturedHandler?.({
+    const result = await capturedHandler({
       sessionKey: "agent:main:subagent:abc123",
     });
     expect(result).toBeUndefined();
@@ -127,8 +133,12 @@ describe("agenr OpenClaw plugin", () => {
     };
 
     await plugin.register(mockApi as never);
+    expect(capturedHandler).not.toBeNull();
+    if (!capturedHandler) {
+      throw new Error("Expected before_agent_start handler to be registered");
+    }
 
-    const result = await capturedHandler?.({
+    const result = await capturedHandler({
       sessionKey: "agent:main:cron:heartbeat",
     });
 
@@ -156,8 +166,12 @@ describe("agenr OpenClaw plugin", () => {
     };
 
     await plugin.register(mockApi as never);
+    expect(capturedHandler).not.toBeNull();
+    if (!capturedHandler) {
+      throw new Error("Expected before_agent_start handler to be registered");
+    }
 
-    const result = await capturedHandler?.({
+    const result = await capturedHandler({
       sessionKey: "agent:main",
     });
 
@@ -165,6 +179,14 @@ describe("agenr OpenClaw plugin", () => {
   });
 
   it("before_agent_start handler resolves without throwing when agenr path does not exist", async () => {
+    vi.resetModules();
+    vi.doMock("../../src/openclaw-plugin/recall.js", () => ({
+      resolveAgenrPath: vi.fn(() => "/nonexistent/path/that/does/not/exist/cli.js"),
+      resolveBudget: vi.fn(() => 2000),
+      runRecall: vi.fn(async () => null),
+      formatRecallAsMarkdown: vi.fn(() => ""),
+    }));
+
     const mod = await import("../../src/openclaw-plugin/index.js");
     const plugin = mod.default;
 
@@ -185,7 +207,14 @@ describe("agenr OpenClaw plugin", () => {
     };
 
     await plugin.register(mockApi as never);
+    expect(capturedHandler).not.toBeNull();
+    if (!capturedHandler) {
+      throw new Error("Expected before_agent_start handler to be registered");
+    }
 
-    await expect(capturedHandler?.({ sessionKey: "agent:main" })).resolves.toBeUndefined();
+    await expect(capturedHandler({ sessionKey: "agent:main" })).resolves.toBeUndefined();
+
+    vi.doUnmock("../../src/openclaw-plugin/recall.js");
+    vi.resetModules();
   });
 });

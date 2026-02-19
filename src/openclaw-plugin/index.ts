@@ -47,8 +47,11 @@ const plugin = {
           }
 
           return { prependContext: markdown };
-        } catch {
-          // Never block session start - swallow all errors silently.
+        } catch (err) {
+          // Never block session start - log and swallow.
+          api.logger.warn(
+            `agenr plugin before_agent_start recall failed: ${err instanceof Error ? err.message : String(err)}`
+          );
           return;
         }
       }
