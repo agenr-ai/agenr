@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.6.2.1
+## v0.6.3
 
 ### Added
 - agenr db reset --full --confirm-reset: full clean-slate reset
