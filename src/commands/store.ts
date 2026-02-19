@@ -371,6 +371,7 @@ export async function runStoreCommand(
         onlineDedup,
         dedupThreshold,
         llmClient,
+        dbPath,
         sourceFile: input.sourceFile,
         ingestContentHash: input.contentHash,
         onDecision: options.verbose

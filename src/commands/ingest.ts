@@ -761,6 +761,7 @@ export async function runIngestCommand(
             onlineDedup: true,
             skipLlmDedup: false,
             llmClient: client,
+            dbPath,
           }),
         );
         const reinforced = storeResult.updated;

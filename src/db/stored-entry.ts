@@ -21,6 +21,10 @@ interface RawStoredEntryFields {
   confirmations?: unknown;
   contradictions?: unknown;
   superseded_by?: unknown;
+  retired?: unknown;
+  retired_at?: unknown;
+  retired_reason?: unknown;
+  suppressed_contexts?: unknown;
 }
 
 interface MapStoredEntryOptions {
@@ -40,6 +44,19 @@ export function mapRawStoredEntry(
   const recallCountRaw = toNumber(row.recall_count);
   const confirmationsRaw = toNumber(row.confirmations);
   const contradictionsRaw = toNumber(row.contradictions);
+  const retiredRaw = toNumber(row.retired);
+  const suppressedContextsRaw = toStringValue(row.suppressed_contexts);
+  let suppressedContexts: string[] | undefined;
+  if (suppressedContextsRaw) {
+    try {
+      const parsed = JSON.parse(suppressedContextsRaw) as unknown;
+      if (Array.isArray(parsed)) {
+        suppressedContexts = parsed.filter((item): item is string => typeof item === "string");
+      }
+    } catch {
+      suppressedContexts = undefined;
+    }
+  }
 
   const entry: StoredEntry = {
     id: toStringValue(row.id),
@@ -64,6 +81,10 @@ export function mapRawStoredEntry(
     confirmations: Number.isFinite(confirmationsRaw) ? confirmationsRaw : 0,
     contradictions: Number.isFinite(contradictionsRaw) ? contradictionsRaw : 0,
     superseded_by: toStringValue(row.superseded_by) || undefined,
+    retired: Number.isFinite(retiredRaw) ? retiredRaw > 0 : false,
+    retired_at: toStringValue(row.retired_at) || undefined,
+    retired_reason: toStringValue(row.retired_reason) || undefined,
+    suppressed_contexts: suppressedContexts,
   };
 
   if (options.embedding !== undefined) {

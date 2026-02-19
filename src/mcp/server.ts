@@ -7,6 +7,7 @@ import type { Client } from "@libsql/client";
 import { readConfig } from "../config.js";
 import { closeDb, getDb, initDb } from "../db/client.js";
 import { recall, updateRecallMetadata } from "../db/recall.js";
+import { retireEntries } from "../db/retirements.js";
 import { sessionStartRecall } from "../db/session-start.js";
 import { storeEntries } from "../db/store.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
@@ -234,6 +235,32 @@ const TOOL_DEFINITIONS: McpToolDefinition[] = [
       },
     },
   },
+  {
+    name: "agenr_retire",
+    description:
+      "Retire a stale, outdated, or irrelevant memory entry. The entry remains in the database and can still be found with explicit queries, but is hidden from session-start recall. Use when the user says 'that is from an old project', 'that decision changed', 'ignore that', or 'that is no longer relevant'. Get the entry ID from agenr_recall output.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["entry_id"],
+      properties: {
+        entry_id: {
+          type: "string",
+          description: "The ID of the entry to retire. Get this from agenr_recall output ([id=xxx] prefix).",
+        },
+        reason: {
+          type: "string",
+          description: "Why this entry is being retired.",
+        },
+        persist: {
+          type: "boolean",
+          description:
+            "If true, write a ledger entry so this retirement survives database re-ingest. Use when retiring entries from killed projects or permanently obsolete topics. Default false.",
+          default: false,
+        },
+      },
+    },
+  },
 ];
 
 export interface McpServerDeps {
@@ -248,6 +275,7 @@ export interface McpServerDeps {
   storeEntriesFn: typeof storeEntries;
   parseTranscriptFileFn: typeof parseTranscriptFile;
   extractKnowledgeFromChunksFn: typeof extractKnowledgeFromChunks;
+  retireEntriesFn: typeof retireEntries;
   mkdtempFn: (prefix: string) => Promise<string>;
   writeFileFn: (filePath: string, data: string, encoding: BufferEncoding) => Promise<void>;
   rmFn: (targetPath: string, options: { recursive?: boolean; force?: boolean }) => Promise<void>;
@@ -590,7 +618,7 @@ function formatRecallText(query: string, results: RecallResult[]): string {
       continue;
     }
     lines.push(
-      `[${i + 1}] (score: ${result.score.toFixed(3)}, type: ${result.entry.type}, ${formatDate(result.entry.created_at)})`,
+      `[${i + 1}] [id=${result.entry.id}] (score: ${result.score.toFixed(3)}, type: ${result.entry.type}, ${formatDate(result.entry.created_at)})`,
     );
     lines.push(result.entry.content);
     if (i < results.length - 1) {
@@ -708,6 +736,7 @@ export function createMcpServer(
     recallFn: deps.recallFn ?? recall,
     updateRecallMetadataFn: deps.updateRecallMetadataFn ?? updateRecallMetadata,
     storeEntriesFn: deps.storeEntriesFn ?? storeEntries,
+    retireEntriesFn: deps.retireEntriesFn ?? retireEntries,
     parseTranscriptFileFn: deps.parseTranscriptFileFn ?? parseTranscriptFile,
     extractKnowledgeFromChunksFn: deps.extractKnowledgeFromChunksFn ?? extractKnowledgeFromChunks,
     mkdtempFn: deps.mkdtempFn ?? ((prefix: string) => fs.mkdtemp(prefix)),
@@ -894,6 +923,7 @@ export function createMcpServer(
       sourceFile: "mcp:agenr_store",
       onlineDedup: true,
       llmClient: dedupClient,
+      dbPath: options.dbPath,
     });
 
     return formatStoreSummary(result);
@@ -993,6 +1023,7 @@ export function createMcpServer(
           sourceFile: sourceLabel ?? "mcp:agenr_extract",
           onlineDedup: true,
           llmClient: client,
+          dbPath: options.dbPath,
         });
       } else if (shouldStore) {
         stored = {
@@ -1011,6 +1042,62 @@ export function createMcpServer(
     } finally {
       await resolvedDeps.rmFn(tempDir, { recursive: true, force: true });
     }
+  }
+
+  async function callRetireTool(args: Record<string, unknown>): Promise<ToolCallResult> {
+    const entryId = typeof args.entry_id === "string" ? args.entry_id.trim() : "";
+    if (!entryId) {
+      throw new RpcError(JSON_RPC_INVALID_PARAMS, "entry_id is required");
+    }
+
+    const reason = typeof args.reason === "string" && args.reason.trim().length > 0 ? args.reason.trim() : undefined;
+    const persist = args.persist === true;
+    const db = await ensureDb();
+
+    const lookup = await db.execute({
+      sql: `
+        SELECT id, subject, type, importance
+        FROM entries
+        WHERE id = ?
+          AND retired = 0
+        LIMIT 1
+      `,
+      args: [entryId],
+    });
+
+    const row = lookup.rows[0] as { subject?: unknown; type?: unknown } | undefined;
+    if (!row) {
+      return {
+        content: [{ type: "text", text: `No active entry found with id: ${entryId}` }],
+        isError: true,
+      };
+    }
+
+    const subject = typeof row.subject === "string" ? row.subject : String(row.subject ?? "");
+    const type = typeof row.type === "string" ? row.type : String(row.type ?? "");
+
+    const retired = await resolvedDeps.retireEntriesFn({
+      entryId,
+      subjectPattern: persist ? subject : undefined,
+      matchType: "exact",
+      reason,
+      writeLedger: persist,
+      db,
+      dbPath: options.dbPath,
+    });
+
+    if (retired.count === 0) {
+      return {
+        content: [{ type: "text", text: `No active entry found with id: ${entryId}` }],
+        isError: true,
+      };
+    }
+
+    const messageBase = `Retired: ${subject} (type: ${type}). Entry is hidden from session-start recall but can still be found with explicit queries.`;
+    const text = persist ? `${messageBase} Retirement will survive database re-ingest.` : messageBase;
+    return {
+      content: [{ type: "text", text }],
+    };
   }
 
   async function dispatchToolCall(params: ToolCallParams): Promise<ToolCallResult> {
@@ -1035,6 +1122,10 @@ export function createMcpServer(
         return {
           content: [{ type: "text", text: await callExtractTool(params.args) }],
         };
+      }
+
+      if (params.name === "agenr_retire") {
+        return await callRetireTool(params.args);
       }
 
       throw new RpcError(JSON_RPC_INVALID_PARAMS, `Unknown tool: ${params.name}`);

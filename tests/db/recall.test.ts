@@ -320,6 +320,130 @@ describe("db recall", () => {
     expect(all.map((row) => row.entry.content).sort()).toEqual(["Codex fact vec-work-strong", "OpenClaw fact vec-work-strong"]);
   });
 
+  it("excludes entries suppressed for session-start context", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    await storeEntries(
+      client,
+      [
+        makeEntry({ content: "Visible session entry vec-work-strong" }),
+        makeEntry({ content: "Hidden session entry vec-work-strong" }),
+      ],
+      "sk-test",
+      {
+        sourceFile: "recall-test.jsonl",
+        ingestContentHash: "hash-session-suppression",
+        embedFn: mockEmbed,
+        force: true,
+      },
+    );
+
+    await client.execute({
+      sql: `
+        UPDATE entries
+        SET suppressed_contexts = json(?)
+        WHERE content = ?
+      `,
+      args: [JSON.stringify(["session-start"]), "Hidden session entry vec-work-strong"],
+    });
+
+    const results = await recall(
+      client,
+      {
+        text: "",
+        context: "session-start",
+        limit: 10,
+      },
+      "sk-test",
+      { now: new Date("2026-02-15T00:00:00.000Z") },
+    );
+
+    expect(results.map((result) => result.entry.content)).toContain("Visible session entry vec-work-strong");
+    expect(results.map((result) => result.entry.content)).not.toContain("Hidden session entry vec-work-strong");
+  });
+
+  it("keeps session-start-suppressed entries available to explicit recall", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    await storeEntries(
+      client,
+      [makeEntry({ content: "Explicit-only entry vec-work-strong", type: "fact" })],
+      "sk-test",
+      {
+        sourceFile: "recall-test.jsonl",
+        ingestContentHash: "hash-explicit-suppression",
+        embedFn: mockEmbed,
+        force: true,
+      },
+    );
+
+    await client.execute({
+      sql: "UPDATE entries SET suppressed_contexts = json(?) WHERE content = ?",
+      args: [JSON.stringify(["session-start"]), "Explicit-only entry vec-work-strong"],
+    });
+
+    const explicitResults = await recall(
+      client,
+      {
+        text: "explicit",
+        limit: 10,
+      },
+      "sk-test",
+      { embedFn: mockEmbed, now: new Date("2026-02-15T00:00:00.000Z") },
+    );
+
+    expect(explicitResults.some((result) => result.entry.content === "Explicit-only entry vec-work-strong")).toBe(true);
+  });
+
+  it("does not hide entries suppressed for other contexts from session-start", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    await storeEntries(
+      client,
+      [makeEntry({ content: "Other-context suppressed entry vec-work-strong" })],
+      "sk-test",
+      {
+        sourceFile: "recall-test.jsonl",
+        ingestContentHash: "hash-other-context",
+        embedFn: mockEmbed,
+        force: true,
+      },
+    );
+
+    await client.execute({
+      sql: "UPDATE entries SET suppressed_contexts = json(?) WHERE content = ?",
+      args: [JSON.stringify(["other-context"]), "Other-context suppressed entry vec-work-strong"],
+    });
+
+    const sessionResults = await recall(
+      client,
+      {
+        text: "",
+        context: "session-start",
+        limit: 10,
+      },
+      "sk-test",
+      { now: new Date("2026-02-15T00:00:00.000Z") },
+    );
+
+    expect(sessionResults.some((result) => result.entry.content === "Other-context suppressed entry vec-work-strong")).toBe(true);
+  });
+
+  it("schema includes retirement and suppression columns", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    const info = await client.execute("PRAGMA table_info(entries)");
+    const columns = new Set(info.rows.map((row) => String((row as { name?: unknown }).name)));
+    expect(columns.has("retired")).toBe(true);
+    expect(columns.has("retired_at")).toBe(true);
+    expect(columns.has("retired_reason")).toBe(true);
+    expect(columns.has("suppressed_contexts")).toBe(true);
+  });
+
   it("filters by project (includes NULL by default, strict excludes NULL)", async () => {
     const client = makeClient();
     await initDb(client);

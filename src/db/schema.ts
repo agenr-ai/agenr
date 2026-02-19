@@ -70,6 +70,10 @@ const CREATE_TABLE_AND_TRIGGER_STATEMENTS: readonly string[] = [
     content_hash TEXT,
     merged_from INTEGER DEFAULT 0,
     consolidated_at TEXT,
+    retired INTEGER NOT NULL DEFAULT 0,
+    retired_at TEXT,
+    retired_reason TEXT,
+    suppressed_contexts TEXT,
     FOREIGN KEY (superseded_by) REFERENCES entries(id)
   )
   `,
@@ -181,6 +185,26 @@ const COLUMN_MIGRATIONS: readonly ColumnMigration[] = [
     table: "entries",
     column: "project",
     sql: "ALTER TABLE entries ADD COLUMN project TEXT DEFAULT NULL",
+  },
+  {
+    table: "entries",
+    column: "retired",
+    sql: "ALTER TABLE entries ADD COLUMN retired INTEGER NOT NULL DEFAULT 0",
+  },
+  {
+    table: "entries",
+    column: "retired_at",
+    sql: "ALTER TABLE entries ADD COLUMN retired_at TEXT",
+  },
+  {
+    table: "entries",
+    column: "retired_reason",
+    sql: "ALTER TABLE entries ADD COLUMN retired_reason TEXT",
+  },
+  {
+    table: "entries",
+    column: "suppressed_contexts",
+    sql: "ALTER TABLE entries ADD COLUMN suppressed_contexts TEXT",
   },
   {
     table: "ingest_log",
