@@ -85,7 +85,7 @@ src/
     rules.ts           # Tier 1: deterministic rules (expiry, near-exact dedup)
     cluster.ts         # Tier 2: union-find clustering with diameter cap
     merge.ts           # Tier 2: LLM-assisted merge via tool calls
-    orchestrate.ts     # Consolidation orchestration (replaces old lock.ts)
+    orchestrate.ts     # Consolidation orchestration (was lock.ts; locking moved to src/db/lockfile.ts)
     verify.ts          # Tier 2: semantic verification + review queue
     util.ts            # Shared utilities (UnionFind, cosineSim, etc.)
   mcp/
