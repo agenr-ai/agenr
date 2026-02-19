@@ -122,8 +122,10 @@ describe("resolveAgenrPath", () => {
     delete process.env["AGENR_BIN"];
     try {
       const resolved = resolveAgenrPath(undefined);
-      expect(resolved).toContain("agenr-local");
+      expect(resolved).toContain("dist");
       expect(resolved).toContain("cli.js");
+      expect(resolved).toMatch(/[\\/]dist[\\/]cli\.js$/);
+      expect(resolved).not.toContain("agenr-local");
     } finally {
       if (original !== undefined) {
         process.env["AGENR_BIN"] = original;

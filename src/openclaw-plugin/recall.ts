@@ -1,11 +1,19 @@
 import { spawn } from "node:child_process";
-import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { AgenrPluginConfig } from "./types.js";
 
 const RECALL_TIMEOUT_MS = 5000;
 const DEFAULT_BUDGET = 2000;
-const DEFAULT_AGENR_PATH = path.join(os.homedir(), "Code", "agenr-local", "dist", "cli.js");
+// Resolve bundled CLI path from this module location for both src/ and dist/ runtime layouts.
+const DEFAULT_AGENR_PATH = path.resolve(
+  fileURLToPath(import.meta.url),
+  "..",
+  "..",
+  "..",
+  "dist",
+  "cli.js"
+);
 
 export type RecallEntry = {
   type: string;
