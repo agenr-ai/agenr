@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.6.6] - 2026-02-19
+
+### Added
+- feat(openclaw-plugin): OpenClaw plugin that injects agenr memory into agent sessions
+  - New src/openclaw-plugin/index.ts: plugin entry point, registers agent:bootstrap hook
+  - New src/openclaw-plugin/recall.ts: runs agenr CLI recall, formats JSON as markdown
+  - New src/openclaw-plugin/types.ts: local type aliases for OpenClaw SDK compatibility
+  - Memory injected as synthetic AGENR.md file into # Project Context in system prompt
+  - Grouped markdown output: Active Todos / Preferences and Decisions / Facts and Events
+  - Skips subagent and cron sessions automatically (sessionKey pattern check)
+  - Configurable: agenrPath, budget, enabled via openclaw.json plugins.entries.agenr.config
+  - 5 second timeout on recall; all errors swallowed silently to never block session start
+  - package.json "openclaw" key declares dist/openclaw-plugin/index.js as plugin extension
+
 ## [0.6.5] - 2026-02-19
 
 ### Added

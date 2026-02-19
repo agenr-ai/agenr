@@ -1,0 +1,24 @@
+{
+  "id": "agenr",
+  "name": "agenr Memory",
+  "description": "Local memory layer - injects agenr context at session start",
+  "version": "0.6.6",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "agenrPath": {
+        "type": "string",
+        "description": "Path to agenr CLI entry point (dist/cli.js)."
+      },
+      "budget": {
+        "type": "number",
+        "description": "Token budget for session-start recall. Default: 2000."
+      },
+      "enabled": {
+        "type": "boolean",
+        "description": "Set false to disable memory injection without uninstalling."
+      }
+    }
+  }
+}

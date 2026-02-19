@@ -1,13 +1,16 @@
 {
   "name": "agenr",
-  "version": "0.6.5",
+  "version": "0.6.6",
+  "openclaw": {
+    "extensions": ["dist/openclaw-plugin/index.js"]
+  },
   "description": "AGENt memoRy -- Memory infrastructure for AI agents",
   "type": "module",
   "bin": {
     "agenr": "dist/cli.js"
   },
   "scripts": {
-    "build": "tsup src/cli.ts src/cli-main.ts --format esm --dts",
+    "build": "tsup src/cli.ts src/cli-main.ts src/openclaw-plugin/index.ts --format esm --dts",
     "dev": "tsup src/cli.ts src/cli-main.ts --format esm --watch",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -49,6 +52,7 @@
   ],
   "files": [
     "dist",
+    "openclaw.plugin.json",
     "CHANGELOG.md",
     "LICENSE",
     "README.md"
