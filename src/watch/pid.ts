@@ -11,7 +11,22 @@ export function resolveWatcherPidPath(configDir?: string): string {
 export async function writeWatcherPid(configDir?: string): Promise<void> {
   const pidPath = resolveWatcherPidPath(configDir);
   await fs.mkdir(path.dirname(pidPath), { recursive: true });
-  await fs.writeFile(pidPath, String(process.pid), "utf8");
+  const tmpPath = `${pidPath}.${process.pid}.${Date.now()}.tmp`;
+  let handle: fs.FileHandle | null = null;
+  try {
+    handle = await fs.open(tmpPath, "w");
+    await handle.writeFile(String(process.pid), "utf8");
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    await fs.rename(tmpPath, pidPath);
+  } catch (error: unknown) {
+    if (handle) {
+      await handle.close().catch(() => undefined);
+    }
+    await fs.unlink(tmpPath).catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function deleteWatcherPid(configDir?: string): Promise<void> {

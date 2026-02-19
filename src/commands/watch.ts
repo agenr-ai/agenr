@@ -395,6 +395,7 @@ export async function runWatchCommand(
   const clackOutput = { output: process.stderr };
   warnIfLocked();
   installSignalHandlers();
+  clack.intro(banner(), clackOutput);
   try {
     await resolvedDeps.writeWatcherPidFn();
   } catch (error: unknown) {
@@ -424,8 +425,6 @@ export async function runWatchCommand(
     const contextEnabled = Boolean(options.context);
 
     const modeConfig = await resolveWatchMode(file, options, resolvedDeps.statFileFn);
-
-    clack.intro(banner(), clackOutput);
 
     for (const warning of modeConfig.warnings) {
       process.stderr.write(`${warning}\n`);
@@ -509,13 +508,12 @@ export async function runWatchCommand(
         },
         onCycle: (result, ctx) => {
           cycleCount += 1;
-          const timestamp = formatClock(resolvedDeps.nowFn());
+          const now = resolvedDeps.nowFn();
+          const timestamp = formatClock(now);
           const fileLabel = result.filePath ? ` | file=${result.filePath}` : "";
 
           if (json) {
-            process.stdout.write(
-              `${JSON.stringify({ cycle: cycleCount, at: resolvedDeps.nowFn().toISOString(), ...result })}\n`,
-            );
+            process.stdout.write(`${JSON.stringify({ cycle: cycleCount, at: now.toISOString(), ...result })}\n`);
           }
 
           if (result.error) {
