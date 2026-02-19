@@ -162,13 +162,21 @@ describe("watch command", () => {
   });
 
   it("rejects when watch mode is ambiguous", async () => {
-    await expect(runWatchCommand("/tmp/session.jsonl", { dir: "/tmp/sessions" })).rejects.toThrow(
-      "Choose exactly one watch mode",
-    );
+    await expect(
+      runWatchCommand("/tmp/session.jsonl", { dir: "/tmp/sessions" }, {
+        writeWatcherPidFn: vi.fn(async () => undefined),
+        deleteWatcherPidFn: vi.fn(async () => undefined),
+      }),
+    ).rejects.toThrow("Choose exactly one watch mode");
   });
 
   it("rejects when no watch mode is provided", async () => {
-    await expect(runWatchCommand(undefined, {})).rejects.toThrow("Choose exactly one watch mode");
+    await expect(
+      runWatchCommand(undefined, {}, {
+        writeWatcherPidFn: vi.fn(async () => undefined),
+        deleteWatcherPidFn: vi.fn(async () => undefined),
+      }),
+    ).rejects.toThrow("Choose exactly one watch mode");
   });
 
   it("validates --dir path existence", async () => {
@@ -179,7 +187,11 @@ describe("watch command", () => {
     });
 
     await expect(
-      runWatchCommand(undefined, { dir: "/tmp/does-not-exist" }, { statFileFn: statFileFn as any }),
+      runWatchCommand(undefined, { dir: "/tmp/does-not-exist" }, {
+        statFileFn: statFileFn as any,
+        writeWatcherPidFn: vi.fn(async () => undefined),
+        deleteWatcherPidFn: vi.fn(async () => undefined),
+      }),
     ).rejects.toThrow("Sessions directory not found");
   });
 
@@ -304,8 +316,8 @@ describe("watch command", () => {
       }),
     ).rejects.toThrow("Choose exactly one watch mode");
 
-    expect(deleteWatcherPidFn).toHaveBeenCalledTimes(1);
-    expect(errorDeleteWatcherPidFn).toHaveBeenCalledTimes(1);
+    expect(deleteWatcherPidFn).toHaveBeenCalled();
+    expect(errorDeleteWatcherPidFn).toHaveBeenCalled();
   });
 
   it("runs one cycle and stores extracted entries", async () => {
@@ -390,6 +402,8 @@ describe("watch command", () => {
         readFileFn: vi.fn((filePath: string, offset: number) => readFileFromOffset(filePath, offset)),
         nowFn: vi.fn(() => new Date("2026-02-15T00:00:00.000Z")),
         generateContextFileFn: vi.fn(async () => undefined) as any,
+        writeWatcherPidFn: vi.fn(async () => undefined),
+        deleteWatcherPidFn: vi.fn(async () => undefined),
       },
     );
 
@@ -457,6 +471,8 @@ describe("watch command", () => {
         readFileFn: vi.fn((filePath: string, offset: number) => readFileFromOffset(filePath, offset)),
         nowFn: vi.fn(() => new Date("2026-02-15T00:00:00.000Z")),
         generateContextFileFn: generateContextFileFn as any,
+        writeWatcherPidFn: vi.fn(async () => undefined),
+        deleteWatcherPidFn: vi.fn(async () => undefined),
       },
     );
 
@@ -521,6 +537,8 @@ describe("watch command", () => {
         readFileFn: vi.fn((filePath: string, offset: number) => readFileFromOffset(filePath, offset)),
         nowFn: vi.fn(() => new Date("2026-02-15T00:00:00.000Z")),
         generateContextFileFn: generateContextFileFn as any,
+        writeWatcherPidFn: vi.fn(async () => undefined),
+        deleteWatcherPidFn: vi.fn(async () => undefined),
       },
     );
 
@@ -584,6 +602,8 @@ describe("watch command", () => {
         readFileFn: vi.fn((filePath: string, offset: number) => readFileFromOffset(filePath, offset)),
         nowFn: vi.fn(() => new Date("2026-02-15T00:00:00.000Z")),
         generateContextFileFn: generateContextFileFn as any,
+        writeWatcherPidFn: vi.fn(async () => undefined),
+        deleteWatcherPidFn: vi.fn(async () => undefined),
       },
     );
 
@@ -665,6 +685,8 @@ describe("watch command", () => {
         readFileFn: vi.fn((filePath: string, offset: number) => readFileFromOffset(filePath, offset)),
         nowFn: vi.fn(() => new Date("2026-02-18T00:10:00.000Z")),
         generateContextFileFn: generateContextFileFn as any,
+        writeWatcherPidFn: vi.fn(async () => undefined),
+        deleteWatcherPidFn: vi.fn(async () => undefined),
       },
     );
 

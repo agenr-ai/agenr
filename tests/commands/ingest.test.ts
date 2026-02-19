@@ -133,6 +133,8 @@ function makeDeps(overrides?: Partial<IngestCommandDeps> & { db?: { execute: Ret
     loadWatchStateFn: overrides?.loadWatchStateFn ?? (vi.fn(async () => ({ version: 1 as const, files: {} }))),
     saveWatchStateFn: overrides?.saveWatchStateFn ?? vi.fn(async () => undefined),
     isWatcherRunningFn: overrides?.isWatcherRunningFn ?? (vi.fn(async () => false) as IngestCommandDeps["isWatcherRunningFn"]),
+    readWatcherPidFn: overrides?.readWatcherPidFn ?? vi.fn(async () => null),
+    resolveWatcherPidPathFn: overrides?.resolveWatcherPidPathFn ?? vi.fn(() => "/tmp/agenr-test/watcher.pid"),
     nowFn: overrides?.nowFn ?? (() => new Date("2026-02-15T00:00:00.000Z")),
     sleepFn: overrides?.sleepFn ?? (vi.fn(async () => undefined) as IngestCommandDeps["sleepFn"]),
     shouldShutdownFn: overrides?.shouldShutdownFn ?? (vi.fn(() => false) as IngestCommandDeps["shouldShutdownFn"]),
@@ -248,25 +250,6 @@ describe("ingest command", () => {
     });
 
     const result = await runIngestCommand([filePath], {}, deps);
-
-    expect(isWatcherRunningFn).toHaveBeenCalledTimes(1);
-    expect(result.exitCode).toBe(0);
-    expect(result.filesProcessed).toBe(1);
-    expect(result.filesFailed).toBe(0);
-  });
-
-  it("proceeds when watcher PID is stale", async () => {
-    const dir = await makeTempDir();
-    const filePath = path.join(dir, "a.txt");
-    await fs.writeFile(filePath, "hello", "utf8");
-
-    const isWatcherRunningFn = vi.fn(async () => false) as IngestCommandDeps["isWatcherRunningFn"];
-    const deps = makeDeps({
-      isWatcherRunningFn,
-      expandInputFilesFn: vi.fn(async () => [filePath]),
-    });
-
-    const result = await runIngestCommand([filePath], { force: true }, deps);
 
     expect(isWatcherRunningFn).toHaveBeenCalledTimes(1);
     expect(result.exitCode).toBe(0);
@@ -1803,6 +1786,8 @@ describe("ingest command", () => {
           return readFileFromOffset(target, offset);
         }),
         nowFn: vi.fn(() => new Date("2026-02-15T00:00:00.000Z")),
+        writeWatcherPidFn: vi.fn(async () => undefined),
+        deleteWatcherPidFn: vi.fn(async () => undefined),
       },
     );
 

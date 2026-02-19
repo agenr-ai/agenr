@@ -95,6 +95,8 @@ export interface IngestCommandDeps {
   loadWatchStateFn: typeof loadWatchState;
   saveWatchStateFn: typeof saveWatchState;
   isWatcherRunningFn: () => Promise<boolean>;
+  readWatcherPidFn: typeof readWatcherPid;
+  resolveWatcherPidPathFn: typeof resolveWatcherPidPath;
   nowFn: () => Date;
   sleepFn: (ms: number) => Promise<void>;
   shouldShutdownFn: () => boolean;
@@ -477,6 +479,8 @@ export async function runIngestCommand(
     loadWatchStateFn: deps?.loadWatchStateFn ?? loadWatchState,
     saveWatchStateFn: deps?.saveWatchStateFn ?? saveWatchState,
     isWatcherRunningFn: deps?.isWatcherRunningFn ?? isWatcherRunning,
+    readWatcherPidFn: deps?.readWatcherPidFn ?? readWatcherPid,
+    resolveWatcherPidPathFn: deps?.resolveWatcherPidPathFn ?? resolveWatcherPidPath,
     nowFn: deps?.nowFn ?? (() => new Date()),
     sleepFn: deps?.sleepFn ?? sleep,
     shouldShutdownFn: deps?.shouldShutdownFn ?? isShutdownRequested,
@@ -485,8 +489,8 @@ export async function runIngestCommand(
   clack.intro(banner(), clackOutput);
 
   if (await resolvedDeps.isWatcherRunningFn()) {
-    const pid = await readWatcherPid();
-    const pidFile = resolveWatcherPidPath();
+    const pid = await resolvedDeps.readWatcherPidFn();
+    const pidFile = resolvedDeps.resolveWatcherPidPathFn();
     clack.log.error(
       formatError(
         `agenr watcher is running (PID ${pid ?? "unknown"}). Stop the watcher before running ingest.\n` +
