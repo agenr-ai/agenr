@@ -64,6 +64,7 @@ export interface DaemonCommandDeps {
   readHealthFileFn: (configDir?: string) => Promise<WatcherHealth | null>;
   loadWatchStateFn: typeof loadWatchState;
   noteFn: (message: string, title?: string) => void;
+  onWarnFn: (message: string) => void;
   confirmFn: (message: string) => Promise<boolean>;
   sleepFn: (ms: number) => Promise<void>;
   nowFn: () => number;
@@ -190,6 +191,7 @@ function resolveDeps(deps?: Partial<DaemonCommandDeps>): DaemonCommandDeps {
     readHealthFileFn: deps?.readHealthFileFn ?? readHealthFile,
     loadWatchStateFn: deps?.loadWatchStateFn ?? loadWatchState,
     noteFn: deps?.noteFn ?? clack.note,
+    onWarnFn: deps?.onWarnFn ?? ((msg: string) => clack.log.warn(msg)),
     sleepFn: deps?.sleepFn ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms))),
     nowFn: deps?.nowFn ?? (() => Date.now()),
     confirmFn:
@@ -623,7 +625,7 @@ export async function runDaemonStatusCommand(
     health = await resolvedDeps.readHealthFileFn(options.configDir);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    clack.log.warn(`Failed to read watcher health: ${message}`);
+    resolvedDeps.onWarnFn(`Failed to read watcher health: ${message}`);
     health = null;
   }
 
@@ -647,7 +649,7 @@ export async function runDaemonStatusCommand(
     `Log file: ${logPath}`,
   ];
 
-  const ageSecs = health ? Math.floor((nowMs - Date.parse(health.lastHeartbeat)) / 1000) : null;
+  const ageSecs = health ? Math.max(0, Math.floor((nowMs - Date.parse(health.lastHeartbeat)) / 1000)) : null;
 
   const stalledWarning =
     health !== null && !isHealthy(health, new Date(nowMs)) ? "[!] watcher may be stalled" : null;
