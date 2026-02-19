@@ -6,6 +6,28 @@ import path from "node:path";
 import type { Client } from "@libsql/client";
 import { backupDb, closeDb, getDb, initDb, walCheckpoint } from "../../src/db/client.js";
 
+function readPragmaValue(row: unknown): number {
+  if (!row || typeof row !== "object") {
+    throw new Error("Expected PRAGMA query to return a row object.");
+  }
+
+  const value = Object.values(row as Record<string, unknown>)[0];
+  if (typeof value === "number") {
+    return value;
+  }
+  if (typeof value === "bigint") {
+    return Number(value);
+  }
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  throw new Error(`Expected PRAGMA query to return a numeric value, received: ${String(value)}`);
+}
+
 describe("db client", () => {
   const clients: Client[] = [];
   let tempDir: string | null = null;
@@ -40,6 +62,41 @@ describe("db client", () => {
       (firstRow ? Object.values(firstRow)[0] : undefined);
 
     expect(String(mode).toLowerCase()).toBe("wal");
+  });
+
+  it("sets busy_timeout for file-backed databases", async () => {
+    tempDir = await mkdtemp(path.join(os.tmpdir(), "agenr-db-"));
+    const dbPath = path.join(tempDir, "knowledge.db");
+
+    const client = getDb(dbPath);
+    clients.push(client);
+    await initDb(client);
+
+    const result = await client.execute("PRAGMA busy_timeout");
+    const timeoutMs = readPragmaValue(result.rows[0]);
+    expect(timeoutMs).toBe(3000);
+  });
+
+  it("sets wal_autocheckpoint for file-backed databases during init", async () => {
+    tempDir = await mkdtemp(path.join(os.tmpdir(), "agenr-db-"));
+    const dbPath = path.join(tempDir, "knowledge.db");
+
+    const client = getDb(dbPath);
+    clients.push(client);
+    await initDb(client);
+
+    const result = await client.execute("PRAGMA wal_autocheckpoint");
+    const autoCheckpointPages = readPragmaValue(result.rows[0]);
+    expect(autoCheckpointPages).toBe(1000);
+  });
+
+  it("does not set busy_timeout for in-memory databases", async () => {
+    const client = getDb(":memory:");
+    clients.push(client);
+
+    const result = await client.execute("PRAGMA busy_timeout");
+    const timeoutMs = readPragmaValue(result.rows[0]);
+    expect(timeoutMs).toBe(0);
   });
 
   it("can run a WAL checkpoint after writes", async () => {

@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.15] - 2026-02-19
+
+### Changed
+- perf(db): file-backed DB clients now set `PRAGMA busy_timeout=3000` during WAL initialization, reducing immediate `SQLITE_BUSY` failures under write contention
+- perf(db): `initDb()` now explicitly sets `PRAGMA wal_autocheckpoint=1000` for WAL-enabled clients to make checkpoint behavior explicit and testable
+- perf(watch): watcher now supports `walCheckpointIntervalMs` (default `30000`) to rate-limit per-cycle WAL checkpoints while keeping shutdown checkpoint behavior unchanged
+
+### Fixed
+- test(watch): updated per-cycle checkpoint tests to pass `walCheckpointIntervalMs: 0` when asserting legacy always-checkpoint behavior
+- test(db): added coverage for file-backed `busy_timeout`, explicit `wal_autocheckpoint`, and `:memory:` busy-timeout exclusion
+- test(watch): added interval-gating, shutdown-checkpoint, and sentinel-bypass coverage for WAL checkpoint scheduling
+
 ## [0.6.14] - 2026-02-19
 
 ### Fixed

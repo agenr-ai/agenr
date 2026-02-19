@@ -63,13 +63,23 @@ export function getDb(dbPath?: string): Client {
 
   if (rawPath.startsWith("file:")) {
     const client = createClient({ url: rawPath });
-    walInitByClient.set(client, client.execute("PRAGMA journal_mode=WAL").then(() => undefined));
+    walInitByClient.set(
+      client,
+      client.execute("PRAGMA journal_mode=WAL")
+        .then(() => client.execute("PRAGMA busy_timeout=3000"))
+        .then(() => undefined),
+    );
     return client;
   }
 
   const resolvedPath = resolveDbPath(rawPath);
   const client = createClient({ url: `file:${resolvedPath}` });
-  walInitByClient.set(client, client.execute("PRAGMA journal_mode=WAL").then(() => undefined));
+  walInitByClient.set(
+    client,
+    client.execute("PRAGMA journal_mode=WAL")
+      .then(() => client.execute("PRAGMA busy_timeout=3000"))
+      .then(() => undefined),
+  );
   return client;
 }
 
@@ -77,6 +87,7 @@ export async function initDb(client: Client): Promise<void> {
   const walInit = walInitByClient.get(client);
   if (walInit) {
     await walInit;
+    await client.execute("PRAGMA wal_autocheckpoint=1000");
   }
   await initSchema(client);
 

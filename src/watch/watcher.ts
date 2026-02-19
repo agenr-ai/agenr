@@ -68,6 +68,7 @@ export interface WatcherOptions {
   onSwitch?: (from: string | null, to: string, platform?: WatchPlatform | null) => void;
   configDir?: string;
   initialState?: WatchState;
+  walCheckpointIntervalMs?: number;
 }
 
 export interface WatchRunSummary {
@@ -635,6 +636,7 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
   let cycles = 0;
   let totalEntriesStored = 0;
   let sessionsWatched = 0;
+  let lastCheckpointAt = new Date(0);
 
   const writeHeartbeat = (): void => {
     resolvedDeps
@@ -788,7 +790,13 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
       options.onCycle?.(cycleResult, { db, apiKey: embeddingApiKey ?? "" });
       writeHeartbeat();
 
-      if (cycleResult.entriesStored > 0 && db) {
+      const nowAt = resolvedDeps.nowFn();
+      const intervalMs = options.walCheckpointIntervalMs ?? 30000;
+      const shouldCheckpoint =
+        intervalMs <= 0 || (nowAt.getTime() - lastCheckpointAt.getTime()) >= intervalMs;
+
+      if (cycleResult.entriesStored > 0 && db && shouldCheckpoint) {
+        lastCheckpointAt = nowAt;
         try {
           await resolvedDeps.walCheckpointFn(db);
         } catch (error) {
