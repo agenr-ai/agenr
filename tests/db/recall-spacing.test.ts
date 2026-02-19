@@ -205,8 +205,21 @@ describe("recall spacing", () => {
       expect(factor).toBeGreaterThan(1.0);
     });
 
+    it("imputes a full created-to-last gap when recall_count is 1", () => {
+      const factor = computeSpacingFactor([], 1, "2025-01-01T00:00:00.000Z", "2025-06-30T00:00:00.000Z");
+      expect(factor).toBeGreaterThan(1.1);
+    });
+
     it("returns neutral when recall_count is zero", () => {
       expect(computeSpacingFactor([], 0, "2025-01-01T00:00:00Z", "2026-01-01T00:00:00Z")).toBe(1.0);
+    });
+
+    it("returns neutral when legacy createdAt and lastRecalledAt are identical", () => {
+      expect(computeSpacingFactor([], 2, "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z")).toBe(1.0);
+    });
+
+    it("returns neutral for unparseable legacy timestamps", () => {
+      expect(computeSpacingFactor([], 2, "garbage", "also-garbage")).toBe(1.0);
     });
 
     it("stays finite for backward/negative-gap timestamp ordering", () => {
@@ -244,6 +257,19 @@ describe("recall spacing", () => {
       const crammedScore = scoreEntryWithBreakdown(highImpCrammed, 0.5, false, now).score;
       const spacedScore = scoreEntryWithBreakdown(highImpSpaced, 0.5, false, now).score;
       expect(spacedScore).toBeGreaterThan(crammedScore);
+    });
+
+    it("keeps score bounded at <= 1.0 with extreme spacing", () => {
+      const now = new Date("2026-02-19T12:00:00.000Z");
+      const entry = makeEntry({
+        expiry: "core",
+        importance: 8,
+        created_at: "2026-02-19T10:00:00.000Z",
+        recall_count: 1,
+        recall_intervals: [t1, t1 + 100 * ONE_DAY_SECS],
+      });
+      const scored = scoreEntryWithBreakdown(entry, 1.0, false, now);
+      expect(scored.score).toBeLessThanOrEqual(1.0);
     });
 
     it("keeps recallStrength behavior unchanged", () => {
@@ -369,35 +395,9 @@ describe("recall spacing", () => {
       expect(intervals[0]).toBeLessThanOrEqual(after + 1);
     });
 
-    it("does not crash scoring when recall_intervals is NULL for legacy rows", async () => {
-      const client = makeClient();
-      await initDb(client);
+  });
 
-      await insertEntry(client, "legacy-null", {
-        recallCount: 3,
-        recallIntervals: null,
-        createdAt: "2025-12-01T00:00:00.000Z",
-        updatedAt: "2025-12-01T00:00:00.000Z",
-        lastRecalledAt: "2026-01-30T00:00:00.000Z",
-      });
-
-      const results = await recall(
-        client,
-        {
-          text: "",
-          context: "session-start",
-          limit: 5,
-          noUpdate: true,
-        },
-        "sk-test",
-        { now: new Date("2026-02-01T00:00:00.000Z") },
-      );
-
-      const legacy = results.find((item) => item.entry.id === "legacy-null");
-      expect(legacy).toBeTruthy();
-      expect(legacy!.score).toBeGreaterThanOrEqual(0);
-    });
-
+  describe("mapRawStoredEntry", () => {
     it("falls back to spacing 1.0 for corrupt recall_intervals JSON", async () => {
       const client = makeClient();
       await initDb(client);
@@ -426,6 +426,37 @@ describe("recall spacing", () => {
 
       expect(scored.score).toBeGreaterThanOrEqual(0);
       expect(scored.scores.spacing).toBe(1.0);
+    });
+  });
+
+  describe("recall() spacing integration", () => {
+    it("does not crash scoring when recall_intervals is NULL for legacy rows", async () => {
+      const client = makeClient();
+      await initDb(client);
+
+      await insertEntry(client, "legacy-null", {
+        recallCount: 3,
+        recallIntervals: null,
+        createdAt: "2025-12-01T00:00:00.000Z",
+        updatedAt: "2025-12-01T00:00:00.000Z",
+        lastRecalledAt: "2026-01-30T00:00:00.000Z",
+      });
+
+      const results = await recall(
+        client,
+        {
+          text: "",
+          context: "session-start",
+          limit: 5,
+          noUpdate: true,
+        },
+        "sk-test",
+        { now: new Date("2026-02-01T00:00:00.000Z") },
+      );
+
+      const legacy = results.find((item) => item.entry.id === "legacy-null");
+      expect(legacy).toBeTruthy();
+      expect(legacy!.score).toBeGreaterThanOrEqual(0);
     });
 
     it("uses recall_intervals in session-start candidate scoring", async () => {
@@ -486,6 +517,74 @@ describe("recall spacing", () => {
       const spaced = results.find((item) => item.entry.id === "vector-spaced");
       expect(spaced).toBeTruthy();
       expect(spaced!.scores.spacing).toBeGreaterThan(1.0);
+    });
+
+    it("builds spacing after repeated recalls with advancing time", async () => {
+      const client = makeClient();
+      await initDb(client);
+
+      const vector = to1024([1, 0, 0]);
+      await insertEntry(client, "roundtrip", {
+        embedding: vector,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      const firstNow = new Date("2026-02-01T00:00:00.000Z");
+      await recall(
+        client,
+        {
+          text: "roundtrip query",
+          limit: 1,
+        },
+        "sk-test",
+        {
+          now: firstNow,
+          embedFn: async () => [vector],
+        },
+      );
+
+      const afterFirst = await client.execute({
+        sql: "SELECT recall_intervals FROM entries WHERE id = ?",
+        args: ["roundtrip"],
+      });
+      expect(parseIntervals(afterFirst.rows[0]?.recall_intervals)).toHaveLength(1);
+
+      const secondNow = new Date("2026-02-08T00:00:00.000Z");
+      await recall(
+        client,
+        {
+          text: "roundtrip query",
+          limit: 1,
+        },
+        "sk-test",
+        {
+          now: secondNow,
+          embedFn: async () => [vector],
+        },
+      );
+
+      const afterSecond = await client.execute({
+        sql: "SELECT recall_intervals FROM entries WHERE id = ?",
+        args: ["roundtrip"],
+      });
+      expect(parseIntervals(afterSecond.rows[0]?.recall_intervals)).toHaveLength(2);
+
+      const third = await recall(
+        client,
+        {
+          text: "roundtrip query",
+          limit: 1,
+          noUpdate: true,
+        },
+        "sk-test",
+        {
+          now: new Date("2026-02-15T00:00:00.000Z"),
+          embedFn: async () => [vector],
+        },
+      );
+
+      expect(third[0]?.scores.spacing).toBeGreaterThan(1.0);
     });
   });
 
