@@ -69,6 +69,7 @@ export interface KnowledgeEntry {
   content: string;
   subject: string;
   canonical_key?: string;
+  suppressedContexts?: string[];
   platform?: KnowledgePlatform;
   project?: string;
   importance: number;
@@ -176,6 +177,10 @@ export interface LlmClient {
 export interface StoredEntry extends KnowledgeEntry {
   id: string;
   embedding?: number[];
+  retired?: boolean;
+  retired_at?: string;
+  retired_reason?: string;
+  suppressed_contexts?: string[];
   created_at: string;
   updated_at: string;
   last_recalled_at?: string;
@@ -262,6 +267,21 @@ export interface EntryRelation {
   target_id: string;
   relation_type: RelationType;
   created_at: string;
+}
+
+export interface RetirementRecord {
+  id: string;
+  created_at: string;
+  canonical_key?: string;
+  subject_pattern: string;
+  match_type: "exact" | "contains";
+  reason?: string;
+  suppressed_contexts: string[];
+}
+
+export interface RetirementsLedger {
+  version: 1;
+  retirements: RetirementRecord[];
 }
 
 export interface WatchFileState {

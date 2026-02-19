@@ -8,6 +8,12 @@
 - feat(health): new `agenr health` command with read-only DB health and forgetting candidate summaries
 - feat(consolidate): `--report` pre-run consolidation stats mode (and report-only behavior with `--dry-run`)
 - feat(watch): `context-mini.md` and `context-hot.md` context variants on watch context refresh
+- feat(schema): retired, retired_at, retired_reason, suppressed_contexts columns
+- feat(recall): session-start context filtering respects suppressed_contexts
+- feat(db): retirements.json ledger for durable retirement across re-ingest
+- feat(mcp): entry IDs in agenr_recall output
+- feat(mcp): agenr_retire tool - retire any entry type by ID
+- feat(cli): agenr retire command with dry-run, persist, contains flags
 
 ### Fixed
 - fix(health): initialize schema before health queries and support `--db` path override

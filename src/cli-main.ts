@@ -29,6 +29,7 @@ import { runIngestCommand } from "./commands/ingest.js";
 import { runContextCommand } from "./commands/context.js";
 import { runMcpCommand } from "./commands/mcp.js";
 import { runRecallCommand } from "./commands/recall.js";
+import { runRetireCommand } from "./commands/retire.js";
 import { runStoreCommand } from "./commands/store.js";
 import { runTodoCommand } from "./commands/todo.js";
 import { runWatchCommand } from "./commands/watch.js";
@@ -469,6 +470,25 @@ export function createProgram(): Command {
         scope: opts.scope as string | undefined,
         noBoost: opts.noBoost === true,
         noUpdate: opts.noUpdate === true,
+      });
+      process.exitCode = result.exitCode;
+    });
+
+  program
+    .command("retire <subject>")
+    .description("Retire a stale entry from active recall (entry is hidden, not deleted)")
+    .option("--persist", "Write to retirements ledger so retirement survives re-ingest")
+    .option("--contains", "Use substring matching instead of exact match")
+    .option("--dry-run", "Preview matches without retiring")
+    .option("--reason <text>", "Reason for retirement")
+    .option("--db <path>", "Path to database file")
+    .action(async (subject: string, opts: Record<string, unknown>) => {
+      const result = await runRetireCommand(subject, {
+        persist: opts.persist === true,
+        contains: opts.contains === true,
+        dryRun: opts.dryRun === true,
+        reason: opts.reason as string | undefined,
+        db: opts.db as string | undefined,
       });
       process.exitCode = result.exitCode;
     });

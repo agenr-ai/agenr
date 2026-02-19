@@ -49,6 +49,10 @@ describe("db schema migrations", () => {
     expect(entries.has("consolidated_at")).toBe(true);
     expect(entries.has("platform")).toBe(true);
     expect(entries.has("project")).toBe(true);
+    expect(entries.has("retired")).toBe(true);
+    expect(entries.has("retired_at")).toBe(true);
+    expect(entries.has("retired_reason")).toBe(true);
+    expect(entries.has("suppressed_contexts")).toBe(true);
 
     expect(ingest.has("content_hash")).toBe(true);
     expect(ingest.has("entries_superseded")).toBe(true);
@@ -200,6 +204,10 @@ describe("db schema migrations", () => {
     const consolidatedAt = entriesColumns.find((row) => toStringValue(row.name) === "consolidated_at");
     const platform = entriesColumns.find((row) => toStringValue(row.name) === "platform");
     const project = entriesColumns.find((row) => toStringValue(row.name) === "project");
+    const retired = entriesColumns.find((row) => toStringValue(row.name) === "retired");
+    const retiredAt = entriesColumns.find((row) => toStringValue(row.name) === "retired_at");
+    const retiredReason = entriesColumns.find((row) => toStringValue(row.name) === "retired_reason");
+    const suppressedContexts = entriesColumns.find((row) => toStringValue(row.name) === "suppressed_contexts");
 
     expect(canonicalKey).toBeTruthy();
     expect(scope).toBeTruthy();
@@ -210,6 +218,11 @@ describe("db schema migrations", () => {
     expect(consolidatedAt).toBeTruthy();
     expect(platform).toBeTruthy();
     expect(project).toBeTruthy();
+    expect(retired).toBeTruthy();
+    expect(toStringValue(retired?.dflt_value)).toBe("0");
+    expect(retiredAt).toBeTruthy();
+    expect(retiredReason).toBeTruthy();
+    expect(suppressedContexts).toBeTruthy();
 
     const ingestInfo = await client.execute("PRAGMA table_info(ingest_log)");
     const ingestColumns = ingestInfo.rows as Array<{ name?: unknown; dflt_value?: unknown }>;

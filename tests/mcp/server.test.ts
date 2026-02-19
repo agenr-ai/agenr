@@ -74,16 +74,27 @@ interface TestHarness {
   recallFn: ReturnType<typeof vi.fn>;
   updateRecallMetadataFn: ReturnType<typeof vi.fn>;
   storeEntriesFn: ReturnType<typeof vi.fn>;
+  retireEntriesFn: ReturnType<typeof vi.fn>;
   parseTranscriptFileFn: ReturnType<typeof vi.fn>;
   extractKnowledgeFromChunksFn: ReturnType<typeof vi.fn>;
   mkdtempFn: ReturnType<typeof vi.fn>;
   writeFileFn: ReturnType<typeof vi.fn>;
   rmFn: ReturnType<typeof vi.fn>;
+  dbExecute: ReturnType<typeof vi.fn>;
 }
 
 function makeHarness(): TestHarness {
+  const dbExecute = vi.fn(async (statement: string | { sql?: string; args?: unknown[] }) => {
+    const sql = typeof statement === "string" ? statement : statement.sql ?? "";
+    const args = typeof statement === "string" ? [] : Array.isArray(statement.args) ? statement.args : [];
+    if (sql.includes("SELECT id, subject, type, importance") && args[0] === "entry-1") {
+      return { rows: [{ id: "entry-1", subject: "Jim", type: "preference", importance: 8 }] };
+    }
+    return { rows: [] };
+  });
+
   const db = {
-    execute: vi.fn(async () => ({ rows: [] })),
+    execute: dbExecute,
     close: vi.fn(() => undefined),
   } as unknown as Client;
 
@@ -106,6 +117,7 @@ function makeHarness(): TestHarness {
     };
     return result;
   });
+  const retireEntriesFn = vi.fn(async () => ({ count: 1 }));
 
   const parseTranscriptFileFn = vi.fn(async (filePath: string) => {
     const chunks: TranscriptChunk[] = [
@@ -162,6 +174,7 @@ function makeHarness(): TestHarness {
       recallFn,
       updateRecallMetadataFn,
       storeEntriesFn,
+      retireEntriesFn,
       parseTranscriptFileFn,
       extractKnowledgeFromChunksFn,
       mkdtempFn,
@@ -178,11 +191,13 @@ function makeHarness(): TestHarness {
     recallFn,
     updateRecallMetadataFn,
     storeEntriesFn,
+    retireEntriesFn,
     parseTranscriptFileFn,
     extractKnowledgeFromChunksFn,
     mkdtempFn,
     writeFileFn,
     rmFn,
+    dbExecute,
   };
 }
 
@@ -288,7 +303,7 @@ describe("mcp server", () => {
     const result = responses[0]?.result as { tools?: Array<{ name: string; inputSchema?: { type?: string } }> };
     const toolNames = (result.tools ?? []).map((tool) => tool.name).sort();
 
-    expect(toolNames).toEqual(["agenr_done", "agenr_extract", "agenr_recall", "agenr_store"]);
+    expect(toolNames).toEqual(["agenr_extract", "agenr_recall", "agenr_retire", "agenr_store"]);
     expect(result.tools?.every((tool) => tool.inputSchema?.type === "object")).toBe(true);
   });
 
@@ -436,6 +451,7 @@ describe("mcp server", () => {
 
     const result = responses[0]?.result as { content?: Array<{ text?: string }> };
     expect(result.content?.[0]?.text).toContain(`Found 1 results for "Jim's diet":`);
+    expect(result.content?.[0]?.text).toContain("[id=entry-1]");
     expect(harness.getDbFn).toHaveBeenCalledTimes(1);
     expect(harness.initDbFn).toHaveBeenCalledTimes(1);
     expect(harness.recallFn).toHaveBeenCalledTimes(1);
@@ -844,6 +860,130 @@ describe("mcp server", () => {
     const storedEntries = harness.storeEntriesFn.mock.calls[0]?.[1] as KnowledgeEntry[];
     expect(storedEntries).toHaveLength(1);
     expect(storedEntries[0]?.project).toBe("agenr");
+  });
+
+  it("agenr_retire with valid entry_id retires entry and returns success message", async () => {
+    const harness = makeHarness();
+    const responses = await runServer(
+      [
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1001,
+          method: "tools/call",
+          params: {
+            name: "agenr_retire",
+            arguments: {
+              entry_id: "entry-1",
+              reason: "stale",
+            },
+          },
+        }),
+      ],
+      harness.deps,
+    );
+
+    const result = responses[0]?.result as { content?: Array<{ text?: string }>; isError?: boolean };
+    expect(result.isError).not.toBe(true);
+    expect(result.content?.[0]?.text).toContain("Retired: Jim (type: preference).");
+    expect(harness.retireEntriesFn).toHaveBeenCalledTimes(1);
+    expect(harness.retireEntriesFn.mock.calls[0]?.[0]).toMatchObject({
+      entryId: "entry-1",
+      reason: "stale",
+      writeLedger: false,
+    });
+  });
+
+  it("agenr_retire with persist=true includes re-ingest note", async () => {
+    const harness = makeHarness();
+    const responses = await runServer(
+      [
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1002,
+          method: "tools/call",
+          params: {
+            name: "agenr_retire",
+            arguments: {
+              entry_id: "entry-1",
+              reason: "obsolete project",
+              persist: true,
+            },
+          },
+        }),
+      ],
+      harness.deps,
+    );
+
+    const result = responses[0]?.result as { content?: Array<{ text?: string }>; isError?: boolean };
+    expect(result.isError).not.toBe(true);
+    expect(result.content?.[0]?.text).toContain("Retirement will survive database re-ingest.");
+    expect(harness.retireEntriesFn.mock.calls[0]?.[0]).toMatchObject({
+      entryId: "entry-1",
+      writeLedger: true,
+    });
+  });
+
+  it("agenr_retire with invalid entry_id returns isError", async () => {
+    const harness = makeHarness();
+    const responses = await runServer(
+      [
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1003,
+          method: "tools/call",
+          params: {
+            name: "agenr_retire",
+            arguments: {
+              entry_id: "missing-id",
+            },
+          },
+        }),
+      ],
+      harness.deps,
+    );
+
+    const result = responses[0]?.result as { content?: Array<{ text?: string }>; isError?: boolean };
+    expect(result.isError).toBe(true);
+    expect(result.content?.[0]?.text).toContain("No active entry found with id: missing-id");
+    expect(harness.retireEntriesFn).not.toHaveBeenCalled();
+  });
+
+  it("retired entries remain findable via agenr_recall", async () => {
+    const harness = makeHarness();
+    const responses = await runServer(
+      [
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1004,
+          method: "tools/call",
+          params: {
+            name: "agenr_retire",
+            arguments: {
+              entry_id: "entry-1",
+            },
+          },
+        }),
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1005,
+          method: "tools/call",
+          params: {
+            name: "agenr_recall",
+            arguments: {
+              query: "Jim",
+            },
+          },
+        }),
+      ],
+      harness.deps,
+    );
+
+    const retireResult = responses[0]?.result as { isError?: boolean };
+    expect(retireResult.isError).not.toBe(true);
+
+    const recallResult = responses[1]?.result as { content?: Array<{ text?: string }> };
+    expect(recallResult.content?.[0]?.text).toContain('Found 1 results for "Jim":');
+    expect(recallResult.content?.[0]?.text).toContain("[id=entry-1]");
   });
 
   it("calls agenr_extract and optionally stores extracted entries", async () => {

@@ -3,6 +3,7 @@ import type { Context, Tool } from "@mariozechner/pi-ai";
 import type { Client, InValue, Row } from "@libsql/client";
 import { Type, type Static } from "@sinclair/typebox";
 import { warnIfLocked } from "./lockfile.js";
+import { applyLedger } from "./retirements.js";
 import { composeEmbeddingText, embed } from "../embeddings/client.js";
 import { EmbeddingCache } from "../embeddings/cache.js";
 import { runSimpleStream } from "../llm/stream.js";
@@ -74,6 +75,7 @@ export interface StoreEntriesOptions {
   onlineDedup?: boolean;
   skipLlmDedup?: boolean;
   dedupThreshold?: number;
+  dbPath?: string;
   llmClient?: LlmClient;
   onlineDedupFn?: (
     client: LlmClient,
@@ -156,6 +158,23 @@ function normalizeCreatedAt(value: string | undefined): string | undefined {
   }
 
   return parsed.toISOString();
+}
+
+async function inferDbPathFromConnection(db: Client): Promise<string | undefined> {
+  try {
+    const result = await db.execute("PRAGMA database_list");
+    const main = result.rows.find((row) => toStringValue((row as { name?: InValue }).name) === "main");
+    if (!main) {
+      return undefined;
+    }
+    const file = toStringValue((main as { file?: InValue }).file);
+    if (!file) {
+      return ":memory:";
+    }
+    return file;
+  } catch {
+    return undefined;
+  }
 }
 
 function mapBufferToVector(value: InValue | undefined): number[] {
@@ -1277,6 +1296,7 @@ export async function storeEntries(
   const startedAt = Date.now();
   const embedFn = options.embedFn ?? embed;
   const totalBefore = await getTotalEntries(db);
+  const effectiveDbPath = options.dbPath ?? (await inferDbPathFromConnection(db));
   const cache = new EmbeddingCache();
 
   let added = 0;
@@ -1447,6 +1467,11 @@ export async function storeEntries(
 
       await db.execute("COMMIT");
 
+      const reapplied = await applyLedger(db, effectiveDbPath);
+      if (options.verbose && reapplied > 0) {
+        process.stderr.write(`[store] re-applied ${reapplied} retirements from ledger\n`);
+      }
+
       return {
         added,
         updated,
@@ -1483,6 +1508,13 @@ export async function storeEntries(
       llmDedupCalls,
       durationMs,
     });
+  }
+
+  if (!options.dryRun) {
+    const reapplied = await applyLedger(db, effectiveDbPath);
+    if (options.verbose && reapplied > 0) {
+      process.stderr.write(`[store] re-applied ${reapplied} retirements from ledger\n`);
+    }
   }
 
   return {

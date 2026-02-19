@@ -121,6 +121,10 @@ describe("db schema", () => {
     expect(entryColumns.has("merged_from")).toBe(true);
     expect(entryColumns.has("consolidated_at")).toBe(true);
     expect(entryColumns.has("platform")).toBe(true);
+    expect(entryColumns.has("retired")).toBe(true);
+    expect(entryColumns.has("retired_at")).toBe(true);
+    expect(entryColumns.has("retired_reason")).toBe(true);
+    expect(entryColumns.has("suppressed_contexts")).toBe(true);
     expect(ingestColumns.has("content_hash")).toBe(true);
     expect(ingestColumns.has("entries_superseded")).toBe(true);
     expect(ingestColumns.has("dedup_llm_calls")).toBe(true);

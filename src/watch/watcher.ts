@@ -541,6 +541,7 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
               sourceFile: targetFilePath,
               onlineDedup: options.onlineDedup !== false,
               llmClient: options.onlineDedup === false ? undefined : client,
+              dbPath,
             }),
           );
           cycleResult.entriesStored += storeResult.added + storeResult.updated + storeResult.superseded;

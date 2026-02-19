@@ -200,8 +200,13 @@ function passesFilters(
   cutoff: Date | undefined,
   allowedScopes: Set<Scope>,
   normalizedTags: string[],
+  isSessionStart: boolean,
 ): boolean {
   if (entry.superseded_by) {
+    return false;
+  }
+
+  if (isSessionStart && entry.suppressed_contexts?.includes("session-start")) {
     return false;
   }
 
@@ -408,7 +413,11 @@ async function fetchVectorCandidates(
         e.recall_count,
         e.confirmations,
         e.contradictions,
-        e.superseded_by
+        e.superseded_by,
+        e.retired,
+        e.retired_at,
+        e.retired_reason,
+        e.suppressed_contexts
       FROM vector_top_k('idx_entries_embedding', vector32(?), ?) AS v
       CROSS JOIN entries AS e ON e.rowid = v.id
       WHERE e.embedding IS NOT NULL
@@ -436,6 +445,7 @@ async function fetchVectorCandidates(
 async function fetchSessionCandidates(
   db: Client,
   limit: number,
+  context: string,
   platform?: KnowledgePlatform,
   project?: string | string[],
   excludeProject?: string | string[],
@@ -478,9 +488,14 @@ async function fetchSessionCandidates(
         recall_count,
         confirmations,
         contradictions,
-        superseded_by
+        superseded_by,
+        retired,
+        retired_at,
+        retired_reason,
+        suppressed_contexts
       FROM entries
       WHERE superseded_by IS NULL
+        ${context === "session-start" ? "AND (suppressed_contexts IS NULL OR suppressed_contexts NOT LIKE '%\"session-start\"%')" : ""}
         ${projectSql.clause}
         ${platform ? "AND platform = ?" : ""}
       ORDER BY updated_at DESC
@@ -582,6 +597,7 @@ export async function recall(
   const project = query.project;
   const excludeProject = query.excludeProject;
   const projectStrict = query.projectStrict === true;
+  const isSessionStart = context === "session-start";
 
   if (!text && context !== "session-start") {
     throw new Error("Query text is required unless --context session-start is used.");
@@ -619,6 +635,7 @@ export async function recall(
     candidates = await fetchSessionCandidates(
       db,
       options.sessionCandidateLimit ?? DEFAULT_SESSION_CANDIDATE_LIMIT,
+      context,
       platform,
       project,
       excludeProject,
@@ -627,7 +644,7 @@ export async function recall(
   }
 
   const filtered = candidates.filter((candidate) =>
-    passesFilters(candidate.entry, query, cutoff, allowedScopes, normalizedTags),
+    passesFilters(candidate.entry, query, cutoff, allowedScopes, normalizedTags, isSessionStart),
   );
 
   if (filtered.length === 0) {
