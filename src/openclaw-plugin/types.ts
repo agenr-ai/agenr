@@ -1,28 +1,14 @@
 // Local type aliases for OpenClaw plugin SDK types.
 // These mirror the shapes in openclaw/dist/plugin-sdk/ without creating a dependency.
 
-export type BootstrapFile = {
-  name: string;
-  path: string;
-  content?: string;
-  missing: boolean;
-};
-
-export type BootstrapHookContext = {
-  bootstrapFiles: BootstrapFile[];
+export type BeforeAgentStartEvent = {
   sessionKey?: string;
-  workspaceDir?: string;
-  sessionId?: string;
-  agentId?: string;
+  prompt?: string;
+  [key: string]: unknown;
 };
 
-export type HookEvent = {
-  type: string;
-  action: string;
-  sessionKey: string;
-  context: Record<string, unknown>;
-  timestamp: Date;
-  messages: string[];
+export type BeforeAgentStartResult = {
+  prependContext?: string;
 };
 
 export type PluginLogger = {
@@ -38,10 +24,11 @@ export type PluginApi = {
   version?: string;
   pluginConfig?: Record<string, unknown>;
   logger: PluginLogger;
-  registerHook: (
-    events: string | string[],
-    handler: (event: HookEvent) => Promise<void> | void,
-    opts?: { name?: string; description?: string; priority?: number }
+  on: (
+    hook: "before_agent_start",
+    handler: (
+      event: BeforeAgentStartEvent
+    ) => Promise<BeforeAgentStartResult | undefined> | BeforeAgentStartResult | undefined
   ) => void;
 };
 
