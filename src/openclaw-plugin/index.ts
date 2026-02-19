@@ -70,7 +70,7 @@ const plugin = {
       } catch {
         // Never block session start - swallow all errors silently.
       }
-    });
+    }, { name: "agenr-memory", description: "Inject agenr memory context at session start" });
   },
 };
 
