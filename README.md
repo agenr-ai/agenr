@@ -25,6 +25,8 @@ export OPENAI_API_KEY=sk-...  # for embeddings + extraction
 ```bash
 # Install
 npm install -g agenr
+# or
+pnpm add -g agenr
 
 # Configure (picks your LLM provider, walks you through auth)
 agenr setup
