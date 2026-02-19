@@ -6,14 +6,14 @@
 
 Local-first memory for AI agents. Extract structured knowledge from conversations, store with semantic dedup, recall with memory-aware ranking, consolidate over time.
 
-**Version:** 0.4.0
+**Version:** 0.6.3
 
 ## Stack
 
 - TypeScript, ESM, Node.js 20+
 - libsql/SQLite for storage (`@libsql/client`)
 - sqlite-vec for vector similarity search
-- OpenAI `text-embedding-3-small` (512 dims) for embeddings
+- OpenAI `text-embedding-3-small` (1024 dims) for embeddings
 - `@mariozechner/pi-ai` for LLM (structured output via tool calling)
 - `@sinclair/typebox` for runtime schemas
 - `@clack/prompts` + `chalk` for CLI UI
@@ -26,6 +26,7 @@ Local-first memory for AI agents. Extract structured knowledge from conversation
 ```
 src/
   cli.ts              # CLI entry point (commander)
+  cli-main.ts         # CLI main entry (invoked by cli.ts)
   extractor.ts        # LLM extraction from transcripts
   dedup.ts            # Per-batch dedup (trigram Jaccard, pre-store filter)
   parser.ts           # File parsing (JSONL, markdown, plain text)
@@ -35,20 +36,50 @@ src/
   setup.ts            # Interactive setup (provider/auth/model)
   auth-status.ts      # Auth diagnostics
   output.ts           # Output formatting
+  platform.ts         # Platform detection and defaults
+  project.ts          # Project auto-detection from CWD
+  shutdown.ts         # Graceful shutdown helpers
   ui.ts               # Shared UI utilities
+  version.ts          # Version constant
+  adapters/           # Source format adapters (per-platform JSONL parsing)
+    types.ts           # Adapter interface
+    registry.ts        # Adapter registry
+    jsonl-base.ts      # Base JSONL adapter
+    jsonl-generic.ts   # Generic JSONL fallback
+    jsonl-registry.ts  # JSONL adapter registry
+    openclaw.ts        # OpenClaw adapter
+    claude-code.ts     # Claude Code adapter
+    codex.ts           # Codex adapter
+    cursor.ts          # Cursor adapter
+    vscode-copilot.ts  # VS Code Copilot adapter
+    plaud.ts           # Plaud transcript adapter
+    text.ts            # Plain text adapter
+  cli/
+    option-parsers.ts  # Shared CLI option parsing helpers
   commands/
     consolidate.ts     # Consolidation CLI (orchestrates rules + LLM tiers)
+    context.ts         # Context file generation CLI
+    daemon.ts          # Daemon install/start/stop/restart
     db.ts              # DB management (stats, export, reset, rebuild-index, check)
+    eval.ts            # Recall scoring eval/regression
+    health.ts          # DB health check and forgetting candidate stats
     ingest.ts          # Bulk ingestion from files/directories
     mcp.ts             # MCP server launcher
     recall.ts          # Recall CLI
+    reset.ts           # DB reset --full command
+    retire.ts          # Entry retirement CLI
+    shared.ts          # Shared command helpers
     store.ts           # Store CLI
+    todo.ts            # Todo done/complete CLI
     watch.ts           # Watch mode CLI
   db/
     client.ts          # DB connection + initialization
-    schema.ts          # Table definitions + indexes/triggers/fts
+    lockfile.ts        # Process lock (prevent concurrent writes)
+    retirements.ts     # Retirements ledger (retirements.json)
+    schema.ts          # Table definitions + column migrations
     store.ts           # Store pipeline (dedup, embed, insert)
-    recall.ts          # Recall scoring (vector + recency + confidence + FTS)
+    stored-entry.ts    # StoredEntry mapping from raw DB rows
+    recall.ts          # Recall scoring (vector + recency + importance + FTS)
     relations.ts       # Entry relations
     session-start.ts   # Session-start bootstrap recall
     vector-index.ts    # Vector index management (rebuild, check)
@@ -56,11 +87,11 @@ src/
     rules.ts           # Tier 1: deterministic rules (expiry, near-exact dedup)
     cluster.ts         # Tier 2: union-find clustering with diameter cap
     merge.ts           # Tier 2: LLM-assisted merge via tool calls
+    orchestrate.ts     # Consolidation orchestration (replaces old lock.ts)
     verify.ts          # Tier 2: semantic verification + review queue
-    lock.ts            # Process lock (prevent concurrent consolidation)
     util.ts            # Shared utilities (UnionFind, cosineSim, etc.)
   mcp/
-    server.ts          # MCP stdio server (3 tools: recall, store, extract)
+    server.ts          # MCP stdio server (4 tools: recall, store, extract, retire)
   llm/
     client.ts          # LLM client abstraction
     models.ts          # Model resolution
@@ -69,11 +100,23 @@ src/
   embeddings/
     client.ts          # OpenAI embeddings (batch, retry, concurrency)
     cache.ts           # Embedding cache
+  utils/
+    entry-utils.ts     # Entry helper utilities
+    string.ts          # String utilities
   watch/
     watcher.ts         # File watcher (auto-extract + store on change)
     state.ts           # Watch state tracking
+    platform-defaults.ts  # Per-platform default watch directories
+    session-resolver.ts   # Active session file resolution
+    resolvers/         # Per-platform active file resolvers
+      index.ts
+      auto.ts
+      claude-code.ts
+      codex.ts
+      mtime.ts
+      openclaw.ts
 tests/                 # vitest test files
-  consolidate-*.test.ts  # Consolidation tests (cluster, merge, verify, lock, e2e)
+  consolidate-*.test.ts  # Consolidation tests (cluster, merge, verify, e2e)
   consolidate/           # Consolidation test fixtures
   db/                    # DB test helpers
   embeddings/            # Embedding test mocks
@@ -88,7 +131,7 @@ docs/
   CONSOLIDATION.md     # Two-tier consolidation design
   CONFIGURATION.md     # Env vars, auth methods, config file
   OPENCLAW.md          # OpenClaw integration guide
-  prompts/             # Codex prompt specs for upcoming work
+  prompts/             # Codex prompt specs (gitignored - local only)
 ```
 
 ## Common commands
@@ -113,7 +156,7 @@ pnpm exec agenr        # Run CLI from source
 
 Seven knowledge types: `fact`, `decision`, `preference`, `todo`, `relationship`, `event`, `lesson`
 
-Confidence: `low`, `medium`, `high`
+Importance: integer 1-10 (6-7 normal, 8-9 critical, 10 never-forget)
 Expiry: `session-only`, `temporary`, `permanent`, `core`
 Scope: `private`, `shared`, `public`
 
@@ -139,7 +182,7 @@ Two-tier system in `src/consolidate/`:
 
 - **Tier 1 (rules):** Expire decayed entries (recency < 0.05), merge near-exact dupes (cosine >= 0.95, same type + same subject). No LLM.
 - **Tier 2 (LLM):** Union-find clustering (same-type threshold 0.85, cross-type 0.89, diameter cap threshold-0.02). Min cluster size 3, max 12. LLM merges via tool calls. Embedding verification (>= 0.65 per-source, >= 0.75 centroid). Flagged merges go to review queue.
-- **Lock:** `acquireLock()`/`releaseLock()` prevents concurrent runs
+- **Lock:** `src/db/lockfile.ts` prevents concurrent consolidation runs
 - **Provenance:** `entry_sources` table tracks merged entry lineage
 
 ## Per-batch dedup
