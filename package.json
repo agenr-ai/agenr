@@ -53,5 +53,10 @@
     "LICENSE",
     "README.md"
   ],
-  "author": "agenr-ai"
+  "author": "agenr-ai",
+  "pnpm": {
+    "overrides": {
+      "fast-xml-parser": ">=5.3.6"
+    }
+  }
 }
