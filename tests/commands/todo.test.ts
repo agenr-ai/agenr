@@ -58,7 +58,9 @@ describe("todo command", () => {
     const program = createProgram();
     const todoCommand = program.commands.find((command) => command.name() === "todo");
     const actionMock = vi.fn(async (..._args: unknown[]) => undefined);
-    todoCommand?.action(actionMock as any);
+    todoCommand?.action(
+      actionMock as unknown as (subcommand: string, subject: string, opts: { db?: string }) => Promise<void>,
+    );
 
     await program.parseAsync(["node", "agenr", "todo", "done", "fix client test", "--db", "/tmp/knowledge.db"]);
 
@@ -151,6 +153,80 @@ describe("todo command", () => {
     expect(byId.get("todo-1")).toBeNull();
     expect(byId.get("todo-2")).toBe("todo-2");
     expect(byId.get("todo-3")).toBeNull();
+  });
+
+  it("done with single match returns exitCode 1 when confirmation is cancelled", async () => {
+    const client = makeClient();
+    await initDb(client);
+    await seedTodo(client, {
+      id: "todo-1",
+      subject: "fix client test",
+      content: "Fix flaky client integration test",
+    });
+    const confirmFn = vi.fn(async () => Symbol.for("clack:cancel")) as unknown as TodoCommandDeps["confirmFn"];
+    const outroFn = vi.fn();
+    const deps = makeDeps(client, { confirmFn, outroFn });
+
+    const result = await runTodoCommand("done", "fix client test", { db: ":memory:" }, deps);
+
+    expect(result.exitCode).toBe(1);
+    expect(confirmFn).toHaveBeenCalledTimes(1);
+    expect(outroFn).toHaveBeenCalledWith("Cancelled.", { output: process.stderr });
+
+    const row = await client.execute({
+      sql: "SELECT superseded_by FROM entries WHERE id = ?",
+      args: ["todo-1"],
+    });
+    expect(row.rows[0]?.superseded_by).toBeNull();
+  });
+
+  it("done with multiple matches returns exitCode 1 when selection is cancelled", async () => {
+    const client = makeClient();
+    await initDb(client);
+    await seedTodo(client, { id: "todo-1", subject: "fix client test", content: "A", importance: 9 });
+    await seedTodo(client, { id: "todo-2", subject: "fix client auth", content: "B", importance: 8 });
+    const selectFn = vi.fn(async () => "__cancel__") as unknown as TodoCommandDeps["selectFn"];
+    const outroFn = vi.fn();
+    const deps = makeDeps(client, { selectFn, outroFn });
+
+    const result = await runTodoCommand("done", "client", { db: ":memory:" }, deps);
+
+    expect(result.exitCode).toBe(1);
+    expect(selectFn).toHaveBeenCalledTimes(1);
+    expect(outroFn).toHaveBeenCalledWith("Cancelled.", { output: process.stderr });
+
+    const rows = await client.execute({
+      sql: "SELECT id, superseded_by FROM entries WHERE id IN ('todo-1', 'todo-2') ORDER BY id ASC",
+      args: [],
+    });
+    expect(rows.rows[0]?.superseded_by).toBeNull();
+    expect(rows.rows[1]?.superseded_by).toBeNull();
+  });
+
+  it("unknown subcommand returns exitCode 1", async () => {
+    const client = makeClient();
+    const introFn = vi.fn();
+    const outroFn = vi.fn();
+    const deps = makeDeps(client, { introFn, outroFn });
+
+    const result = await runTodoCommand("list", "fix client test", { db: ":memory:" }, deps);
+
+    expect(result.exitCode).toBe(1);
+    expect(outroFn).toHaveBeenCalledWith("Unknown todo subcommand: list");
+    expect(introFn).not.toHaveBeenCalled();
+  });
+
+  it("empty subject returns exitCode 1", async () => {
+    const client = makeClient();
+    const introFn = vi.fn();
+    const outroFn = vi.fn();
+    const deps = makeDeps(client, { introFn, outroFn });
+
+    const result = await runTodoCommand("done", "   ", { db: ":memory:" }, deps);
+
+    expect(result.exitCode).toBe(1);
+    expect(outroFn).toHaveBeenCalledWith("Subject is required.");
+    expect(introFn).not.toHaveBeenCalled();
   });
 
   it("done updates updated_at timestamp on the row", async () => {

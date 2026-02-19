@@ -16,6 +16,12 @@ const DEFAULT_SIMILAR_LIMIT = 5;
 const CANONICAL_KEY_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+){2,4}$/;
 const CROSS_TYPE_TODO_SUPERSEDE_TYPES = new Set<KnowledgeEntry["type"]>(["event", "fact", "decision"]);
 const TODO_COMPLETION_SIGNALS = ["done", "fixed", "resolved", "completed", "shipped", "closed", "merged"] as const;
+const TODO_COMPLETION_NEGATION_WINDOW_CHARS = 40;
+const TODO_COMPLETION_NEGATION_PATTERN =
+  /\b(?:not|never)\b(?:\W+\w+){0,2}\W*$|\bno\s+longer\b(?:\W+\w+){0,2}\W*$/i;
+const TODO_COMPLETION_SIGNAL_PATTERNS = TODO_COMPLETION_SIGNALS.map(
+  (signal) => new RegExp(`\\b${signal.split(/\s+/).map(escapeRegExp).join("\\s+")}\\b`, "gi"),
+);
 
 const ONLINE_DEDUP_ACTIONS = ["ADD", "UPDATE", "SKIP", "SUPERSEDE"] as const;
 export type OnlineDedupAction = (typeof ONLINE_DEDUP_ACTIONS)[number];
@@ -116,6 +122,10 @@ function toStringValue(value: InValue | undefined): string {
 
 function normalize(value: string): string {
   return value.trim().toLowerCase();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function normalizeCanonicalKey(value: string | undefined): string | undefined {
@@ -736,7 +746,20 @@ function subjectsContainEachOther(a: string, b: string): boolean {
 
 function hasTodoCompletionSignal(content: string): boolean {
   const normalized = content.toLowerCase();
-  return TODO_COMPLETION_SIGNALS.some((signal) => normalized.includes(signal));
+  for (const pattern of TODO_COMPLETION_SIGNAL_PATTERNS) {
+    pattern.lastIndex = 0;
+    let match = pattern.exec(normalized);
+    while (match) {
+      const matchIndex = match.index;
+      const windowStart = Math.max(0, matchIndex - TODO_COMPLETION_NEGATION_WINDOW_CHARS);
+      const prefixWindow = normalized.slice(windowStart, matchIndex);
+      if (!TODO_COMPLETION_NEGATION_PATTERN.test(prefixWindow)) {
+        return true;
+      }
+      match = pattern.exec(normalized);
+    }
+  }
+  return false;
 }
 
 async function findEntryByTypeAndCanonicalKey(
@@ -784,43 +807,7 @@ async function findEntryByTypeAndCanonicalKey(
 }
 
 async function findActiveTodoByCanonicalKey(db: Client, canonicalKey: string): Promise<StoredEntry | null> {
-  const result = await db.execute({
-    sql: `
-      SELECT
-        id,
-        type,
-        subject,
-        canonical_key,
-        content,
-        importance,
-        expiry,
-        source_file,
-        source_context,
-        embedding,
-        created_at,
-        updated_at,
-        last_recalled_at,
-        recall_count,
-        confirmations,
-        contradictions,
-        superseded_by
-      FROM entries
-      WHERE canonical_key = ?
-        AND superseded_by IS NULL
-        AND type = 'todo'
-      LIMIT 1
-    `,
-    args: [canonicalKey],
-  });
-
-  const row = result.rows[0];
-  if (!row) {
-    return null;
-  }
-
-  const entryId = toStringValue(row.id);
-  const tagsById = await getTagsForEntryIds(db, [entryId]);
-  return mapStoredEntry(row, tagsById.get(entryId) ?? []);
+  return findEntryByTypeAndCanonicalKey(db, "todo", canonicalKey);
 }
 
 function buildFallbackAddDecision(reasoning: string): OnlineDedupDecision {

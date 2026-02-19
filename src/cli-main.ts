@@ -563,7 +563,7 @@ export function createProgram(): Command {
   program
     .command("todo <subcommand> <subject>")
     .description("Manage todos in the knowledge base")
-    .option("--db <path>", "Path to database file")
+    .option("--db <path>", "Database path override")
     .action(async (subcommand: string, subject: string, opts: { db?: string }) => {
       const result = await runTodoCommand(subcommand, subject, { db: opts.db });
       process.exitCode = result.exitCode;

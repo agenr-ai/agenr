@@ -616,6 +616,99 @@ describe("db store pipeline", () => {
     expect(row.rows[0]?.superseded_by).toBeNull();
   });
 
+  it("ignores negated completion phrases and still supersedes on genuine completion", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    await storeEntries(
+      client,
+      [
+        makeEntry({
+          type: "todo",
+          subject: "fix client test",
+          canonicalKey: "client-test-fix-negated",
+          content: "Fix client test flake vec-base",
+          sourceFile: "seed.jsonl",
+        }),
+      ],
+      "sk-test",
+      {
+        sourceFile: "seed.jsonl",
+        ingestContentHash: hashText("seed-todo"),
+        embedFn: mockEmbed,
+      },
+    );
+
+    await storeEntries(
+      client,
+      [
+        makeEntry({
+          type: "event",
+          subject: "fix client test",
+          canonicalKey: "client-test-fix-negated",
+          content: "Fix client test is not done, never completed, and no longer resolved vec-low",
+          sourceFile: "event-negated.jsonl",
+        }),
+      ],
+      "sk-test",
+      {
+        sourceFile: "event-negated.jsonl",
+        ingestContentHash: hashText("event-negated"),
+        embedFn: mockEmbed,
+      },
+    );
+
+    const beforePositive = await client.execute({
+      sql: "SELECT id, superseded_by FROM entries WHERE type = 'todo' AND canonical_key = ?",
+      args: ["client-test-fix-negated"],
+    });
+    expect(beforePositive.rows[0]?.superseded_by).toBeNull();
+
+    await storeEntries(
+      client,
+      [
+        makeEntry({
+          type: "todo",
+          subject: "fix client auth",
+          canonicalKey: "client-auth-fix-positive",
+          content: "Fix client auth flow vec-base",
+          sourceFile: "seed-positive.jsonl",
+        }),
+      ],
+      "sk-test",
+      {
+        sourceFile: "seed-positive.jsonl",
+        ingestContentHash: hashText("seed-positive"),
+        embedFn: mockEmbed,
+      },
+    );
+
+    await storeEntries(
+      client,
+      [
+        makeEntry({
+          type: "event",
+          subject: "fix client auth",
+          canonicalKey: "client-auth-fix-positive",
+          content: "Fix client auth is resolved vec-low",
+          sourceFile: "event-positive.jsonl",
+        }),
+      ],
+      "sk-test",
+      {
+        sourceFile: "event-positive.jsonl",
+        ingestContentHash: hashText("event-positive"),
+        embedFn: mockEmbed,
+      },
+    );
+
+    const afterPositive = await client.execute({
+      sql: "SELECT id, superseded_by FROM entries WHERE type = 'todo' AND canonical_key = ?",
+      args: ["client-auth-fix-positive"],
+    });
+    expect(String(afterPositive.rows[0]?.superseded_by)).toBe(String(afterPositive.rows[0]?.id));
+  });
+
   it("keeps same-type canonical key reinforcement behavior", async () => {
     const client = makeClient();
     await initDb(client);

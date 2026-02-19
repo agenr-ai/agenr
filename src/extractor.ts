@@ -27,7 +27,7 @@ When a todo, task, or action item is explicitly completed in the transcript:
 - Include in content: what was done and that it is now resolved
 - Do NOT re-emit the original todo as a new todo entry
 
-Examples of completion signals: "that's done", "it's fixed", "completed", "we shipped it", "all tests passing", "merged", "resolved", "closed", "out of the oven", "in the oven" (task started = progress, not done), "deployed", "published".
+Examples of completion signals: "that's done", "it's fixed", "completed", "we shipped it", "all tests passing", "merged", "resolved", "closed", "out of the oven", "deployed", "published".
 
 Do NOT emit a completion event for:
 - Tasks that are started but not finished ("working on it", "in progress", "in the oven")

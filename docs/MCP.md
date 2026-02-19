@@ -228,8 +228,11 @@ Stored: 1 new, 0 updated, 1 duplicates skipped, 0 superseded.
 Mark a todo as completed and remove it from active recall.
 
 Parameters:
-- `subject` (string, required): todo subject to match (partial/fuzzy matching supported)
-- `confirm` (boolean, optional, default `false`): if `true`, immediately marks the top match done when multiple candidates exist
+- `subject` (string, required): todo subject to match (partial/fuzzy matching supported). If multiple active todos match, the tool returns the candidate list so the caller can refine the subject.
+- `confirm` (boolean, optional, default `false`):
+  - `false`: do not pick a candidate silently when multiple matches exist; return a response listing candidates.
+  - `true`: immediately mark the single top match as done.
+    Top-match ordering is: `importance` descending, then `created_at` descending, then alphabetical `subject`.
 
 Example call payload:
 
