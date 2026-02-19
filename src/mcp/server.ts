@@ -918,7 +918,7 @@ export function createMcpServer(
         SELECT id, subject, content
         FROM entries
         WHERE type = 'todo' AND superseded_by IS NULL
-        ORDER BY importance DESC, created_at DESC
+        ORDER BY importance DESC, created_at DESC, subject ASC
       `,
       args: [],
     });
