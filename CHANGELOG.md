@@ -3,8 +3,9 @@
 ## [0.6.2] - 2026-02-19
 
 ### Added
-- feat(extractor): elaborative encoding pre-fetch now runs before each chunk extraction, retrieves top related memories from the vector index, and injects up to 3 references into the extractor prompt
+- feat(extractor): elaborative encoding pre-fetch now runs before each chunk extraction, retrieves top-related memories from the vector index, and injects up to 3 references into the extractor prompt
 - feat(cli): `--no-pre-fetch` flag added to `agenr extract`, `agenr ingest`, and `agenr watch` to opt out of prompt memory pre-fetch
+- feat(cli): `--db` flag added to `agenr extract`, `agenr ingest`, and `agenr watch` for database path overrides
 - feat(recall): exported `fetchRelatedEntries()` thin wrapper for direct ANN vector candidate queries
 
 ### Changed
