@@ -394,14 +394,7 @@ export async function runWatchCommand(
     deleteWatcherPidFn: deps?.deleteWatcherPidFn ?? deleteWatcherPid,
     nowFn: deps?.nowFn ?? (() => new Date()),
     shutdownTimeoutMs: deps?.shutdownTimeoutMs ?? 5000,
-    exitProcessFn:
-      deps?.exitProcessFn ??
-      ((code: number) => {
-        if (process.env.VITEST) {
-          return;
-        }
-        process.exit(code);
-      }),
+    exitProcessFn: deps?.exitProcessFn ?? ((code: number) => process.exit(code)),
   };
   const clackOutput = { output: process.stderr };
   warnIfLocked();
@@ -632,7 +625,11 @@ export async function runWatchCommand(
     };
 
     if (!watcherReturned) {
-      await resolvedDeps.deleteWatcherPidFn();
+      if (isShutdownRequested()) {
+        await runShutdownHandlers();
+      } else {
+        await resolvedDeps.deleteWatcherPidFn();
+      }
     } else {
       const forceExitTimer = setTimeout(() => {
         process.stderr.write("[agenr] Force exit after timeout\n");
@@ -646,7 +643,9 @@ export async function runWatchCommand(
         clearTimeout(forceExitTimer);
       }
 
-      resolvedDeps.exitProcessFn(0);
+      if (isShutdownRequested()) {
+        resolvedDeps.exitProcessFn(0);
+      }
     }
   }
 }

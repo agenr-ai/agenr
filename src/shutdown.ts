@@ -31,7 +31,7 @@ export function onShutdown(handler: ShutdownHandler): void {
   shutdownHandlers.push(handler);
 }
 
-export function onWake(fn: () => void): void {
+export function onWake(fn: (() => void) | null): void {
   wakeCallback = fn;
 }
 
@@ -40,7 +40,11 @@ export async function runShutdownHandlers(): Promise<void> {
   for (let i = shutdownHandlers.length - 1; i >= 0; i -= 1) {
     const handler = shutdownHandlers[i];
     if (!handler) continue;
-    await handler();
+    try {
+      await handler();
+    } catch (err) {
+      process.stderr.write(`[agenr] Shutdown handler failed: ${err instanceof Error ? err.message : String(err)}\n`);
+    }
   }
 }
 
