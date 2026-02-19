@@ -19,6 +19,8 @@ import type { SessionResolver } from "./session-resolver.js";
 import type { WatchPlatform } from "./resolvers/index.js";
 import { openClawSessionResolver } from "./resolvers/openclaw.js";
 import { createEmptyWatchState, getFileState, loadWatchState, saveWatchState, updateFileState } from "./state.js";
+import type { WatcherHealth } from "./health.js";
+import { writeHealthFile } from "./health.js";
 
 interface WatchTarget {
   dir: string;
@@ -90,6 +92,7 @@ export interface WatcherDeps {
   storeEntriesFn: typeof storeEntries;
   loadWatchStateFn: typeof loadWatchState;
   saveWatchStateFn: typeof saveWatchState;
+  writeHealthFileFn: (health: WatcherHealth, configDir?: string) => Promise<void>;
   statFileFn: typeof fs.stat;
   readFileFn: (filePath: string, offset: number) => Promise<Buffer>;
   readFileHeadFn: (filePath: string, maxBytes: number) => Promise<Buffer>;
@@ -202,6 +205,7 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
     storeEntriesFn: deps?.storeEntriesFn ?? storeEntries,
     loadWatchStateFn: deps?.loadWatchStateFn ?? loadWatchState,
     saveWatchStateFn: deps?.saveWatchStateFn ?? saveWatchState,
+    writeHealthFileFn: deps?.writeHealthFileFn ?? writeHealthFile,
     statFileFn: deps?.statFileFn ?? fs.stat,
     readFileFn: deps?.readFileFn ?? readFileFromOffset,
     readFileHeadFn: deps?.readFileHeadFn ?? readFileHead,
@@ -628,8 +632,35 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
 	    return result;
 	  }
 
-	  let cycles = 0;
-	  let totalEntriesStored = 0;
+  let cycles = 0;
+  let totalEntriesStored = 0;
+  let sessionsWatched = 0;
+
+  const writeHeartbeat = (): void => {
+    resolvedDeps
+      .writeHealthFileFn(
+        {
+          pid: process.pid,
+          startedAt: startedAt.toISOString(),
+          lastHeartbeat: resolvedDeps.nowFn().toISOString(),
+          sessionsWatched,
+          entriesStored: totalEntriesStored,
+        },
+        options.configDir,
+      )
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        options.onWarn?.(`Health file write failed: ${message}`);
+      });
+  };
+
+  const handleSwitch = (from: string | null, to: string, platform?: WatchPlatform | null): void => {
+    sessionsWatched += 1;
+    options.onSwitch?.(from, to, platform);
+  };
+
+  writeHeartbeat();
+
   // Drain orphaned OpenClaw reset files that may have been renamed while the watcher was offline.
 	  if (findRenamed) {
 	    for (const trackedPath of Object.keys(state.files)) {
@@ -719,14 +750,14 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
         const previous = currentFilePath;
         currentFilePath = resolvedTargetPath;
         currentPlatform = resolvedPlatform;
-        options.onSwitch?.(previous, resolvedTargetPath, resolvedPlatform);
+        handleSwitch(previous, resolvedTargetPath, resolvedPlatform);
 
         requestWake();
       } else {
         if (!currentFilePath && resolvedTargetPath) {
           currentFilePath = resolvedTargetPath;
           currentPlatform = resolvedPlatform;
-          options.onSwitch?.(null, resolvedTargetPath, resolvedPlatform);
+          handleSwitch(null, resolvedTargetPath, resolvedPlatform);
         }
 
         if (!currentFilePath) {
@@ -755,6 +786,7 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
       cycles += 1;
       totalEntriesStored += cycleResult.entriesStored;
       options.onCycle?.(cycleResult, { db, apiKey: embeddingApiKey ?? "" });
+      writeHeartbeat();
 
       if (cycleResult.entriesStored > 0 && db) {
         try {

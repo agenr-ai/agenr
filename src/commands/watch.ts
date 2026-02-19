@@ -19,6 +19,7 @@ import { generateContextFile } from "./context.js";
 import { detectWatchPlatform, getResolver, type WatchPlatform } from "../watch/resolvers/index.js";
 import { deleteWatcherPid, writeWatcherPid } from "../watch/pid.js";
 import { getDefaultPlatformDir } from "../watch/platform-defaults.js";
+import { writeHealthFile } from "../watch/health.js";
 import { getFileState, loadWatchState, saveWatchState } from "../watch/state.js";
 import { readFileFromOffset, runWatcher } from "../watch/watcher.js";
 import { installSignalHandlers, isShutdownRequested, onShutdown, runShutdownHandlers } from "../shutdown.js";
@@ -240,6 +241,7 @@ export interface WatchCommandDeps {
   storeEntriesFn: typeof storeEntries;
   loadWatchStateFn: typeof loadWatchState;
   saveWatchStateFn: typeof saveWatchState;
+  writeHealthFileFn: typeof writeHealthFile;
   statFileFn: typeof fs.stat;
   readFileFn: (path: string, offset: number) => Promise<Buffer>;
   generateContextFileFn: typeof generateContextFile;
@@ -387,6 +389,7 @@ export async function runWatchCommand(
     storeEntriesFn: deps?.storeEntriesFn ?? storeEntries,
     loadWatchStateFn: deps?.loadWatchStateFn ?? loadWatchState,
     saveWatchStateFn: deps?.saveWatchStateFn ?? saveWatchState,
+    writeHealthFileFn: deps?.writeHealthFileFn ?? writeHealthFile,
     statFileFn: deps?.statFileFn ?? fs.stat,
     readFileFn: deps?.readFileFn ?? readFileFromOffset,
     generateContextFileFn: deps?.generateContextFileFn ?? generateContextFile,
@@ -585,6 +588,7 @@ export async function runWatchCommand(
         storeEntriesFn: resolvedDeps.storeEntriesFn,
         loadWatchStateFn: resolvedDeps.loadWatchStateFn,
         saveWatchStateFn: resolvedDeps.saveWatchStateFn,
+        writeHealthFileFn: resolvedDeps.writeHealthFileFn,
         statFileFn: resolvedDeps.statFileFn,
         readFileFn: resolvedDeps.readFileFn,
         nowFn: resolvedDeps.nowFn,

@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.12] - 2026-02-19
+
+### Added
+- feat(watch): new `src/watch/health.ts` heartbeat support with `WatcherHealth` schema, atomic `watcher.health.json` writes, resilient reads, and `isHealthy()` stale-heartbeat checks (5 minute threshold)
+- feat(watch): `runWatcher` now writes heartbeat health snapshots on startup and after every cycle, including PID, start time, last heartbeat timestamp, sessions watched, and total entries stored
+- feat(watch): directory-mode session switch events now increment `sessionsWatched` (including initial `null -> first` activation)
+
+### Changed
+- chore(watch): injected `writeHealthFileFn` dependency in watcher and watch command paths to keep heartbeat writes testable and mockable
+- test(watch): added `tests/watch/health.test.ts` (10 tests) and new watcher heartbeat assertion coverage in `tests/watch/watcher.test.ts`
+
 ## [0.6.11] - 2026-02-19
 
 ### Fixed
