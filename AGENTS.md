@@ -4,9 +4,7 @@
 
 ## What is agenr?
 
-Local-first memory for AI agents. Extract structured knowledge from conversations, store with semantic dedup, recall with memory-aware ranking, consolidate over time.
-
-**Version:** 0.6.3
+Human memory for AI agents. Extract structured knowledge from conversations, store with semantic dedup, recall with memory-aware ranking, consolidate over time.
 
 ## Stack
 
