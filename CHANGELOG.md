@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.6.14] - 2026-02-19
+
+### Fixed
+- fix(daemon): launchd plist now uses `KeepAlive` with `Crashed`-only semantics and `ThrottleInterval` of 10 seconds so intentional daemon stops do not auto-restart while crash recovery remains enabled
+
 ## [0.6.13] - 2026-02-19
 
 ### Added
