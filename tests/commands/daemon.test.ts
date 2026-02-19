@@ -64,10 +64,11 @@ describe("daemon commands", () => {
     expect(plist).toContain("openclaw");
     expect(plist).toContain("--interval");
     expect(plist).toContain("120");
-    expect(plist).toContain("<key>KeepAlive</key>\n  <dict>");
-    expect(plist).toContain("<key>Crashed</key>\n    <true/>");
+    expect(plist).toContain(
+      "<key>KeepAlive</key>\n  <dict>\n    <key>Crashed</key>\n    <true/>\n  </dict>",
+    );
     expect(plist).toContain("<key>ThrottleInterval</key>\n  <integer>10</integer>");
-    expect(!/<key>KeepAlive<\/key>\s*<true\/>/.test(plist)).toBe(true);
+    expect(plist).not.toMatch(/<key>KeepAlive<\/key>\s*<true\/>/);
 
     expect(launchctlCalls).toEqual([
       ["bootout", "gui/501/com.agenr.watch"],
