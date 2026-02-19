@@ -1,6 +1,7 @@
 import { createClient, type Client } from "@libsql/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { initDb } from "../../src/db/client.js";
+import { resetDb } from "../../src/db/schema.js";
 
 describe("db schema", () => {
   const clients: Client[] = [];
@@ -129,5 +130,55 @@ describe("db schema", () => {
     expect(ingestColumns.has("entries_superseded")).toBe(true);
     expect(ingestColumns.has("dedup_llm_calls")).toBe(true);
     expect(sourceColumns.has("original_created_at")).toBe(true);
+  });
+
+  it("resetDb drops user objects and recreates schema", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    await client.execute({
+      sql: `
+        INSERT INTO entries (
+          id, type, subject, content, importance, expiry, scope, source_file, source_context, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      args: [
+        "entry-1",
+        "fact",
+        "subject",
+        "content",
+        5,
+        "temporary",
+        "private",
+        "seed.jsonl",
+        "test",
+        "2026-02-19T00:00:00.000Z",
+        "2026-02-19T00:00:00.000Z",
+      ],
+    });
+    await client.execute("CREATE TABLE IF NOT EXISTS scratch (id TEXT PRIMARY KEY)");
+
+    await resetDb(client);
+
+    const entriesResult = await client.execute("SELECT COUNT(*) AS count FROM entries");
+    const entriesCount = Number((entriesResult.rows[0] as { count?: unknown } | undefined)?.count ?? 0);
+    expect(entriesCount).toBe(0);
+
+    const scratchResult = await client.execute({
+      sql: "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'scratch' LIMIT 1",
+      args: [],
+    });
+    expect(scratchResult.rows).toHaveLength(0);
+
+    const requiredTables = await client.execute({
+      sql: "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (?, ?, ?)",
+      args: ["entries", "ingest_log", "entry_sources"],
+    });
+    expect(requiredTables.rows.map((row) => String((row as { name?: unknown }).name)).sort()).toEqual([
+      "entries",
+      "entry_sources",
+      "ingest_log",
+    ]);
   });
 });

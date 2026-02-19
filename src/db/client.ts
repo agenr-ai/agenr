@@ -1,4 +1,5 @@
 import { createClient, type Client } from "@libsql/client";
+import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { initSchema } from "./schema.js";
@@ -74,6 +75,30 @@ export async function initDb(client: Client): Promise<void> {
 
 export async function walCheckpoint(client: Client): Promise<void> {
   await client.execute("PRAGMA wal_checkpoint(TRUNCATE)");
+}
+
+export async function backupDb(dbPath: string): Promise<string> {
+  if (dbPath === ":memory:") {
+    throw new Error("Cannot back up in-memory databases.");
+  }
+
+  const checkpointClient = getDb(dbPath);
+  try {
+    await checkpointClient.execute("PRAGMA wal_checkpoint(TRUNCATE)");
+  } finally {
+    closeDb(checkpointClient);
+  }
+
+  const normalizedDbPath = dbPath.startsWith("file:") ? dbPath.slice("file:".length) : dbPath;
+  const resolvedDbPath = resolveDbPath(normalizedDbPath);
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-").replace(/Z$/, "");
+  const backupPath = path.join(
+    path.dirname(resolvedDbPath),
+    `${path.basename(resolvedDbPath)}.backup-pre-reset-${timestamp}Z`,
+  );
+
+  await fs.copyFile(resolvedDbPath, backupPath);
+  return backupPath;
 }
 
 export function closeDb(client: Client): void {

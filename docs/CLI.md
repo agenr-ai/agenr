@@ -733,7 +733,9 @@ agenr db reset [options]
 ```
 
 ### Options
-- `--confirm`: required to execute reset.
+- `--confirm`: required to execute the legacy schema-only reset path.
+- `--full`: include side-file cleanup (`watch-state.json`, `review-queue.json`) after schema reset.
+- `--confirm-reset`: required to execute when `--full` is present. Without it, command prints a dry-run summary and exits 0.
 - `--db <path>`: database path override.
 
 ### Example
@@ -742,10 +744,27 @@ agenr db reset [options]
 $A db reset --confirm
 ```
 
+```bash
+$A db reset --full
+```
+
+```bash
+$A db reset --full --confirm-reset
+```
+
 ### Example Output
 
 ```text
 Database reset and migrations reapplied.
+```
+
+```text
+[dry run] agenr db reset --full would perform the following actions:
+  - Backup database to: /Users/you/.agenr/knowledge.db.backup-pre-reset-2026-02-19T12-00-00-000Z
+  - Drop and recreate DB schema (all data erased, file retained)
+  - Delete: /Users/you/.agenr/watch-state.json
+  - Delete: /Users/you/.agenr/review-queue.json
+Run with --confirm-reset to execute.
 ```
 
 ## `db path`
