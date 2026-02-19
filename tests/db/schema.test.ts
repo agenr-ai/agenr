@@ -181,4 +181,17 @@ describe("db schema", () => {
       "ingest_log",
     ]);
   });
+
+  it("resetDb restores foreign_keys pragma to its previous value", async () => {
+    const client = makeClient();
+    await initDb(client);
+    await client.execute("PRAGMA foreign_keys=ON");
+
+    await resetDb(client);
+
+    const foreignKeysResult = await client.execute("PRAGMA foreign_keys");
+    const foreignKeysRow = foreignKeysResult.rows[0] as Record<string, unknown> | undefined;
+    const foreignKeysValue = Number(foreignKeysRow?.foreign_keys ?? (foreignKeysRow ? Object.values(foreignKeysRow)[0] : 0));
+    expect(foreignKeysValue).toBe(1);
+  });
 });

@@ -734,7 +734,7 @@ agenr db reset [options]
 
 ### Options
 - `--confirm`: required to execute the legacy schema-only reset path.
-- `--full`: include side-file cleanup (`watch-state.json`, `review-queue.json`) after schema reset.
+- `--full`: include side-file cleanup (`watch-state.json`, `review-queue.json`, and `context*.md`) after schema reset.
 - `--confirm-reset`: required to execute when `--full` is present. Without it, command prints a dry-run summary and exits 0.
 - `--db <path>`: database path override.
 
@@ -764,7 +764,19 @@ Database reset and migrations reapplied.
   - Drop and recreate DB schema (all data erased, file retained)
   - Delete: /Users/you/.agenr/watch-state.json
   - Delete: /Users/you/.agenr/review-queue.json
+  - Delete: /Users/you/.agenr/context*.md (any matching files)
 Run with --confirm-reset to execute.
+```
+
+```text
+WARNING: If the agenr watcher daemon is running, stop it before proceeding. Reset will not abort if the daemon is running.
+Backup created: /Users/you/.agenr/knowledge.db.backup-pre-reset-2026-02-19T12-01-10-111Z
+Reset complete.
+  DB schema dropped and recreated: /Users/you/.agenr/knowledge.db
+  watch-state.json deleted (or was not present)
+  review-queue.json deleted (or was not present)
+  context-mini.md deleted
+  context-hot.md deleted
 ```
 
 ## `db path`
