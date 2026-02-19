@@ -13,7 +13,7 @@ import { createLlmClient } from "../llm/client.js";
 import { parseTranscriptFile } from "../parser.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
 import { detectProjectFromCwd } from "../project.js";
-import { installSignalHandlers, isShutdownRequested } from "../shutdown.js";
+import { installSignalHandlers, isShutdownRequested, onWake } from "../shutdown.js";
 import type { KnowledgeEntry, KnowledgePlatform, WatchState } from "../types.js";
 import type { SessionResolver } from "./session-resolver.js";
 import type { WatchPlatform } from "./resolvers/index.js";
@@ -316,6 +316,7 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
       wakePromise = null;
     }
   };
+  onWake(requestWake);
 
   const waitForNextCycle = async (): Promise<void> => {
     if (options.intervalMs <= 0) {
@@ -770,6 +771,7 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
       await waitForNextCycle();
     }
   } finally {
+    onWake(() => undefined);
     closeAllWatchers();
     if (db) {
       try {

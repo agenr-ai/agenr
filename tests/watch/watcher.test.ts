@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgenrConfig, KnowledgeEntry, WatchState } from "../../src/types.js";
 import { runWatcher } from "../../src/watch/watcher.js";
-import { isShutdownRequested, requestShutdown, resetShutdownForTests } from "../../src/shutdown.js";
+import { isShutdownRequested, onWake, requestShutdown, resetShutdownForTests } from "../../src/shutdown.js";
 
 function makeEntry(content = "fact"): KnowledgeEntry {
   return {
@@ -1472,6 +1472,79 @@ describe("watcher", () => {
 
     expect(cycleCount).toBe(2);
     expect(fakeWatcher.close).toHaveBeenCalled();
+  });
+
+  it("deregisters wake callback when watcher exits normally", async () => {
+    const wakeSpy = vi.fn();
+    onWake(wakeSpy);
+
+    const deps = makeDeps({
+      statFileFn: vi.fn(async () => ({ size: 0, isFile: () => true })),
+      shouldShutdownFn: vi.fn(() => false),
+    });
+
+    await runWatcher(
+      {
+        filePath: "/tmp/watch.jsonl",
+        intervalMs: 1,
+        minChunkChars: 5,
+        dryRun: true,
+        verbose: false,
+        once: true,
+      },
+      deps,
+    );
+
+    process.emit("SIGTERM");
+
+    expect(wakeSpy).toHaveBeenCalledTimes(0);
+  });
+
+  it("interrupts polling sleep immediately on SIGTERM", async () => {
+    let cycles = 0;
+    const sleepFn = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          setTimeout(resolve, 60_000);
+        }),
+    );
+    const deps = makeDeps({
+      statFileFn: vi.fn(async () => ({ size: 0, isFile: () => true })),
+      sleepFn,
+      shouldShutdownFn: isShutdownRequested,
+    });
+
+    const started = Date.now();
+    const runPromise = runWatcher(
+      {
+        filePath: "/tmp/watch.jsonl",
+        intervalMs: 60_000,
+        minChunkChars: 5,
+        dryRun: true,
+        verbose: false,
+        once: false,
+        onCycle: () => {
+          cycles += 1;
+          if (cycles === 1) {
+            setTimeout(() => {
+              process.emit("SIGTERM");
+            }, 25);
+          }
+        },
+      },
+      deps,
+    );
+
+    await Promise.race([
+      runPromise,
+      new Promise<void>((_resolve, reject) => {
+        setTimeout(() => reject(new Error("watcher did not stop quickly after SIGTERM")), 500);
+      }),
+    ]);
+
+    const elapsedMs = Date.now() - started;
+    expect(elapsedMs).toBeLessThan(500);
+    expect(sleepFn).toHaveBeenCalledTimes(1);
   });
 
   it("falls back to polling when fs.watch hits EMFILE", async () => {
