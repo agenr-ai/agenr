@@ -227,8 +227,9 @@ describe("retire command", () => {
       args: ["Suppressed Subject"],
     });
     expect(Number((row.rows[0] as { retired?: unknown } | undefined)?.retired ?? 0)).toBe(1);
-    expect(String((row.rows[0] as { suppressed_contexts?: unknown } | undefined)?.suppressed_contexts ?? "")).toBe(
-      '["session-start"]',
-    );
+    const parsed = JSON.parse(
+      String((row.rows[0] as { suppressed_contexts?: unknown } | undefined)?.suppressed_contexts ?? ""),
+    ) as unknown[];
+    expect(parsed).toEqual(["session-start"]);
   });
 });

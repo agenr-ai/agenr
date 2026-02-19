@@ -52,17 +52,17 @@ function makeClient(dbPath: string): Client {
   return client;
 }
 
-afterEach(async () => {
-  while (clients.length > 0) {
-    clients.pop()?.close();
-  }
-  for (const dir of tempDirs) {
-    await fs.rm(dir, { recursive: true, force: true });
-  }
-  tempDirs.length = 0;
-});
-
 describe("integration: retirement zombie prevention", () => {
+  afterEach(async () => {
+    while (clients.length > 0) {
+      clients.pop()?.close();
+    }
+    for (const dir of tempDirs) {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+    tempDirs.length = 0;
+  });
+
   it("re-applies retirements after re-ingest without blocking ingest", async () => {
     const dir = await makeTempDir();
     const initialDbPath = path.join(dir, "knowledge.db");

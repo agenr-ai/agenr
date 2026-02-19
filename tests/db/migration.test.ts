@@ -2,16 +2,7 @@ import { createClient, type Client } from "@libsql/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { initSchema } from "../../src/db/schema.js";
 import { APP_VERSION } from "../../src/version.js";
-
-function toStringValue(value: unknown): string {
-  if (typeof value === "string") {
-    return value;
-  }
-  if (typeof value === "number" || typeof value === "bigint") {
-    return String(value);
-  }
-  return "";
-}
+import { toStringValue } from "../../src/utils/entry-utils.js";
 
 function columnNames(rows: Array<{ name?: unknown }>): Set<string> {
   return new Set(rows.map((row) => toStringValue(row.name)));

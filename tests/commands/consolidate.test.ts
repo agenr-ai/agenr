@@ -147,6 +147,17 @@ describe("consolidate command", () => {
     return result.rows.length > 0;
   }
 
+  async function retiredState(client: Client, id: string): Promise<number | null> {
+    const result = await client.execute({
+      sql: "SELECT retired FROM entries WHERE id = ?",
+      args: [id],
+    });
+    if (result.rows.length === 0) {
+      return null;
+    }
+    return Number((result.rows[0] as { retired?: unknown } | undefined)?.retired ?? 0);
+  }
+
   function makeDeps() {
     const db = {
       execute: vi.fn(async (stmt: unknown) => {
@@ -326,6 +337,30 @@ describe("consolidate command", () => {
         lowScoreOldEntryCount: 51,
       }),
     ).toBe(true);
+
+    expect(
+      shouldAutoTriggerForgetting({
+        dbFileSizeBytes: 200 * 1024 * 1024,
+        activeEntryCount: 1_000,
+        lowScoreOldEntryCount: 20,
+      }),
+    ).toBe(false);
+
+    expect(
+      shouldAutoTriggerForgetting({
+        dbFileSizeBytes: 100 * 1024 * 1024,
+        activeEntryCount: 10_000,
+        lowScoreOldEntryCount: 20,
+      }),
+    ).toBe(false);
+
+    expect(
+      shouldAutoTriggerForgetting({
+        dbFileSizeBytes: 100 * 1024 * 1024,
+        activeEntryCount: 1_000,
+        lowScoreOldEntryCount: 50,
+      }),
+    ).toBe(false);
   });
 
   it("--forget deletes entries with forgettingScore below threshold", async () => {
@@ -352,9 +387,9 @@ describe("consolidate command", () => {
     );
 
     expect(exit.exitCode).toBe(0);
-    expect(await entryExists(client, "entry-a")).toBe(false);
-    expect(await entryExists(client, "entry-b")).toBe(true);
-    expect(await entryExists(client, "entry-c")).toBe(true);
+    expect(await retiredState(client, "entry-a")).toBe(1);
+    expect(await retiredState(client, "entry-b")).toBe(0);
+    expect(await retiredState(client, "entry-c")).toBe(0);
   });
 
   it("--forget respects the protect list", async () => {
@@ -454,11 +489,11 @@ describe("consolidate command", () => {
 
     expect(exit.exitCode).toBe(0);
     const output = stdoutSpy.mock.calls.map((call) => String(call[0])).join("");
-    expect(output).toContain("Deleted");
+    expect(output).toContain("Retired");
     expect(output).toContain("freed");
-    const deletedMatch = output.match(/Deleted\s+([0-9,]+)\s+entries/);
-    expect(deletedMatch).toBeTruthy();
-    const deleted = Number((deletedMatch?.[1] ?? "0").replace(/,/g, ""));
+    const retiredMatch = output.match(/Retired\s+([0-9,]+)\s+entries/);
+    expect(retiredMatch).toBeTruthy();
+    const deleted = Number((retiredMatch?.[1] ?? "0").replace(/,/g, ""));
     expect(deleted).toBeGreaterThan(0);
   });
 

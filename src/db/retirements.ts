@@ -54,7 +54,7 @@ function normalizeLedger(input: unknown): RetirementsLedger {
   }
 
   const record = input as Record<string, unknown>;
-  const version = record.version === LEDGER_VERSION ? LEDGER_VERSION : LEDGER_VERSION;
+  const version = record.version ?? LEDGER_VERSION;
   const retirements = Array.isArray(record.retirements)
     ? record.retirements.filter(isRetirementRecord).map((item) => ({
         ...item,
@@ -63,6 +63,29 @@ function normalizeLedger(input: unknown): RetirementsLedger {
     : [];
 
   return { version, retirements };
+}
+
+async function markEntryRetired(
+  db: LibSQLDatabase,
+  id: string | number,
+  reason: string | null,
+  suppressedContexts: string[],
+): Promise<number> {
+  const now = new Date().toISOString();
+  const updateResult = await db.execute({
+    sql: `
+        UPDATE entries
+        SET retired = 1,
+            retired_at = ?,
+            retired_reason = ?,
+            suppressed_contexts = ?,
+            updated_at = ?
+        WHERE id = ?
+          AND retired = 0
+      `,
+    args: [now, reason, JSON.stringify(suppressedContexts), now, id],
+  });
+  return toRowsAffected(updateResult.rowsAffected);
 }
 
 async function readLedger(dbPath?: string): Promise<RetirementsLedger> {
@@ -197,20 +220,7 @@ async function applyRetirementRecord(db: LibSQLDatabase, record: RetirementRecor
 
   let updated = 0;
   for (const match of matches) {
-    const updateResult = await db.execute({
-      sql: `
-        UPDATE entries
-        SET retired = 1,
-            retired_at = datetime('now'),
-            retired_reason = ?,
-            suppressed_contexts = json(?),
-            updated_at = datetime('now')
-        WHERE id = ?
-          AND retired = 0
-      `,
-      args: [record.reason ?? null, JSON.stringify(suppressedContexts), match.id],
-    });
-    updated += toRowsAffected(updateResult.rowsAffected);
+    updated += await markEntryRetired(db, match.id, record.reason ?? null, suppressedContexts);
   }
 
   return updated;
@@ -274,20 +284,7 @@ export async function retireEntries(opts: {
 
   let count = 0;
   for (const match of matches) {
-    const updateResult = await opts.db.execute({
-      sql: `
-        UPDATE entries
-        SET retired = 1,
-            retired_at = datetime('now'),
-            retired_reason = ?,
-            suppressed_contexts = json(?),
-            updated_at = datetime('now')
-        WHERE id = ?
-          AND retired = 0
-      `,
-      args: [opts.reason ?? null, JSON.stringify(suppressedContexts), match.id],
-    });
-    count += toRowsAffected(updateResult.rowsAffected);
+    count += await markEntryRetired(opts.db, match.id, opts.reason ?? null, suppressedContexts);
   }
 
   if (writeLedger && opts.subjectPattern && opts.subjectPattern.trim().length > 0) {

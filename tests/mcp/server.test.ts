@@ -87,7 +87,7 @@ function makeHarness(): TestHarness {
   const dbExecute = vi.fn(async (statement: string | { sql?: string; args?: unknown[] }) => {
     const sql = typeof statement === "string" ? statement : statement.sql ?? "";
     const args = typeof statement === "string" ? [] : Array.isArray(statement.args) ? statement.args : [];
-    if (sql.includes("SELECT id, subject, type, importance") && args[0] === "entry-1") {
+    if (sql.includes("FROM entries") && args[0] === "entry-1") {
       return { rows: [{ id: "entry-1", subject: "Jim", type: "preference", importance: 8 }] };
     }
     return { rows: [] };
@@ -923,7 +923,7 @@ describe("mcp server", () => {
     });
   });
 
-  it("agenr_retire with invalid entry_id returns isError", async () => {
+  it("agenr_retire with invalid entry_id returns a JSON-RPC error", async () => {
     const harness = makeHarness();
     const responses = await runServer(
       [
@@ -942,9 +942,12 @@ describe("mcp server", () => {
       harness.deps,
     );
 
-    const result = responses[0]?.result as { content?: Array<{ text?: string }>; isError?: boolean };
-    expect(result.isError).toBe(true);
-    expect(result.content?.[0]?.text).toContain("No active entry found with id: missing-id");
+    expect(responses[0]).toMatchObject({
+      error: {
+        code: -32602,
+        message: "No active entry found with id: missing-id",
+      },
+    });
     expect(harness.retireEntriesFn).not.toHaveBeenCalled();
   });
 

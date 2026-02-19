@@ -149,6 +149,8 @@ function selectWithinTokenBudget(results: RecallResult[], tokenBudget: number, m
       break;
     }
     const tokens = estimateEntryTokens(result);
+    // Always include at least one entry even if it exceeds the token budget,
+    // so callers always receive a non-empty result when entries exist.
     // Keep top-scored entries contiguous: stop at first over-budget item once budget has started.
     if (selected.length > 0 && used + tokens > tokenBudget) {
       break;

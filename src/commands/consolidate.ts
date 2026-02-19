@@ -537,9 +537,10 @@ async function runForgettingDeletion(
 ): Promise<void> {
   const deletable = candidates.filter((item) => !item.protected);
   if (deletable.length === 0) {
-    process.stdout.write("Deleted 0 entries, freed ~0MB\n");
+    process.stdout.write("Retired 0 entries (score below threshold), freed ~0MB\n");
     return;
   }
+  const retirementReason = "forgetting score below threshold";
 
   const beforeBytes = await getDbFileSizeBytes(dbFilePath);
   await db.execute("PRAGMA wal_checkpoint(TRUNCATE)");
@@ -551,9 +552,17 @@ async function runForgettingDeletion(
         process.stdout.write(`[forget] [${candidate.entry.type}] ${candidate.entry.subject}\n`);
       }
       const placeholders = chunk.map(() => "?").join(", ");
+      const now = new Date().toISOString();
       await db.execute({
-        sql: `DELETE FROM entries WHERE id IN (${placeholders})`,
-        args: chunk.map((candidate) => candidate.entry.id),
+        sql: `
+        UPDATE entries
+        SET retired = 1,
+            retired_at = ?,
+            retired_reason = ?,
+            updated_at = ?
+        WHERE id IN (${placeholders})
+      `,
+        args: [now, retirementReason, now, ...chunk.map((candidate) => candidate.entry.id)],
       });
     }
     await db.execute("COMMIT");
@@ -572,7 +581,9 @@ async function runForgettingDeletion(
     typeof beforeBytes === "number" && typeof afterBytes === "number"
       ? Math.max(0, beforeBytes - afterBytes)
       : 0;
-  process.stdout.write(`Deleted ${formatNumber(deletable.length)} entries, freed ~${formatApproxMb(freedBytes)}\n`);
+  process.stdout.write(
+    `Retired ${formatNumber(deletable.length)} entries (score below threshold), freed ~${formatApproxMb(freedBytes)}\n`,
+  );
 }
 
 export async function runConsolidateCommand(

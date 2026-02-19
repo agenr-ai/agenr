@@ -68,6 +68,7 @@ describe("health command", () => {
         readConfigFn: vi.fn(() => config),
         getDbFn: vi.fn(() => client),
         closeDbFn: vi.fn(() => undefined),
+        statFn: vi.fn(async () => ({ size: 0 } as unknown as fs.Stats)),
         nowFn: vi.fn(() => new Date(nowIso)),
       },
     );
@@ -126,7 +127,7 @@ describe("health command", () => {
       forgetting: { scoreThreshold: 0.2, maxAgeDays: 60, protect: [] },
     });
     expect(output).toContain("Forgetting Candidates");
-    expect(output).toContain("- score < 0.2:  1 entries");
+    expect(output).toMatch(/- score < 0\.2:\s+1 entries/);
   });
 
   it("reports contradiction flags and stale todos in consolidation health", async () => {

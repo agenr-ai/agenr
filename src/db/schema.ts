@@ -35,7 +35,7 @@ const CREATE_ENTRIES_FTS_TRIGGER_AU_SQL = `
 const REBUILD_ENTRIES_FTS_SQL = "INSERT INTO entries_fts(entries_fts) VALUES ('rebuild')";
 const LEGACY_IMPORTANCE_BACKFILL_META_KEY = "legacy_importance_backfill_from_confidence_v1";
 
-type ColumnMigration = { table: string; column: string; sql: string };
+type ColumnMigration = { table: string; column: string; sql: string; isIndex?: boolean };
 
 const CREATE_TABLE_AND_TRIGGER_STATEMENTS: readonly string[] = [
   `
@@ -193,6 +193,12 @@ const COLUMN_MIGRATIONS: readonly ColumnMigration[] = [
   },
   {
     table: "entries",
+    column: "idx_entries_retired",
+    sql: "CREATE INDEX IF NOT EXISTS idx_entries_retired ON entries (retired) WHERE retired = 0",
+    isIndex: true,
+  },
+  {
+    table: "entries",
     column: "retired_at",
     sql: "ALTER TABLE entries ADD COLUMN retired_at TEXT",
   },
@@ -267,6 +273,17 @@ export async function initSchema(client: Client): Promise<void> {
 
   // Apply column migrations before creating any indexes that reference those columns.
   for (const migration of COLUMN_MIGRATIONS) {
+    if (migration.isIndex) {
+      const existingIndex = await client.execute({
+        sql: "SELECT name FROM sqlite_master WHERE type='index' AND name=?",
+        args: [migration.column],
+      });
+      if (existingIndex.rows.length > 0) {
+        continue;
+      }
+      await client.execute(migration.sql);
+      continue;
+    }
     const info = await client.execute(`PRAGMA table_info(${migration.table})`);
     const hasColumn = info.rows.some((row) => String((row as { name?: unknown }).name) === migration.column);
     if (!hasColumn) {

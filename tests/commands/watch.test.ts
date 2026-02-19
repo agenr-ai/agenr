@@ -74,6 +74,14 @@ async function seedContextEntry(client: Client, params: {
   });
 }
 
+async function makeHotContextFixture(): Promise<{ contextPath: string; now: Date }> {
+  const dir = await makeTempDir();
+  return {
+    contextPath: path.join(dir, "CONTEXT.md"),
+    now: new Date("2026-02-18T00:00:00.000Z"),
+  };
+}
+
 describe("watch command", () => {
   it("wires CLI options into runWatchCommand", async () => {
     const { createProgram } = await import("../../src/cli-main.js");
@@ -426,10 +434,8 @@ describe("watch command", () => {
     }
   });
 
-  it("writes context-hot.md with only recent high-importance entries and writes empty file when none qualify", async () => {
-    const dir = await makeTempDir();
-    const contextPath = path.join(dir, "CONTEXT.md");
-    const now = new Date("2026-02-18T00:00:00.000Z");
+  it("writes context-hot.md with eligible entries only", async () => {
+    const { contextPath, now } = await makeHotContextFixture();
 
     const client = createClient({ url: ":memory:" });
     await initDb(client);
@@ -466,7 +472,7 @@ describe("watch command", () => {
       });
 
       await writeContextVariants(client as any, contextPath, now);
-      const hotPath = path.join(dir, "context-hot.md");
+      const hotPath = path.join(path.dirname(contextPath), "context-hot.md");
       const hot = await fs.readFile(hotPath, "utf8");
       expect(hot).toContain("Hot eligible");
       expect(hot).not.toContain("Too old");
@@ -474,16 +480,20 @@ describe("watch command", () => {
     } finally {
       client.close();
     }
+  });
 
-    const emptyClient = createClient({ url: ":memory:" });
-    await initDb(emptyClient);
+  it("writes empty context-hot.md when no entries qualify", async () => {
+    const { contextPath, now } = await makeHotContextFixture();
+
+    const client = createClient({ url: ":memory:" });
+    await initDb(client);
     try {
-      await writeContextVariants(emptyClient as any, contextPath, now);
-      const hotPath = path.join(dir, "context-hot.md");
+      await writeContextVariants(client as any, contextPath, now);
+      const hotPath = path.join(path.dirname(contextPath), "context-hot.md");
       const hot = await fs.readFile(hotPath, "utf8");
       expect(hot).toBe("");
     } finally {
-      emptyClient.close();
+      client.close();
     }
   });
 });
