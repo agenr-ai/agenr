@@ -129,6 +129,10 @@ function normalizeSuppressedContexts(suppressedContexts?: string[]): string[] {
   return Array.from(new Set(contexts.map((context) => context.trim())));
 }
 
+function escapeLike(value: string): string {
+  return value.replace(/[%_\\]/g, (ch) => `\\${ch}`);
+}
+
 function makeRetirementId(): string {
   return `ret_${randomUUID().replace(/-/g, "").slice(0, 8)}`;
 }
@@ -165,20 +169,25 @@ async function queryMatchingEntries(
     return [];
   }
   const matchType = opts.matchType === "contains" ? "contains" : "exact";
+  const pattern = matchType === "contains" ? escapeLike(subjectPattern) : subjectPattern;
 
   if (opts.canonicalKey && opts.canonicalKey.trim().length > 0) {
-    const result = await db.execute({
-      sql: `
+        const result = await db.execute({
+          sql: `
         SELECT id, canonical_key
         FROM entries
         WHERE retired = 0
           AND (
             canonical_key = ?
-            OR ${matchType === "exact" ? "LOWER(subject) = LOWER(?)" : "LOWER(subject) LIKE '%' || LOWER(?) || '%'"}
+            OR ${
+              matchType === "exact"
+                ? "LOWER(subject) = LOWER(?)"
+                : "LOWER(subject) LIKE '%' || LOWER(?) || '%' ESCAPE '\\'"
+            }
           )
       `,
-      args: [opts.canonicalKey.trim(), subjectPattern],
-    });
+          args: [opts.canonicalKey.trim(), pattern],
+        });
     return result.rows.map((row) => ({
       id: String((row as { id?: unknown }).id ?? ""),
       canonical_key: typeof (row as { canonical_key?: unknown }).canonical_key === "string"
@@ -198,10 +207,10 @@ async function queryMatchingEntries(
       : `
         SELECT id, canonical_key
         FROM entries
-        WHERE LOWER(subject) LIKE '%' || LOWER(?) || '%'
+        WHERE LOWER(subject) LIKE '%' || LOWER(?) || '%' ESCAPE '\\'
           AND retired = 0
       `;
-  const result = await db.execute({ sql, args: [subjectPattern] });
+  const result = await db.execute({ sql, args: [pattern] });
   return result.rows.map((row) => ({
     id: String((row as { id?: unknown }).id ?? ""),
     canonical_key: typeof (row as { canonical_key?: unknown }).canonical_key === "string"
