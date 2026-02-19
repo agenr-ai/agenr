@@ -1724,6 +1724,7 @@ describe("watcher", () => {
         dryRun: false,
         verbose: false,
         once: false,
+        walCheckpointIntervalMs: 0,
         onCycle: (cycle) => {
           expect(cycle.entriesStored).toBeGreaterThan(0);
           expect(walCheckpointFn).toHaveBeenCalledTimes(0);
@@ -1796,6 +1797,7 @@ describe("watcher", () => {
         dryRun: false,
         verbose: false,
         once: false,
+        walCheckpointIntervalMs: 0,
         onCycle: () => {
           shutdown = true;
         },
@@ -1814,6 +1816,121 @@ describe("watcher", () => {
     expect(result.cycles).toBe(1);
     expect(warnings.some((message) => message.includes("WAL checkpoint failed: checkpoint failed"))).toBe(true);
     expect(walCheckpointFn).toHaveBeenCalledTimes(2);
+  });
+
+  it("checkpoints WAL per-cycle only when interval has elapsed", async () => {
+    const walCheckpointFn = vi.fn(async () => undefined);
+    let cycles = 0;
+    const entriesStoredByCycle: number[] = [];
+    let nowTickMs = 0;
+    const baseMs = Date.parse("2026-02-19T00:00:00.000Z");
+    const cycleChunk = Buffer.from("1234567890123456789012345");
+    const nowFn = vi.fn(() => {
+      nowTickMs += 1000;
+      return new Date(baseMs + nowTickMs);
+    });
+
+    await runWatcher(
+      {
+        filePath: "/tmp/watch-interval-gated.jsonl",
+        intervalMs: 0,
+        minChunkChars: 5,
+        dryRun: false,
+        verbose: false,
+        once: false,
+        walCheckpointIntervalMs: 60000,
+        onCycle: (cycle) => {
+          cycles += 1;
+          entriesStoredByCycle.push(cycle.entriesStored);
+        },
+      },
+      makeDeps({
+        walCheckpointFn,
+        nowFn,
+        statFileFn: vi
+          .fn()
+          .mockResolvedValueOnce({ size: 25, isFile: () => true })
+          .mockResolvedValueOnce({ size: 25, isFile: () => true })
+          .mockResolvedValueOnce({ size: 50, isFile: () => true })
+          .mockResolvedValue({ size: 50, isFile: () => true }),
+        readFileFn: vi.fn(async (_target: string, offset: number) => {
+          if (offset === 0 || offset === 25) {
+            return cycleChunk;
+          }
+          return Buffer.alloc(0);
+        }),
+        shouldShutdownFn: vi.fn(() => cycles >= 2),
+      }),
+    );
+
+    expect(cycles).toBe(2);
+    expect(entriesStoredByCycle).toEqual([2, 2]);
+    expect(walCheckpointFn).toHaveBeenCalledTimes(2);
+  });
+
+  it("always checkpoints WAL on shutdown in finally block", async () => {
+    const walCheckpointFn = vi.fn(async () => undefined);
+
+    await runWatcher(
+      {
+        filePath: "/tmp/watch-shutdown-checkpoint.jsonl",
+        intervalMs: 1,
+        minChunkChars: 5,
+        dryRun: false,
+        verbose: false,
+        once: true,
+        walCheckpointIntervalMs: 60000,
+      },
+      makeDeps({
+        walCheckpointFn,
+        statFileFn: vi.fn(async () => ({ size: 0, isFile: () => true })),
+      }),
+    );
+
+    expect(walCheckpointFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("bypasses WAL checkpoint interval gate when interval is 0", async () => {
+    const walCheckpointFn = vi.fn(async () => undefined);
+    let cycles = 0;
+    const entriesStoredByCycle: number[] = [];
+    const cycleChunk = Buffer.from("1234567890123456789012345");
+
+    await runWatcher(
+      {
+        filePath: "/tmp/watch-interval-bypass.jsonl",
+        intervalMs: 0,
+        minChunkChars: 5,
+        dryRun: false,
+        verbose: false,
+        once: false,
+        walCheckpointIntervalMs: 0,
+        onCycle: (cycle) => {
+          cycles += 1;
+          entriesStoredByCycle.push(cycle.entriesStored);
+        },
+      },
+      makeDeps({
+        walCheckpointFn,
+        statFileFn: vi
+          .fn()
+          .mockResolvedValueOnce({ size: 25, isFile: () => true })
+          .mockResolvedValueOnce({ size: 25, isFile: () => true })
+          .mockResolvedValueOnce({ size: 50, isFile: () => true })
+          .mockResolvedValue({ size: 50, isFile: () => true }),
+        readFileFn: vi.fn(async (_target: string, offset: number) => {
+          if (offset === 0 || offset === 25) {
+            return cycleChunk;
+          }
+          return Buffer.alloc(0);
+        }),
+        shouldShutdownFn: vi.fn(() => cycles >= 2),
+      }),
+    );
+
+    expect(cycles).toBe(2);
+    expect(entriesStoredByCycle).toEqual([2, 2]);
+    expect(walCheckpointFn).toHaveBeenCalledTimes(3);
   });
 
   it("drains renamed file on session switch ENOENT", async () => {
