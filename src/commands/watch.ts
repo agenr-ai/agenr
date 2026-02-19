@@ -14,7 +14,7 @@ import { extractKnowledgeFromChunks } from "../extractor.js";
 import { createLlmClient } from "../llm/client.js";
 import { parseTranscriptFile } from "../parser.js";
 import type { WatchOptions } from "../types.js";
-import { banner, formatLabel, formatWarn } from "../ui.js";
+import { banner, formatError, formatLabel, formatWarn } from "../ui.js";
 import { generateContextFile } from "./context.js";
 import { detectWatchPlatform, getResolver, type WatchPlatform } from "../watch/resolvers/index.js";
 import { deleteWatcherPid, writeWatcherPid } from "../watch/pid.js";
@@ -399,7 +399,7 @@ export async function runWatchCommand(
     await resolvedDeps.writeWatcherPidFn();
   } catch (error: unknown) {
     clack.log.error(
-      formatWarn(`Failed to write watcher PID file: ${error instanceof Error ? error.message : String(error)}`),
+      formatError(`Failed to write watcher PID file: ${error instanceof Error ? error.message : String(error)}`),
       clackOutput,
     );
     return {

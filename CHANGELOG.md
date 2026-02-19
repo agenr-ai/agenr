@@ -10,6 +10,8 @@
 
 ### Fixed
 - fix(ingest): write conflicts between ingest and watcher are now blocked at the ingest entry point
+- fix(watch): watcher PID write failures now use error-level formatting for consistent clack error output
+- fix(ingest): watcher-running guard now reports via clack error output instead of raw stderr text
 
 ## [0.6.4] - 2026-02-19
 
