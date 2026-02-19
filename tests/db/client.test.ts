@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import os from "node:os";
@@ -16,6 +17,7 @@ describe("db client", () => {
         closeDb(client);
       }
     }
+    vi.restoreAllMocks();
 
     if (tempDir) {
       await rm(tempDir, { recursive: true, force: true });
@@ -112,6 +114,34 @@ describe("db client", () => {
     const rowResult = await backupClient.execute("SELECT COUNT(*) AS count FROM entries");
     const count = Number((rowResult.rows[0] as { count?: unknown } | undefined)?.count ?? 0);
     expect(count).toBe(1);
+  });
+
+  it("attempts to copy WAL/SHM sidecars and ignores missing sidecar files", async () => {
+    tempDir = await mkdtemp(path.join(os.tmpdir(), "agenr-db-"));
+    const dbPath = path.join(tempDir, "knowledge.db");
+
+    const client = getDb(dbPath);
+    clients.push(client);
+    await initDb(client);
+
+    const originalCopyFile = fs.copyFile;
+    const copyFileSpy = vi.spyOn(fs, "copyFile").mockImplementation(async (...args: Parameters<typeof fs.copyFile>) => {
+      const [source] = args;
+      const sourcePath = String(source);
+      if (sourcePath.endsWith("-wal") || sourcePath.endsWith("-shm")) {
+        const error = new Error("missing sidecar") as NodeJS.ErrnoException;
+        error.code = "ENOENT";
+        throw error;
+      }
+      await originalCopyFile(...args);
+    });
+
+    const backupPath = await backupDb(dbPath);
+
+    const copyCalls = copyFileSpy.mock.calls.map(([source, destination]) => [String(source), String(destination)]);
+    expect(copyCalls).toContainEqual([dbPath, backupPath]);
+    expect(copyCalls).toContainEqual([`${dbPath}-wal`, `${backupPath}-wal`]);
+    expect(copyCalls).toContainEqual([`${dbPath}-shm`, `${backupPath}-shm`]);
   });
 
   it("rejects backupDb for in-memory databases", async () => {
