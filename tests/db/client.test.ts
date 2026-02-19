@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -59,6 +59,16 @@ describe("db client", () => {
     await client.execute({ sql: "INSERT INTO wal_checkpoint_test (value) VALUES (?)", args: ["ok"] });
 
     await expect(walCheckpoint(client)).resolves.toBeUndefined();
+  });
+
+  it("fails WAL checkpoint when busy readers never clear", async () => {
+    const execute = vi.fn(async () => ({
+      rows: [{ busy: 1 }],
+    }));
+    const fakeClient = { execute } as unknown as Client;
+
+    await expect(walCheckpoint(fakeClient)).rejects.toThrow("busy=1");
+    expect(execute).toHaveBeenCalledTimes(5);
   });
 
   it("creates a pre-reset backup file for file-backed databases", async () => {

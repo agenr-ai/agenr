@@ -19,6 +19,7 @@ function createDeps(overrides?: Partial<ResetCommandDeps>): { deps: ResetCommand
     resetDbFn: vi.fn(async () => undefined),
     getDbFn: vi.fn(() => db),
     closeDbFn: vi.fn(() => undefined),
+    listContextFilesFn: vi.fn(async () => []),
     deleteFileFn: vi.fn(async () => undefined),
     stdoutLine: vi.fn(() => undefined),
     stderrLine: vi.fn(() => undefined),
@@ -29,6 +30,7 @@ function createDeps(overrides?: Partial<ResetCommandDeps>): { deps: ResetCommand
 }
 
 describe("runResetCommand", () => {
+  const configDir = resolveConfigDir();
   const watchStatePath = path.join(resolveConfigDir(), "watch-state.json");
 
   it("prints dry-run summary and exits 0 when --confirm-reset is missing", async () => {
@@ -47,6 +49,7 @@ describe("runResetCommand", () => {
     expect(stdoutLines).toContain("  - Drop and recreate DB schema (all data erased, file retained)");
     expect(stdoutLines).toContain(`  - Delete: ${watchStatePath}`);
     expect(stdoutLines).toContain(`  - Delete: ${REVIEW_QUEUE_PATH}`);
+    expect(stdoutLines).toContain(`  - Delete: ${path.join(configDir, "context*.md")} (any matching files)`);
     expect(stdoutLines.at(-1)).toBe("Run with --confirm-reset to execute.");
   });
 
@@ -60,6 +63,7 @@ describe("runResetCommand", () => {
     expect(deps.getDbFn).toHaveBeenCalledWith("/tmp/knowledge.db");
     expect(deps.resetDbFn).toHaveBeenCalledWith(db);
     expect(deps.closeDbFn).toHaveBeenCalledTimes(1);
+    expect(deps.listContextFilesFn).toHaveBeenCalledTimes(1);
     expect(deps.deleteFileFn).toHaveBeenCalledTimes(2);
     expect(deps.deleteFileFn).toHaveBeenNthCalledWith(1, watchStatePath);
     expect(deps.deleteFileFn).toHaveBeenNthCalledWith(2, REVIEW_QUEUE_PATH);
@@ -73,6 +77,7 @@ describe("runResetCommand", () => {
     expect(stdoutLines).toContain("  DB schema dropped and recreated: /tmp/knowledge.db");
     expect(stdoutLines).toContain("  watch-state.json deleted (or was not present)");
     expect(stdoutLines).toContain("  review-queue.json deleted (or was not present)");
+    expect(stdoutLines).toContain("  context*.md: none found");
   });
 
   it("treats missing watch-state.json (ENOENT) as success", async () => {
@@ -154,6 +159,78 @@ describe("runResetCommand", () => {
     expect(deps.deleteFileFn).toHaveBeenCalledTimes(2);
     expect(deps.stderrLine).toHaveBeenCalledWith(
       expect.stringContaining(`Warning: failed to delete ${watchStatePath}: permission denied`),
+    );
+    expect(deps.stdoutLine).toHaveBeenCalledWith("Reset complete.");
+  });
+
+  it("deletes context files during full reset and reports each file", async () => {
+    const contextMiniPath = path.join(configDir, "context-mini.md");
+    const contextHotPath = path.join(configDir, "context-hot.md");
+    const { deps } = createDeps({
+      listContextFilesFn: vi.fn(async () => [contextMiniPath, contextHotPath]),
+    });
+
+    const result = await runResetCommand({ confirmReset: true }, deps);
+
+    expect(result.exitCode).toBe(0);
+    expect(deps.deleteFileFn).toHaveBeenCalledTimes(4);
+    expect(deps.deleteFileFn).toHaveBeenNthCalledWith(3, contextMiniPath);
+    expect(deps.deleteFileFn).toHaveBeenNthCalledWith(4, contextHotPath);
+
+    const stdoutLines = (deps.stdoutLine as ReturnType<typeof vi.fn>).mock.calls.map((call) => String(call[0]));
+    expect(stdoutLines).toContain("  context-mini.md deleted");
+    expect(stdoutLines).toContain("  context-hot.md deleted");
+  });
+
+  it("prints context*.md none found when no context files exist", async () => {
+    const { deps } = createDeps({
+      listContextFilesFn: vi.fn(async () => []),
+    });
+
+    const result = await runResetCommand({ confirmReset: true }, deps);
+
+    expect(result.exitCode).toBe(0);
+    expect(deps.deleteFileFn).toHaveBeenCalledTimes(2);
+    const deletedPaths = (deps.deleteFileFn as ReturnType<typeof vi.fn>).mock.calls.map((call) => String(call[0]));
+    expect(deletedPaths).not.toContain(path.join(configDir, "context-mini.md"));
+    expect(deletedPaths).not.toContain(path.join(configDir, "context-hot.md"));
+    expect(deps.stdoutLine).toHaveBeenCalledWith("  context*.md: none found");
+  });
+
+  it("treats missing context file (ENOENT) as success", async () => {
+    const contextMiniPath = path.join(configDir, "context-mini.md");
+    const { deps } = createDeps({
+      listContextFilesFn: vi.fn(async () => [contextMiniPath]),
+      deleteFileFn: vi.fn(async (filePath: string) => {
+        if (filePath === contextMiniPath) {
+          throw makeErrnoError("ENOENT", "missing context file");
+        }
+      }),
+    });
+
+    const result = await runResetCommand({ confirmReset: true }, deps);
+
+    expect(result.exitCode).toBe(0);
+    expect(deps.stderrLine).not.toHaveBeenCalled();
+    expect(deps.stdoutLine).toHaveBeenCalledWith("Reset complete.");
+  });
+
+  it("warns on non-ENOENT context deletion errors and still exits 0", async () => {
+    const contextMiniPath = path.join(configDir, "context-mini.md");
+    const { deps } = createDeps({
+      listContextFilesFn: vi.fn(async () => [contextMiniPath]),
+      deleteFileFn: vi.fn(async (filePath: string) => {
+        if (filePath === contextMiniPath) {
+          throw makeErrnoError("EPERM", "permission denied");
+        }
+      }),
+    });
+
+    const result = await runResetCommand({ confirmReset: true }, deps);
+
+    expect(result.exitCode).toBe(0);
+    expect(deps.stderrLine).toHaveBeenCalledWith(
+      expect.stringContaining(`Warning: failed to delete ${contextMiniPath}: permission denied`),
     );
     expect(deps.stdoutLine).toHaveBeenCalledWith("Reset complete.");
   });

@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import * as clack from "@clack/prompts";
 import { readConfig } from "../config.js";
-import { closeDb, DEFAULT_DB_PATH, getDb, initDb, walCheckpoint } from "../db/client.js";
+import { backupDb, closeDb, DEFAULT_DB_PATH, getDb, initDb, walCheckpoint } from "../db/client.js";
 import { initSchema, resetDb } from "../db/schema.js";
 import { rebuildVectorIndex } from "../db/vector-index.js";
 import { banner, formatLabel, ui } from "../ui.js";
@@ -48,6 +48,7 @@ export interface DbCommandDeps {
   initDbFn: typeof initDb;
   initSchemaFn: typeof initSchema;
   closeDbFn: typeof closeDb;
+  backupDbFn: typeof backupDb;
 }
 
 function toNumber(value: unknown): number {
@@ -264,6 +265,7 @@ export async function runDbPathCommand(options: DbCommandCommonOptions, deps?: P
     initDbFn: deps?.initDbFn ?? initDb,
     initSchemaFn: deps?.initSchemaFn ?? initSchema,
     closeDbFn: deps?.closeDbFn ?? closeDb,
+    backupDbFn: deps?.backupDbFn ?? backupDb,
   };
 
   const config = resolvedDeps.readConfigFn(process.env);
@@ -292,6 +294,7 @@ export async function runDbStatsCommand(
     initDbFn: deps?.initDbFn ?? initDb,
     initSchemaFn: deps?.initSchemaFn ?? initSchema,
     closeDbFn: deps?.closeDbFn ?? closeDb,
+    backupDbFn: deps?.backupDbFn ?? backupDb,
   };
 
   const clackOutput = { output: process.stderr };
@@ -491,6 +494,7 @@ export async function runDbVersionCommand(
     initDbFn: deps?.initDbFn ?? initDb,
     initSchemaFn: deps?.initSchemaFn ?? initSchema,
     closeDbFn: deps?.closeDbFn ?? closeDb,
+    backupDbFn: deps?.backupDbFn ?? backupDb,
   };
 
   const config = resolvedDeps.readConfigFn(process.env);
@@ -541,6 +545,7 @@ export async function runDbExportCommand(
     initDbFn: deps?.initDbFn ?? initDb,
     initSchemaFn: deps?.initSchemaFn ?? initSchema,
     closeDbFn: deps?.closeDbFn ?? closeDb,
+    backupDbFn: deps?.backupDbFn ?? backupDb,
   };
 
   if (!options.json && !options.md) {
@@ -597,17 +602,21 @@ export async function runDbResetCommand(
     initDbFn: deps?.initDbFn ?? initDb,
     initSchemaFn: deps?.initSchemaFn ?? initSchema,
     closeDbFn: deps?.closeDbFn ?? closeDb,
+    backupDbFn: deps?.backupDbFn ?? backupDb,
   };
+
+  const confirmReset = options.full && options.confirm && !options.confirmReset ? true : options.confirmReset;
 
   if (options.full) {
     return runResetCommand(
-      { db: options.db, confirmReset: options.confirmReset },
+      { db: options.db, confirmReset },
       {
         resolveDbPathFn: (resetOptions) =>
           resetOptions.db?.trim() || resolvedDeps.readConfigFn(process.env)?.db?.path || DEFAULT_DB_PATH,
         getDbFn: resolvedDeps.getDbFn,
         closeDbFn: resolvedDeps.closeDbFn,
         resetDbFn: resetDb,
+        backupDbFn: resolvedDeps.backupDbFn,
       },
     );
   }
@@ -643,6 +652,7 @@ export async function runDbRebuildIndexCommand(
     initDbFn: deps?.initDbFn ?? initDb,
     initSchemaFn: deps?.initSchemaFn ?? initSchema,
     closeDbFn: deps?.closeDbFn ?? closeDb,
+    backupDbFn: deps?.backupDbFn ?? backupDb,
   };
 
   const start = Date.now();
@@ -685,6 +695,7 @@ export async function runDbCheckCommand(
     initDbFn: deps?.initDbFn ?? initDb,
     initSchemaFn: deps?.initSchemaFn ?? initSchema,
     closeDbFn: deps?.closeDbFn ?? closeDb,
+    backupDbFn: deps?.backupDbFn ?? backupDb,
   };
 
   let embeddingCount = 0;

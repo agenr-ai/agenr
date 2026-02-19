@@ -377,41 +377,51 @@ export async function initSchema(client: Client): Promise<void> {
 }
 
 export async function resetDb(db: Client): Promise<void> {
+  const foreignKeysResult = await db.execute("PRAGMA foreign_keys");
+  const foreignKeysRow = foreignKeysResult.rows[0] as Record<string, unknown> | undefined;
+  const previousForeignKeys =
+    Number(foreignKeysRow?.foreign_keys ?? (foreignKeysRow ? Object.values(foreignKeysRow)[0] : 1)) === 0
+      ? 0
+      : 1;
+
   await db.execute("PRAGMA foreign_keys=OFF");
+  try {
+    const schemaObjects = await db.execute(`
+      SELECT type, name
+      FROM sqlite_master
+      WHERE name NOT LIKE 'sqlite_%'
+      ORDER BY
+        CASE type
+          WHEN 'trigger' THEN 1
+          WHEN 'index' THEN 2
+          WHEN 'table' THEN 3
+          ELSE 4
+        END,
+        name
+    `);
 
-  const schemaObjects = await db.execute(`
-    SELECT type, name
-    FROM sqlite_master
-    WHERE name NOT LIKE 'sqlite_%'
-    ORDER BY
-      CASE type
-        WHEN 'trigger' THEN 1
-        WHEN 'index' THEN 2
-        WHEN 'table' THEN 3
-        ELSE 4
-      END,
-      name
-  `);
+    for (const row of schemaObjects.rows) {
+      const type = String((row as { type?: unknown }).type ?? "");
+      const name = String((row as { name?: unknown }).name ?? "");
+      if (!type || !name) {
+        continue;
+      }
 
-  for (const row of schemaObjects.rows) {
-    const type = String((row as { type?: unknown }).type ?? "");
-    const name = String((row as { name?: unknown }).name ?? "");
-    if (!type || !name) {
-      continue;
+      if (type === "trigger") {
+        await db.execute(`DROP TRIGGER IF EXISTS "${name}"`);
+        continue;
+      }
+      if (type === "index") {
+        await db.execute(`DROP INDEX IF EXISTS "${name}"`);
+        continue;
+      }
+      if (type === "table") {
+        await db.execute(`DROP TABLE IF EXISTS "${name}"`);
+      }
     }
 
-    if (type === "trigger") {
-      await db.execute(`DROP TRIGGER IF EXISTS "${name}"`);
-      continue;
-    }
-    if (type === "index") {
-      await db.execute(`DROP INDEX IF EXISTS "${name}"`);
-      continue;
-    }
-    if (type === "table") {
-      await db.execute(`DROP TABLE IF EXISTS "${name}"`);
-    }
+    await initSchema(db);
+  } finally {
+    await db.execute(`PRAGMA foreign_keys=${previousForeignKeys === 0 ? "OFF" : "ON"}`);
   }
-
-  await initSchema(db);
 }
