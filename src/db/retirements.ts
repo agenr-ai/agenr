@@ -54,7 +54,7 @@ function normalizeLedger(input: unknown): RetirementsLedger {
   }
 
   const record = input as Record<string, unknown>;
-  const version = record.version ?? LEDGER_VERSION;
+  const version = (record.version ?? LEDGER_VERSION) as RetirementsLedger["version"];
   const retirements = Array.isArray(record.retirements)
     ? record.retirements.filter(isRetirementRecord).map((item) => ({
         ...item,
@@ -129,8 +129,8 @@ function normalizeSuppressedContexts(suppressedContexts?: string[]): string[] {
   return Array.from(new Set(contexts.map((context) => context.trim())));
 }
 
-function escapeLike(value: string): string {
-  return value.replace(/[%_\\]/g, (ch) => `\\${ch}`);
+function escapeLikeWildcard(s: string): string {
+  return s.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
 }
 
 function makeRetirementId(): string {
@@ -169,7 +169,7 @@ async function queryMatchingEntries(
     return [];
   }
   const matchType = opts.matchType === "contains" ? "contains" : "exact";
-  const pattern = matchType === "contains" ? escapeLike(subjectPattern) : subjectPattern;
+  const pattern = matchType === "contains" ? escapeLikeWildcard(subjectPattern) : subjectPattern;
 
   if (opts.canonicalKey && opts.canonicalKey.trim().length > 0) {
         const result = await db.execute({
