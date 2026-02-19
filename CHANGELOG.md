@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.10] - 2026-02-19
+
+### Fixed
+- OpenClaw plugin: AGENR.md now writes a compact summary (subjects only + entry count + recall instructions) instead of full content, preventing double-injection of full context if loaded into Project Context
+- Note: version 0.6.9 was published with a stale build and unpublished; 0.6.10 is the correct release of these changes
+
 ## [0.6.9] - 2026-02-19
 
 ### Fixed

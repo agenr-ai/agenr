@@ -1,8 +1,10 @@
 {
   "name": "agenr",
-  "version": "0.6.9",
+  "version": "0.6.10",
   "openclaw": {
-    "extensions": ["dist/openclaw-plugin/index.js"]
+    "extensions": [
+      "dist/openclaw-plugin/index.js"
+    ]
   },
   "description": "AGENt memoRy -- Memory infrastructure for AI agents",
   "type": "module",
