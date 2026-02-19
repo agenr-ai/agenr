@@ -4,6 +4,7 @@ let shutdownRequested = false;
 let shutdownSignal: NodeJS.Signals | null = null;
 let signalCount = 0;
 let installed = false;
+let wakeCallback: (() => void) | null = null;
 
 const shutdownHandlers: ShutdownHandler[] = [];
 
@@ -30,6 +31,10 @@ export function onShutdown(handler: ShutdownHandler): void {
   shutdownHandlers.push(handler);
 }
 
+export function onWake(fn: () => void): void {
+  wakeCallback = fn;
+}
+
 export async function runShutdownHandlers(): Promise<void> {
   // Run in LIFO order so the most recently registered resources are cleaned up first.
   for (let i = shutdownHandlers.length - 1; i >= 0; i -= 1) {
@@ -49,6 +54,7 @@ export function installSignalHandlers(): void {
 
     if (signalCount === 1) {
       shutdownRequested = true;
+      wakeCallback?.();
       logLine("[agenr] Shutting down gracefully, finishing current entry...");
       return;
     }
@@ -70,6 +76,7 @@ export function resetShutdownForTests(): void {
   shutdownSignal = null;
   signalCount = 0;
   shutdownHandlers.length = 0;
+  wakeCallback = null;
 
   if (installed) {
     if (sigintHandler) process.off("SIGINT", sigintHandler);
@@ -80,4 +87,3 @@ export function resetShutdownForTests(): void {
   sigtermHandler = null;
   installed = false;
 }
-

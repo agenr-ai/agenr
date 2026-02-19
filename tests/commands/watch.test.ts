@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { runWatchCommand, writeContextVariants } from "../../src/commands/watch.js";
 import type { KnowledgeEntry } from "../../src/types.js";
 import { initDb } from "../../src/db/client.js";
-import { resetShutdownForTests } from "../../src/shutdown.js";
+import { onShutdown, requestShutdown, resetShutdownForTests } from "../../src/shutdown.js";
 import { loadWatchState, saveWatchState } from "../../src/watch/state.js";
 import { readFileFromOffset } from "../../src/watch/watcher.js";
 
@@ -318,6 +318,129 @@ describe("watch command", () => {
 
     expect(deleteWatcherPidFn).toHaveBeenCalled();
     expect(errorDeleteWatcherPidFn).toHaveBeenCalled();
+  });
+
+  it("does not run shutdown handlers on clean --once exit", async () => {
+    const dir = await makeTempDir();
+    const transcriptPath = path.join(dir, "session.txt");
+    const configDir = path.join(dir, ".agenr");
+    await fs.mkdir(configDir, { recursive: true });
+    await fs.writeFile(transcriptPath, "watch content\n", "utf8");
+
+    const deleteWatcherPidFn = vi.fn(async () => undefined);
+    const shutdownHandlerSpy = vi.fn(async () => undefined);
+    onShutdown(shutdownHandlerSpy);
+
+    const result = await runWatchCommand(
+      transcriptPath,
+      { once: true, interval: "1", minChunk: "1", dryRun: true },
+      {
+        readConfigFn: vi.fn(() => ({ db: { path: ":memory:" } })),
+        resolveEmbeddingApiKeyFn: vi.fn(() => "sk-test"),
+        parseTranscriptFileFn: vi.fn(async () => ({
+          file: transcriptPath,
+          messages: [],
+          chunks: [{ chunk_index: 0, message_start: 0, message_end: 0, text: "chunk", context_hint: "ctx" }],
+          warnings: [],
+        })),
+        createLlmClientFn: vi.fn(() => ({ resolvedModel: { modelId: "test" }, credentials: { apiKey: "x" } } as any)),
+        extractKnowledgeFromChunksFn: vi.fn(async () => ({
+          entries: [],
+          successfulChunks: 1,
+          failedChunks: 0,
+          warnings: [],
+        })),
+        deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+        getDbFn: vi.fn(() => ({}) as any),
+        initDbFn: vi.fn(async () => undefined),
+        closeDbFn: vi.fn(() => undefined),
+        storeEntriesFn: vi.fn(async () => ({
+          added: 0,
+          updated: 0,
+          skipped: 0,
+          superseded: 0,
+          llm_dedup_calls: 0,
+          relations_created: 0,
+          total_entries: 0,
+          duration_ms: 1,
+        })) as any,
+        loadWatchStateFn: vi.fn(() => loadWatchState(configDir)),
+        saveWatchStateFn: vi.fn((state) => saveWatchState(state, configDir)),
+        statFileFn: vi.fn((filePath: string) => fs.stat(filePath)) as any,
+        readFileFn: vi.fn((filePath: string, offset: number) => readFileFromOffset(filePath, offset)),
+        generateContextFileFn: vi.fn(async () => undefined) as any,
+        writeWatcherPidFn: vi.fn(async () => undefined),
+        deleteWatcherPidFn,
+        exitProcessFn: vi.fn(),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(deleteWatcherPidFn).toHaveBeenCalledTimes(1);
+    expect(shutdownHandlerSpy).toHaveBeenCalledTimes(0);
+  });
+
+  it("runs shutdown handlers on signal path", async () => {
+    const dir = await makeTempDir();
+    const transcriptPath = path.join(dir, "session.txt");
+    const configDir = path.join(dir, ".agenr");
+    await fs.mkdir(configDir, { recursive: true });
+    await fs.writeFile(transcriptPath, "watch content\n", "utf8");
+
+    const deleteWatcherPidFn = vi.fn(async () => undefined);
+    const shutdownHandlerSpy = vi.fn(async () => undefined);
+    onShutdown(shutdownHandlerSpy);
+
+    const result = await runWatchCommand(
+      transcriptPath,
+      { once: true, interval: "1", minChunk: "1", dryRun: true },
+      {
+        readConfigFn: vi.fn(() => ({ db: { path: ":memory:" } })),
+        resolveEmbeddingApiKeyFn: vi.fn(() => "sk-test"),
+        parseTranscriptFileFn: vi.fn(async () => ({
+          file: transcriptPath,
+          messages: [],
+          chunks: [{ chunk_index: 0, message_start: 0, message_end: 0, text: "chunk", context_hint: "ctx" }],
+          warnings: [],
+        })),
+        createLlmClientFn: vi.fn(() => ({ resolvedModel: { modelId: "test" }, credentials: { apiKey: "x" } } as any)),
+        extractKnowledgeFromChunksFn: vi.fn(async () => {
+          requestShutdown();
+          return {
+            entries: [],
+            successfulChunks: 1,
+            failedChunks: 0,
+            warnings: [],
+          };
+        }),
+        deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+        getDbFn: vi.fn(() => ({}) as any),
+        initDbFn: vi.fn(async () => undefined),
+        closeDbFn: vi.fn(() => undefined),
+        storeEntriesFn: vi.fn(async () => ({
+          added: 0,
+          updated: 0,
+          skipped: 0,
+          superseded: 0,
+          llm_dedup_calls: 0,
+          relations_created: 0,
+          total_entries: 0,
+          duration_ms: 1,
+        })) as any,
+        loadWatchStateFn: vi.fn(() => loadWatchState(configDir)),
+        saveWatchStateFn: vi.fn((state) => saveWatchState(state, configDir)),
+        statFileFn: vi.fn((filePath: string) => fs.stat(filePath)) as any,
+        readFileFn: vi.fn((filePath: string, offset: number) => readFileFromOffset(filePath, offset)),
+        generateContextFileFn: vi.fn(async () => undefined) as any,
+        writeWatcherPidFn: vi.fn(async () => undefined),
+        deleteWatcherPidFn,
+        exitProcessFn: vi.fn(),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(deleteWatcherPidFn).toHaveBeenCalledTimes(1);
+    expect(shutdownHandlerSpy).toHaveBeenCalledTimes(1);
   });
 
   it("runs one cycle and stores extracted entries", async () => {

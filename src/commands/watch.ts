@@ -21,7 +21,7 @@ import { deleteWatcherPid, writeWatcherPid } from "../watch/pid.js";
 import { getDefaultPlatformDir } from "../watch/platform-defaults.js";
 import { getFileState, loadWatchState, saveWatchState } from "../watch/state.js";
 import { readFileFromOffset, runWatcher } from "../watch/watcher.js";
-import { installSignalHandlers, isShutdownRequested, onShutdown } from "../shutdown.js";
+import { installSignalHandlers, isShutdownRequested, onShutdown, runShutdownHandlers } from "../shutdown.js";
 import type { RecallResult, StoredEntry } from "../types.js";
 
 function formatBytes(value: number): string {
@@ -246,6 +246,8 @@ export interface WatchCommandDeps {
   writeWatcherPidFn: () => Promise<void>;
   deleteWatcherPidFn: () => Promise<void>;
   nowFn: () => Date;
+  shutdownTimeoutMs: number;
+  exitProcessFn: (code: number) => void;
 }
 
 export interface WatchCommandResult {
@@ -391,6 +393,15 @@ export async function runWatchCommand(
     writeWatcherPidFn: deps?.writeWatcherPidFn ?? writeWatcherPid,
     deleteWatcherPidFn: deps?.deleteWatcherPidFn ?? deleteWatcherPid,
     nowFn: deps?.nowFn ?? (() => new Date()),
+    shutdownTimeoutMs: deps?.shutdownTimeoutMs ?? 5000,
+    exitProcessFn:
+      deps?.exitProcessFn ??
+      ((code: number) => {
+        if (process.env.VITEST) {
+          return;
+        }
+        process.exit(code);
+      }),
   };
   const clackOutput = { output: process.stderr };
   warnIfLocked();
@@ -414,6 +425,7 @@ export async function runWatchCommand(
     await resolvedDeps.deleteWatcherPidFn();
   });
 
+  let watcherReturned = false;
   try {
     const intervalMs = parsePositiveInt(options.interval, 300, "--interval") * 1000;
     const minChunkChars = parsePositiveInt(options.minChunk, 2000, "--min-chunk");
@@ -586,14 +598,15 @@ export async function runWatchCommand(
         shouldShutdownFn: isShutdownRequested,
       },
     );
+    watcherReturned = true;
 
     // Best-effort: ensure any in-flight context refresh finishes before printing the final summary.
     await contextChain.catch(() => undefined);
     if (contextEnabled && contextDb) {
       try {
         resolvedDeps.closeDbFn(contextDb);
-      } catch {
-        // ignore
+      } catch (error) {
+        emitWatchWarning(`Context DB close failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
 
@@ -610,6 +623,30 @@ export async function runWatchCommand(
       durationMs: summary.durationMs,
     };
   } finally {
-    await resolvedDeps.deleteWatcherPidFn();
+    const runCleanup = async (): Promise<void> => {
+      if (isShutdownRequested()) {
+        await runShutdownHandlers();
+      } else {
+        await resolvedDeps.deleteWatcherPidFn();
+      }
+    };
+
+    if (!watcherReturned) {
+      await resolvedDeps.deleteWatcherPidFn();
+    } else {
+      const forceExitTimer = setTimeout(() => {
+        process.stderr.write("[agenr] Force exit after timeout\n");
+        resolvedDeps.exitProcessFn(1);
+      }, resolvedDeps.shutdownTimeoutMs);
+      forceExitTimer.unref();
+
+      try {
+        await runCleanup();
+      } finally {
+        clearTimeout(forceExitTimer);
+      }
+
+      resolvedDeps.exitProcessFn(0);
+    }
   }
 }

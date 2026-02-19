@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { installSignalHandlers, resetShutdownForTests } from "../src/shutdown.js";
+import { installSignalHandlers, onWake, resetShutdownForTests } from "../src/shutdown.js";
 
 afterEach(() => {
   resetShutdownForTests();
@@ -7,6 +7,30 @@ afterEach(() => {
 });
 
 describe("shutdown", () => {
+  it("wakes the watcher immediately on first signal", () => {
+    const wakeSpy = vi.fn();
+
+    installSignalHandlers();
+    onWake(wakeSpy);
+
+    process.emit("SIGTERM");
+
+    expect(wakeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears wake callback during test reset", () => {
+    const wakeSpy = vi.fn();
+
+    installSignalHandlers();
+    onWake(wakeSpy);
+    resetShutdownForTests();
+
+    installSignalHandlers();
+    process.emit("SIGTERM");
+
+    expect(wakeSpy).toHaveBeenCalledTimes(0);
+  });
+
   it("forces exit on second signal", () => {
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`exit:${String(code)}`);
@@ -19,4 +43,3 @@ describe("shutdown", () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 });
-

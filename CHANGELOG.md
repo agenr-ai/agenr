@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.11] - 2026-02-19
+
+### Fixed
+- fix(shutdown): SIGINT/SIGTERM now wake the watcher immediately via a shared wake callback, so long polling sleeps are interrupted without waiting for the next interval
+- fix(watch): watcher now registers and always deregisters the shutdown wake callback in `runWatcher`, preventing stale wake handlers across normal exits (`--once`) and repeated runs
+- fix(watch): `runWatchCommand` now executes registered shutdown handlers on signal-triggered exits, keeps direct PID cleanup for clean `--once` exits, and adds a 5s force-exit timeout guard (`.unref()`) to avoid indefinite hangs
+
 ## [0.6.10] - 2026-02-19
 
 ### Fixed
