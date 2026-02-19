@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.6.2] - 2026-02-19
+
+### Added
+- feat(extractor): elaborative encoding pre-fetch now runs before each chunk extraction, retrieves top related memories from the vector index, and injects up to 3 references into the extractor prompt
+- feat(cli): `--no-pre-fetch` flag added to `agenr extract`, `agenr ingest`, and `agenr watch` to opt out of prompt memory pre-fetch
+- feat(recall): exported `fetchRelatedEntries()` thin wrapper for direct ANN vector candidate queries
+
+### Changed
+- tuning(extractor): pre-fetch similarity threshold set to `0.78` for `text-embedding-3-small` (1024 dimensions)
+- tuning(extractor): fresh-install pre-fetch skip threshold set to 20 non-superseded entries
+- tuning(extractor): pre-fetch timeout set to 5000ms to avoid chunk extraction stalls on hanging embedding calls
+
+### Safety
+- prompt: injected related memories are explicitly reference-only and do not lower the SKIP threshold
+- runtime: pre-fetch is always best-effort and silently degrades to empty related-memory context on any error
+
 ## [0.6.1] - 2026-02-19
 
 ### Fixed

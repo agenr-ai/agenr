@@ -308,6 +308,7 @@ export interface WatchOptions {
   platform?: string;
   auto?: boolean;
   onlineDedup?: boolean;
+  noPreFetch?: boolean;
   verbose?: boolean;
   dryRun?: boolean;
   once?: boolean;

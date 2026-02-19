@@ -9,7 +9,7 @@ import type { KnowledgePlatform, RecallQuery, RecallResult, Scope, StoredEntry }
 const DEFAULT_VECTOR_CANDIDATE_LIMIT = 50;
 const DEFAULT_LIMIT = 10;
 
-interface CandidateRow {
+export interface CandidateRow {
   entry: StoredEntry;
   vectorSim: number;
 }
@@ -440,6 +440,14 @@ async function fetchVectorCandidates(
       vectorSim: clamp01(cosineSimilarity(queryEmbedding, rowEmbedding)),
     };
   });
+}
+
+export async function fetchRelatedEntries(
+  db: Client,
+  queryEmbedding: number[],
+  limit: number,
+): Promise<CandidateRow[]> {
+  return fetchVectorCandidates(db, queryEmbedding, limit);
 }
 
 async function fetchSessionCandidates(

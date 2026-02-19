@@ -1,5 +1,8 @@
 import type { Api, AssistantMessage, Context, Model } from "@mariozechner/pi-ai";
-import type { KnowledgeEntry, LlmClient, TranscriptChunk } from "./types.js";
+import type { Client } from "@libsql/client";
+import type { KnowledgeEntry, LlmClient, StoredEntry, TranscriptChunk } from "./types.js";
+import { fetchRelatedEntries } from "./db/recall.js";
+import { embed } from "./embeddings/client.js";
 import { runSimpleStream, type StreamSimpleFn } from "./llm/stream.js";
 import { SUBMIT_DEDUPED_KNOWLEDGE_TOOL, SUBMIT_KNOWLEDGE_TOOL } from "./schema.js";
 import { isShutdownRequested } from "./shutdown.js";
@@ -242,12 +245,18 @@ WHY: Routine execution. No durable knowledge, decisions, or lessons.
 - canonical_key: optional lowercase hyphenated 3-5 word identifier when clear (example: "preferred-package-manager")
 - content: clear declarative statement, not a quote. Min 20 chars.
 - source_context: one sentence, max 20 words.
-- tags: 1-4 lowercase descriptive tags.`;
+- tags: 1-4 lowercase descriptive tags.
+When related memories are injected before a chunk, they are reference material only. They do not lower the emission threshold.`;
 
 const MAX_ATTEMPTS = 5;
 const DEFAULT_INTER_CHUNK_DELAY_MS = 150;
 const DEDUP_BATCH_SIZE = 50;
 const DEDUP_BATCH_TRIGGER = 100;
+export const PREFETCH_SIMILARITY_THRESHOLD = 0.78;
+export const PREFETCH_CANDIDATE_LIMIT = 10;
+export const MAX_PREFETCH_RESULTS = 3;
+export const PREFETCH_MIN_DB_ENTRIES = 20;
+export const PREFETCH_TIMEOUT_MS = 5000;
 
 const DEDUP_SYSTEM_PROMPT = `You are deduplicating a list of extracted knowledge entries.
 
@@ -308,8 +317,93 @@ function normalize(value: string): string {
   return value.trim().toLowerCase();
 }
 
-function buildUserPrompt(chunk: TranscriptChunk): string {
+export async function preFetchRelated(
+  chunkText: string,
+  db: Client,
+  embeddingApiKey: string,
+  embedFn: (texts: string[], apiKey: string) => Promise<number[][]> = embed,
+  onVerbose?: (line: string) => void,
+): Promise<StoredEntry[]> {
+  const run = async (): Promise<StoredEntry[]> => {
+    try {
+      if (!chunkText.trim()) {
+        onVerbose?.("[pre-fetch] skipped (empty chunk text)");
+        return [];
+      }
+
+      const countResult = await db.execute({
+        sql: "SELECT COUNT(*) AS count FROM entries WHERE superseded_by IS NULL",
+        args: [],
+      });
+      const count = Number(countResult.rows[0]?.count ?? 0);
+      if (count < PREFETCH_MIN_DB_ENTRIES) {
+        onVerbose?.(`[pre-fetch] skipped (db count ${count} < ${PREFETCH_MIN_DB_ENTRIES})`);
+        return [];
+      }
+
+      const vectors = await embedFn([chunkText], embeddingApiKey);
+      const queryVec = vectors[0];
+      if (!queryVec || !Array.isArray(queryVec)) {
+        onVerbose?.("[pre-fetch] skipped: embedding provider returned no query vector");
+        return [];
+      }
+
+      onVerbose?.(`[pre-fetch] embedded chunk (${queryVec.length} dims)`);
+      const candidates = await fetchRelatedEntries(db, queryVec, PREFETCH_CANDIDATE_LIMIT);
+      onVerbose?.(`[pre-fetch] ${candidates.length} candidates returned`);
+      const above = candidates.filter((candidate) => candidate.vectorSim >= PREFETCH_SIMILARITY_THRESHOLD);
+      onVerbose?.(`[pre-fetch] ${above.length} above threshold ${PREFETCH_SIMILARITY_THRESHOLD}`);
+      return above.slice(0, MAX_PREFETCH_RESULTS).map((candidate) => candidate.entry);
+    } catch (error) {
+      onVerbose?.(`[pre-fetch] skipped: ${error instanceof Error ? error.message : String(error)}`);
+      return [];
+    }
+  };
+
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<StoredEntry[]>((resolve) => {
+    timeoutId = setTimeout(() => {
+      onVerbose?.(`[pre-fetch] skipped: timeout after ${PREFETCH_TIMEOUT_MS}ms`);
+      resolve([]);
+    }, PREFETCH_TIMEOUT_MS);
+  });
+
+  const result = await Promise.race([run(), timeout]);
+  if (timeoutId) {
+    clearTimeout(timeoutId);
+  }
+  return result;
+}
+
+export function buildUserPrompt(chunk: TranscriptChunk, related: StoredEntry[] = []): string {
+  const includeRelatedSection = arguments.length >= 2;
+  if (!includeRelatedSection) {
+    return [
+      "Selectively extract durable knowledge from this conversation transcript.",
+      "",
+      "Transcript:",
+      "---",
+      chunk.text,
+      "---",
+      "",
+      "Call submit_knowledge once with {\"entries\": [...]} and use an empty array if nothing qualifies.",
+    ].join("\n");
+  }
+
+  const memoryBlock =
+    related.length === 0
+      ? "[none found]"
+      : related.map((entry) => `- [${entry.type}] ${entry.subject}: ${entry.content}`).join("\n");
+
   return [
+    "Existing related memories (reference only -- your SKIP/emit threshold is unchanged):",
+    memoryBlock,
+    "",
+    "Do not emit entries that express the same fact as any memory listed above, even in different words.",
+    "If this chunk clearly contradicts a memory listed above, emit a fact entry stating the contradiction directly in the content field. Do not use inline citation markers like [1] or [2] in any field -- these become dead references.",
+    "Only emit a cross-reference entry when this chunk extends, contradicts, or updates a specific fact. Do not cross-reference just because entries share the same project or general domain.",
+    "Your SKIP/emit threshold is unchanged. The memories above are reference only.",
+    "",
     "Selectively extract durable knowledge from this conversation transcript.",
     "",
     "Transcript:",
@@ -1141,13 +1235,34 @@ async function extractChunkOnce(params: {
   onVerbose?: (line: string) => void;
   onStreamDelta?: (delta: string, kind: "text" | "thinking") => void;
   streamSimpleImpl?: StreamSimpleFn;
+  db?: Client;
+  embeddingApiKey?: string;
+  noPreFetch?: boolean;
+  embedFn?: (texts: string[], apiKey: string) => Promise<number[][]>;
+  related?: StoredEntry[];
 }): Promise<{ entries: KnowledgeEntry[]; warnings: string[] }> {
+  const hasRelatedOverride = Object.prototype.hasOwnProperty.call(params, "related");
+  let prompt = buildUserPrompt(params.chunk);
+  if (params.noPreFetch !== true) {
+    let related = hasRelatedOverride ? (params.related ?? []) : [];
+    if (!hasRelatedOverride && params.db && params.embeddingApiKey) {
+      related = await preFetchRelated(
+        params.chunk.text,
+        params.db,
+        params.embeddingApiKey,
+        params.embedFn,
+        params.verbose ? params.onVerbose : undefined,
+      );
+    }
+    prompt = buildUserPrompt(params.chunk, related);
+  }
+
   const context: Context = {
     systemPrompt: SYSTEM_PROMPT,
     messages: [
       {
         role: "user",
-        content: buildUserPrompt(params.chunk),
+        content: prompt,
         timestamp: Date.now(),
       },
     ],
@@ -1215,6 +1330,10 @@ export async function extractKnowledgeFromChunks(params: {
   streamSimpleImpl?: StreamSimpleFn;
   sleepImpl?: (ms: number) => Promise<void>;
   retryDelayMs?: (attempt: number) => number;
+  db?: Client;
+  embeddingApiKey?: string;
+  noPreFetch?: boolean;
+  embedFn?: (texts: string[], apiKey: string) => Promise<number[][]>;
 }): Promise<ExtractChunksResult> {
   const warnings: string[] = [];
   const entries: KnowledgeEntry[] = [];
@@ -1261,6 +1380,18 @@ export async function extractKnowledgeFromChunks(params: {
         let lastError: unknown = null;
         let chunkResult: { entries: KnowledgeEntry[]; warnings: string[] } | null = null;
         let streamBuffer: Array<{ delta: string; kind: "text" | "thinking" }> = [];
+        const related =
+          params.noPreFetch === true
+            ? undefined
+            : params.db && params.embeddingApiKey
+              ? await preFetchRelated(
+                  chunk.text,
+                  params.db,
+                  params.embeddingApiKey,
+                  params.embedFn,
+                  params.verbose ? params.onVerbose : undefined,
+                )
+              : [];
 
         for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
           if (params.verbose) {
@@ -1287,6 +1418,11 @@ export async function extractKnowledgeFromChunks(params: {
                   }
                 : params.onStreamDelta,
               streamSimpleImpl: params.streamSimpleImpl,
+              db: params.db,
+              embeddingApiKey: params.embeddingApiKey,
+              noPreFetch: params.noPreFetch,
+              embedFn: params.embedFn,
+              related,
             });
 
             warnings.push(...chunkResult.warnings);

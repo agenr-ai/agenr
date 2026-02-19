@@ -44,6 +44,7 @@ export interface IngestCommandOptions {
   force?: boolean;
   retry?: boolean;
   maxRetries?: number | string;
+  noPreFetch?: boolean;
 }
 
 export interface IngestFileResult {
@@ -598,6 +599,13 @@ export async function runIngestCommand(
     let forceDeletedEntrySourceRows = 0;
     let completed = 0;
     let embeddingApiKey: string | null = null;
+    if (!options.noPreFetch) {
+      try {
+        embeddingApiKey = resolvedDeps.resolveEmbeddingApiKeyFn(config, process.env);
+      } catch {
+        embeddingApiKey = null;
+      }
+    }
     let watchStateLoaded = false;
     let watchState = createEmptyWatchState();
     let cursor = 0;
@@ -789,6 +797,9 @@ export async function runIngestCommand(
         client,
         verbose: false,
         llmConcurrency,
+        db: options.noPreFetch ? undefined : db,
+        embeddingApiKey: options.noPreFetch ? undefined : embeddingApiKey ?? undefined,
+        noPreFetch: options.noPreFetch === true,
         onVerbose: verbose
           ? (line) => {
               clack.log.info(line, clackOutput);

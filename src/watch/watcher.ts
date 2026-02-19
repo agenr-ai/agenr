@@ -57,6 +57,7 @@ export interface WatcherOptions {
   raw: boolean;
   once: boolean;
   onlineDedup?: boolean;
+  noPreFetch?: boolean;
   model?: string;
   provider?: string;
   dbPath?: string;
@@ -275,6 +276,14 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
 
   if (db) {
     await resolvedDeps.initDbFn(db);
+  }
+
+  if (!options.noPreFetch) {
+    try {
+      embeddingApiKey = resolvedDeps.resolveEmbeddingApiKeyFn(config, process.env);
+    } catch {
+      embeddingApiKey = null;
+    }
   }
 
   let dbChain: Promise<void> = Promise.resolve();
@@ -552,6 +561,9 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
           chunks: parsed.chunks,
           client,
           verbose: options.verbose,
+          db: options.noPreFetch ? undefined : db ?? undefined,
+          embeddingApiKey: options.noPreFetch ? undefined : embeddingApiKey ?? undefined,
+          noPreFetch: options.noPreFetch === true,
           onChunkComplete: async (chunkResult) => {
             await processChunkEntries(chunkResult.entries);
           },
