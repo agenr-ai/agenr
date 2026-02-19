@@ -35,7 +35,10 @@ function makeResult(overrides: Partial<RecallResult> = {}): RecallResult {
       recency: 0.8,
       importance: 0.75,
       recall: 0.2,
+      freshness: 1,
+      todoPenalty: 1,
       fts: 0.15,
+      spacing: 1,
     },
     ...overrides,
   };

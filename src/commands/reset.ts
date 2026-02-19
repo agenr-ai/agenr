@@ -17,6 +17,7 @@ export interface ResetCommandDeps {
   resolveDbPathFn: (options: ResetCommandOptions) => string;
   backupDbFn: (dbPath: string) => Promise<string>;
   resetDbFn: (db: Client) => Promise<void>;
+  vacuumDbFn: (db: Client) => Promise<void>;
   getDbFn: (dbPath: string) => Client;
   closeDbFn: (db: Client) => void;
   listContextFilesFn: () => Promise<string[]>;
@@ -65,6 +66,11 @@ function resolveDeps(deps?: Partial<ResetCommandDeps>): ResetCommandDeps {
     resolveDbPathFn: deps?.resolveDbPathFn ?? resolveDbPath,
     backupDbFn: deps?.backupDbFn ?? backupDb,
     resetDbFn: deps?.resetDbFn ?? resetDb,
+    vacuumDbFn:
+      deps?.vacuumDbFn ??
+      (async (db: Client) => {
+        await db.execute("VACUUM");
+      }),
     getDbFn: deps?.getDbFn ?? getDb,
     closeDbFn: deps?.closeDbFn ?? closeDb,
     listContextFilesFn:
@@ -98,6 +104,7 @@ export async function runResetCommand(
     resolvedDeps.stdoutLine("[dry run] agenr db reset --full would perform the following actions:");
     resolvedDeps.stdoutLine(`  - Backup database to: ${buildBackupPath(resolvedDbPath)}`);
     resolvedDeps.stdoutLine("  - Drop and recreate DB schema (all data erased, file retained)");
+    resolvedDeps.stdoutLine("  - VACUUM database (reclaim freed pages)");
     resolvedDeps.stdoutLine(`  - Delete: ${watchStatePath}`);
     resolvedDeps.stdoutLine(`  - Delete: ${REVIEW_QUEUE_PATH}`);
     resolvedDeps.stdoutLine(`  - Delete: ${path.join(configDir, "context*.md")} (any matching files)`);
@@ -122,6 +129,7 @@ export async function runResetCommand(
   const db = resolvedDeps.getDbFn(resolvedDbPath);
   try {
     await resolvedDeps.resetDbFn(db);
+    await resolvedDeps.vacuumDbFn(db);
   } catch (error) {
     resolvedDeps.stderrLine(errorMessage(error));
     return { exitCode: 1 };
@@ -144,6 +152,7 @@ export async function runResetCommand(
 
   resolvedDeps.stdoutLine("Reset complete.");
   resolvedDeps.stdoutLine(`  DB schema dropped and recreated: ${resolvedDbPath}`);
+  resolvedDeps.stdoutLine("  VACUUM complete (freed pages reclaimed)");
   resolvedDeps.stdoutLine("  watch-state.json deleted (or was not present)");
   resolvedDeps.stdoutLine("  review-queue.json deleted (or was not present)");
   if (contextFiles.length === 0) {

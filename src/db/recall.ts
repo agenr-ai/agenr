@@ -265,13 +265,22 @@ export function todoStaleness(entry: StoredEntry, now: Date): number {
   return Math.max(raw, floor);
 }
 
-function getScoreComponents(entry: StoredEntry, now: Date): { daysOld: number; rec: number; imp: number; recall: number } {
+function getScoreComponents(
+  entry: StoredEntry,
+  now: Date,
+): { daysOld: number; rec: number; imp: number; recall: number; spacing: number } {
   const daysOld = parseDaysBetween(now, entry.created_at);
   const daysSinceRecall = entry.last_recalled_at ? parseDaysBetween(now, entry.last_recalled_at) : daysOld;
   const rec = recency(daysOld, entry.expiry);
   const imp = importanceScore(entry.importance);
   const recall = recallStrength(entry.recall_count, daysSinceRecall, entry.expiry);
-  return { daysOld, rec, imp, recall };
+  const spacing = computeSpacingFactor(
+    entry.recall_intervals ?? [],
+    entry.recall_count,
+    entry.created_at,
+    entry.last_recalled_at,
+  );
+  return { daysOld, rec, imp, recall, spacing };
 }
 
 export function recency(daysOld: number, tier: string): number {
@@ -305,6 +314,59 @@ export function recallStrength(recallCount: number, daysSinceRecall: number, tie
   return Math.min(Math.pow(recallCount, 0.7) / 5, 1.0) * recency(daysSinceRecall, tier);
 }
 
+export function computeSpacingFactor(
+  intervals: number[],
+  recallCount?: number,
+  createdAt?: string,
+  lastRecalledAt?: string,
+): number {
+  // Work on a copy - do not mutate the input array.
+  const timestamps = [...intervals];
+
+  // Legacy imputation: synthesize uniform intervals from lifetime span when
+  // recall_intervals was not recorded (pre-v0.6.4 entries).
+  // This prevents older important memories from being permanently buried.
+  if (
+    timestamps.length === 0 &&
+    recallCount !== undefined &&
+    recallCount > 0 &&
+    createdAt &&
+    lastRecalledAt
+  ) {
+    const createdMs = Date.parse(createdAt);
+    const lastMs = Date.parse(lastRecalledAt);
+    if (Number.isFinite(createdMs) && Number.isFinite(lastMs) && lastMs > createdMs) {
+      const syntheticGapMs = (lastMs - createdMs) / recallCount;
+      for (let i = 0; i < recallCount; i += 1) {
+        timestamps.push(Math.round((createdMs + syntheticGapMs * i) / 1000));
+      }
+    }
+  }
+
+  if (timestamps.length < 2) {
+    // Not enough data points to measure a spacing interval.
+    return 1.0;
+  }
+
+  // Sort ascending to handle out-of-order timestamps (clock skew, migration artifacts).
+  const sorted = [...timestamps].sort((a, b) => a - b);
+
+  // Find the longest single gap between consecutive recalls.
+  let maxGapDays = 0;
+  for (let i = 1; i < sorted.length; i += 1) {
+    const prev = sorted[i - 1] ?? 0;
+    const curr = sorted[i] ?? 0;
+    const gapDays = Math.max(0, (curr - prev) / 86400);
+    if (gapDays > maxGapDays) {
+      maxGapDays = gapDays;
+    }
+  }
+
+  // Shift by +1 so a 1-day gap produces a bonus (log1p(2) ~= 1.099).
+  // Floor at 1.0 so same-day cramming is neutral, not penalized.
+  return Math.max(1.0, Math.log1p(maxGapDays + 1));
+}
+
 export function scoreEntryWithBreakdown(
   entry: StoredEntry,
   vectorSim: number,
@@ -312,17 +374,27 @@ export function scoreEntryWithBreakdown(
   now: Date,
 ): { score: number; scores: RecallResult["scores"] } {
   const daysOld = parseDaysBetween(now, entry.created_at);
-  const daysSinceRecall = entry.last_recalled_at ? parseDaysBetween(now, entry.last_recalled_at) : daysOld;
+  const daysSinceRecall = entry.last_recalled_at
+    ? parseDaysBetween(now, entry.last_recalled_at)
+    : daysOld;
 
   const rawVector = clamp01(vectorSim);
   const sim = Math.pow(rawVector, 0.7);
   const rec = recency(daysOld, entry.expiry);
   const imp = importanceScore(entry.importance);
-  const recall = recallStrength(entry.recall_count, daysSinceRecall, entry.expiry);
+  const recallBase = recallStrength(entry.recall_count, daysSinceRecall, entry.expiry);
+
+  const spacingFactor = computeSpacingFactor(
+    entry.recall_intervals ?? [],
+    entry.recall_count,
+    entry.created_at,
+    entry.last_recalled_at,
+  );
+
   const fts = ftsMatch ? 0.15 : 0;
 
   const fresh = freshnessBoost(entry, now);
-  const memoryStrength = Math.min(Math.max(imp, recall) * fresh, 1.0);
+  const memoryStrength = Math.min(Math.max(imp, recallBase) * fresh * spacingFactor, 1.0);
   const todoPenalty = entry.type === "todo" ? todoStaleness(entry, now) : 1.0;
   const contradictionPenalty = entry.contradictions >= 2 ? 0.8 : 1.0;
   const score = sim * (0.3 + 0.7 * rec) * memoryStrength * todoPenalty * contradictionPenalty + fts;
@@ -332,10 +404,11 @@ export function scoreEntryWithBreakdown(
       vector: rawVector,
       recency: rec,
       importance: imp,
-      recall,
+      recall: recallBase,
       freshness: fresh,
       todoPenalty,
       fts,
+      spacing: spacingFactor,
     },
   };
 }
@@ -411,6 +484,7 @@ async function fetchVectorCandidates(
         e.updated_at,
         e.last_recalled_at,
         e.recall_count,
+        e.recall_intervals,
         e.confirmations,
         e.contradictions,
         e.superseded_by,
@@ -494,6 +568,7 @@ async function fetchSessionCandidates(
         updated_at,
         last_recalled_at,
         recall_count,
+        recall_intervals,
         confirmations,
         contradictions,
         superseded_by,
@@ -577,14 +652,16 @@ export async function updateRecallMetadata(db: Client, ids: string[], now: Date)
   }
 
   const placeholders = ids.map(() => "?").join(", ");
+  const epochSecs = Math.floor(now.getTime() / 1000);
   await db.execute({
     sql: `
       UPDATE entries
       SET recall_count = COALESCE(recall_count, 0) + 1,
-          last_recalled_at = ?
+          last_recalled_at = ?,
+          recall_intervals = json_insert(COALESCE(recall_intervals, '[]'), '$[#]', ?)
       WHERE id IN (${placeholders})
     `,
-    args: [now.toISOString(), ...ids],
+    args: [now.toISOString(), epochSecs, ...ids],
   });
 }
 
@@ -689,6 +766,7 @@ export async function recall(
           freshness: 1,
           todoPenalty: 1,
           fts: 0,
+          spacing: 1.0,
         },
       };
     }
@@ -709,9 +787,14 @@ export async function recall(
     const ids = results.map((result) => result.entry.id);
     await updateRecallMetadata(db, ids, now);
     const nowIso = now.toISOString();
+    const epochSecs = Math.floor(now.getTime() / 1000);
     for (const result of results) {
       result.entry.recall_count += 1;
       result.entry.last_recalled_at = nowIso;
+      result.entry.recall_intervals = [
+        ...(result.entry.recall_intervals ?? []),
+        epochSecs,
+      ];
     }
   }
 

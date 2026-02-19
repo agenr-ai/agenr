@@ -17,6 +17,7 @@ function createDeps(overrides?: Partial<ResetCommandDeps>): { deps: ResetCommand
     resolveDbPathFn: vi.fn(() => "/tmp/knowledge.db"),
     backupDbFn: vi.fn(async () => "/tmp/knowledge.db.backup-pre-reset-2026-02-19T10-00-00-000Z"),
     resetDbFn: vi.fn(async () => undefined),
+    vacuumDbFn: vi.fn(async () => undefined),
     getDbFn: vi.fn(() => db),
     closeDbFn: vi.fn(() => undefined),
     listContextFilesFn: vi.fn(async () => []),
@@ -47,6 +48,7 @@ describe("runResetCommand", () => {
     expect(stdoutLines[0]).toBe("[dry run] agenr db reset --full would perform the following actions:");
     expect(stdoutLines[1]).toMatch(/^  - Backup database to: \/tmp\/knowledge\.db\.backup-pre-reset-.+Z$/);
     expect(stdoutLines).toContain("  - Drop and recreate DB schema (all data erased, file retained)");
+    expect(stdoutLines).toContain("  - VACUUM database (reclaim freed pages)");
     expect(stdoutLines).toContain(`  - Delete: ${watchStatePath}`);
     expect(stdoutLines).toContain(`  - Delete: ${REVIEW_QUEUE_PATH}`);
     expect(stdoutLines).toContain(`  - Delete: ${path.join(configDir, "context*.md")} (any matching files)`);
@@ -62,6 +64,7 @@ describe("runResetCommand", () => {
     expect(deps.backupDbFn).toHaveBeenCalledWith("/tmp/knowledge.db");
     expect(deps.getDbFn).toHaveBeenCalledWith("/tmp/knowledge.db");
     expect(deps.resetDbFn).toHaveBeenCalledWith(db);
+    expect(deps.vacuumDbFn).toHaveBeenCalledWith(db);
     expect(deps.closeDbFn).toHaveBeenCalledTimes(1);
     expect(deps.listContextFilesFn).toHaveBeenCalledTimes(1);
     expect(deps.deleteFileFn).toHaveBeenCalledTimes(2);
@@ -75,6 +78,7 @@ describe("runResetCommand", () => {
     expect(stdoutLines).toContain("Backup created: /tmp/knowledge.db.backup-pre-reset-2026-02-19T10-00-00-000Z");
     expect(stdoutLines).toContain("Reset complete.");
     expect(stdoutLines).toContain("  DB schema dropped and recreated: /tmp/knowledge.db");
+    expect(stdoutLines).toContain("  VACUUM complete (freed pages reclaimed)");
     expect(stdoutLines).toContain("  watch-state.json deleted (or was not present)");
     expect(stdoutLines).toContain("  review-queue.json deleted (or was not present)");
     expect(stdoutLines).toContain("  context*.md: none found");
@@ -140,8 +144,37 @@ describe("runResetCommand", () => {
     expect(deps.stderrLine).toHaveBeenCalledWith("reset failed");
     expect(deps.getDbFn).toHaveBeenCalled();
     expect(deps.resetDbFn).toHaveBeenCalledWith(db);
+    expect(deps.vacuumDbFn).not.toHaveBeenCalled();
     expect(deps.closeDbFn).toHaveBeenCalledTimes(1);
     expect(deps.deleteFileFn).not.toHaveBeenCalled();
+  });
+
+  it("calls vacuumDbFn after resetDbFn on successful reset", async () => {
+    const { deps } = createDeps();
+
+    const result = await runResetCommand({ confirmReset: true }, deps);
+
+    expect(result.exitCode).toBe(0);
+    expect(deps.resetDbFn).toHaveBeenCalledTimes(1);
+    expect(deps.vacuumDbFn).toHaveBeenCalledTimes(1);
+    const resetCallOrder = (deps.resetDbFn as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER;
+    const vacuumCallOrder =
+      (deps.vacuumDbFn as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0] ?? Number.MIN_SAFE_INTEGER;
+    expect(vacuumCallOrder).toBeGreaterThan(resetCallOrder);
+  });
+
+  it("returns exit 1 when vacuumDbFn throws", async () => {
+    const { deps } = createDeps({
+      vacuumDbFn: vi.fn(async () => {
+        throw new Error("vacuum failed");
+      }),
+    });
+
+    const result = await runResetCommand({ confirmReset: true }, deps);
+
+    expect(result.exitCode).toBe(1);
+    expect(deps.stderrLine).toHaveBeenCalledWith("vacuum failed");
+    expect(deps.closeDbFn).toHaveBeenCalledTimes(1);
   });
 
   it("warns on non-ENOENT side-file deletion errors and still exits 0", async () => {

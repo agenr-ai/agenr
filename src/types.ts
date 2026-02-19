@@ -185,6 +185,7 @@ export interface StoredEntry extends KnowledgeEntry {
   updated_at: string;
   last_recalled_at?: string;
   recall_count: number;
+  recall_intervals?: number[];
   confirmations: number;
   contradictions: number;
   superseded_by?: string;
@@ -212,6 +213,7 @@ export interface RecallResult {
     freshness: number;
     todoPenalty: number;
     fts: number;
+    spacing: number;
   };
 }
 

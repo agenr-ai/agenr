@@ -18,6 +18,7 @@ interface RawStoredEntryFields {
   updated_at?: unknown;
   last_recalled_at?: unknown;
   recall_count?: unknown;
+  recall_intervals?: unknown;
   confirmations?: unknown;
   contradictions?: unknown;
   superseded_by?: unknown;
@@ -58,6 +59,23 @@ export function mapRawStoredEntry(
     }
   }
 
+  // Parse recall_intervals from JSON string stored in DB.
+  // Corrupt or missing data falls back to undefined (spacingFactor will use 1.0).
+  let recallIntervals: number[] | undefined;
+  const rawIntervals = row.recall_intervals;
+  if (typeof rawIntervals === "string" && rawIntervals.trim().length > 0) {
+    try {
+      const parsed: unknown = JSON.parse(rawIntervals);
+      if (Array.isArray(parsed)) {
+        recallIntervals = parsed.filter(
+          (v): v is number => typeof v === "number" && Number.isFinite(v),
+        );
+      }
+    } catch {
+      // Corrupt JSON - fall back to undefined. Do not throw.
+    }
+  }
+
   const entry: StoredEntry = {
     id: toStringValue(row.id),
     type: toStringValue(row.type) as StoredEntry["type"],
@@ -78,6 +96,7 @@ export function mapRawStoredEntry(
     updated_at: toStringValue(row.updated_at),
     last_recalled_at: toStringValue(row.last_recalled_at) || undefined,
     recall_count: Number.isFinite(recallCountRaw) ? recallCountRaw : 0,
+    ...(recallIntervals !== undefined ? { recall_intervals: recallIntervals } : {}),
     confirmations: Number.isFinite(confirmationsRaw) ? confirmationsRaw : 0,
     contradictions: Number.isFinite(contradictionsRaw) ? contradictionsRaw : 0,
     superseded_by: toStringValue(row.superseded_by) || undefined,
