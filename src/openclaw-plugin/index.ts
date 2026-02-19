@@ -16,10 +16,47 @@ import type {
 
 // Session key substrings that indicate non-interactive sessions to skip.
 const SKIP_SESSION_PATTERNS = [":subagent:", ":cron:"];
-const seenSessions = new Set<string>();
+const DEFAULT_MAX_SEEN_SESSIONS = 1000;
+const seenSessions = new Map<string, true>();
+
+function resolveMaxSeenSessions(): number {
+  const raw = process.env.AGENR_OPENCLAW_MAX_SEEN_SESSIONS;
+  if (!raw) {
+    return DEFAULT_MAX_SEEN_SESSIONS;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return parsed;
+  }
+  return DEFAULT_MAX_SEEN_SESSIONS;
+}
+
+const maxSeenSessions = resolveMaxSeenSessions();
 
 function shouldSkipSession(sessionKey: string): boolean {
   return SKIP_SESSION_PATTERNS.some((pattern) => sessionKey.includes(pattern));
+}
+
+function hasSeenSession(sessionKey: string): boolean {
+  const seen = seenSessions.has(sessionKey);
+  if (!seen) {
+    return false;
+  }
+  // Refresh recency on access.
+  seenSessions.delete(sessionKey);
+  seenSessions.set(sessionKey, true);
+  return true;
+}
+
+function markSessionSeen(sessionKey: string): void {
+  seenSessions.set(sessionKey, true);
+  while (seenSessions.size > maxSeenSessions) {
+    const oldestKey = seenSessions.keys().next().value;
+    if (!oldestKey) {
+      break;
+    }
+    seenSessions.delete(oldestKey);
+  }
 }
 
 const plugin = {
@@ -39,16 +76,16 @@ const plugin = {
           if (shouldSkipSession(sessionKey)) {
             return;
           }
-          if (sessionKey && seenSessions.has(sessionKey)) {
+          if (sessionKey && hasSeenSession(sessionKey)) {
             return;
-          }
-          if (sessionKey) {
-            seenSessions.add(sessionKey);
           }
 
           const config = api.pluginConfig as AgenrPluginConfig | undefined;
           if (config?.enabled === false) {
             return;
+          }
+          if (sessionKey) {
+            markSessionSeen(sessionKey);
           }
 
           const agenrPath = resolveAgenrPath(config);

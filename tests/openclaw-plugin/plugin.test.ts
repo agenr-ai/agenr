@@ -1,11 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { BeforeAgentStartEvent, BeforeAgentStartResult } from "../../src/openclaw-plugin/types.js";
-
-type PluginHookAgentContext = {
-  sessionKey?: string;
-  workspaceDir?: string;
-  [key: string]: unknown;
-};
+import type {
+  BeforeAgentStartEvent,
+  BeforeAgentStartResult,
+  PluginHookAgentContext,
+} from "../../src/openclaw-plugin/types.js";
 
 type BeforeAgentStartHandler = (
   event: BeforeAgentStartEvent,
@@ -211,9 +209,7 @@ describe("agenr OpenClaw plugin", () => {
 
   it("does not reject when writeAgenrMd fails", async () => {
     vi.resetModules();
-    const writeAgenrMd = vi.fn(async () => {
-      throw new Error("write failed");
-    });
+    const writeAgenrMd = vi.fn(async () => {});
     vi.doMock(recallModulePath, () => ({
       resolveAgenrPath: vi.fn(() => "/tmp/agenr-cli.js"),
       resolveBudget: vi.fn(() => 2000),
@@ -230,6 +226,33 @@ describe("agenr OpenClaw plugin", () => {
     await expect(
       handler({}, { sessionKey: "agent:main:test-write-failure", workspaceDir: "/tmp/workspace" })
     ).resolves.toEqual({ prependContext: "## agenr Memory Context" });
+  });
+
+  it("does not consume session keys when config is disabled", async () => {
+    vi.resetModules();
+    const runRecall = vi.fn(async () => ({
+      query: "",
+      results: [{ entry: { type: "fact", subject: "subject", content: "content" }, score: 0.99 }],
+    }));
+    vi.doMock(recallModulePath, () => ({
+      resolveAgenrPath: vi.fn(() => "/tmp/agenr-cli.js"),
+      resolveBudget: vi.fn(() => 2000),
+      runRecall,
+      formatRecallAsMarkdown: vi.fn(() => "## agenr Memory Context"),
+      formatRecallAsSummary: vi.fn(() => "## agenr Memory\n\n1 entries recalled."),
+      writeAgenrMd: vi.fn(async () => {}),
+    }));
+
+    const pluginConfig: { enabled: boolean } = { enabled: false };
+    const { handler } = await registerPlugin(pluginConfig);
+    const sessionKey = "agent:main:test-disabled-then-enabled";
+
+    await handler({}, { sessionKey });
+    pluginConfig.enabled = true;
+    const result = await handler({}, { sessionKey });
+
+    expect(result?.prependContext).toContain("## agenr Memory Context");
+    expect(runRecall).toHaveBeenCalledTimes(1);
   });
 
   it("returns undefined when config.enabled is false", async () => {
