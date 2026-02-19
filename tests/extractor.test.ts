@@ -169,6 +169,7 @@ async function seedEntries(db: Client, count: number, similarity = 0): Promise<v
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
   for (const db of openDbs.splice(0)) {
     db.close();
   }
@@ -257,14 +258,14 @@ describe("pre-fetch", () => {
   it("filters by similarity threshold with boundary handling", async () => {
     const db = await makeDb();
     await seedEntries(db, 15, 0.1);
-    await insertEntryWithEmbedding(db, "sim-090", 0.9, { subject: "sim-090", content: "sim-090" });
     await insertEntryWithEmbedding(db, "sim-080", 0.8, { subject: "sim-080", content: "sim-080" });
     await insertEntryWithEmbedding(db, "sim-07801", 0.7801, { subject: "sim-07801", content: "sim-07801" });
+    await insertEntryWithEmbedding(db, "sim-07800", 0.78, { subject: "sim-07800", content: "sim-07800" });
     await insertEntryWithEmbedding(db, "sim-07799", 0.7799, { subject: "sim-07799", content: "sim-07799" });
     await insertEntryWithEmbedding(db, "sim-070", 0.7, { subject: "sim-070", content: "sim-070" });
 
     const related = await preFetchRelated("chunk", db, "sk-test", async () => [unitVector(1)]);
-    expect(related.map((entry) => entry.subject)).toEqual(["sim-090", "sim-080", "sim-07801"]);
+    expect(related.map((entry) => entry.subject)).toEqual(["sim-080", "sim-07801", "sim-07800"]);
   });
 
   it("caps related results at MAX_PREFETCH_RESULTS", async () => {
@@ -336,6 +337,13 @@ describe("pre-fetch", () => {
     expect(prompt).toContain("Existing related memories");
     expect(prompt).toContain("[none found]");
     expect(prompt).not.toContain("- [");
+  });
+
+  it("omits related-memory section when related is omitted or undefined", () => {
+    const withoutArg = buildUserPrompt(fakeChunk());
+    const explicitUndefined = buildUserPrompt(fakeChunk(), undefined);
+    expect(withoutArg).not.toContain("Existing related memories");
+    expect(explicitUndefined).not.toContain("Existing related memories");
   });
 
   it("renders related entries in prompt when provided", () => {

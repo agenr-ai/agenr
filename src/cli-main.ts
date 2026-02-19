@@ -167,9 +167,12 @@ export async function runExtractCommand(
         embeddingApiKey = resolvedDeps.resolveEmbeddingApiKeyFn(config, process.env);
         db = resolvedDeps.getDbFn(dbPath);
         await resolvedDeps.initDbFn(db);
-      } catch {
+      } catch (error) {
         db = undefined;
         embeddingApiKey = undefined;
+        if (verbose) {
+          stderrLine(`[pre-fetch] init skipped: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
     }
   }

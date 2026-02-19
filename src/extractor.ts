@@ -253,6 +253,7 @@ const DEFAULT_INTER_CHUNK_DELAY_MS = 150;
 const DEDUP_BATCH_SIZE = 50;
 const DEDUP_BATCH_TRIGGER = 100;
 export const PREFETCH_SIMILARITY_THRESHOLD = 0.78;
+const PREFETCH_SIMILARITY_EPSILON = 1e-6;
 export const PREFETCH_CANDIDATE_LIMIT = 10;
 export const MAX_PREFETCH_RESULTS = 3;
 export const PREFETCH_MIN_DB_ENTRIES = 20;
@@ -351,7 +352,9 @@ export async function preFetchRelated(
       onVerbose?.(`[pre-fetch] embedded chunk (${queryVec.length} dims)`);
       const candidates = await fetchRelatedEntries(db, queryVec, PREFETCH_CANDIDATE_LIMIT);
       onVerbose?.(`[pre-fetch] ${candidates.length} candidates returned`);
-      const above = candidates.filter((candidate) => candidate.vectorSim >= PREFETCH_SIMILARITY_THRESHOLD);
+      const above = candidates.filter(
+        (candidate) => candidate.vectorSim + PREFETCH_SIMILARITY_EPSILON >= PREFETCH_SIMILARITY_THRESHOLD,
+      );
       onVerbose?.(`[pre-fetch] ${above.length} above threshold ${PREFETCH_SIMILARITY_THRESHOLD}`);
       return above.slice(0, MAX_PREFETCH_RESULTS).map((candidate) => candidate.entry);
     } catch (error) {
@@ -375,9 +378,8 @@ export async function preFetchRelated(
   return result;
 }
 
-export function buildUserPrompt(chunk: TranscriptChunk, related: StoredEntry[] = []): string {
-  const includeRelatedSection = arguments.length >= 2;
-  if (!includeRelatedSection) {
+export function buildUserPrompt(chunk: TranscriptChunk, related?: StoredEntry[]): string {
+  if (related === undefined) {
     return [
       "Selectively extract durable knowledge from this conversation transcript.",
       "",
@@ -1235,27 +1237,9 @@ async function extractChunkOnce(params: {
   onVerbose?: (line: string) => void;
   onStreamDelta?: (delta: string, kind: "text" | "thinking") => void;
   streamSimpleImpl?: StreamSimpleFn;
-  db?: Client;
-  embeddingApiKey?: string;
-  noPreFetch?: boolean;
-  embedFn?: (texts: string[], apiKey: string) => Promise<number[][]>;
   related?: StoredEntry[];
 }): Promise<{ entries: KnowledgeEntry[]; warnings: string[] }> {
-  const hasRelatedOverride = Object.prototype.hasOwnProperty.call(params, "related");
-  let prompt = buildUserPrompt(params.chunk);
-  if (params.noPreFetch !== true) {
-    let related = hasRelatedOverride ? (params.related ?? []) : [];
-    if (!hasRelatedOverride && params.db && params.embeddingApiKey) {
-      related = await preFetchRelated(
-        params.chunk.text,
-        params.db,
-        params.embeddingApiKey,
-        params.embedFn,
-        params.verbose ? params.onVerbose : undefined,
-      );
-    }
-    prompt = buildUserPrompt(params.chunk, related);
-  }
+  const prompt = buildUserPrompt(params.chunk, params.related);
 
   const context: Context = {
     systemPrompt: SYSTEM_PROMPT,
@@ -1391,7 +1375,7 @@ export async function extractKnowledgeFromChunks(params: {
                   params.embedFn,
                   params.verbose ? params.onVerbose : undefined,
                 )
-              : [];
+              : undefined;
 
         for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
           if (params.verbose) {
@@ -1418,10 +1402,6 @@ export async function extractKnowledgeFromChunks(params: {
                   }
                 : params.onStreamDelta,
               streamSimpleImpl: params.streamSimpleImpl,
-              db: params.db,
-              embeddingApiKey: params.embeddingApiKey,
-              noPreFetch: params.noPreFetch,
-              embedFn: params.embedFn,
               related,
             });
 

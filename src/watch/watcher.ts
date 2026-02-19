@@ -281,8 +281,11 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
   if (!options.noPreFetch) {
     try {
       embeddingApiKey = resolvedDeps.resolveEmbeddingApiKeyFn(config, process.env);
-    } catch {
+    } catch (error) {
       embeddingApiKey = null;
+      options.onWarn?.(
+        `Pre-fetch disabled - embedding API key not available: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 

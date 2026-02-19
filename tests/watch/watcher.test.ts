@@ -960,6 +960,61 @@ describe("watcher", () => {
     expect(deps.storeEntriesFn).not.toHaveBeenCalled();
   });
 
+  it("watcher does not call embedFn when noPreFetch=true", async () => {
+    const filePath = "/tmp/watch.jsonl";
+    const embedFn = vi.fn(async () => [[1, 0, 0]]);
+    const extractKnowledgeFromChunksFn = vi.fn(
+      async (params: {
+        noPreFetch?: boolean;
+        onChunkComplete?: (result: {
+          chunkIndex: number;
+          totalChunks: number;
+          entries: KnowledgeEntry[];
+          warnings: string[];
+        }) => Promise<void>;
+      }) => {
+        if (params.noPreFetch !== true) {
+          await embedFn(["chunk text"], "sk-test");
+        }
+        await params.onChunkComplete?.({
+          chunkIndex: 0,
+          totalChunks: 1,
+          entries: [makeEntry("one")],
+          warnings: [],
+        });
+        return {
+          entries: [],
+          successfulChunks: 1,
+          failedChunks: 0,
+          warnings: [],
+        };
+      },
+    );
+
+    const deps = makeDeps({
+      statFileFn: vi.fn(async () => ({ size: 25, isFile: () => true })),
+      readFileFn: vi.fn(async () => Buffer.from("this content passes threshold")),
+      extractKnowledgeFromChunksFn,
+    });
+
+    await runWatcher(
+      {
+        filePath,
+        intervalMs: 1,
+        minChunkChars: 5,
+        dryRun: true,
+        verbose: false,
+        once: true,
+        noPreFetch: true,
+      },
+      deps,
+    );
+
+    expect(extractKnowledgeFromChunksFn).toHaveBeenCalledTimes(1);
+    expect(extractKnowledgeFromChunksFn.mock.calls[0]?.[0]?.noPreFetch).toBe(true);
+    expect(embedFn).not.toHaveBeenCalled();
+  });
+
   it("streams extraction chunks through callback and stores incrementally", async () => {
     const filePath = "/tmp/watch.jsonl";
     const parseTranscriptFileFn = vi.fn(async () => ({

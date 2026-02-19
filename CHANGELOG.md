@@ -12,7 +12,7 @@
 - tuning(extractor): fresh-install pre-fetch skip threshold set to 20 non-superseded entries
 - tuning(extractor): pre-fetch timeout set to 5000ms to avoid chunk extraction stalls on hanging embedding calls
 
-### Safety
+### Security
 - prompt: injected related memories are explicitly reference-only and do not lower the SKIP threshold
 - runtime: pre-fetch is always best-effort and silently degrades to empty related-memory context on any error
 
