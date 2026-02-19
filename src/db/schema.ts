@@ -406,17 +406,18 @@ export async function resetDb(db: Client): Promise<void> {
       if (!type || !name) {
         continue;
       }
+      const safeName = name.replace(/"/g, "\"\"");
 
       if (type === "trigger") {
-        await db.execute(`DROP TRIGGER IF EXISTS "${name}"`);
+        await db.execute(`DROP TRIGGER IF EXISTS "${safeName}"`);
         continue;
       }
       if (type === "index") {
-        await db.execute(`DROP INDEX IF EXISTS "${name}"`);
+        await db.execute(`DROP INDEX IF EXISTS "${safeName}"`);
         continue;
       }
       if (type === "table") {
-        await db.execute(`DROP TABLE IF EXISTS "${name}"`);
+        await db.execute(`DROP TABLE IF EXISTS "${safeName}"`);
       }
     }
 

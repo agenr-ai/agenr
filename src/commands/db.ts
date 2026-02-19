@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import * as clack from "@clack/prompts";
 import { readConfig } from "../config.js";
-import { backupDb, closeDb, DEFAULT_DB_PATH, getDb, initDb, walCheckpoint } from "../db/client.js";
+import { backupDb, closeDb, getDb, initDb, walCheckpoint } from "../db/client.js";
 import { initSchema, resetDb } from "../db/schema.js";
 import { rebuildVectorIndex } from "../db/vector-index.js";
 import { banner, formatLabel, ui } from "../ui.js";
@@ -12,6 +12,7 @@ import { normalizeKnowledgePlatform } from "../platform.js";
 import { buildProjectFilter, hasAnyProjectParts, parseProjectList } from "../project.js";
 import { KNOWLEDGE_PLATFORMS } from "../types.js";
 import { runResetCommand } from "./reset.js";
+import { resolveDbPathFromOptions } from "./shared.js";
 import type { KnowledgePlatform } from "../types.js";
 
 interface DbRow {
@@ -49,6 +50,7 @@ export interface DbCommandDeps {
   initSchemaFn: typeof initSchema;
   closeDbFn: typeof closeDb;
   backupDbFn: typeof backupDb;
+  resetDbFn: typeof resetDb;
 }
 
 function toNumber(value: unknown): number {
@@ -91,11 +93,9 @@ function resolveDbFilePath(rawPath: string): string {
   return resolveUserPath(rawPath);
 }
 
-function resolveEffectiveDbPath(inputPath: string | undefined): string {
-  if (inputPath?.trim()) {
-    return resolveDbFilePath(inputPath.trim());
-  }
-  return resolveDbFilePath(DEFAULT_DB_PATH);
+function resolveEffectiveDbPath(dbOption: string | undefined, configPath: string | undefined): string {
+  const configuredPath = resolveDbPathFromOptions(dbOption, configPath);
+  return resolveDbFilePath(configuredPath);
 }
 
 async function hasMetaTable(db: ReturnType<typeof getDb>): Promise<boolean> {
@@ -266,11 +266,11 @@ export async function runDbPathCommand(options: DbCommandCommonOptions, deps?: P
     initSchemaFn: deps?.initSchemaFn ?? initSchema,
     closeDbFn: deps?.closeDbFn ?? closeDb,
     backupDbFn: deps?.backupDbFn ?? backupDb,
+    resetDbFn: deps?.resetDbFn ?? resetDb,
   };
 
   const config = resolvedDeps.readConfigFn(process.env);
-  const configured = options.db?.trim() || config?.db?.path || DEFAULT_DB_PATH;
-  const resolved = resolveEffectiveDbPath(configured);
+  const resolved = resolveEffectiveDbPath(options.db, config?.db?.path);
   process.stdout.write(`${resolved}\n`);
   return resolved;
 }
@@ -295,14 +295,15 @@ export async function runDbStatsCommand(
     initSchemaFn: deps?.initSchemaFn ?? initSchema,
     closeDbFn: deps?.closeDbFn ?? closeDb,
     backupDbFn: deps?.backupDbFn ?? backupDb,
+    resetDbFn: deps?.resetDbFn ?? resetDb,
   };
 
   const clackOutput = { output: process.stderr };
   clack.intro(banner(), clackOutput);
 
   const config = resolvedDeps.readConfigFn(process.env);
-  const configured = options.db?.trim() || config?.db?.path || DEFAULT_DB_PATH;
-  const resolvedPath = resolveEffectiveDbPath(configured);
+  const configured = resolveDbPathFromOptions(options.db, config?.db?.path);
+  const resolvedPath = resolveEffectiveDbPath(options.db, config?.db?.path);
   const db = resolvedDeps.getDbFn(configured);
   const platformRaw = options.platform?.trim();
   const platform = platformRaw ? normalizeKnowledgePlatform(platformRaw) : null;
@@ -495,10 +496,11 @@ export async function runDbVersionCommand(
     initSchemaFn: deps?.initSchemaFn ?? initSchema,
     closeDbFn: deps?.closeDbFn ?? closeDb,
     backupDbFn: deps?.backupDbFn ?? backupDb,
+    resetDbFn: deps?.resetDbFn ?? resetDb,
   };
 
   const config = resolvedDeps.readConfigFn(process.env);
-  const configured = options.db?.trim() || config?.db?.path || DEFAULT_DB_PATH;
+  const configured = resolveDbPathFromOptions(options.db, config?.db?.path);
   const db = resolvedDeps.getDbFn(configured);
 
   try {
@@ -546,6 +548,7 @@ export async function runDbExportCommand(
     initSchemaFn: deps?.initSchemaFn ?? initSchema,
     closeDbFn: deps?.closeDbFn ?? closeDb,
     backupDbFn: deps?.backupDbFn ?? backupDb,
+    resetDbFn: deps?.resetDbFn ?? resetDb,
   };
 
   if (!options.json && !options.md) {
@@ -556,7 +559,7 @@ export async function runDbExportCommand(
   }
 
   const config = resolvedDeps.readConfigFn(process.env);
-  const configured = options.db?.trim() || config?.db?.path || DEFAULT_DB_PATH;
+  const configured = resolveDbPathFromOptions(options.db, config?.db?.path);
   const db = resolvedDeps.getDbFn(configured);
   const platformRaw = options.platform?.trim();
   const platform = platformRaw ? normalizeKnowledgePlatform(platformRaw) : null;
@@ -603,19 +606,20 @@ export async function runDbResetCommand(
     initSchemaFn: deps?.initSchemaFn ?? initSchema,
     closeDbFn: deps?.closeDbFn ?? closeDb,
     backupDbFn: deps?.backupDbFn ?? backupDb,
+    resetDbFn: deps?.resetDbFn ?? resetDb,
   };
 
-  const confirmReset = options.full && options.confirm && !options.confirmReset ? true : options.confirmReset;
+  const confirmReset = options.confirmReset === true;
 
   if (options.full) {
     return runResetCommand(
       { db: options.db, confirmReset },
       {
         resolveDbPathFn: (resetOptions) =>
-          resetOptions.db?.trim() || resolvedDeps.readConfigFn(process.env)?.db?.path || DEFAULT_DB_PATH,
+          resolveDbPathFromOptions(resetOptions.db, resolvedDeps.readConfigFn(process.env)?.db?.path),
         getDbFn: resolvedDeps.getDbFn,
         closeDbFn: resolvedDeps.closeDbFn,
-        resetDbFn: resetDb,
+        resetDbFn: resolvedDeps.resetDbFn,
         backupDbFn: resolvedDeps.backupDbFn,
       },
     );
@@ -629,11 +633,11 @@ export async function runDbResetCommand(
   clack.intro(banner(), clackOutput);
 
   const config = resolvedDeps.readConfigFn(process.env);
-  const configured = options.db?.trim() || config?.db?.path || DEFAULT_DB_PATH;
+  const configured = resolveDbPathFromOptions(options.db, config?.db?.path);
   const db = resolvedDeps.getDbFn(configured);
 
   try {
-    await resetDb(db);
+    await resolvedDeps.resetDbFn(db);
     clack.log.success("Database reset and schema reinitialized.", clackOutput);
     clack.outro(undefined, clackOutput);
     return { exitCode: 0 };
@@ -653,13 +657,14 @@ export async function runDbRebuildIndexCommand(
     initSchemaFn: deps?.initSchemaFn ?? initSchema,
     closeDbFn: deps?.closeDbFn ?? closeDb,
     backupDbFn: deps?.backupDbFn ?? backupDb,
+    resetDbFn: deps?.resetDbFn ?? resetDb,
   };
 
   const start = Date.now();
   let embeddingCount = 0;
 
   const config = resolvedDeps.readConfigFn(process.env);
-  const configured = options.db?.trim() || config?.db?.path || DEFAULT_DB_PATH;
+  const configured = resolveDbPathFromOptions(options.db, config?.db?.path);
   const db = resolvedDeps.getDbFn(configured);
 
   try {
@@ -696,12 +701,13 @@ export async function runDbCheckCommand(
     initSchemaFn: deps?.initSchemaFn ?? initSchema,
     closeDbFn: deps?.closeDbFn ?? closeDb,
     backupDbFn: deps?.backupDbFn ?? backupDb,
+    resetDbFn: deps?.resetDbFn ?? resetDb,
   };
 
   let embeddingCount = 0;
 
   const config = resolvedDeps.readConfigFn(process.env);
-  const configured = options.db?.trim() || config?.db?.path || DEFAULT_DB_PATH;
+  const configured = resolveDbPathFromOptions(options.db, config?.db?.path);
   const db = resolvedDeps.getDbFn(configured);
 
   try {

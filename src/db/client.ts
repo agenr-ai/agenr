@@ -25,6 +25,35 @@ function resolveDbPath(dbPath: string): string {
   return resolveUserPath(dbPath);
 }
 
+function normalizeBackupSourcePath(dbPath: string): string {
+  const strippedDbPath = dbPath.startsWith("file:") ? dbPath.slice("file:".length) : dbPath;
+  return path.resolve(resolveDbPath(strippedDbPath));
+}
+
+function isErrnoCode(error: unknown, code: string): boolean {
+  return (error as NodeJS.ErrnoException | undefined)?.code === code;
+}
+
+async function copySidecarIfPresent(sourcePath: string, targetPath: string): Promise<void> {
+  try {
+    await fs.copyFile(sourcePath, targetPath);
+  } catch (error: unknown) {
+    if (isErrnoCode(error, "ENOENT")) {
+      return;
+    }
+    throw error;
+  }
+}
+
+export function buildBackupPath(dbPath: string): string {
+  const resolvedDbPath = normalizeBackupSourcePath(dbPath);
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-").replace(/Z$/, "");
+  return path.join(
+    path.dirname(resolvedDbPath),
+    `${path.basename(resolvedDbPath)}.backup-pre-reset-${timestamp}Z`,
+  );
+}
+
 export function getDb(dbPath?: string): Client {
   const rawPath = dbPath?.trim() ? dbPath.trim() : DEFAULT_DB_PATH;
 
@@ -139,15 +168,12 @@ export async function backupDb(dbPath: string): Promise<string> {
     closeDb(checkpointClient);
   }
 
-  const normalizedDbPath = dbPath.startsWith("file:") ? dbPath.slice("file:".length) : dbPath;
-  const resolvedDbPath = resolveDbPath(normalizedDbPath);
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-").replace(/Z$/, "");
-  const backupPath = path.join(
-    path.dirname(resolvedDbPath),
-    `${path.basename(resolvedDbPath)}.backup-pre-reset-${timestamp}Z`,
-  );
+  const resolvedDbPath = normalizeBackupSourcePath(dbPath);
+  const backupPath = buildBackupPath(dbPath);
 
   await fs.copyFile(resolvedDbPath, backupPath);
+  await copySidecarIfPresent(`${resolvedDbPath}-wal`, `${backupPath}-wal`);
+  await copySidecarIfPresent(`${resolvedDbPath}-shm`, `${backupPath}-shm`);
   return backupPath;
 }
 

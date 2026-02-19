@@ -853,7 +853,7 @@ export function createProgram(): Command {
     .description("Drop all database objects and recreate schema")
     .option("--confirm", "Required confirmation flag", false)
     .option("--full", "Also delete watch and review side files", false)
-    .option("--confirm-reset", "Execute full reset when used with --full", false)
+    .option("--confirm-reset", "Execute full reset when used with --full")
     .option("--db <path>", "Database path override")
     .action(async (opts: { db?: string; confirm?: boolean; full?: boolean; confirmReset?: boolean }) => {
       const result = await runDbResetCommand({

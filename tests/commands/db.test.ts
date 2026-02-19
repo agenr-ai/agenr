@@ -240,6 +240,38 @@ describe("db command", () => {
     ]);
   });
 
+  it("keeps full reset in dry-run mode when --confirm-reset is not provided", async () => {
+    const client = createTestClient();
+    await initDb(client);
+    const backupDbFn = vi.fn(async () => "/tmp/knowledge.db.backup");
+    const resetDbFn = vi.fn(async () => undefined);
+
+    const result = await runDbResetCommand(
+      { full: true, confirm: true },
+      { ...makeDeps(client), backupDbFn, resetDbFn },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(backupDbFn).not.toHaveBeenCalled();
+    expect(resetDbFn).not.toHaveBeenCalled();
+  });
+
+  it("uses injected resetDbFn for non-full reset", async () => {
+    const client = createTestClient();
+    await initDb(client);
+    await seedEntry(client, { id: "inject-1", type: "fact", subject: "Jim", content: "A", tag: "alpha" });
+    const resetDbFn = vi.fn(async () => undefined);
+
+    const result = await runDbResetCommand({ confirm: true }, { ...makeDeps(client), resetDbFn });
+
+    expect(result.exitCode).toBe(0);
+    expect(resetDbFn).toHaveBeenCalledTimes(1);
+    expect(resetDbFn).toHaveBeenCalledWith(client);
+
+    const entriesResult = await client.execute("SELECT COUNT(*) AS count FROM entries");
+    expect(Number((entriesResult.rows[0] as { count?: unknown } | undefined)?.count ?? 0)).toBe(1);
+  });
+
   it("exports only non-superseded entries as json and markdown", async () => {
     const client = createTestClient();
     await initDb(client);

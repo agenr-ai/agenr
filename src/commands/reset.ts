@@ -1,12 +1,12 @@
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import type { Client } from "@libsql/client";
 import { readConfig } from "../config.js";
 import { REVIEW_QUEUE_PATH } from "../consolidate/verify.js";
-import { backupDb, closeDb, DEFAULT_DB_PATH, getDb } from "../db/client.js";
+import { backupDb, buildBackupPath, closeDb, getDb } from "../db/client.js";
 import { resetDb } from "../db/schema.js";
 import { resolveConfigDir } from "../watch/state.js";
+import { resolveDbPathFromOptions } from "./shared.js";
 
 export interface ResetCommandOptions {
   db?: string;
@@ -38,24 +38,11 @@ function stderrLine(message: string): void {
 }
 
 function resolveDbPath(options: ResetCommandOptions): string {
-  return options.db?.trim() || readConfig(process.env)?.db?.path || DEFAULT_DB_PATH;
+  return resolveDbPathFromOptions(options.db, readConfig(process.env)?.db?.path);
 }
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function buildPreResetBackupPath(dbPath: string): string {
-  const normalizedDbPath = dbPath.startsWith("file:") ? dbPath.slice("file:".length) : dbPath;
-  const expandedDbPath = normalizedDbPath.startsWith("~")
-    ? path.join(os.homedir(), normalizedDbPath.slice(1))
-    : normalizedDbPath;
-  const resolvedDbPath = path.resolve(expandedDbPath);
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-").replace(/Z$/, "");
-  return path.join(
-    path.dirname(resolvedDbPath),
-    `${path.basename(resolvedDbPath)}.backup-pre-reset-${timestamp}Z`,
-  );
 }
 
 function isEnoent(error: unknown): boolean {
@@ -109,7 +96,7 @@ export async function runResetCommand(
 
   if (!options.confirmReset) {
     resolvedDeps.stdoutLine("[dry run] agenr db reset --full would perform the following actions:");
-    resolvedDeps.stdoutLine(`  - Backup database to: ${buildPreResetBackupPath(resolvedDbPath)}`);
+    resolvedDeps.stdoutLine(`  - Backup database to: ${buildBackupPath(resolvedDbPath)}`);
     resolvedDeps.stdoutLine("  - Drop and recreate DB schema (all data erased, file retained)");
     resolvedDeps.stdoutLine(`  - Delete: ${watchStatePath}`);
     resolvedDeps.stdoutLine(`  - Delete: ${REVIEW_QUEUE_PATH}`);
