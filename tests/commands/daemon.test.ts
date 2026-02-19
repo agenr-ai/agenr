@@ -203,6 +203,7 @@ describe("daemon commands", () => {
 
   it("returns null health when health file is missing", async () => {
     const home = await makeTempDir();
+    let noteText = "";
 
     const result = await runDaemonStatusCommand(
       {},
@@ -217,11 +218,15 @@ describe("daemon commands", () => {
         })),
         loadWatchStateFn: vi.fn(async () => ({ version: 1 as const, files: {} })),
         readHealthFileFn: vi.fn(async () => null),
+        noteFn: (message: string) => {
+          noteText = message;
+        },
       },
     );
 
     expect(result.health).toBeNull();
     expect(result.exitCode).toBe(0);
+    expect(noteText).toContain("Heartbeat: no data");
   });
 
   it("shows deterministic heartbeat age in status note", async () => {

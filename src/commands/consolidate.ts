@@ -175,7 +175,7 @@ function buildScopedFilter(
   if (platform) {
     args.push(platform);
   }
-  args.push(...(projectSql.args as InValue[]));
+  args.push(...projectSql.args);
   const clause = `${platform ? "AND platform = ?" : ""} ${projectSql.clause}`.trim();
   return { clause: clause ? ` ${clause}` : "", args };
 }
@@ -320,7 +320,7 @@ async function collectForgettingCandidates(
 ): Promise<ForgettingCandidate[]> {
   const scoped = buildScopedFilter(platform, project, excludeProject);
   const cutoffDate = new Date(now.getTime() - maxAgeDays * 86_400_000).toISOString();
-  const args: InValue[] = [cutoffDate as InValue, ...scoped.args];
+  const args: InValue[] = [cutoffDate, ...scoped.args];
   const result = await db.execute({
     sql: `
       SELECT

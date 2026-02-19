@@ -88,9 +88,9 @@ export function buildProjectFilter(params: {
   project?: string[] | null;
   excludeProject?: string[];
   strict?: boolean;
-}): { clause: string; args: unknown[] } {
+}): { clause: string; args: string[] } {
   const clauses: string[] = [];
-  const args: unknown[] = [];
+  const args: string[] = [];
 
   const include = params.project;
   const exclude = params.excludeProject ?? [];
