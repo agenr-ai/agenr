@@ -1,6 +1,6 @@
 {
   "name": "agenr",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "AGENt memoRy -- Memory infrastructure for AI agents",
   "type": "module",
   "bin": {

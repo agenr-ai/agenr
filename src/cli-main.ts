@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import type { Client } from "@libsql/client";
 import * as clack from "@clack/prompts";
 import { Command } from "commander";
 import { formatAuthSummary, getAuthStatus, getQuickStatus } from "./auth-status.js";
@@ -35,6 +36,8 @@ import { runTodoCommand } from "./commands/todo.js";
 import { runWatchCommand } from "./commands/watch.js";
 import { describeAuth, maskSecret, readConfig, setConfigKey, setStoredCredential, writeConfig } from "./config.js";
 import { deduplicateEntries } from "./dedup.js";
+import { closeDb, getDb, initDb } from "./db/client.js";
+import { resolveEmbeddingApiKey } from "./embeddings/client.js";
 import { extractKnowledgeFromChunks } from "./extractor.js";
 import { createLlmClient } from "./llm/client.js";
 import { probeCredentials } from "./llm/credentials.js";
@@ -56,8 +59,10 @@ export interface ExtractCommandOptions {
   split?: boolean;
   model?: string;
   provider?: string;
+  db?: string;
   verbose?: boolean;
   noDedup?: boolean;
+  noPreFetch?: boolean;
 }
 
 export interface CliDeps {
@@ -68,6 +73,11 @@ export interface CliDeps {
   extractKnowledgeFromChunksFn: typeof extractKnowledgeFromChunks;
   deduplicateEntriesFn: typeof deduplicateEntries;
   writeOutputFn: typeof writeOutput;
+  readConfigFn: typeof readConfig;
+  resolveEmbeddingApiKeyFn: typeof resolveEmbeddingApiKey;
+  getDbFn: typeof getDb;
+  initDbFn: typeof initDb;
+  closeDbFn: typeof closeDb;
 }
 
 function stderrLine(message: string): void {
@@ -125,6 +135,11 @@ export async function runExtractCommand(
     extractKnowledgeFromChunksFn: deps?.extractKnowledgeFromChunksFn ?? extractKnowledgeFromChunks,
     deduplicateEntriesFn: deps?.deduplicateEntriesFn ?? deduplicateEntries,
     writeOutputFn: deps?.writeOutputFn ?? writeOutput,
+    readConfigFn: deps?.readConfigFn ?? readConfig,
+    resolveEmbeddingApiKeyFn: deps?.resolveEmbeddingApiKeyFn ?? resolveEmbeddingApiKey,
+    getDbFn: deps?.getDbFn ?? getDb,
+    initDbFn: deps?.initDbFn ?? initDb,
+    closeDbFn: deps?.closeDbFn ?? closeDb,
   };
 
   const expanded = await resolvedDeps.expandInputFilesFn(files);
@@ -141,6 +156,23 @@ export async function runExtractCommand(
     model: options.model,
     env: process.env,
   });
+
+  let db: Client | undefined;
+  let embeddingApiKey: string | undefined;
+  if (!options.noPreFetch) {
+    const config = resolvedDeps.readConfigFn(process.env);
+    const dbPath = options.db?.trim() || config?.db?.path?.trim();
+    if (dbPath) {
+      try {
+        embeddingApiKey = resolvedDeps.resolveEmbeddingApiKeyFn(config, process.env);
+        db = resolvedDeps.getDbFn(dbPath);
+        await resolvedDeps.initDbFn(db);
+      } catch {
+        db = undefined;
+        embeddingApiKey = undefined;
+      }
+    }
+  }
 
   const clackOutput = { output: process.stderr };
   clack.intro(banner(), clackOutput);
@@ -207,129 +239,145 @@ export async function runExtractCommand(
     return warning;
   };
 
-  if (verbose) {
-    for (const [index, file] of expanded.entries()) {
-      const key = toReportKey(file, keySet);
-      clack.log.info(`${ui.dim(`[${index + 1}/${expanded.length}]`)} ${path.basename(file)}`, clackOutput);
+  try {
+    if (verbose) {
+      for (const [index, file] of expanded.entries()) {
+        const key = toReportKey(file, keySet);
+        clack.log.info(`${ui.dim(`[${index + 1}/${expanded.length}]`)} ${path.basename(file)}`, clackOutput);
 
-      try {
-        const parsed = await resolvedDeps.parseTranscriptFileFn(file);
-        clack.log.info(
-          `[parse] ${key}: messages=${parsed.messages.length}, chunks=${parsed.chunks.length}`,
-          clackOutput,
-        );
+        try {
+          const parsed = await resolvedDeps.parseTranscriptFileFn(file);
+          clack.log.info(
+            `[parse] ${key}: messages=${parsed.messages.length}, chunks=${parsed.chunks.length}`,
+            clackOutput,
+          );
 
-        const extracted = await resolvedDeps.extractKnowledgeFromChunksFn({
-          file: key,
-          chunks: parsed.chunks,
-          client,
-          verbose: true,
-          noDedup: options.noDedup === true,
-          onVerbose: (line) => clack.log.info(line, clackOutput),
-          onStreamDelta: (delta) => process.stderr.write(delta),
-        });
-        process.stderr.write("\n");
+          const extracted = await resolvedDeps.extractKnowledgeFromChunksFn({
+            file: key,
+            chunks: parsed.chunks,
+            client,
+            verbose: true,
+            noDedup: options.noDedup === true,
+            db,
+            embeddingApiKey,
+            noPreFetch: options.noPreFetch === true,
+            onVerbose: (line) => clack.log.info(line, clackOutput),
+            onStreamDelta: (delta) => process.stderr.write(delta),
+          });
+          process.stderr.write("\n");
 
-        const stats = recordSuccess({
-          key,
-          chunks: parsed.chunks.length,
-          extracted,
-          parseWarnings: parsed.warnings,
-        });
+          const stats = recordSuccess({
+            key,
+            chunks: parsed.chunks.length,
+            extracted,
+            parseWarnings: parsed.warnings,
+          });
 
-        clack.log.info(ui.success(`${stats.deduped_entries} entries (${stats.chunks} chunks)`), clackOutput);
-      } catch (error) {
-        const warning = recordFailure(key, error);
-        clack.log.error(warning, clackOutput);
+          clack.log.info(ui.success(`${stats.deduped_entries} entries (${stats.chunks} chunks)`), clackOutput);
+        } catch (error) {
+          const warning = recordFailure(key, error);
+          clack.log.error(warning, clackOutput);
+        }
       }
+    } else {
+      await clack.tasks(
+        expanded.map((file, index) => ({
+          title: `${ui.dim(`[${index + 1}/${expanded.length}]`)} ${path.basename(file)}`,
+          task: async () => {
+            const key = toReportKey(file, keySet);
+
+            try {
+              const parsed = await resolvedDeps.parseTranscriptFileFn(file);
+              const extracted = await resolvedDeps.extractKnowledgeFromChunksFn({
+                file: key,
+                chunks: parsed.chunks,
+                client,
+                verbose: false,
+                noDedup: options.noDedup === true,
+                db,
+                embeddingApiKey,
+                noPreFetch: options.noPreFetch === true,
+              });
+
+              const stats = recordSuccess({
+                key,
+                chunks: parsed.chunks.length,
+                extracted,
+                parseWarnings: parsed.warnings,
+              });
+
+              return `${stats.deduped_entries} entries (${stats.chunks} chunks)`;
+            } catch (error) {
+              recordFailure(key, error);
+              return formatError("processing failed");
+            }
+          },
+        })),
+        clackOutput,
+      );
     }
-  } else {
-    await clack.tasks(
-      expanded.map((file, index) => ({
-        title: `${ui.dim(`[${index + 1}/${expanded.length}]`)} ${path.basename(file)}`,
-        task: async () => {
-          const key = toReportKey(file, keySet);
 
-          try {
-            const parsed = await resolvedDeps.parseTranscriptFileFn(file);
-            const extracted = await resolvedDeps.extractKnowledgeFromChunksFn({
-              file: key,
-              chunks: parsed.chunks,
-              client,
-              verbose: false,
-              noDedup: options.noDedup === true,
-            });
+    const report: ExtractionReport = {
+      version: APP_VERSION,
+      extracted_at: new Date().toISOString(),
+      provider: client.resolvedModel.provider,
+      model: client.resolvedModel.modelId,
+      files: fileMap,
+      summary: {
+        files: Object.keys(fileMap).length,
+        chunks: summaryChunks,
+        successful_chunks: summarySuccessChunks,
+        failed_chunks: summaryFailedChunks,
+        raw_entries: summaryRawEntries,
+        deduped_entries: summaryDedupedEntries,
+        warnings: summaryWarnings,
+      },
+    };
 
-            const stats = recordSuccess({
-              key,
-              chunks: parsed.chunks.length,
-              extracted,
-              parseWarnings: parsed.warnings,
-            });
+    const writtenPaths = await resolvedDeps.writeOutputFn({
+      report,
+      format: options.format,
+      output: options.output,
+      split: options.split === true,
+    });
 
-            return `${stats.deduped_entries} entries (${stats.chunks} chunks)`;
-          } catch (error) {
-            recordFailure(key, error);
-            return formatError("processing failed");
-          }
-        },
-      })),
+    clack.note(
+      [
+        formatLabel("Files", String(report.summary.files)),
+        formatLabel("Chunks", `${report.summary.successful_chunks}/${report.summary.chunks} successful`),
+        formatLabel(
+          "Entries",
+          `${report.summary.deduped_entries} entries (${report.summary.raw_entries - report.summary.deduped_entries} duplicates removed)`,
+        ),
+        report.summary.failed_chunks > 0 ? formatWarn(`${report.summary.failed_chunks} chunks failed`) : null,
+        report.summary.warnings > 0 ? formatWarn(`${report.summary.warnings} warning(s)`) : null,
+      ]
+        .filter((line): line is string => Boolean(line))
+        .join("\n"),
+      "Extraction Complete",
       clackOutput,
     );
+
+    for (const outPath of writtenPaths) {
+      clack.log.success("Wrote " + ui.bold(outPath), clackOutput);
+    }
+
+    clack.outro(undefined, clackOutput);
+
+    return {
+      exitCode: report.summary.successful_chunks > 0 ? 0 : 1,
+      report,
+      writtenPaths,
+    };
+  } finally {
+    if (db) {
+      try {
+        resolvedDeps.closeDbFn(db);
+      } catch {
+        // ignore
+      }
+    }
   }
-
-  const report: ExtractionReport = {
-    version: APP_VERSION,
-    extracted_at: new Date().toISOString(),
-    provider: client.resolvedModel.provider,
-    model: client.resolvedModel.modelId,
-    files: fileMap,
-    summary: {
-      files: Object.keys(fileMap).length,
-      chunks: summaryChunks,
-      successful_chunks: summarySuccessChunks,
-      failed_chunks: summaryFailedChunks,
-      raw_entries: summaryRawEntries,
-      deduped_entries: summaryDedupedEntries,
-      warnings: summaryWarnings,
-    },
-  };
-
-  const writtenPaths = await resolvedDeps.writeOutputFn({
-    report,
-    format: options.format,
-    output: options.output,
-    split: options.split === true,
-  });
-
-  clack.note(
-    [
-      formatLabel("Files", String(report.summary.files)),
-      formatLabel("Chunks", `${report.summary.successful_chunks}/${report.summary.chunks} successful`),
-      formatLabel(
-        "Entries",
-        `${report.summary.deduped_entries} entries (${report.summary.raw_entries - report.summary.deduped_entries} duplicates removed)`,
-      ),
-      report.summary.failed_chunks > 0 ? formatWarn(`${report.summary.failed_chunks} chunks failed`) : null,
-      report.summary.warnings > 0 ? formatWarn(`${report.summary.warnings} warning(s)`) : null,
-    ]
-      .filter((line): line is string => Boolean(line))
-      .join("\n"),
-    "Extraction Complete",
-    clackOutput,
-  );
-
-  for (const outPath of writtenPaths) {
-    clack.log.success("Wrote " + ui.bold(outPath), clackOutput);
-  }
-
-  clack.outro(undefined, clackOutput);
-
-  return {
-    exitCode: report.summary.successful_chunks > 0 ? 0 : 1,
-    report,
-    writtenPaths,
-  };
 }
 
 export function createProgram(): Command {
@@ -379,20 +427,24 @@ export function createProgram(): Command {
     .option("--format <type>", "Output format: json, markdown", "markdown")
     .option("--output <file>", "Write output to file (or directory with --split)")
     .option("--split", "Write one output file per input transcript", false)
+    .option("--db <path>", "Database path override")
     .option("--model <model>", "LLM model to use")
     .option("--provider <name>", "LLM provider: anthropic, openai, openai-codex")
     .option("--no-dedup", "Skip post-extraction LLM dedup pass", false)
+    .option("--no-pre-fetch", "Disable elaborative encoding pre-fetch")
     .option("--verbose", "Show extraction progress and debug info", false)
-    .action(async (files: string[], opts: ExtractCommandOptions) => {
+    .action(async (files: string[], opts: ExtractCommandOptions & { preFetch?: boolean }) => {
       const selectedFormat = opts.json ? "json" : opts.format;
       const format = selectedFormat === "json" ? "json" : selectedFormat === "markdown" ? "markdown" : null;
       if (!format) {
         throw new Error("--format must be one of: json, markdown");
       }
+      const noPreFetch = opts.noPreFetch === true || opts.preFetch === false;
 
       const result = await runExtractCommand(files, {
         ...opts,
         format,
+        noPreFetch,
       });
 
       process.exitCode = result.exitCode;
@@ -572,12 +624,16 @@ export function createProgram(): Command {
     .option("--model <model>", "LLM model to use")
     .option("--provider <name>", "LLM provider: anthropic, openai, openai-codex")
     .option("--raw", "Bypass adapter filtering (pass transcripts through unmodified)", false)
+    .option("--no-pre-fetch", "Disable elaborative encoding pre-fetch")
     .option("--verbose", "Show extraction progress", false)
     .option("--dry-run", "Extract without storing", false)
     .option("--once", "Run one cycle and exit", false)
     .option("--json", "Output JSON results", false)
-    .action(async (file: string | undefined, opts: WatchCommandOptions) => {
-      const result = await runWatchCommand(file, opts);
+    .action(async (file: string | undefined, opts: WatchCommandOptions & { preFetch?: boolean }) => {
+      const result = await runWatchCommand(file, {
+        ...opts,
+        noPreFetch: opts.noPreFetch === true || opts.preFetch === false,
+      });
       process.exitCode = result.exitCode;
     });
 
@@ -607,10 +663,14 @@ export function createProgram(): Command {
     .option("--concurrency <n>", "Parallel chunk extractions", parseIntOption, 5)
     .option("--skip-ingested", "Skip already-ingested files", true)
     .option("--no-retry", "Disable auto-retry for failed files")
+    .option("--no-pre-fetch", "Disable elaborative encoding pre-fetch")
     .option("--max-retries <n>", "Maximum auto-retry attempts", parseIntOption, 3)
     .option("--force", "Clean re-ingest: delete previous rows for each file before processing", false)
-    .action(async (paths: string[], opts: IngestCommandOptions) => {
-      const result = await runIngestCommand(paths, opts);
+    .action(async (paths: string[], opts: IngestCommandOptions & { preFetch?: boolean }) => {
+      const result = await runIngestCommand(paths, {
+        ...opts,
+        noPreFetch: opts.noPreFetch === true || opts.preFetch === false,
+      });
       process.exitCode = result.exitCode;
     });
 

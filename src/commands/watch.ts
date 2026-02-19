@@ -463,6 +463,7 @@ export async function runWatchCommand(
         raw,
         once,
         onlineDedup: options.onlineDedup !== false,
+        noPreFetch: options.noPreFetch === true,
         model: options.model,
         provider: options.provider,
         dbPath: options.db,

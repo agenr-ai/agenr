@@ -1,8 +1,18 @@
 import type { Api, AssistantMessage, AssistantMessageEvent, Context, Model, SimpleStreamOptions } from "@mariozechner/pi-ai";
+import { createClient, type Client } from "@libsql/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SYSTEM_PROMPT, extractKnowledgeFromChunks, validateEntry } from "../src/extractor.js";
+import {
+  MAX_PREFETCH_RESULTS,
+  PREFETCH_TIMEOUT_MS,
+  SYSTEM_PROMPT,
+  buildUserPrompt,
+  extractKnowledgeFromChunks,
+  preFetchRelated,
+  validateEntry,
+} from "../src/extractor.js";
+import { initDb } from "../src/db/client.js";
 import { requestShutdown, resetShutdownForTests } from "../src/shutdown.js";
-import type { LlmClient, TranscriptChunk } from "../src/types.js";
+import type { LlmClient, StoredEntry, TranscriptChunk } from "../src/types.js";
 
 function fakeModel(): Model<Api> {
   return {
@@ -102,6 +112,68 @@ function streamWithResult(result: Promise<AssistantMessage>, events: AssistantMe
   };
 }
 
+const openDbs: Client[] = [];
+
+async function makeDb(): Promise<Client> {
+  const db = createClient({ url: ":memory:" });
+  openDbs.push(db);
+  await initDb(db);
+  return db;
+}
+
+function unitVector(similarity: number): number[] {
+  const vec = Array.from({ length: 1024 }, () => 0);
+  vec[0] = similarity;
+  vec[1] = Math.sqrt(Math.max(0, 1 - similarity ** 2));
+  return vec;
+}
+
+async function insertEntryWithEmbedding(
+  db: Client,
+  id: string,
+  similarity: number,
+  overrides: Partial<StoredEntry> = {},
+): Promise<void> {
+  const now = "2026-02-19T00:00:00.000Z";
+  const embedding = unitVector(similarity);
+  await db.execute({
+    sql: `
+      INSERT INTO entries (
+        id, type, subject, content, importance, expiry, scope, source_file, source_context,
+        embedding, created_at, updated_at, recall_count, confirmations, contradictions
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, vector32(?), ?, ?, 0, 0, 0)
+    `,
+    args: [
+      id,
+      overrides.type ?? "fact",
+      overrides.subject ?? `subject-${id}`,
+      overrides.content ?? `content-${id}`,
+      overrides.importance ?? 7,
+      overrides.expiry ?? "temporary",
+      overrides.scope ?? "private",
+      overrides.source?.file ?? "test.jsonl",
+      overrides.source?.context ?? "test",
+      JSON.stringify(embedding),
+      now,
+      now,
+    ],
+  });
+}
+
+async function seedEntries(db: Client, count: number, similarity = 0): Promise<void> {
+  for (let i = 0; i < count; i += 1) {
+    await insertEntryWithEmbedding(db, `seed-${i}`, similarity);
+  }
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+  for (const db of openDbs.splice(0)) {
+    db.close();
+  }
+});
+
 describe("SYSTEM_PROMPT", () => {
   it("includes explicit memory request guidance and trigger phrases", () => {
     expect(SYSTEM_PROMPT).toContain("Explicit Memory Requests");
@@ -129,11 +201,334 @@ describe("SYSTEM_PROMPT", () => {
     expect(SYSTEM_PROMPT).toMatch(/\bclosed\b/i);
     expect(SYSTEM_PROMPT).toMatch(/\bmerged\b/i);
   });
+
+  it("reinforces that related memories do not lower threshold", () => {
+    expect(SYSTEM_PROMPT).toContain("they are reference material only");
+    expect(SYSTEM_PROMPT).toContain("do not lower the emission threshold");
+  });
+});
+
+describe("pre-fetch", () => {
+  function emptyToolCallStream(_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) {
+    return streamWithResult(
+      Promise.resolve(
+        assistantMessageWithContent(
+          [{ type: "toolCall", id: "call_empty", name: "submit_knowledge", arguments: { entries: [] } }],
+          "toolUse",
+        ),
+      ),
+    );
+  }
+
+  it("skips embedding when db is not provided", async () => {
+    const embedFn = vi.fn(async () => [unitVector(1)]);
+    const result = await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunk()],
+      client: fakeClient(),
+      verbose: false,
+      noDedup: true,
+      streamSimpleImpl: emptyToolCallStream,
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+      embedFn,
+    });
+
+    expect(embedFn).not.toHaveBeenCalled();
+    expect(result.successfulChunks).toBe(1);
+    expect(result.failedChunks).toBe(0);
+  });
+
+  it("skips when db entry count is below threshold and proceeds at threshold", async () => {
+    const dbBelow = await makeDb();
+    await seedEntries(dbBelow, 19, 0.2);
+    const embedBelow = vi.fn(async () => [unitVector(1)]);
+    const below = await preFetchRelated("chunk text", dbBelow, "sk-test", embedBelow);
+    expect(below).toEqual([]);
+    expect(embedBelow).not.toHaveBeenCalled();
+
+    const dbAt = await makeDb();
+    await seedEntries(dbAt, 20, 0.2);
+    const embedAt = vi.fn(async () => [unitVector(1)]);
+    await preFetchRelated("chunk text", dbAt, "sk-test", embedAt);
+    expect(embedAt).toHaveBeenCalledTimes(1);
+  });
+
+  it("filters by similarity threshold with boundary handling", async () => {
+    const db = await makeDb();
+    await seedEntries(db, 15, 0.1);
+    await insertEntryWithEmbedding(db, "sim-090", 0.9, { subject: "sim-090", content: "sim-090" });
+    await insertEntryWithEmbedding(db, "sim-080", 0.8, { subject: "sim-080", content: "sim-080" });
+    await insertEntryWithEmbedding(db, "sim-07801", 0.7801, { subject: "sim-07801", content: "sim-07801" });
+    await insertEntryWithEmbedding(db, "sim-07799", 0.7799, { subject: "sim-07799", content: "sim-07799" });
+    await insertEntryWithEmbedding(db, "sim-070", 0.7, { subject: "sim-070", content: "sim-070" });
+
+    const related = await preFetchRelated("chunk", db, "sk-test", async () => [unitVector(1)]);
+    expect(related.map((entry) => entry.subject)).toEqual(["sim-090", "sim-080", "sim-07801"]);
+  });
+
+  it("caps related results at MAX_PREFETCH_RESULTS", async () => {
+    const db = await makeDb();
+    await seedEntries(db, 15, 0.1);
+    await insertEntryWithEmbedding(db, "cap-1", 0.95, { subject: "cap-1" });
+    await insertEntryWithEmbedding(db, "cap-2", 0.93, { subject: "cap-2" });
+    await insertEntryWithEmbedding(db, "cap-3", 0.91, { subject: "cap-3" });
+    await insertEntryWithEmbedding(db, "cap-4", 0.89, { subject: "cap-4" });
+    await insertEntryWithEmbedding(db, "cap-5", 0.87, { subject: "cap-5" });
+
+    const related = await preFetchRelated("chunk", db, "sk-test", async () => [unitVector(1)]);
+    expect(related).toHaveLength(MAX_PREFETCH_RESULTS);
+  });
+
+  it("returns [] for embedding errors and degenerate embedding responses", async () => {
+    const db = await makeDb();
+    await seedEntries(db, 20, 0.2);
+
+    await expect(
+      preFetchRelated("chunk", db, "sk-test", async () => {
+        throw new Error("embedding failed");
+      }),
+    ).resolves.toEqual([]);
+
+    await expect(preFetchRelated("chunk", db, "sk-test", async () => [])).resolves.toEqual([]);
+    await expect(
+      preFetchRelated("chunk", db, "sk-test", async () => [{ embedding: null }] as unknown as number[][]),
+    ).resolves.toEqual([]);
+  });
+
+  it("respects timeout and does not block chunk extraction", async () => {
+    vi.useFakeTimers();
+
+    const db = await makeDb();
+    await seedEntries(db, 20, 0.2);
+    const hangingEmbed = vi.fn(
+      () =>
+        new Promise<number[][]>(() => {
+          // never resolves
+        }),
+    );
+
+    const prefetchPromise = preFetchRelated("chunk", db, "sk-test", hangingEmbed);
+    await vi.advanceTimersByTimeAsync(PREFETCH_TIMEOUT_MS + 20);
+    await expect(prefetchPromise).resolves.toEqual([]);
+
+    const extractPromise = extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunk()],
+      client: fakeClient(),
+      verbose: false,
+      noDedup: true,
+      streamSimpleImpl: emptyToolCallStream,
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+      db,
+      embeddingApiKey: "sk-test",
+      embedFn: hangingEmbed,
+    });
+    await vi.advanceTimersByTimeAsync(PREFETCH_TIMEOUT_MS + 20);
+    const result = await extractPromise;
+    expect(result.successfulChunks).toBe(1);
+    expect(result.failedChunks).toBe(0);
+  });
+
+  it("includes related-memory header for empty related set", () => {
+    const prompt = buildUserPrompt(fakeChunk(), []);
+    expect(prompt).toContain("Existing related memories");
+    expect(prompt).toContain("[none found]");
+    expect(prompt).not.toContain("- [");
+  });
+
+  it("renders related entries in prompt when provided", () => {
+    const related = [
+      { type: "fact", subject: "foo subject", content: "foo content" },
+      { type: "fact", subject: "bar subject", content: "bar content" },
+    ] as unknown as StoredEntry[];
+
+    const prompt = buildUserPrompt(fakeChunk(), related);
+    expect(prompt).toContain("- [fact] foo subject: foo content");
+    expect(prompt).toContain("- [fact] bar subject: bar content");
+  });
+
+  it("returns [] for empty and whitespace chunk text without embedding", async () => {
+    const db = await makeDb();
+    await seedEntries(db, 20, 0.2);
+    const embedFn = vi.fn(async () => [unitVector(1)]);
+
+    await expect(preFetchRelated("", db, "sk-test", embedFn)).resolves.toEqual([]);
+    await expect(preFetchRelated("   ", db, "sk-test", embedFn)).resolves.toEqual([]);
+    expect(embedFn).not.toHaveBeenCalled();
+  });
 });
 
 describe("extractKnowledgeFromChunks", () => {
   afterEach(() => {
     resetShutdownForTests();
+  });
+
+  it("treats pre-fetch failures as best-effort and still completes all chunks", async () => {
+    const db = await makeDb();
+    await seedEntries(db, 30, 0.2);
+    const embedFn = vi.fn(async () => {
+      throw new Error("embedding provider down");
+    });
+
+    const result = await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunkAt(0), fakeChunkAt(1), fakeChunkAt(2)],
+      client: fakeClient(),
+      verbose: false,
+      noDedup: true,
+      streamSimpleImpl: (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) =>
+        streamWithResult(
+          Promise.resolve(
+            assistantMessageWithContent(
+              [{ type: "toolCall", id: "call_empty", name: "submit_knowledge", arguments: { entries: [] } }],
+              "toolUse",
+            ),
+          ),
+        ),
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+      db,
+      embeddingApiKey: "sk-test",
+      embedFn,
+    });
+
+    expect(result.successfulChunks).toBe(3);
+    expect(result.failedChunks).toBe(0);
+  });
+
+  it("runs concurrent pre-fetch calls without blocking other workers", async () => {
+    vi.useFakeTimers();
+    const db = await makeDb();
+    await seedEntries(db, 30, 0.2);
+
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const llmCalls: number[] = [];
+    const embedFn = vi.fn((texts: string[]) => {
+      const text = texts[0] ?? "";
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+
+      if (text.includes("hello 0")) {
+        return new Promise<number[][]>(() => {
+          // intentionally hangs; pre-fetch timeout should release this chunk
+        });
+      }
+
+      return new Promise<number[][]>((resolve) => {
+        setTimeout(() => {
+          inFlight -= 1;
+          resolve([unitVector(1)]);
+        }, 50);
+      });
+    });
+
+    const resultPromise = extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunkAt(0), fakeChunkAt(1), fakeChunkAt(2), fakeChunkAt(3)],
+      client: fakeClient(),
+      verbose: false,
+      noDedup: true,
+      llmConcurrency: 4,
+      streamSimpleImpl: (_model: Model<Api>, context: Context, _opts?: SimpleStreamOptions) => {
+        const prompt = String(context.messages[0]?.content ?? "");
+        const match = /hello (\d+)/.exec(prompt);
+        if (match?.[1]) {
+          llmCalls.push(Number(match[1]));
+        }
+        return streamWithResult(
+          Promise.resolve(
+            assistantMessageWithContent(
+              [{ type: "toolCall", id: "call_empty", name: "submit_knowledge", arguments: { entries: [] } }],
+              "toolUse",
+            ),
+          ),
+        );
+      },
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+      db,
+      embeddingApiKey: "sk-test",
+      embedFn,
+    });
+
+    await vi.advanceTimersByTimeAsync(200);
+    expect(llmCalls.length).toBeGreaterThanOrEqual(3);
+
+    await vi.advanceTimersByTimeAsync(PREFETCH_TIMEOUT_MS + 50);
+    const result = await resultPromise;
+    expect(maxInFlight).toBeGreaterThanOrEqual(2);
+    expect(result.successfulChunks).toBe(4);
+    expect(result.failedChunks).toBe(0);
+  });
+
+  it("disables pre-fetch end-to-end with noPreFetch=true", async () => {
+    const db = await makeDb();
+    await seedEntries(db, 30, 0.2);
+    const embedFn = vi.fn(async () => [unitVector(1)]);
+    const prompts: string[] = [];
+
+    const result = await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunk()],
+      client: fakeClient(),
+      verbose: false,
+      noDedup: true,
+      noPreFetch: true,
+      db,
+      embeddingApiKey: "sk-test",
+      embedFn,
+      streamSimpleImpl: (_model: Model<Api>, context: Context, _opts?: SimpleStreamOptions) => {
+        prompts.push(String(context.messages[0]?.content ?? ""));
+        return streamWithResult(
+          Promise.resolve(
+            assistantMessageWithContent(
+              [{ type: "toolCall", id: "call_empty", name: "submit_knowledge", arguments: { entries: [] } }],
+              "toolUse",
+            ),
+          ),
+        );
+      },
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+    });
+
+    expect(embedFn).not.toHaveBeenCalled();
+    expect(prompts[0]).not.toContain("Existing related memories");
+    expect(result.successfulChunks).toBe(1);
+    expect(result.failedChunks).toBe(0);
+  });
+
+  it("calls embedding exactly once per chunk", async () => {
+    const db = await makeDb();
+    await seedEntries(db, 30, 0.2);
+    const embedFn = vi.fn(async () => [unitVector(1)]);
+
+    await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunkAt(0), fakeChunkAt(1), fakeChunkAt(2)],
+      client: fakeClient(),
+      verbose: false,
+      noDedup: true,
+      db,
+      embeddingApiKey: "sk-test",
+      embedFn,
+      streamSimpleImpl: (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) =>
+        streamWithResult(
+          Promise.resolve(
+            assistantMessageWithContent(
+              [{ type: "toolCall", id: "call_empty", name: "submit_knowledge", arguments: { entries: [] } }],
+              "toolUse",
+            ),
+          ),
+        ),
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+    });
+
+    expect(embedFn).toHaveBeenCalledTimes(3);
   });
 
   it("extracts entries from submit_knowledge tool calls", async () => {

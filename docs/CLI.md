@@ -53,7 +53,9 @@ agenr extract [options] <files...>
 - `--format <type>`: `json|markdown` (default `markdown`).
 - `--output <file>`: write output file (or directory with `--split`).
 - `--split`: one output file per input transcript.
+- `--db <path>`: database path override for pre-fetch memory lookup.
 - `--no-dedup`: skip post-extraction LLM dedup pass.
+- `--no-pre-fetch`: disable elaborative encoding pre-fetch (injecting related memories before extraction).
 - `--model <model>`: override model.
 - `--provider <name>`: `anthropic|openai|openai-codex`.
 - `--verbose`: detailed extraction progress.
@@ -226,6 +228,7 @@ agenr watch [file] [options]
 - `--db <path>`: database path override.
 - `--model <model>`: override model.
 - `--provider <name>`: `anthropic|openai|openai-codex`.
+- `--no-pre-fetch`: disable elaborative encoding pre-fetch in watch extraction cycles.
 - `--verbose`: verbose progress.
 - `--context <path>`: write or refresh context files (`--context` path, `context-mini.md`, and `context-hot.md`) after successful stores.
 - `--dry-run`: extract only, do not store.
@@ -343,6 +346,7 @@ agenr ingest [options] <paths...>
 - `--json`: emit JSON summary.
 - `--concurrency <n>`: parallel chunk extractions (default `5`).
 - `--skip-ingested`: skip already-ingested file/hash pairs (default `true`).
+- `--no-pre-fetch`: disable elaborative encoding pre-fetch before per-chunk extraction.
 - `--no-retry`: disable auto-retry for failed files.
 - `--max-retries <n>`: maximum auto-retry attempts (default `3`).
 - `--force`: clean re-ingest each matched file by deleting previous rows for that source file first.
