@@ -40,7 +40,8 @@ export type PluginApi = {
   logger: PluginLogger;
   registerHook: (
     events: string | string[],
-    handler: (event: HookEvent) => Promise<void> | void
+    handler: (event: HookEvent) => Promise<void> | void,
+    opts?: { name?: string; description?: string; priority?: number }
   ) => void;
 };
 
