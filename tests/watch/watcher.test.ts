@@ -1826,7 +1826,7 @@ describe("watcher", () => {
     const baseMs = Date.parse("2026-02-19T00:00:00.000Z");
     const cycleChunk = Buffer.from("1234567890123456789012345");
     const nowFn = vi.fn(() => {
-      nowTickMs += 1000;
+      nowTickMs += cycles >= 3 ? 60000 : 1000;
       return new Date(baseMs + nowTickMs);
     });
 
@@ -1852,20 +1852,21 @@ describe("watcher", () => {
           .mockResolvedValueOnce({ size: 25, isFile: () => true })
           .mockResolvedValueOnce({ size: 25, isFile: () => true })
           .mockResolvedValueOnce({ size: 50, isFile: () => true })
-          .mockResolvedValue({ size: 50, isFile: () => true }),
+          .mockResolvedValueOnce({ size: 75, isFile: () => true })
+          .mockResolvedValue({ size: 75, isFile: () => true }),
         readFileFn: vi.fn(async (_target: string, offset: number) => {
-          if (offset === 0 || offset === 25) {
+          if (offset === 0 || offset === 25 || offset === 50) {
             return cycleChunk;
           }
           return Buffer.alloc(0);
         }),
-        shouldShutdownFn: vi.fn(() => cycles >= 2),
+        shouldShutdownFn: vi.fn(() => cycles >= 3),
       }),
     );
 
-    expect(cycles).toBe(2);
-    expect(entriesStoredByCycle).toEqual([2, 2]);
-    expect(walCheckpointFn).toHaveBeenCalledTimes(2);
+    expect(cycles).toBe(3);
+    expect(entriesStoredByCycle).toEqual([2, 2, 2]);
+    expect(walCheckpointFn).toHaveBeenCalledTimes(3);
   });
 
   it("always checkpoints WAL on shutdown in finally block", async () => {
