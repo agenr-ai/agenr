@@ -401,6 +401,94 @@ describe("watch command", () => {
     expect(generateContextFileFn).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps DB open for context refresh and writes context variants", async () => {
+    const dir = await makeTempDir();
+    const transcriptPath = path.join(dir, "session.txt");
+    const contextDir = path.join(dir, "context");
+    const contextPath = path.join(contextDir, "CONTEXT.md");
+    const configDir = path.join(dir, ".agenr");
+    await fs.mkdir(configDir, { recursive: true });
+    await fs.mkdir(contextDir, { recursive: true });
+    await fs.writeFile(transcriptPath, "enough content for extraction\n", "utf8");
+
+    const client = createClient({ url: ":memory:" });
+    await initDb(client);
+    await seedContextEntry(client, {
+      id: "ctx-1",
+      type: "fact",
+      subject: "Seeded context",
+      content: "Seeded context entry for variant generation",
+      importance: 8,
+      createdAt: "2026-02-18T00:08:00.000Z",
+      updatedAt: "2026-02-18T00:09:00.000Z",
+    });
+
+    let sawOpenClient = false;
+    const generateContextFileFn = vi.fn(async (db: Client) => {
+      await db.execute({ sql: "SELECT 1", args: [] });
+      sawOpenClient = true;
+    });
+    const closeDbFn = vi.fn((db: Client) => {
+      db.close();
+    });
+
+    const result = await runWatchCommand(
+      transcriptPath,
+      {
+        once: true,
+        interval: "1",
+        minChunk: "1",
+        context: contextPath,
+      },
+      {
+        readConfigFn: vi.fn(() => ({ db: { path: ":memory:" } })),
+        resolveEmbeddingApiKeyFn: vi.fn(() => "sk-test"),
+        parseTranscriptFileFn: vi.fn(async () => ({
+          file: transcriptPath,
+          messages: [],
+          chunks: [{ chunk_index: 0, message_start: 0, message_end: 0, text: "chunk", context_hint: "ctx" }],
+          warnings: [],
+        })),
+        createLlmClientFn: vi.fn(() => ({ resolvedModel: { modelId: "test" }, credentials: { apiKey: "x" } } as any)),
+        extractKnowledgeFromChunksFn: vi.fn(async (params: any) => {
+          await params.onChunkComplete?.({ chunkIndex: 0, totalChunks: 1, entries: [makeEntry()], warnings: [] });
+          return { entries: [], successfulChunks: 1, failedChunks: 0, warnings: [] };
+        }),
+        deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+        getDbFn: vi.fn(() => client) as any,
+        initDbFn: vi.fn(async () => undefined),
+        closeDbFn: closeDbFn as any,
+        storeEntriesFn: vi.fn(async () => ({
+          added: 1,
+          updated: 0,
+          skipped: 0,
+          superseded: 0,
+          llm_dedup_calls: 0,
+          relations_created: 0,
+          total_entries: 1,
+          duration_ms: 5,
+        })) as any,
+        loadWatchStateFn: vi.fn(() => loadWatchState(configDir)),
+        saveWatchStateFn: vi.fn((state) => saveWatchState(state, configDir)),
+        statFileFn: vi.fn((filePath: string) => fs.stat(filePath)) as any,
+        readFileFn: vi.fn((filePath: string, offset: number) => readFileFromOffset(filePath, offset)),
+        nowFn: vi.fn(() => new Date("2026-02-18T00:10:00.000Z")),
+        generateContextFileFn: generateContextFileFn as any,
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.entriesStored).toBe(1);
+    expect(generateContextFileFn).toHaveBeenCalledTimes(1);
+    expect(sawOpenClient).toBe(true);
+
+    const miniPath = path.join(contextDir, "context-mini.md");
+    const hotPath = path.join(contextDir, "context-hot.md");
+    await expect(fs.stat(miniPath)).resolves.toBeDefined();
+    await expect(fs.stat(hotPath)).resolves.toBeDefined();
+    expect(closeDbFn).toHaveBeenCalledTimes(1);
+  });
+
   it("writes context-mini.md with at most 20 entries", async () => {
     const dir = await makeTempDir();
     const contextPath = path.join(dir, "CONTEXT.md");
