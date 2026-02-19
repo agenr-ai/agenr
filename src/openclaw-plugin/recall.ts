@@ -1,19 +1,14 @@
 import { spawn } from "node:child_process";
+import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgenrPluginConfig } from "./types.js";
 
 const RECALL_TIMEOUT_MS = 5000;
 const DEFAULT_BUDGET = 2000;
-// Resolve bundled CLI path from this module location for both src/ and dist/ runtime layouts.
-const DEFAULT_AGENR_PATH = path.resolve(
-  fileURLToPath(import.meta.url),
-  "..",
-  "..",
-  "..",
-  "dist",
-  "cli.js"
-);
+const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
+const PACKAGE_ROOT = path.resolve(MODULE_DIR, "..", "..");
+const DEFAULT_AGENR_PATH = path.join(PACKAGE_ROOT, "dist", "cli.js");
 
 export type RecallEntry = {
   type: string;
@@ -39,10 +34,19 @@ export function resolveBudget(config?: AgenrPluginConfig): number {
   return config?.budget ?? DEFAULT_BUDGET;
 }
 
+export function buildSpawnArgs(agenrPath: string): { cmd: string; args: string[] } {
+  if (agenrPath.endsWith(".js")) {
+    return { cmd: process.execPath, args: [agenrPath] };
+  }
+
+  return { cmd: agenrPath, args: [] };
+}
+
 export async function runRecall(agenrPath: string, budget: number): Promise<RecallResult | null> {
   return await new Promise((resolve) => {
     let stdout = "";
     let settled = false;
+    const spawnArgs = buildSpawnArgs(agenrPath);
 
     function finish(value: RecallResult | null): void {
       if (settled) {
@@ -53,8 +57,8 @@ export async function runRecall(agenrPath: string, budget: number): Promise<Reca
     }
 
     const child = spawn(
-      process.execPath,
-      [agenrPath, "recall", "--context", "session-start", "--budget", String(budget), "--json"],
+      spawnArgs.cmd,
+      [...spawnArgs.args, "recall", "--context", "session-start", "--budget", String(budget), "--json"],
       { stdio: ["ignore", "pipe", "ignore"] }
     );
 
@@ -98,14 +102,22 @@ const TODO_TYPES = new Set(["todo"]);
 const PREFERENCE_TYPES = new Set(["preference", "decision"]);
 // All other types fall into facts/events group.
 
-export function formatRecallAsMarkdown(result: RecallResult): string {
-  if (!result.results || result.results.length === 0) {
-    return "";
-  }
+type GroupedEntries = {
+  todos: RecallEntry[];
+  preferences: RecallEntry[];
+  facts: RecallEntry[];
+};
 
-  const todos: RecallEntry[] = [];
-  const preferences: RecallEntry[] = [];
-  const facts: RecallEntry[] = [];
+function groupValidEntries(result: RecallResult): GroupedEntries {
+  const grouped: GroupedEntries = {
+    todos: [],
+    preferences: [],
+    facts: [],
+  };
+
+  if (!result.results || result.results.length === 0) {
+    return grouped;
+  }
 
   for (const item of result.results) {
     const entry = item.entry;
@@ -119,13 +131,23 @@ export function formatRecallAsMarkdown(result: RecallResult): string {
     }
 
     if (TODO_TYPES.has(entry.type)) {
-      todos.push(entry);
+      grouped.todos.push(entry);
     } else if (PREFERENCE_TYPES.has(entry.type)) {
-      preferences.push(entry);
+      grouped.preferences.push(entry);
     } else {
-      facts.push(entry);
+      grouped.facts.push(entry);
     }
   }
+
+  return grouped;
+}
+
+export function formatRecallAsMarkdown(result: RecallResult): string {
+  if (!result.results || result.results.length === 0) {
+    return "";
+  }
+
+  const { todos, preferences, facts } = groupValidEntries(result);
 
   if (todos.length === 0 && preferences.length === 0 && facts.length === 0) {
     return "";
@@ -158,4 +180,59 @@ export function formatRecallAsMarkdown(result: RecallResult): string {
   }
 
   return lines.join("\n").trimEnd();
+}
+
+export function formatRecallAsSummary(result: RecallResult, timestamp?: string): string {
+  if (!result.results || result.results.length === 0) {
+    return "";
+  }
+
+  const { todos, preferences, facts } = groupValidEntries(result);
+  const totalEntries = todos.length + preferences.length + facts.length;
+  if (totalEntries === 0) {
+    return "";
+  }
+
+  const lines: string[] = [timestamp ? `## agenr Memory -- ${timestamp}` : "## agenr Memory", ""];
+  lines.push(
+    `${totalEntries} entries recalled. Full context injected into this session automatically.`,
+    "To pull specific memories: ask your agent, or run:",
+    '  mcporter call agenr.agenr_recall query="your topic" limit=5',
+    ""
+  );
+
+  if (todos.length > 0) {
+    lines.push(`### Active Todos (${todos.length})`, "");
+    for (const entry of todos) {
+      lines.push(`- ${entry.subject}`);
+    }
+    lines.push("");
+  }
+
+  if (preferences.length > 0) {
+    lines.push(`### Preferences and Decisions (${preferences.length})`, "");
+    for (const entry of preferences) {
+      lines.push(`- ${entry.subject}`);
+    }
+    lines.push("");
+  }
+
+  if (facts.length > 0) {
+    lines.push(`### Facts and Events (${facts.length})`, "");
+    for (const entry of facts) {
+      lines.push(`- ${entry.subject}`);
+    }
+    lines.push("");
+  }
+
+  return lines.join("\n").trimEnd();
+}
+
+export async function writeAgenrMd(markdown: string, workspaceDir: string): Promise<void> {
+  try {
+    const outputPath = path.join(workspaceDir, "AGENR.md");
+    await writeFile(outputPath, markdown, "utf8");
+  } catch {
+    // Do not block plugin behavior on filesystem write failures.
+  }
 }

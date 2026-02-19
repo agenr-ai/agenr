@@ -1,5 +1,15 @@
+import * as fsPromises from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { formatRecallAsMarkdown, resolveAgenrPath } from "../../src/openclaw-plugin/recall.js";
+import {
+  buildSpawnArgs,
+  formatRecallAsMarkdown,
+  formatRecallAsSummary,
+  resolveAgenrPath,
+  writeAgenrMd,
+} from "../../src/openclaw-plugin/recall.js";
 import type { RecallResult } from "../../src/openclaw-plugin/recall.js";
 
 function makeResult(entries: Array<{ type: string; subject: string; content: string }>): RecallResult {
@@ -96,6 +106,82 @@ describe("formatRecallAsMarkdown", () => {
   });
 });
 
+describe("formatRecallAsSummary", () => {
+  it("returns empty string when results array is empty", () => {
+    const result = formatRecallAsSummary({ query: "", results: [] });
+    expect(result).toBe("");
+  });
+
+  it("includes timestamp in header when provided", () => {
+    const result = formatRecallAsSummary(
+      makeResult([{ type: "fact", subject: "x", content: "y" }]),
+      "2026-02-19 13:51"
+    );
+    expect(result.split("\n")[0]).toBe("## agenr Memory -- 2026-02-19 13:51");
+  });
+
+  it("omits timestamp from header when not provided", () => {
+    const result = formatRecallAsSummary(makeResult([{ type: "fact", subject: "x", content: "y" }]));
+    expect(result.split("\n")[0]).toBe("## agenr Memory");
+  });
+
+  it("shows total entry count after filtering invalid entries", () => {
+    const result = formatRecallAsSummary({
+      query: "",
+      results: [
+        { entry: { type: "todo", subject: "a", content: "aa" }, score: 0.9 },
+        { entry: { type: "fact", subject: "b", content: "bb" }, score: 0.9 },
+        { entry: { type: "fact" } as never, score: 0.1 },
+      ],
+    });
+    expect(result).toContain("2 entries recalled. Full context injected into this session automatically.");
+  });
+
+  it("shows only subjects and excludes content bodies", () => {
+    const result = formatRecallAsSummary(
+      makeResult([
+        { type: "todo", subject: "fix parser", content: "Do not show this todo content" },
+        { type: "decision", subject: "use pnpm", content: "Do not show this decision content" },
+        { type: "fact", subject: "repo path", content: "Do not show this fact content" },
+      ])
+    );
+    expect(result).toContain("- fix parser");
+    expect(result).toContain("- use pnpm");
+    expect(result).toContain("- repo path");
+    expect(result).not.toContain("Do not show this todo content");
+    expect(result).not.toContain("Do not show this decision content");
+    expect(result).not.toContain("Do not show this fact content");
+  });
+
+  it("includes per-section counts in section headers", () => {
+    const result = formatRecallAsSummary(
+      makeResult([
+        { type: "todo", subject: "a", content: "ca" },
+        { type: "todo", subject: "b", content: "cb" },
+        { type: "decision", subject: "c", content: "cc" },
+      ])
+    );
+    expect(result).toContain("### Active Todos (2)");
+    expect(result).toContain("### Preferences and Decisions (1)");
+  });
+
+  it("omits sections with zero entries", () => {
+    const result = formatRecallAsSummary(
+      makeResult([{ type: "todo", subject: "only todo", content: "x" }])
+    );
+    expect(result).toContain("### Active Todos (1)");
+    expect(result).not.toContain("### Preferences and Decisions");
+    expect(result).not.toContain("### Facts and Events");
+  });
+
+  it("always includes the instruction block", () => {
+    const result = formatRecallAsSummary(
+      makeResult([{ type: "fact", subject: "subject", content: "content" }])
+    );
+    expect(result).toContain('mcporter call agenr.agenr_recall query="your topic" limit=5');
+  });
+});
+
 describe("resolveAgenrPath", () => {
   it("returns config.agenrPath when provided", () => {
     const resolved = resolveAgenrPath({ agenrPath: "/custom/path/cli.js" });
@@ -117,19 +203,55 @@ describe("resolveAgenrPath", () => {
     }
   });
 
-  it("falls back to default path when nothing is configured", () => {
+  it("falls back to package-relative dist/cli.js when nothing is configured", () => {
     const original = process.env["AGENR_BIN"];
     delete process.env["AGENR_BIN"];
     try {
       const resolved = resolveAgenrPath(undefined);
-      expect(resolved).toContain("dist");
-      expect(resolved).toContain("cli.js");
-      expect(resolved).toMatch(/[\\/]dist[\\/]cli\.js$/);
-      expect(resolved).not.toContain("agenr-local");
+      const expectedRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+      const expectedPath = path.join(expectedRoot, "dist", "cli.js");
+      expect(resolved).toBe(expectedPath);
     } finally {
       if (original !== undefined) {
         process.env["AGENR_BIN"] = original;
       }
+    }
+  });
+});
+
+describe("buildSpawnArgs", () => {
+  it("uses node when agenrPath points to a .js file", () => {
+    const args = buildSpawnArgs("/tmp/agenr/dist/cli.js");
+    expect(args).toEqual({ cmd: process.execPath, args: ["/tmp/agenr/dist/cli.js"] });
+  });
+
+  it("spawns executable directly when agenrPath is a binary path", () => {
+    const args = buildSpawnArgs("/usr/local/bin/agenr");
+    expect(args).toEqual({ cmd: "/usr/local/bin/agenr", args: [] });
+  });
+});
+
+describe("writeAgenrMd", () => {
+  it("writes markdown content to workspaceDir/AGENR.md", async () => {
+    const tempDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), "agenr-openclaw-"));
+    try {
+      await writeAgenrMd("## agenr Memory Context", tempDir);
+      const outputPath = path.join(tempDir, "AGENR.md");
+      const content = await fsPromises.readFile(outputPath, "utf8");
+      expect(content).toBe("## agenr Memory Context");
+    } finally {
+      await fsPromises.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("silently discards filesystem write errors", async () => {
+    const tempDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), "agenr-openclaw-"));
+    const filePath = path.join(tempDir, "not-a-directory.txt");
+    try {
+      await fsPromises.writeFile(filePath, "block", "utf8");
+      await expect(writeAgenrMd("text", filePath)).resolves.toBeUndefined();
+    } finally {
+      await fsPromises.rm(tempDir, { recursive: true, force: true });
     }
   });
 });
