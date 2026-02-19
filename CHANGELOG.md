@@ -58,6 +58,13 @@
 ### Removed
 - `agenr_done` MCP tool removed; use `agenr_retire` instead (supports all entry types, not just todos)
 
+## [0.5.4] - 2026-02-18
+
+### Added
+- feat(todos): `agenr todo done` command to mark todos complete via CLI
+- feat(mcp): `agenr_done` MCP tool for completing todos from AI tools
+- feat(store): cross-type superseding - new entries can supersede entries of any type, not just same-type
+
 ## [0.5.3] - 2026-02-18
 
 ### Added
@@ -68,13 +75,6 @@
 
 ### Fixed
 - `agenr eval recall` now returns correct results for all 5 query categories (was returning zero for 4 of 5 due to FTS literal match; replaced with SQL type filters and hybrid vector+FTS recall)
-
-## [0.5.4] - 2026-02-18
-
-### Added
-- feat(todos): `agenr todo done` command to mark todos complete via CLI
-- feat(mcp): `agenr_done` MCP tool for completing todos from AI tools
-- feat(store): cross-type superseding - new entries can supersede entries of any type, not just same-type
 
 ## [0.5.2] - 2026-02-18
 
@@ -104,7 +104,7 @@
 - Watch ingestion now advances `byteOffset` by bytes actually read in each cycle, preventing duplicate processing when files grow during read.
 - Watch state saves are now atomic (temp file + rename), preventing partial-write corruption on process crashes.
 
-## 0.5.0 (2026-02-17)
+## [0.5.0] - 2026-02-17
 
 ### Added
 - `_meta` table with schema version stamp for future migrations
@@ -130,12 +130,12 @@
 - `agenr daemon install` now prefers stable node symlinks (Homebrew) when `process.execPath` is version-specific; use `--node-path` to override
 - `agenr watch --auto` is deprecated; `agenr watch --platform <name>` is now the standard invocation and auto-resolves the default platform directory when `--dir` is omitted
 
-## 0.4.1 (2026-02-17)
+## [0.4.1] - 2026-02-17
 
 ### Fixed
 - npx symlink handling: isDirectRun check now uses realpathSync to resolve npx symlinks correctly
 
-## 0.4.0 (2026-02-15)
+## [0.4.0] - 2026-02-15
 
 ### Added
 - `agenr context` command - generate context files for AI tool integration
@@ -160,21 +160,21 @@
 - Session-start recall no longer dominated by stale todos (todo staleness penalty)
 - Consolidate releases DB lock after WAL checkpoint, not before
 
-## 0.3.0 (2026-02-15)
+## [0.3.0] - 2026-02-15
 
 ### Added
 - `agenr watch` - live file watcher with auto-extraction
 - `agenr ingest` - bulk ingestion of markdown, plaintext, and JSONL
 - `agenr mcp` - MCP server for cross-tool AI memory (recall, store, extract)
 
-## 0.2.0 (2026-02-14)
+## [0.2.0] - 2026-02-14
 
 ### Added
 - `agenr store` - smart dedup with cosine similarity bands
 - `agenr recall` - recall with scoring and budget-constrained retrieval
 - `agenr db` subcommands (stats, export, reset, path)
 
-## 0.1.0 (2026-02-14)
+## [0.1.0] - 2026-02-14
 
 ### Added
 - `agenr extract` - structured knowledge extraction from conversation transcripts
