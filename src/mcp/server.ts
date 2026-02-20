@@ -867,10 +867,6 @@ export function createMcpServer(
       }
     }
 
-    if (projectRaw && projectRaw !== "*" && project && project.length === 0) {
-      throw new RpcError(JSON_RPC_INVALID_PARAMS, "project must be a non-empty string");
-    }
-
     const db = await ensureDb();
     let results: RecallResult[];
 

@@ -1,12 +1,11 @@
 import { PassThrough } from "node:stream";
 import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import type { Client } from "@libsql/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMcpServer } from "../../src/mcp/server.js";
 import type { McpServerDeps } from "../../src/mcp/server.js";
 import type { KnowledgeEntry, LlmClient, RecallResult, StoreResult, TranscriptChunk } from "../../src/types.js";
+import { createScopedProjectConfig } from "../helpers/scoped-config.js";
 
 const tempDirs: string[] = [];
 
@@ -206,28 +205,6 @@ function makeHarness(): TestHarness {
   };
 }
 
-async function createScopedProjectConfig(params: {
-  project: string;
-  dependencies?: string[];
-}): Promise<string> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agenr-mcp-scope-"));
-  tempDirs.push(dir);
-  await fs.mkdir(path.join(dir, ".agenr"), { recursive: true });
-  await fs.writeFile(
-    path.join(dir, ".agenr", "config.json"),
-    `${JSON.stringify(
-      {
-        project: params.project,
-        dependencies: params.dependencies,
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  return dir;
-}
-
 async function runServer(
   lines: string[],
   deps: Partial<McpServerDeps>,
@@ -248,7 +225,7 @@ async function runServer(
       output,
       errorOutput,
       serverVersion: "9.9.9-test",
-      env: options?.env,
+      env: options?.env ?? { ...process.env, AGENR_PROJECT_DIR: "" },
     },
     deps,
   );
@@ -678,7 +655,7 @@ describe("mcp server", () => {
 
   it("agenr_recall uses project scope from AGENR_PROJECT_DIR when project is omitted", async () => {
     const harness = makeHarness();
-    const scopedDir = await createScopedProjectConfig({ project: "frontend" });
+    const scopedDir = await createScopedProjectConfig({ project: "frontend" }, { tempDirs, prefix: "agenr-mcp-scope-" });
 
     await runServer(
       [
@@ -705,10 +682,13 @@ describe("mcp server", () => {
 
   it("agenr_recall includes dependency projects from scoped config", async () => {
     const harness = makeHarness();
-    const scopedDir = await createScopedProjectConfig({
-      project: "frontend",
-      dependencies: ["api-service", "shared-lib"],
-    });
+    const scopedDir = await createScopedProjectConfig(
+      {
+        project: "frontend",
+        dependencies: ["api-service", "shared-lib"],
+      },
+      { tempDirs, prefix: "agenr-mcp-scope-" },
+    );
 
     await runServer(
       [
@@ -735,10 +715,13 @@ describe("mcp server", () => {
 
   it("agenr_recall project='*' bypasses scoped project filtering", async () => {
     const harness = makeHarness();
-    const scopedDir = await createScopedProjectConfig({
-      project: "frontend",
-      dependencies: ["api-service"],
-    });
+    const scopedDir = await createScopedProjectConfig(
+      {
+        project: "frontend",
+        dependencies: ["api-service"],
+      },
+      { tempDirs, prefix: "agenr-mcp-scope-" },
+    );
 
     await runServer(
       [
@@ -766,10 +749,13 @@ describe("mcp server", () => {
 
   it("agenr_recall explicit project ignores configured dependencies", async () => {
     const harness = makeHarness();
-    const scopedDir = await createScopedProjectConfig({
-      project: "frontend",
-      dependencies: ["api-service", "shared-lib"],
-    });
+    const scopedDir = await createScopedProjectConfig(
+      {
+        project: "frontend",
+        dependencies: ["api-service", "shared-lib"],
+      },
+      { tempDirs, prefix: "agenr-mcp-scope-" },
+    );
 
     await runServer(
       [
@@ -797,7 +783,7 @@ describe("mcp server", () => {
 
   it("agenr_store uses scoped project from AGENR_PROJECT_DIR when project is omitted", async () => {
     const harness = makeHarness();
-    const scopedDir = await createScopedProjectConfig({ project: "frontend" });
+    const scopedDir = await createScopedProjectConfig({ project: "frontend" }, { tempDirs, prefix: "agenr-mcp-scope-" });
 
     await runServer(
       [

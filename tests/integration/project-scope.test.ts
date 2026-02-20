@@ -1,10 +1,9 @@
 import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import { createClient, type Client } from "@libsql/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { initDb } from "../../src/db/client.js";
 import { createMcpServer } from "../../src/mcp/server.js";
+import { createScopedProjectConfig } from "../helpers/scoped-config.js";
 
 const clients: Client[] = [];
 const tempDirs: string[] = [];
@@ -15,28 +14,6 @@ function makeClient(): Client {
   return client;
 }
 
-async function createScopedProjectConfig(params: {
-  project: string;
-  dependencies?: string[];
-}): Promise<string> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agenr-scope-it-"));
-  tempDirs.push(dir);
-  await fs.mkdir(path.join(dir, ".agenr"), { recursive: true });
-  await fs.writeFile(
-    path.join(dir, ".agenr", "config.json"),
-    `${JSON.stringify(
-      {
-        project: params.project,
-        dependencies: params.dependencies,
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  return dir;
-}
-
 async function insertEntry(
   client: Client,
   params: { id: string; project: string; subject: string; content: string },
@@ -45,22 +22,26 @@ async function insertEntry(
   await client.execute({
     sql: `
       INSERT INTO entries (
-        id, type, subject, content, importance, expiry, scope, project, source_file, source_context,
-        created_at, updated_at, retired
+        id, type, subject, canonical_key, content, importance, expiry, scope, platform, project, source_file, source_context,
+        embedding, content_hash, created_at, updated_at, retired
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
     `,
     args: [
       params.id,
       "fact",
       params.subject,
+      params.subject.toLowerCase().replace(/\s+/g, "-"),
       params.content,
       8,
       "permanent",
       "private",
+      "codex",
       params.project,
       "project-scope.test.jsonl",
       "integration test",
+      null,
+      `hash-${params.id}`,
       createdAt,
       createdAt,
     ],
@@ -110,10 +91,13 @@ describe("integration: MCP project scoping", () => {
       content: "Billing memory",
     });
 
-    const scopedDir = await createScopedProjectConfig({
-      project: "frontend",
-      dependencies: ["api-service"],
-    });
+    const scopedDir = await createScopedProjectConfig(
+      {
+        project: "frontend",
+        dependencies: ["api-service"],
+      },
+      { tempDirs, prefix: "agenr-scope-it-" },
+    );
 
     const server = createMcpServer(
       {
@@ -164,7 +148,7 @@ describe("integration: MCP project scoping", () => {
       content: "Billing memory",
     });
 
-    const scopedDir = await createScopedProjectConfig({ project: "frontend" });
+    const scopedDir = await createScopedProjectConfig({ project: "frontend" }, { tempDirs, prefix: "agenr-scope-it-" });
     const server = createMcpServer(
       {
         env: { ...process.env, AGENR_PROJECT_DIR: scopedDir },
@@ -214,10 +198,13 @@ describe("integration: MCP project scoping", () => {
       content: "Billing memory",
     });
 
-    const scopedDir = await createScopedProjectConfig({
-      project: "frontend",
-      dependencies: ["ghost-project"],
-    });
+    const scopedDir = await createScopedProjectConfig(
+      {
+        project: "frontend",
+        dependencies: ["ghost-project"],
+      },
+      { tempDirs, prefix: "agenr-scope-it-" },
+    );
     const server = createMcpServer(
       {
         env: { ...process.env, AGENR_PROJECT_DIR: scopedDir },

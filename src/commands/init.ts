@@ -209,10 +209,10 @@ async function writeAgenrConfig(
   next.platform = platform;
   next.projectDir = projectDir;
   if (dependencies !== undefined) {
-    const existing = Array.isArray(next.dependencies)
+    const currentDeps = Array.isArray(next.dependencies)
       ? next.dependencies.filter((value): value is string => typeof value === "string")
       : [];
-    const merged = Array.from(new Set([...existing, ...dependencies]));
+    const merged = Array.from(new Set([...currentDeps, ...dependencies]));
     next.dependencies = merged;
   }
 
@@ -243,9 +243,12 @@ function mergeMcpConfig(existing: JsonRecord, entry: JsonRecord): JsonRecord {
     };
   }
 
+  const { mcpServers: _ignoredMcpServers, agenr: _ignoredLegacyAgenr, ...rest } = existing;
   return {
-    ...existing,
-    agenr: entry,
+    ...rest,
+    mcpServers: {
+      agenr: entry,
+    },
   };
 }
 
@@ -264,14 +267,20 @@ function isPathInsideProject(projectDir: string, targetPath: string): boolean {
 
 async function addGitignoreEntries(projectDir: string, entries: string[]): Promise<boolean> {
   const gitignorePath = path.join(projectDir, ".gitignore");
+  const normalizedEntries = Array.from(new Set(entries.map((entry) => entry.trim()).filter((entry) => entry.length > 0)));
+  if (normalizedEntries.length === 0) {
+    return false;
+  }
+
   const exists = await pathExists(gitignorePath);
   if (!exists) {
-    return false;
+    const content = normalizedEntries.map((entry) => `${entry}\n`).join("");
+    await fs.writeFile(gitignorePath, content, "utf8");
+    return true;
   }
 
   const existing = await fs.readFile(gitignorePath, "utf8");
   const lines = existing.split(/\r?\n/);
-  const normalizedEntries = Array.from(new Set(entries.map((entry) => entry.trim()).filter((entry) => entry.length > 0)));
   const missing = normalizedEntries.filter((entry) => !lines.includes(entry));
   if (missing.length === 0) {
     return false;
