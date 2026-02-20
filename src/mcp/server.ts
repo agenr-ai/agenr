@@ -963,12 +963,18 @@ export function createMcpServer(
         : parsed;
     const db = await ensureDb();
     const config = resolvedDeps.readConfigFn(env);
+    const aggressiveDedup = config?.dedup?.aggressive === true;
+    const configDedupThreshold = typeof config?.dedup?.threshold === "number"
+      ? config.dedup.threshold
+      : undefined;
     const dedupClient = resolvedDeps.createLlmClientFn({ config, env });
     const apiKey = resolvedDeps.resolveEmbeddingApiKeyFn(config, env);
     const result = await resolvedDeps.storeEntriesFn(db, entries, apiKey, {
       sourceFile: "mcp:agenr_store",
       onlineDedup: true,
       llmClient: dedupClient,
+      aggressiveDedup,
+      dedupThreshold: configDedupThreshold,
       dbPath: options.dbPath,
     });
 

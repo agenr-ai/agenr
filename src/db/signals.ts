@@ -24,14 +24,28 @@ export async function fetchNewSignalEntries(
   sinceSeq: number,
   minImportance: number,
   limit: number,
+  maxAgeSec: number = 0,
 ): Promise<SignalBatch> {
+  const ageArgs: (string | number)[] = maxAgeSec > 0
+    ? [minImportance, sinceSeq, new Date(Date.now() - maxAgeSec * 1000).toISOString(), limit]
+    : [minImportance, sinceSeq, limit];
+
+  const sql = maxAgeSec > 0
+    ? `SELECT rowid, id, type, subject, importance, created_at
+       FROM entries
+       WHERE importance >= ? AND rowid > ? AND retired = 0
+         AND created_at >= ?
+       ORDER BY rowid ASC
+       LIMIT ?`
+    : `SELECT rowid, id, type, subject, importance, created_at
+       FROM entries
+       WHERE importance >= ? AND rowid > ? AND retired = 0
+       ORDER BY rowid ASC
+       LIMIT ?`;
+
   const result = await db.execute({
-    sql: `SELECT rowid, id, type, subject, importance, created_at
-          FROM entries
-          WHERE importance >= ? AND rowid > ? AND retired = 0
-          ORDER BY rowid ASC
-          LIMIT ?`,
-    args: [minImportance, sinceSeq, limit],
+    sql,
+    args: ageArgs,
   });
 
   const entries: SignalEntry[] = result.rows.map((row) => ({

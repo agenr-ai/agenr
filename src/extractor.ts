@@ -252,10 +252,10 @@ const MAX_ATTEMPTS = 5;
 const DEFAULT_INTER_CHUNK_DELAY_MS = 150;
 const DEDUP_BATCH_SIZE = 50;
 const DEDUP_BATCH_TRIGGER = 100;
-export const PREFETCH_SIMILARITY_THRESHOLD = 0.78;
+export const PREFETCH_SIMILARITY_THRESHOLD = 0.72;
 const PREFETCH_SIMILARITY_EPSILON = 1e-6;
-export const PREFETCH_CANDIDATE_LIMIT = 10;
-export const MAX_PREFETCH_RESULTS = 3;
+export const PREFETCH_CANDIDATE_LIMIT = 15;
+export const MAX_PREFETCH_RESULTS = 5;
 export const PREFETCH_MIN_DB_ENTRIES = 20;
 export const PREFETCH_TIMEOUT_MS = 5000;
 
@@ -401,7 +401,7 @@ export function buildUserPrompt(chunk: TranscriptChunk, related?: StoredEntry[])
     "Existing related memories (reference only -- your SKIP/emit threshold is unchanged):",
     memoryBlock,
     "",
-    "Do not emit entries that express the same fact as any memory listed above, even in different words.",
+    "Do not emit entries that express the same fact, topic, or concept as any memory listed above, even if worded differently or from a different angle. If an existing memory already captures the core idea, do not emit a near-variant as a separate entry. When uncertain, omit rather than emit.",
     "If this chunk clearly contradicts a memory listed above, emit a fact entry stating the contradiction directly in the content field. Do not use inline citation markers like [1] or [2] in any field -- these become dead references.",
     "Only emit a cross-reference entry when this chunk extends, contradicts, or updates a specific fact. Do not cross-reference just because entries share the same project or general domain.",
     "Your SKIP/emit threshold is unchanged. The memories above are reference only.",

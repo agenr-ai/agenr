@@ -13,8 +13,10 @@ import { toNumber, toStringValue } from "../utils/entry-utils.js";
 
 const AUTO_SKIP_THRESHOLD = 0.95;
 const SMART_DEDUP_THRESHOLD = 0.88;
-const DEFAULT_DEDUP_THRESHOLD = 0.8;
+const DEFAULT_DEDUP_THRESHOLD = 0.72;
 const DEFAULT_SIMILAR_LIMIT = 5;
+const AGGRESSIVE_DEDUP_THRESHOLD = 0.62;
+const AGGRESSIVE_SIMILAR_LIMIT = 10;
 const RECENCY_DEDUP_HOURS = 24;
 const CANONICAL_KEY_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+){2,4}$/;
 const CROSS_TYPE_TODO_SUPERSEDE_TYPES = new Set<KnowledgeEntry["type"]>(["event", "fact", "decision"]);
@@ -77,6 +79,7 @@ export interface StoreEntriesOptions {
   onlineDedup?: boolean;
   skipLlmDedup?: boolean;
   dedupThreshold?: number;
+  aggressiveDedup?: boolean;
   dbPath?: string;
   llmClient?: LlmClient;
   onlineDedupFn?: (
@@ -883,6 +886,7 @@ async function planEntryAction(
     force: boolean;
     llmDedupEnabled: boolean;
     dedupThreshold: number;
+    similarLimit?: number;
     llmClient?: LlmClient;
     onlineDedupFn?: (
       client: LlmClient,
@@ -907,7 +911,7 @@ async function planEntryAction(
     };
   }
 
-  const similar = await findSimilar(db, embedding, DEFAULT_SIMILAR_LIMIT);
+  const similar = await findSimilar(db, embedding, options.similarLimit ?? DEFAULT_SIMILAR_LIMIT);
   const topMatch = similar[0];
   const similarity = topMatch?.similarity ?? 0;
   const sameSubject = topMatch ? resolveSameSubject(entry.subject, topMatch.entry.subject) : false;
@@ -1315,7 +1319,11 @@ export async function storeEntries(
 ): Promise<StoreResult> {
   warnIfLocked();
 
-  const dedupThreshold = validateThreshold(options.dedupThreshold ?? DEFAULT_DEDUP_THRESHOLD);
+  const dedupThreshold = validateThreshold(
+    options.dedupThreshold ??
+      (options.aggressiveDedup === true ? AGGRESSIVE_DEDUP_THRESHOLD : DEFAULT_DEDUP_THRESHOLD),
+  );
+  const similarLimit = options.aggressiveDedup === true ? AGGRESSIVE_SIMILAR_LIMIT : DEFAULT_SIMILAR_LIMIT;
   const onlineDedup = options.onlineDedup === true && options.force !== true;
   const llmDedupEnabled = onlineDedup && options.skipLlmDedup !== true;
   if (llmDedupEnabled && entries.length > 0 && !options.llmClient) {
@@ -1463,6 +1471,7 @@ export async function storeEntries(
       force: options.force === true,
       llmDedupEnabled,
       dedupThreshold,
+      similarLimit,
       llmClient: options.llmClient,
       onlineDedupFn: options.onlineDedupFn,
       onLlmCall: () => {

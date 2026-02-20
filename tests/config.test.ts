@@ -192,4 +192,23 @@ describe("config", () => {
   it("drops empty labelProjectMap objects", () => {
     expect(normalizeConfig({ labelProjectMap: {} }).labelProjectMap).toBeUndefined();
   });
+
+  it("preserves dedup config through normalizeConfig", () => {
+    const normalized = normalizeConfig({
+      dedup: {
+        aggressive: true,
+        threshold: 0.72,
+      },
+    });
+
+    expect(normalized.dedup).toEqual({
+      aggressive: true,
+      threshold: 0.72,
+    });
+  });
+
+  it("drops invalid dedup config values", () => {
+    expect(normalizeConfig({ dedup: "yes" }).dedup).toBeUndefined();
+    expect(normalizeConfig({ dedup: { aggressive: "yes", threshold: 2 } }).dedup).toBeUndefined();
+  });
 });

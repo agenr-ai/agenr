@@ -9,11 +9,17 @@ import {
 export interface SignalConfig {
   minImportance: number;
   maxPerSignal: number;
+  cooldownMs: number;
+  maxPerSession: number;
+  maxAgeSec: number;
 }
 
 const DEFAULT_SIGNAL_CONFIG: SignalConfig = {
-  minImportance: 7,
-  maxPerSignal: 5,
+  minImportance: 8,
+  maxPerSignal: 3,
+  cooldownMs: 30000,
+  maxPerSession: 10,
+  maxAgeSec: 300,
 };
 
 /**
@@ -32,7 +38,13 @@ export async function checkSignals(
   config: SignalConfig = DEFAULT_SIGNAL_CONFIG,
 ): Promise<string | null> {
   const watermark = await initializeWatermark(db, consumerId);
-  const batch = await fetchNewSignalEntries(db, watermark, config.minImportance, config.maxPerSignal);
+  const batch = await fetchNewSignalEntries(
+    db,
+    watermark,
+    config.minImportance,
+    config.maxPerSignal,
+    config.maxAgeSec,
+  );
 
   if (batch.entries.length === 0) {
     return null;
@@ -58,5 +70,8 @@ export function resolveSignalConfig(pluginConfig?: Record<string, unknown>): Sig
   return {
     minImportance: readNonNegativeInt(pluginConfig?.signalMinImportance, DEFAULT_SIGNAL_CONFIG.minImportance),
     maxPerSignal: readNonNegativeInt(pluginConfig?.signalMaxPerSignal, DEFAULT_SIGNAL_CONFIG.maxPerSignal),
+    cooldownMs: readNonNegativeInt(pluginConfig?.signalCooldownMs, DEFAULT_SIGNAL_CONFIG.cooldownMs),
+    maxPerSession: readNonNegativeInt(pluginConfig?.signalMaxPerSession, DEFAULT_SIGNAL_CONFIG.maxPerSession),
+    maxAgeSec: readNonNegativeInt(pluginConfig?.signalMaxAgeSec, DEFAULT_SIGNAL_CONFIG.maxAgeSec),
   };
 }

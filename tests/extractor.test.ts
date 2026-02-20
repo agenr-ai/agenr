@@ -259,13 +259,13 @@ describe("pre-fetch", () => {
     const db = await makeDb();
     await seedEntries(db, 15, 0.1);
     await insertEntryWithEmbedding(db, "sim-080", 0.8, { subject: "sim-080", content: "sim-080" });
-    await insertEntryWithEmbedding(db, "sim-07801", 0.7801, { subject: "sim-07801", content: "sim-07801" });
-    await insertEntryWithEmbedding(db, "sim-07800", 0.78, { subject: "sim-07800", content: "sim-07800" });
-    await insertEntryWithEmbedding(db, "sim-07799", 0.7799, { subject: "sim-07799", content: "sim-07799" });
+    await insertEntryWithEmbedding(db, "sim-07201", 0.7201, { subject: "sim-07201", content: "sim-07201" });
+    await insertEntryWithEmbedding(db, "sim-07200", 0.72, { subject: "sim-07200", content: "sim-07200" });
+    await insertEntryWithEmbedding(db, "sim-07199", 0.7199, { subject: "sim-07199", content: "sim-07199" });
     await insertEntryWithEmbedding(db, "sim-070", 0.7, { subject: "sim-070", content: "sim-070" });
 
     const related = await preFetchRelated("chunk", db, "sk-test", async () => [unitVector(1)]);
-    expect(related.map((entry) => entry.subject)).toEqual(["sim-080", "sim-07801", "sim-07800"]);
+    expect(related.map((entry) => entry.subject)).toEqual(["sim-080", "sim-07201", "sim-07200"]);
   });
 
   it("caps related results at MAX_PREFETCH_RESULTS", async () => {

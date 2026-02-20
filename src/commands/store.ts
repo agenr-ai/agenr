@@ -295,6 +295,10 @@ export async function runStoreCommand(
   );
 
   const config = resolvedDeps.readConfigFn(process.env);
+  const aggressiveDedup = config?.dedup?.aggressive === true;
+  const configDedupThreshold = typeof config?.dedup?.threshold === "number"
+    ? config.dedup.threshold
+    : undefined;
   const platformRaw = options.platform?.trim();
   const platform = platformRaw ? normalizeKnowledgePlatform(platformRaw) : null;
   if (platformRaw && !platform) {
@@ -369,7 +373,8 @@ export async function runStoreCommand(
         force: options.force,
         verbose: options.verbose,
         onlineDedup,
-        dedupThreshold,
+        aggressiveDedup,
+        dedupThreshold: dedupThreshold ?? configDedupThreshold,
         llmClient,
         dbPath,
         sourceFile: input.sourceFile,

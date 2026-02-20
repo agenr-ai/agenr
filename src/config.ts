@@ -227,6 +227,25 @@ function normalizeForgettingConfig(input: unknown): NonNullable<AgenrConfig["for
   return normalized;
 }
 
+function normalizeDedupConfig(input: unknown): AgenrConfig["dedup"] | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return undefined;
+  }
+
+  const record = input as Record<string, unknown>;
+  const normalized: NonNullable<AgenrConfig["dedup"]> = {};
+
+  if (typeof record.aggressive === "boolean") {
+    normalized.aggressive = record.aggressive;
+  }
+
+  if (typeof record.threshold === "number" && Number.isFinite(record.threshold) && record.threshold >= 0 && record.threshold <= 1) {
+    normalized.threshold = record.threshold;
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
 function normalizeLabelProjectMap(input: unknown): Record<string, string> | undefined {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     return undefined;
@@ -285,6 +304,11 @@ export function normalizeConfig(input: unknown): AgenrConfig {
   const labelProjectMap = normalizeLabelProjectMap(record.labelProjectMap);
   if (labelProjectMap) {
     normalized.labelProjectMap = labelProjectMap;
+  }
+
+  const dedup = normalizeDedupConfig(record.dedup);
+  if (dedup) {
+    normalized.dedup = dedup;
   }
 
   return normalized;
@@ -377,6 +401,13 @@ export function mergeConfigPatch(current: AgenrConfig | null, patch: AgenrConfig
     merged.forgetting = {
       ...(current?.forgetting ?? {}),
       ...(patch.forgetting ?? {}),
+    };
+  }
+
+  if (current?.dedup || patch.dedup) {
+    merged.dedup = {
+      ...(current?.dedup ?? {}),
+      ...(patch.dedup ?? {}),
     };
   }
 
