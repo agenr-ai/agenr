@@ -30,7 +30,7 @@ The **watcher daemon** (`agenr daemon install`) monitors session transcript file
 | Claude Code | `~/.claude/CLAUDE.md` | No (global user file) | `.mcp.json` |
 | Cursor | `.cursor/rules/agenr.mdc` | No (gitignored by `agenr init`) | `.cursor/mcp.json` |
 | Codex CLI | `~/.codex/AGENTS.md` | No (global user file) | `~/.codex/config.toml` (manual step) |
-| OpenClaw | `AGENTS.md` | Per workspace config | Already configured via mcporter |
+| OpenClaw | `AGENTS.md` | Per workspace config | Already configured via native plugin |
 | Windsurf | `~/.codeium/windsurf/memories/global_rules.md` | No (global user file) | `.mcp.json` |
 | Claude Desktop | N/A | N/A | `~/Library/Application Support/Claude/claude_desktop_config.json` |
 | Generic | `AGENTS.md` | Project file (not auto-gitignored) | `.mcp.json` |
@@ -93,26 +93,14 @@ Use any slug you like in place of `assistant` (e.g., `personal`, `eja`, your nam
 **What happens:**
 
 - System prompt block appended to `AGENTS.md` in your OpenClaw workspace.
-- `.mcp.json` is written, but OpenClaw does not read this file. MCP registration still requires `openclaw plugins install agenr` or `mcporter` setup.
+- `.mcp.json` is written, but OpenClaw does not read this file. MCP registration still requires `openclaw plugins install agenr`.
 
-**MCP registration (one-time, if not already done):**
+**Plugin registration (one-time, if not already done):**
 
 OpenClaw manages its own plugin system. Register agenr via the OpenClaw plugin installer:
 
 ```bash
 openclaw plugins install agenr
-```
-
-Or, if you're wiring it manually through mcporter:
-
-```bash
-mcporter config add agenr --stdio agenr --arg mcp --env OPENAI_API_KEY=$OPENAI_API_KEY
-```
-
-Verify:
-
-```bash
-mcporter list agenr
 ```
 
 **How it works:**
@@ -130,6 +118,8 @@ The agent recalls and stores under the `assistant` project scope. Since you're n
 
 - OpenClaw loads `AGENTS.md` as project context automatically. The system prompt block in `AGENTS.md` is how the agent learns about agenr — there's no separate config file.
 - The OpenClaw plugin also injects recall context at session start via `before_agent_start`. This means the agent gets memory even before it reads `AGENTS.md`. The two mechanisms are complementary, not redundant.
+- The OpenClaw plugin filters session-start recall signals by importance. Only entries with importance >= 8 (the default signalMinImportance) appear as proactive signals. If agents store entries at importance 5-7, those entries exist in the database but will not appear in session-start signals. Raise importance to 8+ for entries you want the plugin to surface proactively, or lower signalMinImportance in the plugin config.
+- This is separate from the coached store default in Gotcha #18. Gotcha #18 is correct and should not change - importance 7 is a reasonable store default. The signal threshold is a separate filter applied only by the OpenClaw plugin at recall time.
 
 ---
 
@@ -345,7 +335,7 @@ agenr init
 
 **Watch out for:**
 
-- There's no sub-project scoping within a monorepo in v0.7.1. If your monorepo has `packages/frontend` and `packages/api`, both agents see all entries. This is usually fine -- monorepo teams share context.
+- There's no sub-project scoping within a monorepo yet. If your monorepo has `packages/frontend` and `packages/api`, both agents see all entries. This is usually fine -- monorepo teams share context.
 - If you need isolation between packages, treat them as a polyrepo setup (Scenario 5 or 6) by running `agenr init` in each package directory separately. But then MCP configs and instructions files need to exist per-package, which may not match your workflow.
 
 ---
@@ -384,7 +374,7 @@ No extra setup. Run `agenr init` once. Each agent session spawns its own MCP ser
 | Single project, Claude Code | Works | Fully auto-detected and configured |
 | Single project, Cursor | Works | Auto-detected, uses `.cursor/mcp.json` |
 | Single project, Windsurf | Works | Auto-detected |
-| Single project, OpenClaw | Works | MCP via mcporter (manual add) |
+| Single project, OpenClaw | Works | Native plugin via `openclaw plugins install agenr` |
 | Single project, Codex CLI | Partial | Instructions auto, MCP config is manual (TOML) |
 | Single project, Claude Desktop | Partial | MCP config auto, but no instructions file (no project-level prompt) |
 | Polyrepo, independent | Works | Each project scoped separately |
@@ -525,7 +515,7 @@ The MCP server reads `.agenr/config.json` on every call, not once at startup. Ru
 
 **16. OpenClaw plugin always recalls globally — project scoping does not apply**
 
-The OpenClaw plugin's session-start recall ignores `AGENR_PROJECT_DIR` and always returns entries from all projects. Running `agenr init --platform openclaw` does not scope the plugin's recall to that project. This is a known open gap (tracked post-v0.7.1, see issue #71).
+The OpenClaw plugin's session-start recall ignores `AGENR_PROJECT_DIR` and always returns entries from all projects. Running `agenr init --platform openclaw` does not scope the plugin's recall to that project. This is a known open gap (tracked in issue #71).
 
 For now: OpenClaw users should accept the global brain model and name entry subjects clearly to distinguish projects. Or narrow recall mid-session with a specific `query=`.
 

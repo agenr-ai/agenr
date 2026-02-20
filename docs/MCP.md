@@ -8,6 +8,10 @@
 
 agenr centralizes memory in one local database, while MCP lets multiple AI clients read/write that same memory. Instead of separate memory silos per tool, you get one shared memory layer with consistent extraction, storage, and recall behavior.
 
+Note: OpenClaw users do not use the MCP server. agenr ships as a native OpenClaw
+plugin. See [OPENCLAW.md](./OPENCLAW.md) for OpenClaw-specific setup. This document
+covers Codex, Claude Code, and other MCP-compatible clients.
+
 ## Start the MCP Server
 
 ```bash
@@ -117,6 +121,8 @@ Parameters:
 - `types` (string, optional): comma-separated entry types
 - `since` (string, optional): ISO date or relative (`7d`, `24h`, `1m`, `1y`)
 - `threshold` (number, optional, default `0`): minimum score `0.0..1.0`
+- Note: threshold is only available when using the MCP server directly. The native
+  OpenClaw plugin does not expose this parameter.
 - `platform` (string, optional): platform filter (`openclaw`, `claude-code`, `codex`)
 - `project` (string, optional):
   - omit to use configured project scope (project + dependencies from `.agenr/config.json`)
@@ -235,10 +241,11 @@ Stored: 1 new, 0 updated, 1 duplicates skipped, 0 superseded.
 
 ### `agenr_retire`
 
-Mark one or more memory entries as retired (soft delete). Retired entries are excluded from recall.
+agenr_retire marks a single memory entry as retired (soft delete). Retired entries
+are excluded from all recall but are not deleted from the database.
 
 Parameters:
-- `entry_id` (string, required): entry id to retire.
+- `entry_id` (string, required): single entry ID to retire. To retire multiple entries, make multiple calls.
 - `reason` (string, optional): retirement reason.
 - `persist` (boolean, optional, default `false`): persist retirement to ledger so it survives re-ingest.
 

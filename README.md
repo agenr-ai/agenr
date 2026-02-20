@@ -202,7 +202,7 @@ MCP settings.
 | `agenr extract <files...>` | Extract knowledge entries from text files |
 | `agenr store [files...]` | Store entries with semantic dedup |
 | `agenr recall [query]` | Semantic + memory-aware recall |
-| `agenr retire <subject>` | Retire a stale entry (hidden, not deleted) |
+| `agenr retire [subject]` | Retire a stale entry (hidden, not deleted). Match by subject text or use --id <id> to target by entry ID. |
 | `agenr watch [file]` | Live-watch files/directories, auto-extract knowledge |
 | `agenr daemon install` | Install background watch daemon (macOS launchd) |
 | `agenr daemon status` | Show daemon status (running/stopped, pid, watched file, recent logs) |
@@ -227,7 +227,7 @@ Deep dive: [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
 
 ## Status
 
-The core pipeline is stable and tested (782 tests). We use it daily managing
+The core pipeline is stable and tested (797 tests). We use it daily managing
 thousands of knowledge entries across OpenClaw sessions.
 
 What works: extraction, storage, recall, MCP integration, online dedup, consolidation, smart filtering, live watching, daemon mode.

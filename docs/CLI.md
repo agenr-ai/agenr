@@ -1,7 +1,7 @@
 # agenr CLI Reference
 
 Source of truth for this document:
-- `src/cli.ts`
+- `src/cli-main.ts`
 
 All syntax below is validated against `pnpm exec agenr <command> -h`.
 
@@ -538,7 +538,7 @@ $A mcp --db ~/.agenr/knowledge.db
 ### Example Output
 
 ```text
-[mcp] agenr MCP server started (protocol 2024-11-05, version 0.4.0)
+[mcp] agenr MCP server started (protocol 2024-11-05, version 0.7.6)
 ```
 
 ## `auth status`
@@ -718,8 +718,8 @@ $A db version
 ### Example Output
 
 ```text
-agenr v0.4.0
-Database schema version: 0.4.0
+agenr v0.7.6
+Database schema version: 0.7.6
 Database created: 2026-02-14 00:00:00
 Last migration: 2026-02-17 00:00:00
 ```
