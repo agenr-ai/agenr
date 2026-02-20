@@ -311,7 +311,7 @@ export function formatInitSummary(result: InitCommandResult): string[] {
   if (result.instructionsPath !== null) {
     lines.splice(2, 0, `- Wrote system prompt block to ${path.basename(result.instructionsPath)}`);
   } else {
-    lines.splice(2, 0, "- Memory injection: handled automatically by OpenClaw plugin (no AGENTS.md needed)");
+    lines.splice(2, 0, `- Memory injection: handled automatically by ${result.platform} plugin (no instructions file needed)`);
   }
   if (result.gitignoreUpdated) {
     lines.push("- Added .agenr/knowledge.db to .gitignore");
