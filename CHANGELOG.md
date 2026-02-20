@@ -1,11 +1,17 @@
 # Changelog
 
-## [0.7.2] - 2026-02-20
+## [0.7.3] - 2026-02-20
 
-### Fixed
-- fix(store): within-batch deduplication - entries with the same subject+type+source file in a single storeEntries() call are now deduplicated before processing, preventing same-batch signal duplicates (entries from different source files with the same subject are kept as distinct)
-- fix(store): re-extraction guard - entries with the same subject+type+source_file extracted within 24 hours now increment confirmations instead of adding a new entry
-- fix(mcp): append-only MCP access log at ~/.agenr/mcp-access.log for observability of agenr_recall and agenr_store tool calls
+### Added
+- feat(plugin): bundled OpenClaw skill (skills/SKILL.md) - teaches agents when to call agenr_store and agenr_recall as MCP tools; automatically available when plugin is installed
+- feat(plugin): complete configSchema in openclaw.plugin.json (signalMinImportance, signalMaxPerSignal, signalsEnabled, dbPath)
+
+### Changed
+- fix(init): removed AGENTS.md auto-detection heuristic for openclaw platform - openclaw must be specified explicitly via --platform openclaw (AGENTS.md is also used by Codex; the heuristic was unreliable)
+- fix(init): agenr init --platform openclaw no longer writes to AGENTS.md - the OpenClaw plugin handles memory injection via prependContext; AGENTS.md write was redundant
+
+### Internal
+- chore(plugin): bump openclaw.plugin.json version to 0.7.3
 
 ## [0.7.1] - 2026-02-20
 
