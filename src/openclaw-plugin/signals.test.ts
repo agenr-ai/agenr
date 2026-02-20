@@ -142,4 +142,11 @@ describe("openclaw plugin signals adapter", () => {
       maxPerSignal: 0,
     });
   });
+
+  it("resolveSignalConfig treats null values as unset (uses defaults)", () => {
+    expect(resolveSignalConfig({ signalMinImportance: null, signalMaxPerSignal: null })).toEqual({
+      minImportance: 7,
+      maxPerSignal: 5,
+    });
+  });
 });

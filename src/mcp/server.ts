@@ -124,7 +124,7 @@ const TOOL_DEFINITIONS: McpToolDefinition[] = [
         since_seq: {
           type: "integer",
           description:
-            "Only return entries with rowid > this value (watermark for incremental recall). Overrides semantic search - returns all entries (any importance) ordered by rowid ASC.",
+            "Only return entries with rowid > this value (watermark for incremental recall). When set, overrides all other filters (query, context, types, since, threshold, platform, project) and returns all non-retired entries ordered by rowid ASC.",
           minimum: 0,
         },
         threshold: {
