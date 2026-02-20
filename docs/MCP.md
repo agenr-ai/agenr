@@ -177,7 +177,7 @@ Parameters:
 - Each entry supports:
 - `content` (string, required)
 - `type` (enum, required): `fact|decision|preference|todo|relationship|event|lesson`
-- `importance` (integer, optional, `1..10`, default `5`)
+- `importance` (integer, optional, `1..10`, default `7`)
 - `source` (string, optional)
 - `tags` (string[], optional)
 - `scope` (enum, optional, default `personal`): `private|personal|public`
@@ -274,6 +274,21 @@ Add this to your project `AGENTS.md`:
 - When given large raw notes/transcripts, call `agenr_extract` first.
 - Before answering complex questions, recall relevant memory and cite what was recalled.
 ```
+
+### Importance calibration
+
+Score 7 is the default. Most entries should be 7 -- stored silently.
+
+Score 8+ fires a real-time cross-session signal in OpenClaw. Ask: "Would
+an active parallel session need to act on this right now?" If no, use 7.
+Cap: no more than 20% of stored entries should be 8 or higher.
+
+- 10: Permanent project-level constraints (use sparingly, 1-2 per project)
+- 9: Critical breaking changes or immediate cross-session decisions only
+- 8: Cross-session alert worthy -- fires signal in active sessions
+- 7: Default. Facts, decisions, preferences, milestones
+- 6: Routine verifications and dev observations
+- 5: Borderline, barely worth storing
 
 ## Troubleshooting
 
