@@ -1349,13 +1349,13 @@ export async function storeEntries(
         options.onDecision?.({
           entry: entries[i],
           action: "skipped",
-          reason: "within-batch duplicate (same subject+type)",
+          reason: "within-batch duplicate (same subject+type+source.file)",
         });
       }
     }
 
-    entries = entries.filter((_, i) => {
-      const key = `${entries[i].subject.trim().toLowerCase()}:${entries[i].type}:${entries[i].source.file}`;
+    entries = entries.filter((entry, i) => {
+      const key = `${entry.subject.trim().toLowerCase()}:${entry.type}:${entry.source.file}`;
       return seen.get(key) === i;
     });
   }
