@@ -2,7 +2,10 @@
   "id": "agenr",
   "name": "agenr Memory",
   "description": "Local memory layer - injects agenr context at session start",
-  "version": "0.6.6",
+  "version": "0.7.3",
+  "skills": [
+    "skills"
+  ],
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -18,6 +21,22 @@
       "enabled": {
         "type": "boolean",
         "description": "Set false to disable memory injection without uninstalling."
+      },
+      "signalMinImportance": {
+        "type": "number",
+        "description": "Minimum importance for mid-session signals (1-10, default: 7). Raise to reduce noise."
+      },
+      "signalMaxPerSignal": {
+        "type": "number",
+        "description": "Max entries per signal notification (default: 5)."
+      },
+      "signalsEnabled": {
+        "type": "boolean",
+        "description": "Set false to disable mid-session signals without uninstalling."
+      },
+      "dbPath": {
+        "type": "string",
+        "description": "Path to agenr DB. Defaults to AGENR_DB_PATH env or ~/.agenr/knowledge.db."
       }
     }
   }

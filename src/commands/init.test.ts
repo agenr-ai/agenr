@@ -73,14 +73,40 @@ describe("runInitCommand", () => {
     expect(result.mcpPath).toBe(path.join(dir, ".cursor", "mcp.json"));
   });
 
-  it("auto-detects openclaw from AGENTS.md", async () => {
+  it("explicit --platform openclaw skips AGENTS.md write and still writes MCP config", async () => {
+    const dir = await createTempDir();
+    tempDirs.push(dir);
+
+    const result = await runInitCommand({ path: dir, platform: "openclaw" });
+    expect(result.platform).toBe("openclaw");
+    expect(result.instructionsPath).toBeNull();
+    expect(await pathExists(path.join(dir, "AGENTS.md"))).toBe(false);
+
+    const mcpPath = path.join(dir, ".mcp.json");
+    expect(await pathExists(mcpPath)).toBe(true);
+    const config = await readJson(mcpPath);
+    const mcpServers = config.mcpServers as Record<string, unknown>;
+    expect(mcpServers.agenr).toEqual({
+      command: "agenr",
+      args: ["mcp"],
+      env: {
+        AGENR_PROJECT_DIR: path.resolve(dir),
+      },
+    });
+  });
+
+  it("AGENTS.md presence no longer auto-detects openclaw (falls through to generic)", async () => {
     const dir = await createTempDir();
     tempDirs.push(dir);
     await fs.writeFile(path.join(dir, "AGENTS.md"), "existing instructions\n", "utf8");
 
     const result = await runInitCommand({ path: dir });
-    expect(result.platform).toBe("openclaw");
+    expect(result.platform).toBe("generic");
     expect(result.instructionsPath).toBe(path.join(dir, "AGENTS.md"));
+
+    const instructions = await fs.readFile(path.join(dir, "AGENTS.md"), "utf8");
+    expect(instructions).toContain("<!-- agenr:start -->");
+    expect(instructions).toContain("<!-- agenr:end -->");
   });
 
   it("auto-detects windsurf from .windsurfrules", async () => {

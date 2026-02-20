@@ -21,7 +21,7 @@ export interface InitCommandResult {
   projectDir: string;
   dependencies: string[];
   configPath: string;
-  instructionsPath: string;
+  instructionsPath: string | null;
   mcpPath: string;
   gitignoreUpdated: boolean;
 }
@@ -109,16 +109,13 @@ async function detectPlatform(projectDir: string): Promise<InitPlatform> {
   if (await isDirectory(path.join(projectDir, ".cursor"))) {
     return "cursor";
   }
-  if (await pathExists(path.join(projectDir, "AGENTS.md"))) {
-    return "openclaw";
-  }
   if (await pathExists(path.join(projectDir, ".windsurfrules"))) {
     return "windsurf";
   }
   return "generic";
 }
 
-async function resolveInstructionsPath(projectDir: string, platform: InitPlatform): Promise<string> {
+async function resolveInstructionsPath(projectDir: string, platform: InitPlatform): Promise<string | null> {
   if (platform === "claude-code") {
     return path.join(os.homedir(), ".claude", "CLAUDE.md");
   }
@@ -134,6 +131,9 @@ async function resolveInstructionsPath(projectDir: string, platform: InitPlatfor
   }
   if (platform === "codex") {
     return path.join(os.homedir(), ".codex", "AGENTS.md");
+  }
+  if (platform === "openclaw") {
+    return null;
   }
   return path.join(projectDir, "AGENTS.md");
 }
@@ -306,9 +306,13 @@ export function formatInitSummary(result: InitCommandResult): string[] {
   const lines = [
     `agenr init: platform=${result.platform} project=${result.project} dependencies=${dependencyLabel}`,
     `- Wrote .agenr/config.json`,
-    `- Wrote system prompt block to ${path.basename(result.instructionsPath)}`,
     `- Wrote MCP config to ${path.relative(result.projectDir, result.mcpPath) || path.basename(result.mcpPath)}`,
   ];
+  if (result.instructionsPath !== null) {
+    lines.splice(2, 0, `- Wrote system prompt block to ${path.basename(result.instructionsPath)}`);
+  } else {
+    lines.splice(2, 0, "- Memory injection: handled automatically by OpenClaw plugin (no AGENTS.md needed)");
+  }
   if (result.gitignoreUpdated) {
     lines.push("- Added .agenr/knowledge.db to .gitignore");
   }
@@ -340,12 +344,14 @@ export async function runInitCommand(options: InitCommandOptions): Promise<InitC
 
   const configResult = await writeAgenrConfig(projectDir, project, resolvedPlatform, dependencies);
   const instructionsPath = await resolveInstructionsPath(projectDir, resolvedPlatform);
-  await upsertPromptBlock(instructionsPath, buildSystemPromptBlock(project));
+  if (instructionsPath !== null) {
+    await upsertPromptBlock(instructionsPath, buildSystemPromptBlock(project));
+  }
   const mcpPath = await writeMcpConfig(projectDir, resolvedPlatform);
   const gitignoreEntries = [".agenr/knowledge.db"];
   if (resolvedPlatform === "cursor") {
     gitignoreEntries.push(".cursor/rules/agenr.mdc");
-    if (isPathInsideProject(projectDir, instructionsPath)) {
+    if (instructionsPath !== null && isPathInsideProject(projectDir, instructionsPath)) {
       const relativeInstructionsPath = path.relative(projectDir, instructionsPath).split(path.sep).join("/");
       gitignoreEntries.push(relativeInstructionsPath);
     }
