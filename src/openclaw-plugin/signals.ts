@@ -44,6 +44,9 @@ export async function checkSignals(
 }
 
 function readNonNegativeInt(value: unknown, fallback: number): number {
+  if (value === null || value === undefined) {
+    return fallback;
+  }
   const parsed = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(parsed) || parsed < 0) {
     return fallback;
