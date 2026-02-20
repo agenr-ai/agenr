@@ -24,31 +24,29 @@ Protocol details:
 - MCP protocol version: `2024-11-05`
 - tools: `agenr_recall`, `agenr_store`, `agenr_extract`, `agenr_retire`
 
-## Codex Setup (project `.mcp.json`)
+## Codex Setup (`~/.codex/config.toml`)
 
-```json
-{
-  "agenr": {
-    "command": "agenr",
-    "args": ["mcp"],
-    "env": {
-      "AGENR_PROJECT_DIR": "/path/to/project",
-      "OPENAI_API_KEY": "your-key-here"
-    }
-  }
-}
+```toml
+[mcp]
+agenr = { command = "agenr", args = ["mcp"], env = { AGENR_PROJECT_DIR = "/path/to/project", OPENAI_API_KEY = "your-key" } }
 ```
+
+Notes:
+- Codex reads MCP config from `~/.codex/config.toml`, not project `.mcp.json`.
+- `agenr init --platform codex` still writes project `.mcp.json` for compatibility with other clients. Codex ignores that file.
 
 ## Claude Code Setup (project `.mcp.json`)
 
 ```json
 {
-  "agenr": {
-    "command": "agenr",
-    "args": ["mcp"],
-    "env": {
-      "AGENR_PROJECT_DIR": "/path/to/project",
-      "OPENAI_API_KEY": "your-key-here"
+  "mcpServers": {
+    "agenr": {
+      "command": "agenr",
+      "args": ["mcp"],
+      "env": {
+        "AGENR_PROJECT_DIR": "/path/to/project",
+        "OPENAI_API_KEY": "your-key-here"
+      }
     }
   }
 }
@@ -86,12 +84,14 @@ Pass `--db` to scope the MCP server to a project-local database:
 **Project `.mcp.json`:**
 ```json
 {
-  "agenr": {
-    "command": "agenr",
-    "args": ["mcp", "--db", ".agenr/knowledge.db"],
-    "env": {
-      "AGENR_PROJECT_DIR": "/path/to/project",
-      "OPENAI_API_KEY": "your-key-here"
+  "mcpServers": {
+    "agenr": {
+      "command": "agenr",
+      "args": ["mcp", "--db", ".agenr/knowledge.db"],
+      "env": {
+        "AGENR_PROJECT_DIR": "/path/to/project",
+        "OPENAI_API_KEY": "your-key-here"
+      }
     }
   }
 }
