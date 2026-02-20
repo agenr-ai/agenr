@@ -212,3 +212,36 @@ describe("config", () => {
     expect(normalizeConfig({ dedup: { aggressive: "yes", threshold: 2 } }).dedup).toBeUndefined();
   });
 });
+
+describe("normalizeConfig dedup", () => {
+  it("normalizeConfig ignores missing dedup key", () => {
+    const config = normalizeConfig({ signalMinImportance: 8 });
+    expect(config.dedup).toBeUndefined();
+  });
+
+  it("normalizeConfig accepts aggressive: true with no threshold", () => {
+    const config = normalizeConfig({ dedup: { aggressive: true } });
+    expect(config.dedup).toEqual({ aggressive: true });
+    expect(config.dedup?.threshold).toBeUndefined();
+  });
+
+  it("normalizeConfig accepts threshold in range 0-1", () => {
+    const config = normalizeConfig({ dedup: { threshold: 0.65 } });
+    expect(config.dedup?.threshold).toBe(0.65);
+  });
+
+  it("normalizeConfig rejects threshold out of range", () => {
+    const config = normalizeConfig({ dedup: { threshold: 1.5 } });
+    expect(config.dedup?.threshold).toBeUndefined();
+  });
+
+  it("normalizeConfig rejects non-boolean aggressive", () => {
+    const config = normalizeConfig({ dedup: { aggressive: "yes" } });
+    expect(config.dedup?.aggressive).toBeUndefined();
+  });
+
+  it("normalizeConfig returns undefined dedup for empty object", () => {
+    const config = normalizeConfig({ dedup: {} });
+    expect(config.dedup).toBeUndefined();
+  });
+});

@@ -7,6 +7,8 @@
 - fix(plugin): lower default maxPerSignal from 5 to 3 - smaller batches
 - fix(dedup): lower DEFAULT_DEDUP_THRESHOLD from 0.80 to 0.72 - entries with cosine similarity 0.72-0.80 now reach LLM review instead of being stored as duplicates
 - fix(extractor): increase MAX_PREFETCH_RESULTS from 3 to 5 and lower PREFETCH_SIMILARITY_THRESHOLD from 0.78 to 0.72
+- fix(extractor): increase PREFETCH_CANDIDATE_LIMIT from 10 to 15 for broader elaborative encoding candidates
+- fix(extractor): tighten extractor prompt to suppress near-variant entries already captured in DB
 
 ### Added
 - feat(plugin): signalCooldownMs config - minimum ms between signal batches per session (default: 30000)

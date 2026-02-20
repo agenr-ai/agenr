@@ -184,19 +184,23 @@ const plugin = {
           }
 
           const signalConfig = resolveSignalConfig(config);
-          const state = sessionSignalState.get(sessionKey) ?? { lastSignalAt: 0, signalCount: 0 };
-
-          if (signalConfig.cooldownMs > 0 && Date.now() - state.lastSignalAt < signalConfig.cooldownMs) {
-            return;
-          }
-
-          if (signalConfig.maxPerSession > 0 && state.signalCount >= signalConfig.maxPerSession) {
-            return;
-          }
-
+          // Always call checkSignals so the watermark advances even if we suppress delivery.
+          // This prevents stale-watermark bursts when cooldown expires.
           const db = await ensurePluginDb(config);
           const signal = await checkSignals(db, sessionKey, signalConfig);
           if (!signal) {
+            return;
+          }
+
+          const state = sessionSignalState.get(sessionKey) ?? { lastSignalAt: 0, signalCount: 0 };
+
+          // Suppress delivery (but NOT watermark advance) during cooldown or session cap.
+          const inCooldown =
+            signalConfig.cooldownMs > 0 && Date.now() - state.lastSignalAt < signalConfig.cooldownMs;
+          const overCap =
+            signalConfig.maxPerSession > 0 && state.signalCount >= signalConfig.maxPerSession;
+
+          if (inCooldown || overCap) {
             return;
           }
 
@@ -306,7 +310,7 @@ const plugin = {
               return makeDisabledToolResult();
             }
             const agenrPath = resolveAgenrPath(runtimeConfig);
-            return runStoreTool(agenrPath, params);
+            return runStoreTool(agenrPath, params, runtimeConfig as Record<string, unknown> | undefined);
           },
         },
       );

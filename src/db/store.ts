@@ -1319,11 +1319,14 @@ export async function storeEntries(
 ): Promise<StoreResult> {
   warnIfLocked();
 
+  const explicitThreshold = options.dedupThreshold !== undefined;
   const dedupThreshold = validateThreshold(
     options.dedupThreshold ??
       (options.aggressiveDedup === true ? AGGRESSIVE_DEDUP_THRESHOLD : DEFAULT_DEDUP_THRESHOLD),
   );
-  const similarLimit = options.aggressiveDedup === true ? AGGRESSIVE_SIMILAR_LIMIT : DEFAULT_SIMILAR_LIMIT;
+  // Only use aggressive candidate limit when aggressiveDedup is fully active (no explicit threshold override).
+  const similarLimit =
+    options.aggressiveDedup === true && !explicitThreshold ? AGGRESSIVE_SIMILAR_LIMIT : DEFAULT_SIMILAR_LIMIT;
   const onlineDedup = options.onlineDedup === true && options.force !== true;
   const llmDedupEnabled = onlineDedup && options.skipLlmDedup !== true;
   if (llmDedupEnabled && entries.length > 0 && !options.llmClient) {

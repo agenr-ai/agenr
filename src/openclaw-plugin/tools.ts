@@ -169,7 +169,11 @@ export async function runRecallTool(agenrPath: string, params: Record<string, un
   }
 }
 
-export async function runStoreTool(agenrPath: string, params: Record<string, unknown>): Promise<PluginToolResult> {
+export async function runStoreTool(
+  agenrPath: string,
+  params: Record<string, unknown>,
+  pluginConfig?: Record<string, unknown>,
+): Promise<PluginToolResult> {
   const entries = Array.isArray(params.entries) ? params.entries : [];
   const platform = asString(params.platform);
   const project = asString(params.project);
@@ -181,7 +185,16 @@ export async function runStoreTool(agenrPath: string, params: Record<string, unk
     payload.project = project;
   }
 
-  const result = await runAgenrCommand(agenrPath, ["store"], JSON.stringify(payload));
+  const storeArgs = ["store"];
+  const dedupConfig = pluginConfig?.dedup as Record<string, unknown> | undefined;
+  if (dedupConfig?.aggressive === true) {
+    storeArgs.push("--aggressive");
+  }
+  if (typeof dedupConfig?.threshold === "number") {
+    storeArgs.push("--dedup-threshold", String(dedupConfig.threshold));
+  }
+
+  const result = await runAgenrCommand(agenrPath, storeArgs, JSON.stringify(payload));
   if (result.timedOut) {
     return {
       content: [{ type: "text", text: "agenr_store timed out" }],
