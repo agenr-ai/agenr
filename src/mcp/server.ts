@@ -722,6 +722,10 @@ export function createMcpServer(
     errorOutput.write(`${line}\n`);
   }
 
+  if (!scopedProjectDir) {
+    log("warn: AGENR_PROJECT_DIR not set -- recall will return global (unscoped) results. Run agenr init to configure project scoping.");
+  }
+
   async function ensureDb(): Promise<Client> {
     if (!dbClient) {
       dbClient = resolvedDeps.getDbFn(options.dbPath);

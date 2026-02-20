@@ -852,6 +852,49 @@ describe("mcp server", () => {
     expect(recallQuery.projectStrict).toBeUndefined();
   });
 
+  it("logs warning when AGENR_PROJECT_DIR is not set", async () => {
+    const harness = makeHarness();
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const errorOutput = new PassThrough();
+    let rawError = "";
+    errorOutput.on("data", (chunk: Buffer | string) => {
+      rawError += chunk.toString();
+    });
+
+    const server = createMcpServer(
+      {
+        input,
+        output,
+        errorOutput,
+        serverVersion: "9.9.9-test",
+        env: { ...process.env, AGENR_PROJECT_DIR: "" },
+      },
+      harness.deps,
+    );
+
+    const running = server.startServer();
+    input.write(
+      `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: 41,
+        method: "tools/call",
+        params: {
+          name: "agenr_recall",
+          arguments: {
+            query: "Jim",
+          },
+        },
+      })}\n`,
+    );
+    input.end();
+    await running;
+
+    expect(rawError).toContain(
+      "warn: AGENR_PROJECT_DIR not set -- recall will return global (unscoped) results. Run agenr init to configure project scoping.",
+    );
+  });
+
   it("calls agenr_store and returns storage summary", async () => {
     const harness = makeHarness();
     harness.storeEntriesFn.mockResolvedValueOnce({

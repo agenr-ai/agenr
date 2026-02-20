@@ -341,9 +341,6 @@ export async function runInitCommand(options: InitCommandOptions): Promise<InitC
       gitignoreEntries.push(relativeInstructionsPath);
     }
   }
-  if (resolvedPlatform === "generic") {
-    gitignoreEntries.push("AGENTS.md");
-  }
   const gitignoreUpdated = await addGitignoreEntries(projectDir, gitignoreEntries);
 
   return {

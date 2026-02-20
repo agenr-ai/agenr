@@ -209,6 +209,19 @@ describe("runInitCommand", () => {
     expect(content).toContain(".agenr/knowledge.db");
   });
 
+  it("does not add AGENTS.md to .gitignore for generic platform", async () => {
+    const dir = await createTempDir();
+    tempDirs.push(dir);
+    const gitignorePath = path.join(dir, ".gitignore");
+    await fs.writeFile(gitignorePath, "node_modules/\n", "utf8");
+
+    await runInitCommand({ path: dir, platform: "generic" });
+
+    const content = await fs.readFile(gitignorePath, "utf8");
+    expect(content).toContain(".agenr/knowledge.db");
+    expect(content).not.toContain("AGENTS.md");
+  });
+
   it("is idempotent on re-run: markers stay single, config merges, dependencies persist without --depends-on", async () => {
     const dir = await createTempDir();
     tempDirs.push(dir);
