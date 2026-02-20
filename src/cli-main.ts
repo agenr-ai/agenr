@@ -467,6 +467,7 @@ export function createProgram(): Command {
     .option("--dry-run", "Show what would be stored without writing", false)
     .option("--verbose", "Show per-entry dedup decisions", false)
     .option("--force", "Skip dedup and store all entries as new", false)
+    .option("--aggressive", "Enable aggressive dedup (lower similarity threshold)", false)
     .option("--platform <name>", "Platform tag: openclaw, claude-code, codex")
     .option("--project <name>", "Project tag (lowercase).", (val: string, prev: string[]) => [...prev, val], [] as string[])
     .option("--online-dedup", "Enable online LLM dedup at write time", true)
@@ -480,6 +481,7 @@ export function createProgram(): Command {
           dryRun?: boolean;
           verbose?: boolean;
           force?: boolean;
+          aggressive?: boolean;
           platform?: string;
           project?: string | string[];
           onlineDedup?: boolean;
@@ -536,20 +538,33 @@ export function createProgram(): Command {
     });
 
   program
-    .command("retire <subject>")
+    .command("retire [subject]")
     .description("Retire a stale entry from active recall (entry is hidden, not deleted)")
     .option("--persist", "Write to retirements ledger so retirement survives re-ingest")
     .option("--contains", "Use substring matching instead of exact match")
     .option("--dry-run", "Preview matches without retiring")
     .option("--reason <text>", "Reason for retirement")
     .option("--db <path>", "Path to database file")
-    .action(async (subject: string, opts: Record<string, unknown>) => {
-      const result = await runRetireCommand(subject, {
+    .option("--id <id>", "Retire a specific entry by its ID (overrides subject matching)")
+    .action(async (subject: string | undefined, opts: Record<string, unknown>) => {
+      const entryId = opts.id as string | undefined;
+      if (!entryId && !subject) {
+        console.error("Error: provide a subject or --id <id>");
+        process.exitCode = 1;
+        return;
+      }
+      if (entryId && subject) {
+        console.error("Error: --id and subject are mutually exclusive");
+        process.exitCode = 1;
+        return;
+      }
+      const result = await runRetireCommand(subject ?? "", {
         persist: opts.persist === true,
         contains: opts.contains === true,
         dryRun: opts.dryRun === true,
         reason: opts.reason as string | undefined,
         db: opts.db as string | undefined,
+        id: entryId,
       });
       process.exitCode = result.exitCode;
     });

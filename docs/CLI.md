@@ -121,6 +121,7 @@ agenr store [options] [files...]
 - `--dry-run`: show write decisions without persisting.
 - `--verbose`: show per-entry dedup decisions.
 - `--force`: bypass dedup checks and insert all as new.
+- `--aggressive`: lower online dedup similarity threshold and increase candidate lookups.
 - `--platform <name>`: platform tag (`openclaw|claude-code|claude|codex`).
 - `--project <name>`: project tag (lowercase).
 - `--online-dedup`: enable online LLM dedup at write time (default `true`).
@@ -497,13 +498,14 @@ Consolidation Health
 Retire a stale entry from active recall. The entry is hidden from recall but not deleted from the database.
 
 ```bash
-agenr retire <subject> [options]
+agenr retire [subject] [options]
 ```
 
 Arguments:
-  subject    Subject to match (exact match by default)
+  subject    Subject to match (exact by default; mutually exclusive with --id)
 
 Options:
+  --id <id>          Retire a specific entry by ID (mutually exclusive with subject)
   --contains         Use substring matching instead of exact match
   --dry-run          Preview matches without retiring
   --persist          Write to retirements ledger so retirement survives re-ingest
