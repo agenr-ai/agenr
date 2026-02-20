@@ -593,6 +593,226 @@ describe("mcp server", () => {
     await server.stop();
   });
 
+  it("agenr_recall with since_seq returns entries by rowid", async () => {
+    const harness = makeHarness();
+    harness.dbExecute.mockImplementation(async (statement: string | { sql?: string; args?: unknown[] }) => {
+      const sql = typeof statement === "string" ? statement : statement.sql ?? "";
+      if (sql.includes("WHERE rowid > ?") && sql.includes("ORDER BY rowid ASC")) {
+        return {
+          rows: [
+            {
+              rowid: 1543,
+              id: "abc123",
+              type: "decision",
+              subject: "Switch to Postgres",
+              content: "Switch to Postgres for production database",
+              importance: 8,
+              created_at: "2026-02-19T10:00:00.000Z",
+            },
+            {
+              rowid: 1544,
+              id: "def456",
+              type: "fact",
+              subject: "AWS contract",
+              content: "AWS contract signed through 2027",
+              importance: 9,
+              created_at: "2026-02-19T11:00:00.000Z",
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const responses = await runServer(
+      [
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 35,
+          method: "tools/call",
+          params: {
+            name: "agenr_recall",
+            arguments: {
+              since_seq: 0,
+              limit: 10,
+            },
+          },
+        }),
+      ],
+      harness.deps,
+    );
+
+    const result = responses[0]?.result as { content?: Array<{ text?: string }> };
+    const text = result.content?.[0]?.text ?? "";
+    expect(text).toContain("2 entries since seq 0:");
+    expect(text).toContain("[rowid=1543] [id=abc123]");
+    expect(text).toContain("[rowid=1544] [id=def456]");
+    expect(harness.recallFn).not.toHaveBeenCalled();
+  });
+
+  it("agenr_recall with since_seq=0 returns all entries", async () => {
+    const harness = makeHarness();
+    harness.dbExecute.mockImplementation(async (statement: string | { sql?: string }) => {
+      const sql = typeof statement === "string" ? statement : statement.sql ?? "";
+      if (sql.includes("WHERE rowid > ?") && sql.includes("ORDER BY rowid ASC")) {
+        return {
+          rows: [
+            {
+              rowid: 1,
+              id: "entry-1",
+              type: "fact",
+              subject: "S1",
+              content: "C1",
+              importance: 6,
+              created_at: "2026-02-19T00:00:00.000Z",
+            },
+            {
+              rowid: 2,
+              id: "entry-2",
+              type: "event",
+              subject: "S2",
+              content: "C2",
+              importance: 7,
+              created_at: "2026-02-20T00:00:00.000Z",
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const responses = await runServer(
+      [
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 36,
+          method: "tools/call",
+          params: {
+            name: "agenr_recall",
+            arguments: {
+              since_seq: 0,
+            },
+          },
+        }),
+      ],
+      harness.deps,
+    );
+
+    const result = responses[0]?.result as { content?: Array<{ text?: string }> };
+    const text = result.content?.[0]?.text ?? "";
+    expect(text).toContain("2 entries since seq 0:");
+    expect(text).toContain("[rowid=1] [id=entry-1]");
+    expect(text).toContain("[rowid=2] [id=entry-2]");
+  });
+
+  it("agenr_recall with since_seq rejects negative values", async () => {
+    const harness = makeHarness();
+    const responses = await runServer(
+      [
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 37,
+          method: "tools/call",
+          params: {
+            name: "agenr_recall",
+            arguments: {
+              since_seq: -1,
+            },
+          },
+        }),
+      ],
+      harness.deps,
+    );
+
+    expect(responses[0]).toMatchObject({
+      jsonrpc: "2.0",
+      id: 37,
+      error: {
+        code: -32602,
+        message: "since_seq must be a non-negative integer",
+      },
+    });
+  });
+
+  it("agenr_recall with since_seq returns empty for high watermark", async () => {
+    const harness = makeHarness();
+    harness.dbExecute.mockImplementation(async (statement: string | { sql?: string }) => {
+      const sql = typeof statement === "string" ? statement : statement.sql ?? "";
+      if (sql.includes("WHERE rowid > ?") && sql.includes("ORDER BY rowid ASC")) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    });
+
+    const responses = await runServer(
+      [
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 38,
+          method: "tools/call",
+          params: {
+            name: "agenr_recall",
+            arguments: {
+              since_seq: 9999,
+            },
+          },
+        }),
+      ],
+      harness.deps,
+    );
+
+    const result = responses[0]?.result as { content?: Array<{ text?: string }> };
+    expect(result.content?.[0]?.text).toBe("No new entries since seq 9999.");
+  });
+
+  it("agenr_recall with since_seq bypasses embedding requirements", async () => {
+    const harness = makeHarness();
+    harness.resolveEmbeddingApiKeyFn.mockImplementation(() => {
+      throw new Error("missing OPENAI_API_KEY");
+    });
+    harness.dbExecute.mockImplementation(async (statement: string | { sql?: string }) => {
+      const sql = typeof statement === "string" ? statement : statement.sql ?? "";
+      if (sql.includes("WHERE rowid > ?") && sql.includes("ORDER BY rowid ASC")) {
+        return {
+          rows: [
+            {
+              rowid: 2,
+              id: "entry-2",
+              type: "fact",
+              subject: "S2",
+              content: "C2",
+              importance: 7,
+              created_at: "2026-02-20T00:00:00.000Z",
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const server = createMcpServer({ serverVersion: "9.9.9-test" }, harness.deps);
+    const response = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 39,
+      method: "tools/call",
+      params: {
+        name: "agenr_recall",
+        arguments: {
+          since_seq: 0,
+        },
+      },
+    });
+
+    expect(response).toMatchObject({
+      jsonrpc: "2.0",
+      id: 39,
+    });
+    const text = ((response as { result?: { content?: Array<{ text?: string }> } }).result?.content?.[0]?.text ?? "");
+    expect(text).toContain("[rowid=2] [id=entry-2]");
+    expect(harness.resolveEmbeddingApiKeyFn).not.toHaveBeenCalled();
+    await server.stop();
+  });
+
   it("calls agenr_store and returns storage summary", async () => {
     const harness = makeHarness();
     harness.storeEntriesFn.mockResolvedValueOnce({

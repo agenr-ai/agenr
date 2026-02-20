@@ -17,6 +17,17 @@ export type BeforeAgentStartResult = {
   prependContext?: string;
 };
 
+export type BeforePromptBuildEvent = {
+  prompt?: string;
+  messages?: unknown[];
+  [key: string]: unknown;
+};
+
+export type BeforePromptBuildResult = {
+  systemPrompt?: string;
+  prependContext?: string;
+};
+
 export type PluginLogger = {
   debug?: (message: string) => void;
   info?: (message: string) => void;
@@ -30,13 +41,22 @@ export type PluginApi = {
   version?: string;
   pluginConfig?: Record<string, unknown>;
   logger: PluginLogger;
-  on: (
-    hook: "before_agent_start",
-    handler: (
-      event: BeforeAgentStartEvent,
-      ctx: PluginHookAgentContext
-    ) => Promise<BeforeAgentStartResult | undefined> | BeforeAgentStartResult | undefined
-  ) => void;
+  on: {
+    (
+      hook: "before_agent_start",
+      handler: (
+        event: BeforeAgentStartEvent,
+        ctx: PluginHookAgentContext
+      ) => Promise<BeforeAgentStartResult | undefined> | BeforeAgentStartResult | undefined,
+    ): void;
+    (
+      hook: "before_prompt_build",
+      handler: (
+        event: BeforePromptBuildEvent,
+        ctx: PluginHookAgentContext
+      ) => Promise<BeforePromptBuildResult | undefined> | BeforePromptBuildResult | undefined,
+    ): void;
+  };
 };
 
 export type AgenrPluginConfig = {
@@ -46,4 +66,12 @@ export type AgenrPluginConfig = {
   budget?: number;
   /** Set to false to disable memory injection without removing the plugin */
   enabled?: boolean;
+  /** Path to agenr DB. Defaults to AGENR_DB_PATH env or ~/.agenr/knowledge.db */
+  dbPath?: string;
+  /** Set to false to disable mid-session signals (default: true) */
+  signalsEnabled?: boolean;
+  /** Minimum importance for signal entries (default: 7) */
+  signalMinImportance?: number;
+  /** Max entries per signal notification (default: 5) */
+  signalMaxPerSignal?: number;
 };

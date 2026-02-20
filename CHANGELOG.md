@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.7.0] - 2026-02-20
+
+### Added
+- feat(signals): mid-session signal delivery via `before_prompt_build` hook - notifies agents of new high-importance entries (imp >= 7) with compact 50-100 token notifications
+- feat(signals): `signal_watermarks` table for per-consumer rowid-based watermark tracking
+- feat(mcp): `since_seq` parameter on `agenr_recall` for watermark-based incremental recall without embedding cost
+- feat(plugin): `signalsEnabled`, `signalMinImportance`, `signalMaxPerSignal`, and `dbPath` plugin config options
+
+### Changed
+- refactor(plugin): plugin now opens a direct DB connection for sub-ms signal queries (vs CLI spawn)
+- refactor(plugin/types): expanded `PluginApi` and `AgenrPluginConfig` types for signal support
+
 ## [0.6.15] - 2026-02-19
 
 ### Changed
