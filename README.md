@@ -24,8 +24,6 @@ export OPENAI_API_KEY=sk-...  # for embeddings + extraction
 
 ```bash
 npm install -g agenr
-# or: pnpm add -g agenr
-pnpm add -g agenr
 
 agenr setup        # configure LLM provider + auth
 agenr ingest ~/.openclaw/agents/main/sessions/  # bootstrap from existing sessions
@@ -207,6 +205,8 @@ MCP settings.
 | `agenr retire <subject>` | Retire a stale entry (hidden, not deleted) |
 | `agenr watch [file]` | Live-watch files/directories, auto-extract knowledge |
 | `agenr daemon install` | Install background watch daemon (macOS launchd) |
+| `agenr daemon status` | Show daemon status (running/stopped, pid, watched file, recent logs) |
+| `agenr daemon logs [--lines <n>] [--follow]` | Stream or show recent daemon logs for troubleshooting |
 | `agenr consolidate` | Clean up and merge near-duplicates |
 | `agenr context` | Generate context file for AI tool integration |
 | `agenr health` | Show database health and forgetting candidates |
