@@ -210,6 +210,17 @@ describe("config", () => {
   it("drops invalid dedup config values", () => {
     expect(normalizeConfig({ dedup: "yes" }).dedup).toBeUndefined();
     expect(normalizeConfig({ dedup: { aggressive: "yes", threshold: 2 } }).dedup).toBeUndefined();
+    // Partial invalidity: valid aggressive preserved, only out-of-range threshold dropped
+    expect(normalizeConfig({ dedup: { aggressive: true, threshold: 1.5 } }).dedup).toEqual({ aggressive: true });
+  });
+
+  it("preserves dedup config with only aggressive set", () => {
+    expect(normalizeConfig({ dedup: { aggressive: false } }).dedup).toEqual({ aggressive: false });
+    expect(normalizeConfig({ dedup: { aggressive: true } }).dedup).toEqual({ aggressive: true });
+  });
+
+  it("preserves dedup config with only threshold set", () => {
+    expect(normalizeConfig({ dedup: { threshold: 0.65 } }).dedup).toEqual({ threshold: 0.65 });
   });
 });
 
