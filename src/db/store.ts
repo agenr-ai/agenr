@@ -15,6 +15,7 @@ const AUTO_SKIP_THRESHOLD = 0.95;
 const SMART_DEDUP_THRESHOLD = 0.88;
 const DEFAULT_DEDUP_THRESHOLD = 0.8;
 const DEFAULT_SIMILAR_LIMIT = 5;
+const RECENCY_DEDUP_HOURS = 24;
 const CANONICAL_KEY_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+){2,4}$/;
 const CROSS_TYPE_TODO_SUPERSEDE_TYPES = new Set<KnowledgeEntry["type"]>(["event", "fact", "decision"]);
 const TODO_COMPLETION_SIGNALS = ["done", "fixed", "resolved", "completed", "shipped", "closed", "merged"] as const;
@@ -803,6 +804,56 @@ async function findEntryByTypeAndCanonicalKey(
   return mapStoredEntry(row, tagsById.get(entryId) ?? []);
 }
 
+export async function findRecentEntryBySubjectTypeAndSourceFile(
+  db: Client,
+  normalizedSubject: string,
+  type: string,
+  sourceFile: string,
+  withinHours: number,
+): Promise<StoredEntry | null> {
+  const result = await db.execute({
+    sql: `
+      SELECT
+        id,
+        type,
+        subject,
+        canonical_key,
+        content,
+        importance,
+        expiry,
+        source_file,
+        source_context,
+        embedding,
+        created_at,
+        updated_at,
+        last_recalled_at,
+        recall_count,
+        confirmations,
+        contradictions,
+        superseded_by
+      FROM entries e
+      WHERE lower(trim(e.subject)) = ?
+        AND e.type = ?
+        AND e.source_file = ?
+        AND e.retired = 0
+        AND e.superseded_by IS NULL
+        AND e.created_at > datetime('now', '-' || ? || ' hours')
+      ORDER BY e.rowid DESC
+      LIMIT 1
+    `,
+    args: [normalizedSubject, type, sourceFile, withinHours],
+  });
+
+  const row = result.rows[0];
+  if (!row) {
+    return null;
+  }
+
+  const entryId = toStringValue(row.id);
+  const tagsById = await getTagsForEntryIds(db, [entryId]);
+  return mapStoredEntry(row, tagsById.get(entryId) ?? []);
+}
+
 async function findActiveTodoByCanonicalKey(db: Client, canonicalKey: string): Promise<StoredEntry | null> {
   return findEntryByTypeAndCanonicalKey(db, "todo", canonicalKey);
 }
@@ -1284,6 +1335,31 @@ export async function storeEntries(
   let relationsCreated = 0;
   let llmDedupCalls = 0;
 
+  if (!options.force && !onlineDedup) {
+    const seen = new Map<string, number>();
+    for (let i = 0; i < entries.length; i += 1) {
+      const key = `${entries[i].subject.trim().toLowerCase()}:${entries[i].type}:${entries[i].source.file}`;
+      seen.set(key, i);
+    }
+
+    for (let i = 0; i < entries.length; i += 1) {
+      const key = `${entries[i].subject.trim().toLowerCase()}:${entries[i].type}:${entries[i].source.file}`;
+      if (seen.get(key) !== i) {
+        skipped += 1;
+        options.onDecision?.({
+          entry: entries[i],
+          action: "skipped",
+          reason: "within-batch duplicate (same subject+type)",
+        });
+      }
+    }
+
+    entries = entries.filter((_, i) => {
+      const key = `${entries[i].subject.trim().toLowerCase()}:${entries[i].type}:${entries[i].source.file}`;
+      return seen.get(key) === i;
+    });
+  }
+
   const processOne = async (entry: KnowledgeEntry): Promise<void> => {
     const normalizedEntry: KnowledgeEntry = {
       ...entry,
@@ -1299,6 +1375,29 @@ export async function storeEntries(
         reason: "idempotent content hash match",
       });
       return;
+    }
+
+    if (!options.force && !onlineDedup && normalizedEntry.source.file) {
+      const recentMatch = await findRecentEntryBySubjectTypeAndSourceFile(
+        db,
+        normalizedEntry.subject.trim().toLowerCase(),
+        normalizedEntry.type,
+        normalizedEntry.source.file,
+        RECENCY_DEDUP_HOURS,
+      );
+      if (recentMatch) {
+        await incrementConfirmations(db, recentMatch.id, contentHash);
+        updated += 1;
+        options.onDecision?.({
+          entry: normalizedEntry,
+          action: "updated",
+          reason: "re-extraction guard: same subject+type+source within 24h",
+          matchedEntryId: recentMatch.id,
+          matchedEntry: recentMatch,
+          sameSubject: true,
+        });
+        return;
+      }
     }
 
     if (!options.force && normalizedEntry.canonical_key) {
