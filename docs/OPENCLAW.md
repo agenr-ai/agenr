@@ -96,44 +96,14 @@ find ~/.openclaw/agents/main/sessions/ -name "*.jsonl" -mtime -30 | xargs agenr 
 
 You can always ingest older sessions later.
 
-## Teaching Your Agent
+## Calibrating Memory
 
-The agent needs to know it has memory and how to use it. Add this to your workspace `AGENTS.md`:
+The OpenClaw plugin handles agent instruction automatically - no `AGENTS.md` changes
+needed. When the plugin loads, it registers the four tools and injects guidance via
+the built-in skill. Your agent already knows what to store, when to recall, and
+how to use importance scores.
 
-```markdown
-## Memory (agenr)
-
-You have persistent memory via agenr plugin tools. This is your
-long-term brain - use it.
-
-### Every session
-- On startup: `agenr_recall` with context=session-start and budget=2000 to bootstrap (budget ensures category-balanced results, not just top-N by score)
-- Before answering from memory: recall the specific topic first
-- After important decisions or events: store them
-
-### What to store
-- Decisions and the reasoning behind them
-- User preferences and constraints
-- Project context (architecture, key files, tech choices)
-- Lessons learned from mistakes
-- Relationships between people, projects, and concepts
-
-### What NOT to store
-- Verbatim conversation (that's what session transcripts are for)
-- Temporary state ("currently debugging X")
-- Secrets, tokens, or credentials
-
-### Entry types
-fact, decision, preference, todo, relationship, event, lesson
-
-### Tools
-- `agenr_recall(query, limit, types, since, context, platform, project)` - search memory
-- `agenr_store(entries)` - save new knowledge
-- `agenr_extract(text, store, source)` - extract entries from raw text
-- `agenr_retire(entry_id, reason, persist)` - soft-delete a memory entry
-```
-
-The key insight: **tell the agent what's worth remembering and what isn't.** Without guidance, agents either store everything (noisy) or nothing (defeats the purpose).
+What you **can** tune is how aggressively the agent stores and signals.
 
 ### Importance calibration
 
@@ -304,3 +274,4 @@ This works but the agent needs explicit instructions (in AGENTS.md) to know the 
 - [MCP Integration](./MCP.md) - MCP server details and Codex/Claude Code setup
 - [Configuration](./CONFIGURATION.md) - all config options
 - [Consolidation](./CONSOLIDATION.md) - how knowledge merging works
+
