@@ -1,5 +1,7 @@
 import type { Client } from "@libsql/client";
+import { Type } from "@sinclair/typebox";
 import { closeDb, getDb, initDb } from "../db/client.js";
+import { KNOWLEDGE_TYPES, SCOPE_LEVELS } from "../types.js";
 import {
   formatRecallAsMarkdown,
   resolveAgenrPath,
@@ -7,6 +9,7 @@ import {
   runRecall,
 } from "./recall.js";
 import { checkSignals, resolveSignalConfig } from "./signals.js";
+import { runExtractTool, runRecallTool, runRetireTool, runStoreTool } from "./tools.js";
 import type {
   AgenrPluginConfig,
   BeforeAgentStartEvent,
@@ -189,6 +192,114 @@ const plugin = {
         }
       },
     );
+
+    if (api.registerTool) {
+      const config = api.pluginConfig as AgenrPluginConfig | undefined;
+      const agenrPath = resolveAgenrPath(config);
+
+      api.registerTool(
+        {
+          name: "agenr_recall",
+          label: "Agenr Recall",
+          description:
+            "Retrieve relevant knowledge entries from agenr long-term memory using semantic search. Use mid-session when you need context you do not already have. Session-start recall is already handled automatically.",
+          parameters: Type.Object({
+            query: Type.Optional(Type.String({ description: "What to search for." })),
+            context: Type.Optional(
+              Type.Union(
+                [Type.Literal("default"), Type.Literal("session-start")],
+                { description: "Use session-start for fast bootstrap without embedding." },
+              ),
+            ),
+            limit: Type.Optional(Type.Number({ description: "Max results (default: 10)." })),
+            types: Type.Optional(Type.String({ description: "Comma-separated entry types to filter." })),
+            since: Type.Optional(
+              Type.String({ description: "Only entries newer than this (ISO date or relative, e.g. 7d)." }),
+            ),
+            threshold: Type.Optional(Type.Number({ description: "Minimum relevance score 0.0-1.0." })),
+            platform: Type.Optional(Type.String({ description: "Platform filter: openclaw, claude-code, codex." })),
+            project: Type.Optional(Type.String({ description: "Project scope. Pass * for all projects." })),
+          }),
+          async execute(_toolCallId, params) {
+            return runRecallTool(agenrPath, params);
+          },
+        },
+        { name: "agenr_recall" },
+      );
+
+      api.registerTool(
+        {
+          name: "agenr_store",
+          label: "Agenr Store",
+          description:
+            "Store new knowledge entries in agenr long-term memory. Call immediately after any decision, user preference, lesson learned, or important fact. Do not ask first - just store.",
+          parameters: Type.Object({
+            entries: Type.Array(
+              Type.Object({
+                content: Type.String({ description: "What to remember." }),
+                type: Type.Unsafe<string>({
+                  type: "string",
+                  enum: [...KNOWLEDGE_TYPES],
+                  description: "Entry type: fact | decision | preference | todo | lesson | event",
+                }),
+                importance: Type.Optional(
+                  Type.Number({ description: "Importance 1-10 (default 7, use 9 for critical, 10 sparingly)." }),
+                ),
+                source: Type.Optional(Type.String()),
+                tags: Type.Optional(Type.Array(Type.String())),
+                scope: Type.Optional(
+                  Type.Unsafe<string>({
+                    type: "string",
+                    enum: [...SCOPE_LEVELS],
+                  }),
+                ),
+              }),
+              { description: "Entries to store." },
+            ),
+            platform: Type.Optional(Type.String({ description: "Platform tag for all entries." })),
+            project: Type.Optional(Type.String({ description: "Project tag for all entries." })),
+          }),
+          async execute(_toolCallId, params) {
+            return runStoreTool(agenrPath, params);
+          },
+        },
+        { name: "agenr_store" },
+      );
+
+      api.registerTool(
+        {
+          name: "agenr_extract",
+          label: "Agenr Extract",
+          description: "Extract knowledge entries from raw text using the agenr LLM extractor.",
+          parameters: Type.Object({
+            text: Type.String({ description: "Raw text to extract knowledge from." }),
+            store: Type.Optional(Type.Boolean({ description: "Store extracted entries (default: false)." })),
+            source: Type.Optional(Type.String({ description: "Source label for extracted entries." })),
+          }),
+          async execute(_toolCallId, params) {
+            return runExtractTool(agenrPath, params);
+          },
+        },
+        { name: "agenr_extract" },
+      );
+
+      api.registerTool(
+        {
+          name: "agenr_retire",
+          label: "Agenr Retire",
+          description: "Mark a memory entry as retired (soft delete). Retired entries are excluded from all recall.",
+          parameters: Type.Object({
+            entry_id: Type.String({ description: "Entry ID to retire." }),
+            reason: Type.Optional(Type.String({ description: "Retirement reason." })),
+            persist: Type.Optional(Type.Boolean({ description: "Persist retirement to ledger." })),
+          }),
+          async execute(_toolCallId, params) {
+            return runRetireTool(agenrPath, params);
+          },
+        },
+        { name: "agenr_retire" },
+      );
+    }
   },
 };
 
