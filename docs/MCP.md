@@ -111,7 +111,8 @@ Source of truth:
 Retrieve relevant memories using semantic search.
 
 Parameters:
-- `query` (string, required): search text
+- `query` (string, optional): search text. Required when context is `default` (or omitted). Not needed for `session-start` context.
+- `context` (string, optional, default `default`): Use `session-start` for fast bootstrap without embedding call (no `query` needed). Other value: `default`.
 - `limit` (integer, optional, default `10`): max results
 - `types` (string, optional): comma-separated entry types
 - `since` (string, optional): ISO date or relative (`7d`, `24h`, `1m`, `1y`)
@@ -136,12 +137,24 @@ Example call payload:
 }
 ```
 
+Session-start recall (no query needed):
+
+```json
+{
+  "name": "agenr_recall",
+  "arguments": {
+    "context": "session-start",
+    "limit": 20
+  }
+}
+```
+
 Typical response text:
 
 ```text
 Found 2 results for "what did we decide about package management":
 
-[1] (score: 0.812, type: decision, 2026-02-14)
+[1] [id=entry-abc-123] (score: 0.812, type: decision, 2026-02-14)
 We switched this project to pnpm.
 ```
 

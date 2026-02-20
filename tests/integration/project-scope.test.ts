@@ -197,4 +197,56 @@ describe("integration: MCP project scoping", () => {
     expect(text).toContain("Billing memory");
     await server.stop();
   });
+
+  it("returns only own project entries when dependency has no entries", async () => {
+    const client = makeClient();
+    await initDb(client);
+    await insertEntry(client, {
+      id: "frontend-1",
+      project: "frontend",
+      subject: "Frontend fact",
+      content: "Frontend memory",
+    });
+    await insertEntry(client, {
+      id: "billing-1",
+      project: "billing",
+      subject: "Billing fact",
+      content: "Billing memory",
+    });
+
+    const scopedDir = await createScopedProjectConfig({
+      project: "frontend",
+      dependencies: ["ghost-project"],
+    });
+    const server = createMcpServer(
+      {
+        env: { ...process.env, AGENR_PROJECT_DIR: scopedDir },
+      },
+      {
+        readConfigFn: () => ({ db: { path: ":memory:" } }),
+        resolveEmbeddingApiKeyFn: () => "sk-test",
+        getDbFn: () => client,
+        initDbFn: async () => undefined,
+        closeDbFn: () => undefined,
+      },
+    );
+
+    const response = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: {
+        name: "agenr_recall",
+        arguments: {
+          context: "session-start",
+          limit: 10,
+        },
+      },
+    });
+
+    const text = getToolText(response);
+    expect(text).toContain("Frontend memory");
+    expect(text).not.toContain("Billing memory");
+    await server.stop();
+  });
 });

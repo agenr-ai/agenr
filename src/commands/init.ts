@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
 const AGENR_START_MARKER = "<!-- agenr:start -->";
@@ -119,17 +120,20 @@ async function detectPlatform(projectDir: string): Promise<InitPlatform> {
 
 async function resolveInstructionsPath(projectDir: string, platform: InitPlatform): Promise<string> {
   if (platform === "claude-code") {
-    return path.join(projectDir, "CLAUDE.md");
+    return path.join(os.homedir(), ".claude", "CLAUDE.md");
   }
   if (platform === "cursor") {
     const legacyPath = path.join(projectDir, ".cursorrules");
     if (await pathExists(legacyPath)) {
       return legacyPath;
     }
-    return path.join(projectDir, ".cursor", "rules");
+    return path.join(projectDir, ".cursor", "rules", "agenr.mdc");
   }
   if (platform === "windsurf") {
-    return path.join(projectDir, ".windsurfrules");
+    return path.join(os.homedir(), ".codeium", "windsurf", "memories", "global_rules.md");
+  }
+  if (platform === "codex") {
+    return path.join(os.homedir(), ".codex", "AGENTS.md");
   }
   return path.join(projectDir, "AGENTS.md");
 }
@@ -205,7 +209,11 @@ async function writeAgenrConfig(
   next.platform = platform;
   next.projectDir = projectDir;
   if (dependencies !== undefined) {
-    next.dependencies = dependencies;
+    const existing = Array.isArray(next.dependencies)
+      ? next.dependencies.filter((value): value is string => typeof value === "string")
+      : [];
+    const merged = Array.from(new Set([...existing, ...dependencies]));
+    next.dependencies = merged;
   }
 
   await fs.mkdir(configDir, { recursive: true });
@@ -249,22 +257,29 @@ async function writeMcpConfig(projectDir: string, platform: InitPlatform): Promi
   return mcpPath;
 }
 
-async function addKnowledgeDbToGitignore(projectDir: string): Promise<boolean> {
+function isPathInsideProject(projectDir: string, targetPath: string): boolean {
+  const relative = path.relative(projectDir, targetPath);
+  return !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+async function addGitignoreEntries(projectDir: string, entries: string[]): Promise<boolean> {
   const gitignorePath = path.join(projectDir, ".gitignore");
   const exists = await pathExists(gitignorePath);
   if (!exists) {
     return false;
   }
 
-  const marker = ".agenr/knowledge.db";
   const existing = await fs.readFile(gitignorePath, "utf8");
   const lines = existing.split(/\r?\n/);
-  if (lines.includes(marker)) {
+  const normalizedEntries = Array.from(new Set(entries.map((entry) => entry.trim()).filter((entry) => entry.length > 0)));
+  const missing = normalizedEntries.filter((entry) => !lines.includes(entry));
+  if (missing.length === 0) {
     return false;
   }
 
   const prefix = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
-  await fs.writeFile(gitignorePath, `${existing}${prefix}${marker}\n`, "utf8");
+  const appended = missing.map((entry) => `${entry}\n`).join("");
+  await fs.writeFile(gitignorePath, `${existing}${prefix}${appended}`, "utf8");
   return true;
 }
 
@@ -293,6 +308,12 @@ export function formatInitSummary(result: InitCommandResult): string[] {
 
 export async function runInitCommand(options: InitCommandOptions): Promise<InitCommandResult> {
   const projectDir = path.resolve(options.path?.trim() || process.cwd());
+  if (projectDir === os.homedir()) {
+    throw new Error(
+      "Cannot initialize agenr in your home directory. cd into a project directory first, or pass --path <project-dir>.",
+    );
+  }
+
   const platform = (() => {
     if (!options.platform) {
       return null;
@@ -312,7 +333,18 @@ export async function runInitCommand(options: InitCommandOptions): Promise<InitC
   const instructionsPath = await resolveInstructionsPath(projectDir, resolvedPlatform);
   await upsertPromptBlock(instructionsPath, buildSystemPromptBlock(project));
   const mcpPath = await writeMcpConfig(projectDir, resolvedPlatform);
-  const gitignoreUpdated = await addKnowledgeDbToGitignore(projectDir);
+  const gitignoreEntries = [".agenr/knowledge.db"];
+  if (resolvedPlatform === "cursor") {
+    gitignoreEntries.push(".cursor/rules/agenr.mdc");
+    if (isPathInsideProject(projectDir, instructionsPath)) {
+      const relativeInstructionsPath = path.relative(projectDir, instructionsPath).split(path.sep).join("/");
+      gitignoreEntries.push(relativeInstructionsPath);
+    }
+  }
+  if (resolvedPlatform === "generic") {
+    gitignoreEntries.push("AGENTS.md");
+  }
+  const gitignoreUpdated = await addGitignoreEntries(projectDir, gitignoreEntries);
 
   return {
     platform: resolvedPlatform,

@@ -13,9 +13,32 @@ async function readJson(filePath: string): Promise<Record<string, unknown>> {
   return JSON.parse(raw) as Record<string, unknown>;
 }
 
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const tempDirs: string[] = [];
+const originalHome = process.env.HOME;
+
+async function withTempHome<T>(fn: (homeDir: string) => Promise<T>): Promise<T> {
+  const homeDir = await createTempDir("agenr-home-");
+  tempDirs.push(homeDir);
+  process.env.HOME = homeDir;
+  return await fn(homeDir);
+}
 
 afterEach(async () => {
+  if (originalHome === undefined) {
+    delete process.env.HOME;
+  } else {
+    process.env.HOME = originalHome;
+  }
+
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
     if (!dir) {
@@ -31,9 +54,12 @@ describe("runInitCommand", () => {
     tempDirs.push(dir);
     await fs.mkdir(path.join(dir, ".claude"), { recursive: true });
 
-    const result = await runInitCommand({ path: dir });
-    expect(result.platform).toBe("claude-code");
-    expect(path.basename(result.instructionsPath)).toBe("CLAUDE.md");
+    await withTempHome(async (homeDir) => {
+      const result = await runInitCommand({ path: dir });
+      expect(result.platform).toBe("claude-code");
+      expect(result.instructionsPath).toBe(path.join(homeDir, ".claude", "CLAUDE.md"));
+      expect(await pathExists(path.join(dir, "CLAUDE.md"))).toBe(false);
+    });
   });
 
   it("auto-detects cursor from .cursor directory", async () => {
@@ -43,7 +69,7 @@ describe("runInitCommand", () => {
 
     const result = await runInitCommand({ path: dir });
     expect(result.platform).toBe("cursor");
-    expect(result.instructionsPath).toBe(path.join(dir, ".cursor", "rules"));
+    expect(result.instructionsPath).toBe(path.join(dir, ".cursor", "rules", "agenr.mdc"));
     expect(result.mcpPath).toBe(path.join(dir, ".cursor", "mcp.json"));
   });
 
@@ -62,9 +88,14 @@ describe("runInitCommand", () => {
     tempDirs.push(dir);
     await fs.writeFile(path.join(dir, ".windsurfrules"), "rules\n", "utf8");
 
-    const result = await runInitCommand({ path: dir });
-    expect(result.platform).toBe("windsurf");
-    expect(result.instructionsPath).toBe(path.join(dir, ".windsurfrules"));
+    await withTempHome(async (homeDir) => {
+      const result = await runInitCommand({ path: dir });
+      expect(result.platform).toBe("windsurf");
+      expect(result.instructionsPath).toBe(
+        path.join(homeDir, ".codeium", "windsurf", "memories", "global_rules.md"),
+      );
+      expect(await pathExists(path.join(dir, ".windsurfrules"))).toBe(true);
+    });
   });
 
   it("falls back to generic when no platform markers are present", async () => {
@@ -82,10 +113,13 @@ describe("runInitCommand", () => {
     tempDirs.push(dir);
     await fs.mkdir(path.join(dir, ".claude"), { recursive: true });
 
-    const result = await runInitCommand({ path: dir, platform: "codex" });
-    expect(result.platform).toBe("codex");
-    expect(result.instructionsPath).toBe(path.join(dir, "AGENTS.md"));
-    expect(result.mcpPath).toBe(path.join(dir, ".mcp.json"));
+    await withTempHome(async (homeDir) => {
+      const result = await runInitCommand({ path: dir, platform: "codex" });
+      expect(result.platform).toBe("codex");
+      expect(result.instructionsPath).toBe(path.join(homeDir, ".codex", "AGENTS.md"));
+      expect(result.mcpPath).toBe(path.join(dir, ".mcp.json"));
+      expect(await pathExists(path.join(dir, "AGENTS.md"))).toBe(false);
+    });
   });
 
   it("uses .cursorrules for cursor when present", async () => {
@@ -117,9 +151,11 @@ describe("runInitCommand", () => {
     tempDirs.push(dir);
     await fs.mkdir(path.join(dir, ".claude"), { recursive: true });
 
-    const result = await runInitCommand({
-      path: dir,
-      dependsOn: "api-service,shared-lib",
+    const result = await withTempHome(async () => {
+      return await runInitCommand({
+        path: dir,
+        dependsOn: "api-service,shared-lib",
+      });
     });
 
     const configPath = path.join(dir, ".agenr", "config.json");
@@ -210,5 +246,43 @@ describe("runInitCommand", () => {
     const gitignoreEntries = gitignore.split(/\r?\n/).filter((line) => line.trim().length > 0);
     const dbEntries = gitignoreEntries.filter((line) => line === ".agenr/knowledge.db");
     expect(dbEntries).toHaveLength(1);
+  });
+
+  it("merges --depends-on with existing dependencies", async () => {
+    const dir = await createTempDir();
+    tempDirs.push(dir);
+    const configDir = path.join(dir, ".agenr");
+    await fs.mkdir(configDir, { recursive: true });
+    await fs.writeFile(
+      path.join(configDir, "config.json"),
+      JSON.stringify({ project: "frontend", dependencies: ["api-service"] }),
+      "utf8",
+    );
+
+    const result = await runInitCommand({ path: dir, dependsOn: "shared-lib" });
+    expect(result.dependencies).toContain("api-service");
+    expect(result.dependencies).toContain("shared-lib");
+    expect(result.dependencies).toHaveLength(2);
+  });
+
+  it("deduplicates dependencies on re-run", async () => {
+    const dir = await createTempDir();
+    tempDirs.push(dir);
+    const configDir = path.join(dir, ".agenr");
+    await fs.mkdir(configDir, { recursive: true });
+    await fs.writeFile(
+      path.join(configDir, "config.json"),
+      JSON.stringify({ project: "frontend", dependencies: ["api-service"] }),
+      "utf8",
+    );
+
+    const result = await runInitCommand({ path: dir, dependsOn: "api-service,shared-lib" });
+    expect(result.dependencies).toEqual(["api-service", "shared-lib"]);
+  });
+
+  it("throws when run from home directory", async () => {
+    await expect(runInitCommand({ path: os.homedir() })).rejects.toThrow(
+      "Cannot initialize agenr in your home directory",
+    );
   });
 });

@@ -748,6 +748,10 @@ export function createMcpServer(
     }
   }
 
+  // Intentionally reads config.json on every call (no caching).
+  // This is a feature: dependency changes via `agenr init --depends-on`
+  // take effect immediately without restarting the MCP server.
+  // Per-call filesystem reads are sub-millisecond on local disk.
   async function loadScopedProjectConfig(): Promise<{ project: string; dependencies: string[] } | null> {
     if (!scopedProjectDir) {
       return null;
@@ -852,6 +856,10 @@ export function createMcpServer(
       if (scoped) {
         project = Array.from(new Set([scoped.project, ...scoped.dependencies]));
         projectStrict = true;
+      } else {
+        // No AGENR_PROJECT_DIR and no explicit project= param.
+        // Fall back to global (unscoped) recall. This is intentional for
+        // backward compatibility with single-project setups.
       }
     }
 

@@ -330,6 +330,24 @@ describe("mcp server", () => {
     expect(result.tools?.every((tool) => tool.inputSchema?.type === "object")).toBe(true);
   });
 
+  it("does not expose since_seq in agenr_recall tool schema", async () => {
+    const harness = makeHarness();
+    const responses = await runServer(
+      [
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 201,
+          method: "tools/list",
+        }),
+      ],
+      harness.deps,
+    );
+
+    const result = responses[0]?.result as { tools?: Array<{ name: string; inputSchema?: { properties?: Record<string, unknown> } }> };
+    const recallTool = (result.tools ?? []).find((tool) => tool.name === "agenr_recall");
+    expect(recallTool?.inputSchema?.properties).not.toHaveProperty("since_seq");
+  });
+
   it("calls agenr_recall and formats results", async () => {
     const harness = makeHarness();
     const responses = await runServer(
@@ -370,6 +388,35 @@ describe("mcp server", () => {
     expect(recallQuery.limit).toBe(5);
     expect(recallQuery.types).toEqual(["preference", "fact"]);
     expect(recallQuery.platform).toBe("openclaw");
+  });
+
+  it("ignores since_seq parameter without error", async () => {
+    const harness = makeHarness();
+    const responses = await runServer(
+      [
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 202,
+          method: "tools/call",
+          params: {
+            name: "agenr_recall",
+            arguments: {
+              query: "test",
+              since_seq: 0,
+              limit: 5,
+            },
+          },
+        }),
+      ],
+      harness.deps,
+    );
+
+    expect(responses[0]).toMatchObject({
+      jsonrpc: "2.0",
+      id: 202,
+      result: expect.any(Object),
+    });
+    expect(responses[0]).not.toHaveProperty("error");
   });
 
   it("passes project filter through agenr_recall when provided", async () => {
