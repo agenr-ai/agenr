@@ -2,7 +2,10 @@
 
 ## Overview
 
-[OpenClaw](https://openclaw.ai) is a personal AI assistant platform. It supports MCP servers via [mcporter](https://mcporter.dev), which means agenr integrates natively - your agent gets `agenr_recall`, `agenr_store`, and `agenr_extract` as first-class tools.
+[OpenClaw](https://openclaw.ai) is a personal AI assistant platform. agenr ships
+as a native OpenClaw plugin, which means your agent gets agenr_recall, agenr_store,
+agenr_extract, and agenr_retire as first-class tools without any additional bridge
+software.
 
 This guide covers setup, seeding your agent's memory, and best practices for getting real value out of persistent memory.
 
@@ -11,26 +14,40 @@ This guide covers setup, seeding your agent's memory, and best practices for get
 ### 1. Install
 
 ```bash
-npm install -g agenr mcporter
-agenr setup  # walks you through LLM provider + auth
+openclaw plugins install agenr
+agenr setup  # configure LLM provider + auth
 ```
 
-### 2. Add agenr as an MCP server
+### 2. Optional plugin config
 
-From your OpenClaw workspace:
+After install, agenr works with no additional config. To customize, add an agenr
+entry to `openclaw.json` in your workspace:
 
-```bash
-mcporter config add agenr \
-  --stdio agenr \
-  --arg mcp \
-  --env OPENAI_API_KEY=your-key-here
+```json
+"plugins": {
+  "entries": {
+    "agenr": {
+      "config": {
+        "enabled": true,
+        "budget": 2000,
+        "signalMinImportance": 8
+      }
+    }
+  }
+}
 ```
+
+Set OPENAI_API_KEY as an environment variable or run `agenr setup` to configure it.
 
 ### 3. Verify
 
+Start a new OpenClaw session. The four tools (agenr_recall, agenr_store,
+agenr_extract, agenr_retire) will appear in the tool list automatically.
+
+From the CLI, confirm recall works:
+
 ```bash
-mcporter list agenr              # shows 3 tools
-mcporter call agenr.agenr_recall query="test" limit=3
+agenr recall "test" --limit 3
 ```
 
 That's the wiring. Now the important part.
@@ -86,7 +103,7 @@ The agent needs to know it has memory and how to use it. Add this to your worksp
 ```markdown
 ## Memory (agenr)
 
-You have persistent memory via agenr MCP tools (mcporter). This is your
+You have persistent memory via agenr plugin tools. This is your
 long-term brain - use it.
 
 ### Every session
@@ -110,34 +127,44 @@ long-term brain - use it.
 fact, decision, preference, todo, relationship, event, lesson
 
 ### Tools
-- `agenr_recall(query, limit, budget, types, since, context, threshold)` - search memory
+- `agenr_recall(query, limit, types, since, context, platform, project)` - search memory
 - `agenr_store(entries)` - save new knowledge
 - `agenr_extract(text, store, source)` - extract entries from raw text
+- `agenr_retire(entry_id, reason, persist)` - soft-delete a memory entry
 ```
 
 The key insight: **tell the agent what's worth remembering and what isn't.** Without guidance, agents either store everything (noisy) or nothing (defeats the purpose).
 
 ### Tuning Signal Noise
 
-Three config fields control how often mid-session signal notifications fire:
+Six config fields control signal behavior:
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `signalCooldownMs` | `30000` | Minimum ms between signal batches per session. Set `0` to disable. |
-| `signalMaxPerSession` | `10` | Max total signal batches per session lifetime. Set `0` to disable. |
-| `signalMaxAgeSec` | `300` | Only surface entries created in the last N seconds. Set `0` to disable age filter. |
+signalsEnabled (boolean, default: true)
+  Set to false to disable all mid-session signals.
 
-Example in `openclaw.json`:
+signalMinImportance (integer, default: 8)
+  Only surface entries with importance >= this value.
+
+signalMaxPerSignal (integer, default: 3)
+  Maximum entries included in a single signal notification.
+
+signalCooldownMs (integer, default: 30000)
+  Minimum milliseconds between signal batches in a session. Set 0 to disable.
+
+signalMaxPerSession (integer, default: 10)
+  Maximum signal batches delivered during a session lifetime. Set 0 to disable.
+
+signalMaxAgeSec (integer, default: 300)
+  Only surface entries created within the last N seconds. Set 0 to disable.
+
+Example:
 ```json
-"plugins": {
-  "entries": {
-    "agenr": {
-      "config": {
-        "signalCooldownMs": 60000,
-        "signalMaxPerSession": 5,
-        "signalMaxAgeSec": 120
-      }
-    }
+"agenr": {
+  "config": {
+    "signalCooldownMs": 60000,
+    "signalMaxPerSession": 5,
+    "signalMinImportance": 7,
+    "signalMaxAgeSec": 120
   }
 }
 ```
@@ -194,17 +221,16 @@ User message
     v
 OpenClaw agent
     |
-    |--> mcporter --> agenr MCP server (stdio)
-    |                    |
-    |                    v
-    |              ~/.agenr/knowledge.db
-    |              (SQLite + vector index)
-    |
-    v
-Agent response (informed by recalled memories)
+    +--> agenr plugin (native, loaded in-process)
+              |
+              +--> spawns agenr CLI (child_process)
+                            |
+                            v
+                   ~/.agenr/knowledge.db
+                   (SQLite + vector index)
 ```
 
-Everything is local. The only network calls are to the embedding API (OpenAI) for generating vectors on recall and store. A future version will support local embeddings to eliminate even that.
+Network calls: OpenAI embedding API (on store and recall). All storage is local.
 
 ## Multi-Agent Memory
 
@@ -216,11 +242,17 @@ All agents read/write the same `~/.agenr/knowledge.db`. Your OpenClaw agent, Cod
 
 Give each agent its own database:
 
-```bash
-# OpenClaw agent
-mcporter config add agenr --stdio agenr --arg mcp \
-  --arg --db --arg ~/.agenr/openclaw.db
+For the OpenClaw native plugin, set dbPath in openclaw.json:
 
+```json
+"agenr": {
+  "config": {
+    "dbPath": "~/.agenr/openclaw.db"
+  }
+}
+```
+
+```bash
 # Codex (in ~/.codex/config.toml)
 [mcp_servers.agenr]
 command = "npx"
@@ -231,7 +263,8 @@ Useful when you want coding context separate from personal assistant context.
 
 ## Alternative: Direct CLI
 
-If you prefer not to use mcporter, OpenClaw agents can call agenr directly via shell:
+If you want to invoke agenr from shell commands or AGENTS.md instructions without
+using the plugin tools, you can call the CLI directly:
 
 ```bash
 agenr recall "query" --limit 5
@@ -239,7 +272,7 @@ agenr recall --context session-start --budget 2000
 echo '[{"content":"...","type":"fact","subject":"...","importance":7}]' | agenr store
 ```
 
-This works but the agent needs explicit instructions (in AGENTS.md) to know the commands. The MCP approach is cleaner because the agent discovers the tools automatically.
+This works but the agent needs explicit instructions (in AGENTS.md) to know the commands. The plugin approach is cleaner because the agent discovers the tools automatically.
 
 ## See Also
 

@@ -137,16 +137,16 @@ This allows rollback/audit logic to reconstruct original support metrics for mer
 
 ```bash
 # Full two-tier consolidation
-pnpm exec agenr consolidate
+agenr consolidate
 
 # Tier 1 only
-pnpm exec agenr consolidate --rules-only
+agenr consolidate --rules-only
 
 # Preview changes without writing
-pnpm exec agenr consolidate --dry-run
+agenr consolidate --dry-run
 
 # Inspect flagged merges
-pnpm exec agenr consolidate --show-flagged
+agenr consolidate --show-flagged
 ```
 
 Useful advanced flags:

@@ -101,6 +101,9 @@ Schema source:
 | `superseded_by` | TEXT FK | ID of superseding entry (soft delete) |
 | `merged_from` | INTEGER | Number of source entries merged (v3) |
 | `consolidated_at` | TEXT | ISO timestamp of last consolidation (v3) |
+| `retired` | INTEGER | Soft-delete flag; 1 = retired, 0 = active (default 0) |
+| `retired_at` | TEXT | ISO timestamp when entry was retired (nullable) |
+| `retired_reason` | TEXT | Free-text reason for retirement (nullable) |
 
 Primary tables:
 - `entries`: core memory records, including metadata and `embedding F32_BLOB(1024)`.
@@ -115,7 +118,7 @@ Search/index objects:
 - Full text index: `entries_fts` virtual table with insert/update/delete triggers.
 
 Schema policy:
-- Pre-release, no migrations. The schema is defined as a single CREATE TABLE block in `src/db/schema.ts`.
+- Migrations are defined in `src/db/schema.ts` as a series of column-presence checks followed by ALTER TABLE statements. They apply automatically on first run after an upgrade. No manual migration steps are needed.
 
 ## Entry Model
 
@@ -176,7 +179,7 @@ Store uses Mem0-style online dedup:
 - `0.88..0.95` + same subject + different type: insert new entry and create `related` relation.
 
 3. Online LLM decision path
-- For remaining candidates above threshold (`dedupThreshold`, default `0.8`), LLM returns one of:
+- For remaining candidates above threshold (`dedupThreshold`, default `0.72`; `0.62` in aggressive mode), LLM returns one of:
 - `ADD`: insert new entry.
 - `UPDATE`: update target content, re-embed via `composeEmbeddingText`, bump confirmations.
 - `SKIP`: skip insert, bump confirmations on target.
