@@ -24,6 +24,7 @@ export async function fetchNewSignalEntries(
   sinceSeq: number,
   minImportance: number,
   limit: number,
+  // maxAgeSec: age filter window in seconds. Pass 0 (default) to disable age filtering.
   maxAgeSec: number = 0,
 ): Promise<SignalBatch> {
   const ageArgs: (string | number)[] = maxAgeSec > 0

@@ -23,6 +23,7 @@ export interface StoreCommandOptions {
   platform?: string;
   project?: string | string[];
   onlineDedup?: boolean;
+  aggressive?: boolean;
   dedupThreshold?: number | string;
 }
 
@@ -295,7 +296,7 @@ export async function runStoreCommand(
   );
 
   const config = resolvedDeps.readConfigFn(process.env);
-  const aggressiveDedup = config?.dedup?.aggressive === true;
+  const aggressiveDedup = options.aggressive === true ? true : config?.dedup?.aggressive === true;
   const configDedupThreshold = typeof config?.dedup?.threshold === "number"
     ? config.dedup.threshold
     : undefined;

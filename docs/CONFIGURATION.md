@@ -42,6 +42,27 @@ Stores:
 }
 ```
 
+### dedup
+
+Controls deduplication behavior when storing entries.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `aggressive` | boolean | `false` | Enable aggressive dedup: uses a lower similarity threshold (0.62) and checks more candidates (10). Useful in high-noise environments. |
+| `threshold` | number (0.0-1.0) | `0.72` | Override the LLM dedup similarity threshold. Entries above this threshold trigger LLM review. Lower values mean more entries reach the LLM reviewer. |
+
+Example in `~/.agenr/config.json`:
+```json
+{
+  "dedup": {
+    "aggressive": true,
+    "threshold": 0.65
+  }
+}
+```
+
+Note: `dedup.aggressive` in `~/.agenr/config.json` applies to all store paths (CLI, MCP, and the OpenClaw native plugin tool). The `dedup.threshold` field similarly applies globally.
+
 ## Database
 
 Default path: `~/.agenr/knowledge.db`

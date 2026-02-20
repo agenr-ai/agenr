@@ -1,8 +1,10 @@
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as dbClient from "../db/client.js";
 import plugin from "./index.js";
+import * as pluginSignals from "./signals.js";
 import { runExtractTool, runRecallTool, runRetireTool, runStoreTool } from "./tools.js";
-import type { PluginApi } from "./types.js";
+import type { BeforePromptBuildResult, PluginApi } from "./types.js";
 
 const { spawnMock } = vi.hoisted(() => ({
   spawnMock: vi.fn(),
@@ -63,9 +65,8 @@ function createTimeoutChild(): MockChildProcess {
     end: vi.fn(),
   };
   child.kill = vi.fn(() => {
-    process.nextTick(() => {
-      child.emit("close", null);
-    });
+    // Emit synchronously so fake timers do not need to fake process.nextTick.
+    child.emit("close", null);
   });
   return child;
 }
@@ -84,8 +85,20 @@ function makeApi(overrides?: Partial<PluginApi>): PluginApi {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.clearAllMocks();
 });
+
+function getBeforePromptBuildHandler(
+  api: PluginApi,
+): (event: Record<string, unknown>, ctx: { sessionKey?: string }) => Promise<BeforePromptBuildResult | undefined> {
+  const onMock = api.on as unknown as ReturnType<typeof vi.fn>;
+  const call = onMock.mock.calls.find((args) => args[0] === "before_prompt_build");
+  if (!call) {
+    throw new Error("before_prompt_build handler not registered");
+  }
+  return call[1] as (event: Record<string, unknown>, ctx: { sessionKey?: string }) => Promise<BeforePromptBuildResult | undefined>;
+}
 
 describe("openclaw plugin tool registration", () => {
   it("registers all four tools when registerTool is present", () => {
@@ -127,14 +140,59 @@ describe("openclaw plugin tool runners", () => {
     expect(result.content[0]?.type).toBe("text");
   });
 
-  it("runStoreTool returns stored count on success", async () => {
-    spawnMock.mockReturnValueOnce(createMockChild({ code: 0 }));
+  it("runRecallTool passes --limit 0 when limit is explicitly 0", async () => {
+    let capturedArgs: string[] = [];
+    spawnMock.mockImplementationOnce((_cmd: string, args: string[]) => {
+      capturedArgs = args;
+      return createMockChild({ stdout: JSON.stringify({ query: "x", results: [] }) });
+    });
+
+    await runRecallTool("/path/to/agenr", { query: "x", limit: 0 });
+    expect(capturedArgs).toContain("--limit");
+    const limitIdx = capturedArgs.indexOf("--limit");
+    expect(capturedArgs[limitIdx + 1]).toBe("0");
+  });
+
+  it("runStoreTool returns stored count on success and sends valid JSON to stdin", async () => {
+    let writtenStdin = "";
+    const mockChild = createMockChild({ code: 0 });
+    mockChild.stdin.write = vi.fn((chunk: string) => {
+      writtenStdin += chunk;
+    });
+    spawnMock.mockReturnValueOnce(mockChild);
 
     const result = await runStoreTool("/path/to/agenr", {
-      entries: [{ content: "test", type: "fact" }],
+      entries: [
+        { content: "test entry 1", type: "fact" },
+        { content: "test entry 2", type: "decision" },
+      ],
     });
 
     expect(result.content[0]?.text).toContain("Stored");
+    expect(result.content[0]?.text).toContain("2");
+    const payload = JSON.parse(writtenStdin) as { entries: unknown[] };
+    expect(Array.isArray(payload.entries)).toBe(true);
+    expect(payload.entries).toHaveLength(2);
+  });
+
+  it("runStoreTool passes dedup flags from plugin config", async () => {
+    let capturedArgs: string[] = [];
+    spawnMock.mockImplementationOnce((_cmd: string, args: string[]) => {
+      capturedArgs = args;
+      return createMockChild({ code: 0 });
+    });
+
+    await runStoreTool(
+      "/path/to/agenr",
+      { entries: [{ content: "test entry", type: "fact" }] },
+      { dedup: { aggressive: true, threshold: 0.65 } },
+    );
+
+    expect(capturedArgs).toContain("store");
+    expect(capturedArgs).toContain("--aggressive");
+    expect(capturedArgs).toContain("--dedup-threshold");
+    const thresholdIdx = capturedArgs.indexOf("--dedup-threshold");
+    expect(capturedArgs[thresholdIdx + 1]).toBe("0.65");
   });
 
   it("runExtractTool returns parseable json text on success", async () => {
@@ -184,5 +242,95 @@ describe("openclaw plugin tool runners", () => {
 
     const result = await runRecallTool("/path/to/agenr", { query: "test" });
     expect(result.content[0]?.text).toContain("something went wrong");
+  });
+});
+
+describe("sessionSignalState gating", () => {
+  it("suppresses delivery when within cooldown window", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-02-20T00:00:00.000Z"));
+      vi.spyOn(dbClient, "getDb").mockReturnValue({} as never);
+      vi.spyOn(dbClient, "initDb").mockResolvedValue(undefined);
+      const checkSignalsMock = vi
+        .spyOn(pluginSignals, "checkSignals")
+        .mockResolvedValue("AGENR SIGNAL: 1 new high-importance entry");
+
+      const api = makeApi({
+        pluginConfig: {
+          signalCooldownMs: 60_000,
+          signalMaxPerSession: 10,
+        },
+      });
+      plugin.register(api);
+      const handler = getBeforePromptBuildHandler(api);
+      const sessionKey = "agent:main:cooldown-gating";
+
+      const first = await handler({}, { sessionKey });
+      const second = await handler({}, { sessionKey });
+
+      expect(first?.prependContext).toContain("AGENR SIGNAL");
+      expect(second).toBeUndefined();
+      expect(checkSignalsMock).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("suppresses delivery when session cap is reached", async () => {
+    vi.spyOn(dbClient, "getDb").mockReturnValue({} as never);
+    vi.spyOn(dbClient, "initDb").mockResolvedValue(undefined);
+    const checkSignalsMock = vi
+      .spyOn(pluginSignals, "checkSignals")
+      .mockResolvedValue("AGENR SIGNAL: 1 new high-importance entry");
+
+    const api = makeApi({
+      pluginConfig: {
+        signalCooldownMs: 0,
+        signalMaxPerSession: 1,
+      },
+    });
+    plugin.register(api);
+    const handler = getBeforePromptBuildHandler(api);
+    const sessionKey = "agent:main:session-cap-gating";
+
+    const first = await handler({}, { sessionKey });
+    const second = await handler({}, { sessionKey });
+
+    expect(first?.prependContext).toContain("AGENR SIGNAL");
+    expect(second).toBeUndefined();
+    expect(checkSignalsMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("allows delivery after cooldown has elapsed", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-02-20T00:00:00.000Z"));
+      vi.spyOn(dbClient, "getDb").mockReturnValue({} as never);
+      vi.spyOn(dbClient, "initDb").mockResolvedValue(undefined);
+      const checkSignalsMock = vi
+        .spyOn(pluginSignals, "checkSignals")
+        .mockResolvedValue("AGENR SIGNAL: 1 new high-importance entry");
+
+      const api = makeApi({
+        pluginConfig: {
+          signalCooldownMs: 1000,
+          signalMaxPerSession: 10,
+        },
+      });
+      plugin.register(api);
+      const handler = getBeforePromptBuildHandler(api);
+      const sessionKey = "agent:main:cooldown-elapsed-gating";
+
+      const first = await handler({}, { sessionKey });
+      vi.advanceTimersByTime(1001);
+      const second = await handler({}, { sessionKey });
+
+      expect(first?.prependContext).toContain("AGENR SIGNAL");
+      expect(second?.prependContext).toContain("AGENR SIGNAL");
+      expect(checkSignalsMock).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

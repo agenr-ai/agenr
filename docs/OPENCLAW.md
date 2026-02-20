@@ -117,6 +117,31 @@ fact, decision, preference, todo, relationship, event, lesson
 
 The key insight: **tell the agent what's worth remembering and what isn't.** Without guidance, agents either store everything (noisy) or nothing (defeats the purpose).
 
+### Tuning Signal Noise
+
+Three config fields control how often mid-session signal notifications fire:
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `signalCooldownMs` | `30000` | Minimum ms between signal batches per session. Set `0` to disable. |
+| `signalMaxPerSession` | `10` | Max total signal batches per session lifetime. Set `0` to disable. |
+| `signalMaxAgeSec` | `300` | Only surface entries created in the last N seconds. Set `0` to disable age filter. |
+
+Example in `openclaw.json`:
+```json
+"plugins": {
+  "entries": {
+    "agenr": {
+      "config": {
+        "signalCooldownMs": 60000,
+        "signalMaxPerSession": 5,
+        "signalMaxAgeSec": 120
+      }
+    }
+  }
+}
+```
+
 ## Consolidation
 
 Over time, your knowledge base accumulates duplicates and near-duplicates. The same fact gets stored slightly differently across sessions. Consolidation merges these into clean canonical entries.

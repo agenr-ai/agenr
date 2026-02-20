@@ -163,6 +163,7 @@ describe("db signals", () => {
     });
 
     const batch = await fetchNewSignalEntries(client, 0, 8, 10, 300);
+    expect(batch.entries).toHaveLength(1);
     expect(batch.entries.map((entry) => entry.subject)).toEqual(["new"]);
   });
 
