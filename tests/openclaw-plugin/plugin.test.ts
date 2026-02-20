@@ -347,6 +347,44 @@ describe("agenr OpenClaw plugin", () => {
     expect(checkSignals).not.toHaveBeenCalled();
   });
 
+  it("before_prompt_build skips when enabled=false (global disable)", async () => {
+    vi.resetModules();
+    vi.doMock(dbClientModulePath, () => ({
+      getDb: vi.fn(() => ({ execute: vi.fn(), close: vi.fn() })),
+      initDb: vi.fn(async () => undefined),
+      closeDb: vi.fn(() => undefined),
+    }));
+    const checkSignals = vi.fn(async () => "AGENR SIGNAL: ...");
+    vi.doMock(signalsModulePath, () => ({
+      checkSignals,
+      resolveSignalConfig: vi.fn(() => ({ minImportance: 7, maxPerSignal: 5 })),
+    }));
+
+    const { beforePromptBuildHandler } = await registerPlugin({ enabled: false });
+    const result = await beforePromptBuildHandler({}, { sessionKey: "agent:main:test-global-disable" });
+    expect(result).toBeUndefined();
+    expect(checkSignals).not.toHaveBeenCalled();
+  });
+
+  it("before_prompt_build skips when sessionKey is empty string", async () => {
+    vi.resetModules();
+    const checkSignals = vi.fn(async () => "AGENR SIGNAL: ...");
+    vi.doMock(dbClientModulePath, () => ({
+      getDb: vi.fn(),
+      initDb: vi.fn(),
+      closeDb: vi.fn(),
+    }));
+    vi.doMock(signalsModulePath, () => ({
+      checkSignals,
+      resolveSignalConfig: vi.fn(() => ({ minImportance: 7, maxPerSignal: 5 })),
+    }));
+
+    const { beforePromptBuildHandler } = await registerPlugin();
+    const result = await beforePromptBuildHandler({}, { sessionKey: "" });
+    expect(result).toBeUndefined();
+    expect(checkSignals).not.toHaveBeenCalled();
+  });
+
   it("before_prompt_build returns prependContext with signal", async () => {
     vi.resetModules();
     const fakeDb = { execute: vi.fn(), close: vi.fn() };

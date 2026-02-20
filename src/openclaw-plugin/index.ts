@@ -183,7 +183,7 @@ const plugin = {
           }
 
           const db = await ensurePluginDb(config);
-          const signalConfig = resolveSignalConfig(api.pluginConfig);
+          const signalConfig = resolveSignalConfig(config);
           const signal = await checkSignals(db, sessionKey, signalConfig);
           if (!signal) {
             return;

@@ -19,6 +19,12 @@ const DEFAULT_SIGNAL_CONFIG: SignalConfig = {
 /**
  * Check for and format new signals for a consumer session.
  * Returns prependContext string or null if nothing new.
+ *
+ * Delivery semantics: at-least-once. The watermark is advanced after
+ * fetching entries. If setWatermark fails (transient DB error), the plugin
+ * hook swallows the error and the same entries may be signalled again on
+ * the next turn. This is acceptable for notifications - a duplicate signal
+ * is harmless.
  */
 export async function checkSignals(
   db: Client,
@@ -37,18 +43,17 @@ export async function checkSignals(
   return formatSignal(batch.entries);
 }
 
-function readPositiveInt(value: unknown, fallback: number): number {
+function readNonNegativeInt(value: unknown, fallback: number): number {
   const parsed = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
+  if (!Number.isFinite(parsed) || parsed < 0) {
     return fallback;
   }
   return Math.floor(parsed);
 }
 
 export function resolveSignalConfig(pluginConfig?: Record<string, unknown>): SignalConfig {
-  const raw = pluginConfig as { signalMinImportance?: unknown; signalMaxPerSignal?: unknown } | undefined;
   return {
-    minImportance: readPositiveInt(raw?.signalMinImportance, DEFAULT_SIGNAL_CONFIG.minImportance),
-    maxPerSignal: readPositiveInt(raw?.signalMaxPerSignal, DEFAULT_SIGNAL_CONFIG.maxPerSignal),
+    minImportance: readNonNegativeInt(pluginConfig?.signalMinImportance, DEFAULT_SIGNAL_CONFIG.minImportance),
+    maxPerSignal: readNonNegativeInt(pluginConfig?.signalMaxPerSignal, DEFAULT_SIGNAL_CONFIG.maxPerSignal),
   };
 }

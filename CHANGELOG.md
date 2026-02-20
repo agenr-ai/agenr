@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.7.0] - 2026-02-20
+## [0.7.0] - 2026-02-19
 
 ### Added
 - feat(signals): mid-session signal delivery via `before_prompt_build` hook - notifies agents of new high-importance entries (imp >= 7) with compact 50-100 token notifications
