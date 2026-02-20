@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.7.7] - 2026-02-20
+
+### Fixed
+- fix(extractor): rewrote importance score calibration in SYSTEM_PROMPT -- per-score definitions (5-10) replace undifferentiated 8-10 band
+- fix(extractor): added signal-cost framing -- 8+ fires real-time cross-session alerts; prompt now uses this as conservative filter
+- fix(extractor): made score 7 the explicit default workhorse; 8+ now requires cross-session justification
+- fix(extractor): added dev-session-observations rule -- verified/tested/confirmed patterns cap at 6 unless result is surprising or breaking
+- fix(extractor): resolved conflict between dev-session cap and explicit memory request rule ("remember this" overrides cap)
+- fix(extractor): removed "verified again today" from score-8 pnpm example to avoid contradicting dev-session rule
+- fix(extractor): added NOT-8 negative examples alongside existing NOT-9 callouts
+- fix(extractor): added 3 non-developer few-shot examples (health at 8, personal at 7, preference at 6) to prevent domain bias
+- fix(extractor): lowered 8+ calibration cap from 30% to 20%
+
 ## [0.7.6] - 2026-02-20
 
 ### Fixed
