@@ -1105,13 +1105,16 @@ export function createMcpServer(
 
       if (params.name === "agenr_store") {
         const result = await callStoreTool(params.args);
-        const args = params.args as Record<string, unknown> | undefined;
+        const storeArgs = params.args as Record<string, unknown> | undefined;
+        const storeEntries = Array.isArray(storeArgs?.entries) ? storeArgs.entries : [];
+        const firstEntry = storeEntries[0] as Record<string, unknown> | undefined;
         await appendMcpLog({
           tool: "agenr_store",
-          type: typeof args?.type === "string" ? args.type : undefined,
-          subject: typeof args?.subject === "string" ? args.subject.slice(0, 80) : undefined,
-          importance: typeof args?.importance === "number" ? args.importance : undefined,
-          project: typeof args?.project === "string" ? args.project : undefined,
+          count: storeEntries.length,
+          firstType: typeof firstEntry?.type === "string" ? firstEntry.type : undefined,
+          firstSubject: typeof firstEntry?.subject === "string" ? firstEntry.subject.slice(0, 80) : undefined,
+          firstImportance: typeof firstEntry?.importance === "number" ? firstEntry.importance : undefined,
+          project: typeof storeArgs?.project === "string" ? storeArgs.project : undefined,
         });
         return {
           content: [{ type: "text", text: result }],
