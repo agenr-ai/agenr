@@ -35,12 +35,32 @@ export type PluginLogger = {
   error: (message: string) => void;
 };
 
+export type PluginToolResult = {
+  content: Array<{ type: "text"; text: string }>;
+  details?: Record<string, unknown>;
+};
+
+export type PluginTool = {
+  name: string;
+  label?: string;
+  description: string;
+  parameters: import("@sinclair/typebox").TObject;
+  execute: (toolCallId: string, params: Record<string, unknown>) => Promise<PluginToolResult>;
+};
+
+export type PluginToolOptions = {
+  name?: string;
+  names?: string[];
+  optional?: boolean;
+};
+
 export type PluginApi = {
   id: string;
   name: string;
   version?: string;
   pluginConfig?: Record<string, unknown>;
   logger: PluginLogger;
+  registerTool?: (tool: PluginTool, opts?: PluginToolOptions) => void;
   on: {
     (
       hook: "before_agent_start",

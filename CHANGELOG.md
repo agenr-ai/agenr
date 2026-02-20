@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.7.4] - 2026-02-20
+
+### Added
+- feat(plugin): native agenr_recall, agenr_store, agenr_extract, agenr_retire tools registered via api.registerTool() in the OpenClaw plugin - tools now appear in the agent toolset alongside exec, browser, etc.
+
 ## [0.7.3] - 2026-02-20
 
 ### Added
