@@ -23,67 +23,98 @@ export OPENAI_API_KEY=sk-...  # for embeddings + extraction
 ### 1. Install and ingest your history
 
 ```bash
-# Install
 npm install -g agenr
-# or
+# or: pnpm add -g agenr
 pnpm add -g agenr
 
-# Configure (picks your LLM provider, walks you through auth)
-agenr setup
-
-# Ingest all your OpenClaw sessions
-agenr ingest ~/.openclaw/agents/main/sessions/ --glob '**/*.jsonl'
-
-# Query your memory
+agenr setup        # configure LLM provider + auth
+agenr ingest ~/.openclaw/agents/main/sessions/  # bootstrap from existing sessions
 agenr recall "what did we decide about the database schema?"
 ```
 
 ### 2. Keep it fresh
 
-Start the watcher so new conversations get captured automatically:
+```bash
+agenr daemon install   # runs in background, watches your sessions automatically
+agenr daemon status
+agenr daemon logs
+```
+
+### 3. Wire your agent
+
+Choose your platform:
+
+#### OpenClaw (recommended)
+
+The agenr OpenClaw plugin handles everything automatically - memory injection at
+session start, mid-session signals when important new entries arrive, and
+native `agenr_recall`, `agenr_store`, `agenr_extract`, and `agenr_retire`
+tools registered directly in the agent toolset.
 
 ```bash
-# Watch your current session file
-agenr watch ~/.openclaw/agents/main/sessions/current.jsonl --interval 120
-
-# Or watch a whole directory
-agenr watch --dir ~/.openclaw/agents/main/sessions/
-
-# Or install as a background daemon so it runs on its own
-agenr daemon install
+openclaw plugins install agenr
 ```
 
-### 3. Give your agent memory
+That's it. Memory injection happens via the plugin's `before_agent_start` hook.
+No AGENTS.md edits needed. The bundled `SKILL.md` loads automatically and
+instructs the agent when to call `agenr_store` proactively.
 
-**Option A: CLI in AGENTS.md (no MCP needed, works everywhere)**
+Optional config in `openclaw.json`:
 
-Add this to your OpenClaw `AGENTS.md`:
-
-```markdown
-## Memory (agenr)
-On every session start, run this BEFORE responding to the first message:
-  agenr recall --context session-start --budget 2000
-IMPORTANT: use --budget 2000, not just --limit. Budget triggers balanced output:
-  - 20% active todos
-  - 30% preferences and decisions
-  - 50% recent facts and events
-Without --budget, score ranking skews toward old high-importance todos.
+```json
+{
+  "plugins": {
+    "entries": {
+      "agenr": {
+        "config": {
+          "budget": 2000,
+          "signalMinImportance": 8,
+          "signalCooldownMs": 30000,
+          "signalMaxPerSession": 10
+        }
+      }
+    }
+  }
+}
 ```
 
-Your agent runs the command on startup and gets its memory back. No MCP, no extra config.
+Signal config controls how often mid-session notifications fire. See
+[docs/OPENCLAW.md](./docs/OPENCLAW.md) for all available options.
 
-**Option B: MCP server (richer integration)**
-
-If your tool supports MCP (OpenClaw via mcporter, Claude Code, Codex, Cursor):
+#### Claude Code
 
 ```bash
-# Add to OpenClaw (via mcporter)
-mcporter config add agenr --stdio agenr --arg mcp --env OPENAI_API_KEY=your-key-here
+agenr init --platform claude-code
 ```
 
-This gives your agent `agenr_recall`, `agenr_store`, and `agenr_extract` as tools it can call anytime - not just on startup.
+Adds the `agenr_recall`/`agenr_store` instruction block to
+`~/.claude/CLAUDE.md` and wires `~/.mcp.json`. Your agent sees the tools and
+knows when to use them.
 
-Done. Your agent now has persistent memory that survives compaction, session restarts, and everything in between.
+#### Cursor
+
+```bash
+agenr init --platform cursor
+```
+
+Adds instructions to `.cursor/rules/agenr.mdc` and wires `.cursor/mcp.json`.
+
+#### Codex
+
+```bash
+agenr init --platform codex
+```
+
+Adds instructions to `~/.codex/AGENTS.md` and wires `.mcp.json`.
+
+#### Any MCP-compatible tool
+
+```bash
+agenr init   # auto-detects platform, falls back to generic AGENTS.md
+```
+
+Or configure manually: start `agenr mcp` as a stdio MCP server. Your agent gets
+`agenr_recall`, `agenr_store`, `agenr_extract`, and `agenr_retire` as tools.
 
 ## What happens when you ingest
 
@@ -118,9 +149,6 @@ The watcher keeps your memory current as you work. It tails your session files, 
 # Watch your OpenClaw sessions directory (auto-resolves the default path)
 agenr watch --platform openclaw
 
-# Deprecated: --auto still works (defaults to OpenClaw) but will be removed in a future version
-agenr watch --auto
-
 # Install as a background daemon (macOS launchd)
 agenr daemon install
 agenr daemon status
@@ -152,32 +180,39 @@ Transcript -> Filter -> Extract -> Store -> Recall
 
 ## MCP integration
 
-AGENR exposes three MCP tools: `agenr_recall`, `agenr_store`, `agenr_extract`. Any tool that speaks MCP can use your memory.
+agenr exposes four MCP tools: `agenr_recall`, `agenr_store`, `agenr_extract`,
+`agenr_retire`.
 
-**OpenClaw** (via [mcporter](https://mcporter.dev)):
-```bash
-mcporter config add agenr --stdio agenr --arg mcp --env OPENAI_API_KEY=your-key-here
-```
+**OpenClaw** - `openclaw plugins install agenr` (plugin registers tools
+natively; no MCP config needed)
 
-Verify with `mcporter list agenr`. See [docs/OPENCLAW.md](./docs/OPENCLAW.md) for the full guide.
+**Claude Code / Cursor / Codex** - `agenr init --platform <name>` (wires MCP
+config and instructions)
+
+**Manual** - start `agenr mcp` as a stdio server and configure in your tool's
+MCP settings.
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
-| `agenr setup` | Interactive configuration |
+| `agenr setup` | Interactive configuration (LLM provider, auth, model defaults) |
+| `agenr init [options]` | Wire a project: instructions file + MCP config + project scope. Use `--platform openclaw\|claude-code\|cursor\|codex\|generic` |
 | `agenr config` | Show and update agenr configuration |
 | `agenr auth` | Authentication status and diagnostics |
 | `agenr ingest <paths...>` | Bulk-ingest files and directories |
-| `agenr extract <files...>` | Extract knowledge from text |
+| `agenr extract <files...>` | Extract knowledge entries from text files |
 | `agenr store [files...]` | Store entries with semantic dedup |
 | `agenr recall [query]` | Semantic + memory-aware recall |
-| `agenr watch [file]` | Live-watch files, directories, or auto-detect |
-| `agenr daemon install` | Install background watch daemon |
+| `agenr retire <subject>` | Retire a stale entry (hidden, not deleted) |
+| `agenr watch [file]` | Live-watch files/directories, auto-extract knowledge |
+| `agenr daemon install` | Install background watch daemon (macOS launchd) |
 | `agenr consolidate` | Clean up and merge near-duplicates |
 | `agenr context` | Generate context file for AI tool integration |
+| `agenr health` | Show database health and forgetting candidates |
 | `agenr mcp` | Start MCP server (stdio) |
-| `agenr db <cmd>` | Database management (stats, version, export, reset, path, check, rebuild-index). Run `agenr db --help` for all subcommands. |
+| `agenr todo <subcommand> <subject>` | Manage todos in the knowledge base |
+| `agenr db <cmd>` | Database management (stats, version, export, reset, path, check, rebuild-index) |
 
 Full reference: [docs/CLI.md](./docs/CLI.md) | [docs/CONFIGURATION.md](./docs/CONFIGURATION.md)
 
@@ -192,11 +227,13 @@ Deep dive: [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
 
 ## Status
 
-Alpha. The core pipeline is stable and tested (445 tests). We use it daily managing thousands of knowledge entries across OpenClaw sessions.
+The core pipeline is stable and tested (782 tests). We use it daily managing
+thousands of knowledge entries across OpenClaw sessions.
 
 What works: extraction, storage, recall, MCP integration, online dedup, consolidation, smart filtering, live watching, daemon mode.
 
-What's next: local embeddings support, entity resolution, auto-scheduled consolidation.
+What's next: Cursor live signals, Claude Code UserPromptSubmit adapter,
+transitive project dependencies.
 
 ## Philosophy
 
