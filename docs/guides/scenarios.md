@@ -529,14 +529,11 @@ The system prompt injected by `agenr init` includes this exact phrase — keep i
 
 **"Do not ask — just store it"** is the load-bearing phrase. Without it, agents wait to be told. If you customize the system prompt block, do not soften this into a suggestion.
 
-**18. Importance defaults differ: schema says 5, coached default is 7 — both are correct**
+**18. Importance default is aligned at 7 across schema, coaching, and runtime**
 
-The `agenr_store` MCP schema declares `importance: { default: 5 }`. The system prompt block coaches agents to use 7 as the normal default; 8 for things an active parallel session would act on right now (8+ fires cross-session signals in OpenClaw -- use conservatively); 9 for critical breaking changes or immediate cross-session decisions only (major reversals, breaking API changes, critical blockers discovered -- not generically "important things"); and 10 for once-per-project permanent constraints only (core identity rules, never-do-this constraints -- at most 1-2 per project lifetime). No more than 20% of stored entries should be 8 or higher. These are intentionally different numbers serving different purposes:
+The `agenr_store` MCP schema now declares `importance: { default: 7 }`. The system prompt block coaches agents to use 7 as the normal default; 8 for things an active parallel session would act on right now (8+ fires cross-session signals in OpenClaw -- use conservatively); 9 for critical breaking changes or immediate cross-session decisions only (major reversals, breaking API changes, critical blockers discovered -- not generically "important things"); and 10 for once-per-project permanent constraints only (core identity rules, never-do-this constraints -- at most 1-2 per project lifetime). No more than 20% of stored entries should be 8 or higher.
 
-- Schema default (5): fallback value at the schema validation layer
-- Coached default (7): the practical agent default for most entries
-
-Do not change either number to match the other. If agents are storing lots of 5s, the system prompt instructions are not being followed — check that the agenr block was injected correctly by `agenr init`.
+Runtime behavior now matches that guidance: when MCP clients omit `importance`, `normalizeImportance` also defaults to 7.
 
 ---
 
@@ -572,8 +569,8 @@ The system prompt block injected by `agenr init` includes these instructions, bu
 | 9     | Critical breaking changes or immediate cross-session decisions only. Major architecture reversals, breaking API changes, critical blockers. At most 1 per significant session. |
 | 10    | Once-per-project permanent constraints. "This project must never use GPL-licensed dependencies." At most 1-2 per project lifetime. |
 
-Note: entries scoring 1-4 are not stored (below the emit floor).
+Note: the 1-4 suppression applies to extractor output (`src/extractor.ts`) via the emit floor. Direct `agenr_store` MCP calls accept explicit importance values from 1 to 10.
 
-The system prompt sets the default to 7. Score 8+ fires real-time cross-session signals -- use conservatively. Score 9 is for critical breaking changes and immediate decisions only, not for generally important facts. Score 10 is reserved for once-per-project permanent constraints.
+The system prompt sets the default to 7. In OpenClaw, 8+ fires real-time cross-session signals, so use it conservatively. Reserve 9 for critical breaking changes and immediate decisions only, not for generally important facts. Keep 10 for once-per-project permanent constraints.
 
 This calibration prevents importance inflation. The real risk is at 8+: if more than 20% of stored entries are 8 or higher, importance is being inflated and cross-session signals lose meaning.

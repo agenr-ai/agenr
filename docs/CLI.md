@@ -680,7 +680,7 @@ $A db stats
 ```text
 DB Stats
 Database: /Users/you/.agenr/knowledge.db
-Schema Version: 0.5.0
+Schema Version: 0.7.7
 Entries: 42
 By Type
 - decision: 10
