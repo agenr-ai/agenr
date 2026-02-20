@@ -1,3 +1,6 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   BeforeAgentStartEvent,
@@ -21,6 +24,7 @@ const recallModulePath = "../../src/openclaw-plugin/recall.js";
 const dbClientModulePath = "../../src/db/client.js";
 const signalsModulePath = "../../src/openclaw-plugin/signals.js";
 const indexModulePath = "../../src/openclaw-plugin/index.js";
+const tempDirs: string[] = [];
 
 async function registerPlugin(
   pluginConfig?: Record<string, unknown>
@@ -61,11 +65,18 @@ async function registerPlugin(
   return { handler: capturedHandler, beforePromptBuildHandler: capturedBeforePromptBuildHandler, loggerWarn };
 }
 
-afterEach(() => {
+afterEach(async () => {
   vi.restoreAllMocks();
   vi.doUnmock(recallModulePath);
   vi.doUnmock(dbClientModulePath);
   vi.doUnmock(signalsModulePath);
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop();
+    if (!dir) {
+      continue;
+    }
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 });
 
 describe("agenr OpenClaw plugin", () => {
@@ -117,6 +128,35 @@ describe("agenr OpenClaw plugin", () => {
     );
 
     expect(result?.prependContext).toContain("## agenr Memory Context");
+  });
+
+  it("does not write AGENR.md to workspace", async () => {
+    vi.resetModules();
+    vi.doMock(recallModulePath, () => ({
+      resolveAgenrPath: vi.fn(() => "/tmp/agenr-cli.js"),
+      resolveBudget: vi.fn(() => 2000),
+      runRecall: vi.fn(async () => ({
+        query: "",
+        results: [{ entry: { type: "fact", subject: "subject", content: "content" }, score: 0.99 }],
+      })),
+      formatRecallAsMarkdown: vi.fn(() => "## agenr Memory Context\n\n- memory"),
+    }));
+
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "agenr-openclaw-workspace-"));
+    tempDirs.push(workspaceDir);
+
+    const { handler } = await registerPlugin();
+    await handler(
+      { prompt: "test prompt" },
+      { sessionKey: "agent:main:test-no-agenr-md", workspaceDir },
+    );
+
+    const agenrMdPath = path.join(workspaceDir, "AGENR.md");
+    const exists = await fs
+      .access(agenrMdPath)
+      .then(() => true)
+      .catch(() => false);
+    expect(exists).toBe(false);
   });
 
   it("runs recall only once for repeated calls with the same sessionKey", async () => {
