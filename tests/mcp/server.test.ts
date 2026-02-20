@@ -1,9 +1,14 @@
 import { PassThrough } from "node:stream";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import type { Client } from "@libsql/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMcpServer } from "../../src/mcp/server.js";
 import type { McpServerDeps } from "../../src/mcp/server.js";
 import type { KnowledgeEntry, LlmClient, RecallResult, StoreResult, TranscriptChunk } from "../../src/types.js";
+
+const tempDirs: string[] = [];
 
 function makeLlmClient(): LlmClient {
   return {
@@ -201,9 +206,32 @@ function makeHarness(): TestHarness {
   };
 }
 
+async function createScopedProjectConfig(params: {
+  project: string;
+  dependencies?: string[];
+}): Promise<string> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agenr-mcp-scope-"));
+  tempDirs.push(dir);
+  await fs.mkdir(path.join(dir, ".agenr"), { recursive: true });
+  await fs.writeFile(
+    path.join(dir, ".agenr", "config.json"),
+    `${JSON.stringify(
+      {
+        project: params.project,
+        dependencies: params.dependencies,
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  return dir;
+}
+
 async function runServer(
   lines: string[],
   deps: Partial<McpServerDeps>,
+  options?: { env?: NodeJS.ProcessEnv },
 ): Promise<Array<Record<string, unknown>>> {
   const input = new PassThrough();
   const output = new PassThrough();
@@ -220,6 +248,7 @@ async function runServer(
       output,
       errorOutput,
       serverVersion: "9.9.9-test",
+      env: options?.env,
     },
     deps,
   );
@@ -238,8 +267,15 @@ async function runServer(
     .map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
-afterEach(() => {
+afterEach(async () => {
   vi.restoreAllMocks();
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop();
+    if (!dir) {
+      continue;
+    }
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 });
 
 describe("mcp server", () => {
@@ -593,38 +629,11 @@ describe("mcp server", () => {
     await server.stop();
   });
 
-  it("agenr_recall with since_seq returns entries by rowid", async () => {
+  it("agenr_recall uses project scope from AGENR_PROJECT_DIR when project is omitted", async () => {
     const harness = makeHarness();
-    harness.dbExecute.mockImplementation(async (statement: string | { sql?: string; args?: unknown[] }) => {
-      const sql = typeof statement === "string" ? statement : statement.sql ?? "";
-      if (sql.includes("WHERE rowid > ?") && sql.includes("ORDER BY rowid ASC")) {
-        return {
-          rows: [
-            {
-              rowid: 1543,
-              id: "abc123",
-              type: "decision",
-              subject: "Switch to Postgres",
-              content: "Switch to Postgres for production database",
-              importance: 8,
-              created_at: "2026-02-19T10:00:00.000Z",
-            },
-            {
-              rowid: 1544,
-              id: "def456",
-              type: "fact",
-              subject: "AWS contract",
-              content: "AWS contract signed through 2027",
-              importance: 9,
-              created_at: "2026-02-19T11:00:00.000Z",
-            },
-          ],
-        };
-      }
-      return { rows: [] };
-    });
+    const scopedDir = await createScopedProjectConfig({ project: "frontend" });
 
-    const responses = await runServer(
+    await runServer(
       [
         JSON.stringify({
           jsonrpc: "2.0",
@@ -633,55 +642,28 @@ describe("mcp server", () => {
           params: {
             name: "agenr_recall",
             arguments: {
-              since_seq: 0,
-              limit: 10,
+              query: "Jim's diet",
             },
           },
         }),
       ],
       harness.deps,
+      { env: { ...process.env, AGENR_PROJECT_DIR: scopedDir } },
     );
 
-    const result = responses[0]?.result as { content?: Array<{ text?: string }> };
-    const text = result.content?.[0]?.text ?? "";
-    expect(text).toContain("2 entries since seq 0:");
-    expect(text).toContain("[rowid=1543] [id=abc123]");
-    expect(text).toContain("[rowid=1544] [id=def456]");
-    expect(harness.recallFn).not.toHaveBeenCalled();
+    const recallQuery = harness.recallFn.mock.calls[0]?.[1] as { project?: string[]; projectStrict?: boolean };
+    expect(recallQuery.project).toEqual(["frontend"]);
+    expect(recallQuery.projectStrict).toBe(true);
   });
 
-  it("agenr_recall with since_seq=0 returns all entries", async () => {
+  it("agenr_recall includes dependency projects from scoped config", async () => {
     const harness = makeHarness();
-    harness.dbExecute.mockImplementation(async (statement: string | { sql?: string }) => {
-      const sql = typeof statement === "string" ? statement : statement.sql ?? "";
-      if (sql.includes("WHERE rowid > ?") && sql.includes("ORDER BY rowid ASC")) {
-        return {
-          rows: [
-            {
-              rowid: 1,
-              id: "entry-1",
-              type: "fact",
-              subject: "S1",
-              content: "C1",
-              importance: 6,
-              created_at: "2026-02-19T00:00:00.000Z",
-            },
-            {
-              rowid: 2,
-              id: "entry-2",
-              type: "event",
-              subject: "S2",
-              content: "C2",
-              importance: 7,
-              created_at: "2026-02-20T00:00:00.000Z",
-            },
-          ],
-        };
-      }
-      return { rows: [] };
+    const scopedDir = await createScopedProjectConfig({
+      project: "frontend",
+      dependencies: ["api-service", "shared-lib"],
     });
 
-    const responses = await runServer(
+    await runServer(
       [
         JSON.stringify({
           jsonrpc: "2.0",
@@ -690,24 +672,28 @@ describe("mcp server", () => {
           params: {
             name: "agenr_recall",
             arguments: {
-              since_seq: 0,
+              query: "contracts",
             },
           },
         }),
       ],
       harness.deps,
+      { env: { ...process.env, AGENR_PROJECT_DIR: scopedDir } },
     );
 
-    const result = responses[0]?.result as { content?: Array<{ text?: string }> };
-    const text = result.content?.[0]?.text ?? "";
-    expect(text).toContain("2 entries since seq 0:");
-    expect(text).toContain("[rowid=1] [id=entry-1]");
-    expect(text).toContain("[rowid=2] [id=entry-2]");
+    const recallQuery = harness.recallFn.mock.calls[0]?.[1] as { project?: string[]; projectStrict?: boolean };
+    expect(recallQuery.project).toEqual(["frontend", "api-service", "shared-lib"]);
+    expect(recallQuery.projectStrict).toBe(true);
   });
 
-  it("agenr_recall with since_seq rejects negative values", async () => {
+  it("agenr_recall project='*' bypasses scoped project filtering", async () => {
     const harness = makeHarness();
-    const responses = await runServer(
+    const scopedDir = await createScopedProjectConfig({
+      project: "frontend",
+      dependencies: ["api-service"],
+    });
+
+    await runServer(
       [
         JSON.stringify({
           jsonrpc: "2.0",
@@ -716,35 +702,29 @@ describe("mcp server", () => {
           params: {
             name: "agenr_recall",
             arguments: {
-              since_seq: -1,
+              query: "anything",
+              project: "*",
             },
           },
         }),
       ],
       harness.deps,
+      { env: { ...process.env, AGENR_PROJECT_DIR: scopedDir } },
     );
 
-    expect(responses[0]).toMatchObject({
-      jsonrpc: "2.0",
-      id: 37,
-      error: {
-        code: -32602,
-        message: "since_seq must be a non-negative integer",
-      },
-    });
+    const recallQuery = harness.recallFn.mock.calls[0]?.[1] as { project?: string[]; projectStrict?: boolean };
+    expect(recallQuery.project).toBeUndefined();
+    expect(recallQuery.projectStrict).toBeUndefined();
   });
 
-  it("agenr_recall with since_seq returns empty for high watermark", async () => {
+  it("agenr_recall explicit project ignores configured dependencies", async () => {
     const harness = makeHarness();
-    harness.dbExecute.mockImplementation(async (statement: string | { sql?: string }) => {
-      const sql = typeof statement === "string" ? statement : statement.sql ?? "";
-      if (sql.includes("WHERE rowid > ?") && sql.includes("ORDER BY rowid ASC")) {
-        return { rows: [] };
-      }
-      return { rows: [] };
+    const scopedDir = await createScopedProjectConfig({
+      project: "frontend",
+      dependencies: ["api-service", "shared-lib"],
     });
 
-    const responses = await runServer(
+    await runServer(
       [
         JSON.stringify({
           jsonrpc: "2.0",
@@ -753,64 +733,76 @@ describe("mcp server", () => {
           params: {
             name: "agenr_recall",
             arguments: {
-              since_seq: 9999,
+              query: "contracts",
+              project: "analytics",
             },
           },
         }),
       ],
       harness.deps,
+      { env: { ...process.env, AGENR_PROJECT_DIR: scopedDir } },
     );
 
-    const result = responses[0]?.result as { content?: Array<{ text?: string }> };
-    expect(result.content?.[0]?.text).toBe("No new entries since seq 9999.");
+    const recallQuery = harness.recallFn.mock.calls[0]?.[1] as { project?: string[]; projectStrict?: boolean };
+    expect(recallQuery.project).toEqual(["analytics"]);
+    expect(recallQuery.projectStrict).toBe(true);
   });
 
-  it("agenr_recall with since_seq bypasses embedding requirements", async () => {
+  it("agenr_store uses scoped project from AGENR_PROJECT_DIR when project is omitted", async () => {
     const harness = makeHarness();
-    harness.resolveEmbeddingApiKeyFn.mockImplementation(() => {
-      throw new Error("missing OPENAI_API_KEY");
-    });
-    harness.dbExecute.mockImplementation(async (statement: string | { sql?: string }) => {
-      const sql = typeof statement === "string" ? statement : statement.sql ?? "";
-      if (sql.includes("WHERE rowid > ?") && sql.includes("ORDER BY rowid ASC")) {
-        return {
-          rows: [
-            {
-              rowid: 2,
-              id: "entry-2",
-              type: "fact",
-              subject: "S2",
-              content: "C2",
-              importance: 7,
-              created_at: "2026-02-20T00:00:00.000Z",
+    const scopedDir = await createScopedProjectConfig({ project: "frontend" });
+
+    await runServer(
+      [
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 39,
+          method: "tools/call",
+          params: {
+            name: "agenr_store",
+            arguments: {
+              entries: [
+                {
+                  type: "fact",
+                  content: "Scoped store entry",
+                },
+              ],
             },
-          ],
-        };
-      }
-      return { rows: [] };
-    });
+          },
+        }),
+      ],
+      harness.deps,
+      { env: { ...process.env, AGENR_PROJECT_DIR: scopedDir } },
+    );
 
-    const server = createMcpServer({ serverVersion: "9.9.9-test" }, harness.deps);
-    const response = await server.handleRequest({
-      jsonrpc: "2.0",
-      id: 39,
-      method: "tools/call",
-      params: {
-        name: "agenr_recall",
-        arguments: {
-          since_seq: 0,
-        },
-      },
-    });
+    const storedEntries = harness.storeEntriesFn.mock.calls[0]?.[1] as KnowledgeEntry[];
+    expect(storedEntries[0]?.project).toBe("frontend");
+  });
 
-    expect(response).toMatchObject({
-      jsonrpc: "2.0",
-      id: 39,
-    });
-    const text = ((response as { result?: { content?: Array<{ text?: string }> } }).result?.content?.[0]?.text ?? "");
-    expect(text).toContain("[rowid=2] [id=entry-2]");
-    expect(harness.resolveEmbeddingApiKeyFn).not.toHaveBeenCalled();
-    await server.stop();
+  it("agenr_recall remains global when AGENR_PROJECT_DIR is not set", async () => {
+    const harness = makeHarness();
+
+    await runServer(
+      [
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 40,
+          method: "tools/call",
+          params: {
+            name: "agenr_recall",
+            arguments: {
+              query: "Jim",
+            },
+          },
+        }),
+      ],
+      harness.deps,
+      { env: { ...process.env, AGENR_PROJECT_DIR: "" } },
+    );
+
+    const recallQuery = harness.recallFn.mock.calls[0]?.[1] as { project?: string[]; projectStrict?: boolean };
+    expect(recallQuery.project).toBeUndefined();
+    expect(recallQuery.projectStrict).toBeUndefined();
   });
 
   it("calls agenr_store and returns storage summary", async () => {

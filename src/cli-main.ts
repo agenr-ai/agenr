@@ -28,6 +28,7 @@ import { runEvalRecallCommand } from "./commands/eval.js";
 import { runHealthCommand } from "./commands/health.js";
 import { runIngestCommand } from "./commands/ingest.js";
 import { runContextCommand } from "./commands/context.js";
+import { formatInitSummary, runInitCommand } from "./commands/init.js";
 import { runMcpCommand } from "./commands/mcp.js";
 import { runRecallCommand } from "./commands/recall.js";
 import { runRetireCommand } from "./commands/retire.js";
@@ -725,6 +726,21 @@ export function createProgram(): Command {
     .action(async (opts: { db?: string }) => {
       const result = await runHealthCommand(opts);
       process.exitCode = result.exitCode;
+    });
+
+  program
+    .command("init")
+    .description("Initialize agenr project wiring (instructions, MCP config, and project scope)")
+    .option("--platform <name>", "Platform override: claude-code, cursor, openclaw, windsurf, codex, generic")
+    .option("--project <slug>", "Project slug override")
+    .option("--path <dir>", "Project directory (default: current working directory)")
+    .option("--depends-on <slug,...>", "Comma-separated dependency project slugs")
+    .action(async (opts: { platform?: string; project?: string; path?: string; dependsOn?: string }) => {
+      const result = await runInitCommand(opts);
+      for (const line of formatInitSummary(result)) {
+        process.stdout.write(`${line}\n`);
+      }
+      process.exitCode = 0;
     });
 
   program

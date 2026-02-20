@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgenrPluginConfig } from "./types.js";
@@ -226,13 +225,4 @@ export function formatRecallAsSummary(result: RecallResult, timestamp?: string):
   }
 
   return lines.join("\n").trimEnd();
-}
-
-export async function writeAgenrMd(markdown: string, workspaceDir: string): Promise<void> {
-  try {
-    const outputPath = path.join(workspaceDir, "AGENR.md");
-    await writeFile(outputPath, markdown, "utf8");
-  } catch {
-    // Do not block plugin behavior on filesystem write failures.
-  }
 }

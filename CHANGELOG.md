@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.7.1] - 2026-02-20
+
+### Added
+- feat(init): new `agenr init` command to auto-wire project instructions, MCP config, and `.agenr/config.json` with project slug/platform/projectDir
+- feat(init): `--depends-on` support for dependency-aware project recall scope in `.agenr/config.json`
+
+### Changed
+- feat(mcp): default `agenr_recall` scope now reads `AGENR_PROJECT_DIR` + `.agenr/config.json` per call and auto-includes direct dependencies when `project` is omitted
+- feat(mcp): `project="*"` now bypasses configured project scope, while explicit `project` values stay strict (no dependency expansion)
+- feat(mcp): default `agenr_store` project now comes from configured project scope when caller omits `project`
+- docs: corrected setup guidance in `docs/guides/scenarios.md` and aligned MCP examples in `docs/MCP.md` with current init output
+
+### Removed
+- perf(mcp): removed public `since_seq` parameter/handler from `agenr_recall`
+- perf(plugin): removed redundant OpenClaw `writeAgenrMd` write path (session-start context is still injected via `prependContext`)
+- perf(signals): removed extra `agenr_recall` footer from signal notifications for lower token overhead
+
 ## [0.7.0] - 2026-02-19
 
 ### Added

@@ -64,7 +64,6 @@ export function formatSignal(entries: SignalEntry[]): string {
     lines.push(`- [${entry.type}, imp:${entry.importance}] "${entry.subject}"`);
   }
 
-  lines.push('-> Use agenr_recall query="<subject>" for details.');
   return lines.join("\n");
 }
 

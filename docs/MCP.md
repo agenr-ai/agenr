@@ -22,32 +22,33 @@ Protocol details:
 - transport: stdio
 - JSON-RPC: 2.0
 - MCP protocol version: `2024-11-05`
-- tools: `agenr_recall`, `agenr_store`, `agenr_done`, `agenr_extract`
+- tools: `agenr_recall`, `agenr_store`, `agenr_extract`, `agenr_retire`
 
-## Codex Setup (`~/.codex/config.toml`)
+## Codex Setup (project `.mcp.json`)
 
-```toml
-[mcp_servers.agenr]
-command = "npx"
-args = ["-y", "agenr", "mcp", "--db", "/path/to/knowledge.db"]
-env = { OPENAI_API_KEY = "your-key-here" }
+```json
+{
+  "agenr": {
+    "command": "agenr",
+    "args": ["mcp"],
+    "env": {
+      "AGENR_PROJECT_DIR": "/path/to/project",
+      "OPENAI_API_KEY": "your-key-here"
+    }
+  }
+}
 ```
-
-Notes:
-- This shape matches working Codex TOML MCP configuration.
-- Keep secrets out of committed files.
 
 ## Claude Code Setup (project `.mcp.json`)
 
 ```json
 {
-  "mcpServers": {
-    "agenr": {
-      "command": "npx",
-      "args": ["-y", "agenr", "mcp"],
-      "env": {
-        "OPENAI_API_KEY": "your-key-here"
-      }
+  "agenr": {
+    "command": "agenr",
+    "args": ["mcp"],
+    "env": {
+      "AGENR_PROJECT_DIR": "/path/to/project",
+      "OPENAI_API_KEY": "your-key-here"
     }
   }
 }
@@ -55,19 +56,19 @@ Notes:
 
 Notes:
 - Use project-level `.mcp.json` so config travels with the repo.
-- `mcpServers` is the expected key.
+- If your existing config already uses a `mcpServers` wrapper, agenr merges into that shape.
 
 ## Other MCP Clients (Generic stdio config)
 
 If your client supports stdio servers, configure:
-- command: `node`
-- args: `[/absolute/path/to/agenr/dist/cli.js, mcp]`
-- env: `OPENAI_API_KEY=...`
+- command: `agenr`
+- args: `[mcp]`
+- env: `AGENR_PROJECT_DIR=/path/to/project`, `OPENAI_API_KEY=...`
 
 Equivalent shell command:
 
 ```bash
-OPENAI_API_KEY=your-key-here npx -y agenr mcp
+AGENR_PROJECT_DIR=/path/to/project OPENAI_API_KEY=your-key-here agenr mcp
 ```
 
 ## Project Scoping (Recommended for Coding Agents)
@@ -75,29 +76,22 @@ OPENAI_API_KEY=your-key-here npx -y agenr mcp
 By default, agenr uses a single global database (`~/.agenr/knowledge.db`). This works well for personal assistants, but coding agents typically want to avoid cross-project memory pollution (for example, recalling "use pnpm" in a Python repo).
 
 agenr supports two approaches:
-- **Project tagging (single DB):** entries have an optional `project` tag (`entries.project`). Use the MCP `project` parameter (or CLI `--project`) to filter reads and keep a single database cleanly scoped.
+- **Project tagging (single DB):** entries have an optional `project` tag (`entries.project`). With MCP, `AGENR_PROJECT_DIR` + `.agenr/config.json` sets default scope automatically for `agenr_recall` and default project for `agenr_store`.
 - **Per-project databases:** pass `--db` to run MCP against a project-local database (for stricter isolation).
 
 ### Manual setup (per-project DB)
 
 Pass `--db` to scope the MCP server to a project-local database:
 
-**Codex** (`~/.codex/config.toml`):
-```toml
-[mcp_servers.agenr]
-command = "npx"
-args = ["-y", "agenr", "mcp", "--db", ".agenr/knowledge.db"]
-env = { OPENAI_API_KEY = "your-key-here" }
-```
-
-**Claude Code** (`.mcp.json` in project root):
+**Project `.mcp.json`:**
 ```json
 {
-  "mcpServers": {
-    "agenr": {
-      "command": "npx",
-      "args": ["-y", "agenr", "mcp", "--db", ".agenr/knowledge.db"],
-      "env": { "OPENAI_API_KEY": "your-key-here" }
+  "agenr": {
+    "command": "agenr",
+    "args": ["mcp", "--db", ".agenr/knowledge.db"],
+    "env": {
+      "AGENR_PROJECT_DIR": "/path/to/project",
+      "OPENAI_API_KEY": "your-key-here"
     }
   }
 }
@@ -105,7 +99,7 @@ env = { OPENAI_API_KEY = "your-key-here" }
 
 Add `.agenr/knowledge.db` and `.agenr/knowledge.db-*` to your `.gitignore`.
 
-Project tagging and filtering can be used alongside `--db`. For example, teams can share one DB per monorepo while still filtering memories per package.
+Project tagging and filtering can be used alongside `--db`.
 
 ## Tool Reference
 
@@ -123,7 +117,10 @@ Parameters:
 - `since` (string, optional): ISO date or relative (`7d`, `24h`, `1m`, `1y`)
 - `threshold` (number, optional, default `0`): minimum score `0.0..1.0`
 - `platform` (string, optional): platform filter (`openclaw`, `claude-code`, `codex`)
-- `project` (string, optional): project filter (comma-separated for multiple: `agenr,openclaw`)
+- `project` (string, optional):
+  - omit to use configured project scope (project + dependencies from `.agenr/config.json`)
+  - pass `*` to bypass scope and search all projects
+  - pass an explicit value to query only that project (dependencies are not expanded)
 
 Example call payload:
 
@@ -223,33 +220,26 @@ Extracted 2 entries from text:
 Stored: 1 new, 0 updated, 1 duplicates skipped, 0 superseded.
 ```
 
-### `agenr_done`
+### `agenr_retire`
 
-Mark a todo as completed and remove it from active recall.
+Mark one or more memory entries as retired (soft delete). Retired entries are excluded from recall.
 
 Parameters:
-- `subject` (string, required): todo subject to match (partial/fuzzy matching supported). If multiple active todos match, the tool returns the candidate list so the caller can refine the subject.
-- `confirm` (boolean, optional, default `false`):
-  - `false`: do not pick a candidate silently when multiple matches exist; return a response listing candidates.
-  - `true`: immediately mark the single top match as done.
-    Top-match ordering is: `importance` descending, then `created_at` descending, then alphabetical `subject`.
+- `entry_id` (string, required): entry id to retire.
+- `reason` (string, optional): retirement reason.
+- `persist` (boolean, optional, default `false`): persist retirement to ledger so it survives re-ingest.
 
 Example call payload:
 
 ```json
 {
-  "name": "agenr_done",
+  "name": "agenr_retire",
   "arguments": {
-    "subject": "fix client test",
-    "confirm": true
+    "entry_id": "entry-123",
+    "reason": "obsolete",
+    "persist": true
   }
 }
-```
-
-Typical response text:
-
-```text
-Marked done: fix client test
 ```
 
 ## Teach Your AI to Use agenr

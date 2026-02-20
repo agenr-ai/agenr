@@ -108,8 +108,6 @@ describe("agenr OpenClaw plugin", () => {
         results: [{ entry: { type: "fact", subject: "subject", content: "content" }, score: 0.99 }],
       })),
       formatRecallAsMarkdown: vi.fn(() => "## agenr Memory Context\n\n### Facts and Events\n\n- [subject] content"),
-      formatRecallAsSummary: vi.fn(() => "## agenr Memory\n\n1 entries recalled."),
-      writeAgenrMd: vi.fn(async () => {}),
     }));
 
     const { handler } = await registerPlugin();
@@ -132,8 +130,6 @@ describe("agenr OpenClaw plugin", () => {
       resolveBudget: vi.fn(() => 2000),
       runRecall,
       formatRecallAsMarkdown: vi.fn(() => "## agenr Memory Context"),
-      formatRecallAsSummary: vi.fn(() => "## agenr Memory\n\n1 entries recalled."),
-      writeAgenrMd: vi.fn(async () => {}),
     }));
 
     const { handler } = await registerPlugin();
@@ -156,8 +152,6 @@ describe("agenr OpenClaw plugin", () => {
       resolveBudget: vi.fn(() => 2000),
       runRecall,
       formatRecallAsMarkdown: vi.fn(() => "## agenr Memory Context"),
-      formatRecallAsSummary: vi.fn(() => "## agenr Memory\n\n1 entries recalled."),
-      writeAgenrMd: vi.fn(async () => {}),
     }));
 
     const { handler } = await registerPlugin();
@@ -178,8 +172,6 @@ describe("agenr OpenClaw plugin", () => {
       resolveBudget: vi.fn(() => 2000),
       runRecall,
       formatRecallAsMarkdown: vi.fn(() => "## agenr Memory Context"),
-      formatRecallAsSummary: vi.fn(() => "## agenr Memory\n\n1 entries recalled."),
-      writeAgenrMd: vi.fn(async () => {}),
     }));
 
     const { handler } = await registerPlugin();
@@ -190,64 +182,6 @@ describe("agenr OpenClaw plugin", () => {
 
     expect(result).toBeUndefined();
     expect(runRecall).not.toHaveBeenCalled();
-  });
-
-  it("calls writeAgenrMd with summary content and ctx.workspaceDir when markdown is present", async () => {
-    vi.resetModules();
-    const writeAgenrMd = vi.fn(async () => {});
-    const summaryOutput = [
-      "## agenr Memory -- 2026-02-19 13:51",
-      "",
-      "1 entries recalled. Full context injected into this session automatically.",
-      "To pull specific memories: ask your agent, or run:",
-      '  mcporter call agenr.agenr_recall query="your topic" limit=5',
-      "",
-      "### Facts and Events (1)",
-      "",
-      "- subject",
-    ].join("\n");
-    vi.doMock(recallModulePath, () => ({
-      resolveAgenrPath: vi.fn(() => "/tmp/agenr-cli.js"),
-      resolveBudget: vi.fn(() => 2000),
-      runRecall: vi.fn(async () => ({
-        query: "",
-        results: [{ entry: { type: "fact", subject: "subject", content: "full content body" }, score: 0.99 }],
-      })),
-      formatRecallAsMarkdown: vi.fn(() => "## agenr Memory Context\n\n### Facts and Events\n\n- [subject] full content body"),
-      formatRecallAsSummary: vi.fn(() => summaryOutput),
-      writeAgenrMd,
-    }));
-
-    const { handler } = await registerPlugin();
-    await handler({}, { sessionKey: "agent:main:test-write-md", workspaceDir: "/tmp/workspace" });
-
-    expect(writeAgenrMd).toHaveBeenCalledTimes(1);
-    const [content, workspace] = writeAgenrMd.mock.calls[0] as [string, string];
-    expect(workspace).toBe("/tmp/workspace");
-    expect(content).toContain("mcporter call agenr.agenr_recall");
-    expect(content).toContain("## agenr Memory");
-    expect(content).not.toContain("full content body");
-  });
-
-  it("does not reject when writeAgenrMd fails", async () => {
-    vi.resetModules();
-    const writeAgenrMd = vi.fn(async () => {});
-    vi.doMock(recallModulePath, () => ({
-      resolveAgenrPath: vi.fn(() => "/tmp/agenr-cli.js"),
-      resolveBudget: vi.fn(() => 2000),
-      runRecall: vi.fn(async () => ({
-        query: "",
-        results: [{ entry: { type: "fact", subject: "subject", content: "content" }, score: 0.99 }],
-      })),
-      formatRecallAsMarkdown: vi.fn(() => "## agenr Memory Context"),
-      formatRecallAsSummary: vi.fn(() => "## agenr Memory\n\n1 entries recalled."),
-      writeAgenrMd,
-    }));
-
-    const { handler } = await registerPlugin();
-    await expect(
-      handler({}, { sessionKey: "agent:main:test-write-failure", workspaceDir: "/tmp/workspace" })
-    ).resolves.toEqual({ prependContext: "## agenr Memory Context" });
   });
 
   it("does not consume session keys when config is disabled", async () => {
@@ -261,8 +195,6 @@ describe("agenr OpenClaw plugin", () => {
       resolveBudget: vi.fn(() => 2000),
       runRecall,
       formatRecallAsMarkdown: vi.fn(() => "## agenr Memory Context"),
-      formatRecallAsSummary: vi.fn(() => "## agenr Memory\n\n1 entries recalled."),
-      writeAgenrMd: vi.fn(async () => {}),
     }));
 
     const pluginConfig: { enabled: boolean } = { enabled: false };
@@ -288,8 +220,6 @@ describe("agenr OpenClaw plugin", () => {
       resolveBudget: vi.fn(() => 2000),
       runRecall,
       formatRecallAsMarkdown: vi.fn(() => "## agenr Memory Context"),
-      formatRecallAsSummary: vi.fn(() => "## agenr Memory\n\n1 entries recalled."),
-      writeAgenrMd: vi.fn(async () => {}),
     }));
 
     const { handler } = await registerPlugin({ enabled: false });
