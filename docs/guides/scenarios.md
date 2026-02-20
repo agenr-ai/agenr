@@ -15,9 +15,9 @@ That's it. Your agent now has persistent memory. Next session, it remembers what
 
 `agenr init` does three things:
 
-1. **Init** -- Creates `.agenr/config.json` in your project with a project slug, platform, and path. Adds `.agenr/knowledge.db` to `.gitignore` (plus local instruction files when needed, like Cursor and generic).
+1. **Init** -- Creates `.agenr/config.json` in your project with a project slug, platform, and path. Adds `.agenr/knowledge.db` to `.gitignore` (plus local instruction files when needed, like Cursor).
 
-2. **Instruct** -- Appends a system prompt block (wrapped in `<!-- agenr:start -->` / `<!-- agenr:end -->` markers) to your platform's instructions file. Where the platform supports it, agenr writes to a user-scoped file outside the repo (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, etc.). Where instructions must live in the project, agenr uses a local file and gitignores it when appropriate (for example, `.cursor/rules/agenr.mdc` and generic `AGENTS.md`). The block is idempotent -- re-running `agenr init` updates it, never duplicates it.
+2. **Instruct** -- Appends a system prompt block (wrapped in `<!-- agenr:start -->` / `<!-- agenr:end -->` markers) to your platform's instructions file. Where the platform supports it, agenr writes to a user-scoped file outside the repo (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, etc.). Where instructions must live in the project, agenr uses a local file and gitignores it when appropriate (for example, `.cursor/rules/agenr.mdc`). The block is idempotent -- re-running `agenr init` updates it, never duplicates it.
 
 3. **Connect** -- Writes or merges an MCP server entry into your platform's config file (`.mcp.json`, `.cursor/mcp.json`, etc.) so the agent can call `agenr_recall` and `agenr_store` as tools.
 
@@ -33,7 +33,7 @@ The **watcher daemon** (`agenr daemon install`) monitors session transcript file
 | OpenClaw | `AGENTS.md` | Per workspace config | Already configured via mcporter |
 | Windsurf | `~/.codeium/windsurf/memories/global_rules.md` | No (global user file) | `.mcp.json` |
 | Claude Desktop | N/A | N/A | `~/Library/Application Support/Claude/claude_desktop_config.json` |
-| Generic | `AGENTS.md` or `AGENR.local.md` | No (gitignored by `agenr init`) | `.mcp.json` |
+| Generic | `AGENTS.md` | Project file (not auto-gitignored) | `.mcp.json` |
 
 ---
 

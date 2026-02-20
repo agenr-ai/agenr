@@ -198,6 +198,39 @@ describe("runInitCommand", () => {
     });
   });
 
+  it("wraps agenr MCP config under mcpServers when existing config has no mcpServers key", async () => {
+    const dir = await createTempDir();
+    tempDirs.push(dir);
+    const mcpPath = path.join(dir, ".mcp.json");
+    await fs.writeFile(
+      mcpPath,
+      JSON.stringify(
+        {
+          custom: true,
+          agenr: { command: "legacy-agenr" },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    await runInitCommand({ path: dir });
+
+    const config = await readJson(mcpPath);
+    expect(config.custom).toBe(true);
+    expect(config.agenr).toBeUndefined();
+    expect(config.mcpServers).toEqual({
+      agenr: {
+        command: "agenr",
+        args: ["mcp"],
+        env: {
+          AGENR_PROJECT_DIR: path.resolve(dir),
+        },
+      },
+    });
+  });
+
   it("adds .agenr/knowledge.db to .gitignore when file exists", async () => {
     const dir = await createTempDir();
     tempDirs.push(dir);
@@ -205,6 +238,18 @@ describe("runInitCommand", () => {
     await fs.writeFile(gitignorePath, "node_modules/\n", "utf8");
 
     await runInitCommand({ path: dir });
+    const content = await fs.readFile(gitignorePath, "utf8");
+    expect(content).toContain(".agenr/knowledge.db");
+  });
+
+  it("creates .gitignore and adds .agenr/knowledge.db when file is missing", async () => {
+    const dir = await createTempDir();
+    tempDirs.push(dir);
+    const gitignorePath = path.join(dir, ".gitignore");
+
+    await runInitCommand({ path: dir });
+
+    expect(await pathExists(gitignorePath)).toBe(true);
     const content = await fs.readFile(gitignorePath, "utf8");
     expect(content).toContain(".agenr/knowledge.db");
   });
