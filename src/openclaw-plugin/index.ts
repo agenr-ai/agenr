@@ -1,3 +1,5 @@
+import type { Client } from "@libsql/client";
+import { closeDb, getDb, initDb } from "../db/client.js";
 import {
   formatRecallAsSummary,
   formatRecallAsMarkdown,
@@ -6,10 +8,13 @@ import {
   runRecall,
   writeAgenrMd,
 } from "./recall.js";
+import { checkSignals, resolveSignalConfig } from "./signals.js";
 import type {
   AgenrPluginConfig,
   BeforeAgentStartEvent,
   BeforeAgentStartResult,
+  BeforePromptBuildEvent,
+  BeforePromptBuildResult,
   PluginApi,
   PluginHookAgentContext,
 } from "./types.js";
@@ -18,6 +23,9 @@ import type {
 const SKIP_SESSION_PATTERNS = [":subagent:", ":cron:"];
 const DEFAULT_MAX_SEEN_SESSIONS = 1000;
 const seenSessions = new Map<string, true>();
+let pluginDb: Client | null = null;
+let pluginDbInit: Promise<void> | null = null;
+let didRegisterDbShutdown = false;
 
 function resolveMaxSeenSessions(): number {
   const raw = process.env.AGENR_OPENCLAW_MAX_SEEN_SESSIONS;
@@ -57,6 +65,37 @@ function markSessionSeen(sessionKey: string): void {
     }
     seenSessions.delete(oldestKey);
   }
+}
+
+function registerDbShutdown(): void {
+  if (didRegisterDbShutdown) {
+    return;
+  }
+  didRegisterDbShutdown = true;
+  process.once("exit", () => {
+    if (!pluginDb) {
+      return;
+    }
+    closeDb(pluginDb);
+    pluginDb = null;
+    pluginDbInit = null;
+  });
+}
+
+async function ensurePluginDb(config?: AgenrPluginConfig): Promise<Client> {
+  if (!pluginDb) {
+    const dbPath = config?.dbPath ?? process.env["AGENR_DB_PATH"] ?? undefined;
+    pluginDb = getDb(dbPath);
+    registerDbShutdown();
+  }
+  if (!pluginDbInit) {
+    pluginDbInit = initDb(pluginDb).catch((err) => {
+      pluginDbInit = null;
+      throw err;
+    });
+  }
+  await pluginDbInit;
+  return pluginDb;
 }
 
 const plugin = {
@@ -118,6 +157,47 @@ const plugin = {
           return;
         }
       }
+    );
+
+    api.on(
+      "before_prompt_build",
+      async (
+        _event: BeforePromptBuildEvent,
+        ctx: PluginHookAgentContext,
+      ): Promise<BeforePromptBuildResult | undefined> => {
+        try {
+          const sessionKey = ctx.sessionKey ?? "";
+          if (!sessionKey) {
+            return;
+          }
+          if (shouldSkipSession(sessionKey)) {
+            return;
+          }
+
+          const config = api.pluginConfig as AgenrPluginConfig | undefined;
+          if (config?.enabled === false) {
+            return;
+          }
+          if (config?.signalsEnabled === false) {
+            return;
+          }
+
+          const db = await ensurePluginDb(config);
+          const signalConfig = resolveSignalConfig(api.pluginConfig);
+          const signal = await checkSignals(db, sessionKey, signalConfig);
+          if (!signal) {
+            return;
+          }
+
+          return { prependContext: signal };
+        } catch (err) {
+          // Never block prompt build - log and swallow.
+          api.logger.warn(
+            `agenr plugin before_prompt_build signal check failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          return;
+        }
+      },
     );
   },
 };

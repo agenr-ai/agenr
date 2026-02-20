@@ -121,6 +121,12 @@ const TOOL_DEFINITIONS: McpToolDefinition[] = [
           type: "string",
           description: "Only entries newer than this (ISO date or relative, e.g. 7d, 1m).",
         },
+        since_seq: {
+          type: "integer",
+          description:
+            "Only return entries with rowid > this value (watermark for incremental recall). Overrides semantic search and returns entries chronologically.",
+          minimum: 0,
+        },
         threshold: {
           type: "number",
           description: "Minimum relevance score from 0.0 to 1.0.",
@@ -411,6 +417,14 @@ function parsePositiveInt(value: unknown, fallback: number, fieldName: string): 
     throw new RpcError(JSON_RPC_INVALID_PARAMS, `${fieldName} must be a positive number`);
   }
 
+  return Math.floor(parsed);
+}
+
+function parseNonNegativeInt(value: unknown, fieldName: string): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new RpcError(JSON_RPC_INVALID_PARAMS, `${fieldName} must be a non-negative integer`);
+  }
   return Math.floor(parsed);
 }
 
@@ -738,6 +752,36 @@ export function createMcpServer(
   }
 
   async function callRecallTool(args: Record<string, unknown>): Promise<string> {
+    const sinceSeqRaw = args.since_seq;
+    if (sinceSeqRaw !== undefined) {
+      const sinceSeq = parseNonNegativeInt(sinceSeqRaw, "since_seq");
+      const limit = parsePositiveInt(args.limit, 10, "limit");
+      const db = await ensureDb();
+
+      const result = await db.execute({
+        sql: `SELECT rowid, id, type, subject, content, importance, created_at
+              FROM entries
+              WHERE rowid > ? AND retired = 0
+              ORDER BY rowid ASC
+              LIMIT ?`,
+        args: [sinceSeq, limit],
+      });
+
+      if (result.rows.length === 0) {
+        return `No new entries since seq ${sinceSeq}.`;
+      }
+
+      const lines: string[] = [`${result.rows.length} entries since seq ${sinceSeq}:`, ""];
+      for (const row of result.rows) {
+        lines.push(
+          `[rowid=${Number(row.rowid)}] [id=${String(row.id)}] (type: ${String(row.type)}, imp: ${Number(row.importance)}, ${formatDate(String(row.created_at))})`,
+        );
+        lines.push(String(row.content));
+        lines.push("");
+      }
+      return lines.join("\n").trimEnd();
+    }
+
     const contextRaw = typeof args.context === "string" ? args.context.trim().toLowerCase() : "default";
     const context = contextRaw || "default";
     if (context !== "default" && context !== "session-start") {

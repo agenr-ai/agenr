@@ -120,6 +120,13 @@ const CREATE_TABLE_AND_TRIGGER_STATEMENTS: readonly string[] = [
     PRIMARY KEY (merged_entry_id, source_entry_id)
   )
   `,
+  `
+  CREATE TABLE IF NOT EXISTS signal_watermarks (
+    consumer_id TEXT PRIMARY KEY,
+    last_received_seq INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL
+  )
+  `,
   CREATE_ENTRIES_FTS_TABLE_SQL,
   CREATE_ENTRIES_FTS_TRIGGER_AI_SQL,
   CREATE_ENTRIES_FTS_TRIGGER_AD_SQL,

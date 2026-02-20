@@ -28,6 +28,7 @@ describe("db schema", () => {
       "relations",
       "ingest_log",
       "entry_sources",
+      "signal_watermarks",
       "entries_fts",
       "idx_entries_embedding",
       "idx_entries_type",
@@ -80,6 +81,7 @@ describe("db schema", () => {
         'relations',
         'ingest_log',
         'entry_sources',
+        'signal_watermarks',
         'entries_fts',
         'idx_entries_embedding',
         'idx_entries_type',
@@ -100,7 +102,7 @@ describe("db schema", () => {
       )
       GROUP BY name
     `);
-    expect(namesResult.rows).toHaveLength(22);
+    expect(namesResult.rows).toHaveLength(23);
     for (const row of namesResult.rows as Array<{ count?: unknown }>) {
       expect(Number(row.count)).toBe(1);
     }
