@@ -121,10 +121,11 @@ const plugin = {
       ): Promise<BeforeAgentStartResult | undefined> => {
         try {
           const sessionKey = ctx.sessionKey ?? "";
+          const dedupeKey = ctx.sessionId ?? sessionKey;
           if (shouldSkipSession(sessionKey)) {
             return;
           }
-          if (sessionKey && hasSeenSession(sessionKey)) {
+          if (dedupeKey && hasSeenSession(dedupeKey)) {
             return;
           }
 
@@ -132,8 +133,8 @@ const plugin = {
           if (config?.enabled === false) {
             return;
           }
-          if (sessionKey) {
-            markSessionSeen(sessionKey);
+          if (dedupeKey) {
+            markSessionSeen(dedupeKey);
           }
 
           const agenrPath = resolveAgenrPath(config);

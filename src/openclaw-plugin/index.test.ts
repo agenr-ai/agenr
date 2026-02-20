@@ -2,9 +2,10 @@ import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as dbClient from "../db/client.js";
 import plugin from "./index.js";
+import * as pluginRecall from "./recall.js";
 import * as pluginSignals from "./signals.js";
 import { runExtractTool, runRecallTool, runRetireTool, runStoreTool } from "./tools.js";
-import type { BeforePromptBuildResult, PluginApi } from "./types.js";
+import type { BeforeAgentStartResult, BeforePromptBuildResult, PluginApi } from "./types.js";
 
 const { spawnMock } = vi.hoisted(() => ({
   spawnMock: vi.fn(),
@@ -100,6 +101,20 @@ function getBeforePromptBuildHandler(
   return call[1] as (event: Record<string, unknown>, ctx: { sessionKey?: string }) => Promise<BeforePromptBuildResult | undefined>;
 }
 
+function getBeforeAgentStartHandler(
+  api: PluginApi,
+): (event: Record<string, unknown>, ctx: { sessionKey?: string; sessionId?: string }) => Promise<BeforeAgentStartResult | undefined> {
+  const onMock = api.on as unknown as ReturnType<typeof vi.fn>;
+  const call = onMock.mock.calls.find((args) => args[0] === "before_agent_start");
+  if (!call) {
+    throw new Error("before_agent_start handler not registered");
+  }
+  return call[1] as (
+    event: Record<string, unknown>,
+    ctx: { sessionKey?: string; sessionId?: string },
+  ) => Promise<BeforeAgentStartResult | undefined>;
+}
+
 describe("openclaw plugin tool registration", () => {
   it("registers all four tools when registerTool is present", () => {
     const registerTool = vi.fn();
@@ -122,6 +137,38 @@ describe("openclaw plugin tool registration", () => {
   it("skips tool registration when registerTool is absent", () => {
     const api = makeApi();
     expect(() => plugin.register(api)).not.toThrow();
+  });
+});
+
+describe("before_agent_start dedupe behavior", () => {
+  it("dedupes by sessionId so /new sessions on the same sessionKey still run recall", async () => {
+    vi.spyOn(pluginRecall, "runRecall").mockResolvedValue({
+      query: "session-start",
+      results: [
+        {
+          entry: {
+            type: "fact",
+            subject: "subject",
+            content: "content",
+          },
+          score: 0.9,
+        },
+      ],
+    });
+
+    const api = makeApi();
+    plugin.register(api);
+    const handler = getBeforeAgentStartHandler(api);
+    const sessionKey = "agent:main:tui";
+
+    const first = await handler({}, { sessionKey, sessionId: "uuid-a" });
+    const second = await handler({}, { sessionKey, sessionId: "uuid-b" });
+    const third = await handler({}, { sessionKey, sessionId: "uuid-b" });
+
+    expect(first?.prependContext).toContain("## agenr Memory Context");
+    expect(second?.prependContext).toContain("## agenr Memory Context");
+    expect(third).toBeUndefined();
+    expect(pluginRecall.runRecall).toHaveBeenCalledTimes(2);
   });
 });
 
