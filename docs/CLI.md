@@ -538,7 +538,7 @@ $A mcp --db ~/.agenr/knowledge.db
 ### Example Output
 
 ```text
-[mcp] agenr MCP server started (protocol 2024-11-05, version 0.7.6)
+[mcp] agenr MCP server started (protocol 2024-11-05, version 0.7.7)
 ```
 
 ## `auth status`
@@ -718,8 +718,8 @@ $A db version
 ### Example Output
 
 ```text
-agenr v0.7.6
-Database schema version: 0.7.6
+agenr v0.7.7
+Database schema version: 0.7.7
 Database created: 2026-02-14 00:00:00
 Last migration: 2026-02-17 00:00:00
 ```

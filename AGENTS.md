@@ -154,7 +154,14 @@ pnpm exec agenr        # Run CLI from source
 
 Seven knowledge types: `fact`, `decision`, `preference`, `todo`, `relationship`, `event`, `lesson`
 
-Importance: integer 1-10 (6-7 normal, 8-9 critical, 10 never-forget)
+Importance: integer 1-10
+- 7: default workhorse -- stored silently, no signal fires
+- 8+: fires real-time cross-session signal -- use only when another active
+      session needs this NOW; no more than 20% of entries should be 8+
+- 9: critical breaking changes or immediate cross-session decisions only
+- 10: once-per-project permanent constraints (use sparingly)
+- 6: routine dev observations (verified X, confirmed Y runs, tests passing)
+- 5: borderline -- only store if clearly durable beyond today
 Expiry: `session-only`, `temporary`, `permanent`, `core`
 Scope: `private`, `shared`, `public`
 
@@ -209,8 +216,12 @@ This project is live on npm. Existing users have databases and configs that must
 
 ## Docs
 
-Keep these up to date when changing related code. If you add a CLI flag, update CLI.md. If you change scoring, update ARCHITECTURE.md. Stale docs are worse than no docs.
+Keep docs up to date when changing related code. Stale docs are worse than no docs.
 
+- If you change the importance calibration or SYSTEM_PROMPT in
+  `src/extractor.ts`, update: `docs/guides/scenarios.md` (importance table
+  and Gotcha 18), `docs/OPENCLAW.md` (Teaching Your Agent section),
+  `docs/MCP.md` (Teach Your AI section), and `AGENTS.md` (Key types section).
 - `docs/ARCHITECTURE.md` - system design, scoring formulas, schema
 - `docs/CLI.md` - full command/flag reference
 - `docs/MCP.md` - MCP server setup and tool schemas
@@ -243,10 +254,3 @@ This is a public open-source repo. Follow this flow for all changes:
 
 **Labels:** `enhancement`, `bug`, `good first issue`
 **Milestones:** Group issues by release (v0.5, etc.)
-
-## Memory (agenr MCP)
-
-If you have agenr MCP configured, use it:
-- On session start: `agenr_recall` with context `session-start`
-- When working on a feature: recall related topics
-- When you make a significant decision: store it with `agenr_store`

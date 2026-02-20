@@ -135,6 +135,29 @@ fact, decision, preference, todo, relationship, event, lesson
 
 The key insight: **tell the agent what's worth remembering and what isn't.** Without guidance, agents either store everything (noisy) or nothing (defeats the purpose).
 
+### Importance calibration
+
+Score 7 is the default for most entries -- stored silently, no alert fires.
+
+Score 8+ fires a real-time cross-session signal. Before using 8, ask:
+"Would an active parallel session need to act on this right now?" If no,
+use 7. If more than 20% of stored entries are 8 or higher, importance is
+being inflated.
+
+Score anchors:
+- 10: Once-per-project permanent constraints. "This project must never use
+       GPL-licensed dependencies." At most 1-2 per project lifetime.
+- 9: Critical breaking changes or immediate cross-session decisions only.
+      Major architecture reversals, breaking API changes, critical blockers.
+      At most 1 per significant session, often 0.
+- 8: Things an active parallel session would act on right now. Fires a
+      cross-session signal. Use conservatively.
+- 7: Default for most entries. Project facts, decisions, preferences,
+      milestones. No signal fired.
+- 6: Routine dev observations. "Verified X", "confirmed Y runs",
+      "tests passing". Cap at 6 unless the result is surprising or breaking.
+- 5: Borderline. Only store if clearly durable beyond today.
+
 ### Tuning Signal Noise
 
 Six config fields control signal behavior:
@@ -158,12 +181,13 @@ signalMaxAgeSec (integer, default: 300)
   Only surface entries created within the last N seconds. Set 0 to disable.
 
 Example:
-```json
+```jsonc
 "agenr": {
   "config": {
     "signalCooldownMs": 60000,
     "signalMaxPerSession": 5,
-    "signalMinImportance": 7,
+    // raise from default 8 to 9 for even stricter signal filtering
+    "signalMinImportance": 9,
     "signalMaxAgeSec": 120
   }
 }

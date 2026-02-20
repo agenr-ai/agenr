@@ -183,7 +183,7 @@ const TOOL_DEFINITIONS: McpToolDefinition[] = [
                 type: "integer",
                 minimum: 1,
                 maximum: 10,
-                default: 5,
+                default: 7,
               },
               source: { type: "string" },
               tags: {

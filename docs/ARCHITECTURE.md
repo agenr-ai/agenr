@@ -134,7 +134,10 @@ Knowledge types (7):
 - `lesson`
 
 Importance:
-- Integer `1..10` (see `src/schema.ts` and `src/types.ts`)
+- Integer `1..10`
+- Score 7 is the coached default; most stored entries should be 7
+- Scores 8+ trigger real-time cross-session signals in OpenClaw
+- Full per-score calibration is defined in the LLM prompt in `src/extractor.ts`
 
 Expiry levels:
 - `core`, `permanent`, `temporary`

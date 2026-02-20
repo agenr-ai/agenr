@@ -531,7 +531,7 @@ The system prompt injected by `agenr init` includes this exact phrase — keep i
 
 **18. Importance defaults differ: schema says 5, coached default is 7 — both are correct**
 
-The `agenr_store` MCP schema declares `importance: { default: 5 }`. The system prompt block coaches agents to use `7` as the normal default, `9` for critical items, `10` sparingly. These are intentionally different numbers serving different purposes:
+The `agenr_store` MCP schema declares `importance: { default: 5 }`. The system prompt block coaches agents to use 7 as the normal default; 8 for things an active parallel session would act on right now (8+ fires cross-session signals in OpenClaw -- use conservatively); 9 for critical breaking changes or immediate cross-session decisions only (major reversals, breaking API changes, critical blockers discovered -- not generically "important things"); and 10 for once-per-project permanent constraints only (core identity rules, never-do-this constraints -- at most 1-2 per project lifetime). No more than 20% of stored entries should be 8 or higher. These are intentionally different numbers serving different purposes:
 
 - Schema default (5): fallback value at the schema validation layer
 - Coached default (7): the practical agent default for most entries
@@ -564,10 +564,16 @@ The system prompt block injected by `agenr init` includes these instructions, bu
 ### Importance scale
 
 | Score | When to use |
-|-------|------------|
-| 1-5 | Rarely. Minor observations, low-value context. |
-| 6-7 | Default. Normal decisions, preferences, project facts. |
-| 8-9 | Critical decisions, architectural choices, hard-won lessons. |
-| 10 | Almost never. "The production database password was reset" level. |
+|-------|-------------|
+| 5     | Borderline. Only store if clearly durable beyond today and actionable in a future session. |
+| 6     | Routine dev observations: "verified X", "confirmed Y runs", test passes. Cap at 6 unless the result is surprising or breaks something. |
+| 7     | Default. Most entries. Project facts, decisions, preferences, completed milestones. No signal fires. |
+| 8     | Things an active parallel session would act on right now. Fires a real-time cross-session signal. Ask: "Does another session need this NOW?" If no, use 7. |
+| 9     | Critical breaking changes or immediate cross-session decisions only. Major architecture reversals, breaking API changes, critical blockers. At most 1 per significant session. |
+| 10    | Once-per-project permanent constraints. "This project must never use GPL-licensed dependencies." At most 1-2 per project lifetime. |
 
-The system prompt sets the default to 7 and tells agents to use 9 for critical items and 10 sparingly. This calibration prevents importance inflation -- if everything is a 10, nothing is.
+Note: entries scoring 1-4 are not stored (below the emit floor).
+
+The system prompt sets the default to 7. Score 8+ fires real-time cross-session signals -- use conservatively. Score 9 is for critical breaking changes and immediate decisions only, not for generally important facts. Score 10 is reserved for once-per-project permanent constraints.
+
+This calibration prevents importance inflation. The real risk is at 8+: if more than 20% of stored entries are 8 or higher, importance is being inflated and cross-session signals lose meaning.
