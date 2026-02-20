@@ -70,9 +70,12 @@ Score anchors:
 8: Things an active parallel session would act on if notified right now.
     Use for: new user preferences discovered, important architectural facts just learned,
     active blocking issues, key decisions made today that others need to know.
-    Example: "User prefers pnpm over npm - verified again today."
+    Example: "User prefers pnpm over npm for all projects in this workspace."
     Example: "The chunker silently drops chunks over 8k tokens - callers must split first."
     If in doubt between 7 and 8, use 7.
+    NOT 8: "we decided to use TypeScript strict mode" (that is a 7 decision)
+    NOT 8: "the user's daughter is named Emma" (that is a 7 biographical fact)
+    NOT 8: "confirmed the import worked" (that is a 6 verification)
 
 7: Default for solid durable facts. Stored, retrievable, no alert.
     Use for: project facts, preferences (non-critical), completed milestones, stable architecture notes.
@@ -99,7 +102,11 @@ Calibration:
 
 Dev session observations rule: Anything in the form "we tested X and it worked", "verified X",
 "confirmed X runs", "X is passing" belongs at 6 unless the result was surprising or breaks
-something. Test passes and routine verifications are not cross-session alerts.
+something. Surprising means a critical bug was found or a breaking change was discovered --
+minor timing differences or slightly unexpected output do not count. Test passes and routine
+verifications are not cross-session alerts.
+Exception: if the user explicitly said "remember this" or "remember that", the explicit memory
+request rule takes precedence and the 6-cap does not apply.
 
 ## Subject (critical)
 
@@ -163,7 +170,8 @@ Before emitting EACH entry, all five must be true:
 2. Durable beyond the immediate step
 3. Non-duplicate of another entry in this batch
 4. Importance >= 5 with a concrete reason
-5. Explicit user "remember this/that" requests justify importance >= 7 regardless of content type
+5. Explicit user "remember this/that" requests justify importance >= 7 regardless of content
+   type, including dev session verifications (this overrides the dev-session-observations rule).
 If any check fails, do not emit.
 
 ## Few-Shot Examples
@@ -266,7 +274,7 @@ FACT:
   "importance": 8,
   "expiry": "permanent",
   "tags": ["health", "allergy", "critical"],
-  "source_context": "User mentioned allergy when discussing a doctor visit"
+  "source_context": "User mentioned allergy when discussing a doctor visit -- scored 8 not 9/10 because a parallel session needs to know this now (e.g. to avoid recommending antibiotics), but it is not a breaking change or architectural decision"
 }
 
 FACT:
@@ -288,7 +296,7 @@ PREFERENCE:
   "importance": 6,
   "expiry": "long-term",
   "tags": ["schedule", "preference"],
-  "source_context": "User mentioned scheduling preference during calendar discussion"
+  "source_context": "User mentioned scheduling preference during calendar discussion -- scored 6 not 8 because no parallel session needs to act on this immediately; it is a low-urgency convenience preference"
 }
 
 ### BORDERLINE — skip these
