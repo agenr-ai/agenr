@@ -232,4 +232,43 @@ describe("retire command", () => {
     ) as unknown[];
     expect(parsed).toEqual(["session-start"]);
   });
+
+  it("supports retiring by --id lookup", async () => {
+    const dbPath = await makeTempDbPath();
+    await seedEntries(dbPath, [makeEntry({ subject: "ID Subject", content: "id content" })]);
+
+    const lookupClient = makeClient(dbPath);
+    const lookup = await lookupClient.execute({
+      sql: "SELECT id FROM entries WHERE subject = ? LIMIT 1",
+      args: ["ID Subject"],
+    });
+    const entryId = String((lookup.rows[0] as { id?: unknown } | undefined)?.id ?? "");
+    expect(entryId.length).toBeGreaterThan(0);
+
+    const retireSpy = vi.fn(async (opts: Parameters<typeof retireEntries>[0]) => retireEntries(opts));
+    const result = await runRetireCommand(
+      "",
+      { db: dbPath, id: entryId },
+      {
+        retireEntriesFn: retireSpy,
+        confirmFn: vi.fn(async () => true),
+        textInputFn: vi.fn(async () => null),
+        logFn: vi.fn(),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(retireSpy).toHaveBeenCalledTimes(1);
+    expect(retireSpy.mock.calls[0]?.[0]).toMatchObject({
+      subjectPattern: "ID Subject",
+      matchType: "exact",
+    });
+
+    const verifyClient = makeClient(dbPath);
+    const row = await verifyClient.execute({
+      sql: "SELECT retired FROM entries WHERE id = ? LIMIT 1",
+      args: [entryId],
+    });
+    expect(Number((row.rows[0] as { retired?: unknown } | undefined)?.retired ?? 0)).toBe(1);
+  });
 });

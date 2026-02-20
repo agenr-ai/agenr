@@ -236,15 +236,8 @@ export async function runExtractTool(agenrPath: string, params: Record<string, u
     };
   }
 
+  // Step 1: always run extract --json to get KnowledgeEntry[] output
   const args = ["extract", "--json"];
-  if (params.store === true) {
-    args.push("--store");
-  }
-  const source = asString(params.source);
-  if (source) {
-    args.push("--source", source);
-  }
-
   const tempFile = join(
     tmpdir(),
     `agenr-extract-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`,
@@ -253,38 +246,81 @@ export async function runExtractTool(agenrPath: string, params: Record<string, u
     writeFileSync(tempFile, text, "utf8");
     args.push(tempFile);
 
-    const result = await runAgenrCommand(agenrPath, args, undefined, EXTRACT_TIMEOUT_MS);
-    if (result.timedOut) {
+    const extractResult = await runAgenrCommand(agenrPath, args, undefined, EXTRACT_TIMEOUT_MS);
+    if (extractResult.timedOut) {
       return {
         content: [{ type: "text", text: "agenr_extract failed: command timed out" }],
       };
     }
-    if (result.error) {
+    if (extractResult.error) {
       return {
-        content: [{ type: "text", text: `agenr_extract failed: ${result.error.message}` }],
+        content: [{ type: "text", text: `agenr_extract failed: ${extractResult.error.message}` }],
       };
     }
-    if (result.code !== 0) {
-      const message = result.stderr.trim() || result.stdout.trim() || "unknown error";
+    if (extractResult.code !== 0) {
+      const message = extractResult.stderr.trim() || extractResult.stdout.trim() || "unknown error";
       return {
         content: [{ type: "text", text: `agenr_extract failed: ${message}` }],
       };
     }
 
+    // Step 2: if store is requested, inject source and pipe through store
+    if (params.store === true) {
+      let entries: unknown[];
+      try {
+        entries = JSON.parse(extractResult.stdout) as unknown[];
+        if (!Array.isArray(entries)) {
+          throw new Error("extract did not return an array");
+        }
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `agenr_extract failed: could not parse extract output for store: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          ],
+        };
+      }
+
+      // Inject source into entries here (--source does not exist on extract CLI).
+      const source = asString(params.source);
+      if (source) {
+        for (const e of entries) {
+          if (e && typeof e === "object") {
+            const entry = e as Record<string, unknown>;
+            if (!entry.source) {
+              entry.source = { file: source, context: "extracted via agenr_extract" };
+            }
+          }
+        }
+      }
+
+      const storeResult = await runAgenrCommand(agenrPath, ["store"], JSON.stringify(entries));
+      if (storeResult.timedOut) {
+        return { content: [{ type: "text", text: "agenr_extract store step timed out" }] };
+      }
+      if (storeResult.error) {
+        return { content: [{ type: "text", text: `agenr_extract store step failed: ${storeResult.error.message}` }] };
+      }
+      if (storeResult.code !== 0) {
+        const message = storeResult.stderr.trim() || storeResult.stdout.trim() || "unknown error";
+        return { content: [{ type: "text", text: `agenr_extract store step failed: ${message}` }] };
+      }
+      return { content: [{ type: "text", text: `Extracted and stored ${entries.length} entries.` }] };
+    }
+
+    // No store: return the raw JSON
     try {
-      const parsed: unknown = JSON.parse(result.stdout);
+      const parsed: unknown = JSON.parse(extractResult.stdout);
       return {
         content: [{ type: "text", text: JSON.stringify(parsed, null, 2) }],
         details: parsed as Record<string, unknown>,
       };
-    } catch (error) {
+    } catch {
       return {
-        content: [
-          {
-            type: "text",
-            text: `agenr_extract failed: ${error instanceof Error ? error.message : String(error)}`,
-          },
-        ],
+        content: [{ type: "text", text: "No results found." }],
+        details: { count: 0 },
       };
     }
   } finally {
@@ -307,7 +343,7 @@ export async function runRetireTool(agenrPath: string, params: Record<string, un
   const reason = asString(params.reason);
   const persist = params.persist === true;
 
-  const args = ["retire", entryId];
+  const args = ["retire", "--id", entryId];
   if (reason) {
     args.push("--reason", reason);
   }
@@ -315,8 +351,7 @@ export async function runRetireTool(agenrPath: string, params: Record<string, un
     args.push("--persist");
   }
 
-  // The retire command prompts for confirmation; we pipe "y\n" to answer it.
-  // If the command requires a real TTY, this will fail and return an error.
+  // Keep piping confirmation for the clack prompt.
   const result = await runAgenrCommand(agenrPath, args, "y\n");
 
   if (result.timedOut) {

@@ -19,6 +19,7 @@ export interface RetireCommandOptions {
   dryRun?: boolean;
   reason?: string;
   db?: string;
+  id?: string;
 }
 
 export interface RetireCommandDeps {
@@ -88,6 +89,24 @@ async function queryCandidates(
   }));
 }
 
+async function queryById(db: Client, id: string): Promise<RetireCandidate[]> {
+  const result = await db.execute({
+    sql: `
+      SELECT id, type, subject, importance, content
+      FROM entries
+      WHERE retired = 0 AND id = ?
+    `,
+    args: [id],
+  });
+  return result.rows.map((row) => ({
+    id: toStringValue((row as { id?: unknown }).id),
+    type: toStringValue((row as { type?: unknown }).type),
+    subject: toStringValue((row as { subject?: unknown }).subject),
+    importance: toNumber((row as { importance?: unknown }).importance),
+    content: toStringValue((row as { content?: unknown }).content),
+  }));
+}
+
 export async function runRetireCommand(
   subject: string,
   options: RetireCommandOptions,
@@ -118,8 +137,12 @@ export async function runRetireCommand(
   };
 
   const querySubject = subject.trim();
-  if (!querySubject) {
-    throw new Error("subject is required");
+  const queryId = options.id?.trim() ?? "";
+  if (!queryId && !querySubject) {
+    throw new Error("subject or id is required");
+  }
+  if (queryId && querySubject) {
+    throw new Error("subject and id are mutually exclusive");
   }
 
   const clackOutput = { output: process.stderr };
@@ -132,10 +155,16 @@ export async function runRetireCommand(
   try {
     await resolvedDeps.initDbFn(db);
     const contains = options.contains === true;
-    const candidates = await queryCandidates(db, querySubject, contains);
+    let candidates: RetireCandidate[];
+    if (queryId) {
+      candidates = await queryById(db, queryId);
+    } else {
+      candidates = await queryCandidates(db, querySubject, contains);
+    }
+    const queryDisplay = queryId || querySubject;
 
     if (candidates.length === 0) {
-      clack.log.warn(`No active entries matching: ${querySubject}`, clackOutput);
+      clack.log.warn(`No active entries matching: ${queryDisplay}`, clackOutput);
       clack.outro(undefined, clackOutput);
       return { exitCode: 1 };
     }
@@ -175,9 +204,12 @@ export async function runRetireCommand(
       }
     }
 
+    const retireSubject = queryId
+      ? (candidates[0]?.subject ?? queryId)
+      : querySubject;
     const retired = await resolvedDeps.retireEntriesFn({
-      subjectPattern: querySubject,
-      matchType: contains ? "contains" : "exact",
+      subjectPattern: retireSubject,
+      matchType: queryId ? "exact" : (contains ? "contains" : "exact"),
       reason: options.reason?.trim() || undefined,
       writeLedger: options.persist === true,
       db,
@@ -185,7 +217,7 @@ export async function runRetireCommand(
     });
 
     if (retired.count === 0) {
-      clack.log.warn(`No active entries matching: ${querySubject}`, clackOutput);
+      clack.log.warn(`No active entries matching: ${queryDisplay}`, clackOutput);
       clack.outro(undefined, clackOutput);
       return { exitCode: 1 };
     }

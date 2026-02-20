@@ -210,12 +210,57 @@ describe("openclaw plugin tool runners", () => {
     expect(() => JSON.parse(result.content[0]?.text ?? "")).not.toThrow();
   });
 
+  it("runExtractTool runs store step and injects source when store=true", async () => {
+    let extractArgs: string[] = [];
+    let storeArgs: string[] = [];
+    let storeStdin = "";
+
+    spawnMock
+      .mockImplementationOnce((_cmd: string, args: string[]) => {
+        extractArgs = args;
+        return createMockChild({
+          stdout: JSON.stringify([{ content: "some text", type: "fact", subject: "Some subject" }]),
+        });
+      })
+      .mockImplementationOnce((_cmd: string, args: string[]) => {
+        storeArgs = args;
+        const child = createMockChild({ code: 0 });
+        child.stdin.write = vi.fn((chunk: string) => {
+          storeStdin += chunk;
+        });
+        return child;
+      });
+
+    const result = await runExtractTool("/path/to/agenr", {
+      text: "some text",
+      store: true,
+      source: "/tmp/source.txt",
+    });
+
+    expect(result.content[0]?.text).toContain("Extracted and stored 1 entries.");
+    expect(extractArgs).toContain("extract");
+    expect(extractArgs).toContain("--json");
+    expect(extractArgs).not.toContain("--store");
+    expect(extractArgs).not.toContain("--source");
+    expect(storeArgs).toContain("store");
+    const payload = JSON.parse(storeStdin) as Array<{ source?: { file?: string; context?: string } }>;
+    expect(Array.isArray(payload)).toBe(true);
+    expect(payload[0]?.source).toEqual({ file: "/tmp/source.txt", context: "extracted via agenr_extract" });
+  });
+
   it("runRetireTool returns success message on exit code 0", async () => {
-    spawnMock.mockReturnValueOnce(createMockChild({ code: 0 }));
+    let capturedArgs: string[] = [];
+    spawnMock.mockImplementationOnce((_cmd: string, args: string[]) => {
+      capturedArgs = args;
+      return createMockChild({ code: 0 });
+    });
 
     const result = await runRetireTool("/path/to/agenr", { entry_id: "test-id-123" });
 
     expect(result.content[0]?.text).toContain("Retired entry test-id-123");
+    expect(capturedArgs).toContain("--id");
+    const idIdx = capturedArgs.indexOf("--id");
+    expect(capturedArgs[idIdx + 1]).toBe("test-id-123");
   });
 
   it("returns timeout message when command exceeds timeout", async () => {

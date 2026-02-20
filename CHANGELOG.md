@@ -8,6 +8,10 @@
 - fix(plugin): removed unsupported `--threshold` forwarding from `agenr_recall`; threshold has no direct CLI equivalent
 - fix(plugin): `agenr_store` now sends entries array directly on stdin and passes `platform`/`project` as CLI flags
 - fix(plugin): `agenr_store` now infers missing `subject` from `content` before CLI spawn, matching MCP server behavior
+- fix(plugin): `agenr_retire` now calls `agenr retire --id <entry_id>` instead of subject matching with UUIDs
+- fix(cli): `agenr retire` now supports `--id <id>` and enforces exactly one of subject or `--id`
+- fix(plugin): `agenr_extract` now uses a two-step flow for `store=true` (`extract --json` then `store`) and injects source metadata before storing
+- fix(cli): `agenr store` now accepts the `--aggressive` flag used by plugin dedup config forwarding
 
 ## [0.7.5] - 2026-02-20
 
