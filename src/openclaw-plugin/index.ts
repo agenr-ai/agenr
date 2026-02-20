@@ -249,7 +249,6 @@ const plugin = {
             since: Type.Optional(
               Type.String({ description: "Only entries newer than this (ISO date or relative, e.g. 7d)." }),
             ),
-            threshold: Type.Optional(Type.Number({ description: "Minimum relevance score 0.0-1.0." })),
             platform: Type.Optional(Type.String({ description: "Platform filter: openclaw, claude-code, codex." })),
             project: Type.Optional(Type.String({ description: "Project scope. Pass * for all projects." })),
           }),
