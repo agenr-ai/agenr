@@ -44,17 +44,62 @@ If uncertain whether durable, skip.
 
 ## Importance (1-10)
 
-Emit only importance >= 5. Start every candidate at 5; raise only with clear justification.
+Emit only importance >= 5. Start every candidate at 7; lower or raise only with clear justification.
 
-8-10: biographical facts, durable strategic decisions, foundational architecture
-6-7: meaningful project facts, preferences, events that matter beyond this week
-5: borderline but still durable for days/weeks and actionable in future context
-1-4: noise — do not emit
+Importance scores map to real behavior in the memory system:
+- 8 or higher fires a real-time cross-session signal (an alert to other active AI sessions)
+- 7 is stored silently; no alert fires
+- Below 7 is stored but deprioritized in recall
+
+Use that signal cost as your conservative filter. Ask: "Does someone in another session need to know this RIGHT NOW?" If no, stay at 7 or below.
+
+Score anchors:
+
+10: Once-per-project facts. Core identity, permanent constraints, "never forget this."
+    Example: "This project must never use GPL-licensed dependencies."
+    Example: "The production database password rotation requires manual approval."
+
+9: Critical breaking changes or decisions with immediate cross-session impact.
+    Use for: major architecture reversals, breaking API changes, critical blockers discovered.
+    Example: "agenr embed API changed: model param is now required; all callers must update."
+    Example: "Decided to abandon SQLite-vec in favor of Postgres pgvector - all storage code changes."
+    NOT 9: "we verified signals work" (that is a 6)
+    NOT 9: "tests are passing" (that is a 5-6)
+    NOT 9: "deployed feature X" (that is a 7 event at most)
+
+8: Things an active parallel session would act on if notified right now.
+    Use for: new user preferences discovered, important architectural facts just learned,
+    active blocking issues, key decisions made today that others need to know.
+    Example: "User prefers pnpm over npm - verified again today."
+    Example: "The chunker silently drops chunks over 8k tokens - callers must split first."
+    If in doubt between 7 and 8, use 7.
+
+7: Default for solid durable facts. Stored, retrievable, no alert.
+    Use for: project facts, preferences (non-critical), completed milestones, stable architecture notes.
+    Example: "agenr stores entries in SQLite with sqlite-vec for vector search."
+    Example: "Completed brain audit. Found 73% noise rate in knowledge base."
+    This is the right score for most extracted entries.
+
+6: Routine durable observations. Worth storing but minor.
+    Use for: dev session observations, test results, routine verifications, minor notes.
+    Example: "Verified that signal emission works end to end in local testing."
+    Example: "Confirmed the import path change did not break CLI startup."
+    Example: "agenr extraction runs in about 2s per chunk on the test dataset."
+
+5: Borderline. Only emit if clearly durable beyond today and actionable in a future session.
+    Example: "Port 4242 is the default for the local test server."
 
 Calibration:
 - Typical chunk: 0-3 entries. Most chunks: 0.
-- 8+ entries: usually 0-1 per chunk
-- If >30% of emitted entries are 8+, you are inflating
+- Score 9 or 10: very rare, at most 1 per significant session, often 0
+- Score 8: at most 1-2 per session; ask the cross-session-alert question before assigning
+- Score 7: this is your workhorse; most emitted entries should be 7
+- Score 6: routine dev observations that are still worth storing
+- If more than 20% of your emitted entries are 8 or higher, you are inflating
+
+Dev session observations rule: Anything in the form "we tested X and it worked", "verified X",
+"confirmed X runs", "X is passing" belongs at 6 unless the result was surprising or breaks
+something. Test passes and routine verifications are not cross-session alerts.
 
 ## Subject (critical)
 
@@ -200,6 +245,50 @@ EVENT:
   "expiry": "temporary",
   "tags": ["agenr", "audit", "quality"],
   "source_context": "Brain audit completed and findings documented"
+}
+
+EVENT:
+{
+  "type": "event",
+  "subject": "agenr signal emission",
+  "content": "Verified end-to-end signal emission works in local testing. Entry stored, signal fired, received in OpenClaw session.",
+  "importance": 6,
+  "expiry": "temporary",
+  "tags": ["agenr", "signals", "testing"],
+  "source_context": "Dev session verification of signal feature"
+}
+
+FACT:
+{
+  "type": "fact",
+  "subject": "user penicillin allergy",
+  "content": "User is allergic to penicillin. Must never suggest it or related antibiotics.",
+  "importance": 8,
+  "expiry": "permanent",
+  "tags": ["health", "allergy", "critical"],
+  "source_context": "User mentioned allergy when discussing a doctor visit"
+}
+
+FACT:
+{
+  "type": "fact",
+  "subject": "user daughter name",
+  "content": "User's daughter is named Emma. She is 8 years old.",
+  "importance": 7,
+  "expiry": "permanent",
+  "tags": ["family", "personal"],
+  "source_context": "User mentioned daughter while discussing weekend plans"
+}
+
+PREFERENCE:
+{
+  "type": "preference",
+  "subject": "meeting time preference",
+  "content": "User prefers morning meetings before noon and avoids late afternoon calls.",
+  "importance": 6,
+  "expiry": "long-term",
+  "tags": ["schedule", "preference"],
+  "source_context": "User mentioned scheduling preference during calendar discussion"
 }
 
 ### BORDERLINE — skip these
