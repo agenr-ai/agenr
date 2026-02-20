@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.7.6] - 2026-02-20
+
+### Fixed
+- fix(plugin): `agenr_recall` now passes query as a positional argument instead of unsupported `--query`
+- fix(plugin): `agenr_recall` now uses `--type` (singular) instead of invalid `--types`
+- fix(plugin): removed unsupported `--threshold` forwarding from `agenr_recall`; threshold has no direct CLI equivalent
+- fix(plugin): `agenr_store` now sends entries array directly on stdin and passes `platform`/`project` as CLI flags
+- fix(plugin): `agenr_store` now infers missing `subject` from `content` before CLI spawn, matching MCP server behavior
+
 ## [0.7.5] - 2026-02-20
 
 ### Changed

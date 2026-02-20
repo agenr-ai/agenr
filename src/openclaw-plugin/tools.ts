@@ -100,12 +100,11 @@ export async function runRecallTool(agenrPath: string, params: Record<string, un
   const limit = asNumber(params.limit);
   const types = asString(params.types);
   const since = asString(params.since);
-  const threshold = asNumber(params.threshold);
   const platform = asString(params.platform);
   const project = asString(params.project);
 
   if (query) {
-    args.push("--query", query);
+    args.push(query);
   }
   if (context) {
     args.push("--context", context);
@@ -114,14 +113,12 @@ export async function runRecallTool(agenrPath: string, params: Record<string, un
     args.push("--limit", String(limit));
   }
   if (types) {
-    args.push("--types", types);
+    args.push("--type", types);
   }
   if (since) {
     args.push("--since", since);
   }
-  if (threshold !== undefined) {
-    args.push("--threshold", String(threshold));
-  }
+  // threshold has no direct CLI equivalent in agenr recall
   if (platform) {
     args.push("--platform", platform);
   }
@@ -177,15 +174,28 @@ export async function runStoreTool(
   const entries = Array.isArray(params.entries) ? params.entries : [];
   const platform = asString(params.platform);
   const project = asString(params.project);
-  const payload: Record<string, unknown> = { entries };
+  const storeArgs = ["store"];
+
+  // platform and project go as CLI flags, not in the JSON payload
   if (platform) {
-    payload.platform = platform;
+    storeArgs.push("--platform", platform);
   }
   if (project) {
-    payload.project = project;
+    storeArgs.push("--project", project);
   }
 
-  const storeArgs = ["store"];
+  // Infer subject from content when omitted - matches MCP server behavior.
+  const processedEntries = entries.map((e: unknown) => {
+    const entry = (e && typeof e === "object" ? e : {}) as Record<string, unknown>;
+    if (!entry.subject && typeof entry.content === "string") {
+      entry.subject = entry.content
+        .slice(0, 60)
+        .replace(/[.!?][\s\S]*$/, "")
+        .trim() || entry.content.slice(0, 40);
+    }
+    return entry;
+  });
+
   const dedupConfig = pluginConfig?.dedup as Record<string, unknown> | undefined;
   if (dedupConfig?.aggressive === true) {
     storeArgs.push("--aggressive");
@@ -194,7 +204,7 @@ export async function runStoreTool(
     storeArgs.push("--dedup-threshold", String(dedupConfig.threshold));
   }
 
-  const result = await runAgenrCommand(agenrPath, storeArgs, JSON.stringify(payload));
+  const result = await runAgenrCommand(agenrPath, storeArgs, JSON.stringify(processedEntries));
   if (result.timedOut) {
     return {
       content: [{ type: "text", text: "agenr_store timed out" }],

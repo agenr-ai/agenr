@@ -170,9 +170,10 @@ describe("openclaw plugin tool runners", () => {
 
     expect(result.content[0]?.text).toContain("Stored");
     expect(result.content[0]?.text).toContain("2");
-    const payload = JSON.parse(writtenStdin) as { entries: unknown[] };
-    expect(Array.isArray(payload.entries)).toBe(true);
-    expect(payload.entries).toHaveLength(2);
+    const payload = JSON.parse(writtenStdin) as Array<{ subject?: string }>;
+    expect(Array.isArray(payload)).toBe(true);
+    expect(payload).toHaveLength(2);
+    expect(payload[0]?.subject).toBe("test entry 1");
   });
 
   it("runStoreTool passes dedup flags from plugin config", async () => {
