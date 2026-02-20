@@ -103,6 +103,28 @@ describe("openclaw plugin signals adapter", () => {
     expect(await getWatermark(client, "consumer-init")).toBe(maxRowid);
   });
 
+  it("checkSignals does not replay pre-existing entries on first call", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    // Insert entries BEFORE any signal check (simulate session-start state).
+    await insertEntry(client, { id: "pre1", subject: "Pre-existing A", importance: 9 });
+    await insertEntry(client, { id: "pre2", subject: "Pre-existing B", importance: 8 });
+
+    // First checkSignals call: must return null (watermark init skips pre-existing).
+    const first = await checkSignals(client, "consumer-no-replay");
+    expect(first).toBeNull();
+
+    // Add a new entry after initialization.
+    await insertEntry(client, { id: "new1", subject: "New entry", importance: 7 });
+
+    // Second call: must return the new entry only.
+    const second = await checkSignals(client, "consumer-no-replay");
+    expect(second).toContain("New entry");
+    expect(second).not.toContain("Pre-existing A");
+    expect(second).not.toContain("Pre-existing B");
+  });
+
   it("resolveSignalConfig uses defaults", () => {
     expect(resolveSignalConfig()).toEqual({ minImportance: 7, maxPerSignal: 5 });
   });
@@ -111,6 +133,13 @@ describe("openclaw plugin signals adapter", () => {
     expect(resolveSignalConfig({ signalMinImportance: 9, signalMaxPerSignal: 2 })).toEqual({
       minImportance: 9,
       maxPerSignal: 2,
+    });
+  });
+
+  it("resolveSignalConfig allows zero thresholds", () => {
+    expect(resolveSignalConfig({ signalMinImportance: 0, signalMaxPerSignal: 0 })).toEqual({
+      minImportance: 0,
+      maxPerSignal: 0,
     });
   });
 });

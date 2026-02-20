@@ -43,10 +43,7 @@ export async function fetchNewSignalEntries(
     created_at: String(row.created_at),
   }));
 
-  const maxSeq =
-    entries.length > 0
-      ? Math.max(...entries.map((entry) => entry.rowid))
-      : sinceSeq;
+  const maxSeq = entries.length > 0 ? (entries.at(-1)?.rowid ?? sinceSeq) : sinceSeq;
 
   return { entries, maxSeq };
 }

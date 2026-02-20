@@ -223,6 +223,16 @@ describe("db signals", () => {
     expect(await getWatermark(client, "consumer-init")).toBe(maxRowid);
   });
 
+  it("initializeWatermark returns 0 on empty DB", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    // MAX(rowid) returns NULL on empty table - must fall back to 0.
+    const watermark = await initializeWatermark(client, "consumer-empty");
+    expect(watermark).toBe(0);
+    expect(await getWatermark(client, "consumer-empty")).toBe(0);
+  });
+
   it("initializeWatermark is idempotent", async () => {
     const client = makeClient();
     await initDb(client);
