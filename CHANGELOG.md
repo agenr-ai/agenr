@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.7.5] - 2026-02-20
+
+### Changed
+- fix(plugin): raise default signalMinImportance from 7 to 8 - default-importance stores (importance 7) no longer trigger mid-session signal interrupts
+- fix(plugin): lower default maxPerSignal from 5 to 3 - smaller batches
+- fix(dedup): lower DEFAULT_DEDUP_THRESHOLD from 0.80 to 0.72 - entries with cosine similarity 0.72-0.80 now reach LLM review instead of being stored as duplicates
+- fix(extractor): increase MAX_PREFETCH_RESULTS from 3 to 5 and lower PREFETCH_SIMILARITY_THRESHOLD from 0.78 to 0.72
+
+### Added
+- feat(plugin): signalCooldownMs config - minimum ms between signal batches per session (default: 30000)
+- feat(plugin): signalMaxPerSession config - max total signal batches per session lifetime (default: 10)
+- feat(plugin): signalMaxAgeSec config - only surface entries created within last N seconds (default: 300)
+- feat(dedup): dedup.aggressive config in ~/.agenr/config.json - lower thresholds and more candidate lookups for high-noise environments
+- feat(dedup): dedup.threshold config - manual override for LLM dedup similarity threshold
+
 ## [0.7.4] - 2026-02-20
 
 ### Added

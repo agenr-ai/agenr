@@ -90,8 +90,14 @@ export type AgenrPluginConfig = {
   dbPath?: string;
   /** Set to false to disable mid-session signals (default: true) */
   signalsEnabled?: boolean;
-  /** Minimum importance for signal entries (default: 7) */
+  /** Minimum importance for signal entries (default: 8) */
   signalMinImportance?: number;
-  /** Max entries per signal notification (default: 5) */
+  /** Max entries per signal notification (default: 3) */
   signalMaxPerSignal?: number;
+  /** Minimum ms between signal batches per session (default: 30000). Set 0 to disable cooldown. */
+  signalCooldownMs?: number;
+  /** Max total signal batches delivered per session lifetime (default: 10). Set 0 to disable. */
+  signalMaxPerSession?: number;
+  /** Only surface entries created within last N seconds (default: 300). Set 0 to disable age filter. */
+  signalMaxAgeSec?: number;
 };

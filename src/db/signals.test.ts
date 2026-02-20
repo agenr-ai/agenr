@@ -145,6 +145,27 @@ describe("db signals", () => {
     expect(batch.maxSeq).toBe(rowid);
   });
 
+  it("fetchNewSignalEntries respects maxAgeSec filter", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    await insertEntry(client, {
+      id: "old",
+      subject: "old",
+      importance: 9,
+      createdAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+    });
+    await insertEntry(client, {
+      id: "new",
+      subject: "new",
+      importance: 9,
+      createdAt: new Date(Date.now() - 30 * 1000).toISOString(),
+    });
+
+    const batch = await fetchNewSignalEntries(client, 0, 8, 10, 300);
+    expect(batch.entries.map((entry) => entry.subject)).toEqual(["new"]);
+  });
+
   it("formatSignal produces correct format", () => {
     const formatted = formatSignal([
       {

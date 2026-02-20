@@ -8,6 +8,10 @@ Use `agenr_store` proactively. Call it immediately after any decision, user pref
 Required fields: `type`, `content`, `importance`.
 Types: `fact | decision | preference | todo | lesson | event`.
 Importance: `1-10` (default `7`), use `9` for critical items, use `10` sparingly.
+Importance calibration: entries at importance 7 (the default) are saved to
+memory but will NOT trigger mid-session signals to active sessions. Use
+importance 8+ only for updates that other active sessions need to know about
+NOW. Routine facts should stay at 7.
 
 Do not store secrets/credentials, temporary state, or verbatim conversation.
 

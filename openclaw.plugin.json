@@ -24,11 +24,23 @@
       },
       "signalMinImportance": {
         "type": "number",
-        "description": "Minimum importance for mid-session signals (1-10, default: 7). Raise to reduce noise."
+        "description": "Minimum importance for mid-session signals (1-10, default: 8). Raise to reduce noise."
       },
       "signalMaxPerSignal": {
         "type": "number",
-        "description": "Max entries per signal notification (default: 5)."
+        "description": "Max entries per signal notification (default: 3)."
+      },
+      "signalCooldownMs": {
+        "type": "number",
+        "description": "Minimum ms between signal batches per session (default: 30000). Set 0 to disable cooldown."
+      },
+      "signalMaxPerSession": {
+        "type": "number",
+        "description": "Max total signal batches delivered per session lifetime (default: 10). Set 0 to disable."
+      },
+      "signalMaxAgeSec": {
+        "type": "number",
+        "description": "Only surface entries created within last N seconds (default: 300). Set 0 to disable age filter."
       },
       "signalsEnabled": {
         "type": "boolean",

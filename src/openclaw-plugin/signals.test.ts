@@ -82,12 +82,12 @@ describe("openclaw plugin signals adapter", () => {
     await insertEntry(client, { id: "seed", subject: "Seed", importance: 8 });
     await checkSignals(client, "consumer-new");
 
-    await insertEntry(client, { id: "e1", subject: "New A", importance: 7 });
+    await insertEntry(client, { id: "e1", subject: "New A", importance: 8 });
     const newestRowid = await insertEntry(client, { id: "e2", subject: "New B", importance: 9 });
 
     const signal = await checkSignals(client, "consumer-new");
     expect(signal).toContain("AGENR SIGNAL: 2 new high-importance entries");
-    expect(signal).toContain('- [fact, imp:7] "New A"');
+    expect(signal).toContain('- [fact, imp:8] "New A"');
     expect(signal).toContain('- [fact, imp:9] "New B"');
     expect(await getWatermark(client, "consumer-new")).toBe(newestRowid);
   });
@@ -116,7 +116,7 @@ describe("openclaw plugin signals adapter", () => {
     expect(first).toBeNull();
 
     // Add a new entry after initialization.
-    await insertEntry(client, { id: "new1", subject: "New entry", importance: 7 });
+    await insertEntry(client, { id: "new1", subject: "New entry", importance: 8 });
 
     // Second call: must return the new entry only.
     const second = await checkSignals(client, "consumer-no-replay");
@@ -126,27 +126,66 @@ describe("openclaw plugin signals adapter", () => {
   });
 
   it("resolveSignalConfig uses defaults", () => {
-    expect(resolveSignalConfig()).toEqual({ minImportance: 7, maxPerSignal: 5 });
+    expect(resolveSignalConfig()).toEqual({
+      minImportance: 8,
+      maxPerSignal: 3,
+      cooldownMs: 30000,
+      maxPerSession: 10,
+      maxAgeSec: 300,
+    });
   });
 
   it("resolveSignalConfig respects overrides", () => {
-    expect(resolveSignalConfig({ signalMinImportance: 9, signalMaxPerSignal: 2 })).toEqual({
+    expect(
+      resolveSignalConfig({
+        signalMinImportance: 9,
+        signalMaxPerSignal: 2,
+        signalCooldownMs: 1200,
+        signalMaxPerSession: 4,
+        signalMaxAgeSec: 45,
+      }),
+    ).toEqual({
       minImportance: 9,
       maxPerSignal: 2,
+      cooldownMs: 1200,
+      maxPerSession: 4,
+      maxAgeSec: 45,
     });
   });
 
   it("resolveSignalConfig allows zero thresholds", () => {
-    expect(resolveSignalConfig({ signalMinImportance: 0, signalMaxPerSignal: 0 })).toEqual({
+    expect(
+      resolveSignalConfig({
+        signalMinImportance: 0,
+        signalMaxPerSignal: 0,
+        signalCooldownMs: 0,
+        signalMaxPerSession: 0,
+        signalMaxAgeSec: 0,
+      }),
+    ).toEqual({
       minImportance: 0,
       maxPerSignal: 0,
+      cooldownMs: 0,
+      maxPerSession: 0,
+      maxAgeSec: 0,
     });
   });
 
   it("resolveSignalConfig treats null values as unset (uses defaults)", () => {
-    expect(resolveSignalConfig({ signalMinImportance: null, signalMaxPerSignal: null })).toEqual({
-      minImportance: 7,
-      maxPerSignal: 5,
+    expect(
+      resolveSignalConfig({
+        signalMinImportance: null,
+        signalMaxPerSignal: null,
+        signalCooldownMs: null,
+        signalMaxPerSession: null,
+        signalMaxAgeSec: null,
+      }),
+    ).toEqual({
+      minImportance: 8,
+      maxPerSignal: 3,
+      cooldownMs: 30000,
+      maxPerSession: 10,
+      maxAgeSec: 300,
     });
   });
 });

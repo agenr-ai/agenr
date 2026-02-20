@@ -24,6 +24,14 @@ import type {
 const SKIP_SESSION_PATTERNS = [":subagent:", ":cron:"];
 const DEFAULT_MAX_SEEN_SESSIONS = 1000;
 const seenSessions = new Map<string, true>();
+
+interface SessionSignalState {
+  lastSignalAt: number;
+  signalCount: number;
+}
+
+const sessionSignalState = new Map<string, SessionSignalState>();
+
 let pluginDb: Client | null = null;
 let pluginDbInit: Promise<void> | null = null;
 let didRegisterDbShutdown = false;
@@ -175,12 +183,27 @@ const plugin = {
             return;
           }
 
-          const db = await ensurePluginDb(config);
           const signalConfig = resolveSignalConfig(config);
+          const state = sessionSignalState.get(sessionKey) ?? { lastSignalAt: 0, signalCount: 0 };
+
+          if (signalConfig.cooldownMs > 0 && Date.now() - state.lastSignalAt < signalConfig.cooldownMs) {
+            return;
+          }
+
+          if (signalConfig.maxPerSession > 0 && state.signalCount >= signalConfig.maxPerSession) {
+            return;
+          }
+
+          const db = await ensurePluginDb(config);
           const signal = await checkSignals(db, sessionKey, signalConfig);
           if (!signal) {
             return;
           }
+
+          sessionSignalState.set(sessionKey, {
+            lastSignalAt: Date.now(),
+            signalCount: state.signalCount + 1,
+          });
 
           return { prependContext: signal };
         } catch (err) {

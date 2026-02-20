@@ -62,6 +62,12 @@ export interface AgenrConfig {
   db?: {
     path?: string;
   };
+  dedup?: {
+    /** Enable aggressive dedup mode: lower thresholds, more candidates. */
+    aggressive?: boolean;
+    /** Override the LLM dedup similarity threshold (0.0-1.0). */
+    threshold?: number;
+  };
 }
 
 export interface KnowledgeEntry {
