@@ -934,6 +934,7 @@ describe("mcp server", () => {
     expect(storedEntries).toHaveLength(2);
     expect(storedEntries[0]?.scope).toBe("personal");
     expect(storedEntries[0]?.source.file).toBe("chat-1");
+    expect(storedEntries[1]?.importance).toBe(7);
   });
 
   it("agenr_store tags entries with platform when provided", async () => {

@@ -531,7 +531,7 @@ function parseScope(value: unknown): Scope {
 }
 
 function normalizeImportance(value: unknown): number {
-  const parsed = value === undefined ? 5 : Number(value);
+  const parsed = value === undefined ? 7 : Number(value);
   if (!Number.isInteger(parsed) || parsed < 1 || parsed > 10) {
     throw new RpcError(JSON_RPC_INVALID_PARAMS, "importance must be an integer between 1 and 10");
   }
