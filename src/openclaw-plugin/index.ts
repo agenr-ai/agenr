@@ -195,7 +195,13 @@ const plugin = {
 
     if (api.registerTool) {
       const config = api.pluginConfig as AgenrPluginConfig | undefined;
-      const agenrPath = resolveAgenrPath(config);
+      if (config?.enabled === false) {
+        return;
+      }
+
+      const disabledToolResult = {
+        content: [{ type: "text" as const, text: "agenr tools are disabled by plugin configuration." }],
+      };
 
       api.registerTool(
         {
@@ -221,10 +227,14 @@ const plugin = {
             project: Type.Optional(Type.String({ description: "Project scope. Pass * for all projects." })),
           }),
           async execute(_toolCallId, params) {
+            const runtimeConfig = api.pluginConfig as AgenrPluginConfig | undefined;
+            if (runtimeConfig?.enabled === false) {
+              return disabledToolResult;
+            }
+            const agenrPath = resolveAgenrPath(runtimeConfig);
             return runRecallTool(agenrPath, params);
           },
         },
-        { name: "agenr_recall" },
       );
 
       api.registerTool(
@@ -245,12 +255,15 @@ const plugin = {
                 importance: Type.Optional(
                   Type.Number({ description: "Importance 1-10 (default 7, use 9 for critical, 10 sparingly)." }),
                 ),
-                source: Type.Optional(Type.String()),
+                source: Type.Optional(
+                  Type.String({ description: "Source label for this entry (e.g. conversation, file path)." }),
+                ),
                 tags: Type.Optional(Type.Array(Type.String())),
                 scope: Type.Optional(
                   Type.Unsafe<string>({
                     type: "string",
                     enum: [...SCOPE_LEVELS],
+                    description: `Scope level: ${SCOPE_LEVELS.join(" | ")}.`,
                   }),
                 ),
               }),
@@ -260,10 +273,14 @@ const plugin = {
             project: Type.Optional(Type.String({ description: "Project tag for all entries." })),
           }),
           async execute(_toolCallId, params) {
+            const runtimeConfig = api.pluginConfig as AgenrPluginConfig | undefined;
+            if (runtimeConfig?.enabled === false) {
+              return disabledToolResult;
+            }
+            const agenrPath = resolveAgenrPath(runtimeConfig);
             return runStoreTool(agenrPath, params);
           },
         },
-        { name: "agenr_store" },
       );
 
       api.registerTool(
@@ -277,10 +294,14 @@ const plugin = {
             source: Type.Optional(Type.String({ description: "Source label for extracted entries." })),
           }),
           async execute(_toolCallId, params) {
+            const runtimeConfig = api.pluginConfig as AgenrPluginConfig | undefined;
+            if (runtimeConfig?.enabled === false) {
+              return disabledToolResult;
+            }
+            const agenrPath = resolveAgenrPath(runtimeConfig);
             return runExtractTool(agenrPath, params);
           },
         },
-        { name: "agenr_extract" },
       );
 
       api.registerTool(
@@ -294,10 +315,14 @@ const plugin = {
             persist: Type.Optional(Type.Boolean({ description: "Persist retirement to ledger." })),
           }),
           async execute(_toolCallId, params) {
+            const runtimeConfig = api.pluginConfig as AgenrPluginConfig | undefined;
+            if (runtimeConfig?.enabled === false) {
+              return disabledToolResult;
+            }
+            const agenrPath = resolveAgenrPath(runtimeConfig);
             return runRetireTool(agenrPath, params);
           },
         },
-        { name: "agenr_retire" },
       );
     }
   },
