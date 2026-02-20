@@ -20,6 +20,17 @@ import { APP_VERSION } from "../version.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
 import { normalizeProject } from "../project.js";
 
+async function appendMcpLog(line: Record<string, unknown>): Promise<void> {
+  try {
+    const logPath = path.join(os.homedir(), ".agenr", "mcp-access.log");
+    const entry = JSON.stringify({ ts: new Date().toISOString(), ...line }) + "\n";
+    await fs.appendFile(logPath, entry, "utf8");
+  } catch {
+    // Never let logging failures affect MCP responses. Success-only logging
+    // is intentional - errors and throws are not logged here.
+  }
+}
+
 const MCP_PROTOCOL_VERSION = "2024-11-05";
 
 const JSON_RPC_PARSE_ERROR = -32700;
@@ -1079,14 +1090,31 @@ export function createMcpServer(
   async function dispatchToolCall(params: ToolCallParams): Promise<ToolCallResult> {
     try {
       if (params.name === "agenr_recall") {
+        const result = await callRecallTool(params.args);
+        const args = params.args as Record<string, unknown> | undefined;
+        await appendMcpLog({
+          tool: "agenr_recall",
+          query: typeof args?.query === "string" ? args.query.slice(0, 120) : undefined,
+          context: typeof args?.context === "string" ? args.context : undefined,
+          project: typeof args?.project === "string" ? args.project : undefined,
+        });
         return {
-          content: [{ type: "text", text: await callRecallTool(params.args) }],
+          content: [{ type: "text", text: result }],
         };
       }
 
       if (params.name === "agenr_store") {
+        const result = await callStoreTool(params.args);
+        const args = params.args as Record<string, unknown> | undefined;
+        await appendMcpLog({
+          tool: "agenr_store",
+          type: typeof args?.type === "string" ? args.type : undefined,
+          subject: typeof args?.subject === "string" ? args.subject.slice(0, 80) : undefined,
+          importance: typeof args?.importance === "number" ? args.importance : undefined,
+          project: typeof args?.project === "string" ? args.project : undefined,
+        });
         return {
-          content: [{ type: "text", text: await callStoreTool(params.args) }],
+          content: [{ type: "text", text: result }],
         };
       }
 
