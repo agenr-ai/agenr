@@ -199,9 +199,9 @@ const plugin = {
         return;
       }
 
-      const disabledToolResult = {
+      const makeDisabledToolResult = () => ({
         content: [{ type: "text" as const, text: "agenr tools are disabled by plugin configuration." }],
-      };
+      });
 
       api.registerTool(
         {
@@ -229,7 +229,7 @@ const plugin = {
           async execute(_toolCallId, params) {
             const runtimeConfig = api.pluginConfig as AgenrPluginConfig | undefined;
             if (runtimeConfig?.enabled === false) {
-              return disabledToolResult;
+              return makeDisabledToolResult();
             }
             const agenrPath = resolveAgenrPath(runtimeConfig);
             return runRecallTool(agenrPath, params);
@@ -253,7 +253,12 @@ const plugin = {
                   description: `Entry type: ${KNOWLEDGE_TYPES.join(" | ")}`,
                 }),
                 importance: Type.Optional(
-                  Type.Number({ description: "Importance 1-10 (default 7, use 9 for critical, 10 sparingly)." }),
+                  Type.Integer({
+                    minimum: 1,
+                    maximum: 10,
+                    default: 7,
+                    description: "Importance 1-10 (default 7, use 9 for critical, 10 sparingly).",
+                  }),
                 ),
                 source: Type.Optional(
                   Type.String({ description: "Source label for this entry (e.g. conversation, file path)." }),
@@ -275,7 +280,7 @@ const plugin = {
           async execute(_toolCallId, params) {
             const runtimeConfig = api.pluginConfig as AgenrPluginConfig | undefined;
             if (runtimeConfig?.enabled === false) {
-              return disabledToolResult;
+              return makeDisabledToolResult();
             }
             const agenrPath = resolveAgenrPath(runtimeConfig);
             return runStoreTool(agenrPath, params);
@@ -296,7 +301,7 @@ const plugin = {
           async execute(_toolCallId, params) {
             const runtimeConfig = api.pluginConfig as AgenrPluginConfig | undefined;
             if (runtimeConfig?.enabled === false) {
-              return disabledToolResult;
+              return makeDisabledToolResult();
             }
             const agenrPath = resolveAgenrPath(runtimeConfig);
             return runExtractTool(agenrPath, params);
@@ -317,7 +322,7 @@ const plugin = {
           async execute(_toolCallId, params) {
             const runtimeConfig = api.pluginConfig as AgenrPluginConfig | undefined;
             if (runtimeConfig?.enabled === false) {
-              return disabledToolResult;
+              return makeDisabledToolResult();
             }
             const agenrPath = resolveAgenrPath(runtimeConfig);
             return runRetireTool(agenrPath, params);
