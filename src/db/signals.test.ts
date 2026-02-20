@@ -170,7 +170,6 @@ describe("db signals", () => {
         "AGENR SIGNAL: 2 new high-importance entries",
         '- [decision, imp:8] "Switch to Postgres for prod"',
         '- [fact, imp:9] "AWS contract signed through 2027"',
-        '-> Use agenr_recall query="<subject>" for details.',
       ].join("\n"),
     );
   });

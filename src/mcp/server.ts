@@ -121,12 +121,6 @@ const TOOL_DEFINITIONS: McpToolDefinition[] = [
           type: "string",
           description: "Only entries newer than this (ISO date or relative, e.g. 7d, 1m).",
         },
-        since_seq: {
-          type: "integer",
-          description:
-            "Only return entries with rowid > this value (watermark for incremental recall). When set, overrides all other filters (query, context, types, since, threshold, platform, project) and returns all non-retired entries ordered by rowid ASC.",
-          minimum: 0,
-        },
         threshold: {
           type: "number",
           description: "Minimum relevance score from 0.0 to 1.0.",
@@ -140,7 +134,8 @@ const TOOL_DEFINITIONS: McpToolDefinition[] = [
         },
         project: {
           type: "string",
-          description: "Project filter. Comma-separated for multiple: 'agenr,openclaw'. Omit for all projects.",
+          description:
+            "Omit to use configured project scope (including dependencies). Pass * to return all projects regardless of scope.",
         },
       },
     },
@@ -223,7 +218,7 @@ const TOOL_DEFINITIONS: McpToolDefinition[] = [
   {
     name: "agenr_retire",
     description:
-      "Retire a stale, outdated, or irrelevant memory entry. The entry remains in the database and can still be found with explicit queries, but is hidden from session-start recall. Use when the user says 'that is from an old project', 'that decision changed', 'ignore that', or 'that is no longer relevant'. Get the entry ID from agenr_recall output.",
+      "Mark one or more memory entries as retired (soft delete). Pass ids as a comma-separated string or array. Retired entries are excluded from all recall.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -231,16 +226,15 @@ const TOOL_DEFINITIONS: McpToolDefinition[] = [
       properties: {
         entry_id: {
           type: "string",
-          description: "The ID of the entry to retire. Get this from agenr_recall output ([id=xxx] prefix).",
+          description: "Entry id to retire.",
         },
         reason: {
           type: "string",
-          description: "Why this entry is being retired.",
+          description: "Retirement reason.",
         },
         persist: {
           type: "boolean",
-          description:
-            "If true, write a ledger entry so this retirement survives database re-ingest. Use when retiring entries from killed projects or permanently obsolete topics. Default false.",
+          description: "Persist retirement to ledger for re-ingest safety.",
           default: false,
         },
       },
@@ -420,14 +414,6 @@ function parsePositiveInt(value: unknown, fallback: number, fieldName: string): 
   return Math.floor(parsed);
 }
 
-function parseNonNegativeInt(value: unknown, fieldName: string): number {
-  const parsed = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    throw new RpcError(JSON_RPC_INVALID_PARAMS, `${fieldName} must be a non-negative integer`);
-  }
-  return Math.floor(parsed);
-}
-
 function parseThreshold(value: unknown): number {
   if (value === undefined) {
     return 0;
@@ -437,6 +423,23 @@ function parseThreshold(value: unknown): number {
   if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
     throw new RpcError(JSON_RPC_INVALID_PARAMS, "threshold must be between 0.0 and 1.0");
   }
+  return parsed;
+}
+
+function parseCsvProjects(input: string): string[] {
+  const parsed = Array.from(
+    new Set(
+      input
+        .split(",")
+        .map((value) => normalizeProject(value))
+        .filter((value): value is string => Boolean(value)),
+    ),
+  );
+
+  if (parsed.some((value) => value === "*")) {
+    throw new RpcError(JSON_RPC_INVALID_PARAMS, "project=\"*\" must be passed by itself");
+  }
+
   return parsed;
 }
 
@@ -707,6 +710,8 @@ export function createMcpServer(
     nowFn: deps.nowFn ?? (() => new Date()),
     tmpdirFn: deps.tmpdirFn ?? os.tmpdir,
   };
+  const scopedProjectDirRaw = typeof env.AGENR_PROJECT_DIR === "string" ? env.AGENR_PROJECT_DIR.trim() : "";
+  const scopedProjectDir = scopedProjectDirRaw ? path.resolve(scopedProjectDirRaw) : null;
 
   let dbClient: Client | null = null;
   let dbInitPromise: Promise<void> | null = null;
@@ -743,6 +748,55 @@ export function createMcpServer(
     }
   }
 
+  async function loadScopedProjectConfig(): Promise<{ project: string; dependencies: string[] } | null> {
+    if (!scopedProjectDir) {
+      return null;
+    }
+
+    const configPath = path.join(scopedProjectDir, ".agenr", "config.json");
+    let rawConfig = "";
+    try {
+      rawConfig = await fs.readFile(configPath, "utf8");
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") {
+        return null;
+      }
+      throw error;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(rawConfig);
+    } catch {
+      return null;
+    }
+
+    if (!isRecord(parsed)) {
+      return null;
+    }
+
+    const projectRaw = typeof parsed.project === "string" ? parsed.project : "";
+    const project = normalizeProject(projectRaw);
+    if (!project) {
+      return null;
+    }
+
+    const dependencies = Array.isArray(parsed.dependencies)
+      ? Array.from(
+          new Set(
+            parsed.dependencies
+              .filter((value): value is string => typeof value === "string")
+              .map((value) => normalizeProject(value))
+              .filter((value): value is string => Boolean(value))
+              .filter((value) => value !== project),
+          ),
+        )
+      : [];
+
+    return { project, dependencies };
+  }
+
   function buildSuccess(id: JsonRpcId, result: unknown): JsonRpcSuccessResponse {
     return {
       jsonrpc: "2.0",
@@ -752,36 +806,6 @@ export function createMcpServer(
   }
 
   async function callRecallTool(args: Record<string, unknown>): Promise<string> {
-    const sinceSeqRaw = args.since_seq;
-    if (sinceSeqRaw !== undefined) {
-      const sinceSeq = parseNonNegativeInt(sinceSeqRaw, "since_seq");
-      const limit = parsePositiveInt(args.limit, 10, "limit");
-      const db = await ensureDb();
-
-      const result = await db.execute({
-        sql: `SELECT rowid, id, type, subject, content, importance, created_at
-              FROM entries
-              WHERE rowid > ? AND retired = 0
-              ORDER BY rowid ASC
-              LIMIT ?`,
-        args: [sinceSeq, limit],
-      });
-
-      if (result.rows.length === 0) {
-        return `No new entries since seq ${sinceSeq}.`;
-      }
-
-      const lines: string[] = [`${result.rows.length} entries since seq ${sinceSeq}:`, ""];
-      for (const row of result.rows) {
-        lines.push(
-          `[rowid=${Number(row.rowid)}] [id=${String(row.id)}] (type: ${String(row.type)}, imp: ${Number(row.importance)}, ${formatDate(String(row.created_at))})`,
-        );
-        lines.push(String(row.content));
-        lines.push("");
-      }
-      return lines.join("\n").trimEnd();
-    }
-
     const contextRaw = typeof args.context === "string" ? args.context.trim().toLowerCase() : "default";
     const context = contextRaw || "default";
     if (context !== "default" && context !== "session-start") {
@@ -812,17 +836,26 @@ export function createMcpServer(
     }
 
     const projectRaw = typeof args.project === "string" ? args.project.trim() : "";
-    const project = projectRaw
-      ? Array.from(
-          new Set(
-            projectRaw
-              .split(",")
-              .map((value) => normalizeProject(value))
-              .filter((value): value is string => Boolean(value)),
-          ),
-        )
-      : undefined;
-    if (projectRaw && project && project.length === 0) {
+    let project: string[] | undefined;
+    let projectStrict = false;
+
+    if (projectRaw === "*") {
+      project = undefined;
+    } else if (projectRaw) {
+      project = parseCsvProjects(projectRaw);
+      if (project.length === 0) {
+        throw new RpcError(JSON_RPC_INVALID_PARAMS, "project must be a non-empty string");
+      }
+      projectStrict = true;
+    } else {
+      const scoped = await loadScopedProjectConfig();
+      if (scoped) {
+        project = Array.from(new Set([scoped.project, ...scoped.dependencies]));
+        projectStrict = true;
+      }
+    }
+
+    if (projectRaw && projectRaw !== "*" && project && project.length === 0) {
       throw new RpcError(JSON_RPC_INVALID_PARAMS, "project must be a non-empty string");
     }
 
@@ -839,6 +872,7 @@ export function createMcpServer(
           since,
           platform: platform ?? undefined,
           project,
+          projectStrict: projectStrict ? true : undefined,
           noUpdate: true,
         },
         apiKey: "",
@@ -858,6 +892,7 @@ export function createMcpServer(
           since,
           platform: platform ?? undefined,
           project,
+          projectStrict: projectStrict ? true : undefined,
         },
         apiKey,
       );
@@ -891,10 +926,12 @@ export function createMcpServer(
     }
 
     const projectRaw = typeof args.project === "string" ? args.project.trim() : "";
-    const project = projectRaw ? normalizeProject(projectRaw) : null;
-    if (projectRaw && !project) {
+    const explicitProject = projectRaw ? normalizeProject(projectRaw) : null;
+    if (projectRaw && !explicitProject) {
       throw new RpcError(JSON_RPC_INVALID_PARAMS, "project must be a non-empty string");
     }
+    const scoped = !explicitProject ? await loadScopedProjectConfig() : null;
+    const project = explicitProject ?? scoped?.project ?? null;
 
     const parsed = parseStoreEntries(args.entries);
     const entries =

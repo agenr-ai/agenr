@@ -1,5 +1,3 @@
-import * as fsPromises from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -8,7 +6,6 @@ import {
   formatRecallAsMarkdown,
   formatRecallAsSummary,
   resolveAgenrPath,
-  writeAgenrMd,
 } from "../../src/openclaw-plugin/recall.js";
 import type { RecallResult } from "../../src/openclaw-plugin/recall.js";
 
@@ -228,30 +225,5 @@ describe("buildSpawnArgs", () => {
   it("spawns executable directly when agenrPath is a binary path", () => {
     const args = buildSpawnArgs("/usr/local/bin/agenr");
     expect(args).toEqual({ cmd: "/usr/local/bin/agenr", args: [] });
-  });
-});
-
-describe("writeAgenrMd", () => {
-  it("writes markdown content to workspaceDir/AGENR.md", async () => {
-    const tempDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), "agenr-openclaw-"));
-    try {
-      await writeAgenrMd("## agenr Memory Context", tempDir);
-      const outputPath = path.join(tempDir, "AGENR.md");
-      const content = await fsPromises.readFile(outputPath, "utf8");
-      expect(content).toBe("## agenr Memory Context");
-    } finally {
-      await fsPromises.rm(tempDir, { recursive: true, force: true });
-    }
-  });
-
-  it("silently discards filesystem write errors", async () => {
-    const tempDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), "agenr-openclaw-"));
-    const filePath = path.join(tempDir, "not-a-directory.txt");
-    try {
-      await fsPromises.writeFile(filePath, "block", "utf8");
-      await expect(writeAgenrMd("text", filePath)).resolves.toBeUndefined();
-    } finally {
-      await fsPromises.rm(tempDir, { recursive: true, force: true });
-    }
   });
 });

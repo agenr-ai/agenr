@@ -1,12 +1,10 @@
 import type { Client } from "@libsql/client";
 import { closeDb, getDb, initDb } from "../db/client.js";
 import {
-  formatRecallAsSummary,
   formatRecallAsMarkdown,
   resolveAgenrPath,
   resolveBudget,
   runRecall,
-  writeAgenrMd,
 } from "./recall.js";
 import { checkSignals, resolveSignalConfig } from "./signals.js";
 import type {
@@ -138,14 +136,6 @@ const plugin = {
           const markdown = formatRecallAsMarkdown(result);
           if (!markdown.trim()) {
             return;
-          }
-
-          const workspaceDir =
-            typeof ctx.workspaceDir === "string" ? ctx.workspaceDir.trim() : "";
-          if (workspaceDir) {
-            const now = new Date();
-            const timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-            void writeAgenrMd(formatRecallAsSummary(result, timestamp), workspaceDir);
           }
 
           return { prependContext: markdown };

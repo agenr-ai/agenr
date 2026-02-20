@@ -40,6 +40,38 @@ Select default model:
 Configuration saved
 ```
 
+## `init`
+
+Initialize project-scoped agenr wiring for agent instructions, MCP config, and dependency-aware recall scope.
+
+### Syntax
+
+```bash
+agenr init [options]
+```
+
+### Options
+- `--platform <name>`: override auto-detection (`claude-code|cursor|openclaw|windsurf|codex|generic`).
+- `--project <slug>`: override project slug (defaults to slugified directory name).
+- `--path <dir>`: target project directory (default current working directory).
+- `--depends-on <slug,...>`: comma-separated dependency slugs for cross-project recall.
+
+### Example
+
+```bash
+$A init --depends-on api-service,shared-lib
+```
+
+### Example Output
+
+```text
+agenr init: platform=claude-code project=frontend dependencies=[api-service,shared-lib]
+- Wrote .agenr/config.json
+- Wrote system prompt block to CLAUDE.md
+- Wrote MCP config to .mcp.json
+- Added .agenr/knowledge.db to .gitignore
+```
+
 ## `extract`
 
 ### Syntax
