@@ -1,8 +1,12 @@
 import { spawn } from "node:child_process";
+import { unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { buildSpawnArgs, resolveAgenrPath } from "./recall.js";
 import type { PluginToolResult } from "./types.js";
 
 const TOOL_TIMEOUT_MS = 10000;
+const EXTRACT_TIMEOUT_MS = 60000;
 
 type SpawnResult = {
   code: number | null;
@@ -37,6 +41,7 @@ async function runAgenrCommand(
   agenrPath: string,
   args: string[],
   stdinPayload?: string,
+  timeoutMs: number = TOOL_TIMEOUT_MS,
 ): Promise<SpawnResult> {
   return await new Promise((resolve) => {
     const resolvedAgenrPath = agenrPath.trim() || resolveAgenrPath();
@@ -62,7 +67,8 @@ async function runAgenrCommand(
     const timer = setTimeout(() => {
       timedOut = true;
       child.kill("SIGTERM");
-    }, TOOL_TIMEOUT_MS);
+    }, timeoutMs);
+    timer.unref();
 
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString();
@@ -104,7 +110,7 @@ export async function runRecallTool(agenrPath: string, params: Record<string, un
   if (context) {
     args.push("--context", context);
   }
-  if (limit) {
+  if (limit !== undefined) {
     args.push("--limit", String(limit));
   }
   if (types) {
@@ -216,39 +222,54 @@ export async function runExtractTool(agenrPath: string, params: Record<string, u
     args.push("--source", source);
   }
 
-  const result = await runAgenrCommand(agenrPath, args, text);
-  if (result.timedOut) {
-    return {
-      content: [{ type: "text", text: "agenr_extract failed: command timed out" }],
-    };
-  }
-  if (result.error) {
-    return {
-      content: [{ type: "text", text: `agenr_extract failed: ${result.error.message}` }],
-    };
-  }
-  if (result.code !== 0) {
-    const message = result.stderr.trim() || result.stdout.trim() || "unknown error";
-    return {
-      content: [{ type: "text", text: `agenr_extract failed: ${message}` }],
-    };
-  }
-
+  const tempFile = join(
+    tmpdir(),
+    `agenr-extract-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`,
+  );
   try {
-    const parsed: unknown = JSON.parse(result.stdout);
-    return {
-      content: [{ type: "text", text: JSON.stringify(parsed, null, 2) }],
-      details: parsed as Record<string, unknown>,
-    };
-  } catch (error) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: `agenr_extract failed: ${error instanceof Error ? error.message : String(error)}`,
-        },
-      ],
-    };
+    writeFileSync(tempFile, text, "utf8");
+    args.push(tempFile);
+
+    const result = await runAgenrCommand(agenrPath, args, undefined, EXTRACT_TIMEOUT_MS);
+    if (result.timedOut) {
+      return {
+        content: [{ type: "text", text: "agenr_extract failed: command timed out" }],
+      };
+    }
+    if (result.error) {
+      return {
+        content: [{ type: "text", text: `agenr_extract failed: ${result.error.message}` }],
+      };
+    }
+    if (result.code !== 0) {
+      const message = result.stderr.trim() || result.stdout.trim() || "unknown error";
+      return {
+        content: [{ type: "text", text: `agenr_extract failed: ${message}` }],
+      };
+    }
+
+    try {
+      const parsed: unknown = JSON.parse(result.stdout);
+      return {
+        content: [{ type: "text", text: JSON.stringify(parsed, null, 2) }],
+        details: parsed as Record<string, unknown>,
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `agenr_extract failed: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  } finally {
+    try {
+      unlinkSync(tempFile);
+    } catch {
+      // Ignore cleanup errors for temp extract files.
+    }
   }
 }
 
@@ -263,7 +284,7 @@ export async function runRetireTool(agenrPath: string, params: Record<string, un
   const reason = asString(params.reason);
   const persist = params.persist === true;
 
-  const args = ["retire", entryId, "--yes"];
+  const args = ["retire", entryId];
   if (reason) {
     args.push("--reason", reason);
   }
@@ -271,22 +292,9 @@ export async function runRetireTool(agenrPath: string, params: Record<string, un
     args.push("--persist");
   }
 
-  let result = await runAgenrCommand(agenrPath, args);
-
-  // Fallback for current retire command shape when --yes is unavailable.
-  if (
-    result.code !== 0 &&
-    `${result.stderr}\n${result.stdout}`.toLowerCase().includes("unknown option '--yes'")
-  ) {
-    const fallbackArgs = ["retire", entryId, "--dry-run"];
-    if (reason) {
-      fallbackArgs.push("--reason", reason);
-    }
-    if (persist) {
-      fallbackArgs.push("--persist");
-    }
-    result = await runAgenrCommand(agenrPath, fallbackArgs);
-  }
+  // The retire command prompts for confirmation; we pipe "y\n" to answer it.
+  // If the command requires a real TTY, this will fail and return an error.
+  const result = await runAgenrCommand(agenrPath, args, "y\n");
 
   if (result.timedOut) {
     return {

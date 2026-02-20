@@ -240,7 +240,7 @@ const plugin = {
                 type: Type.Unsafe<string>({
                   type: "string",
                   enum: [...KNOWLEDGE_TYPES],
-                  description: "Entry type: fact | decision | preference | todo | lesson | event",
+                  description: `Entry type: ${KNOWLEDGE_TYPES.join(" | ")}`,
                 }),
                 importance: Type.Optional(
                   Type.Number({ description: "Importance 1-10 (default 7, use 9 for critical, 10 sparingly)." }),

@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import plugin from "./index.js";
-import { runRecallTool, runStoreTool } from "./tools.js";
+import { runExtractTool, runRecallTool, runRetireTool, runStoreTool } from "./tools.js";
 import type { PluginApi } from "./types.js";
 
 const { spawnMock } = vi.hoisted(() => ({
@@ -51,6 +51,22 @@ function createMockChild(params?: {
     child.emit("close", params?.code ?? 0);
   });
 
+  return child;
+}
+
+function createTimeoutChild(): MockChildProcess {
+  const child = new EventEmitter() as MockChildProcess;
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = {
+    write: vi.fn(),
+    end: vi.fn(),
+  };
+  child.kill = vi.fn(() => {
+    process.nextTick(() => {
+      child.emit("close", null);
+    });
+  });
   return child;
 }
 
@@ -119,5 +135,54 @@ describe("openclaw plugin tool runners", () => {
     });
 
     expect(result.content[0]?.text).toContain("Stored");
+  });
+
+  it("runExtractTool returns parseable json text on success", async () => {
+    spawnMock.mockReturnValueOnce(
+      createMockChild({
+        stdout: JSON.stringify({
+          entries: [{ content: "some text", type: "fact" }],
+        }),
+      }),
+    );
+
+    const result = await runExtractTool("/path/to/agenr", { text: "some text" });
+    expect(result.content[0]?.type).toBe("text");
+    expect(() => JSON.parse(result.content[0]?.text ?? "")).not.toThrow();
+  });
+
+  it("runRetireTool returns success message on exit code 0", async () => {
+    spawnMock.mockReturnValueOnce(createMockChild({ code: 0 }));
+
+    const result = await runRetireTool("/path/to/agenr", { entry_id: "test-id-123" });
+
+    expect(result.content[0]?.text).toContain("Retired entry test-id-123");
+  });
+
+  it("returns timeout message when command exceeds timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      spawnMock.mockReturnValueOnce(createTimeoutChild());
+
+      const resultPromise = runRecallTool("/path/to/agenr", { query: "test" });
+      await vi.advanceTimersByTimeAsync(10000);
+      const result = await resultPromise;
+
+      expect(result.content[0]?.text).toContain("timed out");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("returns stderr message when command exits non-zero", async () => {
+    spawnMock.mockReturnValueOnce(
+      createMockChild({
+        code: 1,
+        stderr: "something went wrong",
+      }),
+    );
+
+    const result = await runRecallTool("/path/to/agenr", { query: "test" });
+    expect(result.content[0]?.text).toContain("something went wrong");
   });
 });
