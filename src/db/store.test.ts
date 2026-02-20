@@ -2,7 +2,7 @@ import { createClient, type Client } from "@libsql/client";
 import { afterEach, describe, expect, it } from "vitest";
 import type { KnowledgeEntry } from "../types.js";
 import { initDb } from "./client.js";
-import { storeEntries } from "./store.js";
+import { findRecentEntryBySubjectTypeAndSourceFile, storeEntries } from "./store.js";
 
 const clients: Client[] = [];
 
@@ -132,6 +132,15 @@ describe("db store", () => {
 
     expect(result.updated).toBe(1);
     expect(result.added).toBe(0);
+    const persisted = await findRecentEntryBySubjectTypeAndSourceFile(
+      client,
+      "bar",
+      "fact",
+      "/tmp/session.jsonl",
+      48,
+    );
+    expect(persisted).not.toBeNull();
+    expect(persisted!.confirmations).toBeGreaterThan(0);
   });
 
   it("source-file recency guard: same subject+type but different source_file adds new entry", async () => {

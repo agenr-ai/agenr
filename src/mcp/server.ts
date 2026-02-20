@@ -1091,12 +1091,11 @@ export function createMcpServer(
     try {
       if (params.name === "agenr_recall") {
         const result = await callRecallTool(params.args);
-        const args = params.args as Record<string, unknown> | undefined;
         await appendMcpLog({
           tool: "agenr_recall",
-          query: typeof args?.query === "string" ? args.query.slice(0, 120) : undefined,
-          context: typeof args?.context === "string" ? args.context : undefined,
-          project: typeof args?.project === "string" ? args.project : undefined,
+          query: typeof params.args.query === "string" ? (params.args.query as string).slice(0, 120) : undefined,
+          context: typeof params.args.context === "string" ? (params.args.context as string) : undefined,
+          project: typeof params.args.project === "string" ? (params.args.project as string) : undefined,
         });
         return {
           content: [{ type: "text", text: result }],
@@ -1105,16 +1104,15 @@ export function createMcpServer(
 
       if (params.name === "agenr_store") {
         const result = await callStoreTool(params.args);
-        const storeArgs = params.args as Record<string, unknown> | undefined;
-        const storeEntries = Array.isArray(storeArgs?.entries) ? storeArgs.entries : [];
-        const firstEntry = storeEntries[0] as Record<string, unknown> | undefined;
+        const storeArgsEntries = Array.isArray(params.args.entries) ? params.args.entries : [];
+        const firstEntry = storeArgsEntries[0] as Record<string, unknown> | undefined;
         await appendMcpLog({
           tool: "agenr_store",
-          count: storeEntries.length,
+          count: storeArgsEntries.length,
           firstType: typeof firstEntry?.type === "string" ? firstEntry.type : undefined,
           firstSubject: typeof firstEntry?.subject === "string" ? firstEntry.subject.slice(0, 80) : undefined,
           firstImportance: typeof firstEntry?.importance === "number" ? firstEntry.importance : undefined,
-          project: typeof storeArgs?.project === "string" ? storeArgs.project : undefined,
+          project: typeof params.args.project === "string" ? (params.args.project as string) : undefined,
         });
         return {
           content: [{ type: "text", text: result }],
