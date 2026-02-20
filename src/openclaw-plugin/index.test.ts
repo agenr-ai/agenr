@@ -5,7 +5,7 @@ import plugin from "./index.js";
 import * as pluginRecall from "./recall.js";
 import * as pluginSignals from "./signals.js";
 import { runExtractTool, runRecallTool, runRetireTool, runStoreTool } from "./tools.js";
-import type { BeforeAgentStartResult, BeforePromptBuildResult, PluginApi } from "./types.js";
+import type { BeforePromptBuildResult, PluginApi } from "./types.js";
 
 const { spawnMock } = vi.hoisted(() => ({
   spawnMock: vi.fn(),
@@ -92,27 +92,19 @@ afterEach(() => {
 
 function getBeforePromptBuildHandler(
   api: PluginApi,
-): (event: Record<string, unknown>, ctx: { sessionKey?: string }) => Promise<BeforePromptBuildResult | undefined> {
+): (
+  event: Record<string, unknown>,
+  ctx: { sessionKey?: string; sessionId?: string },
+) => Promise<BeforePromptBuildResult | undefined> {
   const onMock = api.on as unknown as ReturnType<typeof vi.fn>;
   const call = onMock.mock.calls.find((args) => args[0] === "before_prompt_build");
   if (!call) {
     throw new Error("before_prompt_build handler not registered");
   }
-  return call[1] as (event: Record<string, unknown>, ctx: { sessionKey?: string }) => Promise<BeforePromptBuildResult | undefined>;
-}
-
-function getBeforeAgentStartHandler(
-  api: PluginApi,
-): (event: Record<string, unknown>, ctx: { sessionKey?: string; sessionId?: string }) => Promise<BeforeAgentStartResult | undefined> {
-  const onMock = api.on as unknown as ReturnType<typeof vi.fn>;
-  const call = onMock.mock.calls.find((args) => args[0] === "before_agent_start");
-  if (!call) {
-    throw new Error("before_agent_start handler not registered");
-  }
   return call[1] as (
     event: Record<string, unknown>,
     ctx: { sessionKey?: string; sessionId?: string },
-  ) => Promise<BeforeAgentStartResult | undefined>;
+  ) => Promise<BeforePromptBuildResult | undefined>;
 }
 
 describe("openclaw plugin tool registration", () => {
@@ -140,9 +132,9 @@ describe("openclaw plugin tool registration", () => {
   });
 });
 
-describe("before_agent_start dedupe behavior", () => {
-  it("dedupes by sessionId so /new sessions on the same sessionKey still run recall", async () => {
-    vi.spyOn(pluginRecall, "runRecall").mockResolvedValue({
+describe("before_prompt_build recall behavior", () => {
+  it("injects recall on first call and skips recall on repeated sessionId while still checking signals", async () => {
+    const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue({
       query: "session-start",
       results: [
         {
@@ -155,20 +147,33 @@ describe("before_agent_start dedupe behavior", () => {
         },
       ],
     });
+    vi.spyOn(dbClient, "getDb").mockReturnValue({} as never);
+    vi.spyOn(dbClient, "initDb").mockResolvedValue(undefined);
+    const checkSignalsMock = vi
+      .spyOn(pluginSignals, "checkSignals")
+      .mockResolvedValue("AGENR SIGNAL: 1 new high-importance entry");
 
-    const api = makeApi();
+    const api = makeApi({
+      pluginConfig: {
+        signalCooldownMs: 0,
+        signalMaxPerSession: 10,
+      },
+    });
     plugin.register(api);
-    const handler = getBeforeAgentStartHandler(api);
+    const handler = getBeforePromptBuildHandler(api);
     const sessionKey = "agent:main:tui";
 
     const first = await handler({}, { sessionKey, sessionId: "uuid-a" });
-    const second = await handler({}, { sessionKey, sessionId: "uuid-b" });
+    const second = await handler({}, { sessionKey, sessionId: "uuid-a" });
     const third = await handler({}, { sessionKey, sessionId: "uuid-b" });
 
     expect(first?.prependContext).toContain("## agenr Memory Context");
-    expect(second?.prependContext).toContain("## agenr Memory Context");
-    expect(third).toBeUndefined();
-    expect(pluginRecall.runRecall).toHaveBeenCalledTimes(2);
+    expect(first?.prependContext).toContain("AGENR SIGNAL");
+    expect(second?.prependContext).not.toContain("## agenr Memory Context");
+    expect(second?.prependContext).toContain("AGENR SIGNAL");
+    expect(third?.prependContext).toContain("## agenr Memory Context");
+    expect(runRecallMock).toHaveBeenCalledTimes(2);
+    expect(checkSignalsMock).toHaveBeenCalledTimes(3);
   });
 });
 
@@ -343,6 +348,7 @@ describe("sessionSignalState gating", () => {
     vi.useFakeTimers();
     try {
       vi.setSystemTime(new Date("2026-02-20T00:00:00.000Z"));
+      vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
       vi.spyOn(dbClient, "getDb").mockReturnValue({} as never);
       vi.spyOn(dbClient, "initDb").mockResolvedValue(undefined);
       const checkSignalsMock = vi
@@ -371,6 +377,7 @@ describe("sessionSignalState gating", () => {
   });
 
   it("suppresses delivery when session cap is reached", async () => {
+    vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
     vi.spyOn(dbClient, "getDb").mockReturnValue({} as never);
     vi.spyOn(dbClient, "initDb").mockResolvedValue(undefined);
     const checkSignalsMock = vi
@@ -399,6 +406,7 @@ describe("sessionSignalState gating", () => {
     vi.useFakeTimers();
     try {
       vi.setSystemTime(new Date("2026-02-20T00:00:00.000Z"));
+      vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
       vi.spyOn(dbClient, "getDb").mockReturnValue({} as never);
       vi.spyOn(dbClient, "initDb").mockResolvedValue(undefined);
       const checkSignalsMock = vi

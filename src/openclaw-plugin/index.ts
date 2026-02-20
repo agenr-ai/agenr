@@ -12,8 +12,6 @@ import { checkSignals, resolveSignalConfig } from "./signals.js";
 import { runExtractTool, runRecallTool, runRetireTool, runStoreTool } from "./tools.js";
 import type {
   AgenrPluginConfig,
-  BeforeAgentStartEvent,
-  BeforeAgentStartResult,
   BeforePromptBuildEvent,
   BeforePromptBuildResult,
   PluginApi,
@@ -110,57 +108,9 @@ async function ensurePluginDb(config?: AgenrPluginConfig): Promise<Client> {
 const plugin = {
   id: "agenr",
   name: "agenr memory context",
-  description: "Injects agenr long-term memory into every agent session via before_agent_start",
+  description: "Injects agenr long-term memory into every agent session via before_prompt_build",
 
   register(api: PluginApi): void {
-    api.on(
-      "before_agent_start",
-      async (
-        _event: BeforeAgentStartEvent,
-        ctx: PluginHookAgentContext
-      ): Promise<BeforeAgentStartResult | undefined> => {
-        try {
-          const sessionKey = ctx.sessionKey ?? "";
-          const dedupeKey = ctx.sessionId ?? sessionKey;
-          if (shouldSkipSession(sessionKey)) {
-            return;
-          }
-          if (dedupeKey && hasSeenSession(dedupeKey)) {
-            return;
-          }
-
-          const config = api.pluginConfig as AgenrPluginConfig | undefined;
-          if (config?.enabled === false) {
-            return;
-          }
-          if (dedupeKey) {
-            markSessionSeen(dedupeKey);
-          }
-
-          const agenrPath = resolveAgenrPath(config);
-          const budget = resolveBudget(config);
-
-          const result = await runRecall(agenrPath, budget);
-          if (!result) {
-            return;
-          }
-
-          const markdown = formatRecallAsMarkdown(result);
-          if (!markdown.trim()) {
-            return;
-          }
-
-          return { prependContext: markdown };
-        } catch (err) {
-          // Never block session start - log and swallow.
-          api.logger.warn(
-            `agenr plugin before_agent_start recall failed: ${err instanceof Error ? err.message : String(err)}`
-          );
-          return;
-        }
-      }
-    );
-
     api.on(
       "before_prompt_build",
       async (
@@ -180,37 +130,58 @@ const plugin = {
           if (config?.enabled === false) {
             return;
           }
-          if (config?.signalsEnabled === false) {
-            return;
+
+          const dedupeKey = ctx.sessionId ?? sessionKey;
+          let markdown: string | undefined;
+          const isFirstInSession = dedupeKey ? !hasSeenSession(dedupeKey) : true;
+
+          if (isFirstInSession) {
+            if (dedupeKey) {
+              markSessionSeen(dedupeKey);
+            }
+
+            const agenrPath = resolveAgenrPath(config);
+            const budget = resolveBudget(config);
+            const recallResult = await runRecall(agenrPath, budget);
+            if (recallResult) {
+              const formatted = formatRecallAsMarkdown(recallResult);
+              if (formatted.trim()) {
+                markdown = formatted;
+              }
+            }
           }
 
-          const signalConfig = resolveSignalConfig(config);
-          // Always call checkSignals so the watermark advances even if we suppress delivery.
-          // This prevents stale-watermark bursts when cooldown expires.
-          const db = await ensurePluginDb(config);
-          const signal = await checkSignals(db, sessionKey, signalConfig);
-          if (!signal) {
-            return;
+          let signal: string | undefined;
+          if (config?.signalsEnabled !== false) {
+            const signalConfig = resolveSignalConfig(config);
+            // Always call checkSignals so the watermark advances even if we suppress delivery.
+            // This prevents stale-watermark bursts when cooldown expires.
+            const db = await ensurePluginDb(config);
+            const candidateSignal = await checkSignals(db, sessionKey, signalConfig);
+            if (candidateSignal) {
+              const state = sessionSignalState.get(sessionKey) ?? { lastSignalAt: 0, signalCount: 0 };
+
+              // Suppress delivery (but NOT watermark advance) during cooldown or session cap.
+              const inCooldown =
+                signalConfig.cooldownMs > 0 && Date.now() - state.lastSignalAt < signalConfig.cooldownMs;
+              const overCap =
+                signalConfig.maxPerSession > 0 && state.signalCount >= signalConfig.maxPerSession;
+
+              if (!inCooldown && !overCap) {
+                sessionSignalState.set(sessionKey, {
+                  lastSignalAt: Date.now(),
+                  signalCount: state.signalCount + 1,
+                });
+                signal = candidateSignal;
+              }
+            }
           }
 
-          const state = sessionSignalState.get(sessionKey) ?? { lastSignalAt: 0, signalCount: 0 };
-
-          // Suppress delivery (but NOT watermark advance) during cooldown or session cap.
-          const inCooldown =
-            signalConfig.cooldownMs > 0 && Date.now() - state.lastSignalAt < signalConfig.cooldownMs;
-          const overCap =
-            signalConfig.maxPerSession > 0 && state.signalCount >= signalConfig.maxPerSession;
-
-          if (inCooldown || overCap) {
+          const prependContext = [markdown, signal].filter(Boolean).join("\n\n");
+          if (!prependContext) {
             return;
           }
-
-          sessionSignalState.set(sessionKey, {
-            lastSignalAt: Date.now(),
-            signalCount: state.signalCount + 1,
-          });
-
-          return { prependContext: signal };
+          return { prependContext };
         } catch (err) {
           // Never block prompt build - log and swallow.
           api.logger.warn(
