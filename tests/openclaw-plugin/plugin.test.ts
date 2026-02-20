@@ -3,17 +3,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
-  BeforeAgentStartEvent,
-  BeforeAgentStartResult,
   BeforePromptBuildEvent,
   BeforePromptBuildResult,
   PluginHookAgentContext,
 } from "../../src/openclaw-plugin/types.js";
-
-type BeforeAgentStartHandler = (
-  event: BeforeAgentStartEvent,
-  ctx?: PluginHookAgentContext
-) => Promise<BeforeAgentStartResult | undefined>;
 
 type BeforePromptBuildHandler = (
   event: BeforePromptBuildEvent,
@@ -29,14 +22,13 @@ const tempDirs: string[] = [];
 async function registerPlugin(
   pluginConfig?: Record<string, unknown>
 ): Promise<{
-  handler: BeforeAgentStartHandler;
+  handler: BeforePromptBuildHandler;
   beforePromptBuildHandler: BeforePromptBuildHandler;
   loggerWarn: ReturnType<typeof vi.fn>;
 }> {
   const mod = await import(indexModulePath);
   const plugin = mod.default;
 
-  let capturedHandler: BeforeAgentStartHandler | null = null;
   let capturedBeforePromptBuildHandler: BeforePromptBuildHandler | null = null;
   const loggerWarn = vi.fn();
   const mockApi = {
@@ -45,9 +37,6 @@ async function registerPlugin(
     pluginConfig,
     logger: { warn: loggerWarn, error: vi.fn() },
     on: (hook: string, handler: unknown) => {
-      if (hook === "before_agent_start") {
-        capturedHandler = handler as BeforeAgentStartHandler;
-      }
       if (hook === "before_prompt_build") {
         capturedBeforePromptBuildHandler = handler as BeforePromptBuildHandler;
       }
@@ -55,14 +44,15 @@ async function registerPlugin(
   };
 
   plugin.register(mockApi as never);
-  if (!capturedHandler) {
-    throw new Error("Expected before_agent_start handler to be registered");
-  }
   if (!capturedBeforePromptBuildHandler) {
     throw new Error("Expected before_prompt_build handler to be registered");
   }
 
-  return { handler: capturedHandler, beforePromptBuildHandler: capturedBeforePromptBuildHandler, loggerWarn };
+  return {
+    handler: capturedBeforePromptBuildHandler,
+    beforePromptBuildHandler: capturedBeforePromptBuildHandler,
+    loggerWarn,
+  };
 }
 
 afterEach(async () => {
@@ -88,7 +78,7 @@ describe("agenr OpenClaw plugin", () => {
     expect(typeof plugin.register).toBe("function");
   });
 
-  it("register calls api.on with 'before_agent_start' and 'before_prompt_build'", async () => {
+  it("register calls api.on with 'before_prompt_build'", async () => {
     vi.resetModules();
     const mod = await import(indexModulePath);
     const plugin = mod.default;
@@ -105,11 +95,10 @@ describe("agenr OpenClaw plugin", () => {
     };
 
     plugin.register(mockApi as never);
-    expect(registeredHooks).toContain("before_agent_start");
     expect(registeredHooks).toContain("before_prompt_build");
   });
 
-  it("before_agent_start returns prependContext when recall returns valid content", async () => {
+  it("before_prompt_build returns prependContext when recall returns valid content", async () => {
     vi.resetModules();
     vi.doMock(recallModulePath, () => ({
       resolveAgenrPath: vi.fn(() => "/tmp/agenr-cli.js"),
@@ -121,7 +110,7 @@ describe("agenr OpenClaw plugin", () => {
       formatRecallAsMarkdown: vi.fn(() => "## agenr Memory Context\n\n### Facts and Events\n\n- [subject] content"),
     }));
 
-    const { handler } = await registerPlugin();
+    const { handler } = await registerPlugin({ signalsEnabled: false });
     const result = await handler(
       { prompt: "test prompt" },
       { sessionKey: "agent:main:test-prepend-context", workspaceDir: "/tmp/workspace" }
@@ -145,7 +134,7 @@ describe("agenr OpenClaw plugin", () => {
     const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "agenr-openclaw-workspace-"));
     tempDirs.push(workspaceDir);
 
-    const { handler } = await registerPlugin();
+    const { handler } = await registerPlugin({ signalsEnabled: false });
     await handler(
       { prompt: "test prompt" },
       { sessionKey: "agent:main:test-no-agenr-md", workspaceDir },
@@ -172,7 +161,7 @@ describe("agenr OpenClaw plugin", () => {
       formatRecallAsMarkdown: vi.fn(() => "## agenr Memory Context"),
     }));
 
-    const { handler } = await registerPlugin();
+    const { handler } = await registerPlugin({ signalsEnabled: false });
     const first = await handler({}, { sessionKey: "agent:main:test-dedup-same" });
     const second = await handler({}, { sessionKey: "agent:main:test-dedup-same" });
 
@@ -194,7 +183,7 @@ describe("agenr OpenClaw plugin", () => {
       formatRecallAsMarkdown: vi.fn(() => "## agenr Memory Context"),
     }));
 
-    const { handler } = await registerPlugin();
+    const { handler } = await registerPlugin({ signalsEnabled: false });
     await handler({}, { sessionKey: "agent:main:test-distinct-1" });
     await handler({}, { sessionKey: "agent:main:test-distinct-2" });
 
@@ -237,7 +226,7 @@ describe("agenr OpenClaw plugin", () => {
       formatRecallAsMarkdown: vi.fn(() => "## agenr Memory Context"),
     }));
 
-    const pluginConfig: { enabled: boolean } = { enabled: false };
+    const pluginConfig: { enabled: boolean; signalsEnabled: boolean } = { enabled: false, signalsEnabled: false };
     const { handler } = await registerPlugin(pluginConfig);
     const sessionKey = "agent:main:test-disabled-then-enabled";
 
@@ -271,6 +260,13 @@ describe("agenr OpenClaw plugin", () => {
 
   it("before_prompt_build skips sub-agent sessions", async () => {
     vi.resetModules();
+    const runRecall = vi.fn(async () => null);
+    vi.doMock(recallModulePath, () => ({
+      resolveAgenrPath: vi.fn(() => "/tmp/agenr-cli.js"),
+      resolveBudget: vi.fn(() => 2000),
+      runRecall,
+      formatRecallAsMarkdown: vi.fn(() => ""),
+    }));
     const getDb = vi.fn(() => ({ execute: vi.fn(), close: vi.fn() }));
     const initDb = vi.fn(async () => undefined);
     const checkSignals = vi.fn(async () => "AGENR SIGNAL: 1 new high-importance entry");
@@ -289,12 +285,20 @@ describe("agenr OpenClaw plugin", () => {
     const result = await beforePromptBuildHandler({}, { sessionKey: "agent:main:subagent:123" });
 
     expect(result).toBeUndefined();
+    expect(runRecall).not.toHaveBeenCalled();
     expect(getDb).not.toHaveBeenCalled();
     expect(checkSignals).not.toHaveBeenCalled();
   });
 
   it("before_prompt_build skips when signalsEnabled=false", async () => {
     vi.resetModules();
+    const runRecall = vi.fn(async () => null);
+    vi.doMock(recallModulePath, () => ({
+      resolveAgenrPath: vi.fn(() => "/tmp/agenr-cli.js"),
+      resolveBudget: vi.fn(() => 2000),
+      runRecall,
+      formatRecallAsMarkdown: vi.fn(() => ""),
+    }));
     const getDb = vi.fn(() => ({ execute: vi.fn(), close: vi.fn() }));
     const initDb = vi.fn(async () => undefined);
     const checkSignals = vi.fn(async () => "AGENR SIGNAL: 1 new high-importance entry");
@@ -313,12 +317,20 @@ describe("agenr OpenClaw plugin", () => {
     const result = await beforePromptBuildHandler({}, { sessionKey: "agent:main:test-signals-disabled" });
 
     expect(result).toBeUndefined();
+    expect(runRecall).toHaveBeenCalledTimes(1);
     expect(getDb).not.toHaveBeenCalled();
     expect(checkSignals).not.toHaveBeenCalled();
   });
 
   it("before_prompt_build skips when enabled=false (global disable)", async () => {
     vi.resetModules();
+    const runRecall = vi.fn(async () => null);
+    vi.doMock(recallModulePath, () => ({
+      resolveAgenrPath: vi.fn(() => "/tmp/agenr-cli.js"),
+      resolveBudget: vi.fn(() => 2000),
+      runRecall,
+      formatRecallAsMarkdown: vi.fn(() => ""),
+    }));
     vi.doMock(dbClientModulePath, () => ({
       getDb: vi.fn(() => ({ execute: vi.fn(), close: vi.fn() })),
       initDb: vi.fn(async () => undefined),
@@ -333,11 +345,19 @@ describe("agenr OpenClaw plugin", () => {
     const { beforePromptBuildHandler } = await registerPlugin({ enabled: false });
     const result = await beforePromptBuildHandler({}, { sessionKey: "agent:main:test-global-disable" });
     expect(result).toBeUndefined();
+    expect(runRecall).not.toHaveBeenCalled();
     expect(checkSignals).not.toHaveBeenCalled();
   });
 
   it("before_prompt_build skips when sessionKey is empty string", async () => {
     vi.resetModules();
+    const runRecall = vi.fn(async () => null);
+    vi.doMock(recallModulePath, () => ({
+      resolveAgenrPath: vi.fn(() => "/tmp/agenr-cli.js"),
+      resolveBudget: vi.fn(() => 2000),
+      runRecall,
+      formatRecallAsMarkdown: vi.fn(() => ""),
+    }));
     const checkSignals = vi.fn(async () => "AGENR SIGNAL: ...");
     vi.doMock(dbClientModulePath, () => ({
       getDb: vi.fn(),
@@ -352,11 +372,18 @@ describe("agenr OpenClaw plugin", () => {
     const { beforePromptBuildHandler } = await registerPlugin();
     const result = await beforePromptBuildHandler({}, { sessionKey: "" });
     expect(result).toBeUndefined();
+    expect(runRecall).not.toHaveBeenCalled();
     expect(checkSignals).not.toHaveBeenCalled();
   });
 
   it("before_prompt_build returns prependContext with signal", async () => {
     vi.resetModules();
+    vi.doMock(recallModulePath, () => ({
+      resolveAgenrPath: vi.fn(() => "/tmp/agenr-cli.js"),
+      resolveBudget: vi.fn(() => 2000),
+      runRecall: vi.fn(async () => null),
+      formatRecallAsMarkdown: vi.fn(() => ""),
+    }));
     const fakeDb = { execute: vi.fn(), close: vi.fn() };
     const getDb = vi.fn(() => fakeDb);
     const initDb = vi.fn(async () => undefined);
@@ -388,6 +415,12 @@ describe("agenr OpenClaw plugin", () => {
 
   it("before_prompt_build swallows errors", async () => {
     vi.resetModules();
+    vi.doMock(recallModulePath, () => ({
+      resolveAgenrPath: vi.fn(() => "/tmp/agenr-cli.js"),
+      resolveBudget: vi.fn(() => 2000),
+      runRecall: vi.fn(async () => null),
+      formatRecallAsMarkdown: vi.fn(() => ""),
+    }));
     vi.doMock(dbClientModulePath, () => ({
       getDb: vi.fn(() => ({ execute: vi.fn(), close: vi.fn() })),
       initDb: vi.fn(async () => undefined),
