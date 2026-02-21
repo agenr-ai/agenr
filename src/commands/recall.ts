@@ -7,6 +7,7 @@ import type { SessionCategory } from "../db/session-start.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
 import { hasAnyProjectParts, parseProjectList } from "../project.js";
+import { parseSince } from "../utils/time.js";
 import { EXPIRY_LEVELS, IMPORTANCE_MAX, IMPORTANCE_MIN, KNOWLEDGE_PLATFORMS, KNOWLEDGE_TYPES, SCOPE_LEVELS } from "../types.js";
 import type {
   Expiry,
@@ -80,44 +81,12 @@ function parseCsv(input: string | undefined): string[] {
 }
 
 export function parseSinceToIso(since: string | undefined, now = new Date()): string | undefined {
-  if (!since) {
-    return undefined;
+  try {
+    const parsed = parseSince(since, now);
+    return parsed ? parsed.toISOString() : undefined;
+  } catch {
+    throw new Error("Invalid --since value. Use 1h, 7d, 1m, 1y, or an ISO date.");
   }
-
-  const trimmed = since.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-
-  const duration = trimmed.match(/^(\d+)\s*([hdy])$/i);
-  if (duration) {
-    const amount = Number(duration[1]);
-    const unit = duration[2]?.toLowerCase();
-    if (!Number.isFinite(amount) || amount <= 0 || !unit) {
-      throw new Error("Invalid --since duration. Use 1h, 7d, 30d, or 1y.");
-    }
-
-    let millis = 0;
-    if (unit === "h") {
-      millis = amount * 60 * 60 * 1000;
-    } else if (unit === "d") {
-      millis = amount * 24 * 60 * 60 * 1000;
-    } else if (unit === "y") {
-      millis = amount * 365 * 24 * 60 * 60 * 1000;
-    }
-
-    if (millis <= 0) {
-      throw new Error("Invalid --since duration. Use 1h, 7d, 30d, or 1y.");
-    }
-
-    return new Date(now.getTime() - millis).toISOString();
-  }
-
-  const parsed = new Date(trimmed);
-  if (Number.isNaN(parsed.getTime())) {
-    throw new Error("Invalid --since value. Use 1h, 7d, 30d, 1y, or an ISO date.");
-  }
-  return parsed.toISOString();
 }
 
 function stripEmbedding<T extends RecallCommandResult>(result: T): T {

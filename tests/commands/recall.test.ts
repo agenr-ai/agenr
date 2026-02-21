@@ -83,10 +83,12 @@ describe("recall command", () => {
     const now = new Date("2026-02-15T12:00:00.000Z");
     const oneHour = parseSinceToIso("1h", now);
     const sevenDays = parseSinceToIso("7d", now);
+    const oneMonth = parseSinceToIso("1m", now);
     const oneYear = parseSinceToIso("1y", now);
 
     expect(oneHour).toBe("2026-02-15T11:00:00.000Z");
     expect(sevenDays).toBe("2026-02-08T12:00:00.000Z");
+    expect(oneMonth).toBe("2026-01-16T12:00:00.000Z");
     expect(oneYear).toBe("2025-02-15T12:00:00.000Z");
   });
 

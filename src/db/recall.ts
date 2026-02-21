@@ -651,7 +651,10 @@ export async function recall(
   let cutoff: Date | undefined;
   try {
     cutoff = parseSince(query.since, now);
-  } catch {
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    const sinceValue = query.since ?? "";
+    process.stderr.write(`[recall] failed to parse since "${sinceValue}": ${reason}\n`);
     cutoff = undefined;
   }
   const allowedScopes = resolveScopeSet(query.scope);
