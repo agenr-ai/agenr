@@ -1,6 +1,20 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
+
+export function resolveAgenrBinary(): string {
+  try {
+    return execFileSync("which", ["agenr"], { encoding: "utf8" }).trim();
+  } catch {
+    const pnpmHome = process.env.PNPM_HOME;
+    if (pnpmHome) {
+      const candidate = path.join(pnpmHome, "agenr");
+      return candidate;
+    }
+    return "agenr";
+  }
+}
 
 const AGENR_START_MARKER = "<!-- agenr:start -->";
 const AGENR_END_MARKER = "<!-- agenr:end -->";
@@ -23,6 +37,7 @@ export interface InitCommandResult {
   configPath: string;
   instructionsPath: string | null;
   mcpPath: string;
+  mcpSkipped: boolean;
   gitignoreUpdated: boolean;
 }
 
@@ -221,9 +236,9 @@ async function writeAgenrConfig(
   return { configPath, config: next };
 }
 
-function buildMcpEntry(projectDir: string): JsonRecord {
+function buildMcpEntry(projectDir: string, command?: string): JsonRecord {
   return {
-    command: "agenr",
+    command: command ?? "agenr",
     args: ["mcp"],
     env: {
       AGENR_PROJECT_DIR: projectDir,
@@ -252,12 +267,32 @@ function mergeMcpConfig(existing: JsonRecord, entry: JsonRecord): JsonRecord {
   };
 }
 
-async function writeMcpConfig(projectDir: string, platform: InitPlatform): Promise<string> {
-  const mcpPath = platform === "cursor" ? path.join(projectDir, ".cursor", "mcp.json") : path.join(projectDir, ".mcp.json");
+async function writeMcpConfig(
+  projectDir: string,
+  platform: InitPlatform,
+): Promise<{ mcpPath: string; skipped: boolean }> {
+  if (platform === "codex") {
+    const agenrBin = resolveAgenrBinary();
+    const mcpPath = await writeCodexConfig(projectDir, agenrBin);
+    return { mcpPath, skipped: false };
+  }
+
+  if (platform === "openclaw") {
+    // OpenClaw does not use .mcp.json. The native plugin is installed separately
+    // via `openclaw plugins install agenr` and handles MCP registration itself.
+    return { mcpPath: "", skipped: true };
+  }
+
+  const mcpPath =
+    platform === "cursor"
+      ? path.join(projectDir, ".cursor", "mcp.json")
+      : path.join(projectDir, ".mcp.json");
+
+  const agenrBin = resolveAgenrBinary();
   const existing = (await readJsonRecord(mcpPath)) ?? {};
-  const next = mergeMcpConfig(existing, buildMcpEntry(projectDir));
+  const next = mergeMcpConfig(existing, buildMcpEntry(projectDir, agenrBin));
   await writeJsonFile(mcpPath, next);
-  return mcpPath;
+  return { mcpPath, skipped: false };
 }
 
 function isPathInsideProject(projectDir: string, targetPath: string): boolean {
@@ -301,12 +336,58 @@ function resolveProjectSlug(projectDir: string, explicitProject?: string): strin
   return slug;
 }
 
+async function writeCodexConfig(projectDir: string, agenrBin: string): Promise<string> {
+  const configPath = path.join(os.homedir(), ".codex", "config.toml");
+  const newLine = `agenr = { command = "${agenrBin}", args = ["mcp"], env = { AGENR_PROJECT_DIR = "${projectDir}" } }`;
+
+  let existing = "";
+  try {
+    existing = await fs.readFile(configPath, "utf8");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT") throw error;
+  }
+
+  let next: string;
+
+  if (existing.trim().length === 0) {
+    next = `[mcp]\n${newLine}\n`;
+  } else {
+    const lines = existing.split("\n");
+    const agenrLineIdx = lines.findIndex((l) => l.trimStart().startsWith("agenr ="));
+    if (agenrLineIdx !== -1) {
+      // Replace existing agenr line in place (idempotent)
+      lines[agenrLineIdx] = newLine;
+      next = lines.join("\n");
+    } else {
+      const mcpSectionIdx = lines.findIndex((l) => l.trim() === "[mcp]");
+      if (mcpSectionIdx !== -1) {
+        // Insert after [mcp] line
+        lines.splice(mcpSectionIdx + 1, 0, newLine);
+        next = lines.join("\n");
+      } else {
+        // Append [mcp] block at end
+        const suffix = existing.endsWith("\n") ? "" : "\n";
+        next = `${existing}${suffix}\n[mcp]\n${newLine}\n`;
+      }
+    }
+  }
+
+  await fs.mkdir(path.dirname(configPath), { recursive: true });
+  await fs.writeFile(configPath, next, "utf8");
+  return configPath;
+}
+
 export function formatInitSummary(result: InitCommandResult): string[] {
   const dependencyLabel = result.dependencies.length > 0 ? `[${result.dependencies.join(",")}]` : "[]";
   const lines = [
     `agenr init: platform=${result.platform} project=${result.project} dependencies=${dependencyLabel}`,
     `- Wrote .agenr/config.json`,
-    `- Wrote MCP config to ${path.relative(result.projectDir, result.mcpPath) || path.basename(result.mcpPath)}`,
+    result.platform === "codex"
+      ? "- Wrote MCP entry to ~/.codex/config.toml"
+      : result.mcpSkipped
+        ? "- MCP: handled by OpenClaw native plugin (openclaw plugins install agenr)"
+        : `- Wrote MCP config to ${path.relative(result.projectDir, result.mcpPath) || path.basename(result.mcpPath)}`,
   ];
   if (result.instructionsPath !== null) {
     lines.splice(2, 0, `- Wrote system prompt block to ${path.basename(result.instructionsPath)}`);
@@ -347,7 +428,7 @@ export async function runInitCommand(options: InitCommandOptions): Promise<InitC
   if (instructionsPath !== null) {
     await upsertPromptBlock(instructionsPath, buildSystemPromptBlock(project));
   }
-  const mcpPath = await writeMcpConfig(projectDir, resolvedPlatform);
+  const { mcpPath, skipped: mcpSkipped } = await writeMcpConfig(projectDir, resolvedPlatform);
   const gitignoreEntries = [".agenr/knowledge.db"];
   if (resolvedPlatform === "cursor") {
     gitignoreEntries.push(".cursor/rules/agenr.mdc");
@@ -366,6 +447,7 @@ export async function runInitCommand(options: InitCommandOptions): Promise<InitC
     configPath: configResult.configPath,
     instructionsPath,
     mcpPath,
+    mcpSkipped,
     gitignoreUpdated,
   };
 }
