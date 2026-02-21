@@ -212,7 +212,7 @@ This project is live on npm. Existing users have databases and configs that must
 - Config format changes need fallbacks for old formats
 - CLI flag changes should be backward-compatible (add new flags, don't rename old ones)
 - Test migrations against databases created by previous versions
-- Update CHANGELOG.md with every user-facing change (added, changed, fixed, removed)
+- **CHANGELOG.md must be updated for every PR.** Add a new version block with the correct next version number. Do not reuse an existing block. Do not open a PR without it. If the CHANGELOG was pre-written by someone else, verify the description matches what you actually implemented and correct it if not.
 
 ## Docs
 
@@ -254,3 +254,16 @@ This is a public open-source repo. Follow this flow for all changes:
 
 **Labels:** `enhancement`, `bug`, `good first issue`
 **Milestones:** Group issues by release (v0.5, etc.)
+
+## Completion Checklist
+
+Before pushing your branch and opening a PR, verify every applicable item:
+
+- [ ] All code changes are complete and tested (`pnpm test -- --run` passes)
+- [ ] **CHANGELOG.md** - new `[x.y.z]` version block added with accurate description of what changed
+- [ ] **package.json** - `version` field bumped to match the CHANGELOG block
+- [ ] Docs updated for anything user-facing (CLI flags, config, behavior changes)
+- [ ] No em-dashes in any modified file (use hyphens)
+- [ ] No `any` types introduced
+
+The task is not complete until CHANGELOG.md and package.json are updated. A PR missing either will be rejected.
