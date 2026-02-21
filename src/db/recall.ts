@@ -654,8 +654,7 @@ export async function recall(
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     const sinceValue = query.since ?? "";
-    process.stderr.write(`[recall] failed to parse since "${sinceValue}": ${reason}\n`);
-    cutoff = undefined;
+    throw new Error(`Invalid since value "${sinceValue}": ${reason}`);
   }
   const allowedScopes = resolveScopeSet(query.scope);
 
