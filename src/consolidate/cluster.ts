@@ -143,6 +143,7 @@ export async function buildClusters(db: Client, options: ClusterOptions = {}): P
            recall_count, created_at, merged_from, consolidated_at
     FROM entries
     WHERE superseded_by IS NULL
+      AND retired = 0
       AND embedding IS NOT NULL
       ${platform ? "AND platform = ?" : ""}
       ${projectCondition}

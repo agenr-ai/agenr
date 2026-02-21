@@ -134,6 +134,7 @@ export async function countActiveEntries(
       SELECT COUNT(*) AS count
       FROM entries
       WHERE superseded_by IS NULL
+        AND retired = 0
         ${platform ? "AND platform = ?" : ""}
         ${projectSql.clause}
     `,
@@ -190,6 +191,7 @@ async function expireDecayedEntries(
     SELECT id, content, expiry, created_at
     FROM entries
     WHERE superseded_by IS NULL
+      AND retired = 0
       AND expiry = 'temporary'
       ${options.platform ? "AND platform = ?" : ""}
       ${projectSql.clause}
@@ -273,6 +275,7 @@ async function mergeNearExactDuplicates(
     SELECT COUNT(*) AS count
     FROM entries
     WHERE superseded_by IS NULL
+      AND retired = 0
       AND embedding IS NOT NULL
       ${options.platform ? "AND platform = ?" : ""}
       ${projectSql.clause}
@@ -300,6 +303,7 @@ async function mergeNearExactDuplicates(
     SELECT id, type, subject, content, project, embedding, confirmations, recall_count, created_at
     FROM entries
     WHERE superseded_by IS NULL
+      AND retired = 0
       AND embedding IS NOT NULL
       ${options.platform ? "AND platform = ?" : ""}
       ${projectSql.clause}
