@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.15] - 2026-02-21
+
+### Fixed
+- fix(openclaw-plugin): agenr_recall tool now correctly passes --until flag to CLI (was silently dropped)
+- docs(skill): document all agenr_recall parameters in SKILL.md (since, until, types, platform, project, limit, context)
+
 ## [0.7.14] - 2026-02-21
 
 ### Added
