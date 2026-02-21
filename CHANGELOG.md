@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.12] - 2026-02-21
+
+### Fixed
+- fix(recall): retired entries now correctly excluded from all recall queries -- missing `AND retired = 0` filter added to recall.ts and session-start.ts
+- fix(consolidate): retired entries excluded from Tier-1 and clustering queries in rules.ts and cluster.ts
+- fix(recall): consolidated duplicate parseSince implementations into shared utility supporting h/d/m/y units
+
 ## [0.7.11] - 2026-02-20
 
 ### Fixed

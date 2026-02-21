@@ -2,7 +2,8 @@ import type { Client, InValue, Row } from "@libsql/client";
 import { mapRawStoredEntry } from "./stored-entry.js";
 import { embed } from "../embeddings/client.js";
 import { buildProjectFilter, parseProjectList } from "../project.js";
-import { MILLISECONDS_PER_DAY, parseDaysBetween, toNumber, toStringValue } from "../utils/entry-utils.js";
+import { parseDaysBetween, toNumber, toStringValue } from "../utils/entry-utils.js";
+import { parseSince } from "../utils/time.js";
 import { DEFAULT_SESSION_CANDIDATE_LIMIT } from "./session-start.js";
 import type { KnowledgePlatform, RecallQuery, RecallResult, Scope, StoredEntry } from "../types.js";
 
@@ -142,47 +143,6 @@ function resolveScopeSet(scope: Scope | undefined): Set<Scope> {
   return new Set<Scope>(["private", "personal", "public"]);
 }
 
-function parseSince(since: string | undefined, now: Date): Date | undefined {
-  if (!since) {
-    return undefined;
-  }
-
-  const trimmed = since.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-
-  const durationMatch = trimmed.match(/^(\d+)\s*([hdy])$/i);
-  if (durationMatch) {
-    const amount = Number(durationMatch[1]);
-    const unit = durationMatch[2]?.toLowerCase();
-    if (!Number.isFinite(amount) || amount <= 0 || !unit) {
-      return undefined;
-    }
-
-    let multiplier = 0;
-    if (unit === "h") {
-      multiplier = 1000 * 60 * 60;
-    } else if (unit === "d") {
-      multiplier = MILLISECONDS_PER_DAY;
-    } else if (unit === "y") {
-      multiplier = MILLISECONDS_PER_DAY * 365;
-    }
-
-    if (multiplier <= 0) {
-      return undefined;
-    }
-
-    return new Date(now.getTime() - amount * multiplier);
-  }
-
-  const parsed = new Date(trimmed);
-  if (Number.isNaN(parsed.getTime())) {
-    return undefined;
-  }
-  return parsed;
-}
-
 function entryCreatedAfter(entry: StoredEntry, cutoff: Date | undefined): boolean {
   if (!cutoff) {
     return true;
@@ -203,6 +163,10 @@ function passesFilters(
   isSessionStart: boolean,
 ): boolean {
   if (entry.superseded_by) {
+    return false;
+  }
+
+  if (entry.retired) {
     return false;
   }
 
@@ -480,6 +444,7 @@ async function fetchVectorCandidates(
       CROSS JOIN entries AS e ON e.rowid = v.id
       WHERE e.embedding IS NOT NULL
         AND e.superseded_by IS NULL
+        AND e.retired = 0
         ${projectSql.clause}
         ${platform ? "AND e.platform = ?" : ""}
     `,
@@ -562,6 +527,7 @@ async function fetchSessionCandidates(
         suppressed_contexts
       FROM entries
       WHERE superseded_by IS NULL
+        AND retired = 0
         ${context === "session-start" ? "AND (suppressed_contexts IS NULL OR suppressed_contexts NOT LIKE '%\"session-start\"%')" : ""}
         ${projectSql.clause}
         ${platform ? "AND platform = ?" : ""}
@@ -617,6 +583,7 @@ async function runFts(
         JOIN entries AS e ON e.rowid = entries_fts.rowid
         WHERE entries_fts MATCH ?
           AND e.superseded_by IS NULL
+          AND e.retired = 0
           ${projectSql.clause}
           ${platform ? "AND e.platform = ?" : ""}
         LIMIT 250
@@ -681,7 +648,12 @@ export async function recall(
   }
 
   const normalizedTags = normalizeTags(query.tags);
-  const cutoff = parseSince(query.since, now);
+  let cutoff: Date | undefined;
+  try {
+    cutoff = parseSince(query.since, now);
+  } catch {
+    cutoff = undefined;
+  }
   const allowedScopes = resolveScopeSet(query.scope);
 
   let candidates: CandidateRow[];

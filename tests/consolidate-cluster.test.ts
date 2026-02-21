@@ -94,6 +94,21 @@ describe("consolidate cluster", () => {
     expect(clusters[0]?.entries).toHaveLength(3);
   });
 
+  it("excludes retired entries from cluster candidates", async () => {
+    const db = await makeDb();
+    await seed(db, { type: "fact", subject: "Retired filter", content: "a", angle: 0 });
+    await seed(db, { type: "fact", subject: "Retired filter", content: "b", angle: 8 });
+    const retiredId = await seed(db, { type: "fact", subject: "Retired filter", content: "c", angle: 10 });
+
+    await db.execute({
+      sql: "UPDATE entries SET retired = 1, retired_at = ? WHERE id = ?",
+      args: [new Date().toISOString(), retiredId],
+    });
+
+    const clusters = await buildClusters(db, { simThreshold: 0.85, minCluster: 3 });
+    expect(clusters).toHaveLength(0);
+  });
+
   it("respects diameter cap and rejects chained clusters below floor", async () => {
     const db = await makeDb();
     await seed(db, { type: "fact", subject: "Chain", content: "a", angle: 0, confirmations: 3 });

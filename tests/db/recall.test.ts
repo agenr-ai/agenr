@@ -432,6 +432,101 @@ describe("db recall", () => {
     expect(sessionResults.some((result) => result.entry.content === "Other-context suppressed entry vec-work-strong")).toBe(true);
   });
 
+  it("excludes retired entries from session-start and explicit recall", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    await storeEntries(
+      client,
+      [
+        makeEntry({ content: "Active recall entry vec-work-strong" }),
+        makeEntry({ content: "Retired recall entry vec-work-strong" }),
+      ],
+      "sk-test",
+      {
+        sourceFile: "recall-test.jsonl",
+        ingestContentHash: "hash-retired-recall-filter",
+        embedFn: mockEmbed,
+        force: true,
+      },
+    );
+
+    await client.execute({
+      sql: "UPDATE entries SET retired = 1, retired_at = ? WHERE content = ?",
+      args: ["2026-02-15T00:00:00.000Z", "Retired recall entry vec-work-strong"],
+    });
+
+    const sessionResults = await recall(
+      client,
+      {
+        text: "",
+        context: "session-start",
+        limit: 10,
+      },
+      "sk-test",
+      { now: new Date("2026-02-15T00:00:00.000Z") },
+    );
+
+    expect(sessionResults.some((result) => result.entry.content === "Retired recall entry vec-work-strong")).toBe(false);
+    expect(sessionResults.some((result) => result.entry.content === "Active recall entry vec-work-strong")).toBe(true);
+
+    const explicitResults = await recall(
+      client,
+      {
+        text: "Retired recall entry",
+        limit: 10,
+      },
+      "sk-test",
+      { embedFn: mockEmbed, now: new Date("2026-02-15T00:00:00.000Z") },
+    );
+
+    expect(explicitResults.some((result) => result.entry.content === "Retired recall entry vec-work-strong")).toBe(false);
+  });
+
+  it("supports month-based since filters", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    await storeEntries(
+      client,
+      [
+        makeEntry({ content: "Recent month entry vec-work-strong" }),
+        makeEntry({ content: "Old month entry vec-work-strong" }),
+      ],
+      "sk-test",
+      {
+        sourceFile: "recall-test.jsonl",
+        ingestContentHash: "hash-month-since",
+        embedFn: mockEmbed,
+        force: true,
+      },
+    );
+
+    await client.execute({
+      sql: "UPDATE entries SET created_at = ?, updated_at = ? WHERE content = ?",
+      args: ["2026-02-05T00:00:00.000Z", "2026-02-05T00:00:00.000Z", "Recent month entry vec-work-strong"],
+    });
+    await client.execute({
+      sql: "UPDATE entries SET created_at = ?, updated_at = ? WHERE content = ?",
+      args: ["2025-12-15T00:00:00.000Z", "2025-12-15T00:00:00.000Z", "Old month entry vec-work-strong"],
+    });
+
+    const results = await recall(
+      client,
+      {
+        text: "",
+        context: "session-start",
+        limit: 10,
+        since: "1m",
+      },
+      "sk-test",
+      { now: new Date("2026-02-15T00:00:00.000Z") },
+    );
+
+    expect(results.some((result) => result.entry.content === "Recent month entry vec-work-strong")).toBe(true);
+    expect(results.some((result) => result.entry.content === "Old month entry vec-work-strong")).toBe(false);
+  });
+
   it("schema includes retirement and suppression columns", async () => {
     const client = makeClient();
     await initDb(client);

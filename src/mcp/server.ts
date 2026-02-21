@@ -19,6 +19,7 @@ import type { KnowledgeEntry, RecallResult, Scope, StoreResult } from "../types.
 import { APP_VERSION } from "../version.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
 import { normalizeProject } from "../project.js";
+import { parseSince } from "../utils/time.js";
 
 async function appendMcpLog(line: Record<string, unknown>): Promise<void> {
   try {
@@ -454,48 +455,13 @@ function parseCsvProjects(input: string): string[] {
   return parsed;
 }
 
-function parseSinceToIso(since: string | undefined, now: Date): string | undefined {
-  if (!since) {
-    return undefined;
-  }
-
-  const trimmed = since.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-
-  const durationMatch = trimmed.match(/^(\d+)\s*([hdmy])$/i);
-  if (durationMatch) {
-    const amount = Number(durationMatch[1]);
-    const unit = durationMatch[2]?.toLowerCase();
-    if (!Number.isFinite(amount) || amount <= 0 || !unit) {
-      throw new RpcError(JSON_RPC_INVALID_PARAMS, "Invalid since value");
-    }
-
-    let multiplier = 0;
-    if (unit === "h") {
-      multiplier = 1000 * 60 * 60;
-    } else if (unit === "d") {
-      multiplier = 1000 * 60 * 60 * 24;
-    } else if (unit === "m") {
-      multiplier = 1000 * 60 * 60 * 24 * 30;
-    } else if (unit === "y") {
-      multiplier = 1000 * 60 * 60 * 24 * 365;
-    }
-
-    if (multiplier <= 0) {
-      throw new RpcError(JSON_RPC_INVALID_PARAMS, "Invalid since value");
-    }
-
-    return new Date(now.getTime() - amount * multiplier).toISOString();
-  }
-
-  const parsedDate = new Date(trimmed);
-  if (Number.isNaN(parsedDate.getTime())) {
+export function parseSinceToIso(since: string | undefined, now: Date): string | undefined {
+  try {
+    const parsed = parseSince(since, now);
+    return parsed ? parsed.toISOString() : undefined;
+  } catch {
     throw new RpcError(JSON_RPC_INVALID_PARAMS, "Invalid since value");
   }
-
-  return parsedDate.toISOString();
 }
 
 function normalizeTags(value: unknown): string[] {

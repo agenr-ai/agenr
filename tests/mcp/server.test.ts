@@ -2,9 +2,10 @@ import { PassThrough } from "node:stream";
 import fs from "node:fs/promises";
 import type { Client } from "@libsql/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createMcpServer } from "../../src/mcp/server.js";
+import { createMcpServer, parseSinceToIso } from "../../src/mcp/server.js";
 import type { McpServerDeps } from "../../src/mcp/server.js";
 import type { KnowledgeEntry, LlmClient, RecallResult, StoreResult, TranscriptChunk } from "../../src/types.js";
+import { parseSince } from "../../src/utils/time.js";
 import { createScopedProjectConfig } from "../helpers/scoped-config.js";
 
 const tempDirs: string[] = [];
@@ -256,6 +257,19 @@ afterEach(async () => {
 });
 
 describe("mcp server", () => {
+  it("uses the shared since parser implementation", () => {
+    const now = new Date("2026-02-15T00:00:00.000Z");
+    const inputs = ["1h", "7d", "1m", "1y", "2026-02-01T00:00:00.000Z"];
+
+    for (const input of inputs) {
+      const parsed = parseSince(input, now);
+      expect(parsed).toBeTruthy();
+      expect(parseSinceToIso(input, now)).toBe(parsed?.toISOString());
+    }
+
+    expect(() => parseSinceToIso("not-a-duration", now)).toThrow("Invalid since value");
+  });
+
   it("handles initialize handshake", async () => {
     const harness = makeHarness();
     const responses = await runServer(
@@ -1108,8 +1122,9 @@ describe("mcp server", () => {
     expect(harness.retireEntriesFn).not.toHaveBeenCalled();
   });
 
-  it("retired entries remain findable via agenr_recall", async () => {
+  it("retired entries are excluded from agenr_recall", async () => {
     const harness = makeHarness();
+    harness.recallFn.mockResolvedValueOnce([]);
     const responses = await runServer(
       [
         JSON.stringify({
@@ -1142,8 +1157,7 @@ describe("mcp server", () => {
     expect(retireResult.isError).not.toBe(true);
 
     const recallResult = responses[1]?.result as { content?: Array<{ text?: string }> };
-    expect(recallResult.content?.[0]?.text).toContain('Found 1 results for "Jim":');
-    expect(recallResult.content?.[0]?.text).toContain("[id=entry-1]");
+    expect(recallResult.content?.[0]?.text).toContain('Found 0 results for "Jim".');
   });
 
   it("calls agenr_extract and optionally stores extracted entries", async () => {

@@ -142,6 +142,6 @@ describe("integration: retirement zombie prevention", () => {
       "sk-test",
       { embedFn: mockEmbed, now: new Date("2026-02-19T00:00:00.000Z") },
     );
-    expect(explicit.some((result) => result.entry.subject === "Dead Project config")).toBe(true);
+    expect(explicit.some((result) => result.entry.subject === "Dead Project config")).toBe(false);
   });
 });
