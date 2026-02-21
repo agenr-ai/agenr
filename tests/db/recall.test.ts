@@ -646,7 +646,42 @@ describe("db recall", () => {
     it("supports point windows where since equals until", async () => {
       const client = await setupUntilFixture();
       const contents = await recallWindow(client, { since: "7d", until: "7d" });
-      expect(Array.from(contents)).toEqual(["Window until boundary vec-work-strong"]);
+      expect(contents.has("Window until boundary vec-work-strong")).toBe(true);
+      expect(contents.size).toBe(1);
+    });
+
+    it("filters vector path results by until", async () => {
+      const client = await setupUntilFixture();
+      await client.execute({
+        sql: "UPDATE entries SET embedding = vector32(?) WHERE content != ?",
+        args: [JSON.stringify(to512([0, 1, 0])), "Window middle vec-work-strong"],
+      });
+      const results = await recall(
+        client,
+        {
+          text: "Window work",
+          limit: 50,
+          until: "7d",
+        },
+        "sk-test",
+        {
+          embedFn: mockEmbed,
+          now: new Date("2026-02-15T00:00:00.000Z"),
+        },
+      );
+      const contents = new Set(results.map((r) => r.entry.content));
+      expect(contents.has("Window too recent vec-work-strong")).toBe(false);
+      expect(contents.has("Window middle vec-work-strong")).toBe(true);
+    });
+
+    it("silently excludes entries with corrupt created_at when until is active", async () => {
+      const client = await setupUntilFixture();
+      await client.execute({
+        sql: "UPDATE entries SET created_at = 'not-a-date' WHERE content = ?",
+        args: ["Window middle vec-work-strong"],
+      });
+      const contents = await recallWindow(client, { since: "14d", until: "7d" });
+      expect(contents.has("Window middle vec-work-strong")).toBe(false);
     });
 
     it("throws when since is later than until", async () => {
@@ -711,6 +746,7 @@ describe("db recall", () => {
         updated_at: "2026-02-08T00:00:00.000Z",
         importance: 6,
       });
+      // 7 days old with temporary expiry yields recency ≈ 0.97.
       const atSince = makeStoredEntry({
         id: "at-since",
         created_at: "2026-02-01T00:00:00.000Z",

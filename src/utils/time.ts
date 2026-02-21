@@ -41,7 +41,7 @@ export function parseSince(since: string | undefined, now: Date = new Date()): D
 export function parseSinceToIso(
   since: string | undefined,
   now: Date = new Date(),
-  invalidMessage = "Invalid since value",
+  invalidMessage = "Invalid date value",
 ): string | undefined {
   try {
     const parsed = parseSince(since, now);

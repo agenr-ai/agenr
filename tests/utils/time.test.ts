@@ -32,7 +32,7 @@ describe("utils time", () => {
 
   it("throws configured invalid parse messages for parseSinceToIso", () => {
     const now = new Date("2026-02-15T00:00:00.000Z");
-    expect(() => parseSinceToIso("oops", now)).toThrow("Invalid since value");
+    expect(() => parseSinceToIso("oops", now)).toThrow("Invalid date value");
     expect(() => parseSinceToIso("oops", now, "Invalid --until value. Use 1h, 7d, 1m, 1y, or an ISO date.")).toThrow(
       "Invalid --until value. Use 1h, 7d, 1m, 1y, or an ISO date.",
     );
