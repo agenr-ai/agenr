@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.7.10] - 2026-02-20
+
+### Fixed
+- fix(init): codex platform now writes MCP entry directly to ~/.codex/config.toml instead of .mcp.json (which Codex does not read)
+- fix(init): openclaw platform no longer writes a .mcp.json file (OpenClaw native plugin handles MCP registration via openclaw plugins install agenr)
+- fix(init): agenr binary path is now resolved at init time via which or PNPM_HOME fallback -- GUI clients that launch with a restricted PATH will now find the correct binary
+- fix(init): codex config.toml write is idempotent -- re-running init replaces the agenr line without duplicating it
+- docs: remove redundant Memory (agenr) AGENTS.md block from OPENCLAW.md -- OpenClaw plugin handles agent instruction injection automatically via the built-in skill
+
+## [0.7.9] - 2026-02-20
+
+### Fixed
+- fix(openclaw-plugin): moved session-start recall injection from before_agent_start to before_prompt_build -- recall now fires exactly once per session instead of twice due to OpenClaw calling before_agent_start twice (once for model-resolve where prependContext is discarded, once for prompt-build where it is used)
+
+## [0.7.8] - 2026-02-20
+
+### Fixed
+- fix(openclaw-plugin): session-start recall dedup now keys on sessionId instead of a shared seen-Set -- each new session (including after /new) correctly receives injected context instead of being silently skipped on the second run
+- fix(extractor): normalizeImportance now defaults to 7 instead of 5 -- aligns runtime default with schema declaration and coaching guidance
+
+
 ## [0.7.7] - 2026-02-20
 
 ### Fixed
