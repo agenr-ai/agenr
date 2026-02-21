@@ -8,6 +8,9 @@
 ### Changed
 - fix(recall): recency decay now anchors to the `until` ceiling for historical windows while freshness boost remains anchored to real query time
 - fix(recall): centralized `parseSinceToIso` in `src/utils/time.ts` and removed duplicate implementations from recall CLI and MCP server
+- fix(recall): added inverted date-range validation - recall now returns a descriptive error when `since > until` instead of returning an empty list
+- fix(recall): interim 3x candidate over-fetch under date bounds to improve in-window recall coverage until SQL-level date filtering is added
+- fix(recall): corrupt `created_at` values are now safely excluded under date-bound filters instead of leaking invalid rows into filtered recall
 
 ## [0.7.13] - 2026-02-21
 

@@ -502,7 +502,7 @@ export function createProgram(): Command {
     .option("--tags <tags>", "Filter by comma-separated tags")
     .option("--min-importance <n>", "Minimum importance: 1-10")
     .option("--since <duration>", "Filter by recency (1h, 7d, 30d, 1y) or ISO timestamp")
-    .option("--until <date>", "Only entries older than this (ISO date or relative, e.g. 7d, 1m)")
+    .option("--until <date>", "Only entries at or before this time (ISO date or relative, e.g. 7d, 1m)")
     .option("--expiry <level>", "Filter by expiry: core|permanent|temporary")
     .option("--platform <name>", "Filter by platform: openclaw, claude-code, codex")
     .option("--project <name>", "Filter by project (repeatable)", (val: string, prev: string[]) => [...prev, val], [] as string[])

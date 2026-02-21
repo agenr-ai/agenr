@@ -26,6 +26,7 @@ describe("utils time", () => {
 
   it("converts parsed since values to ISO", () => {
     const now = new Date("2026-02-15T00:00:00.000Z");
+    expect(parseSinceToIso(undefined, now)).toBeUndefined();
     expect(parseSinceToIso("7d", now)).toBe("2026-02-08T00:00:00.000Z");
     expect(parseSinceToIso("2026-02-10T00:00:00.000Z", now)).toBe("2026-02-10T00:00:00.000Z");
   });

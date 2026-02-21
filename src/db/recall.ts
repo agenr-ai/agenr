@@ -693,6 +693,7 @@ export async function recall(
   }
   const allowedScopes = resolveScopeSet(query.scope);
 
+  const hasDateBounds = cutoff !== undefined || ceiling !== undefined;
   let candidates: CandidateRow[];
   let effectiveText = text;
 
@@ -706,7 +707,6 @@ export async function recall(
     }
     // Over-fetch when date bounds narrow the post-filter window.
     // Proper fix: push filtering into fetchVectorCandidates SQL (see TODO #111).
-    const hasDateBounds = cutoff !== undefined || ceiling !== undefined;
     const vectorLimit = hasDateBounds
       ? (options.vectorCandidateLimit ?? DEFAULT_VECTOR_CANDIDATE_LIMIT) * 3
       : (options.vectorCandidateLimit ?? DEFAULT_VECTOR_CANDIDATE_LIMIT);
@@ -722,9 +722,12 @@ export async function recall(
       projectStrict,
     );
   } else {
+    const sessionLimit = hasDateBounds
+      ? (options.sessionCandidateLimit ?? DEFAULT_SESSION_CANDIDATE_LIMIT) * 3
+      : (options.sessionCandidateLimit ?? DEFAULT_SESSION_CANDIDATE_LIMIT);
     candidates = await fetchSessionCandidates(
       db,
-      options.sessionCandidateLimit ?? DEFAULT_SESSION_CANDIDATE_LIMIT,
+      sessionLimit,
       context,
       platform,
       project,

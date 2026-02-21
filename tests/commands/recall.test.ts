@@ -218,6 +218,16 @@ describe("recall command", () => {
     expect(firstCall?.[1]?.platform).toBe("openclaw");
   });
 
+  it("passes --until into recall query when provided", async () => {
+    const recallFn = vi.fn(async () => []);
+    const deps = makeDeps({ recallFn });
+
+    await runRecallCommand("work", { context: "default", json: true, until: "2026-02-01T00:00:00.000Z" }, deps);
+
+    const firstCall = (recallFn.mock.calls as unknown[][])[0] as [unknown, { until?: string }] | undefined;
+    expect(firstCall?.[1]?.until).toBe("2026-02-01T00:00:00.000Z");
+  });
+
   it("passes --project into recall query when provided", async () => {
     const recallFn = vi.fn(async () => []);
     const deps = makeDeps({ recallFn });
