@@ -689,7 +689,7 @@ export function createProgram(): Command {
     .option("--concurrency <n>", "Parallel chunk extractions", parseIntOption, 5)
     .option(
       "--workers <n>",
-      "Number of files to process in parallel (default: 10). Each worker uses --concurrency chunk parallelism. Total concurrent LLM calls = workers x concurrency. Reduce if hitting rate limits.",
+      "Number of files to process in parallel (default: 10). Each worker uses --concurrency chunk parallelism. Total concurrent LLM calls = workers x concurrency. Reduce if hitting rate limits. Writes retry once per sub-batch unless --no-retry is set.",
       parseIntOption,
       10,
     )

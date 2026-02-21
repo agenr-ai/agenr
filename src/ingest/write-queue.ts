@@ -19,6 +19,7 @@ export interface WriteQueueOptions {
   dbPath: string | undefined;
   batchSize?: number;
   highWatermark?: number;
+  retryOnFailure?: boolean;
   isShutdownRequested?: () => boolean;
 }
 
@@ -103,13 +104,13 @@ export class WriteQueue {
   private readonly dbPath: string | undefined;
   private readonly batchSize: number;
   private readonly highWatermark: number;
+  private readonly retryOnFailure: boolean;
   private readonly isShutdownRequested: (() => boolean) | undefined;
 
   private readonly queue: QueueItem[] = [];
   private pendingEntries = 0;
   private destroyed = false;
   private writerStopping = false;
-  private writerStopped = false;
   private inflightWrites = 0;
   private activeWorkItems = 0;
   private readonly activeByFileKey = new Map<string, number>();
@@ -125,13 +126,14 @@ export class WriteQueue {
     this.dbPath = options.dbPath;
     this.batchSize = Math.max(1, Math.floor(options.batchSize ?? 40));
     this.highWatermark = Math.max(1, Math.floor(options.highWatermark ?? 500));
+    this.retryOnFailure = options.retryOnFailure !== false;
     this.isShutdownRequested = options.isShutdownRequested;
 
     void this.runWriterLoop();
   }
 
   get pendingCount(): number {
-    return this.pendingEntries;
+    return this.pendingEntries + this.activeWorkItems;
   }
 
   async push(entries: KnowledgeEntry[], fileKey: string, fileHash: string): Promise<BatchWriteResult> {
@@ -261,7 +263,6 @@ export class WriteQueue {
       await this.processBatch(batch);
     }
 
-    this.writerStopped = true;
     this.resolveDrainIfIdle();
   }
 
@@ -354,8 +355,9 @@ export class WriteQueue {
     fileHash: string,
   ): Promise<BatchWriteResult> {
     let lastError: Error | null = null;
+    const maxAttempts = this.retryOnFailure ? 2 : 1;
 
-    for (let attempt = 1; attempt <= 2; attempt += 1) {
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       this.inflightWrites += 1;
       try {
         const result = await this.storeEntriesFn(this.db, entries, this.apiKey, {
@@ -376,7 +378,7 @@ export class WriteQueue {
         };
       } catch (error) {
         lastError = toError(error);
-        if (attempt < 2) {
+        if (attempt < maxAttempts) {
           await sleep(2_000);
         }
       } finally {

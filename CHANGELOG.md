@@ -5,6 +5,7 @@
 ### Performance
 - perf(ingest): two-phase extract+write pipeline eliminates SQLite write-lock contention; extraction workers run in parallel while a single background writer drains entries in batched transactions (#107)
 - feat(ingest): add `--workers` flag (default 10) for file-level parallelism; previously hardcoded to 1
+- The write queue retries each write sub-batch once on transient failure (2s delay) before surfacing the error to the outer file-level retry loop. Use `--no-retry` to disable all retries including the inner write retry.
 
 ### Changed
 - ingest: `entriesStored` now counts `added + superseded` (previously only `added`); superseded entries are written before the previous entry is marked superseded

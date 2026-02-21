@@ -638,7 +638,7 @@ export async function runIngestCommand(
 
   let embeddingApiKey: string | null = null;
   try {
-    if (!embeddingApiKey && !options.noPreFetch) {
+    if (!embeddingApiKey) {
       embeddingApiKey = resolvedDeps.resolveEmbeddingApiKeyFn(config, process.env);
     }
   } catch (error) {
@@ -660,6 +660,7 @@ export async function runIngestCommand(
       dbPath,
       batchSize: 40,
       highWatermark: 500,
+      retryOnFailure: retryEnabled,
       isShutdownRequested: resolvedDeps.shouldShutdownFn,
     });
   } catch (error) {
