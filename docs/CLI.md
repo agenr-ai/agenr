@@ -375,11 +375,13 @@ agenr ingest [options] <paths...>
 - `--provider <name>`: `anthropic|openai|openai-codex`.
 - `--platform <name>`: platform tag (`openclaw|claude-code|claude|codex`).
 - `--project <name>`: project tag (lowercase).
-- `--verbose`: per-file details.
+- `--verbose`: per-file details, including a `[X/N] file -- starting` line before extraction begins.
 - `--dry-run`: extract without storing.
 - `--json`: emit JSON summary.
 - `--concurrency <n>`: parallel chunk extractions (default `5`).
 - `--workers <n>`: files to process in parallel (default `10`). Total concurrent LLM chunk calls can reach `workers x concurrency`.
+- `--queue-high-watermark <n>`: max pending write-queue entries before workers apply backpressure (default `2000`).
+- `--queue-timeout-ms <n>`: max wait time for backpressure to clear before failing with guidance (default `120000`).
 - `--skip-ingested`: skip already-ingested file/hash pairs (default `true`).
 - `--no-pre-fetch`: disable elaborative encoding pre-fetch before per-chunk extraction.
 - `--no-retry`: disable auto-retry for failed files.

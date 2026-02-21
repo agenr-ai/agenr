@@ -693,6 +693,24 @@ export function createProgram(): Command {
       parseIntOption,
       10,
     )
+    .option(
+      "--queue-high-watermark <n>",
+      "Max pending entries in write queue before workers apply backpressure (default: 2000)",
+      (v: string) => {
+        const n = Number.parseInt(v, 10);
+        if (!Number.isInteger(n) || n < 1) throw new Error("--queue-high-watermark must be a positive integer");
+        return n;
+      },
+    )
+    .option(
+      "--queue-timeout-ms <n>",
+      "Max milliseconds a worker waits for write queue backpressure to clear (default: 120000)",
+      (v: string) => {
+        const n = Number.parseInt(v, 10);
+        if (!Number.isInteger(n) || n < 1) throw new Error("--queue-timeout-ms must be a positive integer");
+        return n;
+      },
+    )
     .option("--skip-ingested", "Skip already-ingested files", true)
     .option("--no-retry", "Disable auto-retry for failed files")
     .option("--no-pre-fetch", "Disable elaborative encoding pre-fetch")

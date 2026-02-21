@@ -52,7 +52,15 @@ function makeLlmClient(): LlmClient {
   };
 }
 
-function createQueue(storeEntriesFn: StoreEntriesFn, options?: { batchSize?: number; highWatermark?: number; isShutdownRequested?: () => boolean }) {
+function createQueue(
+  storeEntriesFn: StoreEntriesFn,
+  options?: {
+    batchSize?: number;
+    highWatermark?: number;
+    backpressureTimeoutMs?: number;
+    isShutdownRequested?: () => boolean;
+  },
+) {
   return new WriteQueue({
     db: {} as Client,
     storeEntriesFn,
@@ -61,6 +69,7 @@ function createQueue(storeEntriesFn: StoreEntriesFn, options?: { batchSize?: num
     dbPath: ":memory:",
     batchSize: options?.batchSize,
     highWatermark: options?.highWatermark,
+    backpressureTimeoutMs: options?.backpressureTimeoutMs,
     isShutdownRequested: options?.isShutdownRequested,
   });
 }
@@ -77,6 +86,16 @@ async function waitFor(predicate: () => boolean, timeoutMs = 2_000): Promise<voi
     }
     await sleep(10);
   }
+}
+
+async function runAllTimersCompat(): Promise<void> {
+  const viWithAsync = vi as unknown as { runAllTimersAsync?: () => Promise<void> };
+  if (typeof viWithAsync.runAllTimersAsync === "function") {
+    await viWithAsync.runAllTimersAsync();
+    return;
+  }
+  vi.runAllTimers();
+  await Promise.resolve();
 }
 
 afterEach(() => {
@@ -206,6 +225,66 @@ describe("WriteQueue", () => {
     expect(elapsed).toBeGreaterThanOrEqual(40);
   });
 
+  it("backpressure timeout throws after deadline", async () => {
+    let releaseFirst: (() => void) | null = null;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+
+    const storeEntriesFn = vi.fn(async (_db, entries) => {
+      if (entries[0]?.content === "first") {
+        await firstGate;
+      }
+      return makeStoreResult({ added: entries.length });
+    }) as unknown as StoreEntriesFn;
+    const queue = createQueue(storeEntriesFn, { highWatermark: 1, backpressureTimeoutMs: 200 });
+
+    const first = queue.push([makeEntry("first")], "file-a", "hash-a");
+    await waitFor(() => (storeEntriesFn as unknown as ReturnType<typeof vi.fn>).mock.calls.length === 1);
+    const queued = queue.push([makeEntry("queued")], "file-b", "hash-b");
+
+    await expect(queue.push([makeEntry("blocked")], "file-c", "hash-c")).rejects.toThrow(/backpressure timeout/i);
+
+    releaseFirst?.();
+    await Promise.all([first, queued]);
+    await queue.drain();
+    queue.destroy();
+  });
+
+  it("backpressure clears when writer drains", async () => {
+    let releaseFirst: (() => void) | null = null;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+
+    const storeEntriesFn = vi.fn(async (_db, entries) => {
+      if (entries[0]?.content === "first") {
+        await firstGate;
+      }
+      return makeStoreResult({ added: entries.length });
+    }) as unknown as StoreEntriesFn;
+    const queue = createQueue(storeEntriesFn, { highWatermark: 5, backpressureTimeoutMs: 2_000 });
+
+    const first = queue.push([makeEntry("first")], "file-a", "hash-a");
+    await waitFor(() => (storeEntriesFn as unknown as ReturnType<typeof vi.fn>).mock.calls.length === 1);
+    const queued = queue.push(
+      [makeEntry("queued-1"), makeEntry("queued-2"), makeEntry("queued-3"), makeEntry("queued-4"), makeEntry("queued-5")],
+      "file-b",
+      "hash-b",
+    );
+    const waitingPush = queue.push([makeEntry("after-drain-1"), makeEntry("after-drain-2"), makeEntry("after-drain-3")], "file-c", "hash-c");
+
+    await sleep(75);
+    releaseFirst?.();
+
+    const result = await waitingPush;
+    await Promise.all([first, queued]);
+    await queue.drain();
+    queue.destroy();
+
+    expect(result.added).toBe(3);
+  });
+
   it("retries once after a write error and then succeeds", async () => {
     vi.useFakeTimers();
     const storeEntriesFn = vi
@@ -215,7 +294,7 @@ describe("WriteQueue", () => {
     const queue = createQueue(storeEntriesFn);
 
     const pushPromise = queue.push([makeEntry("x")], "file-a", "hash-a");
-    await vi.runAllTimersAsync();
+    await runAllTimersCompat();
     const result = await pushPromise;
     await queue.drain();
     queue.destroy();
@@ -230,7 +309,7 @@ describe("WriteQueue", () => {
     const queue = createQueue(storeEntriesFn);
 
     const pushExpectation = expect(queue.push([makeEntry("x")], "file-a", "hash-a")).rejects.toThrow("always fails");
-    await vi.runAllTimersAsync();
+    await runAllTimersCompat();
     await pushExpectation;
     await queue.drain();
     queue.destroy();
