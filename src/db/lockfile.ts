@@ -77,6 +77,9 @@ export function isDbLocked(lockDir?: string): boolean {
   if (!pid) {
     return false;
   }
+  if (pid === process.pid) {
+    return false;
+  }
   return isPidAlive(pid);
 }
 

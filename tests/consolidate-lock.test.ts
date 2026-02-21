@@ -50,7 +50,8 @@ describe("consolidate lock", () => {
     const mod = await loadLockModule();
     const lockPath = lockPathFromHome(process.env.HOME || "");
     await fs.mkdir(path.dirname(lockPath), { recursive: true });
-    await fs.writeFile(lockPath, String(process.pid), "utf8");
+    // Use parent PID — always alive and always a different process than us
+    await fs.writeFile(lockPath, String(process.ppid), "utf8");
 
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     mod.warnIfLocked();
