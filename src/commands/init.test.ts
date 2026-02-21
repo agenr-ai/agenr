@@ -424,13 +424,41 @@ describe("runInitCommand", () => {
 });
 
 describe("resolveAgenrBinary", () => {
-  it("returns PNPM_HOME/agenr when which fails but PNPM_HOME is set", () => {
-    process.env.PNPM_HOME = "/tmp/pnpm-home";
+  it("returns trimmed path from which when it succeeds", () => {
+    delete process.env.PNPM_HOME;
+    execFileSyncMock.mockReturnValue("/usr/local/bin/agenr\n");
+
+    expect(resolveAgenrBinary()).toBe("/usr/local/bin/agenr");
+  });
+
+  it("returns PNPM_HOME/agenr when which fails but PNPM_HOME is set", async () => {
+    const pnpmHome = path.join(os.tmpdir(), `agenr-pnpm-home-${Date.now()}`);
+    tempDirs.push(pnpmHome);
+    process.env.PNPM_HOME = pnpmHome;
     execFileSyncMock.mockImplementation(() => {
       throw new Error("which failed");
     });
+    const candidate = path.join(pnpmHome, "agenr");
+    await fs.mkdir(pnpmHome, { recursive: true });
+    await fs.writeFile(candidate, "#!/bin/sh\nexit 0\n", "utf8");
+    await fs.chmod(candidate, 0o755);
 
-    expect(resolveAgenrBinary()).toBe(path.join("/tmp/pnpm-home", "agenr"));
+    expect(resolveAgenrBinary()).toBe(candidate);
+  });
+
+  it("returns 'agenr' when PNPM_HOME candidate is not executable", async () => {
+    const pnpmHome = path.join(os.tmpdir(), `agenr-pnpm-home-noexec-${Date.now()}`);
+    tempDirs.push(pnpmHome);
+    process.env.PNPM_HOME = pnpmHome;
+    execFileSyncMock.mockImplementation(() => {
+      throw new Error("which failed");
+    });
+    const candidate = path.join(pnpmHome, "agenr");
+    await fs.mkdir(pnpmHome, { recursive: true });
+    await fs.writeFile(candidate, "not executable\n", "utf8");
+    await fs.chmod(candidate, 0o644);
+
+    expect(resolveAgenrBinary()).toBe("agenr");
   });
 
   it("returns 'agenr' when which fails and PNPM_HOME is unset", () => {
