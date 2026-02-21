@@ -5,7 +5,7 @@
 ### Fixed
 - fix(init): codex platform now writes MCP entry directly to ~/.codex/config.toml instead of .mcp.json (which Codex does not read)
 - fix(init): openclaw platform no longer writes a .mcp.json file (OpenClaw native plugin handles MCP registration via openclaw plugins install agenr)
-- fix(init): agenr binary path is now resolved at init time via which or PNPM_HOME fallback -- GUI clients that launch with a restricted PATH will now find the correct binary
+- fix(init): agenr MCP command now uses process.execPath (node binary) and process.argv[1] (CLI script path) instead of which lookup -- avoids PATH resolution failures in GUI clients like Codex that launch with a restricted PATH
 - fix(init): codex config.toml write is idempotent -- re-running init replaces the agenr line without duplicating it
 - docs: remove redundant Memory (agenr) AGENTS.md block from OPENCLAW.md -- OpenClaw plugin handles agent instruction injection automatically via the built-in skill
 
