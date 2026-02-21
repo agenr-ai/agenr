@@ -126,24 +126,27 @@ describe("db store pipeline", () => {
     const client = makeClient();
     await initDb(client);
 
-    const embedFn = vi.fn(async (texts: string[]) => texts.map(() => new Array(1024).fill(0)));
+    const embedFn = vi.fn(async (texts: string[]) =>
+      texts.map(() => new Array(1024).fill(0) as number[]),
+    );
 
     await storeEntries(
       client,
       [
-        makeEntry({ content: "batch entry 1 vec-base", sourceFile: "batch-1.jsonl" }),
-        makeEntry({ content: "batch entry 2 vec-v2", sourceFile: "batch-2.jsonl" }),
-        makeEntry({ content: "batch entry 3 vec-v3", sourceFile: "batch-3.jsonl" }),
+        makeEntry({ content: "batch entry 1", sourceFile: "batch-1.jsonl" }),
+        makeEntry({ content: "batch entry 2", sourceFile: "batch-2.jsonl" }),
+        makeEntry({ content: "batch entry 3", sourceFile: "batch-3.jsonl" }),
       ],
       "sk-test",
+      // force:true bypasses content-hash dedup so all 3 entries reach the
+      // embedding step, making the batch assertion deterministic.
       { embedFn, force: true },
     );
 
+    // Pre-batch should call embedFn once for all entries, not once per entry.
     expect(embedFn).toHaveBeenCalledTimes(1);
-    const firstCall = embedFn.mock.calls[0] as [string[], string] | undefined;
-    expect(firstCall).toBeDefined();
-    const [calledTexts] = firstCall ?? [[], ""];
-    expect(calledTexts.length).toBeGreaterThan(1);
+    const [calledTexts] = embedFn.mock.calls[0] as [string[]];
+    expect(calledTexts.length).toBe(3);
   });
 
   it("uses entry created_at when provided", async () => {
