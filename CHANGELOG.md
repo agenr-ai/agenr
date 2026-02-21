@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.7.16] - 2026-02-21
+
+### Fixed
+- docs(skill): comprehensive SKILL.md refresh covering all four tools, full importance scale, confidence-aware extraction, store optional params (subject, scope, tags, project), retire and extract tool docs
+
 ## [0.7.15] - 2026-02-21
 
 ### Fixed
