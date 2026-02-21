@@ -183,7 +183,7 @@ describe("ingest command", () => {
       "7",
       "--queue-high-watermark",
       "3000",
-      "--queue-timeout-ms",
+      "--queue-backpressure-timeout-ms",
       "240000",
       "--skip-ingested",
       "--no-retry",
@@ -206,7 +206,7 @@ describe("ingest command", () => {
       concurrency: 3,
       workers: 7,
       queueHighWatermark: 3000,
-      queueTimeoutMs: 240000,
+      queueBackpressureTimeoutMs: 240000,
       skipIngested: true,
       retry: false,
       maxRetries: 5,
@@ -232,7 +232,7 @@ describe("ingest command", () => {
 
     const result = await runIngestCommand(
       [dir],
-      { workers: 3, dryRun: true, queueHighWatermark: 777, queueTimeoutMs: 4567 },
+      { workers: 3, dryRun: true, queueHighWatermark: 777, queueBackpressureTimeoutMs: 4567 },
       deps,
     );
 

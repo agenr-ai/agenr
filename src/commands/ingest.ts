@@ -45,7 +45,7 @@ export interface IngestCommandOptions {
   concurrency?: number | string;
   workers?: number | string;
   queueHighWatermark?: number | string;
-  queueTimeoutMs?: number | string;
+  queueBackpressureTimeoutMs?: number | string;
   skipIngested?: boolean;
   force?: boolean;
   retry?: boolean;
@@ -538,7 +538,11 @@ export async function runIngestCommand(
   const llmConcurrency = parsePositiveInt(options.concurrency, 5, "--concurrency");
   const requestedFileWorkers = parsePositiveInt(options.workers, 10, "--workers");
   const queueHighWatermark = parsePositiveInt(options.queueHighWatermark, 2000, "--queue-high-watermark");
-  const queueTimeoutMs = parsePositiveInt(options.queueTimeoutMs, 120_000, "--queue-timeout-ms");
+  const queueBackpressureTimeoutMs = parsePositiveInt(
+    options.queueBackpressureTimeoutMs,
+    120_000,
+    "--queue-backpressure-timeout-ms",
+  );
   const retryEnabled = options.retry !== false;
   const maxRetries = retryEnabled ? parsePositiveInt(options.maxRetries, 3, "--max-retries") : 0;
   const platformRaw = options.platform?.trim();
@@ -664,7 +668,7 @@ export async function runIngestCommand(
       dbPath,
       batchSize: 40,
       highWatermark: queueHighWatermark,
-      backpressureTimeoutMs: queueTimeoutMs,
+      backpressureTimeoutMs: queueBackpressureTimeoutMs,
       retryOnFailure: retryEnabled,
       isShutdownRequested: resolvedDeps.shouldShutdownFn,
     });

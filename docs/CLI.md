@@ -381,7 +381,7 @@ agenr ingest [options] <paths...>
 - `--concurrency <n>`: parallel chunk extractions (default `5`).
 - `--workers <n>`: files to process in parallel (default `10`). Total concurrent LLM chunk calls can reach `workers x concurrency`.
 - `--queue-high-watermark <n>`: max pending write-queue entries before workers apply backpressure (default `2000`).
-- `--queue-timeout-ms <n>`: max wait time for backpressure to clear before failing with guidance (default `120000`).
+- `--queue-backpressure-timeout-ms <n>`: max milliseconds workers wait for backpressure to clear before failing with guidance (default `120000ms = 2 min`).
 - `--skip-ingested`: skip already-ingested file/hash pairs (default `true`).
 - `--no-pre-fetch`: disable elaborative encoding pre-fetch before per-chunk extraction.
 - `--no-retry`: disable auto-retry for failed files.

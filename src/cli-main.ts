@@ -703,11 +703,11 @@ export function createProgram(): Command {
       },
     )
     .option(
-      "--queue-timeout-ms <n>",
-      "Max milliseconds a worker waits for write queue backpressure to clear (default: 120000)",
+      "--queue-backpressure-timeout-ms <n>",
+      "Max milliseconds workers wait for write-queue backpressure to clear before failing with guidance (default: 120000ms = 2 min)",
       (v: string) => {
         const n = Number.parseInt(v, 10);
-        if (!Number.isInteger(n) || n < 1) throw new Error("--queue-timeout-ms must be a positive integer");
+        if (!Number.isInteger(n) || n < 1) throw new Error("--queue-backpressure-timeout-ms must be a positive integer");
         return n;
       },
     )
