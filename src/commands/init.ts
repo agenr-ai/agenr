@@ -1,40 +1,21 @@
 import fs from "node:fs/promises";
-import { accessSync, constants } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
 
 function escapeTomlString(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\r/g, "\\r").replace(/\n/g, "\\n").replace(/\t/g, "\\t");
 }
 
-function isExecutableFile(filePath: string): boolean {
-  try {
-    if (process.platform === "win32") {
-      accessSync(filePath, constants.F_OK);
-    } else {
-      accessSync(filePath, constants.X_OK);
-    }
-    return true;
-  } catch {
-    return false;
+export function resolveAgenrCommand(): { command: string; baseArgs: string[] } {
+  const nodeBin = process.execPath;
+  const scriptPath = process.argv[1];
+  if (!scriptPath) {
+    throw new Error("Could not resolve agenr CLI script path from process.argv[1].");
   }
-}
-
-export function resolveAgenrBinary(): string {
-  const lookupCommand = process.platform === "win32" ? "where.exe" : "which";
-  try {
-    return execFileSync(lookupCommand, ["agenr"], { encoding: "utf8" }).trim();
-  } catch {
-    const pnpmHome = process.env.PNPM_HOME;
-    if (pnpmHome) {
-      const candidate = path.join(pnpmHome, "agenr");
-      if (isExecutableFile(candidate)) {
-        return candidate;
-      }
-    }
-    return "agenr";
-  }
+  return {
+    command: nodeBin,
+    baseArgs: [scriptPath],
+  };
 }
 
 const AGENR_START_MARKER = "<!-- agenr:start -->";
@@ -257,10 +238,13 @@ async function writeAgenrConfig(
   return { configPath, config: next };
 }
 
-function buildMcpEntry(projectDir: string, command?: string): JsonRecord {
+export function buildMcpEntry(
+  projectDir: string,
+  resolved: { command: string; baseArgs: string[] },
+): JsonRecord {
   return {
-    command: command ?? "agenr",
-    args: ["mcp"],
+    command: resolved.command,
+    args: [...resolved.baseArgs, "mcp"],
     env: {
       AGENR_PROJECT_DIR: projectDir,
     },
@@ -292,9 +276,9 @@ async function writeMcpConfig(
   projectDir: string,
   platform: InitPlatform,
 ): Promise<{ mcpPath: string; skipped: boolean }> {
+  const resolved = resolveAgenrCommand();
   if (platform === "codex") {
-    const agenrBin = resolveAgenrBinary();
-    const mcpPath = await writeCodexConfig(projectDir, agenrBin);
+    const mcpPath = await writeCodexConfig(projectDir, resolved);
     return { mcpPath, skipped: false };
   }
 
@@ -309,9 +293,8 @@ async function writeMcpConfig(
       ? path.join(projectDir, ".cursor", "mcp.json")
       : path.join(projectDir, ".mcp.json");
 
-  const agenrBin = resolveAgenrBinary();
   const existing = (await readJsonRecord(mcpPath)) ?? {};
-  const next = mergeMcpConfig(existing, buildMcpEntry(projectDir, agenrBin));
+  const next = mergeMcpConfig(existing, buildMcpEntry(projectDir, resolved));
   await writeJsonFile(mcpPath, next);
   return { mcpPath, skipped: false };
 }
@@ -357,11 +340,15 @@ function resolveProjectSlug(projectDir: string, explicitProject?: string): strin
   return slug;
 }
 
-async function writeCodexConfig(projectDir: string, agenrBin: string): Promise<string> {
+async function writeCodexConfig(
+  projectDir: string,
+  resolved: { command: string; baseArgs: string[] },
+): Promise<string> {
   const configPath = path.join(os.homedir(), ".codex", "config.toml");
-  const escapedBin = escapeTomlString(agenrBin);
+  const escapedBin = escapeTomlString(resolved.command);
+  const args = [...resolved.baseArgs, "mcp"].map((value) => `"${escapeTomlString(value)}"`).join(", ");
   const escapedProjectDir = escapeTomlString(projectDir);
-  const newLine = `agenr = { command = "${escapedBin}", args = ["mcp"], env = { AGENR_PROJECT_DIR = "${escapedProjectDir}" } }`;
+  const newLine = `agenr = { command = "${escapedBin}", args = [${args}], env = { AGENR_PROJECT_DIR = "${escapedProjectDir}" } }`;
 
   let existing = "";
   try {
@@ -413,6 +400,11 @@ async function writeCodexConfig(projectDir: string, agenrBin: string): Promise<s
 }
 
 export function formatInitSummary(result: InitCommandResult): string[] {
+  function tildePath(filePath: string): string {
+    const home = os.homedir();
+    return filePath.startsWith(home) ? `~${filePath.slice(home.length)}` : filePath;
+  }
+
   const dependencyLabel = result.dependencies.length > 0 ? `[${result.dependencies.join(",")}]` : "[]";
   const lines = [
     `agenr init: platform=${result.platform} project=${result.project} dependencies=${dependencyLabel}`,
@@ -424,7 +416,7 @@ export function formatInitSummary(result: InitCommandResult): string[] {
         : `- Wrote MCP config to ${path.relative(result.projectDir, result.mcpPath) || path.basename(result.mcpPath)}`,
   ];
   if (result.instructionsPath !== null) {
-    lines.splice(2, 0, `- Wrote system prompt block to ${path.basename(result.instructionsPath)}`);
+    lines.splice(2, 0, `- Wrote system prompt block to ${tildePath(result.instructionsPath)}`);
   } else {
     lines.splice(2, 0, `- Memory injection: handled automatically by ${result.platform} plugin (no instructions file needed)`);
   }
