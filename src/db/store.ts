@@ -18,6 +18,7 @@ const DEFAULT_SIMILAR_LIMIT = 5;
 const AGGRESSIVE_DEDUP_THRESHOLD = 0.62;
 const AGGRESSIVE_SIMILAR_LIMIT = 10;
 const RECENCY_DEDUP_HOURS = 24;
+const DEFAULT_PRE_BATCH_EMBED_CHUNK_SIZE = 2048;
 const CANONICAL_KEY_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+){2,4}$/;
 const CROSS_TYPE_TODO_SUPERSEDE_TYPES = new Set<KnowledgeEntry["type"]>(["event", "fact", "decision"]);
 const TODO_COMPLETION_SIGNALS = ["done", "fixed", "resolved", "completed", "shipped", "closed", "merged"] as const;
@@ -87,6 +88,7 @@ export interface StoreEntriesOptions {
     newEntry: KnowledgeEntry,
     candidates: Array<{ entry: StoredEntry; similarity: number }>,
   ) => Promise<OnlineDedupDecision>;
+  preBatchEmbedChunkSize?: number;
 }
 
 interface PlannedMutation {
@@ -1338,6 +1340,12 @@ export async function storeEntries(
   const totalBefore = await getTotalEntries(db);
   const effectiveDbPath = options.dbPath ?? (await inferDbPathFromConnection(db));
   const cache = new EmbeddingCache();
+  const preBatchEmbedChunkSize =
+    typeof options.preBatchEmbedChunkSize === "number" &&
+    Number.isFinite(options.preBatchEmbedChunkSize) &&
+    options.preBatchEmbedChunkSize > 0
+      ? Math.floor(options.preBatchEmbedChunkSize)
+      : DEFAULT_PRE_BATCH_EMBED_CHUNK_SIZE;
 
   let added = 0;
   let updated = 0;
@@ -1374,11 +1382,7 @@ export async function storeEntries(
   const textsToEmbed: string[] = [];
   if (!options.dryRun) {
     for (const entry of entries) {
-      const normalizedEntry: KnowledgeEntry = {
-        ...entry,
-        canonical_key: normalizeCanonicalKey(entry.canonical_key),
-      };
-      const text = composeEmbeddingText(normalizedEntry);
+      const text = composeEmbeddingText(entry);
       if (cache.get(text) === undefined) {
         textsToEmbed.push(text);
       }
@@ -1387,7 +1391,19 @@ export async function storeEntries(
 
   if (textsToEmbed.length > 0) {
     const uniqueTexts = [...new Set(textsToEmbed)];
-    const vectors = await embedFn(uniqueTexts, apiKey);
+    const vectors: number[][] = [];
+
+    for (let start = 0; start < uniqueTexts.length; start += preBatchEmbedChunkSize) {
+      const chunk = uniqueTexts.slice(start, start + preBatchEmbedChunkSize);
+      const chunkVectors = await embedFn(chunk, apiKey);
+      if (chunkVectors.length !== chunk.length) {
+        throw new Error(
+          `Embedding pre-batch chunk length mismatch: expected ${chunk.length}, got ${chunkVectors.length}.`,
+        );
+      }
+      vectors.push(...chunkVectors);
+    }
+
     if (vectors.length !== uniqueTexts.length) {
       throw new Error(
         `Embedding pre-batch length mismatch: expected ${uniqueTexts.length}, got ${vectors.length}.`,

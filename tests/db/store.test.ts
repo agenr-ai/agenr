@@ -149,6 +149,34 @@ describe("db store pipeline", () => {
     expect(calledTexts.length).toBe(3);
   });
 
+  it("chunks pre-batch embedding calls by configured chunk size", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    const embedFn = vi.fn(async (texts: string[]) =>
+      texts.map(() => new Array(1024).fill(0) as number[]),
+    );
+
+    const result = await storeEntries(
+      client,
+      [
+        makeEntry({ content: "chunked entry 1", sourceFile: "chunked-1.jsonl" }),
+        makeEntry({ content: "chunked entry 2", sourceFile: "chunked-2.jsonl" }),
+        makeEntry({ content: "chunked entry 3", sourceFile: "chunked-3.jsonl" }),
+        makeEntry({ content: "chunked entry 4", sourceFile: "chunked-4.jsonl" }),
+        makeEntry({ content: "chunked entry 5", sourceFile: "chunked-5.jsonl" }),
+      ],
+      "sk-test",
+      { embedFn, force: true, preBatchEmbedChunkSize: 2 },
+    );
+
+    expect(result.added).toBe(5);
+    expect(embedFn).toHaveBeenCalledTimes(3);
+    expect((embedFn.mock.calls[0]?.[0] as string[]).length).toBe(2);
+    expect((embedFn.mock.calls[1]?.[0] as string[]).length).toBe(2);
+    expect((embedFn.mock.calls[2]?.[0] as string[]).length).toBe(1);
+  });
+
   it("uses entry created_at when provided", async () => {
     const client = makeClient();
     await initDb(client);
