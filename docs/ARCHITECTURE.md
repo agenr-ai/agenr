@@ -387,30 +387,23 @@ Locking: File lock at `~/.agenr/consolidation.lock` prevents concurrent consolid
 
 Source: `src/consolidate/rules.ts`
 
+Tier 1 expiry uses the same `recency()` function as recall scoring (see [Recall Scoring Model](#recall-scoring-model)). For `temporary`-expiry entries this is a 30-day half-life. An entry is deleted when:
+
 ```pseudocode
-halfLife         = 90  -- days
-
-ageDecay         = 0.5 ^ (ageDays / halfLife)
-
-recallBonus      = min(recall_count * 0.05, 0.3)
-
-importanceFloor:
-  if importance >= 8  -> 0.4
-  if importance >= 6  -> 0.15
-  else                -> 0.0
-
-forgettingScore  = max(ageDecay + recallBonus, importanceFloor)
+score = recency(ageDays, entry.expiry)   -- same formula as recall scoring recency term
+if score < EXPIRE_THRESHOLD (0.05):
+    expire entry
 ```
 
-An entry expires (is deleted from the DB) when:
-- `forgettingScore < scoreThreshold` (default `0.05`) AND
-- `ageDays > maxAgeDays` (default `60`)
+With a 30-day half-life, a `temporary` entry that has never been recalled falls below the 0.05 threshold after approximately 130 days. Recall activity resets the `last_recalled_at` timestamp and extends the effective life of the entry.
 
 Only `temporary`-expiry entries are subject to expiry. `core` and `permanent` entries are never expired by this mechanism.
 
-Protection rules (checked before any expiry):
-- Entries with `importance >= 10` are always protected.
+Protection rules (checked before expiry):
+- Entries with `importance >= 10` are always protected regardless of recency.
 - Entries whose `subject` matches any pattern in `forgetting.protect[]` are always protected. Patterns are matched case-insensitively; a trailing `*` acts as a prefix wildcard.
+
+`forgettingScore()` is also defined in `rules.ts` (90-day half-life, recall bonus, importance floor) and is exported for display and audit use, but is not the function that drives the consolidation expiry decision.
 
 Config keys: `forgetting.enabled`, `forgetting.scoreThreshold`, `forgetting.maxAgeDays`, `forgetting.protect[]`.
 
