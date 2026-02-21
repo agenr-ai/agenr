@@ -29,8 +29,8 @@ The **watcher daemon** (`agenr daemon install`) monitors session transcript file
 |----------|------------------|------------|-----------------|
 | Claude Code | `~/.claude/CLAUDE.md` | No (global user file) | `.mcp.json` |
 | Cursor | `.cursor/rules/agenr.mdc` | No (gitignored by `agenr init`) | `.cursor/mcp.json` |
-| Codex CLI | `~/.codex/AGENTS.md` | No (global user file) | `~/.codex/config.toml` (manual step) |
-| OpenClaw | `AGENTS.md` | Per workspace config | Already configured via native plugin |
+| Codex CLI | `~/.codex/AGENTS.md` | No (global user file) | `~/.codex/config.toml` |
+| OpenClaw | Native plugin injection | N/A | Already configured via native plugin |
 | Windsurf | `~/.codeium/windsurf/memories/global_rules.md` | No (global user file) | `.mcp.json` |
 | Claude Desktop | N/A | N/A | `~/Library/Application Support/Claude/claude_desktop_config.json` |
 | Generic | `AGENTS.md` | Project file (not auto-gitignored) | `.mcp.json` |
@@ -92,8 +92,8 @@ Use any slug you like in place of `assistant` (e.g., `personal`, `eja`, your nam
 
 **What happens:**
 
-- System prompt block appended to `AGENTS.md` in your OpenClaw workspace.
-- `.mcp.json` is written, but OpenClaw does not read this file. MCP registration still requires `openclaw plugins install agenr`.
+- No instructions file is written. The OpenClaw native plugin injects agent instructions automatically when the plugin is loaded.
+- OpenClaw MCP registration is handled by the native plugin. Install it with `openclaw plugins install agenr`.
 
 **Plugin registration (one-time, if not already done):**
 
@@ -116,8 +116,8 @@ The agent recalls and stores under the `assistant` project scope. Since you're n
 
 **Watch out for:**
 
-- OpenClaw loads `AGENTS.md` as project context automatically. The system prompt block in `AGENTS.md` is how the agent learns about agenr — there's no separate config file.
-- The OpenClaw plugin also injects recall context at session start via `before_agent_start`. This means the agent gets memory even before it reads `AGENTS.md`. The two mechanisms are complementary, not redundant.
+- The OpenClaw native plugin handles agent instruction injection automatically. You do not need to add anything to `AGENTS.md`. The plugin registers the agenr tools and injects memory guidance before the first message.
+- The OpenClaw plugin injects recall context at session start via `before_prompt_build`, which is called once per session when the first message is built.
 - The OpenClaw plugin filters session-start recall signals by importance. Only entries with importance >= 8 (the default signalMinImportance) appear as proactive signals. If agents store entries at importance 5-7, those entries exist in the database but will not appear in session-start signals. Raise importance to 8+ for entries you want the plugin to surface proactively, or lower signalMinImportance in the plugin config.
 - This is separate from the coached store default in Gotcha #18. Gotcha #18 is correct and should not change - importance 7 is a reasonable store default. The signal threshold is a separate filter applied only by the OpenClaw plugin at recall time.
 
@@ -162,12 +162,15 @@ cd ~/Code/my-project
 agenr init --platform openclaw
 ```
 
-Then for Codex, add agenr MCP to `~/.codex/config.toml` manually:
+For Codex, the `~/.codex/config.toml` agenr entry looks like:
 
 ```toml
 [mcp]
-agenr = { command = "agenr", args = ["mcp"], env = { AGENR_PROJECT_DIR = "/Users/you/Code/my-project", OPENAI_API_KEY = "your-key-here" } }
+agenr = { command = "/path/to/agenr", args = ["mcp"], env = { AGENR_PROJECT_DIR = "/Users/you/Code/my-project" } }
 ```
+
+Replace /path/to/agenr with the output of: which agenr
+agenr reads OPENAI_API_KEY from its own config file after agenr setup - do not include it in the TOML.
 
 OpenClaw reads workspace `AGENTS.md`. Codex reads global `~/.codex/AGENTS.md`.
 
@@ -180,7 +183,7 @@ Both platforms connect to the same agenr MCP server, which reads the same `.agen
 - Both instruction files can carry the same agenr block (`AGENTS.md` for OpenClaw workspace, `~/.codex/AGENTS.md` for Codex global instructions).
 
 **What you can't do yet:**
-- Codex MCP config is global (`~/.codex/config.toml`), so switching between multiple projects with Codex requires manually updating `AGENR_PROJECT_DIR` each time.
+- `agenr init --platform codex` now writes the `config.toml` entry automatically. You no longer need to add it by hand.
 
 **Watch out for:**
 
@@ -203,28 +206,28 @@ agenr init --platform codex
 **What happens:**
 
 - System prompt block appended to `~/.codex/AGENTS.md`
-- Prints a manual step: add agenr to `~/.codex/config.toml`
+- Writes the agenr MCP entry to `~/.codex/config.toml` automatically.
 
 **Manual MCP step:**
 
-Add to `~/.codex/config.toml`:
+This step is now handled automatically by `agenr init --platform codex`.
+The generated entry uses the resolved agenr binary path.
 
 ```toml
 [mcp]
-agenr = { command = "agenr", args = ["mcp"], env = { AGENR_PROJECT_DIR = "/Users/you/Code/my-project", OPENAI_API_KEY = "your-key-here" } }
+agenr = { command = "/path/to/agenr", args = ["mcp"], env = { AGENR_PROJECT_DIR = "/Users/you/Code/my-project" } }
 ```
 
 **What you get:**
 - System prompt block is injected into `~/.codex/AGENTS.md` automatically, so Codex knows when to recall and store.
-- Once the MCP entry is added manually, Codex stores and recalls project-scoped entries like any other supported platform.
+- MCP config is written automatically, and Codex stores and recalls project-scoped entries like any other supported platform.
 
 **What you can't do yet:**
-- `agenr init` cannot write the MCP config for you; the `~/.codex/config.toml` step is always manual.
 - The watcher daemon does not know where Codex stores session transcripts, so automatic knowledge extraction from Codex sessions does not work.
 
 **Watch out for:**
 
-- `agenr init` cannot safely write TOML for you (Codex config is global and may have other tools). You must add the MCP entry by hand.
+- Codex config is global (`~/.codex/config.toml`). `agenr init` updates the agenr entry for the current project, so switching projects may require re-running `agenr init --platform codex`.
 - The watcher daemon does not automatically find Codex session transcripts. If Codex stores transcripts somewhere, you'll need to point the watcher at that path manually.
 
 ---
@@ -375,7 +378,7 @@ No extra setup. Run `agenr init` once. Each agent session spawns its own MCP ser
 | Single project, Cursor | Works | Auto-detected, uses `.cursor/mcp.json` |
 | Single project, Windsurf | Works | Auto-detected |
 | Single project, OpenClaw | Works | Native plugin via `openclaw plugins install agenr` |
-| Single project, Codex CLI | Partial | Instructions auto, MCP config is manual (TOML) |
+| Single project, Codex CLI | Works | Both instructions and MCP config written automatically |
 | Single project, Claude Desktop | Partial | MCP config auto, but no instructions file (no project-level prompt) |
 | Polyrepo, independent | Works | Each project scoped separately |
 | Polyrepo, with dependencies | Works | `--depends-on` flag, non-transitive |
@@ -468,6 +471,7 @@ Entries extracted by the watcher daemon have no `project` field. Only entries st
 **10. Codex MCP config is global**
 
 Unlike other platforms where MCP config is per-project (`.mcp.json`), Codex uses `~/.codex/config.toml`. If you work on multiple projects, you need to manage `AGENR_PROJECT_DIR` across them. There's no clean solution for this yet.
+`agenr init --platform codex` now writes the `config.toml` entry automatically using the current binary path. The global nature of the config (and the need to manage `AGENR_PROJECT_DIR` per project) still applies.
 
 **11. Dev clone in a differently-named directory gets the wrong project slug**
 

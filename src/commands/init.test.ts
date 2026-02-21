@@ -1,8 +1,20 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { runInitCommand } from "./init.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resolveAgenrBinary, runInitCommand } from "./init.js";
+
+const { execFileSyncMock } = vi.hoisted(() => ({
+  execFileSyncMock: vi.fn(),
+}));
+
+vi.mock("node:child_process", async () => {
+  const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
+  return {
+    ...actual,
+    execFileSync: execFileSyncMock,
+  };
+});
 
 async function createTempDir(prefix = "agenr-init-"): Promise<string> {
   return await fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -24,6 +36,7 @@ async function pathExists(filePath: string): Promise<boolean> {
 
 const tempDirs: string[] = [];
 const originalHome = process.env.HOME;
+const originalPnpmHome = process.env.PNPM_HOME;
 
 async function withTempHome<T>(fn: (homeDir: string) => Promise<T>): Promise<T> {
   const homeDir = await createTempDir("agenr-home-");
@@ -33,10 +46,16 @@ async function withTempHome<T>(fn: (homeDir: string) => Promise<T>): Promise<T> 
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   if (originalHome === undefined) {
     delete process.env.HOME;
   } else {
     process.env.HOME = originalHome;
+  }
+  if (originalPnpmHome === undefined) {
+    delete process.env.PNPM_HOME;
+  } else {
+    process.env.PNPM_HOME = originalPnpmHome;
   }
 
   while (tempDirs.length > 0) {
@@ -49,6 +68,10 @@ afterEach(async () => {
 });
 
 describe("runInitCommand", () => {
+  beforeEach(() => {
+    execFileSyncMock.mockReturnValue("/mock/bin/agenr\n");
+  });
+
   it("auto-detects claude-code from .claude directory", async () => {
     const dir = await createTempDir();
     tempDirs.push(dir);
@@ -73,26 +96,17 @@ describe("runInitCommand", () => {
     expect(result.mcpPath).toBe(path.join(dir, ".cursor", "mcp.json"));
   });
 
-  it("explicit --platform openclaw skips AGENTS.md write and still writes MCP config", async () => {
+  it("explicit --platform openclaw skips AGENTS.md write and does not write .mcp.json", async () => {
     const dir = await createTempDir();
     tempDirs.push(dir);
 
     const result = await runInitCommand({ path: dir, platform: "openclaw" });
     expect(result.platform).toBe("openclaw");
     expect(result.instructionsPath).toBeNull();
+    expect(result.mcpPath).toBe("");
+    expect(result.mcpSkipped).toBe(true);
     expect(await pathExists(path.join(dir, "AGENTS.md"))).toBe(false);
-
-    const mcpPath = path.join(dir, ".mcp.json");
-    expect(await pathExists(mcpPath)).toBe(true);
-    const config = await readJson(mcpPath);
-    const mcpServers = config.mcpServers as Record<string, unknown>;
-    expect(mcpServers.agenr).toEqual({
-      command: "agenr",
-      args: ["mcp"],
-      env: {
-        AGENR_PROJECT_DIR: path.resolve(dir),
-      },
-    });
+    expect(await pathExists(path.join(dir, ".mcp.json"))).toBe(false);
   });
 
   it("AGENTS.md presence no longer auto-detects openclaw (falls through to generic)", async () => {
@@ -143,8 +157,46 @@ describe("runInitCommand", () => {
       const result = await runInitCommand({ path: dir, platform: "codex" });
       expect(result.platform).toBe("codex");
       expect(result.instructionsPath).toBe(path.join(homeDir, ".codex", "AGENTS.md"));
-      expect(result.mcpPath).toBe(path.join(dir, ".mcp.json"));
+      expect(result.mcpPath).toBe(path.join(homeDir, ".codex", "config.toml"));
+      expect(result.mcpSkipped).toBe(false);
       expect(await pathExists(path.join(dir, "AGENTS.md"))).toBe(false);
+      expect(await pathExists(path.join(dir, ".mcp.json"))).toBe(false);
+    });
+  });
+
+  it("codex platform writes ~/.codex/config.toml with agenr entry and project env", async () => {
+    const dir = await createTempDir();
+    tempDirs.push(dir);
+
+    await withTempHome(async (homeDir) => {
+      const result = await runInitCommand({ path: dir, platform: "codex" });
+      const configPath = path.join(homeDir, ".codex", "config.toml");
+      expect(result.mcpPath).toBe(configPath);
+      expect(await pathExists(configPath)).toBe(true);
+      expect(await pathExists(path.join(dir, ".mcp.json"))).toBe(false);
+
+      const toml = await fs.readFile(configPath, "utf8");
+      expect(toml).toContain("[mcp]");
+      expect(toml).toContain('command = "/mock/bin/agenr"');
+      expect(toml).toContain(`AGENR_PROJECT_DIR = "${path.resolve(dir)}"`);
+      expect(toml).not.toContain("OPENAI_API_KEY");
+    });
+  });
+
+  it("re-running init for codex is idempotent and does not duplicate agenr line", async () => {
+    const dir = await createTempDir();
+    tempDirs.push(dir);
+
+    await withTempHome(async (homeDir) => {
+      await runInitCommand({ path: dir, platform: "codex" });
+      await runInitCommand({ path: dir, platform: "codex" });
+
+      const configPath = path.join(homeDir, ".codex", "config.toml");
+      const toml = await fs.readFile(configPath, "utf8");
+      const agenrLines = toml
+        .split(/\r?\n/)
+        .filter((line) => line.trimStart().startsWith("agenr ="));
+      expect(agenrLines).toHaveLength(1);
     });
   });
 
@@ -216,7 +268,7 @@ describe("runInitCommand", () => {
     const mcpServers = config.mcpServers as Record<string, unknown>;
     expect(mcpServers.other).toEqual({ command: "other", args: ["x"] });
     expect(mcpServers.agenr).toEqual({
-      command: "agenr",
+      command: "/mock/bin/agenr",
       args: ["mcp"],
       env: {
         AGENR_PROJECT_DIR: path.resolve(dir),
@@ -248,7 +300,7 @@ describe("runInitCommand", () => {
     expect(config.agenr).toBeUndefined();
     expect(config.mcpServers).toEqual({
       agenr: {
-        command: "agenr",
+        command: "/mock/bin/agenr",
         args: ["mcp"],
         env: {
           AGENR_PROJECT_DIR: path.resolve(dir),
@@ -368,5 +420,25 @@ describe("runInitCommand", () => {
     await expect(runInitCommand({ path: os.homedir() })).rejects.toThrow(
       "Cannot initialize agenr in your home directory",
     );
+  });
+});
+
+describe("resolveAgenrBinary", () => {
+  it("returns PNPM_HOME/agenr when which fails but PNPM_HOME is set", () => {
+    process.env.PNPM_HOME = "/tmp/pnpm-home";
+    execFileSyncMock.mockImplementation(() => {
+      throw new Error("which failed");
+    });
+
+    expect(resolveAgenrBinary()).toBe(path.join("/tmp/pnpm-home", "agenr"));
+  });
+
+  it("returns 'agenr' when which fails and PNPM_HOME is unset", () => {
+    delete process.env.PNPM_HOME;
+    execFileSyncMock.mockImplementation(() => {
+      throw new Error("which failed");
+    });
+
+    expect(resolveAgenrBinary()).toBe("agenr");
   });
 });
