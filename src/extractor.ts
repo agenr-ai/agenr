@@ -299,6 +299,7 @@ PREFERENCE:
   "source_context": "User mentioned scheduling preference during calendar discussion -- scored 6 not 8 because no parallel session needs to act on this immediately; it is a low-urgency convenience preference"
 }
 
+// NOTE: These examples are drawn from OpenClaw transcripts (agent role labels, tool-verified claims). They provide soft cross-platform guidance for hedged-claim handling; mechanical enforcement (importance cap + unverified tag) is only applied for the openclaw platform via applyConfidenceCap().
 Example: hedged agent claim (correct handling):
 {
   "type": "fact",

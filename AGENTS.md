@@ -175,11 +175,11 @@ The store pipeline in `src/db/store.ts` has layered dedup:
 
 1. **Content hash** - exact content match (cheapest, runs first)
 2. **Vector similarity bands** (cosine against existing entries):
-   - `>= 0.98` (same type) - auto-skip (near-exact duplicate)
-   - `0.92-0.98` (same subject + same type) - reinforce (bump confirmations)
-   - `0.92-0.98` (same subject, different type) - create "related" relation
-   - `0.80-0.92` (same subject, `--classify` flag) - LLM classify relationship
-   - `< 0.80` - insert as new
+   - `>= 0.95` (same type) - auto-skip (near-exact duplicate)
+   - `>= 0.88` (same subject + same type) - reinforce (bump confirmations)
+   - `0.88-0.95` (same subject, different type) - create "related" relation
+   - `>= 0.72` default / `>= 0.62` aggressive - LLM decision path
+   - below threshold - insert as new
 
 Key functions: `hasContentHash`, `findSimilar`, `composeEmbeddingText`, `markSuperseded`
 
