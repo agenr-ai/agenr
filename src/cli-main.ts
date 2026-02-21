@@ -687,6 +687,12 @@ export function createProgram(): Command {
     .option("--dry-run", "Extract without storing", false)
     .option("--json", "Output JSON results", false)
     .option("--concurrency <n>", "Parallel chunk extractions", parseIntOption, 5)
+    .option(
+      "--workers <n>",
+      "Number of files to process in parallel (default: 10). Each worker uses --concurrency chunk parallelism. Total concurrent LLM calls = workers x concurrency. Reduce if hitting rate limits.",
+      parseIntOption,
+      10,
+    )
     .option("--skip-ingested", "Skip already-ingested files", true)
     .option("--no-retry", "Disable auto-retry for failed files")
     .option("--no-pre-fetch", "Disable elaborative encoding pre-fetch")
