@@ -100,6 +100,7 @@ export async function runRecallTool(agenrPath: string, params: Record<string, un
   const limit = asNumber(params.limit);
   const types = asString(params.types);
   const since = asString(params.since);
+  const until = asString(params.until);
   const platform = asString(params.platform);
   const project = asString(params.project);
 
@@ -117,6 +118,9 @@ export async function runRecallTool(agenrPath: string, params: Record<string, un
   }
   if (since) {
     args.push("--since", since);
+  }
+  if (until) {
+    args.push("--until", until);
   }
   // threshold has no direct CLI equivalent in agenr recall
   if (platform) {

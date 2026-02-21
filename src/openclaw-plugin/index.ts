@@ -221,6 +221,9 @@ const plugin = {
             since: Type.Optional(
               Type.String({ description: "Only entries newer than this (ISO date or relative, e.g. 7d)." }),
             ),
+            until: Type.Optional(
+              Type.String({ description: "Only entries older than this ceiling (ISO date or relative, e.g. 7d = entries created before 7 days ago). Use with since for a date window." }),
+            ),
             platform: Type.Optional(Type.String({ description: "Platform filter: openclaw, claude-code, codex." })),
             project: Type.Optional(Type.String({ description: "Project scope. Pass * for all projects." })),
           }),
