@@ -169,8 +169,8 @@ For Codex, the `~/.codex/config.toml` agenr entry looks like:
 agenr = { command = "/path/to/agenr", args = ["mcp"], env = { AGENR_PROJECT_DIR = "/Users/you/Code/my-project" } }
 ```
 
-Replace /path/to/agenr with the output of: which agenr
-agenr reads OPENAI_API_KEY from its own config file after agenr setup - do not include it in the TOML.
+> **Note:** Replace `/path/to/agenr` with the output of `which agenr`.
+> agenr reads `OPENAI_API_KEY` from its own config file after `agenr setup` - do not include it in the TOML.
 
 OpenClaw reads workspace `AGENTS.md`. Codex reads global `~/.codex/AGENTS.md`.
 
@@ -181,9 +181,10 @@ Both platforms connect to the same agenr MCP server, which reads the same `.agen
 **What you get:**
 - Both OpenClaw and Codex read from and write to the same `knowledge.db`, so decisions made in one agent surface in the other.
 - Both instruction files can carry the same agenr block (`AGENTS.md` for OpenClaw workspace, `~/.codex/AGENTS.md` for Codex global instructions).
+- `agenr init --platform codex` writes the `config.toml` entry automatically.
 
 **What you can't do yet:**
-- `agenr init --platform codex` now writes the `config.toml` entry automatically. You no longer need to add it by hand.
+- Codex MCP config is global (`~/.codex/config.toml`), so switching between multiple projects with Codex still requires managing `AGENR_PROJECT_DIR`.
 
 **Watch out for:**
 
@@ -208,7 +209,7 @@ agenr init --platform codex
 - System prompt block appended to `~/.codex/AGENTS.md`
 - Writes the agenr MCP entry to `~/.codex/config.toml` automatically.
 
-**Manual MCP step:**
+**MCP configuration:**
 
 This step is now handled automatically by `agenr init --platform codex`.
 The generated entry uses the resolved agenr binary path.

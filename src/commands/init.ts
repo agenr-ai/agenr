@@ -1,16 +1,37 @@
 import fs from "node:fs/promises";
+import { accessSync, constants } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 
-export function resolveAgenrBinary(): string {
+function escapeTomlString(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\r/g, "\\r").replace(/\n/g, "\\n").replace(/\t/g, "\\t");
+}
+
+function isExecutableFile(filePath: string): boolean {
   try {
-    return execFileSync("which", ["agenr"], { encoding: "utf8" }).trim();
+    if (process.platform === "win32") {
+      accessSync(filePath, constants.F_OK);
+    } else {
+      accessSync(filePath, constants.X_OK);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function resolveAgenrBinary(): string {
+  const lookupCommand = process.platform === "win32" ? "where.exe" : "which";
+  try {
+    return execFileSync(lookupCommand, ["agenr"], { encoding: "utf8" }).trim();
   } catch {
     const pnpmHome = process.env.PNPM_HOME;
     if (pnpmHome) {
       const candidate = path.join(pnpmHome, "agenr");
-      return candidate;
+      if (isExecutableFile(candidate)) {
+        return candidate;
+      }
     }
     return "agenr";
   }
@@ -338,7 +359,9 @@ function resolveProjectSlug(projectDir: string, explicitProject?: string): strin
 
 async function writeCodexConfig(projectDir: string, agenrBin: string): Promise<string> {
   const configPath = path.join(os.homedir(), ".codex", "config.toml");
-  const newLine = `agenr = { command = "${agenrBin}", args = ["mcp"], env = { AGENR_PROJECT_DIR = "${projectDir}" } }`;
+  const escapedBin = escapeTomlString(agenrBin);
+  const escapedProjectDir = escapeTomlString(projectDir);
+  const newLine = `agenr = { command = "${escapedBin}", args = ["mcp"], env = { AGENR_PROJECT_DIR = "${escapedProjectDir}" } }`;
 
   let existing = "";
   try {
@@ -354,22 +377,33 @@ async function writeCodexConfig(projectDir: string, agenrBin: string): Promise<s
     next = `[mcp]\n${newLine}\n`;
   } else {
     const lines = existing.split("\n");
-    const agenrLineIdx = lines.findIndex((l) => l.trimStart().startsWith("agenr ="));
-    if (agenrLineIdx !== -1) {
-      // Replace existing agenr line in place (idempotent)
-      lines[agenrLineIdx] = newLine;
-      next = lines.join("\n");
-    } else {
-      const mcpSectionIdx = lines.findIndex((l) => l.trim() === "[mcp]");
-      if (mcpSectionIdx !== -1) {
+    const mcpSectionIdx = lines.findIndex((l) => l.trim() === "[mcp]");
+    if (mcpSectionIdx !== -1) {
+      let mcpSectionEnd = lines.length;
+      for (let i = mcpSectionIdx + 1; i < lines.length; i += 1) {
+        if (/^\s*\[/.test(lines[i] ?? "")) {
+          mcpSectionEnd = i;
+          break;
+        }
+      }
+
+      const relativeAgenrIdx = lines
+        .slice(mcpSectionIdx + 1, mcpSectionEnd)
+        .findIndex((l) => l.trimStart().startsWith("agenr ="));
+
+      if (relativeAgenrIdx !== -1) {
+        // Replace existing agenr line in place (idempotent)
+        const agenrLineIdx = mcpSectionIdx + 1 + relativeAgenrIdx;
+        lines[agenrLineIdx] = newLine;
+      } else {
         // Insert after [mcp] line
         lines.splice(mcpSectionIdx + 1, 0, newLine);
-        next = lines.join("\n");
-      } else {
-        // Append [mcp] block at end
-        const suffix = existing.endsWith("\n") ? "" : "\n";
-        next = `${existing}${suffix}\n[mcp]\n${newLine}\n`;
       }
+      next = lines.join("\n");
+    } else {
+      // Append [mcp] block at end
+      const suffix = existing.endsWith("\n") ? "" : "\n";
+      next = `${existing}${suffix}\n[mcp]\n${newLine}\n`;
     }
   }
 

@@ -127,6 +127,7 @@ describe("recall command", () => {
 
   it("groups session-start output and includes category fields", async () => {
     const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const freshIso = new Date(Date.now() - 60 * 60 * 1000).toISOString();
     const recallFn = vi.fn(async (_db: unknown, query: { expiry?: string }) => {
       if (query.expiry === "core") {
         return [
@@ -136,6 +137,8 @@ describe("recall command", () => {
               content: "Core identity",
               expiry: "core",
               type: "fact",
+              created_at: freshIso,
+              updated_at: freshIso,
               embedding: [1, 0, 0],
             }),
           }),
@@ -144,15 +147,36 @@ describe("recall command", () => {
 
       return [
         makeResult({
-          entry: makeEntry({ id: "todo-1", type: "todo", expiry: "temporary", content: "Active todo" }),
+          entry: makeEntry({
+            id: "todo-1",
+            type: "todo",
+            expiry: "temporary",
+            content: "Active todo",
+            created_at: freshIso,
+            updated_at: freshIso,
+          }),
           score: 0.92,
         }),
         makeResult({
-          entry: makeEntry({ id: "pref-1", type: "preference", expiry: "permanent", content: "Pref item" }),
+          entry: makeEntry({
+            id: "pref-1",
+            type: "preference",
+            expiry: "permanent",
+            content: "Pref item",
+            created_at: freshIso,
+            updated_at: freshIso,
+          }),
           score: 0.85,
         }),
         makeResult({
-          entry: makeEntry({ id: "recent-1", type: "event", expiry: "temporary", content: "Recent item" }),
+          entry: makeEntry({
+            id: "recent-1",
+            type: "event",
+            expiry: "temporary",
+            content: "Recent item",
+            created_at: freshIso,
+            updated_at: freshIso,
+          }),
           score: 0.8,
         }),
       ];
