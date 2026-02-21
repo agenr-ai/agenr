@@ -440,7 +440,7 @@ RECOMMENDATION - not a factual claim, never capped:
 `;
 
 export function buildExtractionSystemPrompt(
-  platform?: KnowledgePlatform | string,
+  platform?: KnowledgePlatform | (string & {}),
 ): string {
   if (platform === "openclaw") {
     return `${SYSTEM_PROMPT}\n\n${OPENCLAW_CONFIDENCE_ADDENDUM}`;
@@ -765,7 +765,7 @@ export function validateEntry(entry: KnowledgeEntry): string | null {
 
 export function applyConfidenceCap(
   entry: KnowledgeEntry,
-  platform?: KnowledgePlatform | string,
+  platform?: KnowledgePlatform | (string & {}),
 ): KnowledgeEntry {
   if (
     platform === "openclaw" &&
@@ -1520,7 +1520,7 @@ export async function extractKnowledgeFromChunks(params: {
   chunks: TranscriptChunk[];
   client: LlmClient;
   verbose: boolean;
-  platform?: KnowledgePlatform | string;
+  platform?: KnowledgePlatform | (string & {});
   noDedup?: boolean;
   interChunkDelayMs?: number;
   llmConcurrency?: number;
@@ -1672,6 +1672,8 @@ export async function extractKnowledgeFromChunks(params: {
               );
             }
 
+            // Re-validate defensively: applyConfidenceCap currently only lowers importance to 5,
+            // but this guard catches future extensions to applyConfidenceCap that could produce invalid entries.
             const validationIssue = validateEntry(capped);
             if (validationIssue) {
               if (params.verbose) {
