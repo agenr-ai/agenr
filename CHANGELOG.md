@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.7.20] - 2026-02-21
+
+### Added
+- feat(models): add gpt-4.1-nano, gpt-4.1-mini, and gpt-4.1 aliases for OpenAI
+  provider; gpt-4.1-nano is now the recommended fast/cheap extraction model
+  (--model gpt-4.1-nano or agenr config set model gpt-4.1-nano) (#127)
+
+### Performance
+- perf(ingest): pre-batch embedding calls in storeEntries; entries in a write
+  queue batch are now embedded in a single API call instead of one call per
+  entry, reducing ingest wall-clock time significantly on large jobs (#127)
+
 ## [0.7.19] - 2026-02-21
 
 ### Fixed

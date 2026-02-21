@@ -1,5 +1,5 @@
 import { createClient, type Client } from "@libsql/client";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { initDb } from "../../src/db/client.js";
 import { hashText, storeEntries } from "../../src/db/store.js";
 import type { KnowledgeEntry } from "../../src/types.js";
@@ -120,6 +120,30 @@ describe("db store pipeline", () => {
     expect(String(ingestLogs.rows[0]?.content_hash)).toBe(hashText("first"));
     expect(asNumber(ingestLogs.rows[0]?.entries_added)).toBe(5);
     expect(asNumber(ingestLogs.rows[1]?.entries_skipped)).toBe(5);
+  });
+
+  it("pre-batches embeddings for multi-entry store calls", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    const embedFn = vi.fn(async (texts: string[]) => texts.map(() => new Array(1024).fill(0)));
+
+    await storeEntries(
+      client,
+      [
+        makeEntry({ content: "batch entry 1 vec-base", sourceFile: "batch-1.jsonl" }),
+        makeEntry({ content: "batch entry 2 vec-v2", sourceFile: "batch-2.jsonl" }),
+        makeEntry({ content: "batch entry 3 vec-v3", sourceFile: "batch-3.jsonl" }),
+      ],
+      "sk-test",
+      { embedFn, force: true },
+    );
+
+    expect(embedFn).toHaveBeenCalledTimes(1);
+    const firstCall = embedFn.mock.calls[0] as [string[], string] | undefined;
+    expect(firstCall).toBeDefined();
+    const [calledTexts] = firstCall ?? [[], ""];
+    expect(calledTexts.length).toBeGreaterThan(1);
   });
 
   it("uses entry created_at when provided", async () => {
