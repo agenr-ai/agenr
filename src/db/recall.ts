@@ -704,12 +704,18 @@ export async function recall(
     if (!queryEmbedding) {
       throw new Error("Embedding provider returned no vector for recall query.");
     }
-    // TODO(#111): When since/until bounds are active, increase vectorCandidateLimit to
-    // improve in-window coverage. Future: push date filtering into fetchVectorCandidates.
+    // Over-fetch when date bounds narrow the post-filter window.
+    // Proper fix: push filtering into fetchVectorCandidates SQL (see TODO #111).
+    const hasDateBounds = cutoff !== undefined || ceiling !== undefined;
+    const vectorLimit = hasDateBounds
+      ? (options.vectorCandidateLimit ?? DEFAULT_VECTOR_CANDIDATE_LIMIT) * 3
+      : (options.vectorCandidateLimit ?? DEFAULT_VECTOR_CANDIDATE_LIMIT);
+    // TODO(#111): Proper fix is date filtering inside fetchVectorCandidates SQL.
+    // Interim: 3x candidate limit when bounds are active to improve in-window coverage.
     candidates = await fetchVectorCandidates(
       db,
       queryEmbedding,
-      options.vectorCandidateLimit ?? DEFAULT_VECTOR_CANDIDATE_LIMIT,
+      vectorLimit,
       platform,
       project,
       excludeProject,

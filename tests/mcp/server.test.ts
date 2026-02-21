@@ -268,7 +268,7 @@ describe("mcp server", () => {
       expect(parseSinceToIso(input, now)).toBe(parsed?.toISOString());
     }
 
-    expect(() => parseSinceToIso("not-a-duration", now)).toThrow("Invalid since value");
+    expect(() => parseSinceToIso("not-a-duration", now)).toThrow("Invalid date value");
   });
 
   it("handles initialize handshake", async () => {

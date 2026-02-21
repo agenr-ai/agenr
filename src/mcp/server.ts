@@ -136,7 +136,7 @@ const TOOL_DEFINITIONS: McpToolDefinition[] = [
         until: {
           type: "string",
           description:
-            "Only entries older than this (ISO date or relative, e.g. 7d, 1m). Use with since for date range queries: since sets the lower bound, until the upper bound.",
+            "Only entries created before this point in time (ISO date or relative, e.g. 7d = entries older than 7 days). Use with since for a date range: since sets the lower bound, until the upper bound.",
         },
         threshold: {
           type: "number",
