@@ -4,8 +4,10 @@
 
 ### Fixed
 - fix(ingest): WriteQueue backpressure deadlock when processing large session files; raised default highWatermark from 500 to 2000 and added configurable backpressure timeout (default 120s) that surfaces a clear error instead of hanging forever (#125)
-- feat(ingest): add `--queue-high-watermark` and `--queue-timeout-ms` CLI flags for tuning write queue behavior on large ingest jobs
-- feat(ingest): verbose mode now logs `[X/N] file -- starting` before extraction begins, eliminating the silent gap during large-file processing (#124)
+
+### Added
+- feat(ingest): --queue-high-watermark and --queue-backpressure-timeout-ms CLI flags for tuning write queue behavior on large ingest jobs
+- feat(ingest): verbose mode now logs "[X/N] file -- starting" before extraction begins, eliminating the silent gap during large-file processing (#124)
 
 ## [0.7.18] - 2026-02-21
 

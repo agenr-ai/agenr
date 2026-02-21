@@ -128,7 +128,7 @@ export class WriteQueue {
     this.dbPath = options.dbPath;
     this.batchSize = Math.max(1, Math.floor(options.batchSize ?? 40));
     this.highWatermark = Math.max(1, Math.floor(options.highWatermark ?? 2000));
-    this.backpressureTimeoutMs = options.backpressureTimeoutMs ?? 120_000;
+    this.backpressureTimeoutMs = Math.max(1, options.backpressureTimeoutMs ?? 120_000);
     this.retryOnFailure = options.retryOnFailure !== false;
     this.isShutdownRequested = options.isShutdownRequested;
 
@@ -152,9 +152,10 @@ export class WriteQueue {
       if (Date.now() - backpressureStart > this.backpressureTimeoutMs) {
         throw new Error(
           `WriteQueue backpressure timeout after ${this.backpressureTimeoutMs}ms: ` +
-            `${this.pendingEntries} pending entries, highWatermark=${this.highWatermark}. ` +
+            `${this.pendingEntries} pending entries, limit=${this.highWatermark} (--queue-high-watermark). ` +
             "The writer may be stalled. Try reducing --workers or --concurrency, " +
-            "or increase --queue-high-watermark.",
+            "increase --queue-high-watermark, " +
+            "or increase --queue-backpressure-timeout-ms if the writer is just slow.",
         );
       }
       await sleep(50);
