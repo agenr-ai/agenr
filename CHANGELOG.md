@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.7.17] - 2026-02-21
+
+### Performance
+- perf(ingest): two-phase extract+write pipeline eliminates SQLite write-lock contention; extraction workers run in parallel while a single background writer drains entries in batched transactions (#107)
+- feat(ingest): add `--workers` flag (default 10) for file-level parallelism; previously hardcoded to 1
+
+### Changed
+- ingest: `entriesStored` now counts `added + superseded` (previously only `added`); superseded entries are written before the previous entry is marked superseded
+
 ## [0.7.16] - 2026-02-21
 
 ### Fixed

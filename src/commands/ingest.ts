@@ -16,6 +16,8 @@ import { normalizeKnowledgePlatform } from "../platform.js";
 import { parseProjectList } from "../project.js";
 import { KNOWLEDGE_PLATFORMS } from "../types.js";
 import type { KnowledgeEntry } from "../types.js";
+import { CancelledError, ShutdownError, WriteQueue } from "../ingest/write-queue.js";
+import type { BatchWriteResult, WriteQueueOptions } from "../ingest/write-queue.js";
 import { banner, formatError, formatWarn, ui } from "../ui.js";
 import { installSignalHandlers, isShutdownRequested, onShutdown } from "../shutdown.js";
 import { isWatcherRunning, readWatcherPid, resolveWatcherPidPath } from "../watch/pid.js";
@@ -41,6 +43,7 @@ export interface IngestCommandOptions {
   platform?: string;
   project?: string | string[];
   concurrency?: number | string;
+  workers?: number | string;
   skipIngested?: boolean;
   force?: boolean;
   retry?: boolean;
@@ -100,6 +103,7 @@ export interface IngestCommandDeps {
   nowFn: () => Date;
   sleepFn: (ms: number) => Promise<void>;
   shouldShutdownFn: () => boolean;
+  createWriteQueueFn: (opts: WriteQueueOptions) => WriteQueue;
 }
 
 function hasGlobChars(input: string): boolean {
@@ -484,6 +488,7 @@ export async function runIngestCommand(
     nowFn: deps?.nowFn ?? (() => new Date()),
     sleepFn: deps?.sleepFn ?? sleep,
     shouldShutdownFn: deps?.shouldShutdownFn ?? isShutdownRequested,
+    createWriteQueueFn: deps?.createWriteQueueFn ?? ((opts) => new WriteQueue(opts)),
   };
   const clackOutput = { output: process.stderr };
   clack.intro(banner(), clackOutput);
@@ -529,8 +534,9 @@ export async function runIngestCommand(
   const skipIngested = force ? false : options.skipIngested !== false;
   const globPattern = options.glob?.trim() || DEFAULT_GLOB;
   const llmConcurrency = parsePositiveInt(options.concurrency, 5, "--concurrency");
+  const requestedFileWorkers = parsePositiveInt(options.workers, 10, "--workers");
   const retryEnabled = options.retry !== false;
-    const maxRetries = retryEnabled ? parsePositiveInt(options.maxRetries, 3, "--max-retries") : 0;
+  const maxRetries = retryEnabled ? parsePositiveInt(options.maxRetries, 3, "--max-retries") : 0;
   const platformRaw = options.platform?.trim();
   const platform = platformRaw ? normalizeKnowledgePlatform(platformRaw) : null;
   if (platformRaw && !platform) {
@@ -558,141 +564,146 @@ export async function runIngestCommand(
   const retrySummaries: string[] = [];
   let stoppedForShutdown = false;
 
-    const files = await resolveInputFiles(inputPaths, globPattern, resolvedDeps.expandInputFilesFn);
-    const targetsWithSizes = await Promise.all(
-      files.map(async (filePath) => {
-        const stat = await fs.stat(filePath).catch(() => null);
-        return {
-          file: filePath,
-          size: stat?.isFile() ? stat.size : -1,
-        };
-      }),
-    );
-
-    const sortedTargets = targetsWithSizes
-      .sort((a, b) => a.size - b.size || a.file.localeCompare(b.file))
-      .map<IngestTarget>((item, index) => ({ ...item, index }));
-
-    clack.log.info(
-      `Ingesting: ${ui.bold(String(sortedTargets.length))} file(s) | Glob: ${globPattern} | Chunk concurrency: ${ui.bold(String(llmConcurrency))} | Skip ingested: ${skipIngested ? "yes" : "no"}`,
-      clackOutput,
-    );
-
-    if (sortedTargets.length === 0) {
-      clack.log.warn(formatWarn("No files matched input paths and glob filter."), clackOutput);
-      clack.outro(undefined, clackOutput);
-      const emptyResult: IngestCommandResult = {
-        exitCode: 0,
-        filesProcessed: 0,
-        filesSkipped: 0,
-        filesFailed: 0,
-        totalEntriesExtracted: 0,
-        totalEntriesStored: 0,
-        dedupStats: {
-          entries_added: 0,
-          entries_updated: 0,
-          entries_skipped: 0,
-          entries_reinforced: 0,
-          entries_superseded: 0,
-          dedup_llm_calls: 0,
-        },
-        durationMs: Math.max(0, resolvedDeps.nowFn().getTime() - startedAt.getTime()),
-        results: [],
+  const files = await resolveInputFiles(inputPaths, globPattern, resolvedDeps.expandInputFilesFn);
+  const targetsWithSizes = await Promise.all(
+    files.map(async (filePath) => {
+      const stat = await fs.stat(filePath).catch(() => null);
+      return {
+        file: filePath,
+        size: stat?.isFile() ? stat.size : -1,
       };
-      if (json) {
-        process.stdout.write(`${JSON.stringify(emptyResult, null, 2)}\n`);
-      }
-      return emptyResult;
-    }
+    }),
+  );
 
-    const config = resolvedDeps.readConfigFn(process.env);
-    const client = resolvedDeps.createLlmClientFn({
-      provider: options.provider,
-      model: options.model,
-      env: process.env,
+  const sortedTargets = targetsWithSizes
+    .sort((a, b) => a.size - b.size || a.file.localeCompare(b.file))
+    .map<IngestTarget>((item, index) => ({ ...item, index }));
+
+  const fileWorkerCount = Math.min(requestedFileWorkers, Math.max(1, sortedTargets.length));
+  clack.log.info(
+    `Ingesting: ${ui.bold(String(sortedTargets.length))} file(s) | Glob: ${globPattern} | File workers: ${ui.bold(String(fileWorkerCount))} | Chunk concurrency: ${ui.bold(String(llmConcurrency))} | Skip ingested: ${skipIngested ? "yes" : "no"}`,
+    clackOutput,
+  );
+
+  if (sortedTargets.length === 0) {
+    clack.log.warn(formatWarn("No files matched input paths and glob filter."), clackOutput);
+    clack.outro(undefined, clackOutput);
+    const emptyResult: IngestCommandResult = {
+      exitCode: 0,
+      filesProcessed: 0,
+      filesSkipped: 0,
+      filesFailed: 0,
+      totalEntriesExtracted: 0,
+      totalEntriesStored: 0,
+      dedupStats: {
+        entries_added: 0,
+        entries_updated: 0,
+        entries_skipped: 0,
+        entries_reinforced: 0,
+        entries_superseded: 0,
+        dedup_llm_calls: 0,
+      },
+      durationMs: Math.max(0, resolvedDeps.nowFn().getTime() - startedAt.getTime()),
+      results: [],
+    };
+    if (json) {
+      process.stdout.write(`${JSON.stringify(emptyResult, null, 2)}\n`);
+    }
+    return emptyResult;
+  }
+
+  const config = resolvedDeps.readConfigFn(process.env);
+  const client = resolvedDeps.createLlmClientFn({
+    provider: options.provider,
+    model: options.model,
+    env: process.env,
+  });
+
+  const dbPath = options.db?.trim() || config?.db?.path;
+  const shouldLockDb = dbPath !== ":memory:";
+  if (shouldLockDb) {
+    acquireDbLock();
+    onShutdown(async () => {
+      releaseDbLock();
     });
-
-    const dbPath = options.db?.trim() || config?.db?.path;
-    const shouldLockDb = dbPath !== ":memory:";
+  }
+  const db = resolvedDeps.getDbFn(dbPath);
+  await resolvedDeps.initDbFn(db);
+  const cleanupDbResources = (): void => {
     if (shouldLockDb) {
-      acquireDbLock();
-      onShutdown(async () => {
-        releaseDbLock();
-      });
+      releaseDbLock();
     }
-    const db = resolvedDeps.getDbFn(dbPath);
-    await resolvedDeps.initDbFn(db);
+    resolvedDeps.closeDbFn(db);
+  };
 
-    const results: IngestFileResult[] = new Array(sortedTargets.length);
-    let totalEntriesExtracted = 0;
-    let totalEntriesStored = 0;
-    let totalEntriesAdded = 0;
-    let totalEntriesUpdated = 0;
-    let totalEntriesSkipped = 0;
-    let totalEntriesReinforced = 0;
-    let totalEntriesSuperseded = 0;
-    let totalDedupLlmCalls = 0;
-    let forceDeletedIngestLogRows = 0;
-    let forceDeletedEntryRows = 0;
-    let forceDeletedEntrySourceRows = 0;
-    let completed = 0;
-    let embeddingApiKey: string | null = null;
-    if (!options.noPreFetch) {
-      try {
-        embeddingApiKey = resolvedDeps.resolveEmbeddingApiKeyFn(config, process.env);
-      } catch (error) {
-        embeddingApiKey = null;
-        if (verbose) {
-          clack.log.warn(
-            formatWarn(
-              `Pre-fetch disabled - embedding API key not available: ${error instanceof Error ? error.message : String(error)}`,
-            ),
-            clackOutput,
-          );
-        }
-      }
+  let embeddingApiKey: string | null = null;
+  try {
+    if (!embeddingApiKey && !options.noPreFetch) {
+      embeddingApiKey = resolvedDeps.resolveEmbeddingApiKeyFn(config, process.env);
     }
-    let watchStateLoaded = false;
-    let watchState = createEmptyWatchState();
-    let cursor = 0;
-    let totalChunksFailed = 0;
-    let filesWithChunkFailures = 0;
-    const chunkStatsByFile = new Map<string, { successfulChunks: number; failedChunks: number }>();
-    let firstPassFailedIndexSet = new Set<number>();
+  } catch (error) {
+    cleanupDbResources();
+    throw error;
+  }
+  if ((!embeddingApiKey || embeddingApiKey.trim().length === 0) && !dryRun) {
+    cleanupDbResources();
+    throw new Error("Embedding API key is required for ingest. Run 'agenr setup' to configure.");
+  }
 
-    let dbChain: Promise<void> = Promise.resolve();
-    const withDbLock = async <T>(fn: () => Promise<T>): Promise<T> => {
-      const previous = dbChain;
-      let release!: () => void;
-      dbChain = new Promise<void>((resolve) => {
-        release = resolve;
-      });
+  let queue: WriteQueue;
+  try {
+    queue = resolvedDeps.createWriteQueueFn({
+      db,
+      storeEntriesFn: resolvedDeps.storeEntriesFn,
+      apiKey: embeddingApiKey ?? "",
+      llmClient: client,
+      dbPath,
+      batchSize: 40,
+      highWatermark: 500,
+      isShutdownRequested: resolvedDeps.shouldShutdownFn,
+    });
+  } catch (error) {
+    cleanupDbResources();
+    throw error;
+  }
 
-      await previous;
-      try {
-        return await fn();
-      } finally {
-        release();
-      }
-    };
+  const results: IngestFileResult[] = new Array(sortedTargets.length);
+  let totalEntriesExtracted = 0;
+  let totalEntriesStored = 0;
+  let totalEntriesAdded = 0;
+  let totalEntriesUpdated = 0;
+  let totalEntriesSkipped = 0;
+  let totalEntriesReinforced = 0;
+  let totalEntriesSuperseded = 0;
+  let totalDedupLlmCalls = 0;
+  let forceDeletedIngestLogRows = 0;
+  let forceDeletedEntryRows = 0;
+  let forceDeletedEntrySourceRows = 0;
+  let completed = 0;
+  let watchStateLoaded = false;
+  let watchState = createEmptyWatchState();
+  let cursor = 0;
+  let totalChunksFailed = 0;
+  let filesWithChunkFailures = 0;
+  const chunkStatsByFile = new Map<string, { successfulChunks: number; failedChunks: number }>();
+  let firstPassFailedIndexSet = new Set<number>();
 
-    const updateProgress = (completedCount: number, totalCount: number, verb: string): void => {
-      if (verbose) {
-        return;
-      }
-      const suffix = llmConcurrency > 1 ? ` (${llmConcurrency} chunks active)...` : "...";
-      process.stderr.write(`\r${ui.dim(`${verb} ${completedCount}/${totalCount}${suffix}`)}`);
-    };
+  const updateProgress = (completedCount: number, totalCount: number, verb: string): void => {
+    if (verbose) {
+      return;
+    }
+    process.stderr.write(`\r${ui.dim(`${verb} ${completedCount}/${totalCount} (queue: ${queue.pendingCount})...`)}`);
+  };
 
-    const clearProgressLine = (): void => {
-      if (verbose) {
-        return;
-      }
-      process.stderr.write("\r");
-      process.stderr.write(`${" ".repeat(80)}\r`);
-    };
+  const clearProgressLine = (): void => {
+    if (verbose) {
+      return;
+    }
+    process.stderr.write("\r");
+    process.stderr.write(`${" ".repeat(80)}\r`);
+  };
 
-    const syncWatchStateOffset = async (filePath: string, ingestByteOffset: number): Promise<void> => {
+  const syncWatchStateOffset = async (filePath: string, ingestByteOffset: number): Promise<void> => {
       if (dryRun || !isJsonlFile(filePath)) {
         return;
       }
@@ -756,9 +767,10 @@ export async function runIngestCommand(
       const rawContent = await fs.readFile(target.file, "utf8");
       const ingestByteOffset = Buffer.byteLength(rawContent, "utf8");
       fileHash = resolvedDeps.hashTextFn(rawContent);
+      const chunkTickets: Array<Promise<BatchWriteResult>> = [];
 
       if (skipIngested && !force) {
-        const alreadyIngested = await withDbLock(() => isAlreadyIngested(db, target.file, fileHash));
+        const alreadyIngested = await isAlreadyIngested(db, target.file, fileHash);
         if (alreadyIngested) {
           fileResult.skipped = true;
           fileResult.skipReason = "already ingested";
@@ -767,12 +779,12 @@ export async function runIngestCommand(
       }
 
       if (force) {
-        const cleanupStats = await withDbLock(() => cleanupForForceReingest(db, target.file, dryRun));
+        const cleanupStats = await queue.runExclusive(() => cleanupForForceReingest(db, target.file, dryRun));
         forceDeletedIngestLogRows += cleanupStats.ingestLogRows;
         forceDeletedEntryRows += cleanupStats.entryRows;
         forceDeletedEntrySourceRows += cleanupStats.entrySourceRows;
       } else {
-        baselineEntryIds = await withDbLock(() => getSourceEntryIds(db, target.file));
+        baselineEntryIds = await getSourceEntryIds(db, target.file);
       }
 
       const parsed = await resolvedDeps.parseTranscriptFileFn(target.file, { raw: options.raw === true, verbose });
@@ -798,43 +810,34 @@ export async function runIngestCommand(
         fileResult.entriesExtracted += normalizedEntries.length;
         totalEntriesExtracted += normalizedEntries.length;
 
-        const deduped = resolvedDeps.deduplicateEntriesFn(normalizedEntries);
-        if (dryRun || deduped.length === 0) {
+        if (dryRun || normalizedEntries.length === 0) {
+          chunkTickets.push(
+            Promise.resolve({
+              added: 0,
+              updated: 0,
+              skipped: 0,
+              superseded: 0,
+              llm_dedup_calls: 0,
+            }),
+          );
           return;
         }
 
-        if (!embeddingApiKey) {
-          embeddingApiKey = resolvedDeps.resolveEmbeddingApiKeyFn(config, process.env);
+        const deduped = resolvedDeps.deduplicateEntriesFn(normalizedEntries);
+        if (deduped.length === 0) {
+          chunkTickets.push(
+            Promise.resolve({
+              added: 0,
+              updated: 0,
+              skipped: 0,
+              superseded: 0,
+              llm_dedup_calls: 0,
+            }),
+          );
+          return;
         }
 
-        const storeResult = await withDbLock(() =>
-          resolvedDeps.storeEntriesFn(db, deduped, embeddingApiKey ?? "", {
-            sourceFile: target.file,
-            ingestContentHash: fileHash,
-            skipIngestLog: true,
-            onlineDedup: true,
-            skipLlmDedup: false,
-            llmClient: client,
-            dbPath,
-          }),
-        );
-        const reinforced = storeResult.updated;
-        const stored = storeResult.added + storeResult.superseded;
-        fileResult.entriesStored += stored;
-        fileResult.entriesSkippedDuplicate += storeResult.skipped;
-        fileResult.entriesReinforced += reinforced;
-        totalEntriesStored += stored;
-        totalEntriesAdded += storeResult.added;
-        totalEntriesUpdated += 0;
-        totalEntriesSkipped += storeResult.skipped;
-        totalEntriesReinforced += reinforced;
-        totalEntriesSuperseded += storeResult.superseded;
-        totalDedupLlmCalls += storeResult.llm_dedup_calls;
-        fileStoreStats.added += storeResult.added;
-        fileStoreStats.updated += storeResult.updated;
-        fileStoreStats.skipped += storeResult.skipped;
-        fileStoreStats.superseded += storeResult.superseded;
-        fileStoreStats.llmDedupCalls += storeResult.llm_dedup_calls;
+        chunkTickets.push(queue.push(deduped, target.file, fileHash));
       };
 
       const extracted = await resolvedDeps.extractKnowledgeFromChunksFn({
@@ -873,10 +876,53 @@ export async function runIngestCommand(
         );
       }
 
-      await withDbLock(() => syncWatchStateOffset(target.file, ingestByteOffset));
+      const writeResults = await Promise.allSettled(chunkTickets);
+      const writeErrors: string[] = [];
+      let cancelledTickets = 0;
+      for (const writeResult of writeResults) {
+        if (writeResult.status === "fulfilled") {
+          const result = writeResult.value;
+          const stored = result.added + result.superseded;
+          fileResult.entriesStored += stored;
+          fileResult.entriesSkippedDuplicate += result.skipped;
+          fileResult.entriesReinforced += result.updated;
+          totalEntriesStored += stored;
+          totalEntriesAdded += result.added;
+          totalEntriesSuperseded += result.superseded;
+          totalEntriesSkipped += result.skipped;
+          totalEntriesReinforced += result.updated;
+          totalDedupLlmCalls += result.llm_dedup_calls;
+          fileStoreStats.added += result.added;
+          fileStoreStats.updated += result.updated;
+          fileStoreStats.skipped += result.skipped;
+          fileStoreStats.superseded += result.superseded;
+          fileStoreStats.llmDedupCalls += result.llm_dedup_calls;
+          continue;
+        }
+
+        const reason = writeResult.reason;
+        if (reason instanceof CancelledError) {
+          cancelledTickets += 1;
+          continue;
+        }
+        writeErrors.push(errorMessage(reason));
+      }
+
+      if (writeErrors.length > 0) {
+        throw new Error(writeErrors.join(" | "));
+      }
+
+      if (cancelledTickets > 0 && verbose) {
+        clack.log.warn(
+          formatWarn(`Cancelled ${cancelledTickets} pending write chunk(s) for ${path.basename(target.file)}.`),
+          clackOutput,
+        );
+      }
+
+      await syncWatchStateOffset(target.file, ingestByteOffset);
       if (!dryRun) {
         const fileDurationMs = Math.max(0, resolvedDeps.nowFn().getTime() - fileStartedAt.getTime());
-        await withDbLock(() =>
+        await queue.runExclusive(() =>
           insertIngestLogForFile(db, {
             filePath: target.file,
             contentHash: fileHash,
@@ -890,7 +936,8 @@ export async function runIngestCommand(
     } catch (error) {
       if (fileHash.length > 0) {
         try {
-          await withDbLock(() => cleanupFailedFileIngest(db, target.file, fileHash, baselineEntryIds, dryRun));
+          await queue.cancel(target.file);
+          await queue.runExclusive(() => cleanupFailedFileIngest(db, target.file, fileHash, baselineEntryIds, dryRun));
         } catch (cleanupError) {
           fileResult.error = `${errorMessage(error)} | cleanup failed: ${errorMessage(cleanupError)}`;
           return fileResult;
@@ -912,7 +959,7 @@ export async function runIngestCommand(
       cursor = 0;
       completed = 0;
       const total = targets.length;
-      const workerCount = 1;
+      const workerCount = Math.min(fileWorkerCount, total);
 
       await Promise.all(
         Array.from({ length: workerCount }, async () => {
@@ -1047,6 +1094,17 @@ export async function runIngestCommand(
       }
     } finally {
       clearProgressLine();
+      try {
+        await queue.drain();
+      } catch (error) {
+        if (error instanceof ShutdownError) {
+          clack.log.warn(formatWarn(`Write queue shutdown before full drain: ${error.message}`), clackOutput);
+        } else {
+          clack.log.warn(formatWarn(`Write queue drain failed: ${errorMessage(error)}`), clackOutput);
+        }
+      } finally {
+        queue.destroy();
+      }
       if (!dryRun) {
         try {
           await walCheckpoint(db);

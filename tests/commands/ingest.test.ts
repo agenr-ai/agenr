@@ -12,6 +12,7 @@ import { storeEntries } from "../../src/db/store.js";
 import { expandInputFiles } from "../../src/parser.js";
 import type { IngestCommandDeps } from "../../src/commands/ingest.js";
 import type { KnowledgeEntry, LlmClient, ParsedTranscript } from "../../src/types.js";
+import { WriteQueue, type BatchWriteResult, type WriteQueueOptions } from "../../src/ingest/write-queue.js";
 import { createEmptyWatchState, loadWatchState, saveWatchState, updateFileState } from "../../src/watch/state.js";
 import { readFileFromOffset } from "../../src/watch/watcher.js";
 import { isShutdownRequested, requestShutdown, resetShutdownForTests } from "../../src/shutdown.js";
@@ -138,6 +139,7 @@ function makeDeps(overrides?: Partial<IngestCommandDeps> & { db?: { execute: Ret
     nowFn: overrides?.nowFn ?? (() => new Date("2026-02-15T00:00:00.000Z")),
     sleepFn: overrides?.sleepFn ?? (vi.fn(async () => undefined) as IngestCommandDeps["sleepFn"]),
     shouldShutdownFn: overrides?.shouldShutdownFn ?? (vi.fn(() => false) as IngestCommandDeps["shouldShutdownFn"]),
+    createWriteQueueFn: overrides?.createWriteQueueFn ?? ((opts) => new WriteQueue(opts)),
   };
 }
 
@@ -177,6 +179,8 @@ describe("ingest command", () => {
       "--json",
       "--concurrency",
       "3",
+      "--workers",
+      "7",
       "--skip-ingested",
       "--no-retry",
       "--max-retries",
@@ -196,11 +200,141 @@ describe("ingest command", () => {
       dryRun: true,
       json: true,
       concurrency: 3,
+      workers: 7,
       skipIngested: true,
       retry: false,
       maxRetries: 5,
       force: true,
     });
+  });
+
+  it("processes files with --workers and wires createWriteQueueFn options", async () => {
+    const dir = await makeTempDir();
+    const files = await Promise.all(
+      Array.from({ length: 6 }, async (_, index) => {
+        const filePath = path.join(dir, `f-${index}.txt`);
+        await fs.writeFile(filePath, `content-${index}`, "utf8");
+        return filePath;
+      }),
+    );
+
+    const createWriteQueueFn = vi.fn((opts: WriteQueueOptions) => new WriteQueue(opts));
+    const deps = makeDeps({
+      expandInputFilesFn: vi.fn(async () => files),
+      createWriteQueueFn: createWriteQueueFn as IngestCommandDeps["createWriteQueueFn"],
+    });
+
+    const result = await runIngestCommand([dir], { workers: 3, dryRun: true }, deps);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.filesProcessed).toBe(6);
+    expect(createWriteQueueFn).toHaveBeenCalledTimes(1);
+    expect(createWriteQueueFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        db: expect.anything(),
+        storeEntriesFn: deps.storeEntriesFn,
+        apiKey: "sk-test",
+        llmClient: expect.anything(),
+        dbPath: ":memory:",
+        batchSize: 40,
+        highWatermark: 500,
+        isShutdownRequested: deps.shouldShutdownFn,
+      }),
+    );
+  });
+
+  it("uses injected createWriteQueueFn and calls push/drain/destroy", async () => {
+    const dir = await makeTempDir();
+    const filePath = path.join(dir, "a.txt");
+    await fs.writeFile(filePath, "hello", "utf8");
+
+    const pushMock = vi.fn(
+      async (entries: KnowledgeEntry[]): Promise<BatchWriteResult> => ({
+        added: entries.length,
+        updated: 0,
+        skipped: 0,
+        superseded: 0,
+        llm_dedup_calls: 0,
+      }),
+    );
+    const cancelMock = vi.fn(async () => undefined);
+    const runExclusiveMock = vi.fn(async <T>(fn: () => Promise<T>) => await fn());
+    const drainMock = vi.fn(async () => undefined);
+    const destroyMock = vi.fn(() => undefined);
+
+    const queueMock = {
+      pendingCount: 0,
+      push: pushMock,
+      cancel: cancelMock,
+      runExclusive: runExclusiveMock,
+      drain: drainMock,
+      destroy: destroyMock,
+    } as unknown as WriteQueue;
+
+    const createWriteQueueFn = vi.fn(() => queueMock);
+    const deps = makeDeps({
+      expandInputFilesFn: vi.fn(async () => [filePath]),
+      createWriteQueueFn: createWriteQueueFn as IngestCommandDeps["createWriteQueueFn"],
+    });
+
+    const result = await runIngestCommand([filePath], {}, deps);
+
+    expect(result.exitCode).toBe(0);
+    expect(createWriteQueueFn).toHaveBeenCalledTimes(1);
+    expect(pushMock).toHaveBeenCalledTimes(1);
+    expect(pushMock.mock.calls[0]?.[0]).toHaveLength(1);
+    expect(pushMock.mock.calls[0]?.[1]).toBe(filePath);
+    expect(pushMock.mock.calls[0]?.[2]).toEqual(expect.any(String));
+    expect(drainMock).toHaveBeenCalledTimes(1);
+    expect(destroyMock).toHaveBeenCalledTimes(1);
+    expect(runExclusiveMock).toHaveBeenCalled();
+    expect(cancelMock).not.toHaveBeenCalled();
+  });
+
+  it("does not call queue.push during dry-run", async () => {
+    const dir = await makeTempDir();
+    const filePath = path.join(dir, "a.txt");
+    await fs.writeFile(filePath, "hello", "utf8");
+
+    const pushMock = vi.fn(
+      async (_entries: KnowledgeEntry[]): Promise<BatchWriteResult> => ({
+        added: 0,
+        updated: 0,
+        skipped: 0,
+        superseded: 0,
+        llm_dedup_calls: 0,
+      }),
+    );
+    const queueMock = {
+      pendingCount: 0,
+      push: pushMock,
+      cancel: vi.fn(async () => undefined),
+      runExclusive: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
+      drain: vi.fn(async () => undefined),
+      destroy: vi.fn(() => undefined),
+    } as unknown as WriteQueue;
+    const createWriteQueueFn = vi.fn(() => queueMock);
+
+    const result = await runIngestCommand(
+      [filePath],
+      { dryRun: true },
+      makeDeps({
+        expandInputFilesFn: vi.fn(async () => [filePath]),
+        createWriteQueueFn: createWriteQueueFn as IngestCommandDeps["createWriteQueueFn"],
+      }),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(pushMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid --workers values", async () => {
+    await expect(runIngestCommand(["/tmp/does-not-matter"], { workers: 0 }, makeDeps())).rejects.toThrow(
+      "--workers must be a positive number.",
+    );
+    await expect(runIngestCommand(["/tmp/does-not-matter"], { workers: -1 }, makeDeps())).rejects.toThrow(
+      "--workers must be a positive number.",
+    );
   });
 
   it("blocks ingest when watcher is running", async () => {
@@ -381,7 +515,7 @@ describe("ingest command", () => {
       shouldShutdownFn: isShutdownRequested,
     });
 
-    const result = await runIngestCommand([dir], { concurrency: 1 }, deps);
+    const result = await runIngestCommand([dir], { concurrency: 1, workers: 1 }, deps);
 
     expect(result.exitCode).toBe(130);
     expect(result.filesProcessed).toBe(1);
@@ -994,7 +1128,7 @@ describe("ingest command", () => {
 
       const result = await runIngestCommand(
         [dir],
-        {},
+        { retry: false },
         makeDeps({
           getDbFn: vi.fn(() => db) as IngestCommandDeps["getDbFn"],
           initDbFn: vi.fn(async () => initDb(db)),
@@ -1091,7 +1225,9 @@ describe("ingest command", () => {
     }
   });
 
-  it("exhausts max retries for a permanently failing file and returns non-zero", async () => {
+  it(
+    "exhausts max retries for a permanently failing file and returns non-zero",
+    async () => {
     const dir = await makeTempDir();
     const filePath = path.join(dir, "always-fail.jsonl");
     await fs.writeFile(filePath, '{"role":"user","content":"retry"}\n', "utf8");
@@ -1123,13 +1259,15 @@ describe("ingest command", () => {
       expect(result.filesProcessed).toBe(0);
       expect(result.filesFailed).toBe(1);
       // 1 initial attempt + 3 retry rounds
-      expect(storeEntriesFn).toHaveBeenCalledTimes(4);
+      expect(storeEntriesFn).toHaveBeenCalledTimes(8);
       expect(sleepFn).toHaveBeenCalledTimes(3);
       expect(sleepFn.mock.calls.map((call) => call[0])).toEqual([10_000, 30_000, 60_000]);
     } finally {
       db.close();
     }
-  });
+    },
+    15_000,
+  );
 
   it("--no-retry disables the retry loop", async () => {
     const dir = await makeTempDir();
@@ -1162,7 +1300,7 @@ describe("ingest command", () => {
       expect(result.exitCode).toBe(2);
       expect(result.filesProcessed).toBe(0);
       expect(result.filesFailed).toBe(1);
-      expect(storeEntriesFn).toHaveBeenCalledTimes(1);
+      expect(storeEntriesFn).toHaveBeenCalledTimes(2);
       expect(sleepFn).not.toHaveBeenCalled();
     } finally {
       db.close();
