@@ -189,6 +189,23 @@ describe("WriteQueue", () => {
     expect(elapsed).toBeGreaterThanOrEqual(40);
   });
 
+  it("applies backpressure based on pending plus incoming batch size", async () => {
+    const storeEntriesFn = vi.fn(async (_db, entries) => makeStoreResult({ added: entries.length })) as unknown as StoreEntriesFn;
+    const queue = createQueue(storeEntriesFn, { highWatermark: 2 });
+
+    const first = queue.push([makeEntry("a")], "file-a", "hash-a");
+    const startedAt = Date.now();
+    const second = queue.push([makeEntry("b"), makeEntry("c")], "file-b", "hash-b");
+    const secondResult = await second;
+    const elapsed = Date.now() - startedAt;
+    await first;
+    await queue.drain();
+    queue.destroy();
+
+    expect(secondResult.added).toBe(2);
+    expect(elapsed).toBeGreaterThanOrEqual(40);
+  });
+
   it("retries once after a write error and then succeeds", async () => {
     vi.useFakeTimers();
     const storeEntriesFn = vi

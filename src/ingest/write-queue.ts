@@ -141,7 +141,7 @@ export class WriteQueue {
       throw new ShutdownError("WriteQueue has been destroyed and cannot accept new items.");
     }
 
-    while (this.pendingEntries >= this.highWatermark) {
+    while (this.pendingEntries > 0 && this.pendingEntries + entries.length > this.highWatermark) {
       if (this.destroyed) {
         throw new ShutdownError("WriteQueue has been destroyed and cannot accept new items.");
       }
