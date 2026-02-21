@@ -12,6 +12,9 @@ const MODEL_ALIASES: Record<AgenrProvider, Record<string, string>> = {
   openai: {
     gpt: "gpt-5.2-codex",
     "gpt-codex": "gpt-5.2-codex",
+    "gpt-4.1-nano": "openai/gpt-4.1-nano",
+    "gpt-4.1-mini": "openai/gpt-4.1-mini",
+    "gpt-4.1": "openai/gpt-4.1",
   },
   "openai-codex": {
     codex: "gpt-5.3-codex",
@@ -46,17 +49,23 @@ function normalizeModelId(provider: AgenrProvider, model: string): string {
 export function resolveModel(providerRaw: string, modelRaw: string): ResolvedModel {
   const provider = normalizeProvider(providerRaw);
   const modelId = normalizeModelId(provider, modelRaw);
+  const fallbackModelId = modelId.startsWith(`${provider}/`) ? modelId.slice(provider.length + 1) : undefined;
+  const candidateModelIds = [modelId, fallbackModelId].filter((value): value is string => Boolean(value));
 
-  let model: Model<Api>;
-  try {
-    model = getModel(provider, modelId as never) as Model<Api>;
-  } catch {
-    throw new Error(
-      `Model \"${modelId}\" is not available for provider \"${provider}\" in @mariozechner/pi-ai.`,
-    );
+  let model: Model<Api> | undefined;
+  for (const candidateId of candidateModelIds) {
+    try {
+      const candidate = getModel(provider, candidateId as never) as Model<Api>;
+      if (candidate && typeof candidate.id === "string" && candidate.id.trim()) {
+        model = candidate;
+        break;
+      }
+    } catch {
+      // Try the next candidate model id.
+    }
   }
 
-  if (!model || typeof model.id !== "string" || !model.id.trim()) {
+  if (!model) {
     throw new Error(
       `Model \"${modelId}\" is not available for provider \"${provider}\" in @mariozechner/pi-ai.`,
     );

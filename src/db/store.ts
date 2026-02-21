@@ -1371,6 +1371,33 @@ export async function storeEntries(
     });
   }
 
+  const textsToEmbed: string[] = [];
+  if (!options.dryRun) {
+    for (const entry of entries) {
+      const normalizedEntry: KnowledgeEntry = {
+        ...entry,
+        canonical_key: normalizeCanonicalKey(entry.canonical_key),
+      };
+      const text = composeEmbeddingText(normalizedEntry);
+      if (!cache.get(text)) {
+        textsToEmbed.push(text);
+      }
+    }
+  }
+
+  if (textsToEmbed.length > 0) {
+    const uniqueTexts = [...new Set(textsToEmbed)];
+    const vectors = await embedFn(uniqueTexts, apiKey);
+    if (vectors.length !== uniqueTexts.length) {
+      throw new Error(
+        `Embedding pre-batch length mismatch: expected ${uniqueTexts.length}, got ${vectors.length}.`,
+      );
+    }
+    for (let i = 0; i < uniqueTexts.length; i += 1) {
+      cache.set(uniqueTexts[i], vectors[i]);
+    }
+  }
+
   const processOne = async (entry: KnowledgeEntry): Promise<void> => {
     const normalizedEntry: KnowledgeEntry = {
       ...entry,
