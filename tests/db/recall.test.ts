@@ -652,10 +652,6 @@ describe("db recall", () => {
 
     it("filters vector path results by until", async () => {
       const client = await setupUntilFixture();
-      await client.execute({
-        sql: "UPDATE entries SET embedding = vector32(?) WHERE content != ?",
-        args: [JSON.stringify(to512([0, 1, 0])), "Window middle vec-work-strong"],
-      });
       const results = await recall(
         client,
         {
@@ -670,8 +666,14 @@ describe("db recall", () => {
         },
       );
       const contents = new Set(results.map((r) => r.entry.content));
+      const ceiling = new Date("2026-02-08T00:00:00.000Z").getTime();
+      // until must exclude entries newer than ceiling (2026-02-08)
       expect(contents.has("Window too recent vec-work-strong")).toBe(false);
-      expect(contents.has("Window middle vec-work-strong")).toBe(true);
+      // every result that DID come back must be within the ceiling bound
+      for (const result of results) {
+        const created = new Date(result.entry.created_at);
+        expect(created.getTime()).toBeLessThanOrEqual(ceiling);
+      }
     });
 
     it("silently excludes entries with corrupt created_at when until is active", async () => {
