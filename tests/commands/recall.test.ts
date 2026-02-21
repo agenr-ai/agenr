@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { estimateEntryTokens, parseSinceToIso, runRecallCommand } from "../../src/commands/recall.js";
+import { estimateEntryTokens, runRecallCommand } from "../../src/commands/recall.js";
+import { parseSinceToIso } from "../../src/utils/time.js";
 import type { RecallResult, StoredEntry } from "../../src/types.js";
 
 function makeEntry(overrides: Partial<StoredEntry> = {}): StoredEntry {

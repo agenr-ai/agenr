@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.7.14] - 2026-02-21
+
+### Added
+- feat(recall): added `until` upper date bound to recall query filtering in CLI, MCP, and DB recall paths (`since` + `until` now define an inclusive window)
+
+### Changed
+- fix(recall): recency decay now anchors to the `until` ceiling for historical windows while freshness boost remains anchored to real query time
+- fix(recall): centralized `parseSinceToIso` in `src/utils/time.ts` and removed duplicate implementations from recall CLI and MCP server
+
 ## [0.7.13] - 2026-02-21
 
 ### Fixed

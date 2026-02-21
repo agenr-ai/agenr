@@ -104,7 +104,7 @@ Source: `src/commands/`, `src/extractor.ts`, `src/db/store.ts`, `src/db/recall.t
    `storeEntries()` in `src/db/store.ts` performs a similarity search against existing entries, runs dedup decisions (fast-path or LLM-assisted), creates inter-entry relations, and writes the final record. Dedup runs at write time rather than only at consolidation time because catching duplicates early prevents the vector index from accumulating redundant neighbors that degrade future recall quality. See [Deduplication Strategy](#deduplication-strategy-store-pipeline).
 
 6. **Recall**
-   `recall()` in `src/db/recall.ts` fetches vector candidates via the vector index, applies filters (scope, type, project, tags), computes the final composite score, and ranks results. The composite score combines multiple independent signals so that any single disqualifying factor (stale recency, high contradictions, staleness) suppresses the entry even if its vector similarity is high. See [Recall Scoring Model](#recall-scoring-model).
+   `recall()` in `src/db/recall.ts` fetches vector candidates via the vector index, applies filters (scope, type, project, tags, since, until), computes the final composite score, and ranks results. The composite score combines multiple independent signals so that any single disqualifying factor (stale recency, high contradictions, staleness) suppresses the entry even if its vector similarity is high. See [Recall Scoring Model](#recall-scoring-model).
 
 7. **Consolidation**
    A separate offline process that cleans accumulated entries. Tier 1 (rules) runs first and handles the common cases cheaply. Tier 2 (LLM-assisted clustering) runs on what remains and handles semantically similar but not identical entries. See [Consolidation Architecture](#consolidation-architecture).
@@ -310,16 +310,18 @@ See also: [Consolidation Architecture](#consolidation-architecture) for the comp
 
 Source: `src/db/recall.ts`
 
-Recall starts with vector top-k candidates from `idx_entries_embedding`, then applies filters (scope, type, project, tags) and scoring.
+Recall starts with vector top-k candidates from `idx_entries_embedding`, then applies filters (scope, type, project, tags, since, until) and scoring.
 
 **Why multiplicative scoring:** Each factor in the score is a multiplier. A single disqualifying factor - stale recency, many contradictions, a past-due todo - suppresses the entry even if its vector similarity is high. Additive scoring would merely reduce the score, allowing stale or contradicted entries to still appear in results. Multiplicative scoring makes bad signals disqualifying rather than just penalizing.
 
 ### Scoring formula
 
 ```pseudocode
+effectiveNow     = untilCeiling ?? now
+
 sim              = rawVectorSimilarity ^ 0.7
 
-rec              = recency(daysOld, entry.expiry)
+rec              = recency(daysOld(effectiveNow), entry.expiry)
                    -- expiry half-lives:
                    --   core      = infinite (no decay)
                    --   permanent = 365 days
@@ -327,7 +329,7 @@ rec              = recency(daysOld, entry.expiry)
 
 imp              = importanceScore(entry.importance)
 
-recallBase       = recallStrength(recall_count, daysSinceRecall, expiry)
+recallBase       = recallStrength(recall_count, daysSinceRecall(effectiveNow), expiry)
 
 spacingFactor    = computeSpacingFactor(recall_intervals)
                    -- log-scale spaced-repetition bonus derived from
@@ -344,7 +346,7 @@ fresh            = freshnessBoost(entry, now)
 
 memoryStrength   = min(max(imp, spacedRecallBase) * fresh, 1.0)
 
-todoPenalty      = todoStaleness(entry, now) if entry.type == "todo" else 1.0
+todoPenalty      = todoStaleness(entry, effectiveNow) if entry.type == "todo" else 1.0
                    -- exponential decay with 7-day half-life
                    -- penalizes todos that have not been updated recently
 
@@ -354,6 +356,17 @@ fts              = 0.15 if ftsMatch else 0.0
 
 score = sim * (0.3 + 0.7 * rec) * memoryStrength * todoPenalty * contradictionPenalty + fts
 ```
+
+### Temporal window filters
+
+Recall supports two time bounds parsed by `parseSince()`:
+- `since` is the lower bound (inclusive), expressed as ISO date or relative duration from now.
+- `until` is the upper bound (inclusive), expressed with the same subtraction semantics as `since` (`until: "7d"` means entries created at or before `now - 7 days`).
+- Using both defines a bounded window (`since <= created_at <= until`).
+
+If both bounds are present and `since > until`, recall throws an `Invalid date range` error instead of returning an empty list.
+
+When `until` is present, decay-based scoring anchors to `effectiveNow = until` so the newest in-window entry is not over-penalized by global time decay. `freshnessBoost` still anchors to real query `now` because it is a live-query signal rather than a historical-window signal.
 
 `recall_intervals` is a JSON array of epoch-second timestamps appended on each recall. `computeSpacingFactor()` uses the distribution of intervals between successive recalls to compute the spaced-repetition bonus: entries recalled at expanding intervals (spaced practice) score higher than entries recalled repeatedly in a short window.
 
@@ -627,7 +640,7 @@ The MCP server exposes four tools. Input validation is strict: enum values, nume
 ### Exposed tools
 
 **`agenr_recall`**
-Semantic search over the knowledge base. Accepts a query string, optional filters (type, scope, project, tags), and a result limit. Returns a ranked list of matching entries with their scores. Updating `recall_count` and `last_recalled_at` (and appending to `recall_intervals`) is performed as a side effect.
+Semantic search over the knowledge base. Accepts a query string, optional filters (type, scope, project, tags, since, until), and a result limit. Returns a ranked list of matching entries with their scores. Updating `recall_count` and `last_recalled_at` (and appending to `recall_intervals`) is performed as a side effect.
 
 **`agenr_store`**
 Stores a single structured entry directly, bypassing LLM extraction. Accepts the full entry fields (type, subject, content, importance, expiry, scope, tags, canonical_key, platform, project). Runs online dedup before writing. Useful when the caller has already structured the knowledge and does not need extraction.

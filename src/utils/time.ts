@@ -37,3 +37,16 @@ export function parseSince(since: string | undefined, now: Date = new Date()): D
 
   return parsed;
 }
+
+export function parseSinceToIso(
+  since: string | undefined,
+  now: Date = new Date(),
+  invalidMessage = "Invalid since value",
+): string | undefined {
+  try {
+    const parsed = parseSince(since, now);
+    return parsed ? parsed.toISOString() : undefined;
+  } catch {
+    throw new Error(invalidMessage);
+  }
+}

@@ -120,6 +120,7 @@ Parameters:
 - `limit` (integer, optional, default `10`): max results
 - `types` (string, optional): comma-separated entry types
 - `since` (string, optional): ISO date or relative (`7d`, `24h`, `1m`, `1y`)
+- `until` (string, optional): ISO date or relative (`7d`, `24h`, `1m`, `1y`), treated as an upper bound (entries at or before this time)
 - `threshold` (number, optional, default `0`): minimum score `0.0..1.0`
 - Note: threshold is only available when using the MCP server directly. The native
   OpenClaw plugin does not expose this parameter.

@@ -1,7 +1,16 @@
 import { createClient, type Client } from "@libsql/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { initDb } from "../../src/db/client.js";
-import { freshnessBoost, importanceScore, recall, recallStrength, recency, scoreEntry, todoStaleness } from "../../src/db/recall.js";
+import {
+  freshnessBoost,
+  importanceScore,
+  recall,
+  recallStrength,
+  recency,
+  scoreEntry,
+  scoreEntryWithBreakdown,
+  todoStaleness,
+} from "../../src/db/recall.js";
 import { storeEntries } from "../../src/db/store.js";
 import type { KnowledgeEntry, StoredEntry } from "../../src/types.js";
 
@@ -525,6 +534,234 @@ describe("db recall", () => {
 
     expect(results.some((result) => result.entry.content === "Recent month entry vec-work-strong")).toBe(true);
     expect(results.some((result) => result.entry.content === "Old month entry vec-work-strong")).toBe(false);
+  });
+
+  describe("until parameter", () => {
+    async function setupUntilFixture(): Promise<Client> {
+      const client = makeClient();
+      await initDb(client);
+
+      await storeEntries(
+        client,
+        [
+          makeEntry({ content: "Window too old vec-work-strong" }),
+          makeEntry({ content: "Window since boundary vec-work-strong" }),
+          makeEntry({ content: "Window middle vec-work-strong" }),
+          makeEntry({ content: "Window until boundary vec-work-strong" }),
+          makeEntry({ content: "Window too recent vec-work-strong" }),
+        ],
+        "sk-test",
+        {
+          sourceFile: "recall-test.jsonl",
+          ingestContentHash: "hash-until-window",
+          embedFn: mockEmbed,
+          force: true,
+        },
+      );
+
+      await client.execute({
+        sql: "UPDATE entries SET created_at = ?, updated_at = ? WHERE content = ?",
+        args: ["2026-01-25T00:00:00.000Z", "2026-01-25T00:00:00.000Z", "Window too old vec-work-strong"],
+      });
+      await client.execute({
+        sql: "UPDATE entries SET created_at = ?, updated_at = ? WHERE content = ?",
+        args: ["2026-02-01T00:00:00.000Z", "2026-02-01T00:00:00.000Z", "Window since boundary vec-work-strong"],
+      });
+      await client.execute({
+        sql: "UPDATE entries SET created_at = ?, updated_at = ? WHERE content = ?",
+        args: ["2026-02-05T00:00:00.000Z", "2026-02-05T00:00:00.000Z", "Window middle vec-work-strong"],
+      });
+      await client.execute({
+        sql: "UPDATE entries SET created_at = ?, updated_at = ? WHERE content = ?",
+        args: ["2026-02-08T00:00:00.000Z", "2026-02-08T00:00:00.000Z", "Window until boundary vec-work-strong"],
+      });
+      await client.execute({
+        sql: "UPDATE entries SET created_at = ?, updated_at = ? WHERE content = ?",
+        args: ["2026-02-12T00:00:00.000Z", "2026-02-12T00:00:00.000Z", "Window too recent vec-work-strong"],
+      });
+
+      return client;
+    }
+
+    async function recallWindow(
+      client: Client,
+      filters: { since?: string; until?: string },
+    ): Promise<Set<string>> {
+      const results = await recall(
+        client,
+        {
+          text: "",
+          context: "session-start",
+          limit: 50,
+          ...filters,
+        },
+        "sk-test",
+        { now: new Date("2026-02-15T00:00:00.000Z") },
+      );
+      return new Set(results.map((result) => result.entry.content));
+    }
+
+    it("includes entries inside a since/until window", async () => {
+      const client = await setupUntilFixture();
+      const contents = await recallWindow(client, { since: "14d", until: "7d" });
+      expect(contents.has("Window middle vec-work-strong")).toBe(true);
+    });
+
+    it("excludes entries that are newer than until", async () => {
+      const client = await setupUntilFixture();
+      const contents = await recallWindow(client, { since: "14d", until: "7d" });
+      expect(contents.has("Window too recent vec-work-strong")).toBe(false);
+    });
+
+    it("excludes entries that are older than since", async () => {
+      const client = await setupUntilFixture();
+      const contents = await recallWindow(client, { since: "14d", until: "7d" });
+      expect(contents.has("Window too old vec-work-strong")).toBe(false);
+    });
+
+    it("includes older entries when only until is set", async () => {
+      const client = await setupUntilFixture();
+      const contents = await recallWindow(client, { until: "7d" });
+      expect(contents.has("Window too old vec-work-strong")).toBe(true);
+    });
+
+    it("excludes newer entries when only until is set", async () => {
+      const client = await setupUntilFixture();
+      const contents = await recallWindow(client, { until: "7d" });
+      expect(contents.has("Window too recent vec-work-strong")).toBe(false);
+    });
+
+    it("includes entries exactly at the until ceiling", async () => {
+      const client = await setupUntilFixture();
+      const contents = await recallWindow(client, { until: "7d" });
+      expect(contents.has("Window until boundary vec-work-strong")).toBe(true);
+    });
+
+    it("includes entries exactly at the since cutoff", async () => {
+      const client = await setupUntilFixture();
+      const contents = await recallWindow(client, { since: "14d" });
+      expect(contents.has("Window since boundary vec-work-strong")).toBe(true);
+    });
+
+    it("supports point windows where since equals until", async () => {
+      const client = await setupUntilFixture();
+      const contents = await recallWindow(client, { since: "7d", until: "7d" });
+      expect(Array.from(contents)).toEqual(["Window until boundary vec-work-strong"]);
+    });
+
+    it("throws when since is later than until", async () => {
+      const client = await setupUntilFixture();
+      await expect(
+        recall(
+          client,
+          {
+            text: "",
+            context: "session-start",
+            limit: 50,
+            since: "7d",
+            until: "14d",
+          },
+          "sk-test",
+          { now: new Date("2026-02-15T00:00:00.000Z") },
+        ),
+      ).rejects.toThrow("Invalid date range: since");
+    });
+
+    it("throws on invalid until values", async () => {
+      const client = await setupUntilFixture();
+      await expect(
+        recall(
+          client,
+          {
+            text: "",
+            context: "session-start",
+            limit: 50,
+            until: "bad-value",
+          },
+          "sk-test",
+          { now: new Date("2026-02-15T00:00:00.000Z") },
+        ),
+      ).rejects.toThrow('Invalid until value "bad-value"');
+    });
+  });
+
+  describe("window-relative recency scoring", () => {
+    it("scores the same entry higher when effectiveNow is the ceiling", () => {
+      const entry = makeStoredEntry({
+        created_at: "2026-02-08T00:00:00.000Z",
+        updated_at: "2026-02-08T00:00:00.000Z",
+        importance: 6,
+        recall_count: 0,
+        expiry: "temporary",
+      });
+      const ceiling = new Date("2026-02-08T00:00:00.000Z");
+      const now = new Date("2026-02-15T00:00:00.000Z");
+
+      const relative = scoreEntryWithBreakdown(entry, 0.9, false, ceiling, now);
+      const global = scoreEntryWithBreakdown(entry, 0.9, false, now, now);
+      expect(relative.score).toBeGreaterThan(global.score);
+    });
+
+    it("gives newer-in-window entries higher recency than older-in-window entries", () => {
+      const effectiveNow = new Date("2026-02-08T00:00:00.000Z");
+      const freshnessNow = new Date("2026-02-15T00:00:00.000Z");
+      const atCeiling = makeStoredEntry({
+        id: "at-ceiling",
+        created_at: "2026-02-08T00:00:00.000Z",
+        updated_at: "2026-02-08T00:00:00.000Z",
+        importance: 6,
+      });
+      const atSince = makeStoredEntry({
+        id: "at-since",
+        created_at: "2026-02-01T00:00:00.000Z",
+        updated_at: "2026-02-01T00:00:00.000Z",
+        importance: 6,
+      });
+
+      const ceilingScore = scoreEntryWithBreakdown(atCeiling, 0.9, false, effectiveNow, freshnessNow);
+      const sinceScore = scoreEntryWithBreakdown(atSince, 0.9, false, effectiveNow, freshnessNow);
+      expect(ceilingScore.scores.recency).toBeGreaterThan(sinceScore.scores.recency);
+      expect(ceilingScore.score).toBeGreaterThan(sinceScore.score);
+    });
+
+    it("keeps core-tier recency at 1.0 regardless of effectiveNow", () => {
+      const coreEntry = makeStoredEntry({
+        expiry: "core",
+        created_at: "2025-01-01T00:00:00.000Z",
+        updated_at: "2025-01-01T00:00:00.000Z",
+      });
+
+      const oldAnchor = scoreEntryWithBreakdown(
+        coreEntry,
+        0.9,
+        false,
+        new Date("2026-02-08T00:00:00.000Z"),
+        new Date("2026-02-15T00:00:00.000Z"),
+      );
+      const newAnchor = scoreEntryWithBreakdown(
+        coreEntry,
+        0.9,
+        false,
+        new Date("2026-02-15T00:00:00.000Z"),
+        new Date("2026-02-15T00:00:00.000Z"),
+      );
+
+      expect(oldAnchor.scores.recency).toBe(1.0);
+      expect(newAnchor.scores.recency).toBe(1.0);
+    });
+
+    it("does not apply freshness boost for entries near historical ceiling", () => {
+      const ceilingEntry = makeStoredEntry({
+        importance: 6,
+        created_at: "2026-02-08T00:00:00.000Z",
+        updated_at: "2026-02-08T00:00:00.000Z",
+      });
+      const effectiveNow = new Date("2026-02-08T00:00:00.000Z");
+      const realNow = new Date("2026-02-15T00:00:00.000Z");
+
+      const scored = scoreEntryWithBreakdown(ceilingEntry, 0.9, false, effectiveNow, realNow);
+      expect(scored.scores.freshness).toBe(1.0);
+    });
   });
 
   it("schema includes retirement and suppression columns", async () => {

@@ -159,6 +159,7 @@ agenr recall [options] [query]
 - `--tags <tags>`: comma-separated tags filter.
 - `--min-importance <n>`: minimum importance (1-10).
 - `--since <duration>`: recency filter (`1h`, `7d`, `30d`, `1y`, or ISO timestamp).
+- `--until <date>`: upper recency cap (`1h`, `7d`, `1m`, `1y`, or ISO timestamp). Includes entries at or before this time.
 - `--expiry <level>`: `core|permanent|temporary`.
 - `--platform <name>`: platform filter (`openclaw|claude-code|claude|codex`).
 - `--project <name>`: project filter (comma-separated for multiple).
@@ -874,7 +875,7 @@ In **default** mode: entries are ranked by score, then consumed in order until t
 
 In **session-start** mode: the budget is split across categories dynamically via `computeBudgetSplit()` based on category counts (active ~10-30%, preferences ~20-40%, remainder to recent with a 20% minimum floor for recent). Each category consumes entries in score order until its quota is full. Leftover budget is redistributed to remaining entries across all categories.
 
-This is useful for keeping context windows manageable — e.g., `agenr recall --context session-start --budget 2000` loads ≈2000 tokens of the most relevant memories.
+This is useful for keeping context windows manageable - e.g., `agenr recall --context session-start --budget 2000` loads ≈2000 tokens of the most relevant memories.
 
 
 ## Interrupted Processes and Data Safety

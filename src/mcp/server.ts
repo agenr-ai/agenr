@@ -19,7 +19,7 @@ import type { KnowledgeEntry, RecallResult, Scope, StoreResult } from "../types.
 import { APP_VERSION } from "../version.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
 import { normalizeProject } from "../project.js";
-import { parseSince } from "../utils/time.js";
+import { parseSinceToIso } from "../utils/time.js";
 
 async function appendMcpLog(line: Record<string, unknown>): Promise<void> {
   try {
@@ -132,6 +132,11 @@ const TOOL_DEFINITIONS: McpToolDefinition[] = [
         since: {
           type: "string",
           description: "Only entries newer than this (ISO date or relative, e.g. 7d, 1m).",
+        },
+        until: {
+          type: "string",
+          description:
+            "Only entries older than this (ISO date or relative, e.g. 7d, 1m). Use with since for date range queries: since sets the lower bound, until the upper bound.",
         },
         threshold: {
           type: "number",
@@ -453,15 +458,6 @@ function parseCsvProjects(input: string): string[] {
   }
 
   return parsed;
-}
-
-export function parseSinceToIso(since: string | undefined, now: Date): string | undefined {
-  try {
-    const parsed = parseSince(since, now);
-    return parsed ? parsed.toISOString() : undefined;
-  } catch {
-    throw new RpcError(JSON_RPC_INVALID_PARAMS, "Invalid since value");
-  }
 }
 
 function normalizeTags(value: unknown): string[] {
@@ -807,10 +803,22 @@ export function createMcpServer(
     const now = resolvedDeps.nowFn();
     const types =
       typeof args.types === "string" && args.types.trim().length > 0 ? parseCsvTypes(args.types) : undefined;
-    const since =
-      typeof args.since === "string" && args.since.trim().length > 0
-        ? parseSinceToIso(args.since, now)
-        : undefined;
+    let since: string | undefined;
+    if (typeof args.since === "string" && args.since.trim().length > 0) {
+      try {
+        since = parseSinceToIso(args.since, now);
+      } catch {
+        throw new RpcError(JSON_RPC_INVALID_PARAMS, "Invalid since value");
+      }
+    }
+    let until: string | undefined;
+    if (typeof args.until === "string" && args.until.trim().length > 0) {
+      try {
+        until = parseSinceToIso(args.until, now);
+      } catch {
+        throw new RpcError(JSON_RPC_INVALID_PARAMS, "Invalid until value");
+      }
+    }
     const platformRaw = typeof args.platform === "string" ? args.platform.trim() : "";
     const platform = platformRaw ? normalizeKnowledgePlatform(platformRaw) : null;
     if (platformRaw && !platform) {
@@ -855,6 +863,7 @@ export function createMcpServer(
           limit,
           types,
           since,
+          until,
           platform: platform ?? undefined,
           project,
           projectStrict: projectStrict ? true : undefined,
@@ -875,6 +884,7 @@ export function createMcpServer(
           limit,
           types,
           since,
+          until,
           platform: platform ?? undefined,
           project,
           projectStrict: projectStrict ? true : undefined,

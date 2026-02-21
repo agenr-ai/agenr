@@ -7,7 +7,7 @@ import type { SessionCategory } from "../db/session-start.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
 import { hasAnyProjectParts, parseProjectList } from "../project.js";
-import { parseSince } from "../utils/time.js";
+import { parseSinceToIso } from "../utils/time.js";
 import { EXPIRY_LEVELS, IMPORTANCE_MAX, IMPORTANCE_MIN, KNOWLEDGE_PLATFORMS, KNOWLEDGE_TYPES, SCOPE_LEVELS } from "../types.js";
 import type {
   Expiry,
@@ -29,6 +29,7 @@ export interface RecallCommandOptions {
   tags?: string;
   minImportance?: string;
   since?: string;
+  until?: string;
   expiry?: string;
   platform?: string;
   project?: string | string[];
@@ -78,15 +79,6 @@ function parseCsv(input: string | undefined): string[] {
         .filter((value) => value.length > 0),
     ),
   );
-}
-
-export function parseSinceToIso(since: string | undefined, now = new Date()): string | undefined {
-  try {
-    const parsed = parseSince(since, now);
-    return parsed ? parsed.toISOString() : undefined;
-  } catch {
-    throw new Error("Invalid --since value. Use 1h, 7d, 1m, 1y, or an ISO date.");
-  }
 }
 
 function stripEmbedding<T extends RecallCommandResult>(result: T): T {
@@ -285,7 +277,8 @@ export async function runRecallCommand(
   const excludeProject = parsedExcludeProject.length > 0 ? parsedExcludeProject : undefined;
   const projectStrict = options.strict === true && Boolean(project && project.length > 0);
 
-  const sinceIso = parseSinceToIso(options.since, now);
+  const sinceIso = parseSinceToIso(options.since, now, "Invalid --since value. Use 1h, 7d, 1m, 1y, or an ISO date.");
+  const untilIso = parseSinceToIso(options.until, now, "Invalid --until value. Use 1h, 7d, 1m, 1y, or an ISO date.");
   const queryForRecall: RecallQuery = {
     text: queryText ? shapeRecallText(queryText, context) : undefined,
     limit,
@@ -293,6 +286,7 @@ export async function runRecallCommand(
     tags: tags.length > 0 ? tags : undefined,
     minImportance,
     since: sinceIso,
+    until: untilIso,
     expiry,
     scope: scope ?? "private",
     platform,
