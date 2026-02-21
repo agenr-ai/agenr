@@ -706,11 +706,11 @@ export async function recall(
       throw new Error("Embedding provider returned no vector for recall query.");
     }
     // Over-fetch when date bounds narrow the post-filter window.
-    // Proper fix: push filtering into fetchVectorCandidates SQL (see TODO #111).
+    // Proper fix: push filtering into fetchVectorCandidates SQL (see #114).
     const vectorLimit = hasDateBounds
       ? (options.vectorCandidateLimit ?? DEFAULT_VECTOR_CANDIDATE_LIMIT) * 3
       : (options.vectorCandidateLimit ?? DEFAULT_VECTOR_CANDIDATE_LIMIT);
-    // TODO(#111): Proper fix is date filtering inside fetchVectorCandidates SQL.
+    // TODO(#114): Proper fix is SQL-level date filtering inside fetchVectorCandidates (and fetchSessionCandidates).
     // Interim: 3x candidate limit when bounds are active to improve in-window coverage.
     candidates = await fetchVectorCandidates(
       db,
