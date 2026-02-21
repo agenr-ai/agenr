@@ -19,6 +19,7 @@ export interface WriteQueueOptions {
   dbPath: string | undefined;
   batchSize?: number;
   highWatermark?: number;
+  backpressureTimeoutMs?: number;
   retryOnFailure?: boolean;
   isShutdownRequested?: () => boolean;
 }
@@ -104,6 +105,7 @@ export class WriteQueue {
   private readonly dbPath: string | undefined;
   private readonly batchSize: number;
   private readonly highWatermark: number;
+  private readonly backpressureTimeoutMs: number;
   private readonly retryOnFailure: boolean;
   private readonly isShutdownRequested: (() => boolean) | undefined;
 
@@ -125,7 +127,8 @@ export class WriteQueue {
     this.llmClient = options.llmClient;
     this.dbPath = options.dbPath;
     this.batchSize = Math.max(1, Math.floor(options.batchSize ?? 40));
-    this.highWatermark = Math.max(1, Math.floor(options.highWatermark ?? 500));
+    this.highWatermark = Math.max(1, Math.floor(options.highWatermark ?? 2000));
+    this.backpressureTimeoutMs = options.backpressureTimeoutMs ?? 120_000;
     this.retryOnFailure = options.retryOnFailure !== false;
     this.isShutdownRequested = options.isShutdownRequested;
 
@@ -141,9 +144,18 @@ export class WriteQueue {
       throw new ShutdownError("WriteQueue has been destroyed and cannot accept new items.");
     }
 
+    const backpressureStart = Date.now();
     while (this.pendingEntries > 0 && this.pendingEntries + entries.length > this.highWatermark) {
       if (this.destroyed) {
         throw new ShutdownError("WriteQueue has been destroyed and cannot accept new items.");
+      }
+      if (Date.now() - backpressureStart > this.backpressureTimeoutMs) {
+        throw new Error(
+          `WriteQueue backpressure timeout after ${this.backpressureTimeoutMs}ms: ` +
+            `${this.pendingEntries} pending entries, highWatermark=${this.highWatermark}. ` +
+            "The writer may be stalled. Try reducing --workers or --concurrency, " +
+            "or increase --queue-high-watermark.",
+        );
       }
       await sleep(50);
     }

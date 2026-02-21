@@ -181,6 +181,10 @@ describe("ingest command", () => {
       "3",
       "--workers",
       "7",
+      "--queue-high-watermark",
+      "3000",
+      "--queue-timeout-ms",
+      "240000",
       "--skip-ingested",
       "--no-retry",
       "--max-retries",
@@ -201,6 +205,8 @@ describe("ingest command", () => {
       json: true,
       concurrency: 3,
       workers: 7,
+      queueHighWatermark: 3000,
+      queueTimeoutMs: 240000,
       skipIngested: true,
       retry: false,
       maxRetries: 5,
@@ -224,7 +230,11 @@ describe("ingest command", () => {
       createWriteQueueFn: createWriteQueueFn as IngestCommandDeps["createWriteQueueFn"],
     });
 
-    const result = await runIngestCommand([dir], { workers: 3, dryRun: true }, deps);
+    const result = await runIngestCommand(
+      [dir],
+      { workers: 3, dryRun: true, queueHighWatermark: 777, queueTimeoutMs: 4567 },
+      deps,
+    );
 
     expect(result.exitCode).toBe(0);
     expect(result.filesProcessed).toBe(6);
@@ -237,7 +247,8 @@ describe("ingest command", () => {
         llmClient: expect.anything(),
         dbPath: ":memory:",
         batchSize: 40,
-        highWatermark: 500,
+        highWatermark: 777,
+        backpressureTimeoutMs: 4567,
         retryOnFailure: true,
         isShutdownRequested: deps.shouldShutdownFn,
       }),
@@ -1459,7 +1470,7 @@ describe("ingest command", () => {
 
     await runIngestCommand(
       [small, large],
-      { concurrency: "1" },
+      { concurrency: "1", workers: 1 },
       makeDeps({
         parseTranscriptFileFn,
       }),
@@ -1599,6 +1610,11 @@ describe("ingest command", () => {
     );
 
     const output = stderrSpy.mock.calls.map((call) => String(call[0])).join("");
+    const startIndex = output.indexOf("-- starting");
+    const completeIndex = output.indexOf("3 extracted, 1 stored, 2 skipped (duplicate), 1 reinforced");
+    expect(startIndex).toBeGreaterThanOrEqual(0);
+    expect(completeIndex).toBeGreaterThanOrEqual(0);
+    expect(startIndex).toBeLessThan(completeIndex);
     expect(output).toContain("3 extracted, 1 stored, 2 skipped (duplicate), 1 reinforced");
   });
 

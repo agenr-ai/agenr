@@ -44,6 +44,8 @@ export interface IngestCommandOptions {
   project?: string | string[];
   concurrency?: number | string;
   workers?: number | string;
+  queueHighWatermark?: number | string;
+  queueTimeoutMs?: number | string;
   skipIngested?: boolean;
   force?: boolean;
   retry?: boolean;
@@ -535,6 +537,8 @@ export async function runIngestCommand(
   const globPattern = options.glob?.trim() || DEFAULT_GLOB;
   const llmConcurrency = parsePositiveInt(options.concurrency, 5, "--concurrency");
   const requestedFileWorkers = parsePositiveInt(options.workers, 10, "--workers");
+  const queueHighWatermark = parsePositiveInt(options.queueHighWatermark, 2000, "--queue-high-watermark");
+  const queueTimeoutMs = parsePositiveInt(options.queueTimeoutMs, 120_000, "--queue-timeout-ms");
   const retryEnabled = options.retry !== false;
   const maxRetries = retryEnabled ? parsePositiveInt(options.maxRetries, 3, "--max-retries") : 0;
   const platformRaw = options.platform?.trim();
@@ -659,7 +663,8 @@ export async function runIngestCommand(
       llmClient: client,
       dbPath,
       batchSize: 40,
-      highWatermark: 500,
+      highWatermark: queueHighWatermark,
+      backpressureTimeoutMs: queueTimeoutMs,
       retryOnFailure: retryEnabled,
       isShutdownRequested: resolvedDeps.shouldShutdownFn,
     });
@@ -980,13 +985,17 @@ export async function runIngestCommand(
               return;
             }
 
+            const label = `[${target.index + 1}/${sortedTargets.length}] ${path.basename(target.file)} (${formatBytes(target.size)})`;
+            if (verbose) {
+              clack.log.step(`${label} -- starting`, clackOutput);
+            }
+
             const result = await processTarget(target);
             results[target.index] = result;
 
             completed += 1;
             updateProgress(completed, total, passVerb);
 
-            const label = `[${target.index + 1}/${sortedTargets.length}] ${path.basename(target.file)} (${formatBytes(target.size)})`;
             if (verbose) {
               if (result.error) {
                 clack.log.warn(`${label} -- ${formatError(result.error)}`, clackOutput);
