@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.7.18] - 2026-02-21
+
+### Fixed
+- fix(lockfile): suppress false-positive "Another agenr process is writing" warning during multi-worker ingest; `isDbLocked` now returns false when the lock is held by the current process (#121)
+
 ## [0.7.17] - 2026-02-21
 
 ### Performance
