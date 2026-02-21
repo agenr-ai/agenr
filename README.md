@@ -161,7 +161,7 @@ agenr watch --platform openclaw --context ~/.agenr/CONTEXT.md
 
 ## How it works
 
-**Extract** - An LLM reads your transcripts and pulls out structured entries: facts, decisions, preferences, todos, relationships, events, lessons. Smart filtering removes noise (tool calls, file contents, boilerplate) before the LLM ever sees it.
+**Extract** - An LLM reads your transcripts and pulls out structured entries: facts, decisions, preferences, todos, relationships, events, lessons. Smart filtering removes noise (tool calls, file contents, boilerplate) before the LLM ever sees it. For OpenClaw sessions, hedged or unverified agent claims are detected and capped at importance 5 with an `unverified` tag - so speculative assistant statements do not pollute your memory as facts.
 
 **Store** - Entries get embedded and compared against what's already in the database. Near-duplicates reinforce existing knowledge. New information gets inserted. Online dedup catches copies in real-time.
 
@@ -201,7 +201,7 @@ MCP settings.
 | `agenr ingest <paths...>` | Bulk-ingest files and directories |
 | `agenr extract <files...>` | Extract knowledge entries from text files |
 | `agenr store [files...]` | Store entries with semantic dedup |
-| `agenr recall [query]` | Semantic + memory-aware recall |
+| `agenr recall [query]` | Semantic + memory-aware recall. Use `--since` / `--until` for date range queries (e.g. `--since 14d --until 7d` for entries from two weeks ago). |
 | `agenr retire [subject]` | Retire a stale entry (hidden, not deleted). Match by subject text or use --id <id> to target by entry ID. |
 | `agenr watch [file]` | Live-watch files/directories, auto-extract knowledge |
 | `agenr daemon install` | Install background watch daemon (macOS launchd) |
@@ -227,13 +227,12 @@ Deep dive: [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
 
 ## Status
 
-The core pipeline is stable and tested (797 tests). We use it daily managing
+The core pipeline is stable and tested (841 tests). We use it daily managing
 thousands of knowledge entries across OpenClaw sessions.
 
 What works: extraction, storage, recall, MCP integration, online dedup, consolidation, smart filtering, live watching, daemon mode.
 
-What's next: Cursor live signals, Claude Code UserPromptSubmit adapter,
-transitive project dependencies.
+What's next: GUI Management Console (browse, search, and curate your knowledge database visually), Cursor live signals, Claude Code UserPromptSubmit adapter, transitive project dependencies.
 
 ## Philosophy
 
