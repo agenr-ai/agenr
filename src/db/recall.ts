@@ -154,10 +154,22 @@ function entryCreatedAfter(entry: StoredEntry, cutoff: Date | undefined): boolea
   return created.getTime() >= cutoff.getTime();
 }
 
+function entryCreatedBefore(entry: StoredEntry, ceiling: Date | undefined): boolean {
+  if (!ceiling) {
+    return true;
+  }
+  const created = new Date(entry.created_at);
+  if (Number.isNaN(created.getTime())) {
+    return false;
+  }
+  return created.getTime() <= ceiling.getTime();
+}
+
 function passesFilters(
   entry: StoredEntry,
   query: RecallQuery,
   cutoff: Date | undefined,
+  ceiling: Date | undefined,
   allowedScopes: Set<Scope>,
   normalizedTags: string[],
   isSessionStart: boolean,
@@ -193,6 +205,10 @@ function passesFilters(
   }
 
   if (!entryCreatedAfter(entry, cutoff)) {
+    return false;
+  }
+
+  if (!entryCreatedBefore(entry, ceiling)) {
     return false;
   }
 
@@ -319,6 +335,7 @@ export function scoreEntryWithBreakdown(
   vectorSim: number,
   ftsMatch: boolean,
   now: Date,
+  freshnessNow: Date = now,
 ): { score: number; scores: RecallResult["scores"] } {
   const daysOld = parseDaysBetween(now, entry.created_at);
   const daysSinceRecall = entry.last_recalled_at
@@ -340,7 +357,7 @@ export function scoreEntryWithBreakdown(
 
   const fts = ftsMatch ? 0.15 : 0;
 
-  const fresh = freshnessBoost(entry, now);
+  const fresh = freshnessBoost(entry, freshnessNow);
   const spacedRecallBase = Math.min(recallBase * spacingFactor, 1.0);
   const memoryStrength = Math.min(Math.max(imp, spacedRecallBase) * fresh, 1.0);
   const todoPenalty = entry.type === "todo" ? todoStaleness(entry, now) : 1.0;
@@ -407,7 +424,7 @@ async function fetchVectorCandidates(
   });
 
   // args order: JSON.stringify(queryEmbedding) (vector32(?)), limit, ...projectSql.args, platform (if present)
-  const args: unknown[] = [JSON.stringify(queryEmbedding), limit, ...projectSql.args];
+  const args: InValue[] = [JSON.stringify(queryEmbedding), limit, ...(projectSql.args as InValue[])];
   if (platform) {
     args.push(platform);
   }
@@ -491,7 +508,7 @@ async function fetchSessionCandidates(
     excludeProject: normalizedExclude.length > 0 ? normalizedExclude : undefined,
   });
 
-  const args: unknown[] = [...projectSql.args];
+  const args: InValue[] = [...(projectSql.args as InValue[])];
   if (platform) {
     args.push(platform);
   }
@@ -571,7 +588,7 @@ async function runFts(
       excludeProject: normalizedExclude.length > 0 ? normalizedExclude : undefined,
     });
 
-    const args: unknown[] = [text, ...projectSql.args];
+    const args: InValue[] = [text, ...(projectSql.args as InValue[])];
     if (platform) {
       args.push(platform);
     }
@@ -620,8 +637,12 @@ export async function updateRecallMetadata(db: Client, ids: string[], now: Date)
   });
 }
 
-function scoreSessionEntry(entry: StoredEntry, now: Date): { score: number; scores: RecallResult["scores"] } {
-  return scoreEntryWithBreakdown(entry, 1.0, false, now);
+function scoreSessionEntry(
+  entry: StoredEntry,
+  effectiveNow: Date,
+  freshnessNow: Date,
+): { score: number; scores: RecallResult["scores"] } {
+  return scoreEntryWithBreakdown(entry, 1.0, false, effectiveNow, freshnessNow);
 }
 
 export async function recall(
@@ -656,6 +677,20 @@ export async function recall(
     const sinceValue = query.since ?? "";
     throw new Error(`Invalid since value "${sinceValue}": ${reason}`);
   }
+  // parseSince returns (now - N), which is correct as an upper ceiling for `until`.
+  let ceiling: Date | undefined;
+  try {
+    ceiling = parseSince(query.until, now);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`Invalid until value "${query.until ?? ""}": ${reason}`);
+  }
+
+  if (cutoff !== undefined && ceiling !== undefined && cutoff > ceiling) {
+    throw new Error(
+      `Invalid date range: since (${cutoff.toISOString()}) must be earlier than until (${ceiling.toISOString()}). since sets the lower bound, until the upper bound.`,
+    );
+  }
   const allowedScopes = resolveScopeSet(query.scope);
 
   let candidates: CandidateRow[];
@@ -669,6 +704,8 @@ export async function recall(
     if (!queryEmbedding) {
       throw new Error("Embedding provider returned no vector for recall query.");
     }
+    // TODO(#111): When since/until bounds are active, increase vectorCandidateLimit to
+    // improve in-window coverage. Future: push date filtering into fetchVectorCandidates.
     candidates = await fetchVectorCandidates(
       db,
       queryEmbedding,
@@ -691,7 +728,7 @@ export async function recall(
   }
 
   const filtered = candidates.filter((candidate) =>
-    passesFilters(candidate.entry, query, cutoff, allowedScopes, normalizedTags, isSessionStart),
+    passesFilters(candidate.entry, query, cutoff, ceiling, allowedScopes, normalizedTags, isSessionStart),
   );
 
   if (filtered.length === 0) {
@@ -703,11 +740,15 @@ export async function recall(
       ? await runFts(db, effectiveText, platform, project, excludeProject, projectStrict)
       : new Set<string>();
 
+  // effectiveNow shifts the recency decay anchor to the window end for historical queries.
+  // freshnessBoost always uses real `now` -- it is a live-query signal, not a window signal.
+  const effectiveNow = ceiling ?? now;
+
   const scored: RecallResult[] = filtered.map((candidate) => {
     const ftsMatch = ftsMatches.has(candidate.entry.id);
 
     if (!text) {
-      const sessionScore = scoreSessionEntry(candidate.entry, now);
+      const sessionScore = scoreSessionEntry(candidate.entry, effectiveNow, now);
       return {
         entry: candidate.entry,
         score: sessionScore.score,
@@ -733,7 +774,7 @@ export async function recall(
       };
     }
 
-    const detailed = scoreEntryWithBreakdown(candidate.entry, candidate.vectorSim, ftsMatch, now);
+    const detailed = scoreEntryWithBreakdown(candidate.entry, candidate.vectorSim, ftsMatch, effectiveNow, now);
     return {
       entry: candidate.entry,
       score: detailed.score,

@@ -230,6 +230,7 @@ export interface RecallQuery {
   tags?: string[];
   minImportance?: number;
   since?: string;
+  until?: string; // upper bound; same subtraction semantics as since (e.g. "7d" = entries older than 7 days ago)
   expiry?: Expiry | Expiry[];
   scope?: Scope;
   context?: string;

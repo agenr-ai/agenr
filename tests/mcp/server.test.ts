@@ -2,10 +2,10 @@ import { PassThrough } from "node:stream";
 import fs from "node:fs/promises";
 import type { Client } from "@libsql/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createMcpServer, parseSinceToIso } from "../../src/mcp/server.js";
+import { createMcpServer } from "../../src/mcp/server.js";
 import type { McpServerDeps } from "../../src/mcp/server.js";
 import type { KnowledgeEntry, LlmClient, RecallResult, StoreResult, TranscriptChunk } from "../../src/types.js";
-import { parseSince } from "../../src/utils/time.js";
+import { parseSince, parseSinceToIso } from "../../src/utils/time.js";
 import { createScopedProjectConfig } from "../helpers/scoped-config.js";
 
 const tempDirs: string[] = [];
@@ -380,6 +380,33 @@ describe("mcp server", () => {
     expect(recallQuery.limit).toBe(5);
     expect(recallQuery.types).toEqual(["preference", "fact"]);
     expect(recallQuery.platform).toBe("openclaw");
+  });
+
+  it("forwards until to recall queries", async () => {
+    const harness = makeHarness();
+    await runServer(
+      [
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 203,
+          method: "tools/call",
+          params: {
+            name: "agenr_recall",
+            arguments: {
+              query: "Jim's diet",
+              until: "7d",
+            },
+          },
+        }),
+      ],
+      harness.deps,
+    );
+
+    expect(harness.recallFn).toHaveBeenCalledTimes(1);
+    const recallQuery = harness.recallFn.mock.calls[0]?.[1] as { until?: string };
+    const expectedIso = new Date("2026-02-08T00:00:00.000Z").getTime();
+    const actualIso = new Date(String(recallQuery.until)).getTime();
+    expect(Math.abs(actualIso - expectedIso)).toBeLessThanOrEqual(1000);
   });
 
   it("ignores since_seq parameter without error", async () => {
