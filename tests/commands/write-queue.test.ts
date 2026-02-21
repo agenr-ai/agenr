@@ -220,6 +220,28 @@ describe("WriteQueue", () => {
     expect(storeEntriesFn).toHaveBeenCalledTimes(2);
   });
 
+  it("does not retry when retryOnFailure is false", async () => {
+    const storeEntriesFn = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("fail once"))
+      .mockResolvedValueOnce(makeStoreResult({ added: 1 })) as unknown as StoreEntriesFn;
+
+    const queue = new WriteQueue({
+      db: {} as Client,
+      storeEntriesFn,
+      apiKey: "sk-test",
+      llmClient: makeLlmClient(),
+      dbPath: ":memory:",
+      retryOnFailure: false,
+    });
+
+    await expect(queue.push([makeEntry("x")], "file-a", "hash-a")).rejects.toThrow("fail once");
+    await queue.drain();
+    queue.destroy();
+
+    expect(storeEntriesFn).toHaveBeenCalledTimes(1);
+  });
+
   it("drain resolves only after all pushed items are written", async () => {
     let releaseGate: (() => void) | null = null;
     const gate = new Promise<void>((resolve) => {
@@ -288,6 +310,17 @@ describe("WriteQueue", () => {
     await expect(pendingCancelled).rejects.toBeInstanceOf(CancelledError);
 
     await queue.drain();
+    queue.destroy();
+  });
+
+  it("cancel() is a no-op when no items are pending for that fileKey", async () => {
+    const storeEntriesFn = vi.fn(async (_db, entries) => makeStoreResult({ added: entries.length })) as unknown as StoreEntriesFn;
+    const queue = createQueue(storeEntriesFn);
+
+    await queue.push([makeEntry("a")], "file-a", "hash-a");
+    await queue.drain();
+
+    await expect(queue.cancel("file-a")).resolves.toBeUndefined();
     queue.destroy();
   });
 
