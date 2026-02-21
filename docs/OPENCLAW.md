@@ -128,6 +128,19 @@ Score anchors:
       "tests passing". Cap at 6 unless the result is surprising or breaking.
 - 5: Borderline. Only store if clearly durable beyond today.
 
+### Confidence-aware extraction for OpenClaw transcripts
+
+OpenClaw transcript lines include `[user]` and `[assistant]` role labels.
+The extractor now uses that signal to reduce hallucination risk:
+
+- Hedged, unverified assistant factual claims are tagged `unverified` and
+  capped at importance 5.
+- Tool-verified assistant claims keep normal importance rules.
+- User messages are never capped by this confidence rule.
+
+This keeps uncertain assistant assertions from being stored as high-importance
+memories while preserving verified outcomes.
+
 ### Tuning Signal Noise
 
 Six config fields control signal behavior:
@@ -274,4 +287,3 @@ This works but the agent needs explicit instructions (in AGENTS.md) to know the 
 - [MCP Integration](./MCP.md) - MCP server details and Codex/Claude Code setup
 - [Configuration](./CONFIGURATION.md) - all config options
 - [Consolidation](./CONSOLIDATION.md) - how knowledge merging works
-

@@ -37,6 +37,7 @@ function makeLlmClient(): LlmClient {
 }
 
 function makeRecallResult(overrides?: Partial<RecallResult>): RecallResult {
+  const recentIso = new Date(Date.now() - 60_000).toISOString();
   return {
     score: 0.847,
     scores: {
@@ -59,8 +60,8 @@ function makeRecallResult(overrides?: Partial<RecallResult>): RecallResult {
       scope: "personal",
       tags: ["diet"],
       source: { file: "chat-1", context: "test" },
-      created_at: "2026-02-14T10:00:00.000Z",
-      updated_at: "2026-02-14T10:00:00.000Z",
+      created_at: recentIso,
+      updated_at: recentIso,
       recall_count: 0,
       confirmations: 0,
       contradictions: 0,

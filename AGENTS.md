@@ -162,6 +162,8 @@ Importance: integer 1-10
 - 10: once-per-project permanent constraints (use sparingly)
 - 6: routine dev observations (verified X, confirmed Y runs, tests passing)
 - 5: borderline -- only store if clearly durable beyond today
+- OpenClaw extractor confidence rule: hedged, unverified assistant factual
+      claims are tagged `unverified` and capped at importance 5
 Expiry: `session-only`, `temporary`, `permanent`, `core`
 Scope: `private`, `shared`, `public`
 

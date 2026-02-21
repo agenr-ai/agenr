@@ -572,6 +572,10 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
           chunks: parsed.chunks,
           client,
           verbose: options.verbose,
+          platform:
+            currentPlatform && currentPlatform !== "mtime"
+              ? normalizeKnowledgePlatform(currentPlatform) ?? undefined
+              : undefined,
           db: options.noPreFetch ? undefined : db ?? undefined,
           embeddingApiKey: options.noPreFetch ? undefined : embeddingApiKey ?? undefined,
           noPreFetch: options.noPreFetch === true,
