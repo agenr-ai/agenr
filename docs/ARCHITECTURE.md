@@ -205,6 +205,8 @@ Migrations are defined as a series of column-presence checks followed by `ALTER 
 | `retired_at` | TEXT | ISO timestamp when entry was retired (nullable) |
 | `retired_reason` | TEXT | Free-text reason for retirement (nullable) |
 
+> Note: (v2) and (v3) annotations in the table above indicate the schema migration that added the column. Migrations apply automatically on first run after an upgrade.
+
 **Note on `canonical_key`:** When two ingestion runs encounter logically identical facts (e.g., a user preference that appears in multiple transcripts), the canonical key provides a stable identity so that the dedup pipeline can recognize them as the same entry and update-in-place rather than creating a sibling duplicate. Without canonical keys, near-identical entries that differ only in phrasing may slip past similarity thresholds.
 
 **Note on `recall_intervals`:** Each time an entry is recalled, the current epoch-second timestamp is appended to this JSON array. `computeSpacingFactor()` uses the distribution of intervals between recalls to compute a spaced-repetition bonus: entries recalled at expanding intervals score higher than those recalled in rapid succession, reflecting stronger encoding.
@@ -269,7 +271,7 @@ See also: [Recall Scoring Model](#recall-scoring-model) for how embeddings feed 
 
 Source: `src/db/store.ts`
 
-Store uses Mem0-style online dedup. Online dedup is complementary to batch consolidation: online dedup prevents duplicates from accumulating at write time, which keeps the vector index clean and reduces the work consolidation must do. Batch consolidation handles semantic near-duplicates that slip through online dedup due to phrasing variation.
+Store uses an online, per-entry dedup model. Online dedup is complementary to batch consolidation: online dedup prevents duplicates from accumulating at write time, which keeps the vector index clean and reduces the work consolidation must do. Batch consolidation handles semantic near-duplicates that slip through online dedup due to phrasing variation.
 
 **Why per-entry transactions:** LLM dedup calls take seconds. Holding a write lock across an LLM call would block all concurrent readers for the duration. Instead, each entry uses its own `BEGIN IMMEDIATE`/`COMMIT` so the lock is held only during the actual DB write.
 
