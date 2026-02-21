@@ -70,7 +70,9 @@ describe("db lockfile", () => {
 
   it("isDbLocked returns true when lock exists with live pid", async () => {
     const lockDir = await makeLockDir();
-    acquireDbLock(lockDir);
+    const pathToLock = lockPath(lockDir, "db");
+    // Use parent PID — always alive and always a different process than us
+    await fs.writeFile(pathToLock, String(process.ppid), "utf8");
     expect(isDbLocked(lockDir)).toBe(true);
   });
 
