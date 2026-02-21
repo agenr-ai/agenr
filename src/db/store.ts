@@ -1379,7 +1379,7 @@ export async function storeEntries(
         canonical_key: normalizeCanonicalKey(entry.canonical_key),
       };
       const text = composeEmbeddingText(normalizedEntry);
-      if (!cache.get(text)) {
+      if (cache.get(text) === undefined) {
         textsToEmbed.push(text);
       }
     }

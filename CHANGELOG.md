@@ -7,10 +7,11 @@
   provider; gpt-4.1-nano is now the recommended fast/cheap extraction model
   (--model gpt-4.1-nano or agenr config set model gpt-4.1-nano) (#127)
 
-### Performance
-- perf(ingest): pre-batch embedding calls in storeEntries; entries in a write
-  queue batch are now embedded in a single API call instead of one call per
-  entry, reducing ingest wall-clock time significantly on large jobs (#127)
+### Changed
+- perf(ingest): pre-batch embedding calls in storeEntries; all entries in a
+  write-queue batch are now embedded in a single API call instead of one call
+  per entry, cutting embedding API round-trips from O(n) to O(1) per batch
+  and reducing ingest wall-clock time proportionally to batch size (#127)
 
 ## [0.7.19] - 2026-02-21
 
