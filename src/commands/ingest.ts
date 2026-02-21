@@ -842,6 +842,7 @@ export async function runIngestCommand(
         chunks: parsed.chunks,
         client,
         verbose: false,
+        platform: platform ?? parsed.metadata?.platform ?? undefined,
         llmConcurrency,
         db: options.noPreFetch ? undefined : db,
         embeddingApiKey: options.noPreFetch ? undefined : embeddingApiKey ?? undefined,

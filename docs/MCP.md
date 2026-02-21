@@ -290,6 +290,11 @@ Cap: no more than 20% of stored entries should be 8 or higher.
 - 6: Routine verifications and dev observations
 - 5: Borderline, barely worth storing
 
+For OpenClaw transcript ingestion, extractor prompting is confidence-aware:
+hedged, unverified assistant factual claims are tagged `unverified` and capped
+at importance 5, while verified assistant claims and user statements keep normal
+importance handling.
+
 ## Troubleshooting
 
 ### Missing OpenAI API key

@@ -3,8 +3,11 @@ import { createClient, type Client } from "@libsql/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   MAX_PREFETCH_RESULTS,
+  OPENCLAW_CONFIDENCE_ADDENDUM,
   PREFETCH_TIMEOUT_MS,
   SYSTEM_PROMPT,
+  applyConfidenceCap,
+  buildExtractionSystemPrompt,
   buildUserPrompt,
   extractKnowledgeFromChunks,
   preFetchRelated,
@@ -12,7 +15,7 @@ import {
 } from "../src/extractor.js";
 import { initDb } from "../src/db/client.js";
 import { requestShutdown, resetShutdownForTests } from "../src/shutdown.js";
-import type { LlmClient, StoredEntry, TranscriptChunk } from "../src/types.js";
+import type { KnowledgeEntry, LlmClient, StoredEntry, TranscriptChunk } from "../src/types.js";
 
 function fakeModel(): Model<Api> {
   return {
@@ -206,6 +209,97 @@ describe("SYSTEM_PROMPT", () => {
   it("reinforces that related memories do not lower threshold", () => {
     expect(SYSTEM_PROMPT).toContain("they are reference material only");
     expect(SYSTEM_PROMPT).toContain("do not lower the emission threshold");
+  });
+});
+
+describe("buildExtractionSystemPrompt", () => {
+  it("with openclaw returns base + addendum", () => {
+    const prompt = buildExtractionSystemPrompt("openclaw");
+    expect(prompt).toContain(SYSTEM_PROMPT);
+    expect(prompt).toContain(OPENCLAW_CONFIDENCE_ADDENDUM);
+  });
+
+  it("with non-openclaw returns base only", () => {
+    const prompt = buildExtractionSystemPrompt("codex");
+    expect(prompt).toBe(SYSTEM_PROMPT);
+    expect(prompt).not.toContain(OPENCLAW_CONFIDENCE_ADDENDUM);
+  });
+
+  it("with undefined returns base only", () => {
+    const prompt = buildExtractionSystemPrompt(undefined);
+    expect(prompt).toBe(SYSTEM_PROMPT);
+  });
+
+  it("openclaw addendum instructs capping hedged claims", () => {
+    expect(OPENCLAW_CONFIDENCE_ADDENDUM).toMatch(/unverified/i);
+    expect(OPENCLAW_CONFIDENCE_ADDENDUM).toMatch(/I think|I believe|probably/);
+    expect(OPENCLAW_CONFIDENCE_ADDENDUM).toMatch(/cap.*5|min.*5/i);
+  });
+});
+
+describe("applyConfidenceCap", () => {
+  function makeEntry(overrides: Partial<KnowledgeEntry>): KnowledgeEntry {
+    return {
+      type: "fact",
+      content: "test content for confidence cap checks",
+      subject: "test subject",
+      importance: 7,
+      tags: [],
+      expiry: "temporary",
+      source: { file: "test.jsonl", context: "test" },
+      ...overrides,
+    } as KnowledgeEntry;
+  }
+
+  it("caps importance from 8 to 5 for unverified entry on openclaw", () => {
+    const entry = makeEntry({ importance: 8, tags: ["unverified", "agenr"] });
+    const result = applyConfidenceCap(entry, "openclaw");
+    expect(result.importance).toBe(5);
+    expect(result.tags).toContain("unverified");
+  });
+
+  it("does not cap when platform is not openclaw", () => {
+    const entry = makeEntry({ importance: 8, tags: ["unverified"] });
+    const result = applyConfidenceCap(entry, "codex");
+    expect(result.importance).toBe(8);
+  });
+
+  it("does not cap when platform is undefined", () => {
+    const entry = makeEntry({ importance: 8, tags: ["unverified"] });
+    const result = applyConfidenceCap(entry, undefined);
+    expect(result.importance).toBe(8);
+  });
+
+  it("does not cap entry without unverified tag", () => {
+    const entry = makeEntry({ importance: 8, tags: ["agenr"] });
+    const result = applyConfidenceCap(entry, "openclaw");
+    expect(result.importance).toBe(8);
+  });
+
+  it("does not push down importance already at 5", () => {
+    const entry = makeEntry({ importance: 5, tags: ["unverified"] });
+    const result = applyConfidenceCap(entry, "openclaw");
+    expect(result.importance).toBe(5);
+  });
+
+  it("does not push down importance below 5", () => {
+    const entry = makeEntry({ importance: 3, tags: ["unverified"] });
+    const result = applyConfidenceCap(entry, "openclaw");
+    expect(result.importance).toBe(3);
+  });
+
+  it("preserves all tags when capping", () => {
+    const entry = makeEntry({ importance: 9, tags: ["agenr", "unverified", "memory"] });
+    const result = applyConfidenceCap(entry, "openclaw");
+    expect(result.importance).toBe(5);
+    expect(result.tags).toEqual(["agenr", "unverified", "memory"]);
+  });
+
+  it("returns a new object, does not mutate the original", () => {
+    const entry = makeEntry({ importance: 8, tags: ["unverified"] });
+    const result = applyConfidenceCap(entry, "openclaw");
+    expect(result).not.toBe(entry);
+    expect(entry.importance).toBe(8);
   });
 });
 

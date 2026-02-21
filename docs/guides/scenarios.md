@@ -540,6 +540,11 @@ The `agenr_store` MCP schema now declares `importance: { default: 7 }`. The syst
 
 Runtime behavior now matches that guidance: when MCP clients omit `importance`, `normalizeImportance` also defaults to 7.
 
+For OpenClaw transcript ingestion, extractor prompting is also confidence-aware:
+hedged assistant factual claims (for example, "I think", "probably") that are
+not tool-verified are tagged `unverified` and capped at importance 5. Verified
+assistant claims and all user statements keep normal scoring rules.
+
 ---
 
 ## What Agents Should (and Should Not) Store
@@ -575,6 +580,9 @@ The system prompt block injected by `agenr init` includes these instructions, bu
 | 10    | Once-per-project permanent constraints. "This project must never use GPL-licensed dependencies." At most 1-2 per project lifetime. |
 
 Note: the 1-4 suppression applies to extractor output (`src/extractor.ts`) via the emit floor. Direct `agenr_store` MCP calls accept explicit importance values from 1 to 10.
+
+OpenClaw extractor note: hedged, unverified assistant factual claims are capped
+at 5 and tagged `unverified`.
 
 The system prompt sets the default to 7. In OpenClaw, 8+ fires real-time cross-session signals, so use it conservatively. Reserve 9 for critical breaking changes and immediate decisions only, not for generally important facts. Keep 10 for once-per-project permanent constraints.
 

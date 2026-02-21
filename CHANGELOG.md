@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.13] - 2026-02-21
+
+### Fixed
+- fix(extractor): added platform-aware extraction system prompt builder (`buildExtractionSystemPrompt`) and OpenClaw confidence addendum for role-labeled transcript handling
+- fix(extractor): added `applyConfidenceCap` hard-cap enforcement for OpenClaw `unverified` entries so tagged claims cannot exceed importance 5
+- fix(extractor): threaded `platform` through `extractKnowledgeFromChunks` and call sites in ingest/watch flows so OpenClaw-specific confidence behavior applies during transcript ingestion
+- fix(extractor): added OpenClaw confidence few-shot examples to `SYSTEM_PROMPT` to distinguish hedged unverified claims from tool-verified claims
+
 ## [0.7.12] - 2026-02-21
 
 ### Fixed

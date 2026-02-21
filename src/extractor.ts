@@ -1,6 +1,6 @@
 import type { Api, AssistantMessage, Context, Model } from "@mariozechner/pi-ai";
 import type { Client } from "@libsql/client";
-import type { KnowledgeEntry, LlmClient, StoredEntry, TranscriptChunk } from "./types.js";
+import type { KnowledgeEntry, KnowledgePlatform, LlmClient, StoredEntry, TranscriptChunk } from "./types.js";
 import { fetchRelatedEntries } from "./db/recall.js";
 import { embed } from "./embeddings/client.js";
 import { runSimpleStream, type StreamSimpleFn } from "./llm/stream.js";
@@ -299,6 +299,28 @@ PREFERENCE:
   "source_context": "User mentioned scheduling preference during calendar discussion -- scored 6 not 8 because no parallel session needs to act on this immediately; it is a low-urgency convenience preference"
 }
 
+Example: hedged agent claim (correct handling):
+{
+  "type": "fact",
+  "subject": "agenr openclaw ingestion support",
+  "content": "Agent expressed uncertainty about whether agenr supports OpenClaw session ingestion. This has not been tool-verified.",
+  "importance": 5,
+  "expiry": "temporary",
+  "tags": ["agenr", "openclaw", "unverified"],
+  "canonical_key": "agenr-openclaw-ingestion-support-uncertain"
+}
+
+Example: tool-verified agent claim (correct handling):
+{
+  "type": "fact",
+  "subject": "agenr openclaw ingestion",
+  "content": "agenr actively ingests OpenClaw sessions. Confirmed via exec output showing watch active on 3 files.",
+  "importance": 7,
+  "expiry": "temporary",
+  "tags": ["agenr", "openclaw"],
+  "canonical_key": "agenr-openclaw-ingestion-active"
+}
+
 ### BORDERLINE — skip these
 
 SKIP: "The assistant read the config file and found the port was 3000."
@@ -344,6 +366,86 @@ WHY: Routine execution. No durable knowledge, decisions, or lessons.
 - source_context: one sentence, max 20 words.
 - tags: 1-4 lowercase descriptive tags.
 When related memories are injected before a chunk, they are reference material only. They do not lower the emission threshold.`;
+
+export const OPENCLAW_CONFIDENCE_ADDENDUM = `
+## Confidence Language (role-labeled transcripts)
+
+Transcript lines are prefixed with [user] or [assistant] role labels.
+Apply confidence-language analysis to [assistant] statements only.
+Never apply this logic to [user] messages.
+
+### Verified agent statements - normal importance rules apply
+
+An [assistant] statement is verified when it meets ANY of these conditions:
+- It immediately follows a line matching the pattern [called X: ...] such as
+  [called exec: ...], [called web_search: ...], [called web_fetch: ...],
+  [called Read: ...], [called write: ...], or any [called ...: ...] marker
+- It uses explicit verification language such as: "I confirmed", "I verified",
+  "I checked and", "the output shows", "the test shows", "confirmed via",
+  "the file shows", "I ran", "the result shows"
+- It is a direct summary of tool output returned in the same chunk
+
+### Hedged agent statements - cap importance at 5 and add "unverified" tag
+
+An [assistant] statement is hedged when it uses speculative language WITHOUT
+any of the verification signals above. Hedging indicators:
+- Uncertainty: "I think", "I believe", "I assume", "I'm not sure", "probably",
+  "likely", "I don't know if", "I imagine", "I suspect"
+- Conditional: "it might be", "it could be", "possibly", "maybe"
+- Unverified recall: "I recall that", "if I remember correctly",
+  "I seem to recall", "I think we"
+
+When an [assistant] factual claim is hedged and unverified:
+- Set importance to min(your assigned importance, 5)
+- Add the tag "unverified"
+- Apply all other normal extraction rules unchanged
+
+EXCEPTION: Do NOT cap agent recommendations or opinions. "I think we should
+use pnpm" is a recommendation, not a factual claim. Only cap FACTUAL CLAIMS
+made with hedging language. Ask: is the agent asserting a fact about the
+world, or expressing a preference or suggestion?
+
+Do NOT apply any cap to [assistant] lines that ARE the tool call markers
+themselves (lines like "[called exec: ls]"). These are structural metadata,
+not agent assertions.
+
+### Examples
+
+HEDGED FACTUAL CLAIM - cap at 5, add "unverified":
+  [m00010][assistant] I think agenr doesn't support OpenClaw ingestion yet.
+  Result: importance capped at 5, tags include "unverified"
+
+HEDGED FACTUAL CLAIM - cap at 5, add "unverified":
+  [m00015][assistant] Probably the port is 3000 - I'm not 100% sure.
+  Result: importance capped at 5, tags include "unverified"
+
+VERIFIED after tool call - normal importance:
+  [m00020][assistant] [called exec: agenr watch --list]
+  [m00021][assistant] I confirmed via the output that OpenClaw ingestion is
+  active on 3 files.
+  Result: normal importance, no "unverified" tag
+
+VERIFIED by explicit language - normal importance:
+  [m00030][assistant] I verified in the source that the port is 4242.
+  Result: normal importance
+
+USER STATEMENT - never capped regardless of hedging language:
+  [m00040][user] I'm not 100% sure, but I think our API key was rotated.
+  Result: normal importance, no cap applied
+
+RECOMMENDATION - not a factual claim, never capped:
+  [m00050][assistant] I think we should switch to pnpm for consistency.
+  Result: this is a suggestion, not a fact - do not apply the cap
+`;
+
+export function buildExtractionSystemPrompt(
+  platform?: KnowledgePlatform | string,
+): string {
+  if (platform === "openclaw") {
+    return `${SYSTEM_PROMPT}\n\n${OPENCLAW_CONFIDENCE_ADDENDUM}`;
+  }
+  return SYSTEM_PROMPT;
+}
 
 const MAX_ATTEMPTS = 5;
 const DEFAULT_INTER_CHUNK_DELAY_MS = 150;
@@ -658,6 +760,20 @@ export function validateEntry(entry: KnowledgeEntry): string | null {
     return "source_context > 20 words";
   }
   return null;
+}
+
+export function applyConfidenceCap(
+  entry: KnowledgeEntry,
+  platform?: KnowledgePlatform | string,
+): KnowledgeEntry {
+  if (
+    platform === "openclaw" &&
+    entry.tags.includes("unverified") &&
+    entry.importance > 5
+  ) {
+    return { ...entry, importance: 5 };
+  }
+  return entry;
 }
 
 function selectStringField(
@@ -1330,6 +1446,7 @@ async function extractChunkOnce(params: {
   chunk: TranscriptChunk;
   model: Model<Api>;
   apiKey: string;
+  systemPrompt?: string;
   verbose: boolean;
   onVerbose?: (line: string) => void;
   onStreamDelta?: (delta: string, kind: "text" | "thinking") => void;
@@ -1339,7 +1456,7 @@ async function extractChunkOnce(params: {
   const prompt = buildUserPrompt(params.chunk, params.related);
 
   const context: Context = {
-    systemPrompt: SYSTEM_PROMPT,
+    systemPrompt: params.systemPrompt ?? SYSTEM_PROMPT,
     messages: [
       {
         role: "user",
@@ -1402,6 +1519,7 @@ export async function extractKnowledgeFromChunks(params: {
   chunks: TranscriptChunk[];
   client: LlmClient;
   verbose: boolean;
+  platform?: KnowledgePlatform | string;
   noDedup?: boolean;
   interChunkDelayMs?: number;
   llmConcurrency?: number;
@@ -1416,6 +1534,7 @@ export async function extractKnowledgeFromChunks(params: {
   noPreFetch?: boolean;
   embedFn?: (texts: string[], apiKey: string) => Promise<number[][]>;
 }): Promise<ExtractChunksResult> {
+  const systemPrompt = buildExtractionSystemPrompt(params.platform);
   const warnings: string[] = [];
   const entries: KnowledgeEntry[] = [];
 
@@ -1491,6 +1610,7 @@ export async function extractKnowledgeFromChunks(params: {
               chunk,
               model: params.client.resolvedModel.model,
               apiKey: params.client.credentials.apiKey,
+              systemPrompt,
               verbose: params.verbose,
               onVerbose: params.onVerbose,
               onStreamDelta: bufferStreamDeltas
@@ -1542,15 +1662,35 @@ export async function extractKnowledgeFromChunks(params: {
           );
         } else if (chunkResult) {
           dynamicDelay = Math.max(baseDelay, Math.floor(dynamicDelay * 0.9));
+          const validatedChunkEntries: KnowledgeEntry[] = [];
+          for (const entry of chunkResult.entries) {
+            const capped = applyConfidenceCap(entry, params.platform);
+            if (params.verbose && capped.importance !== entry.importance) {
+              params.onVerbose?.(
+                `[confidence-cap] lowered importance from ${entry.importance} to 5 (unverified tag)`,
+              );
+            }
+
+            const validationIssue = validateEntry(capped);
+            if (validationIssue) {
+              if (params.verbose) {
+                params.onVerbose?.(`[entry-drop] ${validationIssue}`);
+              }
+              continue;
+            }
+
+            validatedChunkEntries.push(capped);
+          }
+
           if (params.onChunkComplete) {
             await params.onChunkComplete({
               chunkIndex: chunk.chunk_index,
               totalChunks: params.chunks.length,
-              entries: chunkResult.entries,
+              entries: validatedChunkEntries,
               warnings: chunkResult.warnings,
             });
           } else {
-            entries.push(...chunkResult.entries);
+            entries.push(...validatedChunkEntries);
           }
         }
 
