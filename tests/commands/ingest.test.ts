@@ -57,6 +57,26 @@ function makeParsed(filePath: string): ParsedTranscript {
   };
 }
 
+function makeParsedWithMessages(filePath: string): ParsedTranscript {
+  return {
+    ...makeParsed(filePath),
+    messages: [
+      {
+        index: 0,
+        role: "user",
+        text: "message one",
+        timestamp: "2026-02-21T00:00:00.000Z",
+      },
+      {
+        index: 1,
+        role: "assistant",
+        text: "message two",
+        timestamp: "2026-02-21T00:01:00.000Z",
+      },
+    ],
+  };
+}
+
 function fakeLlmClient(): LlmClient {
   return {
     auth: "openai-api-key",
@@ -190,6 +210,7 @@ describe("ingest command", () => {
       "--max-retries",
       "5",
       "--force",
+      "--whole-file",
     ]);
 
     expect(runIngestCommandMock).toHaveBeenCalledTimes(1);
@@ -211,7 +232,25 @@ describe("ingest command", () => {
       retry: false,
       maxRetries: 5,
       force: true,
+      wholeFile: true,
     });
+  });
+
+  it("exits with code 1 when --whole-file and --chunk are used together", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
+      throw new Error(`process.exit(${String(code)})`);
+    }) as never);
+
+    await expect(
+      runIngestCommand(["/tmp/does-not-matter"], { wholeFile: true, chunk: true }, makeDeps()),
+    ).rejects.toThrow("process.exit(1)");
+
+    expect(errorSpy).toHaveBeenCalledWith("Error: Cannot use --whole-file and --chunk together");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+
+    errorSpy.mockRestore();
+    exitSpy.mockRestore();
   });
 
   it("processes files with --workers and wires createWriteQueueFn options", async () => {
@@ -318,9 +357,10 @@ describe("ingest command", () => {
     expect(result.exitCode).toBe(0);
     expect(createWriteQueueFn).toHaveBeenCalledTimes(1);
     expect(pushMock).toHaveBeenCalledTimes(1);
-    expect(pushMock.mock.calls[0]?.[0]).toHaveLength(1);
-    expect(pushMock.mock.calls[0]?.[1]).toBe(filePath);
-    expect(pushMock.mock.calls[0]?.[2]).toEqual(expect.any(String));
+    const firstPushCall = pushMock.mock.calls[0] as unknown[] | undefined;
+    expect(firstPushCall?.[0]).toHaveLength(1);
+    expect(firstPushCall?.[1]).toBe(filePath);
+    expect(firstPushCall?.[2]).toEqual(expect.any(String));
     expect(drainMock).toHaveBeenCalledTimes(1);
     expect(destroyMock).toHaveBeenCalledTimes(1);
     expect(runExclusiveMock).toHaveBeenCalled();
@@ -595,7 +635,8 @@ describe("ingest command", () => {
     expect(result.filesSkipped).toBe(0);
 
     const ingestLogInserts = dbExecute.mock.calls.filter((call) => {
-      const arg = call[0] as any;
+      const args = call as unknown[];
+      const arg = args[0] as any;
       return Boolean(arg?.sql) && String(arg.sql).includes("INTO ingest_log");
     });
     expect(ingestLogInserts).toHaveLength(1);
@@ -603,7 +644,8 @@ describe("ingest command", () => {
       .filter((item) => Boolean(item) && !(item as any).skipped && !(item as any).error)
       .map((item) => (item as any).file);
     expect(storedFiles).toHaveLength(1);
-    expect((ingestLogInserts[0]?.[0] as any).args?.[1]).toBe(storedFiles[0]);
+    const firstIngestLogInsert = ingestLogInserts[0] as unknown[] | undefined;
+    expect((firstIngestLogInsert?.[0] as any).args?.[1]).toBe(storedFiles[0]);
   });
 
   it("re-processes already-ingested files with --force", async () => {
@@ -770,6 +812,124 @@ describe("ingest command", () => {
     expect(resolveEmbeddingApiKeyFn).toHaveBeenCalledTimes(1);
     expect(extractKnowledgeFromChunksFn).toHaveBeenCalledTimes(1);
     expect(extractKnowledgeFromChunksFn.mock.calls[0]?.[0]?.embeddingApiKey).toBe("test-key");
+  });
+
+  it("--whole-file forces whole-file mode and passes parsed messages", async () => {
+    const dir = await makeTempDir();
+    const filePath = path.join(dir, "a.txt");
+    await fs.writeFile(filePath, "hello", "utf8");
+    const parsed = makeParsedWithMessages(filePath);
+
+    const extractKnowledgeFromChunksFn = vi.fn(
+      async (params: Parameters<IngestCommandDeps["extractKnowledgeFromChunksFn"]>[0]) => {
+        await params.onChunkComplete?.({
+          chunkIndex: 0,
+          totalChunks: 1,
+          entries: [makeEntry("one")],
+          warnings: [],
+          entriesExtracted: 1,
+          durationMs: 0,
+        });
+        return {
+          entries: [],
+          successfulChunks: 1,
+          failedChunks: 0,
+          warnings: [],
+        };
+      },
+    );
+
+    await runIngestCommand(
+      [dir],
+      { dryRun: true, wholeFile: true },
+      makeDeps({
+        expandInputFilesFn: vi.fn(async () => [filePath]),
+        parseTranscriptFileFn: vi.fn(async () => parsed),
+        extractKnowledgeFromChunksFn: extractKnowledgeFromChunksFn as IngestCommandDeps["extractKnowledgeFromChunksFn"],
+      }),
+    );
+
+    expect(extractKnowledgeFromChunksFn).toHaveBeenCalledTimes(1);
+    expect(extractKnowledgeFromChunksFn.mock.calls[0]?.[0]?.wholeFile).toBe("force");
+    expect(extractKnowledgeFromChunksFn.mock.calls[0]?.[0]?.messages).toEqual(parsed.messages);
+  });
+
+  it("--chunk forces chunked mode even when auto could use whole-file", async () => {
+    const dir = await makeTempDir();
+    const filePath = path.join(dir, "a.txt");
+    await fs.writeFile(filePath, "hello", "utf8");
+    const parsed = makeParsedWithMessages(filePath);
+
+    const extractKnowledgeFromChunksFn = vi.fn(
+      async (params: Parameters<IngestCommandDeps["extractKnowledgeFromChunksFn"]>[0]) => {
+        await params.onChunkComplete?.({
+          chunkIndex: 0,
+          totalChunks: 1,
+          entries: [makeEntry("one")],
+          warnings: [],
+          entriesExtracted: 1,
+          durationMs: 0,
+        });
+        return {
+          entries: [],
+          successfulChunks: 1,
+          failedChunks: 0,
+          warnings: [],
+        };
+      },
+    );
+
+    await runIngestCommand(
+      [dir],
+      { dryRun: true, chunk: true },
+      makeDeps({
+        expandInputFilesFn: vi.fn(async () => [filePath]),
+        parseTranscriptFileFn: vi.fn(async () => parsed),
+        extractKnowledgeFromChunksFn: extractKnowledgeFromChunksFn as IngestCommandDeps["extractKnowledgeFromChunksFn"],
+      }),
+    );
+
+    expect(extractKnowledgeFromChunksFn).toHaveBeenCalledTimes(1);
+    expect(extractKnowledgeFromChunksFn.mock.calls[0]?.[0]?.wholeFile).toBe("never");
+  });
+
+  it("defaults to wholeFile=auto when no mode flags are provided", async () => {
+    const dir = await makeTempDir();
+    const filePath = path.join(dir, "a.txt");
+    await fs.writeFile(filePath, "hello", "utf8");
+    const parsed = makeParsedWithMessages(filePath);
+
+    const extractKnowledgeFromChunksFn = vi.fn(
+      async (params: Parameters<IngestCommandDeps["extractKnowledgeFromChunksFn"]>[0]) => {
+        await params.onChunkComplete?.({
+          chunkIndex: 0,
+          totalChunks: 1,
+          entries: [makeEntry("one")],
+          warnings: [],
+          entriesExtracted: 1,
+          durationMs: 0,
+        });
+        return {
+          entries: [],
+          successfulChunks: 1,
+          failedChunks: 0,
+          warnings: [],
+        };
+      },
+    );
+
+    await runIngestCommand(
+      [dir],
+      { dryRun: true },
+      makeDeps({
+        expandInputFilesFn: vi.fn(async () => [filePath]),
+        parseTranscriptFileFn: vi.fn(async () => parsed),
+        extractKnowledgeFromChunksFn: extractKnowledgeFromChunksFn as IngestCommandDeps["extractKnowledgeFromChunksFn"],
+      }),
+    );
+
+    expect(extractKnowledgeFromChunksFn).toHaveBeenCalledTimes(1);
+    expect(extractKnowledgeFromChunksFn.mock.calls[0]?.[0]?.wholeFile).toBe("auto");
   });
 
   it("does not delete rows during --force --dry-run and reports would-delete summary", async () => {
@@ -1247,7 +1407,7 @@ describe("ingest command", () => {
     await fs.writeFile(filePath, '{"role":"user","content":"retry"}\n', "utf8");
 
     const db = createClient({ url: ":memory:" });
-    const storeEntriesFn = vi.fn(async () => {
+    const storeEntriesFn = vi.fn(async (): ReturnType<IngestCommandDeps["storeEntriesFn"]> => {
       throw new Error("OpenAI embeddings request failed (500)");
     });
     // Fail once, then succeed on the first retry round.
@@ -1308,7 +1468,7 @@ describe("ingest command", () => {
     const storeEntriesFn = vi.fn(async () => {
       throw new Error("OpenAI embeddings request failed (500)");
     });
-    const sleepFn = vi.fn(async () => undefined);
+    const sleepFn = vi.fn(async (_ms: number) => undefined);
 
     try {
       const result = await runIngestCommand(
@@ -1350,7 +1510,7 @@ describe("ingest command", () => {
     const storeEntriesFn = vi.fn(async () => {
       throw new Error("OpenAI embeddings request failed (500)");
     });
-    const sleepFn = vi.fn(async () => undefined);
+    const sleepFn = vi.fn(async (_ms: number) => undefined);
 
     try {
       const result = await runIngestCommand(

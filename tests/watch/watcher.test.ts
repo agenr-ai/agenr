@@ -1049,6 +1049,30 @@ describe("watcher", () => {
     expect(deps.storeEntriesFn).not.toHaveBeenCalled();
   });
 
+  it("passes watchMode=true to extraction calls", async () => {
+    const filePath = "/tmp/watch.jsonl";
+    const deps = makeDeps({
+      statFileFn: vi.fn(async () => ({ size: 25, isFile: () => true })),
+      readFileFn: vi.fn(async () => Buffer.from("this content passes threshold")),
+    });
+
+    await runWatcher(
+      {
+        filePath,
+        intervalMs: 1,
+        minChunkChars: 5,
+        dryRun: true,
+        verbose: false,
+        once: true,
+      },
+      deps,
+    );
+
+    expect(deps.extractKnowledgeFromChunksFn).toHaveBeenCalledTimes(1);
+    expect(deps.extractKnowledgeFromChunksFn.mock.calls[0]?.[0]?.watchMode).toBe(true);
+    expect(deps.extractKnowledgeFromChunksFn.mock.calls[0]?.[0]?.messages).toBeUndefined();
+  });
+
   it("watcher does not call embedFn when noPreFetch=true", async () => {
     const filePath = "/tmp/watch.jsonl";
     const embedFn = vi.fn(async () => [[1, 0, 0]]);

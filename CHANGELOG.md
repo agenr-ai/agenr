@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.8.0] - 2026-02-22
+
+### Added
+- feat(ingest): whole-file extraction mode for transcript ingest. `extractKnowledgeFromChunks` now supports `wholeFile: "auto" | "force" | "never"` with automatic fit detection against known model context windows and single-call extraction when a file fits.
+- feat(ingest): new `--whole-file` and `--chunk` ingest flags to force whole-file or chunked extraction mode.
+- feat(ingest): new whole-file utilities in `src/ingest/whole-file.ts` for context-window detection, mode resolution, overlap-free message reconstruction, and hard-cap truncation.
+
+### Changed
+- ingest: whole-file mode now reconstructs extraction text from parsed `messages` via `renderTranscriptLine` instead of joining chunk text, avoiding overlap duplication at chunk boundaries.
+- extractor: whole-file mode now skips embedding pre-fetch and skips post-extraction LLM dedup, applies a 100-entry hard cap by importance, and retries failed whole-file extraction attempts before falling back to chunked mode.
+- watch: watcher calls now set `watchMode: true`, which enforces chunked extraction even if whole-file mode is requested.
+- mcp: ingest-style extraction now forwards parsed `messages` into extraction so whole-file mode can be resolved consistently.
+
 ## [0.7.21] - 2026-02-21
 
 ### Fixed

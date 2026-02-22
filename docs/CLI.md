@@ -384,11 +384,14 @@ agenr ingest [options] <paths...>
 - `--queue-backpressure-timeout-ms <n>`: max milliseconds workers wait for backpressure to clear before failing with guidance (default `120000ms = 2 min`).
 - `--skip-ingested`: skip already-ingested file/hash pairs (default `true`).
 - `--no-pre-fetch`: disable elaborative encoding pre-fetch before per-chunk extraction.
+- `--whole-file`: force whole-file extraction mode (single LLM call per file).
+- `--chunk`: force chunked extraction mode (disables whole-file auto-detect).
 - `--no-retry`: disable auto-retry for failed files.
 - `--max-retries <n>`: maximum auto-retry attempts (default `3`).
 - `--force`: clean re-ingest each matched file by deleting previous rows for that source file first.
 
 Ingest runs online dedup at store time (including LLM classification for ambiguous similarity bands).
+Whole-file mode defaults to `auto` when neither `--whole-file` nor `--chunk` is passed. `--whole-file` and `--chunk` are mutually exclusive.
 
 ### Example
 

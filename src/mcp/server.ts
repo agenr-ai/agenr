@@ -979,6 +979,7 @@ export function createMcpServer(
       const extraction = await resolvedDeps.extractKnowledgeFromChunksFn({
         file: tempFile,
         chunks: parsed.chunks,
+        messages: parsed.messages,
         client,
         verbose: false,
       });
