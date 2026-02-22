@@ -613,6 +613,13 @@ export async function backfillNormContentHash(db: Client): Promise<number> {
     }
   }
 
+  if (updated >= maxRowsPerRun) {
+    process.stderr.write(
+      `[agenr] Warning: norm_content_hash backfill capped at ${maxRowsPerRun} rows. ` +
+      "Run 'agenr ingest --bulk' again to continue backfilling remaining entries.\n",
+    );
+  }
+
   return updated;
 }
 
