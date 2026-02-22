@@ -246,7 +246,7 @@ export async function runStoreTool(
     if (!entry.subject && typeof entry.content === "string") {
       entry.subject = entry.content
         .slice(0, 60)
-        .replace(/[.!?][\s\S]*$/, "")
+        .replace(/[.!?:;]\s[\s\S]*$/, "")
         .trim() || entry.content.slice(0, 40);
     }
     return entry;
@@ -268,6 +268,8 @@ export async function runStoreTool(
   }
 
   for (const entry of processedEntries) {
+    // Object-shaped sources (e.g. from runExtractTool) come from controlled code
+    // paths and are already normalized. Only validate raw string sources here.
     if (typeof entry.source !== "string") {
       continue;
     }

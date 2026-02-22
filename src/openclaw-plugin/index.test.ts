@@ -281,6 +281,23 @@ describe("openclaw plugin tool runners", () => {
     expect(payload[0]?.subject).toBe("explicit subject");
   });
 
+  it("runStoreTool subject inference does not truncate at file path periods", async () => {
+    let writtenStdin = "";
+    const mockChild = createMockChild({ code: 0 });
+    mockChild.stdin.write = vi.fn((chunk: string) => {
+      writtenStdin += chunk;
+    });
+    spawnMock.mockReturnValueOnce(mockChild);
+
+    const content = "Use /tmp/notes.txt for reference and keep parsing safely";
+    await runStoreTool("/path/to/agenr", {
+      entries: [{ content, type: "fact" }],
+    });
+
+    const payload = JSON.parse(writtenStdin) as Array<{ subject?: string }>;
+    expect(payload[0]?.subject).toBe(content);
+  });
+
   it("runStoreTool passes dedup flags from plugin config", async () => {
     let capturedArgs: string[] = [];
     spawnMock.mockImplementationOnce((_cmd: string, args: string[]) => {
