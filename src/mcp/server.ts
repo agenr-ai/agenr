@@ -1065,7 +1065,7 @@ export function createMcpServer(
       throw new RpcError(JSON_RPC_INVALID_PARAMS, `No active entry found with id: ${entryId}`);
     }
 
-    const messageBase = `Retired: ${subject} (type: ${type}). Entry is hidden from session-start recall but can still be found with explicit queries.`;
+    const messageBase = `Retired: ${subject} (type: ${type}). Entry is hidden from all recall (session-start and explicit queries).`;
     const text = persist ? `${messageBase} Retirement will survive database re-ingest.` : messageBase;
     return text;
   }
