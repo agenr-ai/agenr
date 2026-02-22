@@ -89,12 +89,15 @@ function mapActiveEmbeddedEntry(row: Record<string, InValue | undefined>): Activ
 
   const projectRaw = toStringValue(row.project);
   const project = projectRaw.trim().length > 0 ? projectRaw.trim().toLowerCase() : null;
+  const tagsRaw = toStringValue(row.tags_csv);
+  const tags = tagsRaw.length > 0 ? tagsRaw.split(",").map((tag) => tag.trim()).filter(Boolean) : [];
 
   return {
     id,
     type: toStringValue(row.type),
     subject: toStringValue(row.subject),
     content: toStringValue(row.content),
+    tags,
     project,
     importance: Number.isFinite(toNumber(row.importance)) ? toNumber(row.importance) : 5,
     embedding,
@@ -139,13 +142,29 @@ export async function buildClusters(db: Client, options: ClusterOptions = {}): P
 
   const result = await db.execute({
     sql: `
-    SELECT id, type, subject, content, project, importance, embedding, confirmations,
-           recall_count, created_at, merged_from, consolidated_at
-    FROM entries
+    SELECT
+      e.id,
+      e.type,
+      e.subject,
+      e.content,
+      e.project,
+      e.importance,
+      e.embedding,
+      e.confirmations,
+      e.recall_count,
+      e.created_at,
+      e.merged_from,
+      e.consolidated_at,
+      (
+        SELECT GROUP_CONCAT(t.tag, ',')
+        FROM tags t
+        WHERE t.entry_id = e.id
+      ) AS tags_csv
+    FROM entries e
     WHERE superseded_by IS NULL
       AND retired = 0
       AND embedding IS NOT NULL
-      ${platform ? "AND platform = ?" : ""}
+      ${platform ? "AND e.platform = ?" : ""}
       ${projectCondition}
     `,
     args,
