@@ -120,6 +120,8 @@ describe("db schema", () => {
     const sourceColumns = new Set(sourceInfo.rows.map((row) => String(row.name)));
 
     expect(entryColumns.has("content_hash")).toBe(true);
+    expect(entryColumns.has("norm_content_hash")).toBe(true);
+    expect(entryColumns.has("minhash_sig")).toBe(true);
     expect(entryColumns.has("canonical_key")).toBe(true);
     expect(entryColumns.has("merged_from")).toBe(true);
     expect(entryColumns.has("consolidated_at")).toBe(true);

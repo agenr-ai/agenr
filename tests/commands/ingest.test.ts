@@ -160,6 +160,9 @@ function makeDeps(overrides?: Partial<IngestCommandDeps> & { db?: { execute: Ret
     sleepFn: overrides?.sleepFn ?? (vi.fn(async () => undefined) as IngestCommandDeps["sleepFn"]),
     shouldShutdownFn: overrides?.shouldShutdownFn ?? (vi.fn(() => false) as IngestCommandDeps["shouldShutdownFn"]),
     createWriteQueueFn: overrides?.createWriteQueueFn ?? ((opts) => new WriteQueue(opts)),
+    embedFn:
+      overrides?.embedFn ??
+      (vi.fn(async (texts: string[], _apiKey: string) => mockEmbed(texts)) as IngestCommandDeps["embedFn"]),
   };
 }
 
@@ -206,6 +209,7 @@ describe("ingest command", () => {
       "--queue-backpressure-timeout-ms",
       "240000",
       "--skip-ingested",
+      "--bulk",
       "--no-retry",
       "--max-retries",
       "5",
@@ -229,6 +233,7 @@ describe("ingest command", () => {
       queueHighWatermark: 3000,
       queueBackpressureTimeoutMs: 240000,
       skipIngested: true,
+      bulk: true,
       retry: false,
       maxRetries: 5,
       force: true,
