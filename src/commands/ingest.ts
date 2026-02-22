@@ -51,6 +51,8 @@ export interface IngestCommandOptions {
   retry?: boolean;
   maxRetries?: number | string;
   noPreFetch?: boolean;
+  wholeFile?: boolean;
+  chunk?: boolean;
 }
 
 export interface IngestFileResult {
@@ -469,6 +471,11 @@ export async function runIngestCommand(
   options: IngestCommandOptions,
   deps?: Partial<IngestCommandDeps>,
 ): Promise<IngestCommandResult> {
+  if (options.wholeFile === true && options.chunk === true) {
+    console.error("Error: Cannot use --whole-file and --chunk together");
+    process.exit(1);
+  }
+
   const resolvedDeps: IngestCommandDeps = {
     readConfigFn: deps?.readConfigFn ?? readConfig,
     resolveEmbeddingApiKeyFn: deps?.resolveEmbeddingApiKeyFn ?? resolveEmbeddingApiKey,
@@ -566,6 +573,12 @@ export async function runIngestCommand(
 
   const parsedProject = parseProjectList(options.project);
   const project = parsedProject[0] ?? null;
+  const resolvedWholeFile: "auto" | "force" | "never" =
+    options.wholeFile === true
+      ? "force"
+      : options.chunk === true
+        ? "never"
+        : "auto";
   if (rawProjectPartCount > 0 && parsedProject.length === 0) {
     throw new Error("--project must be a non-empty string.");
   }
@@ -853,8 +866,10 @@ export async function runIngestCommand(
       const extracted = await resolvedDeps.extractKnowledgeFromChunksFn({
         file: target.file,
         chunks: parsed.chunks,
+        messages: parsed.messages,
         client,
         verbose: false,
+        wholeFile: resolvedWholeFile,
         platform: platform ?? parsed.metadata?.platform ?? undefined,
         llmConcurrency,
         db: options.noPreFetch ? undefined : db,

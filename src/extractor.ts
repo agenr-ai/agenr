@@ -1,8 +1,20 @@
 import type { Api, AssistantMessage, Context, Model } from "@mariozechner/pi-ai";
 import type { Client } from "@libsql/client";
-import type { KnowledgeEntry, KnowledgePlatform, LlmClient, StoredEntry, TranscriptChunk } from "./types.js";
+import type {
+  KnowledgeEntry,
+  KnowledgePlatform,
+  LlmClient,
+  StoredEntry,
+  TranscriptChunk,
+  TranscriptMessage,
+} from "./types.js";
 import { fetchRelatedEntries } from "./db/recall.js";
 import { embed } from "./embeddings/client.js";
+import {
+  applyEntryHardCap,
+  buildWholeFileChunkFromMessages,
+  resolveWholeFileMode,
+} from "./ingest/whole-file.js";
 import { runSimpleStream, type StreamSimpleFn } from "./llm/stream.js";
 import { SUBMIT_DEDUPED_KNOWLEDGE_TOOL, SUBMIT_KNOWLEDGE_TOOL } from "./schema.js";
 import { isShutdownRequested } from "./shutdown.js";
@@ -439,19 +451,49 @@ RECOMMENDATION - not a factual claim, never capped:
   Result: this is a suggestion, not a fact - do not apply the cap
 `;
 
+const CHUNKED_CALIBRATION_BLOCK = `Calibration:
+- Typical chunk: 0-3 entries. Most chunks: 0.
+- Score 9 or 10: very rare, at most 1 per significant session, often 0
+- Score 8: at most 1-2 per session; ask the cross-session-alert question before assigning
+- Score 7: this is your workhorse; most emitted entries should be 7
+- Score 6: routine dev observations that are still worth storing
+- If more than 20% of your emitted entries are 8 or higher, you are inflating`;
+
+const WHOLE_FILE_CALIBRATION_BLOCK = `Calibration (whole-file mode - you have the FULL session context, not a fragment):
+- Typical session: 5-15 entries. Dense sessions may warrant 30-50.
+- You are seeing the complete conversation. Extract complete, coherent entries that
+  capture multi-part discussions as single entries, not fragments.
+- Score 9 or 10: very rare, at most 1 per session, often 0
+- Score 8: at most 2-3 per session; ask the cross-session-alert question before assigning
+- Score 7: this is your workhorse; most emitted entries should be 7
+- Score 6: routine dev observations worth storing
+- TODO completion: if a TODO is raised AND completed within this session, emit only
+  the completion event - not the original todo.
+- If more than 30% of your emitted entries are score 8 or higher, you are inflating.
+- Do NOT extract the same fact multiple times even if stated differently in the session.`;
+
 export function buildExtractionSystemPrompt(
   platform?: KnowledgePlatform | (string & {}),
+  wholeFile = false,
 ): string {
-  if (platform === "openclaw") {
-    return `${SYSTEM_PROMPT}\n\n${OPENCLAW_CONFIDENCE_ADDENDUM}`;
+  let prompt = SYSTEM_PROMPT;
+  if (wholeFile) {
+    prompt = prompt.replace(CHUNKED_CALIBRATION_BLOCK, WHOLE_FILE_CALIBRATION_BLOCK);
+    prompt = prompt.replace("- Max 8 entries; prefer 0-3.\n", "");
   }
-  return SYSTEM_PROMPT;
+
+  if (platform === "openclaw") {
+    return `${prompt}\n\n${OPENCLAW_CONFIDENCE_ADDENDUM}`;
+  }
+  return prompt;
 }
 
 const MAX_ATTEMPTS = 5;
 const DEFAULT_INTER_CHUNK_DELAY_MS = 150;
 const DEDUP_BATCH_SIZE = 50;
 const DEDUP_BATCH_TRIGGER = 100;
+const WHOLE_FILE_ATTEMPTS = 3;
+const WHOLE_FILE_RETRY_DELAYS_MS = [2000, 4000, 8000] as const;
 export const PREFETCH_SIMILARITY_THRESHOLD = 0.72;
 const PREFETCH_SIMILARITY_EPSILON = 1e-6;
 export const PREFETCH_CANDIDATE_LIMIT = 15;
@@ -1442,6 +1484,36 @@ async function sleepMs(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function validateExtractedEntries(
+  rawEntries: KnowledgeEntry[],
+  platform: KnowledgePlatform | (string & {}) | undefined,
+  verbose: boolean,
+  onVerbose?: (line: string) => void,
+): KnowledgeEntry[] {
+  const validatedEntries: KnowledgeEntry[] = [];
+  for (const entry of rawEntries) {
+    const capped = applyConfidenceCap(entry, platform);
+    if (verbose && capped.importance !== entry.importance) {
+      onVerbose?.(
+        `[confidence-cap] lowered importance from ${entry.importance} to 5 (unverified tag)`,
+      );
+    }
+
+    // Re-validate defensively: applyConfidenceCap currently only lowers importance to 5,
+    // but this guard catches future extensions to applyConfidenceCap that could produce invalid entries.
+    const validationIssue = validateEntry(capped);
+    if (validationIssue) {
+      if (verbose) {
+        onVerbose?.(`[entry-drop] ${validationIssue}`);
+      }
+      continue;
+    }
+
+    validatedEntries.push(capped);
+  }
+  return validatedEntries;
+}
+
 async function extractChunkOnce(params: {
   file: string;
   chunk: TranscriptChunk;
@@ -1499,6 +1571,78 @@ async function extractChunkOnce(params: {
   return { entries, warnings };
 }
 
+async function extractWholeFileChunkWithRetry(params: {
+  file: string;
+  chunk: TranscriptChunk;
+  model: Model<Api>;
+  apiKey: string;
+  systemPrompt: string;
+  verbose: boolean;
+  onVerbose?: (line: string) => void;
+  onStreamDelta?: (delta: string, kind: "text" | "thinking") => void;
+  streamSimpleImpl?: StreamSimpleFn;
+  sleep: (ms: number) => Promise<void>;
+}): Promise<
+  | {
+      chunkResult: { entries: KnowledgeEntry[]; warnings: string[] };
+      durationMs: number;
+      fallbackWarning?: undefined;
+    }
+  | {
+      chunkResult: null;
+      durationMs: number;
+      fallbackWarning: string;
+    }
+> {
+  const startedAt = Date.now();
+  let lastError: unknown = null;
+
+  for (let attempt = 1; attempt <= WHOLE_FILE_ATTEMPTS; attempt += 1) {
+    if (params.verbose) {
+      params.onVerbose?.(
+        `[whole-file] attempt ${attempt}/${WHOLE_FILE_ATTEMPTS}`,
+      );
+    }
+
+    try {
+      const chunkResult = await extractChunkOnce({
+        file: params.file,
+        chunk: params.chunk,
+        model: params.model,
+        apiKey: params.apiKey,
+        systemPrompt: params.systemPrompt,
+        verbose: params.verbose,
+        onVerbose: params.onVerbose,
+        onStreamDelta: params.onStreamDelta,
+        streamSimpleImpl: params.streamSimpleImpl,
+      });
+      return {
+        chunkResult,
+        durationMs: Math.max(0, Date.now() - startedAt),
+      };
+    } catch (error) {
+      lastError = error;
+      if (attempt < WHOLE_FILE_ATTEMPTS) {
+        const baseDelayMs = WHOLE_FILE_RETRY_DELAYS_MS[attempt - 1] ?? WHOLE_FILE_RETRY_DELAYS_MS[WHOLE_FILE_RETRY_DELAYS_MS.length - 1];
+        const jitterMs = Math.floor(Math.random() * 1000);
+        const delayMs = baseDelayMs + jitterMs;
+        if (params.verbose) {
+          params.onVerbose?.(
+            `[whole-file] attempt ${attempt} failed (${error instanceof Error ? error.message : String(error)}), retrying in ${delayMs}ms.`,
+          );
+        }
+        await params.sleep(delayMs);
+      }
+    }
+  }
+
+  return {
+    chunkResult: null,
+    durationMs: Math.max(0, Date.now() - startedAt),
+    fallbackWarning: `[whole-file] WARNING: all ${WHOLE_FILE_ATTEMPTS} attempts failed. Falling back to chunked mode for file. Error: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+  };
+}
+
 export interface ExtractChunksResult {
   entries: KnowledgeEntry[];
   successfulChunks: number;
@@ -1512,14 +1656,19 @@ export interface ExtractChunkCompleteResult {
   chunkIndex: number;
   totalChunks: number;
   entries: KnowledgeEntry[];
+  entriesExtracted?: number;
+  durationMs?: number;
   warnings: string[];
 }
 
 export async function extractKnowledgeFromChunks(params: {
   file: string;
   chunks: TranscriptChunk[];
+  messages?: TranscriptMessage[];
   client: LlmClient;
   verbose: boolean;
+  wholeFile?: "auto" | "force" | "never";
+  watchMode?: boolean;
   platform?: KnowledgePlatform | (string & {});
   noDedup?: boolean;
   interChunkDelayMs?: number;
@@ -1535,9 +1684,118 @@ export async function extractKnowledgeFromChunks(params: {
   noPreFetch?: boolean;
   embedFn?: (texts: string[], apiKey: string) => Promise<number[][]>;
 }): Promise<ExtractChunksResult> {
-  const systemPrompt = buildExtractionSystemPrompt(params.platform);
   const warnings: string[] = [];
   const entries: KnowledgeEntry[] = [];
+  const sleep = params.sleepImpl ?? sleepMs;
+
+  if (params.watchMode && params.wholeFile !== undefined && params.wholeFile !== "never" && params.verbose) {
+    const watchOverrideMessage =
+      "[whole-file] watchMode=true overrides wholeFile setting to 'never'. Whole-file mode is not safe in watch mode (cost amplification).";
+    if (params.onVerbose) {
+      params.onVerbose(watchOverrideMessage);
+    } else {
+      console.warn(watchOverrideMessage);
+    }
+  }
+
+  const effectiveWholeFile = params.watchMode ? "never" : (params.wholeFile ?? "auto");
+  const inputMessages = params.messages ?? [];
+  if (effectiveWholeFile === "force" && inputMessages.length === 0) {
+    console.error("[whole-file] force mode requested but no messages provided; cannot build whole-file chunk");
+  }
+
+  let wholeFileMode = resolveWholeFileMode(
+    effectiveWholeFile,
+    inputMessages,
+    params.client,
+    params.verbose,
+  );
+
+  let effectiveChunks = params.chunks;
+  if (wholeFileMode) {
+    if (inputMessages.length === 0) {
+      if (effectiveWholeFile === "force") {
+        console.error("[whole-file] force mode requested but no messages provided; cannot build whole-file chunk");
+      } else if (params.verbose) {
+        console.warn("[whole-file] auto mode: no messages provided, falling back to chunked");
+      }
+      wholeFileMode = false;
+    } else {
+      effectiveChunks = [buildWholeFileChunkFromMessages(inputMessages)];
+    }
+  }
+
+  let effectiveNoPreFetch = wholeFileMode ? true : (params.noPreFetch ?? false);
+  if (wholeFileMode && params.verbose) {
+    const ignoredParamsLine =
+      "[whole-file] interChunkDelayMs and llmConcurrency have no effect in whole-file mode";
+    if (params.onVerbose) {
+      params.onVerbose(ignoredParamsLine);
+    } else {
+      console.warn(ignoredParamsLine);
+    }
+  }
+
+  if (wholeFileMode) {
+    const chunk = effectiveChunks[0];
+    if (!chunk) {
+      wholeFileMode = false;
+      effectiveChunks = params.chunks;
+      effectiveNoPreFetch = params.noPreFetch ?? false;
+    } else {
+      const wholeFileResult = await extractWholeFileChunkWithRetry({
+        file: params.file,
+        chunk,
+        model: params.client.resolvedModel.model,
+        apiKey: params.client.credentials.apiKey,
+        systemPrompt: buildExtractionSystemPrompt(params.platform, true),
+        verbose: params.verbose,
+        onVerbose: params.onVerbose,
+        onStreamDelta: params.onStreamDelta,
+        streamSimpleImpl: params.streamSimpleImpl,
+        sleep,
+      });
+
+      if (wholeFileResult.chunkResult === null) {
+        warnings.push(wholeFileResult.fallbackWarning);
+        console.warn(wholeFileResult.fallbackWarning);
+        wholeFileMode = false;
+        effectiveChunks = params.chunks;
+        effectiveNoPreFetch = params.noPreFetch ?? false;
+      } else {
+        warnings.push(...wholeFileResult.chunkResult.warnings);
+        const validatedChunkEntries = validateExtractedEntries(
+          wholeFileResult.chunkResult.entries,
+          params.platform,
+          params.verbose,
+          params.onVerbose,
+        );
+        if (params.onChunkComplete) {
+          await params.onChunkComplete({
+            chunkIndex: 0,
+            totalChunks: 1,
+            entries: validatedChunkEntries,
+            entriesExtracted: validatedChunkEntries.length,
+            durationMs: wholeFileResult.durationMs,
+            warnings: wholeFileResult.chunkResult.warnings,
+          });
+        } else {
+          entries.push(...validatedChunkEntries);
+        }
+        if (params.onStreamDelta) {
+          params.onStreamDelta("\n", "text");
+        }
+        return {
+          entries: applyEntryHardCap(entries, params.verbose),
+          successfulChunks: 1,
+          failedChunks: 0,
+          warnings,
+        };
+      }
+    }
+  }
+
+  const systemPrompt = buildExtractionSystemPrompt(params.platform, wholeFileMode);
 
   let successfulChunks = 0;
   let failedChunks = 0;
@@ -1551,13 +1809,12 @@ export async function extractKnowledgeFromChunks(params: {
   );
   let dynamicDelay = baseDelay;
   let lastThrottleNoticeDelayMs: number | null = null;
-  const sleep = params.sleepImpl ?? sleepMs;
 
   const llmConcurrency = Math.max(1, Math.trunc(params.llmConcurrency ?? 1));
   const bufferStreamDeltas = llmConcurrency > 1 && Boolean(params.onStreamDelta);
   let cursor = 0;
 
-  const workerCount = Math.max(1, Math.min(llmConcurrency, params.chunks.length));
+  const workerCount = Math.max(1, Math.min(llmConcurrency, effectiveChunks.length));
   await Promise.all(
     Array.from({ length: workerCount }, async () => {
       while (true) {
@@ -1567,22 +1824,23 @@ export async function extractKnowledgeFromChunks(params: {
 
         const currentIndex = cursor;
         cursor += 1;
-        if (currentIndex >= params.chunks.length) {
+        if (currentIndex >= effectiveChunks.length) {
           return;
         }
 
         startedChunks += 1;
-        const chunk = params.chunks[currentIndex];
+        const chunk = effectiveChunks[currentIndex];
         if (!chunk) {
           return;
         }
 
+        const chunkStartedAt = Date.now();
         let chunkDone = false;
         let lastError: unknown = null;
         let chunkResult: { entries: KnowledgeEntry[]; warnings: string[] } | null = null;
         let streamBuffer: Array<{ delta: string; kind: "text" | "thinking" }> = [];
         const related =
-          params.noPreFetch === true
+          effectiveNoPreFetch === true
             ? undefined
             : params.db && params.embeddingApiKey
               ? await preFetchRelated(
@@ -1597,7 +1855,7 @@ export async function extractKnowledgeFromChunks(params: {
         for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
           if (params.verbose) {
             params.onVerbose?.(
-              `[chunk ${chunk.chunk_index + 1}/${params.chunks.length}] attempt ${attempt}/${MAX_ATTEMPTS}`,
+              `[chunk ${chunk.chunk_index + 1}/${effectiveChunks.length}] attempt ${attempt}/${MAX_ATTEMPTS}`,
             );
           }
 
@@ -1663,33 +1921,20 @@ export async function extractKnowledgeFromChunks(params: {
           );
         } else if (chunkResult) {
           dynamicDelay = Math.max(baseDelay, Math.floor(dynamicDelay * 0.9));
-          const validatedChunkEntries: KnowledgeEntry[] = [];
-          for (const entry of chunkResult.entries) {
-            const capped = applyConfidenceCap(entry, params.platform);
-            if (params.verbose && capped.importance !== entry.importance) {
-              params.onVerbose?.(
-                `[confidence-cap] lowered importance from ${entry.importance} to 5 (unverified tag)`,
-              );
-            }
-
-            // Re-validate defensively: applyConfidenceCap currently only lowers importance to 5,
-            // but this guard catches future extensions to applyConfidenceCap that could produce invalid entries.
-            const validationIssue = validateEntry(capped);
-            if (validationIssue) {
-              if (params.verbose) {
-                params.onVerbose?.(`[entry-drop] ${validationIssue}`);
-              }
-              continue;
-            }
-
-            validatedChunkEntries.push(capped);
-          }
+          const validatedChunkEntries = validateExtractedEntries(
+            chunkResult.entries,
+            params.platform,
+            params.verbose,
+            params.onVerbose,
+          );
 
           if (params.onChunkComplete) {
             await params.onChunkComplete({
               chunkIndex: chunk.chunk_index,
-              totalChunks: params.chunks.length,
+              totalChunks: effectiveChunks.length,
               entries: validatedChunkEntries,
+              entriesExtracted: validatedChunkEntries.length,
+              durationMs: Math.max(0, Date.now() - chunkStartedAt),
               warnings: chunkResult.warnings,
             });
           } else {
@@ -1706,11 +1951,11 @@ export async function extractKnowledgeFromChunks(params: {
           params.onStreamDelta("\n", "text");
         }
 
-        if (dynamicDelay > 0 && cursor < params.chunks.length && !isShutdownRequested()) {
+        if (dynamicDelay > 0 && cursor < effectiveChunks.length && !isShutdownRequested()) {
           if (llmConcurrency > 1) {
             const jitterMs = Math.max(0, Math.trunc(dynamicDelay * (0.5 + Math.random())));
             await sleep(jitterMs);
-          } else if (currentIndex < params.chunks.length - 1) {
+          } else if (currentIndex < effectiveChunks.length - 1) {
             // Preserve existing (serial) delay behavior.
             await sleep(dynamicDelay);
           }
@@ -1719,14 +1964,15 @@ export async function extractKnowledgeFromChunks(params: {
     }),
   );
 
-  const skippedChunks = Math.max(0, params.chunks.length - startedChunks);
+  const skippedChunks = Math.max(0, effectiveChunks.length - startedChunks);
   const aborted = skippedChunks > 0 && isShutdownRequested();
   if (aborted) {
     warnings.push(`Shutdown requested; skipped ${skippedChunks} chunk(s).`);
   }
 
   let finalEntries = entries;
-  if (!aborted && !params.noDedup && finalEntries.length > 1) {
+  const skipDedup = wholeFileMode;
+  if (!aborted && !skipDedup && !params.noDedup && finalEntries.length > 1) {
     const dedupResult = await deduplicateEntriesWithLlm({
       file: params.file,
       entries: finalEntries,
@@ -1738,6 +1984,9 @@ export async function extractKnowledgeFromChunks(params: {
     });
     finalEntries = dedupResult.entries;
     warnings.push(...dedupResult.warnings);
+  }
+  if (wholeFileMode) {
+    finalEntries = applyEntryHardCap(finalEntries, params.verbose);
   }
 
   return {

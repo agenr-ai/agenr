@@ -714,6 +714,16 @@ export function createProgram(): Command {
     .option("--skip-ingested", "Skip already-ingested files", true)
     .option("--no-retry", "Disable auto-retry for failed files")
     .option("--no-pre-fetch", "Disable elaborative encoding pre-fetch")
+    .option(
+      "--whole-file",
+      "Force whole-file extraction mode. Sends each file as a single LLM call. Auto-detected for large-context models; use this flag to force it for any model. Ignored in watch mode.",
+      false,
+    )
+    .option(
+      "--chunk",
+      "Force chunked extraction. Disables whole-file auto-detect. Use if whole-file mode produces unexpected results.",
+      false,
+    )
     .option("--max-retries <n>", "Maximum auto-retry attempts", parseIntOption, 3)
     .option("--force", "Clean re-ingest: delete previous rows for each file before processing", false)
     .action(async (paths: string[], opts: IngestCommandOptions) => {

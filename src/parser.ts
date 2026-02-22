@@ -198,7 +198,7 @@ export async function expandInputFiles(inputs: string[]): Promise<string[]> {
   return Array.from(resolved).sort((a, b) => a.localeCompare(b));
 }
 
-function renderTranscriptLine(message: TranscriptMessage): string {
+export function renderTranscriptLine(message: TranscriptMessage): string {
   const index = String(message.index).padStart(5, "0");
   return `[m${index}][${message.role}] ${message.text}`;
 }

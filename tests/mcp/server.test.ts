@@ -4,7 +4,14 @@ import type { Client } from "@libsql/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMcpServer } from "../../src/mcp/server.js";
 import type { McpServerDeps } from "../../src/mcp/server.js";
-import type { KnowledgeEntry, LlmClient, RecallResult, StoreResult, TranscriptChunk } from "../../src/types.js";
+import type {
+  KnowledgeEntry,
+  LlmClient,
+  ParsedTranscript,
+  RecallResult,
+  StoreResult,
+  TranscriptChunk,
+} from "../../src/types.js";
 import { parseSince, parseSinceToIso } from "../../src/utils/time.js";
 import { createScopedProjectConfig } from "../helpers/scoped-config.js";
 
@@ -125,7 +132,7 @@ function makeHarness(): TestHarness {
   });
   const retireEntriesFn = vi.fn(async () => ({ count: 1 }));
 
-  const parseTranscriptFileFn = vi.fn(async (filePath: string) => {
+  const parseTranscriptFileFn = vi.fn(async (filePath: string): Promise<ParsedTranscript> => {
     const chunks: TranscriptChunk[] = [
       {
         chunk_index: 0,
@@ -137,7 +144,13 @@ function makeHarness(): TestHarness {
     ];
     return {
       file: filePath,
-      messages: [],
+      messages: [
+        {
+          index: 0,
+          role: "user",
+          text: "sample",
+        },
+      ],
       chunks,
       warnings: [],
     };
@@ -1252,6 +1265,7 @@ describe("mcp server", () => {
     expect(harness.writeFileFn).toHaveBeenCalledTimes(1);
     expect(harness.parseTranscriptFileFn).toHaveBeenCalledTimes(1);
     expect(harness.extractKnowledgeFromChunksFn).toHaveBeenCalledTimes(1);
+    expect(harness.extractKnowledgeFromChunksFn.mock.calls[0]?.[0]?.messages).toHaveLength(1);
     expect(harness.storeEntriesFn).toHaveBeenCalledTimes(1);
     expect(harness.rmFn).toHaveBeenCalledTimes(1);
 

@@ -14,8 +14,9 @@ import {
   validateEntry,
 } from "../src/extractor.js";
 import { initDb } from "../src/db/client.js";
+import { renderTranscriptLine } from "../src/parser.js";
 import { requestShutdown, resetShutdownForTests } from "../src/shutdown.js";
-import type { KnowledgeEntry, LlmClient, StoredEntry, TranscriptChunk } from "../src/types.js";
+import type { KnowledgeEntry, LlmClient, StoredEntry, TranscriptChunk, TranscriptMessage } from "../src/types.js";
 
 function fakeModel(): Model<Api> {
   return {
@@ -43,6 +44,16 @@ function fakeClient(): LlmClient {
     credentials: {
       apiKey: "test-key",
       source: "test",
+    },
+  };
+}
+
+function fakeClientWithModelId(modelId: string): LlmClient {
+  return {
+    ...fakeClient(),
+    resolvedModel: {
+      ...fakeClient().resolvedModel,
+      modelId,
     },
   };
 }
@@ -77,6 +88,23 @@ function fakeChunkWithTimestamp(index: number, timestampEnd: string): Transcript
     timestamp_start: timestampEnd,
     timestamp_end: timestampEnd,
   };
+}
+
+function fakeMessages(): TranscriptMessage[] {
+  return [
+    {
+      index: 0,
+      role: "user",
+      text: "First whole-file message",
+      timestamp: "2026-02-21T10:00:00.000Z",
+    },
+    {
+      index: 1,
+      role: "assistant",
+      text: "Second whole-file message",
+      timestamp: "2026-02-21T10:01:00.000Z",
+    },
+  ];
 }
 
 function assistantMessageWithContent(
@@ -228,6 +256,17 @@ describe("buildExtractionSystemPrompt", () => {
   it("with undefined returns base only", () => {
     const prompt = buildExtractionSystemPrompt(undefined);
     expect(prompt).toBe(SYSTEM_PROMPT);
+  });
+
+  it("whole-file mode removes max-entry chunk cap and uses whole-file calibration text", () => {
+    const prompt = buildExtractionSystemPrompt("codex", true);
+    expect(prompt).not.toContain("Max 8 entries; prefer 0-3.");
+    expect(prompt).toContain("Calibration (whole-file mode - you have the FULL session context, not a fragment):");
+  });
+
+  it("chunked mode keeps max-entry chunk cap text", () => {
+    const prompt = buildExtractionSystemPrompt("codex", false);
+    expect(prompt).toContain("Max 8 entries; prefer 0-3.");
   });
 
   it("openclaw addendum instructs capping hedged claims", () => {
@@ -465,6 +504,413 @@ describe("pre-fetch", () => {
 describe("extractKnowledgeFromChunks", () => {
   afterEach(() => {
     resetShutdownForTests();
+  });
+
+  it("skips pre-fetch in whole-file mode", async () => {
+    const db = await makeDb();
+    await seedEntries(db, 30, 0.2);
+    const embedFn = vi.fn(async () => [unitVector(1)]);
+
+    const result = await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunk()],
+      messages: fakeMessages(),
+      client: fakeClientWithModelId("gpt-4.1-nano"),
+      verbose: false,
+      wholeFile: "force",
+      db,
+      embeddingApiKey: "sk-test",
+      embedFn,
+      streamSimpleImpl: (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) =>
+        streamWithResult(
+          Promise.resolve(
+            assistantMessageWithContent(
+              [{ type: "toolCall", id: "call_empty", name: "submit_knowledge", arguments: { entries: [] } }],
+              "toolUse",
+            ),
+          ),
+        ),
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+    });
+
+    expect(embedFn).not.toHaveBeenCalled();
+    expect(result.successfulChunks).toBe(1);
+    expect(result.failedChunks).toBe(0);
+  });
+
+  it("force mode without messages logs an error and falls back to chunked", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    let prompt = "";
+
+    const result = await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunk()],
+      client: fakeClientWithModelId("gpt-4.1-nano"),
+      verbose: false,
+      wholeFile: "force",
+      streamSimpleImpl: (_model: Model<Api>, context: Context, _opts?: SimpleStreamOptions) => {
+        prompt = String(context.messages[0]?.content ?? "");
+        return streamWithResult(
+          Promise.resolve(
+            assistantMessageWithContent(
+              [{ type: "toolCall", id: "call_empty", name: "submit_knowledge", arguments: { entries: [] } }],
+              "toolUse",
+            ),
+          ),
+        );
+      },
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+    });
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      "[whole-file] force mode requested but no messages provided; cannot build whole-file chunk",
+    );
+    expect(prompt).toContain(fakeChunk().text);
+    expect(result.successfulChunks).toBe(1);
+    expect(result.failedChunks).toBe(0);
+
+    errorSpy.mockRestore();
+  });
+
+  it("returns empty entries and warning when whole-file response is malformed JSON", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const result = await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunk()],
+      messages: fakeMessages(),
+      client: fakeClientWithModelId("gpt-4.1-nano"),
+      verbose: false,
+      wholeFile: "force",
+      streamSimpleImpl: (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) =>
+        streamWithResult(Promise.resolve(assistantMessage("not-json"))),
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+    });
+
+    expect(result.entries).toEqual([]);
+    expect(result.warnings.some((line) => line.includes("Falling back to chunked mode"))).toBe(true);
+    expect(warnSpy).toHaveBeenCalled();
+
+    warnSpy.mockRestore();
+  });
+
+  it("fires onChunkComplete once in whole-file mode even when zero entries are returned", async () => {
+    const callbacks: Array<{
+      chunkIndex: number;
+      totalChunks: number;
+      entriesExtracted?: number;
+      durationMs?: number;
+    }> = [];
+
+    await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunk()],
+      messages: fakeMessages(),
+      client: fakeClientWithModelId("gpt-4.1-nano"),
+      verbose: false,
+      wholeFile: "force",
+      streamSimpleImpl: (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) =>
+        streamWithResult(
+          Promise.resolve(
+            assistantMessageWithContent(
+              [{ type: "toolCall", id: "call_empty", name: "submit_knowledge", arguments: { entries: [] } }],
+              "toolUse",
+            ),
+          ),
+        ),
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+      onChunkComplete: async (chunkResult) => {
+        callbacks.push(chunkResult);
+      },
+    });
+
+    expect(callbacks).toHaveLength(1);
+    expect(callbacks[0]?.chunkIndex).toBe(0);
+    expect(callbacks[0]?.totalChunks).toBe(1);
+    expect(callbacks[0]?.entriesExtracted).toBe(0);
+    expect((callbacks[0]?.durationMs ?? -1) >= 0).toBe(true);
+  });
+
+  it("uses a single LLM call in whole-file mode and sends full rendered file text", async () => {
+    const messages = fakeMessages();
+    let callCount = 0;
+    let prompt = "";
+
+    await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunkAt(0), fakeChunkAt(1)],
+      messages,
+      client: fakeClientWithModelId("gpt-4.1-nano"),
+      verbose: false,
+      wholeFile: "force",
+      noDedup: true,
+      streamSimpleImpl: (_model: Model<Api>, context: Context, _opts?: SimpleStreamOptions) => {
+        callCount += 1;
+        prompt = String(context.messages[0]?.content ?? "");
+        return streamWithResult(Promise.resolve(assistantMessage("[]")));
+      },
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+    });
+
+    const fullRenderedText = messages.map((message) => renderTranscriptLine(message)).join("");
+    expect(callCount).toBe(1);
+    expect(prompt).toContain(fullRenderedText);
+  });
+
+  it("skips dedup in whole-file mode but runs dedup in chunked mode", async () => {
+    let wholeFileDedupCalls = 0;
+    const wholeFileStream = (_model: Model<Api>, context: Context, _opts?: SimpleStreamOptions) => {
+      const prompt = String(context.messages[0]?.content ?? "");
+      if (prompt.includes("Deduplicate these extracted knowledge entries.")) {
+        wholeFileDedupCalls += 1;
+      }
+      return streamWithResult(
+        Promise.resolve(
+          assistantMessage(
+            JSON.stringify([
+              {
+                type: "fact",
+                content: "Duplicate candidate one with durable context",
+                subject: "dedup subject",
+                importance: 7,
+                expiry: "temporary",
+                tags: ["dedup"],
+                source: { context: "a" },
+              },
+              {
+                type: "fact",
+                content: "Duplicate candidate two with durable context",
+                subject: "dedup subject",
+                importance: 7,
+                expiry: "temporary",
+                tags: ["dedup"],
+                source: { context: "b" },
+              },
+            ]),
+          ),
+        ),
+      );
+    };
+
+    const wholeFileResult = await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunkAt(0), fakeChunkAt(1)],
+      messages: fakeMessages(),
+      client: fakeClientWithModelId("gpt-4.1-nano"),
+      verbose: false,
+      wholeFile: "force",
+      streamSimpleImpl: wholeFileStream,
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+    });
+
+    let chunkedDedupCalls = 0;
+    const chunkedStream = (_model: Model<Api>, context: Context, _opts?: SimpleStreamOptions) => {
+      const prompt = String(context.messages[0]?.content ?? "");
+      if (prompt.includes("Deduplicate these extracted knowledge entries.")) {
+        chunkedDedupCalls += 1;
+        return streamWithResult(
+          Promise.resolve(
+            assistantMessageWithContent(
+              [
+                {
+                  type: "toolCall",
+                  id: "dedup_call",
+                  name: "submit_deduped_knowledge",
+                  arguments: {
+                    entries: [
+                      {
+                        type: "fact",
+                        content: "Merged deduplicated fact",
+                        subject: "dedup subject",
+                        importance: 7,
+                        expiry: "temporary",
+                        tags: ["dedup"],
+                        source_context: "merged",
+                      },
+                    ],
+                  },
+                },
+              ],
+              "toolUse",
+            ),
+          ),
+        );
+      }
+
+      return streamWithResult(
+        Promise.resolve(
+          assistantMessage(
+            '[{"type":"fact","content":"Chunked candidate fact","subject":"dedup subject","importance":7,"expiry":"temporary","tags":["dedup"],"source":{"context":"chunk"}}]',
+          ),
+        ),
+      );
+    };
+
+    const chunkedResult = await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunkAt(0), fakeChunkAt(1)],
+      client: fakeClientWithModelId("gpt-4.1-nano"),
+      verbose: false,
+      wholeFile: "never",
+      streamSimpleImpl: chunkedStream,
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+    });
+
+    expect(wholeFileDedupCalls).toBe(0);
+    expect(wholeFileResult.entries).toHaveLength(2);
+    expect(chunkedDedupCalls).toBeGreaterThanOrEqual(1);
+    expect(chunkedResult.entries).toHaveLength(1);
+  });
+
+  it("reports whole-file onChunkComplete payload fields", async () => {
+    const callbacks: Array<{
+      chunkIndex: number;
+      totalChunks: number;
+      entriesExtracted?: number;
+      durationMs?: number;
+    }> = [];
+
+    await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunk()],
+      messages: fakeMessages(),
+      client: fakeClientWithModelId("gpt-4.1-nano"),
+      verbose: false,
+      wholeFile: "force",
+      streamSimpleImpl: (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) =>
+        streamWithResult(
+          Promise.resolve(
+            assistantMessage(
+              '[{"type":"fact","content":"Whole-file callback payload test entry","subject":"whole-file payload","importance":7,"expiry":"temporary","tags":["whole-file"],"source":{"context":"wf"}}]',
+            ),
+          ),
+        ),
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+      onChunkComplete: async (chunkResult) => {
+        callbacks.push(chunkResult);
+      },
+    });
+
+    expect(callbacks).toHaveLength(1);
+    expect(callbacks[0]?.chunkIndex).toBe(0);
+    expect(callbacks[0]?.totalChunks).toBe(1);
+    expect(callbacks[0]?.entriesExtracted).toBe(1);
+    expect((callbacks[0]?.durationMs ?? -1) >= 0).toBe(true);
+  });
+
+  it("retries whole-file extraction and succeeds on the third attempt with expected delays", async () => {
+    let callCount = 0;
+    const sleepCalls: number[] = [];
+    const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
+
+    try {
+      const result = await extractKnowledgeFromChunks({
+        file: "session.jsonl",
+        chunks: [fakeChunk()],
+        messages: fakeMessages(),
+        client: fakeClientWithModelId("gpt-4.1-nano"),
+        verbose: false,
+        wholeFile: "force",
+        streamSimpleImpl: (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) => {
+          callCount += 1;
+          if (callCount < 3) {
+            return streamWithResult(Promise.reject(new Error("network timeout")));
+          }
+          return streamWithResult(
+            Promise.resolve(
+              assistantMessage(
+                '[{"type":"fact","content":"Retry success on third attempt","subject":"whole-file retry","importance":7,"expiry":"temporary","tags":["retry"],"source":{"context":"wf"}}]',
+              ),
+            ),
+          );
+        },
+        sleepImpl: async (ms) => {
+          sleepCalls.push(ms);
+        },
+        retryDelayMs: () => 0,
+      });
+
+      expect(callCount).toBe(3);
+      expect(sleepCalls).toEqual([2000, 4000]);
+      expect(result.entries).toHaveLength(1);
+    } finally {
+      randomSpy.mockRestore();
+    }
+  });
+
+  it("falls back to chunked mode when whole-file retries are exhausted", async () => {
+    let callCount = 0;
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const result = await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunk()],
+      messages: fakeMessages(),
+      client: fakeClientWithModelId("gpt-4.1-nano"),
+      verbose: false,
+      wholeFile: "force",
+      streamSimpleImpl: (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) => {
+        callCount += 1;
+        if (callCount <= 3) {
+          return streamWithResult(Promise.reject(new Error("upstream outage")));
+        }
+        return streamWithResult(
+          Promise.resolve(
+            assistantMessage(
+              '[{"type":"fact","content":"Fallback chunked result","subject":"fallback path","importance":7,"expiry":"temporary","tags":["fallback"],"source":{"context":"chunk"}}]',
+            ),
+          ),
+        );
+      },
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+    });
+
+    expect(callCount).toBeGreaterThanOrEqual(4);
+    expect(result.entries).toHaveLength(1);
+    expect(result.warnings.some((line) => line.includes("Falling back to chunked mode"))).toBe(true);
+    expect(warnSpy).toHaveBeenCalled();
+
+    warnSpy.mockRestore();
+  });
+
+  it("watchMode overrides wholeFile and uses chunked extraction with warning", async () => {
+    const verboseLines: string[] = [];
+    let prompt = "";
+
+    await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunkAt(0)],
+      messages: fakeMessages(),
+      client: fakeClientWithModelId("gpt-4.1-nano"),
+      verbose: true,
+      watchMode: true,
+      wholeFile: "force",
+      noDedup: true,
+      onVerbose: (line) => verboseLines.push(line),
+      streamSimpleImpl: (_model: Model<Api>, context: Context, _opts?: SimpleStreamOptions) => {
+        prompt = String(context.messages[0]?.content ?? "");
+        return streamWithResult(Promise.resolve(assistantMessage("[]")));
+      },
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+    });
+
+    expect(prompt).toContain("hello 0");
+    expect(prompt).not.toContain("First whole-file message");
+    expect(
+      verboseLines.some((line) =>
+        line.includes("watchMode=true overrides wholeFile setting to 'never'"),
+      ),
+    ).toBe(true);
   });
 
   it("treats pre-fetch failures as best-effort and still completes all chunks", async () => {

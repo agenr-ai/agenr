@@ -570,6 +570,7 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
         await resolvedDeps.extractKnowledgeFromChunksFn({
           file: targetFilePath,
           chunks: parsed.chunks,
+          watchMode: true,
           client,
           verbose: options.verbose,
           platform:
