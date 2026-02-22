@@ -177,7 +177,14 @@ export async function initDb(client: Client, opts?: { checkBulkRecovery?: boolea
   }
   await initSchema(client);
   if (opts?.checkBulkRecovery === true) {
-    await checkAndRecoverBulkIngest(client);
+    try {
+      await checkAndRecoverBulkIngest(client);
+    } catch (recoveryError) {
+      process.stderr.write(
+        `[agenr] Warning: bulk ingest recovery failed: ${recoveryError instanceof Error ? (recoveryError.stack ?? recoveryError.message) : String(recoveryError)}\n` +
+        `[agenr] Continuing without recovery. Run 'agenr ingest --bulk' again if FTS or vector search is degraded.\n`,
+      );
+    }
   }
 
   // Probe vector index health (best-effort; do not block normal commands).
