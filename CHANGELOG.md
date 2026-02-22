@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.8.5]
+
+### Added
+- feat(ingest): `--bulk` mode for large-scale ingests; drops FTS triggers and the vector index before writing, uses `batchSize=500` with `BEGIN IMMEDIATE` transactions per batch, and rebuilds FTS content + vector index in a single pass after all entries are written (issue #135)
+- feat(ingest): MinHash dedup (`src/db/minhash.ts`) - 128-hash signatures using 5-gram shingles and FNV32 with pre-seeded arrays; two-layer dedup combines an in-memory norm-content-hash Set (cross-batch per run) with per-candidate exact-hash + MinHash scan; new `norm_content_hash` and `minhash_sig` columns added via schema migration with automatic backfill
+- feat(ingest): crash recovery for interrupted bulk ingests; `_meta` flag (`bulk_ingest_state`) is set before teardown and cleared only after REINDEX succeeds; `checkAndRecoverBulkIngest()` detects an interrupted run on next startup, rebuilds missing FTS triggers and/or vector index, runs `PRAGMA integrity_check`, and clears the flag (issue #135)
+
+### Fixed
+- fix(bulk): `seenNormHashes` was updated inside the transaction before `COMMIT`, causing a rollback to poison the in-memory Set and silently skip affected entries on retry; fixed by moving the update to after `COMMIT` using a local `committedHashes` Set
+- fix(bulk): `bufferToMinhashSig` threw an unhandled `RangeError` on any `minhash_sig` blob that was not exactly 512 bytes (corrupt row, partial write, or schema version mismatch); fixed with a byte-length guard before conversion
+- fix(bulk): `rebuildVectorIndex` DROP+CREATE fallback was not atomic; if `CREATE INDEX` failed after `DROP` succeeded the vector index was permanently absent until recovery ran; fixed by wrapping the fallback in `BEGIN IMMEDIATE`
+- fix(bulk): backfill of `norm_content_hash` and `minhash_sig` ran unconditionally on every `agenr ingest` invocation; gated on `bulkMode` to avoid unnecessary write transactions on non-bulk runs
+- fix(bulk): backfill cap (5000 rows) was hit silently; warns to stderr when more rows remain so the user knows to run ingest again
+- fix(minhash): short-text MinHash fallback used raw `text` instead of normalized `chars`, causing near-duplicate short strings differing only in whitespace to score Jaccard ~0
+- fix(bulk): `getBulkIngestMeta` silently swallowed JSON parse errors, disabling crash recovery without any signal; now warns to stderr
+
 ## [0.8.4]
 
 ### Added
