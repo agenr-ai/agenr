@@ -530,6 +530,30 @@ describe("pre-fetch", () => {
     ).resolves.toEqual([]);
   });
 
+  it("suppresses vector index not found pre-fetch errors", async () => {
+    const db = {
+      execute: vi.fn(async () => {
+        throw new Error("SQLITE_ERROR: vector index(search): index not found");
+      }),
+    } as unknown as Client;
+    const onVerbose = vi.fn();
+
+    await expect(preFetchRelated("chunk", db, "sk-test", async () => [unitVector(1)], onVerbose)).resolves.toEqual([]);
+    expect(onVerbose).not.toHaveBeenCalled();
+  });
+
+  it("logs non-vector-index pre-fetch errors", async () => {
+    const db = {
+      execute: vi.fn(async () => {
+        throw new Error("SQLITE_BUSY: database is locked");
+      }),
+    } as unknown as Client;
+    const onVerbose = vi.fn();
+
+    await expect(preFetchRelated("chunk", db, "sk-test", async () => [unitVector(1)], onVerbose)).resolves.toEqual([]);
+    expect(onVerbose).toHaveBeenCalledWith(expect.stringContaining("database is locked"));
+  });
+
   it("respects timeout and does not block chunk extraction", async () => {
     vi.useFakeTimers();
 
@@ -1010,6 +1034,58 @@ describe("extractKnowledgeFromChunks", () => {
         line.includes("watchMode=true overrides wholeFile setting to 'never'"),
       ),
     ).toBe(true);
+  });
+
+  it("emits whole-file ignored-params warning once when onceFlags are shared across calls", async () => {
+    const verboseLines: string[] = [];
+    const onceFlags = { hasWarnedWholeFileIgnoredParams: false };
+    const streamSimpleImpl = (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) =>
+      streamWithResult(
+        Promise.resolve(
+          assistantMessageWithContent(
+            [{ type: "toolCall", id: "call_empty", name: "submit_knowledge", arguments: { entries: [] } }],
+            "toolUse",
+          ),
+        ),
+      );
+
+    await extractKnowledgeFromChunks({
+      file: "file-a.jsonl",
+      chunks: [fakeChunkAt(0)],
+      messages: fakeMessages(),
+      client: fakeClientWithModelId("gpt-4.1-nano"),
+      verbose: true,
+      wholeFile: "force",
+      interChunkDelayMs: 100,
+      llmConcurrency: 8,
+      noDedup: true,
+      onceFlags,
+      onVerbose: (line) => verboseLines.push(line),
+      streamSimpleImpl,
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+    });
+
+    await extractKnowledgeFromChunks({
+      file: "file-b.jsonl",
+      chunks: [fakeChunkAt(1)],
+      messages: fakeMessages(),
+      client: fakeClientWithModelId("gpt-4.1-nano"),
+      verbose: true,
+      wholeFile: "force",
+      interChunkDelayMs: 100,
+      llmConcurrency: 8,
+      noDedup: true,
+      onceFlags,
+      onVerbose: (line) => verboseLines.push(line),
+      streamSimpleImpl,
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+    });
+
+    const ignoredParamsLine =
+      "[whole-file] interChunkDelayMs and llmConcurrency have no effect in whole-file mode";
+    expect(verboseLines.filter((line) => line === ignoredParamsLine)).toHaveLength(1);
   });
 
   it("treats pre-fetch failures as best-effort and still completes all chunks", async () => {

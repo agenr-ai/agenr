@@ -228,7 +228,7 @@ async function runLaunchctl(
 }
 
 function resolveCliPath(argv: string[]): string {
-  const cliArg = argv[1];
+  const cliArg = argv[1] ?? process.argv[1];
   if (cliArg && cliArg.trim().length > 0) {
     return path.resolve(cliArg);
   }
