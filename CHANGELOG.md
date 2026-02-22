@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.8.4]
+
+### Added
+- feat(openclaw-plugin): project scoping via config.project in openclaw.json; all session-start recall and store calls are scoped to the configured project when set (issue #71)
+- feat(openclaw-plugin): optional subject field in agenr_store schema; agents can now pass an explicit subject per entry rather than always relying on inference (issue #86)
+- feat(openclaw-plugin): platform normalization and source_file format warnings in runStoreTool; platform is inferred from source when missing, invalid values are warned and dropped, freeform source strings trigger a format hint (issue #145)
+
+### Fixed
+- fix(recall): cap final recall scores at 1.0 after FTS bonus; Math.min(1.0) applied in scoreEntryWithBreakdown (issue #64)
+- fix(mcp): correct misleading retire tool message; retired entries are hidden from all recall paths (issue #143)
+- fix(mcp): inferSubject now splits on punctuation followed by whitespace only, preventing truncation on file path periods (e.g. .ts, .js)
+- fix(openclaw-plugin): subject inference in runStoreTool processedEntries now uses the same safe regex as inferSubject
+
+### Changed
+- chore(openclaw-plugin): remove openclaw.plugin.json version field; package.json is now the single source of truth (issue #91)
+- chore(openclaw-plugin): remove formatRecallAsSummary dead code; writeAgenrMd was already removed, this cleans up the last orphaned export (issue #77)
+
 ## [0.8.3]
 
 ### Fixed
