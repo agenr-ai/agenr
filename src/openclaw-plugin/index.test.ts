@@ -265,6 +265,22 @@ describe("openclaw plugin tool runners", () => {
     expect(payload[0]?.subject).toBe("test entry 1");
   });
 
+  it("runStoreTool keeps explicit subject values from params", async () => {
+    let writtenStdin = "";
+    const mockChild = createMockChild({ code: 0 });
+    mockChild.stdin.write = vi.fn((chunk: string) => {
+      writtenStdin += chunk;
+    });
+    spawnMock.mockReturnValueOnce(mockChild);
+
+    await runStoreTool("/path/to/agenr", {
+      entries: [{ content: "entry content", subject: "explicit subject", type: "fact" }],
+    });
+
+    const payload = JSON.parse(writtenStdin) as Array<{ subject?: string }>;
+    expect(payload[0]?.subject).toBe("explicit subject");
+  });
+
   it("runStoreTool passes dedup flags from plugin config", async () => {
     let capturedArgs: string[] = [];
     spawnMock.mockImplementationOnce((_cmd: string, args: string[]) => {
