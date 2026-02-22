@@ -11,8 +11,8 @@ export class EmbeddingCache {
   private tail: string | null = null; // least recently used key
 
   constructor(maxSize = 5000) {
-    if (maxSize < 1) {
-      throw new RangeError("EmbeddingCache maxSize must be at least 1.");
+    if (!(maxSize >= 1)) {
+      throw new RangeError(`EmbeddingCache maxSize must be at least 1. Received: ${String(maxSize)}.`);
     }
     this.maxSize = maxSize;
   }

@@ -78,8 +78,9 @@ describe("EmbeddingCache", () => {
     expect(cache.get("c")).toEqual([3]);
   });
 
-  it("throws RangeError when maxSize is less than 1", () => {
+  it("throws RangeError when maxSize is less than 1 or NaN", () => {
     expect(() => new EmbeddingCache(0)).toThrow(RangeError);
     expect(() => new EmbeddingCache(-1)).toThrow(RangeError);
+    expect(() => new EmbeddingCache(NaN)).toThrow(RangeError);
   });
 });
