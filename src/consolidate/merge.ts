@@ -311,13 +311,14 @@ export async function mergeCluster(
   if (mergeResult.type !== dominantType) {
     mergeResult.type = dominantType;
   }
+  const maxSourceImportance = Math.max(...cluster.entries.map((entry) => entry.importance ?? 5));
   const sourceTagUnion = normalizeTags(cluster.entries.flatMap((entry) => entry.tags ?? []));
 
   const mergedEntry: KnowledgeEntry = {
     type: mergeResult.type,
     subject: mergeResult.subject,
     content: mergeResult.content,
-    importance: mergeResult.importance,
+    importance: Math.max(mergeResult.importance, maxSourceImportance),
     expiry: mergeResult.expiry,
     tags: normalizeTags([...mergeResult.tags, ...sourceTagUnion]),
     ...(expectedProject ? { project: expectedProject } : {}),
