@@ -198,7 +198,7 @@ export async function runSetup(env: NodeJS.ProcessEnv = process.env): Promise<vo
           storedCredentials: working.credentials,
           env,
         });
-        clack.log.info("Credential updated. Note: the new credential has not been re-validated.");
+        clack.log.info("Credential updated.");
       } else {
         clack.log.warn("Credential not updated - empty input.");
       }
