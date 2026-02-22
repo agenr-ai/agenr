@@ -6,8 +6,24 @@ import * as clack from "@clack/prompts";
 import { readConfig } from "../config.js";
 import { deduplicateEntries } from "../dedup.js";
 import { closeDb, getDb, initDb, walCheckpoint } from "../db/client.js";
-import { hashText, storeEntries } from "../db/store.js";
+import { computeMinhashSig, computeNormContentHash, minhashSigToBuffer } from "../db/minhash.js";
+import {
+  backfillNormContentHash,
+  findDuplicateBulk,
+  hashEntrySourceContent,
+  hashText,
+  insertEntry,
+  storeEntries,
+} from "../db/store.js";
+import {
+  clearBulkIngestMeta,
+  dropFtsTriggersAndIndex,
+  rebuildFtsAndTriggers,
+  rebuildVectorIndex,
+  setBulkIngestMeta,
+} from "../db/schema.js";
 import { acquireDbLock, releaseDbLock } from "../db/lockfile.js";
+import { composeEmbeddingText, embed } from "../embeddings/client.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { extractKnowledgeFromChunks } from "../extractor.js";
 import { createLlmClient } from "../llm/client.js";
@@ -16,6 +32,7 @@ import { normalizeKnowledgePlatform } from "../platform.js";
 import { parseProjectList } from "../project.js";
 import { KNOWLEDGE_PLATFORMS } from "../types.js";
 import type { KnowledgeEntry } from "../types.js";
+import type { StoreResult } from "../types.js";
 import { CancelledError, ShutdownError, WriteQueue } from "../ingest/write-queue.js";
 import type { BatchWriteResult, WriteQueueOptions } from "../ingest/write-queue.js";
 import { banner, formatError, formatWarn, ui } from "../ui.js";
@@ -53,6 +70,7 @@ export interface IngestCommandOptions {
   noPreFetch?: boolean;
   wholeFile?: boolean;
   chunk?: boolean;
+  bulk?: boolean;
 }
 
 export interface IngestFileResult {
@@ -108,6 +126,7 @@ export interface IngestCommandDeps {
   sleepFn: (ms: number) => Promise<void>;
   shouldShutdownFn: () => boolean;
   createWriteQueueFn: (opts: WriteQueueOptions) => WriteQueue;
+  embedFn: (texts: string[], apiKey: string) => Promise<number[][]>;
 }
 
 function hasGlobChars(input: string): boolean {
@@ -283,6 +302,10 @@ async function isAlreadyIngested(db: Client, filePath: string, contentHash: stri
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function asError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
 }
 
 interface ForceCleanupStats {
@@ -515,6 +538,7 @@ export async function runIngestCommand(
     sleepFn: deps?.sleepFn ?? sleep,
     shouldShutdownFn: deps?.shouldShutdownFn ?? isShutdownRequested,
     createWriteQueueFn: deps?.createWriteQueueFn ?? ((opts) => new WriteQueue(opts)),
+    embedFn: deps?.embedFn ?? embed,
   };
   const clackOutput = { output: process.stderr };
   clack.intro(banner(), clackOutput);
@@ -555,6 +579,8 @@ export async function runIngestCommand(
   const startedAt = resolvedDeps.nowFn();
   const verbose = options.verbose === true;
   const dryRun = options.dryRun === true;
+  const bulkRequested = options.bulk === true;
+  const bulkMode = bulkRequested && !dryRun;
   const json = options.json === true;
   const force = options.force === true;
   const skipIngested = force ? false : options.skipIngested !== false;
@@ -601,6 +627,10 @@ export async function runIngestCommand(
   }
   const retrySummaries: string[] = [];
   let stoppedForShutdown = false;
+
+  if (bulkRequested && dryRun) {
+    clack.log.warn(formatWarn("[bulk] --bulk is ignored when --dry-run is enabled."), clackOutput);
+  }
 
   const files = await resolveInputFiles(inputPaths, globPattern, resolvedDeps.expandInputFilesFn);
   const targetsWithSizes = await Promise.all(
@@ -666,13 +696,42 @@ export async function runIngestCommand(
     });
   }
   const db = resolvedDeps.getDbFn(dbPath);
-  await resolvedDeps.initDbFn(db);
   const cleanupDbResources = (): void => {
     if (shouldLockDb) {
       releaseDbLock();
     }
     resolvedDeps.closeDbFn(db);
   };
+
+  try {
+    await resolvedDeps.initDbFn(db, { checkBulkRecovery: true });
+  } catch (error) {
+    cleanupDbResources();
+    throw error;
+  }
+
+  if (bulkMode) {
+    clack.log.warn(
+      formatWarn(
+        "[bulk] WARNING: --bulk mode disables vector dedup. Run 'agenr consolidate' after ingest to catch near-duplicates.",
+      ),
+      clackOutput,
+    );
+    try {
+      await setBulkIngestMeta(db, "initialized");
+    } catch (error) {
+      cleanupDbResources();
+      throw error;
+    }
+  }
+
+  try {
+    const backfilled = await backfillNormContentHash(db);
+    clack.log.info(`[ingest] Backfilled norm_content_hash for ${backfilled} entries.`, clackOutput);
+  } catch (error) {
+    cleanupDbResources();
+    throw error;
+  }
 
   let embeddingApiKey: string | null = null;
   try {
@@ -688,15 +747,113 @@ export async function runIngestCommand(
     throw new Error("Embedding API key is required for ingest. Run 'agenr setup' to configure.");
   }
 
+  const seenNormHashes = new Set<string>();
+  let bulkDedupSkippedHashMinhash = 0;
+  const bulkStoreEntriesFn: typeof storeEntries = async (
+    bulkDb,
+    entries,
+    apiKey,
+    storeOptions = {},
+  ): Promise<StoreResult> => {
+    const started = Date.now();
+    let added = 0;
+    let skipped = 0;
+
+    const localSeenNormHashes = new Set<string>();
+    const candidates: Array<{
+      entry: KnowledgeEntry;
+      contentHash: string;
+      normHash: string;
+      minhashSig: Uint32Array;
+    }> = [];
+
+    for (const entry of entries) {
+      const normHash = computeNormContentHash(entry.content);
+      if (seenNormHashes.has(normHash) || localSeenNormHashes.has(normHash)) {
+        skipped += 1;
+        bulkDedupSkippedHashMinhash += 1;
+        continue;
+      }
+
+      const minhashSig = computeMinhashSig(entry.content);
+      const isDuplicate = await findDuplicateBulk(bulkDb, normHash, minhashSig);
+      if (isDuplicate) {
+        skipped += 1;
+        bulkDedupSkippedHashMinhash += 1;
+        continue;
+      }
+
+      localSeenNormHashes.add(normHash);
+      candidates.push({
+        entry,
+        contentHash: hashEntrySourceContent(entry),
+        normHash,
+        minhashSig,
+      });
+    }
+
+    const texts = candidates.map((candidate) => composeEmbeddingText(candidate.entry));
+    const embeddings = texts.length > 0 ? await resolvedDeps.embedFn(texts, apiKey) : [];
+    if (embeddings.length !== texts.length) {
+      throw new Error(`Bulk embed mismatch: expected ${texts.length}, got ${embeddings.length}.`);
+    }
+
+    await bulkDb.execute("BEGIN IMMEDIATE");
+    try {
+      for (let i = 0; i < candidates.length; i += 1) {
+        const candidate = candidates[i];
+        const embedding = embeddings[i];
+        if (!candidate || !embedding) {
+          throw new Error(`Missing bulk write candidate or embedding at index ${i}.`);
+        }
+
+        await insertEntry(
+          bulkDb,
+          candidate.entry,
+          embedding,
+          candidate.contentHash,
+          candidate.normHash,
+          minhashSigToBuffer(candidate.minhashSig),
+        );
+        seenNormHashes.add(candidate.normHash);
+        added += 1;
+      }
+
+      if (storeOptions.dryRun === true) {
+        await bulkDb.execute("ROLLBACK");
+      } else {
+        await bulkDb.execute("COMMIT");
+      }
+    } catch (error) {
+      try {
+        await bulkDb.execute("ROLLBACK");
+      } catch {
+        // Ignore rollback failures.
+      }
+      throw error;
+    }
+
+    return {
+      added,
+      updated: 0,
+      skipped,
+      superseded: 0,
+      llm_dedup_calls: 0,
+      relations_created: 0,
+      total_entries: 0,
+      duration_ms: Date.now() - started,
+    };
+  };
+
   let queue: WriteQueue;
   try {
     queue = resolvedDeps.createWriteQueueFn({
       db,
-      storeEntriesFn: resolvedDeps.storeEntriesFn,
+      storeEntriesFn: bulkMode ? bulkStoreEntriesFn : resolvedDeps.storeEntriesFn,
       apiKey: embeddingApiKey ?? "",
       llmClient: client,
       dbPath,
-      batchSize: 40,
+      batchSize: bulkMode ? 500 : 40,
       highWatermark: queueHighWatermark,
       backpressureTimeoutMs: queueBackpressureTimeoutMs,
       retryOnFailure: retryEnabled,
@@ -727,6 +884,9 @@ export async function runIngestCommand(
   let filesWithChunkFailures = 0;
   const chunkStatsByFile = new Map<string, { successfulChunks: number; failedChunks: number }>();
   let firstPassFailedIndexSet = new Set<number>();
+  let bulkTeardownComplete = false;
+  let bulkVectorRebuildDurationSeconds: number | null = null;
+  let cleanupFailure: Error | null = null;
 
   const updateProgress = (completedCount: number, totalCount: number, verb: string): void => {
     if (verbose) {
@@ -1089,6 +1249,14 @@ export async function runIngestCommand(
       );
     };
 
+      if (bulkMode) {
+        clack.log.info("[bulk] Dropping FTS triggers and vector index...", clackOutput);
+        await dropFtsTriggersAndIndex(db);
+        await setBulkIngestMeta(db, "writing");
+        bulkTeardownComplete = true;
+        clack.log.info("[bulk] Teardown complete. Starting bulk writes...", clackOutput);
+      }
+
       await processTargets(sortedTargets, "Processing");
 
       firstPassFailedIndexSet = new Set(
@@ -1151,6 +1319,43 @@ export async function runIngestCommand(
       } finally {
         queue.destroy();
       }
+      if (bulkMode && bulkTeardownComplete && !dryRun) {
+        try {
+          await setBulkIngestMeta(db, "rebuilding_fts");
+          clack.log.info("[bulk] Rebuilding FTS index...", clackOutput);
+          await rebuildFtsAndTriggers(db);
+          clack.log.info(
+            "[bulk] FTS rebuilt. Rebuilding vector index (may take 10-60s for large datasets)...",
+            clackOutput,
+          );
+          await setBulkIngestMeta(db, "rebuilding_vector");
+          const vectorRebuildStartedAt = Date.now();
+          try {
+            await rebuildVectorIndex(db);
+            bulkVectorRebuildDurationSeconds = Math.max(
+              0,
+              (Date.now() - vectorRebuildStartedAt) / 1000,
+            );
+            await clearBulkIngestMeta(db);
+            clack.log.info(
+              `[bulk] Vector index rebuilt in ${bulkVectorRebuildDurationSeconds.toFixed(1)}s.`,
+              clackOutput,
+            );
+          } catch (error) {
+            clack.log.error(
+              formatError(`[bulk] Vector index rebuild failed: ${errorMessage(error)}`),
+              clackOutput,
+            );
+            clack.log.error(
+              "[bulk] Data is safe. Run 'agenr ingest' again to retry, or run 'agenr consolidate' after recovery.",
+              clackOutput,
+            );
+            throw error;
+          }
+        } catch (error) {
+          cleanupFailure = asError(error);
+        }
+      }
       if (!dryRun) {
         try {
           await walCheckpoint(db);
@@ -1162,6 +1367,10 @@ export async function runIngestCommand(
         releaseDbLock();
       }
       resolvedDeps.closeDbFn(db);
+    }
+
+    if (cleanupFailure) {
+      throw cleanupFailure;
     }
 
     const durationMs = Math.max(0, resolvedDeps.nowFn().getTime() - startedAt.getTime());
@@ -1236,10 +1445,19 @@ export async function runIngestCommand(
               .map((result) => `  ${path.basename(result.file)} - ${result.error ?? "Unknown error"}`),
           ]
         : [];
+    const bulkRebuildLine =
+      bulkMode && bulkVectorRebuildDurationSeconds !== null
+        ? `Bulk mode: FTS rebuild + vector index rebuilt in ${bulkVectorRebuildDurationSeconds.toFixed(1)}s.`
+        : null;
+    const bulkDedupLine = bulkMode
+      ? `Bulk dedup: ${bulkDedupSkippedHashMinhash} entries skipped (hash/MinHash).`
+      : null;
     clack.note(
       [
         doneLine,
         chunkFailureLine,
+        bulkRebuildLine,
+        bulkDedupLine,
         ...retryLines,
         ...failedFileLines,
       ]

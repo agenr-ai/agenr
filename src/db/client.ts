@@ -2,7 +2,13 @@ import { createClient, type Client } from "@libsql/client";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { initSchema } from "./schema.js";
+import {
+  clearBulkIngestMeta,
+  getBulkIngestMeta,
+  initSchema,
+  rebuildFtsAndTriggers,
+  rebuildVectorIndex,
+} from "./schema.js";
 
 export const DEFAULT_DB_PATH = path.join(os.homedir(), ".agenr", "knowledge.db");
 
@@ -83,13 +89,96 @@ export function getDb(dbPath?: string): Client {
   return client;
 }
 
-export async function initDb(client: Client): Promise<void> {
+function readCount(row: unknown, key = "cnt"): number {
+  if (!row || typeof row !== "object") {
+    return 0;
+  }
+
+  const record = row as Record<string, unknown>;
+  const raw = record[key] ?? Object.values(record)[0];
+  return toFiniteNumber(raw) ?? 0;
+}
+
+function readIntegrityValue(row: unknown): string {
+  if (!row || typeof row !== "object") {
+    return "";
+  }
+  const record = row as Record<string, unknown>;
+  const raw = record.integrity_check ?? Object.values(record)[0];
+  return String(raw ?? "").trim();
+}
+
+export async function checkAndRecoverBulkIngest(client: Client): Promise<void> {
+  const meta = await getBulkIngestMeta(client);
+  if (!meta) {
+    return;
+  }
+
+  try {
+    const triggerCountResult = await client.execute(`
+      SELECT COUNT(*) AS cnt
+      FROM sqlite_master
+      WHERE type = 'trigger' AND name IN ('entries_ai', 'entries_ad', 'entries_au')
+    `);
+    const triggerCount = readCount(triggerCountResult.rows[0]);
+
+    const indexCountResult = await client.execute(`
+      SELECT COUNT(*) AS cnt
+      FROM sqlite_master
+      WHERE type = 'index' AND name = 'idx_entries_embedding'
+    `);
+    const indexCount = readCount(indexCountResult.rows[0]);
+
+    process.stderr.write(
+      `[agenr] Interrupted bulk ingest detected (phase: ${meta.phase}). Recovering...\n`,
+    );
+
+    if (triggerCount < 3) {
+      await rebuildFtsAndTriggers(client);
+    } else if (indexCount < 1) {
+      const entriesCountResult = await client.execute("SELECT COUNT(*) AS cnt FROM entries");
+      const ftsCountResult = await client.execute("SELECT COUNT(*) AS cnt FROM entries_fts");
+      const entriesCount = readCount(entriesCountResult.rows[0]);
+      const ftsCount = readCount(ftsCountResult.rows[0]);
+      if (entriesCount > 0 && ftsCount === 0) {
+        await client.execute("INSERT INTO entries_fts(entries_fts) VALUES('rebuild')");
+      }
+    }
+
+    if (indexCount < 1) {
+      await rebuildVectorIndex(client);
+    }
+
+    try {
+      const integrityResult = await client.execute("PRAGMA integrity_check");
+      const integrity = readIntegrityValue(integrityResult.rows[0]);
+      process.stderr.write(`[agenr] integrity_check: ${integrity || "unknown"}\n`);
+    } catch (integrityError) {
+      process.stderr.write(
+        `[agenr] integrity_check failed: ${integrityError instanceof Error ? integrityError.message : String(integrityError)}\n`,
+      );
+    }
+
+    await clearBulkIngestMeta(client);
+    process.stderr.write("[agenr] Recovery complete.\n");
+  } catch (error) {
+    process.stderr.write(
+      `[agenr] Bulk ingest recovery failed: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+    );
+    throw error;
+  }
+}
+
+export async function initDb(client: Client, opts?: { checkBulkRecovery?: boolean }): Promise<void> {
   const walInit = walInitByClient.get(client);
   if (walInit) {
     await walInit;
     await client.execute("PRAGMA wal_autocheckpoint=1000");
   }
   await initSchema(client);
+  if (opts?.checkBulkRecovery === true) {
+    await checkAndRecoverBulkIngest(client);
+  }
 
   // Probe vector index health (best-effort; do not block normal commands).
   try {

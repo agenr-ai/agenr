@@ -34,6 +34,7 @@ const CREATE_ENTRIES_FTS_TRIGGER_AU_SQL = `
 
 const REBUILD_ENTRIES_FTS_SQL = "INSERT INTO entries_fts(entries_fts) VALUES ('rebuild')";
 const LEGACY_IMPORTANCE_BACKFILL_META_KEY = "legacy_importance_backfill_from_confidence_v1";
+export const BULK_INGEST_META_KEY = "bulk_ingest_state";
 
 type ColumnMigration = { table: string; column: string; sql: string; isIndex?: boolean };
 
@@ -68,6 +69,8 @@ const CREATE_TABLE_AND_TRIGGER_STATEMENTS: readonly string[] = [
     contradictions INTEGER DEFAULT 0,
     superseded_by TEXT,
     content_hash TEXT,
+    norm_content_hash TEXT,
+    minhash_sig BLOB,
     merged_from INTEGER DEFAULT 0,
     consolidated_at TEXT,
     retired INTEGER NOT NULL DEFAULT 0,
@@ -133,23 +136,6 @@ const CREATE_TABLE_AND_TRIGGER_STATEMENTS: readonly string[] = [
   CREATE_ENTRIES_FTS_TRIGGER_AU_SQL,
 ];
 
-const CREATE_INDEX_STATEMENTS: readonly string[] = [
-  CREATE_IDX_ENTRIES_EMBEDDING_SQL,
-  "CREATE INDEX IF NOT EXISTS idx_entries_type ON entries(type)",
-  "CREATE INDEX IF NOT EXISTS idx_entries_type_canonical_key ON entries(type, canonical_key)",
-  "CREATE INDEX IF NOT EXISTS idx_entries_expiry ON entries(expiry)",
-  "CREATE INDEX IF NOT EXISTS idx_entries_scope ON entries(scope)",
-  "CREATE INDEX IF NOT EXISTS idx_entries_platform ON entries(platform)",
-  "CREATE INDEX IF NOT EXISTS idx_entries_project ON entries(project)",
-  "CREATE INDEX IF NOT EXISTS idx_entries_created ON entries(created_at)",
-  "CREATE INDEX IF NOT EXISTS idx_entries_superseded ON entries(superseded_by)",
-  "CREATE INDEX IF NOT EXISTS idx_entries_content_hash ON entries(content_hash)",
-  "CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag)",
-  "CREATE INDEX IF NOT EXISTS idx_relations_source ON relations(source_id)",
-  "CREATE INDEX IF NOT EXISTS idx_relations_target ON relations(target_id)",
-  "CREATE UNIQUE INDEX IF NOT EXISTS idx_ingest_log_file_hash ON ingest_log(file_path, content_hash)",
-];
-
 // Columns added after the initial schema shipped must be added via ALTER TABLE.
 // CREATE TABLE IF NOT EXISTS does not backfill columns for existing databases.
 const COLUMN_MIGRATIONS: readonly ColumnMigration[] = [
@@ -172,6 +158,22 @@ const COLUMN_MIGRATIONS: readonly ColumnMigration[] = [
     table: "entries",
     column: "content_hash",
     sql: "ALTER TABLE entries ADD COLUMN content_hash TEXT",
+  },
+  {
+    table: "entries",
+    column: "norm_content_hash",
+    sql: "ALTER TABLE entries ADD COLUMN norm_content_hash TEXT",
+  },
+  {
+    table: "entries",
+    column: "idx_entries_norm_content_hash",
+    sql: "CREATE INDEX IF NOT EXISTS idx_entries_norm_content_hash ON entries(norm_content_hash)",
+    isIndex: true,
+  },
+  {
+    table: "entries",
+    column: "minhash_sig",
+    sql: "ALTER TABLE entries ADD COLUMN minhash_sig BLOB",
   },
   {
     table: "entries",
@@ -245,6 +247,100 @@ const COLUMN_MIGRATIONS: readonly ColumnMigration[] = [
     sql: "ALTER TABLE entries ADD COLUMN recall_intervals TEXT DEFAULT NULL",
   },
 ];
+
+const CREATE_INDEX_STATEMENTS: readonly string[] = [
+  CREATE_IDX_ENTRIES_EMBEDDING_SQL,
+  "CREATE INDEX IF NOT EXISTS idx_entries_type ON entries(type)",
+  "CREATE INDEX IF NOT EXISTS idx_entries_type_canonical_key ON entries(type, canonical_key)",
+  "CREATE INDEX IF NOT EXISTS idx_entries_expiry ON entries(expiry)",
+  "CREATE INDEX IF NOT EXISTS idx_entries_scope ON entries(scope)",
+  "CREATE INDEX IF NOT EXISTS idx_entries_platform ON entries(platform)",
+  "CREATE INDEX IF NOT EXISTS idx_entries_project ON entries(project)",
+  "CREATE INDEX IF NOT EXISTS idx_entries_created ON entries(created_at)",
+  "CREATE INDEX IF NOT EXISTS idx_entries_superseded ON entries(superseded_by)",
+  "CREATE INDEX IF NOT EXISTS idx_entries_content_hash ON entries(content_hash)",
+  "CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag)",
+  "CREATE INDEX IF NOT EXISTS idx_relations_source ON relations(source_id)",
+  "CREATE INDEX IF NOT EXISTS idx_relations_target ON relations(target_id)",
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_ingest_log_file_hash ON ingest_log(file_path, content_hash)",
+];
+
+export async function dropFtsTriggersAndIndex(db: Client): Promise<void> {
+  await db.execute("BEGIN IMMEDIATE");
+  try {
+    await db.execute("DROP TRIGGER IF EXISTS entries_ai");
+    await db.execute("DROP TRIGGER IF EXISTS entries_ad");
+    await db.execute("DROP TRIGGER IF EXISTS entries_au");
+    await db.execute("DROP INDEX IF EXISTS idx_entries_embedding");
+    await db.execute("COMMIT");
+  } catch (error) {
+    try {
+      await db.execute("ROLLBACK");
+    } catch {
+      // Ignore rollback failures.
+    }
+    throw error;
+  }
+}
+
+export async function rebuildFtsAndTriggers(db: Client): Promise<void> {
+  await db.execute("BEGIN");
+  try {
+    await db.execute(REBUILD_ENTRIES_FTS_SQL);
+    await db.execute(CREATE_ENTRIES_FTS_TRIGGER_AI_SQL);
+    await db.execute(CREATE_ENTRIES_FTS_TRIGGER_AD_SQL);
+    await db.execute(CREATE_ENTRIES_FTS_TRIGGER_AU_SQL);
+    await db.execute("COMMIT");
+  } catch (error) {
+    try {
+      await db.execute("ROLLBACK");
+    } catch {
+      // Ignore rollback failures.
+    }
+    throw error;
+  }
+}
+
+export async function rebuildVectorIndex(db: Client): Promise<void> {
+  try {
+    await db.execute("REINDEX idx_entries_embedding");
+    return;
+  } catch {
+    // REINDEX not supported/failing for this connection. Fall back to drop+create.
+  }
+
+  await db.execute("DROP INDEX IF EXISTS idx_entries_embedding");
+  await db.execute(CREATE_IDX_ENTRIES_EMBEDDING_SQL);
+}
+
+export async function setBulkIngestMeta(db: Client, phase: string): Promise<void> {
+  await db.execute({
+    sql: `
+      INSERT OR REPLACE INTO _meta (key, value, updated_at)
+      VALUES (?, json_object('phase', ?, 'started_at', datetime('now')), datetime('now'))
+    `,
+    args: [BULK_INGEST_META_KEY, phase],
+  });
+}
+
+export async function clearBulkIngestMeta(db: Client): Promise<void> {
+  await db.execute({ sql: "DELETE FROM _meta WHERE key = ?", args: [BULK_INGEST_META_KEY] });
+}
+
+export async function getBulkIngestMeta(db: Client): Promise<{ phase: string; started_at: string } | null> {
+  const result = await db.execute({ sql: "SELECT value FROM _meta WHERE key = ?", args: [BULK_INGEST_META_KEY] });
+  if (result.rows.length === 0) {
+    return null;
+  }
+
+  try {
+    const row = result.rows[0] as Record<string, unknown> | undefined;
+    const raw = row?.value ?? (row ? Object.values(row)[0] : undefined);
+    return JSON.parse(String(raw)) as { phase: string; started_at: string };
+  } catch {
+    return null;
+  }
+}
 
 export async function initSchema(client: Client): Promise<void> {
   for (const statement of CREATE_TABLE_AND_TRIGGER_STATEMENTS) {

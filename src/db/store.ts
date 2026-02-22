@@ -10,6 +10,13 @@ import { runSimpleStream } from "../llm/stream.js";
 import type { Expiry, KnowledgeEntry, LlmClient, RelationType, StoreResult, StoredEntry } from "../types.js";
 import { createRelation } from "./relations.js";
 import { toNumber, toStringValue } from "../utils/entry-utils.js";
+import {
+  bufferToMinhashSig,
+  computeMinhashSig,
+  computeNormContentHash,
+  minhashJaccard,
+  minhashSigToBuffer,
+} from "./minhash.js";
 
 const AUTO_SKIP_THRESHOLD = 0.95;
 const SMART_DEDUP_THRESHOLD = 0.88;
@@ -513,6 +520,98 @@ async function hasContentHash(db: Client, contentHash: string): Promise<boolean>
   return result.rows.length > 0;
 }
 
+export async function findDuplicateBulk(
+  db: Client,
+  normHash: string,
+  minhashSig: Uint32Array,
+  minhashThreshold = 0.65,
+): Promise<boolean> {
+  const exactResult = await db.execute({
+    sql: "SELECT id FROM entries WHERE norm_content_hash = ? AND retired = 0 LIMIT 1",
+    args: [normHash],
+  });
+  if (exactResult.rows.length > 0) {
+    return true;
+  }
+
+  const rows = await db.execute("SELECT minhash_sig FROM entries WHERE minhash_sig IS NOT NULL AND retired = 0");
+  for (const row of rows.rows) {
+    const raw = (row as Record<string, unknown>).minhash_sig ?? Object.values(row as Record<string, unknown>)[0];
+    const buf =
+      Buffer.isBuffer(raw)
+        ? raw
+        : raw instanceof Uint8Array
+          ? Buffer.from(raw.buffer, raw.byteOffset, raw.byteLength)
+          : raw instanceof ArrayBuffer
+            ? Buffer.from(raw)
+            : ArrayBuffer.isView(raw)
+              ? Buffer.from(raw.buffer, raw.byteOffset, raw.byteLength)
+          : null;
+    if (!buf) {
+      continue;
+    }
+
+    const sig = bufferToMinhashSig(buf);
+    if (minhashJaccard(minhashSig, sig) >= minhashThreshold) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export async function backfillNormContentHash(db: Client): Promise<number> {
+  const batchSize = 500;
+  const maxRowsPerRun = 5000;
+  let updated = 0;
+
+  while (updated < maxRowsPerRun) {
+    const remaining = Math.min(batchSize, maxRowsPerRun - updated);
+    const batch = await db.execute({
+      sql: `
+        SELECT id, content
+        FROM entries
+        WHERE norm_content_hash IS NULL
+        LIMIT ?
+      `,
+      args: [remaining],
+    });
+
+    if (batch.rows.length === 0) {
+      break;
+    }
+
+    await db.execute("BEGIN");
+    try {
+      for (const row of batch.rows) {
+        const id = toStringValue(row.id);
+        const content = toStringValue(row.content);
+        if (!id) {
+          continue;
+        }
+
+        const normHash = computeNormContentHash(content);
+        const minhashSig = computeMinhashSig(content);
+        await db.execute({
+          sql: "UPDATE entries SET norm_content_hash = ?, minhash_sig = ? WHERE id = ?",
+          args: [normHash, minhashSigToBuffer(minhashSig), id],
+        });
+        updated += 1;
+      }
+      await db.execute("COMMIT");
+    } catch (error) {
+      try {
+        await db.execute("ROLLBACK");
+      } catch {
+        // Ignore rollback failures.
+      }
+      throw error;
+    }
+  }
+
+  return updated;
+}
+
 async function resolveEmbeddingForText(
   text: string,
   apiKey: string,
@@ -662,6 +761,8 @@ export async function insertEntry(
   entry: KnowledgeEntry,
   embedding: number[],
   contentHash: string,
+  normContentHash?: string | null,
+  minhashSig?: Buffer | null,
 ): Promise<string> {
   const id = randomUUID();
   const now = new Date().toISOString();
@@ -683,9 +784,11 @@ export async function insertEntry(
         content_hash,
         embedding,
         created_at,
-        updated_at
+        updated_at,
+        norm_content_hash,
+        minhash_sig
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, vector32(?), ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, vector32(?), ?, ?, ?, ?)
     `,
     args: [
       id,
@@ -703,6 +806,8 @@ export async function insertEntry(
       JSON.stringify(embedding),
       createdAt,
       now,
+      normContentHash ?? null,
+      minhashSig ?? null,
     ],
   });
 
