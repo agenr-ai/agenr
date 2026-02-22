@@ -102,6 +102,7 @@ function formatClusterEntries(cluster: Cluster, contentLimit?: number): string {
         `- confirmations: ${entry.confirmations}`,
         `- created_at: ${entry.createdAt}`,
         `- content: ${content}`,
+        `- tags: ${(entry.tags ?? []).join(", ") || "(none)"}`,
       ].join("\n");
     })
     .join("\n\n");
@@ -310,6 +311,7 @@ export async function mergeCluster(
   if (mergeResult.type !== dominantType) {
     mergeResult.type = dominantType;
   }
+  const sourceTagUnion = normalizeTags(cluster.entries.flatMap((entry) => entry.tags ?? []));
 
   const mergedEntry: KnowledgeEntry = {
     type: mergeResult.type,
@@ -317,7 +319,7 @@ export async function mergeCluster(
     content: mergeResult.content,
     importance: mergeResult.importance,
     expiry: mergeResult.expiry,
-    tags: mergeResult.tags,
+    tags: normalizeTags([...mergeResult.tags, ...sourceTagUnion]),
     ...(expectedProject ? { project: expectedProject } : {}),
     source: {
       file: "agenr",
