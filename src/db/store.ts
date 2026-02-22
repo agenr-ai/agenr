@@ -589,7 +589,7 @@ export async function backfillBulkColumns(db: Client): Promise<number> {
       break;
     }
 
-    await db.execute("BEGIN");
+    await db.execute("BEGIN IMMEDIATE");
     try {
       for (const row of batch.rows) {
         const id = toStringValue(row.id);
