@@ -42,7 +42,14 @@ function modelChoicesForAuth(auth: AgenrAuthMethod, provider: AgenrProvider): st
   const definition = getAuthMethodDefinition(auth);
   const allModels = getModels(provider).map((model) => model.id);
 
-  const preferred = definition.preferredModels.filter((modelId) => allModels.includes(modelId));
+  const preferred = definition.preferredModels.filter((modelId) => {
+    try {
+      resolveModel(provider, modelId);
+      return true;
+    } catch {
+      return false;
+    }
+  });
   const fallback = allModels.filter((modelId) => !preferred.includes(modelId));
 
   if (provider === "openai") {
@@ -123,10 +130,11 @@ export async function runSetup(env: NodeJS.ProcessEnv = process.env): Promise<vo
     env,
   });
 
+  const credentialKey = credentialKeyForAuth(auth);
+
   if (!probe.available) {
     clack.log.warn(probe.guidance);
 
-    const credentialKey = credentialKeyForAuth(auth);
     if (credentialKey) {
       const shouldEnterNow = await clack.confirm({
         message: "Enter the credential now?",
@@ -159,6 +167,33 @@ export async function runSetup(env: NodeJS.ProcessEnv = process.env): Promise<vo
         }
       }
     }
+  } else if (existing && credentialKey) {
+    // Already configured and working. When reconfiguring, offer to update.
+    const updateKey = await clack.confirm({
+      message: "Update stored credential?",
+      initialValue: false,
+    });
+
+    if (clack.isCancel(updateKey)) {
+      clack.cancel("Setup cancelled.");
+      return;
+    }
+
+    if (updateKey) {
+      const entered = await clack.password({
+        message: promptToEnterCredential(auth),
+      });
+
+      if (clack.isCancel(entered)) {
+        clack.cancel("Setup cancelled.");
+        return;
+      }
+
+      const normalized = entered.trim();
+      if (normalized) {
+        working = setStoredCredential(working, credentialKey, normalized);
+      }
+    }
   }
 
   const modelChoices = modelChoicesForAuth(auth, provider);
@@ -173,7 +208,7 @@ export async function runSetup(env: NodeJS.ProcessEnv = process.env): Promise<vo
       return {
         value: id,
         label: id,
-        hint: details?.name ?? undefined,
+        hint: details ? details.name : undefined,
       };
     }),
   });

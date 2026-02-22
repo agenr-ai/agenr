@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- setup: custom model aliases (gpt-4.1-nano, gpt-4.1-mini) now appear in
+  the model picker when using openai-api-key auth (issue #136)
+- setup: openai-api-key now prioritizes gpt-4.1-nano, gpt-4.1-mini, and
+  gpt-5-nano in preferred model selection, and adds gpt-5-nano alias
+  resolution for OpenAI model lookup
+- setup: reconfigure now offers to update stored API key even when existing
+  credential is valid (issue #13)
+- embeddings: EmbeddingCache is now bounded with LRU eviction (default
+  max 5000 entries) to prevent unbounded heap growth during large ingests
+  (issue #57)
+
 ## [0.8.2] - 2026-02-22
 
 ### Added
