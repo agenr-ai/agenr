@@ -7,6 +7,10 @@ import type { PluginToolResult } from "./types.js";
 
 const TOOL_TIMEOUT_MS = 10000;
 const EXTRACT_TIMEOUT_MS = 60000;
+const KNOWN_PLATFORMS = new Set(["openclaw", "codex", "claude-code", "plaud"]);
+const RECOMMENDED_SOURCE_PREFIXES = ["mcp:", "file:", "cli:", "session:", "conversation"];
+const SOURCE_FORMAT_WARNING =
+  "agenr_store: source_file does not follow recommended format (mcp:, file:, cli:, session:, conversation). Storing as-is.";
 
 type SpawnResult = {
   code: number | null;
@@ -32,6 +36,57 @@ function asNumber(value: unknown): number | undefined {
     const parsed = Number(value);
     if (Number.isFinite(parsed)) {
       return parsed;
+    }
+  }
+  return undefined;
+}
+
+function resolveWarn(pluginConfig?: Record<string, unknown>): (message: string) => void {
+  const logger = pluginConfig?.logger;
+  if (logger && typeof logger === "object") {
+    const warn = (logger as { warn?: unknown }).warn;
+    if (typeof warn === "function") {
+      return (message: string) => {
+        warn(message);
+      };
+    }
+  }
+  return (message: string) => {
+    console.warn(message);
+  };
+}
+
+function sourceStringFromEntry(entry: Record<string, unknown>): string | undefined {
+  if (typeof entry.source === "string") {
+    return entry.source;
+  }
+  if (entry.source && typeof entry.source === "object") {
+    const sourceFile = asString((entry.source as Record<string, unknown>).file);
+    if (sourceFile) {
+      return sourceFile;
+    }
+  }
+  return undefined;
+}
+
+function inferPlatformFromEntries(entries: Array<Record<string, unknown>>): string | undefined {
+  for (const entry of entries) {
+    const source = sourceStringFromEntry(entry);
+    if (!source) {
+      continue;
+    }
+    const normalizedSource = source.toLowerCase();
+    if (normalizedSource.includes("codex")) {
+      return "codex";
+    }
+    if (normalizedSource.includes("claude")) {
+      return "claude-code";
+    }
+    if (normalizedSource.includes("openclaw")) {
+      return "openclaw";
+    }
+    if (normalizedSource.includes("plaud")) {
+      return "plaud";
     }
   }
   return undefined;
@@ -181,17 +236,8 @@ export async function runStoreTool(
   defaultProject?: string,
 ): Promise<PluginToolResult> {
   const entries = Array.isArray(params.entries) ? params.entries : [];
-  const platform = asString(params.platform);
   const project = asString(params.project) || defaultProject;
-  const storeArgs = ["store"];
-
-  // platform and project go as CLI flags, not in the JSON payload
-  if (platform) {
-    storeArgs.push("--platform", platform);
-  }
-  if (project) {
-    storeArgs.push("--project", project);
-  }
+  const warn = resolveWarn(pluginConfig);
 
   // Subject from params is preserved; inference only runs when subject is omitted.
   // This now aligns with agenr_store schema exposing optional subject.
@@ -205,6 +251,44 @@ export async function runStoreTool(
     }
     return entry;
   });
+
+  const explicitPlatform = asString(params.platform);
+  const normalizedPlatform = explicitPlatform?.toLowerCase();
+  let platform: string | undefined;
+  if (explicitPlatform) {
+    if (normalizedPlatform && KNOWN_PLATFORMS.has(normalizedPlatform)) {
+      platform = normalizedPlatform;
+    } else {
+      warn(
+        `agenr_store: invalid platform "${explicitPlatform}". Expected one of: openclaw, codex, claude-code, plaud. Omitting --platform.`,
+      );
+    }
+  } else {
+    platform = inferPlatformFromEntries(processedEntries);
+  }
+
+  for (const entry of processedEntries) {
+    if (typeof entry.source !== "string") {
+      continue;
+    }
+    const normalizedSource = entry.source.toLowerCase();
+    const hasKnownPrefix = RECOMMENDED_SOURCE_PREFIXES.some((prefix) =>
+      normalizedSource.startsWith(prefix),
+    );
+    if (!hasKnownPrefix) {
+      warn(SOURCE_FORMAT_WARNING);
+      break;
+    }
+  }
+
+  const storeArgs = ["store"];
+  // platform and project go as CLI flags, not in the JSON payload
+  if (platform) {
+    storeArgs.push("--platform", platform);
+  }
+  if (project) {
+    storeArgs.push("--project", project);
+  }
 
   const dedupConfig = pluginConfig?.dedup as Record<string, unknown> | undefined;
   if (dedupConfig?.aggressive === true) {
