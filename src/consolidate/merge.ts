@@ -312,6 +312,10 @@ export async function mergeCluster(
     mergeResult.type = dominantType;
   }
   const maxSourceImportance = Math.max(...cluster.entries.map((entry) => entry.importance ?? 5));
+  const oldestCreatedAt = cluster.entries
+    .map((entry) => entry.createdAt)
+    .filter((date): date is string => Boolean(date) && date.length > 0)
+    .sort()[0];
   const sourceTagUnion = normalizeTags(cluster.entries.flatMap((entry) => entry.tags ?? []));
 
   const mergedEntry: KnowledgeEntry = {
@@ -321,6 +325,7 @@ export async function mergeCluster(
     importance: Math.max(mergeResult.importance, maxSourceImportance),
     expiry: mergeResult.expiry,
     tags: normalizeTags([...mergeResult.tags, ...sourceTagUnion]),
+    ...(oldestCreatedAt ? { created_at: oldestCreatedAt } : {}),
     ...(expectedProject ? { project: expectedProject } : {}),
     source: {
       file: "agenr",
