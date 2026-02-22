@@ -36,6 +36,8 @@ describe("db schema migrations", () => {
     expect(entries.has("canonical_key")).toBe(true);
     expect(entries.has("scope")).toBe(true);
     expect(entries.has("content_hash")).toBe(true);
+    expect(entries.has("norm_content_hash")).toBe(true);
+    expect(entries.has("minhash_sig")).toBe(true);
     expect(entries.has("merged_from")).toBe(true);
     expect(entries.has("consolidated_at")).toBe(true);
     expect(entries.has("platform")).toBe(true);
@@ -192,6 +194,8 @@ describe("db schema migrations", () => {
     const canonicalKey = entriesColumns.find((row) => toStringValue(row.name) === "canonical_key");
     const scope = entriesColumns.find((row) => toStringValue(row.name) === "scope");
     const contentHash = entriesColumns.find((row) => toStringValue(row.name) === "content_hash");
+    const normContentHash = entriesColumns.find((row) => toStringValue(row.name) === "norm_content_hash");
+    const minhashSig = entriesColumns.find((row) => toStringValue(row.name) === "minhash_sig");
     const mergedFrom = entriesColumns.find((row) => toStringValue(row.name) === "merged_from");
     const consolidatedAt = entriesColumns.find((row) => toStringValue(row.name) === "consolidated_at");
     const platform = entriesColumns.find((row) => toStringValue(row.name) === "platform");
@@ -206,6 +210,8 @@ describe("db schema migrations", () => {
     expect(scope).toBeTruthy();
     expect(toStringValue(scope?.dflt_value)).toContain("private");
     expect(contentHash).toBeTruthy();
+    expect(normContentHash).toBeTruthy();
+    expect(minhashSig).toBeTruthy();
     expect(mergedFrom).toBeTruthy();
     expect(toStringValue(mergedFrom?.dflt_value)).toBe("0");
     expect(consolidatedAt).toBeTruthy();
