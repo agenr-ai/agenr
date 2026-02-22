@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.8]
+
+### Fixed
+- fix(ingest): whole-file mode now uses model-aware output token budgets for context-fit checks and whole-file extraction calls, including support for gpt-5-nano, gpt-5.2-codex, and gpt-5.3-codex (issue #166)
+- fix(ingest): removed whole-file 100-entry truncation; extracted entries are no longer discarded and now only emit a verbose warning when entry count exceeds 500 before downstream dedup (issue #166)
+
 ## [0.8.7]
 
 ### Fixed

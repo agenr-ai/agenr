@@ -721,6 +721,28 @@ describe("extractKnowledgeFromChunks", () => {
     expect(prompt).toContain(fullRenderedText);
   });
 
+  it("passes model-aware maxTokens to whole-file extraction calls", async () => {
+    let capturedOptions: SimpleStreamOptions | undefined;
+
+    await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [fakeChunkAt(0), fakeChunkAt(1)],
+      messages: fakeMessages(),
+      client: fakeClientWithModelId("gpt-5.3-codex"),
+      verbose: false,
+      wholeFile: "force",
+      noDedup: true,
+      streamSimpleImpl: (_model: Model<Api>, _context: Context, opts?: SimpleStreamOptions) => {
+        capturedOptions = opts;
+        return streamWithResult(Promise.resolve(assistantMessage("[]")));
+      },
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+    });
+
+    expect(capturedOptions?.maxTokens).toBe(100_000);
+  });
+
   it("skips dedup in whole-file mode but runs dedup in chunked mode", async () => {
     let wholeFileDedupCalls = 0;
     const wholeFileStream = (_model: Model<Api>, context: Context, _opts?: SimpleStreamOptions) => {

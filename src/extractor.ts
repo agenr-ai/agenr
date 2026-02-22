@@ -11,9 +11,10 @@ import type {
 import { fetchRelatedEntries } from "./db/recall.js";
 import { embed } from "./embeddings/client.js";
 import {
-  applyEntryHardCap,
   buildWholeFileChunkFromMessages,
+  getOutputTokens,
   resolveWholeFileMode,
+  warnOnHighEntryCount,
 } from "./ingest/whole-file.js";
 import { runSimpleStream, type StreamSimpleFn } from "./llm/stream.js";
 import { SUBMIT_DEDUPED_KNOWLEDGE_TOOL, SUBMIT_KNOWLEDGE_TOOL } from "./schema.js";
@@ -1730,6 +1731,7 @@ async function extractChunkOnce(params: {
   model: Model<Api>;
   apiKey: string;
   systemPrompt?: string;
+  maxTokens?: number;
   verbose: boolean;
   onVerbose?: (line: string) => void;
   onStreamDelta?: (delta: string, kind: "text" | "thinking") => void;
@@ -1755,6 +1757,7 @@ async function extractChunkOnce(params: {
     context,
     options: {
       apiKey: params.apiKey,
+      maxTokens: params.maxTokens,
       reasoning: params.verbose ? "low" : undefined,
     },
     verbose: params.verbose,
@@ -1787,6 +1790,7 @@ async function extractWholeFileChunkWithRetry(params: {
   model: Model<Api>;
   apiKey: string;
   systemPrompt: string;
+  maxTokens: number;
   verbose: boolean;
   onVerbose?: (line: string) => void;
   onStreamDelta?: (delta: string, kind: "text" | "thinking") => void;
@@ -1820,6 +1824,7 @@ async function extractWholeFileChunkWithRetry(params: {
         model: params.model,
         apiKey: params.apiKey,
         systemPrompt: params.systemPrompt,
+        maxTokens: params.maxTokens,
         verbose: params.verbose,
         onVerbose: params.onVerbose,
         onStreamDelta: params.onStreamDelta,
@@ -1948,6 +1953,7 @@ export async function extractKnowledgeFromChunks(params: {
         model: params.client.resolvedModel.model,
         apiKey: params.client.credentials.apiKey,
         systemPrompt: buildExtractionSystemPrompt(params.platform, true),
+        maxTokens: getOutputTokens(params.client),
         verbose: params.verbose,
         onVerbose: params.onVerbose,
         onStreamDelta: params.onStreamDelta,
@@ -1969,7 +1975,7 @@ export async function extractKnowledgeFromChunks(params: {
           params.verbose,
           params.onVerbose,
         );
-        const cappedEntries = applyEntryHardCap(
+        const cappedEntries = warnOnHighEntryCount(
           validatedChunkEntries,
           params.verbose,
           params.onVerbose,
@@ -2188,7 +2194,7 @@ export async function extractKnowledgeFromChunks(params: {
     finalEntries = dedupResult.entries;
     warnings.push(...dedupResult.warnings);
   }
-  finalEntries = applyEntryHardCap(finalEntries, params.verbose, params.onVerbose);
+  finalEntries = warnOnHighEntryCount(finalEntries, params.verbose, params.onVerbose);
 
   return {
     entries: finalEntries,
