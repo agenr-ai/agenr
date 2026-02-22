@@ -362,7 +362,8 @@ export function scoreEntryWithBreakdown(
   const memoryStrength = Math.min(Math.max(imp, spacedRecallBase) * fresh, 1.0);
   const todoPenalty = entry.type === "todo" ? todoStaleness(entry, now) : 1.0;
   const contradictionPenalty = entry.contradictions >= 2 ? 0.8 : 1.0;
-  const score = sim * (0.3 + 0.7 * rec) * memoryStrength * todoPenalty * contradictionPenalty + fts;
+  const rawScore = sim * (0.3 + 0.7 * rec) * memoryStrength * todoPenalty * contradictionPenalty + fts;
+  const score = Math.min(1.0, rawScore);
   return {
     score,
     scores: {
@@ -372,6 +373,7 @@ export function scoreEntryWithBreakdown(
       recall: recallBase,
       freshness: fresh,
       todoPenalty,
+      // FTS bonus component before the final score is capped at 1.0.
       fts,
       spacing: spacingFactor,
     },
