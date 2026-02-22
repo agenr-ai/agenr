@@ -17,7 +17,7 @@ export const EXPIRY_LEVELS = ["core", "permanent", "temporary"] as const;
 
 export const SCOPE_LEVELS = ["private", "personal", "public"] as const;
 
-export const KNOWLEDGE_PLATFORMS = ["openclaw", "claude-code", "codex"] as const;
+export const KNOWLEDGE_PLATFORMS = ["openclaw", "claude-code", "codex", "plaud"] as const;
 
 export type KnowledgeType = (typeof KNOWLEDGE_TYPES)[number];
 
