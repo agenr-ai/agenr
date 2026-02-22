@@ -269,6 +269,13 @@ describe("buildExtractionSystemPrompt", () => {
     expect(prompt).toContain("Max 8 entries; prefer 0-3.");
   });
 
+  it("appends openclaw addendum in whole-file mode", () => {
+    const prompt = buildExtractionSystemPrompt("openclaw", true);
+    expect(prompt).not.toContain("Max 8 entries");
+    expect(prompt).toContain("whole-file mode");
+    expect(prompt).toContain("cross-session-alert");
+  });
+
   it("openclaw addendum instructs capping hedged claims", () => {
     expect(OPENCLAW_CONFIDENCE_ADDENDUM).toMatch(/unverified/i);
     expect(OPENCLAW_CONFIDENCE_ADDENDUM).toMatch(/I think|I believe|probably/);
@@ -539,39 +546,17 @@ describe("extractKnowledgeFromChunks", () => {
     expect(result.failedChunks).toBe(0);
   });
 
-  it("force mode without messages logs an error and falls back to chunked", async () => {
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    let prompt = "";
-
-    const result = await extractKnowledgeFromChunks({
-      file: "session.jsonl",
-      chunks: [fakeChunk()],
-      client: fakeClientWithModelId("gpt-4.1-nano"),
-      verbose: false,
-      wholeFile: "force",
-      streamSimpleImpl: (_model: Model<Api>, context: Context, _opts?: SimpleStreamOptions) => {
-        prompt = String(context.messages[0]?.content ?? "");
-        return streamWithResult(
-          Promise.resolve(
-            assistantMessageWithContent(
-              [{ type: "toolCall", id: "call_empty", name: "submit_knowledge", arguments: { entries: [] } }],
-              "toolUse",
-            ),
-          ),
-        );
-      },
-      sleepImpl: async () => {},
-      retryDelayMs: () => 0,
-    });
-
-    expect(errorSpy).toHaveBeenCalledWith(
-      "[whole-file] force mode requested but no messages provided; cannot build whole-file chunk",
-    );
-    expect(prompt).toContain(fakeChunk().text);
-    expect(result.successfulChunks).toBe(1);
-    expect(result.failedChunks).toBe(0);
-
-    errorSpy.mockRestore();
+  it("force mode without messages throws", async () => {
+    await expect(
+      extractKnowledgeFromChunks({
+        file: "session.jsonl",
+        chunks: [fakeChunk()],
+        client: fakeClientWithModelId("gpt-4.1-nano"),
+        verbose: false,
+        wholeFile: "force",
+        sleepImpl: async () => {},
+      }),
+    ).rejects.toThrow("force mode requires messages to be provided");
   });
 
   it("returns empty entries and warning when whole-file response is malformed JSON", async () => {
@@ -657,7 +642,7 @@ describe("extractKnowledgeFromChunks", () => {
       retryDelayMs: () => 0,
     });
 
-    const fullRenderedText = messages.map((message) => renderTranscriptLine(message)).join("");
+    const fullRenderedText = messages.map((message) => renderTranscriptLine(message)).join("\n");
     expect(callCount).toBe(1);
     expect(prompt).toContain(fullRenderedText);
   });
@@ -835,7 +820,6 @@ describe("extractKnowledgeFromChunks", () => {
         sleepImpl: async (ms) => {
           sleepCalls.push(ms);
         },
-        retryDelayMs: () => 0,
       });
 
       expect(callCount).toBe(3);

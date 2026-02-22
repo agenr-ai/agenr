@@ -89,10 +89,20 @@ describe("buildWholeFileChunkFromMessages", () => {
     ];
 
     const output = buildWholeFileChunkFromMessages(messages);
-    const expectedRenderedChars = messages.reduce((total, message) => total + renderTranscriptLine(message).length, 0);
+    const expectedRenderedChars =
+      messages.reduce((total, message) => total + renderTranscriptLine(message).length, 0) +
+      (messages.length - 1);
 
     expect(countOccurrences(output.text, overlap)).toBe(1);
     expect(output.text.length).toBe(expectedRenderedChars);
+    expect(output.chunk_index).toBe(0);
+    expect(output.totalChunks).toBe(1);
+    expect(output.index).toBe(0);
+    expect(output.context_hint).toContain("2 messages");
+    expect(output.timestamp_start).toBe(messages[0].timestamp);
+    expect(output.timestamp_end).toBe(messages[1].timestamp);
+    expect(output.message_start).toBe(messages[0].index);
+    expect(output.message_end).toBe(messages[1].index);
   });
 
   it("throws for empty messages", () => {
@@ -121,6 +131,13 @@ describe("getContextWindowTokens", () => {
 
     warnSpy.mockRestore();
   });
+
+  it("returns undefined silently for unknown models when not verbose", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(getContextWindowTokens(makeClient("unknown-model"))).toBeUndefined();
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
 });
 
 describe("fileFitsInContext", () => {
@@ -132,6 +149,19 @@ describe("fileFitsInContext", () => {
 
     expect(Math.ceil(message.text.length / 4)).toBeLessThanOrEqual(usableTokens);
     expect(fileFitsInContext(messages, client)).toBe(false);
+  });
+
+  it("returns true for a file that fits within context window", () => {
+    const client = makeClient("gpt-4o");
+    const usableTokens = 128_000 - 16_384 - 4_000;
+    const message = makeMessage(0, "user", "a".repeat((usableTokens - 100) * 4));
+    expect(fileFitsInContext([message], client)).toBe(true);
+  });
+
+  it("returns false for unknown model regardless of file size", () => {
+    const client = makeClient("some-future-model");
+    const smallMessage = makeMessage(0, "user", "tiny");
+    expect(fileFitsInContext([smallMessage], client)).toBe(false);
   });
 });
 
@@ -145,10 +175,9 @@ describe("resolveWholeFileMode", () => {
     expect(resolveWholeFileMode("force", smallMessages, client)).toBe(true);
   });
 
-  it("returns false for empty messages", () => {
+  it("returns false for empty messages in auto mode", () => {
     const client = makeClient("gpt-4.1-nano");
     expect(resolveWholeFileMode("auto", [], client)).toBe(false);
-    expect(resolveWholeFileMode("force", [], client)).toBe(false);
   });
 
   it("returns false for unknown model in auto mode", () => {
@@ -162,6 +191,31 @@ describe("resolveWholeFileMode", () => {
     const tooLarge = [makeMessage(0, "user", "x".repeat(600_000))];
 
     expect(() => resolveWholeFileMode("force", tooLarge, client)).toThrow("force mode");
+  });
+
+  it("returns false in auto mode when file exceeds context window", () => {
+    const client = makeClient("gpt-4o");
+    const usableTokens = 128_000 - 16_384 - 4_000;
+    const tooLarge = [makeMessage(0, "user", "x".repeat((usableTokens + 100) * 4))];
+    expect(resolveWholeFileMode("auto", tooLarge, client)).toBe(false);
+  });
+
+  it("throws in force mode when messages array is empty", () => {
+    const client = makeClient("gpt-4.1-nano");
+    expect(() => resolveWholeFileMode("force", [], client)).toThrow("force mode");
+  });
+
+  it("returns true and warns when force mode tokens exceed 500K on large-context model", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const client = makeClient("gpt-4.1-nano");
+    const bigMessages = [makeMessage(0, "user", "x".repeat(500_001 * 4))];
+
+    const result = resolveWholeFileMode("force", bigMessages, client, true);
+    expect(result).toBe(true);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0]?.[0]).toContain("500");
+
+    warnSpy.mockRestore();
   });
 });
 
@@ -177,6 +231,8 @@ describe("applyEntryHardCap", () => {
     expect(Math.max(...importances)).toBe(147);
     expect(Math.min(...importances)).toBe(48);
     expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0]?.[0]).toContain("147");
+    expect(warnSpy.mock.calls[0]?.[0]).toContain("100");
 
     warnSpy.mockRestore();
   });
