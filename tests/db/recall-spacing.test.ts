@@ -272,6 +272,20 @@ describe("recall spacing", () => {
       expect(scored.score).toBeLessThanOrEqual(1.0);
     });
 
+    it("caps final score at 1.0 when FTS bonus would overflow", () => {
+      const now = new Date("2026-02-19T12:00:00.000Z");
+      const entry = makeEntry({
+        expiry: "core",
+        importance: 10,
+        created_at: "2026-02-19T11:59:00.000Z",
+        recall_count: 20,
+        recall_intervals: [t1, t1 + 30 * ONE_DAY_SECS],
+      });
+      const scored = scoreEntryWithBreakdown(entry, 1.0, true, now);
+      expect(scored.scores.fts).toBe(0.15);
+      expect(scored.score).toBe(1.0);
+    });
+
     it("keeps recallStrength behavior unchanged", () => {
       expect(recallStrength(0, 10, "permanent")).toBe(0);
       expect(recallStrength(5, 0, "core")).toBe(1.0);
