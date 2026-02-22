@@ -39,6 +39,7 @@ describe("db schema", () => {
       "idx_entries_created",
       "idx_entries_superseded",
       "idx_entries_content_hash",
+      "idx_entries_norm_content_hash",
       "idx_tags_tag",
       "idx_relations_source",
       "idx_relations_target",
@@ -92,6 +93,7 @@ describe("db schema", () => {
         'idx_entries_created',
         'idx_entries_superseded',
         'idx_entries_content_hash',
+        'idx_entries_norm_content_hash',
         'idx_tags_tag',
         'idx_relations_source',
         'idx_relations_target',
@@ -102,7 +104,7 @@ describe("db schema", () => {
       )
       GROUP BY name
     `);
-    expect(namesResult.rows).toHaveLength(23);
+    expect(namesResult.rows).toHaveLength(24);
     for (const row of namesResult.rows as Array<{ count?: unknown }>) {
       expect(Number(row.count)).toBe(1);
     }
