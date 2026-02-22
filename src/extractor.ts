@@ -22,15 +22,15 @@ import { isShutdownRequested } from "./shutdown.js";
 
 export const SYSTEM_PROMPT = `You are a selective memory extraction engine. Extract only knowledge worth remembering beyond the immediate step.
 
-Default action: SKIP. Most chunks should produce zero entries -- EXCEPT personal facts about the user (health, family, home, lifestyle, relationships), which should be captured even from casual or passing mentions.
+Default action: SKIP. Most chunks should produce zero entries. Personal disclosures (health, diet, family structure, pets, occupation, location, values, relationships) are high-signal -- do not skip them just because the mention is brief or incidental. Apply the durability gate below to all entries including personal ones.
 
 ## Types
 
-FACT -- Verifiable information about a system, project, person, or concept. Personal facts count as first-class entries: health conditions, family members, pets, where the user lives or works, occupation, hobbies, recurring habits, and lifestyle circumstances.
+FACT — Verifiable information about a system, project, person, or concept. Personal facts count as first-class entries: health conditions, family members, pets, where the user lives or works, occupation, hobbies, recurring habits, and lifestyle circumstances.
 DECISION — A choice that constrains future options. Requires BOTH the choice AND the rationale. If rationale is missing, use fact or event instead.
 PREFERENCE — A stated or demonstrated preference that should influence future behavior.
 LESSON — An insight from experience that should change future behavior.
-EVENT -- A significant milestone, launch, completion, or one-time life moment. Includes project launches, deployments, merges; and personal milestones like starting a new job, relocating, major health events, or notable personal experiences. NOT recurring habits or routines (those are FACT or PREFERENCE). NOT "the assistant ran git status." NOT vague references with no anchoring detail.
+EVENT — A significant milestone, launch, completion, or one-time life moment. Includes project launches, deployments, merges; and personal milestones like starting a new job, relocating, major health events, or notable personal experiences. NOT recurring habits or routines (those are FACT or PREFERENCE). NOT "the assistant ran git status." NOT vague references with no anchoring detail. If a personal behavior is described as newly begun, prefer EVENT for the initiation; use FACT if the stable ongoing state is also established in the same context.
 RELATIONSHIP — A connection between named entities. Content must include both entities and the relation.
 TODO — A persistent future action not completed in this chunk and not a one-step session instruction.
 
@@ -343,7 +343,7 @@ FACT:
   "importance": 6,
   "expiry": "permanent",
   "tags": ["routine", "health", "personal"],
-  "source_context": "User described morning routine while discussing their schedule -- scored 6 as biographical context; recurring habit not requiring cross-session alert"
+  "source_context": "User described morning routine while discussing their schedule -- scored 6 not 8 because this is low-urgency biographical context; no parallel session needs to act on it immediately"
 }
 
 EVENT:
@@ -354,7 +354,7 @@ EVENT:
   "importance": 7,
   "expiry": "permanent",
   "tags": ["career", "work", "personal"],
-  "source_context": "User mentioned new job while discussing their schedule -- one-time life event worth remembering as context"
+  "source_context": "User mentioned new job while discussing their schedule -- scored 7 not 9 because this is a significant life milestone worth preserving but does not require immediate cross-session action"
 }
 
 // NOTE: These examples are drawn from OpenClaw transcripts (agent role labels, tool-verified claims). They provide soft cross-platform guidance for hedged-claim handling; mechanical enforcement (importance cap + unverified tag) is applied for openclaw, codex, and claude-code via applyConfidenceCap().
