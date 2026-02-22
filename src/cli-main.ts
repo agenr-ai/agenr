@@ -714,6 +714,11 @@ export function createProgram(): Command {
       },
     )
     .option("--skip-ingested", "Skip already-ingested files", true)
+    .option(
+      "--bulk",
+      "Optimize large imports by disabling FTS/vector indexes during writes and rebuilding afterward",
+      false,
+    )
     .option("--no-retry", "Disable auto-retry for failed files")
     .option("--no-pre-fetch", "Disable elaborative encoding pre-fetch")
     .option(
