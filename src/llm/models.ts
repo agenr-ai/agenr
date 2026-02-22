@@ -15,6 +15,7 @@ const MODEL_ALIASES: Record<AgenrProvider, Record<string, string>> = {
     "gpt-4.1-nano": "openai/gpt-4.1-nano",
     "gpt-4.1-mini": "openai/gpt-4.1-mini",
     "gpt-4.1": "openai/gpt-4.1",
+    "gpt-5-nano": "openai/gpt-5-nano",
   },
   "openai-codex": {
     codex: "gpt-5.3-codex",
