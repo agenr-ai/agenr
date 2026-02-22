@@ -284,7 +284,7 @@ export async function dropFtsTriggersAndIndex(db: Client): Promise<void> {
 }
 
 export async function rebuildFtsAndTriggers(db: Client): Promise<void> {
-  await db.execute("BEGIN");
+  await db.execute("BEGIN IMMEDIATE");
   try {
     await db.execute(REBUILD_ENTRIES_FTS_SQL);
     await db.execute(CREATE_ENTRIES_FTS_TRIGGER_AI_SQL);
