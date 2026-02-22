@@ -162,9 +162,6 @@ export async function checkAndRecoverBulkIngest(client: Client): Promise<void> {
     await clearBulkIngestMeta(client);
     process.stderr.write("[agenr] Recovery complete.\n");
   } catch (error) {
-    process.stderr.write(
-      `[agenr] Bulk ingest recovery failed: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
-    );
     throw error;
   }
 }
