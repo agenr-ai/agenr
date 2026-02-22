@@ -231,6 +231,92 @@ describe("runSetup", () => {
     });
   });
 
+  it("offers credential update when reconfiguring with working credentials", async () => {
+    const mocks = getMocks();
+    const env = await makeTempConfigEnv();
+    const existing: AgenrConfig = {
+      auth: "openai-api-key",
+      provider: "openai",
+      model: "gpt-4o",
+      credentials: { openaiApiKey: "sk-old" },
+    };
+    writeConfig(existing, env);
+
+    mocks.confirmMock.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+    mocks.selectMock.mockResolvedValueOnce("openai-api-key").mockResolvedValueOnce("gpt-4o");
+    mocks.passwordMock.mockResolvedValueOnce("sk-new");
+    mocks.probeCredentialsMock.mockReturnValue({
+      available: true,
+      source: "config:credentials.openaiApiKey",
+      guidance: "Credentials available.",
+      credentials: { apiKey: "sk-old", source: "config:credentials.openaiApiKey" },
+    });
+    mocks.runConnectionTestMock.mockResolvedValueOnce({ ok: true });
+
+    await runSetup(env);
+
+    const saved = readConfig(env);
+    expect(saved?.credentials).toMatchObject({ openaiApiKey: "sk-new" });
+    expect(mocks.logMock.info).toHaveBeenCalledWith(expect.stringContaining("Credential updated"));
+  });
+
+  it("warns and skips credential update when empty input is entered", async () => {
+    const mocks = getMocks();
+    const env = await makeTempConfigEnv();
+    const existing: AgenrConfig = {
+      auth: "openai-api-key",
+      provider: "openai",
+      model: "gpt-4o",
+      credentials: { openaiApiKey: "sk-old" },
+    };
+    writeConfig(existing, env);
+
+    mocks.confirmMock.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+    mocks.selectMock.mockResolvedValueOnce("openai-api-key").mockResolvedValueOnce("gpt-4o");
+    mocks.passwordMock.mockResolvedValueOnce("   ");
+    mocks.probeCredentialsMock.mockReturnValue({
+      available: true,
+      source: "config:credentials.openaiApiKey",
+      guidance: "Credentials available.",
+      credentials: { apiKey: "sk-old", source: "config:credentials.openaiApiKey" },
+    });
+    mocks.runConnectionTestMock.mockResolvedValueOnce({ ok: true });
+
+    await runSetup(env);
+
+    const saved = readConfig(env);
+    expect(saved?.credentials).toMatchObject({ openaiApiKey: "sk-old" });
+    expect(mocks.logMock.warn).toHaveBeenCalledWith(expect.stringContaining("Credential not updated"));
+  });
+
+  it("skips credential update when user declines during reconfigure", async () => {
+    const mocks = getMocks();
+    const env = await makeTempConfigEnv();
+    const existing: AgenrConfig = {
+      auth: "openai-api-key",
+      provider: "openai",
+      model: "gpt-4o",
+      credentials: { openaiApiKey: "sk-old" },
+    };
+    writeConfig(existing, env);
+
+    mocks.confirmMock.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    mocks.selectMock.mockResolvedValueOnce("openai-api-key").mockResolvedValueOnce("gpt-4o");
+    mocks.probeCredentialsMock.mockReturnValue({
+      available: true,
+      source: "config:credentials.openaiApiKey",
+      guidance: "Credentials available.",
+      credentials: { apiKey: "sk-old", source: "config:credentials.openaiApiKey" },
+    });
+    mocks.runConnectionTestMock.mockResolvedValueOnce({ ok: true });
+
+    await runSetup(env);
+
+    const saved = readConfig(env);
+    expect(saved?.credentials).toMatchObject({ openaiApiKey: "sk-old" });
+    expect(mocks.passwordMock).not.toHaveBeenCalled();
+  });
+
   it("skips connection test when credentials remain unavailable", async () => {
     const mocks = getMocks();
     const env = await makeTempConfigEnv();

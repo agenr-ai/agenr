@@ -5,6 +5,9 @@
 ### Fixed
 - setup: custom model aliases (gpt-4.1-nano, gpt-4.1-mini) now appear in
   the model picker when using openai-api-key auth (issue #136)
+- setup: revert hint null-normalization regression (details?.name ?? undefined)
+- setup: warn user when empty credential is entered during key rotation
+- setup: note that updated credential is saved but not re-validated
 - setup: openai-api-key now prioritizes gpt-4.1-nano, gpt-4.1-mini, and
   gpt-5-nano in preferred model selection, and adds gpt-5-nano alias
   resolution for OpenAI model lookup
@@ -13,6 +16,7 @@
 - embeddings: EmbeddingCache is now bounded with LRU eviction (default
   max 5000 entries) to prevent unbounded heap growth during large ingests
   (issue #57)
+- embeddings: EmbeddingCache constructor throws RangeError for maxSize < 1
 
 ## [0.8.2] - 2026-02-22
 

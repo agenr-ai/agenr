@@ -12,6 +12,12 @@ describe("resolveModel OpenAI aliases", () => {
     expect(resolveModel("openai", "gpt-4.1-nano").modelId).toBe("openai/gpt-4.1-nano");
   });
 
+  it("resolves gpt-5-nano alias to openai/gpt-5-nano", () => {
+    const result = resolveModel("openai", "gpt-5-nano");
+    expect(result.provider).toBe("openai");
+    expect(result.modelId).toBe("openai/gpt-5-nano");
+  });
+
   it("accepts full prefixed id openai/gpt-4.1-nano without alias", () => {
     expect(() => resolveModel("openai", "openai/gpt-4.1-nano")).not.toThrow();
   });
