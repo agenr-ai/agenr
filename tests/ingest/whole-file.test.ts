@@ -25,13 +25,13 @@ function fakeModel(id: string): Model<Api> {
   };
 }
 
-function makeClient(modelId: string | undefined): LlmClient {
+function makeClient(modelId: string): LlmClient {
   return {
     auth: "openai-api-key",
     resolvedModel: {
       provider: "openai",
-      modelId: modelId as string,
-      model: fakeModel(modelId ?? "unknown"),
+      modelId,
+      model: fakeModel(modelId),
     },
     credentials: {
       apiKey: "test-key",
@@ -41,11 +41,12 @@ function makeClient(modelId: string | undefined): LlmClient {
 }
 
 function makeMessage(index: number, role: "user" | "assistant", text: string): TranscriptMessage {
+  const minutes = index.toString().padStart(2, "0");
   return {
     index,
     role,
     text,
-    timestamp: `2026-02-21T00:0${index}:00.000Z`,
+    timestamp: `2026-02-21T00:${minutes}:00.000Z`,
   };
 }
 

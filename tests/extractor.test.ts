@@ -49,10 +49,11 @@ function fakeClient(): LlmClient {
 }
 
 function fakeClientWithModelId(modelId: string): LlmClient {
+  const base = fakeClient();
   return {
-    ...fakeClient(),
+    ...base,
     resolvedModel: {
-      ...fakeClient().resolvedModel,
+      ...base.resolvedModel,
       modelId,
     },
   };

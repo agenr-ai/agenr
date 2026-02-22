@@ -238,19 +238,17 @@ describe("ingest command", () => {
 
   it("exits with code 1 when --whole-file and --chunk are used together", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
-      throw new Error(`process.exit(${String(code)})`);
-    }) as never);
+    const result = await runIngestCommand(
+      ["/tmp/does-not-matter"],
+      { wholeFile: true, chunk: true },
+      makeDeps(),
+    );
 
-    await expect(
-      runIngestCommand(["/tmp/does-not-matter"], { wholeFile: true, chunk: true }, makeDeps()),
-    ).rejects.toThrow("process.exit(1)");
-
+    expect(result.exitCode).toBe(1);
+    expect(result.filesProcessed).toBe(0);
+    expect(result.filesFailed).toBe(0);
+    expect(result.filesSkipped).toBe(0);
     expect(errorSpy).toHaveBeenCalledWith("Error: Cannot use --whole-file and --chunk together");
-    expect(exitSpy).toHaveBeenCalledWith(1);
-
-    errorSpy.mockRestore();
-    exitSpy.mockRestore();
   });
 
   it("processes files with --workers and wires createWriteQueueFn options", async () => {
