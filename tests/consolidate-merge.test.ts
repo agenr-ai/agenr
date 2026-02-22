@@ -366,6 +366,21 @@ describe("extractMergeResultFromToolCall", () => {
     expect(result?.expiry).toBe("permanent");
   });
 
+  it("falls back to permanent and logs warning when expiry is an ISO timestamp", () => {
+    const onLog = vi.fn();
+    const isoTimestamp = "2026-02-21T19:28:54.672Z";
+    const result = extractMergeResultFromToolCall(makeToolCallMessage({ expiry: isoTimestamp }), {
+      verbose: true,
+      onLog,
+    });
+
+    expect(result).not.toBeNull();
+    expect(result?.expiry).toBe("permanent");
+    expect(onLog).toHaveBeenCalledWith(
+      `[merge] LLM returned invalid expiry "${isoTimestamp}", falling back to "permanent"`,
+    );
+  });
+
   it("falls back to 5 when importance is non-numeric", () => {
     const result = extractMergeResultFromToolCall(makeToolCallMessage({ importance: "certain" }));
     expect(result).not.toBeNull();

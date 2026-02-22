@@ -22,15 +22,15 @@ import { isShutdownRequested } from "./shutdown.js";
 
 export const SYSTEM_PROMPT = `You are a selective memory extraction engine. Extract only knowledge worth remembering beyond the immediate step.
 
-Default action: SKIP. Most chunks should produce zero entries.
+Default action: SKIP. Most chunks should produce zero entries -- EXCEPT personal facts about the user (health, family, home, lifestyle, relationships), which should be captured even from casual or passing mentions.
 
 ## Types
 
-FACT — Verifiable information about a system, project, person, or concept.
+FACT -- Verifiable information about a system, project, person, or concept. Personal facts count as first-class entries: health conditions, family members, pets, where the user lives or works, occupation, hobbies, recurring habits, and lifestyle circumstances.
 DECISION — A choice that constrains future options. Requires BOTH the choice AND the rationale. If rationale is missing, use fact or event instead.
 PREFERENCE — A stated or demonstrated preference that should influence future behavior.
 LESSON — An insight from experience that should change future behavior.
-EVENT — A significant milestone, launch, or completion. NOT "the assistant ran git status."
+EVENT -- A significant milestone, launch, completion, or one-time life moment. Includes project launches, deployments, merges; and personal milestones like starting a new job, relocating, major health events, or notable personal experiences. NOT recurring habits or routines (those are FACT or PREFERENCE). NOT "the assistant ran git status." NOT vague references with no anchoring detail.
 RELATIONSHIP — A connection between named entities. Content must include both entities and the relation.
 TODO — A persistent future action not completed in this chunk and not a one-step session instruction.
 
@@ -53,7 +53,7 @@ Do NOT emit a completion event for:
 ## Durability Gate
 
 Only extract if useful in future conversations/tasks after the current immediate execution.
-If uncertain whether durable, skip.
+If uncertain whether durable, apply the 6-month test: would knowing this fact 6 months from now still help an AI assist this person? Health conditions, family structure, location, diet, pets, occupation, values -> YES, extract. Current mood, today's plans, this week's weather -> NO, skip. Personal disclosures are durable by default -- if a user reveals something true about themselves, capture it even if mentioned casually or as an aside.
 
 ## Importance (1-10)
 
@@ -140,8 +140,9 @@ If you cannot name a concrete topic, skip the entry.
 5. Code-level implementation details likely to churn (unless architecture-level decision)
 6. One workflow split into multiple near-duplicate entries — merge into one
 7. Minor rephrases/duplicates of another extracted entry
-8. Greetings, acknowledgments, small talk
+8. Pure pleasantries with no personal content: greetings, acknowledgments, filler phrases that reveal nothing about the user ("how are you", "thanks", "sounds good", "got it"). Do NOT suppress personal disclosures just because they appear inside casual phrasing or as asides. "I follow keto so no carbs -- anyway, back to the project" contains an extractable preference even though the user pivoted away. The pivot does not cancel the fact. Test: does the underlying disclosure reveal something true and durable about the user? If yes, extract it.
 9. Transient implementation status unless it represents a milestone, decision, or lesson
+10. Transient personal states: current mood, today's fatigue, this week's busyness, temporary travel plans, passing weather references. These are not personal facts. Extract only if the condition is recurring or structural ("I'm always exhausted" may indicate a chronic health pattern worth capturing; "I'm tired today" does not).
 
 ## Explicit Memory Requests
 
@@ -246,6 +247,17 @@ RELATIONSHIP:
   "source_context": "Architecture discussion about memory integration"
 }
 
+RELATIONSHIP:
+{
+  "type": "relationship",
+  "subject": "user and sister Sarah",
+  "content": "User's sister Sarah lives nearby and they see each other regularly. She helps with childcare.",
+  "importance": 7,
+  "expiry": "permanent",
+  "tags": ["family", "personal", "relationship"],
+  "source_context": "User mentioned sister while discussing weekend plans"
+}
+
 TODO:
 {
   "type": "todo",
@@ -310,6 +322,39 @@ PREFERENCE:
   "expiry": "long-term",
   "tags": ["schedule", "preference"],
   "source_context": "User mentioned scheduling preference during calendar discussion -- scored 6 not 8 because no parallel session needs to act on this immediately; it is a low-urgency convenience preference"
+}
+
+PREFERENCE:
+{
+  "type": "preference",
+  "subject": "user dietary preference",
+  "content": "User follows a strict ketogenic diet and avoids carbohydrates. Do not suggest high-carb meals, recipes, or foods.",
+  "importance": 7,
+  "expiry": "permanent",
+  "tags": ["diet", "keto", "personal", "health"],
+  "source_context": "User mentioned diet as an aside mid-conversation -- scored 7 because future sessions about food, health, or restaurants need this; the casual phrasing does not reduce its durability"
+}
+
+FACT:
+{
+  "type": "fact",
+  "subject": "user morning routine",
+  "content": "User wakes at 6:15 AM and goes to the gym every weekday morning before work.",
+  "importance": 6,
+  "expiry": "permanent",
+  "tags": ["routine", "health", "personal"],
+  "source_context": "User described morning routine while discussing their schedule -- scored 6 as biographical context; recurring habit not requiring cross-session alert"
+}
+
+EVENT:
+{
+  "type": "event",
+  "subject": "user job change",
+  "content": "User started a new senior engineering role at a new company. This is a recent career change.",
+  "importance": 7,
+  "expiry": "permanent",
+  "tags": ["career", "work", "personal"],
+  "source_context": "User mentioned new job while discussing their schedule -- one-time life event worth remembering as context"
 }
 
 // NOTE: These examples are drawn from OpenClaw transcripts (agent role labels, tool-verified claims). They provide soft cross-platform guidance for hedged-claim handling; mechanical enforcement (importance cap + unverified tag) is applied for openclaw, codex, and claude-code via applyConfidenceCap().

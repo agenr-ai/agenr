@@ -115,6 +115,7 @@ function buildMergeContext(cluster: Cluster): Context {
     "Only include information explicitly stated in the source entries. Do not infer or add details not present.",
     "Prefer preserving temporal changes in the merged narrative.",
     "Call merge_entries with your final merged result.",
+    'expiry must be exactly the string "permanent" or "temporary" -- never a date, timestamp, or other value.',
   ].join("\n");
 
   let contentLimit: number | undefined;
