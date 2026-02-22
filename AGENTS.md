@@ -162,7 +162,7 @@ Importance: integer 1-10
 - 10: once-per-project permanent constraints (use sparingly)
 - 6: routine dev observations (verified X, confirmed Y runs, tests passing)
 - 5: borderline -- only store if clearly durable beyond today
-- OpenClaw extractor confidence rule: hedged, unverified assistant factual
+- Extractor confidence rule (openclaw, codex, claude-code): hedged, unverified assistant factual
       claims are tagged `unverified` and capped at importance 5
 Whole-file extraction calibration (full-session extraction mode):
 - Typical session: 5-15 entries. Dense sessions may warrant 30-50.

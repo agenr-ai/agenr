@@ -141,18 +141,27 @@ Whole-file extraction calibration (when the extractor processes a full session):
 - If more than 30% of your emitted entries are score 8 or higher, you are inflating.
 - Do NOT extract the same fact multiple times even if stated differently in the session.
 
-### Confidence-aware extraction for OpenClaw transcripts
+### Platform-aware extraction
 
-OpenClaw transcript lines include `[user]` and `[assistant]` role labels.
-The extractor now uses that signal to reduce hallucination risk:
+agenr injects a platform-specific addendum to the extraction prompt based on
+the `--platform` flag (or adapter auto-detection).
 
-- Hedged, unverified assistant factual claims are tagged `unverified` and
-  capped at importance 5.
-- Tool-verified assistant claims keep normal importance rules.
-- User messages are never capped by this confidence rule.
+**openclaw** -- confidence-aware extraction:
+- Transcript lines include `[user]` and `[assistant]` role labels.
+- Hedged, unverified assistant factual claims are tagged `unverified` and capped at importance 5.
+- Tool-verified claims and user messages keep normal importance rules.
 
-This keeps uncertain assistant assertions from being stored as high-importance
-memories while preserving verified outcomes.
+**codex / claude-code** -- code session rules:
+- Confirmed bugs and architectural decisions with file/line evidence are stored at importance 8+ with permanent expiry.
+- Navigation noise ("I explored N files", "I read X") is skipped.
+- Confidence cap applies identically to openclaw (hedged factual claims capped at 5).
+
+**plaud** -- meeting transcript rules:
+- Explicit and implicit action items are extracted with speaker attribution from `[HH:MM] Name:` labels.
+- Meeting chunks use a higher entry density target (3-8 entries) than agent session chunks.
+- The `unverified` tag is prohibited (no tool-call verification signal in meeting transcripts).
+
+Transcripts with no platform tag get the base extraction prompt with no addendum.
 
 ### Tuning Signal Noise
 

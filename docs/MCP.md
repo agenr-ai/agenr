@@ -124,7 +124,7 @@ Parameters:
 - `threshold` (number, optional, default `0`): minimum score `0.0..1.0`
 - Note: threshold is only available when using the MCP server directly. The native
   OpenClaw plugin does not expose this parameter.
-- `platform` (string, optional): platform filter (`openclaw`, `claude-code`, `codex`)
+- `platform` (string, optional): platform filter (`openclaw`, `claude-code`, `codex`, `plaud`)
 - `project` (string, optional):
   - omit to use configured project scope (project + dependencies from `.agenr/config.json`)
   - pass `*` to bypass scope and search all projects
@@ -173,7 +173,7 @@ Store structured entries in the memory DB.
 
 Parameters:
 - `entries` (array, required)
-- `platform` (string, optional): platform tag applied to all stored entries (`openclaw`, `claude-code`, `codex`)
+- `platform` (string, optional): platform tag applied to all stored entries (`openclaw`, `claude-code`, `codex`, `plaud`)
 - `project` (string, optional): project tag applied to all stored entries (lowercase)
 - Each entry supports:
 - `content` (string, required)
@@ -291,10 +291,10 @@ Cap: no more than 20% of stored entries should be 8 or higher.
 - 6: Routine verifications and dev observations
 - 5: Borderline, barely worth storing
 
-For OpenClaw transcript ingestion, extractor prompting is confidence-aware:
-hedged, unverified assistant factual claims are tagged `unverified` and capped
-at importance 5, while verified assistant claims and user statements keep normal
-importance handling.
+Extractor prompting is platform-aware. Each platform injects a calibration addendum:
+- `openclaw`: confidence-aware extraction. Hedged, unverified assistant factual claims are tagged `unverified` and capped at importance 5. Verified claims and user messages keep normal importance.
+- `codex` / `claude-code`: code-session rules. Confirmed bugs and architectural decisions with file/line evidence get importance 8+. Navigation noise is filtered. Confidence cap applies (same as openclaw).
+- `plaud`: meeting transcript rules. Action items (explicit and implicit) are extracted with speaker attribution. Meeting chunks use a higher entry density calibration (3-8 entries vs 0-3 for agent sessions). The `unverified` tag is prohibited.
 
 Whole-file extraction calibration (when the extractor processes a full session):
 - Typical session: 5-15 entries. Dense sessions may warrant 30-50.
