@@ -1916,6 +1916,7 @@ export async function extractKnowledgeFromChunks(params: {
     inputMessages,
     params.client,
     params.verbose,
+    params.onVerbose,
   );
 
   let effectiveChunks = params.chunks;
