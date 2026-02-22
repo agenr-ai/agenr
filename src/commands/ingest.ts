@@ -893,6 +893,7 @@ export async function runIngestCommand(
   let totalChunksFailed = 0;
   let filesWithChunkFailures = 0;
   const chunkStatsByFile = new Map<string, { successfulChunks: number; failedChunks: number }>();
+  const extractOnceFlags = { hasWarnedWholeFileIgnoredParams: false };
   let firstPassFailedIndexSet = new Set<number>();
   let bulkTeardownComplete = false;
   let bulkVectorRebuildDurationSeconds: number | null = null;
@@ -1062,6 +1063,7 @@ export async function runIngestCommand(
         db: options.noPreFetch ? undefined : db,
         embeddingApiKey: options.noPreFetch ? undefined : embeddingApiKey ?? undefined,
         noPreFetch: options.noPreFetch === true,
+        onceFlags: extractOnceFlags,
         onVerbose: verbose
           ? (line) => {
               clack.log.info(line, clackOutput);

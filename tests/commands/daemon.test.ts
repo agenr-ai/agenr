@@ -100,6 +100,31 @@ describe("daemon commands", () => {
     expect(plist).toContain("/tmp/CONTEXT.md");
   });
 
+  it("uses argv[1] as the launchd cli path", async () => {
+    const home = await makeTempDir();
+    const sessionsDir = path.join(home, "sessions");
+    const cliPath = "/Users/test/.pnpm-global/lib/node_modules/agenr/dist/cli.js";
+    await fs.mkdir(sessionsDir, { recursive: true });
+
+    const result = await runDaemonInstallCommand(
+      { force: true, dir: sessionsDir, platform: "openclaw" },
+      {
+        platformFn: () => "darwin",
+        homedirFn: () => home,
+        uidFn: () => 501,
+        argvFn: () => ["node", cliPath],
+        execFileFn: vi.fn(async () => ({ stdout: "", stderr: "", exitCode: 0 })),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+
+    const plistPath = path.join(home, "Library", "LaunchAgents", "com.agenr.watch.plist");
+    const plist = await fs.readFile(plistPath, "utf8");
+    expect(plist).toContain(`<string>${cliPath}</string>`);
+    expect(plist).not.toContain("/opt/homebrew/lib/node_modules/agenr/dist/cli.js");
+  });
+
   it("uninstalls daemon by bootout + plist removal", async () => {
     const home = await makeTempDir();
     const plistPath = path.join(home, "Library", "LaunchAgents", "com.agenr.watch.plist");

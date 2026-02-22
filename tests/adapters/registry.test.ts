@@ -47,6 +47,21 @@ describe("adapter registry", () => {
     expect(adapter.name).toBe("codex");
   });
 
+  it(".jsonl, .jsonl.deleted.TIMESTAMP, and .jsonl.reset.TIMESTAMP resolve to JSONL adapter family", async () => {
+    const content = '{"role":"user","content":"hello"}\n';
+    const plainPath = await makeTempFile("session.jsonl", content);
+    const deletedPath = await makeTempFile("session.jsonl.deleted.2026-02-22T17-00-14.068Z", content);
+    const resetPath = await makeTempFile("session.jsonl.reset.2026-02-20T04-16-49.269Z", content);
+
+    const plainAdapter = await detectAdapter(plainPath);
+    const deletedAdapter = await detectAdapter(deletedPath);
+    const resetAdapter = await detectAdapter(resetPath);
+
+    expect(plainAdapter.name).toBe("jsonl-generic");
+    expect(deletedAdapter.name).toBe("jsonl-generic");
+    expect(resetAdapter.name).toBe("jsonl-generic");
+  });
+
   it(".jsonl.deleted.TIMESTAMP with OpenClaw content routes to openclaw adapter", async () => {
     const filePath = await makeTempFile(
       "34da25ee.jsonl.deleted.2026-02-22T17-00-14.068Z",

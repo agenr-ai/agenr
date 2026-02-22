@@ -816,6 +816,11 @@ function normalize(value: string): string {
   return value.trim().toLowerCase();
 }
 
+function isVectorIndexNotFoundMessage(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return normalized.includes("vector index") && normalized.includes("not found");
+}
+
 export async function preFetchRelated(
   chunkText: string,
   db: Client,
@@ -856,7 +861,11 @@ export async function preFetchRelated(
       onVerbose?.(`[pre-fetch] ${above.length} above threshold ${PREFETCH_SIMILARITY_THRESHOLD}`);
       return above.slice(0, MAX_PREFETCH_RESULTS).map((candidate) => candidate.entry);
     } catch (error) {
-      onVerbose?.(`[pre-fetch] skipped: ${error instanceof Error ? error.message : String(error)}`);
+      const message = error instanceof Error ? error.message : String(error);
+      if (isVectorIndexNotFoundMessage(message)) {
+        return [];
+      }
+      onVerbose?.(`[pre-fetch] skipped: ${message}`);
       return [];
     }
   };
@@ -1921,6 +1930,10 @@ export interface ExtractChunkCompleteResult {
   warnings: string[];
 }
 
+export interface ExtractRunOnceFlags {
+  hasWarnedWholeFileIgnoredParams?: boolean;
+}
+
 export async function extractKnowledgeFromChunks(params: {
   file: string;
   chunks: TranscriptChunk[];
@@ -1943,6 +1956,7 @@ export async function extractKnowledgeFromChunks(params: {
   embeddingApiKey?: string;
   noPreFetch?: boolean;
   embedFn?: (texts: string[], apiKey: string) => Promise<number[][]>;
+  onceFlags?: ExtractRunOnceFlags;
 }): Promise<ExtractChunksResult> {
   const warnings: string[] = [];
   const entries: KnowledgeEntry[] = [];
@@ -1978,10 +1992,15 @@ export async function extractKnowledgeFromChunks(params: {
   if (wholeFileMode && params.verbose) {
     const ignoredParamsLine =
       "[whole-file] interChunkDelayMs and llmConcurrency have no effect in whole-file mode";
-    if (params.onVerbose) {
-      params.onVerbose(ignoredParamsLine);
-    } else {
-      console.warn(ignoredParamsLine);
+    if (!params.onceFlags?.hasWarnedWholeFileIgnoredParams) {
+      if (params.onVerbose) {
+        params.onVerbose(ignoredParamsLine);
+      } else {
+        console.warn(ignoredParamsLine);
+      }
+      if (params.onceFlags) {
+        params.onceFlags.hasWarnedWholeFileIgnoredParams = true;
+      }
     }
   }
 
