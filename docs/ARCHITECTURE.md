@@ -45,6 +45,7 @@ A host-level integration that hooks into the OpenClaw agent framework. Before ea
               +----------------------------+----------------------------+
               |             LLM Extraction Layer                        |
               |  extractKnowledgeFromChunks() (src/extractor.ts)        |
+              |  whole-file mode (src/ingest/whole-file.ts) or chunked  |
               |  -> KnowledgeEntry[]                                    |
               +----------------------------+----------------------------+
                                            |
@@ -92,7 +93,13 @@ Source: `src/commands/`, `src/extractor.ts`, `src/db/store.ts`, `src/db/recall.t
    Input comes from transcript files (`.jsonl`, `.md`, `.txt`) via the platform adapter system or directly from CLI/MCP arguments. Adapters normalize heterogeneous source formats into a uniform message list before any further processing, so the rest of the pipeline never needs to know the source format.
 
 2. **LLM extraction**
-   `extractKnowledgeFromChunks()` (`src/extractor.ts`) sends chunked text to the configured LLM and receives back `KnowledgeEntry[]`. Extraction runs per-chunk rather than per-file so that large transcripts fit within context window limits and parallelism is possible.
+   `extractKnowledgeFromChunks()` (`src/extractor.ts`) sends transcript text to the configured LLM and receives back `KnowledgeEntry[]`. Two extraction paths exist:
+
+   - **Whole-file mode** (default `auto`): when a transcript fits within the model context window, the full session is sent as a single LLM call. Text is reconstructed from the parsed message list via `renderTranscriptLine()` to avoid chunk-overlap duplication. The model sees the complete conversation, enabling correct TODO-completion detection and coherent multi-part entries. Pre-fetch and the post-extraction LLM dedup pass are both skipped; a 100-entry hard cap (by importance score) is applied instead. Retries up to 3 times with exponential backoff before falling back to chunked. Helpers live in `src/ingest/whole-file.ts`.
+
+   - **Chunked mode** (`--chunk` flag or when the file exceeds the context window): the transcript is split into ~3K-token chunks with 1,200-character overlap via `chunkMessages()` in `src/parser.ts`. Chunks are extracted in parallel up to `llmConcurrency`, then a post-extraction LLM dedup pass merges near-duplicates across chunk boundaries.
+
+   Mode is auto-detected per file against a model context window registry in `src/ingest/whole-file.ts`. Unknown models always fall back to chunked. Watch mode always uses chunked (whole-file would re-extract the full file on every append event). CLI flags `--whole-file` and `--chunk` override auto-detect; they are mutually exclusive.
 
 3. **Structured entry normalization**
    Types and enums from `src/types.ts` are enforced at this stage. Normalization catches out-of-range importance values, unknown types, and missing required fields before the entry reaches storage, preventing corrupt records from entering the DB.
