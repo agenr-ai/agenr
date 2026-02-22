@@ -798,6 +798,7 @@ export async function runIngestCommand(
       throw new Error(`Bulk embed mismatch: expected ${texts.length}, got ${embeddings.length}.`);
     }
 
+    const committedHashes = new Set<string>();
     await bulkDb.execute("BEGIN IMMEDIATE");
     try {
       for (let i = 0; i < candidates.length; i += 1) {
@@ -815,7 +816,7 @@ export async function runIngestCommand(
           candidate.normHash,
           minhashSigToBuffer(candidate.minhashSig),
         );
-        seenNormHashes.add(candidate.normHash);
+        committedHashes.add(candidate.normHash);
         added += 1;
       }
 
@@ -823,6 +824,9 @@ export async function runIngestCommand(
         await bulkDb.execute("ROLLBACK");
       } else {
         await bulkDb.execute("COMMIT");
+        for (const hash of committedHashes) {
+          seenNormHashes.add(hash);
+        }
       }
     } catch (error) {
       try {
