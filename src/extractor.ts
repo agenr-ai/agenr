@@ -1596,12 +1596,11 @@ async function extractWholeFileChunkWithRetry(params: {
 > {
   const startedAt = Date.now();
   let lastError: unknown = null;
+  const emit = params.onVerbose ?? ((line: string) => console.log(line));
 
   for (let attempt = 1; attempt <= WHOLE_FILE_ATTEMPTS; attempt += 1) {
     if (params.verbose) {
-      params.onVerbose?.(
-        `[whole-file] attempt ${attempt}/${WHOLE_FILE_ATTEMPTS}`,
-      );
+      emit(`[whole-file] attempt ${attempt}/${WHOLE_FILE_ATTEMPTS}`);
     }
 
     try {
@@ -1627,7 +1626,7 @@ async function extractWholeFileChunkWithRetry(params: {
         const jitterMs = Math.floor(Math.random() * 1000);
         const delayMs = baseDelayMs + jitterMs;
         if (params.verbose) {
-          params.onVerbose?.(
+          emit(
             `[whole-file] attempt ${attempt} failed (${error instanceof Error ? error.message : String(error)}), retrying in ${delayMs}ms.`,
           );
         }
@@ -1636,6 +1635,7 @@ async function extractWholeFileChunkWithRetry(params: {
     }
   }
 
+  // fallback is unreachable at runtime; TypeScript requires it because attempt is number not a literal union
   return {
     chunkResult: null,
     durationMs: Math.max(0, Date.now() - startedAt),
@@ -1688,7 +1688,7 @@ export async function extractKnowledgeFromChunks(params: {
   const entries: KnowledgeEntry[] = [];
   const sleep = params.sleepImpl ?? sleepMs;
 
-  if (params.watchMode && params.wholeFile !== undefined && params.wholeFile !== "never" && params.verbose) {
+  if (params.watchMode && params.wholeFile !== undefined && params.wholeFile !== "never") {
     const watchOverrideMessage =
       "[whole-file] watchMode=true overrides wholeFile setting to 'never'. Whole-file mode is not safe in watch mode (cost amplification).";
     if (params.onVerbose) {
@@ -1700,9 +1700,6 @@ export async function extractKnowledgeFromChunks(params: {
 
   const effectiveWholeFile = params.watchMode ? "never" : (params.wholeFile ?? "auto");
   const inputMessages = params.messages ?? [];
-  if (effectiveWholeFile === "force" && inputMessages.length === 0) {
-    console.error("[whole-file] force mode requested but no messages provided; cannot build whole-file chunk");
-  }
 
   let wholeFileMode = resolveWholeFileMode(
     effectiveWholeFile,
@@ -1713,16 +1710,7 @@ export async function extractKnowledgeFromChunks(params: {
 
   let effectiveChunks = params.chunks;
   if (wholeFileMode) {
-    if (inputMessages.length === 0) {
-      if (effectiveWholeFile === "force") {
-        console.error("[whole-file] force mode requested but no messages provided; cannot build whole-file chunk");
-      } else if (params.verbose) {
-        console.warn("[whole-file] auto mode: no messages provided, falling back to chunked");
-      }
-      wholeFileMode = false;
-    } else {
-      effectiveChunks = [buildWholeFileChunkFromMessages(inputMessages)];
-    }
+    effectiveChunks = [buildWholeFileChunkFromMessages(inputMessages)];
   }
 
   let effectiveNoPreFetch = wholeFileMode ? true : (params.noPreFetch ?? false);
@@ -1770,17 +1758,18 @@ export async function extractKnowledgeFromChunks(params: {
           params.verbose,
           params.onVerbose,
         );
+        const cappedEntries = applyEntryHardCap(validatedChunkEntries, params.verbose);
         if (params.onChunkComplete) {
           await params.onChunkComplete({
             chunkIndex: 0,
             totalChunks: 1,
-            entries: validatedChunkEntries,
-            entriesExtracted: validatedChunkEntries.length,
+            entries: cappedEntries,
+            entriesExtracted: cappedEntries.length,
             durationMs: wholeFileResult.durationMs,
             warnings: wholeFileResult.chunkResult.warnings,
           });
         } else {
-          entries.push(...validatedChunkEntries);
+          entries.push(...cappedEntries);
         }
         if (params.onStreamDelta) {
           params.onStreamDelta("\n", "text");
@@ -1971,8 +1960,7 @@ export async function extractKnowledgeFromChunks(params: {
   }
 
   let finalEntries = entries;
-  const skipDedup = wholeFileMode;
-  if (!aborted && !skipDedup && !params.noDedup && finalEntries.length > 1) {
+  if (!aborted && !params.noDedup && finalEntries.length > 1) {
     const dedupResult = await deduplicateEntriesWithLlm({
       file: params.file,
       entries: finalEntries,
@@ -1985,9 +1973,7 @@ export async function extractKnowledgeFromChunks(params: {
     finalEntries = dedupResult.entries;
     warnings.push(...dedupResult.warnings);
   }
-  if (wholeFileMode) {
-    finalEntries = applyEntryHardCap(finalEntries, params.verbose);
-  }
+  finalEntries = applyEntryHardCap(finalEntries, params.verbose);
 
   return {
     entries: finalEntries,
