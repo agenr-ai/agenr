@@ -4,7 +4,6 @@ import { describe, expect, it } from "vitest";
 import {
   buildSpawnArgs,
   formatRecallAsMarkdown,
-  formatRecallAsSummary,
   resolveAgenrPath,
 } from "../../src/openclaw-plugin/recall.js";
 import type { RecallResult } from "../../src/openclaw-plugin/recall.js";
@@ -100,82 +99,6 @@ describe("formatRecallAsMarkdown", () => {
     expect(result).toContain("[good] valid entry");
     const lines = result.split("\n").filter((line) => line.startsWith("- "));
     expect(lines).toHaveLength(1);
-  });
-});
-
-describe("formatRecallAsSummary", () => {
-  it("returns empty string when results array is empty", () => {
-    const result = formatRecallAsSummary({ query: "", results: [] });
-    expect(result).toBe("");
-  });
-
-  it("includes timestamp in header when provided", () => {
-    const result = formatRecallAsSummary(
-      makeResult([{ type: "fact", subject: "x", content: "y" }]),
-      "2026-02-19 13:51"
-    );
-    expect(result.split("\n")[0]).toBe("## agenr Memory -- 2026-02-19 13:51");
-  });
-
-  it("omits timestamp from header when not provided", () => {
-    const result = formatRecallAsSummary(makeResult([{ type: "fact", subject: "x", content: "y" }]));
-    expect(result.split("\n")[0]).toBe("## agenr Memory");
-  });
-
-  it("shows total entry count after filtering invalid entries", () => {
-    const result = formatRecallAsSummary({
-      query: "",
-      results: [
-        { entry: { type: "todo", subject: "a", content: "aa" }, score: 0.9 },
-        { entry: { type: "fact", subject: "b", content: "bb" }, score: 0.9 },
-        { entry: { type: "fact" } as never, score: 0.1 },
-      ],
-    });
-    expect(result).toContain("2 entries recalled. Full context injected into this session automatically.");
-  });
-
-  it("shows only subjects and excludes content bodies", () => {
-    const result = formatRecallAsSummary(
-      makeResult([
-        { type: "todo", subject: "fix parser", content: "Do not show this todo content" },
-        { type: "decision", subject: "use pnpm", content: "Do not show this decision content" },
-        { type: "fact", subject: "repo path", content: "Do not show this fact content" },
-      ])
-    );
-    expect(result).toContain("- fix parser");
-    expect(result).toContain("- use pnpm");
-    expect(result).toContain("- repo path");
-    expect(result).not.toContain("Do not show this todo content");
-    expect(result).not.toContain("Do not show this decision content");
-    expect(result).not.toContain("Do not show this fact content");
-  });
-
-  it("includes per-section counts in section headers", () => {
-    const result = formatRecallAsSummary(
-      makeResult([
-        { type: "todo", subject: "a", content: "ca" },
-        { type: "todo", subject: "b", content: "cb" },
-        { type: "decision", subject: "c", content: "cc" },
-      ])
-    );
-    expect(result).toContain("### Active Todos (2)");
-    expect(result).toContain("### Preferences and Decisions (1)");
-  });
-
-  it("omits sections with zero entries", () => {
-    const result = formatRecallAsSummary(
-      makeResult([{ type: "todo", subject: "only todo", content: "x" }])
-    );
-    expect(result).toContain("### Active Todos (1)");
-    expect(result).not.toContain("### Preferences and Decisions");
-    expect(result).not.toContain("### Facts and Events");
-  });
-
-  it("always includes the instruction block", () => {
-    const result = formatRecallAsSummary(
-      makeResult([{ type: "fact", subject: "subject", content: "content" }])
-    );
-    expect(result).toContain('mcporter call agenr.agenr_recall query="your topic" limit=5');
   });
 });
 
