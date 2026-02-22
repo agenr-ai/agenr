@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { createClient, type Client } from "@libsql/client";
+import { createClient, type Client, type InStatement } from "@libsql/client";
 import * as clack from "@clack/prompts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { IngestCommandDeps } from "../../src/commands/ingest.js";
@@ -329,7 +329,7 @@ describe("bulk ingest helpers", () => {
   });
 
   it("rebuildVectorIndex falls back to drop+create when REINDEX fails", async () => {
-    const execute = vi.fn(async (statement: string) => {
+    const execute = vi.fn(async (statement: InStatement) => {
       if (statement === "REINDEX idx_entries_embedding") {
         throw new Error("reindex unsupported");
       }
