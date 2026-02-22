@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.8.3]
 
 ### Fixed
 - setup: custom model aliases (gpt-4.1-nano, gpt-4.1-mini) now appear in

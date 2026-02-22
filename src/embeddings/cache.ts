@@ -1,6 +1,12 @@
+interface CacheNode {
+  value: number[];
+  prev: string | null;
+  next: string | null;
+}
+
 export class EmbeddingCache {
   private readonly maxSize: number;
-  private readonly map = new Map<string, { value: number[]; prev: string | null; next: string | null }>();
+  private readonly map = new Map<string, CacheNode>();
   private head: string | null = null; // most recently used key
   private tail: string | null = null; // least recently used key
 
@@ -30,7 +36,7 @@ export class EmbeddingCache {
       this.evictTail();
     }
 
-    const node = { value: embedding, prev: null, next: this.head };
+    const node: CacheNode = { value: embedding, prev: null, next: this.head };
     this.map.set(text, node);
 
     if (this.head !== null) {
@@ -47,7 +53,7 @@ export class EmbeddingCache {
     return this.map.size;
   }
 
-  private moveToHead(key: string, node: { value: number[]; prev: string | null; next: string | null }): void {
+  private moveToHead(key: string, node: CacheNode): void {
     if (this.head === key) return;
 
     // detach from current position
