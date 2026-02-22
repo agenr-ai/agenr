@@ -34,6 +34,7 @@ const MODEL_OUTPUT_TOKENS: Record<string, number> = {
   "gpt-4o": 16_384,
   "gpt-4o-mini": 16_384,
   "gpt-3.5-turbo": 4_096,
+  "gpt-4-turbo": 16_384,
   "gpt-5-nano": 131_072,
   "gpt-5.2-codex": 131_072,
   "gpt-5.3-codex": 100_000,
@@ -147,7 +148,7 @@ export function resolveWholeFileMode(
     const outputTokens = getOutputTokens(client);
     if (contextWindow !== undefined && estimatedTokens > usableWindowTokens(contextWindow, outputTokens)) {
       throw new Error(
-        `[whole-file] force mode: estimated ${estimatedTokens} tokens exceeds ${contextWindow}-token context window. Use --chunk to force chunked mode instead.`,
+        `[whole-file] force mode: estimated ${estimatedTokens} tokens exceeds usable window of ${usableWindowTokens(contextWindow, outputTokens)} tokens (${contextWindow} context - ${outputTokens} output budget - ${SYSTEM_PROMPT_BUDGET_TOKENS} system prompt). Use --chunk to force chunked mode instead.`,
       );
     }
     if (contextWindow === undefined && verbose) {
