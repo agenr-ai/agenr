@@ -309,8 +309,19 @@ export async function rebuildVectorIndex(db: Client): Promise<void> {
     // REINDEX not supported/failing for this connection. Fall back to drop+create.
   }
 
-  await db.execute("DROP INDEX IF EXISTS idx_entries_embedding");
-  await db.execute(CREATE_IDX_ENTRIES_EMBEDDING_SQL);
+  await db.execute("BEGIN IMMEDIATE");
+  try {
+    await db.execute("DROP INDEX IF EXISTS idx_entries_embedding");
+    await db.execute(CREATE_IDX_ENTRIES_EMBEDDING_SQL);
+    await db.execute("COMMIT");
+  } catch (fallbackError) {
+    try {
+      await db.execute("ROLLBACK");
+    } catch {
+      // Ignore rollback failures.
+    }
+    throw fallbackError;
+  }
 }
 
 export async function setBulkIngestMeta(db: Client, phase: string): Promise<void> {
