@@ -45,7 +45,7 @@ function countFromRow(row: unknown, key = "cnt"): number {
     return 0;
   }
   const record = row as Record<string, unknown>;
-  const raw = record[key] ?? Object.values(record)[0];
+  const raw = record[key];
   if (typeof raw === "number") {
     return raw;
   }
