@@ -301,6 +301,88 @@ describe("openclaw plugin tool runners", () => {
     expect(capturedArgs[thresholdIdx + 1]).toBe("0.65");
   });
 
+  it("runStoreTool normalizes a valid platform before passing it to CLI", async () => {
+    let capturedArgs: string[] = [];
+    spawnMock.mockImplementationOnce((_cmd: string, args: string[]) => {
+      capturedArgs = args;
+      return createMockChild({ code: 0 });
+    });
+
+    await runStoreTool("/path/to/agenr", {
+      platform: " CoDeX ",
+      entries: [{ content: "test entry", type: "fact" }],
+    });
+
+    expect(capturedArgs).toContain("--platform");
+    const platformIdx = capturedArgs.indexOf("--platform");
+    expect(capturedArgs[platformIdx + 1]).toBe("codex");
+  });
+
+  it("runStoreTool omits invalid platform and warns", async () => {
+    let capturedArgs: string[] = [];
+    const warn = vi.fn();
+    spawnMock.mockImplementationOnce((_cmd: string, args: string[]) => {
+      capturedArgs = args;
+      return createMockChild({ code: 0 });
+    });
+
+    await runStoreTool(
+      "/path/to/agenr",
+      {
+        platform: "not-a-platform",
+        entries: [{ content: "test entry", type: "fact" }],
+      },
+      { logger: { warn } },
+    );
+
+    expect(capturedArgs).not.toContain("--platform");
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toContain("invalid platform");
+  });
+
+  it("runStoreTool infers platform from source.file when platform is omitted", async () => {
+    let capturedArgs: string[] = [];
+    spawnMock.mockImplementationOnce((_cmd: string, args: string[]) => {
+      capturedArgs = args;
+      return createMockChild({ code: 0 });
+    });
+
+    await runStoreTool("/path/to/agenr", {
+      entries: [
+        {
+          content: "test entry",
+          type: "fact",
+          source: { file: "/tmp/claude-sessions/chat.jsonl" },
+        },
+      ],
+    });
+
+    expect(capturedArgs).toContain("--platform");
+    const platformIdx = capturedArgs.indexOf("--platform");
+    expect(capturedArgs[platformIdx + 1]).toBe("claude-code");
+  });
+
+  it("runStoreTool warns once when source string does not use recommended prefixes", async () => {
+    const warn = vi.fn();
+    spawnMock.mockReturnValueOnce(createMockChild({ code: 0 }));
+
+    await runStoreTool(
+      "/path/to/agenr",
+      {
+        entries: [
+          { content: "one", type: "fact", source: "notes.txt" },
+          { content: "two", type: "fact", source: "misc source" },
+        ],
+      },
+      { logger: { warn } },
+    );
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(
+      "agenr_store: source_file does not follow recommended format (mcp:, file:, cli:, session:, conversation). Storing as-is.",
+    );
+  });
+
   it("runStoreTool uses default project when params.project is omitted", async () => {
     let capturedArgs: string[] = [];
     spawnMock.mockImplementationOnce((_cmd: string, args: string[]) => {

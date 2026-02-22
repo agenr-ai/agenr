@@ -292,10 +292,14 @@ const plugin = {
             }
             const agenrPath = resolveAgenrPath(runtimeConfig);
             const defaultProject = runtimeConfig?.project?.trim() || undefined;
+            const toolConfig: Record<string, unknown> = {
+              ...(runtimeConfig as Record<string, unknown> | undefined),
+              logger: api.logger,
+            };
             return runStoreTool(
               agenrPath,
               params,
-              runtimeConfig as Record<string, unknown> | undefined,
+              toolConfig,
               defaultProject,
             );
           },
