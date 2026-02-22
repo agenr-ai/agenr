@@ -59,7 +59,7 @@ export function computeMinhashSig(text: string, numHashes = NUM_HASHES): Uint32A
     ngrams.push(chars.slice(i, i + 5));
   }
   if (ngrams.length < 3) {
-    ngrams.push(text.slice(0, 40) || "empty");
+    ngrams.push(chars.slice(0, 40) || "empty");
   }
 
   const sig = new Uint32Array(numHashes).fill(0xffffffff);
