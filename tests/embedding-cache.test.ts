@@ -64,4 +64,22 @@ describe("EmbeddingCache", () => {
     expect(cache.get("b")).toEqual([2]);
     expect(cache.size).toBe(1);
   });
+
+  it("re-setting an existing key moves it to MRU position", () => {
+    const cache = new EmbeddingCache(2);
+    cache.set("a", [1]);
+    cache.set("b", [2]);
+    // b is MRU, a is LRU - re-set a to promote it
+    cache.set("a", [99]);
+    // now a is MRU, b is LRU - next insert should evict b, not a
+    cache.set("c", [3]);
+    expect(cache.get("b")).toBeUndefined();
+    expect(cache.get("a")).toEqual([99]);
+    expect(cache.get("c")).toEqual([3]);
+  });
+
+  it("throws RangeError when maxSize is less than 1", () => {
+    expect(() => new EmbeddingCache(0)).toThrow(RangeError);
+    expect(() => new EmbeddingCache(-1)).toThrow(RangeError);
+  });
 });

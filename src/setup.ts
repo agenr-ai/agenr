@@ -44,6 +44,7 @@ function modelChoicesForAuth(auth: AgenrAuthMethod, provider: AgenrProvider): st
 
   const preferred = definition.preferredModels.filter((modelId) => {
     try {
+      // resolveModel throws if the alias is unknown - used here for validation only.
       resolveModel(provider, modelId);
       return true;
     } catch {
@@ -192,6 +193,9 @@ export async function runSetup(env: NodeJS.ProcessEnv = process.env): Promise<vo
       const normalized = entered.trim();
       if (normalized) {
         working = setStoredCredential(working, credentialKey, normalized);
+        clack.log.info("Credential updated. Note: the new credential has not been re-validated.");
+      } else {
+        clack.log.warn("Credential not updated - empty input.");
       }
     }
   }
@@ -208,7 +212,7 @@ export async function runSetup(env: NodeJS.ProcessEnv = process.env): Promise<vo
       return {
         value: id,
         label: id,
-        hint: details ? details.name : undefined,
+        hint: details?.name ?? undefined,
       };
     }),
   });
