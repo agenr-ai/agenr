@@ -478,8 +478,24 @@ export function buildExtractionSystemPrompt(
 ): string {
   let prompt = SYSTEM_PROMPT;
   if (wholeFile) {
-    prompt = prompt.replace(CHUNKED_CALIBRATION_BLOCK, WHOLE_FILE_CALIBRATION_BLOCK);
-    prompt = prompt.replace("- Max 8 entries; prefer 0-3.\n", "");
+    const replacedCalibration = prompt.replace(CHUNKED_CALIBRATION_BLOCK, WHOLE_FILE_CALIBRATION_BLOCK);
+    if (
+      replacedCalibration === prompt ||
+      replacedCalibration.includes(CHUNKED_CALIBRATION_BLOCK) ||
+      !replacedCalibration.includes(WHOLE_FILE_CALIBRATION_BLOCK)
+    ) {
+      throw new Error("[whole-file] buildExtractionSystemPrompt failed to replace calibration block");
+    }
+    prompt = replacedCalibration;
+
+    const removedChunkCap = prompt.replace("- Max 8 entries; prefer 0-3.\n", "");
+    if (
+      removedChunkCap === prompt ||
+      removedChunkCap.includes("- Max 8 entries; prefer 0-3.\n")
+    ) {
+      throw new Error("[whole-file] buildExtractionSystemPrompt failed to remove chunk cap output rule");
+    }
+    prompt = removedChunkCap;
   }
 
   if (platform === "openclaw") {
@@ -493,7 +509,7 @@ const DEFAULT_INTER_CHUNK_DELAY_MS = 150;
 const DEDUP_BATCH_SIZE = 50;
 const DEDUP_BATCH_TRIGGER = 100;
 const WHOLE_FILE_ATTEMPTS = 3;
-const WHOLE_FILE_RETRY_DELAYS_MS = [2000, 4000, 8000] as const;
+const WHOLE_FILE_RETRY_DELAYS_MS = [2000, 4000] as const;
 export const PREFETCH_SIMILARITY_THRESHOLD = 0.72;
 const PREFETCH_SIMILARITY_EPSILON = 1e-6;
 export const PREFETCH_CANDIDATE_LIMIT = 15;
@@ -1635,7 +1651,7 @@ async function extractWholeFileChunkWithRetry(params: {
     }
   }
 
-  // fallback is unreachable at runtime; TypeScript requires it because attempt is number not a literal union
+  // All WHOLE_FILE_ATTEMPTS failed. Caller handles chunkResult === null by falling back to chunked extraction.
   return {
     chunkResult: null,
     durationMs: Math.max(0, Date.now() - startedAt),
@@ -1758,7 +1774,11 @@ export async function extractKnowledgeFromChunks(params: {
           params.verbose,
           params.onVerbose,
         );
-        const cappedEntries = applyEntryHardCap(validatedChunkEntries, params.verbose);
+        const cappedEntries = applyEntryHardCap(
+          validatedChunkEntries,
+          params.verbose,
+          params.onVerbose,
+        );
         if (params.onChunkComplete) {
           await params.onChunkComplete({
             chunkIndex: 0,
@@ -1775,7 +1795,7 @@ export async function extractKnowledgeFromChunks(params: {
           params.onStreamDelta("\n", "text");
         }
         return {
-          entries: applyEntryHardCap(entries, params.verbose),
+          entries,
           successfulChunks: 1,
           failedChunks: 0,
           warnings,
@@ -1973,7 +1993,7 @@ export async function extractKnowledgeFromChunks(params: {
     finalEntries = dedupResult.entries;
     warnings.push(...dedupResult.warnings);
   }
-  finalEntries = applyEntryHardCap(finalEntries, params.verbose);
+  finalEntries = applyEntryHardCap(finalEntries, params.verbose, params.onVerbose);
 
   return {
     entries: finalEntries,

@@ -545,6 +545,19 @@ hedged assistant factual claims (for example, "I think", "probably") that are
 not tool-verified are tagged `unverified` and capped at importance 5. Verified
 assistant claims and all user statements keep normal scoring rules.
 
+Whole-file extraction calibration (from `src/extractor.ts`, used when the extractor sees the full session):
+- Typical session: 5-15 entries. Dense sessions may warrant 30-50.
+- You are seeing the complete conversation. Extract complete, coherent entries that
+  capture multi-part discussions as single entries, not fragments.
+- Score 9 or 10: very rare, at most 1 per session, often 0
+- Score 8: at most 2-3 per session; ask the cross-session-alert question before assigning
+- Score 7: this is your workhorse; most emitted entries should be 7
+- Score 6: routine dev observations worth storing
+- TODO completion: if a TODO is raised AND completed within this session, emit only
+  the completion event - not the original todo.
+- If more than 30% of your emitted entries are score 8 or higher, you are inflating.
+- Do NOT extract the same fact multiple times even if stated differently in the session.
+
 ---
 
 ## What Agents Should (and Should Not) Store
@@ -586,4 +599,4 @@ at 5 and tagged `unverified`.
 
 The system prompt sets the default to 7. In OpenClaw, 8+ fires real-time cross-session signals, so use it conservatively. Reserve 9 for critical breaking changes and immediate decisions only, not for generally important facts. Keep 10 for once-per-project permanent constraints.
 
-This calibration prevents importance inflation. The real risk is at 8+: if more than 20% of stored entries are 8 or higher, importance is being inflated and cross-session signals lose meaning.
+Chunked extraction calibration keeps the 20% guardrail for score 8+. Whole-file extraction calibration uses a 30% guardrail. Use the calibration block above for whole-file sessions.
