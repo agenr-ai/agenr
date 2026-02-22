@@ -264,6 +264,7 @@ export async function runExtractCommand(
           const extracted = await resolvedDeps.extractKnowledgeFromChunksFn({
             file: key,
             chunks: parsed.chunks,
+            messages: parsed.messages,
             client,
             verbose: true,
             noDedup: options.noDedup === true,
@@ -300,6 +301,7 @@ export async function runExtractCommand(
               const extracted = await resolvedDeps.extractKnowledgeFromChunksFn({
                 file: key,
                 chunks: parsed.chunks,
+                messages: parsed.messages,
                 client,
                 verbose: false,
                 noDedup: options.noDedup === true,

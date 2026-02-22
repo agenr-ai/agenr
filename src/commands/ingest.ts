@@ -473,7 +473,24 @@ export async function runIngestCommand(
 ): Promise<IngestCommandResult> {
   if (options.wholeFile === true && options.chunk === true) {
     console.error("Error: Cannot use --whole-file and --chunk together");
-    process.exit(1);
+    return {
+      exitCode: 1,
+      filesProcessed: 0,
+      filesSkipped: 0,
+      filesFailed: 0,
+      totalEntriesExtracted: 0,
+      totalEntriesStored: 0,
+      dedupStats: {
+        entries_added: 0,
+        entries_updated: 0,
+        entries_skipped: 0,
+        entries_reinforced: 0,
+        entries_superseded: 0,
+        dedup_llm_calls: 0,
+      },
+      durationMs: 0,
+      results: [],
+    };
   }
 
   const resolvedDeps: IngestCommandDeps = {
