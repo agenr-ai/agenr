@@ -16,6 +16,7 @@ import {
   computeNormContentHash,
   minhashJaccard,
   minhashSigToBuffer,
+  NUM_HASHES,
 } from "./minhash.js";
 
 const AUTO_SKIP_THRESHOLD = 0.95;
@@ -548,6 +549,9 @@ export async function findDuplicateBulk(
               ? Buffer.from(raw.buffer, raw.byteOffset, raw.byteLength)
           : null;
     if (!buf) {
+      continue;
+    }
+    if (buf.byteLength !== NUM_HASHES * 4) {
       continue;
     }
 
