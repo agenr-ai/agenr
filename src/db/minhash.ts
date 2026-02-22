@@ -91,7 +91,7 @@ export function minhashJaccard(a: Uint32Array, b: Uint32Array): number {
 }
 
 export function minhashSigToBuffer(sig: Uint32Array): Buffer {
-  return Buffer.from(sig.buffer);
+  return Buffer.from(sig.buffer, sig.byteOffset, sig.byteLength);
 }
 
 export function bufferToMinhashSig(buf: Buffer | Uint8Array): Uint32Array {
