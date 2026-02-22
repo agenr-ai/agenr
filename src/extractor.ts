@@ -311,7 +311,7 @@ PREFERENCE:
   "source_context": "User mentioned scheduling preference during calendar discussion -- scored 6 not 8 because no parallel session needs to act on this immediately; it is a low-urgency convenience preference"
 }
 
-// NOTE: These examples are drawn from OpenClaw transcripts (agent role labels, tool-verified claims). They provide soft cross-platform guidance for hedged-claim handling; mechanical enforcement (importance cap + unverified tag) is only applied for the openclaw platform via applyConfidenceCap().
+// NOTE: These examples are drawn from OpenClaw transcripts (agent role labels, tool-verified claims). They provide soft cross-platform guidance for hedged-claim handling; mechanical enforcement (importance cap + unverified tag) is applied for openclaw, codex, and claude-code via applyConfidenceCap().
 Example: hedged agent claim (correct handling):
 {
   "type": "fact",
@@ -451,6 +451,169 @@ RECOMMENDATION - not a factual claim, never capped:
   Result: this is a suggestion, not a fact - do not apply the cap
 `;
 
+export const CODE_PLATFORM_ADDENDUM = `
+## Code Session Rules (codex / claude-code)
+
+You are extracting from a coding agent session. These rules take precedence over the base extraction rules where they conflict.
+
+### What to capture with elevated importance
+
+Code audit FINDINGS (confirmed bugs, security issues, correctness flaws):
+- Importance: 8 minimum. Set expiry field to "permanent" (not "temporary").
+- Content MUST include: file path, line number or function name, exact nature of the flaw.
+- Example: "Bug in src/db/recall.ts fetchSessionCandidates(): missing AND retired = 0
+  filter causes retired entries to appear in recall results."
+- If evidence is missing (no file/line), drop importance to 7.
+
+Architectural decisions made during exploration:
+- Importance: 8. Set expiry to "permanent".
+- Include the specific files or modules involved and the rationale.
+
+Breaking changes discovered in dependencies or APIs:
+- Importance: 9 if cross-session impact. Include affected callers.
+
+Feature implementations completed with tests passing:
+- Importance: 7 event. Include branch name and what was shipped.
+
+### What to skip entirely
+
+Navigation and exploration events:
+- "I explored N files", "I read X", "I looked at Y", "I checked the codebase"
+- These are execution noise. Skip unless a specific finding resulted.
+
+Build or test status alone:
+- "Tests pass" or "build succeeded" with no new behavioral change = skip or 6 max.
+- Only store if it signals a resolved blocker or confirmed fix.
+
+Routine file reads without findings:
+- "I found that file X exists" or "I opened Y to understand Z" = skip.
+
+### Evidence requirement for importance >= 8
+
+If you assign importance 8 or higher to a code finding, the content MUST contain
+at least one of:
+- A file path
+- A line number or function name
+- A quoted snippet of the problematic code
+
+Without that evidence, cap at 7.
+
+### Role labels and confidence caps in code sessions
+
+Transcript lines are prefixed with [user] or [assistant] role labels.
+[user] messages are task descriptions or steering from the developer.
+[assistant] messages are the coding agent findings, reasoning, and actions.
+
+Apply confidence-cap rules to [assistant] statements only.
+Never apply this logic to [user] messages.
+
+An [assistant] statement is verified when it meets ANY of these conditions:
+- It immediately follows a line matching the pattern [called X: ...] such as
+  [called exec: ...], [called Read: ...], or any [called ...: ...] marker
+- It uses explicit verification language: "I confirmed", "I verified", "the output shows",
+  "the test shows", "confirmed via", "the file shows", "I ran", "the result shows"
+
+An [assistant] statement is hedged when it uses speculative language WITHOUT
+any of the verification signals above:
+- "I think", "I believe", "I assume", "I'm not sure", "probably", "likely",
+  "it might be", "it could be", "possibly", "maybe", "I recall that"
+
+When an [assistant] factual claim is hedged and unverified:
+- Set importance to min(your assigned importance, 5)
+- Add the tag "unverified"
+
+EXCEPTION: Do NOT cap recommendations or opinions. "I think we should refactor X"
+is a recommendation, not a factual claim. Only cap FACTUAL CLAIMS made with hedging language.
+`;
+
+export const PLAUD_PLATFORM_ADDENDUM = `
+## Meeting Transcript Rules (plaud)
+
+You are extracting from a Plaud meeting transcript. These rules take precedence
+over the base extraction rules where they conflict.
+
+### Transcript format
+
+Plaud transcripts use the format:
+  [HH:MM] Speaker Name: spoken text
+
+Speaker names appear inline - use them directly for attribution. There are no
+[user] or [assistant] role labels. Do not apply confidence-cap logic based on
+role labels. Apply normal human epistemic judgment: uncertain language ("I think",
+"I assume", "probably") lowers confidence; direct statements and confirmed facts do not.
+
+Transcripts are generated by speech-to-text and will contain filler words (uh, um,
+gonna, you know), incomplete sentences, and lowercase runs. Extract the substance
+beneath these artifacts. Do not penalize transcript quality when deciding what to store.
+
+### What to capture with elevated importance
+
+Action items - explicit OR implicit:
+- Importance: 8, type TODO. Set expiry to "permanent".
+- Explicit: a speaker directly states "action item: X will do Y by Z."
+- Implicit: speaker says "I'll..." or "we need to..." followed by a concrete deliverable.
+  Use the speaker name from the transcript label as the owner.
+- Content MUST include: speaker name as owner, the action, and deadline if stated.
+- If no clear owner can be inferred, store as importance 7 TODO anyway.
+- Example: "Action item: Jordan to create two tracking tickets for the system migration
+  work by end of week."
+
+Decisions with cross-functional or product impact:
+- Importance: 8+ if the decision affects multiple teams or external stakeholders.
+- Importance: 7 if scoped to a single team.
+- Include who drove the decision and any stated rationale.
+- Example: "Decision: proceed with data extraction from System A immediately.
+  Hold System B extraction until post-cutover data completeness can be verified.
+  Rationale: System B new instance confirmed to have incomplete historical records
+  (Alex, Sam, Morgan)."
+
+Commitments made by named speakers:
+- Importance: 8 if binding (deadline, deliverable, or external party involved).
+- Importance: 7 if informal.
+- Use the speaker label from the transcript as the person name.
+
+Key facts about systems, timelines, or risks surfaced in the meeting:
+- Importance: 7-8 depending on cross-session impact.
+- Example: "System B EMR cutover to separate instance on [cutover date]. After
+  cutover, shared warehouse instance goes read-only for System B tenant. New
+  instance may have incomplete historical data due to minimal migration scope,
+  not a full data reload."
+
+Meeting summary as an event:
+- Importance: 7 event.
+- Include: meeting name, date if available (often in filename), attendees by name,
+  top 2-3 outcomes.
+
+### What to skip entirely
+
+Pure filler and crosstalk:
+- "Hello?", "Oh, sorry.", "Yeah.", "Okay." alone with no content = skip.
+- Greetings, scheduling, "how was your weekend" = skip.
+
+Vague mentions without commitment or decision:
+- "we should think about X someday" = skip.
+- "that would be interesting" without follow-through = skip.
+
+Pure status with no decision or action:
+- "Team A is still working on the integration" alone = skip.
+
+### Speaker name guidance
+
+Use the name exactly as it appears in the transcript label.
+If only a first name is available, use it - do not guess the last name.
+If a full name is available, use it.
+
+Sometimes Plaud cannot identify a speaker and labels them "Speaker 1", "Speaker 2", etc.
+When this happens:
+- If the speaker is later identified by name elsewhere in the transcript (someone
+  addresses them directly, or they introduce themselves), use that real name instead.
+- If the speaker remains unidentified, use the label as-is: "Speaker 1 committed to..."
+- For action items or decisions where the owner is only "Speaker X" with no real name
+  ever surfacing, downgrade importance to 7 regardless of content significance.
+  Unknown attribution weakens the reliability of the entry.
+- Do NOT guess or infer real names from context clues alone.
+`;
+
 const CHUNKED_CALIBRATION_BLOCK = `Calibration:
 - Typical chunk: 0-3 entries. Most chunks: 0.
 - Score 9 or 10: very rare, at most 1 per significant session, often 0
@@ -500,6 +663,12 @@ export function buildExtractionSystemPrompt(
 
   if (platform === "openclaw") {
     return `${prompt}\n\n${OPENCLAW_CONFIDENCE_ADDENDUM}`;
+  }
+  if (platform === "codex" || platform === "claude-code") {
+    return `${prompt}\n\n${CODE_PLATFORM_ADDENDUM}`;
+  }
+  if (platform === "plaud") {
+    return `${prompt}\n\n${PLAUD_PLATFORM_ADDENDUM}`;
   }
   return prompt;
 }
@@ -826,7 +995,7 @@ export function applyConfidenceCap(
   platform?: KnowledgePlatform | (string & {}),
 ): KnowledgeEntry {
   if (
-    platform === "openclaw" &&
+    (platform === "openclaw" || platform === "codex" || platform === "claude-code") &&
     entry.tags.includes("unverified") &&
     entry.importance > 5
   ) {

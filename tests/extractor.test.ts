@@ -2,8 +2,10 @@ import type { Api, AssistantMessage, AssistantMessageEvent, Context, Model, Simp
 import { createClient, type Client } from "@libsql/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  CODE_PLATFORM_ADDENDUM,
   MAX_PREFETCH_RESULTS,
   OPENCLAW_CONFIDENCE_ADDENDUM,
+  PLAUD_PLATFORM_ADDENDUM,
   PREFETCH_TIMEOUT_MS,
   SYSTEM_PROMPT,
   applyConfidenceCap,
@@ -16,6 +18,7 @@ import {
 import { initDb } from "../src/db/client.js";
 import { renderTranscriptLine } from "../src/parser.js";
 import { requestShutdown, resetShutdownForTests } from "../src/shutdown.js";
+import { KNOWLEDGE_PLATFORMS } from "../src/types.js";
 import type { KnowledgeEntry, LlmClient, StoredEntry, TranscriptChunk, TranscriptMessage } from "../src/types.js";
 
 function fakeModel(): Model<Api> {
@@ -242,21 +245,55 @@ describe("SYSTEM_PROMPT", () => {
 });
 
 describe("buildExtractionSystemPrompt", () => {
-  it("with openclaw returns base + addendum", () => {
-    const prompt = buildExtractionSystemPrompt("openclaw");
-    expect(prompt).toContain(SYSTEM_PROMPT);
-    expect(prompt).toContain(OPENCLAW_CONFIDENCE_ADDENDUM);
+  it("plaud is in KNOWLEDGE_PLATFORMS", () => {
+    expect(KNOWLEDGE_PLATFORMS).toContain("plaud");
   });
 
-  it("with non-openclaw returns base only", () => {
-    const prompt = buildExtractionSystemPrompt("codex");
-    expect(prompt).toBe(SYSTEM_PROMPT);
-    expect(prompt).not.toContain(OPENCLAW_CONFIDENCE_ADDENDUM);
+  it("codex platform includes CODE_PLATFORM_ADDENDUM and starts with SYSTEM_PROMPT", () => {
+    const result = buildExtractionSystemPrompt("codex", false);
+    expect(result.indexOf(SYSTEM_PROMPT.trim())).toBe(0);
+    expect(result).toContain(CODE_PLATFORM_ADDENDUM.trim());
+    expect(result).not.toContain(OPENCLAW_CONFIDENCE_ADDENDUM.trim());
+    expect(result).not.toContain(PLAUD_PLATFORM_ADDENDUM.trim());
   });
 
-  it("with undefined returns base only", () => {
-    const prompt = buildExtractionSystemPrompt(undefined);
-    expect(prompt).toBe(SYSTEM_PROMPT);
+  it("claude-code platform includes CODE_PLATFORM_ADDENDUM, not openclaw addendum", () => {
+    const result = buildExtractionSystemPrompt("claude-code", false);
+    expect(result.indexOf(SYSTEM_PROMPT.trim())).toBe(0);
+    expect(result).toContain(CODE_PLATFORM_ADDENDUM.trim());
+    expect(result).not.toContain(OPENCLAW_CONFIDENCE_ADDENDUM.trim());
+  });
+
+  it("plaud platform includes PLAUD_PLATFORM_ADDENDUM only", () => {
+    const result = buildExtractionSystemPrompt("plaud", false);
+    expect(result.indexOf(SYSTEM_PROMPT.trim())).toBe(0);
+    expect(result).toContain(PLAUD_PLATFORM_ADDENDUM.trim());
+    expect(result).not.toContain(CODE_PLATFORM_ADDENDUM.trim());
+    expect(result).not.toContain(OPENCLAW_CONFIDENCE_ADDENDUM.trim());
+  });
+
+  it("openclaw platform still includes OPENCLAW_CONFIDENCE_ADDENDUM", () => {
+    const result = buildExtractionSystemPrompt("openclaw", false);
+    expect(result.indexOf(SYSTEM_PROMPT.trim())).toBe(0);
+    expect(result).toContain(OPENCLAW_CONFIDENCE_ADDENDUM.trim());
+    expect(result).not.toContain(CODE_PLATFORM_ADDENDUM.trim());
+    expect(result).not.toContain(PLAUD_PLATFORM_ADDENDUM.trim());
+  });
+
+  it("undefined platform returns base SYSTEM_PROMPT with no addenda", () => {
+    const result = buildExtractionSystemPrompt(undefined, false);
+    expect(result).toContain(SYSTEM_PROMPT.trim());
+    expect(result).not.toContain(OPENCLAW_CONFIDENCE_ADDENDUM.trim());
+    expect(result).not.toContain(CODE_PLATFORM_ADDENDUM.trim());
+    expect(result).not.toContain(PLAUD_PLATFORM_ADDENDUM.trim());
+    expect(result).toContain("Max 8 entries");
+  });
+
+  it("unknown platform string returns base prompt only", () => {
+    const result = buildExtractionSystemPrompt("zoom", false);
+    expect(result).toContain(SYSTEM_PROMPT.trim());
+    expect(result).not.toContain(CODE_PLATFORM_ADDENDUM.trim());
+    expect(result).not.toContain(PLAUD_PLATFORM_ADDENDUM.trim());
   });
 
   it("whole-file mode removes max-entry chunk cap and uses whole-file calibration text", () => {
@@ -270,11 +307,28 @@ describe("buildExtractionSystemPrompt", () => {
     expect(prompt).toContain("Max 8 entries; prefer 0-3.");
   });
 
-  it("appends openclaw addendum in whole-file mode", () => {
-    const prompt = buildExtractionSystemPrompt("openclaw", true);
-    expect(prompt).not.toContain("Max 8 entries");
-    expect(prompt).toContain("whole-file mode");
-    expect(prompt).toContain("cross-session-alert");
+  it("wholeFile + codex: calibration replaced and CODE_PLATFORM_ADDENDUM present", () => {
+    const result = buildExtractionSystemPrompt("codex", true);
+    expect(result).toContain(CODE_PLATFORM_ADDENDUM.trim());
+    expect(result).not.toContain("Max 8 entries");
+    expect(result).not.toContain("Typical chunk: 0-3 entries");
+    expect(result).toContain("whole-file mode");
+    expect(result).toContain("Typical session:");
+  });
+
+  it("wholeFile + openclaw: calibration replaced and OPENCLAW_CONFIDENCE_ADDENDUM present", () => {
+    const result = buildExtractionSystemPrompt("openclaw", true);
+    expect(result).toContain(OPENCLAW_CONFIDENCE_ADDENDUM.trim());
+    expect(result).not.toContain("Max 8 entries");
+    expect(result).toContain("whole-file mode");
+  });
+
+  it("wholeFile + plaud: calibration replaced and PLAUD_PLATFORM_ADDENDUM present", () => {
+    const result = buildExtractionSystemPrompt("plaud", true);
+    expect(result).toContain(PLAUD_PLATFORM_ADDENDUM.trim());
+    expect(result).not.toContain("Max 8 entries");
+    expect(result).toContain("whole-file mode");
+    expect(result).not.toContain(CODE_PLATFORM_ADDENDUM.trim());
   });
 
   it("openclaw addendum instructs capping hedged claims", () => {
@@ -305,9 +359,21 @@ describe("applyConfidenceCap", () => {
     expect(result.tags).toContain("unverified");
   });
 
-  it("does not cap when platform is not openclaw", () => {
+  it("caps when platform is codex", () => {
     const entry = makeEntry({ importance: 8, tags: ["unverified"] });
     const result = applyConfidenceCap(entry, "codex");
+    expect(result.importance).toBe(5);
+  });
+
+  it("caps when platform is claude-code", () => {
+    const entry = makeEntry({ importance: 8, tags: ["unverified"] });
+    const result = applyConfidenceCap(entry, "claude-code");
+    expect(result.importance).toBe(5);
+  });
+
+  it("does not cap when platform is plaud", () => {
+    const entry = makeEntry({ importance: 8, tags: ["unverified"] });
+    const result = applyConfidenceCap(entry, "plaud");
     expect(result.importance).toBe(8);
   });
 
