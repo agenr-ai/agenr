@@ -634,18 +634,37 @@ describe("ingest command", () => {
     expect(result.filesFailed).toBe(0);
     expect(result.filesSkipped).toBe(0);
 
-    const ingestLogInserts = dbExecute.mock.calls.filter((call) => {
-      const args = call as unknown[];
-      const arg = args[0] as any;
-      return Boolean(arg?.sql) && String(arg.sql).includes("INTO ingest_log");
-    });
+    type ExecuteStmt = { sql: string; args?: unknown[] };
+    type ExecuteCall = [ExecuteStmt, ...unknown[]];
+    const isIngestLogInsert = (call: unknown[]): call is ExecuteCall => {
+      const first = call[0];
+      if (typeof first !== "object" || first === null) {
+        return false;
+      }
+      const statement = first as { sql?: unknown };
+      return typeof statement.sql === "string" && statement.sql.includes("INTO ingest_log");
+    };
+
+    const ingestLogInserts = dbExecute.mock.calls.filter(isIngestLogInsert);
     expect(ingestLogInserts).toHaveLength(1);
-    const storedFiles = result.results
-      .filter((item) => Boolean(item) && !(item as any).skipped && !(item as any).error)
-      .map((item) => (item as any).file);
+    interface IngestResultRow {
+      file: string;
+      skipped?: boolean;
+      error?: string;
+    }
+    const isStoredResult = (item: unknown): item is IngestResultRow => {
+      if (typeof item !== "object" || item === null) {
+        return false;
+      }
+      const row = item as { file?: unknown; skipped?: unknown; error?: unknown };
+      return typeof row.file === "string" && !row.skipped && !row.error;
+    };
+    const storedFiles = result.results.filter(isStoredResult).map((item) => item.file);
     expect(storedFiles).toHaveLength(1);
-    const firstIngestLogInsert = ingestLogInserts[0] as unknown[] | undefined;
-    expect((firstIngestLogInsert?.[0] as any).args?.[1]).toBe(storedFiles[0]);
+    const firstIngestLogInsert = ingestLogInserts[0];
+    const firstInsertArgs = firstIngestLogInsert?.[0].args;
+    const insertedFile = Array.isArray(firstInsertArgs) ? firstInsertArgs[1] : undefined;
+    expect(insertedFile).toBe(storedFiles[0]);
   });
 
   it("re-processes already-ingested files with --force", async () => {

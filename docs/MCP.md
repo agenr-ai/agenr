@@ -296,6 +296,19 @@ hedged, unverified assistant factual claims are tagged `unverified` and capped
 at importance 5, while verified assistant claims and user statements keep normal
 importance handling.
 
+Whole-file extraction calibration (when the extractor processes a full session):
+- Typical session: 5-15 entries. Dense sessions may warrant 30-50.
+- You are seeing the complete conversation. Extract complete, coherent entries that
+  capture multi-part discussions as single entries, not fragments.
+- Score 9 or 10: very rare, at most 1 per session, often 0
+- Score 8: at most 2-3 per session; ask the cross-session-alert question before assigning
+- Score 7: this is your workhorse; most emitted entries should be 7
+- Score 6: routine dev observations worth storing
+- TODO completion: if a TODO is raised AND completed within this session, emit only
+  the completion event - not the original todo.
+- If more than 30% of your emitted entries are score 8 or higher, you are inflating.
+- Do NOT extract the same fact multiple times even if stated differently in the session.
+
 ## Troubleshooting
 
 ### Missing OpenAI API key

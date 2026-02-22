@@ -1380,7 +1380,8 @@ export async function storeEntries(
   }
 
   const textsToEmbed: string[] = [];
-  if (!options.dryRun) {
+  if (!options.dryRun && !onlineDedup) {
+    // Preserve per-entry behavior for online dedup (content-hash short-circuit and partial progress on failures).
     for (const entry of entries) {
       const text = composeEmbeddingText(entry);
       if (cache.get(text) === undefined) {

@@ -26,7 +26,7 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
 
 export const OUTPUT_BUDGET_TOKENS = 16_384;
 export const SYSTEM_PROMPT_BUDGET_TOKENS = 4_000;
-export const BYTES_PER_TOKEN = 4;
+export const CHARS_PER_TOKEN = 4;
 export const MAX_ENTRIES_HARD_CAP = 100;
 
 function getClientModelId(client: LlmClient): string | undefined {
@@ -39,7 +39,7 @@ function getClientModelId(client: LlmClient): string | undefined {
 
 function estimateTokens(messages: TranscriptMessage[]): number {
   const totalChars = messages.reduce((sum, message) => sum + renderTranscriptLine(message).length, 0);
-  return Math.ceil(totalChars / BYTES_PER_TOKEN);
+  return Math.ceil(totalChars / CHARS_PER_TOKEN);
 }
 
 function usableWindowTokens(contextWindow: number): number {
@@ -55,12 +55,15 @@ export function getContextWindowTokens(client: LlmClient, verbose?: boolean): nu
     return undefined;
   }
   const bare = modelId.includes("/") ? (modelId.split("/").at(-1) ?? modelId) : modelId;
-  const normalized = bare.replace(/-\d{4}-\d{2}-\d{2}$/, "");
+  const normalized = bare
+    .toLowerCase()
+    .replace(/-\d{4}-\d{2}-\d{2}$/, "")
+    .replace(/-\d{8}$/, "");
   const contextWindow = MODEL_CONTEXT_WINDOWS[normalized];
 
   if (contextWindow === undefined && verbose) {
     console.warn(
-      `[whole-file] Unknown model "${modelId}": context window unknown, falling back to chunked mode. Set modelContextWindow config to override.`,
+      `[whole-file] Unknown model "${modelId}": context window unknown, falling back to chunked mode.`,
     );
   }
 
@@ -103,6 +106,11 @@ export function resolveWholeFileMode(
         `[whole-file] force mode: estimated ${estimatedTokens} tokens exceeds ${contextWindow}-token context window. Use --chunk to force chunked mode instead.`,
       );
     }
+    if (contextWindow === undefined && verbose) {
+      console.warn(
+        `[whole-file] force mode: unknown context window from getContextWindowTokens; proceeding without size validation for ~${estimatedTokens} estimated tokens.`,
+      );
+    }
     if (estimatedTokens > 500_000 && verbose) {
       console.warn(
         `[whole-file] force mode with ~${estimatedTokens} estimated tokens on a large-context model. This may be slow and expensive.`,
@@ -138,7 +146,11 @@ export function buildWholeFileChunkFromMessages(messages: TranscriptMessage[]): 
   };
 }
 
-export function applyEntryHardCap(entries: KnowledgeEntry[], verbose?: boolean): KnowledgeEntry[] {
+export function applyEntryHardCap(
+  entries: KnowledgeEntry[],
+  verbose?: boolean,
+  onVerbose?: (line: string) => void,
+): KnowledgeEntry[] {
   if (entries.length <= MAX_ENTRIES_HARD_CAP) {
     return entries;
   }
@@ -147,9 +159,13 @@ export function applyEntryHardCap(entries: KnowledgeEntry[], verbose?: boolean):
     .sort((left, right) => (right.importance ?? 0) - (left.importance ?? 0))
     .slice(0, MAX_ENTRIES_HARD_CAP);
   if (verbose) {
-    console.warn(
-      `[whole-file] Received ${entries.length} entries, exceeding hard cap of ${MAX_ENTRIES_HARD_CAP}. Truncating to top ${MAX_ENTRIES_HARD_CAP} by importance score.`,
-    );
+    const message =
+      `[whole-file] Received ${entries.length} entries, exceeding hard cap of ${MAX_ENTRIES_HARD_CAP}. Truncating to top ${MAX_ENTRIES_HARD_CAP} by importance score.`;
+    if (onVerbose) {
+      onVerbose(message);
+    } else {
+      console.warn(message);
+    }
   }
   return truncated;
 }

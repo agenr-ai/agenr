@@ -123,6 +123,10 @@ describe("getContextWindowTokens", () => {
     expect(getContextWindowTokens(makeClient("gpt-4.1-nano-2025-04-14"))).toBe(1_000_000);
   });
 
+  it("strips anthropic snapshot suffix before lookup", () => {
+    expect(getContextWindowTokens(makeClient("anthropic/claude-opus-4-20250514"))).toBe(200_000);
+  });
+
   it("returns undefined and warns for unknown models in verbose mode", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
@@ -217,6 +221,26 @@ describe("resolveWholeFileMode", () => {
 
     warnSpy.mockRestore();
   });
+
+  it("warns in force mode when context window is unknown and proceeds", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const client = makeClient("some-future-model");
+    const messages = [makeMessage(0, "user", "tiny")];
+
+    const result = resolveWholeFileMode("force", messages, client, true);
+
+    expect(result).toBe(true);
+    expect(warnSpy).toHaveBeenCalledTimes(2);
+    expect(
+      warnSpy.mock.calls.some(
+        (call) =>
+          typeof call[0] === "string" &&
+          call[0].includes("force mode: unknown context window from getContextWindowTokens"),
+      ),
+    ).toBe(true);
+
+    warnSpy.mockRestore();
+  });
 });
 
 describe("applyEntryHardCap", () => {
@@ -244,6 +268,21 @@ describe("applyEntryHardCap", () => {
     const capped = applyEntryHardCap(entries, true);
 
     expect(capped).toHaveLength(100);
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    warnSpy.mockRestore();
+  });
+
+  it("uses onVerbose callback when provided", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const onVerbose = vi.fn();
+    const entries = Array.from({ length: 147 }, (_value, index) => makeEntry(index + 1));
+
+    const capped = applyEntryHardCap(entries, true, onVerbose);
+
+    expect(capped).toHaveLength(100);
+    expect(onVerbose).toHaveBeenCalledTimes(1);
+    expect(onVerbose.mock.calls[0]?.[0]).toContain("Received 147 entries");
     expect(warnSpy).not.toHaveBeenCalled();
 
     warnSpy.mockRestore();
