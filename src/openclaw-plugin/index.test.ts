@@ -175,6 +175,30 @@ describe("before_prompt_build recall behavior", () => {
     expect(runRecallMock).toHaveBeenCalledTimes(2);
     expect(checkSignalsMock).toHaveBeenCalledTimes(3);
   });
+
+  it("passes plugin config project to runRecall", async () => {
+    const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue({
+      query: "session-start",
+      results: [],
+    });
+    vi.spyOn(dbClient, "getDb").mockReturnValue({} as never);
+    vi.spyOn(dbClient, "initDb").mockResolvedValue(undefined);
+    vi.spyOn(pluginSignals, "checkSignals").mockResolvedValue(undefined);
+
+    const api = makeApi({
+      pluginConfig: {
+        project: "  plugin-scope  ",
+        signalCooldownMs: 0,
+        signalMaxPerSession: 10,
+      },
+    });
+    plugin.register(api);
+    const handler = getBeforePromptBuildHandler(api);
+    await handler({}, { sessionKey: "agent:main:scoped", sessionId: "uuid-scope-a" });
+
+    expect(runRecallMock).toHaveBeenCalledTimes(1);
+    expect(runRecallMock).toHaveBeenCalledWith(expect.any(String), expect.any(Number), "plugin-scope");
+  });
 });
 
 describe("openclaw plugin tool runners", () => {
@@ -203,6 +227,19 @@ describe("openclaw plugin tool runners", () => {
     expect(capturedArgs).toContain("--limit");
     const limitIdx = capturedArgs.indexOf("--limit");
     expect(capturedArgs[limitIdx + 1]).toBe("0");
+  });
+
+  it("runRecallTool uses default project when params.project is omitted", async () => {
+    let capturedArgs: string[] = [];
+    spawnMock.mockImplementationOnce((_cmd: string, args: string[]) => {
+      capturedArgs = args;
+      return createMockChild({ stdout: JSON.stringify({ query: "x", results: [] }) });
+    });
+
+    await runRecallTool("/path/to/agenr", { query: "x" }, "project-from-config");
+    expect(capturedArgs).toContain("--project");
+    const projectIdx = capturedArgs.indexOf("--project");
+    expect(capturedArgs[projectIdx + 1]).toBe("project-from-config");
   });
 
   it("runStoreTool returns stored count on success and sends valid JSON to stdin", async () => {
@@ -246,6 +283,25 @@ describe("openclaw plugin tool runners", () => {
     expect(capturedArgs).toContain("--dedup-threshold");
     const thresholdIdx = capturedArgs.indexOf("--dedup-threshold");
     expect(capturedArgs[thresholdIdx + 1]).toBe("0.65");
+  });
+
+  it("runStoreTool uses default project when params.project is omitted", async () => {
+    let capturedArgs: string[] = [];
+    spawnMock.mockImplementationOnce((_cmd: string, args: string[]) => {
+      capturedArgs = args;
+      return createMockChild({ code: 0 });
+    });
+
+    await runStoreTool(
+      "/path/to/agenr",
+      { entries: [{ content: "test entry", type: "fact" }] },
+      undefined,
+      "project-from-config",
+    );
+
+    expect(capturedArgs).toContain("--project");
+    const projectIdx = capturedArgs.indexOf("--project");
+    expect(capturedArgs[projectIdx + 1]).toBe("project-from-config");
   });
 
   it("runExtractTool returns parseable json text on success", async () => {

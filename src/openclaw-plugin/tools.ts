@@ -93,7 +93,11 @@ async function runAgenrCommand(
   });
 }
 
-export async function runRecallTool(agenrPath: string, params: Record<string, unknown>): Promise<PluginToolResult> {
+export async function runRecallTool(
+  agenrPath: string,
+  params: Record<string, unknown>,
+  defaultProject?: string,
+): Promise<PluginToolResult> {
   const args = ["recall", "--json"];
   const query = asString(params.query);
   const context = asString(params.context);
@@ -102,7 +106,7 @@ export async function runRecallTool(agenrPath: string, params: Record<string, un
   const since = asString(params.since);
   const until = asString(params.until);
   const platform = asString(params.platform);
-  const project = asString(params.project);
+  const project = asString(params.project) || defaultProject;
 
   if (query) {
     args.push(query);
@@ -174,10 +178,11 @@ export async function runStoreTool(
   agenrPath: string,
   params: Record<string, unknown>,
   pluginConfig?: Record<string, unknown>,
+  defaultProject?: string,
 ): Promise<PluginToolResult> {
   const entries = Array.isArray(params.entries) ? params.entries : [];
   const platform = asString(params.platform);
-  const project = asString(params.project);
+  const project = asString(params.project) || defaultProject;
   const storeArgs = ["store"];
 
   // platform and project go as CLI flags, not in the JSON payload

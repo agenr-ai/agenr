@@ -18,6 +18,10 @@
         "type": "number",
         "description": "Token budget for session-start recall. Default: 2000."
       },
+      "project": {
+        "type": "string",
+        "description": "Project scope for recall and store. Omit for global (default)."
+      },
       "enabled": {
         "type": "boolean",
         "description": "Set false to disable memory injection without uninstalling."
