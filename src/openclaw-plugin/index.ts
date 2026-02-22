@@ -250,6 +250,11 @@ const plugin = {
             entries: Type.Array(
               Type.Object({
                 content: Type.String({ description: "What to remember." }),
+                subject: Type.Optional(
+                  Type.String({
+                    description: "Short subject label. Inferred from content if omitted.",
+                  }),
+                ),
                 type: Type.Unsafe<string>({
                   type: "string",
                   enum: [...KNOWLEDGE_TYPES],

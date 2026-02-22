@@ -193,7 +193,8 @@ export async function runStoreTool(
     storeArgs.push("--project", project);
   }
 
-  // Infer subject from content when omitted - matches MCP server behavior.
+  // Subject from params is preserved; inference only runs when subject is omitted.
+  // This now aligns with agenr_store schema exposing optional subject.
   const processedEntries = entries.map((e: unknown) => {
     const entry = (e && typeof e === "object" ? e : {}) as Record<string, unknown>;
     if (!entry.subject && typeof entry.content === "string") {
