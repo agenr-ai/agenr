@@ -9,6 +9,9 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   "gpt-4o-mini": 128_000,
   "gpt-4-turbo": 128_000,
   "gpt-3.5-turbo": 16_385,
+  "gpt-5-nano": 400_000,
+  "gpt-5.2-codex": 400_000,
+  "gpt-5.3-codex": 200_000,
   "claude-3-haiku": 200_000,
   "claude-3-sonnet": 200_000,
   "claude-3-opus": 200_000,
@@ -24,10 +27,35 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   "gemini-2.0-pro": 1_000_000,
 };
 
-export const OUTPUT_BUDGET_TOKENS = 16_384;
+const MODEL_OUTPUT_TOKENS: Record<string, number> = {
+  "gpt-4.1-nano": 131_072,
+  "gpt-4.1-mini": 131_072,
+  "gpt-4.1": 32_768,
+  "gpt-4o": 16_384,
+  "gpt-4o-mini": 16_384,
+  "gpt-3.5-turbo": 4_096,
+  "gpt-5-nano": 131_072,
+  "gpt-5.2-codex": 131_072,
+  "gpt-5.3-codex": 100_000,
+  "claude-3-haiku": 8_192,
+  "claude-3-sonnet": 8_192,
+  "claude-3-opus": 8_192,
+  "claude-3-5-haiku": 8_192,
+  "claude-3-5-sonnet": 8_192,
+  "claude-3-7-sonnet": 64_000,
+  "claude-opus-4": 32_000,
+  "claude-sonnet-4": 32_000,
+  "claude-haiku-4": 16_000,
+  "gemini-1.5-pro": 8_192,
+  "gemini-1.5-flash": 8_192,
+  "gemini-2.0-flash": 8_192,
+  "gemini-2.0-pro": 8_192,
+};
+
+export const OUTPUT_BUDGET_TOKENS_DEFAULT = 16_384;
 export const SYSTEM_PROMPT_BUDGET_TOKENS = 4_000;
 export const CHARS_PER_TOKEN = 4;
-export const MAX_ENTRIES_HARD_CAP = 100;
+export const MAX_ENTRIES_WARN_THRESHOLD = 500;
 
 function getClientModelId(client: LlmClient): string | undefined {
   const modelId = client.resolvedModel?.modelId;
@@ -42,8 +70,21 @@ function estimateTokens(messages: TranscriptMessage[]): number {
   return Math.ceil(totalChars / CHARS_PER_TOKEN);
 }
 
-function usableWindowTokens(contextWindow: number): number {
-  return contextWindow - OUTPUT_BUDGET_TOKENS - SYSTEM_PROMPT_BUDGET_TOKENS;
+export function getOutputTokens(client: LlmClient): number {
+  const modelId = getClientModelId(client);
+  if (!modelId) {
+    return OUTPUT_BUDGET_TOKENS_DEFAULT;
+  }
+  const bare = modelId.includes("/") ? (modelId.split("/").at(-1) ?? modelId) : modelId;
+  const normalized = bare
+    .toLowerCase()
+    .replace(/-\d{4}-\d{2}-\d{2}$/, "")
+    .replace(/-\d{8}$/, "");
+  return MODEL_OUTPUT_TOKENS[normalized] ?? OUTPUT_BUDGET_TOKENS_DEFAULT;
+}
+
+export function usableWindowTokens(contextWindow: number, outputTokens: number): number {
+  return contextWindow - outputTokens - SYSTEM_PROMPT_BUDGET_TOKENS;
 }
 
 export function getContextWindowTokens(client: LlmClient, verbose?: boolean): number | undefined {
@@ -75,8 +116,9 @@ export function fileFitsInContext(messages: TranscriptMessage[], client: LlmClie
   if (contextWindow === undefined) {
     return false;
   }
+  const outputTokens = getOutputTokens(client);
 
-  return estimateTokens(messages) <= usableWindowTokens(contextWindow);
+  return estimateTokens(messages) <= usableWindowTokens(contextWindow, outputTokens);
 }
 
 export function resolveWholeFileMode(
@@ -102,7 +144,8 @@ export function resolveWholeFileMode(
 
     const contextWindow = getContextWindowTokens(client, verbose);
     const estimatedTokens = estimateTokens(messages);
-    if (contextWindow !== undefined && estimatedTokens > usableWindowTokens(contextWindow)) {
+    const outputTokens = getOutputTokens(client);
+    if (contextWindow !== undefined && estimatedTokens > usableWindowTokens(contextWindow, outputTokens)) {
       throw new Error(
         `[whole-file] force mode: estimated ${estimatedTokens} tokens exceeds ${contextWindow}-token context window. Use --chunk to force chunked mode instead.`,
       );
@@ -154,26 +197,23 @@ export function buildWholeFileChunkFromMessages(messages: TranscriptMessage[]): 
   };
 }
 
-export function applyEntryHardCap(
+export function warnOnHighEntryCount(
   entries: KnowledgeEntry[],
   verbose?: boolean,
   onVerbose?: (line: string) => void,
 ): KnowledgeEntry[] {
-  if (entries.length <= MAX_ENTRIES_HARD_CAP) {
+  if (entries.length <= MAX_ENTRIES_WARN_THRESHOLD) {
     return entries;
   }
 
-  const truncated = [...entries]
-    .sort((left, right) => (right.importance ?? 0) - (left.importance ?? 0))
-    .slice(0, MAX_ENTRIES_HARD_CAP);
   if (verbose) {
     const message =
-      `[whole-file] Received ${entries.length} entries, exceeding hard cap of ${MAX_ENTRIES_HARD_CAP}. Truncating to top ${MAX_ENTRIES_HARD_CAP} by importance score.`;
+      `[whole-file] Received ${entries.length} entries, exceeding warning threshold of ${MAX_ENTRIES_WARN_THRESHOLD}. Keeping all entries for downstream dedup.`;
     if (onVerbose) {
       onVerbose(message);
     } else {
       console.warn(message);
     }
   }
-  return truncated;
+  return entries;
 }

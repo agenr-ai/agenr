@@ -1,11 +1,14 @@
 import type { Api, Model } from "@mariozechner/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import {
-  applyEntryHardCap,
   buildWholeFileChunkFromMessages,
   fileFitsInContext,
   getContextWindowTokens,
+  getOutputTokens,
+  OUTPUT_BUDGET_TOKENS_DEFAULT,
   resolveWholeFileMode,
+  usableWindowTokens,
+  warnOnHighEntryCount,
 } from "../../src/ingest/whole-file.js";
 import { renderTranscriptLine } from "../../src/parser.js";
 import type { KnowledgeEntry, LlmClient, TranscriptMessage } from "../../src/types.js";
@@ -145,6 +148,29 @@ describe("getContextWindowTokens", () => {
   });
 });
 
+describe("getOutputTokens", () => {
+  it("returns correct value for gpt-4.1-nano", () => {
+    expect(getOutputTokens(makeClient("gpt-4.1-nano"))).toBe(131_072);
+  });
+
+  it("returns correct values for gpt-5 codex and nano models", () => {
+    expect(getOutputTokens(makeClient("gpt-5-nano"))).toBe(131_072);
+    expect(getOutputTokens(makeClient("gpt-5.2-codex"))).toBe(131_072);
+    expect(getOutputTokens(makeClient("gpt-5.3-codex"))).toBe(100_000);
+  });
+
+  it("returns fallback output budget for unknown models", () => {
+    expect(getOutputTokens(makeClient("unknown-model"))).toBe(OUTPUT_BUDGET_TOKENS_DEFAULT);
+  });
+});
+
+describe("usableWindowTokens", () => {
+  it("uses per-model output tokens in calculation", () => {
+    const outputTokens = getOutputTokens(makeClient("gpt-4.1-nano"));
+    expect(usableWindowTokens(1_000_000, outputTokens)).toBe(864_928);
+  });
+});
+
 describe("fileFitsInContext", () => {
   it("uses rendered transcript length instead of raw message text length", () => {
     const client = makeClient("gpt-4o");
@@ -259,46 +285,40 @@ describe("resolveWholeFileMode", () => {
   });
 });
 
-describe("applyEntryHardCap", () => {
-  it("truncates to top 100 entries by importance and warns", () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const entries = Array.from({ length: 147 }, (_value, index) => makeEntry(index + 1));
+describe("warnOnHighEntryCount", () => {
+  it("does not truncate entries array", () => {
+    const entries = Array.from({ length: 700 }, (_value, index) => makeEntry(index + 1));
 
-    const capped = applyEntryHardCap(entries, true);
-    const importances = capped.map((entry) => entry.importance);
+    const result = warnOnHighEntryCount(entries, false);
 
-    expect(capped).toHaveLength(100);
-    expect(Math.max(...importances)).toBe(147);
-    expect(Math.min(...importances)).toBe(48);
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    expect(warnSpy.mock.calls[0]?.[0]).toContain("147");
-    expect(warnSpy.mock.calls[0]?.[0]).toContain("100");
-
-    warnSpy.mockRestore();
+    expect(result).toHaveLength(700);
+    expect(result).toBe(entries);
   });
 
-  it("keeps exactly 100 entries without warning", () => {
+  it("emits warning via onVerbose when entries are greater than 500", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const entries = Array.from({ length: 100 }, (_value, index) => makeEntry(index + 1));
+    const onVerbose = vi.fn();
+    const entries = Array.from({ length: 501 }, (_value, index) => makeEntry(index + 1));
 
-    const capped = applyEntryHardCap(entries, true);
+    const result = warnOnHighEntryCount(entries, true, onVerbose);
 
-    expect(capped).toHaveLength(100);
+    expect(result).toHaveLength(501);
+    expect(onVerbose).toHaveBeenCalledTimes(1);
+    expect(onVerbose.mock.calls[0]?.[0]).toContain("Received 501 entries");
     expect(warnSpy).not.toHaveBeenCalled();
 
     warnSpy.mockRestore();
   });
 
-  it("uses onVerbose callback when provided", () => {
+  it("does not emit warning when entries are 500 or fewer", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const onVerbose = vi.fn();
-    const entries = Array.from({ length: 147 }, (_value, index) => makeEntry(index + 1));
+    const entries = Array.from({ length: 500 }, (_value, index) => makeEntry(index + 1));
 
-    const capped = applyEntryHardCap(entries, true, onVerbose);
+    const result = warnOnHighEntryCount(entries, true, onVerbose);
 
-    expect(capped).toHaveLength(100);
-    expect(onVerbose).toHaveBeenCalledTimes(1);
-    expect(onVerbose.mock.calls[0]?.[0]).toContain("Received 147 entries");
+    expect(result).toHaveLength(500);
+    expect(onVerbose).not.toHaveBeenCalled();
     expect(warnSpy).not.toHaveBeenCalled();
 
     warnSpy.mockRestore();
