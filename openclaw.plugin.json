@@ -2,7 +2,7 @@
   "id": "agenr",
   "name": "agenr Memory",
   "description": "Local memory layer - injects agenr context at session start",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "skills": [
     "skills"
   ],
