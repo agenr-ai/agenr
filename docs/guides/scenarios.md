@@ -594,8 +594,10 @@ The system prompt block injected by `agenr init` includes these instructions, bu
 
 Note: the 1-4 suppression applies to extractor output (`src/extractor.ts`) via the emit floor. Direct `agenr_store` MCP calls accept explicit importance values from 1 to 10.
 
-OpenClaw extractor note: hedged, unverified assistant factual claims are capped
-at 5 and tagged `unverified`.
+Platform-aware extractor note: the extractor injects a platform-specific addendum based on the --platform flag:
+- openclaw / codex / claude-code: hedged, unverified assistant factual claims are capped at 5 and tagged `unverified`.
+- codex / claude-code additionally: confirmed bugs with file/line evidence are stored at importance 8+ with permanent expiry; navigation noise is filtered.
+- plaud (meeting transcripts): action items extracted from speaker-labeled lines; higher entry density target (3-8 per chunk); `unverified` tag prohibited.
 
 The system prompt sets the default to 7. In OpenClaw, 8+ fires real-time cross-session signals, so use it conservatively. Reserve 9 for critical breaking changes and immediate decisions only, not for generally important facts. Keep 10 for once-per-project permanent constraints.
 
