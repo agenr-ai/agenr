@@ -28,8 +28,8 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
 };
 
 const MODEL_OUTPUT_TOKENS: Record<string, number> = {
-  "gpt-4.1-nano": 131_072,
-  "gpt-4.1-mini": 131_072,
+  "gpt-4.1-nano": 32_768,
+  "gpt-4.1-mini": 32_768,
   "gpt-4.1": 32_768,
   "gpt-4o": 16_384,
   "gpt-4o-mini": 16_384,

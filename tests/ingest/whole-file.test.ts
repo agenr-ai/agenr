@@ -150,7 +150,7 @@ describe("getContextWindowTokens", () => {
 
 describe("getOutputTokens", () => {
   it("returns correct value for gpt-4.1-nano", () => {
-    expect(getOutputTokens(makeClient("gpt-4.1-nano"))).toBe(131_072);
+    expect(getOutputTokens(makeClient("gpt-4.1-nano"))).toBe(32_768);
   });
 
   it("returns correct values for gpt-5 codex and nano models", () => {
@@ -167,7 +167,7 @@ describe("getOutputTokens", () => {
 describe("usableWindowTokens", () => {
   it("uses per-model output tokens in calculation", () => {
     const outputTokens = getOutputTokens(makeClient("gpt-4.1-nano"));
-    expect(usableWindowTokens(1_000_000, outputTokens)).toBe(864_928);
+    expect(usableWindowTokens(1_000_000, outputTokens)).toBe(963_232);
   });
 });
 
