@@ -8,11 +8,12 @@ import type { SourceAdapter } from "./types.js";
 import { vscodeCopilotAdapter } from "./vscode-copilot.js";
 
 export async function detectAdapter(filePath: string): Promise<SourceAdapter> {
-  const ext = path.extname(filePath).toLowerCase();
+  const strippedPath = filePath.replace(/\.deleted\.[^/\\]+$/, "");
+  const ext = path.extname(strippedPath).toLowerCase();
 
   if (ext === ".jsonl") {
     const firstLine = await readFirstNonEmptyLine(filePath);
-    return detectJsonlAdapter(filePath, firstLine);
+    return detectJsonlAdapter(strippedPath, firstLine);
   }
 
   if (ext === ".vscdb") {

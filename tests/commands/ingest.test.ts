@@ -954,6 +954,43 @@ describe("ingest command", () => {
     expect(extractKnowledgeFromChunksFn.mock.calls[0]?.[0]?.wholeFile).toBe("auto");
   });
 
+  it("passes verbose=true to extraction when --verbose is enabled", async () => {
+    const dir = await makeTempDir();
+    const filePath = path.join(dir, "a.txt");
+    await fs.writeFile(filePath, "hello", "utf8");
+
+    const extractKnowledgeFromChunksFn = vi.fn(
+      async (params: Parameters<IngestCommandDeps["extractKnowledgeFromChunksFn"]>[0]) => {
+        await params.onChunkComplete?.({
+          chunkIndex: 0,
+          totalChunks: 1,
+          entries: [makeEntry("one")],
+          warnings: [],
+          entriesExtracted: 1,
+          durationMs: 0,
+        });
+        return {
+          entries: [],
+          successfulChunks: 1,
+          failedChunks: 0,
+          warnings: [],
+        };
+      },
+    );
+
+    await runIngestCommand(
+      [dir],
+      { dryRun: true, verbose: true },
+      makeDeps({
+        expandInputFilesFn: vi.fn(async () => [filePath]),
+        extractKnowledgeFromChunksFn: extractKnowledgeFromChunksFn as IngestCommandDeps["extractKnowledgeFromChunksFn"],
+      }),
+    );
+
+    expect(extractKnowledgeFromChunksFn).toHaveBeenCalledTimes(1);
+    expect(extractKnowledgeFromChunksFn.mock.calls[0]?.[0]?.verbose).toBe(true);
+  });
+
   it("does not delete rows during --force --dry-run and reports would-delete summary", async () => {
     const dir = await makeTempDir();
     const fileA = path.join(dir, "a.md");

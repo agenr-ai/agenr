@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.6]
+
+### Fixed
+- fix(ingest): detect `.jsonl.deleted.<timestamp>` session files as JSONL by stripping the `.deleted.*` suffix before extension lookup, restoring OpenClaw/Codex adapter routing instead of silent text fallback (issues #160, #163)
+- fix(ingest): pass the resolved ingest `verbose` flag into extraction calls so whole-file diagnostics are emitted with `--verbose`, including unknown-model context-window warnings and whole-file retry/fallback logs (issues #161, #162)
+- fix(ingest): emit an explicit `[whole-file]` verbose warning when auto mode receives zero parsed messages and falls back to chunked extraction (issue #163)
+
 ## [0.8.5]
 
 ### Added

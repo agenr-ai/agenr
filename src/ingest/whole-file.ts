@@ -87,6 +87,7 @@ export function resolveWholeFileMode(
   messages: TranscriptMessage[],
   client: LlmClient,
   verbose?: boolean,
+  onVerbose?: (line: string) => void,
 ): boolean {
   if (wholeFile === "never") {
     return false;
@@ -120,6 +121,13 @@ export function resolveWholeFileMode(
   }
 
   if (messages.length === 0) {
+    const message =
+      "[whole-file] skipping whole-file: no messages parsed from file (falling back to chunked text)";
+    if (onVerbose) {
+      onVerbose(message);
+    } else if (verbose) {
+      console.warn(message);
+    }
     return false;
   }
 

@@ -1055,7 +1055,7 @@ export async function runIngestCommand(
         chunks: parsed.chunks,
         messages: parsed.messages,
         client,
-        verbose: false,
+        verbose,
         wholeFile: resolvedWholeFile,
         platform: platform ?? parsed.metadata?.platform ?? undefined,
         llmConcurrency,

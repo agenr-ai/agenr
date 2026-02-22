@@ -1852,6 +1852,7 @@ describe("extractKnowledgeFromChunks", () => {
       { delta: "\n", kind: "text" },
     ]);
     expect(verboseLines).toEqual([
+      "[whole-file] skipping whole-file: no messages parsed from file (falling back to chunked text)",
       "[chunk 1/2] attempt 1/5",
       "[thinking]",
       "[/thinking]",

@@ -185,6 +185,21 @@ describe("resolveWholeFileMode", () => {
     expect(resolveWholeFileMode("auto", [], client)).toBe(false);
   });
 
+  it("emits onVerbose warning for empty messages in auto mode", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const client = makeClient("gpt-4.1-nano");
+    const onVerbose = vi.fn();
+
+    const result = resolveWholeFileMode("auto", [], client, false, onVerbose);
+
+    expect(result).toBe(false);
+    expect(onVerbose).toHaveBeenCalledTimes(1);
+    expect(onVerbose.mock.calls[0]?.[0]).toContain("no messages parsed from file");
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    warnSpy.mockRestore();
+  });
+
   it("returns false for unknown model in auto mode", () => {
     const client = makeClient("some-new-model");
     const messages = [makeMessage(0, "user", "hello")];
