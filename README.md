@@ -12,7 +12,7 @@ One local database. Your memory stays on your machine.
 
 AGENR uses embeddings to make your memory searchable. The best setup we've found: an **OpenAI API key** with `text-embedding-3-small`. Embeddings cost fractions of a penny per operation - a full ingestion of 100+ session transcripts runs about $0.10 total.
 
-AGENR also supports **OpenAI Pro subscriptions** and **Anthropic Claude subscriptions** (no API key needed) for the LLM extraction step. But for the best balance of speed, accuracy, and cost, we recommend `gpt-4o-mini` with an API key. `agenr setup` walks you through all of this.
+AGENR also supports **OpenAI Pro subscriptions** and **Anthropic Claude subscriptions** (no API key needed) for the LLM extraction step. But for the best balance of speed, accuracy, and cost, we recommend `gpt-4.1-nano` with an API key. `agenr setup` walks you through all of this.
 
 ```bash
 export OPENAI_API_KEY=sk-...  # for embeddings + extraction
