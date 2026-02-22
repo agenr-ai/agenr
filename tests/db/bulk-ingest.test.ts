@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createClient, type Client } from "@libsql/client";
+import * as clack from "@clack/prompts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { IngestCommandDeps } from "../../src/commands/ingest.js";
 import { runIngestCommand } from "../../src/commands/ingest.js";
@@ -14,6 +15,7 @@ import {
   minhashSigToBuffer,
 } from "../../src/db/minhash.js";
 import {
+  backfillBulkColumns,
   findDuplicateBulk,
   hashText,
   insertEntry,
@@ -111,6 +113,77 @@ async function hasVectorIndex(db: Client): Promise<boolean> {
   return countFromRow(result.rows[0]) === 1;
 }
 
+function makeLlmClient(): LlmClient {
+  return {
+    auth: "openai-api-key",
+    resolvedModel: {
+      provider: "openai",
+      modelId: "gpt-4o",
+      model: {},
+    },
+    credentials: {
+      apiKey: "sk-test",
+      source: "test",
+    },
+  } as unknown as LlmClient;
+}
+
+function makeIngestDeps(params: {
+  db: Client;
+  filePath: string;
+  extractKnowledgeFromChunksFn: IngestCommandDeps["extractKnowledgeFromChunksFn"];
+  embedFn?: IngestCommandDeps["embedFn"];
+}): IngestCommandDeps {
+  const parsed: ParsedTranscript = {
+    file: params.filePath,
+    messages: [],
+    chunks: [
+      {
+        chunk_index: 0,
+        message_start: 0,
+        message_end: 0,
+        text: "chunk",
+        context_hint: "ctx",
+      },
+    ],
+    warnings: [],
+  };
+
+  return {
+    readConfigFn: () => ({ db: { path: ":memory:" } }),
+    resolveEmbeddingApiKeyFn: () => "sk-test",
+    expandInputFilesFn: async () => [params.filePath],
+    parseTranscriptFileFn: async () => parsed,
+    createLlmClientFn: () => makeLlmClient(),
+    extractKnowledgeFromChunksFn: params.extractKnowledgeFromChunksFn,
+    deduplicateEntriesFn: (entries) => entries,
+    getDbFn: () => params.db,
+    initDbFn: initDb,
+    closeDbFn: () => undefined,
+    storeEntriesFn: async () => ({
+      added: 0,
+      updated: 0,
+      skipped: 0,
+      superseded: 0,
+      llm_dedup_calls: 0,
+      relations_created: 0,
+      total_entries: 0,
+      duration_ms: 0,
+    }),
+    hashTextFn: hashText,
+    loadWatchStateFn: async () => ({ version: 1 as const, files: {} }),
+    saveWatchStateFn: async () => undefined,
+    isWatcherRunningFn: async () => false,
+    readWatcherPidFn: async () => null,
+    resolveWatcherPidPathFn: () => "/tmp/agenr-watch.pid",
+    nowFn: () => new Date("2026-02-22T00:00:00.000Z"),
+    sleepFn: async () => undefined,
+    shouldShutdownFn: () => false,
+    createWriteQueueFn: (opts: WriteQueueOptions) => new WriteQueue(opts),
+    embedFn: params.embedFn ?? (async (texts: string[]) => texts.map((_text, index) => embedding(index + 1))),
+  };
+}
+
 afterEach(async () => {
   vi.restoreAllMocks();
 
@@ -156,6 +229,16 @@ describe("bulk ingest helpers", () => {
     expect(Array.from(roundTrip)).toEqual(Array.from(sig));
   });
 
+  it("handles empty and short text minhash edge cases", () => {
+    expect(() => computeMinhashSig("")).not.toThrow();
+    const shortSig = computeMinhashSig("abc");
+    expect(shortSig).toBeInstanceOf(Uint32Array);
+    expect(shortSig.length).toBe(128);
+
+    const same = computeMinhashSig("identical short text");
+    expect(minhashJaccard(same, same)).toBe(1);
+  });
+
   it("findDuplicateBulk detects hash match, minhash match, and novel content", async () => {
     const db = makeClient();
     await initDb(db);
@@ -176,6 +259,33 @@ describe("bulk ingest helpers", () => {
     const novelNormHash = computeNormContentHash(novelContent);
     const novelSig = computeMinhashSig(novelContent);
     await expect(findDuplicateBulk(db, novelNormHash, novelSig, 0.65)).resolves.toBe(false);
+  });
+
+  it("backfillBulkColumns fills missing norm_content_hash and minhash_sig columns", async () => {
+    const db = makeClient();
+    await initDb(db);
+
+    for (let i = 0; i < 5; i += 1) {
+      const entry = makeEntry(`legacy content ${i}`);
+      await insertEntryWithHashes(db, entry, i + 1);
+      await db.execute({
+        sql: "UPDATE entries SET norm_content_hash = NULL, minhash_sig = NULL WHERE content = ?",
+        args: [entry.content],
+      });
+    }
+
+    const updated = await backfillBulkColumns(db);
+    expect(updated).toBe(5);
+
+    const result = await db.execute(`
+      SELECT
+        SUM(CASE WHEN norm_content_hash IS NOT NULL THEN 1 ELSE 0 END) AS norm_count,
+        SUM(CASE WHEN minhash_sig IS NOT NULL THEN 1 ELSE 0 END) AS minhash_count
+      FROM entries
+    `);
+    const row = result.rows[0] as { norm_count?: unknown; minhash_count?: unknown } | undefined;
+    expect(countFromRow({ cnt: row?.norm_count })).toBe(5);
+    expect(countFromRow({ cnt: row?.minhash_count })).toBe(5);
   });
 
   it("dropFtsTriggersAndIndex removes triggers/index but keeps entries_fts virtual table", async () => {
@@ -231,9 +341,11 @@ describe("bulk ingest helpers", () => {
 
     const calls = execute.mock.calls.map((call) => call[0]);
     expect(calls[0]).toBe("REINDEX idx_entries_embedding");
-    expect(calls[1]).toBe("DROP INDEX IF EXISTS idx_entries_embedding");
-    expect(String(calls[2])).toContain("idx_entries_embedding");
-    expect(String(calls[2])).toContain(CREATE_IDX_ENTRIES_EMBEDDING_SQL.trim().split("\n")[1]?.trim() ?? "CREATE");
+    expect(calls[1]).toBe("BEGIN IMMEDIATE");
+    expect(calls[2]).toBe("DROP INDEX IF EXISTS idx_entries_embedding");
+    expect(String(calls[3])).toContain("idx_entries_embedding");
+    expect(String(calls[3])).toContain(CREATE_IDX_ENTRIES_EMBEDDING_SQL.trim().split("\n")[1]?.trim() ?? "CREATE");
+    expect(calls[4]).toBe("COMMIT");
   });
 
   it("checkAndRecoverBulkIngest restores dropped objects and clears meta flag", async () => {
@@ -250,48 +362,74 @@ describe("bulk ingest helpers", () => {
     await expect(getBulkIngestMeta(db)).resolves.toBe(null);
   });
 
-  it("bulk ingest intra-batch dedup inserts one row for duplicate entries", async () => {
+  it("checkAndRecoverBulkIngest restores missing vector index when triggers already exist", async () => {
+    const db = makeClient();
+    await initDb(db);
+    await insertEntryWithHashes(db, makeEntry("vector-only recovery content"), 1);
+
+    expect(await triggerCount(db)).toBe(3);
+    await db.execute("DROP INDEX IF EXISTS idx_entries_embedding");
+    await setBulkIngestMeta(db, "rebuilding_vector");
+
+    await checkAndRecoverBulkIngest(db);
+
+    expect(await triggerCount(db)).toBe(3);
+    expect(await hasVectorIndex(db)).toBe(true);
+    expect(await getBulkIngestMeta(db)).toBe(null);
+  });
+
+  it("ignores --bulk behavior when --dry-run is enabled", async () => {
+    const warnSpy = vi.spyOn(clack.log, "warn");
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agenr-bulk-ingest-"));
     tempDirs.push(dir);
     const filePath = path.join(dir, "sample.txt");
     await fs.writeFile(filePath, "bulk ingest source", "utf8");
 
     const db = makeClient();
-    const parsed: ParsedTranscript = {
-      file: filePath,
-      messages: [],
-      chunks: [
-        {
-          chunk_index: 0,
-          message_start: 0,
-          message_end: 0,
-          text: "chunk",
-          context_hint: "ctx",
-        },
-      ],
-      warnings: [],
-    };
-    const llmClient = {
-      auth: "openai-api-key",
-      resolvedModel: {
-        provider: "openai",
-        modelId: "gpt-4o",
-        model: {},
-      },
-      credentials: {
-        apiKey: "sk-test",
-        source: "test",
-      },
-    } as unknown as LlmClient;
-
-    const deps: IngestCommandDeps = {
-      readConfigFn: () => ({ db: { path: ":memory:" } }),
-      resolveEmbeddingApiKeyFn: () => "sk-test",
-      expandInputFilesFn: async () => [filePath],
-      parseTranscriptFileFn: async () => parsed,
-      createLlmClientFn: () => llmClient,
+    const deps = makeIngestDeps({
+      db,
+      filePath,
       extractKnowledgeFromChunksFn: async (params) => {
-        const duplicated = makeEntry("Identical duplicate content for bulk mode", filePath);
+        const duplicated = makeEntry("Dry run bulk content", filePath);
+        await params.onChunkComplete?.({
+          chunkIndex: 0,
+          totalChunks: 1,
+          entries: [duplicated],
+          warnings: [],
+        });
+        return {
+          entries: [],
+          successfulChunks: 1,
+          failedChunks: 0,
+          warnings: [],
+        };
+      },
+    });
+
+    const result = await runIngestCommand([dir], { bulk: true, dryRun: true, workers: 1, concurrency: 1 }, deps);
+    expect(result.exitCode).toBe(0);
+
+    expect(await triggerCount(db)).toBe(3);
+    expect(await getBulkIngestMeta(db)).toBe(null);
+    const rowCountResult = await db.execute("SELECT COUNT(*) AS cnt FROM entries");
+    expect(countFromRow(rowCountResult.rows[0])).toBe(0);
+    expect(
+      warnSpy.mock.calls.some((call) => String(call[0]).includes("--bulk is ignored when --dry-run is enabled")),
+    ).toBe(true);
+  });
+
+  it("bulk ingest intra-batch dedup inserts one row and restores post-rebuild state", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agenr-bulk-ingest-"));
+    tempDirs.push(dir);
+    const filePath = path.join(dir, "sample.txt");
+    await fs.writeFile(filePath, "bulk ingest source", "utf8");
+
+    const db = makeClient();
+    const deps = makeIngestDeps({
+      db,
+      filePath,
+      extractKnowledgeFromChunksFn: async (params) => {
+        const duplicated = makeEntry("Identical duplicate content for bulk mode test", filePath);
         await params.onChunkComplete?.({
           chunkIndex: 0,
           totalChunks: 1,
@@ -305,38 +443,64 @@ describe("bulk ingest helpers", () => {
           warnings: [],
         };
       },
-      deduplicateEntriesFn: (entries) => entries,
-      getDbFn: () => db,
-      initDbFn: initDb,
-      closeDbFn: () => undefined,
-      storeEntriesFn: async () => ({
-        added: 0,
-        updated: 0,
-        skipped: 0,
-        superseded: 0,
-        llm_dedup_calls: 0,
-        relations_created: 0,
-        total_entries: 0,
-        duration_ms: 0,
-      }),
-      hashTextFn: hashText,
-      loadWatchStateFn: async () => ({ version: 1 as const, files: {} }),
-      saveWatchStateFn: async () => undefined,
-      isWatcherRunningFn: async () => false,
-      readWatcherPidFn: async () => null,
-      resolveWatcherPidPathFn: () => "/tmp/agenr-watch.pid",
-      nowFn: () => new Date("2026-02-22T00:00:00.000Z"),
-      sleepFn: async () => undefined,
-      shouldShutdownFn: () => false,
-      createWriteQueueFn: (opts: WriteQueueOptions) => new WriteQueue(opts),
-      embedFn: async (texts: string[]) => texts.map((_text, index) => embedding(index + 1)),
-    };
+    });
 
     const result = await runIngestCommand([dir], { bulk: true, workers: 1, concurrency: 1 }, deps);
     expect(result.exitCode).toBe(0);
 
     const rowCountResult = await db.execute("SELECT COUNT(*) AS cnt FROM entries");
     expect(countFromRow(rowCountResult.rows[0])).toBe(1);
+    expect(result.dedupStats.entries_skipped).toBe(1);
+    expect(await getBulkIngestMeta(db)).toBe(null);
+    expect(await triggerCount(db)).toBe(3);
+    expect(await hasVectorIndex(db)).toBe(true);
+
+    const ftsMatches = await db.execute({
+      sql: "SELECT rowid FROM entries_fts WHERE entries_fts MATCH ?",
+      args: ["duplicate"],
+    });
+    expect(ftsMatches.rows.length).toBeGreaterThan(0);
+  });
+
+  it("bulk ingest deduplicates across chunk batches using seenNormHashes", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agenr-bulk-ingest-"));
+    tempDirs.push(dir);
+    const filePath = path.join(dir, "sample.txt");
+    await fs.writeFile(filePath, "bulk ingest source", "utf8");
+
+    const db = makeClient();
+    const deps = makeIngestDeps({
+      db,
+      filePath,
+      extractKnowledgeFromChunksFn: async (params) => {
+        const entry = makeEntry("Cross batch duplicate content", filePath);
+        await params.onChunkComplete?.({
+          chunkIndex: 0,
+          totalChunks: 2,
+          entries: [entry],
+          warnings: [],
+        });
+        await params.onChunkComplete?.({
+          chunkIndex: 1,
+          totalChunks: 2,
+          entries: [entry],
+          warnings: [],
+        });
+        return {
+          entries: [],
+          successfulChunks: 2,
+          failedChunks: 0,
+          warnings: [],
+        };
+      },
+    });
+
+    const result = await runIngestCommand([dir], { bulk: true, workers: 1, concurrency: 1 }, deps);
+    expect(result.exitCode).toBe(0);
+
+    const rowCountResult = await db.execute("SELECT COUNT(*) AS cnt FROM entries");
+    expect(countFromRow(rowCountResult.rows[0])).toBe(1);
+    expect(result.dedupStats.entries_skipped).toBe(1);
   });
 
   it("initDb default does not trigger bulk recovery check", async () => {
