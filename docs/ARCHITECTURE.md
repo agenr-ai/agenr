@@ -197,6 +197,8 @@ Migrations are defined as a series of column-presence checks followed by `ALTER 
 | `source_context` | TEXT | Extraction context |
 | `embedding` | F32_BLOB(1024) | 1024-dimensional float32 vector |
 | `content_hash` | TEXT | Content hash for idempotency (v2) |
+| `norm_content_hash` | TEXT | SHA-256 of lowercased, whitespace/punctuation-normalized content; used for exact-match dedup in bulk mode |
+| `minhash_sig` | BLOB | 512-byte (128x4) MinHash signature (5-gram, FNV32); used for near-duplicate dedup in bulk mode |
 | `created_at` | TEXT | ISO timestamp |
 | `updated_at` | TEXT | ISO timestamp |
 | `last_recalled_at` | TEXT | ISO timestamp of last recall |
