@@ -506,10 +506,12 @@ function inferSubject(content: string): string {
     return "memory";
   }
 
-  const firstClause = trimmed.split(/[.!?:;]\s/)[0] ?? trimmed;
-  const words = firstClause.split(/\s+/).filter((word) => word.length > 0).slice(0, 10);
-  const candidate = words.join(" ");
-  return candidate.slice(0, 80) || "memory";
+  const firstClause = (trimmed.split(/[.!?:;]\s/)[0] ?? trimmed).trim();
+  if (firstClause.length <= 80) {
+    return firstClause || "memory";
+  }
+  const cut = firstClause.lastIndexOf(" ", 80);
+  return (cut > 0 ? firstClause.slice(0, cut) : firstClause.slice(0, 80)) || "memory";
 }
 
 function parseStoreEntries(rawEntries: unknown): KnowledgeEntry[] {
