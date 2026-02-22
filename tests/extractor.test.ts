@@ -147,6 +147,25 @@ function streamWithResult(result: Promise<AssistantMessage>, events: AssistantMe
   };
 }
 
+function fakeStream(entries: Array<Record<string, unknown>>) {
+  return (_model: Model<Api>, _context: Context, _opts?: SimpleStreamOptions) =>
+    streamWithResult(
+      Promise.resolve(
+        assistantMessageWithContent(
+          [
+            {
+              type: "toolCall",
+              id: "call_fake",
+              name: "submit_knowledge",
+              arguments: { entries },
+            },
+          ],
+          "toolUse",
+        ),
+      ),
+    );
+}
+
 const openDbs: Client[] = [];
 
 async function makeDb(): Promise<Client> {
@@ -1207,6 +1226,91 @@ describe("extractKnowledgeFromChunks", () => {
     expect(result.entries[0]?.importance).toBe(8);
     expect(result.entries[0]?.source.file).toBe("session.jsonl");
     expect(result.entries[0]?.source.context).toBe("user discussed preferred package manager");
+  });
+
+  it("keeps personal dietary disclosures when mentioned as an aside", async () => {
+    const result = await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [
+        {
+          ...fakeChunk(),
+          text: "[m00000][user] I follow keto -- anyway, back to the code.",
+        },
+      ],
+      client: fakeClient(),
+      verbose: false,
+      streamSimpleImpl: fakeStream([
+        {
+          type: "preference",
+          subject: "user dietary preference",
+          content: "User follows a strict ketogenic diet and avoids carbohydrates.",
+          importance: 7,
+          expiry: "permanent",
+          tags: ["diet", "keto", "personal", "health"],
+          source_context: "User mentioned diet as an aside mid-conversation",
+        },
+      ]),
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+    });
+
+    expect(result.entries.length).toBeGreaterThanOrEqual(1);
+    expect(
+      result.entries.some(
+        (entry) =>
+          (entry.type === "preference" || entry.type === "fact") &&
+          entry.tags.some((tag) => tag === "diet" || tag === "keto"),
+      ),
+    ).toBe(true);
+  });
+
+  it("produces zero entries for pure pleasantries", async () => {
+    const result = await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [
+        {
+          ...fakeChunk(),
+          text: "[m00000][user] sounds good, thanks!",
+        },
+      ],
+      client: fakeClient(),
+      verbose: false,
+      streamSimpleImpl: fakeStream([]),
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+    });
+
+    expect(result.entries).toHaveLength(0);
+  });
+
+  it("keeps one-time personal milestones as event entries", async () => {
+    const result = await extractKnowledgeFromChunks({
+      file: "session.jsonl",
+      chunks: [
+        {
+          ...fakeChunk(),
+          text: "[m00000][user] I just started a new job.",
+        },
+      ],
+      client: fakeClient(),
+      verbose: false,
+      streamSimpleImpl: fakeStream([
+        {
+          type: "event",
+          subject: "user job change",
+          content: "User started a new senior engineering role at a new company.",
+          importance: 7,
+          expiry: "permanent",
+          tags: ["career", "work", "personal"],
+          source_context: "User mentioned new job while discussing their schedule",
+        },
+      ]),
+      sleepImpl: async () => {},
+      retryDelayMs: () => 0,
+    });
+
+    expect(result.entries.length).toBeGreaterThanOrEqual(1);
+    expect(result.entries.some((entry) => entry.type === "event")).toBe(true);
   });
 
   it("sets created_at from chunk timestamp when model does not provide it", async () => {
