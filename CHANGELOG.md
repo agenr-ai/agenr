@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.8.6]
+## [0.8.7]
 
 ### Fixed
 - fix(ingest): detect `.jsonl.deleted.<timestamp>` session files as JSONL by stripping the `.deleted.*` suffix before extension lookup, restoring OpenClaw/Codex adapter routing instead of silent text fallback (issues #160, #163)
