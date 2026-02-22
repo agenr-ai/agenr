@@ -8,7 +8,7 @@ import { deduplicateEntries } from "../dedup.js";
 import { closeDb, getDb, initDb, walCheckpoint } from "../db/client.js";
 import { computeMinhashSig, computeNormContentHash, minhashSigToBuffer } from "../db/minhash.js";
 import {
-  backfillNormContentHash,
+  backfillBulkColumns,
   findDuplicateBulk,
   hashEntrySourceContent,
   hashText,
@@ -23,8 +23,7 @@ import {
   setBulkIngestMeta,
 } from "../db/schema.js";
 import { acquireDbLock, releaseDbLock } from "../db/lockfile.js";
-import { composeEmbeddingText, embed } from "../embeddings/client.js";
-import { resolveEmbeddingApiKey } from "../embeddings/client.js";
+import { composeEmbeddingText, embed, resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { extractKnowledgeFromChunks } from "../extractor.js";
 import { createLlmClient } from "../llm/client.js";
 import { expandInputFiles, parseTranscriptFile } from "../parser.js";
@@ -727,7 +726,7 @@ export async function runIngestCommand(
 
   if (bulkMode) {
     try {
-      const backfilled = await backfillNormContentHash(db);
+      const backfilled = await backfillBulkColumns(db);
       if (backfilled > 0) {
         clack.log.info(`[ingest] Backfilled norm_content_hash for ${backfilled} entries.`, clackOutput);
       }
@@ -751,6 +750,9 @@ export async function runIngestCommand(
     throw new Error("Embedding API key is required for ingest. Run 'agenr setup' to configure.");
   }
 
+  // Tracks norm_content_hash for all committed entries in this run.
+  // Intentional: provides cross-batch dedup within a single ingest run.
+  // Grows at ~64 bytes per unique entry; acceptable up to ~5M entries (~320MB).
   const seenNormHashes = new Set<string>();
   let bulkDedupSkippedHashMinhash = 0;
   const bulkStoreEntriesFn: typeof storeEntries = async (
