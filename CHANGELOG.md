@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.7.20.1] - 2026-02-21
+
+### Fixed
+- fix(openclaw-plugin): sync plugin version in openclaw.plugin.json to match npm package (was stale at 0.7.7, now 0.7.20.1)
+
 ## [0.7.20] - 2026-02-21
 
 ### Added
