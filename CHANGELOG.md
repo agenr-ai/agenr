@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.8.2] - 2026-02-22
 
 ### Added
 - Per-platform extraction prompt addenda for codex/claude-code (code session rules with inline confidence caps) and plaud (meeting transcript rules)
