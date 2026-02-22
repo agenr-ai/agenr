@@ -389,6 +389,7 @@ agenr ingest [options] <paths...>
 - `--no-retry`: disable auto-retry for failed files.
 - `--max-retries <n>`: maximum auto-retry attempts (default `3`).
 - `--force`: clean re-ingest each matched file by deleting previous rows for that source file first.
+- `--bulk`: bulk ingest mode for large datasets. Drops FTS triggers and the vector index before writing, uses larger batch sizes with `BEGIN IMMEDIATE` transactions per batch, and rebuilds FTS + the vector index in a single pass after all entries are written. Disables per-entry vector dedup during writes - run `agenr consolidate` after a bulk ingest to catch near-duplicates. Implies crash recovery on next startup if the run is interrupted.
 
 Ingest runs online dedup at store time (including LLM classification for ambiguous similarity bands).
 Whole-file mode defaults to `auto` when neither `--whole-file` nor `--chunk` is passed. `--whole-file` and `--chunk` are mutually exclusive.
@@ -406,6 +407,17 @@ Ingest Complete
 Done: 3 files | 3 processed, 0 skipped, 0 failed
 Entries: 6 extracted, 3 stored, 2 skipped (duplicate), 1 reinforced
 Duration: 0s
+```
+
+Bulk mode example output:
+
+```text
+Ingest Complete
+Done: 100 files | 100 processed, 0 skipped, 0 failed
+Entries: 1240 extracted, 980 stored, 260 skipped (duplicate), 0 reinforced
+Bulk mode: FTS rebuild + vector index rebuilt in 4.2s.
+Bulk dedup: 47 entries skipped (hash/MinHash).
+Duration: 38s
 ```
 
 ## `consolidate`

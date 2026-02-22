@@ -308,8 +308,31 @@ Ingest behavior: `ingest` uses the same online dedup path (including LLM decisio
 Transaction mode:
 - Online dedup enabled: per-entry `BEGIN IMMEDIATE`/`COMMIT`.
 - Online dedup disabled: single batch transaction for throughput.
+- Bulk mode (`--bulk`): see below.
 
 See also: [Consolidation Architecture](#consolidation-architecture) for the complementary batch dedup pipeline.
+
+### Bulk Ingest Mode (`--bulk`)
+
+For large-scale ingests (e.g. overnight import of thousands of files), the per-row overhead of FTS trigger maintenance and vector index updates becomes the dominant bottleneck. `--bulk` mode eliminates this by deferring both to a single post-write rebuild pass.
+
+**Write pipeline:**
+1. FTS triggers (`entries_ai`, `entries_ad`, `entries_au`) and `idx_entries_embedding` are dropped atomically before writes begin.
+2. A `bulk_ingest_state` flag is written to the `_meta` table (crash recovery signal).
+3. Entries are written in batches of 500 with `BEGIN IMMEDIATE`/`COMMIT` per batch. Embeddings are computed before the transaction opens so the lock is held only for the DB writes.
+4. After all writes complete, FTS content is rebuilt via `INSERT INTO entries_fts(entries_fts) VALUES('rebuild')` and the vector index is recreated via `REINDEX` (with DROP+CREATE atomic fallback wrapped in `BEGIN IMMEDIATE`).
+5. The `bulk_ingest_state` flag is cleared.
+
+**Dedup in bulk mode:**
+Per-entry vector similarity dedup is disabled during writes. Two cheaper mechanisms provide ingest-time dedup:
+- Exact hash: `norm_content_hash` (SHA-256 of lowercased, whitespace/punctuation-normalized content) matched against the DB before each entry.
+- MinHash: 128-hash signatures using 5-gram shingles and FNV32. Full-table scan of `minhash_sig` column (O(n) per entry; acceptable at current scale, LSH banding planned for issue #147).
+- In-memory `seenNormHashes` Set deduplicates across batches within a single run without DB round-trips.
+
+Because MinHash operates at lower fidelity than vector similarity, run `agenr consolidate --sim-threshold 0.76` after a bulk ingest to catch semantic near-duplicates that slipped through.
+
+**Crash recovery:**
+`checkAndRecoverBulkIngest()` is called during `initDb({ checkBulkRecovery: true })` (only in the ingest command). If `bulk_ingest_state` exists in `_meta`, an interrupted run is detected. Recovery checks the FTS trigger count and vector index presence, rebuilds whichever are missing, runs `PRAGMA integrity_check`, and clears the flag.
 
 ---
 
