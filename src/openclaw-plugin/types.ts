@@ -85,6 +85,8 @@ export type AgenrPluginConfig = {
   agenrPath?: string;
   /** Token budget for recall (default: 2000) */
   budget?: number;
+  /** Active project scope. When set, recall and store calls are scoped to this project. */
+  project?: string;
   /** Set to false to disable memory injection without removing the plugin */
   enabled?: boolean;
   /** Path to agenr DB. Defaults to AGENR_DB_PATH env or ~/.agenr/knowledge.db */

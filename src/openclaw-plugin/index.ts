@@ -142,7 +142,8 @@ const plugin = {
 
             const agenrPath = resolveAgenrPath(config);
             const budget = resolveBudget(config);
-            const recallResult = await runRecall(agenrPath, budget);
+            const project = config?.project?.trim() || undefined;
+            const recallResult = await runRecall(agenrPath, budget, project);
             if (recallResult) {
               const formatted = formatRecallAsMarkdown(recallResult);
               if (formatted.trim()) {
@@ -233,7 +234,8 @@ const plugin = {
               return makeDisabledToolResult();
             }
             const agenrPath = resolveAgenrPath(runtimeConfig);
-            return runRecallTool(agenrPath, params);
+            const defaultProject = runtimeConfig?.project?.trim() || undefined;
+            return runRecallTool(agenrPath, params, defaultProject);
           },
         },
       );
@@ -284,7 +286,13 @@ const plugin = {
               return makeDisabledToolResult();
             }
             const agenrPath = resolveAgenrPath(runtimeConfig);
-            return runStoreTool(agenrPath, params, runtimeConfig as Record<string, unknown> | undefined);
+            const defaultProject = runtimeConfig?.project?.trim() || undefined;
+            return runStoreTool(
+              agenrPath,
+              params,
+              runtimeConfig as Record<string, unknown> | undefined,
+              defaultProject,
+            );
           },
         },
       );

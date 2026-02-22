@@ -41,7 +41,11 @@ export function buildSpawnArgs(agenrPath: string): { cmd: string; args: string[]
   return { cmd: agenrPath, args: [] };
 }
 
-export async function runRecall(agenrPath: string, budget: number): Promise<RecallResult | null> {
+export async function runRecall(
+  agenrPath: string,
+  budget: number,
+  project?: string,
+): Promise<RecallResult | null> {
   return await new Promise((resolve) => {
     let stdout = "";
     let settled = false;
@@ -55,11 +59,13 @@ export async function runRecall(agenrPath: string, budget: number): Promise<Reca
       resolve(value);
     }
 
-    const child = spawn(
-      spawnArgs.cmd,
-      [...spawnArgs.args, "recall", "--context", "session-start", "--budget", String(budget), "--json"],
-      { stdio: ["ignore", "pipe", "ignore"] }
-    );
+    const args = ["recall", "--context", "session-start", "--budget", String(budget), "--json"];
+    if (project) {
+      args.push("--project", project);
+    }
+    const child = spawn(spawnArgs.cmd, [...spawnArgs.args, ...args], {
+      stdio: ["ignore", "pipe", "ignore"],
+    });
 
     const timer = setTimeout(() => {
       child.kill("SIGTERM");
