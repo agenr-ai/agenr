@@ -813,7 +813,7 @@ export function createProgram(): Command {
     .option("--force", "Overwrite existing launchd plist", false)
     .option("--interval <seconds>", "Watch interval for daemon mode", parseIntOption, 120)
     .option("--dir <path>", "Sessions directory to watch (overrides auto-detection)")
-    .option("--platform <name>", "Platform name (openclaw, codex, claude-code, plaud)")
+    .option("--platform <name>", "Platform name (openclaw, claude-code, codex, plaud)")
     .option("--node-path <path>", "Node binary path override for launchd")
     .option("--context <path>", "Regenerate context file after each cycle")
     .action(async (opts: DaemonInstallOptions) => {

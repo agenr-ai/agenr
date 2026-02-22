@@ -5,7 +5,8 @@ export function normalizeKnowledgePlatform(value: string | undefined): Knowledge
     return null;
   }
 
-  const normalized = value.trim().toLowerCase();
+  const trimmed = value.trim();
+  const normalized = trimmed.toLowerCase();
   if (normalized === "openclaw") {
     return "openclaw";
   }
@@ -15,7 +16,7 @@ export function normalizeKnowledgePlatform(value: string | undefined): Knowledge
   if (normalized === "codex") {
     return "codex";
   }
-  if (normalized === "plaud") {
+  if (trimmed === "plaud") {
     return "plaud";
   }
   return null;

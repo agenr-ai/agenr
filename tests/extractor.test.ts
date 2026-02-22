@@ -251,7 +251,7 @@ describe("buildExtractionSystemPrompt", () => {
 
   it("codex platform includes CODE_PLATFORM_ADDENDUM and starts with SYSTEM_PROMPT", () => {
     const result = buildExtractionSystemPrompt("codex", false);
-    expect(result.indexOf(SYSTEM_PROMPT.trim())).toBe(0);
+    expect(result.startsWith(SYSTEM_PROMPT)).toBe(true);
     expect(result).toContain(CODE_PLATFORM_ADDENDUM.trim());
     expect(result).not.toContain(OPENCLAW_CONFIDENCE_ADDENDUM.trim());
     expect(result).not.toContain(PLAUD_PLATFORM_ADDENDUM.trim());
@@ -259,14 +259,14 @@ describe("buildExtractionSystemPrompt", () => {
 
   it("claude-code platform includes CODE_PLATFORM_ADDENDUM, not openclaw addendum", () => {
     const result = buildExtractionSystemPrompt("claude-code", false);
-    expect(result.indexOf(SYSTEM_PROMPT.trim())).toBe(0);
+    expect(result.startsWith(SYSTEM_PROMPT)).toBe(true);
     expect(result).toContain(CODE_PLATFORM_ADDENDUM.trim());
     expect(result).not.toContain(OPENCLAW_CONFIDENCE_ADDENDUM.trim());
   });
 
   it("plaud platform includes PLAUD_PLATFORM_ADDENDUM only", () => {
     const result = buildExtractionSystemPrompt("plaud", false);
-    expect(result.indexOf(SYSTEM_PROMPT.trim())).toBe(0);
+    expect(result.startsWith(SYSTEM_PROMPT)).toBe(true);
     expect(result).toContain(PLAUD_PLATFORM_ADDENDUM.trim());
     expect(result).not.toContain(CODE_PLATFORM_ADDENDUM.trim());
     expect(result).not.toContain(OPENCLAW_CONFIDENCE_ADDENDUM.trim());
@@ -274,7 +274,7 @@ describe("buildExtractionSystemPrompt", () => {
 
   it("openclaw platform still includes OPENCLAW_CONFIDENCE_ADDENDUM", () => {
     const result = buildExtractionSystemPrompt("openclaw", false);
-    expect(result.indexOf(SYSTEM_PROMPT.trim())).toBe(0);
+    expect(result.startsWith(SYSTEM_PROMPT)).toBe(true);
     expect(result).toContain(OPENCLAW_CONFIDENCE_ADDENDUM.trim());
     expect(result).not.toContain(CODE_PLATFORM_ADDENDUM.trim());
     expect(result).not.toContain(PLAUD_PLATFORM_ADDENDUM.trim());
@@ -282,7 +282,7 @@ describe("buildExtractionSystemPrompt", () => {
 
   it("undefined platform returns base SYSTEM_PROMPT with no addenda", () => {
     const result = buildExtractionSystemPrompt(undefined, false);
-    expect(result).toContain(SYSTEM_PROMPT.trim());
+    expect(result).toBe(SYSTEM_PROMPT);
     expect(result).not.toContain(OPENCLAW_CONFIDENCE_ADDENDUM.trim());
     expect(result).not.toContain(CODE_PLATFORM_ADDENDUM.trim());
     expect(result).not.toContain(PLAUD_PLATFORM_ADDENDUM.trim());
@@ -291,7 +291,8 @@ describe("buildExtractionSystemPrompt", () => {
 
   it("unknown platform string returns base prompt only", () => {
     const result = buildExtractionSystemPrompt("zoom", false);
-    expect(result).toContain(SYSTEM_PROMPT.trim());
+    expect(result).toBe(SYSTEM_PROMPT);
+    expect(result).not.toContain(OPENCLAW_CONFIDENCE_ADDENDUM.trim());
     expect(result).not.toContain(CODE_PLATFORM_ADDENDUM.trim());
     expect(result).not.toContain(PLAUD_PLATFORM_ADDENDUM.trim());
   });
@@ -380,6 +381,12 @@ describe("applyConfidenceCap", () => {
   it("does not cap when platform is undefined", () => {
     const entry = makeEntry({ importance: 8, tags: ["unverified"] });
     const result = applyConfidenceCap(entry, undefined);
+    expect(result.importance).toBe(8);
+  });
+
+  it("does not cap codex entry without unverified tag", () => {
+    const entry = makeEntry({ importance: 8, tags: [] });
+    const result = applyConfidenceCap(entry, "codex");
     expect(result.importance).toBe(8);
   });
 
