@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Per-platform extraction prompt addenda for codex/claude-code (code session rules with inline confidence caps) and plaud (meeting transcript rules)
+- plaud added to KNOWLEDGE_PLATFORMS and normalizeKnowledgePlatform
+- applyConfidenceCap now enforces importance cap for codex and claude-code platforms
+- All CLI --platform help text updated to include plaud
+
 ## [0.8.1] - 2026-02-22
 
 ### Fixed
