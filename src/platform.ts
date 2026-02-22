@@ -16,7 +16,7 @@ export function normalizeKnowledgePlatform(value: string | undefined): Knowledge
   if (normalized === "codex") {
     return "codex";
   }
-  if (trimmed === "plaud") {
+  if (normalized === "plaud") {
     return "plaud";
   }
   return null;
