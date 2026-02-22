@@ -1261,9 +1261,18 @@ export async function runIngestCommand(
 
       if (bulkMode) {
         clack.log.info("[bulk] Dropping FTS triggers and vector index...", clackOutput);
-        await dropFtsTriggersAndIndex(db);
-        await setBulkIngestMeta(db, "writing");
-        bulkTeardownComplete = true;
+        try {
+          await setBulkIngestMeta(db, "writing");
+          await dropFtsTriggersAndIndex(db);
+          bulkTeardownComplete = true;
+        } catch (error) {
+          try {
+            await clearBulkIngestMeta(db);
+          } catch {
+            // Ignore cleanup failures.
+          }
+          throw error;
+        }
         clack.log.info("[bulk] Teardown complete. Starting bulk writes...", clackOutput);
       }
 
