@@ -725,12 +725,16 @@ export async function runIngestCommand(
     }
   }
 
-  try {
-    const backfilled = await backfillNormContentHash(db);
-    clack.log.info(`[ingest] Backfilled norm_content_hash for ${backfilled} entries.`, clackOutput);
-  } catch (error) {
-    cleanupDbResources();
-    throw error;
+  if (bulkMode) {
+    try {
+      const backfilled = await backfillNormContentHash(db);
+      if (backfilled > 0) {
+        clack.log.info(`[ingest] Backfilled norm_content_hash for ${backfilled} entries.`, clackOutput);
+      }
+    } catch (error) {
+      cleanupDbResources();
+      throw error;
+    }
   }
 
   let embeddingApiKey: string | null = null;
