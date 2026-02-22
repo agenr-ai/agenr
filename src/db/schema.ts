@@ -348,7 +348,10 @@ export async function getBulkIngestMeta(db: Client): Promise<{ phase: string; st
     const row = result.rows[0] as Record<string, unknown> | undefined;
     const raw = row?.value ?? (row ? Object.values(row)[0] : undefined);
     return JSON.parse(String(raw)) as { phase: string; started_at: string };
-  } catch {
+  } catch (parseError) {
+    process.stderr.write(
+      `[agenr] Warning: failed to parse bulk_ingest_state metadata: ${parseError instanceof Error ? parseError.message : String(parseError)}. Crash recovery may be skipped.\n`,
+    );
     return null;
   }
 }
