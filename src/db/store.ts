@@ -535,6 +535,10 @@ export async function findDuplicateBulk(
     return true;
   }
 
+  // NOTE: This is an O(n) scan across all stored minhash signatures. For bulk
+  // ingest this is acceptable since vector dedup is disabled and the hash check
+  // above handles exact duplicates. For large databases (>50k entries) consider
+  // LSH banding to reduce this to O(1) amortized. Track in issue #147.
   const rows = await db.execute("SELECT minhash_sig FROM entries WHERE minhash_sig IS NOT NULL AND retired = 0");
   for (const row of rows.rows) {
     const raw = (row as Record<string, unknown>).minhash_sig ?? Object.values(row as Record<string, unknown>)[0];
@@ -564,7 +568,7 @@ export async function findDuplicateBulk(
   return false;
 }
 
-export async function backfillNormContentHash(db: Client): Promise<number> {
+export async function backfillBulkColumns(db: Client): Promise<number> {
   const batchSize = 500;
   const maxRowsPerRun = 5000;
   let updated = 0;
