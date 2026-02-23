@@ -159,7 +159,7 @@ export async function findPreviousSessionFile(
 ): Promise<string | null> {
   try {
     const normalizedSessionId = currentSessionId?.trim();
-    const currentSessionFileName = normalizedSessionId ? `${normalizedSessionId}.jsonl` : undefined;
+    const normalizedSessionFileName = normalizedSessionId ? `${normalizedSessionId}.jsonl` : undefined;
     const entries = await readdir(sessionsDir, { withFileTypes: true });
     const candidatePaths: string[] = [];
 
@@ -167,13 +167,17 @@ export async function findPreviousSessionFile(
       if (!entry.isFile()) {
         continue;
       }
-      if (!entry.name.endsWith(".jsonl")) {
+      // Accept plain .jsonl files and .jsonl.reset.* files (from /new resets)
+      const isPlainJsonl = entry.name.endsWith(".jsonl");
+      const isResetJsonl = entry.name.includes(".jsonl.reset.");
+      if (!isPlainJsonl && !isResetJsonl) {
         continue;
       }
       if (entry.name.includes(".deleted.")) {
         continue;
       }
-      if (currentSessionFileName && entry.name === currentSessionFileName) {
+      // Skip current session (by ID prefix, since reset files have timestamp suffix)
+      if (normalizedSessionId && entry.name.startsWith(normalizedSessionId)) {
         continue;
       }
       candidatePaths.push(path.join(sessionsDir, entry.name));

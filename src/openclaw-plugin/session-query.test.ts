@@ -143,6 +143,37 @@ describe("findPreviousSessionFile", () => {
       path.join(dir, "current.jsonl"),
     );
   });
+
+  it("picks .jsonl.reset.* file when it is the most recent (real OpenClaw /new pattern)", async () => {
+    const dir = await createTempDir();
+    const now = Date.now();
+    await writeJsonlFile(path.join(dir, "older-session.jsonl"), [], now - 10_000);
+    await writeJsonlFile(
+      path.join(dir, "prev-session-abc.jsonl.reset.2026-02-23T22-52-01.017Z"),
+      [],
+      now - 100,
+    );
+
+    await expect(findPreviousSessionFile(dir, "current-session-id")).resolves.toBe(
+      path.join(dir, "prev-session-abc.jsonl.reset.2026-02-23T22-52-01.017Z"),
+    );
+  });
+
+  it("skips .jsonl.reset.* files that belong to the current session", async () => {
+    const dir = await createTempDir();
+    const now = Date.now();
+    // Current session reset file (should be skipped)
+    await writeJsonlFile(
+      path.join(dir, "current-session.jsonl.reset.2026-02-23T22-52-01.017Z"),
+      [],
+      now - 10,
+    );
+    await writeJsonlFile(path.join(dir, "previous-session.jsonl"), [], now - 100);
+
+    await expect(findPreviousSessionFile(dir, "current-session")).resolves.toBe(
+      path.join(dir, "previous-session.jsonl"),
+    );
+  });
 });
 
 describe("extractRecentTurns", () => {
