@@ -1,4 +1,7 @@
 import { EventEmitter } from "node:events";
+import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as dbClient from "../db/client.js";
 import { __testing } from "./index.js";
@@ -108,7 +111,7 @@ function getBeforePromptBuildHandler(
   api: PluginApi,
 ): (
   event: Record<string, unknown>,
-  ctx: { sessionKey?: string; sessionId?: string },
+  ctx: { sessionKey?: string; sessionId?: string; agentId?: string },
 ) => Promise<BeforePromptBuildResult | undefined> {
   const onMock = api.on as unknown as ReturnType<typeof vi.fn>;
   const call = onMock.mock.calls.find((args) => args[0] === "before_prompt_build");
@@ -117,7 +120,7 @@ function getBeforePromptBuildHandler(
   }
   return call[1] as (
     event: Record<string, unknown>,
-    ctx: { sessionKey?: string; sessionId?: string },
+    ctx: { sessionKey?: string; sessionId?: string; agentId?: string },
   ) => Promise<BeforePromptBuildResult | undefined>;
 }
 
@@ -702,6 +705,62 @@ describe("before_prompt_build query seeding", () => {
       stashedText,
     );
     expect(resolveSessionQuery("/new", sessionKey)).toBeUndefined();
+  });
+
+  it("uses archived session fallback when session-start prompt is low-signal and stash is empty", async () => {
+    const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
+    const tempHome = await mkdtemp(path.join(os.tmpdir(), "agenr-openclaw-home-"));
+    const homeSpy = vi.spyOn(os, "homedir").mockReturnValue(tempHome);
+
+    try {
+      const sessionsDir = path.join(tempHome, ".openclaw", "agents", "main", "sessions");
+      await mkdir(sessionsDir, { recursive: true });
+      const archivedPath = path.join(sessionsDir, "abc123.jsonl.reset.2026-02-23T08:00:00.000Z");
+      const archivedEntries = [
+        { type: "message", message: { role: "assistant", content: "assistant message" } },
+        { type: "message", message: { role: "user", content: "resume the prior migration planning discussion" } },
+        { type: "message", message: { role: "user", content: "focus on the webchat reset recall fallback behavior" } },
+        { type: "message", message: { role: "user", content: "include the archived sessions path handling" } },
+      ];
+      await writeFile(
+        archivedPath,
+        archivedEntries.map((entry) => JSON.stringify(entry)).join("\n"),
+        "utf8",
+      );
+      const now = new Date();
+      await utimes(archivedPath, now, now);
+
+      const infoLogger = vi.fn();
+      const api = makeApi({
+        pluginConfig: { signalsEnabled: false },
+        logger: {
+          info: infoLogger,
+          warn: vi.fn(),
+          error: vi.fn(),
+        },
+      });
+      plugin.register(api);
+      const handler = getBeforePromptBuildHandler(api);
+
+      await handler(
+        { prompt: "help?" },
+        { sessionKey: "agent:main:webchat", sessionId: "uuid-webchat-start", agentId: "main" },
+      );
+
+      expect(runRecallMock).toHaveBeenCalledTimes(1);
+      expect(runRecallMock).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(Number),
+        undefined,
+        "resume the prior migration planning discussion focus on the webchat reset recall fallback behavior include the archived sessions path handling",
+      );
+      expect(infoLogger).toHaveBeenCalledWith(
+        "[agenr] session-start: using archived session fallback, 3 messages",
+      );
+    } finally {
+      homeSpy.mockRestore();
+      await rm(tempHome, { recursive: true, force: true });
+    }
   });
 
   it("strips OpenClaw prompt metadata envelope before resolving query", async () => {
