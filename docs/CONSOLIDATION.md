@@ -73,6 +73,8 @@ Sources:
 - cross-type same-subject threshold: `0.89` (`CROSS_TYPE_SUBJECT_THRESHOLD`)
 - minimum cluster size: `2` (`DEFAULT_MIN_CLUSTER`)
 - max entries per validated cluster: `12` (`DEFAULT_MAX_CLUSTER_SIZE`)
+- Tag separator: tags are joined with `|` (pipe) in `GROUP_CONCAT` and split on `|` in the
+  result mapper. Pipe is used instead of comma because tag values may contain commas.
 - Additional idempotency guard:
 - skips recently consolidated merged entries for `7` days by default (`DEFAULT_IDEMPOTENCY_DAYS`)
 

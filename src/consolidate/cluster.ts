@@ -90,7 +90,7 @@ function mapActiveEmbeddedEntry(row: Record<string, InValue | undefined>): Activ
   const projectRaw = toStringValue(row.project);
   const project = projectRaw.trim().length > 0 ? projectRaw.trim().toLowerCase() : null;
   const tagsRaw = toStringValue(row.tags_csv);
-  const tags = tagsRaw.length > 0 ? tagsRaw.split(",").map((tag) => tag.trim()).filter(Boolean) : [];
+  const tags = tagsRaw.length > 0 ? tagsRaw.split("|").map((tag) => tag.trim()).filter(Boolean) : [];
 
   return {
     id,
@@ -156,7 +156,7 @@ export async function buildClusters(db: Client, options: ClusterOptions = {}): P
       e.merged_from,
       e.consolidated_at,
       (
-        SELECT GROUP_CONCAT(t.tag, ',')
+        SELECT GROUP_CONCAT(t.tag, '|')
         FROM tags t
         WHERE t.entry_id = e.id
       ) AS tags_csv
