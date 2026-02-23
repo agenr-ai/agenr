@@ -13,6 +13,7 @@ import {
   extractLastUserText,
   resolveSessionQuery,
   SESSION_TOPIC_TTL_MS,
+  stripPromptMetadata,
   shouldStashTopic,
   stashSessionTopic,
 } from "./session-query.js";
@@ -151,7 +152,9 @@ const plugin = {
             const agenrPath = resolveAgenrPath(config);
             const budget = resolveBudget(config);
             const project = config?.project?.trim() || undefined;
-            const queryText = resolveSessionQuery(event.prompt, ctx.sessionKey);
+            const rawPrompt = event.prompt;
+            const userPrompt = stripPromptMetadata(rawPrompt ?? "");
+            const queryText = resolveSessionQuery(userPrompt, ctx.sessionKey);
             const recallResult = await runRecall(agenrPath, budget, project, queryText);
             if (recallResult) {
               const formatted = formatRecallAsMarkdown(recallResult);

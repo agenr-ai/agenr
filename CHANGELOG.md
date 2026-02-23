@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.12]
+
+### Fixed
+- fix(openclaw-plugin): strip OpenClaw metadata envelope from `before_prompt_build` prompts before session-start recall query resolution; query seeding now uses the user message after the final timestamp marker instead of prepended metadata, with last-match handling for repeated timestamp patterns
+
 ## [0.8.11]
 
 ### Changed
