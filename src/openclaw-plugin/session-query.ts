@@ -4,8 +4,8 @@ import path from "node:path";
 export const SESSION_TOPIC_TTL_MS = 60 * 60 * 1000;
 // Raised from 20 to 40 to filter trivial conversational closers.
 export const SESSION_TOPIC_MIN_LENGTH = 40;
-// Must exceed SESSION_TOPIC_TTL_MS (1h) to cover back-to-back sessions
-export const ARCHIVED_SESSION_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+// 24h window covers daily-use gaps and back-to-back sessions
+export const ARCHIVED_SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 // Number of most-recent user messages considered for query seed text.
 const SESSION_QUERY_LOOKBACK = 3;
 
@@ -130,35 +130,37 @@ export async function readLatestArchivedUserMessages(
     }
 
     archivedFiles.sort((a, b) => b.mtimeMs - a.mtimeMs);
-    const best = archivedFiles[0];
-    if (!best) {
-      return [];
-    }
-    const raw = await readFile(best.filePath, "utf8");
-    const userMessages: string[] = [];
+    for (const candidate of archivedFiles) {
+      const raw = await readFile(candidate.filePath, "utf8");
+      const userMessages: string[] = [];
 
-    for (const line of raw.split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (!trimmed) {
-        continue;
+      for (const line of raw.split(/\r?\n/)) {
+        const trimmed = line.trim();
+        if (!trimmed) {
+          continue;
+        }
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(trimmed);
+        } catch {
+          continue;
+        }
+        if (!isRecord(parsed) || parsed["type"] !== "message") {
+          continue;
+        }
+        const text = extractTextFromUserMessage(parsed["message"]);
+        if (!text) {
+          continue;
+        }
+        userMessages.push(text);
       }
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(trimmed);
-      } catch {
-        continue;
+
+      if (userMessages.length > 0) {
+        return userMessages.slice(-SESSION_QUERY_LOOKBACK);
       }
-      if (!isRecord(parsed) || parsed["type"] !== "message") {
-        continue;
-      }
-      const text = extractTextFromUserMessage(parsed["message"]);
-      if (!text) {
-        continue;
-      }
-      userMessages.push(text);
     }
 
-    return userMessages.slice(-SESSION_QUERY_LOOKBACK);
+    return [];
   } catch {
     return [];
   }

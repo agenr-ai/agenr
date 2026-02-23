@@ -160,13 +160,18 @@ const plugin = {
             const queryText = resolveSessionQuery(userPrompt, ctx.sessionKey);
             let recallQueryText = queryText;
 
+            // resolveSessionQuery returns undefined for command-like prompts ("/new", "/help").
+            // In that case, queryText !== userPrompt so archive fallback does not fire.
+            // recallQueryText remains undefined and runRecall treats that as no seed query.
             if (
               isFirstInSession &&
               queryText === userPrompt &&
               userPrompt.length < SESSION_TOPIC_MIN_LENGTH
             ) {
-              const agentIdRaw = ctx.agentId;
-              const agentId = typeof agentIdRaw === "string" && agentIdRaw.trim() ? agentIdRaw : "main";
+              const agentId = ctx.agentId?.trim() || "main";
+              if (!ctx.agentId?.trim()) {
+                api.logger.debug?.("[agenr] session-start: agentId not provided, defaulting to 'main'");
+              }
               const sessionsDir = path.join(
                 os.homedir(),
                 ".openclaw",
@@ -176,9 +181,9 @@ const plugin = {
               );
               const archivedMessages = await readLatestArchivedUserMessages(sessionsDir);
               if (archivedMessages.length > 0) {
-                recallQueryText = archivedMessages.join(" ");
+                recallQueryText = `${archivedMessages.join(" ")} ${userPrompt}`;
                 api.logger.info?.(
-                  `[agenr] session-start: using archived session fallback, ${archivedMessages.length} messages`,
+                  `[agenr] session-start: archived session fallback applied, ${archivedMessages.length} messages`,
                 );
               }
             }
@@ -420,7 +425,6 @@ const plugin = {
 
 export const __testing = {
   SESSION_TOPIC_TTL_MS,
-  readLatestArchivedUserMessages,
   clearState(): void {
     clearStash();
     seenSessions.clear();
