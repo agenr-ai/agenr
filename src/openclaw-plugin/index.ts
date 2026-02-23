@@ -224,8 +224,7 @@ const plugin = {
         stashSessionTopic(sessionKey, lastUserText);
       } catch (err) {
         api.logger.warn(
-          "agenr plugin before_reset stash failed: " +
-            (err instanceof Error ? err.message : String(err)),
+          `agenr plugin before_reset stash failed: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     });

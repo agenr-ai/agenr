@@ -11,6 +11,7 @@ import {
   resolveSessionQuery,
   SESSION_TOPIC_TTL_MS,
   shouldStashTopic,
+  sweepInterval,
 } from "./session-query.js";
 import * as pluginSignals from "./signals.js";
 import { runExtractTool, runRecallTool, runRetireTool, runStoreTool } from "./tools.js";
@@ -1127,6 +1128,11 @@ describe("shouldStashTopic", () => {
       shouldStashTopic("Please keep working on release planning and rollback checks today"),
     ).toBe(true);
   });
+
+  it("clearStash cancels the sweep interval handle", () => {
+    clearStash();
+    expect(sweepInterval).toBeUndefined();
+  });
 });
 
 describe("resolveSessionQuery", () => {
@@ -1153,6 +1159,16 @@ describe("resolveSessionQuery", () => {
 
     expect(result).toBe("Need release notes draft");
     expect(resolveSessionQuery("/new", sessionKey)).toBeUndefined();
+  });
+
+  it("strips /new prefix for high-signal prompts", () => {
+    const result = resolveSessionQuery("/new let's continue the migration work", "agent:main:strip-new");
+    expect(result).toBe("let's continue the migration work");
+  });
+
+  it("strips /reset prefix for high-signal prompts", () => {
+    const result = resolveSessionQuery("/reset pick up where we left off", "agent:main:strip-reset");
+    expect(result).toBe("pick up where we left off");
   });
 
   it("returns undefined for thin prompt when stash is missing", () => {

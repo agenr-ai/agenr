@@ -33,6 +33,7 @@ export type BeforeResetEvent = {
   sessionFile?: string;
   messages?: unknown[];
   reason?: string;
+  [key: string]: unknown;
 };
 
 export type PluginLogger = {
