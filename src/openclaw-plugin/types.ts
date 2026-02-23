@@ -98,6 +98,8 @@ export type PluginApi = {
 export type AgenrPluginConfig = {
   /** Path to agenr CLI entry point (dist/cli.js). Defaults to AGENR_BIN env or bundled dist/cli.js */
   agenrPath?: string;
+  /** Path to OpenClaw sessions directory. Defaults to ~/.openclaw/agents/<agentId>/sessions */
+  sessionsDir?: string;
   /** Token budget for recall (default: 2000) */
   budget?: number;
   /** Active project scope. When set, recall and store calls are scoped to this project. */

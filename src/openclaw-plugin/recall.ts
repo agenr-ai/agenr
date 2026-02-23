@@ -30,6 +30,7 @@ export type RecallResult = {
 export type RunRecallOptions = {
   context?: "session-start" | "browse";
   since?: string;
+  limit?: number;
 };
 
 export function resolveAgenrPath(config?: AgenrPluginConfig): string {
@@ -72,6 +73,9 @@ export async function runRecall(
     const args = isBrowse
       ? ["recall", "--browse", "--since", options?.since ?? "1d", "--json"]
       : ["recall", "--context", "session-start", "--budget", String(budget), "--json"];
+    if (isBrowse && options?.limit) {
+      args.push("--limit", String(options.limit));
+    }
     if (project) {
       args.push("--project", project);
     }
