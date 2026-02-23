@@ -152,10 +152,8 @@ const plugin = {
             const agenrPath = resolveAgenrPath(config);
             const budget = resolveBudget(config);
             const project = config?.project?.trim() || undefined;
-            const rawPrompt = event.prompt;
-            const userPrompt = stripPromptMetadata(rawPrompt ?? "");
+            const userPrompt = stripPromptMetadata(event.prompt ?? "");
             const queryText = resolveSessionQuery(userPrompt, ctx.sessionKey);
-            console.log("[agenr] session-start recall query:", JSON.stringify(queryText));
             const recallResult = await runRecall(agenrPath, budget, project, queryText);
             if (recallResult) {
               const formatted = formatRecallAsMarkdown(recallResult);
