@@ -3,8 +3,10 @@
 ## [0.8.15] - 2026-02-23
 
 ### Fixed
+- fix(consolidate): switch GROUP_CONCAT separator from comma to pipe in buildClusters to prevent silent tag corruption when tag values contain commas (issue #155)
 - fix(consolidate): Tier 1 near-exact duplicate merge now preserves the highest importance across merged entries by raising the keeper's `importance` floor to the group max (issue #156)
 - fix(consolidate): Tier 1 near-exact duplicate merge now preserves oldest provenance by inheriting the oldest `created_at` across the merge group into the keeper (issue #156)
+- test(consolidate): new cluster.test.ts with pipe-separator roundtrip and comma-in-tag regression coverage (issue #155)
 - test(consolidate): added merge coverage for tag union transfer, keeper importance floor, and keeper `created_at` inheritance in rules consolidation tests (issue #156)
 
 ## [0.8.13] - 2026-02-23
