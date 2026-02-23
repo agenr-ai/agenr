@@ -1,5 +1,8 @@
 export const SESSION_TOPIC_TTL_MS = 60 * 60 * 1000;
+// Raised from 20 to 40 to filter trivial conversational closers.
 export const SESSION_TOPIC_MIN_LENGTH = 40;
+// Number of most-recent user messages considered for query seed text.
+const SESSION_QUERY_LOOKBACK = 3;
 
 export type TopicStashEntry = {
   text: string;
@@ -58,16 +61,26 @@ export function extractLastUserText(messages: unknown[]): string {
         continue;
       }
       collected.push(extracted);
-      if (collected.length >= 3) {
+      if (collected.length >= SESSION_QUERY_LOOKBACK) {
         break;
       }
     }
 
+    // reverse to restore chronological order (oldest first) before joining
     const joined = collected.reverse().join(" ").trim();
     return joined || "";
   } catch {
     return "";
   }
+}
+
+// Quality gate for deciding whether extracted topic text is stash eligible.
+export function shouldStashTopic(text: string): boolean {
+  if (text.length < SESSION_TOPIC_MIN_LENGTH) {
+    return false;
+  }
+  const wordCount = text.split(/\s+/).filter(Boolean).length;
+  return wordCount >= 5;
 }
 
 function sweepExpiredStash(): void {
@@ -105,6 +118,11 @@ export function resolveSessionQuery(prompt: string | undefined, sessionKey?: str
 }
 
 export function stashSessionTopic(sessionKey: string, text: string): void {
+  // Keep an internal length guard so callers cannot bypass minimum quality.
+  // Word-count checks are handled by shouldStashTopic at call sites.
+  if (text.length < SESSION_TOPIC_MIN_LENGTH) {
+    return;
+  }
   sessionTopicStash.set(sessionKey, {
     text,
     storedAt: Date.now(),

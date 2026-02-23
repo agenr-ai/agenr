@@ -12,8 +12,8 @@ import {
   clearStash,
   extractLastUserText,
   resolveSessionQuery,
-  SESSION_TOPIC_MIN_LENGTH,
-  SESSION_TOPIC_TTL_MS as _TTL,
+  SESSION_TOPIC_TTL_MS,
+  shouldStashTopic,
   stashSessionTopic,
 } from "./session-query.js";
 import { checkSignals, resolveSignalConfig } from "./signals.js";
@@ -217,11 +217,7 @@ const plugin = {
         }
 
         const lastUserText = extractLastUserText(messages);
-        if (!lastUserText || lastUserText.length < SESSION_TOPIC_MIN_LENGTH) {
-          return;
-        }
-        const wordCount = lastUserText.split(/\s+/).filter(Boolean).length;
-        if (wordCount < 5) {
+        if (!shouldStashTopic(lastUserText)) {
           return;
         }
 
@@ -393,7 +389,7 @@ const plugin = {
 };
 
 export const __testing = {
-  SESSION_TOPIC_TTL_MS: _TTL,
+  SESSION_TOPIC_TTL_MS,
   clearState(): void {
     clearStash();
     seenSessions.clear();
