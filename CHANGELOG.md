@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.13]
+
+### Fixed
+- fix(openclaw-plugin): session-start recall now falls back to reading the most recent archived OpenClaw session file (`*.reset.*`) when webchat `/new` bypasses `before_reset`; if stash-based seeding is unavailable and the opening prompt is low-signal, recall query text is built from the last 3 user messages in the archived session
+
 ## [0.8.12]
 
 ### Fixed

@@ -1,3 +1,6 @@
+import { readFile, readdir, stat } from "node:fs/promises";
+import path from "node:path";
+
 export const SESSION_TOPIC_TTL_MS = 60 * 60 * 1000;
 // Raised from 20 to 40 to filter trivial conversational closers.
 export const SESSION_TOPIC_MIN_LENGTH = 40;
@@ -96,6 +99,57 @@ export function extractLastUserText(messages: unknown[]): string {
     return joined || "";
   } catch {
     return "";
+  }
+}
+
+export async function readLatestArchivedMessages(
+  sessionsDir: string,
+  maxAgeMs = 2 * 60 * 60 * 1000,
+): Promise<string[]> {
+  try {
+    const now = Date.now();
+    const archivedFiles: Array<{ filePath: string; mtimeMs: number }> = [];
+    const entries = await readdir(sessionsDir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.includes(".reset.")) {
+        continue;
+      }
+      const filePath = path.join(sessionsDir, entry.name);
+      const fileStats = await stat(filePath);
+      if (now - fileStats.mtimeMs > maxAgeMs) {
+        continue;
+      }
+      archivedFiles.push({ filePath, mtimeMs: fileStats.mtimeMs });
+    }
+
+    if (archivedFiles.length === 0) {
+      return [];
+    }
+
+    archivedFiles.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    const raw = await readFile(archivedFiles[0].filePath, "utf8");
+    const userMessages: string[] = [];
+
+    for (const line of raw.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        continue;
+      }
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (!isRecord(parsed) || parsed["type"] !== "message") {
+        continue;
+      }
+      const text = extractTextFromUserMessage(parsed["message"]);
+      if (!text) {
+        continue;
+      }
+      userMessages.push(text);
+    }
+
+    return userMessages.slice(-SESSION_QUERY_LOOKBACK);
+  } catch {
+    return [];
   }
 }
 

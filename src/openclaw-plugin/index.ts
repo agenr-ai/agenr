@@ -1,3 +1,5 @@
+import os from "node:os";
+import path from "node:path";
 import type { Client } from "@libsql/client";
 import { Type } from "@sinclair/typebox";
 import { closeDb, getDb, initDb } from "../db/client.js";
@@ -11,7 +13,9 @@ import {
 import {
   clearStash,
   extractLastUserText,
+  readLatestArchivedMessages,
   resolveSessionQuery,
+  SESSION_TOPIC_MIN_LENGTH,
   SESSION_TOPIC_TTL_MS,
   stripPromptMetadata,
   shouldStashTopic,
@@ -154,7 +158,31 @@ const plugin = {
             const project = config?.project?.trim() || undefined;
             const userPrompt = stripPromptMetadata(event.prompt ?? "");
             const queryText = resolveSessionQuery(userPrompt, ctx.sessionKey);
-            const recallResult = await runRecall(agenrPath, budget, project, queryText);
+            let recallQueryText = queryText;
+
+            if (
+              queryText === userPrompt &&
+              userPrompt.length < SESSION_TOPIC_MIN_LENGTH
+            ) {
+              const agentIdRaw = ctx["agentId"];
+              const agentId = typeof agentIdRaw === "string" && agentIdRaw.trim() ? agentIdRaw : "main";
+              const sessionsDir = path.join(
+                os.homedir(),
+                ".openclaw",
+                "agents",
+                agentId,
+                "sessions",
+              );
+              const archivedMessages = await readLatestArchivedMessages(sessionsDir);
+              if (archivedMessages.length > 0) {
+                recallQueryText = archivedMessages.join(" ");
+                api.logger.info?.(
+                  `[agenr] session-start: using archived session fallback, ${archivedMessages.length} messages`,
+                );
+              }
+            }
+
+            const recallResult = await runRecall(agenrPath, budget, project, recallQueryText);
             if (recallResult) {
               const formatted = formatRecallAsMarkdown(recallResult);
               if (formatted.trim()) {
@@ -391,6 +419,7 @@ const plugin = {
 
 export const __testing = {
   SESSION_TOPIC_TTL_MS,
+  readLatestArchivedMessages,
   clearState(): void {
     clearStash();
     seenSessions.clear();
