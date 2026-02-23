@@ -156,13 +156,13 @@ const plugin = {
             const project = config?.project?.trim() || undefined;
             const userPrompt = stripPromptMetadata(event.prompt ?? "");
             const queryText = resolveSessionQuery(userPrompt, ctx.sessionKey);
-            if (!ctx.agentId?.trim()) {
-              api.logger.debug?.("[agenr] session-start: agentId not provided, defaulting to 'main'");
-            }
             let recallResult: RecallResult | null;
             const isColdStart = isFirstInSession && queryText === undefined;
 
             if (isColdStart) {
+              if (!ctx.agentId?.trim()) {
+                api.logger.debug?.("[agenr] cold-start: agentId not in ctx, defaulting to 'main'");
+              }
               recallResult = await runRecall(agenrPath, budget, project, undefined, {
                 context: "browse",
                 since: "1d",
@@ -189,8 +189,10 @@ const plugin = {
                     await runRetireTool(agenrPath, {
                       entry_id: entryId,
                       reason: "consumed at session start",
-                    }).catch(() => {
-                      // Silently swallow - worst case handoff shows up again next session.
+                    }).catch((err) => {
+                      api.logger.debug?.(
+                        `[agenr] session-start: retire handoff ${entryId} failed: ${err instanceof Error ? err.message : String(err)}`,
+                      );
                     });
                   } else {
                     api.logger.debug?.(
@@ -276,8 +278,14 @@ const plugin = {
               },
             ],
           };
-          runStoreTool(agenrPath, handoffEntry, config as Record<string, unknown>).catch(() => {
-            // Fire-and-forget - do not block or throw.
+          const storeConfig: Record<string, unknown> = {
+            ...(config as Record<string, unknown> | undefined),
+            logger: api.logger,
+          };
+          runStoreTool(agenrPath, handoffEntry, storeConfig).catch((err) => {
+            api.logger.debug?.(
+              `[agenr] before_reset: handoff store failed: ${err instanceof Error ? err.message : String(err)}`,
+            );
           });
         }
       } catch (err) {
@@ -288,7 +296,6 @@ const plugin = {
     });
 
     if (api.registerTool) {
-      const config = api.pluginConfig as AgenrPluginConfig | undefined;
       if (config?.enabled === false) {
         return;
       }
