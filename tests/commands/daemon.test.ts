@@ -125,6 +125,29 @@ describe("daemon commands", () => {
     expect(plist).not.toContain("/opt/homebrew/lib/node_modules/agenr/dist/cli.js");
   });
 
+  it("falls back to cwd-relative cli path when argv[1] is undefined", async () => {
+    const home = await makeTempDir();
+    const sessionsDir = path.join(home, "sessions");
+    await fs.mkdir(sessionsDir, { recursive: true });
+
+    const result = await runDaemonInstallCommand(
+      { force: true, dir: sessionsDir, platform: "openclaw" },
+      {
+        platformFn: () => "darwin",
+        homedirFn: () => home,
+        uidFn: () => 501,
+        argvFn: () => ["node"],
+        execFileFn: vi.fn(async () => ({ stdout: "", stderr: "", exitCode: 0 })),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const plistPath = path.join(home, "Library", "LaunchAgents", "com.agenr.watch.plist");
+    const plist = await fs.readFile(plistPath, "utf8");
+    expect(plist).not.toContain("/opt/homebrew/lib/node_modules/agenr/dist/cli.js");
+    expect(plist).toContain("dist/cli.js");
+  });
+
   it("uninstalls daemon by bootout + plist removal", async () => {
     const home = await makeTempDir();
     const plistPath = path.join(home, "Library", "LaunchAgents", "com.agenr.watch.plist");
