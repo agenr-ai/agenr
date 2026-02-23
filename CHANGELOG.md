@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.8.10]
+
+### Added
+- feat(plugin): session-start recall now uses the inbound user message as the recall query seed, enabling vector similarity scoring instead of pure recency ranking; entries relevant to the actual conversation topic now surface at session start (issues #177, #178)
+- feat(plugin): before_reset hook captures the last 3 substantive user messages before a /new reset and stashes them in memory; the next session-start recall uses the stash as its query seed when the opening prompt is low-signal (issues #177, #178)
+- feat(plugin): session topic stash eviction sweep runs every 5 minutes; TTL is 1 hour
+
+### Changed
+- chore(plugin): session-start recall timeout increased from 5s to 10s to accommodate the embedding API call now required when a query is present
+- chore(plugin): session topic stash requires a minimum of 40 characters and 5 words to filter out low-signal conversational closers
+- refactor(plugin): session query helpers extracted from index.ts into session-query.ts
+
+### Fixed
+- fix(plugin): session-start recall no longer skips vector similarity scoring when a query is available; previously RecallQuery.text was always undefined at session start (issue #177)
+
 ## [0.8.9]
 
 ### Added

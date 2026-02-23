@@ -18,6 +18,12 @@ openclaw plugins install agenr
 agenr setup  # configure LLM provider + auth
 ```
 
+> **Security notice:** OpenClaw's code scanner flags a critical warning during install:
+> _"Shell command execution detected (child_process)."_
+> This is expected -- agenr shells out to its own CLI binary to run recall and store
+> operations. It does not make external network calls, read your OpenClaw credentials,
+> or exfiltrate data. The plugin source is open at https://github.com/agenr-ai/agenr.
+
 ### 2. Optional plugin config
 
 After install, agenr works with no additional config. To customize, add an agenr
@@ -51,6 +57,33 @@ agenr recall "test" --limit 3
 ```
 
 That's the wiring. Now the important part.
+
+## Session-Start Recall
+
+When a new session begins, agenr automatically seeds recall with a query so that
+relevant memory surfaces before the first response. The query source depends on
+how the session started:
+
+**Normal session (daily reset or gateway restart):**
+The user's first message is used directly as the recall query. Entries relevant
+to what the user actually asked rank higher than generic recency-based results.
+
+**After /new (no topic):**
+When the user sends /new alone, the opening prompt is low-signal. agenr captures
+the last few substantive user messages from the ending session before it resets
+and uses that content as the recall seed for the new session. This means recall
+surfaces what you were working on -- not just whatever was most recently stored.
+
+A message is only eligible for stashing if the combined recent content is at least
+40 characters and 5 words. Short conversational closers ("thanks", "sounds good",
+"see you on the other side") are filtered out.
+
+**After /new with a topic (e.g., /new let's pick up the migration work):**
+The topic portion is used as the recall query directly. The stash from the
+ending session is consumed and discarded.
+
+**Cold boot (no prior session):**
+Recall falls back to recency-based ranking with no query.
 
 ## Seed Your Agent's Memory
 
