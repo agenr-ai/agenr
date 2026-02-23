@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.11]
+
+### Changed
+- feat(plugin): resolveSessionQuery now blends the before_reset stash with the live prompt for session-start recall; when a stash exists and the live prompt is high-signal (>=40 chars / >=5 words), the query is stash + live prompt; when the live prompt is low-signal (common short opener like "did the plugin fire?"), the stash wins outright; no-stash behavior is unchanged (issue #181)
+
 ## [0.8.10]
 
 ### Added
