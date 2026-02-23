@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.8.9]
+
+### Added
+- feat(extractor): broadened extraction prompt to capture personal user context (health, diet, family, occupation, location, values) even from casual or passing mentions; added 6-month durability test heuristic to distinguish durable personal facts from transient states (issue #173)
+- feat(extractor): new few-shot examples for RELATIONSHIP, PREFERENCE, FACT, and EVENT types covering personal context scenarios with scoring rationale
+
+### Fixed
+- fix(ingest): suppress redundant whole-file ignored-params warning; now fires once per ingest run via shared ExtractRunOnceFlags object instead of once per file (issue #168)
+- fix(ingest): silence SQLITE_ERROR vector-index-not-found pre-fetch error during bulk ingest when vector index is intentionally absent; all other pre-fetch errors still log (issue #168)
+- fix(ingest): detect .jsonl.reset.TIMESTAMP session files as JSONL adapter by extending suffix-stripping regex to handle both .deleted and .reset suffixes (issue #169)
+- fix(consolidate): added merge system prompt constraint that expiry must be exactly permanent or temporary, never a date or timestamp; complements existing runtime fallback (issue #172)
+- fix(daemon): daemon install plist now uses the runtime CLI path resolved from argv[1] via the injected argvFn, preventing hardcoded npm global paths from breaking pnpm installs (issue #174)
+
 ## [0.8.8]
 
 ### Fixed
