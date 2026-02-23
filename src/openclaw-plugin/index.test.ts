@@ -1326,7 +1326,7 @@ describe("before_reset topic stashing", () => {
     );
   });
 
-  it("before_reset stores a session handoff entry when last user text is non-empty", async () => {
+  it("before_reset stores handoff with exchange context not just user text", async () => {
     let capturedStdinPayload: unknown;
     const mockChild = createMockChild({ code: 0 });
     mockChild.stdin.write = vi.fn((chunk: string) => {
@@ -1341,7 +1341,9 @@ describe("before_reset topic stashing", () => {
     handler(
       {
         messages: [
-          { role: "user", content: "Working on the session handoff feature and testing auto-retire behavior" },
+          { role: "user", content: "Working on session handoff behavior" },
+          { role: "assistant", content: "I can update the implementation and tests now" },
+          { role: "user", content: "Do it and include swarm findings in the patch" },
         ],
       },
       { sessionKey: "agent:main:handoff-store-test" },
@@ -1352,10 +1354,19 @@ describe("before_reset topic stashing", () => {
     });
 
     expect(Array.isArray(capturedStdinPayload)).toBe(true);
-    const entries = capturedStdinPayload as Array<{ type: string; importance: number; subject: string }>;
+    const entries = capturedStdinPayload as Array<{
+      type: string;
+      importance: number;
+      subject: string;
+      content: string;
+    }>;
     expect(entries[0]?.type).toBe("event");
     expect(entries[0]?.importance).toBe(10);
     expect(entries[0]?.subject).toMatch(/^session handoff/i);
+    expect(entries[0]?.content).toContain("U:");
+    expect(entries[0]?.content).toContain("A:");
+    expect(entries[0]?.content).toContain("U: Do it and include swarm findings in the patch");
+    expect(entries[0]?.content).not.toBe("Working on session handoff behavior Do it and include swarm findings in the patch");
   });
 });
 

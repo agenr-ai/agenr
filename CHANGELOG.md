@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.8.19] - 2026-02-23
+
+### Changed
+- feat(openclaw-plugin): `before_reset` handoff store content now uses a structured recent exchange summary (`U:`/`A:` turns) instead of user-only fragments, improving cross-session handoff clarity while keeping stash-based recall seeding unchanged (issue #196)
+- feat(openclaw-plugin): added `extractLastExchangeText(messages, maxTurns?)` in `src/openclaw-plugin/session-query.ts` to collect the last 5 user-turn windows with interleaved assistant context, per-turn truncation (200 chars), and chronological `U:`/`A:` formatting
+- chore(openclaw-plugin): exported `SESSION_QUERY_LOOKBACK` from `session-query.ts` for direct test assertions
+
+### Tests
+- test(openclaw-plugin): added `extractLastExchangeText` coverage for empty input, U/A formatting, per-message truncation, 5-user-turn collection window, and no-extractable-content behavior
+- test(openclaw-plugin): updated handoff-store integration assertion to verify stored content includes exchange context prefixes (`U:`/`A:`) rather than flattened user-only text
+
 ## [0.8.18] - 2026-02-23
 
 ### Changed

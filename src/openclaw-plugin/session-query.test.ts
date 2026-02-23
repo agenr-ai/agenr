@@ -2,7 +2,12 @@ import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { readLatestArchivedUserMessages, stripPromptMetadata } from "./session-query.js";
+import {
+  extractLastExchangeText,
+  readLatestArchivedUserMessages,
+  SESSION_QUERY_LOOKBACK,
+  stripPromptMetadata,
+} from "./session-query.js";
 
 const tempDirs: string[] = [];
 
@@ -66,6 +71,59 @@ describe("stripPromptMetadata", () => {
   });
 });
 
+describe("extractLastExchangeText", () => {
+  it("returns empty string for empty messages array", () => {
+    expect(extractLastExchangeText([])).toBe("");
+  });
+
+  it("formats last user and assistant turns with U:/A: prefixes", () => {
+    const result = extractLastExchangeText([
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "hi there" },
+      { role: "user", content: "what is the status?" },
+    ]);
+
+    expect(result).toBe("U: hello | A: hi there | U: what is the status?");
+  });
+
+  it("truncates individual messages to 200 chars", () => {
+    const longUserText = "x".repeat(250);
+    const result = extractLastExchangeText([{ role: "user", content: longUserText }]);
+    const expected = `U: ${"x".repeat(200)}`;
+
+    expect(result).toBe(expected);
+    expect(result).not.toContain("x".repeat(201));
+  });
+
+  it("collects up to 5 user turns worth of context", () => {
+    const result = extractLastExchangeText([
+      { role: "user", content: "u1" },
+      { role: "assistant", content: "a1" },
+      { role: "user", content: "u2" },
+      { role: "assistant", content: "a2" },
+      { role: "user", content: "u3" },
+      { role: "assistant", content: "a3" },
+      { role: "user", content: "u4" },
+      { role: "assistant", content: "a4" },
+      { role: "user", content: "u5" },
+      { role: "assistant", content: "a5" },
+      { role: "user", content: "u6" },
+    ]);
+
+    expect(result).toBe("U: u2 | A: a2 | U: u3 | A: a3 | U: u4 | A: a4 | U: u5 | A: a5 | U: u6");
+  });
+
+  it("returns empty string when no extractable text exists", () => {
+    const result = extractLastExchangeText([
+      { role: "user", content: [{ type: "image", source: "img" }] },
+      { role: "assistant", content: [{ type: "tool_result", text: "ignored" }] },
+      { role: "assistant", content: null },
+    ]);
+
+    expect(result).toBe("");
+  });
+});
+
 describe("readLatestArchivedUserMessages", () => {
   it("returns [] when dir does not exist", async () => {
     const missingDir = path.join(os.tmpdir(), `agenr-missing-${Date.now()}`);
@@ -122,11 +180,9 @@ describe("readLatestArchivedUserMessages", () => {
       now - 200,
     );
 
-    await expect(readLatestArchivedUserMessages(dir, 60_000)).resolves.toEqual([
-      "second user message",
-      "third user message",
-      "fourth user message",
-    ]);
+    const result = await readLatestArchivedUserMessages(dir, 60_000);
+    expect(result).toEqual(["second user message", "third user message", "fourth user message"]);
+    expect(result).toHaveLength(SESSION_QUERY_LOOKBACK);
   });
 
   it("skips non-user messages and tool results", async () => {
