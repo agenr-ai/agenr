@@ -29,6 +29,12 @@ export type BeforePromptBuildResult = {
   prependContext?: string;
 };
 
+export type BeforeResetEvent = {
+  sessionFile?: string;
+  messages?: unknown[];
+  reason?: string;
+};
+
 export type PluginLogger = {
   debug?: (message: string) => void;
   info?: (message: string) => void;
@@ -76,6 +82,13 @@ export type PluginApi = {
         event: BeforePromptBuildEvent,
         ctx: PluginHookAgentContext
       ) => Promise<BeforePromptBuildResult | undefined> | BeforePromptBuildResult | undefined,
+    ): void;
+    (
+      hook: "before_reset",
+      handler: (
+        event: BeforeResetEvent,
+        ctx: PluginHookAgentContext
+      ) => Promise<void> | void,
     ): void;
   };
 };

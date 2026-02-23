@@ -8,6 +8,14 @@ import {
   resolveBudget,
   runRecall,
 } from "./recall.js";
+import {
+  clearStash,
+  extractLastUserText,
+  resolveSessionQuery,
+  SESSION_TOPIC_MIN_LENGTH,
+  SESSION_TOPIC_TTL_MS as _TTL,
+  stashSessionTopic,
+} from "./session-query.js";
 import { checkSignals, resolveSignalConfig } from "./signals.js";
 import { runExtractTool, runRecallTool, runRetireTool, runStoreTool } from "./tools.js";
 import type {
@@ -114,7 +122,7 @@ const plugin = {
     api.on(
       "before_prompt_build",
       async (
-        _event: BeforePromptBuildEvent,
+        event: BeforePromptBuildEvent,
         ctx: PluginHookAgentContext,
       ): Promise<BeforePromptBuildResult | undefined> => {
         try {
@@ -143,7 +151,8 @@ const plugin = {
             const agenrPath = resolveAgenrPath(config);
             const budget = resolveBudget(config);
             const project = config?.project?.trim() || undefined;
-            const recallResult = await runRecall(agenrPath, budget, project);
+            const queryText = resolveSessionQuery(event.prompt, ctx.sessionKey);
+            const recallResult = await runRecall(agenrPath, budget, project, queryText);
             if (recallResult) {
               const formatted = formatRecallAsMarkdown(recallResult);
               if (formatted.trim()) {
@@ -192,6 +201,38 @@ const plugin = {
         }
       },
     );
+
+    // Stash the last user topic before reset so before_prompt_build can
+    // seed recall when the next prompt is thin (e.g., a bare /new).
+    api.on("before_reset", (event, ctx): void => {
+      try {
+        const sessionKey = ctx.sessionKey;
+        if (!sessionKey) {
+          return;
+        }
+
+        const messages = event.messages;
+        if (!Array.isArray(messages) || messages.length === 0) {
+          return;
+        }
+
+        const lastUserText = extractLastUserText(messages);
+        if (!lastUserText || lastUserText.length < SESSION_TOPIC_MIN_LENGTH) {
+          return;
+        }
+        const wordCount = lastUserText.split(/\s+/).filter(Boolean).length;
+        if (wordCount < 5) {
+          return;
+        }
+
+        stashSessionTopic(sessionKey, lastUserText);
+      } catch (err) {
+        api.logger.warn(
+          "agenr plugin before_reset stash failed: " +
+            (err instanceof Error ? err.message : String(err)),
+        );
+      }
+    });
 
     if (api.registerTool) {
       const config = api.pluginConfig as AgenrPluginConfig | undefined;
@@ -348,6 +389,15 @@ const plugin = {
         },
       );
     }
+  },
+};
+
+export const __testing = {
+  SESSION_TOPIC_TTL_MS: _TTL,
+  clearState(): void {
+    clearStash();
+    seenSessions.clear();
+    sessionSignalState.clear();
   },
 };
 
