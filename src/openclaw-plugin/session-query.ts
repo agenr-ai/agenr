@@ -92,9 +92,20 @@ function sweepExpiredStash(): void {
   }
 }
 
-const sweepInterval = setInterval(sweepExpiredStash, 5 * 60 * 1000);
-if (typeof sweepInterval.unref === "function") {
+export let sweepInterval: ReturnType<typeof setInterval> | undefined =
+  setInterval(sweepExpiredStash, 5 * 60 * 1000);
+if (sweepInterval !== undefined && typeof sweepInterval.unref === "function") {
   sweepInterval.unref();
+}
+
+function stripResetPrefix(prompt: string): string {
+  const lower = prompt.toLowerCase();
+  for (const cmd of ["/new", "/reset"]) {
+    if (lower.startsWith(cmd + " ")) {
+      return prompt.slice(cmd.length).trim();
+    }
+  }
+  return prompt;
 }
 
 export function resolveSessionQuery(prompt: string | undefined, sessionKey?: string): string | undefined {
@@ -112,15 +123,13 @@ export function resolveSessionQuery(prompt: string | undefined, sessionKey?: str
 
   const normalized = (prompt ?? "").trim();
   if (!isThinPrompt(normalized)) {
-    return normalized;
+    return stripResetPrefix(normalized);
   }
   return stashedText;
 }
 
 export function stashSessionTopic(sessionKey: string, text: string): void {
-  // Keep an internal length guard so callers cannot bypass minimum quality.
-  // Word-count checks are handled by shouldStashTopic at call sites.
-  if (text.length < SESSION_TOPIC_MIN_LENGTH) {
+  if (!shouldStashTopic(text)) {
     return;
   }
   sessionTopicStash.set(sessionKey, {
@@ -131,4 +140,8 @@ export function stashSessionTopic(sessionKey: string, text: string): void {
 
 export function clearStash(): void {
   sessionTopicStash.clear();
+  if (sweepInterval !== undefined) {
+    clearInterval(sweepInterval);
+    sweepInterval = undefined;
+  }
 }
