@@ -827,7 +827,7 @@ describe("before_prompt_build query seeding", () => {
       { context: "browse", since: "1d" },
     );
     expect(debugLogger).toHaveBeenCalledWith(
-      "[agenr] session-start: agentId not provided, defaulting to 'main'",
+      "[agenr] cold-start: agentId not in ctx, defaulting to 'main'",
     );
   });
 

@@ -27,6 +27,11 @@ export type RecallResult = {
   }>;
 };
 
+export type RunRecallOptions = {
+  context?: "session-start" | "browse";
+  since?: string;
+};
+
 export function resolveAgenrPath(config?: AgenrPluginConfig): string {
   return config?.agenrPath?.trim() || process.env["AGENR_BIN"]?.trim() || DEFAULT_AGENR_PATH;
 }
@@ -48,7 +53,7 @@ export async function runRecall(
   budget: number,
   project?: string,
   query?: string,
-  options?: { context?: "session-start" | "browse"; since?: string },
+  options?: RunRecallOptions,
 ): Promise<RecallResult | null> {
   return await new Promise((resolve) => {
     let stdout = "";
