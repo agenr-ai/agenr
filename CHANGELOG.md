@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.8.22] - 2026-02-23
+
+### Changed
+- feat(openclaw-plugin): replace thin-prompt/stash session-start recall with three-phase
+  cross-session context injection (issue #205)
+  - Phase 1A (always): reads last 7 user+assistant turns from most recently modified
+    session JSONL file in ~/.openclaw/agents/<agentId>/sessions/
+  - Phase 1B (always): runs agenr recall --browse --since 1d --limit 20, picks up
+    importance:10 handoff entry written at /new time
+  - Phase 2 (conditional): semantic recall seeded from Phase 1A turns + first user
+    message if >= 5 words; results deduplicated against Phase 1B by entry id
+  - Handoff entries retired after first use (one-time read)
+- feat(openclaw-plugin): added findPreviousSessionFile, extractRecentTurns,
+  buildSemanticSeed to src/openclaw-plugin/session-query.ts
+- feat(openclaw-plugin): findPreviousSessionFile uses parallel stat() calls for
+  performance on large sessions dirs
+- feat(openclaw-plugin): sessionsDir configurable via AgenrPluginConfig.sessionsDir;
+  defaults to ~/.openclaw/agents/<agentId>/sessions using ctx.agentId with "main"
+  fallback
+- feat(openclaw-plugin): RunRecallOptions extended with limit?: number to support
+  --limit flag in browse recall
+- refactor(openclaw-plugin): removed isThinPrompt, resolveSessionQuery,
+  sessionTopicStash, stashSessionTopic, shouldStashTopic, sweepInterval, clearStash,
+  readLatestArchivedUserMessages
+
+### Tests
+- test(openclaw-plugin): added unit tests for findPreviousSessionFile, extractRecentTurns,
+  buildSemanticSeed in session-query.test.ts
+- test(openclaw-plugin): added integration tests for three-phase before_prompt_build flow,
+  Phase 2 deduplication, and isFirstInSession guard in index.test.ts
+- test(openclaw-plugin): added second-message guard test (isFirstInSession prevents
+  re-injection on subsequent messages in same session)
+
 ## [0.8.19] - 2026-02-23
 
 ### Changed
