@@ -400,8 +400,8 @@ describe("before_prompt_build cross-session context injection", () => {
     expect(result?.prependContext).toContain("## Recent memory");
   });
 
-  it("does not inject recall on second message in the same session", async () => {
-    vi.spyOn(pluginRecall, "runRecall").mockResolvedValue({
+  it("second message in same session does not inject context again", async () => {
+    const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue({
       query: "[browse]",
       results: [
         {
@@ -415,6 +415,7 @@ describe("before_prompt_build cross-session context injection", () => {
         },
       ],
     });
+    const findPreviousSessionFileMock = vi.spyOn(sessionQuery, "findPreviousSessionFile");
     const api = makeApi({ pluginConfig: { signalsEnabled: false } });
     plugin.register(api);
     const handler = getBeforePromptBuildHandler(api);
@@ -430,6 +431,8 @@ describe("before_prompt_build cross-session context injection", () => {
 
     expect(first?.prependContext).toContain("## Recent memory");
     expect(second).toBeUndefined();
+    expect(runRecallMock).toHaveBeenCalledTimes(1);
+    expect(findPreviousSessionFileMock).toHaveBeenCalledTimes(1);
   });
 
   it("Phase 2 deduplicates entries already present in Phase 1B by id", async () => {

@@ -1,7 +1,6 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 
-export const SESSION_QUERY_LOOKBACK = 3;
 const EXCHANGE_TEXT_MAX_CHARS = 200;
 const EXCHANGE_USER_TURN_LIMIT = 5;
 const RECENT_TURN_MAX_CHARS = 150;
@@ -105,28 +104,6 @@ export function stripPromptMetadata(raw: string): string {
   }
 }
 
-export function extractLastUserText(messages: unknown[]): string {
-  try {
-    const collected: string[] = [];
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-      const extracted = extractTextFromUserMessage(messages[index]);
-      if (!extracted) {
-        continue;
-      }
-      collected.push(extracted);
-      if (collected.length >= SESSION_QUERY_LOOKBACK) {
-        break;
-      }
-    }
-
-    // reverse to restore chronological order (oldest first) before joining
-    const joined = collected.reverse().join(" ").trim();
-    return joined || "";
-  } catch {
-    return "";
-  }
-}
-
 export function extractLastExchangeText(messages: unknown[], maxTurns = EXCHANGE_USER_TURN_LIMIT): string {
   try {
     if (!Array.isArray(messages) || messages.length === 0) {
@@ -176,12 +153,13 @@ export function extractLastExchangeText(messages: unknown[], maxTurns = EXCHANGE
 export async function findPreviousSessionFile(
   sessionsDir: string,
   currentSessionId: string | undefined,
+  logger?: { debug?: (msg: string) => void },
 ): Promise<string | null> {
   try {
-    const candidates: Array<{ filePath: string; mtimeMs: number }> = [];
     const normalizedSessionId = currentSessionId?.trim();
     const currentSessionFileName = normalizedSessionId ? `${normalizedSessionId}.jsonl` : undefined;
     const entries = await readdir(sessionsDir, { withFileTypes: true });
+    const candidatePaths: string[] = [];
 
     for (const entry of entries) {
       if (!entry.isFile()) {
@@ -196,17 +174,36 @@ export async function findPreviousSessionFile(
       if (currentSessionFileName && entry.name === currentSessionFileName) {
         continue;
       }
-      const filePath = path.join(sessionsDir, entry.name);
-      const fileStats = await stat(filePath);
-      candidates.push({ filePath, mtimeMs: fileStats.mtimeMs });
+      candidatePaths.push(path.join(sessionsDir, entry.name));
     }
 
+    if (candidatePaths.length === 0) {
+      return null;
+    }
+
+    const statResults = await Promise.all(
+      candidatePaths.map(async (filePath) => {
+        try {
+          const fileStats = await stat(filePath);
+          return { filePath, mtimeMs: fileStats.mtimeMs };
+        } catch {
+          return null;
+        }
+      }),
+    );
+    const candidates = statResults.filter(
+      (result): result is { filePath: string; mtimeMs: number } => result !== null,
+    );
     if (candidates.length === 0) {
       return null;
     }
+
     candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
     return candidates[0]?.filePath ?? null;
-  } catch {
+  } catch (err) {
+    logger?.debug?.(
+      `[agenr] findPreviousSessionFile: failed to read sessions dir "${sessionsDir}": ${err instanceof Error ? err.message : String(err)}`,
+    );
     return null;
   }
 }

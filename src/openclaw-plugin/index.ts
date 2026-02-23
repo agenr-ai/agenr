@@ -158,7 +158,7 @@ const plugin = {
               config?.sessionsDir ?? path.join(os.homedir(), `.openclaw/agents/${agentId}/sessions`);
 
             const [previousTurns, browseResult] = await Promise.all([
-              findPreviousSessionFile(sessionsDir, ctx.sessionId).then((file) =>
+              findPreviousSessionFile(sessionsDir, ctx.sessionId, api.logger).then((file) =>
                 file ? extractRecentTurns(file) : Promise.resolve(""),
               ),
               runRecall(agenrPath, budget, project, undefined, {
