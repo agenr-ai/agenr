@@ -300,7 +300,7 @@ async function mergeNearExactDuplicates(
 
   const result = await db.execute({
     sql: `
-    SELECT id, type, subject, content, project, embedding, confirmations, recall_count, created_at
+    SELECT id, type, subject, content, project, importance, embedding, confirmations, recall_count, created_at
     FROM entries
     WHERE superseded_by IS NULL
       AND retired = 0
@@ -318,6 +318,7 @@ async function mergeNearExactDuplicates(
       subject: toStringValue(row.subject),
       content: toStringValue(row.content),
       project: toProjectValue(row.project),
+      importance: Number.isFinite(toNumber(row.importance)) ? toNumber(row.importance) : 5,
       embedding: mapBufferToVector(row.embedding),
       confirmations: Number.isFinite(toNumber(row.confirmations)) ? toNumber(row.confirmations) : 0,
       recallCount: Number.isFinite(toNumber(row.recall_count)) ? toNumber(row.recall_count) : 0,
@@ -407,6 +408,12 @@ async function mergeNearExactDuplicates(
     }
 
     const totalConfirmations = sorted.reduce((sum, entry) => sum + entry.confirmations, 0);
+    const maxImportance = sorted.reduce((max, entry) => Math.max(max, entry.importance ?? 5), 0);
+    const oldestCreatedAt = sorted.reduce((oldest, entry) => {
+      const t = Date.parse(entry.createdAt);
+      const o = Date.parse(oldest);
+      return Number.isFinite(t) && t < (Number.isFinite(o) ? o : Infinity) ? entry.createdAt : oldest;
+    }, keeper.createdAt);
     for (const source of sources) {
       await db.execute({
         sql: `
@@ -445,10 +452,12 @@ async function mergeNearExactDuplicates(
         UPDATE entries
         SET merged_from = ?,
             consolidated_at = datetime('now'),
-            confirmations = ?
+            confirmations = ?,
+            importance = CASE WHEN importance < ? THEN ? ELSE importance END,
+            created_at = CASE WHEN created_at > ? THEN ? ELSE created_at END
         WHERE id = ?
       `,
-      args: [sources.length, totalConfirmations, keeper.id],
+      args: [sources.length, totalConfirmations, maxImportance, maxImportance, oldestCreatedAt, oldestCreatedAt, keeper.id],
     });
   }
 
