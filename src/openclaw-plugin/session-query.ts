@@ -52,18 +52,18 @@ export function isThinPrompt(prompt: string): boolean {
   return trimmed === "" || trimmed === "/new" || trimmed === "/reset";
 }
 
-const OPENCLAW_PROMPT_TIMESTAMP_PATTERN = /\[\w{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2} [A-Z]{2,5}\] /g;
-
 export function stripPromptMetadata(raw: string): string {
   if (!raw) {
     return "";
   }
 
   try {
+    // Local regex (no g-flag state leak): matches OpenClaw timestamp prefixes.
+    // Covers named abbreviations (CST, AEST) and offset-style (GMT+5, GMT-10).
+    const pattern = /\[\w{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2} (?:[A-Z]{2,5}|GMT[+-]\d{1,2})\] /g;
     let lastMatchEnd = -1;
     let match: RegExpExecArray | null = null;
-    OPENCLAW_PROMPT_TIMESTAMP_PATTERN.lastIndex = 0;
-    while ((match = OPENCLAW_PROMPT_TIMESTAMP_PATTERN.exec(raw)) !== null) {
+    while ((match = pattern.exec(raw)) !== null) {
       lastMatchEnd = match.index + match[0].length;
     }
 
