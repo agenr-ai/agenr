@@ -816,6 +816,9 @@ function normalize(value: string): string {
   return value.trim().toLowerCase();
 }
 
+// Matches libsql/sqlite-vec error: "SQLITE_ERROR: vector index(search): index not found"
+// Both branches of the pre-fetch catch return []; this suppresses the redundant log noise
+// during bulk ingest when the vector index is intentionally absent.
 function isVectorIndexNotFoundMessage(message: string): boolean {
   const normalized = message.toLowerCase();
   return normalized.includes("vector index") && normalized.includes("not found");
@@ -1930,7 +1933,14 @@ export interface ExtractChunkCompleteResult {
   warnings: string[];
 }
 
+/**
+ * Shared mutable state object passed across multiple extractKnowledgeFromChunks
+ * calls (e.g., across files in a single ingest run) to suppress duplicate
+ * one-time warnings. When undefined, all warnings fire on every call,
+ * preserving backward-compatible behavior for callers that do not share state.
+ */
 export interface ExtractRunOnceFlags {
+  /** Set to true after the whole-file ignored-params warning fires once. */
   hasWarnedWholeFileIgnoredParams?: boolean;
 }
 
@@ -1956,6 +1966,7 @@ export async function extractKnowledgeFromChunks(params: {
   embeddingApiKey?: string;
   noPreFetch?: boolean;
   embedFn?: (texts: string[], apiKey: string) => Promise<number[][]>;
+  /** Shared warning state across calls; pass one object per ingest run to dedupe one-time logs. */
   onceFlags?: ExtractRunOnceFlags;
 }): Promise<ExtractChunksResult> {
   const warnings: string[] = [];
@@ -1999,6 +2010,7 @@ export async function extractKnowledgeFromChunks(params: {
         console.warn(ignoredParamsLine);
       }
       if (params.onceFlags) {
+        // Intentional mutation: flag is shared by reference across the ingest run.
         params.onceFlags.hasWarnedWholeFileIgnoredParams = true;
       }
     }
