@@ -704,6 +704,41 @@ describe("before_prompt_build query seeding", () => {
     expect(resolveSessionQuery("/new", sessionKey)).toBeUndefined();
   });
 
+  it("strips OpenClaw prompt metadata envelope before resolving query", async () => {
+    const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
+    const api = makeApi({ pluginConfig: { signalsEnabled: false } });
+    plugin.register(api);
+    const promptHandler = getBeforePromptBuildHandler(api);
+    const resetHandler = getBeforeResetHandler(api);
+    const sessionKey = "agent:main:seed-metadata-envelope";
+    const stashedText = "Please continue discussing release risks across deployment and rollback checks";
+    seedStashWithMessage(resetHandler, sessionKey, stashedText);
+    const rawPrompt = `Conversation info (untrusted metadata):
+\`\`\`json
+{
+  "message_id": "08f2ed82-1111-2222-3333-444455556666",
+  "sender_id": "gateway-client",
+  "sender": "gateway-client"
+}
+\`\`\`
+
+[Sun 2026-02-22 21:08 CST] hey`;
+
+    await promptHandler(
+      { prompt: rawPrompt },
+      { sessionKey, sessionId: "uuid-seed-metadata-envelope" },
+    );
+
+    expect(runRecallMock).toHaveBeenCalledTimes(1);
+    expect(runRecallMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(Number),
+      undefined,
+      stashedText,
+    );
+    expect(resolveSessionQuery("/new", sessionKey)).toBeUndefined();
+  });
+
   it("blends stash and high-signal live prompt when both present at integration level", async () => {
     const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
     const api = makeApi({ pluginConfig: { signalsEnabled: false } });
