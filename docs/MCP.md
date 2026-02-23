@@ -115,8 +115,11 @@ Source of truth:
 Retrieve relevant memories using semantic search.
 
 Parameters:
-- `query` (string, optional): search text. Required when context is `default` (or omitted). Not needed for `session-start` context.
-- `context` (string, optional, default `default`): Use `session-start` for fast bootstrap without embedding call (no `query` needed). Other value: `default`.
+- `query` (string, optional): search text. Required when context is `default` (or omitted). Not needed for `session-start` or `browse`.
+- `context` (string, optional, default `default`):
+  - `default`: semantic search (requires `query`)
+  - `session-start`: fast bootstrap without embedding call (no `query` needed)
+  - `browse`: temporal browse mode sorted by importance/date (no `query`, zero embedding/API calls)
 - `limit` (integer, optional, default `10`): max results
 - `types` (string, optional): comma-separated entry types
 - `since` (string, optional): ISO date or relative (`7d`, `24h`, `1m`, `1y`)
@@ -151,6 +154,19 @@ Session-start recall (no query needed):
   "name": "agenr_recall",
   "arguments": {
     "context": "session-start",
+    "limit": 20
+  }
+}
+```
+
+Browse recall (no query needed):
+
+```json
+{
+  "name": "agenr_recall",
+  "arguments": {
+    "context": "browse",
+    "since": "1d",
     "limit": 20
   }
 }

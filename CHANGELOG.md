@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.8.16] - 2026-02-23
+
+### Added
+- feat(recall): new temporal browse mode for recall via `agenr recall --browse` and MCP `agenr_recall` with `context="browse"` (issue #190)
+- docs(recall): added `docs/usage/recall.md` with browse-mode CLI and MCP usage examples
+
+### Changed
+- recall browse mode now uses a SQL-only path that requires no query and performs zero embedding/OpenAI API calls
+- browse mode does not increment recall metadata (`recall_count`, `last_recalled_at`, `recall_intervals`)
+- OpenClaw plugin tool wiring now maps `context="browse"` to the CLI `--browse` flag (and omits query/context positional args appropriately)
+
+### Tests
+- test(recall): added browse-mode coverage in DB recall, CLI command recall, MCP server recall, and OpenClaw plugin recall tool argument wiring
+
 ## [0.8.15] - 2026-02-23
 
 ### Fixed

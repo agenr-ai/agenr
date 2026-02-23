@@ -515,6 +515,7 @@ export function createProgram(): Command {
     .option("--budget <tokens>", "Approximate token budget", parseIntOption)
     .option("--context <mode>", "Context mode: default|session-start|topic:<query>", "default")
     .option("--scope <level>", "Visibility scope: private|personal|public", "private")
+    .option("--browse", "Skip semantic search and return entries sorted by importance and date", false)
     .option("--no-boost", "Disable scoring boosts and use raw vector similarity", false)
     .option("--no-update", "Do not increment recall metadata", false)
     .action(async (query: string | undefined, opts: Record<string, unknown>) => {
@@ -535,6 +536,7 @@ export function createProgram(): Command {
         budget: opts.budget as number | undefined,
         context: opts.context as string | undefined,
         scope: opts.scope as string | undefined,
+        browse: opts.browse === true,
         noBoost: opts.noBoost === true,
         noUpdate: opts.noUpdate === true,
       });

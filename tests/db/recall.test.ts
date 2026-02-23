@@ -1,5 +1,5 @@
 import { createClient, type Client } from "@libsql/client";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { initDb } from "../../src/db/client.js";
 import {
   freshnessBoost,
@@ -7,6 +7,7 @@ import {
   recall,
   recallStrength,
   recency,
+  scoreBrowseEntry,
   scoreEntry,
   scoreEntryWithBreakdown,
   todoStaleness,
@@ -1252,6 +1253,346 @@ describe("db recall", () => {
     expect(results[2]?.entry.content).toContain("Low vector");
     expect(results.every((item) => item.scores.fts === 0)).toBe(true);
     expect(results.every((item) => item.scores.spacing === 1.0)).toBe(true);
+  });
+
+  describe("browse mode", () => {
+    let hashCounter = 0;
+
+    async function storeBrowseEntries(client: Client, entries: KnowledgeEntry[]): Promise<void> {
+      hashCounter += 1;
+      await storeEntries(client, entries, "sk-test", {
+        sourceFile: "recall-browse-test.jsonl",
+        ingestContentHash: `hash-browse-${hashCounter}`,
+        embedFn: mockEmbed,
+        force: true,
+      });
+    }
+
+    async function setCreatedAt(client: Client, content: string, iso: string): Promise<void> {
+      await client.execute({
+        sql: "UPDATE entries SET created_at = ?, updated_at = ? WHERE content = ?",
+        args: [iso, iso, content],
+      });
+    }
+
+    it("returns entries sorted by importance descending", async () => {
+      const client = makeClient();
+      await initDb(client);
+      await storeBrowseEntries(client, [
+        makeEntry({ content: "browse-imp-9 vec-work-strong", importance: 9 }),
+        makeEntry({ content: "browse-imp-7 vec-work-strong", importance: 7 }),
+        makeEntry({ content: "browse-imp-5 vec-work-strong", importance: 5 }),
+        makeEntry({ content: "browse-imp-8 vec-work-strong", importance: 8 }),
+        makeEntry({ content: "browse-imp-3 vec-work-strong", importance: 3 }),
+      ]);
+
+      const fixedNow = new Date("2026-02-23T00:00:00.000Z");
+      await client.execute({
+        sql: "UPDATE entries SET created_at = ?, updated_at = ?",
+        args: ["2026-02-22T23:30:00.000Z", "2026-02-22T23:30:00.000Z"],
+      });
+
+      const results = await recall(client, { browse: true, limit: 10 }, "", { now: fixedNow });
+      expect(results).toHaveLength(5);
+      expect(results[0]?.entry.importance).toBe(9);
+      expect(results[1]?.entry.importance).toBe(8);
+      expect(results[2]?.entry.importance).toBe(7);
+    });
+
+    it("applies since filter and excludes old entries", async () => {
+      const client = makeClient();
+      await initDb(client);
+
+      const oldEntries = Array.from({ length: 5 }, (_, index) =>
+        makeEntry({ content: `browse-since-old-${index} vec-work-strong`, importance: 6 }),
+      );
+      const freshEntries = Array.from({ length: 5 }, (_, index) =>
+        makeEntry({ content: `browse-since-fresh-${index} vec-work-strong`, importance: 7 }),
+      );
+      await storeBrowseEntries(client, [...oldEntries, ...freshEntries]);
+
+      for (const entry of oldEntries) {
+        await setCreatedAt(client, entry.content, "2026-02-21T23:00:00.000Z");
+      }
+      for (const entry of freshEntries) {
+        await setCreatedAt(client, entry.content, "2026-02-22T23:00:00.000Z");
+      }
+
+      const fixedNow = new Date("2026-02-23T00:00:00.000Z");
+      const cutoffMs = fixedNow.getTime() - 24 * 60 * 60 * 1000;
+      const results = await recall(client, { browse: true, since: "1d", limit: 20 }, "", { now: fixedNow });
+      expect(results).toHaveLength(5);
+      for (const result of results) {
+        expect(new Date(result.entry.created_at).getTime()).toBeGreaterThanOrEqual(cutoffMs);
+      }
+    });
+
+    it("applies until filter and excludes recent entries", async () => {
+      const client = makeClient();
+      await initDb(client);
+      await storeBrowseEntries(client, [
+        makeEntry({ content: "browse-until-old-1 vec-work-strong", importance: 7 }),
+        makeEntry({ content: "browse-until-old-2 vec-work-strong", importance: 7 }),
+        makeEntry({ content: "browse-until-old-3 vec-work-strong", importance: 7 }),
+        makeEntry({ content: "browse-until-new-1 vec-work-strong", importance: 7 }),
+        makeEntry({ content: "browse-until-new-2 vec-work-strong", importance: 7 }),
+        makeEntry({ content: "browse-until-new-3 vec-work-strong", importance: 7 }),
+      ]);
+
+      await setCreatedAt(client, "browse-until-old-1 vec-work-strong", "2026-01-10T00:00:00.000Z");
+      await setCreatedAt(client, "browse-until-old-2 vec-work-strong", "2026-01-10T01:00:00.000Z");
+      await setCreatedAt(client, "browse-until-old-3 vec-work-strong", "2026-01-10T02:00:00.000Z");
+      await setCreatedAt(client, "browse-until-new-1 vec-work-strong", "2026-02-20T00:00:00.000Z");
+      await setCreatedAt(client, "browse-until-new-2 vec-work-strong", "2026-02-20T01:00:00.000Z");
+      await setCreatedAt(client, "browse-until-new-3 vec-work-strong", "2026-02-20T02:00:00.000Z");
+
+      const results = await recall(
+        client,
+        { browse: true, until: "2026-01-15T00:00:00.000Z", limit: 20 },
+        "",
+        { now: new Date("2026-02-23T00:00:00.000Z") },
+      );
+      expect(results).toHaveLength(3);
+      expect(results.every((row) => row.entry.created_at.startsWith("2026-01-10"))).toBe(true);
+    });
+
+    it("returns only entries inside a since and until window", async () => {
+      const client = makeClient();
+      await initDb(client);
+      await storeBrowseEntries(client, [
+        makeEntry({ content: "browse-window-too-old vec-work-strong", importance: 7 }),
+        makeEntry({ content: "browse-window-boundary-low vec-work-strong", importance: 7 }),
+        makeEntry({ content: "browse-window-middle vec-work-strong", importance: 7 }),
+        makeEntry({ content: "browse-window-boundary-high vec-work-strong", importance: 7 }),
+        makeEntry({ content: "browse-window-too-recent vec-work-strong", importance: 7 }),
+      ]);
+
+      await setCreatedAt(client, "browse-window-too-old vec-work-strong", "2026-01-25T00:00:00.000Z");
+      await setCreatedAt(client, "browse-window-boundary-low vec-work-strong", "2026-02-01T00:00:00.000Z");
+      await setCreatedAt(client, "browse-window-middle vec-work-strong", "2026-02-05T00:00:00.000Z");
+      await setCreatedAt(client, "browse-window-boundary-high vec-work-strong", "2026-02-08T00:00:00.000Z");
+      await setCreatedAt(client, "browse-window-too-recent vec-work-strong", "2026-02-12T00:00:00.000Z");
+
+      const fixedNow = new Date("2026-02-15T00:00:00.000Z");
+      const results = await recall(
+        client,
+        {
+          browse: true,
+          since: "14d",
+          until: "2026-02-09T00:00:00.000Z",
+          limit: 20,
+        },
+        "",
+        { now: fixedNow },
+      );
+
+      const contents = new Set(results.map((row) => row.entry.content));
+      expect(results).toHaveLength(3);
+      expect(contents).toEqual(
+        new Set([
+          "browse-window-boundary-low vec-work-strong",
+          "browse-window-middle vec-work-strong",
+          "browse-window-boundary-high vec-work-strong",
+        ]),
+      );
+    });
+
+    it("respects limit in browse mode", async () => {
+      const client = makeClient();
+      await initDb(client);
+      const entries = Array.from({ length: 100 }, (_, index) =>
+        makeEntry({ content: `browse-limit-${index} vec-work-strong`, importance: 6 }),
+      );
+      await storeBrowseEntries(client, entries);
+      const results = await recall(client, { browse: true, limit: 5 }, "", { now: new Date("2026-02-23T00:00:00.000Z") });
+      expect(results).toHaveLength(5);
+    });
+
+    it("returns empty array for an empty browse window", async () => {
+      const client = makeClient();
+      await initDb(client);
+      await storeBrowseEntries(client, [
+        makeEntry({ content: "browse-empty-1 vec-work-strong", importance: 7 }),
+        makeEntry({ content: "browse-empty-2 vec-work-strong", importance: 7 }),
+        makeEntry({ content: "browse-empty-3 vec-work-strong", importance: 7 }),
+      ]);
+      await setCreatedAt(client, "browse-empty-1 vec-work-strong", "2026-01-01T00:00:00.000Z");
+      await setCreatedAt(client, "browse-empty-2 vec-work-strong", "2026-01-01T01:00:00.000Z");
+      await setCreatedAt(client, "browse-empty-3 vec-work-strong", "2026-01-01T02:00:00.000Z");
+
+      const results = await recall(
+        client,
+        { browse: true, since: "1d", limit: 10 },
+        "",
+        { now: new Date("2026-02-23T00:00:00.000Z") },
+      );
+
+      expect(results).toHaveLength(0);
+    });
+
+    it("excludes retired entries in browse mode", async () => {
+      const client = makeClient();
+      await initDb(client);
+      await storeBrowseEntries(client, [
+        makeEntry({ content: "browse-retired-active-1 vec-work-strong", importance: 7 }),
+        makeEntry({ content: "browse-retired-hidden vec-work-strong", importance: 9 }),
+        makeEntry({ content: "browse-retired-active-2 vec-work-strong", importance: 8 }),
+      ]);
+      await client.execute({
+        sql: "UPDATE entries SET retired = 1, retired_at = ? WHERE content = ?",
+        args: ["2026-02-23T00:00:00.000Z", "browse-retired-hidden vec-work-strong"],
+      });
+
+      const results = await recall(client, { browse: true, limit: 10 }, "", { now: new Date("2026-02-23T00:00:00.000Z") });
+      expect(results).toHaveLength(2);
+      expect(results.some((row) => row.entry.content === "browse-retired-hidden vec-work-strong")).toBe(false);
+    });
+
+    it("excludes superseded entries in browse mode", async () => {
+      const client = makeClient();
+      await initDb(client);
+      await storeBrowseEntries(client, [
+        makeEntry({ content: "browse-superseded-active-1 vec-work-strong", importance: 7 }),
+        makeEntry({ content: "browse-superseded-hidden vec-work-strong", importance: 9 }),
+        makeEntry({ content: "browse-superseded-active-2 vec-work-strong", importance: 8 }),
+      ]);
+      await client.execute({
+        sql: `
+          UPDATE entries
+          SET superseded_by = (SELECT id FROM entries WHERE content = ? LIMIT 1)
+          WHERE content = ?
+        `,
+        args: ["browse-superseded-active-1 vec-work-strong", "browse-superseded-hidden vec-work-strong"],
+      });
+
+      const results = await recall(client, { browse: true, limit: 10 }, "", { now: new Date("2026-02-23T00:00:00.000Z") });
+      expect(results).toHaveLength(2);
+      expect(results.some((row) => row.entry.content === "browse-superseded-hidden vec-work-strong")).toBe(false);
+    });
+
+    it("filters browse results by platform", async () => {
+      const client = makeClient();
+      await initDb(client);
+      await storeBrowseEntries(client, [
+        { ...makeEntry({ content: "browse-platform-openclaw-1 vec-work-strong", importance: 7 }), platform: "openclaw" as const },
+        { ...makeEntry({ content: "browse-platform-openclaw-2 vec-work-strong", importance: 6 }), platform: "openclaw" as const },
+        { ...makeEntry({ content: "browse-platform-codex-1 vec-work-strong", importance: 8 }), platform: "codex" as const },
+        { ...makeEntry({ content: "browse-platform-codex-2 vec-work-strong", importance: 5 }), platform: "codex" as const },
+      ]);
+
+      const results = await recall(
+        client,
+        { browse: true, platform: "openclaw", limit: 10 },
+        "",
+        { now: new Date("2026-02-23T00:00:00.000Z") },
+      );
+      expect(results).toHaveLength(2);
+      expect(results.every((row) => row.entry.platform === "openclaw")).toBe(true);
+    });
+
+    it("filters browse results by minImportance", async () => {
+      const client = makeClient();
+      await initDb(client);
+      await storeBrowseEntries(client, [
+        makeEntry({ content: "browse-min-3 vec-work-strong", importance: 3 }),
+        makeEntry({ content: "browse-min-5 vec-work-strong", importance: 5 }),
+        makeEntry({ content: "browse-min-6 vec-work-strong", importance: 6 }),
+        makeEntry({ content: "browse-min-7 vec-work-strong", importance: 7 }),
+        makeEntry({ content: "browse-min-9 vec-work-strong", importance: 9 }),
+      ]);
+
+      const results = await recall(
+        client,
+        { browse: true, minImportance: 6, limit: 10 },
+        "",
+        { now: new Date("2026-02-23T00:00:00.000Z") },
+      );
+      expect(results).toHaveLength(3);
+      expect(results.every((row) => row.entry.importance >= 6)).toBe(true);
+    });
+
+    it("does not call embed in browse mode", async () => {
+      const client = makeClient();
+      await initDb(client);
+      await storeBrowseEntries(client, [
+        makeEntry({ content: "browse-no-embed-1 vec-work-strong", importance: 7 }),
+        makeEntry({ content: "browse-no-embed-2 vec-work-strong", importance: 7 }),
+        makeEntry({ content: "browse-no-embed-3 vec-work-strong", importance: 7 }),
+      ]);
+
+      const spyEmbed = vi.fn().mockRejectedValue(new Error("embed called"));
+      const results = await recall(
+        client,
+        { browse: true, limit: 10 },
+        "",
+        { now: new Date("2026-02-23T00:00:00.000Z"), embedFn: spyEmbed },
+      );
+      expect(results).toHaveLength(3);
+      expect(spyEmbed).not.toHaveBeenCalled();
+    });
+
+    it("orders same-importance entries by most recent first", async () => {
+      const client = makeClient();
+      await initDb(client);
+      await storeBrowseEntries(client, [
+        makeEntry({ content: "entry-a vec-work-strong", importance: 7 }),
+        makeEntry({ content: "entry-b vec-work-strong", importance: 7 }),
+        makeEntry({ content: "entry-c vec-work-strong", importance: 7 }),
+      ]);
+      await setCreatedAt(client, "entry-a vec-work-strong", "2026-02-20T00:00:00.000Z");
+      await setCreatedAt(client, "entry-b vec-work-strong", "2026-02-22T00:00:00.000Z");
+      await setCreatedAt(client, "entry-c vec-work-strong", "2026-02-21T00:00:00.000Z");
+
+      const fixedNow = new Date("2026-02-23T00:00:00.000Z");
+      const results = await recall(client, { browse: true, limit: 10 }, "", { now: fixedNow });
+      expect(results[0]?.entry.content).toBe("entry-b vec-work-strong");
+      expect(results[1]?.entry.content).toBe("entry-c vec-work-strong");
+      expect(results[2]?.entry.content).toBe("entry-a vec-work-strong");
+
+      const firstScore = scoreBrowseEntry(results[0]!.entry, fixedNow);
+      const firstScoreAgain = scoreBrowseEntry(results[0]!.entry, fixedNow);
+      expect(firstScore).toBe(firstScoreAgain);
+    });
+
+    it("applies project filtering in browse mode", async () => {
+      const client = makeClient();
+      await initDb(client);
+      await storeBrowseEntries(client, [
+        { ...makeEntry({ content: "browse-project-alpha-1 vec-work-strong", importance: 7 }), project: "alpha" },
+        { ...makeEntry({ content: "browse-project-alpha-2 vec-work-strong", importance: 8 }), project: "alpha" },
+        { ...makeEntry({ content: "browse-project-beta-1 vec-work-strong", importance: 9 }), project: "beta" },
+        { ...makeEntry({ content: "browse-project-beta-2 vec-work-strong", importance: 6 }), project: "beta" },
+      ]);
+
+      const results = await recall(
+        client,
+        { browse: true, project: "alpha", projectStrict: true, limit: 10 },
+        "",
+        { now: new Date("2026-02-23T00:00:00.000Z") },
+      );
+      expect(results).toHaveLength(2);
+      expect(results.every((row) => row.entry.project === "alpha")).toBe(true);
+    });
+
+    it("applies type filtering in browse mode", async () => {
+      const client = makeClient();
+      await initDb(client);
+      await storeBrowseEntries(client, [
+        makeEntry({ content: "browse-type-fact-1 vec-work-strong", type: "fact", importance: 7 }),
+        makeEntry({ content: "browse-type-todo-1 vec-work-strong", type: "todo", importance: 7 }),
+        makeEntry({ content: "browse-type-fact-2 vec-work-strong", type: "fact", importance: 7 }),
+        makeEntry({ content: "browse-type-preference-1 vec-work-strong", type: "preference", importance: 7 }),
+      ]);
+
+      const results = await recall(
+        client,
+        { browse: true, types: ["fact"], limit: 10 },
+        "",
+        { now: new Date("2026-02-23T00:00:00.000Z") },
+      );
+      expect(results).toHaveLength(2);
+      expect(results.every((row) => row.entry.type === "fact")).toBe(true);
+    });
   });
 
   it(

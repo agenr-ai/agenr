@@ -241,6 +241,7 @@ export interface RecallQuery {
   project?: string | string[];
   excludeProject?: string | string[];
   projectStrict?: boolean;
+  browse?: boolean;
 }
 
 export interface RecallCommandResult extends RecallResult {

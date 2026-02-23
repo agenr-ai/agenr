@@ -42,6 +42,7 @@ export interface RecallCommandOptions {
   scope?: string;
   noBoost?: boolean;
   noUpdate?: boolean;
+  browse?: boolean;
 }
 
 export interface RecallCommandDeps {
@@ -185,6 +186,27 @@ function printHumanResults(results: RecallCommandResult[], elapsedMs: number, no
   }
 }
 
+function printBrowseResults(results: RecallCommandResult[], elapsedMs: number): void {
+  const clackOutput = { output: process.stderr };
+  clack.log.info(`${ui.bold(String(results.length))} entries (browse mode, ${elapsedMs}ms)`, clackOutput);
+
+  if (results.length === 0) {
+    clack.log.info("No entries found in the specified time window.", clackOutput);
+    return;
+  }
+
+  let index = 1;
+  for (const result of results) {
+    const dateStr = new Date(result.entry.created_at).toISOString().slice(0, 10);
+    clack.log.info(
+      `${index}. [${dateStr}] [importance=${result.entry.importance}] (${result.entry.type}) ${result.entry.subject}: ${result.entry.content}`,
+      clackOutput,
+    );
+    clack.log.info(`   tags: ${result.entry.tags.length > 0 ? result.entry.tags.join(", ") : "none"}`, clackOutput);
+    index += 1;
+  }
+}
+
 export async function runRecallCommand(
   queryInput: string | undefined,
   options: RecallCommandOptions,
@@ -208,13 +230,28 @@ export async function runRecallCommand(
   const queryText = queryInput?.trim() ?? "";
   const context = options.context?.trim() || "default";
   const isSessionStart = context === "session-start";
+  const isBrowse = options.browse === true;
 
-  if (!queryText && !isSessionStart) {
-    throw new Error("Provide a query or use --context session-start.");
+  if (isBrowse && isSessionStart) {
+    throw new Error("--browse and --context session-start cannot be combined.");
+  }
+
+  if (!queryText && !isSessionStart && !isBrowse) {
+    throw new Error("Provide a query, use --context session-start, or use --browse.");
+  }
+
+  if (options.noBoost && isBrowse) {
+    throw new Error("--no-boost is not applicable in browse mode.");
   }
 
   if (options.noBoost && !queryText) {
     throw new Error("--no-boost requires a query.");
+  }
+
+  if (isBrowse && queryText) {
+    process.stderr.write(
+      "[agenr] Warning: --browse mode ignores query text. Remove the query or use agenr recall <query> for semantic search.\n",
+    );
   }
 
   const limit = parsePositiveInt(options.limit, DEFAULT_LIMIT, "--limit");
@@ -280,7 +317,7 @@ export async function runRecallCommand(
   const sinceIso = parseSinceToIso(options.since, now, "Invalid --since value. Use 1h, 7d, 1m, 1y, or an ISO date.");
   const untilIso = parseSinceToIso(options.until, now, "Invalid --until value. Use 1h, 7d, 1m, 1y, or an ISO date.");
   const queryForRecall: RecallQuery = {
-    text: queryText ? shapeRecallText(queryText, context) : undefined,
+    text: queryText && !isBrowse ? shapeRecallText(queryText, context) : undefined,
     limit,
     types: types.length > 0 ? (types as RecallQuery["types"]) : undefined,
     tags: tags.length > 0 ? tags : undefined,
@@ -297,6 +334,7 @@ export async function runRecallCommand(
     noUpdate: true,
     context,
     budget,
+    browse: isBrowse,
   };
 
   const config = resolvedDeps.readConfigFn(process.env);
@@ -306,13 +344,17 @@ export async function runRecallCommand(
   try {
     await resolvedDeps.initDbFn(db);
 
-    const apiKey = queryText ? resolvedDeps.resolveEmbeddingApiKeyFn(config, process.env) : "";
+    const apiKey = queryText && !isBrowse ? resolvedDeps.resolveEmbeddingApiKeyFn(config, process.env) : "";
     const startedAt = Date.now();
 
     let finalResults: RecallCommandResult[] = [];
     let budgetUsed = 0;
 
-    if (isSessionStart) {
+    if (isBrowse) {
+      const baseResults = await resolvedDeps.recallFn(db, queryForRecall, apiKey);
+      finalResults = baseResults.map((result) => ({ ...result }));
+      budgetUsed = finalResults.reduce((sum, item) => sum + estimateEntryTokens(item), 0);
+    } else if (isSessionStart) {
       const grouped = await sessionStartRecall(db, {
         query: queryForRecall,
         apiKey,
@@ -334,7 +376,7 @@ export async function runRecallCommand(
       }
     }
 
-    if (!options.noUpdate && finalResults.length > 0) {
+    if (!isBrowse && !options.noUpdate && finalResults.length > 0) {
       const ids = finalResults.map((result) => result.entry.id);
       await resolvedDeps.updateRecallMetadataFn(db, ids, now);
       const nowIso = now.toISOString();
@@ -346,7 +388,7 @@ export async function runRecallCommand(
 
     const stripped = finalResults.map((result) => stripEmbedding(result));
     const payload: RecallCommandResponse = {
-      query: queryText,
+      query: isBrowse ? "[browse]" : queryText,
       results: stripped,
       total: stripped.length,
       budget_used: budgetUsed,
@@ -357,7 +399,11 @@ export async function runRecallCommand(
     if (options.json) {
       process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
     } else {
-      printHumanResults(stripped, elapsedMs, now, isSessionStart);
+      if (isBrowse) {
+        printBrowseResults(stripped, elapsedMs);
+      } else {
+        printHumanResults(stripped, elapsedMs, now, isSessionStart);
+      }
     }
 
     clack.outro(undefined, clackOutput);

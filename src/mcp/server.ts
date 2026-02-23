@@ -116,8 +116,9 @@ const TOOL_DEFINITIONS: McpToolDefinition[] = [
         },
         context: {
           type: "string",
-          description: "Recall context. Use 'session-start' for fast bootstrap without embedding (no query needed).",
-          enum: ["default", "session-start"],
+          description:
+            "Recall context. Use 'session-start' for fast bootstrap (no query needed). Use 'browse' for temporal browsing sorted by date+importance without semantic search (no query needed, zero API calls).",
+          enum: ["default", "session-start", "browse"],
         },
         limit: {
           type: "integer",
@@ -603,6 +604,30 @@ function formatRecallText(query: string, results: RecallResult[]): string {
   return lines.join("\n");
 }
 
+function formatBrowseText(results: RecallResult[]): string {
+  if (results.length === 0) {
+    return "No entries found in the specified time window.";
+  }
+
+  const lines: string[] = [`Found ${results.length} entries (browse mode):`, ""];
+  for (let i = 0; i < results.length; i += 1) {
+    const result = results[i];
+    if (!result) {
+      continue;
+    }
+    const dateStr = new Date(result.entry.created_at).toISOString().slice(0, 10);
+    lines.push(
+      `[${i + 1}] [id=${result.entry.id}] [${dateStr}] importance=${result.entry.importance} type=${result.entry.type}`,
+    );
+    lines.push(result.entry.content);
+    if (i < results.length - 1) {
+      lines.push("");
+    }
+  }
+
+  return lines.join("\n");
+}
+
 function formatStoreSummary(result: StoreResult): string {
   const total = result.added + result.updated + result.skipped + result.superseded;
   const parts = [`${result.added} new`, `${result.updated} updated`, `${result.skipped} duplicates skipped`];
@@ -794,12 +819,12 @@ export function createMcpServer(
   async function callRecallTool(args: Record<string, unknown>): Promise<string> {
     const contextRaw = typeof args.context === "string" ? args.context.trim().toLowerCase() : "default";
     const context = contextRaw || "default";
-    if (context !== "default" && context !== "session-start") {
-      throw new RpcError(JSON_RPC_INVALID_PARAMS, "context must be one of: default, session-start");
+    if (context !== "default" && context !== "session-start" && context !== "browse") {
+      throw new RpcError(JSON_RPC_INVALID_PARAMS, "context must be one of: default, session-start, browse");
     }
 
     const query = typeof args.query === "string" ? args.query.trim() : "";
-    if (!query && context !== "session-start") {
+    if (!query && context === "default") {
       throw new RpcError(JSON_RPC_INVALID_PARAMS, "query is required unless context is session-start");
     }
 
@@ -860,7 +885,25 @@ export function createMcpServer(
     const db = await ensureDb();
     let results: RecallResult[];
 
-    if (context === "session-start") {
+    if (context === "browse") {
+      results = await resolvedDeps.recallFn(
+        db,
+        {
+          text: undefined,
+          context: "browse",
+          browse: true,
+          limit,
+          types,
+          since,
+          until,
+          platform: platform ?? undefined,
+          project,
+          projectStrict: projectStrict ? true : undefined,
+          noUpdate: true,
+        },
+        "",
+      );
+    } else if (context === "session-start") {
       const grouped = await sessionStartRecall(db, {
         query: {
           context,
@@ -907,6 +950,9 @@ export function createMcpServer(
         result.entry.recall_count += 1;
         result.entry.last_recalled_at = nowIso;
       }
+    }
+    if (context === "browse") {
+      return formatBrowseText(filtered);
     }
     return formatRecallText(query || context, filtered);
   }

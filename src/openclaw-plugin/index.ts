@@ -285,8 +285,11 @@ const plugin = {
             query: Type.Optional(Type.String({ description: "What to search for." })),
             context: Type.Optional(
               Type.Union(
-                [Type.Literal("default"), Type.Literal("session-start")],
-                { description: "Use session-start for fast bootstrap without embedding." },
+                [Type.Literal("default"), Type.Literal("session-start"), Type.Literal("browse")],
+                {
+                  description:
+                    "Use session-start for fast bootstrap without embedding. Use browse for temporal browsing (date+importance, no query needed, no semantic search).",
+                },
               ),
             ),
             limit: Type.Optional(Type.Number({ description: "Max results (default: 10)." })),

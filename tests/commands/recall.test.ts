@@ -105,10 +105,10 @@ describe("recall command", () => {
     expect(tokens).toBeGreaterThan(5);
   });
 
-  it("requires either a query or session-start context", async () => {
+  it("requires either a query, session-start context, or browse mode", async () => {
     const deps = makeDeps();
     await expect(runRecallCommand(undefined, { context: "default" }, deps)).rejects.toThrow(
-      "Provide a query or use --context session-start.",
+      "Provide a query, use --context session-start, or use --browse.",
     );
   });
 
@@ -246,5 +246,49 @@ describe("recall command", () => {
 
     const firstCall = (recallFn.mock.calls as unknown[][])[0] as [unknown, { projectStrict?: boolean }] | undefined;
     expect(firstCall?.[1]?.projectStrict).toBe(true);
+  });
+
+  it("allows --browse without query text", async () => {
+    const recallFn = vi.fn(async () => []);
+    const deps = makeDeps({ recallFn });
+    const output = await runRecallCommand(undefined, { browse: true, json: true }, deps);
+    expect(output.exitCode).toBe(0);
+  });
+
+  it("rejects --browse with --context session-start", async () => {
+    const deps = makeDeps();
+    await expect(runRecallCommand(undefined, { browse: true, context: "session-start" }, deps)).rejects.toThrow(
+      "cannot be combined",
+    );
+  });
+
+  it("does not update recall metadata in browse mode", async () => {
+    const recallFn = vi.fn(async () => [makeResult()]);
+    const updateRecallMetadataFn = vi.fn(async () => undefined);
+    const deps = makeDeps({ recallFn, updateRecallMetadataFn });
+
+    await runRecallCommand(undefined, { browse: true, json: true }, deps);
+    expect(updateRecallMetadataFn).not.toHaveBeenCalled();
+  });
+
+  it("threads --since into browse recall queries", async () => {
+    const recallFn = vi.fn(async () => []);
+    const deps = makeDeps({ recallFn });
+
+    await runRecallCommand(undefined, { browse: true, since: "1d", json: true }, deps);
+    const firstCall = (recallFn.mock.calls as unknown[][])[0] as [unknown, { browse?: boolean; since?: string }] | undefined;
+    expect(firstCall?.[1]?.browse).toBe(true);
+    expect(firstCall?.[1]?.since).toBe("2026-02-14T00:00:00.000Z");
+  });
+
+  it("sets JSON query field to [browse] in browse mode", async () => {
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const deps = makeDeps();
+
+    await runRecallCommand(undefined, { browse: true, json: true }, deps);
+
+    const jsonOutput = stdoutSpy.mock.calls.map((call) => String(call[0])).join("");
+    const parsed = JSON.parse(jsonOutput) as { query: string };
+    expect(parsed.query).toBe("[browse]");
   });
 });
