@@ -53,6 +53,8 @@ tools registered directly in the agent toolset.
 openclaw plugins install agenr
 ```
 
+> **Security notice:** OpenClaw's code scanner will flag a critical warning during install: _"Shell command execution detected (child_process)."_ This is expected. agenr shells out to its own CLI binary to run recall and store operations -- it does not make any external network calls, does not read your OpenClaw credentials, and does not send data anywhere. The plugin source is open and auditable at [github.com/agenr-ai/agenr](https://github.com/agenr-ai/agenr).
+
 That's it. Memory injection happens via the plugin's `before_agent_start` hook.
 No AGENTS.md edits needed. The bundled `SKILL.md` loads automatically and
 instructs the agent when to call `agenr_store` proactively.
