@@ -10,6 +10,7 @@ import {
   isThinPrompt,
   resolveSessionQuery,
   SESSION_TOPIC_TTL_MS,
+  shouldStashTopic,
 } from "./session-query.js";
 import * as pluginSignals from "./signals.js";
 import { runExtractTool, runRecallTool, runRetireTool, runStoreTool } from "./tools.js";
@@ -929,6 +930,27 @@ describe("before_reset topic stashing", () => {
     expect(resolveSessionQuery("/new", sessionKey)).toBeUndefined();
   });
 
+  it("does not stash when concatenated text meets length but has fewer than five words", () => {
+    const api = makeApi();
+    plugin.register(api);
+    const handler = getBeforeResetHandler(api);
+    const sessionKey = "agent:main:reset-long-few-words";
+
+    handler(
+      {
+        messages: [
+          {
+            role: "user",
+            content: "Superlongpaddddddddddddddddddddddddd one",
+          },
+        ],
+      },
+      { sessionKey },
+    );
+
+    expect(resolveSessionQuery("/new", sessionKey)).toBeUndefined();
+  });
+
   it("stashes concatenated result from the last three user messages", () => {
     const api = makeApi();
     plugin.register(api);
@@ -1088,6 +1110,22 @@ describe("extractLastUserText", () => {
   it("returns empty string for empty messages array", () => {
     const text = extractLastUserText([]);
     expect(text).toBe("");
+  });
+});
+
+describe("shouldStashTopic", () => {
+  it("returns false for text under 40 chars", () => {
+    expect(shouldStashTopic("one two three four")).toBe(false);
+  });
+
+  it("returns false for text >= 40 chars but fewer than five words", () => {
+    expect(shouldStashTopic("Superlongpaddddddddddddddddddddddddd one")).toBe(false);
+  });
+
+  it("returns true for text >= 40 chars and >= five words", () => {
+    expect(
+      shouldStashTopic("Please keep working on release planning and rollback checks today"),
+    ).toBe(true);
   });
 });
 
