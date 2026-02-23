@@ -90,9 +90,18 @@ function truncateMessageText(text: string): string {
   return text.length > EXCHANGE_TEXT_MAX_CHARS ? text.slice(0, EXCHANGE_TEXT_MAX_CHARS) : text;
 }
 
+// Prefix of OpenClaw BARE_SESSION_RESET_PROMPT injected as event.prompt on bare /new or
+// /reset. Matched by prefix only to stay resilient to minor wording changes in OpenClaw.
+const OPENCLAW_BARE_RESET_PREFIX = "a new session was started via /new";
+
 export function isThinPrompt(prompt: string): boolean {
   const trimmed = prompt.trim().toLowerCase();
-  return trimmed === "" || trimmed === "/new" || trimmed === "/reset";
+  return (
+    trimmed === "" ||
+    trimmed === "/new" ||
+    trimmed === "/reset" ||
+    trimmed.startsWith(OPENCLAW_BARE_RESET_PREFIX)
+  );
 }
 
 export function stripPromptMetadata(raw: string): string {

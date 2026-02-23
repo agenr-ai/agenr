@@ -1,11 +1,15 @@
 import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  clearStash,
   extractLastExchangeText,
+  isThinPrompt,
   readLatestArchivedUserMessages,
+  resolveSessionQuery,
   SESSION_QUERY_LOOKBACK,
+  stashSessionTopic,
   stripPromptMetadata,
 } from "./session-query.js";
 
@@ -68,6 +72,76 @@ describe("stripPromptMetadata", () => {
 
   it("returns empty string when timestamp has no trailing content", () => {
     expect(stripPromptMetadata("[Sun 2026-02-22 21:08 CST] ")).toBe("");
+  });
+});
+
+describe("isThinPrompt", () => {
+  it("returns true for empty string", () => {
+    expect(isThinPrompt("")).toBe(true);
+  });
+
+  it("returns true for /new", () => {
+    expect(isThinPrompt("/new")).toBe(true);
+  });
+
+  it("returns true for /reset", () => {
+    expect(isThinPrompt("/reset")).toBe(true);
+  });
+
+  it("returns true for full OpenClaw bare-reset boilerplate", () => {
+    const prompt =
+      "A new session was started via /new or /reset. Greet the user in your configured persona, if one is provided. Be yourself - use your defined voice, mannerisms, and mood. Keep it to 1-3 sentences and ask what they want to do. If the runtime model differs from default_model in the system prompt, mention the default model. Do not mention internal steps, files, tools, or reasoning.";
+
+    expect(isThinPrompt(prompt)).toBe(true);
+  });
+
+  it("returns true for bare-reset prefix only", () => {
+    expect(isThinPrompt("A new session was started via /new")).toBe(true);
+  });
+
+  it("returns true for uppercase bare-reset text", () => {
+    expect(isThinPrompt("A NEW SESSION WAS STARTED VIA /NEW OR /RESET")).toBe(true);
+  });
+
+  it("returns false for a real user message", () => {
+    expect(isThinPrompt("what should we work on today?")).toBe(false);
+  });
+
+  it("returns false for /new with real content", () => {
+    expect(isThinPrompt("/new let's keep working on agenr")).toBe(false);
+  });
+
+  it("returns false for another real user message", () => {
+    expect(isThinPrompt("deploy the agenr plugin")).toBe(false);
+  });
+});
+
+describe("resolveSessionQuery - bare reset prompt", () => {
+  const BARE_RESET_PROMPT =
+    "A new session was started via /new or /reset. Greet the user in your configured " +
+    "persona, if one is provided. Be yourself - use your defined voice, mannerisms, and " +
+    "mood. Keep it to 1-3 sentences and ask what they want to do. If the runtime model " +
+    "differs from default_model in the system prompt, mention the default model. Do not " +
+    "mention internal steps, files, tools, or reasoning.";
+
+  beforeEach(() => {
+    clearStash();
+  });
+
+  afterAll(() => {
+    clearStash();
+  });
+
+  it("returns undefined when bare-reset prompt has no stash", () => {
+    expect(resolveSessionQuery(BARE_RESET_PROMPT)).toBeUndefined();
+  });
+
+  it("returns stash text when bare-reset prompt has stash", () => {
+    const key = "agent:main:tui";
+    const stashText = "working on agenr session recall improvements for bare new sessions";
+    stashSessionTopic(key, stashText);
+
+    expect(resolveSessionQuery(BARE_RESET_PROMPT, key)).toBe(stashText);
   });
 });
 
