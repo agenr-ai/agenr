@@ -13,7 +13,7 @@ import {
 import {
   clearStash,
   extractLastUserText,
-  readLatestArchivedMessages,
+  readLatestArchivedUserMessages,
   resolveSessionQuery,
   SESSION_TOPIC_MIN_LENGTH,
   SESSION_TOPIC_TTL_MS,
@@ -161,10 +161,11 @@ const plugin = {
             let recallQueryText = queryText;
 
             if (
+              isFirstInSession &&
               queryText === userPrompt &&
               userPrompt.length < SESSION_TOPIC_MIN_LENGTH
             ) {
-              const agentIdRaw = ctx["agentId"];
+              const agentIdRaw = ctx.agentId;
               const agentId = typeof agentIdRaw === "string" && agentIdRaw.trim() ? agentIdRaw : "main";
               const sessionsDir = path.join(
                 os.homedir(),
@@ -173,7 +174,7 @@ const plugin = {
                 agentId,
                 "sessions",
               );
-              const archivedMessages = await readLatestArchivedMessages(sessionsDir);
+              const archivedMessages = await readLatestArchivedUserMessages(sessionsDir);
               if (archivedMessages.length > 0) {
                 recallQueryText = archivedMessages.join(" ");
                 api.logger.info?.(
@@ -419,7 +420,7 @@ const plugin = {
 
 export const __testing = {
   SESSION_TOPIC_TTL_MS,
-  readLatestArchivedMessages,
+  readLatestArchivedUserMessages,
   clearState(): void {
     clearStash();
     seenSessions.clear();
