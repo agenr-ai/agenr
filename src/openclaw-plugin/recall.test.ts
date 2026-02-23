@@ -99,3 +99,32 @@ describe("runRecall query args", () => {
     expect(positionalQuery).toBe("x".repeat(500));
   });
 });
+
+describe("runRecall browse mode args", () => {
+  it("uses browse flags and omits budget/context/query by default", async () => {
+    let capturedArgs: string[] = [];
+    spawnMock.mockImplementationOnce((_cmd: string, args: string[]) => {
+      capturedArgs = args;
+      return createMockChild(JSON.stringify({ query: "[browse]", results: [] }));
+    });
+
+    await runRecall("/path/to/agenr", 1234, undefined, "ignored query", { context: "browse" });
+
+    expect(capturedArgs).toEqual(["recall", "--browse", "--since", "1d", "--json"]);
+  });
+
+  it("uses explicit browse since and keeps --project while omitting query", async () => {
+    let capturedArgs: string[] = [];
+    spawnMock.mockImplementationOnce((_cmd: string, args: string[]) => {
+      capturedArgs = args;
+      return createMockChild(JSON.stringify({ query: "[browse]", results: [] }));
+    });
+
+    await runRecall("/path/to/agenr", 1234, "proj-x", "ignored query", {
+      context: "browse",
+      since: "7d",
+    });
+
+    expect(capturedArgs).toEqual(["recall", "--browse", "--since", "7d", "--json", "--project", "proj-x"]);
+  });
+});

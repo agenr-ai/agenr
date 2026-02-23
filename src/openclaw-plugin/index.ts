@@ -1,5 +1,3 @@
-import os from "node:os";
-import path from "node:path";
 import type { Client } from "@libsql/client";
 import { Type } from "@sinclair/typebox";
 import { closeDb, getDb, initDb } from "../db/client.js";
@@ -9,13 +7,12 @@ import {
   resolveAgenrPath,
   resolveBudget,
   runRecall,
+  type RecallResult,
 } from "./recall.js";
 import {
   clearStash,
   extractLastUserText,
-  readLatestArchivedUserMessages,
   resolveSessionQuery,
-  SESSION_TOPIC_MIN_LENGTH,
   SESSION_TOPIC_TTL_MS,
   stripPromptMetadata,
   shouldStashTopic,
@@ -124,6 +121,8 @@ const plugin = {
   description: "Injects agenr long-term memory into every agent session via before_prompt_build",
 
   register(api: PluginApi): void {
+    const config = api.pluginConfig as AgenrPluginConfig | undefined;
+
     api.on(
       "before_prompt_build",
       async (
@@ -139,7 +138,6 @@ const plugin = {
             return;
           }
 
-          const config = api.pluginConfig as AgenrPluginConfig | undefined;
           if (config?.enabled === false) {
             return;
           }
@@ -158,41 +156,48 @@ const plugin = {
             const project = config?.project?.trim() || undefined;
             const userPrompt = stripPromptMetadata(event.prompt ?? "");
             const queryText = resolveSessionQuery(userPrompt, ctx.sessionKey);
-            let recallQueryText = queryText;
-
-            // resolveSessionQuery returns undefined for command-like prompts ("/new", "/help").
-            // In that case, queryText !== userPrompt so archive fallback does not fire.
-            // recallQueryText remains undefined and runRecall treats that as no seed query.
-            if (
-              isFirstInSession &&
-              queryText === userPrompt &&
-              userPrompt.length < SESSION_TOPIC_MIN_LENGTH
-            ) {
-              const agentId = ctx.agentId?.trim() || "main";
-              if (!ctx.agentId?.trim()) {
-                api.logger.debug?.("[agenr] session-start: agentId not provided, defaulting to 'main'");
-              }
-              const sessionsDir = path.join(
-                os.homedir(),
-                ".openclaw",
-                "agents",
-                agentId,
-                "sessions",
-              );
-              const archivedMessages = await readLatestArchivedUserMessages(sessionsDir);
-              if (archivedMessages.length > 0) {
-                recallQueryText = `${archivedMessages.join(" ")} ${userPrompt}`;
-                api.logger.info?.(
-                  `[agenr] session-start: archived session fallback applied, ${archivedMessages.length} messages`,
-                );
-              }
+            if (!ctx.agentId?.trim()) {
+              api.logger.debug?.("[agenr] session-start: agentId not provided, defaulting to 'main'");
             }
+            let recallResult: RecallResult | null;
+            const isColdStart = isFirstInSession && queryText === undefined;
 
-            const recallResult = await runRecall(agenrPath, budget, project, recallQueryText);
+            if (isColdStart) {
+              recallResult = await runRecall(agenrPath, budget, project, undefined, {
+                context: "browse",
+                since: "1d",
+              });
+            } else {
+              recallResult = await runRecall(agenrPath, budget, project, queryText);
+            }
             if (recallResult) {
               const formatted = formatRecallAsMarkdown(recallResult);
               if (formatted.trim()) {
                 markdown = formatted;
+              }
+
+              if (isColdStart) {
+                for (const item of recallResult.results) {
+                  const entry = item.entry;
+                  const subject = typeof entry.subject === "string" ? entry.subject : "";
+                  if (!subject.toLowerCase().startsWith("session handoff")) {
+                    continue;
+                  }
+                  const entryId =
+                    typeof entry.id === "string" && entry.id.trim() ? entry.id.trim() : null;
+                  if (entryId) {
+                    await runRetireTool(agenrPath, {
+                      entry_id: entryId,
+                      reason: "consumed at session start",
+                    }).catch(() => {
+                      // Silently swallow - worst case handoff shows up again next session.
+                    });
+                  } else {
+                    api.logger.debug?.(
+                      "[agenr] session-start: handoff entry missing id, skipping retire",
+                    );
+                  }
+                }
               }
             }
           }
@@ -253,11 +258,28 @@ const plugin = {
         }
 
         const lastUserText = extractLastUserText(messages);
-        if (!shouldStashTopic(lastUserText)) {
-          return;
+        if (shouldStashTopic(lastUserText)) {
+          stashSessionTopic(sessionKey, lastUserText);
         }
 
-        stashSessionTopic(sessionKey, lastUserText);
+        if (lastUserText && lastUserText.length > 0) {
+          const agenrPath = resolveAgenrPath(config);
+          const timestamp = new Date().toISOString().slice(0, 16).replace("T", " ");
+          const handoffEntry = {
+            entries: [
+              {
+                type: "event",
+                importance: 10,
+                subject: `session handoff ${timestamp}`,
+                content: lastUserText,
+                tags: ["handoff", "session"],
+              },
+            ],
+          };
+          runStoreTool(agenrPath, handoffEntry, config as Record<string, unknown>).catch(() => {
+            // Fire-and-forget - do not block or throw.
+          });
+        }
       } catch (err) {
         api.logger.warn(
           `agenr plugin before_reset stash failed: ${err instanceof Error ? err.message : String(err)}`,
