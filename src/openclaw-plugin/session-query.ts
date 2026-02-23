@@ -123,7 +123,18 @@ export function resolveSessionQuery(prompt: string | undefined, sessionKey?: str
 
   const normalized = (prompt ?? "").trim();
   if (!isThinPrompt(normalized)) {
-    return stripResetPrefix(normalized);
+    const stripped = stripResetPrefix(normalized);
+    if (!stashedText) {
+      // No stash - use live prompt as-is.
+      return stripped;
+    }
+    // Stash exists: blend when live prompt carries real signal; otherwise stash wins.
+    if (shouldStashTopic(stripped)) {
+      // High-signal live prompt: stash provides topic continuity, prompt appends new intent.
+      return `${stashedText} ${stripped}`;
+    }
+    // Low-signal live prompt (short opener like "did the plugin fire?"): stash wins.
+    return stashedText;
   }
   return stashedText;
 }
