@@ -281,6 +281,32 @@ describe("openclaw plugin tool runners", () => {
     expect(capturedArgs[limitIdx + 1]).toBe("0");
   });
 
+  it("runRecallTool passes --browse and omits query text for context=browse", async () => {
+    let capturedArgs: string[] = [];
+    spawnMock.mockImplementationOnce((_cmd: string, args: string[]) => {
+      capturedArgs = args;
+      return createMockChild({ stdout: JSON.stringify({ query: "[browse]", results: [] }) });
+    });
+
+    await runRecallTool("/path/to/agenr", { context: "browse", query: "ignored text" });
+
+    expect(capturedArgs).toContain("--browse");
+    expect(capturedArgs).not.toContain("ignored text");
+  });
+
+  it("runRecallTool does not pass --context browse to CLI", async () => {
+    let capturedArgs: string[] = [];
+    spawnMock.mockImplementationOnce((_cmd: string, args: string[]) => {
+      capturedArgs = args;
+      return createMockChild({ stdout: JSON.stringify({ query: "[browse]", results: [] }) });
+    });
+
+    await runRecallTool("/path/to/agenr", { context: "browse" });
+
+    expect(capturedArgs).not.toContain("--context");
+    expect(capturedArgs).toContain("--browse");
+  });
+
   it("runRecallTool uses default project when params.project is omitted", async () => {
     let capturedArgs: string[] = [];
     spawnMock.mockImplementationOnce((_cmd: string, args: string[]) => {

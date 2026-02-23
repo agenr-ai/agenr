@@ -169,6 +169,7 @@ agenr recall [options] [query]
 - `--db <path>`: database path override.
 - `--budget <tokens>`: approximate token budget cap.
 - `--context <mode>`: `default|session-start|topic:<query>`.
+- `--browse`: SQL-only temporal browse mode (importance/date ordering, no semantic search, no query required).
 - `--scope <level>`: `private|personal|public`.
 - `--no-boost`: use raw vector similarity only.
 - `--no-update`: do not increment recall metadata.
@@ -884,6 +885,15 @@ The `--context` flag changes how recall behaves:
   When used with `--budget`, allocates tokens across categories dynamically via `computeBudgetSplit()` based on category counts: active receives ~10-30%, preferences ~20-40%, and the remainder goes to recent (with a minimum 20% floor for recent), with overflow redistribution.
 
 - **`topic:<query>`**: Prepends `[topic: <query>]` to the search text before embedding, biasing results toward that topic. Useful for scoping recall to a specific area (e.g., `--context topic:authentication`).
+
+### `--browse` mode
+
+The `--browse` flag activates a SQL-only temporal browse path:
+
+- No query string is required.
+- Results are sorted by importance and date (with deterministic recency-decay scoring).
+- Zero embedding/OpenAI API calls are made.
+- Recall metadata is not incremented in browse mode.
 
 ### `--budget` behavior
 

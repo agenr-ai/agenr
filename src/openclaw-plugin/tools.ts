@@ -156,6 +156,7 @@ export async function runRecallTool(
   const args = ["recall", "--json"];
   const query = asString(params.query);
   const context = asString(params.context);
+  const isBrowse = context === "browse";
   const limit = asNumber(params.limit);
   const types = asString(params.types);
   const since = asString(params.since);
@@ -163,10 +164,12 @@ export async function runRecallTool(
   const platform = asString(params.platform);
   const project = asString(params.project) || defaultProject;
 
-  if (query) {
+  if (isBrowse) {
+    args.push("--browse");
+  } else if (query) {
     args.push(query);
   }
-  if (context) {
+  if (context && !isBrowse) {
     args.push("--context", context);
   }
   if (limit !== undefined) {

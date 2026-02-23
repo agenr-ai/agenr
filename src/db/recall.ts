@@ -384,6 +384,14 @@ export function scoreEntry(entry: StoredEntry, vectorSim: number, ftsMatch: bool
   return scoreEntryWithBreakdown(entry, vectorSim, ftsMatch, now).score;
 }
 
+export function scoreBrowseEntry(entry: StoredEntry, now: Date): number {
+  const daysOld = parseDaysBetween(now, entry.created_at);
+  const HALF_LIFE_DAYS = 30.0;
+  const recencyFactor = Math.exp(-(daysOld / HALF_LIFE_DAYS) * Math.LN2);
+  const impScore = importanceScore(entry.importance);
+  return clamp01(impScore * recencyFactor);
+}
+
 export function shapeRecallText(text: string, context: string | undefined): string {
   const trimmedText = text.trim();
   if (!trimmedText) {
@@ -568,6 +576,112 @@ async function fetchSessionCandidates(
   });
 }
 
+async function fetchBrowseCandidates(
+  db: Client,
+  query: RecallQuery,
+  limit: number,
+  now: Date,
+): Promise<CandidateRow[]> {
+  const normalizedProject = parseProjectList(query.project);
+  const normalizedExclude = parseProjectList(query.excludeProject);
+  const projectSql = buildProjectFilter({
+    column: "project",
+    strict: Boolean(query.projectStrict && normalizedProject.length > 0),
+    project: normalizedProject.length > 0 ? normalizedProject : undefined,
+    excludeProject: normalizedExclude.length > 0 ? normalizedExclude : undefined,
+  });
+
+  const whereClauses: string[] = [
+    "superseded_by IS NULL",
+    "retired = 0",
+  ];
+  if (projectSql.clause.trim()) {
+    whereClauses.push(projectSql.clause.trim().replace(/^AND\s+/i, ""));
+  }
+  const args: InValue[] = [...(projectSql.args as InValue[])];
+
+  const since = parseSince(query.since, now);
+  if (since) {
+    whereClauses.push("created_at >= ?");
+    args.push(since.toISOString());
+  }
+
+  const until = parseSince(query.until, now);
+  if (until) {
+    whereClauses.push("created_at <= ?");
+    args.push(until.toISOString());
+  }
+
+  if (query.minImportance !== undefined) {
+    whereClauses.push("importance >= ?");
+    args.push(Math.max(1, Math.min(10, Math.round(query.minImportance))));
+  }
+
+  if (query.types && query.types.length > 0) {
+    const placeholders = query.types.map(() => "?").join(", ");
+    whereClauses.push(`type IN (${placeholders})`);
+    args.push(...(query.types as InValue[]));
+  }
+
+  if (query.platform) {
+    whereClauses.push("platform = ?");
+    args.push(query.platform);
+  }
+
+  args.push(limit);
+
+  const whereClause = whereClauses.length > 0
+    ? "WHERE " + whereClauses.join(" AND ")
+    : "";
+
+  const result = await db.execute({
+    sql: `
+      SELECT
+        id,
+        type,
+        subject,
+        canonical_key,
+        content,
+        importance,
+        expiry,
+        scope,
+        platform,
+        project,
+        source_file,
+        source_context,
+        embedding,
+        created_at,
+        updated_at,
+        last_recalled_at,
+        recall_count,
+        recall_intervals,
+        confirmations,
+        contradictions,
+        superseded_by,
+        retired,
+        retired_at,
+        retired_reason,
+        suppressed_contexts
+      FROM entries
+      ${whereClause}
+      ORDER BY importance DESC, created_at DESC
+      LIMIT ?
+    `,
+    args,
+  });
+
+  const ids = result.rows.map((row) => toStringValue(row.id)).filter((id) => id.length > 0);
+  const tagsByEntryId = await getTagsForEntryIds(db, ids);
+
+  return result.rows.map((row) => {
+    const entryId = toStringValue(row.id);
+    return {
+      entry: mapStoredEntry(row, tagsByEntryId.get(entryId) ?? []),
+      vectorSim: 0,
+    };
+  });
+}
+
 async function runFts(
   db: Client,
   text: string,
@@ -662,11 +776,11 @@ export async function recall(
   const projectStrict = query.projectStrict === true;
   const isSessionStart = context === "session-start";
 
-  if (!text && context !== "session-start") {
+  if (!text && context !== "session-start" && query.browse !== true) {
     throw new Error("Query text is required unless --context session-start is used.");
   }
 
-  if (!text && query.noBoost) {
+  if (!text && query.noBoost && query.browse !== true) {
     throw new Error("--no-boost requires query text.");
   }
 
@@ -694,6 +808,47 @@ export async function recall(
     );
   }
   const allowedScopes = resolveScopeSet(query.scope);
+
+  if (query.browse === true) {
+    if (text) {
+      process.stderr.write(
+        "[agenr] Warning: --browse mode ignores query text. Remove the query or use agenr recall <query> for semantic search.\n",
+      );
+    }
+    if (query.noBoost) {
+      throw new Error("--no-boost is not applicable in browse mode.");
+    }
+
+    const requestedLimit = Number.isFinite(query.limit) && (query.limit ?? 0) > 0
+      ? Math.floor(query.limit as number)
+      : DEFAULT_LIMIT;
+    const browseLimit = Math.max(requestedLimit * 3, 50);
+    const browseCandidates = await fetchBrowseCandidates(db, query, browseLimit, now);
+    const filtered = browseCandidates.filter((candidate) =>
+      passesFilters(candidate.entry, query, cutoff, ceiling, allowedScopes, normalizedTags, false),
+    );
+
+    const scored: RecallResult[] = filtered.map((candidate) => {
+      const score = scoreBrowseEntry(candidate.entry, now);
+      return {
+        entry: candidate.entry,
+        score,
+        scores: {
+          vector: 0,
+          recency: recency(parseDaysBetween(now, candidate.entry.created_at), candidate.entry.expiry),
+          importance: importanceScore(candidate.entry.importance),
+          recall: 0,
+          freshness: 1,
+          todoPenalty: 1,
+          fts: 0,
+          spacing: 1.0,
+        },
+      };
+    });
+
+    scored.sort((a, b) => b.score - a.score);
+    return scored.slice(0, requestedLimit);
+  }
 
   const hasDateBounds = cutoff !== undefined || ceiling !== undefined;
   let candidates: CandidateRow[];

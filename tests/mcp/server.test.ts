@@ -348,9 +348,18 @@ describe("mcp server", () => {
       harness.deps,
     );
 
-    const result = responses[0]?.result as { tools?: Array<{ name: string; inputSchema?: { properties?: Record<string, unknown> } }> };
+    const result = responses[0]?.result as {
+      tools?: Array<{
+        name: string;
+        inputSchema?: {
+          properties?: Record<string, unknown>;
+        };
+      }>;
+    };
     const recallTool = (result.tools ?? []).find((tool) => tool.name === "agenr_recall");
     expect(recallTool?.inputSchema?.properties).not.toHaveProperty("since_seq");
+    const contextProperty = recallTool?.inputSchema?.properties?.context as { enum?: string[] } | undefined;
+    expect(contextProperty?.enum).toContain("browse");
   });
 
   it("calls agenr_recall and formats results", async () => {
@@ -706,6 +715,139 @@ describe("mcp server", () => {
     });
     expect(harness.resolveEmbeddingApiKeyFn).not.toHaveBeenCalled();
     await server.stop();
+  });
+
+  it("supports context=browse without query", async () => {
+    const harness = makeHarness();
+    const responses = await runServer(
+      [
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 3301,
+          method: "tools/call",
+          params: {
+            name: "agenr_recall",
+            arguments: {
+              context: "browse",
+            },
+          },
+        }),
+      ],
+      harness.deps,
+    );
+
+    const result = responses[0]?.result as { content?: Array<{ text?: string }> };
+    expect(result.content?.[0]?.text).toMatch(/browse mode|Found 0 entries/);
+  });
+
+  it("passes since filter through context=browse recall", async () => {
+    const harness = makeHarness();
+    await runServer(
+      [
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 3302,
+          method: "tools/call",
+          params: {
+            name: "agenr_recall",
+            arguments: {
+              context: "browse",
+              since: "1d",
+            },
+          },
+        }),
+      ],
+      harness.deps,
+    );
+
+    expect(harness.recallFn).toHaveBeenCalledTimes(1);
+    const recallQuery = harness.recallFn.mock.calls[0]?.[1] as { browse?: boolean; since?: string };
+    expect(recallQuery.browse).toBe(true);
+    expect(recallQuery.since).toBe("2026-02-14T00:00:00.000Z");
+  });
+
+  it("does not resolve embedding API key for context=browse", async () => {
+    const harness = makeHarness();
+    harness.resolveEmbeddingApiKeyFn.mockImplementation(() => {
+      throw new Error("should not be called");
+    });
+
+    const server = createMcpServer(
+      {
+        serverVersion: "9.9.9-test",
+      },
+      harness.deps,
+    );
+
+    const response = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 3303,
+      method: "tools/call",
+      params: {
+        name: "agenr_recall",
+        arguments: {
+          context: "browse",
+        },
+      },
+    });
+
+    expect(response).toMatchObject({
+      jsonrpc: "2.0",
+      id: 3303,
+    });
+    expect(harness.resolveEmbeddingApiKeyFn).not.toHaveBeenCalled();
+    await server.stop();
+  });
+
+  it("does not update recall metadata for context=browse", async () => {
+    const harness = makeHarness();
+    await runServer(
+      [
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 3304,
+          method: "tools/call",
+          params: {
+            name: "agenr_recall",
+            arguments: {
+              context: "browse",
+            },
+          },
+        }),
+      ],
+      harness.deps,
+    );
+
+    expect(harness.updateRecallMetadataFn).not.toHaveBeenCalled();
+  });
+
+  it("keeps default-context query requirement for backward compatibility", async () => {
+    const harness = makeHarness();
+    const responses = await runServer(
+      [
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 3305,
+          method: "tools/call",
+          params: {
+            name: "agenr_recall",
+            arguments: {
+              context: "default",
+            },
+          },
+        }),
+      ],
+      harness.deps,
+    );
+
+    expect(responses[0]).toMatchObject({
+      jsonrpc: "2.0",
+      id: 3305,
+      error: {
+        code: -32602,
+        message: "query is required unless context is session-start",
+      },
+    });
   });
 
   it("agenr_recall uses project scope from AGENR_PROJECT_DIR when project is omitted", async () => {
