@@ -198,6 +198,7 @@ const plugin = {
             }
 
             if (browseResult) {
+              const retirePromises: Promise<void>[] = [];
               for (const item of browseResult.results) {
                 const entry = item.entry;
                 const subject = typeof entry.subject === "string" ? entry.subject : "";
@@ -206,20 +207,25 @@ const plugin = {
                 }
                 const entryId = typeof entry.id === "string" && entry.id.trim() ? entry.id.trim() : null;
                 if (entryId) {
-                  await runRetireTool(agenrPath, {
-                    entry_id: entryId,
-                    reason: "consumed at session start",
-                  }).catch((err) => {
-                    api.logger.debug?.(
-                      `[agenr] session-start: retire handoff ${entryId} failed: ${err instanceof Error ? err.message : String(err)}`,
-                    );
-                  });
+                  retirePromises.push(
+                    runRetireTool(agenrPath, {
+                      entry_id: entryId,
+                      reason: "consumed at session start",
+                    })
+                      .then(() => undefined)
+                      .catch((err) => {
+                        api.logger.debug?.(
+                          `[agenr] session-start: retire handoff ${entryId} failed: ${err instanceof Error ? err.message : String(err)}`,
+                        );
+                      }),
+                  );
                 } else {
                   api.logger.debug?.(
                     "[agenr] session-start: handoff entry missing id, skipping retire",
                   );
                 }
               }
+              await Promise.allSettled(retirePromises);
             }
 
             const sections: string[] = [];

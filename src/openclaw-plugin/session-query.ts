@@ -1,5 +1,7 @@
-import { readFile, readdir, stat } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
+import { createInterface } from "node:readline";
 
 const EXCHANGE_TEXT_MAX_CHARS = 200;
 const EXCHANGE_USER_TURN_LIMIT = 5;
@@ -217,42 +219,51 @@ export async function extractRecentTurns(filePath: string, maxTurns = DEFAULT_RE
     if (parsedMaxTurns === 0) {
       return "";
     }
-    const raw = await readFile(filePath, "utf8");
-    if (!raw.trim()) {
-      return "";
-    }
+    const ring: string[] = [];
 
-    const turns: string[] = [];
-    for (const line of raw.split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (!trimmed) {
-        continue;
-      }
-      let record: unknown;
-      try {
-        record = JSON.parse(trimmed);
-      } catch {
-        continue;
-      }
-      if (!isRecord(record) || record["type"] !== "message") {
-        continue;
-      }
-      const message = record["message"];
-      const userText = extractTextFromUserMessage(message);
-      if (userText) {
-        turns.push(`U: ${truncateMessageText(userText, RECENT_TURN_MAX_CHARS)}`);
-        continue;
-      }
-      const assistantText = extractTextFromAssistantMessage(message);
-      if (assistantText) {
-        turns.push(`A: ${truncateMessageText(assistantText, RECENT_TURN_MAX_CHARS)}`);
-      }
-    }
+    await new Promise<void>((resolve, reject) => {
+      const rl = createInterface({
+        input: createReadStream(filePath, { encoding: "utf8" }),
+        crlfDelay: Infinity,
+      });
 
-    if (turns.length === 0) {
-      return "";
-    }
-    return turns.slice(-parsedMaxTurns).join(" | ");
+      rl.on("line", (line) => {
+        const trimmed = line.trim();
+        if (!trimmed) {
+          return;
+        }
+        let record: unknown;
+        try {
+          record = JSON.parse(trimmed);
+        } catch {
+          return;
+        }
+        if (!isRecord(record) || record["type"] !== "message") {
+          return;
+        }
+        const message = record["message"];
+        const userText = extractTextFromUserMessage(message);
+        if (userText) {
+          ring.push(`U: ${truncateMessageText(userText, RECENT_TURN_MAX_CHARS)}`);
+          if (ring.length > parsedMaxTurns) {
+            ring.shift();
+          }
+          return;
+        }
+        const assistantText = extractTextFromAssistantMessage(message);
+        if (assistantText) {
+          ring.push(`A: ${truncateMessageText(assistantText, RECENT_TURN_MAX_CHARS)}`);
+          if (ring.length > parsedMaxTurns) {
+            ring.shift();
+          }
+        }
+      });
+
+      rl.on("close", resolve);
+      rl.on("error", reject);
+    });
+
+    return ring.join(" | ");
   } catch {
     return "";
   }
