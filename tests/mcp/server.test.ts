@@ -683,7 +683,7 @@ describe("mcp server", () => {
       id: 32,
       error: {
         code: -32602,
-        message: "query is required unless context is session-start",
+        message: "query is required unless context is session-start or browse",
       },
     });
   });
@@ -737,7 +737,8 @@ describe("mcp server", () => {
     );
 
     const result = responses[0]?.result as { content?: Array<{ text?: string }> };
-    expect(result.content?.[0]?.text).toMatch(/browse mode|Found 0 entries/);
+    expect(result.content?.[0]?.text).toContain("browse mode");
+    expect(result.content?.[0]?.text).toMatch(/Found \d+ entries/);
   });
 
   it("passes since filter through context=browse recall", async () => {
@@ -845,7 +846,7 @@ describe("mcp server", () => {
       id: 3305,
       error: {
         code: -32602,
-        message: "query is required unless context is session-start",
+        message: "query is required unless context is session-start or browse",
       },
     });
   });

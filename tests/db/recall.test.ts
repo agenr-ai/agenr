@@ -1294,9 +1294,7 @@ describe("db recall", () => {
 
       const results = await recall(client, { browse: true, limit: 10 }, "", { now: fixedNow });
       expect(results).toHaveLength(5);
-      expect(results[0]?.entry.importance).toBe(9);
-      expect(results[1]?.entry.importance).toBe(8);
-      expect(results[2]?.entry.importance).toBe(7);
+      expect(results.map((row) => row.entry.importance)).toEqual([9, 8, 7, 5, 3]);
     });
 
     it("applies since filter and excludes old entries", async () => {
@@ -1531,6 +1529,44 @@ describe("db recall", () => {
       expect(spyEmbed).not.toHaveBeenCalled();
     });
 
+    it("does not increment recall_count after browse", async () => {
+      const client = makeClient();
+      await initDb(client);
+
+      const entry = makeEntry({
+        content: "browse-no-metadata-update vec-work-strong",
+        importance: 7,
+      });
+      await storeBrowseEntries(client, [entry]);
+
+      const fixedNow = new Date("2026-02-23T12:00:00.000Z");
+      await recall(client, { browse: true, limit: 10 }, "", { now: fixedNow });
+
+      const result = await client.execute({
+        sql: "SELECT recall_count, last_recalled_at FROM entries WHERE content = ?",
+        args: [entry.content],
+      });
+
+      const row = result.rows[0] as { recall_count?: unknown; last_recalled_at?: unknown } | undefined;
+      expect(row).toBeDefined();
+      expect(asNumber(row?.recall_count)).toBe(0);
+      expect(row?.last_recalled_at).toBeNull();
+    });
+
+    it("throws when noBoost is used in browse mode", async () => {
+      const client = makeClient();
+      await initDb(client);
+
+      await expect(
+        recall(
+          client,
+          { browse: true, noBoost: true, limit: 10 },
+          "",
+          { now: new Date("2026-02-23T00:00:00.000Z") },
+        ),
+      ).rejects.toThrow("--no-boost is not applicable in browse mode");
+    });
+
     it("orders same-importance entries by most recent first", async () => {
       const client = makeClient();
       await initDb(client);
@@ -1549,9 +1585,9 @@ describe("db recall", () => {
       expect(results[1]?.entry.content).toBe("entry-c vec-work-strong");
       expect(results[2]?.entry.content).toBe("entry-a vec-work-strong");
 
-      const firstScore = scoreBrowseEntry(results[0]!.entry, fixedNow);
-      const firstScoreAgain = scoreBrowseEntry(results[0]!.entry, fixedNow);
-      expect(firstScore).toBe(firstScoreAgain);
+      expect(results[0]!.score).toBeCloseTo(scoreBrowseEntry(results[0]!.entry, fixedNow));
+      expect(results[0]!.score).toBeGreaterThan(0);
+      expect(results[0]!.score).toBeLessThanOrEqual(1);
     });
 
     it("applies project filtering in browse mode", async () => {

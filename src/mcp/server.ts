@@ -825,7 +825,7 @@ export function createMcpServer(
 
     const query = typeof args.query === "string" ? args.query.trim() : "";
     if (!query && context === "default") {
-      throw new RpcError(JSON_RPC_INVALID_PARAMS, "query is required unless context is session-start");
+      throw new RpcError(JSON_RPC_INVALID_PARAMS, "query is required unless context is session-start or browse");
     }
 
     const limit = parsePositiveInt(args.limit, 10, "limit");
@@ -899,6 +899,7 @@ export function createMcpServer(
           platform: platform ?? undefined,
           project,
           projectStrict: projectStrict ? true : undefined,
+          scope: "private",
           noUpdate: true,
         },
         "",

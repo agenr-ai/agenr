@@ -664,6 +664,10 @@ async function fetchBrowseCandidates(
         suppressed_contexts
       FROM entries
       ${whereClause}
+      -- SQL pre-sort is a best-effort approximation only.
+      -- Final order is determined by scoreBrowseEntry() (importance * recency decay)
+      -- which re-sorts post-fetch. The over-fetch buffer (limit*3, min 50)
+      -- ensures the final top-N are present in the candidate pool.
       ORDER BY importance DESC, created_at DESC
       LIMIT ?
     `,
