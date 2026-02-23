@@ -2,7 +2,7 @@ import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { readLatestArchivedMessages, stripPromptMetadata } from "./session-query.js";
+import { readLatestArchivedUserMessages, stripPromptMetadata } from "./session-query.js";
 
 const tempDirs: string[] = [];
 
@@ -66,17 +66,17 @@ describe("stripPromptMetadata", () => {
   });
 });
 
-describe("readLatestArchivedMessages", () => {
+describe("readLatestArchivedUserMessages", () => {
   it("returns [] when dir does not exist", async () => {
     const missingDir = path.join(os.tmpdir(), `agenr-missing-${Date.now()}`);
-    await expect(readLatestArchivedMessages(missingDir)).resolves.toEqual([]);
+    await expect(readLatestArchivedUserMessages(missingDir)).resolves.toEqual([]);
   });
 
   it("returns [] when no .reset.* files exist", async () => {
     const dir = await createTempDir();
     await writeFile(path.join(dir, "active-session.jsonl"), "", "utf8");
 
-    await expect(readLatestArchivedMessages(dir)).resolves.toEqual([]);
+    await expect(readLatestArchivedUserMessages(dir)).resolves.toEqual([]);
   });
 
   it("returns [] when only old .reset.* files are outside maxAgeMs", async () => {
@@ -93,7 +93,7 @@ describe("readLatestArchivedMessages", () => {
       now - 10_000,
     );
 
-    await expect(readLatestArchivedMessages(dir, 1_000)).resolves.toEqual([]);
+    await expect(readLatestArchivedUserMessages(dir, 1_000)).resolves.toEqual([]);
   });
 
   it("returns last 3 user messages from the most recent .reset.* file", async () => {
@@ -122,7 +122,7 @@ describe("readLatestArchivedMessages", () => {
       now - 200,
     );
 
-    await expect(readLatestArchivedMessages(dir, 60_000)).resolves.toEqual([
+    await expect(readLatestArchivedUserMessages(dir, 60_000)).resolves.toEqual([
       "second user message",
       "third user message",
       "fourth user message",
@@ -153,9 +153,53 @@ describe("readLatestArchivedMessages", () => {
       now - 100,
     );
 
-    await expect(readLatestArchivedMessages(dir, 60_000)).resolves.toEqual([
+    await expect(readLatestArchivedUserMessages(dir, 60_000)).resolves.toEqual([
       "first user text chunk second chunk",
       "plain user text",
+    ]);
+  });
+
+  it("returns [] when newest archived file has no user messages", async () => {
+    const dir = await createTempDir();
+    const now = Date.now();
+    await writeJsonlFile(
+      path.join(dir, "no-user.jsonl.reset.2026-02-23T00:25:00.000Z"),
+      [
+        { type: "tool_result", content: "tool output" },
+        { type: "message", message: { role: "assistant", content: "assistant-only content" } },
+      ],
+      now - 100,
+    );
+
+    await expect(readLatestArchivedUserMessages(dir, 60_000)).resolves.toEqual([]);
+  });
+
+  it("skips malformed json lines and keeps valid user messages", async () => {
+    const dir = await createTempDir();
+    const now = Date.now();
+    const filePath = path.join(dir, "mixed-valid-malformed.jsonl.reset.2026-02-23T00:30:00.000Z");
+    const raw = [
+      JSON.stringify({
+        type: "message",
+        message: { role: "user", content: "first valid user message" },
+      }),
+      "{ this is not valid json",
+      JSON.stringify({
+        type: "message",
+        message: { role: "assistant", content: "assistant message to ignore" },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: { role: "user", content: "second valid user message" },
+      }),
+    ].join("\n");
+    await writeFile(filePath, raw, "utf8");
+    const mtime = new Date(now - 50);
+    await utimes(filePath, mtime, mtime);
+
+    await expect(readLatestArchivedUserMessages(dir, 60_000)).resolves.toEqual([
+      "first valid user message",
+      "second valid user message",
     ]);
   });
 });

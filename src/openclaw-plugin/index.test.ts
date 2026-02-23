@@ -707,7 +707,124 @@ describe("before_prompt_build query seeding", () => {
     expect(resolveSessionQuery("/new", sessionKey)).toBeUndefined();
   });
 
-  it("uses archived session fallback when session-start prompt is low-signal and stash is empty", async () => {
+  it("does not use archive fallback when prompt meets minimum session topic length", async () => {
+    const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
+    const api = makeApi({ pluginConfig: { signalsEnabled: false } });
+    plugin.register(api);
+    const handler = getBeforePromptBuildHandler(api);
+    const longPrompt = "this prompt is clearly long enough to bypass archive fallback logic";
+
+    await handler(
+      { prompt: longPrompt },
+      { sessionKey: "agent:main:archive-not-needed", sessionId: "uuid-archive-not-needed" },
+    );
+
+    expect(runRecallMock).toHaveBeenCalledTimes(1);
+    expect(runRecallMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(Number),
+      undefined,
+      longPrompt,
+    );
+  });
+
+  it("does not use archive fallback when stash provides the query text", async () => {
+    const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
+    const tempHome = await mkdtemp(path.join(os.tmpdir(), "agenr-openclaw-home-"));
+    const homeSpy = vi.spyOn(os, "homedir").mockReturnValue(tempHome);
+
+    try {
+      const sessionsDir = path.join(tempHome, ".openclaw", "agents", "main", "sessions");
+      await mkdir(sessionsDir, { recursive: true });
+      const archivedPath = path.join(sessionsDir, "stash-should-win.jsonl.reset.2026-02-23T08:10:00.000Z");
+      await writeFile(
+        archivedPath,
+        JSON.stringify({
+          type: "message",
+          message: { role: "user", content: "archive text should not be used when stash exists" },
+        }),
+        "utf8",
+      );
+      const now = new Date();
+      await utimes(archivedPath, now, now);
+
+      const infoLogger = vi.fn();
+      const api = makeApi({
+        pluginConfig: { signalsEnabled: false },
+        logger: {
+          info: infoLogger,
+          warn: vi.fn(),
+          error: vi.fn(),
+        },
+      });
+      plugin.register(api);
+      const promptHandler = getBeforePromptBuildHandler(api);
+      const resetHandler = getBeforeResetHandler(api);
+      const sessionKey = "agent:main:archive-skip-with-stash";
+      const stashedText = "this stashed topic should be used instead of archive fallback text";
+      seedStashWithMessage(resetHandler, sessionKey, stashedText);
+
+      await promptHandler(
+        { prompt: "help?" },
+        { sessionKey, sessionId: "uuid-archive-skip-with-stash", agentId: "main" },
+      );
+
+      expect(runRecallMock).toHaveBeenCalledTimes(1);
+      expect(runRecallMock).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(Number),
+        undefined,
+        stashedText,
+      );
+      expect(infoLogger).not.toHaveBeenCalled();
+    } finally {
+      homeSpy.mockRestore();
+      await rm(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  it("falls through to original short prompt when archive fallback has no user messages", async () => {
+    const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
+    const tempHome = await mkdtemp(path.join(os.tmpdir(), "agenr-openclaw-home-"));
+    const homeSpy = vi.spyOn(os, "homedir").mockReturnValue(tempHome);
+
+    try {
+      const sessionsDir = path.join(tempHome, ".openclaw", "agents", "main", "sessions");
+      await mkdir(sessionsDir, { recursive: true });
+
+      const infoLogger = vi.fn();
+      const api = makeApi({
+        pluginConfig: { signalsEnabled: false },
+        logger: {
+          info: infoLogger,
+          warn: vi.fn(),
+          error: vi.fn(),
+        },
+      });
+      plugin.register(api);
+      const handler = getBeforePromptBuildHandler(api);
+      const shortPrompt = "help?";
+
+      await handler(
+        { prompt: shortPrompt },
+        { sessionKey: "agent:main:archive-empty", sessionId: "uuid-archive-empty", agentId: "main" },
+      );
+
+      expect(runRecallMock).toHaveBeenCalledTimes(1);
+      expect(runRecallMock).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(Number),
+        undefined,
+        shortPrompt,
+      );
+      expect(infoLogger).not.toHaveBeenCalled();
+    } finally {
+      homeSpy.mockRestore();
+      await rm(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  it("uses archived session fallback when session-start prompt is short and stash is empty", async () => {
     const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
     const tempHome = await mkdtemp(path.join(os.tmpdir(), "agenr-openclaw-home-"));
     const homeSpy = vi.spyOn(os, "homedir").mockReturnValue(tempHome);

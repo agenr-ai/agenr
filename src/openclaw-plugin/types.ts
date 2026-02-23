@@ -10,6 +10,7 @@ export type BeforeAgentStartEvent = {
 export type PluginHookAgentContext = {
   sessionKey?: string;
   sessionId?: string;
+  agentId?: string;
   workspaceDir?: string;
   [key: string]: unknown;
 };
