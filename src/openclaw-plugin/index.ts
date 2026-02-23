@@ -1,5 +1,7 @@
 import type { Client } from "@libsql/client";
 import { Type } from "@sinclair/typebox";
+import os from "node:os";
+import path from "node:path";
 import { closeDb, getDb, initDb } from "../db/client.js";
 import { KNOWLEDGE_TYPES, SCOPE_LEVELS } from "../types.js";
 import {
@@ -10,14 +12,10 @@ import {
   type RecallResult,
 } from "./recall.js";
 import {
-  clearStash,
+  buildSemanticSeed,
   extractLastExchangeText,
-  extractLastUserText,
-  resolveSessionQuery,
-  SESSION_TOPIC_TTL_MS,
-  stripPromptMetadata,
-  shouldStashTopic,
-  stashSessionTopic,
+  extractRecentTurns,
+  findPreviousSessionFile,
 } from "./session-query.js";
 import { checkSignals, resolveSignalConfig } from "./signals.js";
 import { runExtractTool, runRecallTool, runRetireTool, runStoreTool } from "./tools.js";
@@ -155,54 +153,92 @@ const plugin = {
             const agenrPath = resolveAgenrPath(config);
             const budget = resolveBudget(config);
             const project = config?.project?.trim() || undefined;
-            const userPrompt = stripPromptMetadata(event.prompt ?? "");
-            const queryText = resolveSessionQuery(userPrompt, ctx.sessionKey);
-            let recallResult: RecallResult | null;
-            const isColdStart = isFirstInSession && queryText === undefined;
+            const agentId = ctx.agentId?.trim() || "main";
+            const sessionsDir =
+              config?.sessionsDir ?? path.join(os.homedir(), `.openclaw/agents/${agentId}/sessions`);
 
-            if (isColdStart) {
-              if (!ctx.agentId?.trim()) {
-                api.logger.debug?.("[agenr] cold-start: agentId not in ctx, defaulting to 'main'");
-              }
-              recallResult = await runRecall(agenrPath, budget, project, undefined, {
+            const [previousTurns, browseResult] = await Promise.all([
+              findPreviousSessionFile(sessionsDir, ctx.sessionId).then((file) =>
+                file ? extractRecentTurns(file) : Promise.resolve(""),
+              ),
+              runRecall(agenrPath, budget, project, undefined, {
                 context: "browse",
                 since: "1d",
-              });
-            } else {
-              recallResult = await runRecall(agenrPath, budget, project, queryText);
-            }
-            if (recallResult) {
-              const formatted = formatRecallAsMarkdown(recallResult);
-              if (formatted.trim()) {
-                markdown = formatted;
-              }
+                limit: 20,
+              }),
+            ]);
 
-              if (isColdStart) {
-                for (const item of recallResult.results) {
-                  const entry = item.entry;
-                  const subject = typeof entry.subject === "string" ? entry.subject : "";
-                  if (!subject.toLowerCase().startsWith("session handoff")) {
-                    continue;
+            const seed = buildSemanticSeed(previousTurns, event.prompt ?? "");
+            let semanticResult: RecallResult | null = null;
+            if (seed) {
+              const browseIds = new Set<string>();
+              for (const item of browseResult?.results ?? []) {
+                const id =
+                  typeof item.entry?.id === "string" && item.entry.id.trim()
+                    ? item.entry.id.trim()
+                    : null;
+                if (id) {
+                  browseIds.add(id);
+                }
+              }
+              const rawSemantic = await runRecall(agenrPath, budget, project, seed);
+              if (rawSemantic) {
+                rawSemantic.results = rawSemantic.results.filter((item) => {
+                  const id =
+                    typeof item.entry?.id === "string" && item.entry.id.trim()
+                      ? item.entry.id.trim()
+                      : null;
+                  if (!id) {
+                    return true;
                   }
-                  const entryId =
-                    typeof entry.id === "string" && entry.id.trim() ? entry.id.trim() : null;
-                  if (entryId) {
-                    await runRetireTool(agenrPath, {
-                      entry_id: entryId,
-                      reason: "consumed at session start",
-                    }).catch((err) => {
-                      api.logger.debug?.(
-                        `[agenr] session-start: retire handoff ${entryId} failed: ${err instanceof Error ? err.message : String(err)}`,
-                      );
-                    });
-                  } else {
+                  return !browseIds.has(id);
+                });
+                semanticResult = rawSemantic.results.length > 0 ? rawSemantic : null;
+              }
+            }
+
+            if (browseResult) {
+              for (const item of browseResult.results) {
+                const entry = item.entry;
+                const subject = typeof entry.subject === "string" ? entry.subject : "";
+                if (!subject.toLowerCase().startsWith("session handoff")) {
+                  continue;
+                }
+                const entryId = typeof entry.id === "string" && entry.id.trim() ? entry.id.trim() : null;
+                if (entryId) {
+                  await runRetireTool(agenrPath, {
+                    entry_id: entryId,
+                    reason: "consumed at session start",
+                  }).catch((err) => {
                     api.logger.debug?.(
-                      "[agenr] session-start: handoff entry missing id, skipping retire",
+                      `[agenr] session-start: retire handoff ${entryId} failed: ${err instanceof Error ? err.message : String(err)}`,
                     );
-                  }
+                  });
+                } else {
+                  api.logger.debug?.(
+                    "[agenr] session-start: handoff entry missing id, skipping retire",
+                  );
                 }
               }
             }
+
+            const sections: string[] = [];
+            if (previousTurns.trim()) {
+              sections.push(`## Recent session\n${previousTurns.trim()}`);
+            }
+            if (browseResult) {
+              const formatted = formatRecallAsMarkdown(browseResult);
+              if (formatted.trim()) {
+                sections.push(`## Recent memory\n${formatted.trim()}`);
+              }
+            }
+            if (semanticResult) {
+              const formatted = formatRecallAsMarkdown(semanticResult);
+              if (formatted.trim()) {
+                sections.push(`## Relevant memory\n${formatted.trim()}`);
+              }
+            }
+            markdown = sections.length > 0 ? sections.join("\n\n") : undefined;
           }
 
           let signal: string | undefined;
@@ -246,8 +282,6 @@ const plugin = {
       },
     );
 
-    // Stash the last user topic before reset so before_prompt_build can
-    // seed recall when the next prompt is thin (e.g., a bare /new).
     api.on("before_reset", (event, ctx): void => {
       try {
         const sessionKey = ctx.sessionKey;
@@ -260,11 +294,8 @@ const plugin = {
           return;
         }
 
-        const lastUserText = extractLastUserText(messages);
-        if (shouldStashTopic(lastUserText)) {
-          stashSessionTopic(sessionKey, lastUserText);
-        }
-
+        // Write importance:10 handoff entry to agenr DB so Phase 1B browse picks it up
+        // in the new session. Entry is retired after first use (see auto-retire below).
         const handoffText = extractLastExchangeText(messages);
         if (handoffText) {
           const agenrPath = resolveAgenrPath(config);
@@ -293,7 +324,7 @@ const plugin = {
         }
       } catch (err) {
         api.logger.warn(
-          `agenr plugin before_reset stash failed: ${err instanceof Error ? err.message : String(err)}`,
+          `agenr plugin before_reset failed: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     });
@@ -459,9 +490,7 @@ const plugin = {
 };
 
 export const __testing = {
-  SESSION_TOPIC_TTL_MS,
   clearState(): void {
-    clearStash();
     seenSessions.clear();
     sessionSignalState.clear();
   },

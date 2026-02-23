@@ -1,28 +1,18 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 
-export const SESSION_TOPIC_TTL_MS = 60 * 60 * 1000;
-// Raised from 20 to 40 to filter trivial conversational closers.
-export const SESSION_TOPIC_MIN_LENGTH = 40;
-// 24h window covers daily-use gaps and back-to-back sessions
-export const ARCHIVED_SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-// Number of most-recent user messages considered for query seed text.
 export const SESSION_QUERY_LOOKBACK = 3;
 const EXCHANGE_TEXT_MAX_CHARS = 200;
 const EXCHANGE_USER_TURN_LIMIT = 5;
-
-export type TopicStashEntry = {
-  text: string;
-  storedAt: number;
-};
-
-const sessionTopicStash = new Map<string, TopicStashEntry>();
+const RECENT_TURN_MAX_CHARS = 150;
+const SEMANTIC_SEED_PREVIOUS_TURNS_MAX_CHARS = 400;
+const DEFAULT_RECENT_TURN_LIMIT = 7;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-function extractTextFromUserMessage(message: unknown): string {
+export function extractTextFromUserMessage(message: unknown): string {
   if (!isRecord(message) || message["role"] !== "user") {
     return "";
   }
@@ -54,7 +44,7 @@ function extractTextFromUserMessage(message: unknown): string {
   return textParts.join(" ").trim();
 }
 
-function extractTextFromAssistantMessage(message: unknown): string {
+export function extractTextFromAssistantMessage(message: unknown): string {
   if (!isRecord(message) || message["role"] !== "assistant") {
     return "";
   }
@@ -86,22 +76,8 @@ function extractTextFromAssistantMessage(message: unknown): string {
   return textParts.join(" ").trim();
 }
 
-function truncateMessageText(text: string): string {
-  return text.length > EXCHANGE_TEXT_MAX_CHARS ? text.slice(0, EXCHANGE_TEXT_MAX_CHARS) : text;
-}
-
-// Prefix of OpenClaw BARE_SESSION_RESET_PROMPT injected as event.prompt on bare /new or
-// /reset. Matched by prefix only to stay resilient to minor wording changes in OpenClaw.
-const OPENCLAW_BARE_RESET_PREFIX = "a new session was started via /new";
-
-export function isThinPrompt(prompt: string): boolean {
-  const trimmed = prompt.trim().toLowerCase();
-  return (
-    trimmed === "" ||
-    trimmed === "/new" ||
-    trimmed === "/reset" ||
-    trimmed.startsWith(OPENCLAW_BARE_RESET_PREFIX)
-  );
+export function truncateMessageText(text: string, maxChars = EXCHANGE_TEXT_MAX_CHARS): string {
+  return text.length > maxChars ? text.slice(0, maxChars) : text;
 }
 
 export function stripPromptMetadata(raw: string): string {
@@ -197,147 +173,116 @@ export function extractLastExchangeText(messages: unknown[], maxTurns = EXCHANGE
   }
 }
 
-export async function readLatestArchivedUserMessages(
+export async function findPreviousSessionFile(
   sessionsDir: string,
-  maxAgeMs = ARCHIVED_SESSION_MAX_AGE_MS,
-): Promise<string[]> {
+  currentSessionId: string | undefined,
+): Promise<string | null> {
   try {
-    const now = Date.now();
-    const archivedFiles: Array<{ filePath: string; mtimeMs: number }> = [];
+    const candidates: Array<{ filePath: string; mtimeMs: number }> = [];
+    const normalizedSessionId = currentSessionId?.trim();
+    const currentSessionFileName = normalizedSessionId ? `${normalizedSessionId}.jsonl` : undefined;
     const entries = await readdir(sessionsDir, { withFileTypes: true });
 
     for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.includes(".reset.")) {
+      if (!entry.isFile()) {
+        continue;
+      }
+      if (!entry.name.endsWith(".jsonl")) {
+        continue;
+      }
+      if (entry.name.includes(".deleted.")) {
+        continue;
+      }
+      if (currentSessionFileName && entry.name === currentSessionFileName) {
         continue;
       }
       const filePath = path.join(sessionsDir, entry.name);
       const fileStats = await stat(filePath);
-      if (now - fileStats.mtimeMs > maxAgeMs) {
+      candidates.push({ filePath, mtimeMs: fileStats.mtimeMs });
+    }
+
+    if (candidates.length === 0) {
+      return null;
+    }
+    candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    return candidates[0]?.filePath ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function extractRecentTurns(filePath: string, maxTurns = DEFAULT_RECENT_TURN_LIMIT): Promise<string> {
+  try {
+    if (!filePath) {
+      return "";
+    }
+    const parsedMaxTurns = Number.isFinite(maxTurns) ? Math.max(0, Math.trunc(maxTurns)) : 0;
+    if (parsedMaxTurns === 0) {
+      return "";
+    }
+    const raw = await readFile(filePath, "utf8");
+    if (!raw.trim()) {
+      return "";
+    }
+
+    const turns: string[] = [];
+    for (const line of raw.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed) {
         continue;
       }
-      archivedFiles.push({ filePath, mtimeMs: fileStats.mtimeMs });
-    }
-
-    if (archivedFiles.length === 0) {
-      return [];
-    }
-
-    archivedFiles.sort((a, b) => b.mtimeMs - a.mtimeMs);
-    for (const candidate of archivedFiles) {
-      const raw = await readFile(candidate.filePath, "utf8");
-      const userMessages: string[] = [];
-
-      for (const line of raw.split(/\r?\n/)) {
-        const trimmed = line.trim();
-        if (!trimmed) {
-          continue;
-        }
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(trimmed);
-        } catch {
-          continue;
-        }
-        if (!isRecord(parsed) || parsed["type"] !== "message") {
-          continue;
-        }
-        const text = extractTextFromUserMessage(parsed["message"]);
-        if (!text) {
-          continue;
-        }
-        userMessages.push(text);
+      let record: unknown;
+      try {
+        record = JSON.parse(trimmed);
+      } catch {
+        continue;
       }
-
-      if (userMessages.length > 0) {
-        return userMessages.slice(-SESSION_QUERY_LOOKBACK);
+      if (!isRecord(record) || record["type"] !== "message") {
+        continue;
+      }
+      const message = record["message"];
+      const userText = extractTextFromUserMessage(message);
+      if (userText) {
+        turns.push(`U: ${truncateMessageText(userText, RECENT_TURN_MAX_CHARS)}`);
+        continue;
+      }
+      const assistantText = extractTextFromAssistantMessage(message);
+      if (assistantText) {
+        turns.push(`A: ${truncateMessageText(assistantText, RECENT_TURN_MAX_CHARS)}`);
       }
     }
 
-    return [];
+    if (turns.length === 0) {
+      return "";
+    }
+    return turns.slice(-parsedMaxTurns).join(" | ");
   } catch {
-    return [];
+    return "";
   }
 }
 
-// Quality gate for deciding whether extracted topic text is stash eligible.
-export function shouldStashTopic(text: string): boolean {
-  if (text.length < SESSION_TOPIC_MIN_LENGTH) {
-    return false;
-  }
-  const wordCount = text.split(/\s+/).filter(Boolean).length;
-  return wordCount >= 5;
-}
+export function buildSemanticSeed(
+  previousTurns: string,
+  firstUserMessage: string,
+): string | undefined {
+  const stripped = stripPromptMetadata(firstUserMessage).trim();
+  // Minimum 5 words for user message to contribute signal to the seed.
+  // Fewer than 5 words ("hey", "fix it", "on the other side") rarely carry enough
+  // specificity to improve a recall query. Phase 1A transcript turns are the primary
+  // seed - user message is additive signal on top.
+  const wordCount = stripped.split(/\s+/).filter(Boolean).length;
+  const messageHasSignal = wordCount >= 5;
 
-function sweepExpiredStash(): void {
-  const now = Date.now();
-  for (const [key, entry] of sessionTopicStash) {
-    if (now - entry.storedAt > SESSION_TOPIC_TTL_MS) {
-      sessionTopicStash.delete(key);
-    }
-  }
-}
+  const truncatedTurns = previousTurns.slice(0, SEMANTIC_SEED_PREVIOUS_TURNS_MAX_CHARS);
 
-export let sweepInterval: ReturnType<typeof setInterval> | undefined =
-  setInterval(sweepExpiredStash, 5 * 60 * 1000);
-if (sweepInterval !== undefined && typeof sweepInterval.unref === "function") {
-  sweepInterval.unref();
-}
-
-function stripResetPrefix(prompt: string): string {
-  const lower = prompt.toLowerCase();
-  for (const cmd of ["/new", "/reset"]) {
-    if (lower.startsWith(cmd + " ")) {
-      return prompt.slice(cmd.length).trim();
-    }
+  if (truncatedTurns && messageHasSignal) {
+    return `${truncatedTurns} ${stripped}`;
   }
-  return prompt;
-}
-
-export function resolveSessionQuery(prompt: string | undefined, sessionKey?: string): string | undefined {
-  let stashedText: string | undefined;
-  if (sessionKey) {
-    const entry = sessionTopicStash.get(sessionKey);
-    if (entry) {
-      sessionTopicStash.delete(sessionKey);
-      const expired = Date.now() - entry.storedAt > SESSION_TOPIC_TTL_MS;
-      if (!expired && entry.text.length > 0) {
-        stashedText = entry.text;
-      }
-    }
+  if (truncatedTurns) {
+    return truncatedTurns;
   }
-
-  const normalized = (prompt ?? "").trim();
-  if (!isThinPrompt(normalized)) {
-    const stripped = stripResetPrefix(normalized);
-    if (!stashedText) {
-      // No stash - use live prompt as-is.
-      return stripped;
-    }
-    // Stash exists: blend when live prompt carries real signal; otherwise stash wins.
-    if (shouldStashTopic(stripped)) {
-      // High-signal live prompt: stash provides topic continuity, prompt appends new intent.
-      return `${stashedText} ${stripped}`;
-    }
-    // Low-signal live prompt (short opener like "did the plugin fire?"): stash wins.
-    return stashedText;
+  if (messageHasSignal) {
+    return stripped;
   }
-  return stashedText;
-}
-
-export function stashSessionTopic(sessionKey: string, text: string): void {
-  if (!shouldStashTopic(text)) {
-    return;
-  }
-  sessionTopicStash.set(sessionKey, {
-    text,
-    storedAt: Date.now(),
-  });
-}
-
-export function clearStash(): void {
-  sessionTopicStash.clear();
-  if (sweepInterval !== undefined) {
-    clearInterval(sweepInterval);
-    sweepInterval = undefined;
-  }
+  return undefined;
 }

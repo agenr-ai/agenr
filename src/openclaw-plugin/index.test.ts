@@ -4,15 +4,7 @@ import * as dbClient from "../db/client.js";
 import { __testing } from "./index.js";
 import plugin from "./index.js";
 import * as pluginRecall from "./recall.js";
-import {
-  clearStash,
-  extractLastUserText,
-  isThinPrompt,
-  resolveSessionQuery,
-  SESSION_TOPIC_TTL_MS,
-  shouldStashTopic,
-  sweepInterval,
-} from "./session-query.js";
+import * as sessionQuery from "./session-query.js";
 import * as pluginSignals from "./signals.js";
 import { runExtractTool, runRecallTool, runRetireTool, runStoreTool } from "./tools.js";
 import type { BeforePromptBuildResult, PluginApi } from "./types.js";
@@ -103,6 +95,8 @@ afterEach(() => {
 beforeEach(() => {
   __testing.clearState();
   spawnMock.mockImplementation(() => createMockChild({ code: 0 }));
+  vi.spyOn(sessionQuery, "findPreviousSessionFile").mockResolvedValue(null);
+  vi.spyOn(sessionQuery, "extractRecentTurns").mockResolvedValue("");
 });
 
 function getBeforePromptBuildHandler(
@@ -137,19 +131,6 @@ function getBeforeResetHandler(
     event: { messages?: unknown[] },
     ctx: { sessionKey?: string; sessionId?: string },
   ) => void;
-}
-
-function seedStashWithMessage(
-  handler: ReturnType<typeof getBeforeResetHandler>,
-  sessionKey: string,
-  text: string,
-): void {
-  handler(
-    {
-      messages: [{ role: "user", content: text }],
-    },
-    { sessionKey },
-  );
 }
 
 describe("openclaw plugin tool registration", () => {
@@ -245,13 +226,321 @@ describe("before_prompt_build recall behavior", () => {
       { sessionKey: "agent:main:scoped", sessionId: "uuid-scope-a" },
     );
 
-    expect(runRecallMock).toHaveBeenCalledTimes(1);
-    expect(runRecallMock).toHaveBeenCalledWith(
+    expect(runRecallMock).toHaveBeenCalledTimes(2);
+    expect(runRecallMock).toHaveBeenNthCalledWith(
+      1,
+      expect.any(String),
+      expect.any(Number),
+      "plugin-scope",
+      undefined,
+      { context: "browse", since: "1d", limit: 20 },
+    );
+    expect(runRecallMock).toHaveBeenNthCalledWith(
+      2,
       expect.any(String),
       expect.any(Number),
       "plugin-scope",
       prompt,
     );
+  });
+});
+
+describe("before_prompt_build cross-session context injection", () => {
+  it("first message in new session always runs Phase 1B browse recall", async () => {
+    const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
+    const api = makeApi({ pluginConfig: { signalsEnabled: false } });
+    plugin.register(api);
+    const handler = getBeforePromptBuildHandler(api);
+
+    await handler(
+      { prompt: "hey" },
+      { sessionKey: "agent:main:first-browse", sessionId: "uuid-first-browse" },
+    );
+
+    expect(runRecallMock).toHaveBeenCalledTimes(1);
+    expect(runRecallMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(Number),
+      undefined,
+      undefined,
+      { context: "browse", since: "1d", limit: 20 },
+    );
+  });
+
+  it("injects Phase 1A recent turns when a prior session file exists", async () => {
+    vi.spyOn(sessionQuery, "findPreviousSessionFile").mockResolvedValue("/tmp/prev.jsonl");
+    vi.spyOn(sessionQuery, "extractRecentTurns").mockResolvedValue("U: previous user | A: previous assistant");
+    vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
+
+    const api = makeApi({ pluginConfig: { signalsEnabled: false } });
+    plugin.register(api);
+    const handler = getBeforePromptBuildHandler(api);
+    const result = await handler(
+      { prompt: "hello" },
+      { sessionKey: "agent:main:phase-1a", sessionId: "uuid-phase-1a" },
+    );
+
+    expect(result?.prependContext).toContain("## Recent session\nU: previous user | A: previous assistant");
+  });
+
+  it("for short first message with prior session, Phase 2 seed uses previous turns only", async () => {
+    vi.spyOn(sessionQuery, "findPreviousSessionFile").mockResolvedValue("/tmp/prev.jsonl");
+    vi.spyOn(sessionQuery, "extractRecentTurns").mockResolvedValue("U: previous user | A: previous assistant");
+    const browseResult = {
+      query: "[browse]",
+      results: [
+        {
+          entry: {
+            id: "browse-1",
+            type: "fact",
+            subject: "recent",
+            content: "recent memory",
+          },
+          score: 0.9,
+        },
+      ],
+    };
+    const runRecallMock = vi.spyOn(pluginRecall, "runRecall");
+    runRecallMock.mockResolvedValueOnce(browseResult).mockResolvedValueOnce(null);
+
+    const api = makeApi({ pluginConfig: { signalsEnabled: false } });
+    plugin.register(api);
+    const handler = getBeforePromptBuildHandler(api);
+    const result = await handler(
+      { prompt: "hey" },
+      { sessionKey: "agent:main:short-message", sessionId: "uuid-short-message" },
+    );
+
+    expect(runRecallMock).toHaveBeenCalledTimes(2);
+    expect(runRecallMock).toHaveBeenNthCalledWith(
+      2,
+      expect.any(String),
+      expect.any(Number),
+      undefined,
+      "U: previous user | A: previous assistant",
+    );
+    expect(result?.prependContext).toContain("## Recent session");
+    expect(result?.prependContext).toContain("## Recent memory");
+  });
+
+  it("for substantive first message with prior session, injects Phase 1A, 1B, and Phase 2", async () => {
+    vi.spyOn(sessionQuery, "findPreviousSessionFile").mockResolvedValue("/tmp/prev.jsonl");
+    vi.spyOn(sessionQuery, "extractRecentTurns").mockResolvedValue("U: prior work");
+    const runRecallMock = vi.spyOn(pluginRecall, "runRecall");
+    runRecallMock
+      .mockResolvedValueOnce({
+        query: "[browse]",
+        results: [
+          {
+            entry: {
+              id: "browse-1",
+              type: "fact",
+              subject: "browse subject",
+              content: "browse content",
+            },
+            score: 0.9,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        query: "semantic",
+        results: [
+          {
+            entry: {
+              id: "sem-1",
+              type: "fact",
+              subject: "semantic subject",
+              content: "semantic content",
+            },
+            score: 0.8,
+          },
+        ],
+      });
+
+    const api = makeApi({ pluginConfig: { signalsEnabled: false } });
+    plugin.register(api);
+    const handler = getBeforePromptBuildHandler(api);
+    const result = await handler(
+      { prompt: "fix the recall bug now" },
+      { sessionKey: "agent:main:substantive", sessionId: "uuid-substantive" },
+    );
+
+    expect(result?.prependContext).toContain("## Recent session");
+    expect(result?.prependContext).toContain("## Recent memory");
+    expect(result?.prependContext).toContain("## Relevant memory");
+  });
+
+  it("when no prior session file exists, skips Phase 1A and still runs Phase 1B", async () => {
+    vi.spyOn(sessionQuery, "findPreviousSessionFile").mockResolvedValue(null);
+    const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue({
+      query: "[browse]",
+      results: [
+        {
+          entry: {
+            id: "browse-1",
+            type: "fact",
+            subject: "browse only",
+            content: "browse content",
+          },
+          score: 0.9,
+        },
+      ],
+    });
+
+    const api = makeApi({ pluginConfig: { signalsEnabled: false } });
+    plugin.register(api);
+    const handler = getBeforePromptBuildHandler(api);
+    const result = await handler(
+      { prompt: "hello" },
+      { sessionKey: "agent:main:no-prior", sessionId: "uuid-no-prior" },
+    );
+
+    expect(runRecallMock).toHaveBeenCalledTimes(1);
+    expect(result?.prependContext).not.toContain("## Recent session");
+    expect(result?.prependContext).toContain("## Recent memory");
+  });
+
+  it("does not inject recall on second message in the same session", async () => {
+    vi.spyOn(pluginRecall, "runRecall").mockResolvedValue({
+      query: "[browse]",
+      results: [
+        {
+          entry: {
+            id: "browse-1",
+            type: "fact",
+            subject: "browse only",
+            content: "browse content",
+          },
+          score: 0.9,
+        },
+      ],
+    });
+    const api = makeApi({ pluginConfig: { signalsEnabled: false } });
+    plugin.register(api);
+    const handler = getBeforePromptBuildHandler(api);
+
+    const first = await handler(
+      { prompt: "hello" },
+      { sessionKey: "agent:main:same-session", sessionId: "uuid-same-session" },
+    );
+    const second = await handler(
+      { prompt: "fix it" },
+      { sessionKey: "agent:main:same-session", sessionId: "uuid-same-session" },
+    );
+
+    expect(first?.prependContext).toContain("## Recent memory");
+    expect(second).toBeUndefined();
+  });
+
+  it("Phase 2 deduplicates entries already present in Phase 1B by id", async () => {
+    vi.spyOn(sessionQuery, "findPreviousSessionFile").mockResolvedValue("/tmp/prev.jsonl");
+    vi.spyOn(sessionQuery, "extractRecentTurns").mockResolvedValue("U: prior work");
+    const runRecallMock = vi.spyOn(pluginRecall, "runRecall");
+    runRecallMock
+      .mockResolvedValueOnce({
+        query: "[browse]",
+        results: [
+          {
+            entry: {
+              id: "dup-id",
+              type: "fact",
+              subject: "duplicate subject",
+              content: "browse content",
+            },
+            score: 0.9,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        query: "semantic",
+        results: [
+          {
+            entry: {
+              id: "dup-id",
+              type: "fact",
+              subject: "duplicate subject",
+              content: "semantic duplicate content",
+            },
+            score: 0.8,
+          },
+          {
+            entry: {
+              id: "new-id",
+              type: "fact",
+              subject: "new semantic subject",
+              content: "semantic new content",
+            },
+            score: 0.7,
+          },
+        ],
+      });
+
+    const api = makeApi({ pluginConfig: { signalsEnabled: false } });
+    plugin.register(api);
+    const handler = getBeforePromptBuildHandler(api);
+    const result = await handler(
+      { prompt: "fix the recall bug now" },
+      { sessionKey: "agent:main:dedup", sessionId: "uuid-dedup" },
+    );
+
+    expect(result?.prependContext).toContain("## Relevant memory");
+    expect(result?.prependContext).toContain("new semantic subject");
+    expect(result?.prependContext).not.toContain("semantic duplicate content");
+  });
+
+  it("does not deduplicate Phase 2 entries that do not have an id", async () => {
+    vi.spyOn(sessionQuery, "findPreviousSessionFile").mockResolvedValue("/tmp/prev.jsonl");
+    vi.spyOn(sessionQuery, "extractRecentTurns").mockResolvedValue("U: prior work");
+    const runRecallMock = vi.spyOn(pluginRecall, "runRecall");
+    runRecallMock
+      .mockResolvedValueOnce({
+        query: "[browse]",
+        results: [
+          {
+            entry: {
+              id: "dup-id",
+              type: "fact",
+              subject: "duplicate subject",
+              content: "browse content",
+            },
+            score: 0.9,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        query: "semantic",
+        results: [
+          {
+            entry: {
+              type: "fact",
+              subject: "no-id semantic subject",
+              content: "no-id semantic content",
+            },
+            score: 0.8,
+          },
+          {
+            entry: {
+              id: "dup-id",
+              type: "fact",
+              subject: "duplicate subject",
+              content: "semantic duplicate content",
+            },
+            score: 0.7,
+          },
+        ],
+      });
+
+    const api = makeApi({ pluginConfig: { signalsEnabled: false } });
+    plugin.register(api);
+    const handler = getBeforePromptBuildHandler(api);
+    const result = await handler(
+      { prompt: "fix the recall bug now" },
+      { sessionKey: "agent:main:no-id-dedup", sessionId: "uuid-no-id-dedup" },
+    );
+
+    expect(result?.prependContext).toContain("## Relevant memory");
+    expect(result?.prependContext).toContain("no-id semantic subject");
+    expect(result?.prependContext).not.toContain("semantic duplicate content");
   });
 });
 
@@ -687,319 +976,6 @@ describe("sessionSignalState gating", () => {
   });
 });
 
-describe("before_prompt_build query seeding", () => {
-  it("uses high-signal prompt when no stash is present", async () => {
-    const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
-    const api = makeApi({ pluginConfig: { signalsEnabled: false } });
-    plugin.register(api);
-    const handler = getBeforePromptBuildHandler(api);
-    const sessionKey = "agent:main:seed-high-no-stash";
-
-    await handler(
-      { prompt: "What is the current status?" },
-      { sessionKey, sessionId: "uuid-seed-high-no-stash" },
-    );
-
-    expect(runRecallMock).toHaveBeenCalledTimes(1);
-    expect(runRecallMock).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.any(Number),
-      undefined,
-      "What is the current status?",
-    );
-    expect(resolveSessionQuery("/new", sessionKey)).toBeUndefined();
-  });
-
-  it("uses stash as query when live prompt is low-signal and stash is present", async () => {
-    const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
-    const api = makeApi({ pluginConfig: { signalsEnabled: false } });
-    plugin.register(api);
-    const promptHandler = getBeforePromptBuildHandler(api);
-    const resetHandler = getBeforeResetHandler(api);
-    const sessionKey = "agent:main:seed-low-with-stash";
-    const stashedText = "Please continue discussing release risks across deployment and rollback checks";
-    seedStashWithMessage(resetHandler, sessionKey, stashedText);
-
-    await promptHandler(
-      { prompt: "Check release blockers" },
-      { sessionKey, sessionId: "uuid-seed-low-with-stash" },
-    );
-
-    expect(runRecallMock).toHaveBeenCalledTimes(1);
-    expect(runRecallMock).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.any(Number),
-      undefined,
-      stashedText,
-    );
-    expect(resolveSessionQuery("/new", sessionKey)).toBeUndefined();
-  });
-
-  it("substantive prompt uses embed path", async () => {
-    const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
-    const api = makeApi({ pluginConfig: { signalsEnabled: false } });
-    plugin.register(api);
-    const handler = getBeforePromptBuildHandler(api);
-    const longPrompt = "this prompt is clearly long enough to use the embed path";
-
-    await handler(
-      { prompt: longPrompt },
-      { sessionKey: "agent:main:embed-substantive", sessionId: "uuid-embed-substantive" },
-    );
-
-    expect(runRecallMock).toHaveBeenCalledTimes(1);
-    expect(runRecallMock).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.any(Number),
-      undefined,
-      longPrompt,
-    );
-  });
-
-  it("thin prompt with stash uses embed path with stash", async () => {
-    const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
-    const api = makeApi({ pluginConfig: { signalsEnabled: false } });
-    plugin.register(api);
-    const promptHandler = getBeforePromptBuildHandler(api);
-    const resetHandler = getBeforeResetHandler(api);
-    const sessionKey = "agent:main:thin-with-stash-embed";
-    const stashedText = "this stashed topic should be used for recall query seeding";
-    seedStashWithMessage(resetHandler, sessionKey, stashedText);
-
-    await promptHandler(
-      { prompt: "/new" },
-      { sessionKey, sessionId: "uuid-thin-with-stash-embed", agentId: "main" },
-    );
-
-    expect(runRecallMock).toHaveBeenCalledTimes(1);
-    expect(runRecallMock).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.any(Number),
-      undefined,
-      stashedText,
-    );
-  });
-
-  it("runs recall once per session even when first prompt is thin", async () => {
-    const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
-    const api = makeApi({ pluginConfig: { signalsEnabled: false } });
-    plugin.register(api);
-    const handler = getBeforePromptBuildHandler(api);
-    const sessionId = "uuid-same-session-no-second-recall";
-
-    await handler(
-      { prompt: "/new" },
-      { sessionKey: "agent:main:same-session", sessionId, agentId: "main" },
-    );
-    await handler(
-      { prompt: "yes" },
-      { sessionKey: "agent:main:same-session", sessionId, agentId: "main" },
-    );
-
-    expect(runRecallMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("uses agentId main as fallback when ctx.agentId is absent", async () => {
-    const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
-    const debugLogger = vi.fn();
-    const api = makeApi({
-      pluginConfig: { signalsEnabled: false },
-      logger: {
-        debug: debugLogger,
-        warn: vi.fn(),
-        error: vi.fn(),
-      },
-    });
-    plugin.register(api);
-    const handler = getBeforePromptBuildHandler(api);
-
-    await handler(
-      { prompt: "/new" },
-      { sessionKey: "agent:main:agentid-fallback", sessionId: "uuid-agentid-fallback" },
-    );
-
-    expect(runRecallMock).toHaveBeenCalledTimes(1);
-    expect(runRecallMock).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.any(Number),
-      undefined,
-      undefined,
-      { context: "browse", since: "1d" },
-    );
-    expect(debugLogger).toHaveBeenCalledWith(
-      "[agenr] cold-start: agentId not in ctx, defaulting to 'main'",
-    );
-  });
-
-  it("strips OpenClaw prompt metadata envelope before resolving query", async () => {
-    const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
-    const api = makeApi({ pluginConfig: { signalsEnabled: false } });
-    plugin.register(api);
-    const promptHandler = getBeforePromptBuildHandler(api);
-    const resetHandler = getBeforeResetHandler(api);
-    const sessionKey = "agent:main:seed-metadata-envelope";
-    const stashedText = "Please continue discussing release risks across deployment and rollback checks";
-    seedStashWithMessage(resetHandler, sessionKey, stashedText);
-    const rawPrompt = `Conversation info (untrusted metadata):
-\`\`\`json
-{
-  "message_id": "08f2ed82-1111-2222-3333-444455556666",
-  "sender_id": "gateway-client",
-  "sender": "gateway-client"
-}
-\`\`\`
-
-[Sun 2026-02-22 21:08 CST] hey`;
-
-    await promptHandler(
-      { prompt: rawPrompt },
-      { sessionKey, sessionId: "uuid-seed-metadata-envelope" },
-    );
-
-    expect(runRecallMock).toHaveBeenCalledTimes(1);
-    expect(runRecallMock).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.any(Number),
-      undefined,
-      stashedText,
-    );
-    expect(resolveSessionQuery("/new", sessionKey)).toBeUndefined();
-  });
-
-  it("blends stash and high-signal live prompt when both present at integration level", async () => {
-    const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
-    const api = makeApi({ pluginConfig: { signalsEnabled: false } });
-    plugin.register(api);
-    const promptHandler = getBeforePromptBuildHandler(api);
-    const resetHandler = getBeforeResetHandler(api);
-    const sessionKey = "agent:main:blend-high-with-stash";
-    const stashedText = "Please continue discussing release risks across deployment and rollback checks";
-    const livePrompt = "Let us pick up the recall blend work and fix the stash query seeding logic";
-    seedStashWithMessage(resetHandler, sessionKey, stashedText);
-
-    await promptHandler(
-      { prompt: livePrompt },
-      { sessionKey, sessionId: "uuid-blend-high-with-stash" },
-    );
-
-    expect(runRecallMock).toHaveBeenCalledTimes(1);
-    expect(runRecallMock).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.any(Number),
-      undefined,
-      `${stashedText} ${livePrompt}`,
-    );
-    expect(resolveSessionQuery("/new", sessionKey)).toBeUndefined();
-  });
-
-  it("thin prompt with no stash uses browse mode recall", async () => {
-    const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
-    const api = makeApi({ pluginConfig: { signalsEnabled: false } });
-    plugin.register(api);
-    const handler = getBeforePromptBuildHandler(api);
-
-    await handler(
-      { prompt: "/new" },
-      { sessionKey: "agent:main:thin-no-stash", sessionId: "uuid-thin-no-stash" },
-    );
-
-    expect(runRecallMock).toHaveBeenCalledTimes(1);
-    expect(runRecallMock).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.any(Number),
-      undefined,
-      undefined,
-      { context: "browse", since: "1d" },
-    );
-  });
-
-  it("falls back to valid stash text for thin prompt and consumes stash", async () => {
-    const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
-    const api = makeApi({ pluginConfig: { signalsEnabled: false } });
-    plugin.register(api);
-    const promptHandler = getBeforePromptBuildHandler(api);
-    const resetHandler = getBeforeResetHandler(api);
-    const sessionKey = "agent:main:thin-with-stash";
-    const stashedText = "Please continue from the previous deployment migration issue and retry checks";
-    seedStashWithMessage(resetHandler, sessionKey, stashedText);
-
-    await promptHandler({ prompt: "/new" }, { sessionKey, sessionId: "uuid-thin-with-stash" });
-
-    expect(runRecallMock).toHaveBeenCalledTimes(1);
-    expect(runRecallMock).toHaveBeenCalledWith(expect.any(String), expect.any(Number), undefined, stashedText);
-    expect(resolveSessionQuery("/new", sessionKey)).toBeUndefined();
-  });
-
-  it("drops expired stash for thin prompt and still consumes stash entry", async () => {
-    vi.useFakeTimers();
-    try {
-      vi.setSystemTime(new Date("2026-02-20T00:00:00.000Z"));
-      const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
-      const api = makeApi({ pluginConfig: { signalsEnabled: false } });
-      plugin.register(api);
-      const promptHandler = getBeforePromptBuildHandler(api);
-      const resetHandler = getBeforeResetHandler(api);
-      const sessionKey = "agent:main:thin-expired-stash";
-      seedStashWithMessage(
-        resetHandler,
-        sessionKey,
-        "Keep investigating the retry queue behavior before release goes live",
-      );
-      vi.advanceTimersByTime(SESSION_TOPIC_TTL_MS + 1);
-
-      await promptHandler({ prompt: "/new" }, { sessionKey, sessionId: "uuid-thin-expired-stash" });
-
-      expect(runRecallMock).toHaveBeenCalledTimes(1);
-      expect(runRecallMock).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.any(Number),
-        undefined,
-        undefined,
-        { context: "browse", since: "1d" },
-      );
-      expect(resolveSessionQuery("/new", sessionKey)).toBeUndefined();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("treats missing prompt key as thin and falls back to stash", async () => {
-    const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
-    const api = makeApi({ pluginConfig: { signalsEnabled: false } });
-    plugin.register(api);
-    const promptHandler = getBeforePromptBuildHandler(api);
-    const resetHandler = getBeforeResetHandler(api);
-    const sessionKey = "agent:main:thin-undefined-prompt";
-    const stashedText = "Continue evaluating migration planning and rollback readiness this afternoon";
-    seedStashWithMessage(resetHandler, sessionKey, stashedText);
-
-    await promptHandler({}, { sessionKey, sessionId: "uuid-thin-undefined-prompt" });
-
-    expect(runRecallMock).toHaveBeenCalledTimes(1);
-    expect(runRecallMock).toHaveBeenCalledWith(expect.any(String), expect.any(Number), undefined, stashedText);
-  });
-
-  it("runs recall once per session and stash stays consumed after first call", async () => {
-    const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
-    const api = makeApi({ pluginConfig: { signalsEnabled: false } });
-    plugin.register(api);
-    const promptHandler = getBeforePromptBuildHandler(api);
-    const resetHandler = getBeforeResetHandler(api);
-    const sessionKey = "agent:main:thin-run-once";
-    seedStashWithMessage(
-      resetHandler,
-      sessionKey,
-      "Resume discussion about release timing and rollout plan with rollback coverage",
-    );
-
-    await promptHandler({ prompt: "/new" }, { sessionKey, sessionId: "uuid-thin-run-once" });
-    await promptHandler({ prompt: "/new" }, { sessionKey, sessionId: "uuid-thin-run-once" });
-
-    expect(runRecallMock).toHaveBeenCalledTimes(1);
-    expect(resolveSessionQuery("/new", sessionKey)).toBeUndefined();
-  });
-});
-
 describe("before_prompt_build handoff auto-retire", () => {
   it("retires handoff entry surfaced by browse at session start", async () => {
     const browseResult = {
@@ -1128,205 +1104,8 @@ describe("before_prompt_build handoff auto-retire", () => {
   });
 });
 
-describe("before_reset topic stashing", () => {
-  it("stashes the last long user message for sessionKey", () => {
-    const api = makeApi();
-    plugin.register(api);
-    const handler = getBeforeResetHandler(api);
-    const sessionKey = "agent:main:reset-long-user";
-
-    handler(
-      {
-        messages: [
-          { role: "assistant", content: "ok" },
-          {
-            role: "user",
-            content: "   Continue work on ingestion retry failure investigation and release checklists   ",
-          },
-        ],
-      },
-      { sessionKey },
-    );
-
-    expect(resolveSessionQuery("/new", sessionKey)).toBe(
-      "Continue work on ingestion retry failure investigation and release checklists",
-    );
-  });
-
-  it("does not stash when last user message is shorter than minimum length", () => {
-    const api = makeApi();
-    plugin.register(api);
-    const handler = getBeforeResetHandler(api);
-    const sessionKey = "agent:main:reset-short-user";
-
-    handler(
-      {
-        messages: [{ role: "user", content: "thanks team" }],
-      },
-      { sessionKey },
-    );
-
-    expect(resolveSessionQuery("/new", sessionKey)).toBeUndefined();
-  });
-
-  it("does not modify stash when there are no user messages", () => {
-    const api = makeApi();
-    plugin.register(api);
-    const handler = getBeforeResetHandler(api);
-
-    handler(
-      {
-        messages: [{ role: "assistant", content: "no user content" }],
-      },
-      { sessionKey: "agent:main:reset-no-user" },
-    );
-
-    expect(resolveSessionQuery("/new", "agent:main:reset-no-user")).toBeUndefined();
-  });
-
-  it("does not stash when messages are undefined or empty", () => {
-    const api = makeApi();
-    plugin.register(api);
-    const handler = getBeforeResetHandler(api);
-    const sessionKey = "agent:main:reset-empty-messages";
-
-    handler({}, { sessionKey });
-    handler({ messages: [] }, { sessionKey });
-
-    expect(resolveSessionQuery("/new", sessionKey)).toBeUndefined();
-  });
-
-  it("overwrites stash with newer value when before_reset fires twice", () => {
-    const api = makeApi();
-    plugin.register(api);
-    const handler = getBeforeResetHandler(api);
-    const sessionKey = "agent:main:reset-overwrite";
-
-    handler(
-      {
-        messages: [{ role: "user", content: "First long message about parsing adapters and migrations safety" }],
-      },
-      { sessionKey },
-    );
-    handler(
-      {
-        messages: [{ role: "user", content: "Second long message about session query seeding behavior updates" }],
-      },
-      { sessionKey },
-    );
-
-    expect(resolveSessionQuery("/new", sessionKey)).toBe(
-      "Second long message about session query seeding behavior updates",
-    );
-  });
-
-  it("does not stash anything when sessionKey is undefined", () => {
-    const api = makeApi();
-    plugin.register(api);
-    const handler = getBeforeResetHandler(api);
-
-    handler(
-      {
-        messages: [{ role: "user", content: "Long topic text that should never be stashed without a session key" }],
-      },
-      {},
-    );
-
-    expect(resolveSessionQuery("/new", "agent:main:missing-session-key")).toBeUndefined();
-  });
-
-  it("does not stash when concatenated text has fewer than five words", () => {
-    const api = makeApi();
-    plugin.register(api);
-    const handler = getBeforeResetHandler(api);
-    const sessionKey = "agent:main:reset-few-words";
-
-    handler(
-      {
-        messages: [
-          { role: "user", content: "nice" },
-          { role: "assistant", content: "ok" },
-          { role: "user", content: "great" },
-          { role: "user", content: "ok" },
-        ],
-      },
-      { sessionKey },
-    );
-
-    expect(resolveSessionQuery("/new", sessionKey)).toBeUndefined();
-  });
-
-  it("does not stash when concatenated text meets length but has fewer than five words", () => {
-    const api = makeApi();
-    plugin.register(api);
-    const handler = getBeforeResetHandler(api);
-    const sessionKey = "agent:main:reset-long-few-words";
-
-    handler(
-      {
-        messages: [
-          {
-            role: "user",
-            content: "Superlongpaddddddddddddddddddddddddd one",
-          },
-        ],
-      },
-      { sessionKey },
-    );
-
-    expect(resolveSessionQuery("/new", sessionKey)).toBeUndefined();
-  });
-
-  it("stashes concatenated result from the last three user messages", () => {
-    const api = makeApi();
-    plugin.register(api);
-    const handler = getBeforeResetHandler(api);
-    const sessionKey = "agent:main:reset-last-three";
-
-    handler(
-      {
-        messages: [
-          { role: "user", content: "Let us review the deployment pipeline" },
-          { role: "assistant", content: "sure" },
-          { role: "user", content: "Focus on the retry logic" },
-          { role: "assistant", content: "ok" },
-          { role: "user", content: "And then check the alert thresholds" },
-        ],
-      },
-      { sessionKey },
-    );
-
-    expect(resolveSessionQuery("/new", sessionKey)).toBe(
-      "Let us review the deployment pipeline Focus on the retry logic And then check the alert thresholds",
-    );
-  });
-
-  it("stashes array-content user messages correctly", () => {
-    const api = makeApi();
-    plugin.register(api);
-    const handler = getBeforeResetHandler(api);
-    const sessionKey = "agent:main:reset-array-content";
-
-    handler(
-      {
-        messages: [
-          {
-            role: "user",
-            content: [{ type: "text", text: "Continue the migration work and validate every rollback path" }],
-          },
-          { role: "assistant", content: "sure" },
-          { role: "user", content: "Then verify the final release checklist before deploying to production" },
-        ],
-      },
-      { sessionKey },
-    );
-
-    expect(resolveSessionQuery("/new", sessionKey)).toBe(
-      "Continue the migration work and validate every rollback path Then verify the final release checklist before deploying to production",
-    );
-  });
-
-  it("before_reset stores handoff with exchange context not just user text", async () => {
+describe("before_reset handoff store", () => {
+  it("stores handoff with exchange context", async () => {
     let capturedStdinPayload: unknown;
     const mockChild = createMockChild({ code: 0 });
     mockChild.stdin.write = vi.fn((chunk: string) => {
@@ -1366,10 +1145,9 @@ describe("before_reset topic stashing", () => {
     expect(entries[0]?.content).toContain("U:");
     expect(entries[0]?.content).toContain("A:");
     expect(entries[0]?.content).toContain("U: Do it and include swarm findings in the patch");
-    expect(entries[0]?.content).not.toBe("Working on session handoff behavior Do it and include swarm findings in the patch");
   });
 
-  it("before_reset passes project to runStoreTool when config has project set", async () => {
+  it("passes project to runStoreTool when config has project set", async () => {
     let capturedArgs: string[] = [];
     spawnMock.mockImplementationOnce((_cmd: string, args: string[]) => {
       capturedArgs = args;
@@ -1396,255 +1174,5 @@ describe("before_reset topic stashing", () => {
     expect(capturedArgs).toContain("--project");
     const projectIdx = capturedArgs.indexOf("--project");
     expect(capturedArgs[projectIdx + 1]).toBe("my-project");
-  });
-});
-
-describe("isThinPrompt", () => {
-  it("returns true for empty and reset commands", () => {
-    expect(isThinPrompt("")).toBe(true);
-    expect(isThinPrompt("/new")).toBe(true);
-    expect(isThinPrompt("/reset")).toBe(true);
-  });
-
-  it("returns true for case-insensitive reset commands", () => {
-    expect(isThinPrompt("/NEW")).toBe(true);
-    expect(isThinPrompt("/Reset")).toBe(true);
-  });
-
-  it("returns true for whitespace-only prompts", () => {
-    expect(isThinPrompt("   ")).toBe(true);
-  });
-
-  it("returns false for substantive prompts", () => {
-    expect(isThinPrompt("hi")).toBe(false);
-    expect(isThinPrompt("ok")).toBe(false);
-    expect(isThinPrompt("what is the status?")).toBe(false);
-  });
-});
-
-describe("extractLastUserText", () => {
-  it("returns trimmed user string content", () => {
-    const text = extractLastUserText([{ role: "user", content: "  hello world  " }]);
-    expect(text).toBe("hello world");
-  });
-
-  it("returns user text from a single text part array", () => {
-    const text = extractLastUserText([
-      { role: "user", content: [{ type: "text", text: "single part" }] },
-    ]);
-    expect(text).toBe("single part");
-  });
-
-  it("joins multiple text parts in a content array", () => {
-    const text = extractLastUserText([
-      { role: "user", content: [{ type: "text", text: "first" }, { type: "text", text: "second" }] },
-    ]);
-    expect(text).toBe("first second");
-  });
-
-  it("returns empty string when content array has only non-text parts", () => {
-    const text = extractLastUserText([
-      { role: "user", content: [{ type: "image", source: "img" }] },
-    ]);
-    expect(text).toBe("");
-  });
-
-  it("returns only text parts from mixed content arrays", () => {
-    const text = extractLastUserText([
-      {
-        role: "user",
-        content: [
-          { type: "image", source: "img" },
-          { type: "text", text: "keep this" },
-          { type: "tool_use", name: "x" },
-          { type: "text", text: "and this" },
-        ],
-      },
-    ]);
-    expect(text).toBe("keep this and this");
-  });
-
-  it("collects up to the last three non-empty user messages", () => {
-    const text = extractLastUserText([
-      { role: "user", content: "oldest message should be ignored" },
-      { role: "user", content: "second message should be included" },
-      { role: "assistant", content: "ok" },
-      { role: "user", content: "third message should be included" },
-      { role: "user", content: "fourth message should be included" },
-    ]);
-    expect(text).toBe(
-      "second message should be included third message should be included fourth message should be included",
-    );
-  });
-
-  it("returns empty string when user content is null", () => {
-    const text = extractLastUserText([{ role: "user", content: null }]);
-    expect(text).toBe("");
-  });
-
-  it("returns empty string when user content is undefined", () => {
-    const text = extractLastUserText([{ role: "user" }]);
-    expect(text).toBe("");
-  });
-
-  it("returns empty string when user content is an unexpected primitive", () => {
-    const text = extractLastUserText([{ role: "user", content: 0 }]);
-    expect(text).toBe("");
-  });
-
-  it("returns empty string when no user role messages are present", () => {
-    const text = extractLastUserText([{ role: "assistant", content: "nope" }]);
-    expect(text).toBe("");
-  });
-
-  it("returns prior user text when last message is assistant", () => {
-    const text = extractLastUserText([
-      { role: "user", content: "user message" },
-      { role: "assistant", content: "assistant message" },
-    ]);
-    expect(text).toBe("user message");
-  });
-
-  it("returns empty string for empty messages array", () => {
-    const text = extractLastUserText([]);
-    expect(text).toBe("");
-  });
-});
-
-describe("shouldStashTopic", () => {
-  it("returns false for text under 40 chars", () => {
-    expect(shouldStashTopic("one two three four")).toBe(false);
-  });
-
-  it("returns false for text >= 40 chars but fewer than five words", () => {
-    expect(shouldStashTopic("Superlongpaddddddddddddddddddddddddd one")).toBe(false);
-  });
-
-  it("returns true for text >= 40 chars and >= five words", () => {
-    expect(
-      shouldStashTopic("Please keep working on release planning and rollback checks today"),
-    ).toBe(true);
-  });
-
-  it("clearStash cancels the sweep interval handle", () => {
-    clearStash();
-    expect(sweepInterval).toBeUndefined();
-  });
-});
-
-describe("resolveSessionQuery", () => {
-  function seed(sessionKey: string, text: string): void {
-    const api = makeApi();
-    plugin.register(api);
-    const handler = getBeforeResetHandler(api);
-    seedStashWithMessage(handler, sessionKey, text);
-  }
-
-  it("returns high-signal prompt when no stash exists", () => {
-    const result = resolveSessionQuery("What should we ship next?", "agent:main:no-stash");
-    expect(result).toBe("What should we ship next?");
-  });
-
-  it("returns stash when live prompt is low-signal and stash exists", () => {
-    const sessionKey = "agent:main:low-signal-live-stash";
-    const stashedText = "Need release notes draft with rollback caveats and dependency warnings included";
-    seed(sessionKey, stashedText);
-
-    const result = resolveSessionQuery("Need release notes draft", sessionKey);
-
-    expect(result).toBe(stashedText);
-    expect(resolveSessionQuery("/new", sessionKey)).toBeUndefined();
-  });
-
-  it("blends stash and high-signal live prompt when both are present", () => {
-    const sessionKey = "agent:main:blend-stash-high-signal";
-    const stashedText = "Working on session-start recall query seeding and stash eviction logic";
-    const livePrompt = "Let us continue fixing the recall blend for short first messages now";
-    seed(sessionKey, stashedText);
-
-    const result = resolveSessionQuery(livePrompt, sessionKey);
-
-    expect(result).toBe(`${stashedText} ${livePrompt}`);
-    expect(resolveSessionQuery("/new", sessionKey)).toBeUndefined();
-  });
-
-  it("strips /new prefix for high-signal prompts", () => {
-    const result = resolveSessionQuery("/new let's continue the migration work", "agent:main:strip-new");
-    expect(result).toBe("let's continue the migration work");
-  });
-
-  it("strips /reset prefix for high-signal prompts", () => {
-    const result = resolveSessionQuery("/reset pick up where we left off", "agent:main:strip-reset");
-    expect(result).toBe("pick up where we left off");
-  });
-
-  it("returns undefined for thin prompt when stash is missing", () => {
-    const result = resolveSessionQuery("/new", "agent:main:thin-no-stash-unit");
-    expect(result).toBeUndefined();
-  });
-
-  it("returns stash text for thin prompt when stash is valid", () => {
-    const sessionKey = "agent:main:thin-valid-stash-unit";
-    const stashedText = "Stashed value for release planning and deployment risk discussion";
-    seed(sessionKey, stashedText);
-
-    const result = resolveSessionQuery("/new", sessionKey);
-
-    expect(result).toBe(stashedText);
-    expect(resolveSessionQuery("/new", sessionKey)).toBeUndefined();
-  });
-
-  it("returns undefined for expired stash and still consumes entry", () => {
-    vi.useFakeTimers();
-    try {
-      vi.setSystemTime(new Date("2026-02-20T00:00:00.000Z"));
-      const sessionKey = "agent:main:thin-expired-stash-unit";
-      seed(
-        sessionKey,
-        "Old stashed value about rollout strategy and alert threshold tuning",
-      );
-      vi.advanceTimersByTime(SESSION_TOPIC_TTL_MS + 1);
-
-      const result = resolveSessionQuery("/new", sessionKey);
-
-      expect(result).toBeUndefined();
-      expect(resolveSessionQuery("/new", sessionKey)).toBeUndefined();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("does not consume stash for other keys when sessionKey is undefined", () => {
-    const otherKey = "agent:main:other-key";
-    const stashedText = "Other key value for migration readiness and release sequencing checks";
-    seed(otherKey, stashedText);
-
-    const result = resolveSessionQuery("/new");
-
-    expect(result).toBeUndefined();
-    expect(resolveSessionQuery("/new", otherKey)).toBe(stashedText);
-    clearStash();
-  });
-
-  it("treats exactly-ttl-age stash as valid", () => {
-    vi.useFakeTimers();
-    try {
-      vi.setSystemTime(new Date("2026-02-20T00:00:00.000Z"));
-      const sessionKey = "agent:main:ttl-boundary";
-      seed(
-        sessionKey,
-        "Boundary value for release triage and deployment gate verification details",
-      );
-      vi.advanceTimersByTime(SESSION_TOPIC_TTL_MS);
-
-      const result = resolveSessionQuery("/new", sessionKey);
-
-      expect(result).toBe(
-        "Boundary value for release triage and deployment gate verification details",
-      );
-      expect(resolveSessionQuery("/new", sessionKey)).toBeUndefined();
-    } finally {
-      vi.useRealTimers();
-    }
   });
 });

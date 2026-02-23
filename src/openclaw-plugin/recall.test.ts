@@ -127,4 +127,19 @@ describe("runRecall browse mode args", () => {
 
     expect(capturedArgs).toEqual(["recall", "--browse", "--since", "7d", "--json", "--project", "proj-x"]);
   });
+
+  it("passes --limit when browse limit is provided", async () => {
+    let capturedArgs: string[] = [];
+    spawnMock.mockImplementationOnce((_cmd: string, args: string[]) => {
+      capturedArgs = args;
+      return createMockChild(JSON.stringify({ query: "[browse]", results: [] }));
+    });
+
+    await runRecall("/path/to/agenr", 1234, undefined, undefined, {
+      context: "browse",
+      limit: 20,
+    });
+
+    expect(capturedArgs).toEqual(["recall", "--browse", "--since", "1d", "--json", "--limit", "20"]);
+  });
 });
