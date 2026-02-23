@@ -174,6 +174,34 @@ describe("readLatestArchivedUserMessages", () => {
     await expect(readLatestArchivedUserMessages(dir, 60_000)).resolves.toEqual([]);
   });
 
+  it("falls back to second-most-recent file when newest has no user messages", async () => {
+    const dir = await createTempDir();
+    const now = Date.now();
+
+    await writeJsonlFile(
+      path.join(dir, "older-with-user.jsonl.reset.2026-02-23T00:20:00.000Z"),
+      [
+        { type: "message", message: { role: "user", content: "older user one" } },
+        { type: "message", message: { role: "user", content: "older user two" } },
+      ],
+      now - 2_000,
+    );
+
+    await writeJsonlFile(
+      path.join(dir, "newer-no-user.jsonl.reset.2026-02-23T00:30:00.000Z"),
+      [
+        { type: "tool_result", content: "tool output only" },
+        { type: "message", message: { role: "assistant", content: "assistant only" } },
+      ],
+      now - 100,
+    );
+
+    await expect(readLatestArchivedUserMessages(dir, 60_000)).resolves.toEqual([
+      "older user one",
+      "older user two",
+    ]);
+  });
+
   it("skips malformed json lines and keeps valid user messages", async () => {
     const dir = await createTempDir();
     const now = Date.now();

@@ -709,23 +709,34 @@ describe("before_prompt_build query seeding", () => {
 
   it("does not use archive fallback when prompt meets minimum session topic length", async () => {
     const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
-    const api = makeApi({ pluginConfig: { signalsEnabled: false } });
-    plugin.register(api);
-    const handler = getBeforePromptBuildHandler(api);
-    const longPrompt = "this prompt is clearly long enough to bypass archive fallback logic";
+    const tempHome = await mkdtemp(path.join(os.tmpdir(), "agenr-openclaw-home-"));
+    const homeSpy = vi.spyOn(os, "homedir").mockReturnValue(tempHome);
 
-    await handler(
-      { prompt: longPrompt },
-      { sessionKey: "agent:main:archive-not-needed", sessionId: "uuid-archive-not-needed" },
-    );
+    try {
+      const sessionsDir = path.join(tempHome, ".openclaw", "agents", "main", "sessions");
+      await mkdir(sessionsDir, { recursive: true });
 
-    expect(runRecallMock).toHaveBeenCalledTimes(1);
-    expect(runRecallMock).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.any(Number),
-      undefined,
-      longPrompt,
-    );
+      const api = makeApi({ pluginConfig: { signalsEnabled: false } });
+      plugin.register(api);
+      const handler = getBeforePromptBuildHandler(api);
+      const longPrompt = "this prompt is clearly long enough to bypass archive fallback logic";
+
+      await handler(
+        { prompt: longPrompt },
+        { sessionKey: "agent:main:archive-not-needed", sessionId: "uuid-archive-not-needed" },
+      );
+
+      expect(runRecallMock).toHaveBeenCalledTimes(1);
+      expect(runRecallMock).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(Number),
+        undefined,
+        longPrompt,
+      );
+    } finally {
+      homeSpy.mockRestore();
+      await rm(tempHome, { recursive: true, force: true });
+    }
   });
 
   it("does not use archive fallback when stash provides the query text", async () => {
@@ -869,10 +880,107 @@ describe("before_prompt_build query seeding", () => {
         expect.any(String),
         expect.any(Number),
         undefined,
-        "resume the prior migration planning discussion focus on the webchat reset recall fallback behavior include the archived sessions path handling",
+        "resume the prior migration planning discussion focus on the webchat reset recall fallback behavior include the archived sessions path handling help?",
       );
       expect(infoLogger).toHaveBeenCalledWith(
-        "[agenr] session-start: using archived session fallback, 3 messages",
+        "[agenr] session-start: archived session fallback applied, 3 messages",
+      );
+    } finally {
+      homeSpy.mockRestore();
+      await rm(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  it("does not use archive fallback on second message in same session even if prompt is short", async () => {
+    const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
+    const tempHome = await mkdtemp(path.join(os.tmpdir(), "agenr-openclaw-home-"));
+    const homeSpy = vi.spyOn(os, "homedir").mockReturnValue(tempHome);
+
+    try {
+      const sessionsDir = path.join(tempHome, ".openclaw", "agents", "main", "sessions");
+      await mkdir(sessionsDir, { recursive: true });
+      const archivedPath = path.join(sessionsDir, "second-message.jsonl.reset.2026-02-23T08:20:00.000Z");
+      await writeFile(
+        archivedPath,
+        [
+          JSON.stringify({
+            type: "message",
+            message: { role: "user", content: "archive seed text for first call only" },
+          }),
+        ].join("\n"),
+        "utf8",
+      );
+      const now = new Date();
+      await utimes(archivedPath, now, now);
+
+      const api = makeApi({ pluginConfig: { signalsEnabled: false } });
+      plugin.register(api);
+      const handler = getBeforePromptBuildHandler(api);
+      const sessionId = "uuid-same-session-no-archive-second";
+
+      await handler(
+        { prompt: "help?" },
+        { sessionKey: "agent:main:same-session", sessionId, agentId: "main" },
+      );
+      await handler(
+        { prompt: "yes" },
+        { sessionKey: "agent:main:same-session", sessionId, agentId: "main" },
+      );
+
+      expect(runRecallMock).toHaveBeenCalledTimes(1);
+    } finally {
+      homeSpy.mockRestore();
+      await rm(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  it("uses agentId main as fallback when ctx.agentId is absent", async () => {
+    const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
+    const tempHome = await mkdtemp(path.join(os.tmpdir(), "agenr-openclaw-home-"));
+    const homeSpy = vi.spyOn(os, "homedir").mockReturnValue(tempHome);
+
+    try {
+      const sessionsDir = path.join(tempHome, ".openclaw", "agents", "main", "sessions");
+      await mkdir(sessionsDir, { recursive: true });
+      const archivedPath = path.join(sessionsDir, "agentid-main-fallback.jsonl.reset.2026-02-23T08:30:00.000Z");
+      const archivedEntries = [
+        { type: "message", message: { role: "user", content: "fallback main agent message one" } },
+        { type: "message", message: { role: "user", content: "fallback main agent message two" } },
+      ];
+      await writeFile(
+        archivedPath,
+        archivedEntries.map((entry) => JSON.stringify(entry)).join("\n"),
+        "utf8",
+      );
+      const now = new Date();
+      await utimes(archivedPath, now, now);
+
+      const debugLogger = vi.fn();
+      const api = makeApi({
+        pluginConfig: { signalsEnabled: false },
+        logger: {
+          debug: debugLogger,
+          warn: vi.fn(),
+          error: vi.fn(),
+        },
+      });
+      plugin.register(api);
+      const handler = getBeforePromptBuildHandler(api);
+
+      await handler(
+        { prompt: "help?" },
+        { sessionKey: "agent:main:agentid-fallback", sessionId: "uuid-agentid-fallback" },
+      );
+
+      expect(runRecallMock).toHaveBeenCalledTimes(1);
+      expect(runRecallMock).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(Number),
+        undefined,
+        "fallback main agent message one fallback main agent message two help?",
+      );
+      expect(debugLogger).toHaveBeenCalledWith(
+        "[agenr] session-start: agentId not provided, defaulting to 'main'",
       );
     } finally {
       homeSpy.mockRestore();
