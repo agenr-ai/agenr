@@ -1,0 +1,101 @@
+import { EventEmitter } from "node:events";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { runRecall } from "./recall.js";
+
+const { spawnMock } = vi.hoisted(() => ({
+  spawnMock: vi.fn(),
+}));
+
+vi.mock("node:child_process", () => ({
+  spawn: spawnMock,
+}));
+
+type MockChildProcess = EventEmitter & {
+  stdout: EventEmitter;
+  kill: (signal?: NodeJS.Signals | number) => void;
+};
+
+function createMockChild(stdout: string): MockChildProcess {
+  const child = new EventEmitter() as MockChildProcess;
+  child.stdout = new EventEmitter();
+  child.kill = vi.fn();
+
+  process.nextTick(() => {
+    child.stdout.emit("data", Buffer.from(stdout));
+    child.emit("close");
+  });
+
+  return child;
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.clearAllMocks();
+});
+
+describe("runRecall query args", () => {
+  it("omits positional query arg when query is undefined", async () => {
+    let capturedArgs: string[] = [];
+    spawnMock.mockImplementationOnce((_cmd: string, args: string[]) => {
+      capturedArgs = args;
+      return createMockChild(JSON.stringify({ query: "session-start", results: [] }));
+    });
+
+    await runRecall("/path/to/agenr", 1234);
+
+    expect(capturedArgs).toEqual([
+      "recall",
+      "--context",
+      "session-start",
+      "--budget",
+      "1234",
+      "--json",
+    ]);
+  });
+
+  it("omits positional query arg when query is blank", async () => {
+    let capturedArgs: string[] = [];
+    spawnMock.mockImplementationOnce((_cmd: string, args: string[]) => {
+      capturedArgs = args;
+      return createMockChild(JSON.stringify({ query: "session-start", results: [] }));
+    });
+
+    await runRecall("/path/to/agenr", 1234, undefined, "   ");
+
+    expect(capturedArgs).toEqual([
+      "recall",
+      "--context",
+      "session-start",
+      "--budget",
+      "1234",
+      "--json",
+    ]);
+  });
+
+  it("appends trimmed query as positional arg when under 500 chars", async () => {
+    let capturedArgs: string[] = [];
+    spawnMock.mockImplementationOnce((_cmd: string, args: string[]) => {
+      capturedArgs = args;
+      return createMockChild(JSON.stringify({ query: "session-start", results: [] }));
+    });
+
+    await runRecall("/path/to/agenr", 1234, undefined, "  what is the status now?  ");
+
+    expect(capturedArgs[capturedArgs.length - 1]).toBe("what is the status now?");
+  });
+
+  it("appends truncated 500-char query when query exceeds 500 chars", async () => {
+    let capturedArgs: string[] = [];
+    spawnMock.mockImplementationOnce((_cmd: string, args: string[]) => {
+      capturedArgs = args;
+      return createMockChild(JSON.stringify({ query: "session-start", results: [] }));
+    });
+    const longQuery = "x".repeat(510);
+
+    await runRecall("/path/to/agenr", 1234, undefined, longQuery);
+
+    const positionalQuery = capturedArgs[capturedArgs.length - 1] ?? "";
+    expect(positionalQuery.length).toBe(500);
+    expect(positionalQuery).toBe("x".repeat(500));
+  });
+});

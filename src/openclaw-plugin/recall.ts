@@ -3,7 +3,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgenrPluginConfig } from "./types.js";
 
-const RECALL_TIMEOUT_MS = 5000;
+const RECALL_TIMEOUT_MS = 10000;
+// Cap query length to avoid oversized CLI args and embedding inputs.
+const RECALL_QUERY_MAX_CHARS = 500;
 const DEFAULT_BUDGET = 2000;
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = path.resolve(MODULE_DIR, "..", "..");
@@ -45,6 +47,7 @@ export async function runRecall(
   agenrPath: string,
   budget: number,
   project?: string,
+  query?: string,
 ): Promise<RecallResult | null> {
   return await new Promise((resolve) => {
     let stdout = "";
@@ -62,6 +65,14 @@ export async function runRecall(
     const args = ["recall", "--context", "session-start", "--budget", String(budget), "--json"];
     if (project) {
       args.push("--project", project);
+    }
+    const trimmedQuery = query?.trim() ?? "";
+    const truncatedQuery =
+      trimmedQuery.length > RECALL_QUERY_MAX_CHARS
+        ? trimmedQuery.slice(0, RECALL_QUERY_MAX_CHARS)
+        : trimmedQuery;
+    if (truncatedQuery) {
+      args.push(truncatedQuery);
     }
     const child = spawn(spawnArgs.cmd, [...spawnArgs.args, ...args], {
       stdio: ["ignore", "pipe", "ignore"],
