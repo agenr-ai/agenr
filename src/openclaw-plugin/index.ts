@@ -155,6 +155,7 @@ const plugin = {
             const rawPrompt = event.prompt;
             const userPrompt = stripPromptMetadata(rawPrompt ?? "");
             const queryText = resolveSessionQuery(userPrompt, ctx.sessionKey);
+            console.log("[agenr] session-start recall query:", JSON.stringify(queryText));
             const recallResult = await runRecall(agenrPath, budget, project, queryText);
             if (recallResult) {
               const formatted = formatRecallAsMarkdown(recallResult);
