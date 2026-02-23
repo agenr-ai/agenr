@@ -266,8 +266,9 @@ const plugin = {
         }
 
         const handoffText = extractLastExchangeText(messages);
-        if (handoffText.length > 0) {
+        if (handoffText) {
           const agenrPath = resolveAgenrPath(config);
+          const defaultProject = config?.project?.trim() || undefined;
           const timestamp = new Date().toISOString().slice(0, 16).replace("T", " ");
           const handoffEntry = {
             entries: [
@@ -284,7 +285,7 @@ const plugin = {
             ...(config as Record<string, unknown> | undefined),
             logger: api.logger,
           };
-          runStoreTool(agenrPath, handoffEntry, storeConfig).catch((err) => {
+          runStoreTool(agenrPath, handoffEntry, storeConfig, defaultProject).catch((err) => {
             api.logger.debug?.(
               `[agenr] before_reset: handoff store failed: ${err instanceof Error ? err.message : String(err)}`,
             );

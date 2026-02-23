@@ -1368,6 +1368,35 @@ describe("before_reset topic stashing", () => {
     expect(entries[0]?.content).toContain("U: Do it and include swarm findings in the patch");
     expect(entries[0]?.content).not.toBe("Working on session handoff behavior Do it and include swarm findings in the patch");
   });
+
+  it("before_reset passes project to runStoreTool when config has project set", async () => {
+    let capturedArgs: string[] = [];
+    spawnMock.mockImplementationOnce((_cmd: string, args: string[]) => {
+      capturedArgs = args;
+      return createMockChild({ code: 0 });
+    });
+
+    const api = makeApi({
+      pluginConfig: { project: "  my-project  " },
+    });
+    plugin.register(api);
+    const handler = getBeforeResetHandler(api);
+
+    handler(
+      {
+        messages: [{ role: "user", content: "Capture this handoff with project context included for browse recall" }],
+      },
+      { sessionKey: "agent:main:handoff-project-scope" },
+    );
+
+    await new Promise<void>((resolve) => {
+      process.nextTick(resolve);
+    });
+
+    expect(capturedArgs).toContain("--project");
+    const projectIdx = capturedArgs.indexOf("--project");
+    expect(capturedArgs[projectIdx + 1]).toBe("my-project");
+  });
 });
 
 describe("isThinPrompt", () => {
