@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.8.18] - 2026-02-23
+
+### Changed
+- feat(openclaw-plugin): `before_prompt_build` now uses browse-mode recall (`--browse --since 1d`) for cold session starts where no stash/query seed is available, and keeps embed/query recall for substantive or stash-seeded starts (issue #196)
+- chore(openclaw-plugin): removed archived-session fallback query synthesis from session-start recall seeding, simplifying thin-prompt startup behavior to browse vs stash/embed paths only (issue #196)
+- feat(openclaw-plugin): `before_reset` now stores a fire-and-forget `event` memory entry (`session handoff ...`) with the latest user context to support next-session handoff continuity (issue #196)
+- feat(openclaw-plugin): session-start browse results now auto-retire surfaced handoff entries after context injection to avoid repeated carryover (`reason: consumed at session start`) (issue #196)
+- feat(openclaw-plugin): `runRecall` in `src/openclaw-plugin/recall.ts` now accepts an optional context options object and maps browse context to CLI browse args while preserving existing default/session-start call behavior for unchanged callers (issue #196)
+
+### Tests
+- test(openclaw-plugin): updated query-seeding coverage for new cold-start browse path and removed archive-fallback-specific expectations (issue #196)
+- test(openclaw-plugin): added regression coverage for before-reset handoff storage and session-start handoff auto-retire success, non-handoff skip, missing-id skip, and retire-failure resilience (issue #196)
+- test(openclaw-plugin): added plugin recall browse-args unit coverage to assert `runRecall` browse flag construction and query omission behavior (issue #196)
+
 ## [0.8.17] - 2026-02-23
 
 ### Changed

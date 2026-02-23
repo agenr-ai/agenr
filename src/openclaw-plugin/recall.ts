@@ -48,6 +48,7 @@ export async function runRecall(
   budget: number,
   project?: string,
   query?: string,
+  options?: { context?: "session-start" | "browse"; since?: string },
 ): Promise<RecallResult | null> {
   return await new Promise((resolve) => {
     let stdout = "";
@@ -62,17 +63,22 @@ export async function runRecall(
       resolve(value);
     }
 
-    const args = ["recall", "--context", "session-start", "--budget", String(budget), "--json"];
+    const isBrowse = options?.context === "browse";
+    const args = isBrowse
+      ? ["recall", "--browse", "--since", options?.since ?? "1d", "--json"]
+      : ["recall", "--context", "session-start", "--budget", String(budget), "--json"];
     if (project) {
       args.push("--project", project);
     }
-    const trimmedQuery = query?.trim() ?? "";
-    const truncatedQuery =
-      trimmedQuery.length > RECALL_QUERY_MAX_CHARS
-        ? trimmedQuery.slice(0, RECALL_QUERY_MAX_CHARS)
-        : trimmedQuery;
-    if (truncatedQuery) {
-      args.push(truncatedQuery);
+    if (!isBrowse) {
+      const trimmedQuery = query?.trim() ?? "";
+      const truncatedQuery =
+        trimmedQuery.length > RECALL_QUERY_MAX_CHARS
+          ? trimmedQuery.slice(0, RECALL_QUERY_MAX_CHARS)
+          : trimmedQuery;
+      if (truncatedQuery) {
+        args.push(truncatedQuery);
+      }
     }
     const child = spawn(spawnArgs.cmd, [...spawnArgs.args, ...args], {
       stdio: ["ignore", "pipe", "ignore"],
