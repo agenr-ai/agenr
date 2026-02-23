@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.17] - 2026-02-23
+
+### Changed
+- chore: rebuild dist to include browse mode CLI flag inadvertently omitted from 0.8.16 publish
+
 ## [0.8.16] - 2026-02-23
 
 ### Added
