@@ -7,7 +7,9 @@ export const SESSION_TOPIC_MIN_LENGTH = 40;
 // 24h window covers daily-use gaps and back-to-back sessions
 export const ARCHIVED_SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 // Number of most-recent user messages considered for query seed text.
-const SESSION_QUERY_LOOKBACK = 3;
+export const SESSION_QUERY_LOOKBACK = 3;
+const EXCHANGE_TEXT_MAX_CHARS = 200;
+const EXCHANGE_USER_TURN_LIMIT = 5;
 
 export type TopicStashEntry = {
   text: string;
@@ -50,6 +52,42 @@ function extractTextFromUserMessage(message: unknown): string {
   }
 
   return textParts.join(" ").trim();
+}
+
+function extractTextFromAssistantMessage(message: unknown): string {
+  if (!isRecord(message) || message["role"] !== "assistant") {
+    return "";
+  }
+
+  const content = message["content"];
+  if (typeof content === "string") {
+    return content.trim();
+  }
+
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  const textParts: string[] = [];
+  for (const part of content) {
+    if (!isRecord(part) || part["type"] !== "text") {
+      continue;
+    }
+    const partText = part["text"];
+    if (typeof partText !== "string") {
+      continue;
+    }
+    const trimmed = partText.trim();
+    if (trimmed) {
+      textParts.push(trimmed);
+    }
+  }
+
+  return textParts.join(" ").trim();
+}
+
+function truncateMessageText(text: string): string {
+  return text.length > EXCHANGE_TEXT_MAX_CHARS ? text.slice(0, EXCHANGE_TEXT_MAX_CHARS) : text;
 }
 
 export function isThinPrompt(prompt: string): boolean {
@@ -99,6 +137,52 @@ export function extractLastUserText(messages: unknown[]): string {
     // reverse to restore chronological order (oldest first) before joining
     const joined = collected.reverse().join(" ").trim();
     return joined || "";
+  } catch {
+    return "";
+  }
+}
+
+export function extractLastExchangeText(messages: unknown[], maxTurns = EXCHANGE_USER_TURN_LIMIT): string {
+  try {
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return "";
+    }
+    if (maxTurns <= 0) {
+      return "";
+    }
+
+    const collected: Array<{ role: "user" | "assistant"; text: string }> = [];
+    let collectedUserTurns = 0;
+
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      const userText = extractTextFromUserMessage(message);
+      if (userText) {
+        collected.push({ role: "user", text: truncateMessageText(userText) });
+        collectedUserTurns += 1;
+        if (collectedUserTurns >= maxTurns) {
+          break;
+        }
+        continue;
+      }
+
+      const assistantText = extractTextFromAssistantMessage(message);
+      if (assistantText) {
+        collected.push({
+          role: "assistant",
+          text: truncateMessageText(assistantText),
+        });
+      }
+    }
+
+    if (collected.length === 0) {
+      return "";
+    }
+
+    return collected
+      .reverse()
+      .map((turn) => `${turn.role === "user" ? "U" : "A"}: ${turn.text}`)
+      .join(" | ");
   } catch {
     return "";
   }

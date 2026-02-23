@@ -11,6 +11,7 @@ import {
 } from "./recall.js";
 import {
   clearStash,
+  extractLastExchangeText,
   extractLastUserText,
   resolveSessionQuery,
   SESSION_TOPIC_TTL_MS,
@@ -264,7 +265,8 @@ const plugin = {
           stashSessionTopic(sessionKey, lastUserText);
         }
 
-        if (lastUserText && lastUserText.length > 0) {
+        const handoffText = extractLastExchangeText(messages);
+        if (handoffText.length > 0) {
           const agenrPath = resolveAgenrPath(config);
           const timestamp = new Date().toISOString().slice(0, 16).replace("T", " ");
           const handoffEntry = {
@@ -273,7 +275,7 @@ const plugin = {
                 type: "event",
                 importance: 10,
                 subject: `session handoff ${timestamp}`,
-                content: lastUserText,
+                content: handoffText,
                 tags: ["handoff", "session"],
               },
             ],
