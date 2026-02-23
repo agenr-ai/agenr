@@ -679,22 +679,19 @@ describe("before_prompt_build query seeding", () => {
     expect(resolveSessionQuery("/new", sessionKey)).toBeUndefined();
   });
 
-  it("uses high-signal prompt and consumes stash when both are present", async () => {
+  it("uses stash as query when live prompt is low-signal and stash is present", async () => {
     const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
     const api = makeApi({ pluginConfig: { signalsEnabled: false } });
     plugin.register(api);
     const promptHandler = getBeforePromptBuildHandler(api);
     const resetHandler = getBeforeResetHandler(api);
-    const sessionKey = "agent:main:seed-high-with-stash";
-    seedStashWithMessage(
-      resetHandler,
-      sessionKey,
-      "Please continue discussing release risks across deployment and rollback checks",
-    );
+    const sessionKey = "agent:main:seed-low-with-stash";
+    const stashedText = "Please continue discussing release risks across deployment and rollback checks";
+    seedStashWithMessage(resetHandler, sessionKey, stashedText);
 
     await promptHandler(
       { prompt: "Check release blockers" },
-      { sessionKey, sessionId: "uuid-seed-high-with-stash" },
+      { sessionKey, sessionId: "uuid-seed-low-with-stash" },
     );
 
     expect(runRecallMock).toHaveBeenCalledTimes(1);
@@ -702,7 +699,33 @@ describe("before_prompt_build query seeding", () => {
       expect.any(String),
       expect.any(Number),
       undefined,
-      "Check release blockers",
+      stashedText,
+    );
+    expect(resolveSessionQuery("/new", sessionKey)).toBeUndefined();
+  });
+
+  it("blends stash and high-signal live prompt when both present at integration level", async () => {
+    const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
+    const api = makeApi({ pluginConfig: { signalsEnabled: false } });
+    plugin.register(api);
+    const promptHandler = getBeforePromptBuildHandler(api);
+    const resetHandler = getBeforeResetHandler(api);
+    const sessionKey = "agent:main:blend-high-with-stash";
+    const stashedText = "Please continue discussing release risks across deployment and rollback checks";
+    const livePrompt = "Let us pick up the recall blend work and fix the stash query seeding logic";
+    seedStashWithMessage(resetHandler, sessionKey, stashedText);
+
+    await promptHandler(
+      { prompt: livePrompt },
+      { sessionKey, sessionId: "uuid-blend-high-with-stash" },
+    );
+
+    expect(runRecallMock).toHaveBeenCalledTimes(1);
+    expect(runRecallMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(Number),
+      undefined,
+      `${stashedText} ${livePrompt}`,
     );
     expect(resolveSessionQuery("/new", sessionKey)).toBeUndefined();
   });
@@ -1148,16 +1171,26 @@ describe("resolveSessionQuery", () => {
     expect(result).toBe("What should we ship next?");
   });
 
-  it("returns high-signal prompt and deletes stash when stash exists", () => {
-    const sessionKey = "agent:main:high-signal-stash";
-    seed(
-      sessionKey,
-      "Need release notes draft with rollback caveats and dependency warnings included",
-    );
+  it("returns stash when live prompt is low-signal and stash exists", () => {
+    const sessionKey = "agent:main:low-signal-live-stash";
+    const stashedText = "Need release notes draft with rollback caveats and dependency warnings included";
+    seed(sessionKey, stashedText);
 
     const result = resolveSessionQuery("Need release notes draft", sessionKey);
 
-    expect(result).toBe("Need release notes draft");
+    expect(result).toBe(stashedText);
+    expect(resolveSessionQuery("/new", sessionKey)).toBeUndefined();
+  });
+
+  it("blends stash and high-signal live prompt when both are present", () => {
+    const sessionKey = "agent:main:blend-stash-high-signal";
+    const stashedText = "Working on session-start recall query seeding and stash eviction logic";
+    const livePrompt = "Let us continue fixing the recall blend for short first messages now";
+    seed(sessionKey, stashedText);
+
+    const result = resolveSessionQuery(livePrompt, sessionKey);
+
+    expect(result).toBe(`${stashedText} ${livePrompt}`);
     expect(resolveSessionQuery("/new", sessionKey)).toBeUndefined();
   });
 
