@@ -403,6 +403,129 @@ describe("consolidate rules", () => {
     expect(supersedesRelations.rows.map((row) => asString(row.target_id)).sort()).toEqual([id1, id3].sort());
   });
 
+  it("unions keeper tags from all merged sources", async () => {
+    const idA = await insertTestEntry({
+      content: "tag merge source",
+      subject: "Tag Subject",
+      type: "fact",
+      confirmations: 0,
+      seed: 110,
+      tags: ["alpha", "beta"],
+    });
+    const idB = await insertTestEntry({
+      content: "tag merge keeper",
+      subject: "Tag Subject",
+      type: "fact",
+      confirmations: 5,
+      seed: 110,
+      tags: ["beta", "gamma"],
+    });
+
+    await consolidateRules(client, backupSourcePath);
+
+    expect(await getSupersededBy(idA)).toBe(idB);
+
+    const keeperTagsResult = await client.execute({
+      sql: "SELECT tag FROM tags WHERE entry_id = ? ORDER BY tag ASC",
+      args: [idB],
+    });
+    expect(keeperTagsResult.rows.map((row) => asString(row.tag))).toEqual(["alpha", "beta", "gamma"]);
+  });
+
+  it("raises keeper importance to the max value across merged entries", async () => {
+    const idA = await insertTestEntry({
+      content: "importance keeper",
+      subject: "Importance Subject",
+      type: "fact",
+      confirmations: 10,
+      seed: 120,
+    });
+    const idB = await insertTestEntry({
+      content: "importance source high",
+      subject: "Importance Subject",
+      type: "fact",
+      confirmations: 1,
+      seed: 120,
+    });
+    const idC = await insertTestEntry({
+      content: "importance source medium",
+      subject: "Importance Subject",
+      type: "fact",
+      confirmations: 0,
+      seed: 120,
+    });
+
+    await client.execute({
+      sql: "UPDATE entries SET importance = ? WHERE id = ?",
+      args: [4, idA],
+    });
+    await client.execute({
+      sql: "UPDATE entries SET importance = ? WHERE id = ?",
+      args: [9, idB],
+    });
+    await client.execute({
+      sql: "UPDATE entries SET importance = ? WHERE id = ?",
+      args: [7, idC],
+    });
+
+    await consolidateRules(client, backupSourcePath);
+
+    expect(await getSupersededBy(idB)).toBe(idA);
+    expect(await getSupersededBy(idC)).toBe(idA);
+
+    const keeperResult = await client.execute({
+      sql: "SELECT importance FROM entries WHERE id = ?",
+      args: [idA],
+    });
+    expect(asNumber(keeperResult.rows[0]?.importance)).toBe(9);
+  });
+
+  it("inherits the oldest created_at into the keeper after merge", async () => {
+    const idA = await insertTestEntry({
+      content: "created_at keeper",
+      subject: "Created At Subject",
+      type: "fact",
+      confirmations: 10,
+      daysOld: 10,
+      seed: 130,
+    });
+    const idB = await insertTestEntry({
+      content: "created_at source middle",
+      subject: "Created At Subject",
+      type: "fact",
+      confirmations: 1,
+      daysOld: 30,
+      seed: 130,
+    });
+    const idC = await insertTestEntry({
+      content: "created_at source oldest",
+      subject: "Created At Subject",
+      type: "fact",
+      confirmations: 0,
+      daysOld: 60,
+      seed: 130,
+    });
+
+    const oldestSourceResult = await client.execute({
+      sql: "SELECT created_at FROM entries WHERE id = ?",
+      args: [idC],
+    });
+    const oldestSourceCreatedAt = asString(oldestSourceResult.rows[0]?.created_at);
+
+    await consolidateRules(client, backupSourcePath);
+
+    expect(await getSupersededBy(idB)).toBe(idA);
+    expect(await getSupersededBy(idC)).toBe(idA);
+
+    const keeperResult = await client.execute({
+      sql: "SELECT created_at FROM entries WHERE id = ?",
+      args: [idA],
+    });
+    const keeperCreatedAt = asString(keeperResult.rows[0]?.created_at);
+    const diffMs = Math.abs(Date.parse(keeperCreatedAt) - Date.parse(oldestSourceCreatedAt));
+    expect(diffMs).toBeLessThanOrEqual(5_000);
+  });
+
   it("does not merge entries with different types", async () => {
     const id1 = await insertTestEntry({
       content: "fact variant",

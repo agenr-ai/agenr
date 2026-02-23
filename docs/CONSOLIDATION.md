@@ -53,6 +53,9 @@ Source:
 - max cluster size `12`
 - diameter floor `0.93` (`0.95 - 0.02`)
 - Keeper selection prefers higher `confirmations + recall_count`, then newer `created_at`.
+- After merge, keeper importance is raised to the max importance across all merged entries.
+- After merge, keeper `created_at` is set to the oldest `created_at` across all merged entries.
+- Tags from all source entries are merged into the keeper via `INSERT OR IGNORE` (union, no duplicates).
 
 ### 3) Orphaned relations cleanup
 
