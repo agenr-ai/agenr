@@ -15,6 +15,7 @@ import type { StreamSimpleFn } from "../llm/stream.js";
 import plugin, { __testing } from "./index.js";
 import * as pluginRecall from "./recall.js";
 import * as sessionQuery from "./session-query.js";
+import * as pluginTools from "./tools.js";
 import type { BeforePromptBuildResult, PluginApi, PluginLogger } from "./types.js";
 
 const tmpDirs: string[] = [];
@@ -709,6 +710,40 @@ describe("50-message budget slicing", () => {
 });
 
 describe("summarizeSessionForHandoff", () => {
+  it("logs model and transcript stats before calling LLM", async () => {
+    vi.spyOn(llmClientModule, "createLlmClient").mockReturnValue({
+      auth: "openai-api-key",
+      resolvedModel: {
+        provider: "openai",
+        modelId: "gpt-4.1-nano",
+        model: "gpt-4.1-nano" as unknown as Model<Api>,
+      },
+      credentials: {
+        apiKey: "test-api-key",
+        source: "env:OPENAI_API_KEY",
+      },
+    });
+    const logger = makeLogger();
+    const dir = await makeTempDir("agenr-handoff-summary-");
+    const currentSessionFile = path.join(dir, "current-uuid.jsonl");
+    await fs.writeFile(currentSessionFile, "", "utf8");
+
+    const summary = await __testing.summarizeSessionForHandoff(
+      makeEventMessages(5, "current"),
+      dir,
+      currentSessionFile,
+      logger,
+      makeStreamSimple({ message: makeAssistantMessage("summary text") }),
+    );
+
+    expect(summary).toBe("summary text");
+    expect(logger.debug).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /^\[agenr\] before_reset: sending to LLM model=gpt-4\.1-nano chars=\d+ currentMsgs=5 priorMsgs=0$/,
+      ),
+    );
+  });
+
   it("returns LLM summary string on success", async () => {
     mockLlmClientSuccess();
     const dir = await makeTempDir("agenr-handoff-summary-");
@@ -844,6 +879,74 @@ describe("summarizeSessionForHandoff", () => {
     expect(logger.debug).toHaveBeenCalledWith(
       "[agenr] before_reset: no apiKey available, skipping LLM summary",
     );
+  });
+});
+
+describe("runHandoffForSession", () => {
+  it("retires fallback by subject+importance+tag even when browse content differs", async () => {
+    let resolveSummary: ((value: string | null) => void) | null = null;
+    const summaryPromise = new Promise<string | null>((resolve) => {
+      resolveSummary = resolve;
+    });
+    vi.spyOn(__testing, "summarizeSessionForHandoff").mockReturnValue(summaryPromise);
+
+    let fallbackSubject = "";
+    const runStoreMock = vi.spyOn(pluginTools, "runStoreTool").mockImplementation(async (_agenrPath, payload) => {
+      const subject = (payload as { entries?: Array<{ subject?: string }> }).entries?.[0]?.subject;
+      if (!fallbackSubject && typeof subject === "string") {
+        fallbackSubject = subject;
+      }
+      return {
+        content: [{ type: "text", text: "Stored 1 entries." }],
+      };
+    });
+    vi.spyOn(pluginRecall, "runRecall").mockImplementation(async () => ({
+      query: "[browse]",
+      results: [
+        {
+          entry: {
+            id: "fallback-entry-221",
+            subject: fallbackSubject,
+            importance: 9,
+            tags: ["handoff", "session"],
+            content: "content intentionally mismatched from stored fallback",
+          },
+          score: 0.95,
+        },
+      ],
+    }));
+    const runRetireMock = vi.spyOn(pluginTools, "runRetireTool").mockResolvedValue({
+      content: [{ type: "text", text: "Retired 1 entries." }],
+    });
+
+    await __testing.runHandoffForSession({
+      messages: [
+        { role: "user", content: "Please carry this handoff forward." },
+        { role: "assistant", content: "I will summarize and persist it." },
+      ],
+      sessionFile: "/tmp/current-session-221.jsonl",
+      sessionId: "session-221",
+      sessionKey: "agent:main:session-221",
+      agentId: "main",
+      agenrPath: "/tmp/agenr",
+      budget: 20,
+      defaultProject: undefined,
+      storeConfig: {},
+      sessionsDir: "/tmp",
+      logger: makeLogger(),
+      source: "before_reset",
+    });
+
+    expect(runStoreMock).toHaveBeenCalledTimes(1);
+    expect(fallbackSubject).toMatch(/^session handoff /);
+
+    resolveSummary?.("WORKING ON: issue #221 complete.");
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(runRetireMock).toHaveBeenCalledWith("/tmp/agenr", {
+      entry_id: "fallback-entry-221",
+      reason: "superseded by LLM handoff",
+    });
   });
 });
 

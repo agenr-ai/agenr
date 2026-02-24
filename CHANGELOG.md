@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.31] - 2026-02-24
+
+### Fixed
+- plugin: LLM handoff now logs transcript size, model, and summary length before/after the LLM call for observability (#221)
+- plugin: fallback handoff retirement now matches by subject+importance+tag only, dropping fragile content equality check that left stale fallback entries alongside LLM summaries (#221)
+
 ## [0.8.30] - 2026-02-24
 
 ### Fixed
