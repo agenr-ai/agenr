@@ -250,8 +250,8 @@ describe("ingest debug logging", () => {
 
     expect(result.entries).toHaveLength(1);
     const files = await fs.readdir(logDir);
-    const inputFile = files.find((file) => /^ingest-.*-chunk0-input\.txt$/.test(file));
-    const outputFile = files.find((file) => /^ingest-.*-chunk0-output\.txt$/.test(file));
+    const inputFile = files.find((file) => /^ingest_.*_chunk0_input.txt$/.test(file));
+    const outputFile = files.find((file) => /^ingest_.*_chunk0_output.txt$/.test(file));
     expect(inputFile).toBeDefined();
     expect(outputFile).toBeDefined();
 
@@ -456,7 +456,7 @@ describe("ingest debug logging", () => {
 
     expect(result.entries).toHaveLength(1);
     const files = await fs.readdir(logDir);
-    const dedupFile = files.find((file) => /^ingest-.*-dedup\.txt$/.test(file));
+    const dedupFile = files.find((file) => /^ingest_.*_dedup.txt$/.test(file));
     expect(dedupFile).toBeDefined();
     const dedupBody = await fs.readFile(path.join(logDir, dedupFile as string), "utf8");
     expect(dedupBody).toContain("=== PRE-DEDUP ENTRIES ===");
