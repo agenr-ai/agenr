@@ -674,6 +674,7 @@ const plugin = {
 
   register(api: PluginApi): void {
     const config = api.pluginConfig as AgenrPluginConfig | undefined;
+    process.stderr.write(`[AGENR-PROBE] register() called pluginId=${api.id}\n`);
 
     api.on(
       "before_prompt_build",
@@ -840,18 +841,33 @@ const plugin = {
         }
       },
     );
+    process.stderr.write(`[AGENR-PROBE] before_prompt_build hook registered\n`);
+
+    api.on("session_start", async (_event: unknown, ctx: PluginHookAgentContext): Promise<void> => {
+      process.stderr.write(
+        `[AGENR-PROBE] session_start FIRED sessionKey=${(ctx as { sessionKey?: string }).sessionKey ?? "none"}\n`,
+      );
+    });
 
     api.on("before_reset", async (event, ctx): Promise<void> => {
       try {
+        process.stderr.write(
+          `[AGENR-PROBE] before_reset FIRED sessionKey=${ctx.sessionKey ?? "none"} msgs=${Array.isArray(event.messages) ? event.messages.length : "non-array"}\n`,
+        );
+        api.logger.info(
+          `[agenr] before_reset: fired sessionKey=${ctx.sessionKey ?? "none"} agentId=${ctx.agentId ?? "none"} msgs=${Array.isArray(event.messages) ? event.messages.length : "non-array"} sessionFile=${event.sessionFile ?? "none"}`,
+        );
         const sessionKey = ctx.sessionKey;
         if (!sessionKey) {
           return;
         }
+        process.stderr.write(`[AGENR-PROBE] before_reset: sessionKey ok\n`);
 
         const messages = event.messages;
         if (!Array.isArray(messages) || messages.length === 0) {
           return;
         }
+        process.stderr.write(`[AGENR-PROBE] before_reset: messages ok count=${messages.length}\n`);
 
         const currentSessionFile =
           typeof event.sessionFile === "string" && event.sessionFile.trim()
@@ -953,6 +969,7 @@ const plugin = {
         );
       }
     });
+    process.stderr.write(`[AGENR-PROBE] before_reset hook registered\n`);
 
     if (api.registerTool) {
       if (config?.enabled === false) {
