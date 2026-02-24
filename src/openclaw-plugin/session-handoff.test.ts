@@ -886,12 +886,105 @@ describe("summarizeSessionForHandoff", () => {
 });
 
 describe("runHandoffForSession", () => {
-  it("retires fallback by subject+importance+tag even when browse content differs", async () => {
-    let resolveSummary: ((value: string | null) => void) | null = null;
-    const summaryPromise = new Promise<string | null>((resolve) => {
-      resolveSummary = resolve;
+  it("LLM handoff store is awaited before before_reset resolves", async () => {
+    const summaryText = "WORKING ON: awaited LLM handoff";
+    let runResolved = false;
+    let llmStoreHappenedBeforeResolve = false;
+
+    vi.spyOn(__testing, "summarizeSessionForHandoff").mockImplementation(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 10));
+      return summaryText;
     });
-    vi.spyOn(__testing, "summarizeSessionForHandoff").mockReturnValue(summaryPromise);
+    const runStoreMock = vi.spyOn(pluginTools, "runStoreTool").mockImplementation(async (_agenrPath, payload) => {
+      const content = (payload as { entries?: Array<{ content?: string }> }).entries?.[0]?.content;
+      if (content === summaryText) {
+        llmStoreHappenedBeforeResolve = !runResolved;
+      }
+      return {
+        content: [{ type: "text", text: "Stored 1 entries." }],
+      };
+    });
+
+    const runPromise = __testing.runHandoffForSession({
+      messages: [
+        { role: "user", content: "please summarize this handoff" },
+        { role: "assistant", content: "summary incoming" },
+      ],
+      sessionFile: "/tmp/current-session-await.jsonl",
+      sessionId: "session-await",
+      sessionKey: "agent:main:session-await",
+      agentId: "main",
+      agenrPath: "/tmp/agenr",
+      budget: 20,
+      defaultProject: undefined,
+      storeConfig: {},
+      sessionsDir: "/tmp",
+      logger: makeLogger(),
+      source: "before_reset",
+    });
+
+    runPromise.then(() => {
+      runResolved = true;
+    });
+    await runPromise;
+
+    expect(runStoreMock).toHaveBeenCalledWith(
+      "/tmp/agenr",
+      expect.objectContaining({
+        entries: [
+          expect.objectContaining({
+            content: summaryText,
+          }),
+        ],
+      }),
+      {},
+      undefined,
+    );
+    expect(llmStoreHappenedBeforeResolve).toBe(true);
+  });
+
+  it("falls back to fallback-only if LLM returns null", async () => {
+    vi.spyOn(__testing, "summarizeSessionForHandoff").mockResolvedValue(null);
+    const runStoreMock = vi.spyOn(pluginTools, "runStoreTool").mockResolvedValue({
+      content: [{ type: "text", text: "Stored 1 entries." }],
+    });
+
+    await __testing.runHandoffForSession({
+      messages: [
+        { role: "user", content: "fallback only path" },
+        { role: "assistant", content: "no llm summary for this one" },
+      ],
+      sessionFile: "/tmp/current-session-null.jsonl",
+      sessionId: "session-null",
+      sessionKey: "agent:main:session-null",
+      agentId: "main",
+      agenrPath: "/tmp/agenr",
+      budget: 20,
+      defaultProject: undefined,
+      storeConfig: {},
+      sessionsDir: "/tmp",
+      logger: makeLogger(),
+      source: "before_reset",
+    });
+
+    expect(runStoreMock).toHaveBeenCalledTimes(1);
+    expect(runStoreMock).toHaveBeenCalledWith(
+      "/tmp/agenr",
+      expect.objectContaining({
+        entries: [
+          expect.objectContaining({
+            importance: 9,
+            content: expect.stringContaining("fallback only path"),
+          }),
+        ],
+      }),
+      {},
+      undefined,
+    );
+  });
+
+  it("retires fallback by subject+importance+tag even when browse content differs", async () => {
+    vi.spyOn(__testing, "summarizeSessionForHandoff").mockResolvedValue("WORKING ON: issue #221 complete.");
 
     let fallbackSubject = "";
     const runStoreMock = vi.spyOn(pluginTools, "runStoreTool").mockImplementation(async (_agenrPath, payload) => {
@@ -940,11 +1033,8 @@ describe("runHandoffForSession", () => {
       source: "before_reset",
     });
 
-    expect(runStoreMock).toHaveBeenCalledTimes(1);
+    expect(runStoreMock).toHaveBeenCalledTimes(2);
     expect(fallbackSubject).toMatch(/^session handoff /);
-
-    resolveSummary?.("WORKING ON: issue #221 complete.");
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
     expect(runRetireMock).toHaveBeenCalledWith("/tmp/agenr", {
       entry_id: "fallback-entry-221",

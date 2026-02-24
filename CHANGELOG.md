@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.36] - 2026-02-24
+
+### Fixed
+- openclaw-plugin: await LLM upgrade in runHandoffForSession instead of fire-and-forget; the gateway awaits before_reset so the LLM call can and should block until the summary is stored (closes #230)
+- openclaw-plugin: raise Phase 1 fallback store success/failure logs from logger.debug to console.log for production visibility (extends #223)
+
 ## [0.8.34] - 2026-02-24
 
 ### Fixed
