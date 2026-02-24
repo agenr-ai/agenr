@@ -97,6 +97,7 @@ async function runAgenrCommand(
   args: string[],
   stdinPayload?: string,
   timeoutMs: number = TOOL_TIMEOUT_MS,
+  dbPath?: string,
 ): Promise<SpawnResult> {
   return await new Promise((resolve) => {
     const resolvedAgenrPath = agenrPath.trim() || resolveAgenrPath();
@@ -117,6 +118,7 @@ async function runAgenrCommand(
 
     const child = spawn(spawnArgs.cmd, [...spawnArgs.args, ...args], {
       stdio: ["pipe", "pipe", "pipe"],
+      env: dbPath ? { ...process.env, AGENR_DB_PATH: dbPath } : process.env,
     });
 
     const timer = setTimeout(() => {
@@ -152,6 +154,7 @@ export async function runRecallTool(
   agenrPath: string,
   params: Record<string, unknown>,
   defaultProject?: string,
+  dbPath?: string,
 ): Promise<PluginToolResult> {
   const args = ["recall", "--json"];
   const query = asString(params.query);
@@ -192,7 +195,7 @@ export async function runRecallTool(
     args.push("--project", project);
   }
 
-  const result = await runAgenrCommand(agenrPath, args);
+  const result = await runAgenrCommand(agenrPath, args, undefined, undefined, dbPath);
   if (result.timedOut) {
     return {
       content: [{ type: "text", text: "agenr_recall failed: command timed out" }],
@@ -237,6 +240,7 @@ export async function runStoreTool(
   params: Record<string, unknown>,
   pluginConfig?: Record<string, unknown>,
   defaultProject?: string,
+  dbPath?: string,
 ): Promise<PluginToolResult> {
   const entries = Array.isArray(params.entries) ? params.entries : [];
   const project = asString(params.project) || defaultProject;
@@ -303,7 +307,7 @@ export async function runStoreTool(
     storeArgs.push("--dedup-threshold", String(dedupConfig.threshold));
   }
 
-  const result = await runAgenrCommand(agenrPath, storeArgs, JSON.stringify(processedEntries));
+  const result = await runAgenrCommand(agenrPath, storeArgs, JSON.stringify(processedEntries), undefined, dbPath);
   if (result.timedOut) {
     return {
       content: [{ type: "text", text: "agenr_store timed out" }],
@@ -327,7 +331,7 @@ export async function runStoreTool(
   };
 }
 
-export async function runExtractTool(agenrPath: string, params: Record<string, unknown>): Promise<PluginToolResult> {
+export async function runExtractTool(agenrPath: string, params: Record<string, unknown>, dbPath?: string): Promise<PluginToolResult> {
   const text = asString(params.text);
   if (!text) {
     return {
@@ -345,7 +349,7 @@ export async function runExtractTool(agenrPath: string, params: Record<string, u
     writeFileSync(tempFile, text, "utf8");
     args.push(tempFile);
 
-    const extractResult = await runAgenrCommand(agenrPath, args, undefined, EXTRACT_TIMEOUT_MS);
+    const extractResult = await runAgenrCommand(agenrPath, args, undefined, EXTRACT_TIMEOUT_MS, dbPath);
     if (extractResult.timedOut) {
       return {
         content: [{ type: "text", text: "agenr_extract failed: command timed out" }],
@@ -395,7 +399,7 @@ export async function runExtractTool(agenrPath: string, params: Record<string, u
         }
       }
 
-      const storeResult = await runAgenrCommand(agenrPath, ["store"], JSON.stringify(entries));
+      const storeResult = await runAgenrCommand(agenrPath, ["store"], JSON.stringify(entries), undefined, dbPath);
       if (storeResult.timedOut) {
         return { content: [{ type: "text", text: "agenr_extract store step timed out" }] };
       }
@@ -431,7 +435,7 @@ export async function runExtractTool(agenrPath: string, params: Record<string, u
   }
 }
 
-export async function runRetireTool(agenrPath: string, params: Record<string, unknown>): Promise<PluginToolResult> {
+export async function runRetireTool(agenrPath: string, params: Record<string, unknown>, dbPath?: string): Promise<PluginToolResult> {
   const entryId = asString(params.entry_id);
   if (!entryId) {
     return {
@@ -451,7 +455,7 @@ export async function runRetireTool(agenrPath: string, params: Record<string, un
   }
   args.push("--force");
 
-  const result = await runAgenrCommand(agenrPath, args);
+  const result = await runAgenrCommand(agenrPath, args, undefined, undefined, dbPath);
 
   if (result.timedOut) {
     return {

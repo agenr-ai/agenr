@@ -55,6 +55,7 @@ export async function runRecall(
   project?: string,
   query?: string,
   options?: RunRecallOptions,
+  dbPath?: string,
 ): Promise<RecallResult | null> {
   return await new Promise((resolve) => {
     let stdout = "";
@@ -91,6 +92,7 @@ export async function runRecall(
     }
     const child = spawn(spawnArgs.cmd, [...spawnArgs.args, ...args], {
       stdio: ["ignore", "pipe", "ignore"],
+      env: dbPath ? { ...process.env, AGENR_DB_PATH: dbPath } : process.env,
     });
 
     const timer = setTimeout(() => {
