@@ -62,8 +62,16 @@ function makeAssistantStream(message: AssistantMessage): AsyncIterable<Assistant
   result: () => Promise<AssistantMessage>;
 } {
   return {
-    async *[Symbol.asyncIterator](): AsyncIterator<AssistantMessageEvent> {
-      return;
+    [Symbol.asyncIterator](): AsyncIterableIterator<AssistantMessageEvent> {
+      return {
+        next: async () => ({
+          done: true as const,
+          value: undefined as never,
+        }),
+        [Symbol.asyncIterator]() {
+          return this;
+        },
+      };
     },
     result: async () => message,
   };
@@ -108,7 +116,7 @@ afterEach(async () => {
 describe("readSessionsJson", () => {
   it("returns {} when file does not exist", async () => {
     const dir = await makeTempDir("agenr-handoff-sessions-json-");
-    expect(__testing.readSessionsJson(dir)).toEqual({});
+    expect(await __testing.readSessionsJson(dir)).toEqual({});
   });
 
   it("returns parsed object when file is valid JSON", async () => {
@@ -119,7 +127,7 @@ describe("readSessionsJson", () => {
       "utf8",
     );
 
-    expect(__testing.readSessionsJson(dir)).toEqual({
+    expect(await __testing.readSessionsJson(dir)).toEqual({
       "agent:main:main": { sessionFile: "/tmp/a.jsonl" },
     });
   });
@@ -128,7 +136,7 @@ describe("readSessionsJson", () => {
     const dir = await makeTempDir("agenr-handoff-sessions-json-");
     await fs.writeFile(path.join(dir, "sessions.json"), "{invalid", "utf8");
 
-    expect(__testing.readSessionsJson(dir)).toEqual({});
+    expect(await __testing.readSessionsJson(dir)).toEqual({});
   });
 });
 
