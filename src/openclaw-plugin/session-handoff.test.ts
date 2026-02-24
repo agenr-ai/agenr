@@ -382,108 +382,26 @@ describe("readMessagesFromJsonl", () => {
   });
 });
 
-describe("findPriorResetFile", () => {
-  it("returns null when no .reset.* files exist", async () => {
-    const dir = await makeTempDir("agenr-handoff-prior-");
-    await fs.writeFile(path.join(dir, "session-a.jsonl"), "", "utf8");
-
-    await expect(__testing.findPriorResetFile(dir, path.join(dir, "session-b.jsonl"))).resolves.toBeNull();
-  });
-
-  it("returns null when most recent .reset.* file is older than 24h", async () => {
-    const dir = await makeTempDir("agenr-handoff-prior-");
-    const oldFile = path.join(dir, "old-uuid.jsonl.reset.2026-02-23T01-00-00.000Z");
-    await fs.writeFile(oldFile, "", "utf8");
-
-    const olderThanDay = new Date(Date.now() - (24 * 60 * 60 * 1000 + 1));
-    await fs.utimes(oldFile, olderThanDay, olderThanDay);
-
-    await expect(__testing.findPriorResetFile(dir, path.join(dir, "current-uuid.jsonl"))).resolves.toBeNull();
-  });
-
-  it("returns correct file when multiple .reset.* files exist (returns newest)", async () => {
-    const dir = await makeTempDir("agenr-handoff-prior-");
-    const older = path.join(dir, "older-uuid.jsonl.reset.2026-02-23T01-00-00.000Z");
-    const newer = path.join(dir, "newer-uuid.jsonl.reset.2026-02-24T01-00-00.000Z");
-    await fs.writeFile(older, "", "utf8");
-    await fs.writeFile(newer, "", "utf8");
-
-    const oldTime = new Date(Date.now() - 5000);
-    const newTime = new Date(Date.now() - 1000);
-    await fs.utimes(older, oldTime, oldTime);
-    await fs.utimes(newer, newTime, newTime);
-
-    await expect(__testing.findPriorResetFile(dir, path.join(dir, "current-uuid.jsonl"))).resolves.toBe(newer);
-  });
-
-  it("excludes reset files from the current session UUID", async () => {
-    const dir = await makeTempDir("agenr-handoff-prior-");
-    const currentReset = path.join(dir, "abc123.jsonl.reset.2026-02-24T01-00-00.000Z");
-    const otherReset = path.join(dir, "def456.jsonl.reset.2026-02-24T01-00-00.000Z");
-    await fs.writeFile(currentReset, "", "utf8");
-    await fs.writeFile(otherReset, "", "utf8");
-
-    const now = new Date();
-    await fs.utimes(currentReset, now, now);
-    await fs.utimes(otherReset, now, now);
-
-    await expect(__testing.findPriorResetFile(dir, path.join(dir, "abc123.jsonl"))).resolves.toBe(otherReset);
-  });
-
-  it("returns null when the only .reset.* file is from current session UUID", async () => {
-    const dir = await makeTempDir("agenr-handoff-prior-");
-    const currentReset = path.join(dir, "abc123.jsonl.reset.2026-02-24T01-00-00.000Z");
-    await fs.writeFile(currentReset, "", "utf8");
-
-    await expect(__testing.findPriorResetFile(dir, path.join(dir, "abc123.jsonl"))).resolves.toBeNull();
+describe("testingApi exports", () => {
+  it("does not export findPriorResetFile", () => {
+    const exported = __testing as unknown as Record<string, unknown>;
+    expect("findPriorResetFile" in exported).toBe(false);
   });
 });
 
-describe("buildMergedTranscript", () => {
-  it("formats two blocks with headers including surface and (ended) label", () => {
-    const transcript = __testing.buildMergedTranscript(
-      [{ role: "user", content: "prior line", timestamp: "2026-02-23T09:15:00" }],
-      "telegram",
+describe("buildTranscript", () => {
+  it("formats one block with header including surface and (ended) label", () => {
+    const transcript = __testing.buildTranscript(
       [{ role: "assistant", content: "current line", timestamp: "2026-02-24T10:20:00" }],
       "webchat",
     );
 
-    expect(transcript).toContain("--- Session 2026-02-23 09:15 [telegram] ---");
     expect(transcript).toContain("--- Session 2026-02-24 10:20 [webchat] (ended) ---");
-    expect(transcript).toContain("[user]: prior line");
     expect(transcript).toContain("[assistant]: current line");
   });
 
-  it("orders prior block before current block", () => {
-    const transcript = __testing.buildMergedTranscript(
-      [{ role: "user", content: "prior line", timestamp: "2026-02-23T09:15:00" }],
-      "telegram",
-      [{ role: "assistant", content: "current line", timestamp: "2026-02-24T10:20:00" }],
-      "webchat",
-    );
-
-    const priorIndex = transcript.indexOf("--- Session 2026-02-23 09:15 [telegram] ---");
-    const currentIndex = transcript.indexOf("--- Session 2026-02-24 10:20 [webchat] (ended) ---");
-    expect(priorIndex).toBeGreaterThanOrEqual(0);
-    expect(currentIndex).toBeGreaterThanOrEqual(0);
-    expect(priorIndex).toBeLessThan(currentIndex);
-  });
-
-  it("omits prior block when priorMessages is empty", () => {
-    const transcript = __testing.buildMergedTranscript(
-      [],
-      "telegram",
-      [{ role: "user", content: "current only", timestamp: "2026-02-24T11:30:00" }],
-      "webchat",
-    );
-
-    expect(transcript).toBe("--- Session 2026-02-24 11:30 [webchat] (ended) ---\n[user]: current only");
-  });
-
   it("filters out messages with empty content", () => {
-    const transcript = __testing.buildMergedTranscript(
-      [{ role: "assistant", content: "   ", timestamp: "2026-02-24T09:00:00" }],
-      "telegram",
+    const transcript = __testing.buildTranscript(
       [
         { role: "user", content: "", timestamp: "2026-02-24T10:00:00" },
         { role: "assistant", content: "kept", timestamp: "2026-02-24T10:01:00" },
@@ -491,112 +409,22 @@ describe("buildMergedTranscript", () => {
       "webchat",
     );
 
-    expect(transcript).not.toContain("telegram");
     expect(transcript).toContain("[assistant]: kept");
     expect(transcript).not.toContain("[user]:");
   });
 
   it("header timestamp formatted as YYYY-MM-DD HH:MM from message timestamp", () => {
-    const transcript = __testing.buildMergedTranscript(
-      [{ role: "user", content: "prior", timestamp: "2026-01-02T03:04:05" }],
-      "telegram",
+    const transcript = __testing.buildTranscript(
       [{ role: "assistant", content: "current", timestamp: "2026-01-02T06:07:08" }],
       "webchat",
     );
 
-    expect(transcript).toContain("--- Session 2026-01-02 03:04 [telegram] ---");
     expect(transcript).toContain("--- Session 2026-01-02 06:07 [webchat] (ended) ---");
   });
 });
 
-describe("capTranscriptLength", () => {
-  it("drops prior messages until transcript is under maxChars when prior causes overflow", () => {
-    const priorMessages = Array.from({ length: 20 }, (_, index) => ({
-      role: "user" as const,
-      content: `prior-${index + 1} ${"x".repeat(120)}`,
-      timestamp: "2026-02-23T09:15:00",
-    }));
-    const currentMessages = [
-      { role: "assistant" as const, content: "current-kept", timestamp: "2026-02-24T10:20:00" },
-    ];
-
-    const capped = __testing.capTranscriptLength({
-      priorMessages,
-      priorSurface: "telegram",
-      currentMessages,
-      currentSurface: "webchat",
-      maxChars: 600,
-    });
-
-    expect(capped.length).toBeLessThanOrEqual(600);
-    expect(capped).toContain("current-kept");
-    const priorLines = capped.split("\n").filter((line) => line.startsWith("[user]: prior-"));
-    expect(priorLines.some((line) => line.startsWith("[user]: prior-1 "))).toBe(false);
-  });
-
-  it("returns truncated transcript under maxChars when current-only content exceeds cap", () => {
-    const currentMessages = [
-      { role: "user" as const, content: `current-${"y".repeat(9000)}`, timestamp: "2026-02-24T10:20:00" },
-    ];
-
-    const capped = __testing.capTranscriptLength({
-      priorMessages: [],
-      priorSurface: "telegram",
-      currentMessages,
-      currentSurface: "webchat",
-      maxChars: 8000,
-    });
-
-    expect(capped.length).toBeLessThanOrEqual(8000);
-    expect(capped.length).toBeGreaterThan(0);
-  });
-
-  it("returns the original transcript when already under cap", () => {
-    const priorMessages = [
-      { role: "user" as const, content: "prior", timestamp: "2026-02-23T09:15:00" },
-    ];
-    const currentMessages = [
-      { role: "assistant" as const, content: "current", timestamp: "2026-02-24T10:20:00" },
-    ];
-    const original = __testing.buildMergedTranscript(priorMessages, "telegram", currentMessages, "webchat");
-
-    const capped = __testing.capTranscriptLength({
-      priorMessages,
-      priorSurface: "telegram",
-      currentMessages,
-      currentSurface: "webchat",
-      maxChars: 8000,
-    });
-
-    expect(capped).toBe(original);
-  });
-
-  it("does not truncate current message text when removing prior is sufficient", () => {
-    const priorMessages = Array.from({ length: 8 }, (_, index) => ({
-      role: "user" as const,
-      content: `prior-${index + 1}-${"z".repeat(200)}`,
-      timestamp: "2026-02-23T09:15:00",
-    }));
-    const currentContent = "CURRENT_FULL_PAYLOAD_1234567890";
-    const currentMessages = [
-      { role: "assistant" as const, content: currentContent, timestamp: "2026-02-24T10:20:00" },
-    ];
-
-    const capped = __testing.capTranscriptLength({
-      priorMessages,
-      priorSurface: "telegram",
-      currentMessages,
-      currentSurface: "webchat",
-      maxChars: 500,
-    });
-
-    expect(capped.length).toBeLessThanOrEqual(500);
-    expect(capped).toContain(`[assistant]: ${currentContent}`);
-  });
-});
-
 describe("50-message budget slicing", () => {
-  it("when currentMessages.length > 50, prior gets 0 messages and current is capped at 50", async () => {
+  it("sends only current-session messages to LLM transcript", async () => {
     mockLlmClientSuccess();
     const dir = await makeTempDir("agenr-handoff-budget-");
     const currentSessionFile = path.join(dir, "current-uuid.jsonl");
@@ -649,31 +477,16 @@ describe("50-message budget slicing", () => {
     expect(messageLines).not.toContain("[user]: current-1");
   });
 
-  it("when currentMessages.length = 30 and prior has 40 messages, takes last 20 from prior and all 30 current", async () => {
+  it("when currentMessages.length = 30, sends all 30 current messages", async () => {
     mockLlmClientSuccess();
     const dir = await makeTempDir("agenr-handoff-budget-");
     const currentSessionFile = path.join(dir, "current-uuid.jsonl");
-    const priorFile = path.join(dir, "prior-uuid.jsonl.reset.2026-02-24T01-00-00.000Z");
 
     await fs.writeFile(currentSessionFile, "", "utf8");
-
-    const priorLines: string[] = [];
-    for (let index = 1; index <= 40; index += 1) {
-      const minute = String(index % 60).padStart(2, "0");
-      priorLines.push(
-        JSON.stringify({
-          type: "message",
-          timestamp: `2026-02-24T08:${minute}:00`,
-          message: { role: "user", content: `prior-${index}` },
-        }),
-      );
-    }
-    await writeJsonlLines(priorFile, priorLines);
     await fs.writeFile(
       path.join(dir, "sessions.json"),
       JSON.stringify({
         "agent:main:main": { sessionFile: currentSessionFile, origin: { surface: "webchat" } },
-        "agent:main:tui": { sessionFile: priorFile, origin: { surface: "telegram" } },
       }),
       "utf8",
     );
@@ -698,14 +511,10 @@ describe("50-message budget slicing", () => {
     );
 
     expect(summary).toBe("summary text");
-    const priorMessageLines = transcript.split("\n").filter((line) => line.includes("prior-"));
     const currentMessageLines = transcript.split("\n").filter((line) => line.includes("current-"));
-    expect(priorMessageLines).toHaveLength(20);
     expect(currentMessageLines).toHaveLength(30);
-    expect(transcript).toContain("prior-21");
-    expect(transcript).toContain("prior-40");
-    expect(transcript).not.toContain("prior-1");
-    expect(transcript).not.toContain("prior-20");
+    expect(transcript).toContain("current-1");
+    expect(transcript).toContain("current-30");
   });
 });
 
@@ -740,9 +549,34 @@ describe("summarizeSessionForHandoff", () => {
     expect(summary).toBe("summary text");
     expect(consoleLogSpy).toHaveBeenCalledWith(
       expect.stringMatching(
-        /^\[agenr\] before_reset: sending to LLM model=gpt-4\.1-nano chars=\d+ currentMsgs=5 priorMsgs=0$/,
+        /^\[agenr\] before_reset: sending to LLM model=gpt-4\.1-nano chars=\d+ msgs=5$/,
       ),
     );
+  });
+
+  it('uses a single-session prompt without "prior session" or "two sessions"', async () => {
+    mockLlmClientSuccess();
+    const dir = await makeTempDir("agenr-handoff-summary-");
+    const currentSessionFile = path.join(dir, "current-uuid.jsonl");
+    await fs.writeFile(currentSessionFile, "", "utf8");
+
+    let systemPrompt = "";
+    const summary = await __testing.summarizeSessionForHandoff(
+      makeEventMessages(5, "current"),
+      dir,
+      currentSessionFile,
+      makeLogger(),
+      makeStreamSimple({
+        message: makeAssistantMessage("summary text"),
+        onContext: (context) => {
+          systemPrompt = context.systemPrompt;
+        },
+      }),
+    );
+
+    expect(summary).toBe("summary text");
+    expect(systemPrompt.toLowerCase()).not.toContain("prior session");
+    expect(systemPrompt.toLowerCase()).not.toContain("two sessions");
   });
 
   it("returns LLM summary string on success", async () => {
@@ -797,22 +631,29 @@ describe("summarizeSessionForHandoff", () => {
     expect(createLlmClientSpy).not.toHaveBeenCalled();
   });
 
-  it("returns null when minimum session gate fails (fewer than 5 current messages and no prior)", async () => {
-    const createLlmClientSpy = vi.spyOn(llmClientModule, "createLlmClient");
+  it('returns "No significant activity" summary for a trivial greeting session', async () => {
+    mockLlmClientSuccess();
     const dir = await makeTempDir("agenr-handoff-summary-");
     const currentSessionFile = path.join(dir, "current-uuid.jsonl");
     await fs.writeFile(currentSessionFile, "", "utf8");
 
     const summary = await __testing.summarizeSessionForHandoff(
-      makeEventMessages(4, "current"),
+      [
+        { role: "user", content: "hi", timestamp: "2026-02-24T10:00:00" },
+        { role: "assistant", content: "hello", timestamp: "2026-02-24T10:01:00" },
+        { role: "user", content: "thanks", timestamp: "2026-02-24T10:02:00" },
+      ],
       dir,
       currentSessionFile,
       makeLogger(),
-      makeStreamSimple({ message: makeAssistantMessage("unused") }),
+      makeStreamSimple({
+        message: makeAssistantMessage(
+          "WORKING ON: No significant activity\nKEY FINDINGS: None\nOPEN THREADS: None\nIMPORTANT FACTS: None",
+        ),
+      }),
     );
 
-    expect(summary).toBeNull();
-    expect(createLlmClientSpy).not.toHaveBeenCalled();
+    expect(summary).toContain("No significant activity");
   });
 
   it('returns null when LLM returns stopReason "error"', async () => {
