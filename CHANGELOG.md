@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.8.29] - 2026-02-24
+
+### Added
+- Phase 1A now triggers LLM handoff summarization (fire-and-forget) when a
+  previous session file is found at session start. This is a reliable
+  fallback for the before_reset/command hook paths that do not fire in
+  current OpenClaw versions due to a dispatch gap (openclaw/openclaw#25074).
+  The existing before_reset and command hook paths are unchanged.
+
+### Changed
+- runHandoffForSession source type now includes "session_start"
+
+### Tests
+- 5 new tests in session-handoff.test.ts covering the Phase 1A handoff
+  trigger path
+
 ## [0.8.28] - 2026-02-24
 
 ### Fixed
