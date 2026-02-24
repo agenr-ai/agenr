@@ -785,73 +785,64 @@ async function runHandoffForSession(opts: {
     };
     try {
       await runStoreTool(opts.agenrPath, fallbackEntry, opts.storeConfig, opts.defaultProject);
-      opts.logger?.debug?.(`[agenr] ${opts.source}: fallback handoff stored`);
+      console.log(`[agenr] ${opts.source}: fallback handoff stored`);
     } catch (err) {
-      opts.logger?.debug?.(
+      console.log(
         `[agenr] ${opts.source}: fallback store failed: ${err instanceof Error ? err.message : String(err)}`,
       );
       fallbackEntrySubject = null;
     }
   }
 
-  // Phase 2: best-effort LLM upgrade, intentionally fire-and-forget.
+  // Phase 2: await LLM upgrade so before_reset does not resolve early.
   if (opts.sessionFile) {
-    void testingApi
-      .summarizeSessionForHandoff(
-        normalizedMessages,
-        opts.sessionsDir,
-        opts.sessionFile,
-        opts.logger ?? {
-          warn: () => undefined,
-          error: () => undefined,
-        },
-      )
-      .then(async (summary) => {
-        if (!summary) {
-          return;
-        }
+    const summary = await testingApi.summarizeSessionForHandoff(
+      normalizedMessages,
+      opts.sessionsDir,
+      opts.sessionFile,
+      opts.logger ?? {
+        warn: () => undefined,
+        error: () => undefined,
+      },
+    );
 
-        if (fallbackEntrySubject) {
-          await retireFallbackHandoffEntries({
-            agenrPath: opts.agenrPath,
-            budget: opts.budget,
-            defaultProject: opts.defaultProject,
-            fallbackSubject: fallbackEntrySubject,
-            logger: opts.logger ?? {
-              warn: () => undefined,
-              error: () => undefined,
-            },
-            source: opts.source,
-          });
-        }
+    if (summary) {
+      if (fallbackEntrySubject) {
+        await retireFallbackHandoffEntries({
+          agenrPath: opts.agenrPath,
+          budget: opts.budget,
+          defaultProject: opts.defaultProject,
+          fallbackSubject: fallbackEntrySubject,
+          logger: opts.logger ?? {
+            warn: () => undefined,
+            error: () => undefined,
+          },
+          source: opts.source,
+        });
+      }
 
-        const timestamp = new Date().toISOString().slice(0, 16).replace("T", " ");
-        const llmEntry = {
-          entries: [
-            {
-              type: "event",
-              importance: 10,
-              subject: `session handoff ${timestamp}`,
-              content: summary,
-              tags: ["handoff", "session"],
-            },
-          ],
-        };
+      const timestamp = new Date().toISOString().slice(0, 16).replace("T", " ");
+      const llmEntry = {
+        entries: [
+          {
+            type: "event",
+            importance: 9,
+            subject: `session handoff ${timestamp}`,
+            content: summary,
+            tags: ["handoff", "session"],
+          },
+        ],
+      };
 
-        try {
-          await runStoreTool(opts.agenrPath, llmEntry, opts.storeConfig, opts.defaultProject);
-          opts.logger?.debug?.(`[agenr] ${opts.source}: LLM handoff stored`);
-        } catch (err) {
-          opts.logger?.debug?.(
-            `[agenr] ${opts.source}: LLM handoff store failed: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
-      })
-      .catch((err) => {
-        opts.logger?.debug?.(
-          `[agenr] ${opts.source}: LLM handoff rejected: ${err instanceof Error ? err.message : String(err)}`,
+      try {
+        await runStoreTool(opts.agenrPath, llmEntry, opts.storeConfig, opts.defaultProject);
+        console.log(`[agenr] ${opts.source}: LLM handoff stored`);
+      } catch (err) {
+        console.log(
+          `[agenr] ${opts.source}: LLM handoff store failed: ${err instanceof Error ? err.message : String(err)}`,
         );
-      });
+      }
+    }
   }
 }
 

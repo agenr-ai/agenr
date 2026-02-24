@@ -1228,12 +1228,10 @@ describe("before_reset handoff store", () => {
     expect(capturedArgs[projectIdx + 1]).toBe("my-project");
   });
 
-  it("stores fallback immediately, then asynchronously upgrades with LLM summary", async () => {
-    let resolveSummary: ((value: string | null) => void) | null = null;
-    const summaryPromise = new Promise<string | null>((resolve) => {
-      resolveSummary = resolve;
-    });
-    vi.spyOn(__testing, "summarizeSessionForHandoff").mockReturnValue(summaryPromise);
+  it("stores fallback and upgrades with LLM summary before returning", async () => {
+    vi.spyOn(__testing, "summarizeSessionForHandoff").mockResolvedValue(
+      "WORKING ON: Completed issue #199 handoff summary.",
+    );
     vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
     const runStoreMock = vi.spyOn(pluginTools, "runStoreTool").mockResolvedValue({
       content: [{ type: "text", text: "Stored 1 entries." }],
@@ -1255,17 +1253,13 @@ describe("before_reset handoff store", () => {
       { sessionKey: "agent:main:handoff-summary", agentId: "main" },
     );
 
-    expect(runStoreMock).toHaveBeenCalledTimes(1);
+    expect(runStoreMock).toHaveBeenCalledTimes(2);
     const firstPayload = runStoreMock.mock.calls[0]?.[1] as { entries: Array<{ importance: number; content: string }> };
     expect(firstPayload.entries[0]?.importance).toBe(9);
     expect(firstPayload.entries[0]?.content).toContain("U:");
 
-    resolveSummary?.("WORKING ON: Completed issue #199 handoff summary.");
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-
-    expect(runStoreMock).toHaveBeenCalledTimes(2);
     const secondPayload = runStoreMock.mock.calls[1]?.[1] as { entries: Array<{ importance: number; content: string }> };
-    expect(secondPayload.entries[0]?.importance).toBe(10);
+    expect(secondPayload.entries[0]?.importance).toBe(9);
     expect(secondPayload.entries[0]?.content).toBe("WORKING ON: Completed issue #199 handoff summary.");
   });
 
