@@ -197,16 +197,16 @@ describe("extractRecentTurns", () => {
     );
   });
 
-  it("truncates each turn to 150 chars", async () => {
+  it("truncates each turn to 300 chars", async () => {
     const dir = await createTempDir();
     const filePath = path.join(dir, "session.jsonl");
-    const longText = "x".repeat(200);
+    const longText = "x".repeat(400);
     await writeJsonlFile(filePath, [
       { type: "message", message: { role: "user", content: longText } },
     ]);
 
     const result = await extractRecentTurns(filePath);
-    expect(result).toBe(`U: ${"x".repeat(150)}`);
+    expect(result).toBe(`U: ${"x".repeat(300)}`);
   });
 
   it("skips non-message JSONL records", async () => {
@@ -251,6 +251,48 @@ describe("extractRecentTurns", () => {
     ]);
 
     await expect(extractRecentTurns(filePath)).resolves.toBe("U: keep this | A: assistant text");
+  });
+
+  it("strips OpenClaw conversation metadata blocks from user turns", async () => {
+    const dir = await createTempDir();
+    const filePath = path.join(dir, "session.jsonl");
+    await writeJsonlFile(filePath, [
+      {
+        type: "message",
+        message: {
+          role: "user",
+          content:
+            "Hey\n\nConversation info (untrusted metadata):\n```json\n{\"message_id\":\"abc\"}\n```",
+        },
+      },
+    ]);
+
+    await expect(extractRecentTurns(filePath)).resolves.toBe("U: Hey");
+  });
+
+  it("returns the last maxTurns entries (bottom-up selection)", async () => {
+    const dir = await createTempDir();
+    const filePath = path.join(dir, "session.jsonl");
+    const entries = Array.from({ length: 10 }, (_, index) => ({
+      type: "message",
+      message: { role: "user", content: `u${index + 1}` },
+    }));
+    await writeJsonlFile(filePath, entries);
+
+    await expect(extractRecentTurns(filePath, 3)).resolves.toBe("U: u8 | U: u9 | U: u10");
+  });
+
+  it("collapses internal whitespace in turn text before formatting", async () => {
+    const dir = await createTempDir();
+    const filePath = path.join(dir, "session.jsonl");
+    await writeJsonlFile(filePath, [
+      {
+        type: "message",
+        message: { role: "user", content: "Hello\n\nWorld" },
+      },
+    ]);
+
+    await expect(extractRecentTurns(filePath)).resolves.toBe("U: Hello World");
   });
 });
 
