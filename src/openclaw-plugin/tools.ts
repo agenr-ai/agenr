@@ -116,9 +116,9 @@ async function runAgenrCommand(
       resolve(result);
     };
 
-    const child = spawn(spawnArgs.cmd, [...spawnArgs.args, ...args], {
+    const finalArgs = dbPath ? [...args, "--db", dbPath] : args;
+    const child = spawn(spawnArgs.cmd, [...spawnArgs.args, ...finalArgs], {
       stdio: ["pipe", "pipe", "pipe"],
-      env: dbPath ? { ...process.env, AGENR_DB_PATH: dbPath } : process.env,
     });
 
     const timer = setTimeout(() => {

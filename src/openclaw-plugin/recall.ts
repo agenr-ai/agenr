@@ -90,9 +90,9 @@ export async function runRecall(
         args.push(truncatedQuery);
       }
     }
-    const child = spawn(spawnArgs.cmd, [...spawnArgs.args, ...args], {
+    const finalArgs = dbPath ? [...args, "--db", dbPath] : args;
+    const child = spawn(spawnArgs.cmd, [...spawnArgs.args, ...finalArgs], {
       stdio: ["ignore", "pipe", "ignore"],
-      env: dbPath ? { ...process.env, AGENR_DB_PATH: dbPath } : process.env,
     });
 
     const timer = setTimeout(() => {
