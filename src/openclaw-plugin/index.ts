@@ -655,6 +655,13 @@ async function summarizeSessionForHandoff(
         currentSlice = currentSlice.slice(1);
         transcript = buildTranscript(currentSlice, currentSurface);
       }
+      if (transcript.length > HANDOFF_TRANSCRIPT_MAX_CHARS) {
+        transcript = transcript.slice(-HANDOFF_TRANSCRIPT_MAX_CHARS);
+        const firstNewline = transcript.indexOf("\n");
+        if (firstNewline > 0) {
+          transcript = transcript.slice(firstNewline + 1);
+        }
+      }
     }
 
     let llmClient;
