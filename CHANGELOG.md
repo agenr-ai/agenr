@@ -6,6 +6,10 @@
 - Handoff log line now shows model ID string instead of [object Object]
 - Upgraded handoff retirement and browse debug logs from logger.debug to
   console.log for production visibility
+- Handoff transcript now strips OpenClaw/agenr injected context (memory
+  blocks, signals, conversation metadata, timestamp prefixes) before
+  sending to the LLM, preventing the summarizer from summarizing its own
+  metadata (#235)
 
 ### Added
 - Opt-in `handoff.includeBackground` config flag for handoff summarizer: when

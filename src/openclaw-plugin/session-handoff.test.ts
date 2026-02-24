@@ -256,6 +256,100 @@ describe("getBaseSessionPath", () => {
   });
 });
 
+describe("stripInjectedContext", () => {
+  it("removes ## Recent session block", () => {
+    const input = "hello\n## Recent session\n- item a\n## Some Other Header\nworld";
+    const output = __testing.stripInjectedContext(input);
+    expect(output).not.toContain("## Recent session");
+    expect(output).not.toContain("- item a");
+    expect(output).toContain("## Some Other Header");
+    expect(output).toContain("world");
+  });
+
+  it("removes ## Recent memory block", () => {
+    const input = "hello\n## Recent memory\n- [fact] memory line\n## Some Other Header\nworld";
+    const output = __testing.stripInjectedContext(input);
+    expect(output).not.toContain("## Recent memory");
+    expect(output).not.toContain("memory line");
+    expect(output).toContain("## Some Other Header");
+    expect(output).toContain("world");
+  });
+
+  it("removes ## Relevant memory block", () => {
+    const input = "hello\n## Relevant memory\n- [decision] relevant line\n## Some Other Header\nworld";
+    const output = __testing.stripInjectedContext(input);
+    expect(output).not.toContain("## Relevant memory");
+    expect(output).not.toContain("relevant line");
+    expect(output).toContain("## Some Other Header");
+    expect(output).toContain("world");
+  });
+
+  it("removes AGENR SIGNAL lines and following list entries", () => {
+    const input = "start\nAGENR SIGNAL: important updates\n- [fact] one\n- [decision] two\nend";
+    const output = __testing.stripInjectedContext(input);
+    expect(output).not.toContain("AGENR SIGNAL:");
+    expect(output).not.toContain("- [fact] one");
+    expect(output).not.toContain("- [decision] two");
+    expect(output).toContain("start");
+    expect(output).toContain("end");
+  });
+
+  it("removes Conversation info metadata json block", () => {
+    const input = [
+      "hello",
+      "Conversation info (untrusted metadata):",
+      "```json",
+      '{"sessionKey":"abc"}',
+      "```",
+      "world",
+    ].join("\n");
+    const output = __testing.stripInjectedContext(input);
+    expect(output).not.toContain("Conversation info (untrusted metadata):");
+    expect(output).not.toContain('{"sessionKey":"abc"}');
+    expect(output).toContain("hello");
+    expect(output).toContain("world");
+  });
+
+  it("removes timestamp prefix", () => {
+    const input = "[Tue 2026-02-24 13:13 CST] hello world";
+    const output = __testing.stripInjectedContext(input);
+    expect(output).toBe("hello world");
+  });
+
+  it("returns clean text unchanged", () => {
+    const input = "plain handoff content with no injected metadata";
+    const output = __testing.stripInjectedContext(input);
+    expect(output).toBe(input);
+  });
+
+  it("handles text with multiple injected blocks", () => {
+    const input = [
+      "[Tue 2026-02-24 13:13 CST] start",
+      "## Recent session",
+      "- a",
+      "## Recent memory",
+      "- b",
+      "AGENR SIGNAL: signal",
+      "- [fact] c",
+      "Conversation info (untrusted metadata):",
+      "```json",
+      '{"k":"v"}',
+      "```",
+      "## Notes",
+      "end",
+    ].join("\n");
+    const output = __testing.stripInjectedContext(input);
+    expect(output).not.toContain("## Recent session");
+    expect(output).not.toContain("## Recent memory");
+    expect(output).not.toContain("AGENR SIGNAL:");
+    expect(output).not.toContain("Conversation info (untrusted metadata):");
+    expect(output).not.toContain("[Tue 2026-02-24 13:13 CST]");
+    expect(output).toContain("## Notes");
+    expect(output).toContain("start");
+    expect(output).toContain("end");
+  });
+});
+
 describe("readMessagesFromJsonl", () => {
   it("returns [] when file does not exist", async () => {
     const dir = await makeTempDir("agenr-handoff-jsonl-");
@@ -701,6 +795,49 @@ describe("summarizeSessionForHandoff", () => {
     expect(responseBody).toContain("=== METADATA ===");
   });
 
+  it("request log file contains stripped transcript content, not injected metadata", async () => {
+    mockLlmClientSuccess();
+    const dir = await makeTempDir("agenr-handoff-summary-logdir-strip-");
+    const logDir = path.join(dir, "handoff-logs");
+    const currentSessionFile = path.join(dir, "current-uuid.jsonl");
+    await fs.writeFile(currentSessionFile, "", "utf8");
+
+    const summary = await __testing.summarizeSessionForHandoff(
+      [
+        { role: "user", content: "## Recent memory\n- [fact] stale", timestamp: "2026-02-24T10:00:00" },
+        { role: "assistant", content: "[Tue 2026-02-24 13:13 CST] cleaned one", timestamp: "2026-02-24T10:01:00" },
+        {
+          role: "user",
+          content: "Conversation info (untrusted metadata):\n```json\n{\"sessionKey\":\"abc\"}\n```",
+          timestamp: "2026-02-24T10:02:00",
+        },
+        { role: "assistant", content: "AGENR SIGNAL: signal\n- [fact] hidden", timestamp: "2026-02-24T10:03:00" },
+        { role: "user", content: "cleaned two", timestamp: "2026-02-24T10:04:00" },
+        { role: "assistant", content: "cleaned three", timestamp: "2026-02-24T10:05:00" },
+      ],
+      dir,
+      currentSessionFile,
+      makeLogger(),
+      false,
+      makeStreamSimple({ message: makeAssistantMessage("summary text") }),
+      true,
+      logDir,
+    );
+
+    expect(summary).toBe("summary text");
+    const files = await fs.readdir(logDir);
+    const requestFile = files.find((file) => /^handoff-.*-request\.txt$/.test(file));
+    expect(requestFile).toBeDefined();
+    const requestBody = await fs.readFile(path.join(logDir, requestFile as string), "utf8");
+    expect(requestBody).toContain("cleaned one");
+    expect(requestBody).toContain("cleaned two");
+    expect(requestBody).toContain("cleaned three");
+    expect(requestBody).not.toContain("## Recent memory");
+    expect(requestBody).not.toContain("Conversation info (untrusted metadata):");
+    expect(requestBody).not.toContain("AGENR SIGNAL:");
+    expect(requestBody).not.toContain("[Tue 2026-02-24 13:13 CST]");
+  });
+
   it("does not write files when logDir is not set", async () => {
     mockLlmClientSuccess();
     const dir = await makeTempDir("agenr-handoff-summary-logdir-");
@@ -867,6 +1004,55 @@ describe("summarizeSessionForHandoff", () => {
     expect(transcript).toContain("--- Session");
     expect(transcript).not.toContain("=== BACKGROUND CONTEXT (DO NOT SUMMARIZE) ===");
     expect(transcript).not.toContain("=== SUMMARIZE THIS SESSION ONLY ===");
+  });
+
+  it("excludes messages that become empty after stripping injected context", async () => {
+    mockLlmClientSuccess();
+    const dir = await makeTempDir("agenr-handoff-summary-strip-empty-");
+    const currentSessionFile = path.join(dir, "current-uuid.jsonl");
+    await fs.writeFile(currentSessionFile, "", "utf8");
+
+    let transcript = "";
+    const summary = await __testing.summarizeSessionForHandoff(
+      [
+        { role: "user", content: "## Recent session\n- [fact] stale", timestamp: "2026-02-24T10:00:00" },
+        { role: "assistant", content: "[Tue 2026-02-24 13:13 CST] cleaned one", timestamp: "2026-02-24T10:01:00" },
+        {
+          role: "user",
+          content: "Conversation info (untrusted metadata):\n```json\n{\"sessionKey\":\"abc\"}\n```",
+          timestamp: "2026-02-24T10:02:00",
+        },
+        { role: "assistant", content: "AGENR SIGNAL: signal\n- [fact] hidden", timestamp: "2026-02-24T10:03:00" },
+        { role: "user", content: "cleaned two", timestamp: "2026-02-24T10:04:00" },
+        { role: "assistant", content: "cleaned three", timestamp: "2026-02-24T10:05:00" },
+      ],
+      dir,
+      currentSessionFile,
+      makeLogger(),
+      false,
+      makeStreamSimple({
+        message: makeAssistantMessage("summary text"),
+        onContext: (context) => {
+          const userMessage = context.messages[0];
+          if (userMessage?.role === "user" && typeof userMessage.content === "string") {
+            transcript = userMessage.content;
+          }
+        },
+      }),
+    );
+
+    expect(summary).toBe("summary text");
+    const messageLines = transcript
+      .split("\n")
+      .filter((line) => line.startsWith("[user]:") || line.startsWith("[assistant]:"));
+    expect(messageLines).toHaveLength(3);
+    expect(transcript).toContain("[assistant]: cleaned one");
+    expect(transcript).toContain("[user]: cleaned two");
+    expect(transcript).toContain("[assistant]: cleaned three");
+    expect(transcript).not.toContain("## Recent session");
+    expect(transcript).not.toContain("Conversation info (untrusted metadata):");
+    expect(transcript).not.toContain("AGENR SIGNAL:");
+    expect(transcript).not.toContain("[Tue 2026-02-24 13:13 CST]");
   });
 
   it('uses a single-session prompt without "prior session" or "two sessions"', async () => {

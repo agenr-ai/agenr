@@ -20,6 +20,7 @@ import {
   extractLastExchangeText,
   extractRecentTurns,
   findPreviousSessionFile,
+  stripPromptMetadata,
 } from "./session-query.js";
 import { checkSignals, resolveSignalConfig } from "./signals.js";
 import { runExtractTool, runRecallTool, runRetireTool, runStoreTool } from "./tools.js";
@@ -258,6 +259,30 @@ function extractHandoffContent(content: unknown): string {
   return extractTextFromContent(content, " ");
 }
 
+function stripInjectedContext(text: string): string {
+  if (!text) {
+    return "";
+  }
+
+  let cleaned = text;
+  // Strip large agenr-injected context blocks.
+  cleaned = cleaned.replace(
+    /(?:^|\n)## (?:Recent session|Recent memory|Relevant memory)\b[\s\S]*?(?=\n##\s|$)/g,
+    "",
+  );
+  // Strip signal headline and following bullet entries.
+  cleaned = cleaned.replace(/^\s*AGENR SIGNAL:.*(?:\n\s*-\s\[[^\n]*)*/gm, "");
+  // Strip OpenClaw conversation metadata JSON block.
+  cleaned = cleaned.replace(
+    /Conversation info \(untrusted metadata\):\s*```json[\s\S]*?```/g,
+    "",
+  );
+  // Strip OpenClaw prompt timestamp prefix.
+  cleaned = stripPromptMetadata(cleaned);
+
+  return cleaned.trim();
+}
+
 function formatHandoffTimestamp(timestamp: string): string {
   if (!timestamp) {
     return "unknown time";
@@ -392,14 +417,15 @@ async function readMessagesFromJsonl(filePath: string): Promise<HandoffMessage[]
       }
 
       const content = extractHandoffContent(message["content"]);
-      if (!content) {
+      const strippedContent = stripInjectedContext(content);
+      if (!strippedContent) {
         continue;
       }
 
       const timestamp = typeof parsed["timestamp"] === "string" ? parsed["timestamp"] : "";
       messages.push({
         role,
-        content,
+        content: strippedContent,
         timestamp,
       });
     }
@@ -548,13 +574,14 @@ function mapCurrentSessionMessage(message: unknown): HandoffMessage | null {
     return null;
   }
   const content = extractHandoffContent(message["content"]);
-  if (!content) {
+  const strippedContent = stripInjectedContext(content);
+  if (!strippedContent) {
     return null;
   }
   const timestamp = typeof message["timestamp"] === "string" ? message["timestamp"] : "";
   return {
     role,
-    content,
+    content: strippedContent,
     timestamp,
   };
 }
@@ -986,6 +1013,7 @@ const testingApi = {
   getBaseSessionPath,
   getSurfaceForSessionFile,
   readMessagesFromJsonl,
+  stripInjectedContext,
   findPriorResetFile,
   buildTranscript,
   buildMergedTranscript,
