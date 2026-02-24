@@ -1352,6 +1352,7 @@ describe("command hook handoff", () => {
       { role: "assistant", content: "Acknowledged, capturing handoff now." },
       { role: "user", content: "Focus on issue #210 command reset path." },
     ]);
+    const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const runStoreMock = vi.spyOn(pluginTools, "runStoreTool").mockResolvedValue({
       content: [{ type: "text", text: "Stored 1 entries." }],
     });
@@ -1385,6 +1386,10 @@ describe("command hook handoff", () => {
     expect(payload.entries[0]?.type).toBe("event");
     expect(payload.entries[0]?.importance).toBe(9);
     expect(payload.entries[0]?.tags).toContain("handoff");
+    expect(consoleLogSpy).toHaveBeenCalledWith(
+      "[agenr] command: triggered action=new sessionKey=agent:main:command-new",
+    );
+    expect(consoleLogSpy).toHaveBeenCalledWith("[agenr] command: handoff complete");
   });
 
   it("skips handoff for action=stop", async () => {
@@ -1452,6 +1457,7 @@ describe("command hook handoff", () => {
       { role: "user", content: "First handoff call should store." },
       { role: "assistant", content: "Second call should dedup skip." },
     ]);
+    const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const runStoreMock = vi.spyOn(pluginTools, "runStoreTool").mockResolvedValue({
       content: [{ type: "text", text: "Stored 1 entries." }],
     });
@@ -1477,6 +1483,9 @@ describe("command hook handoff", () => {
     await handler(event, { sessionKey: "agent:main:command-dedup", agentId: "main" });
 
     expect(runStoreMock).toHaveBeenCalledTimes(1);
+    expect(consoleLogSpy).toHaveBeenCalledWith(
+      "[agenr] command: dedup skip sessionId=session-210-cmd-dedup",
+    );
   });
 
   it("dedup: before_reset and command with same sessionId only write one entry", async () => {

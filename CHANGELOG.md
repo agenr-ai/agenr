@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.38] - 2026-02-24
+
+### Fixed
+- Handoff summarizer no longer blends prior session messages into the LLM summary, preventing stale facts from being stored as current findings (#235)
+- Simplified handoff system prompt to single-session summarization
+- Added anti-hallucination guardrail to handoff prompt
+
+### Removed
+- All temporary [AGENR-PROBE] debug logging from openclaw-plugin (replaced with clean operational logs where needed)
+- Removed findPriorResetFile (no longer needed for summarization)
+- Removed capTranscriptLength (simplified without prior session merging)
+
 ## [0.8.37] - 2026-02-24
 
 ### Fixed

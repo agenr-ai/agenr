@@ -153,21 +153,18 @@ interface CommandHookApi {
 
 const HANDOFF_TRANSCRIPT_MAX_MESSAGES = 50;
 const HANDOFF_TRANSCRIPT_MAX_CHARS = 8000;
-const MILLIS_PER_DAY = 24 * 60 * 60 * 1000;
 
 const HANDOFF_SUMMARY_SYSTEM_PROMPT = `You are a session summarizer for an AI agent memory system. Your job is
 to produce a concise handoff note from a conversation transcript so the
 next session can orient quickly.
 
-The transcript may cover one or two sessions labeled with timestamps and
-surfaces (webchat, telegram, etc.). Use this temporal and surface context
-in your summary. If the sessions are separated by more than 30 minutes,
-begin WORKING ON with a note like "Resumed 4 hours after a telegram
-session." If sessions are continuous, omit the gap.
+The transcript contains messages from a single session labeled with a
+timestamp and surface (webchat, telegram, etc.). Only include information
+explicitly present in the transcript. Do not infer or invent details.
 
-If the two sessions cover clearly unrelated topics, label them separately
-using "PRIOR SESSION TOPIC:" and "CURRENT SESSION TOPIC:" instead of a
-unified WORKING ON section.
+If the session contains no substantive work (e.g. just greetings or
+small talk), write "No significant activity" for WORKING ON and "None"
+for all other sections.
 
 Produce these sections in plain text (no markdown, no bullet symbols,
 use plain dashes for lists):
@@ -368,67 +365,14 @@ async function readMessagesFromJsonl(filePath: string): Promise<HandoffMessage[]
   }
 }
 
-async function findPriorResetFile(sessionsDir: string, currentSessionFile: string): Promise<string | null> {
-  try {
-    const currentUuid = path.basename(currentSessionFile, ".jsonl");
-    const entries = await fs.promises.readdir(sessionsDir);
-    const resetEntries = entries.filter((entry) => /\.jsonl\.reset\./.test(entry));
-    const candidates = resetEntries.filter((entry) => entry.split(".jsonl")[0] !== currentUuid);
-    if (candidates.length === 0) {
-      return null;
-    }
-
-    const stats = await Promise.all(
-      candidates.map(async (entry) => {
-        const filePath = path.join(sessionsDir, entry);
-        const fileStats = await fs.promises.stat(filePath);
-        return {
-          filePath,
-          mtime: fileStats.mtime,
-        };
-      }),
-    );
-
-    stats.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
-    const latest = stats[0];
-    if (!latest) {
-      return null;
-    }
-
-    const ageMs = Date.now() - latest.mtime.getTime();
-    if (ageMs < MILLIS_PER_DAY) {
-      return latest.filePath;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-function buildMergedTranscript(
-  priorMessages: HandoffMessage[],
-  priorSurface: string,
-  currentMessages: HandoffMessage[],
-  currentSurface: string,
-): string {
-  const cleanPrior = priorMessages
-    .map((message) => ({ ...message, content: message.content.trim() }))
-    .filter((message) => message.content.length > 0);
-  const cleanCurrent = currentMessages
+function buildTranscript(messages: HandoffMessage[], surface: string): string {
+  const cleanMessages = messages
     .map((message) => ({ ...message, content: message.content.trim() }))
     .filter((message) => message.content.length > 0);
 
   const lines: string[] = [];
-  if (cleanPrior.length > 0) {
-    lines.push(`--- Session ${formatHandoffTimestamp(cleanPrior[0]?.timestamp ?? "")} [${priorSurface}] ---`);
-    lines.push(...cleanPrior.map((message) => `[${message.role}]: ${message.content}`));
-    lines.push("");
-  }
-
-  lines.push(
-    `--- Session ${formatHandoffTimestamp(cleanCurrent[0]?.timestamp ?? "")} [${currentSurface}] (ended) ---`,
-  );
-  lines.push(...cleanCurrent.map((message) => `[${message.role}]: ${message.content}`));
+  lines.push(`--- Session ${formatHandoffTimestamp(cleanMessages[0]?.timestamp ?? "")} [${surface}] (ended) ---`);
+  lines.push(...cleanMessages.map((message) => `[${message.role}]: ${message.content}`));
 
   return lines.join("\n");
 }
@@ -438,42 +382,6 @@ function countTranscriptContentLines(transcript: string): number {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line.length > 0 && !line.startsWith("---")).length;
-}
-
-function capTranscriptLength(params: {
-  priorMessages: HandoffMessage[];
-  priorSurface: string;
-  currentMessages: HandoffMessage[];
-  currentSurface: string;
-  maxChars: number;
-}): string {
-  let cappedPrior = [...params.priorMessages];
-  let transcript = buildMergedTranscript(
-    cappedPrior,
-    params.priorSurface,
-    params.currentMessages,
-    params.currentSurface,
-  );
-
-  while (transcript.length > params.maxChars && cappedPrior.length > 0) {
-    cappedPrior = cappedPrior.slice(1);
-    transcript = buildMergedTranscript(
-      cappedPrior,
-      params.priorSurface,
-      params.currentMessages,
-      params.currentSurface,
-    );
-  }
-
-  if (transcript.length > params.maxChars) {
-    transcript = transcript.slice(-params.maxChars);
-    const firstNewline = transcript.indexOf("\n");
-    if (firstNewline > 0) {
-      transcript = transcript.slice(firstNewline + 1);
-    }
-  }
-
-  return transcript;
 }
 
 function extractAssistantSummaryText(message: unknown): string {
@@ -517,40 +425,26 @@ async function summarizeSessionForHandoff(
       .map((message) => mapCurrentSessionMessage(message))
       .filter((message): message is HandoffMessage => message !== null);
 
-    const currentSlice = currentMessages.slice(
+    let currentSlice = currentMessages.slice(
       -Math.min(currentMessages.length, HANDOFF_TRANSCRIPT_MAX_MESSAGES),
     );
-    const priorBudget = HANDOFF_TRANSCRIPT_MAX_MESSAGES - currentSlice.length;
-
-    let priorSlice: HandoffMessage[] = [];
-    let priorSurface = "prior session";
-    const priorFile = await findPriorResetFile(sessionsDir, currentSessionFile);
-    if (priorFile && priorBudget > 0) {
-      const priorAllMessages = await readMessagesFromJsonl(priorFile);
-      priorSlice = priorAllMessages.slice(-priorBudget);
-      priorSurface = getSurfaceForSessionFile(getBaseSessionPath(priorFile), sessionsJson);
+    if (currentSlice.length < 3) {
+      console.log("[agenr] before_reset: skipping LLM summary - reason: too few messages");
+      return null;
     }
 
-    let transcript = buildMergedTranscript(priorSlice, priorSurface, currentSlice, currentSurface);
+    let transcript = buildTranscript(currentSlice, currentSurface);
     const nonHeaderLineCount = countTranscriptContentLines(transcript);
     if (nonHeaderLineCount < 3) {
       console.log("[agenr] before_reset: skipping LLM summary - reason: short transcript");
       return null;
     }
 
-    if (currentSlice.length < 5 && priorSlice.length === 0) {
-      console.log("[agenr] before_reset: skipping LLM summary - reason: too few messages");
-      return null;
-    }
-
     if (transcript.length > HANDOFF_TRANSCRIPT_MAX_CHARS) {
-      transcript = capTranscriptLength({
-        priorMessages: priorSlice,
-        priorSurface,
-        currentMessages: currentSlice,
-        currentSurface,
-        maxChars: HANDOFF_TRANSCRIPT_MAX_CHARS,
-      });
+      while (transcript.length > HANDOFF_TRANSCRIPT_MAX_CHARS && currentSlice.length > 1) {
+        currentSlice = currentSlice.slice(1);
+        transcript = buildTranscript(currentSlice, currentSurface);
+      }
     }
 
     let llmClient;
@@ -576,7 +470,7 @@ async function summarizeSessionForHandoff(
     };
 
     console.log(
-      `[agenr] before_reset: sending to LLM model=${resolvedModel.model} chars=${transcript.length} currentMsgs=${currentSlice.length} priorMsgs=${priorSlice.length}`,
+      `[agenr] before_reset: sending to LLM model=${resolvedModel.model} chars=${transcript.length} msgs=${currentSlice.length}`,
     );
     const assistantMsg = await runSimpleStream({
       model: resolvedModel.model,
@@ -743,9 +637,7 @@ async function runHandoffForSession(opts: {
 }): Promise<void> {
   const sessionId = opts.sessionId.trim() || opts.sessionKey;
   if (handoffSeenSessionIds.has(sessionId)) {
-    process.stderr.write(
-      `[AGENR-PROBE] ${opts.source} hook: dedup skip sessionId=${sessionId} source=${opts.source}\n`,
-    );
+    console.log(`[agenr] ${opts.source}: dedup skip sessionId=${sessionId}`);
     return;
   }
   handoffSeenSessionIds.add(sessionId);
@@ -758,7 +650,6 @@ async function runHandoffForSession(opts: {
 
   const normalizedMessages = normalizeHandoffMessages(opts.messages);
   if (normalizedMessages.length === 0) {
-    process.stderr.write(`[AGENR-PROBE] ${opts.source} hook: no messages after normalization source=${opts.source}\n`);
     return;
   }
 
@@ -857,9 +748,7 @@ const testingApi = {
   getBaseSessionPath,
   getSurfaceForSessionFile,
   readMessagesFromJsonl,
-  findPriorResetFile,
-  buildMergedTranscript,
-  capTranscriptLength,
+  buildTranscript,
   summarizeSessionForHandoff,
   runHandoffForSession,
 };
@@ -871,7 +760,6 @@ const plugin = {
 
   register(api: PluginApi): void {
     const config = api.pluginConfig as AgenrPluginConfig | undefined;
-    process.stderr.write(`[AGENR-PROBE] register() called pluginId=${api.id}\n`);
 
     api.on(
       "before_prompt_build",
@@ -929,12 +817,8 @@ const plugin = {
               }
 
               if (Array.isArray(messages) && messages.length > 0) {
-                process.stderr.write(
-                  `[AGENR-PROBE] session_start: triggering handoff for prev file=${previousSessionFile} msgs=${messages.length}\n`,
-                );
-                console.log(
-                  `[agenr] session_start: awaiting runHandoffForSession file=${previousSessionFile}`,
-                );
+                const sessionKey = ctx.sessionKey ?? "";
+                console.log("[agenr] session_start: triggered sessionKey=" + sessionKey);
                 try {
                   await testingApi.runHandoffForSession({
                     messages,
@@ -961,15 +845,7 @@ const plugin = {
                     `[agenr] session_start: handoff failed: ${err instanceof Error ? err.message : String(err)}`,
                   );
                 }
-              } else if (Array.isArray(messages)) {
-                process.stderr.write(
-                  `[AGENR-PROBE] session_start: skipping handoff - no messages in prev file=${previousSessionFile}\n`,
-                );
               }
-            } else {
-              process.stderr.write(
-                "[AGENR-PROBE] session_start: skipping handoff - no previous session file found\n",
-              );
             }
 
             const seed = buildSemanticSeed(previousTurns, event.prompt ?? "");
@@ -1091,33 +967,19 @@ const plugin = {
         }
       },
     );
-    process.stderr.write(`[AGENR-PROBE] before_prompt_build hook registered\n`);
-
-    (api as unknown as { on: (hook: string, handler: (event: unknown, ctx: PluginHookAgentContext) => Promise<void>) => void }).on("session_start", async (_event: unknown, ctx: PluginHookAgentContext): Promise<void> => {
-      process.stderr.write(
-        `[AGENR-PROBE] session_start FIRED sessionKey=${(ctx as { sessionKey?: string }).sessionKey ?? "none"}\n`,
-      );
-    });
-
     api.on("before_reset", async (event, ctx): Promise<void> => {
       try {
-        process.stderr.write(
-          `[AGENR-PROBE] before_reset FIRED sessionKey=${ctx.sessionKey ?? "none"} msgs=${Array.isArray(event.messages) ? event.messages.length : "non-array"} source=before_reset\n`,
-        );
         api.logger.info?.(`[agenr] before_reset: fired sessionKey=${ctx.sessionKey ?? "none"} agentId=${ctx.agentId ?? "none"} msgs=${Array.isArray(event.messages) ? event.messages.length : "non-array"} sessionFile=${event.sessionFile ?? "none"} source=before_reset`);
         const sessionKey = ctx.sessionKey;
         if (!sessionKey) {
           return;
         }
-        process.stderr.write(`[AGENR-PROBE] before_reset: sessionKey ok source=before_reset\n`);
 
         const messages = event.messages;
         if (!Array.isArray(messages) || messages.length === 0) {
           return;
         }
-        process.stderr.write(
-          `[AGENR-PROBE] before_reset: messages ok count=${messages.length} source=before_reset\n`,
-        );
+        console.log("[agenr] before_reset: triggered sessionKey=" + sessionKey + " msgs=" + messages.length);
 
         const currentSessionFile =
           typeof event.sessionFile === "string" && event.sessionFile.trim()
@@ -1155,26 +1017,18 @@ const plugin = {
         );
       }
     });
-    process.stderr.write(`[AGENR-PROBE] before_reset hook registered\n`);
 
     (api as unknown as CommandHookApi).on(
       "command",
       async (event: CommandHookEvent, ctx: PluginHookAgentContext): Promise<void> => {
         try {
-          process.stderr.write(
-            `[AGENR-PROBE] command hook FIRED action=${event.action ?? "none"} sessionKey=${event.sessionKey ?? "none"} source=${String(event.context?.commandSource ?? "unknown")}\n`,
-          );
-
+          console.log("[agenr] command: triggered action=" + event.action + " sessionKey=" + event.sessionKey);
           if (event.action !== "new" && event.action !== "reset") {
-            process.stderr.write(
-              `[AGENR-PROBE] command hook: skipping action=${event.action ?? "none"} source=command\n`,
-            );
             return;
           }
 
           const sessionKey = event.sessionKey;
           if (!sessionKey) {
-            process.stderr.write("[AGENR-PROBE] command hook: no sessionKey, skipping source=command\n");
             return;
           }
 
@@ -1182,9 +1036,6 @@ const plugin = {
             (event.context?.sessionEntry as { sessionFile?: string } | undefined)?.sessionFile ?? null;
           const sessionId =
             (event.context?.sessionEntry as { sessionId?: string } | undefined)?.sessionId ?? sessionKey;
-          process.stderr.write(
-            `[AGENR-PROBE] command hook: new/reset detected sessionKey=${sessionKey} sessionFile=${sessionFile ?? "none"} source=command\n`,
-          );
           api.logger.info?.(
             `[agenr] command hook: fired action=${event.action} sessionKey=${sessionKey} sessionFile=${sessionFile ?? "none"} source=command`,
           );
@@ -1192,15 +1043,9 @@ const plugin = {
           let messages: unknown[] = [];
           if (sessionFile) {
             messages = await testingApi.readAndParseSessionJsonl(sessionFile);
-            process.stderr.write(
-              `[AGENR-PROBE] command hook: parsed ${messages.length} messages from JSONL source=command\n`,
-            );
-          } else {
-            process.stderr.write("[AGENR-PROBE] command hook: no sessionFile available source=command\n");
           }
 
           if (messages.length === 0) {
-            process.stderr.write("[AGENR-PROBE] command hook: no messages, skipping handoff source=command\n");
             return;
           }
 
@@ -1230,7 +1075,7 @@ const plugin = {
             source: "command",
           });
 
-          process.stderr.write("[AGENR-PROBE] command hook: handoff complete source=command\n");
+          console.log("[agenr] command: handoff complete");
         } catch (err) {
           api.logger.warn(
             `agenr plugin command hook failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -1238,7 +1083,6 @@ const plugin = {
         }
       },
     );
-    process.stderr.write("[AGENR-PROBE] command hook registered\n");
 
     if (api.registerTool) {
       if (config?.enabled === false) {
