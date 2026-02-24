@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.8.28] - 2026-02-23
+
+### Fixed
+- command hook fires before_reset handoff logic for RPC-triggered /new (closes #210)
+  - before_reset hook only fires in the in-process auto-reply path; sessions.reset RPC
+    path only fires the command hook
+  - new command hook handler reads and parses the session JSONL directly, then runs
+    the same Phase 1 fallback store + Phase 2 LLM upgrade logic
+  - dedup guard (Set<sessionId>) prevents double-writes when both hooks fire in
+    auto-reply path
+
+### Added
+- [AGENR-PROBE] debug logging throughout command hook path for observability
+  (to be removed in a future cleanup pass)
+- readAndParseSessionJsonl() helper to parse JSONL session files line by line
+- runHandoffForSession() shared helper extracted from before_reset for reuse
+
+### Tests
+- 5 new tests for command hook handoff behavior in index.test.ts
+
 ## [0.8.27] - 2026-02-24
 
 ### Changed

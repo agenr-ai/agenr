@@ -139,6 +139,43 @@ function getBeforeResetHandler(
   ) => Promise<void>;
 }
 
+function getCommandHandler(
+  api: PluginApi,
+): (
+  event: {
+    type: string;
+    action: string;
+    sessionKey: string;
+    timestamp: Date;
+    messages: string[];
+    context?: {
+      sessionEntry?: { sessionFile?: string; sessionId?: string };
+      commandSource?: string;
+    };
+  },
+  ctx: { sessionKey?: string; sessionId?: string; agentId?: string },
+) => Promise<void> {
+  const onMock = api.on as unknown as ReturnType<typeof vi.fn>;
+  const call = onMock.mock.calls.find((args) => args[0] === "command");
+  if (!call) {
+    throw new Error("command handler not registered");
+  }
+  return call[1] as (
+    event: {
+      type: string;
+      action: string;
+      sessionKey: string;
+      timestamp: Date;
+      messages: string[];
+      context?: {
+        sessionEntry?: { sessionFile?: string; sessionId?: string };
+        commandSource?: string;
+      };
+    },
+    ctx: { sessionKey?: string; sessionId?: string; agentId?: string },
+  ) => Promise<void>;
+}
+
 describe("openclaw plugin tool registration", () => {
   it("registers all four tools when registerTool is present", () => {
     const registerTool = vi.fn();
@@ -1279,5 +1316,185 @@ describe("before_reset handoff store", () => {
 
     expect(runStoreMock).toHaveBeenCalledTimes(1);
     expect(debug).toHaveBeenCalledWith("[agenr] before_reset: no sessionFile in event, using fallback");
+  });
+});
+
+describe("command hook handoff", () => {
+  it("fires handoff for action=new with valid sessionFile", async () => {
+    vi.spyOn(__testing, "summarizeSessionForHandoff").mockResolvedValue(null);
+    vi.spyOn(__testing, "readAndParseSessionJsonl").mockResolvedValue([
+      { role: "user", content: "Please carry this into the next session." },
+      { role: "assistant", content: "Acknowledged, capturing handoff now." },
+      { role: "user", content: "Focus on issue #210 command reset path." },
+    ]);
+    const runStoreMock = vi.spyOn(pluginTools, "runStoreTool").mockResolvedValue({
+      content: [{ type: "text", text: "Stored 1 entries." }],
+    });
+
+    const api = makeApi();
+    plugin.register(api);
+    const handler = getCommandHandler(api);
+
+    await handler(
+      {
+        type: "command",
+        action: "new",
+        sessionKey: "agent:main:command-new",
+        timestamp: new Date(),
+        messages: [],
+        context: {
+          commandSource: "gateway-rpc",
+          sessionEntry: {
+            sessionId: "session-210-cmd-new",
+            sessionFile: "/tmp/session-210-cmd-new.jsonl",
+          },
+        },
+      },
+      { sessionKey: "agent:main:command-new", agentId: "main" },
+    );
+
+    expect(runStoreMock).toHaveBeenCalledTimes(1);
+    const payload = runStoreMock.mock.calls[0]?.[1] as {
+      entries: Array<{ type: string; importance: number; tags: string[] }>;
+    };
+    expect(payload.entries[0]?.type).toBe("event");
+    expect(payload.entries[0]?.importance).toBe(9);
+    expect(payload.entries[0]?.tags).toContain("handoff");
+  });
+
+  it("skips handoff for action=stop", async () => {
+    const runStoreMock = vi.spyOn(pluginTools, "runStoreTool").mockResolvedValue({
+      content: [{ type: "text", text: "Stored 1 entries." }],
+    });
+
+    const api = makeApi();
+    plugin.register(api);
+    const handler = getCommandHandler(api);
+
+    await handler(
+      {
+        type: "command",
+        action: "stop",
+        sessionKey: "agent:main:command-stop",
+        timestamp: new Date(),
+        messages: [],
+        context: {
+          sessionEntry: {
+            sessionId: "session-210-cmd-stop",
+            sessionFile: "/tmp/session-210-cmd-stop.jsonl",
+          },
+        },
+      },
+      { sessionKey: "agent:main:command-stop", agentId: "main" },
+    );
+
+    expect(runStoreMock).not.toHaveBeenCalled();
+  });
+
+  it("skips handoff when no messages parsed from JSONL", async () => {
+    vi.spyOn(__testing, "readAndParseSessionJsonl").mockResolvedValue([]);
+    const runStoreMock = vi.spyOn(pluginTools, "runStoreTool").mockResolvedValue({
+      content: [{ type: "text", text: "Stored 1 entries." }],
+    });
+
+    const api = makeApi();
+    plugin.register(api);
+    const handler = getCommandHandler(api);
+
+    await handler(
+      {
+        type: "command",
+        action: "reset",
+        sessionKey: "agent:main:command-empty",
+        timestamp: new Date(),
+        messages: [],
+        context: {
+          sessionEntry: {
+            sessionId: "session-210-cmd-empty",
+            sessionFile: "/tmp/session-210-cmd-empty.jsonl",
+          },
+        },
+      },
+      { sessionKey: "agent:main:command-empty", agentId: "main" },
+    );
+
+    expect(runStoreMock).not.toHaveBeenCalled();
+  });
+
+  it("dedup: second handler call with same sessionId is skipped", async () => {
+    vi.spyOn(__testing, "summarizeSessionForHandoff").mockResolvedValue(null);
+    vi.spyOn(__testing, "readAndParseSessionJsonl").mockResolvedValue([
+      { role: "user", content: "First handoff call should store." },
+      { role: "assistant", content: "Second call should dedup skip." },
+    ]);
+    const runStoreMock = vi.spyOn(pluginTools, "runStoreTool").mockResolvedValue({
+      content: [{ type: "text", text: "Stored 1 entries." }],
+    });
+
+    const api = makeApi();
+    plugin.register(api);
+    const handler = getCommandHandler(api);
+    const event = {
+      type: "command",
+      action: "new",
+      sessionKey: "agent:main:command-dedup",
+      timestamp: new Date(),
+      messages: [],
+      context: {
+        sessionEntry: {
+          sessionId: "session-210-cmd-dedup",
+          sessionFile: "/tmp/session-210-cmd-dedup.jsonl",
+        },
+      },
+    };
+
+    await handler(event, { sessionKey: "agent:main:command-dedup", agentId: "main" });
+    await handler(event, { sessionKey: "agent:main:command-dedup", agentId: "main" });
+
+    expect(runStoreMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("dedup: before_reset and command with same sessionId only write one entry", async () => {
+    vi.spyOn(__testing, "readAndParseSessionJsonl").mockResolvedValue([
+      { role: "user", content: "Command path should be deduped by sessionId." },
+      { role: "assistant", content: "before_reset already stored fallback." },
+    ]);
+    const runStoreMock = vi.spyOn(pluginTools, "runStoreTool").mockResolvedValue({
+      content: [{ type: "text", text: "Stored 1 entries." }],
+    });
+
+    const api = makeApi();
+    plugin.register(api);
+    const beforeResetHandler = getBeforeResetHandler(api);
+    const commandHandler = getCommandHandler(api);
+
+    await beforeResetHandler(
+      {
+        messages: [
+          { role: "user", content: "Persist this fallback before reset." },
+          { role: "assistant", content: "Persisted." },
+        ],
+      },
+      { sessionKey: "agent:main:before-reset-dedup", sessionId: "session-210-shared", agentId: "main" },
+    );
+
+    await commandHandler(
+      {
+        type: "command",
+        action: "new",
+        sessionKey: "agent:main:before-reset-dedup",
+        timestamp: new Date(),
+        messages: [],
+        context: {
+          sessionEntry: {
+            sessionId: "session-210-shared",
+            sessionFile: "/tmp/session-210-shared.jsonl",
+          },
+        },
+      },
+      { sessionKey: "agent:main:before-reset-dedup", agentId: "main" },
+    );
+
+    expect(runStoreMock).toHaveBeenCalledTimes(1);
   });
 });

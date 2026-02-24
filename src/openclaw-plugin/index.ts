@@ -30,6 +30,7 @@ import type {
   BeforeResetEvent,
   PluginApi,
   PluginHookAgentContext,
+  PluginLogger,
 } from "./types.js";
 
 // Session key substrings that indicate non-interactive sessions to skip.
@@ -43,6 +44,7 @@ interface SessionSignalState {
 }
 
 const sessionSignalState = new Map<string, SessionSignalState>();
+const handoffSeenSessionIds = new Set<string>();
 
 let pluginDb: Client | null = null;
 let pluginDbInit: Promise<void> | null = null;
@@ -124,6 +126,30 @@ type HandoffMessage = {
   content: string;
   timestamp: string;
 };
+
+interface CommandHookEvent {
+  type: string;
+  action: string;
+  sessionKey: string;
+  timestamp: Date;
+  messages: string[];
+  context?: {
+    sessionEntry?: {
+      sessionFile?: string;
+      sessionId?: string;
+    };
+    commandSource?: string;
+    senderId?: string;
+    cfg?: unknown;
+  };
+}
+
+interface CommandHookApi {
+  on(
+    hook: "command",
+    handler: (event: CommandHookEvent, ctx: PluginHookAgentContext) => Promise<void>,
+  ): void;
+}
 
 const HANDOFF_TRANSCRIPT_MAX_MESSAGES = 50;
 const HANDOFF_TRANSCRIPT_MAX_CHARS = 8000;
@@ -220,6 +246,28 @@ async function readSessionsJson(sessionsDir: string): Promise<Record<string, unk
     return isRecord(parsed) ? parsed : {};
   } catch {
     return {};
+  }
+}
+
+async function readAndParseSessionJsonl(sessionFile: string): Promise<unknown[]> {
+  try {
+    const raw = await fs.promises.readFile(sessionFile, "utf8");
+    const messages: unknown[] = [];
+    for (const line of raw.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        continue;
+      }
+      try {
+        const parsed = JSON.parse(trimmed) as unknown;
+        messages.push(parsed);
+      } catch {
+        // skip malformed lines
+      }
+    }
+    return messages;
+  } catch {
+    return [];
   }
 }
 
@@ -652,12 +700,161 @@ async function retireFallbackHandoffEntries(params: {
   }
 }
 
+function normalizeHandoffMessages(messages: unknown[]): unknown[] {
+  return messages.map((message) => {
+    if (!isRecord(message)) {
+      return message;
+    }
+    if (message["role"] === "user" || message["role"] === "assistant") {
+      return message;
+    }
+    if (message["type"] !== "message" || !isRecord(message["message"])) {
+      return message;
+    }
+    const parsedMessage: Record<string, unknown> = { ...message["message"] };
+    if (typeof parsedMessage["timestamp"] !== "string" && typeof message["timestamp"] === "string") {
+      parsedMessage["timestamp"] = message["timestamp"];
+    }
+    return parsedMessage;
+  });
+}
+
+async function runHandoffForSession(opts: {
+  messages: unknown[];
+  sessionFile: string | null;
+  sessionId: string;
+  sessionKey: string;
+  agentId: string;
+  agenrPath: string;
+  budget: number;
+  defaultProject: string | undefined;
+  storeConfig: Record<string, unknown>;
+  sessionsDir: string;
+  logger: PluginLogger | undefined;
+  source: "before_reset" | "command";
+}): Promise<void> {
+  const sessionId = opts.sessionId.trim() || opts.sessionKey;
+  if (handoffSeenSessionIds.has(sessionId)) {
+    process.stderr.write(
+      `[AGENR-PROBE] ${opts.source} hook: dedup skip sessionId=${sessionId} source=${opts.source}\n`,
+    );
+    return;
+  }
+  handoffSeenSessionIds.add(sessionId);
+  const evictionTimer = setTimeout(() => {
+    handoffSeenSessionIds.delete(sessionId);
+  }, 60_000);
+  if (typeof evictionTimer.unref === "function") {
+    evictionTimer.unref();
+  }
+
+  const normalizedMessages = normalizeHandoffMessages(opts.messages);
+  if (normalizedMessages.length === 0) {
+    process.stderr.write(`[AGENR-PROBE] ${opts.source} hook: no messages after normalization source=${opts.source}\n`);
+    return;
+  }
+
+  if (!opts.sessionFile) {
+    opts.logger?.debug?.("[agenr] before_reset: no sessionFile in event, using fallback");
+  }
+
+  // Phase 1: store fallback immediately so the next session can always read it.
+  const fallbackText = extractLastExchangeText(normalizedMessages);
+  let fallbackEntrySubject: string | null = null;
+  if (fallbackText) {
+    const timestamp = new Date().toISOString().slice(0, 16).replace("T", " ");
+    fallbackEntrySubject = `session handoff ${timestamp}`;
+    const fallbackEntry = {
+      entries: [
+        {
+          type: "event",
+          importance: 9,
+          subject: fallbackEntrySubject,
+          content: fallbackText,
+          tags: ["handoff", "session"],
+        },
+      ],
+    };
+    try {
+      await runStoreTool(opts.agenrPath, fallbackEntry, opts.storeConfig, opts.defaultProject);
+      opts.logger?.debug?.("[agenr] before_reset: fallback handoff stored");
+    } catch (err) {
+      opts.logger?.debug?.(
+        `[agenr] before_reset: fallback store failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      fallbackEntrySubject = null;
+    }
+  }
+
+  // Phase 2: best-effort LLM upgrade, intentionally fire-and-forget.
+  if (opts.sessionFile) {
+    void testingApi
+      .summarizeSessionForHandoff(
+        normalizedMessages,
+        opts.sessionsDir,
+        opts.sessionFile,
+        opts.logger ?? {
+          warn: () => undefined,
+          error: () => undefined,
+        },
+      )
+      .then(async (summary) => {
+        if (!summary) {
+          return;
+        }
+
+        if (fallbackEntrySubject && fallbackText) {
+          await retireFallbackHandoffEntries({
+            agenrPath: opts.agenrPath,
+            budget: opts.budget,
+            defaultProject: opts.defaultProject,
+            fallbackSubject: fallbackEntrySubject,
+            fallbackText,
+            logger: opts.logger ?? {
+              warn: () => undefined,
+              error: () => undefined,
+            },
+          });
+        }
+
+        const timestamp = new Date().toISOString().slice(0, 16).replace("T", " ");
+        const llmEntry = {
+          entries: [
+            {
+              type: "event",
+              importance: 10,
+              subject: `session handoff ${timestamp}`,
+              content: summary,
+              tags: ["handoff", "session"],
+            },
+          ],
+        };
+
+        try {
+          await runStoreTool(opts.agenrPath, llmEntry, opts.storeConfig, opts.defaultProject);
+          opts.logger?.debug?.("[agenr] before_reset: LLM handoff stored");
+        } catch (err) {
+          opts.logger?.debug?.(
+            `[agenr] before_reset: LLM handoff store failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      })
+      .catch((err) => {
+        opts.logger?.debug?.(
+          `[agenr] before_reset: LLM handoff rejected: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+  }
+}
+
 const testingApi = {
   clearState(): void {
     seenSessions.clear();
     sessionSignalState.clear();
+    handoffSeenSessionIds.clear();
   },
   readSessionsJson,
+  readAndParseSessionJsonl,
   getBaseSessionPath,
   getSurfaceForSessionFile,
   readMessagesFromJsonl,
@@ -665,6 +862,7 @@ const testingApi = {
   buildMergedTranscript,
   capTranscriptLength,
   summarizeSessionForHandoff,
+  runHandoffForSession,
 };
 
 const plugin = {
@@ -852,28 +1050,27 @@ const plugin = {
     api.on("before_reset", async (event, ctx): Promise<void> => {
       try {
         process.stderr.write(
-          `[AGENR-PROBE] before_reset FIRED sessionKey=${ctx.sessionKey ?? "none"} msgs=${Array.isArray(event.messages) ? event.messages.length : "non-array"}\n`,
+          `[AGENR-PROBE] before_reset FIRED sessionKey=${ctx.sessionKey ?? "none"} msgs=${Array.isArray(event.messages) ? event.messages.length : "non-array"} source=before_reset\n`,
         );
-        api.logger.info?.(`[agenr] before_reset: fired sessionKey=${ctx.sessionKey ?? "none"} agentId=${ctx.agentId ?? "none"} msgs=${Array.isArray(event.messages) ? event.messages.length : "non-array"} sessionFile=${event.sessionFile ?? "none"}`);
+        api.logger.info?.(`[agenr] before_reset: fired sessionKey=${ctx.sessionKey ?? "none"} agentId=${ctx.agentId ?? "none"} msgs=${Array.isArray(event.messages) ? event.messages.length : "non-array"} sessionFile=${event.sessionFile ?? "none"} source=before_reset`);
         const sessionKey = ctx.sessionKey;
         if (!sessionKey) {
           return;
         }
-        process.stderr.write(`[AGENR-PROBE] before_reset: sessionKey ok\n`);
+        process.stderr.write(`[AGENR-PROBE] before_reset: sessionKey ok source=before_reset\n`);
 
         const messages = event.messages;
         if (!Array.isArray(messages) || messages.length === 0) {
           return;
         }
-        process.stderr.write(`[AGENR-PROBE] before_reset: messages ok count=${messages.length}\n`);
+        process.stderr.write(
+          `[AGENR-PROBE] before_reset: messages ok count=${messages.length} source=before_reset\n`,
+        );
 
         const currentSessionFile =
           typeof event.sessionFile === "string" && event.sessionFile.trim()
             ? event.sessionFile.trim()
             : null;
-        if (!currentSessionFile) {
-          api.logger.debug?.("[agenr] before_reset: no sessionFile in event, using fallback");
-        }
         const agentId = ctx.agentId?.trim() || "main";
         const sessionsDir =
           config?.sessionsDir ?? path.join(os.homedir(), `.openclaw/agents/${agentId}/sessions`);
@@ -884,83 +1081,22 @@ const plugin = {
           ...(config as Record<string, unknown> | undefined),
           logger: api.logger,
         };
+        const sessionId = ctx.sessionId ?? ctx.sessionKey ?? sessionKey;
 
-        // Phase 1: store fallback immediately so the next session can always read it.
-        const fallbackText = extractLastExchangeText(messages);
-        let fallbackEntrySubject: string | null = null;
-        if (fallbackText) {
-          const timestamp = new Date().toISOString().slice(0, 16).replace("T", " ");
-          fallbackEntrySubject = `session handoff ${timestamp}`;
-          const fallbackEntry = {
-            entries: [
-              {
-                type: "event",
-                importance: 9,
-                subject: fallbackEntrySubject,
-                content: fallbackText,
-                tags: ["handoff", "session"],
-              },
-            ],
-          };
-          try {
-            await runStoreTool(agenrPath, fallbackEntry, storeConfig, defaultProject);
-            api.logger.debug?.("[agenr] before_reset: fallback handoff stored");
-          } catch (err) {
-            api.logger.debug?.(
-              `[agenr] before_reset: fallback store failed: ${err instanceof Error ? err.message : String(err)}`,
-            );
-            fallbackEntrySubject = null;
-          }
-        }
-
-        // Phase 2: best-effort LLM upgrade, intentionally fire-and-forget.
-        if (currentSessionFile) {
-          void testingApi
-            .summarizeSessionForHandoff(messages, sessionsDir, currentSessionFile, api.logger)
-            .then(async (summary) => {
-              if (!summary) {
-                return;
-              }
-
-              if (fallbackEntrySubject && fallbackText) {
-                await retireFallbackHandoffEntries({
-                  agenrPath,
-                  budget,
-                  defaultProject,
-                  fallbackSubject: fallbackEntrySubject,
-                  fallbackText,
-                  logger: api.logger,
-                });
-              }
-
-              const timestamp = new Date().toISOString().slice(0, 16).replace("T", " ");
-              const llmEntry = {
-                entries: [
-                  {
-                    type: "event",
-                    importance: 10,
-                    subject: `session handoff ${timestamp}`,
-                    content: summary,
-                    tags: ["handoff", "session"],
-                  },
-                ],
-              };
-
-              try {
-                await runStoreTool(agenrPath, llmEntry, storeConfig, defaultProject);
-                api.logger.debug?.("[agenr] before_reset: LLM handoff stored");
-              } catch (err) {
-                api.logger.debug?.(
-                  `[agenr] before_reset: LLM handoff store failed: ${err instanceof Error ? err.message : String(err)}`,
-                );
-              }
-            })
-            .catch((err) => {
-              api.logger.debug?.(
-                `[agenr] before_reset: LLM handoff rejected: ${err instanceof Error ? err.message : String(err)}`,
-              );
-            });
-        }
+        await runHandoffForSession({
+          messages,
+          sessionFile: currentSessionFile,
+          sessionId,
+          sessionKey,
+          agentId,
+          agenrPath,
+          budget,
+          defaultProject,
+          storeConfig,
+          sessionsDir,
+          logger: api.logger,
+          source: "before_reset",
+        });
       } catch (err) {
         api.logger.warn(
           `agenr plugin before_reset failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -968,6 +1104,89 @@ const plugin = {
       }
     });
     process.stderr.write(`[AGENR-PROBE] before_reset hook registered\n`);
+
+    (api as unknown as CommandHookApi).on(
+      "command",
+      async (event: CommandHookEvent, ctx: PluginHookAgentContext): Promise<void> => {
+        try {
+          process.stderr.write(
+            `[AGENR-PROBE] command hook FIRED action=${event.action ?? "none"} sessionKey=${event.sessionKey ?? "none"} source=${String(event.context?.commandSource ?? "unknown")}\n`,
+          );
+
+          if (event.action !== "new" && event.action !== "reset") {
+            process.stderr.write(
+              `[AGENR-PROBE] command hook: skipping action=${event.action ?? "none"} source=command\n`,
+            );
+            return;
+          }
+
+          const sessionKey = event.sessionKey;
+          if (!sessionKey) {
+            process.stderr.write("[AGENR-PROBE] command hook: no sessionKey, skipping source=command\n");
+            return;
+          }
+
+          const sessionFile =
+            (event.context?.sessionEntry as { sessionFile?: string } | undefined)?.sessionFile ?? null;
+          const sessionId =
+            (event.context?.sessionEntry as { sessionId?: string } | undefined)?.sessionId ?? sessionKey;
+          process.stderr.write(
+            `[AGENR-PROBE] command hook: new/reset detected sessionKey=${sessionKey} sessionFile=${sessionFile ?? "none"} source=command\n`,
+          );
+          api.logger.info?.(
+            `[agenr] command hook: fired action=${event.action} sessionKey=${sessionKey} sessionFile=${sessionFile ?? "none"} source=command`,
+          );
+
+          let messages: unknown[] = [];
+          if (sessionFile) {
+            messages = await testingApi.readAndParseSessionJsonl(sessionFile);
+            process.stderr.write(
+              `[AGENR-PROBE] command hook: parsed ${messages.length} messages from JSONL source=command\n`,
+            );
+          } else {
+            process.stderr.write("[AGENR-PROBE] command hook: no sessionFile available source=command\n");
+          }
+
+          if (messages.length === 0) {
+            process.stderr.write("[AGENR-PROBE] command hook: no messages, skipping handoff source=command\n");
+            return;
+          }
+
+          const agentId = ctx.agentId?.trim() || sessionKey.split(":")[0] || "main";
+          const sessionsDir =
+            config?.sessionsDir ?? path.join(os.homedir(), `.openclaw/agents/${agentId}/sessions`);
+          const agenrPath = resolveAgenrPath(config);
+          const defaultProject = config?.project?.trim() || undefined;
+          const budget = resolveBudget(config);
+          const storeConfig: Record<string, unknown> = {
+            ...(config as Record<string, unknown> | undefined),
+            logger: api.logger,
+          };
+
+          await runHandoffForSession({
+            messages,
+            sessionFile,
+            sessionId,
+            sessionKey,
+            agentId,
+            agenrPath,
+            budget,
+            defaultProject,
+            storeConfig,
+            sessionsDir,
+            logger: api.logger,
+            source: "command",
+          });
+
+          process.stderr.write("[AGENR-PROBE] command hook: handoff complete source=command\n");
+        } catch (err) {
+          api.logger.warn(
+            `agenr plugin command hook failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      },
+    );
+    process.stderr.write("[AGENR-PROBE] command hook registered\n");
 
     if (api.registerTool) {
       if (config?.enabled === false) {
