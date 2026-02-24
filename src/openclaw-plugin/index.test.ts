@@ -6,6 +6,7 @@ import plugin from "./index.js";
 import * as pluginRecall from "./recall.js";
 import * as sessionQuery from "./session-query.js";
 import * as pluginSignals from "./signals.js";
+import * as pluginTools from "./tools.js";
 import { runExtractTool, runRecallTool, runRetireTool, runStoreTool } from "./tools.js";
 import type { BeforePromptBuildResult, PluginApi } from "./types.js";
 
@@ -1139,7 +1140,7 @@ describe("before_reset handoff store", () => {
       content: string;
     }>;
     expect(entries[0]?.type).toBe("event");
-    expect(entries[0]?.importance).toBe(10);
+    expect(entries[0]?.importance).toBe(9);
     expect(entries[0]?.subject).toMatch(/^session handoff/i);
     expect(entries[0]?.content).toContain("U:");
     expect(entries[0]?.content).toContain("A:");
@@ -1171,16 +1172,16 @@ describe("before_reset handoff store", () => {
     expect(capturedArgs[projectIdx + 1]).toBe("my-project");
   });
 
-  it("uses LLM summary for handoff content when summarizer returns text", async () => {
-    let capturedStdinPayload: unknown;
-    const mockChild = createMockChild({ code: 0 });
-    mockChild.stdin.write = vi.fn((chunk: string) => {
-      capturedStdinPayload = JSON.parse(chunk);
+  it("stores fallback immediately, then asynchronously upgrades with LLM summary", async () => {
+    let resolveSummary: ((value: string | null) => void) | null = null;
+    const summaryPromise = new Promise<string | null>((resolve) => {
+      resolveSummary = resolve;
     });
-    spawnMock.mockReturnValueOnce(mockChild);
-    const summarySpy = vi
-      .spyOn(__testing, "summarizeSessionForHandoff")
-      .mockResolvedValue("WORKING ON: Completed issue #199 handoff summary.");
+    vi.spyOn(__testing, "summarizeSessionForHandoff").mockReturnValue(summaryPromise);
+    vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
+    const runStoreMock = vi.spyOn(pluginTools, "runStoreTool").mockResolvedValue({
+      content: [{ type: "text", text: "Stored 1 entries." }],
+    });
 
     const api = makeApi();
     plugin.register(api);
@@ -1198,19 +1199,25 @@ describe("before_reset handoff store", () => {
       { sessionKey: "agent:main:handoff-summary", agentId: "main" },
     );
 
-    expect(summarySpy).toHaveBeenCalledTimes(1);
-    const entries = capturedStdinPayload as Array<{ content: string }>;
-    expect(entries[0]?.content).toBe("WORKING ON: Completed issue #199 handoff summary.");
+    expect(runStoreMock).toHaveBeenCalledTimes(1);
+    const firstPayload = runStoreMock.mock.calls[0]?.[1] as { entries: Array<{ importance: number; content: string }> };
+    expect(firstPayload.entries[0]?.importance).toBe(9);
+    expect(firstPayload.entries[0]?.content).toContain("U:");
+
+    resolveSummary?.("WORKING ON: Completed issue #199 handoff summary.");
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(runStoreMock).toHaveBeenCalledTimes(2);
+    const secondPayload = runStoreMock.mock.calls[1]?.[1] as { entries: Array<{ importance: number; content: string }> };
+    expect(secondPayload.entries[0]?.importance).toBe(10);
+    expect(secondPayload.entries[0]?.content).toBe("WORKING ON: Completed issue #199 handoff summary.");
   });
 
-  it("falls back to extractLastExchangeText when summarizer returns null", async () => {
-    let capturedStdinPayload: unknown;
-    const mockChild = createMockChild({ code: 0 });
-    mockChild.stdin.write = vi.fn((chunk: string) => {
-      capturedStdinPayload = JSON.parse(chunk);
-    });
-    spawnMock.mockReturnValueOnce(mockChild);
+  it("keeps fallback entry when summarizer returns null", async () => {
     vi.spyOn(__testing, "summarizeSessionForHandoff").mockResolvedValue(null);
+    const runStoreMock = vi.spyOn(pluginTools, "runStoreTool").mockResolvedValue({
+      content: [{ type: "text", text: "Stored 1 entries." }],
+    });
 
     const api = makeApi();
     plugin.register(api);
@@ -1228,9 +1235,44 @@ describe("before_reset handoff store", () => {
       { sessionKey: "agent:main:handoff-fallback", agentId: "main" },
     );
 
-    const entries = capturedStdinPayload as Array<{ content: string }>;
-    expect(entries[0]?.content).toContain("U:");
-    expect(entries[0]?.content).toContain("A:");
-    expect(entries[0]?.content).toContain("Please preserve this turn in fallback.");
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(runStoreMock).toHaveBeenCalledTimes(1);
+    const payload = runStoreMock.mock.calls[0]?.[1] as {
+      entries: Array<{ importance: number; content: string }>;
+    };
+    expect(payload.entries[0]?.importance).toBe(9);
+    expect(payload.entries[0]?.content).toContain("U:");
+    expect(payload.entries[0]?.content).toContain("A:");
+    expect(payload.entries[0]?.content).toContain("Please preserve this turn in fallback.");
+  });
+
+  it("logs debug and uses fallback when event.sessionFile is missing", async () => {
+    const debug = vi.fn();
+    const runStoreMock = vi.spyOn(pluginTools, "runStoreTool").mockResolvedValue({
+      content: [{ type: "text", text: "Stored 1 entries." }],
+    });
+    const api = makeApi({
+      logger: {
+        warn: vi.fn(),
+        error: vi.fn(),
+        debug,
+      },
+    });
+    plugin.register(api);
+    const handler = getBeforeResetHandler(api);
+
+    await handler(
+      {
+        messages: [
+          { role: "user", content: "Use fallback because sessionFile is missing." },
+          { role: "assistant", content: "Acknowledged." },
+        ],
+      },
+      { sessionKey: "agent:main:no-session-file" },
+    );
+
+    expect(runStoreMock).toHaveBeenCalledTimes(1);
+    expect(debug).toHaveBeenCalledWith("[agenr] before_reset: no sessionFile in event, using fallback");
   });
 });

@@ -12,6 +12,30 @@
   to raw text extraction on any failure. Handler is now properly async with
   awaited store call.
 
+### Changed
+- fix(openclaw-plugin): before_reset handoff store now uses a two-phase flow to
+  avoid race windows with detached hook execution. Phase 1 stores fallback
+  exchange text immediately at importance 9, then Phase 2 asynchronously upgrades
+  to an importance 10 LLM summary when available.
+- fix(openclaw-plugin): when the LLM upgrade succeeds, fallback handoff entries
+  are looked up and retired (subject/content/tag match) before storing the
+  upgraded summary, preventing stale fallback carryover.
+- fix(openclaw-plugin): prior reset session surface lookup now maps
+  `*.jsonl.reset.*` files back to base `*.jsonl` paths via getBaseSessionPath,
+  and unknown surface fallback now uses "prior session" to improve prompt context.
+- fix(openclaw-plugin): capTranscriptLength now enforces a hard length cap even
+  when the current session alone exceeds 8000 chars.
+- chore(openclaw-plugin): added before_reset debug logs for missing sessionFile,
+  missing apiKey, and pre-LLM invocation traceability.
+
+### Tests
+- test(openclaw-plugin): added coverage for getBaseSessionPath, reset-path surface
+  resolution, capTranscriptLength edge cases (prior-only overflow, current-only
+  overflow, under-cap passthrough), missing-apiKey debug behavior, budget tail
+  slicing assertions, and buildMergedTranscript ordering.
+- test(openclaw-plugin): updated before_reset integration coverage for two-phase
+  fallback-plus-upgrade storage behavior and no-sessionFile debug path.
+
 ## [0.8.25] - 2026-02-23
 
 ### Changed

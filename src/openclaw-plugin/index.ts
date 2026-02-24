@@ -206,6 +206,11 @@ function formatHandoffTimestamp(timestamp: string): string {
   return `${parsed.getFullYear()}-${pad2(parsed.getMonth() + 1)}-${pad2(parsed.getDate())} ${pad2(parsed.getHours())}:${pad2(parsed.getMinutes())}`;
 }
 
+function getBaseSessionPath(filePath: string): string {
+  const resetMatch = filePath.match(/^(.+\.jsonl)\.reset\..+$/);
+  return resetMatch ? resetMatch[1] : filePath;
+}
+
 function readSessionsJson(sessionsDir: string): Record<string, unknown> {
   try {
     const sessionsJsonPath = path.join(sessionsDir, "sessions.json");
@@ -247,11 +252,11 @@ function getSurfaceForSessionFile(
         deliveryContext && typeof deliveryContext["channel"] === "string"
           ? deliveryContext["channel"].trim()
           : "";
-      return channel || "unknown";
+      return channel || "prior session";
     }
-    return "unknown";
+    return "prior session";
   } catch {
-    return "unknown";
+    return "prior session";
   }
 }
 
@@ -405,6 +410,14 @@ function capTranscriptLength(params: {
     );
   }
 
+  if (transcript.length > params.maxChars) {
+    transcript = transcript.slice(-params.maxChars);
+    const firstNewline = transcript.indexOf("\n");
+    if (firstNewline > 0) {
+      transcript = transcript.slice(firstNewline + 1);
+    }
+  }
+
   return transcript;
 }
 
@@ -478,12 +491,12 @@ async function summarizeSessionForHandoff(
     const priorBudget = HANDOFF_TRANSCRIPT_MAX_MESSAGES - currentSlice.length;
 
     let priorSlice: HandoffMessage[] = [];
-    let priorSurface = "unknown";
+    let priorSurface = "prior session";
     const priorFile = await findPriorResetFile(sessionsDir, currentSessionFile);
     if (priorFile && priorBudget > 0) {
       const priorAllMessages = await readMessagesFromJsonl(priorFile);
       priorSlice = priorAllMessages.slice(-priorBudget);
-      priorSurface = getSurfaceForSessionFile(priorFile, sessionsJson);
+      priorSurface = getSurfaceForSessionFile(getBaseSessionPath(priorFile), sessionsJson);
     }
 
     let transcript = buildMergedTranscript(priorSlice, priorSurface, currentSlice, currentSurface);
@@ -520,6 +533,7 @@ async function summarizeSessionForHandoff(
     const credentials = llmClient.credentials;
     const apiKey = typeof credentials.apiKey === "string" ? credentials.apiKey.trim() : "";
     if (!apiKey) {
+      logger.debug?.("[agenr] before_reset: no apiKey available, skipping LLM summary");
       return null;
     }
 
@@ -529,6 +543,7 @@ async function summarizeSessionForHandoff(
       tools: [],
     };
 
+    logger.debug?.("[agenr] before_reset: calling LLM for session summary...");
     const assistantMsg = await runSimpleStream({
       model: resolvedModel.model,
       context,
@@ -551,16 +566,126 @@ async function summarizeSessionForHandoff(
   }
 }
 
+function getEntryImportance(entry: Record<string, unknown>): number | null {
+  const rawImportance = entry["importance"];
+  if (typeof rawImportance === "number" && Number.isFinite(rawImportance)) {
+    return rawImportance;
+  }
+  if (typeof rawImportance === "string" && rawImportance.trim().length > 0) {
+    const parsed = Number(rawImportance);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+function getEntryTags(entry: Record<string, unknown>): string[] {
+  const rawTags = entry["tags"];
+  if (!Array.isArray(rawTags)) {
+    return [];
+  }
+  const tags: string[] = [];
+  for (const rawTag of rawTags) {
+    if (typeof rawTag !== "string") {
+      continue;
+    }
+    const normalized = rawTag.trim().toLowerCase();
+    if (normalized) {
+      tags.push(normalized);
+    }
+  }
+  return tags;
+}
+
+async function retireFallbackHandoffEntries(params: {
+  agenrPath: string;
+  budget: number;
+  defaultProject?: string;
+  fallbackSubject: string;
+  fallbackText: string;
+  logger: PluginApi["logger"];
+}): Promise<void> {
+  try {
+    const browseResult = await runRecall(params.agenrPath, params.budget, params.defaultProject, undefined, {
+      context: "browse",
+      since: "1d",
+      limit: 100,
+    });
+    if (!browseResult) {
+      return;
+    }
+
+    const normalizedFallbackText = params.fallbackText.trim();
+    const retirePromises: Promise<void>[] = [];
+    for (const item of browseResult.results) {
+      const entryRecord = isRecord(item.entry) ? item.entry : null;
+      if (!entryRecord) {
+        continue;
+      }
+
+      const entryId =
+        typeof entryRecord["id"] === "string" && entryRecord["id"].trim()
+          ? entryRecord["id"].trim()
+          : null;
+      if (!entryId) {
+        continue;
+      }
+
+      const entrySubject = typeof entryRecord["subject"] === "string" ? entryRecord["subject"].trim() : "";
+      if (entrySubject !== params.fallbackSubject) {
+        continue;
+      }
+
+      const importance = getEntryImportance(entryRecord);
+      if (importance !== 9) {
+        continue;
+      }
+
+      const tags = getEntryTags(entryRecord);
+      if (!tags.includes("handoff")) {
+        continue;
+      }
+
+      const entryContent = typeof entryRecord["content"] === "string" ? entryRecord["content"].trim() : "";
+      if (normalizedFallbackText && entryContent !== normalizedFallbackText) {
+        continue;
+      }
+
+      retirePromises.push(
+        runRetireTool(params.agenrPath, {
+          entry_id: entryId,
+          reason: "superseded by LLM handoff",
+        })
+          .then(() => undefined)
+          .catch((err) => {
+            params.logger.debug?.(
+              `[agenr] before_reset: fallback retire failed for ${entryId}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }),
+      );
+    }
+
+    await Promise.allSettled(retirePromises);
+  } catch (err) {
+    params.logger.debug?.(
+      `[agenr] before_reset: fallback retire lookup failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
 const testingApi = {
   clearState(): void {
     seenSessions.clear();
     sessionSignalState.clear();
   },
   readSessionsJson,
+  getBaseSessionPath,
   getSurfaceForSessionFile,
   readMessagesFromJsonl,
   findPriorResetFile,
   buildMergedTranscript,
+  capTranscriptLength,
   summarizeSessionForHandoff,
 };
 
@@ -754,47 +879,95 @@ const plugin = {
           typeof event.sessionFile === "string" && event.sessionFile.trim()
             ? event.sessionFile.trim()
             : null;
+        if (!currentSessionFile) {
+          api.logger.debug?.("[agenr] before_reset: no sessionFile in event, using fallback");
+        }
         const agentId = ctx.agentId?.trim() || "main";
         const sessionsDir =
           config?.sessionsDir ?? path.join(os.homedir(), `.openclaw/agents/${agentId}/sessions`);
+        const agenrPath = resolveAgenrPath(config);
+        const defaultProject = config?.project?.trim() || undefined;
+        const budget = resolveBudget(config);
+        const storeConfig: Record<string, unknown> = {
+          ...(config as Record<string, unknown> | undefined),
+          logger: api.logger,
+        };
 
-        // Write importance:10 handoff entry to agenr DB so Phase 1B browse picks it up
-        // in the new session. Entry is retired after first use (see auto-retire below).
-        const summary = currentSessionFile
-          ? await testingApi.summarizeSessionForHandoff(
-              messages,
-              sessionsDir,
-              currentSessionFile,
-              api.logger,
-            )
-          : null;
-        const handoffText = summary ?? extractLastExchangeText(messages);
-        if (handoffText) {
-          const agenrPath = resolveAgenrPath(config);
-          const defaultProject = config?.project?.trim() || undefined;
+        // Phase 1: store fallback immediately so the next session can always read it.
+        const fallbackText = extractLastExchangeText(messages);
+        let fallbackEntrySubject: string | null = null;
+        if (fallbackText) {
           const timestamp = new Date().toISOString().slice(0, 16).replace("T", " ");
-          const handoffEntry = {
+          fallbackEntrySubject = `session handoff ${timestamp}`;
+          const fallbackEntry = {
             entries: [
               {
                 type: "event",
-                importance: 10,
-                subject: `session handoff ${timestamp}`,
-                content: handoffText,
+                importance: 9,
+                subject: fallbackEntrySubject,
+                content: fallbackText,
                 tags: ["handoff", "session"],
               },
             ],
           };
-          const storeConfig: Record<string, unknown> = {
-            ...(config as Record<string, unknown> | undefined),
-            logger: api.logger,
-          };
           try {
-            await runStoreTool(agenrPath, handoffEntry, storeConfig, defaultProject);
+            await runStoreTool(agenrPath, fallbackEntry, storeConfig, defaultProject);
+            api.logger.debug?.("[agenr] before_reset: fallback handoff stored");
           } catch (err) {
             api.logger.debug?.(
-              `[agenr] before_reset: handoff store failed: ${err instanceof Error ? err.message : String(err)}`,
+              `[agenr] before_reset: fallback store failed: ${err instanceof Error ? err.message : String(err)}`,
             );
+            fallbackEntrySubject = null;
           }
+        }
+
+        // Phase 2: best-effort LLM upgrade, intentionally fire-and-forget.
+        if (currentSessionFile) {
+          void testingApi
+            .summarizeSessionForHandoff(messages, sessionsDir, currentSessionFile, api.logger)
+            .then(async (summary) => {
+              if (!summary) {
+                return;
+              }
+
+              if (fallbackEntrySubject && fallbackText) {
+                await retireFallbackHandoffEntries({
+                  agenrPath,
+                  budget,
+                  defaultProject,
+                  fallbackSubject: fallbackEntrySubject,
+                  fallbackText,
+                  logger: api.logger,
+                });
+              }
+
+              const timestamp = new Date().toISOString().slice(0, 16).replace("T", " ");
+              const llmEntry = {
+                entries: [
+                  {
+                    type: "event",
+                    importance: 10,
+                    subject: `session handoff ${timestamp}`,
+                    content: summary,
+                    tags: ["handoff", "session"],
+                  },
+                ],
+              };
+
+              try {
+                await runStoreTool(agenrPath, llmEntry, storeConfig, defaultProject);
+                api.logger.debug?.("[agenr] before_reset: LLM handoff stored");
+              } catch (err) {
+                api.logger.debug?.(
+                  `[agenr] before_reset: LLM handoff store failed: ${err instanceof Error ? err.message : String(err)}`,
+                );
+              }
+            })
+            .catch((err) => {
+              api.logger.debug?.(
+                `[agenr] before_reset: LLM handoff rejected: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            });
         }
       } catch (err) {
         api.logger.warn(
