@@ -932,8 +932,11 @@ const plugin = {
                 process.stderr.write(
                   `[AGENR-PROBE] session_start: triggering handoff for prev file=${previousSessionFile} msgs=${messages.length}\n`,
                 );
-                void testingApi
-                  .runHandoffForSession({
+                console.log(
+                  `[agenr] session_start: awaiting runHandoffForSession file=${previousSessionFile}`,
+                );
+                try {
+                  await testingApi.runHandoffForSession({
                     messages,
                     sessionFile: previousSessionFile,
                     sessionId:
@@ -951,12 +954,13 @@ const plugin = {
                     sessionsDir,
                     logger: api.logger,
                     source: "session_start",
-                  })
-                  .catch((err) => {
-                    api.logger.debug?.(
-                      `[agenr] session_start: handoff fire-and-forget failed: ${err instanceof Error ? err.message : String(err)}`,
-                    );
                   });
+                  console.log("[agenr] session_start: runHandoffForSession completed");
+                } catch (err) {
+                  api.logger.debug?.(
+                    `[agenr] session_start: handoff failed: ${err instanceof Error ? err.message : String(err)}`,
+                  );
+                }
               } else if (Array.isArray(messages)) {
                 process.stderr.write(
                   `[AGENR-PROBE] session_start: skipping handoff - no messages in prev file=${previousSessionFile}\n`,

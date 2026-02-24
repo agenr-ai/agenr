@@ -1080,6 +1080,43 @@ describe("session_start path in before_prompt_build", () => {
     );
   });
 
+  it("session_start path: awaits runHandoffForSession before handler resolves", async () => {
+    let resolved = false;
+    const runHandoffSpy = vi.spyOn(__testing, "runHandoffForSession").mockImplementation(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      resolved = true;
+    });
+
+    const sessionsDir = await makeTempDir("agenr-handoff-session-start-await-");
+    const previousSessionFile = path.join(
+      sessionsDir,
+      "abc123.jsonl.reset.2026-02-24T01-00-00.000Z",
+    );
+    await writeJsonlLines(previousSessionFile, [
+      JSON.stringify({
+        role: "user",
+        content: "hello",
+        timestamp: Date.now() - 5000,
+      }),
+    ]);
+
+    vi.spyOn(sessionQuery, "findPreviousSessionFile").mockResolvedValue(previousSessionFile);
+    vi.spyOn(sessionQuery, "extractRecentTurns").mockResolvedValue("U: previous user");
+    vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
+
+    const api = makePluginApi({ pluginConfig: { signalsEnabled: false } });
+    plugin.register(api);
+    const handler = getBeforePromptBuildHandler(api);
+
+    await handler(
+      { prompt: "hello" },
+      { sessionKey: "agent:main:session-start-await", sessionId: "uuid-session-start-await", agentId: "main" },
+    );
+
+    expect(resolved).toBe(true);
+    expect(runHandoffSpy).toHaveBeenCalledOnce();
+  });
+
   it("session_start path: runHandoffForSession NOT called when no previous session file found", async () => {
     vi.spyOn(sessionQuery, "findPreviousSessionFile").mockResolvedValue(null);
     vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
