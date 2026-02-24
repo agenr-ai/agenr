@@ -632,6 +632,119 @@ describe("summarizeSessionForHandoff", () => {
     );
   });
 
+  it("uses resolvedModel.modelId in log output instead of model object", async () => {
+    vi.spyOn(llmClientModule, "createLlmClient").mockReturnValue({
+      auth: "openai-api-key",
+      resolvedModel: {
+        provider: "openai",
+        modelId: "gpt-4.1-nano-test",
+        model: {} as Model<Api>,
+      },
+      credentials: {
+        apiKey: "test-api-key",
+        source: "env:OPENAI_API_KEY",
+      },
+    });
+    const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const dir = await makeTempDir("agenr-handoff-summary-");
+    const currentSessionFile = path.join(dir, "current-uuid.jsonl");
+    await fs.writeFile(currentSessionFile, "", "utf8");
+
+    const summary = await __testing.summarizeSessionForHandoff(
+      makeEventMessages(5, "current"),
+      dir,
+      currentSessionFile,
+      makeLogger(),
+      false,
+      makeStreamSimple({ message: makeAssistantMessage("summary text") }),
+    );
+
+    expect(summary).toBe("summary text");
+    const sendingLog = consoleLogSpy.mock.calls
+      .map((call) => (typeof call[0] === "string" ? call[0] : ""))
+      .find((line) => line.includes("[agenr] before_reset: sending to LLM"));
+    expect(sendingLog).toContain("model=gpt-4.1-nano-test");
+    expect(sendingLog).not.toContain("[object Object]");
+  });
+
+  it("writes request/response files when logEnabled=true and logDir is set", async () => {
+    mockLlmClientSuccess();
+    const dir = await makeTempDir("agenr-handoff-summary-logdir-");
+    const logDir = path.join(dir, "handoff-logs");
+    const currentSessionFile = path.join(dir, "current-uuid.jsonl");
+    await fs.writeFile(currentSessionFile, "", "utf8");
+
+    const summary = await __testing.summarizeSessionForHandoff(
+      makeEventMessages(5, "current"),
+      dir,
+      currentSessionFile,
+      makeLogger(),
+      false,
+      makeStreamSimple({ message: makeAssistantMessage("summary text") }),
+      true,
+      logDir,
+    );
+
+    expect(summary).toBe("summary text");
+    const files = await fs.readdir(logDir);
+    const requestFile = files.find((file) => /^handoff-.*-request\.txt$/.test(file));
+    const responseFile = files.find((file) => /^handoff-.*-response\.txt$/.test(file));
+    expect(requestFile).toBeDefined();
+    expect(responseFile).toBeDefined();
+
+    const requestBody = await fs.readFile(path.join(logDir, requestFile as string), "utf8");
+    const responseBody = await fs.readFile(path.join(logDir, responseFile as string), "utf8");
+    expect(requestBody).toContain("=== SYSTEM PROMPT ===");
+    expect(requestBody).toContain("=== TRANSCRIPT ===");
+    expect(requestBody).toContain("=== METADATA ===");
+    expect(responseBody).toContain("=== LLM RESPONSE ===");
+    expect(responseBody).toContain("=== METADATA ===");
+  });
+
+  it("does not write files when logDir is not set", async () => {
+    mockLlmClientSuccess();
+    const dir = await makeTempDir("agenr-handoff-summary-logdir-");
+    const currentSessionFile = path.join(dir, "current-uuid.jsonl");
+    const mkdirSpy = vi.spyOn(fs, "mkdir");
+    await fs.writeFile(currentSessionFile, "", "utf8");
+
+    const summary = await __testing.summarizeSessionForHandoff(
+      makeEventMessages(5, "current"),
+      dir,
+      currentSessionFile,
+      makeLogger(),
+      false,
+      makeStreamSimple({ message: makeAssistantMessage("summary text") }),
+      true,
+      undefined,
+    );
+
+    expect(summary).toBe("summary text");
+    expect(mkdirSpy).not.toHaveBeenCalled();
+  });
+
+  it("continues successfully when logDir is not writable", async () => {
+    mockLlmClientSuccess();
+    const dir = await makeTempDir("agenr-handoff-summary-logdir-");
+    const blockedPath = path.join(dir, "blocked-path");
+    const currentSessionFile = path.join(dir, "current-uuid.jsonl");
+    await fs.writeFile(blockedPath, "not-a-directory", "utf8");
+    await fs.writeFile(currentSessionFile, "", "utf8");
+
+    const summary = await __testing.summarizeSessionForHandoff(
+      makeEventMessages(5, "current"),
+      dir,
+      currentSessionFile,
+      makeLogger(),
+      false,
+      makeStreamSimple({ message: makeAssistantMessage("summary text") }),
+      true,
+      blockedPath,
+    );
+
+    expect(summary).toBe("summary text");
+  });
+
   it("when includeBackground=true and prior reset exists, transcript contains both section headers", async () => {
     mockLlmClientSuccess();
     const dir = await makeTempDir("agenr-handoff-summary-bg-");

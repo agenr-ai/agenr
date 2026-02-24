@@ -271,6 +271,10 @@ function formatHandoffTimestamp(timestamp: string): string {
   return `${parsed.getFullYear()}-${pad2(parsed.getMonth() + 1)}-${pad2(parsed.getDate())} ${pad2(parsed.getHours())}:${pad2(parsed.getMinutes())}`;
 }
 
+function formatHandoffLogTimestamp(date: Date): string {
+  return date.toISOString().slice(0, 19).replace(/:/g, "-");
+}
+
 function getBaseSessionPath(filePath: string): string {
   const resetMatch = filePath.match(/^(.+\.jsonl)\.reset\..+$/);
   return resetMatch ? resetMatch[1] : filePath;
@@ -562,6 +566,8 @@ async function summarizeSessionForHandoff(
   logger: PluginApi["logger"],
   includeBackground: boolean,
   streamSimpleImpl?: StreamSimpleFn,
+  logEnabled = false,
+  logDir?: string,
 ): Promise<string | null> {
   try {
     const sessionsJson = await readSessionsJson(sessionsDir);
@@ -644,11 +650,11 @@ async function summarizeSessionForHandoff(
 
     if (includeBackground) {
       console.log(
-        `[agenr] before_reset: sending to LLM model=${resolvedModel.model} chars=${transcript.length} currentMsgs=${currentSlice.length} priorMsgs=${priorSlice.length}`,
+        `[agenr] before_reset: sending to LLM model=${resolvedModel.modelId} chars=${transcript.length} currentMsgs=${currentSlice.length} priorMsgs=${priorSlice.length}`,
       );
     } else {
       console.log(
-        `[agenr] before_reset: sending to LLM model=${resolvedModel.model} chars=${transcript.length} msgs=${currentSlice.length}`,
+        `[agenr] before_reset: sending to LLM model=${resolvedModel.modelId} chars=${transcript.length} msgs=${currentSlice.length}`,
       );
     }
     const assistantMsg = await runSimpleStream({
@@ -658,13 +664,56 @@ async function summarizeSessionForHandoff(
       verbose: false,
       streamSimpleImpl,
     });
+    const summaryText = extractAssistantSummaryText(assistantMsg);
+
+    const normalizedLogDir = typeof logDir === "string" ? logDir.trim() : "";
+    if (logEnabled && normalizedLogDir) {
+      const timestamp = formatHandoffLogTimestamp(new Date());
+      const requestPath = path.join(normalizedLogDir, `handoff-${timestamp}-request.txt`);
+      const responsePath = path.join(normalizedLogDir, `handoff-${timestamp}-response.txt`);
+      const requestPayload = [
+        "=== SYSTEM PROMPT ===",
+        systemPrompt,
+        "",
+        "=== TRANSCRIPT ===",
+        transcript,
+        "",
+        "=== METADATA ===",
+        `model: ${resolvedModel.modelId}`,
+        `currentMsgs: ${currentSlice.length}`,
+        `priorMsgs: ${priorSlice.length}`,
+        `includeBackground: ${includeBackground}`,
+        `transcriptChars: ${transcript.length}`,
+      ].join("\n");
+      const responsePayload = [
+        "=== LLM RESPONSE ===",
+        summaryText,
+        "",
+        "=== METADATA ===",
+        `model: ${resolvedModel.modelId}`,
+        `stopReason: ${assistantMsg.stopReason}`,
+        `responseChars: ${summaryText.length}`,
+      ].join("\n");
+
+      try {
+        await fs.promises.mkdir(normalizedLogDir, { recursive: true });
+        await Promise.all([
+          fs.promises.writeFile(requestPath, requestPayload, "utf8"),
+          fs.promises.writeFile(responsePath, responsePayload, "utf8"),
+        ]);
+        console.log(`[agenr] handoff: logged LLM request/response to ${normalizedLogDir}`);
+      } catch (err) {
+        console.log(
+          `[agenr] handoff: failed to write LLM request/response logs: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
 
     if (assistantMsg.stopReason === "error") {
       console.log("[agenr] before_reset: skipping LLM summary - reason: LLM error stop");
       return null;
     }
 
-    const summaryText = extractAssistantSummaryText(assistantMsg);
     if (!summaryText) {
       console.log("[agenr] before_reset: skipping LLM summary - reason: empty summary text");
       return null;
@@ -765,7 +814,7 @@ async function retireFallbackHandoffEntries(params: {
           entry_id: entryId,
           reason: "superseded by LLM handoff",
         }, params.dbPath)
-          .then(() => undefined)
+          .then(() => { console.log(`[agenr] session-start: retired handoff ${entryId}`); })
           .catch((err) => {
             params.logger.debug?.(
               `[agenr] ${params.source}: fallback retire failed for ${entryId}: ${err instanceof Error ? err.message : String(err)}`,
@@ -813,6 +862,8 @@ async function runHandoffForSession(opts: {
   storeConfig: Record<string, unknown>;
   sessionsDir: string;
   includeBackground?: boolean;
+  logEnabled?: boolean;
+  logDir?: string;
   logger: PluginLogger | undefined;
   source: "before_reset" | "command" | "session_start";
   dbPath?: string;
@@ -879,6 +930,9 @@ async function runHandoffForSession(opts: {
         error: () => undefined,
       },
       includeBackground,
+      undefined,
+      opts.logEnabled ?? false,
+      opts.logDir,
     );
 
     if (summary) {
@@ -950,6 +1004,12 @@ const plugin = {
   register(api: PluginApi): void {
     const config = api.pluginConfig as AgenrPluginConfig | undefined;
     const includeBackground = config?.handoff?.includeBackground ?? false;
+    const handoffLogEnabled = config?.handoff?.logEnabled === true;
+    const handoffLogDirRaw = config?.handoff?.logDir;
+    const handoffLogDir =
+      typeof handoffLogDirRaw === "string" && handoffLogDirRaw.trim()
+        ? handoffLogDirRaw.trim()
+        : undefined;
 
     api.on(
       "before_prompt_build",
@@ -1027,13 +1087,15 @@ const plugin = {
                     },
                     sessionsDir,
                     includeBackground,
+                    logEnabled: handoffLogEnabled,
+                    logDir: handoffLogDir,
                     logger: api.logger,
                     source: "session_start",
                     dbPath: config?.dbPath,
                   });
                   console.log("[agenr] session_start: runHandoffForSession completed");
                 } catch (err) {
-                  api.logger.debug?.(
+                  console.log(
                     `[agenr] session_start: handoff failed: ${err instanceof Error ? err.message : String(err)}`,
                   );
                 }
@@ -1070,6 +1132,7 @@ const plugin = {
             }
 
             if (browseResult) {
+              console.log(`[agenr] session-start: browse returned ${browseResult.results.length} entries, checking for handoffs to retire`);
               const retirePromises: Promise<void>[] = [];
               for (const item of browseResult.results) {
                 const entry = item.entry;
@@ -1084,15 +1147,15 @@ const plugin = {
                       entry_id: entryId,
                       reason: "consumed at session start",
                     }, config?.dbPath)
-                      .then(() => undefined)
+                      .then(() => { console.log(`[agenr] session-start: retired handoff ${entryId}`); })
                       .catch((err) => {
-                        api.logger.debug?.(
+                        console.log(
                           `[agenr] session-start: retire handoff ${entryId} failed: ${err instanceof Error ? err.message : String(err)}`,
                         );
                       }),
                   );
                 } else {
-                  api.logger.debug?.(
+                  console.log(
                     "[agenr] session-start: handoff entry missing id, skipping retire",
                   );
                 }
@@ -1201,6 +1264,8 @@ const plugin = {
           storeConfig,
           sessionsDir,
           includeBackground,
+          logEnabled: handoffLogEnabled,
+          logDir: handoffLogDir,
           logger: api.logger,
           source: "before_reset",
           dbPath: config?.dbPath,
@@ -1266,6 +1331,8 @@ const plugin = {
             storeConfig,
             sessionsDir,
             includeBackground,
+            logEnabled: handoffLogEnabled,
+            logDir: handoffLogDir,
             logger: api.logger,
             source: "command",
             dbPath: config?.dbPath,
