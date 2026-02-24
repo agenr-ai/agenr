@@ -843,7 +843,7 @@ const plugin = {
     );
     process.stderr.write(`[AGENR-PROBE] before_prompt_build hook registered\n`);
 
-    api.on("session_start", async (_event: unknown, ctx: PluginHookAgentContext): Promise<void> => {
+    (api as unknown as { on: (hook: string, handler: (event: unknown, ctx: PluginHookAgentContext) => Promise<void>) => void }).on("session_start", async (_event: unknown, ctx: PluginHookAgentContext): Promise<void> => {
       process.stderr.write(
         `[AGENR-PROBE] session_start FIRED sessionKey=${(ctx as { sessionKey?: string }).sessionKey ?? "none"}\n`,
       );
@@ -854,9 +854,7 @@ const plugin = {
         process.stderr.write(
           `[AGENR-PROBE] before_reset FIRED sessionKey=${ctx.sessionKey ?? "none"} msgs=${Array.isArray(event.messages) ? event.messages.length : "non-array"}\n`,
         );
-        api.logger.info(
-          `[agenr] before_reset: fired sessionKey=${ctx.sessionKey ?? "none"} agentId=${ctx.agentId ?? "none"} msgs=${Array.isArray(event.messages) ? event.messages.length : "non-array"} sessionFile=${event.sessionFile ?? "none"}`,
-        );
+        api.logger.info?.(`[agenr] before_reset: fired sessionKey=${ctx.sessionKey ?? "none"} agentId=${ctx.agentId ?? "none"} msgs=${Array.isArray(event.messages) ? event.messages.length : "non-array"} sessionFile=${event.sessionFile ?? "none"}`);
         const sessionKey = ctx.sessionKey;
         if (!sessionKey) {
           return;
