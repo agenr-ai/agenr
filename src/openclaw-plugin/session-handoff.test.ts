@@ -157,7 +157,7 @@ describe("getSurfaceForSessionFile", () => {
     expect(__testing.getSurfaceForSessionFile(target, sessionsJson)).toBe("telegram");
   });
 
-  it('returns "unknown" when no entry matches the file path', () => {
+  it('returns "prior session" when no entry matches the file path', () => {
     const target = path.join(os.tmpdir(), "session-c.jsonl");
     const sessionsJson = {
       "agent:main:main": {
@@ -166,16 +166,43 @@ describe("getSurfaceForSessionFile", () => {
       },
     } as Record<string, unknown>;
 
-    expect(__testing.getSurfaceForSessionFile(target, sessionsJson)).toBe("unknown");
+    expect(__testing.getSurfaceForSessionFile(target, sessionsJson)).toBe("prior session");
   });
 
-  it('returns "unknown" on malformed sessionsJson input', () => {
+  it('returns "prior session" on malformed sessionsJson input', () => {
     expect(
       __testing.getSurfaceForSessionFile(
         path.join(os.tmpdir(), "session-d.jsonl"),
         null as unknown as Record<string, unknown>,
       ),
-    ).toBe("unknown");
+    ).toBe("prior session");
+  });
+
+  it("resolves surface for reset file path when getBaseSessionPath is applied", () => {
+    const activePath = path.join(os.tmpdir(), "abc123.jsonl");
+    const resetPath = `${activePath}.reset.2026-02-24T01-00-00.000Z`;
+    const sessionsJson = {
+      "agent:main:main": {
+        sessionFile: activePath,
+        origin: { surface: "webchat" },
+      },
+    } as Record<string, unknown>;
+
+    expect(
+      __testing.getSurfaceForSessionFile(__testing.getBaseSessionPath(resetPath), sessionsJson),
+    ).toBe("webchat");
+  });
+});
+
+describe("getBaseSessionPath", () => {
+  it("extracts base path from a .reset.* filename", () => {
+    const resetPath = "/tmp/abc123.jsonl.reset.2026-02-24T01-00-00.000Z";
+    expect(__testing.getBaseSessionPath(resetPath)).toBe("/tmp/abc123.jsonl");
+  });
+
+  it("returns input unchanged for non-reset files", () => {
+    const activePath = "/tmp/abc123.jsonl";
+    expect(__testing.getBaseSessionPath(activePath)).toBe(activePath);
   });
 });
 
@@ -377,6 +404,21 @@ describe("buildMergedTranscript", () => {
     expect(transcript).toContain("[assistant]: current line");
   });
 
+  it("orders prior block before current block", () => {
+    const transcript = __testing.buildMergedTranscript(
+      [{ role: "user", content: "prior line", timestamp: "2026-02-23T09:15:00" }],
+      "telegram",
+      [{ role: "assistant", content: "current line", timestamp: "2026-02-24T10:20:00" }],
+      "webchat",
+    );
+
+    const priorIndex = transcript.indexOf("--- Session 2026-02-23 09:15 [telegram] ---");
+    const currentIndex = transcript.indexOf("--- Session 2026-02-24 10:20 [webchat] (ended) ---");
+    expect(priorIndex).toBeGreaterThanOrEqual(0);
+    expect(currentIndex).toBeGreaterThanOrEqual(0);
+    expect(priorIndex).toBeLessThan(currentIndex);
+  });
+
   it("omits prior block when priorMessages is empty", () => {
     const transcript = __testing.buildMergedTranscript(
       [],
@@ -414,6 +456,92 @@ describe("buildMergedTranscript", () => {
 
     expect(transcript).toContain("--- Session 2026-01-02 03:04 [telegram] ---");
     expect(transcript).toContain("--- Session 2026-01-02 06:07 [webchat] (ended) ---");
+  });
+});
+
+describe("capTranscriptLength", () => {
+  it("drops prior messages until transcript is under maxChars when prior causes overflow", () => {
+    const priorMessages = Array.from({ length: 20 }, (_, index) => ({
+      role: "user" as const,
+      content: `prior-${index + 1} ${"x".repeat(120)}`,
+      timestamp: "2026-02-23T09:15:00",
+    }));
+    const currentMessages = [
+      { role: "assistant" as const, content: "current-kept", timestamp: "2026-02-24T10:20:00" },
+    ];
+
+    const capped = __testing.capTranscriptLength({
+      priorMessages,
+      priorSurface: "telegram",
+      currentMessages,
+      currentSurface: "webchat",
+      maxChars: 600,
+    });
+
+    expect(capped.length).toBeLessThanOrEqual(600);
+    expect(capped).toContain("current-kept");
+    const priorLines = capped.split("\n").filter((line) => line.startsWith("[user]: prior-"));
+    expect(priorLines.some((line) => line.startsWith("[user]: prior-1 "))).toBe(false);
+  });
+
+  it("returns truncated transcript under maxChars when current-only content exceeds cap", () => {
+    const currentMessages = [
+      { role: "user" as const, content: `current-${"y".repeat(9000)}`, timestamp: "2026-02-24T10:20:00" },
+    ];
+
+    const capped = __testing.capTranscriptLength({
+      priorMessages: [],
+      priorSurface: "telegram",
+      currentMessages,
+      currentSurface: "webchat",
+      maxChars: 8000,
+    });
+
+    expect(capped.length).toBeLessThanOrEqual(8000);
+    expect(capped.length).toBeGreaterThan(0);
+  });
+
+  it("returns the original transcript when already under cap", () => {
+    const priorMessages = [
+      { role: "user" as const, content: "prior", timestamp: "2026-02-23T09:15:00" },
+    ];
+    const currentMessages = [
+      { role: "assistant" as const, content: "current", timestamp: "2026-02-24T10:20:00" },
+    ];
+    const original = __testing.buildMergedTranscript(priorMessages, "telegram", currentMessages, "webchat");
+
+    const capped = __testing.capTranscriptLength({
+      priorMessages,
+      priorSurface: "telegram",
+      currentMessages,
+      currentSurface: "webchat",
+      maxChars: 8000,
+    });
+
+    expect(capped).toBe(original);
+  });
+
+  it("does not truncate current message text when removing prior is sufficient", () => {
+    const priorMessages = Array.from({ length: 8 }, (_, index) => ({
+      role: "user" as const,
+      content: `prior-${index + 1}-${"z".repeat(200)}`,
+      timestamp: "2026-02-23T09:15:00",
+    }));
+    const currentContent = "CURRENT_FULL_PAYLOAD_1234567890";
+    const currentMessages = [
+      { role: "assistant" as const, content: currentContent, timestamp: "2026-02-24T10:20:00" },
+    ];
+
+    const capped = __testing.capTranscriptLength({
+      priorMessages,
+      priorSurface: "telegram",
+      currentMessages,
+      currentSurface: "webchat",
+      maxChars: 500,
+    });
+
+    expect(capped.length).toBeLessThanOrEqual(500);
+    expect(capped).toContain(`[assistant]: ${currentContent}`);
   });
 });
 
@@ -467,6 +595,8 @@ describe("50-message budget slicing", () => {
     expect(messageLines).toHaveLength(50);
     expect(transcript).not.toContain("prior-budget-should-not-appear");
     expect(transcript).not.toContain("[telegram]");
+    expect(transcript).toContain("current-60");
+    expect(messageLines).not.toContain("[user]: current-1");
   });
 
   it("when currentMessages.length = 30 and prior has 40 messages, takes last 20 from prior and all 30 current", async () => {
@@ -636,5 +766,34 @@ describe("summarizeSessionForHandoff", () => {
 
     expect(summary).toBeNull();
     expect(logger.debug).toHaveBeenCalled();
+  });
+
+  it("returns null and logs debug when credentials.apiKey is missing", async () => {
+    vi.spyOn(llmClientModule, "createLlmClient").mockReturnValue({
+      auth: "openai-api-key",
+      resolvedModel: {
+        provider: "openai",
+        modelId: "gpt-4.1-nano",
+        model: {} as Model<Api>,
+      },
+      credentials: {} as { apiKey?: string },
+    });
+    const logger = makeLogger();
+    const dir = await makeTempDir("agenr-handoff-summary-");
+    const currentSessionFile = path.join(dir, "current-uuid.jsonl");
+    await fs.writeFile(currentSessionFile, "", "utf8");
+
+    const summary = await __testing.summarizeSessionForHandoff(
+      makeEventMessages(5, "current"),
+      dir,
+      currentSessionFile,
+      logger,
+      makeStreamSimple({ message: makeAssistantMessage("unused") }),
+    );
+
+    expect(summary).toBeNull();
+    expect(logger.debug).toHaveBeenCalledWith(
+      "[agenr] before_reset: no apiKey available, skipping LLM summary",
+    );
   });
 });
