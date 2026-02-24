@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.34] - 2026-02-24
+
+### Fixed
+- rebuild dist - --force flag missing from 0.8.33 artifact (stale build)
+
 ## [0.8.33] - 2026-02-24
 
 ### Fixed
