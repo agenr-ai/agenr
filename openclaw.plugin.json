@@ -65,6 +65,14 @@
           "includeBackground": {
             "type": "boolean",
             "description": "Include prior session as background context in handoff summary (default: false)."
+          },
+          "logEnabled": {
+            "type": "boolean",
+            "description": "Enable writing handoff LLM request/response logs to logDir (default: false)."
+          },
+          "logDir": {
+            "type": "string",
+            "description": "Directory to write handoff LLM request/response logs for debugging. Requires logEnabled: true."
           }
         }
       }

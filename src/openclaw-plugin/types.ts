@@ -112,6 +112,10 @@ export type AgenrPluginConfig = {
   handoff?: {
     /** Include prior session transcript as background-only context (default: false) */
     includeBackground?: boolean;
+    /** Enable writing handoff LLM request/response logs to logDir (default: false) */
+    logEnabled?: boolean;
+    /** Directory to write handoff LLM request/response logs for debugging */
+    logDir?: string;
   };
   /** Set to false to disable mid-session signals (default: true) */
   signalsEnabled?: boolean;
