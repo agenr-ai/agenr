@@ -814,6 +814,7 @@ describe("summarizeSessionForHandoff", () => {
         { role: "assistant", content: "AGENR SIGNAL: signal\n- [fact] hidden", timestamp: "2026-02-24T10:03:00" },
         { role: "user", content: "cleaned two", timestamp: "2026-02-24T10:04:00" },
         { role: "assistant", content: "cleaned three", timestamp: "2026-02-24T10:05:00" },
+        { role: "user", content: "cleaned four", timestamp: "2026-02-24T10:06:00" },
       ],
       dir,
       currentSessionFile,
@@ -1025,6 +1026,7 @@ describe("summarizeSessionForHandoff", () => {
         { role: "assistant", content: "AGENR SIGNAL: signal\n- [fact] hidden", timestamp: "2026-02-24T10:03:00" },
         { role: "user", content: "cleaned two", timestamp: "2026-02-24T10:04:00" },
         { role: "assistant", content: "cleaned three", timestamp: "2026-02-24T10:05:00" },
+        { role: "user", content: "cleaned four", timestamp: "2026-02-24T10:06:00" },
       ],
       dir,
       currentSessionFile,
@@ -1045,10 +1047,11 @@ describe("summarizeSessionForHandoff", () => {
     const messageLines = transcript
       .split("\n")
       .filter((line) => line.startsWith("[user]:") || line.startsWith("[assistant]:"));
-    expect(messageLines).toHaveLength(3);
+    expect(messageLines).toHaveLength(4);
     expect(transcript).toContain("[assistant]: cleaned one");
     expect(transcript).toContain("[user]: cleaned two");
     expect(transcript).toContain("[assistant]: cleaned three");
+    expect(transcript).toContain("[user]: cleaned four");
     expect(transcript).not.toContain("## Recent session");
     expect(transcript).not.toContain("Conversation info (untrusted metadata):");
     expect(transcript).not.toContain("AGENR SIGNAL:");
@@ -1147,6 +1150,7 @@ describe("summarizeSessionForHandoff", () => {
         { role: "user", content: "hi", timestamp: "2026-02-24T10:00:00" },
         { role: "assistant", content: "hello", timestamp: "2026-02-24T10:01:00" },
         { role: "user", content: "thanks", timestamp: "2026-02-24T10:02:00" },
+        { role: "assistant", content: "bye", timestamp: "2026-02-24T10:03:00" },
       ],
       dir,
       currentSessionFile,
