@@ -166,15 +166,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-function extractHandoffContent(content: unknown): string {
+function extractTextFromContent(content: unknown, separator: string): string {
   if (typeof content === "string") {
     return content.trim();
   }
-
   if (!Array.isArray(content)) {
     return "";
   }
-
   const textParts: string[] = [];
   for (const block of content) {
     if (!isRecord(block) || block["type"] !== "text") {
@@ -189,8 +187,11 @@ function extractHandoffContent(content: unknown): string {
       textParts.push(trimmed);
     }
   }
+  return textParts.join(separator).trim();
+}
 
-  return textParts.join(" ").trim();
+function extractHandoffContent(content: unknown): string {
+  return extractTextFromContent(content, " ");
 }
 
 function formatHandoffTimestamp(timestamp: string): string {
@@ -211,10 +212,10 @@ function getBaseSessionPath(filePath: string): string {
   return resetMatch ? resetMatch[1] : filePath;
 }
 
-function readSessionsJson(sessionsDir: string): Record<string, unknown> {
+async function readSessionsJson(sessionsDir: string): Promise<Record<string, unknown>> {
   try {
     const sessionsJsonPath = path.join(sessionsDir, "sessions.json");
-    const raw = fs.readFileSync(sessionsJsonPath, "utf8");
+    const raw = await fs.promises.readFile(sessionsJsonPath, "utf8");
     const parsed = JSON.parse(raw);
     return isRecord(parsed) ? parsed : {};
   } catch {
@@ -425,30 +426,7 @@ function extractAssistantSummaryText(message: unknown): string {
   if (!isRecord(message)) {
     return "";
   }
-
-  const content = message["content"];
-  if (typeof content === "string") {
-    return content.trim();
-  }
-  if (!Array.isArray(content)) {
-    return "";
-  }
-
-  const textParts: string[] = [];
-  for (const block of content) {
-    if (!isRecord(block) || block["type"] !== "text") {
-      continue;
-    }
-    const blockText = block["text"];
-    if (typeof blockText !== "string") {
-      continue;
-    }
-    const trimmed = blockText.trim();
-    if (trimmed) {
-      textParts.push(trimmed);
-    }
-  }
-  return textParts.join("\n").trim();
+  return extractTextFromContent(message["content"], "\n");
 }
 
 function mapCurrentSessionMessage(message: unknown): HandoffMessage | null {
@@ -479,7 +457,7 @@ async function summarizeSessionForHandoff(
   streamSimpleImpl?: StreamSimpleFn,
 ): Promise<string | null> {
   try {
-    const sessionsJson = readSessionsJson(sessionsDir);
+    const sessionsJson = await readSessionsJson(sessionsDir);
     const currentSurface = getSurfaceForSessionFile(currentSessionFile, sessionsJson);
     const currentMessages = (Array.isArray(currentRawMessages) ? currentRawMessages : [])
       .map((message) => mapCurrentSessionMessage(message))
