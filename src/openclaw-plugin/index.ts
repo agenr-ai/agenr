@@ -268,12 +268,12 @@ function stripInjectedContext(text: string): string {
   // Strip large agenr-injected context blocks (## Recent session/memory/Relevant memory
   // and any ## agenr Memory Context sub-blocks that follow them).
   cleaned = cleaned.replace(
-    /(?:^|\n)## (?:Recent session|Recent memory|Relevant memory)\b[\s\S]*?(?=(?:^|\n)(?:Conversation info|\[(?:user|assistant)\]:|AGENR SIGNAL:|=== )|$)/g,
+    /(?:^|\n)## (?:Recent session|Recent memory|Relevant memory)\b[\s\S]*?(?=(?:^|\n)(?:## (?!Recent session|Recent memory|Relevant memory|agenr Memory Context)|Conversation info|\[(?:user|assistant)\]:|AGENR SIGNAL:|=== )|$)/g,
     "",
   );
   // Strip standalone ## agenr Memory Context blocks (if not already caught above).
   cleaned = cleaned.replace(
-    /(?:^|\n)## agenr Memory Context[\s\S]*?(?=(?:^|\n)(?:Conversation info|\[(?:user|assistant)\]:|AGENR SIGNAL:|=== )|$)/g,
+    /(?:^|\n)## agenr Memory Context[\s\S]*?(?=(?:^|\n)(?:## (?!agenr Memory Context)|Conversation info|\[(?:user|assistant)\]:|AGENR SIGNAL:|=== )|$)/g,
     "",
   );
   // Strip signal headline and following bullet entries.
