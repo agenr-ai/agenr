@@ -108,6 +108,11 @@ export type AgenrPluginConfig = {
   enabled?: boolean;
   /** Path to agenr DB. Defaults to AGENR_DB_PATH env or ~/.agenr/knowledge.db */
   dbPath?: string;
+  /** Handoff summarizer options */
+  handoff?: {
+    /** Include prior session transcript as background-only context (default: false) */
+    includeBackground?: boolean;
+  };
   /** Set to false to disable mid-session signals (default: true) */
   signalsEnabled?: boolean;
   /** Minimum importance for signal entries (default: 8) */
