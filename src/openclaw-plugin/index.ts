@@ -534,10 +534,12 @@ async function summarizeSessionForHandoff(
     let transcript = buildMergedTranscript(priorSlice, priorSurface, currentSlice, currentSurface);
     const nonHeaderLineCount = countTranscriptContentLines(transcript);
     if (nonHeaderLineCount < 3) {
+      logger.debug?.("[agenr] before_reset: skipping LLM summary - reason: short transcript");
       return null;
     }
 
     if (currentSlice.length < 5 && priorSlice.length === 0) {
+      logger.debug?.("[agenr] before_reset: skipping LLM summary - reason: too few messages");
       return null;
     }
 
@@ -555,9 +557,7 @@ async function summarizeSessionForHandoff(
     try {
       llmClient = createLlmClient({});
     } catch (err) {
-      logger.debug?.(
-        `[agenr] before_reset: LLM client init failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      logger.debug?.("[agenr] before_reset: skipping LLM summary - reason: LLM client init failed");
       return null;
     }
 
@@ -575,7 +575,9 @@ async function summarizeSessionForHandoff(
       tools: [],
     };
 
-    logger.debug?.("[agenr] before_reset: calling LLM for session summary...");
+    logger.debug?.(
+      `[agenr] before_reset: sending to LLM model=${resolvedModel.model} chars=${transcript.length} currentMsgs=${currentSlice.length} priorMsgs=${priorSlice.length}`,
+    );
     const assistantMsg = await runSimpleStream({
       model: resolvedModel.model,
       context,
@@ -585,11 +587,17 @@ async function summarizeSessionForHandoff(
     });
 
     if (assistantMsg.stopReason === "error") {
+      logger.debug?.("[agenr] before_reset: skipping LLM summary - reason: LLM error stop");
       return null;
     }
 
     const summaryText = extractAssistantSummaryText(assistantMsg);
-    return summaryText || null;
+    if (!summaryText) {
+      logger.debug?.("[agenr] before_reset: skipping LLM summary - reason: empty summary text");
+      return null;
+    }
+    logger.debug?.(`[agenr] before_reset: LLM summary received chars=${summaryText.length}`);
+    return summaryText;
   } catch (err) {
     logger.debug?.(
       `[agenr] before_reset: summarize handoff failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -635,7 +643,6 @@ async function retireFallbackHandoffEntries(params: {
   budget: number;
   defaultProject?: string;
   fallbackSubject: string;
-  fallbackText: string;
   logger: PluginApi["logger"];
   source: "before_reset" | "command" | "session_start";
 }): Promise<void> {
@@ -649,7 +656,6 @@ async function retireFallbackHandoffEntries(params: {
       return;
     }
 
-    const normalizedFallbackText = params.fallbackText.trim();
     const retirePromises: Promise<void>[] = [];
     for (const item of browseResult.results) {
       const entryRecord = isRecord(item.entry) ? item.entry : null;
@@ -677,11 +683,6 @@ async function retireFallbackHandoffEntries(params: {
 
       const tags = getEntryTags(entryRecord);
       if (!tags.includes("handoff")) {
-        continue;
-      }
-
-      const entryContent = typeof entryRecord["content"] === "string" ? entryRecord["content"].trim() : "";
-      if (normalizedFallbackText && entryContent !== normalizedFallbackText) {
         continue;
       }
 
@@ -810,13 +811,12 @@ async function runHandoffForSession(opts: {
           return;
         }
 
-        if (fallbackEntrySubject && fallbackText) {
+        if (fallbackEntrySubject) {
           await retireFallbackHandoffEntries({
             agenrPath: opts.agenrPath,
             budget: opts.budget,
             defaultProject: opts.defaultProject,
             fallbackSubject: fallbackEntrySubject,
-            fallbackText,
             logger: opts.logger ?? {
               warn: () => undefined,
               error: () => undefined,
