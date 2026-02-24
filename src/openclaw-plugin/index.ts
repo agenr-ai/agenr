@@ -613,7 +613,7 @@ async function summarizeSessionForHandoff(
     let currentSlice = currentMessages.slice(
       -Math.min(currentMessages.length, HANDOFF_TRANSCRIPT_MAX_MESSAGES),
     );
-    if (currentSlice.length < 3) {
+    if (currentSlice.length < 4) {
       console.log("[agenr] before_reset: skipping LLM summary - reason: too few messages");
       return null;
     }
@@ -698,7 +698,16 @@ async function summarizeSessionForHandoff(
       verbose: false,
       streamSimpleImpl,
     });
+    if (assistantMsg.stopReason === "error") {
+      console.log("[agenr] before_reset: skipping LLM summary - reason: LLM error stop");
+      return null;
+    }
+
     const summaryText = extractAssistantSummaryText(assistantMsg);
+    if (!summaryText) {
+      console.log("[agenr] before_reset: skipping LLM summary - reason: empty summary text");
+      return null;
+    }
 
     const normalizedLogDir = typeof logDir === "string" ? logDir.trim() : "";
     if (logEnabled && normalizedLogDir) {
@@ -743,15 +752,7 @@ async function summarizeSessionForHandoff(
       }
     }
 
-    if (assistantMsg.stopReason === "error") {
-      console.log("[agenr] before_reset: skipping LLM summary - reason: LLM error stop");
-      return null;
-    }
 
-    if (!summaryText) {
-      console.log("[agenr] before_reset: skipping LLM summary - reason: empty summary text");
-      return null;
-    }
     console.log(`[agenr] before_reset: LLM summary received chars=${summaryText.length}`);
     return summaryText;
   } catch (err) {
