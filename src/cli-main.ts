@@ -717,6 +717,9 @@ export function createProgram(): Command {
         return n;
       },
     )
+    .option("--log-dir <path>", "Directory to write ingest extraction debug logs")
+    .option("--log-all", "Log every file during ingest extraction debugging", false)
+    .option("--sample-rate <n>", "Sample 1 in N files for ingest extraction debug logging", parseIntOption, 10)
     .option("--skip-ingested", "Skip already-ingested files", true)
     .option(
       "--bulk",
