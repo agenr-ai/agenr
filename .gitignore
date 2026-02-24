@@ -7,3 +7,6 @@ docs/internal/
 
 # Sandbox environment
 sandbox/
+
+# npm pack artifacts
+*.tgz
