@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.26] - 2026-02-23
+
+### Added
+- feat(openclaw-plugin): LLM-summarized multi-session handoff entry at
+  before_reset (#199). Builds a merged transcript from the current session
+  (via event.messages) and the most recent prior .reset.* file (if under
+  24h old), labeled with timestamps and surface (webchat/telegram/etc.)
+  from sessions.json. Summarizes via the configured LLM (from agenr config,
+  default gpt-4.1-nano) into a structured four-section handoff. Falls back
+  to raw text extraction on any failure. Handler is now properly async with
+  awaited store call.
+
 ## [0.8.25] - 2026-02-23
 
 ### Changed
