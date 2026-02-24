@@ -66,6 +66,9 @@ export interface IngestCommandOptions {
   force?: boolean;
   retry?: boolean;
   maxRetries?: number | string;
+  logDir?: string;
+  logAll?: boolean;
+  sampleRate?: number | string;
   noPreFetch?: boolean;
   wholeFile?: boolean;
   chunk?: boolean;
@@ -594,6 +597,8 @@ export async function runIngestCommand(
   );
   const retryEnabled = options.retry !== false;
   const maxRetries = retryEnabled ? parsePositiveInt(options.maxRetries, 3, "--max-retries") : 0;
+  const logDir = options.logDir?.trim() ? options.logDir.trim() : undefined;
+  const sampleRate = options.logAll === true ? 1 : parsePositiveInt(options.sampleRate, 10, "--sample-rate");
   const platformRaw = options.platform?.trim();
   const platform = platformRaw ? normalizeKnowledgePlatform(platformRaw) : null;
   if (platformRaw && !platform) {
@@ -1064,6 +1069,7 @@ export async function runIngestCommand(
         embeddingApiKey: options.noPreFetch ? undefined : embeddingApiKey ?? undefined,
         noPreFetch: options.noPreFetch === true,
         onceFlags: extractOnceFlags,
+        logDir: logDir && (options.logAll === true || target.index % sampleRate === 0) ? logDir : undefined,
         onVerbose: verbose
           ? (line) => {
               clack.log.info(line, clackOutput);

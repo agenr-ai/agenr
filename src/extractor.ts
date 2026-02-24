@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import type { Api, AssistantMessage, Context, Model } from "@mariozechner/pi-ai";
 import type { Client } from "@libsql/client";
 import type {
@@ -1789,6 +1791,7 @@ async function extractChunkOnce(params: {
   apiKey: string;
   systemPrompt?: string;
   maxTokens?: number;
+  logDir?: string;
   verbose: boolean;
   onVerbose?: (line: string) => void;
   onStreamDelta?: (delta: string, kind: "text" | "thinking") => void;
@@ -1823,21 +1826,71 @@ async function extractChunkOnce(params: {
     streamSimpleImpl: params.streamSimpleImpl,
   });
 
-  if (assistantMessage.stopReason === "error" || assistantMessage.errorMessage) {
+  const warnings: string[] = [];
+  const isProviderError = assistantMessage.stopReason === "error" || assistantMessage.errorMessage;
+  const entries = isProviderError
+    ? []
+    : extractToolCallEntries(
+        assistantMessage,
+        params.file,
+        params.chunk,
+        warnings,
+        params.verbose,
+        params.onVerbose,
+      );
+
+  if (params.logDir) {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const safeName = params.file.replace(/[^a-zA-Z0-9_-]/g, "_").slice(-80);
+    const chunkIdx = params.chunk.chunk_index;
+    const prefix = `ingest-${timestamp}-${safeName}-chunk${chunkIdx}`;
+
+    const inputPayload = [
+      "=== SYSTEM PROMPT ===",
+      params.systemPrompt ?? SYSTEM_PROMPT,
+      "",
+      "=== USER PROMPT ===",
+      prompt,
+      "",
+      "=== METADATA ===",
+      `file: ${params.file}`,
+      `chunk: ${chunkIdx}`,
+      `model: ${params.model.id}`,
+      `promptChars: ${prompt.length}`,
+    ].join("\n");
+
+    const responsePayload = [
+      "=== RAW RESPONSE ===",
+      JSON.stringify(assistantMessage, null, 2),
+      "",
+      "=== EXTRACTED ENTRIES ===",
+      JSON.stringify(entries, null, 2),
+      "",
+      "=== WARNINGS ===",
+      warnings.length ? warnings.join("\n") : "(none)",
+      "",
+      "=== METADATA ===",
+      `stopReason: ${assistantMessage.stopReason}`,
+      `entryCount: ${entries.length}`,
+    ].join("\n");
+
+    try {
+      await fs.mkdir(params.logDir, { recursive: true });
+      await Promise.all([
+        fs.writeFile(path.join(params.logDir, `${prefix}-input.txt`), inputPayload),
+        fs.writeFile(path.join(params.logDir, `${prefix}-output.txt`), responsePayload),
+      ]);
+    } catch {
+      // Best-effort logging only.
+    }
+  }
+
+  if (isProviderError) {
     throw new Error(
       `Chunk ${params.chunk.chunk_index + 1}: provider returned an error (${assistantMessage.errorMessage ?? "unknown error"}).`,
     );
   }
 
-  const warnings: string[] = [];
-  const entries = extractToolCallEntries(
-    assistantMessage,
-    params.file,
-    params.chunk,
-    warnings,
-    params.verbose,
-    params.onVerbose,
-  );
   return { entries, warnings };
 }
 
@@ -1848,6 +1901,7 @@ async function extractWholeFileChunkWithRetry(params: {
   apiKey: string;
   systemPrompt: string;
   maxTokens: number;
+  logDir?: string;
   verbose: boolean;
   onVerbose?: (line: string) => void;
   onStreamDelta?: (delta: string, kind: "text" | "thinking") => void;
@@ -1882,6 +1936,7 @@ async function extractWholeFileChunkWithRetry(params: {
         apiKey: params.apiKey,
         systemPrompt: params.systemPrompt,
         maxTokens: params.maxTokens,
+        logDir: params.logDir,
         verbose: params.verbose,
         onVerbose: params.onVerbose,
         onStreamDelta: params.onStreamDelta,
@@ -1965,6 +2020,7 @@ export async function extractKnowledgeFromChunks(params: {
   db?: Client;
   embeddingApiKey?: string;
   noPreFetch?: boolean;
+  logDir?: string;
   embedFn?: (texts: string[], apiKey: string) => Promise<number[][]>;
   /** Shared warning state across calls; pass one object per ingest run to dedupe one-time logs. */
   onceFlags?: ExtractRunOnceFlags;
@@ -2030,6 +2086,7 @@ export async function extractKnowledgeFromChunks(params: {
         apiKey: params.client.credentials.apiKey,
         systemPrompt: buildExtractionSystemPrompt(params.platform, true),
         maxTokens: getOutputTokens(params.client),
+        logDir: params.logDir,
         verbose: params.verbose,
         onVerbose: params.onVerbose,
         onStreamDelta: params.onStreamDelta,
@@ -2156,6 +2213,7 @@ export async function extractKnowledgeFromChunks(params: {
               model: params.client.resolvedModel.model,
               apiKey: params.client.credentials.apiKey,
               systemPrompt,
+              logDir: params.logDir,
               verbose: params.verbose,
               onVerbose: params.onVerbose,
               onStreamDelta: bufferStreamDeltas
@@ -2258,6 +2316,7 @@ export async function extractKnowledgeFromChunks(params: {
 
   let finalEntries = entries;
   if (!aborted && !params.noDedup && finalEntries.length > 1) {
+    const preDedupEntries = finalEntries;
     const dedupResult = await deduplicateEntriesWithLlm({
       file: params.file,
       entries: finalEntries,
@@ -2269,6 +2328,34 @@ export async function extractKnowledgeFromChunks(params: {
     });
     finalEntries = dedupResult.entries;
     warnings.push(...dedupResult.warnings);
+
+    if (params.logDir) {
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const safeName = params.file.replace(/[^a-zA-Z0-9_-]/g, "_").slice(-80);
+      const dedupPayload = [
+        "=== PRE-DEDUP ENTRIES ===",
+        JSON.stringify(preDedupEntries, null, 2),
+        "",
+        "=== POST-DEDUP ENTRIES ===",
+        JSON.stringify(dedupResult.entries, null, 2),
+        "",
+        "=== DEDUP METADATA ===",
+        `file: ${params.file}`,
+        `before: ${preDedupEntries.length}`,
+        `after: ${dedupResult.entries.length}`,
+        `removed: ${preDedupEntries.length - dedupResult.entries.length}`,
+      ].join("\n");
+
+      try {
+        await fs.mkdir(params.logDir, { recursive: true });
+        await fs.writeFile(
+          path.join(params.logDir, `ingest-${timestamp}-${safeName}-dedup.txt`),
+          dedupPayload,
+        );
+      } catch {
+        // Best-effort logging only.
+      }
+    }
   }
   finalEntries = warnOnHighEntryCount(finalEntries, params.verbose, params.onVerbose);
 
@@ -2281,3 +2368,7 @@ export async function extractKnowledgeFromChunks(params: {
     skippedChunks: aborted ? skippedChunks : undefined,
   };
 }
+
+export const __testing = {
+  extractChunkOnce,
+};

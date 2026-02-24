@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.39] - 2025-02-25
+
+### Features
+- **ingest:** Add LLM debug logging via `--log-dir`, `--log-all`, and `--sample-rate` flags (#238)
+  - Captures raw LLM prompt input and response output per chunk
+  - Logs dedup before/after entry lists
+  - Best-effort writes, never blocks extraction
+  - Sampling defaults to 1-in-10 files; use `--log-all` for full capture
+
+### Tests
+- Add tests for ingest debug logging: file creation, sampling, dedup logs, graceful failure on bad logDir
+
 ## [0.8.38] - 2026-02-24
 
 ### Fixed
