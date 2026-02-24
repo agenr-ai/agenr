@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.8.23] - 2026-02-23
+
+### Changed
+- fix(openclaw-plugin): strip OpenClaw conversation metadata JSON blocks from
+  extractRecentTurns() output (issue #208)
+- fix(openclaw-plugin): extractRecentTurns() now reads JSONL bottom-up, ensuring
+  most recent turns are always included when maxTurns budget is exceeded
+- fix(openclaw-plugin): increase RECENT_TURN_MAX_CHARS from 150 to 300
+- fix(openclaw-plugin): normalize internal whitespace in extracted turns (collapse
+  newlines/spaces to single space) to keep " | " separator clean
+
+### Tests
+- test(openclaw-plugin): added tests for metadata stripping, bottom-up reading,
+  and whitespace normalization in extractRecentTurns()
+
 ## [0.8.22] - 2026-02-23
 
 ### Changed

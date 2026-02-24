@@ -5,9 +5,11 @@ import { createInterface } from "node:readline";
 
 const EXCHANGE_TEXT_MAX_CHARS = 200;
 const EXCHANGE_USER_TURN_LIMIT = 5;
-const RECENT_TURN_MAX_CHARS = 150;
+const RECENT_TURN_MAX_CHARS = 300;
 const SEMANTIC_SEED_PREVIOUS_TURNS_MAX_CHARS = 400;
 const DEFAULT_RECENT_TURN_LIMIT = 7;
+const CONVERSATION_METADATA_BLOCK_PATTERN =
+  /(?:^|\r?\n)\s*Conversation info \(untrusted metadata\):\s*\r?\n\s*```json\s*\r?\n[\s\S]*?\r?\n\s*```\s*/g;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -104,6 +106,14 @@ export function stripPromptMetadata(raw: string): string {
   } catch {
     return "";
   }
+}
+
+export function stripConversationMetadata(text: string): string {
+  if (!text) {
+    return "";
+  }
+
+  return text.replace(CONVERSATION_METADATA_BLOCK_PATTERN, "").trim();
 }
 
 export function extractLastExchangeText(messages: unknown[], maxTurns = EXCHANGE_USER_TURN_LIMIT): string {
@@ -223,7 +233,7 @@ export async function extractRecentTurns(filePath: string, maxTurns = DEFAULT_RE
     if (parsedMaxTurns === 0) {
       return "";
     }
-    const ring: string[] = [];
+    const allTurns: string[] = [];
 
     await new Promise<void>((resolve, reject) => {
       const rl = createInterface({
@@ -248,17 +258,21 @@ export async function extractRecentTurns(filePath: string, maxTurns = DEFAULT_RE
         const message = record["message"];
         const userText = extractTextFromUserMessage(message);
         if (userText) {
-          ring.push(`U: ${truncateMessageText(userText, RECENT_TURN_MAX_CHARS)}`);
-          if (ring.length > parsedMaxTurns) {
-            ring.shift();
+          const normalizedUserText = stripConversationMetadata(userText)
+            .replace(/\s+/g, " ")
+            .trim();
+          if (normalizedUserText) {
+            allTurns.push(`U: ${truncateMessageText(normalizedUserText, RECENT_TURN_MAX_CHARS)}`);
           }
           return;
         }
         const assistantText = extractTextFromAssistantMessage(message);
         if (assistantText) {
-          ring.push(`A: ${truncateMessageText(assistantText, RECENT_TURN_MAX_CHARS)}`);
-          if (ring.length > parsedMaxTurns) {
-            ring.shift();
+          const normalizedAssistantText = stripConversationMetadata(assistantText)
+            .replace(/\s+/g, " ")
+            .trim();
+          if (normalizedAssistantText) {
+            allTurns.push(`A: ${truncateMessageText(normalizedAssistantText, RECENT_TURN_MAX_CHARS)}`);
           }
         }
       });
@@ -267,7 +281,7 @@ export async function extractRecentTurns(filePath: string, maxTurns = DEFAULT_RE
       rl.on("error", reject);
     });
 
-    return ring.join(" | ");
+    return allTurns.slice(-parsedMaxTurns).join(" | ");
   } catch {
     return "";
   }
