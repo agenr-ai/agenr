@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.30] - 2026-02-24
+
+### Fixed
+- Rebuild dist to include Phase 1A handoff trigger missing from 0.8.29.
+  The dist/ artifact in 0.8.29 was stale - runHandoffForSession() call added
+  in the 0.8.29 source (commit e3222c5) was not present in the published
+  package. No logic changes. Build-only fix.
+
 ## [0.8.29] - 2026-02-24
 
 ### Added
