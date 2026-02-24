@@ -1840,10 +1840,11 @@ async function extractChunkOnce(params: {
       );
 
   if (params.logDir) {
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const safeName = params.file.replace(/[^a-zA-Z0-9_-]/g, "_").slice(-80);
+    const now = new Date();
+    const timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}_${String(now.getHours()).padStart(2, "0")}-${String(now.getMinutes()).padStart(2, "0")}-${String(now.getSeconds()).padStart(2, "0")}`;
+    const safeName = path.basename(params.file).replace(/[^a-zA-Z0-9_-]/g, "_").slice(-80);
     const chunkIdx = params.chunk.chunk_index;
-    const prefix = `ingest-${timestamp}-${safeName}-chunk${chunkIdx}`;
+    const prefix = `ingest_${timestamp}_${safeName}_chunk${chunkIdx}`;
 
     const inputPayload = [
       "=== SYSTEM PROMPT ===",
@@ -1877,8 +1878,8 @@ async function extractChunkOnce(params: {
     try {
       await fs.mkdir(params.logDir, { recursive: true });
       await Promise.all([
-        fs.writeFile(path.join(params.logDir, `${prefix}-input.txt`), inputPayload),
-        fs.writeFile(path.join(params.logDir, `${prefix}-output.txt`), responsePayload),
+        fs.writeFile(path.join(params.logDir, `${prefix}_input.txt`), inputPayload),
+        fs.writeFile(path.join(params.logDir, `${prefix}_output.txt`), responsePayload),
       ]);
     } catch {
       // Best-effort logging only.
@@ -2330,8 +2331,9 @@ export async function extractKnowledgeFromChunks(params: {
     warnings.push(...dedupResult.warnings);
 
     if (params.logDir) {
-      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-      const safeName = params.file.replace(/[^a-zA-Z0-9_-]/g, "_").slice(-80);
+      const now = new Date();
+      const timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}_${String(now.getHours()).padStart(2, "0")}-${String(now.getMinutes()).padStart(2, "0")}-${String(now.getSeconds()).padStart(2, "0")}`;
+      const safeName = path.basename(params.file).replace(/[^a-zA-Z0-9_-]/g, "_").slice(-80);
       const dedupPayload = [
         "=== PRE-DEDUP ENTRIES ===",
         JSON.stringify(preDedupEntries, null, 2),
@@ -2349,7 +2351,7 @@ export async function extractKnowledgeFromChunks(params: {
       try {
         await fs.mkdir(params.logDir, { recursive: true });
         await fs.writeFile(
-          path.join(params.logDir, `ingest-${timestamp}-${safeName}-dedup.txt`),
+          path.join(params.logDir, `ingest_${timestamp}_${safeName}_dedup.txt`),
           dedupPayload,
         );
       } catch {
