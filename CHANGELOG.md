@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.27] - 2026-02-24
+
+### Changed
+- Add stderr debug probes to openclaw plugin to diagnose before_reset hook dispatch issue
+- Probes: register() entry, hook registrations, session_start handler, before_reset handler entry and guard points
+
 ## [0.8.26] - 2026-02-23
 
 ### Added

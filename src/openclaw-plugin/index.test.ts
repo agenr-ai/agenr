@@ -76,15 +76,20 @@ function createTimeoutChild(): MockChildProcess {
 }
 
 function makeApi(overrides?: Partial<PluginApi>): PluginApi {
+  const logger = {
+    warn: vi.fn(),
+    error: vi.fn(),
+    info: vi.fn(),
+    debug: vi.fn(),
+    ...(overrides?.logger ?? {}),
+  };
+  const { logger: _ignoredLogger, ...restOverrides } = overrides ?? {};
   return {
     id: "agenr",
     name: "agenr memory context",
-    logger: {
-      warn: vi.fn(),
-      error: vi.fn(),
-    },
+    logger,
     on: vi.fn() as unknown as PluginApi["on"],
-    ...overrides,
+    ...restOverrides,
   };
 }
 
