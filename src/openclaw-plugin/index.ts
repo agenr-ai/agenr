@@ -241,7 +241,7 @@ function getBaseSessionPath(filePath: string): string {
 function deriveSessionIdFromSessionFile(sessionFile: string): string {
   const baseSessionPath = getBaseSessionPath(sessionFile);
   const baseName = path.basename(baseSessionPath, ".jsonl").trim();
-  return baseName || sessionFile;
+  return baseName || "";
 }
 
 async function readSessionsJson(sessionsDir: string): Promise<Record<string, unknown>> {
@@ -938,7 +938,6 @@ const plugin = {
               }
 
               if (Array.isArray(messages) && messages.length > 0) {
-                const previousSessionId = deriveSessionIdFromSessionFile(previousSessionFile);
                 process.stderr.write(
                   `[AGENR-PROBE] session_start: triggering handoff for prev file=${previousSessionFile} msgs=${messages.length}\n`,
                 );
@@ -946,13 +945,18 @@ const plugin = {
                   .runHandoffForSession({
                     messages,
                     sessionFile: previousSessionFile,
-                    sessionId: previousSessionId,
+                    sessionId:
+                      deriveSessionIdFromSessionFile(previousSessionFile) ||
+                      (ctx.sessionId ?? ctx.sessionKey ?? ""),
                     sessionKey: ctx.sessionKey ?? "",
                     agentId,
                     agenrPath,
                     budget,
                     defaultProject: project,
-                    storeConfig: {},
+                    storeConfig: {
+                      ...(config as Record<string, unknown> | undefined),
+                      logger: api.logger,
+                    },
                     sessionsDir,
                     logger: api.logger,
                     source: "session_start",
