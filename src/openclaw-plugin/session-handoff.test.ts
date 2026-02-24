@@ -724,6 +724,7 @@ describe("summarizeSessionForHandoff", () => {
       },
     });
     const logger = makeLogger();
+    const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const dir = await makeTempDir("agenr-handoff-summary-");
     const currentSessionFile = path.join(dir, "current-uuid.jsonl");
     await fs.writeFile(currentSessionFile, "", "utf8");
@@ -737,7 +738,7 @@ describe("summarizeSessionForHandoff", () => {
     );
 
     expect(summary).toBe("summary text");
-    expect(logger.debug).toHaveBeenCalledWith(
+    expect(consoleLogSpy).toHaveBeenCalledWith(
       expect.stringMatching(
         /^\[agenr\] before_reset: sending to LLM model=gpt-4\.1-nano chars=\d+ currentMsgs=5 priorMsgs=0$/,
       ),
@@ -836,6 +837,7 @@ describe("summarizeSessionForHandoff", () => {
       throw new Error("Not configured. Run `agenr setup`.");
     });
     const logger = makeLogger();
+    const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const dir = await makeTempDir("agenr-handoff-summary-");
     const currentSessionFile = path.join(dir, "current-uuid.jsonl");
     await fs.writeFile(currentSessionFile, "", "utf8");
@@ -849,10 +851,10 @@ describe("summarizeSessionForHandoff", () => {
     );
 
     expect(summary).toBeNull();
-    expect(logger.debug).toHaveBeenCalled();
+    expect(consoleLogSpy).toHaveBeenCalled();
   });
 
-  it("returns null and logs debug when credentials.apiKey is missing", async () => {
+  it("returns null and logs when credentials.apiKey is missing", async () => {
     vi.spyOn(llmClientModule, "createLlmClient").mockReturnValue({
       auth: "openai-api-key",
       resolvedModel: {
@@ -863,6 +865,7 @@ describe("summarizeSessionForHandoff", () => {
       credentials: {} as { apiKey?: string },
     });
     const logger = makeLogger();
+    const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const dir = await makeTempDir("agenr-handoff-summary-");
     const currentSessionFile = path.join(dir, "current-uuid.jsonl");
     await fs.writeFile(currentSessionFile, "", "utf8");
@@ -876,7 +879,7 @@ describe("summarizeSessionForHandoff", () => {
     );
 
     expect(summary).toBeNull();
-    expect(logger.debug).toHaveBeenCalledWith(
+    expect(consoleLogSpy).toHaveBeenCalledWith(
       "[agenr] before_reset: no apiKey available, skipping LLM summary",
     );
   });

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.32] - 2026-02-24
+
+### Fixed
+- summarizeSessionForHandoff: changed logger.debug to console.log for all skip-reason
+  and LLM call logging so output is visible in gateway.err.log at production log level
+  (closes #223)
+
 ## [0.8.31] - 2026-02-24
 
 ### Fixed
