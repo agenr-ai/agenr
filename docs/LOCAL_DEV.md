@@ -83,7 +83,8 @@ Create `~/.openclaw-sandbox/.openclaw/openclaw.json`:
       "agenr": {
         "enabled": true,
         "config": {
-          "dbPath": "<ABSOLUTE_PATH>/.openclaw-sandbox/agenr-data/knowledge.db"
+          "dbPath": "<ABSOLUTE_PATH>/.openclaw-sandbox/agenr-data/knowledge.db",
+          "sessionsDir": "<ABSOLUTE_PATH>/.openclaw-sandbox/.openclaw/agents/main/sessions"
         }
       }
     }
@@ -245,11 +246,12 @@ No conflict - global and local coexist fine. They use different entry points and
 
 ## Gotchas
 
-- **Always use absolute paths** in the config for `workspace` and `dbPath`. Tilde paths can double-nest (`~/.openclaw-sandbox/.openclaw-sandbox/...`).
+- **Always use absolute paths** in the config for `workspace`, `dbPath`, and `sessionsDir`. Tilde paths can double-nest (`~/.openclaw-sandbox/.openclaw-sandbox/...`).
 - **Auth uses `auth-profiles.json`**, not `auth.json`. OpenClaw looks for the profiles format.
 - **Session JSONL carries context forward.** If you test with a dirty DB and then switch to a clean one, old context may persist in session files. Delete `*.jsonl` to fully reset.
 - **Port conflicts.** If the sandbox won't start, check for zombie processes: `lsof -i :18790` and `kill <pid>`. You can also force-kill with `sandbox-openclaw gateway stop` or just `kill <pid>`.
 - **The plugin reads the built `dist/` output.** Always run `pnpm build` before testing. Stale dist is the number one source of "but I changed it" confusion.
+- **`sessionsDir` must be set in plugin config.** The plugin defaults to `~/.openclaw/agents/main/sessions` (the production path), not the sandbox home. Without `sessionsDir` in the config, the handoff hooks will fail to find session files and silently skip.
 - **Sandbox shares the log file** at `/tmp/openclaw/openclaw-YYYY-MM-DD.log` with any other local OpenClaw instance. Filter by port or timestamps if needed.
 
 ## Running Tests (Unit)
