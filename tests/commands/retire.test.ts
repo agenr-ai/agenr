@@ -185,7 +185,63 @@ describe("retire command", () => {
     expect(retireSpy.mock.calls[0]?.[0]).toMatchObject({ writeLedger: true });
   });
 
-  it("importance >= 8 requires CONFIRM text input", async () => {
+  it("retire with force=true skips guardrail for imp >= 8 entry and retires", async () => {
+    const dbPath = await makeTempDbPath();
+    await seedEntries(dbPath, [makeEntry({ subject: "High Force Subject", content: "critical", importance: 9 })]);
+
+    const confirmFn = vi.fn(async () => false);
+    const textInputFn = vi.fn(async () => "NOPE");
+    const result = await runRetireCommand(
+      "High Force Subject",
+      { db: dbPath, force: true },
+      {
+        confirmFn,
+        textInputFn,
+        logFn: vi.fn(),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(textInputFn).not.toHaveBeenCalled();
+    expect(confirmFn).not.toHaveBeenCalled();
+
+    const verifyClient = makeClient(dbPath);
+    const row = await verifyClient.execute({
+      sql: "SELECT retired FROM entries WHERE subject = ? LIMIT 1",
+      args: ["High Force Subject"],
+    });
+    expect(Number((row.rows[0] as { retired?: unknown } | undefined)?.retired ?? 0)).toBe(1);
+  });
+
+  it("retire with force=true skips simple confirm for imp < 8 entry and retires", async () => {
+    const dbPath = await makeTempDbPath();
+    await seedEntries(dbPath, [makeEntry({ subject: "Low Force Subject", content: "routine", importance: 5 })]);
+
+    const confirmFn = vi.fn(async () => false);
+    const textInputFn = vi.fn(async () => null);
+    const result = await runRetireCommand(
+      "Low Force Subject",
+      { db: dbPath, force: true },
+      {
+        confirmFn,
+        textInputFn,
+        logFn: vi.fn(),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(textInputFn).not.toHaveBeenCalled();
+    expect(confirmFn).not.toHaveBeenCalled();
+
+    const verifyClient = makeClient(dbPath);
+    const row = await verifyClient.execute({
+      sql: "SELECT retired FROM entries WHERE subject = ? LIMIT 1",
+      args: ["Low Force Subject"],
+    });
+    expect(Number((row.rows[0] as { retired?: unknown } | undefined)?.retired ?? 0)).toBe(1);
+  });
+
+  it("retire without force still calls textInputFn for imp >= 8 entry", async () => {
     const dbPath = await makeTempDbPath();
     await seedEntries(dbPath, [makeEntry({ subject: "High Subject", content: "critical", importance: 9 })]);
 

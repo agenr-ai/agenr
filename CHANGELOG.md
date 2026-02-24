@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.33] - 2026-02-24
+
+### Fixed
+- retire --force flag skips confirmation prompts for programmatic retirement (#225)
+- runRetireTool now passes --force so high-importance handoff entries (imp >= 8) are properly retired (#225)
+
 ## [0.8.32] - 2026-02-24
 
 ### Fixed
