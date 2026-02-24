@@ -119,18 +119,18 @@ function getBeforePromptBuildHandler(
 function getBeforeResetHandler(
   api: PluginApi,
 ): (
-  event: { messages?: unknown[] },
-  ctx: { sessionKey?: string; sessionId?: string },
-) => void {
+  event: { messages?: unknown[]; sessionFile?: string },
+  ctx: { sessionKey?: string; sessionId?: string; agentId?: string },
+) => Promise<void> {
   const onMock = api.on as unknown as ReturnType<typeof vi.fn>;
   const call = onMock.mock.calls.find((args) => args[0] === "before_reset");
   if (!call) {
     throw new Error("before_reset handler not registered");
   }
   return call[1] as (
-    event: { messages?: unknown[] },
-    ctx: { sessionKey?: string; sessionId?: string },
-  ) => void;
+    event: { messages?: unknown[]; sessionFile?: string },
+    ctx: { sessionKey?: string; sessionId?: string; agentId?: string },
+  ) => Promise<void>;
 }
 
 describe("openclaw plugin tool registration", () => {
@@ -1120,7 +1120,7 @@ describe("before_reset handoff store", () => {
     plugin.register(api);
     const handler = getBeforeResetHandler(api);
 
-    handler(
+    await handler(
       {
         messages: [
           { role: "user", content: "Working on session handoff behavior" },
@@ -1130,10 +1130,6 @@ describe("before_reset handoff store", () => {
       },
       { sessionKey: "agent:main:handoff-store-test" },
     );
-
-    await new Promise<void>((resolve) => {
-      process.nextTick(resolve);
-    });
 
     expect(Array.isArray(capturedStdinPayload)).toBe(true);
     const entries = capturedStdinPayload as Array<{
@@ -1163,19 +1159,78 @@ describe("before_reset handoff store", () => {
     plugin.register(api);
     const handler = getBeforeResetHandler(api);
 
-    handler(
+    await handler(
       {
         messages: [{ role: "user", content: "Capture this handoff with project context included for browse recall" }],
       },
       { sessionKey: "agent:main:handoff-project-scope" },
     );
 
-    await new Promise<void>((resolve) => {
-      process.nextTick(resolve);
-    });
-
     expect(capturedArgs).toContain("--project");
     const projectIdx = capturedArgs.indexOf("--project");
     expect(capturedArgs[projectIdx + 1]).toBe("my-project");
+  });
+
+  it("uses LLM summary for handoff content when summarizer returns text", async () => {
+    let capturedStdinPayload: unknown;
+    const mockChild = createMockChild({ code: 0 });
+    mockChild.stdin.write = vi.fn((chunk: string) => {
+      capturedStdinPayload = JSON.parse(chunk);
+    });
+    spawnMock.mockReturnValueOnce(mockChild);
+    const summarySpy = vi
+      .spyOn(__testing, "summarizeSessionForHandoff")
+      .mockResolvedValue("WORKING ON: Completed issue #199 handoff summary.");
+
+    const api = makeApi();
+    plugin.register(api);
+    const handler = getBeforeResetHandler(api);
+
+    await handler(
+      {
+        sessionFile: "/tmp/current-session.jsonl",
+        messages: [
+          { role: "user", content: "Implement issue 199 summary flow." },
+          { role: "assistant", content: "Done. Added merged transcript and summary." },
+          { role: "user", content: "Store the summary in handoff." },
+        ],
+      },
+      { sessionKey: "agent:main:handoff-summary", agentId: "main" },
+    );
+
+    expect(summarySpy).toHaveBeenCalledTimes(1);
+    const entries = capturedStdinPayload as Array<{ content: string }>;
+    expect(entries[0]?.content).toBe("WORKING ON: Completed issue #199 handoff summary.");
+  });
+
+  it("falls back to extractLastExchangeText when summarizer returns null", async () => {
+    let capturedStdinPayload: unknown;
+    const mockChild = createMockChild({ code: 0 });
+    mockChild.stdin.write = vi.fn((chunk: string) => {
+      capturedStdinPayload = JSON.parse(chunk);
+    });
+    spawnMock.mockReturnValueOnce(mockChild);
+    vi.spyOn(__testing, "summarizeSessionForHandoff").mockResolvedValue(null);
+
+    const api = makeApi();
+    plugin.register(api);
+    const handler = getBeforeResetHandler(api);
+
+    await handler(
+      {
+        sessionFile: "/tmp/current-session.jsonl",
+        messages: [
+          { role: "user", content: "Fallback should include user context." },
+          { role: "assistant", content: "Assistant context should be included too." },
+          { role: "user", content: "Please preserve this turn in fallback." },
+        ],
+      },
+      { sessionKey: "agent:main:handoff-fallback", agentId: "main" },
+    );
+
+    const entries = capturedStdinPayload as Array<{ content: string }>;
+    expect(entries[0]?.content).toContain("U:");
+    expect(entries[0]?.content).toContain("A:");
+    expect(entries[0]?.content).toContain("Please preserve this turn in fallback.");
   });
 });

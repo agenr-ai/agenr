@@ -1,8 +1,12 @@
 import type { Client } from "@libsql/client";
 import { Type } from "@sinclair/typebox";
+import fs, { createReadStream } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createInterface } from "node:readline";
 import { closeDb, getDb, initDb } from "../db/client.js";
+import { createLlmClient } from "../llm/client.js";
+import { runSimpleStream, type StreamSimpleFn } from "../llm/stream.js";
 import { KNOWLEDGE_TYPES, SCOPE_LEVELS } from "../types.js";
 import {
   formatRecallAsMarkdown,
@@ -23,6 +27,7 @@ import type {
   AgenrPluginConfig,
   BeforePromptBuildEvent,
   BeforePromptBuildResult,
+  BeforeResetEvent,
   PluginApi,
   PluginHookAgentContext,
 } from "./types.js";
@@ -113,6 +118,451 @@ async function ensurePluginDb(config?: AgenrPluginConfig): Promise<Client> {
   await pluginDbInit;
   return pluginDb;
 }
+
+type HandoffMessage = {
+  role: "user" | "assistant";
+  content: string;
+  timestamp: string;
+};
+
+const HANDOFF_TRANSCRIPT_MAX_MESSAGES = 50;
+const HANDOFF_TRANSCRIPT_MAX_CHARS = 8000;
+const MILLIS_PER_DAY = 24 * 60 * 60 * 1000;
+
+const HANDOFF_SUMMARY_SYSTEM_PROMPT = `You are a session summarizer for an AI agent memory system. Your job is
+to produce a concise handoff note from a conversation transcript so the
+next session can orient quickly.
+
+The transcript may cover one or two sessions labeled with timestamps and
+surfaces (webchat, telegram, etc.). Use this temporal and surface context
+in your summary. If the sessions are separated by more than 30 minutes,
+begin WORKING ON with a note like "Resumed 4 hours after a telegram
+session." If sessions are continuous, omit the gap.
+
+If the two sessions cover clearly unrelated topics, label them separately
+using "PRIOR SESSION TOPIC:" and "CURRENT SESSION TOPIC:" instead of a
+unified WORKING ON section.
+
+Produce these sections in plain text (no markdown, no bullet symbols,
+use plain dashes for lists):
+
+WORKING ON: One to two sentences on the main task or topic, including
+the project or system being worked on (e.g. "Working on agenr plugin
+(#199) in the agenr-ai/agenr repo.").
+
+KEY FINDINGS: Decisions, discoveries, or conclusions reached this
+session.
+
+OPEN THREADS: Unresolved questions or next steps. Write "None" if
+everything was wrapped up.
+
+IMPORTANT FACTS: Stateful facts only - file paths, version numbers,
+env states, config values. Do NOT repeat decisions already in KEY
+FINDINGS. Write "None" if nothing new.
+
+Keep the total response under 500 words. Plain text only.`;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function extractHandoffContent(content: unknown): string {
+  if (typeof content === "string") {
+    return content.trim();
+  }
+
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  const textParts: string[] = [];
+  for (const block of content) {
+    if (!isRecord(block) || block["type"] !== "text") {
+      continue;
+    }
+    const blockText = block["text"];
+    if (typeof blockText !== "string") {
+      continue;
+    }
+    const trimmed = blockText.trim();
+    if (trimmed) {
+      textParts.push(trimmed);
+    }
+  }
+
+  return textParts.join(" ").trim();
+}
+
+function formatHandoffTimestamp(timestamp: string): string {
+  if (!timestamp) {
+    return "unknown time";
+  }
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.getTime())) {
+    return "unknown time";
+  }
+
+  const pad2 = (value: number): string => value.toString().padStart(2, "0");
+  return `${parsed.getFullYear()}-${pad2(parsed.getMonth() + 1)}-${pad2(parsed.getDate())} ${pad2(parsed.getHours())}:${pad2(parsed.getMinutes())}`;
+}
+
+function readSessionsJson(sessionsDir: string): Record<string, unknown> {
+  try {
+    const sessionsJsonPath = path.join(sessionsDir, "sessions.json");
+    const raw = fs.readFileSync(sessionsJsonPath, "utf8");
+    const parsed = JSON.parse(raw);
+    return isRecord(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function getSurfaceForSessionFile(
+  sessionFilePath: string,
+  sessionsJson: Record<string, unknown>,
+): string {
+  try {
+    const normalizedTarget = path.resolve(sessionFilePath);
+    for (const value of Object.values(sessionsJson)) {
+      if (!isRecord(value)) {
+        continue;
+      }
+      const entrySessionFile = value["sessionFile"];
+      if (typeof entrySessionFile !== "string" || !entrySessionFile.trim()) {
+        continue;
+      }
+      if (path.resolve(entrySessionFile) !== normalizedTarget) {
+        continue;
+      }
+
+      const origin = isRecord(value["origin"]) ? value["origin"] : null;
+      const originSurface =
+        origin && typeof origin["surface"] === "string" ? origin["surface"].trim() : "";
+      if (originSurface) {
+        return originSurface;
+      }
+
+      const deliveryContext = isRecord(value["deliveryContext"]) ? value["deliveryContext"] : null;
+      const channel =
+        deliveryContext && typeof deliveryContext["channel"] === "string"
+          ? deliveryContext["channel"].trim()
+          : "";
+      return channel || "unknown";
+    }
+    return "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+async function readMessagesFromJsonl(filePath: string): Promise<HandoffMessage[]> {
+  try {
+    const messages: HandoffMessage[] = [];
+    const rl = createInterface({
+      input: createReadStream(filePath, { encoding: "utf8" }),
+      crlfDelay: Infinity,
+    });
+
+    for await (const line of rl) {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        continue;
+      }
+
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(trimmed);
+      } catch {
+        continue;
+      }
+
+      if (!isRecord(parsed) || parsed["type"] !== "message") {
+        continue;
+      }
+      const message = parsed["message"];
+      if (!isRecord(message)) {
+        continue;
+      }
+
+      const role = message["role"];
+      if (role !== "user" && role !== "assistant") {
+        continue;
+      }
+
+      const content = extractHandoffContent(message["content"]);
+      if (!content) {
+        continue;
+      }
+
+      const timestamp = typeof parsed["timestamp"] === "string" ? parsed["timestamp"] : "";
+      messages.push({
+        role,
+        content,
+        timestamp,
+      });
+    }
+
+    return messages;
+  } catch {
+    return [];
+  }
+}
+
+async function findPriorResetFile(sessionsDir: string, currentSessionFile: string): Promise<string | null> {
+  try {
+    const currentUuid = path.basename(currentSessionFile, ".jsonl");
+    const entries = await fs.promises.readdir(sessionsDir);
+    const resetEntries = entries.filter((entry) => /\.jsonl\.reset\./.test(entry));
+    const candidates = resetEntries.filter((entry) => entry.split(".jsonl")[0] !== currentUuid);
+    if (candidates.length === 0) {
+      return null;
+    }
+
+    const stats = await Promise.all(
+      candidates.map(async (entry) => {
+        const filePath = path.join(sessionsDir, entry);
+        const fileStats = await fs.promises.stat(filePath);
+        return {
+          filePath,
+          mtime: fileStats.mtime,
+        };
+      }),
+    );
+
+    stats.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
+    const latest = stats[0];
+    if (!latest) {
+      return null;
+    }
+
+    const ageMs = Date.now() - latest.mtime.getTime();
+    if (ageMs < MILLIS_PER_DAY) {
+      return latest.filePath;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function buildMergedTranscript(
+  priorMessages: HandoffMessage[],
+  priorSurface: string,
+  currentMessages: HandoffMessage[],
+  currentSurface: string,
+): string {
+  const cleanPrior = priorMessages
+    .map((message) => ({ ...message, content: message.content.trim() }))
+    .filter((message) => message.content.length > 0);
+  const cleanCurrent = currentMessages
+    .map((message) => ({ ...message, content: message.content.trim() }))
+    .filter((message) => message.content.length > 0);
+
+  const lines: string[] = [];
+  if (cleanPrior.length > 0) {
+    lines.push(`--- Session ${formatHandoffTimestamp(cleanPrior[0]?.timestamp ?? "")} [${priorSurface}] ---`);
+    lines.push(...cleanPrior.map((message) => `[${message.role}]: ${message.content}`));
+    lines.push("");
+  }
+
+  lines.push(
+    `--- Session ${formatHandoffTimestamp(cleanCurrent[0]?.timestamp ?? "")} [${currentSurface}] (ended) ---`,
+  );
+  lines.push(...cleanCurrent.map((message) => `[${message.role}]: ${message.content}`));
+
+  return lines.join("\n");
+}
+
+function countTranscriptContentLines(transcript: string): number {
+  return transcript
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("---")).length;
+}
+
+function capTranscriptLength(params: {
+  priorMessages: HandoffMessage[];
+  priorSurface: string;
+  currentMessages: HandoffMessage[];
+  currentSurface: string;
+  maxChars: number;
+}): string {
+  let cappedPrior = [...params.priorMessages];
+  let transcript = buildMergedTranscript(
+    cappedPrior,
+    params.priorSurface,
+    params.currentMessages,
+    params.currentSurface,
+  );
+
+  while (transcript.length > params.maxChars && cappedPrior.length > 0) {
+    cappedPrior = cappedPrior.slice(1);
+    transcript = buildMergedTranscript(
+      cappedPrior,
+      params.priorSurface,
+      params.currentMessages,
+      params.currentSurface,
+    );
+  }
+
+  return transcript;
+}
+
+function extractAssistantSummaryText(message: unknown): string {
+  if (!isRecord(message)) {
+    return "";
+  }
+
+  const content = message["content"];
+  if (typeof content === "string") {
+    return content.trim();
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  const textParts: string[] = [];
+  for (const block of content) {
+    if (!isRecord(block) || block["type"] !== "text") {
+      continue;
+    }
+    const blockText = block["text"];
+    if (typeof blockText !== "string") {
+      continue;
+    }
+    const trimmed = blockText.trim();
+    if (trimmed) {
+      textParts.push(trimmed);
+    }
+  }
+  return textParts.join("\n").trim();
+}
+
+function mapCurrentSessionMessage(message: unknown): HandoffMessage | null {
+  if (!isRecord(message)) {
+    return null;
+  }
+  const role = message["role"];
+  if (role !== "user" && role !== "assistant") {
+    return null;
+  }
+  const content = extractHandoffContent(message["content"]);
+  if (!content) {
+    return null;
+  }
+  const timestamp = typeof message["timestamp"] === "string" ? message["timestamp"] : "";
+  return {
+    role,
+    content,
+    timestamp,
+  };
+}
+
+async function summarizeSessionForHandoff(
+  currentRawMessages: BeforeResetEvent["messages"],
+  sessionsDir: string,
+  currentSessionFile: string,
+  logger: PluginApi["logger"],
+  streamSimpleImpl?: StreamSimpleFn,
+): Promise<string | null> {
+  try {
+    const sessionsJson = readSessionsJson(sessionsDir);
+    const currentSurface = getSurfaceForSessionFile(currentSessionFile, sessionsJson);
+    const currentMessages = (Array.isArray(currentRawMessages) ? currentRawMessages : [])
+      .map((message) => mapCurrentSessionMessage(message))
+      .filter((message): message is HandoffMessage => message !== null);
+
+    const currentSlice = currentMessages.slice(
+      -Math.min(currentMessages.length, HANDOFF_TRANSCRIPT_MAX_MESSAGES),
+    );
+    const priorBudget = HANDOFF_TRANSCRIPT_MAX_MESSAGES - currentSlice.length;
+
+    let priorSlice: HandoffMessage[] = [];
+    let priorSurface = "unknown";
+    const priorFile = await findPriorResetFile(sessionsDir, currentSessionFile);
+    if (priorFile && priorBudget > 0) {
+      const priorAllMessages = await readMessagesFromJsonl(priorFile);
+      priorSlice = priorAllMessages.slice(-priorBudget);
+      priorSurface = getSurfaceForSessionFile(priorFile, sessionsJson);
+    }
+
+    let transcript = buildMergedTranscript(priorSlice, priorSurface, currentSlice, currentSurface);
+    const nonHeaderLineCount = countTranscriptContentLines(transcript);
+    if (nonHeaderLineCount < 3) {
+      return null;
+    }
+
+    if (currentSlice.length < 5 && priorSlice.length === 0) {
+      return null;
+    }
+
+    if (transcript.length > HANDOFF_TRANSCRIPT_MAX_CHARS) {
+      transcript = capTranscriptLength({
+        priorMessages: priorSlice,
+        priorSurface,
+        currentMessages: currentSlice,
+        currentSurface,
+        maxChars: HANDOFF_TRANSCRIPT_MAX_CHARS,
+      });
+    }
+
+    let llmClient;
+    try {
+      llmClient = createLlmClient({});
+    } catch (err) {
+      logger.debug?.(
+        `[agenr] before_reset: LLM client init failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
+
+    const resolvedModel = llmClient.resolvedModel;
+    const credentials = llmClient.credentials;
+    const apiKey = typeof credentials.apiKey === "string" ? credentials.apiKey.trim() : "";
+    if (!apiKey) {
+      return null;
+    }
+
+    const context = {
+      systemPrompt: HANDOFF_SUMMARY_SYSTEM_PROMPT,
+      messages: [{ role: "user" as const, content: transcript, timestamp: Date.now() }],
+      tools: [],
+    };
+
+    const assistantMsg = await runSimpleStream({
+      model: resolvedModel.model,
+      context,
+      options: { apiKey },
+      verbose: false,
+      streamSimpleImpl,
+    });
+
+    if (assistantMsg.stopReason === "error") {
+      return null;
+    }
+
+    const summaryText = extractAssistantSummaryText(assistantMsg);
+    return summaryText || null;
+  } catch (err) {
+    logger.debug?.(
+      `[agenr] before_reset: summarize handoff failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return null;
+  }
+}
+
+const testingApi = {
+  clearState(): void {
+    seenSessions.clear();
+    sessionSignalState.clear();
+  },
+  readSessionsJson,
+  getSurfaceForSessionFile,
+  readMessagesFromJsonl,
+  findPriorResetFile,
+  buildMergedTranscript,
+  summarizeSessionForHandoff,
+};
 
 const plugin = {
   id: "agenr",
@@ -288,7 +738,7 @@ const plugin = {
       },
     );
 
-    api.on("before_reset", (event, ctx): void => {
+    api.on("before_reset", async (event, ctx): Promise<void> => {
       try {
         const sessionKey = ctx.sessionKey;
         if (!sessionKey) {
@@ -300,9 +750,25 @@ const plugin = {
           return;
         }
 
+        const currentSessionFile =
+          typeof event.sessionFile === "string" && event.sessionFile.trim()
+            ? event.sessionFile.trim()
+            : null;
+        const agentId = ctx.agentId?.trim() || "main";
+        const sessionsDir =
+          config?.sessionsDir ?? path.join(os.homedir(), `.openclaw/agents/${agentId}/sessions`);
+
         // Write importance:10 handoff entry to agenr DB so Phase 1B browse picks it up
         // in the new session. Entry is retired after first use (see auto-retire below).
-        const handoffText = extractLastExchangeText(messages);
+        const summary = currentSessionFile
+          ? await testingApi.summarizeSessionForHandoff(
+              messages,
+              sessionsDir,
+              currentSessionFile,
+              api.logger,
+            )
+          : null;
+        const handoffText = summary ?? extractLastExchangeText(messages);
         if (handoffText) {
           const agenrPath = resolveAgenrPath(config);
           const defaultProject = config?.project?.trim() || undefined;
@@ -322,11 +788,13 @@ const plugin = {
             ...(config as Record<string, unknown> | undefined),
             logger: api.logger,
           };
-          runStoreTool(agenrPath, handoffEntry, storeConfig, defaultProject).catch((err) => {
+          try {
+            await runStoreTool(agenrPath, handoffEntry, storeConfig, defaultProject);
+          } catch (err) {
             api.logger.debug?.(
               `[agenr] before_reset: handoff store failed: ${err instanceof Error ? err.message : String(err)}`,
             );
-          });
+          }
         }
       } catch (err) {
         api.logger.warn(
@@ -495,11 +963,6 @@ const plugin = {
   },
 };
 
-export const __testing = {
-  clearState(): void {
-    seenSessions.clear();
-    sessionSignalState.clear();
-  },
-};
+export const __testing = testingApi;
 
 export default plugin;
