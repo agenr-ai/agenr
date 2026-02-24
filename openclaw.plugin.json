@@ -56,6 +56,17 @@
       "sessionsDir": {
         "type": "string",
         "description": "Path to OpenClaw sessions directory. Defaults to ~/.openclaw/agents/{agentId}/sessions."
+      },
+      "handoff": {
+        "type": "object",
+        "description": "Handoff summarizer options.",
+        "additionalProperties": false,
+        "properties": {
+          "includeBackground": {
+            "type": "boolean",
+            "description": "Include prior session as background context in handoff summary (default: false)."
+          }
+        }
       }
     }
   }
