@@ -265,20 +265,26 @@ function stripInjectedContext(text: string): string {
   }
 
   let cleaned = text;
-  // Strip large agenr-injected context blocks.
+  // Strip large agenr-injected context blocks (## Recent session/memory/Relevant memory
+  // and any ## agenr Memory Context sub-blocks that follow them).
   cleaned = cleaned.replace(
-    /(?:^|\n)## (?:Recent session|Recent memory|Relevant memory)\b[\s\S]*?(?=\n##\s|$)/g,
+    /(?:^|\n)## (?:Recent session|Recent memory|Relevant memory)\b[\s\S]*?(?=(?:^|\n)(?:Conversation info|\[(?:user|assistant)\]:|AGENR SIGNAL:|=== )|$)/g,
+    "",
+  );
+  // Strip standalone ## agenr Memory Context blocks (if not already caught above).
+  cleaned = cleaned.replace(
+    /(?:^|\n)## agenr Memory Context[\s\S]*?(?=(?:^|\n)(?:Conversation info|\[(?:user|assistant)\]:|AGENR SIGNAL:|=== )|$)/g,
     "",
   );
   // Strip signal headline and following bullet entries.
-  cleaned = cleaned.replace(/^\s*AGENR SIGNAL:.*(?:\n\s*-\s\[[^\n]*)*/gm, "");
+  cleaned = cleaned.replace(/^\s*AGENR SIGNAL:.*(?:\n\s*-\s*\[[^\n]*)*/gm, "");
   // Strip OpenClaw conversation metadata JSON block.
   cleaned = cleaned.replace(
-    /Conversation info \(untrusted metadata\):\s*```json[\s\S]*?```/g,
+    /Conversation info \(untrusted metadata\):\s*\`\`\`json[\s\S]*?\`\`\`/g,
     "",
   );
-  // Strip OpenClaw prompt timestamp prefix.
-  cleaned = stripPromptMetadata(cleaned);
+  // Strip OpenClaw prompt timestamp prefixes.
+  cleaned = cleaned.replace(/\[\w{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2} (?:[A-Z]{2,5}|GMT[+-]\d{1,2})\] /g, "");
 
   return cleaned.trim();
 }
@@ -438,7 +444,8 @@ async function readMessagesFromJsonl(filePath: string): Promise<HandoffMessage[]
 
 async function findPriorResetFile(sessionsDir: string, currentSessionFile: string): Promise<string | null> {
   try {
-    const currentUuid = path.basename(currentSessionFile, ".jsonl");
+    const currentBasename = path.basename(currentSessionFile);
+    const currentUuid = currentBasename.split(".jsonl")[0];
     const entries = await fs.promises.readdir(sessionsDir);
     const resetEntries = entries.filter((entry) => /\.jsonl\.reset\./.test(entry));
     const candidates = resetEntries.filter((entry) => entry.split(".jsonl")[0] !== currentUuid);
