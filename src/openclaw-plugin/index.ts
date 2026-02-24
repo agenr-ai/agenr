@@ -755,7 +755,7 @@ async function runHandoffForSession(opts: {
   }
 
   if (!opts.sessionFile) {
-    opts.logger?.debug?.("[agenr] before_reset: no sessionFile in event, using fallback");
+    opts.logger?.debug?.(`[agenr] ${opts.source}: no sessionFile in event, using fallback`);
   }
 
   // Phase 1: store fallback immediately so the next session can always read it.
@@ -777,10 +777,10 @@ async function runHandoffForSession(opts: {
     };
     try {
       await runStoreTool(opts.agenrPath, fallbackEntry, opts.storeConfig, opts.defaultProject);
-      opts.logger?.debug?.("[agenr] before_reset: fallback handoff stored");
+      opts.logger?.debug?.(`[agenr] ${opts.source}: fallback handoff stored`);
     } catch (err) {
       opts.logger?.debug?.(
-        `[agenr] before_reset: fallback store failed: ${err instanceof Error ? err.message : String(err)}`,
+        `[agenr] ${opts.source}: fallback store failed: ${err instanceof Error ? err.message : String(err)}`,
       );
       fallbackEntrySubject = null;
     }
@@ -832,16 +832,16 @@ async function runHandoffForSession(opts: {
 
         try {
           await runStoreTool(opts.agenrPath, llmEntry, opts.storeConfig, opts.defaultProject);
-          opts.logger?.debug?.("[agenr] before_reset: LLM handoff stored");
+          opts.logger?.debug?.(`[agenr] ${opts.source}: LLM handoff stored`);
         } catch (err) {
           opts.logger?.debug?.(
-            `[agenr] before_reset: LLM handoff store failed: ${err instanceof Error ? err.message : String(err)}`,
+            `[agenr] ${opts.source}: LLM handoff store failed: ${err instanceof Error ? err.message : String(err)}`,
           );
         }
       })
       .catch((err) => {
         opts.logger?.debug?.(
-          `[agenr] before_reset: LLM handoff rejected: ${err instanceof Error ? err.message : String(err)}`,
+          `[agenr] ${opts.source}: LLM handoff rejected: ${err instanceof Error ? err.message : String(err)}`,
         );
       });
   }
@@ -1152,7 +1152,7 @@ const plugin = {
             return;
           }
 
-          const agentId = ctx.agentId?.trim() || sessionKey.split(":")[0] || "main";
+          const agentId = ctx.agentId?.trim() || "main";
           const sessionsDir =
             config?.sessionsDir ?? path.join(os.homedir(), `.openclaw/agents/${agentId}/sessions`);
           const agenrPath = resolveAgenrPath(config);

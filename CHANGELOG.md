@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.8.28] - 2026-02-23
+## [0.8.28] - 2026-02-24
 
 ### Fixed
 - command hook fires before_reset handoff logic for RPC-triggered /new (closes #210)
