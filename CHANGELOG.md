@@ -8,8 +8,22 @@
   console.log for production visibility
 
 ### Added
+- Opt-in `handoff.includeBackground` config flag for handoff summarizer: when
+  enabled, prior session messages are included as background context with strong
+  section headers so the LLM can orient without blending stale facts into the
+  current session summary (#235)
+- New system prompt variant with anti-hallucination instructions for background
+  context mode ("BACKGROUND CONTEXT (DO NOT SUMMARIZE)" / "SUMMARIZE THIS
+  SESSION ONLY" section headers)
 - Optional `handoff.logDir` config: when set, writes the full LLM request
   transcript and response to files for prompt tuning and debugging (#235)
+
+### Changed
+- Default handoff behavior unchanged: current session only, no prior messages
+
+### Removed
+- All temporary [AGENR-PROBE] debug logging from openclaw-plugin (replaced with
+  clean operational logs where needed)
 
 ## [0.8.37] - 2026-02-24
 
