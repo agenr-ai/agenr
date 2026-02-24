@@ -1265,8 +1265,37 @@ describe("before_reset handoff store", () => {
 
     expect(runStoreMock).toHaveBeenCalledTimes(2);
     const secondPayload = runStoreMock.mock.calls[1]?.[1] as { entries: Array<{ importance: number; content: string }> };
-    expect(secondPayload.entries[0]?.importance).toBe(10);
+    expect(secondPayload.entries[0]?.importance).toBe(9);
     expect(secondPayload.entries[0]?.content).toBe("WORKING ON: Completed issue #199 handoff summary.");
+  });
+
+  it("stores LLM upgrade entry at importance 9", async () => {
+    vi.spyOn(__testing, "summarizeSessionForHandoff").mockResolvedValue("WORKING ON: Keep handoff state.");
+    const runStoreMock = vi.spyOn(pluginTools, "runStoreTool").mockResolvedValue({
+      content: [{ type: "text", text: "Stored 1 entries." }],
+    });
+
+    const api = makeApi();
+    plugin.register(api);
+    const handler = getBeforeResetHandler(api);
+
+    await handler(
+      {
+        sessionFile: "/tmp/current-session.jsonl",
+        messages: [
+          { role: "user", content: "Carry this to the next session." },
+          { role: "assistant", content: "I will keep the handoff summary concise." },
+        ],
+      },
+      { sessionKey: "agent:main:handoff-summary-importance", agentId: "main" },
+    );
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(runStoreMock).toHaveBeenCalledTimes(2);
+    const llmPayload = runStoreMock.mock.calls[1]?.[1] as { entries: Array<{ importance: number; content: string }> };
+    expect(llmPayload.entries[0]?.importance).toBe(9);
+    expect(llmPayload.entries[0]?.content).toBe("WORKING ON: Keep handoff state.");
   });
 
   it("keeps fallback entry when summarizer returns null", async () => {

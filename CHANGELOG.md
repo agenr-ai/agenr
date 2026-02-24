@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.35] - 2026-02-24
+
+### Fixed
+- plugin: LLM handoff entry now stored at importance 9 instead of 10, preventing accumulation of stale handoff entries that outlive the session-start browse retirement window (#228)
+- plugin: removed ~20 AGENR-PROBE debug stderr writes from openclaw plugin that were added during handoff trigger debugging (#228)
+
 ## [0.8.34] - 2026-02-24
 
 ### Fixed

@@ -743,9 +743,6 @@ async function runHandoffForSession(opts: {
 }): Promise<void> {
   const sessionId = opts.sessionId.trim() || opts.sessionKey;
   if (handoffSeenSessionIds.has(sessionId)) {
-    process.stderr.write(
-      `[AGENR-PROBE] ${opts.source} hook: dedup skip sessionId=${sessionId} source=${opts.source}\n`,
-    );
     return;
   }
   handoffSeenSessionIds.add(sessionId);
@@ -758,7 +755,6 @@ async function runHandoffForSession(opts: {
 
   const normalizedMessages = normalizeHandoffMessages(opts.messages);
   if (normalizedMessages.length === 0) {
-    process.stderr.write(`[AGENR-PROBE] ${opts.source} hook: no messages after normalization source=${opts.source}\n`);
     return;
   }
 
@@ -830,7 +826,7 @@ async function runHandoffForSession(opts: {
           entries: [
             {
               type: "event",
-              importance: 10,
+              importance: 9,
               subject: `session handoff ${timestamp}`,
               content: summary,
               tags: ["handoff", "session"],
@@ -880,7 +876,6 @@ const plugin = {
 
   register(api: PluginApi): void {
     const config = api.pluginConfig as AgenrPluginConfig | undefined;
-    process.stderr.write(`[AGENR-PROBE] register() called pluginId=${api.id}\n`);
 
     api.on(
       "before_prompt_build",
@@ -938,9 +933,6 @@ const plugin = {
               }
 
               if (Array.isArray(messages) && messages.length > 0) {
-                process.stderr.write(
-                  `[AGENR-PROBE] session_start: triggering handoff for prev file=${previousSessionFile} msgs=${messages.length}\n`,
-                );
                 void testingApi
                   .runHandoffForSession({
                     messages,
@@ -966,15 +958,7 @@ const plugin = {
                       `[agenr] session_start: handoff fire-and-forget failed: ${err instanceof Error ? err.message : String(err)}`,
                     );
                   });
-              } else if (Array.isArray(messages)) {
-                process.stderr.write(
-                  `[AGENR-PROBE] session_start: skipping handoff - no messages in prev file=${previousSessionFile}\n`,
-                );
               }
-            } else {
-              process.stderr.write(
-                "[AGENR-PROBE] session_start: skipping handoff - no previous session file found\n",
-              );
             }
 
             const seed = buildSemanticSeed(previousTurns, event.prompt ?? "");
@@ -1096,33 +1080,19 @@ const plugin = {
         }
       },
     );
-    process.stderr.write(`[AGENR-PROBE] before_prompt_build hook registered\n`);
-
-    (api as unknown as { on: (hook: string, handler: (event: unknown, ctx: PluginHookAgentContext) => Promise<void>) => void }).on("session_start", async (_event: unknown, ctx: PluginHookAgentContext): Promise<void> => {
-      process.stderr.write(
-        `[AGENR-PROBE] session_start FIRED sessionKey=${(ctx as { sessionKey?: string }).sessionKey ?? "none"}\n`,
-      );
-    });
 
     api.on("before_reset", async (event, ctx): Promise<void> => {
       try {
-        process.stderr.write(
-          `[AGENR-PROBE] before_reset FIRED sessionKey=${ctx.sessionKey ?? "none"} msgs=${Array.isArray(event.messages) ? event.messages.length : "non-array"} source=before_reset\n`,
-        );
         api.logger.info?.(`[agenr] before_reset: fired sessionKey=${ctx.sessionKey ?? "none"} agentId=${ctx.agentId ?? "none"} msgs=${Array.isArray(event.messages) ? event.messages.length : "non-array"} sessionFile=${event.sessionFile ?? "none"} source=before_reset`);
         const sessionKey = ctx.sessionKey;
         if (!sessionKey) {
           return;
         }
-        process.stderr.write(`[AGENR-PROBE] before_reset: sessionKey ok source=before_reset\n`);
 
         const messages = event.messages;
         if (!Array.isArray(messages) || messages.length === 0) {
           return;
         }
-        process.stderr.write(
-          `[AGENR-PROBE] before_reset: messages ok count=${messages.length} source=before_reset\n`,
-        );
 
         const currentSessionFile =
           typeof event.sessionFile === "string" && event.sessionFile.trim()
@@ -1160,26 +1130,18 @@ const plugin = {
         );
       }
     });
-    process.stderr.write(`[AGENR-PROBE] before_reset hook registered\n`);
 
     (api as unknown as CommandHookApi).on(
       "command",
       async (event: CommandHookEvent, ctx: PluginHookAgentContext): Promise<void> => {
         try {
-          process.stderr.write(
-            `[AGENR-PROBE] command hook FIRED action=${event.action ?? "none"} sessionKey=${event.sessionKey ?? "none"} source=${String(event.context?.commandSource ?? "unknown")}\n`,
-          );
 
           if (event.action !== "new" && event.action !== "reset") {
-            process.stderr.write(
-              `[AGENR-PROBE] command hook: skipping action=${event.action ?? "none"} source=command\n`,
-            );
             return;
           }
 
           const sessionKey = event.sessionKey;
           if (!sessionKey) {
-            process.stderr.write("[AGENR-PROBE] command hook: no sessionKey, skipping source=command\n");
             return;
           }
 
@@ -1187,9 +1149,6 @@ const plugin = {
             (event.context?.sessionEntry as { sessionFile?: string } | undefined)?.sessionFile ?? null;
           const sessionId =
             (event.context?.sessionEntry as { sessionId?: string } | undefined)?.sessionId ?? sessionKey;
-          process.stderr.write(
-            `[AGENR-PROBE] command hook: new/reset detected sessionKey=${sessionKey} sessionFile=${sessionFile ?? "none"} source=command\n`,
-          );
           api.logger.info?.(
             `[agenr] command hook: fired action=${event.action} sessionKey=${sessionKey} sessionFile=${sessionFile ?? "none"} source=command`,
           );
@@ -1197,15 +1156,9 @@ const plugin = {
           let messages: unknown[] = [];
           if (sessionFile) {
             messages = await testingApi.readAndParseSessionJsonl(sessionFile);
-            process.stderr.write(
-              `[AGENR-PROBE] command hook: parsed ${messages.length} messages from JSONL source=command\n`,
-            );
-          } else {
-            process.stderr.write("[AGENR-PROBE] command hook: no sessionFile available source=command\n");
           }
 
           if (messages.length === 0) {
-            process.stderr.write("[AGENR-PROBE] command hook: no messages, skipping handoff source=command\n");
             return;
           }
 
@@ -1234,8 +1187,6 @@ const plugin = {
             logger: api.logger,
             source: "command",
           });
-
-          process.stderr.write("[AGENR-PROBE] command hook: handoff complete source=command\n");
         } catch (err) {
           api.logger.warn(
             `agenr plugin command hook failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -1243,7 +1194,6 @@ const plugin = {
         }
       },
     );
-    process.stderr.write("[AGENR-PROBE] command hook registered\n");
 
     if (api.registerTool) {
       if (config?.enabled === false) {
