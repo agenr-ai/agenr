@@ -886,7 +886,7 @@ describe("openclaw plugin tool runners", () => {
     expect(payload[0]?.source).toEqual({ file: "/tmp/source.txt", context: "extracted via agenr_extract" });
   });
 
-  it("runRetireTool returns success message on exit code 0", async () => {
+  it("runRetireTool includes --force in args", async () => {
     let capturedArgs: string[] = [];
     spawnMock.mockImplementationOnce((_cmd: string, args: string[]) => {
       capturedArgs = args;
@@ -899,6 +899,20 @@ describe("openclaw plugin tool runners", () => {
     expect(capturedArgs).toContain("--id");
     const idIdx = capturedArgs.indexOf("--id");
     expect(capturedArgs[idIdx + 1]).toBe("test-id-123");
+    expect(capturedArgs).toContain("--force");
+  });
+
+  it("runRetireTool does not pass stdinPayload to runAgenrCommand", async () => {
+    let childRef: MockChildProcess | undefined;
+    spawnMock.mockImplementationOnce(() => {
+      const child = createMockChild({ code: 0 });
+      childRef = child;
+      return child;
+    });
+
+    await runRetireTool("/path/to/agenr", { entry_id: "test-id-123" });
+
+    expect(childRef?.stdin.write).not.toHaveBeenCalled();
   });
 
   it("returns timeout message when command exceeds timeout", async () => {

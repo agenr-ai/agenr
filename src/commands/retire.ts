@@ -17,6 +17,7 @@ export interface RetireCommandOptions {
   persist?: boolean;
   contains?: boolean;
   dryRun?: boolean;
+  force?: boolean;
   reason?: string;
   db?: string;
   id?: string;
@@ -185,22 +186,24 @@ export async function runRetireCommand(
       return { exitCode: 0 };
     }
 
-    const requiresGuardrail = candidates.some((candidate) => candidate.importance >= 8);
-    let confirmed = false;
-    if (requiresGuardrail) {
-      const typed = await resolvedDeps.textInputFn("Type CONFIRM to retire high-importance entries");
-      confirmed = typed === "CONFIRM";
-      if (!confirmed) {
-        clack.log.warn("Retirement canceled.", clackOutput);
-        clack.outro(undefined, clackOutput);
-        return { exitCode: 1 };
-      }
-    } else {
-      confirmed = await resolvedDeps.confirmFn(`Retire ${candidates.length} matching entr${candidates.length === 1 ? "y" : "ies"}?`);
-      if (!confirmed) {
-        clack.log.warn("Retirement canceled.", clackOutput);
-        clack.outro(undefined, clackOutput);
-        return { exitCode: 1 };
+    if (options.force !== true) {
+      const requiresGuardrail = candidates.some((candidate) => candidate.importance >= 8);
+      if (requiresGuardrail) {
+        const typed = await resolvedDeps.textInputFn("Type CONFIRM to retire high-importance entries");
+        if (typed !== "CONFIRM") {
+          clack.log.warn("Retirement canceled.", clackOutput);
+          clack.outro(undefined, clackOutput);
+          return { exitCode: 1 };
+        }
+      } else {
+        const confirmed = await resolvedDeps.confirmFn(
+          `Retire ${candidates.length} matching entr${candidates.length === 1 ? "y" : "ies"}?`,
+        );
+        if (!confirmed) {
+          clack.log.warn("Retirement canceled.", clackOutput);
+          clack.outro(undefined, clackOutput);
+          return { exitCode: 1 };
+        }
       }
     }
 

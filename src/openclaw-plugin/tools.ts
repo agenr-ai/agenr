@@ -449,9 +449,9 @@ export async function runRetireTool(agenrPath: string, params: Record<string, un
   if (persist) {
     args.push("--persist");
   }
+  args.push("--force");
 
-  // Keep piping confirmation for the clack prompt.
-  const result = await runAgenrCommand(agenrPath, args, "y\n");
+  const result = await runAgenrCommand(agenrPath, args);
 
   if (result.timedOut) {
     return {

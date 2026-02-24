@@ -549,6 +549,7 @@ export function createProgram(): Command {
     .option("--persist", "Write to retirements ledger so retirement survives re-ingest")
     .option("--contains", "Use substring matching instead of exact match")
     .option("--dry-run", "Preview matches without retiring")
+    .option("--force", "Skip confirmation prompts (for programmatic use)")
     .option("--reason <text>", "Reason for retirement")
     .option("--db <path>", "Path to database file")
     .option("--id <id>", "Retire a specific entry by its ID (overrides subject matching)")
@@ -568,6 +569,7 @@ export function createProgram(): Command {
         persist: opts.persist === true,
         contains: opts.contains === true,
         dryRun: opts.dryRun === true,
+        force: opts.force === true,
         reason: opts.reason as string | undefined,
         db: opts.db as string | undefined,
         id: entryId,
