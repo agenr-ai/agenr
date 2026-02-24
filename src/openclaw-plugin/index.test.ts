@@ -277,6 +277,7 @@ describe("before_prompt_build recall behavior", () => {
       "plugin-scope",
       undefined,
       { context: "browse", since: "1d", limit: 20 },
+      undefined,
     );
     expect(runRecallMock).toHaveBeenNthCalledWith(
       2,
@@ -284,6 +285,8 @@ describe("before_prompt_build recall behavior", () => {
       expect.any(Number),
       "plugin-scope",
       prompt,
+      undefined,
+      undefined,
     );
   });
 });
@@ -307,6 +310,7 @@ describe("before_prompt_build cross-session context injection", () => {
       undefined,
       undefined,
       { context: "browse", since: "1d", limit: 20 },
+      undefined,
     );
   });
 
@@ -361,6 +365,8 @@ describe("before_prompt_build cross-session context injection", () => {
       expect.any(Number),
       undefined,
       "U: previous user | A: previous assistant",
+      undefined,
+      undefined,
     );
     expect(result?.prependContext).toContain("## Recent session");
     expect(result?.prependContext).toContain("## Recent memory");

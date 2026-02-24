@@ -780,6 +780,7 @@ describe("runHandoffForSession", () => {
       }),
       {},
       undefined,
+      undefined,
     );
     expect(llmStoreHappenedBeforeResolve).toBe(true);
   });
@@ -820,6 +821,7 @@ describe("runHandoffForSession", () => {
         ],
       }),
       {},
+      undefined,
       undefined,
     );
   });
@@ -880,7 +882,7 @@ describe("runHandoffForSession", () => {
     expect(runRetireMock).toHaveBeenCalledWith("/tmp/agenr", {
       entry_id: "fallback-entry-221",
       reason: "superseded by LLM handoff",
-    });
+    }, undefined);
   });
 });
 

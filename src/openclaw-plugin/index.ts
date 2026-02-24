@@ -536,6 +536,7 @@ async function retireFallbackHandoffEntries(params: {
   agenrPath: string;
   budget: number;
   defaultProject?: string;
+  dbPath?: string;
   fallbackSubject: string;
   logger: PluginApi["logger"];
   source: "before_reset" | "command" | "session_start";
@@ -545,7 +546,7 @@ async function retireFallbackHandoffEntries(params: {
       context: "browse",
       since: "1d",
       limit: 100,
-    });
+    }, params.dbPath);
     if (!browseResult) {
       return;
     }
@@ -584,7 +585,7 @@ async function retireFallbackHandoffEntries(params: {
         runRetireTool(params.agenrPath, {
           entry_id: entryId,
           reason: "superseded by LLM handoff",
-        })
+        }, params.dbPath)
           .then(() => undefined)
           .catch((err) => {
             params.logger.debug?.(
@@ -634,6 +635,7 @@ async function runHandoffForSession(opts: {
   sessionsDir: string;
   logger: PluginLogger | undefined;
   source: "before_reset" | "command" | "session_start";
+  dbPath?: string;
 }): Promise<void> {
   const sessionId = opts.sessionId.trim() || opts.sessionKey;
   if (handoffSeenSessionIds.has(sessionId)) {
@@ -675,7 +677,7 @@ async function runHandoffForSession(opts: {
       ],
     };
     try {
-      await runStoreTool(opts.agenrPath, fallbackEntry, opts.storeConfig, opts.defaultProject);
+      await runStoreTool(opts.agenrPath, fallbackEntry, opts.storeConfig, opts.defaultProject, opts.dbPath);
       console.log(`[agenr] ${opts.source}: fallback handoff stored`);
     } catch (err) {
       console.log(
@@ -726,7 +728,7 @@ async function runHandoffForSession(opts: {
       };
 
       try {
-        await runStoreTool(opts.agenrPath, llmEntry, opts.storeConfig, opts.defaultProject);
+        await runStoreTool(opts.agenrPath, llmEntry, opts.storeConfig, opts.defaultProject, opts.dbPath);
         console.log(`[agenr] ${opts.source}: LLM handoff stored`);
       } catch (err) {
         console.log(
@@ -805,7 +807,7 @@ const plugin = {
                 context: "browse",
                 since: "1d",
                 limit: 20,
-              }),
+              }, config?.dbPath),
             ]);
 
             if (previousSessionFile) {
@@ -838,6 +840,7 @@ const plugin = {
                     sessionsDir,
                     logger: api.logger,
                     source: "session_start",
+                    dbPath: config?.dbPath,
                   });
                   console.log("[agenr] session_start: runHandoffForSession completed");
                 } catch (err) {
@@ -861,7 +864,7 @@ const plugin = {
                   browseIds.add(id);
                 }
               }
-              const rawSemantic = await runRecall(agenrPath, budget, project, seed);
+              const rawSemantic = await runRecall(agenrPath, budget, project, seed, undefined, config?.dbPath);
               if (rawSemantic) {
                 rawSemantic.results = rawSemantic.results.filter((item) => {
                   const id =
@@ -891,7 +894,7 @@ const plugin = {
                     runRetireTool(agenrPath, {
                       entry_id: entryId,
                       reason: "consumed at session start",
-                    })
+                    }, config?.dbPath)
                       .then(() => undefined)
                       .catch((err) => {
                         api.logger.debug?.(
@@ -1010,6 +1013,7 @@ const plugin = {
           sessionsDir,
           logger: api.logger,
           source: "before_reset",
+          dbPath: config?.dbPath,
         });
       } catch (err) {
         api.logger.warn(
@@ -1073,6 +1077,7 @@ const plugin = {
             sessionsDir,
             logger: api.logger,
             source: "command",
+            dbPath: config?.dbPath,
           });
 
           console.log("[agenr] command: handoff complete");
@@ -1128,7 +1133,8 @@ const plugin = {
             }
             const agenrPath = resolveAgenrPath(runtimeConfig);
             const defaultProject = runtimeConfig?.project?.trim() || undefined;
-            return runRecallTool(agenrPath, params, defaultProject);
+            const dbPath = runtimeConfig?.dbPath;
+            return runRecallTool(agenrPath, params, defaultProject, dbPath);
           },
         },
       );
@@ -1189,11 +1195,13 @@ const plugin = {
               ...(runtimeConfig as Record<string, unknown> | undefined),
               logger: api.logger,
             };
+            const dbPath = runtimeConfig?.dbPath;
             return runStoreTool(
               agenrPath,
               params,
               toolConfig,
               defaultProject,
+              dbPath,
             );
           },
         },
@@ -1215,7 +1223,8 @@ const plugin = {
               return makeDisabledToolResult();
             }
             const agenrPath = resolveAgenrPath(runtimeConfig);
-            return runExtractTool(agenrPath, params);
+            const dbPath = runtimeConfig?.dbPath;
+            return runExtractTool(agenrPath, params, dbPath);
           },
         },
       );
@@ -1236,7 +1245,8 @@ const plugin = {
               return makeDisabledToolResult();
             }
             const agenrPath = resolveAgenrPath(runtimeConfig);
-            return runRetireTool(agenrPath, params);
+            const dbPath = runtimeConfig?.dbPath;
+            return runRetireTool(agenrPath, params, dbPath);
           },
         },
       );
