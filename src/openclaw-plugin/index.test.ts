@@ -1319,6 +1319,23 @@ describe("before_reset handoff store", () => {
   });
 });
 
+describe("summarizeSessionForHandoff logging skip paths", () => {
+  it("returns null for short transcripts without throwing", async () => {
+    const api = makeApi();
+    const summaryPromise = __testing.summarizeSessionForHandoff(
+      [
+        { role: "user", content: "short one" },
+        { role: "assistant", content: "short two" },
+      ],
+      "/tmp/agenr-missing-sessions-dir",
+      "/tmp/current-session-short.jsonl",
+      api.logger,
+    );
+
+    await expect(summaryPromise).resolves.toBeNull();
+  });
+});
+
 describe("command hook handoff", () => {
   it("fires handoff for action=new with valid sessionFile", async () => {
     vi.spyOn(__testing, "summarizeSessionForHandoff").mockResolvedValue(null);

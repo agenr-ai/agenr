@@ -534,12 +534,12 @@ async function summarizeSessionForHandoff(
     let transcript = buildMergedTranscript(priorSlice, priorSurface, currentSlice, currentSurface);
     const nonHeaderLineCount = countTranscriptContentLines(transcript);
     if (nonHeaderLineCount < 3) {
-      logger.debug?.("[agenr] before_reset: skipping LLM summary - reason: short transcript");
+      console.log("[agenr] before_reset: skipping LLM summary - reason: short transcript");
       return null;
     }
 
     if (currentSlice.length < 5 && priorSlice.length === 0) {
-      logger.debug?.("[agenr] before_reset: skipping LLM summary - reason: too few messages");
+      console.log("[agenr] before_reset: skipping LLM summary - reason: too few messages");
       return null;
     }
 
@@ -557,7 +557,7 @@ async function summarizeSessionForHandoff(
     try {
       llmClient = createLlmClient({});
     } catch (err) {
-      logger.debug?.("[agenr] before_reset: skipping LLM summary - reason: LLM client init failed");
+      console.log("[agenr] before_reset: skipping LLM summary - reason: LLM client init failed");
       return null;
     }
 
@@ -565,7 +565,7 @@ async function summarizeSessionForHandoff(
     const credentials = llmClient.credentials;
     const apiKey = typeof credentials.apiKey === "string" ? credentials.apiKey.trim() : "";
     if (!apiKey) {
-      logger.debug?.("[agenr] before_reset: no apiKey available, skipping LLM summary");
+      console.log("[agenr] before_reset: no apiKey available, skipping LLM summary");
       return null;
     }
 
@@ -575,7 +575,7 @@ async function summarizeSessionForHandoff(
       tools: [],
     };
 
-    logger.debug?.(
+    console.log(
       `[agenr] before_reset: sending to LLM model=${resolvedModel.model} chars=${transcript.length} currentMsgs=${currentSlice.length} priorMsgs=${priorSlice.length}`,
     );
     const assistantMsg = await runSimpleStream({
@@ -587,19 +587,19 @@ async function summarizeSessionForHandoff(
     });
 
     if (assistantMsg.stopReason === "error") {
-      logger.debug?.("[agenr] before_reset: skipping LLM summary - reason: LLM error stop");
+      console.log("[agenr] before_reset: skipping LLM summary - reason: LLM error stop");
       return null;
     }
 
     const summaryText = extractAssistantSummaryText(assistantMsg);
     if (!summaryText) {
-      logger.debug?.("[agenr] before_reset: skipping LLM summary - reason: empty summary text");
+      console.log("[agenr] before_reset: skipping LLM summary - reason: empty summary text");
       return null;
     }
-    logger.debug?.(`[agenr] before_reset: LLM summary received chars=${summaryText.length}`);
+    console.log(`[agenr] before_reset: LLM summary received chars=${summaryText.length}`);
     return summaryText;
   } catch (err) {
-    logger.debug?.(
+    console.log(
       `[agenr] before_reset: summarize handoff failed: ${err instanceof Error ? err.message : String(err)}`,
     );
     return null;
