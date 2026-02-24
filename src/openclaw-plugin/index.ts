@@ -153,6 +153,7 @@ interface CommandHookApi {
 
 const HANDOFF_TRANSCRIPT_MAX_MESSAGES = 50;
 const HANDOFF_TRANSCRIPT_MAX_CHARS = 8000;
+const MILLIS_PER_DAY = 24 * 60 * 60 * 1000;
 
 const HANDOFF_SUMMARY_SYSTEM_PROMPT = `You are a session summarizer for an AI agent memory system. Your job is
 to produce a concise handoff note from a conversation transcript so the
@@ -175,6 +176,46 @@ the project or system being worked on (e.g. "Working on agenr plugin
 
 KEY FINDINGS: Decisions, discoveries, or conclusions reached this
 session.
+
+OPEN THREADS: Unresolved questions or next steps. Write "None" if
+everything was wrapped up.
+
+IMPORTANT FACTS: Stateful facts only - file paths, version numbers,
+env states, config values. Do NOT repeat decisions already in KEY
+FINDINGS. Write "None" if nothing new.
+
+Keep the total response under 500 words. Plain text only.`;
+
+const HANDOFF_SUMMARY_SYSTEM_PROMPT_WITH_BACKGROUND = `You are a session summarizer for an AI agent memory system. Your job is
+to produce a concise handoff note so the next session can orient quickly.
+
+The transcript has two clearly labeled sections:
+
+1. "BACKGROUND CONTEXT (DO NOT SUMMARIZE)" - a prior session included
+   ONLY for orientation. Do NOT include facts, versions, or states from
+   this section in your summary. It is there so you understand what came
+   before.
+
+2. "SUMMARIZE THIS SESSION ONLY" - the session that just ended. Your
+   summary must cover ONLY this section.
+
+If the current session contains no substantive work (e.g. just greetings
+or small talk), write "No significant activity" for WORKING ON and
+"None" for all other sections. Do NOT fall back to summarizing the
+background context.
+
+Only include information explicitly present in the current session
+transcript. Do not infer or invent details.
+
+Produce these sections in plain text (no markdown, no bullet symbols,
+use plain dashes for lists):
+
+WORKING ON: One to two sentences on the main task or topic, including
+the project or system being worked on (e.g. "Working on agenr plugin
+(#199) in the agenr-ai/agenr repo.").
+
+KEY FINDINGS: Decisions, discoveries, or conclusions reached in the
+current session only.
 
 OPEN THREADS: Unresolved questions or next steps. Write "None" if
 everything was wrapped up.
@@ -365,6 +406,43 @@ async function readMessagesFromJsonl(filePath: string): Promise<HandoffMessage[]
   }
 }
 
+async function findPriorResetFile(sessionsDir: string, currentSessionFile: string): Promise<string | null> {
+  try {
+    const currentUuid = path.basename(currentSessionFile, ".jsonl");
+    const entries = await fs.promises.readdir(sessionsDir);
+    const resetEntries = entries.filter((entry) => /\.jsonl\.reset\./.test(entry));
+    const candidates = resetEntries.filter((entry) => entry.split(".jsonl")[0] !== currentUuid);
+    if (candidates.length === 0) {
+      return null;
+    }
+
+    const stats = await Promise.all(
+      candidates.map(async (entry) => {
+        const filePath = path.join(sessionsDir, entry);
+        const fileStats = await fs.promises.stat(filePath);
+        return {
+          filePath,
+          mtime: fileStats.mtime,
+        };
+      }),
+    );
+
+    stats.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
+    const latest = stats[0];
+    if (!latest) {
+      return null;
+    }
+
+    const ageMs = Date.now() - latest.mtime.getTime();
+    if (ageMs < MILLIS_PER_DAY) {
+      return latest.filePath;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function buildTranscript(messages: HandoffMessage[], surface: string): string {
   const cleanMessages = messages
     .map((message) => ({ ...message, content: message.content.trim() }))
@@ -377,11 +455,77 @@ function buildTranscript(messages: HandoffMessage[], surface: string): string {
   return lines.join("\n");
 }
 
+function buildMergedTranscript(
+  priorMessages: HandoffMessage[],
+  priorSurface: string,
+  currentMessages: HandoffMessage[],
+  currentSurface: string,
+): string {
+  const cleanPrior = priorMessages
+    .map((message) => ({ ...message, content: message.content.trim() }))
+    .filter((message) => message.content.length > 0);
+  const cleanCurrent = currentMessages
+    .map((message) => ({ ...message, content: message.content.trim() }))
+    .filter((message) => message.content.length > 0);
+
+  const lines: string[] = [];
+  if (cleanPrior.length > 0) {
+    lines.push("=== BACKGROUND CONTEXT (DO NOT SUMMARIZE) ===");
+    lines.push(`Prior session ${formatHandoffTimestamp(cleanPrior[0]?.timestamp ?? "")} [${priorSurface}]`);
+    lines.push(...cleanPrior.map((message) => `[${message.role}]: ${message.content}`));
+    lines.push("");
+  }
+
+  lines.push("=== SUMMARIZE THIS SESSION ONLY ===");
+  lines.push(
+    `Current session ${formatHandoffTimestamp(cleanCurrent[0]?.timestamp ?? "")} [${currentSurface}] (ended)`,
+  );
+  lines.push(...cleanCurrent.map((message) => `[${message.role}]: ${message.content}`));
+
+  return lines.join("\n");
+}
+
 function countTranscriptContentLines(transcript: string): number {
   return transcript
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line.length > 0 && !line.startsWith("---")).length;
+}
+
+function capTranscriptLength(params: {
+  priorMessages: HandoffMessage[];
+  priorSurface: string;
+  currentMessages: HandoffMessage[];
+  currentSurface: string;
+  maxChars: number;
+}): string {
+  let cappedPrior = [...params.priorMessages];
+  let transcript = buildMergedTranscript(
+    cappedPrior,
+    params.priorSurface,
+    params.currentMessages,
+    params.currentSurface,
+  );
+
+  while (transcript.length > params.maxChars && cappedPrior.length > 0) {
+    cappedPrior = cappedPrior.slice(1);
+    transcript = buildMergedTranscript(
+      cappedPrior,
+      params.priorSurface,
+      params.currentMessages,
+      params.currentSurface,
+    );
+  }
+
+  if (transcript.length > params.maxChars) {
+    transcript = transcript.slice(-params.maxChars);
+    const firstNewline = transcript.indexOf("\n");
+    if (firstNewline > 0) {
+      transcript = transcript.slice(firstNewline + 1);
+    }
+  }
+
+  return transcript;
 }
 
 function extractAssistantSummaryText(message: unknown): string {
@@ -416,6 +560,7 @@ async function summarizeSessionForHandoff(
   sessionsDir: string,
   currentSessionFile: string,
   logger: PluginApi["logger"],
+  includeBackground: boolean,
   streamSimpleImpl?: StreamSimpleFn,
 ): Promise<string | null> {
   try {
@@ -433,14 +578,39 @@ async function summarizeSessionForHandoff(
       return null;
     }
 
-    let transcript = buildTranscript(currentSlice, currentSurface);
+    let priorSlice: HandoffMessage[] = [];
+    let priorSurface = "prior session";
+    let transcript = "";
+    if (includeBackground) {
+      const priorBudget = HANDOFF_TRANSCRIPT_MAX_MESSAGES - currentSlice.length;
+      const priorFile = await findPriorResetFile(sessionsDir, currentSessionFile);
+      if (priorFile && priorBudget > 0) {
+        const priorAllMessages = await readMessagesFromJsonl(priorFile);
+        priorSlice = priorAllMessages.slice(-priorBudget);
+        priorSurface = getSurfaceForSessionFile(getBaseSessionPath(priorFile), sessionsJson);
+      }
+      transcript = buildMergedTranscript(priorSlice, priorSurface, currentSlice, currentSurface);
+    } else {
+      transcript = buildTranscript(currentSlice, currentSurface);
+    }
+
     const nonHeaderLineCount = countTranscriptContentLines(transcript);
     if (nonHeaderLineCount < 3) {
       console.log("[agenr] before_reset: skipping LLM summary - reason: short transcript");
       return null;
     }
 
-    if (transcript.length > HANDOFF_TRANSCRIPT_MAX_CHARS) {
+    if (includeBackground) {
+      if (transcript.length > HANDOFF_TRANSCRIPT_MAX_CHARS) {
+        transcript = capTranscriptLength({
+          priorMessages: priorSlice,
+          priorSurface,
+          currentMessages: currentSlice,
+          currentSurface,
+          maxChars: HANDOFF_TRANSCRIPT_MAX_CHARS,
+        });
+      }
+    } else if (transcript.length > HANDOFF_TRANSCRIPT_MAX_CHARS) {
       while (transcript.length > HANDOFF_TRANSCRIPT_MAX_CHARS && currentSlice.length > 1) {
         currentSlice = currentSlice.slice(1);
         transcript = buildTranscript(currentSlice, currentSurface);
@@ -463,15 +633,24 @@ async function summarizeSessionForHandoff(
       return null;
     }
 
+    const systemPrompt = includeBackground
+      ? HANDOFF_SUMMARY_SYSTEM_PROMPT_WITH_BACKGROUND
+      : HANDOFF_SUMMARY_SYSTEM_PROMPT;
     const context = {
-      systemPrompt: HANDOFF_SUMMARY_SYSTEM_PROMPT,
+      systemPrompt,
       messages: [{ role: "user" as const, content: transcript, timestamp: Date.now() }],
       tools: [],
     };
 
-    console.log(
-      `[agenr] before_reset: sending to LLM model=${resolvedModel.model} chars=${transcript.length} msgs=${currentSlice.length}`,
-    );
+    if (includeBackground) {
+      console.log(
+        `[agenr] before_reset: sending to LLM model=${resolvedModel.model} chars=${transcript.length} currentMsgs=${currentSlice.length} priorMsgs=${priorSlice.length}`,
+      );
+    } else {
+      console.log(
+        `[agenr] before_reset: sending to LLM model=${resolvedModel.model} chars=${transcript.length} msgs=${currentSlice.length}`,
+      );
+    }
     const assistantMsg = await runSimpleStream({
       model: resolvedModel.model,
       context,
@@ -633,6 +812,7 @@ async function runHandoffForSession(opts: {
   defaultProject: string | undefined;
   storeConfig: Record<string, unknown>;
   sessionsDir: string;
+  includeBackground?: boolean;
   logger: PluginLogger | undefined;
   source: "before_reset" | "command" | "session_start";
   dbPath?: string;
@@ -689,6 +869,7 @@ async function runHandoffForSession(opts: {
 
   // Phase 2: await LLM upgrade so before_reset does not resolve early.
   if (opts.sessionFile) {
+    const includeBackground = opts.includeBackground ?? false;
     const summary = await testingApi.summarizeSessionForHandoff(
       normalizedMessages,
       opts.sessionsDir,
@@ -697,6 +878,7 @@ async function runHandoffForSession(opts: {
         warn: () => undefined,
         error: () => undefined,
       },
+      includeBackground,
     );
 
     if (summary) {
@@ -750,7 +932,12 @@ const testingApi = {
   getBaseSessionPath,
   getSurfaceForSessionFile,
   readMessagesFromJsonl,
+  findPriorResetFile,
   buildTranscript,
+  buildMergedTranscript,
+  capTranscriptLength,
+  HANDOFF_SUMMARY_SYSTEM_PROMPT,
+  HANDOFF_SUMMARY_SYSTEM_PROMPT_WITH_BACKGROUND,
   summarizeSessionForHandoff,
   runHandoffForSession,
 };
@@ -762,6 +949,7 @@ const plugin = {
 
   register(api: PluginApi): void {
     const config = api.pluginConfig as AgenrPluginConfig | undefined;
+    const includeBackground = config?.handoff?.includeBackground ?? false;
 
     api.on(
       "before_prompt_build",
@@ -838,6 +1026,7 @@ const plugin = {
                       logger: api.logger,
                     },
                     sessionsDir,
+                    includeBackground,
                     logger: api.logger,
                     source: "session_start",
                     dbPath: config?.dbPath,
@@ -1011,6 +1200,7 @@ const plugin = {
           defaultProject,
           storeConfig,
           sessionsDir,
+          includeBackground,
           logger: api.logger,
           source: "before_reset",
           dbPath: config?.dbPath,
@@ -1075,6 +1265,7 @@ const plugin = {
             defaultProject,
             storeConfig,
             sessionsDir,
+            includeBackground,
             logger: api.logger,
             source: "command",
             dbPath: config?.dbPath,

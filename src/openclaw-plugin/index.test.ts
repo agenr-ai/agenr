@@ -1344,6 +1344,7 @@ describe("summarizeSessionForHandoff logging skip paths", () => {
       "/tmp/agenr-missing-sessions-dir",
       "/tmp/current-session-short.jsonl",
       api.logger,
+      false,
     );
 
     await expect(summaryPromise).resolves.toBeNull();

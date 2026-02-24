@@ -2,15 +2,21 @@
 
 ## [0.8.38] - 2026-02-24
 
-### Fixed
-- Handoff summarizer no longer blends prior session messages into the LLM summary, preventing stale facts from being stored as current findings (#235)
-- Simplified handoff system prompt to single-session summarization
-- Added anti-hallucination guardrail to handoff prompt
+### Added
+- Opt-in `handoff.includeBackground` config flag for handoff summarizer: when
+  enabled, prior session messages are included as background context with strong
+  section headers so the LLM can orient without blending stale facts into the
+  current session summary (#235)
+- New system prompt variant with anti-hallucination instructions for background
+  context mode ("BACKGROUND CONTEXT (DO NOT SUMMARIZE)" / "SUMMARIZE THIS
+  SESSION ONLY" section headers)
+
+### Changed
+- Default handoff behavior unchanged: current session only, no prior messages
 
 ### Removed
-- All temporary [AGENR-PROBE] debug logging from openclaw-plugin (replaced with clean operational logs where needed)
-- Removed findPriorResetFile (no longer needed for summarization)
-- Removed capTranscriptLength (simplified without prior session merging)
+- All temporary [AGENR-PROBE] debug logging from openclaw-plugin (replaced with
+  clean operational logs where needed)
 
 ## [0.8.37] - 2026-02-24
 

@@ -383,9 +383,9 @@ describe("readMessagesFromJsonl", () => {
 });
 
 describe("testingApi exports", () => {
-  it("does not export findPriorResetFile", () => {
+  it("exports findPriorResetFile", () => {
     const exported = __testing as unknown as Record<string, unknown>;
-    expect("findPriorResetFile" in exported).toBe(false);
+    expect("findPriorResetFile" in exported).toBe(true);
   });
 });
 
@@ -420,6 +420,81 @@ describe("buildTranscript", () => {
     );
 
     expect(transcript).toContain("--- Session 2026-01-02 06:07 [webchat] (ended) ---");
+  });
+});
+
+describe("buildMergedTranscript", () => {
+  it("with empty prior section includes summarize header only", () => {
+    const transcript = __testing.buildMergedTranscript(
+      [],
+      "telegram",
+      [{ role: "assistant", content: "current line", timestamp: "2026-02-24T10:20:00" }],
+      "webchat",
+    );
+
+    expect(transcript).toContain("=== SUMMARIZE THIS SESSION ONLY ===");
+    expect(transcript).not.toContain("=== BACKGROUND CONTEXT (DO NOT SUMMARIZE) ===");
+  });
+
+  it("with prior and current includes both section headers", () => {
+    const transcript = __testing.buildMergedTranscript(
+      [{ role: "user", content: "prior line", timestamp: "2026-02-24T09:10:00" }],
+      "telegram",
+      [{ role: "assistant", content: "current line", timestamp: "2026-02-24T10:20:00" }],
+      "webchat",
+    );
+
+    expect(transcript).toContain("=== BACKGROUND CONTEXT (DO NOT SUMMARIZE) ===");
+    expect(transcript).toContain("=== SUMMARIZE THIS SESSION ONLY ===");
+  });
+
+  it("orders prior messages before current messages", () => {
+    const transcript = __testing.buildMergedTranscript(
+      [{ role: "user", content: "prior line", timestamp: "2026-02-24T09:10:00" }],
+      "telegram",
+      [{ role: "assistant", content: "current line", timestamp: "2026-02-24T10:20:00" }],
+      "webchat",
+    );
+
+    const priorIndex = transcript.indexOf("[user]: prior line");
+    const currentIndex = transcript.indexOf("[assistant]: current line");
+    expect(priorIndex).toBeGreaterThanOrEqual(0);
+    expect(currentIndex).toBeGreaterThanOrEqual(0);
+    expect(priorIndex).toBeLessThan(currentIndex);
+  });
+
+  it("filters empty content from both prior and current sections", () => {
+    const transcript = __testing.buildMergedTranscript(
+      [{ role: "user", content: "   ", timestamp: "2026-02-24T09:10:00" }],
+      "telegram",
+      [
+        { role: "assistant", content: "", timestamp: "2026-02-24T10:20:00" },
+        { role: "assistant", content: "kept", timestamp: "2026-02-24T10:21:00" },
+      ],
+      "webchat",
+    );
+
+    expect(transcript).not.toContain("[user]:");
+    expect(transcript).not.toContain("Current session unknown time");
+    expect(transcript).toContain("[assistant]: kept");
+  });
+});
+
+describe("handoff prompt constants", () => {
+  it('HANDOFF_SUMMARY_SYSTEM_PROMPT does not mention "BACKGROUND CONTEXT"', () => {
+    expect(__testing.HANDOFF_SUMMARY_SYSTEM_PROMPT).not.toContain("BACKGROUND CONTEXT");
+  });
+
+  it("HANDOFF_SUMMARY_SYSTEM_PROMPT_WITH_BACKGROUND includes required background headers and guardrail text", () => {
+    expect(__testing.HANDOFF_SUMMARY_SYSTEM_PROMPT_WITH_BACKGROUND).toContain(
+      "BACKGROUND CONTEXT (DO NOT SUMMARIZE)",
+    );
+    expect(__testing.HANDOFF_SUMMARY_SYSTEM_PROMPT_WITH_BACKGROUND).toContain(
+      "SUMMARIZE THIS SESSION ONLY",
+    );
+    expect(__testing.HANDOFF_SUMMARY_SYSTEM_PROMPT_WITH_BACKGROUND).toMatch(
+      /Do NOT fall back to summarizing the\s+background context/,
+    );
   });
 });
 
@@ -463,6 +538,7 @@ describe("50-message budget slicing", () => {
       dir,
       currentSessionFile,
       makeLogger(),
+      false,
       streamSimpleImpl,
     );
 
@@ -507,6 +583,7 @@ describe("50-message budget slicing", () => {
       dir,
       currentSessionFile,
       makeLogger(),
+      false,
       streamSimpleImpl,
     );
 
@@ -543,6 +620,7 @@ describe("summarizeSessionForHandoff", () => {
       dir,
       currentSessionFile,
       logger,
+      false,
       makeStreamSimple({ message: makeAssistantMessage("summary text") }),
     );
 
@@ -552,6 +630,130 @@ describe("summarizeSessionForHandoff", () => {
         /^\[agenr\] before_reset: sending to LLM model=gpt-4\.1-nano chars=\d+ msgs=5$/,
       ),
     );
+  });
+
+  it("when includeBackground=true and prior reset exists, transcript contains both section headers", async () => {
+    mockLlmClientSuccess();
+    const dir = await makeTempDir("agenr-handoff-summary-bg-");
+    const currentSessionFile = path.join(dir, "current-uuid.jsonl");
+    const priorBaseFile = path.join(dir, "prior-uuid.jsonl");
+    const priorResetFile = `${priorBaseFile}.reset.2026-02-24T01-00-00.000Z`;
+    await fs.writeFile(currentSessionFile, "", "utf8");
+    await writeJsonlLines(priorResetFile, [
+      JSON.stringify({
+        type: "message",
+        timestamp: "2026-02-24T09:00:00Z",
+        message: { role: "user", content: "prior context here" },
+      }),
+    ]);
+    const now = new Date();
+    await fs.utimes(priorResetFile, now, now);
+    await fs.writeFile(
+      path.join(dir, "sessions.json"),
+      JSON.stringify({
+        "agent:main:main": { sessionFile: currentSessionFile, origin: { surface: "webchat" } },
+        "agent:main:tui": { sessionFile: priorBaseFile, origin: { surface: "telegram" } },
+      }),
+      "utf8",
+    );
+
+    let transcript = "";
+    const summary = await __testing.summarizeSessionForHandoff(
+      makeEventMessages(5, "current"),
+      dir,
+      currentSessionFile,
+      makeLogger(),
+      true,
+      makeStreamSimple({
+        message: makeAssistantMessage("summary text"),
+        onContext: (context) => {
+          const userMessage = context.messages[0];
+          if (userMessage?.role === "user" && typeof userMessage.content === "string") {
+            transcript = userMessage.content;
+          }
+        },
+      }),
+    );
+
+    expect(summary).toBe("summary text");
+    expect(transcript).toContain("=== BACKGROUND CONTEXT (DO NOT SUMMARIZE) ===");
+    expect(transcript).toContain("=== SUMMARIZE THIS SESSION ONLY ===");
+  });
+
+  it("when includeBackground=true and no prior file within 24h, transcript includes summarize header only", async () => {
+    mockLlmClientSuccess();
+    const dir = await makeTempDir("agenr-handoff-summary-bg-");
+    const currentSessionFile = path.join(dir, "current-uuid.jsonl");
+    const oldResetFile = path.join(dir, "older-uuid.jsonl.reset.2026-02-23T01-00-00.000Z");
+    await fs.writeFile(currentSessionFile, "", "utf8");
+    await writeJsonlLines(oldResetFile, [
+      JSON.stringify({
+        type: "message",
+        timestamp: "2026-02-23T09:00:00Z",
+        message: { role: "user", content: "stale prior context" },
+      }),
+    ]);
+    const olderThanDay = new Date(Date.now() - (24 * 60 * 60 * 1000 + 1));
+    await fs.utimes(oldResetFile, olderThanDay, olderThanDay);
+    await fs.writeFile(
+      path.join(dir, "sessions.json"),
+      JSON.stringify({
+        "agent:main:main": { sessionFile: currentSessionFile, origin: { surface: "webchat" } },
+      }),
+      "utf8",
+    );
+
+    let transcript = "";
+    const summary = await __testing.summarizeSessionForHandoff(
+      makeEventMessages(5, "current"),
+      dir,
+      currentSessionFile,
+      makeLogger(),
+      true,
+      makeStreamSimple({
+        message: makeAssistantMessage("summary text"),
+        onContext: (context) => {
+          const userMessage = context.messages[0];
+          if (userMessage?.role === "user" && typeof userMessage.content === "string") {
+            transcript = userMessage.content;
+          }
+        },
+      }),
+    );
+
+    expect(summary).toBe("summary text");
+    expect(transcript).not.toContain("=== BACKGROUND CONTEXT (DO NOT SUMMARIZE) ===");
+    expect(transcript).toContain("=== SUMMARIZE THIS SESSION ONLY ===");
+  });
+
+  it("when includeBackground=false, transcript uses simple single-session format", async () => {
+    mockLlmClientSuccess();
+    const dir = await makeTempDir("agenr-handoff-summary-bg-");
+    const currentSessionFile = path.join(dir, "current-uuid.jsonl");
+    await fs.writeFile(currentSessionFile, "", "utf8");
+
+    let transcript = "";
+    const summary = await __testing.summarizeSessionForHandoff(
+      makeEventMessages(5, "current"),
+      dir,
+      currentSessionFile,
+      makeLogger(),
+      false,
+      makeStreamSimple({
+        message: makeAssistantMessage("summary text"),
+        onContext: (context) => {
+          const userMessage = context.messages[0];
+          if (userMessage?.role === "user" && typeof userMessage.content === "string") {
+            transcript = userMessage.content;
+          }
+        },
+      }),
+    );
+
+    expect(summary).toBe("summary text");
+    expect(transcript).toContain("--- Session");
+    expect(transcript).not.toContain("=== BACKGROUND CONTEXT (DO NOT SUMMARIZE) ===");
+    expect(transcript).not.toContain("=== SUMMARIZE THIS SESSION ONLY ===");
   });
 
   it('uses a single-session prompt without "prior session" or "two sessions"', async () => {
@@ -566,6 +768,7 @@ describe("summarizeSessionForHandoff", () => {
       dir,
       currentSessionFile,
       makeLogger(),
+      false,
       makeStreamSimple({
         message: makeAssistantMessage("summary text"),
         onContext: (context) => {
@@ -590,6 +793,7 @@ describe("summarizeSessionForHandoff", () => {
       dir,
       currentSessionFile,
       makeLogger(),
+      false,
       makeStreamSimple({ message: makeAssistantMessage("WORKING ON: Implementing issue #199.") }),
     );
 
@@ -607,6 +811,7 @@ describe("summarizeSessionForHandoff", () => {
       dir,
       currentSessionFile,
       makeLogger(),
+      false,
       makeStreamSimple({ shouldThrow: true }),
     );
 
@@ -624,6 +829,7 @@ describe("summarizeSessionForHandoff", () => {
       dir,
       currentSessionFile,
       makeLogger(),
+      false,
       makeStreamSimple({ message: makeAssistantMessage("unused") }),
     );
 
@@ -646,6 +852,7 @@ describe("summarizeSessionForHandoff", () => {
       dir,
       currentSessionFile,
       makeLogger(),
+      false,
       makeStreamSimple({
         message: makeAssistantMessage(
           "WORKING ON: No significant activity\nKEY FINDINGS: None\nOPEN THREADS: None\nIMPORTANT FACTS: None",
@@ -667,6 +874,7 @@ describe("summarizeSessionForHandoff", () => {
       dir,
       currentSessionFile,
       makeLogger(),
+      false,
       makeStreamSimple({ message: makeAssistantMessage("provider error", "error") }),
     );
 
@@ -688,6 +896,7 @@ describe("summarizeSessionForHandoff", () => {
       dir,
       currentSessionFile,
       logger,
+      false,
       makeStreamSimple({ message: makeAssistantMessage("unused") }),
     );
 
@@ -716,6 +925,7 @@ describe("summarizeSessionForHandoff", () => {
       dir,
       currentSessionFile,
       logger,
+      false,
       makeStreamSimple({ message: makeAssistantMessage("unused") }),
     );
 
