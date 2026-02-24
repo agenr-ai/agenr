@@ -263,6 +263,7 @@ export async function extractRecentTurns(filePath: string, maxTurns = DEFAULT_RE
             .trim();
           if (normalizedUserText) {
             allTurns.push(`U: ${truncateMessageText(normalizedUserText, RECENT_TURN_MAX_CHARS)}`);
+            if (allTurns.length > parsedMaxTurns) allTurns.shift();
           }
           return;
         }
@@ -273,6 +274,7 @@ export async function extractRecentTurns(filePath: string, maxTurns = DEFAULT_RE
             .trim();
           if (normalizedAssistantText) {
             allTurns.push(`A: ${truncateMessageText(normalizedAssistantText, RECENT_TURN_MAX_CHARS)}`);
+            if (allTurns.length > parsedMaxTurns) allTurns.shift();
           }
         }
       });
@@ -281,7 +283,7 @@ export async function extractRecentTurns(filePath: string, maxTurns = DEFAULT_RE
       rl.on("error", reject);
     });
 
-    return allTurns.slice(-parsedMaxTurns).join(" | ");
+    return allTurns.join(" | ");
   } catch {
     return "";
   }
