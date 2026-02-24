@@ -10,3 +10,4 @@ sandbox/
 
 # npm pack artifacts
 *.tgz
+tmp/
