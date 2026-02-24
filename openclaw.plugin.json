@@ -52,6 +52,10 @@
       "dbPath": {
         "type": "string",
         "description": "Path to agenr DB. Defaults to AGENR_DB_PATH env or ~/.agenr/knowledge.db."
+      },
+      "sessionsDir": {
+        "type": "string",
+        "description": "Path to OpenClaw sessions directory. Defaults to ~/.openclaw/agents/{agentId}/sessions."
       }
     }
   }
