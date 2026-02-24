@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.8.23] - 2026-02-23
+## [0.8.25] - 2026-02-23
 
 ### Changed
 - fix(openclaw-plugin): strip OpenClaw conversation metadata JSON blocks from
