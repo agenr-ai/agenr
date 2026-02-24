@@ -9,11 +9,13 @@ import type {
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as llmClientModule from "../llm/client.js";
 import type { StreamSimpleFn } from "../llm/stream.js";
-import { __testing } from "./index.js";
-import type { PluginLogger } from "./types.js";
+import plugin, { __testing } from "./index.js";
+import * as pluginRecall from "./recall.js";
+import * as sessionQuery from "./session-query.js";
+import type { BeforePromptBuildResult, PluginApi, PluginLogger } from "./types.js";
 
 const tmpDirs: string[] = [];
 
@@ -105,6 +107,45 @@ function mockLlmClientSuccess(): void {
     },
   });
 }
+
+function makePluginApi(overrides?: Partial<PluginApi>): PluginApi {
+  const logger = {
+    warn: vi.fn(),
+    error: vi.fn(),
+    info: vi.fn(),
+    debug: vi.fn(),
+    ...(overrides?.logger ?? {}),
+  };
+  const { logger: _ignoredLogger, ...restOverrides } = overrides ?? {};
+  return {
+    id: "agenr",
+    name: "agenr memory context",
+    logger,
+    on: vi.fn() as unknown as PluginApi["on"],
+    ...restOverrides,
+  };
+}
+
+function getBeforePromptBuildHandler(
+  api: PluginApi,
+): (
+  event: Record<string, unknown>,
+  ctx: { sessionKey?: string; sessionId?: string; agentId?: string },
+) => Promise<BeforePromptBuildResult | undefined> {
+  const onMock = api.on as unknown as ReturnType<typeof vi.fn>;
+  const call = onMock.mock.calls.find((args) => args[0] === "before_prompt_build");
+  if (!call) {
+    throw new Error("before_prompt_build handler not registered");
+  }
+  return call[1] as (
+    event: Record<string, unknown>,
+    ctx: { sessionKey?: string; sessionId?: string; agentId?: string },
+  ) => Promise<BeforePromptBuildResult | undefined>;
+}
+
+beforeEach(() => {
+  __testing.clearState();
+});
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -803,5 +844,115 @@ describe("summarizeSessionForHandoff", () => {
     expect(logger.debug).toHaveBeenCalledWith(
       "[agenr] before_reset: no apiKey available, skipping LLM summary",
     );
+  });
+});
+
+describe("session_start path in before_prompt_build", () => {
+  it("session_start path: runHandoffForSession called when previous session file found", async () => {
+    const previousSessionFile = "/tmp/prev-session-123.jsonl.reset.2026-02-24T01-00-00.000Z";
+    const parsedMessages = Array.from({ length: 10 }, (_, index) => ({
+      role: index % 2 === 0 ? "user" : "assistant",
+      content: `message-${index + 1}`,
+      timestamp: `2026-02-24T10:${String(index).padStart(2, "0")}:00`,
+    }));
+
+    vi.spyOn(sessionQuery, "findPreviousSessionFile").mockResolvedValue(previousSessionFile);
+    vi.spyOn(sessionQuery, "extractRecentTurns").mockResolvedValue("U: previous user | A: previous assistant");
+    vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
+    vi.spyOn(__testing, "readAndParseSessionJsonl").mockResolvedValue(parsedMessages);
+    const runHandoffSpy = vi.spyOn(__testing, "runHandoffForSession").mockResolvedValue(undefined);
+
+    const api = makePluginApi({ pluginConfig: { signalsEnabled: false } });
+    plugin.register(api);
+    const handler = getBeforePromptBuildHandler(api);
+
+    await handler(
+      { prompt: "hello" },
+      { sessionKey: "agent:main:session-start-trigger", sessionId: "uuid-session-start-trigger", agentId: "main" },
+    );
+
+    expect(runHandoffSpy).toHaveBeenCalledTimes(1);
+    expect(runHandoffSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: parsedMessages,
+        sessionFile: previousSessionFile,
+        sessionId: "prev-session-123",
+        sessionKey: "agent:main:session-start-trigger",
+        agentId: "main",
+        source: "session_start",
+      }),
+    );
+  });
+
+  it("session_start path: runHandoffForSession NOT called when no previous session file found", async () => {
+    vi.spyOn(sessionQuery, "findPreviousSessionFile").mockResolvedValue(null);
+    vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
+    const readSpy = vi.spyOn(__testing, "readAndParseSessionJsonl");
+    const runHandoffSpy = vi.spyOn(__testing, "runHandoffForSession").mockResolvedValue(undefined);
+
+    const api = makePluginApi({ pluginConfig: { signalsEnabled: false } });
+    plugin.register(api);
+    const handler = getBeforePromptBuildHandler(api);
+
+    await handler(
+      { prompt: "hello" },
+      { sessionKey: "agent:main:session-start-no-prev", sessionId: "uuid-session-start-no-prev", agentId: "main" },
+    );
+
+    expect(readSpy).not.toHaveBeenCalled();
+    expect(runHandoffSpy).not.toHaveBeenCalled();
+  });
+
+  it("session_start path: runHandoffForSession NOT called on second prompt in same session (isFirstInSession = false)", async () => {
+    const previousSessionFile = "/tmp/prev-session-same.jsonl";
+    const parsedMessages = [{ role: "user", content: "first", timestamp: "2026-02-24T10:00:00" }];
+
+    vi.spyOn(sessionQuery, "findPreviousSessionFile").mockResolvedValue(previousSessionFile);
+    vi.spyOn(sessionQuery, "extractRecentTurns").mockResolvedValue("U: prior");
+    vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
+    vi.spyOn(__testing, "readAndParseSessionJsonl").mockResolvedValue(parsedMessages);
+    const runHandoffSpy = vi.spyOn(__testing, "runHandoffForSession").mockResolvedValue(undefined);
+
+    const api = makePluginApi({ pluginConfig: { signalsEnabled: false } });
+    plugin.register(api);
+    const handler = getBeforePromptBuildHandler(api);
+
+    await handler(
+      { prompt: "first prompt" },
+      { sessionKey: "agent:main:session-start-same", sessionId: "uuid-session-start-same", agentId: "main" },
+    );
+    await handler(
+      { prompt: "second prompt" },
+      { sessionKey: "agent:main:session-start-same", sessionId: "uuid-session-start-same", agentId: "main" },
+    );
+
+    expect(runHandoffSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("session_start path: skips if readAndParseSessionJsonl returns empty array", async () => {
+    const previousSessionFile = "/tmp/prev-session-empty.jsonl";
+
+    vi.spyOn(sessionQuery, "findPreviousSessionFile").mockResolvedValue(previousSessionFile);
+    vi.spyOn(sessionQuery, "extractRecentTurns").mockResolvedValue("U: prior");
+    vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);
+    vi.spyOn(__testing, "readAndParseSessionJsonl").mockResolvedValue([]);
+    const runHandoffSpy = vi.spyOn(__testing, "runHandoffForSession").mockResolvedValue(undefined);
+
+    const api = makePluginApi({ pluginConfig: { signalsEnabled: false } });
+    plugin.register(api);
+    const handler = getBeforePromptBuildHandler(api);
+
+    await handler(
+      { prompt: "hello" },
+      { sessionKey: "agent:main:session-start-empty", sessionId: "uuid-session-start-empty", agentId: "main" },
+    );
+
+    expect(runHandoffSpy).not.toHaveBeenCalled();
+  });
+
+  it("source type allows session_start", () => {
+    type HandoffSource = Parameters<(typeof __testing)["runHandoffForSession"]>[0]["source"];
+    const source: HandoffSource = "session_start";
+    expect(source).toBe("session_start");
   });
 });

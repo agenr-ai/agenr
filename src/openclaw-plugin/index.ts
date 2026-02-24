@@ -238,6 +238,12 @@ function getBaseSessionPath(filePath: string): string {
   return resetMatch ? resetMatch[1] : filePath;
 }
 
+function deriveSessionIdFromSessionFile(sessionFile: string): string {
+  const baseSessionPath = getBaseSessionPath(sessionFile);
+  const baseName = path.basename(baseSessionPath, ".jsonl").trim();
+  return baseName || sessionFile;
+}
+
 async function readSessionsJson(sessionsDir: string): Promise<Record<string, unknown>> {
   try {
     const sessionsJsonPath = path.join(sessionsDir, "sessions.json");
@@ -631,6 +637,7 @@ async function retireFallbackHandoffEntries(params: {
   fallbackSubject: string;
   fallbackText: string;
   logger: PluginApi["logger"];
+  source: "before_reset" | "command" | "session_start";
 }): Promise<void> {
   try {
     const browseResult = await runRecall(params.agenrPath, params.budget, params.defaultProject, undefined, {
@@ -686,7 +693,7 @@ async function retireFallbackHandoffEntries(params: {
           .then(() => undefined)
           .catch((err) => {
             params.logger.debug?.(
-              `[agenr] before_reset: fallback retire failed for ${entryId}: ${err instanceof Error ? err.message : String(err)}`,
+              `[agenr] ${params.source}: fallback retire failed for ${entryId}: ${err instanceof Error ? err.message : String(err)}`,
             );
           }),
       );
@@ -695,7 +702,7 @@ async function retireFallbackHandoffEntries(params: {
     await Promise.allSettled(retirePromises);
   } catch (err) {
     params.logger.debug?.(
-      `[agenr] before_reset: fallback retire lookup failed: ${err instanceof Error ? err.message : String(err)}`,
+      `[agenr] ${params.source}: fallback retire lookup failed: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 }
@@ -731,7 +738,7 @@ async function runHandoffForSession(opts: {
   storeConfig: Record<string, unknown>;
   sessionsDir: string;
   logger: PluginLogger | undefined;
-  source: "before_reset" | "command";
+  source: "before_reset" | "command" | "session_start";
 }): Promise<void> {
   const sessionId = opts.sessionId.trim() || opts.sessionKey;
   if (handoffSeenSessionIds.has(sessionId)) {
@@ -814,6 +821,7 @@ async function runHandoffForSession(opts: {
               warn: () => undefined,
               error: () => undefined,
             },
+            source: opts.source,
           });
         }
 
@@ -909,16 +917,61 @@ const plugin = {
             const sessionsDir =
               config?.sessionsDir ?? path.join(os.homedir(), `.openclaw/agents/${agentId}/sessions`);
 
-            const [previousTurns, browseResult] = await Promise.all([
-              findPreviousSessionFile(sessionsDir, ctx.sessionId, api.logger).then((file) =>
-                file ? extractRecentTurns(file) : Promise.resolve(""),
-              ),
+            const [{ previousSessionFile, previousTurns }, browseResult] = await Promise.all([
+              findPreviousSessionFile(sessionsDir, ctx.sessionId, api.logger).then(async (file) => ({
+                previousSessionFile: file,
+                previousTurns: file ? await extractRecentTurns(file) : "",
+              })),
               runRecall(agenrPath, budget, project, undefined, {
                 context: "browse",
                 since: "1d",
                 limit: 20,
               }),
             ]);
+
+            if (previousSessionFile) {
+              let messages: unknown[] | null = null;
+              try {
+                messages = await testingApi.readAndParseSessionJsonl(previousSessionFile);
+              } catch {
+                messages = null;
+              }
+
+              if (Array.isArray(messages) && messages.length > 0) {
+                const previousSessionId = deriveSessionIdFromSessionFile(previousSessionFile);
+                process.stderr.write(
+                  `[AGENR-PROBE] session_start: triggering handoff for prev file=${previousSessionFile} msgs=${messages.length}\n`,
+                );
+                void testingApi
+                  .runHandoffForSession({
+                    messages,
+                    sessionFile: previousSessionFile,
+                    sessionId: previousSessionId,
+                    sessionKey: ctx.sessionKey ?? "",
+                    agentId,
+                    agenrPath,
+                    budget,
+                    defaultProject: project,
+                    storeConfig: {},
+                    sessionsDir,
+                    logger: api.logger,
+                    source: "session_start",
+                  })
+                  .catch((err) => {
+                    api.logger.debug?.(
+                      `[agenr] session_start: handoff fire-and-forget failed: ${err instanceof Error ? err.message : String(err)}`,
+                    );
+                  });
+              } else if (Array.isArray(messages)) {
+                process.stderr.write(
+                  `[AGENR-PROBE] session_start: skipping handoff - no messages in prev file=${previousSessionFile}\n`,
+                );
+              }
+            } else {
+              process.stderr.write(
+                "[AGENR-PROBE] session_start: skipping handoff - no previous session file found\n",
+              );
+            }
 
             const seed = buildSemanticSeed(previousTurns, event.prompt ?? "");
             let semanticResult: RecallResult | null = null;
