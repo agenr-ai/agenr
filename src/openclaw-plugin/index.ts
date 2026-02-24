@@ -983,6 +983,7 @@ async function runHandoffForSession(opts: {
           agenrPath: opts.agenrPath,
           budget: opts.budget,
           defaultProject: opts.defaultProject,
+          dbPath: opts.dbPath,
           fallbackSubject: fallbackEntrySubject,
           logger: opts.logger ?? {
             warn: () => undefined,
