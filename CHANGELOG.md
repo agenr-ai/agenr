@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.37] - 2026-02-24
+
+### Fixed
+- openclaw-plugin: await runHandoffForSession in session_start handler instead of void
+  fire-and-forget; webchat /new goes through sessions.reset RPC which does not trigger
+  before_reset, so session_start is the only hook that fires on that path - making it
+  void meant the LLM summary was always dropped (closes #232)
+
 ## [0.8.36] - 2026-02-24
 
 ### Fixed
