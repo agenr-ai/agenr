@@ -6,7 +6,12 @@ import { describeAuth, readConfig } from "../config.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { formatExistingConfig, runSetupCore } from "../setup.js";
 import { banner, formatLabel } from "../ui.js";
-import { detectPlatforms } from "./init/platform-detector.js";
+import {
+  detectPlatforms,
+  isDefaultOpenClawPath,
+  resolveDefaultCodexConfigDir,
+  resolveDefaultOpenClawConfigDir,
+} from "./init/platform-detector.js";
 import type { DetectedPlatform } from "./init/platform-detector.js";
 
 function escapeTomlString(value: string): string {
@@ -52,6 +57,7 @@ export interface WizardChanges {
   platformChanged: boolean;
   projectChanged: boolean;
   embeddingsKeyChanged: boolean;
+  openclawDbPath?: string;
   previousModel: string | undefined;
   newModel: string | undefined;
 }
@@ -83,6 +89,8 @@ interface ExistingProjectSettings {
 
 interface WizardSummary {
   platform: string;
+  directory?: string;
+  database?: string;
   project: string;
   authLabel: string;
   model: string;
@@ -437,11 +445,6 @@ async function writeCodexConfig(
 }
 
 export function formatInitSummary(result: InitCommandResult): string[] {
-  function tildePath(filePath: string): string {
-    const home = os.homedir();
-    return filePath.startsWith(home) ? `~${filePath.slice(home.length)}` : filePath;
-  }
-
   const dependencyLabel = result.dependencies.length > 0 ? `[${result.dependencies.join(",")}]` : "[]";
   const lines = [
     `agenr init: platform=${result.platform} project=${result.project} dependencies=${dependencyLabel}`,
@@ -453,7 +456,7 @@ export function formatInitSummary(result: InitCommandResult): string[] {
         : `- Wrote MCP config to ${path.relative(result.projectDir, result.mcpPath) || path.basename(result.mcpPath)}`,
   ];
   if (result.instructionsPath !== null) {
-    lines.splice(2, 0, `- Wrote system prompt block to ${tildePath(result.instructionsPath)}`);
+    lines.splice(2, 0, `- Wrote system prompt block to ${formatPathForDisplay(result.instructionsPath)}`);
   } else {
     lines.splice(2, 0, `- Memory injection: handled automatically by ${result.platform} plugin (no instructions file needed)`);
   }
@@ -461,6 +464,29 @@ export function formatInitSummary(result: InitCommandResult): string[] {
     lines.push("- Added .agenr/knowledge.db to .gitignore");
   }
   return lines;
+}
+
+function formatPathForDisplay(filePath: string): string {
+  const home = os.homedir();
+  return filePath.startsWith(home) ? `~${filePath.slice(home.length)}` : filePath;
+}
+
+function resolveInputPath(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return path.resolve(trimmed);
+  }
+  if (trimmed === "~") {
+    return os.homedir();
+  }
+  if (trimmed.startsWith("~/") || trimmed.startsWith("~\\")) {
+    return path.resolve(os.homedir(), trimmed.slice(2));
+  }
+  return path.resolve(trimmed);
+}
+
+function resolveSharedKnowledgeDbPath(): string {
+  return path.join(os.homedir(), ".agenr", "knowledge.db");
 }
 
 function isWizardPlatformId(value: string): value is DetectedPlatform["id"] {
@@ -493,6 +519,13 @@ export function resolveWizardProjectSlug(projectDir: string, platformId: string)
     return platformId;
   }
   return resolveProjectSlug(projectDir);
+}
+
+export function resolveWizardProjectDir(projectDir: string, platformId: string, platformConfigDir: string): string {
+  if (platformId === "openclaw" || platformId === "codex") {
+    return platformConfigDir;
+  }
+  return projectDir;
 }
 
 async function readExistingProjectSettings(projectDir: string): Promise<ExistingProjectSettings> {
@@ -558,12 +591,17 @@ async function choosePlatform(platforms: DetectedPlatform[]): Promise<DetectedPl
 }
 
 function formatWizardSummary(result: WizardSummary): string {
-  return [
-    `  Platform:  ${result.platform}`,
-    `  Project:   ${result.project}`,
-    `  Auth:      ${result.authLabel}`,
-    `  Model:     ${result.model}`,
-  ].join("\n");
+  const lines = [`  Platform:  ${result.platform}`];
+  if (result.directory) {
+    lines.push(`  Directory: ${result.directory}`);
+  }
+  if (result.database) {
+    lines.push(`  Database:  ${result.database}`);
+  }
+  lines.push(`  Project:   ${result.project}`);
+  lines.push(`  Auth:      ${result.authLabel}`);
+  lines.push(`  Model:     ${result.model}`);
+  return lines.join("\n");
 }
 
 export function formatWizardChanges(changes: WizardChanges): string {
@@ -669,9 +707,10 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
   clack.intro(banner());
 
   const env = process.env;
-  const projectDir = path.resolve(options.path?.trim() || process.cwd());
+  const baseProjectDir = path.resolve(options.path?.trim() || process.cwd());
+  let projectDir = baseProjectDir;
   const existingConfig = initWizardRuntime.readConfig(env);
-  const existingProjectSettings = await readExistingProjectSettings(projectDir);
+  const existingProjectSettings = await readExistingProjectSettings(baseProjectDir);
   const hasExistingConfig =
     existingConfig !== null || existingProjectSettings.platform !== undefined || existingProjectSettings.project !== undefined;
 
@@ -798,8 +837,12 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
           id: currentPlatform,
           label: formatPlatformLabel(currentPlatform),
           detected: false,
-          configDir: "",
-          sessionsDir: "",
+          configDir:
+            currentPlatform === "openclaw" ? resolveDefaultOpenClawConfigDir() : resolveDefaultCodexConfigDir(),
+          sessionsDir:
+            currentPlatform === "openclaw"
+              ? path.join(resolveDefaultOpenClawConfigDir(), "sessions")
+              : path.join(resolveDefaultCodexConfigDir(), "sessions"),
         };
     } else {
       selectedPlatform = await choosePlatform(platforms);
@@ -817,6 +860,9 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
     clack.cancel("Setup cancelled.");
     return;
   }
+
+  const sharedDbPath = resolveSharedKnowledgeDbPath();
+  let selectedOpenclawDbPath: string | undefined;
 
   if (selectedPlatform.id === "openclaw") {
     const openclawDir = await clack.text({
@@ -837,13 +883,42 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
       return;
     }
 
-    selectedPlatform.configDir = path.resolve(openclawDir.trim());
+    selectedPlatform.configDir = resolveInputPath(openclawDir.trim());
     selectedPlatform.sessionsDir = path.join(selectedPlatform.configDir, "sessions");
+  }
+
+  projectDir = resolveWizardProjectDir(projectDir, selectedPlatform.id, selectedPlatform.configDir);
+
+  if (selectedPlatform.id === "openclaw" && !isDefaultOpenClawPath(selectedPlatform.configDir)) {
+    const dbSelection = await clack.select<"isolated" | "shared">({
+      message: "Database: use shared brain (~/.agenr/knowledge.db) or isolated?",
+      options: [
+        {
+          value: "isolated",
+          label: "Isolated (separate database for this instance)",
+        },
+        {
+          value: "shared",
+          label: "Shared (all instances use the same knowledge)",
+        },
+      ],
+    });
+
+    if (clack.isCancel(dbSelection)) {
+      clack.cancel("Setup cancelled.");
+      return;
+    }
+
+    if (dbSelection === "isolated") {
+      selectedOpenclawDbPath = path.join(selectedPlatform.configDir, "agenr-data", "knowledge.db");
+      clack.log.info(`Database path: ${formatPathForDisplay(selectedOpenclawDbPath)}`);
+    }
   }
 
   wizardChanges.platformChanged = existingProjectSettings.platform
     ? existingProjectSettings.platform !== selectedPlatform.id
     : false;
+  wizardChanges.openclawDbPath = selectedOpenclawDbPath;
 
   const derivedSlug = resolveWizardProjectSlug(projectDir, selectedPlatform.id);
   let projectSlug: string | null = null;
@@ -895,13 +970,19 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
   const initResult = await initWizardRuntime.runInitCommand({
     platform: selectedPlatform.id,
     project: projectSlug,
-    path: options.path,
+    path: projectDir,
     dependsOn: options.dependsOn,
   });
 
+  const openclawDatabase =
+    selectedPlatform.id === "openclaw"
+      ? `${formatPathForDisplay(selectedOpenclawDbPath ?? sharedDbPath)} (${selectedOpenclawDbPath ? "isolated" : "shared"})`
+      : undefined;
   clack.note(
     formatWizardSummary({
       platform: formatPlatformLabel(initResult.platform),
+      directory: initResult.platform === "openclaw" ? formatPathForDisplay(selectedPlatform.configDir) : undefined,
+      database: openclawDatabase,
       project: initResult.project,
       authLabel: selectedAuth ? describeAuth(selectedAuth) : "(not set)",
       model: selectedModel ?? "(not set)",
@@ -911,6 +992,11 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
 
   if (hasExistingConfig) {
     clack.note(formatWizardChanges(wizardChanges), "Changes");
+  }
+  if (selectedOpenclawDbPath) {
+    clack.log.info(
+      `To use the isolated database, add to your OpenClaw plugin config:\n  "dbPath": "${selectedOpenclawDbPath}"`,
+    );
   }
   clack.outro("Setup complete.");
 }

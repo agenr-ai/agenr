@@ -11,25 +11,41 @@ export interface DetectedPlatform {
   sessionsDir: string;
 }
 
-export function detectPlatforms(pathLookup: (command: string) => boolean = isOnPath): DetectedPlatform[] {
+export function resolveDefaultOpenClawConfigDir(): string {
   const home = os.homedir();
   const isWindows = process.platform === "win32";
+  return isWindows
+    ? path.join(process.env.APPDATA ?? path.join(home, "AppData", "Roaming"), "openclaw")
+    : path.join(home, ".openclaw");
+}
 
+export function resolveDefaultCodexConfigDir(): string {
+  return path.join(os.homedir(), ".codex");
+}
+
+export function isDefaultOpenClawPath(configDir: string): boolean {
+  const expected = path.resolve(resolveDefaultOpenClawConfigDir());
+  const actual = path.resolve(configDir);
+  if (process.platform === "win32") {
+    return expected.toLowerCase() === actual.toLowerCase();
+  }
+  return expected === actual;
+}
+
+export function detectPlatforms(pathLookup: (command: string) => boolean = isOnPath): DetectedPlatform[] {
   const platforms: DetectedPlatform[] = [
     {
       id: "openclaw",
       label: "OpenClaw",
       detected: false,
-      configDir: isWindows
-        ? path.join(process.env.APPDATA ?? path.join(home, "AppData", "Roaming"), "openclaw")
-        : path.join(home, ".openclaw"),
+      configDir: resolveDefaultOpenClawConfigDir(),
       sessionsDir: "",
     },
     {
       id: "codex",
       label: "Codex",
       detected: false,
-      configDir: path.join(home, ".codex"),
+      configDir: resolveDefaultCodexConfigDir(),
       sessionsDir: "",
     },
   ];

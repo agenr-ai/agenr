@@ -30,7 +30,7 @@ const {
   clackSelectMock: vi.fn(),
   clackTextMock: vi.fn(async (options?: { message?: string; initialValue?: string }) => {
     if (options?.message === "OpenClaw directory:") {
-      return options.initialValue ?? "/tmp/.openclaw";
+      return options.initialValue ?? resolveDefaultOpenClawConfigDir();
     }
     return "agenr";
   }),
@@ -74,10 +74,12 @@ import {
   formatInitSummary,
   initWizardRuntime,
   resolveAgenrCommand,
+  resolveWizardProjectDir,
   resolveWizardProjectSlug,
   runInitCommand,
   runInitWizard,
 } from "./init.js";
+import { resolveDefaultCodexConfigDir, resolveDefaultOpenClawConfigDir } from "./init/platform-detector.js";
 
 async function createTempDir(prefix = "agenr-init-"): Promise<string> {
   return await fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -124,7 +126,7 @@ afterEach(async () => {
   clackTextMock.mockReset();
   clackTextMock.mockImplementation(async (options?: { message?: string; initialValue?: string }) => {
     if (options?.message === "OpenClaw directory:") {
-      return options.initialValue ?? "/tmp/.openclaw";
+      return options.initialValue ?? resolveDefaultOpenClawConfigDir();
     }
     return "agenr";
   });
@@ -537,15 +539,15 @@ describe("runInitWizard", () => {
         id: "openclaw" as const,
         label: "OpenClaw",
         detected: openclawDetected,
-        configDir: "/tmp/.openclaw",
-        sessionsDir: "/tmp/.openclaw/sessions",
+        configDir: resolveDefaultOpenClawConfigDir(),
+        sessionsDir: path.join(resolveDefaultOpenClawConfigDir(), "sessions"),
       },
       {
         id: "codex" as const,
         label: "Codex",
         detected: codexDetected,
-        configDir: "/tmp/.codex",
-        sessionsDir: "/tmp/.codex/sessions",
+        configDir: resolveDefaultCodexConfigDir(),
+        sessionsDir: path.join(resolveDefaultCodexConfigDir(), "sessions"),
       },
     ];
   }
@@ -624,7 +626,7 @@ describe("runInitWizard", () => {
     await runInitWizard({ isInteractive: true, path: dir });
 
     expect(clackConfirmMock).toHaveBeenCalledWith({
-      message: "Detected OpenClaw at /tmp/.openclaw. Use this platform?",
+      message: `Detected OpenClaw at ${resolveDefaultOpenClawConfigDir()}. Use this platform?`,
       initialValue: true,
     });
   });
@@ -642,8 +644,8 @@ describe("runInitWizard", () => {
     expect(clackTextMock).toHaveBeenCalledWith(
       expect.objectContaining({
         message: "OpenClaw directory:",
-        initialValue: "/tmp/.openclaw",
-        placeholder: "/tmp/.openclaw",
+        initialValue: resolveDefaultOpenClawConfigDir(),
+        placeholder: resolveDefaultOpenClawConfigDir(),
       }),
     );
   });
@@ -710,13 +712,184 @@ describe("runInitWizard", () => {
     runSetupCoreMock.mockResolvedValue(mockSetupResult());
     vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platforms);
     vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
-    clackSelectMock.mockResolvedValue("openclaw");
+    clackSelectMock.mockResolvedValueOnce("openclaw").mockResolvedValueOnce("shared");
     clackTextMock.mockResolvedValueOnce("/tmp/custom-openclaw").mockResolvedValueOnce("agenr");
 
     await runInitWizard({ isInteractive: true, path: dir });
 
     expect(platforms[0]?.configDir).toBe(path.resolve("/tmp/custom-openclaw"));
     expect(platforms[0]?.sessionsDir).toBe(path.join(path.resolve("/tmp/custom-openclaw"), "sessions"));
+  });
+
+  it("wizard uses OpenClaw configDir as projectDir", async () => {
+    const dir = await createWizardProjectDir();
+    readConfigMock.mockReturnValue(null);
+    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    const runInitCommandSpy = vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
+    clackConfirmMock.mockResolvedValue(true);
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(runInitCommandSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: resolveDefaultOpenClawConfigDir(),
+      }),
+    );
+  });
+
+  it("wizard uses Codex configDir as projectDir", async () => {
+    const dir = await createWizardProjectDir();
+    readConfigMock.mockReturnValue(null);
+    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    const runInitCommandSpy = vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, true));
+    clackSelectMock.mockResolvedValue("codex");
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(runInitCommandSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: resolveDefaultCodexConfigDir(),
+      }),
+    );
+  });
+
+  it("wizard uses custom OpenClaw path as projectDir", async () => {
+    const dir = await createWizardProjectDir();
+    const customOpenclawDir = "/tmp/.openclaw-sandbox";
+    readConfigMock.mockReturnValue(null);
+    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    const runInitCommandSpy = vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(false, false));
+    clackSelectMock.mockResolvedValueOnce("openclaw").mockResolvedValueOnce("isolated");
+    clackTextMock.mockResolvedValueOnce(customOpenclawDir).mockResolvedValueOnce("openclaw-sandbox");
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(runInitCommandSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: path.resolve(customOpenclawDir),
+      }),
+    );
+  });
+
+  it("wizard keeps cwd as projectDir for coding platforms", () => {
+    const cwdProjectDir = "/tmp/my-project";
+    expect(resolveWizardProjectDir(cwdProjectDir, "cursor", "/tmp/.cursor")).toBe(cwdProjectDir);
+  });
+
+  it("wizard skips DB isolation step when OpenClaw directory is default", async () => {
+    const dir = await createWizardProjectDir();
+    readConfigMock.mockReturnValue(null);
+    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackConfirmMock.mockResolvedValue(true);
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(clackSelectMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "Database: use shared brain (~/.agenr/knowledge.db) or isolated?",
+      }),
+    );
+  });
+
+  it("wizard shows DB isolation step for custom OpenClaw directory", async () => {
+    const dir = await createWizardProjectDir();
+    readConfigMock.mockReturnValue(null);
+    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(false, false));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackSelectMock.mockResolvedValueOnce("openclaw").mockResolvedValueOnce("shared");
+    clackTextMock.mockResolvedValueOnce("/tmp/.openclaw-sandbox").mockResolvedValueOnce("openclaw-sandbox");
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(clackSelectMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "Database: use shared brain (~/.agenr/knowledge.db) or isolated?",
+        options: [
+          expect.objectContaining({ label: "Isolated (separate database for this instance)" }),
+          expect.objectContaining({ label: "Shared (all instances use the same knowledge)" }),
+        ],
+      }),
+    );
+  });
+
+  it("wizard defaults to Isolated for custom OpenClaw directory", async () => {
+    const dir = await createWizardProjectDir();
+    readConfigMock.mockReturnValue(null);
+    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(false, false));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackSelectMock.mockResolvedValueOnce("openclaw").mockResolvedValueOnce("shared");
+    clackTextMock.mockResolvedValueOnce("/tmp/.openclaw-sandbox").mockResolvedValueOnce("openclaw-sandbox");
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    const dbPrompt = clackSelectMock.mock.calls
+      .map((call) => call[0] as { message?: string; options?: Array<{ value: string }> })
+      .find((call) => call.message === "Database: use shared brain (~/.agenr/knowledge.db) or isolated?");
+    expect(dbPrompt?.options?.[0]?.value).toBe("isolated");
+  });
+
+  it("wizard sets isolated DB path from custom OpenClaw directory", async () => {
+    const dir = await createWizardProjectDir();
+    const customDir = "/tmp/.openclaw-sandbox";
+    readConfigMock.mockReturnValue(null);
+    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(false, false));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackSelectMock.mockResolvedValueOnce("openclaw").mockResolvedValueOnce("isolated");
+    clackTextMock.mockResolvedValueOnce(customDir).mockResolvedValueOnce("openclaw-sandbox");
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(clackLogInfoMock).toHaveBeenCalledWith(
+      expect.stringContaining(`Database path: ${path.join(path.resolve(customDir), "agenr-data", "knowledge.db")}`),
+    );
+  });
+
+  it("wizard shows shared DB in summary when shared selected", async () => {
+    const dir = await createWizardProjectDir();
+    readConfigMock.mockReturnValue(null);
+    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(false, false));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackSelectMock.mockResolvedValueOnce("openclaw").mockResolvedValueOnce("shared");
+    clackTextMock.mockResolvedValueOnce("/tmp/.openclaw-shared").mockResolvedValueOnce("openclaw");
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(clackNoteMock).toHaveBeenCalledWith(
+      expect.stringContaining("Database:  ~/.agenr/knowledge.db (shared)"),
+      "Setup summary",
+    );
+  });
+
+  it("wizard shows isolated DB path and post-setup note", async () => {
+    const dir = await createWizardProjectDir();
+    const customDir = "/tmp/.openclaw-sandbox";
+    readConfigMock.mockReturnValue(null);
+    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(false, false));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackSelectMock.mockResolvedValueOnce("openclaw").mockResolvedValueOnce("isolated");
+    clackTextMock.mockResolvedValueOnce(customDir).mockResolvedValueOnce("openclaw-sandbox");
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(clackNoteMock).toHaveBeenCalledWith(
+      expect.stringContaining(`${path.join(path.resolve(customDir), "agenr-data", "knowledge.db")} (isolated)`),
+      "Setup summary",
+    );
+    expect(clackLogInfoMock).toHaveBeenCalledWith(
+      expect.stringContaining(
+        `To use the isolated database, add to your OpenClaw plugin config:\n  "dbPath": "${path.join(path.resolve(customDir), "agenr-data", "knowledge.db")}"`,
+      ),
+    );
   });
 
   it("wizard shows selector when no platform detected", async () => {
@@ -1018,6 +1191,21 @@ describe("runInitWizard", () => {
     expect(runInitCommandSpy).not.toHaveBeenCalled();
   });
 
+  it("wizard handles Ctrl+C at DB isolation prompt", async () => {
+    const dir = await createWizardProjectDir();
+    readConfigMock.mockReturnValue(null);
+    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    const runInitCommandSpy = vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(false, false));
+    clackSelectMock.mockResolvedValueOnce("openclaw").mockResolvedValueOnce(clackCancelToken);
+    clackTextMock.mockResolvedValueOnce("/tmp/.openclaw-sandbox");
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(clackCancelMock).toHaveBeenCalledWith("Setup cancelled.");
+    expect(runInitCommandSpy).not.toHaveBeenCalled();
+  });
+
   it("wizard handles Ctrl+C at project slug input", async () => {
     const dir = await createWizardProjectDir();
     readConfigMock.mockReturnValue(null);
@@ -1025,7 +1213,7 @@ describe("runInitWizard", () => {
     vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(false, false));
     vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
     clackSelectMock.mockResolvedValue("openclaw");
-    clackTextMock.mockResolvedValueOnce("/tmp/.openclaw").mockResolvedValueOnce(clackCancelToken);
+    clackTextMock.mockResolvedValueOnce(resolveDefaultOpenClawConfigDir()).mockResolvedValueOnce(clackCancelToken);
 
     await runInitWizard({ isInteractive: true, path: dir });
 
