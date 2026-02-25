@@ -59,6 +59,8 @@ export interface WizardChanges {
   platformChanged: boolean;
   projectChanged: boolean;
   embeddingsKeyChanged: boolean;
+  directoryChanged: boolean;
+  dbPathChanged: boolean;
   openclawDbPath?: string;
   previousModel: string | undefined;
   newModel: string | undefined;
@@ -739,6 +741,16 @@ export function formatWizardChanges(changes: WizardChanges): string {
   if (changes.projectChanged) {
     items.push("Project slug changed");
   }
+  if (changes.directoryChanged) {
+    items.push("OpenClaw directory changed");
+  }
+  if (changes.dbPathChanged) {
+    if (changes.openclawDbPath) {
+      items.push(`Database: isolated at ${changes.openclawDbPath}`);
+    } else {
+      items.push("Database: switched to shared");
+    }
+  }
 
   if (items.length === 0) {
     return "No changes detected.";
@@ -870,6 +882,8 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
     platformChanged: false,
     projectChanged: false,
     embeddingsKeyChanged: false,
+    directoryChanged: false,
+    dbPathChanged: false,
     previousModel: existingConfig?.model,
     newModel: existingConfig?.model,
   };
@@ -1146,6 +1160,23 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
     ? existingProjectSettings.project !== projectSlug
     : false;
 
+  if (isWizardPlatformId(selectedPlatform.id)) {
+    const existingProjects = getGlobalProjectMap(readConfig(env));
+    const existingEntry = existingProjects[projectSlug];
+
+    if (existingEntry) {
+      wizardChanges.directoryChanged =
+        path.resolve(existingEntry.projectDir) !== path.resolve(selectedPlatform.configDir);
+
+      const existingDbPath = existingEntry.dbPath ?? null;
+      const newDbPath = selectedOpenclawDbPath ?? null;
+      wizardChanges.dbPathChanged = existingDbPath !== newDbPath;
+    } else {
+      wizardChanges.directoryChanged = true;
+      wizardChanges.dbPathChanged = Boolean(selectedOpenclawDbPath);
+    }
+  }
+
   const initResult = await initWizardRuntime.runInitCommand({
     platform: selectedPlatform.id,
     project: projectSlug,
@@ -1180,11 +1211,6 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
 
   if (hasExistingConfig) {
     clack.note(formatWizardChanges(wizardChanges), "Changes");
-  }
-  if (selectedOpenclawDbPath) {
-    clack.log.info(
-      `To use the isolated database, add to your OpenClaw plugin config:\n  "dbPath": "${selectedOpenclawDbPath}"`,
-    );
   }
   clack.outro("Setup complete.");
 }

@@ -1373,7 +1373,7 @@ describe("runInitWizard", () => {
     ).toBe(false);
   });
 
-  it("wizard shows isolated DB path and post-setup note", async () => {
+  it("wizard shows isolated DB path without manual plugin hint", async () => {
     const dir = await createWizardProjectDir();
     const customDir = "/tmp/.openclaw-sandbox";
     readConfigMock.mockReturnValue(null);
@@ -1389,11 +1389,11 @@ describe("runInitWizard", () => {
       expect.stringContaining(`${path.join(path.resolve(customDir), "agenr-data", "knowledge.db")} (isolated)`),
       "Setup summary",
     );
-    expect(clackLogInfoMock).toHaveBeenCalledWith(
-      expect.stringContaining(
-        `To use the isolated database, add to your OpenClaw plugin config:\n  "dbPath": "${path.join(path.resolve(customDir), "agenr-data", "knowledge.db")}"`,
+    expect(
+      clackLogInfoMock.mock.calls.some(
+        (call) => typeof call[0] === "string" && call[0].includes("To use the isolated database, add to your OpenClaw plugin config:"),
       ),
-    );
+    ).toBe(false);
   });
 
   it("wizard shows selector when no platform detected", async () => {
@@ -1530,6 +1530,77 @@ describe("runInitWizard", () => {
     );
   });
 
+  it("wizard detects directory change on reconfigure", async () => {
+    const dir = await createWizardProjectDir({
+      project: "my-project",
+      platform: "openclaw",
+    });
+    readConfigMock.mockReturnValue({
+      auth: "openai-api-key",
+      provider: "openai",
+      model: "gpt-4.1-mini",
+      projects: {
+        "my-project": {
+          platform: "openclaw",
+          projectDir: resolveDefaultOpenClawConfigDir(),
+        },
+      },
+    });
+    describeAuthMock.mockReturnValue("OpenAI API key");
+    formatExistingConfigMock.mockReturnValue("auth summary");
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackConfirmMock.mockResolvedValue(true);
+    clackSelectMock
+      .mockResolvedValueOnce("keep")
+      .mockResolvedValueOnce("keep")
+      .mockResolvedValueOnce("shared")
+      .mockResolvedValueOnce("keep");
+    clackTextMock.mockResolvedValueOnce("/tmp/.openclaw-sandbox");
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(clackNoteMock).toHaveBeenCalledWith(expect.stringContaining("OpenClaw directory changed"), "Changes");
+  });
+
+  it("wizard detects dbPath change on reconfigure", async () => {
+    const dir = await createWizardProjectDir({
+      project: "my-project",
+      platform: "openclaw",
+    });
+    const customDir = "/tmp/.openclaw-sandbox";
+    const isolatedDbPath = path.join(path.resolve(customDir), "agenr-data", "knowledge.db");
+    readConfigMock.mockReturnValue({
+      auth: "openai-api-key",
+      provider: "openai",
+      model: "gpt-4.1-mini",
+      projects: {
+        "my-project": {
+          platform: "openclaw",
+          projectDir: path.resolve(customDir),
+        },
+      },
+    });
+    describeAuthMock.mockReturnValue("OpenAI API key");
+    formatExistingConfigMock.mockReturnValue("auth summary");
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackConfirmMock.mockResolvedValue(true);
+    clackSelectMock
+      .mockResolvedValueOnce("keep")
+      .mockResolvedValueOnce("keep")
+      .mockResolvedValueOnce("isolated")
+      .mockResolvedValueOnce("keep");
+    clackTextMock.mockResolvedValueOnce(customDir);
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(clackNoteMock).toHaveBeenCalledWith(
+      expect.stringContaining(`Database: isolated at ${isolatedDbPath}`),
+      "Changes",
+    );
+  });
+
   it("reconfigure tracks embeddingsKeyChanged when key changes", async () => {
     const dir = await createWizardProjectDir({
       project: "my-project",
@@ -1612,6 +1683,12 @@ describe("runInitWizard", () => {
       auth: "openai-api-key",
       provider: "openai",
       model: "gpt-4.1-mini",
+      projects: {
+        "my-project": {
+          platform: "openclaw",
+          projectDir: resolveDefaultOpenClawConfigDir(),
+        },
+      },
     });
     describeAuthMock.mockReturnValue("OpenAI API key");
     formatExistingConfigMock.mockReturnValue("auth summary");
@@ -1828,6 +1905,8 @@ describe("formatWizardChanges", () => {
       platformChanged: false,
       projectChanged: true,
       embeddingsKeyChanged: true,
+      directoryChanged: false,
+      dbPathChanged: false,
       previousModel: "claude-sonnet-4-20250514",
       newModel: "openai/gpt-4.1",
     });
@@ -1838,6 +1917,55 @@ describe("formatWizardChanges", () => {
     expect(formatted).toContain("- Project slug changed");
   });
 
+  it("formatWizardChanges includes directory changed", () => {
+    const formatted = formatWizardChanges({
+      authChanged: false,
+      modelChanged: false,
+      platformChanged: false,
+      projectChanged: false,
+      embeddingsKeyChanged: false,
+      directoryChanged: true,
+      dbPathChanged: false,
+      previousModel: "gpt-4.1-mini",
+      newModel: "gpt-4.1-mini",
+    });
+
+    expect(formatted).toContain("- OpenClaw directory changed");
+  });
+
+  it("formatWizardChanges includes isolated DB change", () => {
+    const formatted = formatWizardChanges({
+      authChanged: false,
+      modelChanged: false,
+      platformChanged: false,
+      projectChanged: false,
+      embeddingsKeyChanged: false,
+      directoryChanged: false,
+      dbPathChanged: true,
+      openclawDbPath: "/tmp/.openclaw-sandbox/agenr-data/knowledge.db",
+      previousModel: "gpt-4.1-mini",
+      newModel: "gpt-4.1-mini",
+    });
+
+    expect(formatted).toContain("- Database: isolated at /tmp/.openclaw-sandbox/agenr-data/knowledge.db");
+  });
+
+  it("formatWizardChanges includes shared DB change", () => {
+    const formatted = formatWizardChanges({
+      authChanged: false,
+      modelChanged: false,
+      platformChanged: false,
+      projectChanged: false,
+      embeddingsKeyChanged: false,
+      directoryChanged: false,
+      dbPathChanged: true,
+      previousModel: "gpt-4.1-mini",
+      newModel: "gpt-4.1-mini",
+    });
+
+    expect(formatted).toContain("- Database: switched to shared");
+  });
+
   it("formatWizardChanges shows no changes message when nothing changed", () => {
     const formatted = formatWizardChanges({
       authChanged: false,
@@ -1845,6 +1973,8 @@ describe("formatWizardChanges", () => {
       platformChanged: false,
       projectChanged: false,
       embeddingsKeyChanged: false,
+      directoryChanged: false,
+      dbPathChanged: false,
       previousModel: "gpt-4.1-mini",
       newModel: "gpt-4.1-mini",
     });
