@@ -255,7 +255,7 @@ describe("runInitCommand", () => {
     expect(await pathExists(path.join(dir, ".mcp.json"))).toBe(false);
   });
 
-  it("writeAgenrConfig writes to global projects map for openclaw", async () => {
+  it("writeGlobalProjectEntry keys by resolved projectDir", async () => {
     const dir = await createTempDir();
     tempDirs.push(dir);
 
@@ -266,10 +266,22 @@ describe("runInitCommand", () => {
       const projects = config.projects as Record<string, unknown>;
 
       expect(result.configPath).toBe(configPath);
-      expect(projects[result.project]).toEqual({
+      expect(projects[path.resolve(dir)]).toEqual({
+        project: result.project,
         platform: "openclaw",
-        projectDir: path.resolve(dir),
       });
+    });
+  });
+
+  it("writeGlobalProjectEntry stores project slug as field", async () => {
+    const dir = await createTempDir();
+    tempDirs.push(dir);
+
+    await withTempHome(async () => {
+      const result = await runInitCommand({ path: dir, platform: "openclaw", project: "openclaw" });
+      const config = await readJson(getIsolatedConfigPath());
+      const projects = config.projects as Record<string, { project?: string }>;
+      expect(projects[path.resolve(dir)]?.project).toBe(result.project);
     });
   });
 
@@ -349,9 +361,9 @@ describe("runInitCommand", () => {
       const projects = config.projects as Record<string, unknown>;
 
       expect(result.configPath).toBe(configPath);
-      expect(projects[result.project]).toEqual({
+      expect(projects[path.resolve(dir)]).toEqual({
+        project: result.project,
         platform: "codex",
-        projectDir: path.resolve(dir),
       });
     });
   });
@@ -368,14 +380,32 @@ describe("runInitCommand", () => {
 
       const config = await readJson(getIsolatedConfigPath());
       const projects = config.projects as Record<string, unknown>;
-      expect(projects[openclawResult.project]).toEqual({
+      expect(projects[path.resolve(openclawDir)]).toEqual({
+        project: openclawResult.project,
         platform: "openclaw",
-        projectDir: path.resolve(openclawDir),
       });
-      expect(projects[codexResult.project]).toEqual({
+      expect(projects[path.resolve(codexDir)]).toEqual({
+        project: codexResult.project,
         platform: "codex",
-        projectDir: path.resolve(codexDir),
       });
+    });
+  });
+
+  it("two projects with same slug coexist when keyed by different dirs", async () => {
+    await withTempHome(async () => {
+      const primaryDir = await createTempDir("agenr-openclaw-primary-");
+      const sandboxDir = await createTempDir("agenr-openclaw-sandbox-");
+      tempDirs.push(primaryDir);
+      tempDirs.push(sandboxDir);
+
+      await runInitCommand({ path: primaryDir, platform: "openclaw", project: "openclaw" });
+      await runInitCommand({ path: sandboxDir, platform: "openclaw", project: "openclaw" });
+
+      const config = await readJson(getIsolatedConfigPath());
+      const projects = config.projects as Record<string, { project?: string }>;
+      expect(Object.keys(projects)).toEqual(expect.arrayContaining([path.resolve(primaryDir), path.resolve(sandboxDir)]));
+      expect(projects[path.resolve(primaryDir)]?.project).toBe("openclaw");
+      expect(projects[path.resolve(sandboxDir)]?.project).toBe("openclaw");
     });
   });
 
@@ -407,9 +437,9 @@ describe("runInitCommand", () => {
       expect(config.auth).toBe("openai-api-key");
       expect(config.provider).toBe("openai");
       expect(config.model).toBe("gpt-4.1-mini");
-      expect(projects[result.project]).toEqual({
+      expect(projects[path.resolve(dir)]).toEqual({
+        project: result.project,
         platform: "openclaw",
-        projectDir: path.resolve(dir),
       });
     });
   });
@@ -423,7 +453,7 @@ describe("runInitCommand", () => {
       const result = await runInitCommand({ path: dir, platform: "openclaw", openclawDbPath });
       const config = await readJson(getIsolatedConfigPath());
       const projects = config.projects as Record<string, { dbPath?: string }>;
-      expect(projects[result.project]?.dbPath).toBe(openclawDbPath);
+      expect(projects[path.resolve(dir)]?.dbPath).toBe(openclawDbPath);
     });
   });
 
@@ -435,9 +465,9 @@ describe("runInitCommand", () => {
       const result = await runInitCommand({ path: dir, platform: "openclaw" });
       const config = await readJson(getIsolatedConfigPath());
       const projects = config.projects as Record<string, unknown>;
-      expect(projects[result.project]).toEqual({
+      expect(projects[path.resolve(dir)]).toEqual({
+        project: result.project,
         platform: "openclaw",
-        projectDir: path.resolve(dir),
       });
     });
   });
@@ -766,7 +796,7 @@ describe("runInitWizard", () => {
   }
 
   async function writeGlobalProjectsConfig(
-    projects: Record<string, { platform: string; projectDir: string; dbPath?: string }>,
+    projects: Record<string, { project: string; platform: string; dbPath?: string }>,
   ): Promise<void> {
     const configPath = getIsolatedConfigPath();
     await fs.mkdir(path.dirname(configPath), { recursive: true });
@@ -836,9 +866,9 @@ describe("runInitWizard", () => {
         JSON.stringify(
           {
             projects: {
-              "openclaw-sandbox": {
+              [path.resolve(dir)]: {
+                project: "openclaw-sandbox",
                 platform: "openclaw",
-                projectDir: path.resolve(dir),
               },
             },
           },
@@ -1175,14 +1205,14 @@ describe("runInitWizard", () => {
     );
   });
 
-  it("summary shows registered projects when 2+ exist", async () => {
+  it("formatRegisteredProjects shows project slug from entry", async () => {
     const dir = await createWizardProjectDir();
     const sandboxDir = await createTempDir("openclaw-sandbox-");
     tempDirs.push(sandboxDir);
     await writeGlobalProjectsConfig({
-      "codex-main": {
+      "/tmp/.codex-main": {
+        project: "openclaw",
         platform: "codex",
-        projectDir: "/tmp/.codex-main",
       },
     });
     formatExistingConfigMock.mockReturnValue("current config");
@@ -1195,8 +1225,10 @@ describe("runInitWizard", () => {
     await runInitWizard({ isInteractive: true, path: dir });
 
     const registeredProjectsNote = clackNoteMock.mock.calls.find((call) => call[1] === "Registered projects");
-    expect(registeredProjectsNote?.[0]).toContain("codex-main");
+    expect(registeredProjectsNote?.[0]).toContain("openclaw");
+    expect(registeredProjectsNote?.[0]).toContain("/tmp/.codex-main");
     expect(registeredProjectsNote?.[0]).toContain("openclaw-sandbox");
+    expect(registeredProjectsNote?.[0]).toContain(path.resolve(sandboxDir));
   });
 
   it("summary hides registered projects when only 1 exists", async () => {
@@ -1219,9 +1251,9 @@ describe("runInitWizard", () => {
     const sandboxDir = await createTempDir("openclaw-sandbox-");
     tempDirs.push(sandboxDir);
     await writeGlobalProjectsConfig({
-      "shared-main": {
+      "/tmp/.openclaw": {
+        project: "shared-main",
         platform: "openclaw",
-        projectDir: "/tmp/.openclaw",
       },
     });
     formatExistingConfigMock.mockReturnValue("current config");
@@ -1238,40 +1270,19 @@ describe("runInitWizard", () => {
     expect(registeredProjectsNote?.[0]).toContain("(isolated)");
   });
 
-  it("wizard warns on slug collision with different projectDir", async () => {
+  it("wizard does not warn on same project slug with different directories", async () => {
     const dir = await createWizardProjectDir();
     const sandboxDir = await createTempDir("openclaw-sandbox-");
     tempDirs.push(sandboxDir);
     await writeGlobalProjectsConfig({
-      openclaw: {
+      "/tmp/.openclaw-main": {
+        project: "openclaw",
         platform: "openclaw",
-        projectDir: "/tmp/.openclaw-main",
       },
     });
     formatExistingConfigMock.mockReturnValue("current config");
     runSetupCoreMock.mockResolvedValue(mockSetupResult());
-    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(false, false));
-    clackConfirmMock.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
-    clackSelectMock.mockResolvedValueOnce("openclaw").mockResolvedValueOnce("shared");
-    clackTextMock.mockResolvedValueOnce(sandboxDir).mockResolvedValueOnce("openclaw");
-
-    await runInitWizard({ isInteractive: true, path: dir });
-
-    expect(clackLogWarnMock).toHaveBeenCalledWith(expect.stringContaining('Project "openclaw" is already registered at'));
-  });
-
-  it("wizard does not warn on slug collision with same projectDir", async () => {
-    const dir = await createWizardProjectDir();
-    const sandboxDir = await createTempDir("openclaw-sandbox-");
-    tempDirs.push(sandboxDir);
-    await writeGlobalProjectsConfig({
-      openclaw: {
-        platform: "openclaw",
-        projectDir: path.resolve(sandboxDir),
-      },
-    });
-    formatExistingConfigMock.mockReturnValue("current config");
-    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    const runInitCommandSpy = vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
     vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(false, false));
     clackConfirmMock.mockResolvedValue(true);
     clackSelectMock.mockResolvedValueOnce("openclaw").mockResolvedValueOnce("shared");
@@ -1284,41 +1295,11 @@ describe("runInitWizard", () => {
         (call) => typeof call[0] === "string" && call[0].includes('Project "openclaw" is already registered at'),
       ),
     ).toBe(false);
-  });
-
-  it("wizard allows user to cancel on slug collision and re-enter project name", async () => {
-    const dir = await createWizardProjectDir();
-    const sandboxDir = await createTempDir("openclaw-sandbox-");
-    tempDirs.push(sandboxDir);
-    await writeGlobalProjectsConfig({
-      openclaw: {
-        platform: "openclaw",
-        projectDir: "/tmp/.openclaw-main",
-      },
-    });
-    formatExistingConfigMock.mockReturnValue("current config");
-    runSetupCoreMock.mockResolvedValue(mockSetupResult());
-    const runInitCommandSpy = vi.spyOn(initWizardRuntime, "runInitCommand");
-    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(false, false));
-    clackConfirmMock.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
-    clackSelectMock.mockResolvedValueOnce("openclaw").mockResolvedValueOnce("shared");
-    clackTextMock
-      .mockResolvedValueOnce(sandboxDir)
-      .mockResolvedValueOnce("openclaw")
-      .mockResolvedValueOnce("openclaw-sandbox");
-
-    await runInitWizard({ isInteractive: true, path: dir });
-
-    const projectPromptCalls = clackTextMock.mock.calls.filter(
-      (call) => (call[0] as { message?: string }).message === "Project name:",
-    );
-    expect(projectPromptCalls).toHaveLength(2);
     expect(runInitCommandSpy).toHaveBeenCalledWith(
       expect.objectContaining({
-        project: "openclaw-sandbox",
+        project: "openclaw",
       }),
     );
-    expect(clackLogInfoMock).toHaveBeenCalledWith("Change the project name to avoid the collision.");
   });
 
   it("wizard shows shared DB info when other projects share the DB", async () => {
@@ -1326,9 +1307,9 @@ describe("runInitWizard", () => {
     const sandboxDir = await createTempDir("openclaw-sandbox-");
     tempDirs.push(sandboxDir);
     await writeGlobalProjectsConfig({
-      "other-shared": {
+      "/tmp/.openclaw-main": {
+        project: "other-shared",
         platform: "openclaw",
-        projectDir: "/tmp/.openclaw-main",
       },
     });
     formatExistingConfigMock.mockReturnValue("current config");
@@ -1341,7 +1322,7 @@ describe("runInitWizard", () => {
     await runInitWizard({ isInteractive: true, path: dir });
 
     expect(clackLogInfoMock).toHaveBeenCalledWith(
-      expect.stringContaining("This project shares the knowledge database with: other-shared"),
+      expect.stringContaining("This project shares the knowledge database with:\n  - other-shared (/tmp/.openclaw-main)"),
     );
   });
 
@@ -1350,9 +1331,9 @@ describe("runInitWizard", () => {
     const sandboxDir = await createTempDir("openclaw-sandbox-");
     tempDirs.push(sandboxDir);
     await writeGlobalProjectsConfig({
-      "other-shared": {
+      "/tmp/.openclaw-main": {
+        project: "other-shared",
         platform: "openclaw",
-        projectDir: "/tmp/.openclaw-main",
       },
     });
     formatExistingConfigMock.mockReturnValue("current config");
@@ -1540,9 +1521,9 @@ describe("runInitWizard", () => {
       provider: "openai",
       model: "gpt-4.1-mini",
       projects: {
-        "my-project": {
+        [resolveDefaultOpenClawConfigDir()]: {
+          project: "my-project",
           platform: "openclaw",
-          projectDir: resolveDefaultOpenClawConfigDir(),
         },
       },
     });
@@ -1575,9 +1556,9 @@ describe("runInitWizard", () => {
       provider: "openai",
       model: "gpt-4.1-mini",
       projects: {
-        "my-project": {
+        [path.resolve(customDir)]: {
+          project: "my-project",
           platform: "openclaw",
-          projectDir: path.resolve(customDir),
         },
       },
     });
@@ -1684,9 +1665,9 @@ describe("runInitWizard", () => {
       provider: "openai",
       model: "gpt-4.1-mini",
       projects: {
-        "my-project": {
+        [resolveDefaultOpenClawConfigDir()]: {
+          project: "my-project",
           platform: "openclaw",
-          projectDir: resolveDefaultOpenClawConfigDir(),
         },
       },
     });

@@ -49,8 +49,8 @@ export interface AgenrConfig {
   projects?: Record<
     string,
     {
+      project: string;
       platform: string;
-      projectDir: string;
       dbPath?: string;
       dependencies?: string[];
     }

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.4 (2026-02-25)
+
+- Refactor: global projects map keyed by directory path instead of project slug
+- Multiple instances can now share the same project slug with isolated databases
+- Removed slug collision warning (no longer applicable)
+- `resolveProjectFromGlobalConfig` uses direct key lookup (O(1) instead of iteration)
+
 ## 0.9.3 (2026-02-25)
 
 ### Fixed

@@ -226,13 +226,13 @@ describe("config", () => {
   it("normalizeConfig preserves valid projects map", () => {
     const normalized = normalizeConfig({
       projects: {
-        openclaw: {
+        "/Users/jmartin/.openclaw": {
+          project: "openclaw",
           platform: "openclaw",
-          projectDir: "/Users/jmartin/.openclaw",
         },
-        "openclaw-sandbox": {
+        "/Users/jmartin/.openclaw-sandbox": {
+          project: "openclaw",
           platform: "openclaw",
-          projectDir: "/Users/jmartin/.openclaw-sandbox",
           dbPath: "/Users/jmartin/.openclaw-sandbox/agenr-data/knowledge.db",
           dependencies: ["shared-brain", "workspace-x"],
         },
@@ -240,13 +240,13 @@ describe("config", () => {
     });
 
     expect(normalized.projects).toEqual({
-      openclaw: {
+      "/Users/jmartin/.openclaw": {
+        project: "openclaw",
         platform: "openclaw",
-        projectDir: "/Users/jmartin/.openclaw",
       },
-      "openclaw-sandbox": {
+      "/Users/jmartin/.openclaw-sandbox": {
+        project: "openclaw",
         platform: "openclaw",
-        projectDir: "/Users/jmartin/.openclaw-sandbox",
         dbPath: "/Users/jmartin/.openclaw-sandbox/agenr-data/knowledge.db",
         dependencies: ["shared-brain", "workspace-x"],
       },
@@ -256,23 +256,53 @@ describe("config", () => {
   it("normalizeConfig drops malformed project entries", () => {
     const normalized = normalizeConfig({
       projects: {
-        valid: {
+        "/Users/jmartin/.openclaw": {
+          project: "openclaw",
           platform: "openclaw",
-          projectDir: "/Users/jmartin/.openclaw",
         },
-        missingPlatform: {
-          projectDir: "/Users/jmartin/.openclaw-sandbox",
+        "/Users/jmartin/.missing-platform": {
+          project: "openclaw-sandbox",
         },
-        missingProjectDir: {
+        "/Users/jmartin/.missing-project": {
           platform: "openclaw",
         },
       },
     });
 
     expect(normalized.projects).toEqual({
-      valid: {
+      "/Users/jmartin/.openclaw": {
+        project: "openclaw",
         platform: "openclaw",
-        projectDir: "/Users/jmartin/.openclaw",
+      },
+    });
+  });
+
+  it("normalizeConfig validates project field in entries", () => {
+    const normalized = normalizeConfig({
+      projects: {
+        "/Users/jmartin/.openclaw": {
+          platform: "openclaw",
+        },
+      },
+    });
+
+    expect(normalized.projects).toBeUndefined();
+  });
+
+  it("normalizeConfig migrates legacy slug-keyed project entries", () => {
+    const normalized = normalizeConfig({
+      projects: {
+        openclaw: {
+          platform: "openclaw",
+          projectDir: "/Users/jmartin/.openclaw",
+        },
+      },
+    });
+
+    expect(normalized.projects).toEqual({
+      "/Users/jmartin/.openclaw": {
+        project: "openclaw",
+        platform: "openclaw",
       },
     });
   });
@@ -312,15 +342,15 @@ describe("normalizeConfig dedup", () => {
 });
 
 describe("resolveProjectFromGlobalConfig", () => {
-  it("returns matching entry", async () => {
+  it("does direct key lookup", async () => {
     const configPath = await makeTempConfigPath();
     const env = makeEnv(configPath);
     writeConfig(
       {
         projects: {
-          "openclaw-sandbox": {
+          "/Users/jmartin/.openclaw-sandbox": {
+            project: "openclaw",
             platform: "openclaw",
-            projectDir: "/Users/jmartin/.openclaw-sandbox",
             dbPath: "/Users/jmartin/.openclaw-sandbox/agenr-data/knowledge.db",
           },
         },
@@ -330,7 +360,7 @@ describe("resolveProjectFromGlobalConfig", () => {
 
     const resolved = resolveProjectFromGlobalConfig("/Users/jmartin/.openclaw-sandbox", env);
     expect(resolved).toEqual({
-      slug: "openclaw-sandbox",
+      slug: "openclaw",
       platform: "openclaw",
       dbPath: "/Users/jmartin/.openclaw-sandbox/agenr-data/knowledge.db",
     });
@@ -342,9 +372,9 @@ describe("resolveProjectFromGlobalConfig", () => {
     writeConfig(
       {
         projects: {
-          openclaw: {
+          "/Users/jmartin/.openclaw": {
+            project: "openclaw",
             platform: "openclaw",
-            projectDir: "/Users/jmartin/.openclaw",
           },
         },
       },
