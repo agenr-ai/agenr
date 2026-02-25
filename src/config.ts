@@ -270,6 +270,59 @@ function normalizeLabelProjectMap(input: unknown): Record<string, string> | unde
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+function normalizeProjectsMap(input: unknown): AgenrConfig["projects"] | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return undefined;
+  }
+
+  const out: NonNullable<AgenrConfig["projects"]> = {};
+  for (const [rawSlug, rawValue] of Object.entries(input as Record<string, unknown>)) {
+    if (!rawValue || typeof rawValue !== "object" || Array.isArray(rawValue)) {
+      continue;
+    }
+
+    const slug = rawSlug.trim();
+    if (!slug) {
+      continue;
+    }
+
+    const value = rawValue as Record<string, unknown>;
+    if (typeof value.platform !== "string" || !value.platform.trim()) {
+      continue;
+    }
+    if (typeof value.projectDir !== "string" || !value.projectDir.trim()) {
+      continue;
+    }
+
+    const entry: NonNullable<AgenrConfig["projects"]>[string] = {
+      platform: value.platform.trim(),
+      projectDir: value.projectDir.trim(),
+    };
+
+    if (typeof value.dbPath === "string" && value.dbPath.trim()) {
+      entry.dbPath = value.dbPath.trim();
+    }
+
+    if (Array.isArray(value.dependencies)) {
+      const dependencies = Array.from(
+        new Set(
+          value.dependencies
+            .filter((dependency): dependency is string => typeof dependency === "string")
+            .map((dependency) => dependency.trim())
+            .filter((dependency) => dependency.length > 0),
+        ),
+      );
+      if (dependencies.length > 0) {
+        entry.dependencies = dependencies;
+      }
+    }
+
+    out[slug] = entry;
+  }
+
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 export function normalizeConfig(input: unknown): AgenrConfig {
   const record = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
   const normalized: AgenrConfig = {
@@ -304,6 +357,11 @@ export function normalizeConfig(input: unknown): AgenrConfig {
   const labelProjectMap = normalizeLabelProjectMap(record.labelProjectMap);
   if (labelProjectMap) {
     normalized.labelProjectMap = labelProjectMap;
+  }
+
+  const projects = normalizeProjectsMap(record.projects);
+  if (projects) {
+    normalized.projects = projects;
   }
 
   const dedup = normalizeDedupConfig(record.dedup);
@@ -364,6 +422,30 @@ export function writeConfig(config: AgenrConfig, env: NodeJS.ProcessEnv = proces
   } catch {
     // Best-effort permission hardening.
   }
+}
+
+export function resolveProjectFromGlobalConfig(
+  projectDir: string,
+  env: NodeJS.ProcessEnv = process.env,
+): { slug: string; platform: string; dbPath?: string } | null {
+  const config = readConfig(env);
+  if (!config?.projects) {
+    return null;
+  }
+
+  const resolvedProjectDir = path.resolve(projectDir);
+  for (const [slug, entry] of Object.entries(config.projects)) {
+    if (path.resolve(entry.projectDir) !== resolvedProjectDir) {
+      continue;
+    }
+    return {
+      slug,
+      platform: entry.platform,
+      dbPath: entry.dbPath,
+    };
+  }
+
+  return null;
 }
 
 export function mergeConfigPatch(current: AgenrConfig | null, patch: AgenrConfig): AgenrConfig {

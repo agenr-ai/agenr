@@ -2,9 +2,10 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import * as clack from "@clack/prompts";
-import { describeAuth, readConfig } from "../config.js";
+import { describeAuth, readConfig, resolveConfigPath, resolveProjectFromGlobalConfig, writeConfig } from "../config.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { formatExistingConfig, runSetupCore } from "../setup.js";
+import type { AgenrConfig } from "../types.js";
 import { banner, formatLabel } from "../ui.js";
 import {
   detectPlatforms,
@@ -41,6 +42,7 @@ export interface InitCommandOptions {
   project?: string;
   path?: string;
   dependsOn?: string;
+  openclawDbPath?: string;
 }
 
 export interface WizardOptions {
@@ -91,6 +93,7 @@ interface WizardSummary {
   platform: string;
   directory?: string;
   database?: string;
+  configPath: string;
   project: string;
   authLabel: string;
   model: string;
@@ -261,7 +264,12 @@ async function writeAgenrConfig(
   project: string,
   platform: InitPlatform,
   dependencies: string[] | undefined,
+  dbPath: string | undefined,
 ): Promise<{ configPath: string; config: InitConfigFile }> {
+  if (platform === "openclaw" || platform === "codex") {
+    return await writeGlobalProjectEntry(project, platform, projectDir, dependencies, dbPath);
+  }
+
   const configDir = path.join(projectDir, ".agenr");
   const configPath = path.join(configDir, "config.json");
   const existing = (await readJsonRecord(configPath)) ?? {};
@@ -281,6 +289,55 @@ async function writeAgenrConfig(
   await fs.mkdir(configDir, { recursive: true });
   await writeJsonFile(configPath, next as JsonRecord);
   return { configPath, config: next };
+}
+
+async function writeGlobalProjectEntry(
+  project: string,
+  platform: InitPlatform,
+  projectDir: string,
+  dependencies: string[] | undefined,
+  dbPath: string | undefined,
+): Promise<{ configPath: string; config: InitConfigFile }> {
+  const existingConfig = readConfig(process.env) ?? {};
+  const projects: NonNullable<AgenrConfig["projects"]> = {
+    ...(existingConfig.projects ?? {}),
+  };
+  const existingEntry = projects[project];
+
+  const currentDependencies = Array.isArray(existingEntry?.dependencies)
+    ? existingEntry.dependencies.filter((value): value is string => typeof value === "string")
+    : [];
+
+  let nextDependencies: string[] | undefined;
+  if (dependencies !== undefined) {
+    nextDependencies = Array.from(new Set([...currentDependencies, ...dependencies]));
+  } else if (currentDependencies.length > 0) {
+    nextDependencies = currentDependencies;
+  }
+
+  projects[project] = {
+    platform,
+    projectDir,
+    ...(nextDependencies && nextDependencies.length > 0 ? { dependencies: nextDependencies } : {}),
+    ...(dbPath ? { dbPath } : {}),
+  };
+
+  const nextConfig: AgenrConfig = {
+    ...existingConfig,
+    projects,
+  };
+  writeConfig(nextConfig, process.env);
+
+  return {
+    configPath: resolveConfigPath(process.env),
+    config: {
+      project,
+      platform,
+      projectDir,
+      ...(nextDependencies && nextDependencies.length > 0 ? { dependencies: nextDependencies } : {}),
+      ...(dbPath ? { dbPath } : {}),
+    },
+  };
 }
 
 export function buildMcpEntry(
@@ -446,9 +503,13 @@ async function writeCodexConfig(
 
 export function formatInitSummary(result: InitCommandResult): string[] {
   const dependencyLabel = result.dependencies.length > 0 ? `[${result.dependencies.join(",")}]` : "[]";
+  const configPath =
+    result.platform === "openclaw" || result.platform === "codex"
+      ? formatPathForDisplay(result.configPath)
+      : path.relative(result.projectDir, result.configPath) || path.basename(result.configPath);
   const lines = [
     `agenr init: platform=${result.platform} project=${result.project} dependencies=${dependencyLabel}`,
-    `- Wrote .agenr/config.json`,
+    `- Wrote config to ${configPath}`,
     result.platform === "codex"
       ? "- Wrote MCP entry to ~/.codex/config.toml"
       : result.mcpSkipped
@@ -529,6 +590,14 @@ export function resolveWizardProjectDir(projectDir: string, platformId: string, 
 }
 
 async function readExistingProjectSettings(projectDir: string): Promise<ExistingProjectSettings> {
+  const globalProject = resolveProjectFromGlobalConfig(projectDir, process.env);
+  if (globalProject) {
+    return {
+      project: globalProject.slug,
+      platform: isPlatform(globalProject.platform) ? globalProject.platform : undefined,
+    };
+  }
+
   const configPath = path.join(projectDir, ".agenr", "config.json");
   const config = await readJsonRecord(configPath);
   if (!config) {
@@ -598,6 +667,7 @@ function formatWizardSummary(result: WizardSummary): string {
   if (result.database) {
     lines.push(`  Database:  ${result.database}`);
   }
+  lines.push(`  Config:    ${result.configPath}`);
   lines.push(`  Project:   ${result.project}`);
   lines.push(`  Auth:      ${result.authLabel}`);
   lines.push(`  Model:     ${result.model}`);
@@ -655,7 +725,13 @@ export async function runInitCommand(options: InitCommandOptions): Promise<InitC
   const project = resolveProjectSlug(projectDir, options.project);
   const dependencies = options.dependsOn !== undefined ? normalizeSlugList(options.dependsOn) : undefined;
 
-  const configResult = await writeAgenrConfig(projectDir, project, resolvedPlatform, dependencies);
+  const configResult = await writeAgenrConfig(
+    projectDir,
+    project,
+    resolvedPlatform,
+    dependencies,
+    options.openclawDbPath,
+  );
   const instructionsPath = await resolveInstructionsPath(projectDir, resolvedPlatform);
   if (instructionsPath !== null) {
     await upsertPromptBlock(instructionsPath, buildSystemPromptBlock(project));
@@ -972,6 +1048,7 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
     project: projectSlug,
     path: projectDir,
     dependsOn: options.dependsOn,
+    openclawDbPath: selectedOpenclawDbPath,
   });
 
   const openclawDatabase =
@@ -983,6 +1060,7 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
       platform: formatPlatformLabel(initResult.platform),
       directory: initResult.platform === "openclaw" ? formatPathForDisplay(selectedPlatform.configDir) : undefined,
       database: openclawDatabase,
+      configPath: formatPathForDisplay(initResult.configPath),
       project: initResult.project,
       authLabel: selectedAuth ? describeAuth(selectedAuth) : "(not set)",
       model: selectedModel ?? "(not set)",

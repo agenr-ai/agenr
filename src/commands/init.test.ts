@@ -18,6 +18,7 @@ const {
   clackCancelMock,
   clackOutroMock,
   clackCancelToken,
+  readConfigActualRef,
 } = vi.hoisted(() => ({
   readConfigMock: vi.fn(),
   describeAuthMock: vi.fn((auth: string) => auth),
@@ -38,6 +39,9 @@ const {
   clackCancelMock: vi.fn(),
   clackOutroMock: vi.fn(),
   clackCancelToken: Symbol("cancel"),
+  readConfigActualRef: {
+    value: undefined as undefined | typeof import("../config.js")["readConfig"],
+  },
 }));
 
 vi.mock("@clack/prompts", () => ({
@@ -54,10 +58,15 @@ vi.mock("@clack/prompts", () => ({
   isCancel: (value: unknown) => value === clackCancelToken,
 }));
 
-vi.mock("../config.js", () => ({
-  readConfig: readConfigMock,
-  describeAuth: describeAuthMock,
-}));
+vi.mock("../config.js", async () => {
+  const actual = await vi.importActual<typeof import("../config.js")>("../config.js");
+  readConfigActualRef.value = actual.readConfig;
+  return {
+    ...actual,
+    readConfig: readConfigMock,
+    describeAuth: describeAuthMock,
+  };
+});
 
 vi.mock("../setup.js", () => ({
   runSetupCore: runSetupCoreMock,
@@ -80,6 +89,17 @@ import {
   runInitWizard,
 } from "./init.js";
 import { resolveDefaultCodexConfigDir, resolveDefaultOpenClawConfigDir } from "./init/platform-detector.js";
+
+function resetReadConfigMockDefault(): void {
+  readConfigMock.mockImplementation((env?: NodeJS.ProcessEnv) => {
+    if (!readConfigActualRef.value) {
+      return null;
+    }
+    return readConfigActualRef.value(env);
+  });
+}
+
+resetReadConfigMockDefault();
 
 async function createTempDir(prefix = "agenr-init-"): Promise<string> {
   return await fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -117,6 +137,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.clearAllMocks();
   readConfigMock.mockReset();
+  resetReadConfigMockDefault();
   describeAuthMock.mockReset();
   describeAuthMock.mockImplementation((auth: string) => auth);
   resolveEmbeddingApiKeyMock.mockReset();
@@ -171,6 +192,32 @@ describe("runInitCommand", () => {
     expect(result.mcpPath).toBe(path.join(dir, ".cursor", "mcp.json"));
   });
 
+  it("writeAgenrConfig still writes per-repo config for cursor", async () => {
+    const dir = await createTempDir();
+    tempDirs.push(dir);
+
+    const result = await runInitCommand({ path: dir, platform: "cursor" });
+    const configPath = path.join(dir, ".agenr", "config.json");
+    const config = await readJson(configPath);
+
+    expect(result.configPath).toBe(configPath);
+    expect(config.platform).toBe("cursor");
+    expect(config.projectDir).toBe(path.resolve(dir));
+  });
+
+  it("writeAgenrConfig still writes per-repo config for claude-code", async () => {
+    const dir = await createTempDir();
+    tempDirs.push(dir);
+
+    const result = await runInitCommand({ path: dir, platform: "claude-code" });
+    const configPath = path.join(dir, ".agenr", "config.json");
+    const config = await readJson(configPath);
+
+    expect(result.configPath).toBe(configPath);
+    expect(config.platform).toBe("claude-code");
+    expect(config.projectDir).toBe(path.resolve(dir));
+  });
+
   it("explicit --platform openclaw skips AGENTS.md write and does not write .mcp.json", async () => {
     const dir = await createTempDir();
     tempDirs.push(dir);
@@ -182,6 +229,34 @@ describe("runInitCommand", () => {
     expect(result.mcpSkipped).toBe(true);
     expect(await pathExists(path.join(dir, "AGENTS.md"))).toBe(false);
     expect(await pathExists(path.join(dir, ".mcp.json"))).toBe(false);
+  });
+
+  it("writeAgenrConfig writes to global projects map for openclaw", async () => {
+    const dir = await createTempDir();
+    tempDirs.push(dir);
+
+    await withTempHome(async (homeDir) => {
+      const result = await runInitCommand({ path: dir, platform: "openclaw" });
+      const configPath = path.join(homeDir, ".agenr", "config.json");
+      const config = await readJson(configPath);
+      const projects = config.projects as Record<string, unknown>;
+
+      expect(result.configPath).toBe(configPath);
+      expect(projects[result.project]).toEqual({
+        platform: "openclaw",
+        projectDir: path.resolve(dir),
+      });
+    });
+  });
+
+  it("writeAgenrConfig does not create .agenr dir for openclaw", async () => {
+    const dir = await createTempDir();
+    tempDirs.push(dir);
+
+    await withTempHome(async () => {
+      await runInitCommand({ path: dir, platform: "openclaw" });
+      expect(await pathExists(path.join(dir, ".agenr"))).toBe(false);
+    });
   });
 
   it("AGENTS.md presence no longer auto-detects openclaw (falls through to generic)", async () => {
@@ -236,6 +311,110 @@ describe("runInitCommand", () => {
       expect(result.mcpSkipped).toBe(false);
       expect(await pathExists(path.join(dir, "AGENTS.md"))).toBe(false);
       expect(await pathExists(path.join(dir, ".mcp.json"))).toBe(false);
+    });
+  });
+
+  it("writeAgenrConfig writes to global projects map for codex", async () => {
+    const dir = await createTempDir();
+    tempDirs.push(dir);
+
+    await withTempHome(async (homeDir) => {
+      const result = await runInitCommand({ path: dir, platform: "codex" });
+      const configPath = path.join(homeDir, ".agenr", "config.json");
+      const config = await readJson(configPath);
+      const projects = config.projects as Record<string, unknown>;
+
+      expect(result.configPath).toBe(configPath);
+      expect(projects[result.project]).toEqual({
+        platform: "codex",
+        projectDir: path.resolve(dir),
+      });
+    });
+  });
+
+  it("writeAgenrConfig preserves existing projects when adding new one", async () => {
+    await withTempHome(async (homeDir) => {
+      const openclawDir = await createTempDir("agenr-openclaw-");
+      const codexDir = await createTempDir("agenr-codex-");
+      tempDirs.push(openclawDir);
+      tempDirs.push(codexDir);
+
+      const openclawResult = await runInitCommand({ path: openclawDir, platform: "openclaw" });
+      const codexResult = await runInitCommand({ path: codexDir, platform: "codex" });
+
+      const config = await readJson(path.join(homeDir, ".agenr", "config.json"));
+      const projects = config.projects as Record<string, unknown>;
+      expect(projects[openclawResult.project]).toEqual({
+        platform: "openclaw",
+        projectDir: path.resolve(openclawDir),
+      });
+      expect(projects[codexResult.project]).toEqual({
+        platform: "codex",
+        projectDir: path.resolve(codexDir),
+      });
+    });
+  });
+
+  it("writeAgenrConfig does not clobber auth/model settings", async () => {
+    const dir = await createTempDir();
+    tempDirs.push(dir);
+
+    await withTempHome(async (homeDir) => {
+      const configPath = path.join(homeDir, ".agenr", "config.json");
+      await fs.mkdir(path.dirname(configPath), { recursive: true });
+      await fs.writeFile(
+        configPath,
+        JSON.stringify(
+          {
+            auth: "openai-api-key",
+            provider: "openai",
+            model: "gpt-4.1-mini",
+          },
+          null,
+          2,
+        ),
+        "utf8",
+      );
+
+      const result = await runInitCommand({ path: dir, platform: "openclaw" });
+
+      const config = await readJson(configPath);
+      const projects = config.projects as Record<string, unknown>;
+      expect(config.auth).toBe("openai-api-key");
+      expect(config.provider).toBe("openai");
+      expect(config.model).toBe("gpt-4.1-mini");
+      expect(projects[result.project]).toEqual({
+        platform: "openclaw",
+        projectDir: path.resolve(dir),
+      });
+    });
+  });
+
+  it("writeAgenrConfig includes dbPath when provided", async () => {
+    const dir = await createTempDir();
+    tempDirs.push(dir);
+    const openclawDbPath = path.join(path.resolve(dir), "agenr-data", "knowledge.db");
+
+    await withTempHome(async (homeDir) => {
+      const result = await runInitCommand({ path: dir, platform: "openclaw", openclawDbPath });
+      const config = await readJson(path.join(homeDir, ".agenr", "config.json"));
+      const projects = config.projects as Record<string, { dbPath?: string }>;
+      expect(projects[result.project]?.dbPath).toBe(openclawDbPath);
+    });
+  });
+
+  it("writeAgenrConfig omits dbPath when not provided", async () => {
+    const dir = await createTempDir();
+    tempDirs.push(dir);
+
+    await withTempHome(async (homeDir) => {
+      const result = await runInitCommand({ path: dir, platform: "openclaw" });
+      const config = await readJson(path.join(homeDir, ".agenr", "config.json"));
+      const projects = config.projects as Record<string, unknown>;
+      expect(projects[result.project]).toEqual({
+        platform: "openclaw",
+        projectDir: path.resolve(dir),
+      });
     });
   });
 
@@ -615,6 +794,78 @@ describe("runInitWizard", () => {
     expect(clackOutroMock).toHaveBeenCalledWith("Setup unchanged.");
   });
 
+  it("readExistingProjectSettings finds project in global config by projectDir", async () => {
+    await withTempHome(async (homeDir) => {
+      const dir = await createWizardProjectDir();
+      const globalConfigPath = path.join(homeDir, ".agenr", "config.json");
+      await fs.mkdir(path.dirname(globalConfigPath), { recursive: true });
+      await fs.writeFile(
+        globalConfigPath,
+        JSON.stringify(
+          {
+            projects: {
+              "openclaw-sandbox": {
+                platform: "openclaw",
+                projectDir: path.resolve(dir),
+              },
+            },
+          },
+          null,
+          2,
+        ),
+        "utf8",
+      );
+
+      readConfigMock.mockReturnValue(null);
+      clackConfirmMock.mockResolvedValue(false);
+
+      await runInitWizard({ isInteractive: true, path: dir });
+
+      expect(clackNoteMock).toHaveBeenCalledWith(
+        expect.stringContaining("Platform: OpenClaw"),
+        "Current config",
+      );
+      expect(clackNoteMock).toHaveBeenCalledWith(
+        expect.stringContaining("Project: openclaw-sandbox"),
+        "Current config",
+      );
+    });
+  });
+
+  it("readExistingProjectSettings falls back to per-repo config", async () => {
+    const dir = await createWizardProjectDir({
+      project: "local-project",
+      platform: "openclaw",
+    });
+    readConfigMock.mockReturnValue(null);
+    clackConfirmMock.mockResolvedValue(false);
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(clackNoteMock).toHaveBeenCalledWith(
+      expect.stringContaining("Platform: OpenClaw"),
+      "Current config",
+    );
+    expect(clackNoteMock).toHaveBeenCalledWith(
+      expect.stringContaining("Project: local-project"),
+      "Current config",
+    );
+  });
+
+  it("readExistingProjectSettings returns empty when no config exists", async () => {
+    const dir = await createWizardProjectDir();
+    readConfigMock.mockReturnValue(null);
+    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(false, false));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackSelectMock.mockResolvedValue("openclaw");
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(clackNoteMock).not.toHaveBeenCalledWith(expect.any(String), "Current config");
+    expect(clackConfirmMock).not.toHaveBeenCalled();
+  });
+
   it("wizard suggests single detected platform", async () => {
     const dir = await createWizardProjectDir();
     readConfigMock.mockReturnValue(null);
@@ -865,6 +1116,29 @@ describe("runInitWizard", () => {
 
     expect(clackNoteMock).toHaveBeenCalledWith(
       expect.stringContaining("Database:  ~/.agenr/knowledge.db (shared)"),
+      "Setup summary",
+    );
+  });
+
+  it("wizard summary shows ~/.agenr/config.json for openclaw", async () => {
+    const dir = await createWizardProjectDir();
+    readConfigMock.mockReturnValue(null);
+    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
+    clackConfirmMock.mockResolvedValue(true);
+
+    await withTempHome(async (homeDir) => {
+      vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue({
+        ...mockInitResult(),
+        platform: "openclaw",
+        configPath: path.join(homeDir, ".agenr", "config.json"),
+      });
+
+      await runInitWizard({ isInteractive: true, path: dir });
+    });
+
+    expect(clackNoteMock).toHaveBeenCalledWith(
+      expect.stringContaining("Config:    ~/.agenr/config.json"),
       "Setup summary",
     );
   });
@@ -1296,6 +1570,23 @@ describe("formatInitSummary", () => {
       });
       expect(lines).toContain("- Wrote system prompt block to ~/.codex/AGENTS.md");
     });
+  });
+
+  it("shows per-project config path for cursor", () => {
+    const projectDir = path.resolve("/tmp/project");
+    const lines = formatInitSummary({
+      platform: "cursor",
+      project: "agenr",
+      projectDir,
+      dependencies: [],
+      configPath: path.join(projectDir, ".agenr", "config.json"),
+      instructionsPath: path.join(projectDir, ".cursor", "rules", "agenr.mdc"),
+      mcpPath: path.join(projectDir, ".cursor", "mcp.json"),
+      mcpSkipped: false,
+      gitignoreUpdated: false,
+    });
+
+    expect(lines).toContain("- Wrote config to .agenr/config.json");
   });
 });
 

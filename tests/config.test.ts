@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { normalizeConfig, readConfig, resolveConfigPath, writeConfig } from "../src/config.js";
+import { normalizeConfig, readConfig, resolveConfigPath, resolveProjectFromGlobalConfig, writeConfig } from "../src/config.js";
 import type { AgenrConfig } from "../src/types.js";
 
 const tempDirs: string[] = [];
@@ -222,6 +222,60 @@ describe("config", () => {
   it("preserves dedup config with only threshold set", () => {
     expect(normalizeConfig({ dedup: { threshold: 0.65 } }).dedup).toEqual({ threshold: 0.65 });
   });
+
+  it("normalizeConfig preserves valid projects map", () => {
+    const normalized = normalizeConfig({
+      projects: {
+        openclaw: {
+          platform: "openclaw",
+          projectDir: "/Users/jmartin/.openclaw",
+        },
+        "openclaw-sandbox": {
+          platform: "openclaw",
+          projectDir: "/Users/jmartin/.openclaw-sandbox",
+          dbPath: "/Users/jmartin/.openclaw-sandbox/agenr-data/knowledge.db",
+          dependencies: ["shared-brain", "workspace-x"],
+        },
+      },
+    });
+
+    expect(normalized.projects).toEqual({
+      openclaw: {
+        platform: "openclaw",
+        projectDir: "/Users/jmartin/.openclaw",
+      },
+      "openclaw-sandbox": {
+        platform: "openclaw",
+        projectDir: "/Users/jmartin/.openclaw-sandbox",
+        dbPath: "/Users/jmartin/.openclaw-sandbox/agenr-data/knowledge.db",
+        dependencies: ["shared-brain", "workspace-x"],
+      },
+    });
+  });
+
+  it("normalizeConfig drops malformed project entries", () => {
+    const normalized = normalizeConfig({
+      projects: {
+        valid: {
+          platform: "openclaw",
+          projectDir: "/Users/jmartin/.openclaw",
+        },
+        missingPlatform: {
+          projectDir: "/Users/jmartin/.openclaw-sandbox",
+        },
+        missingProjectDir: {
+          platform: "openclaw",
+        },
+      },
+    });
+
+    expect(normalized.projects).toEqual({
+      valid: {
+        platform: "openclaw",
+        projectDir: "/Users/jmartin/.openclaw",
+      },
+    });
+  });
 });
 
 describe("normalizeConfig dedup", () => {
@@ -254,5 +308,50 @@ describe("normalizeConfig dedup", () => {
   it("normalizeConfig returns undefined dedup for empty object", () => {
     const config = normalizeConfig({ dedup: {} });
     expect(config.dedup).toBeUndefined();
+  });
+});
+
+describe("resolveProjectFromGlobalConfig", () => {
+  it("returns matching entry", async () => {
+    const configPath = await makeTempConfigPath();
+    const env = makeEnv(configPath);
+    writeConfig(
+      {
+        projects: {
+          "openclaw-sandbox": {
+            platform: "openclaw",
+            projectDir: "/Users/jmartin/.openclaw-sandbox",
+            dbPath: "/Users/jmartin/.openclaw-sandbox/agenr-data/knowledge.db",
+          },
+        },
+      },
+      env,
+    );
+
+    const resolved = resolveProjectFromGlobalConfig("/Users/jmartin/.openclaw-sandbox", env);
+    expect(resolved).toEqual({
+      slug: "openclaw-sandbox",
+      platform: "openclaw",
+      dbPath: "/Users/jmartin/.openclaw-sandbox/agenr-data/knowledge.db",
+    });
+  });
+
+  it("returns null for unknown projectDir", async () => {
+    const configPath = await makeTempConfigPath();
+    const env = makeEnv(configPath);
+    writeConfig(
+      {
+        projects: {
+          openclaw: {
+            platform: "openclaw",
+            projectDir: "/Users/jmartin/.openclaw",
+          },
+        },
+      },
+      env,
+    );
+
+    const resolved = resolveProjectFromGlobalConfig("/Users/jmartin/.openclaw-sandbox", env);
+    expect(resolved).toBeNull();
   });
 });
