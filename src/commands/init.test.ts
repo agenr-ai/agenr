@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const {
   readConfigMock,
   describeAuthMock,
+  resolveEmbeddingApiKeyMock,
   runSetupCoreMock,
   formatExistingConfigMock,
   clackIntroMock,
@@ -20,6 +21,7 @@ const {
 } = vi.hoisted(() => ({
   readConfigMock: vi.fn(),
   describeAuthMock: vi.fn((auth: string) => auth),
+  resolveEmbeddingApiKeyMock: vi.fn(),
   runSetupCoreMock: vi.fn(),
   formatExistingConfigMock: vi.fn(),
   clackIntroMock: vi.fn(),
@@ -55,6 +57,10 @@ vi.mock("../config.js", () => ({
 vi.mock("../setup.js", () => ({
   runSetupCore: runSetupCoreMock,
   formatExistingConfig: formatExistingConfigMock,
+}));
+
+vi.mock("../embeddings/client.js", () => ({
+  resolveEmbeddingApiKey: resolveEmbeddingApiKeyMock,
 }));
 
 import {
@@ -104,6 +110,7 @@ afterEach(async () => {
   readConfigMock.mockReset();
   describeAuthMock.mockReset();
   describeAuthMock.mockImplementation((auth: string) => auth);
+  resolveEmbeddingApiKeyMock.mockReset();
   runSetupCoreMock.mockReset();
   formatExistingConfigMock.mockReset();
   clackSelectMock.mockReset();
@@ -759,6 +766,78 @@ describe("runInitWizard", () => {
     expect(clackLogInfoMock).toHaveBeenCalledWith(expect.stringContaining(`"modelChanged":true`));
   });
 
+  it("reconfigure tracks embeddingsKeyChanged when key changes", async () => {
+    const dir = await createWizardProjectDir({
+      project: "my-project",
+      platform: "openclaw",
+    });
+    readConfigMock.mockReturnValue({
+      auth: "openai-api-key",
+      provider: "openai",
+      model: "gpt-4.1-mini",
+    });
+    describeAuthMock.mockReturnValue("OpenAI API key");
+    formatExistingConfigMock.mockReturnValue("auth summary");
+    runSetupCoreMock.mockResolvedValue(mockSetupResult({ auth: "anthropic-api-key", model: "gpt-4.1-mini" }));
+    resolveEmbeddingApiKeyMock.mockImplementationOnce(() => "old-key").mockImplementationOnce(() => "new-key");
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackConfirmMock.mockResolvedValue(true);
+    clackSelectMock.mockResolvedValueOnce("change").mockResolvedValueOnce("keep").mockResolvedValueOnce("keep");
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(clackLogInfoMock).toHaveBeenCalledWith(expect.stringContaining(`"embeddingsKeyChanged":true`));
+  });
+
+  it("reconfigure does not set embeddingsKeyChanged when key is unchanged", async () => {
+    const dir = await createWizardProjectDir({
+      project: "my-project",
+      platform: "openclaw",
+    });
+    readConfigMock.mockReturnValue({
+      auth: "openai-api-key",
+      provider: "openai",
+      model: "gpt-4.1-mini",
+    });
+    describeAuthMock.mockReturnValue("OpenAI API key");
+    formatExistingConfigMock.mockReturnValue("auth summary");
+    runSetupCoreMock.mockResolvedValue(mockSetupResult({ auth: "anthropic-api-key", model: "gpt-4.1-mini" }));
+    resolveEmbeddingApiKeyMock.mockImplementation(() => "same-key");
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackConfirmMock.mockResolvedValue(true);
+    clackSelectMock.mockResolvedValueOnce("change").mockResolvedValueOnce("keep").mockResolvedValueOnce("keep");
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(clackLogInfoMock).toHaveBeenCalledWith(expect.stringContaining(`"embeddingsKeyChanged":false`));
+  });
+
+  it("reconfigure shows embeddings status when auth is kept", async () => {
+    const dir = await createWizardProjectDir({
+      project: "my-project",
+      platform: "openclaw",
+    });
+    readConfigMock.mockReturnValue({
+      auth: "openai-api-key",
+      provider: "openai",
+      model: "gpt-4.1-mini",
+    });
+    describeAuthMock.mockReturnValue("OpenAI API key");
+    formatExistingConfigMock.mockReturnValue("auth summary");
+    resolveEmbeddingApiKeyMock.mockImplementation(() => "existing-key");
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, true));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackConfirmMock.mockResolvedValue(true);
+    clackSelectMock.mockResolvedValueOnce("keep").mockResolvedValueOnce("keep").mockResolvedValueOnce("keep");
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(clackLogInfoMock).toHaveBeenCalledWith(expect.stringContaining("Embeddings:"));
+    expect(clackLogInfoMock).toHaveBeenCalledWith(expect.stringContaining("configured"));
+  });
+
   it("reconfigure mode does NOT set changes when user keeps everything", async () => {
     const dir = await createWizardProjectDir({
       project: "my-project",
@@ -782,6 +861,7 @@ describe("runInitWizard", () => {
     expect(clackLogInfoMock).toHaveBeenCalledWith(expect.stringContaining(`"modelChanged":false`));
     expect(clackLogInfoMock).toHaveBeenCalledWith(expect.stringContaining(`"platformChanged":false`));
     expect(clackLogInfoMock).toHaveBeenCalledWith(expect.stringContaining(`"projectChanged":false`));
+    expect(clackLogInfoMock).toHaveBeenCalledWith(expect.stringContaining(`"embeddingsKeyChanged":false`));
   });
 
   it("handles Ctrl+C gracefully at reconfigure prompt", async () => {
