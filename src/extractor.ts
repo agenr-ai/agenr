@@ -22,9 +22,9 @@ import { runSimpleStream, type StreamSimpleFn } from "./llm/stream.js";
 import { SUBMIT_DEDUPED_KNOWLEDGE_TOOL, SUBMIT_KNOWLEDGE_TOOL } from "./schema.js";
 import { isShutdownRequested } from "./shutdown.js";
 
-export const SYSTEM_PROMPT = `You are a selective memory extraction engine. Extract only knowledge worth remembering beyond the immediate step.
+export const SYSTEM_PROMPT = `You are a highly selective memory extraction engine. Your primary job is to SKIP. Extract only knowledge that would be valuable in a future conversation months from now.
 
-Default action: SKIP. Most chunks should produce zero entries. Personal disclosures (health, diet, family structure, pets, occupation, location, values, relationships) are high-signal -- do not skip them just because the mention is brief or incidental. Apply the durability gate below to all entries including personal ones.
+Default action: SKIP. Most chunks should produce zero entries. When in doubt, do not extract. An empty result is better than a noisy one. Personal disclosures (health, diet, family structure, pets, occupation, location, values, relationships) are high-signal -- do not skip them just because the mention is brief or incidental. Apply the durability gate below to all entries including personal ones.
 
 ## Types
 
@@ -54,12 +54,15 @@ Do NOT emit a completion event for:
 
 ## Durability Gate
 
-Only extract if useful in future conversations/tasks after the current immediate execution.
-If uncertain whether durable, apply the 6-month test: would knowing this fact 6 months from now still help an AI assist this person? Health conditions, family structure, location, diet, pets, occupation, values -> YES, extract. Current mood, today's plans, this week's weather -> NO, skip. Personal disclosures are durable by default -- if a user reveals something true about themselves, capture it even if mentioned casually or as an aside.
+Classify every candidate as EPHEMERAL or DURABLE before extracting. Only extract DURABLE knowledge.
+- EPHEMERAL: version numbers, error messages, publish events, file reads, today's status, debug steps, corrections. SKIP these.
+- DURABLE: architecture decisions, personal facts, preferences, lessons learned, stable system facts. Extract these.
+
+If uncertain, apply the 6-month test: would knowing this fact 6 months from now still help an AI assist this person? Health conditions, family structure, location, diet, pets, occupation, values -> YES, extract. Current mood, today's plans, this week's weather -> NO, skip. Personal disclosures are durable by default -- if a user reveals something true about themselves, capture it even if mentioned casually or as an aside.
 
 ## Importance (1-10)
 
-Emit only importance >= 5. Start every candidate at 7; lower or raise only with clear justification.
+Emit only importance >= 5. Start every candidate at 6; raise to 7 only if clearly durable and useful across sessions. Raise above 7 only with strong justification per the anchors below.
 
 Importance scores map to real behavior in the memory system:
 - 8 or higher fires a real-time cross-session signal (an alert to other active AI sessions)
@@ -111,8 +114,8 @@ Calibration:
 - Typical chunk: 0-3 entries. Most chunks: 0.
 - Score 9 or 10: very rare, at most 1 per significant session, often 0
 - Score 8: at most 1-2 per session; ask the cross-session-alert question before assigning
-- Score 7: this is your workhorse; most emitted entries should be 7
-- Score 6: routine dev observations that are still worth storing
+- Score 7: solid durable knowledge worth preserving long-term; common but earned, not default
+- Score 6: this is your workhorse; most emitted entries should be 6
 - If more than 20% of your emitted entries are 8 or higher, you are inflating
 
 Dev session observations rule: Anything in the form "we tested X and it worked", "verified X",
@@ -145,6 +148,12 @@ If you cannot name a concrete topic, skip the entry.
 8. Pure pleasantries with no personal content: greetings, acknowledgments, filler phrases that reveal nothing about the user ("how are you", "thanks", "sounds good", "got it"). Do NOT suppress personal disclosures just because they appear inside casual phrasing or as asides. "I follow keto so no carbs -- anyway, back to the project" contains an extractable preference even though the user pivoted away. The pivot does not cancel the fact. Test: does the underlying disclosure reveal something true and durable about the user? If yes, extract it.
 9. Transient implementation status unless it represents a milestone, decision, or lesson
 10. Transient personal states: current mood, today's fatigue, this week's busyness, temporary travel plans, passing weather references. These are not personal facts. Extract only if the condition is recurring or structural ("I'm always exhausted" may indicate a chronic health pattern worth capturing; "I'm tired today" does not).
+11. Typos, corrections, and naming mistakes ("the correct name is X not Y", "I misspelled X"). The correction itself is noise - if the correct name matters, extract the fact about the correct name without mentioning the typo.
+12. Transient version numbers and version bumps ("bumped to 0.8.34", "published v1.2.3"). These change constantly during development. Only extract if a version marks a major milestone with lasting significance.
+13. One-off error messages, 404s, stack traces, and transient failures. Only extract if the error reveals a durable architectural lesson or recurring systemic issue.
+14. Publish and deploy events ("npm publish succeeded", "deployed to staging"). These are routine CI/CD events, not durable knowledge. Only extract if the deployment represents a significant project milestone (first launch, major migration).
+15. Obvious or tautological facts ("the project has a README", "the plugin contains files", "the config file has settings in it").
+16. File/directory existence observations ("I found that file X exists", "the project has a src/ folder"). Extract only if the organizational structure itself is an architectural decision worth preserving.
 
 ## Explicit Memory Requests
 
@@ -392,6 +401,24 @@ WHY: Session-ephemeral instruction. Subject would be actor.
 
 SKIP: "The team discussed several approaches to caching."
 WHY: Conversation summary. No concrete decision or fact emerged.
+
+SKIP: "Bumped package version to 0.8.34 and published to npm."
+WHY: Transient version number + routine publish event. Changes constantly.
+
+SKIP: "The correct package name is agenr, not argenr - that was a typo."
+WHY: Typo correction. If the package name matters, extract the name as a fact without the typo.
+
+SKIP: "Got a 404 error when hitting /api/v2/entries endpoint."
+WHY: One-off transient error. Not a durable architectural fact.
+
+SKIP: "I looked at src/extractor.ts and src/schema.ts to understand the pipeline."
+WHY: Exploration narration. No finding or lesson resulted.
+
+SKIP: "The project has a tests/ directory with 15 test files."
+WHY: Obvious directory structure observation. Not durable knowledge.
+
+SKIP: "npm publish succeeded for version 0.8.35."
+WHY: Routine CI/CD event. Not a milestone.
 
 ### BAD extractions (never produce these)
 
@@ -689,8 +716,8 @@ const CHUNKED_CALIBRATION_BLOCK = `Calibration:
 - Typical chunk: 0-3 entries. Most chunks: 0.
 - Score 9 or 10: very rare, at most 1 per significant session, often 0
 - Score 8: at most 1-2 per session; ask the cross-session-alert question before assigning
-- Score 7: this is your workhorse; most emitted entries should be 7
-- Score 6: routine dev observations that are still worth storing
+- Score 7: solid durable knowledge worth preserving long-term; common but earned, not default
+- Score 6: this is your workhorse; most emitted entries should be 6
 - If more than 20% of your emitted entries are 8 or higher, you are inflating`;
 
 const WHOLE_FILE_CALIBRATION_BLOCK = `Calibration (whole-file mode - you have the FULL session context, not a fragment):
@@ -699,8 +726,8 @@ const WHOLE_FILE_CALIBRATION_BLOCK = `Calibration (whole-file mode - you have th
   capture multi-part discussions as single entries, not fragments.
 - Score 9 or 10: very rare, at most 1 per session, often 0
 - Score 8: at most 2-3 per session; ask the cross-session-alert question before assigning
-- Score 7: this is your workhorse; most emitted entries should be 7
-- Score 6: routine dev observations worth storing
+- Score 7: solid durable knowledge worth preserving long-term; common but earned, not default
+- Score 6: this is your workhorse; most emitted entries should be 6
 - TODO completion: if a TODO is raised AND completed within this session, emit only
   the completion event - not the original todo.
 - If more than 30% of your emitted entries are score 8 or higher, you are inflating.
