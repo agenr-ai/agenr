@@ -5,21 +5,29 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const {
   readConfigMock,
+  describeAuthMock,
   runSetupCoreMock,
   formatExistingConfigMock,
   clackIntroMock,
   clackNoteMock,
   clackConfirmMock,
+  clackSelectMock,
+  clackTextMock,
+  clackLogInfoMock,
   clackCancelMock,
   clackOutroMock,
   clackCancelToken,
 } = vi.hoisted(() => ({
   readConfigMock: vi.fn(),
+  describeAuthMock: vi.fn((auth: string) => auth),
   runSetupCoreMock: vi.fn(),
   formatExistingConfigMock: vi.fn(),
   clackIntroMock: vi.fn(),
   clackNoteMock: vi.fn(),
   clackConfirmMock: vi.fn(),
+  clackSelectMock: vi.fn(),
+  clackTextMock: vi.fn(),
+  clackLogInfoMock: vi.fn(),
   clackCancelMock: vi.fn(),
   clackOutroMock: vi.fn(),
   clackCancelToken: Symbol("cancel"),
@@ -29,6 +37,11 @@ vi.mock("@clack/prompts", () => ({
   intro: clackIntroMock,
   note: clackNoteMock,
   confirm: clackConfirmMock,
+  select: clackSelectMock,
+  text: clackTextMock,
+  log: {
+    info: clackLogInfoMock,
+  },
   cancel: clackCancelMock,
   outro: clackOutroMock,
   isCancel: (value: unknown) => value === clackCancelToken,
@@ -36,6 +49,7 @@ vi.mock("@clack/prompts", () => ({
 
 vi.mock("../config.js", () => ({
   readConfig: readConfigMock,
+  describeAuth: describeAuthMock,
 }));
 
 vi.mock("../setup.js", () => ({
@@ -88,8 +102,13 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.clearAllMocks();
   readConfigMock.mockReset();
+  describeAuthMock.mockReset();
+  describeAuthMock.mockImplementation((auth: string) => auth);
   runSetupCoreMock.mockReset();
   formatExistingConfigMock.mockReset();
+  clackSelectMock.mockReset();
+  clackTextMock.mockReset();
+  clackLogInfoMock.mockReset();
   if (originalHome === undefined) {
     delete process.env.HOME;
   } else {
@@ -459,9 +478,28 @@ describe("runInitCommand", () => {
 });
 
 describe("runInitWizard", () => {
+  function mockSetupResult(overrides?: { auth?: string; model?: string }) {
+    return {
+      auth: (overrides?.auth ?? "openai-api-key") as
+        | "openai-api-key"
+        | "anthropic-api-key"
+        | "anthropic-oauth"
+        | "anthropic-token"
+        | "openai-subscription",
+      provider: "openai" as const,
+      model: overrides?.model ?? "gpt-4.1-mini",
+      config: {
+        auth: "openai-api-key" as const,
+        provider: "openai" as const,
+        model: "gpt-4.1-mini",
+      },
+      changed: true,
+    };
+  }
+
   function mockInitResult() {
     return {
-      platform: "generic" as const,
+      platform: "openclaw" as const,
       project: "agenr",
       projectDir: "/tmp/project",
       dependencies: [],
@@ -471,6 +509,35 @@ describe("runInitWizard", () => {
       mcpSkipped: false,
       gitignoreUpdated: false,
     };
+  }
+
+  function platformList(openclawDetected: boolean, codexDetected: boolean) {
+    return [
+      {
+        id: "openclaw" as const,
+        label: "OpenClaw",
+        detected: openclawDetected,
+        configDir: "/tmp/.openclaw",
+        sessionsDir: "/tmp/.openclaw/sessions",
+      },
+      {
+        id: "codex" as const,
+        label: "Codex",
+        detected: codexDetected,
+        configDir: "/tmp/.codex",
+        sessionsDir: "/tmp/.codex/sessions",
+      },
+    ];
+  }
+
+  async function createWizardProjectDir(config?: Record<string, unknown>): Promise<string> {
+    const dir = await createTempDir("agenr-init-wizard-");
+    tempDirs.push(dir);
+    if (config) {
+      await fs.mkdir(path.join(dir, ".agenr"), { recursive: true });
+      await fs.writeFile(path.join(dir, ".agenr", "config.json"), `${JSON.stringify(config, null, 2)}\n`, "utf8");
+    }
+    return dir;
   }
 
   it("runs non-interactive path when isInteractive is false", async () => {
@@ -510,6 +577,7 @@ describe("runInitWizard", () => {
   });
 
   it("shows existing config and skips setup when user declines reconfigure", async () => {
+    const dir = await createWizardProjectDir();
     readConfigMock.mockReturnValue({
       auth: "openai-api-key",
       provider: "openai",
@@ -518,43 +586,206 @@ describe("runInitWizard", () => {
     formatExistingConfigMock.mockReturnValue("current config");
     clackConfirmMock.mockResolvedValue(false);
 
-    await runInitWizard({ isInteractive: true });
+    await runInitWizard({ isInteractive: true, path: dir });
 
     expect(clackNoteMock).toHaveBeenCalledWith("current config", "Current config");
     expect(runSetupCoreMock).not.toHaveBeenCalled();
     expect(clackOutroMock).toHaveBeenCalledWith("Setup unchanged.");
   });
 
-  it("calls runSetupCore when no existing config", async () => {
+  it("wizard suggests single detected platform", async () => {
+    const dir = await createWizardProjectDir();
     readConfigMock.mockReturnValue(null);
-    runSetupCoreMock.mockResolvedValue({
-      auth: "openai-api-key",
-      provider: "openai",
-      model: "gpt-4.1-mini",
-      config: {
-        auth: "openai-api-key",
-        provider: "openai",
-        model: "gpt-4.1-mini",
-      },
-      changed: true,
-    });
+    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackConfirmMock.mockResolvedValue(true);
+    clackTextMock.mockResolvedValue("agenr");
 
-    await runInitWizard({ isInteractive: true });
+    await runInitWizard({ isInteractive: true, path: dir });
 
-    expect(runSetupCoreMock).toHaveBeenCalledWith({
-      env: process.env,
-      existingConfig: null,
-      skipIntroOutro: true,
+    expect(clackConfirmMock).toHaveBeenCalledWith({
+      message: "Detected OpenClaw at /tmp/.openclaw. Use this platform?",
+      initialValue: true,
     });
-    expect(clackOutroMock).toHaveBeenCalledWith(
-      expect.stringContaining("Setup complete. Run "),
-    );
-    expect(clackOutroMock).toHaveBeenCalledWith(
-      expect.stringContaining("again after the next update for the full wizard experience."),
+  });
+
+  it("wizard shows selector when both platforms detected", async () => {
+    const dir = await createWizardProjectDir();
+    readConfigMock.mockReturnValue(null);
+    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, true));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackSelectMock.mockResolvedValue("codex");
+    clackTextMock.mockResolvedValue("agenr");
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(clackSelectMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "Which platform are you using?",
+      }),
     );
   });
 
+  it("wizard shows selector when no platform detected", async () => {
+    const dir = await createWizardProjectDir();
+    readConfigMock.mockReturnValue(null);
+    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(false, false));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackSelectMock.mockResolvedValue("openclaw");
+    clackTextMock.mockResolvedValue("agenr");
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(clackSelectMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "Which platform are you using?",
+        options: [
+          expect.objectContaining({ label: "OpenClaw" }),
+          expect.objectContaining({ label: "Codex" }),
+        ],
+      }),
+    );
+    expect(clackLogInfoMock).toHaveBeenCalledWith("No known platform config detected. More platforms coming soon.");
+  });
+
+  it("reconfigure mode shows keep current for auth", async () => {
+    const dir = await createWizardProjectDir({
+      project: "my-project",
+      platform: "openclaw",
+    });
+    readConfigMock.mockReturnValue({
+      auth: "openai-api-key",
+      provider: "openai",
+      model: "gpt-4.1-mini",
+    });
+    describeAuthMock.mockReturnValue("OpenAI API key");
+    formatExistingConfigMock.mockReturnValue("auth summary");
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackConfirmMock.mockResolvedValue(true);
+    clackSelectMock.mockResolvedValueOnce("keep").mockResolvedValueOnce("keep").mockResolvedValueOnce("keep");
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(clackSelectMock).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        message: "Auth: OpenAI API key (current)",
+        options: [
+          expect.objectContaining({ label: "Keep current" }),
+          expect.objectContaining({ label: "Change..." }),
+        ],
+      }),
+    );
+  });
+
+  it("reconfigure mode shows keep current for platform", async () => {
+    const dir = await createWizardProjectDir({
+      project: "my-project",
+      platform: "openclaw",
+    });
+    readConfigMock.mockReturnValue({
+      auth: "openai-api-key",
+      provider: "openai",
+      model: "gpt-4.1-mini",
+    });
+    describeAuthMock.mockReturnValue("OpenAI API key");
+    formatExistingConfigMock.mockReturnValue("auth summary");
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, true));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackConfirmMock.mockResolvedValue(true);
+    clackSelectMock.mockResolvedValueOnce("keep").mockResolvedValueOnce("keep").mockResolvedValueOnce("keep");
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(clackSelectMock).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        message: "Platform: OpenClaw (current)",
+        options: [
+          expect.objectContaining({ label: "Keep current" }),
+          expect.objectContaining({ label: "Change..." }),
+        ],
+      }),
+    );
+  });
+
+  it("reconfigure mode tracks auth change in WizardChanges", async () => {
+    const dir = await createWizardProjectDir({
+      project: "my-project",
+      platform: "openclaw",
+    });
+    readConfigMock.mockReturnValue({
+      auth: "openai-api-key",
+      provider: "openai",
+      model: "gpt-4.1-mini",
+    });
+    describeAuthMock.mockReturnValue("OpenAI API key");
+    formatExistingConfigMock.mockReturnValue("auth summary");
+    runSetupCoreMock.mockResolvedValue(mockSetupResult({ auth: "anthropic-api-key", model: "gpt-4.1-mini" }));
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackConfirmMock.mockResolvedValue(true);
+    clackSelectMock.mockResolvedValueOnce("change").mockResolvedValueOnce("keep").mockResolvedValueOnce("keep");
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(clackLogInfoMock).toHaveBeenCalledWith(expect.stringContaining(`"authChanged":true`));
+  });
+
+  it("reconfigure mode tracks model change in WizardChanges", async () => {
+    const dir = await createWizardProjectDir({
+      project: "my-project",
+      platform: "openclaw",
+    });
+    readConfigMock.mockReturnValue({
+      auth: "openai-api-key",
+      provider: "openai",
+      model: "gpt-4.1-mini",
+    });
+    describeAuthMock.mockReturnValue("OpenAI API key");
+    formatExistingConfigMock.mockReturnValue("auth summary");
+    runSetupCoreMock.mockResolvedValue(mockSetupResult({ auth: "openai-api-key", model: "gpt-4.1" }));
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackConfirmMock.mockResolvedValue(true);
+    clackSelectMock.mockResolvedValueOnce("change").mockResolvedValueOnce("keep").mockResolvedValueOnce("keep");
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(clackLogInfoMock).toHaveBeenCalledWith(expect.stringContaining(`"modelChanged":true`));
+  });
+
+  it("reconfigure mode does NOT set changes when user keeps everything", async () => {
+    const dir = await createWizardProjectDir({
+      project: "my-project",
+      platform: "openclaw",
+    });
+    readConfigMock.mockReturnValue({
+      auth: "openai-api-key",
+      provider: "openai",
+      model: "gpt-4.1-mini",
+    });
+    describeAuthMock.mockReturnValue("OpenAI API key");
+    formatExistingConfigMock.mockReturnValue("auth summary");
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, true));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackConfirmMock.mockResolvedValue(true);
+    clackSelectMock.mockResolvedValueOnce("keep").mockResolvedValueOnce("keep").mockResolvedValueOnce("keep");
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(clackLogInfoMock).toHaveBeenCalledWith(expect.stringContaining(`"authChanged":false`));
+    expect(clackLogInfoMock).toHaveBeenCalledWith(expect.stringContaining(`"modelChanged":false`));
+    expect(clackLogInfoMock).toHaveBeenCalledWith(expect.stringContaining(`"platformChanged":false`));
+    expect(clackLogInfoMock).toHaveBeenCalledWith(expect.stringContaining(`"projectChanged":false`));
+  });
+
   it("handles Ctrl+C gracefully at reconfigure prompt", async () => {
+    const dir = await createWizardProjectDir();
     readConfigMock.mockReturnValue({
       auth: "openai-api-key",
       provider: "openai",
@@ -563,10 +794,70 @@ describe("runInitWizard", () => {
     formatExistingConfigMock.mockReturnValue("current config");
     clackConfirmMock.mockResolvedValue(clackCancelToken);
 
-    await runInitWizard({ isInteractive: true });
+    await runInitWizard({ isInteractive: true, path: dir });
 
     expect(runSetupCoreMock).not.toHaveBeenCalled();
     expect(clackCancelMock).toHaveBeenCalledWith("Setup cancelled.");
+  });
+
+  it("wizard handles Ctrl+C at platform selection", async () => {
+    const dir = await createWizardProjectDir();
+    readConfigMock.mockReturnValue(null);
+    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, true));
+    clackSelectMock.mockResolvedValue(clackCancelToken);
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(clackCancelMock).toHaveBeenCalledWith("Setup cancelled.");
+  });
+
+  it("wizard handles Ctrl+C at project slug input", async () => {
+    const dir = await createWizardProjectDir();
+    readConfigMock.mockReturnValue(null);
+    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(false, false));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackSelectMock.mockResolvedValue("openclaw");
+    clackTextMock.mockResolvedValue(clackCancelToken);
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(clackCancelMock).toHaveBeenCalledWith("Setup cancelled.");
+  });
+
+  it("project slug validation rejects empty input", async () => {
+    const dir = await createWizardProjectDir();
+    readConfigMock.mockReturnValue(null);
+    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(false, false));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackSelectMock.mockResolvedValue("openclaw");
+    clackTextMock.mockResolvedValue("agenr");
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    const textCall = clackTextMock.mock.calls[0]?.[0] as { validate?: (value: string) => string | undefined };
+    expect(textCall.validate?.("   ")).toBe("Project name is required");
+    expect(textCall.validate?.("my-project")).toBeUndefined();
+  });
+
+  it("calls runSetupCore when no existing config", async () => {
+    const dir = await createWizardProjectDir();
+    readConfigMock.mockReturnValue(null);
+    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(false, false));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackSelectMock.mockResolvedValue("openclaw");
+    clackTextMock.mockResolvedValue("agenr");
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(runSetupCoreMock).toHaveBeenCalledWith({
+      env: process.env,
+      existingConfig: null,
+      skipIntroOutro: true,
+    });
   });
 });
 
