@@ -14,6 +14,9 @@ const {
   clackConfirmMock,
   clackSelectMock,
   clackTextMock,
+  clackSpinnerMock,
+  clackSpinnerStartMock,
+  clackSpinnerStopMock,
   clackLogInfoMock,
   clackLogWarnMock,
   clackCancelMock,
@@ -36,6 +39,9 @@ const {
     }
     return "agenr";
   }),
+  clackSpinnerStartMock: vi.fn(),
+  clackSpinnerStopMock: vi.fn(),
+  clackSpinnerMock: vi.fn(),
   clackLogInfoMock: vi.fn(),
   clackLogWarnMock: vi.fn(),
   clackCancelMock: vi.fn(),
@@ -52,6 +58,7 @@ vi.mock("@clack/prompts", () => ({
   confirm: clackConfirmMock,
   select: clackSelectMock,
   text: clackTextMock,
+  spinner: clackSpinnerMock,
   log: {
     info: clackLogInfoMock,
     warn: clackLogWarnMock,
@@ -146,10 +153,71 @@ async function withTempHome<T>(fn: (homeDir: string) => Promise<T>): Promise<T> 
   return await fn(homeDir);
 }
 
+async function withMockedPlatform<T>(
+  platform: NodeJS.Platform,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const descriptor = Object.getOwnPropertyDescriptor(process, "platform");
+  if (!descriptor) {
+    throw new Error("process.platform descriptor is unavailable");
+  }
+
+  Object.defineProperty(process, "platform", {
+    configurable: true,
+    value: platform,
+  });
+
+  try {
+    return await fn();
+  } finally {
+    Object.defineProperty(process, "platform", descriptor);
+  }
+}
+
 beforeEach(async () => {
   const configDir = await createTempDir("agenr-config-");
   tempDirs.push(configDir);
   process.env.AGENR_CONFIG_PATH = path.join(configDir, "config.json");
+
+  clackSpinnerMock.mockImplementation(() => ({
+    start: clackSpinnerStartMock,
+    stop: clackSpinnerStopMock,
+  }));
+
+  vi.spyOn(initWizardRuntime, "installOpenClawPlugin").mockResolvedValue({
+    success: true,
+    message: "agenr plugin already installed",
+  });
+  vi.spyOn(initWizardRuntime, "writeOpenClawPluginDbPath").mockResolvedValue();
+  vi.spyOn(initWizardRuntime, "scanSessionFiles").mockResolvedValue({
+    totalFiles: 0,
+    recentFiles: [],
+    allFiles: [],
+    totalSizeBytes: 0,
+    recentSizeBytes: 0,
+  });
+  vi.spyOn(initWizardRuntime, "runIngestCommand").mockResolvedValue({
+    exitCode: 0,
+    filesProcessed: 0,
+    filesSkipped: 0,
+    filesFailed: 0,
+    totalEntriesExtracted: 0,
+    totalEntriesStored: 0,
+    dedupStats: {
+      entries_added: 0,
+      entries_updated: 0,
+      entries_skipped: 0,
+      entries_reinforced: 0,
+      entries_superseded: 0,
+      dedup_llm_calls: 0,
+    },
+    durationMs: 0,
+    results: [],
+  });
+  vi.spyOn(initWizardRuntime, "runConsolidateCommand").mockResolvedValue({ exitCode: 0 });
+  vi.spyOn(initWizardRuntime, "runDaemonInstallCommand").mockResolvedValue({ exitCode: 0 });
+  vi.spyOn(initWizardRuntime, "runDaemonStopCommand").mockResolvedValue({ exitCode: 0 });
+  vi.spyOn(initWizardRuntime, "runDbResetCommand").mockResolvedValue({ exitCode: 0 });
 });
 
 afterEach(async () => {
@@ -164,6 +232,9 @@ afterEach(async () => {
   formatExistingConfigMock.mockReset();
   clackSelectMock.mockReset();
   clackTextMock.mockReset();
+  clackSpinnerMock.mockReset();
+  clackSpinnerStartMock.mockReset();
+  clackSpinnerStopMock.mockReset();
   clackTextMock.mockImplementation(async (options?: { message?: string; initialValue?: string }) => {
     if (options?.message === "OpenClaw directory:") {
       return options.initialValue ?? resolveDefaultOpenClawConfigDir();
@@ -774,7 +845,7 @@ describe("runInitWizard", () => {
         label: "OpenClaw",
         detected: openclawDetected,
         configDir: resolveDefaultOpenClawConfigDir(),
-        sessionsDir: path.join(resolveDefaultOpenClawConfigDir(), "sessions"),
+        sessionsDir: path.join(resolveDefaultOpenClawConfigDir(), "agents", "main", "sessions"),
       },
       {
         id: "codex" as const,
@@ -970,7 +1041,9 @@ describe("runInitWizard", () => {
     await runInitWizard({ isInteractive: true, path: dir });
 
     expect(clackNoteMock).not.toHaveBeenCalledWith(expect.any(String), "Current config");
-    expect(clackConfirmMock).not.toHaveBeenCalled();
+    expect(clackConfirmMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Reconfigure?" }),
+    );
   });
 
   it("wizard suggests single detected platform", async () => {
@@ -1226,7 +1299,7 @@ describe("runInitWizard", () => {
     await runInitWizard({ isInteractive: true, path: dir });
 
     expect(clackNoteMock).toHaveBeenCalledWith(
-      expect.stringContaining("Database:  ~/.agenr/knowledge.db (shared)"),
+      expect.stringContaining("Database:     ~/.agenr/knowledge.db (shared)"),
       "Setup summary",
     );
   });
@@ -1249,7 +1322,7 @@ describe("runInitWizard", () => {
     });
 
     expect(clackNoteMock).toHaveBeenCalledWith(
-      expect.stringContaining("Config:    ~/.agenr/config.json"),
+      expect.stringContaining("Config:       ~/.agenr/config.json"),
       "Setup summary",
     );
   });
@@ -1343,7 +1416,11 @@ describe("runInitWizard", () => {
     expect(clackLogInfoMock).toHaveBeenCalledWith(
       "Choose a different project name, or restart and select an isolated database for this instance.",
     );
-    expect(clackConfirmMock).not.toHaveBeenCalled();
+    expect(clackConfirmMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "Detected OpenClaw at /tmp/.openclaw-sandbox. Use this platform?",
+      }),
+    );
     const projectPrompts = clackTextMock.mock.calls
       .map((call) => call[0] as { message?: string })
       .filter((call) => call.message === "Project name:");
@@ -1868,6 +1945,492 @@ describe("runInitWizard", () => {
       env: process.env,
       existingConfig: null,
       skipIntroOutro: true,
+    });
+  });
+
+  it("wizard installs openclaw plugin with spinner", async () => {
+    const dir = await createWizardProjectDir();
+    const installSpy = vi.spyOn(initWizardRuntime, "installOpenClawPlugin").mockResolvedValue({
+      success: true,
+      message: "agenr plugin already installed",
+    });
+    readConfigMock.mockReturnValue(null);
+    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackConfirmMock.mockResolvedValue(true);
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(clackSpinnerStartMock).toHaveBeenCalledWith("Installing agenr plugin for OpenClaw...");
+    expect(installSpy).toHaveBeenCalledWith(resolveDefaultOpenClawConfigDir());
+  });
+
+  it("wizard skips plugin install for codex platform", async () => {
+    const dir = await createWizardProjectDir();
+    const installSpy = vi.spyOn(initWizardRuntime, "installOpenClawPlugin");
+    readConfigMock.mockReturnValue(null);
+    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, true));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue({
+      ...mockInitResult(),
+      platform: "codex",
+    });
+    clackSelectMock.mockResolvedValue("codex");
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(installSpy).not.toHaveBeenCalled();
+  });
+
+  it("wizard writes dbPath to openclaw.json for isolated DB", async () => {
+    const dir = await createWizardProjectDir();
+    const customDir = "/tmp/.openclaw-isolated";
+    const writeSpy = vi.spyOn(initWizardRuntime, "writeOpenClawPluginDbPath");
+    readConfigMock.mockReturnValue(null);
+    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(false, false));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackSelectMock
+      .mockResolvedValueOnce("openclaw")
+      .mockResolvedValueOnce("isolated");
+    clackTextMock
+      .mockResolvedValueOnce(customDir)
+      .mockResolvedValueOnce("openclaw-isolated");
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(writeSpy).toHaveBeenCalledWith(
+      path.resolve(customDir),
+      path.join(path.resolve(customDir), "agenr-data", "knowledge.db"),
+    );
+  });
+
+  it("wizard skips dbPath write for shared DB", async () => {
+    const dir = await createWizardProjectDir();
+    const customDir = "/tmp/.openclaw-shared";
+    const writeSpy = vi.spyOn(initWizardRuntime, "writeOpenClawPluginDbPath");
+    readConfigMock.mockReturnValue(null);
+    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(false, false));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackSelectMock
+      .mockResolvedValueOnce("openclaw")
+      .mockResolvedValueOnce("shared");
+    clackTextMock
+      .mockResolvedValueOnce(customDir)
+      .mockResolvedValueOnce("openclaw-shared");
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(writeSpy).not.toHaveBeenCalled();
+  });
+
+  it("wizard offers re-ingest when model changed", async () => {
+    const dir = await createWizardProjectDir({
+      project: "my-project",
+      platform: "openclaw",
+    });
+    readConfigMock.mockReturnValue({
+      auth: "openai-api-key",
+      provider: "openai",
+      model: "gpt-4.1-mini",
+    });
+    describeAuthMock.mockReturnValue("OpenAI API key");
+    formatExistingConfigMock.mockReturnValue("auth summary");
+    runSetupCoreMock.mockResolvedValue(mockSetupResult({ model: "gpt-4.1" }));
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackConfirmMock.mockResolvedValue(true);
+    clackSelectMock
+      .mockResolvedValueOnce("change")
+      .mockResolvedValueOnce("keep")
+      .mockResolvedValueOnce("keep")
+      .mockResolvedValueOnce("keep");
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(
+      clackSelectMock.mock.calls.some(
+        (call) =>
+          typeof (call[0] as { message?: unknown }).message === "string" &&
+          ((call[0] as { message: string }).message ===
+            "WARNING: Re-ingest will permanently delete all existing entries."),
+      ),
+    ).toBe(true);
+  });
+
+  it("wizard does NOT offer re-ingest when nothing changed", async () => {
+    const dir = await createWizardProjectDir({
+      project: "my-project",
+      platform: "openclaw",
+    });
+    readConfigMock.mockReturnValue({
+      auth: "openai-api-key",
+      provider: "openai",
+      model: "gpt-4.1-mini",
+    });
+    describeAuthMock.mockReturnValue("OpenAI API key");
+    formatExistingConfigMock.mockReturnValue("auth summary");
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackConfirmMock.mockResolvedValue(true);
+    clackSelectMock.mockResolvedValueOnce("keep").mockResolvedValueOnce("keep").mockResolvedValueOnce("keep");
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(
+      clackSelectMock.mock.calls.some(
+        (call) =>
+          (call[0] as { message?: string }).message ===
+          "WARNING: Re-ingest will permanently delete all existing entries.",
+      ),
+    ).toBe(false);
+  });
+
+  it("wizard stops daemon before db reset during re-ingest", async () => {
+    await withMockedPlatform("darwin", async () => {
+      const dir = await createWizardProjectDir({
+        project: "my-project",
+        platform: "openclaw",
+      });
+      const stopSpy = vi.spyOn(initWizardRuntime, "runDaemonStopCommand").mockResolvedValue({ exitCode: 0 });
+      const resetSpy = vi.spyOn(initWizardRuntime, "runDbResetCommand").mockResolvedValue({ exitCode: 0 });
+      readConfigMock.mockReturnValue({
+        auth: "openai-api-key",
+        provider: "openai",
+        model: "gpt-4.1-mini",
+      });
+      describeAuthMock.mockReturnValue("OpenAI API key");
+      formatExistingConfigMock.mockReturnValue("auth summary");
+      runSetupCoreMock.mockResolvedValue(mockSetupResult({ model: "gpt-4.1" }));
+      vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
+      vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+      clackConfirmMock.mockResolvedValue(true);
+      clackSelectMock
+        .mockResolvedValueOnce("change")
+        .mockResolvedValueOnce("keep")
+        .mockResolvedValueOnce("keep")
+        .mockResolvedValueOnce("reingest");
+
+      await runInitWizard({ isInteractive: true, path: dir });
+
+      expect(stopSpy).toHaveBeenCalled();
+      expect(resetSpy).toHaveBeenCalledWith({
+        full: true,
+        confirmReset: true,
+      });
+      expect(stopSpy.mock.invocationCallOrder[0]).toBeLessThan(resetSpy.mock.invocationCallOrder[0]);
+    });
+  });
+
+  it("wizard passes db option to runDbResetCommand for isolated DB", async () => {
+    await withMockedPlatform("darwin", async () => {
+      const dir = await createWizardProjectDir({
+        project: "my-project",
+        platform: "openclaw",
+      });
+      const customDir = "/tmp/.openclaw-reingest";
+      const resetSpy = vi.spyOn(initWizardRuntime, "runDbResetCommand").mockResolvedValue({ exitCode: 0 });
+      readConfigMock.mockReturnValue({
+        auth: "openai-api-key",
+        provider: "openai",
+        model: "gpt-4.1-mini",
+      });
+      describeAuthMock.mockReturnValue("OpenAI API key");
+      formatExistingConfigMock.mockReturnValue("auth summary");
+      runSetupCoreMock.mockResolvedValue(mockSetupResult({ model: "gpt-4.1" }));
+      vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
+      vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+      clackConfirmMock.mockResolvedValue(true);
+      clackSelectMock
+        .mockResolvedValueOnce("change")
+        .mockResolvedValueOnce("keep")
+        .mockResolvedValueOnce("isolated")
+        .mockResolvedValueOnce("keep")
+        .mockResolvedValueOnce("reingest");
+      clackTextMock.mockResolvedValueOnce(customDir);
+
+      await runInitWizard({ isInteractive: true, path: dir });
+
+      expect(resetSpy).toHaveBeenCalledWith({
+        full: true,
+        confirmReset: true,
+        db: path.join(path.resolve(customDir), "agenr-data", "knowledge.db"),
+      });
+    });
+  });
+
+  it("wizard passes recent file paths for recent ingest", async () => {
+    const dir = await createWizardProjectDir();
+    const ingestSpy = vi.spyOn(initWizardRuntime, "runIngestCommand").mockResolvedValue({
+      exitCode: 0,
+      filesProcessed: 2,
+      filesSkipped: 0,
+      filesFailed: 0,
+      totalEntriesExtracted: 5,
+      totalEntriesStored: 0,
+      dedupStats: {
+        entries_added: 0,
+        entries_updated: 0,
+        entries_skipped: 0,
+        entries_reinforced: 0,
+        entries_superseded: 0,
+        dedup_llm_calls: 0,
+      },
+      durationMs: 0,
+      results: [],
+    });
+    vi.spyOn(initWizardRuntime, "scanSessionFiles").mockResolvedValue({
+      totalFiles: 3,
+      recentFiles: ["/tmp/one.jsonl", "/tmp/two.jsonl"],
+      allFiles: ["/tmp/one.jsonl", "/tmp/two.jsonl", "/tmp/three.jsonl"],
+      totalSizeBytes: 12000,
+      recentSizeBytes: 8000,
+    });
+    readConfigMock.mockReturnValue(null);
+    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackConfirmMock.mockResolvedValue(true);
+    clackSelectMock.mockResolvedValueOnce("recent");
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(ingestSpy).toHaveBeenCalledWith(
+      ["/tmp/one.jsonl", "/tmp/two.jsonl"],
+      expect.not.objectContaining({ glob: expect.anything() }),
+    );
+  });
+
+  it("wizard passes directory with glob for full ingest", async () => {
+    const dir = await createWizardProjectDir();
+    const ingestSpy = vi.spyOn(initWizardRuntime, "runIngestCommand").mockResolvedValue({
+      exitCode: 0,
+      filesProcessed: 3,
+      filesSkipped: 0,
+      filesFailed: 0,
+      totalEntriesExtracted: 5,
+      totalEntriesStored: 0,
+      dedupStats: {
+        entries_added: 0,
+        entries_updated: 0,
+        entries_skipped: 0,
+        entries_reinforced: 0,
+        entries_superseded: 0,
+        dedup_llm_calls: 0,
+      },
+      durationMs: 0,
+      results: [],
+    });
+    vi.spyOn(initWizardRuntime, "scanSessionFiles").mockResolvedValue({
+      totalFiles: 3,
+      recentFiles: ["/tmp/one.jsonl"],
+      allFiles: ["/tmp/one.jsonl", "/tmp/two.jsonl", "/tmp/three.jsonl"],
+      totalSizeBytes: 12000,
+      recentSizeBytes: 4000,
+    });
+    readConfigMock.mockReturnValue(null);
+    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackConfirmMock.mockResolvedValue(true);
+    clackSelectMock.mockResolvedValueOnce("full");
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(ingestSpy).toHaveBeenCalledWith(
+      [path.join(resolveDefaultOpenClawConfigDir(), "agents", "main", "sessions")],
+      expect.objectContaining({ glob: "**/*.jsonl*" }),
+    );
+  });
+
+  it("wizard handles empty sessions directory", async () => {
+    const dir = await createWizardProjectDir();
+    vi.spyOn(initWizardRuntime, "scanSessionFiles").mockResolvedValue({
+      totalFiles: 0,
+      recentFiles: [],
+      allFiles: [],
+      totalSizeBytes: 0,
+      recentSizeBytes: 0,
+    });
+    readConfigMock.mockReturnValue(null);
+    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackConfirmMock.mockResolvedValue(true);
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(clackLogInfoMock).toHaveBeenCalledWith(expect.stringContaining("No sessions found yet."));
+  });
+
+  it("wizard prompts for consolidation after successful ingest", async () => {
+    const dir = await createWizardProjectDir();
+    const consolidateSpy = vi.spyOn(initWizardRuntime, "runConsolidateCommand");
+    vi.spyOn(initWizardRuntime, "scanSessionFiles").mockResolvedValue({
+      totalFiles: 1,
+      recentFiles: ["/tmp/recent.jsonl"],
+      allFiles: ["/tmp/recent.jsonl"],
+      totalSizeBytes: 2000,
+      recentSizeBytes: 2000,
+    });
+    vi.spyOn(initWizardRuntime, "runIngestCommand").mockResolvedValue({
+      exitCode: 0,
+      filesProcessed: 1,
+      filesSkipped: 0,
+      filesFailed: 0,
+      totalEntriesExtracted: 4,
+      totalEntriesStored: 4,
+      dedupStats: {
+        entries_added: 4,
+        entries_updated: 0,
+        entries_skipped: 0,
+        entries_reinforced: 0,
+        entries_superseded: 0,
+        dedup_llm_calls: 0,
+      },
+      durationMs: 0,
+      results: [],
+    });
+    readConfigMock.mockReturnValue(null);
+    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackConfirmMock.mockResolvedValueOnce(true).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    clackSelectMock.mockResolvedValueOnce("recent");
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(consolidateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ simThreshold: 0.76 }),
+    );
+  });
+
+  it("wizard installs daemon with force:true on macOS and corrected sessionsDir", async () => {
+    await withMockedPlatform("darwin", async () => {
+      const dir = await createWizardProjectDir();
+      const daemonSpy = vi.spyOn(initWizardRuntime, "runDaemonInstallCommand");
+      readConfigMock.mockReturnValue(null);
+      runSetupCoreMock.mockResolvedValue(mockSetupResult());
+      vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
+      vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+      clackConfirmMock.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+
+      await runInitWizard({ isInteractive: true, path: dir });
+
+      expect(daemonSpy).toHaveBeenCalledWith({
+        force: true,
+        interval: 120,
+        dir: path.join(resolveDefaultOpenClawConfigDir(), "agents", "main", "sessions"),
+        platform: "openclaw",
+      });
+    });
+  });
+
+  it("wizard shows manual command on Linux", async () => {
+    await withMockedPlatform("linux", async () => {
+      const dir = await createWizardProjectDir();
+      readConfigMock.mockReturnValue(null);
+      runSetupCoreMock.mockResolvedValue(mockSetupResult());
+      vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
+      vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+      clackConfirmMock.mockResolvedValue(true);
+
+      await runInitWizard({ isInteractive: true, path: dir });
+
+      expect(clackLogInfoMock).toHaveBeenCalledWith(
+        expect.stringContaining("Automatic ingestion not yet supported on Linux."),
+      );
+    });
+  });
+
+  it("wizard summary includes plugin/ingest/watcher status and next steps for skipped items", async () => {
+    await withMockedPlatform("darwin", async () => {
+      const dir = await createWizardProjectDir();
+      readConfigMock.mockReturnValue(null);
+      runSetupCoreMock.mockResolvedValue(mockSetupResult());
+      vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
+      vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+      clackConfirmMock.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+
+      await runInitWizard({ isInteractive: true, path: dir });
+
+      const summaryNote = clackNoteMock.mock.calls.find((call) => call[1] === "Setup summary");
+      expect(summaryNote?.[0]).toContain("Plugin:");
+      expect(summaryNote?.[0]).toContain("Ingest:");
+      expect(summaryNote?.[0]).toContain("Watcher:");
+      expect(
+        clackNoteMock.mock.calls.some(
+          (call) =>
+            call[1] === "Next steps" &&
+            typeof call[0] === "string" &&
+            call[0].includes("Run ingest: agenr ingest"),
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it("wizard omits next steps when all action steps succeed", async () => {
+    await withMockedPlatform("darwin", async () => {
+      const dir = await createWizardProjectDir();
+      vi.spyOn(initWizardRuntime, "scanSessionFiles").mockResolvedValue({
+        totalFiles: 1,
+        recentFiles: ["/tmp/recent.jsonl"],
+        allFiles: ["/tmp/recent.jsonl"],
+        totalSizeBytes: 2000,
+        recentSizeBytes: 2000,
+      });
+      vi.spyOn(initWizardRuntime, "runIngestCommand").mockResolvedValue({
+        exitCode: 0,
+        filesProcessed: 1,
+        filesSkipped: 0,
+        filesFailed: 0,
+        totalEntriesExtracted: 4,
+        totalEntriesStored: 4,
+        dedupStats: {
+          entries_added: 4,
+          entries_updated: 0,
+          entries_skipped: 0,
+          entries_reinforced: 0,
+          entries_superseded: 0,
+          dedup_llm_calls: 0,
+        },
+        durationMs: 0,
+        results: [],
+      });
+      readConfigMock.mockReturnValue(null);
+      runSetupCoreMock.mockResolvedValue(mockSetupResult());
+      vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
+      vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+      clackConfirmMock.mockResolvedValueOnce(true).mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+      clackSelectMock.mockResolvedValueOnce("recent");
+
+      await runInitWizard({ isInteractive: true, path: dir });
+
+      expect(clackNoteMock.mock.calls.some((call) => call[1] === "Next steps")).toBe(false);
+    });
+  });
+
+  it("OpenClaw directory confirmation sets sessionsDir to agents/main/sessions", async () => {
+    await withMockedPlatform("darwin", async () => {
+      const dir = await createWizardProjectDir();
+      const daemonSpy = vi.spyOn(initWizardRuntime, "runDaemonInstallCommand");
+      readConfigMock.mockReturnValue(null);
+      runSetupCoreMock.mockResolvedValue(mockSetupResult());
+      vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(false, false));
+      vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+      clackSelectMock.mockResolvedValueOnce("openclaw").mockResolvedValueOnce("shared");
+      clackTextMock.mockResolvedValueOnce("/tmp/custom-openclaw-dir").mockResolvedValueOnce("custom-openclaw");
+      clackConfirmMock.mockResolvedValueOnce(true);
+
+      await runInitWizard({ isInteractive: true, path: dir });
+
+      expect(daemonSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          dir: path.join("/tmp/custom-openclaw-dir", "agents", "main", "sessions"),
+        }),
+      );
     });
   });
 });

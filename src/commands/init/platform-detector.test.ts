@@ -66,6 +66,16 @@ describe("detectPlatforms", () => {
     expect(platforms).toHaveLength(2);
     expect(platforms.map((platform) => platform.id)).toEqual(["openclaw", "codex"]);
   });
+
+  it("OpenClaw platform sessionsDir includes agents/main/sessions", async () => {
+    const homeDir = await createTempDir();
+    vi.spyOn(os, "homedir").mockReturnValue(homeDir);
+
+    const platforms = detectPlatforms(() => false);
+    const openclaw = platforms.find((platform) => platform.id === "openclaw");
+
+    expect(openclaw?.sessionsDir).toBe(path.join(homeDir, ".openclaw", "agents", "main", "sessions"));
+  });
 });
 
 describe("isOnPath", () => {
