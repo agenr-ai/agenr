@@ -383,7 +383,7 @@ export async function runSetupCore(options: SetupCoreOptions): Promise<SetupResu
         return null;
       }
 
-      const normalizedEmbeddingKey = embeddingKey.trim();
+      const normalizedEmbeddingKey = (embeddingKey ?? "").trim();
       if (normalizedEmbeddingKey) {
         working = setStoredCredential(working, "openai", normalizedEmbeddingKey);
         clack.log.info("OpenAI API key saved for embeddings.");
