@@ -293,6 +293,28 @@ describe("extraction prompt quality (#240)", () => {
     expect(SYSTEM_PROMPT).toContain("Bumped package version to 0.8.34");
   });
 
+  it("contains anti-consolidation instruction for personal facts", () => {
+    expect(SYSTEM_PROMPT).toContain("Do NOT consolidate multiple personal facts");
+  });
+
+  it("contains project convention decisions in durable list", () => {
+    expect(SYSTEM_PROMPT).toContain("project convention decisions");
+  });
+
+  it("contains release-engineering noise anti-pattern", () => {
+    expect(SYSTEM_PROMPT).toContain("Release-engineering noise");
+  });
+
+  it("whole-file prompt keeps anti-consolidation note for biographical facts", () => {
+    const prompt = buildExtractionSystemPrompt(undefined, true);
+    expect(prompt).toContain("do NOT merge biographical details");
+  });
+
+  it("whole-file prompt does not include max 8 entries cap", () => {
+    const prompt = buildExtractionSystemPrompt(undefined, true);
+    expect(prompt).not.toContain("Max 8 entries");
+  });
+
   it("does not contain old importance default at 7", () => {
     expect(SYSTEM_PROMPT).not.toContain("Start every candidate at 7");
   });
