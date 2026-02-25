@@ -1,5 +1,5 @@
 import fs from "node:fs/promises";
-import { readFileSync } from "node:fs";
+
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { parseTranscriptFile } from "../parser.js";
@@ -468,7 +468,7 @@ export async function runBenchmarkCommand(
   let contextContent: string | undefined;
   if (options.context) {
     try {
-      contextContent = readFileSync(options.context, "utf-8");
+      contextContent = await resolvedDeps.readFileFn(options.context, "utf8");
     } catch (err) {
       throw new Error(`Failed to read context file "${options.context}": ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -538,7 +538,7 @@ export async function runBenchmarkCommand(
 
   const result: BenchmarkResult = {
     model: client.resolvedModel.modelId,
-    temperature: BENCHMARK_TEMPERATURE,
+    temperature: warnedTemperatureUnsupported ? null : BENCHMARK_TEMPERATURE,
     runs,
     agenr_version: APP_VERSION,
     prompt_hash: promptHash,

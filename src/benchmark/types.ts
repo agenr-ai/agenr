@@ -80,7 +80,7 @@ export interface SessionRunResult {
 
 export interface BenchmarkResult {
   model: string;
-  temperature: number;
+  temperature: number | null;
   runs: number;
   agenr_version: string;
   prompt_hash: string;
