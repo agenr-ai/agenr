@@ -82,6 +82,7 @@ vi.mock("../embeddings/client.js", () => ({
 
 import {
   buildMcpEntry,
+  formatPathForDisplay,
   formatWizardChanges,
   formatInitSummary,
   initWizardRuntime,
@@ -1889,6 +1890,18 @@ describe("buildMcpEntry", () => {
         AGENR_PROJECT_DIR: projectDir,
       },
     });
+  });
+});
+
+describe("formatPathForDisplay", () => {
+  it("does not replace sibling-prefix paths", () => {
+    vi.spyOn(os, "homedir").mockReturnValue("/Users/al");
+    expect(formatPathForDisplay("/Users/alex/foo")).toBe("/Users/alex/foo");
+  });
+
+  it("returns ~ for exact home directory", () => {
+    vi.spyOn(os, "homedir").mockReturnValue("/Users/al");
+    expect(formatPathForDisplay("/Users/al")).toBe("~");
   });
 });
 

@@ -536,9 +536,13 @@ export function formatInitSummary(result: InitCommandResult): string[] {
   return lines;
 }
 
-function formatPathForDisplay(filePath: string): string {
+export function formatPathForDisplay(filePath: string): string {
   const home = os.homedir();
-  return filePath.startsWith(home) ? `~${filePath.slice(home.length)}` : filePath;
+  if (filePath === home) {
+    return "~";
+  }
+  const homePrefix = `${home}${path.sep}`;
+  return filePath.startsWith(homePrefix) ? `~${filePath.slice(home.length)}` : filePath;
 }
 
 function resolveInputPath(value: string): string {
