@@ -2056,6 +2056,19 @@ async function extractWholeFileChunkWithRetry(params: {
       };
     } catch (error) {
       lastError = error;
+      // If temperature is unsupported, clear it and continue retrying in whole-file mode
+      if (
+        params.temperature !== undefined &&
+        error instanceof Error &&
+        error.message.toLowerCase().includes("temperature") &&
+        (error.message.toLowerCase().includes("unsupported") || error.message.toLowerCase().includes("not supported"))
+      ) {
+        if (params.verbose) {
+          emit("[whole-file] temperature not supported by model, disabling temperature for remaining attempts.");
+        }
+        params = { ...params, temperature: undefined };
+        continue;
+      }
       if (attempt < WHOLE_FILE_ATTEMPTS) {
         const baseDelayMs = WHOLE_FILE_RETRY_DELAYS_MS[attempt - 1] ?? WHOLE_FILE_RETRY_DELAYS_MS[WHOLE_FILE_RETRY_DELAYS_MS.length - 1];
         const jitterMs = Math.floor(Math.random() * 1000);
