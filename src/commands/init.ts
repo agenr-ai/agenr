@@ -3,8 +3,9 @@ import os from "node:os";
 import path from "node:path";
 import * as clack from "@clack/prompts";
 import { describeAuth, readConfig } from "../config.js";
+import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { formatExistingConfig, runSetupCore } from "../setup.js";
-import { banner } from "../ui.js";
+import { banner, formatLabel } from "../ui.js";
 import { detectPlatforms } from "./init/platform-detector.js";
 import type { DetectedPlatform } from "./init/platform-detector.js";
 
@@ -50,6 +51,7 @@ export interface WizardChanges {
   modelChanged: boolean;
   platformChanged: boolean;
   projectChanged: boolean;
+  embeddingsKeyChanged: boolean;
   previousModel: string | undefined;
   newModel: string | undefined;
 }
@@ -465,6 +467,17 @@ function isWizardPlatformId(value: string): value is DetectedPlatform["id"] {
   return value === "openclaw" || value === "codex";
 }
 
+function resolveEmbeddingKeyOrNull(config: ReturnType<typeof readConfig>, env: NodeJS.ProcessEnv): string | null {
+  if (!config) {
+    return null;
+  }
+  try {
+    return resolveEmbeddingApiKey(config, env);
+  } catch {
+    return null;
+  }
+}
+
 function formatPlatformLabel(platform: InitPlatform | DetectedPlatform["id"]): string {
   if (platform === "openclaw") {
     return "OpenClaw";
@@ -661,12 +674,15 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
     modelChanged: false,
     platformChanged: false,
     projectChanged: false,
+    embeddingsKeyChanged: false,
     previousModel: existingConfig?.model,
     newModel: existingConfig?.model,
   };
 
   let selectedAuth = existingConfig?.auth;
   let selectedModel = existingConfig?.model;
+  const previousEmbeddingKey = resolveEmbeddingKeyOrNull(existingConfig, env);
+  let currentEmbeddingKey = previousEmbeddingKey;
   const hasCurrentAuthModel = Boolean(existingConfig?.auth && existingConfig.model && existingConfig.provider);
 
   if (hasCurrentAuthModel && existingConfig?.auth) {
@@ -694,6 +710,7 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
       }
       selectedAuth = setupResult.auth;
       selectedModel = setupResult.model;
+      currentEmbeddingKey = resolveEmbeddingKeyOrNull(setupResult.config, env);
     }
   } else {
     const setupResult = await initWizardRuntime.runSetupCore({
@@ -707,11 +724,18 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
     }
     selectedAuth = setupResult.auth;
     selectedModel = setupResult.model;
+    currentEmbeddingKey = resolveEmbeddingKeyOrNull(setupResult.config, env);
   }
 
   wizardChanges.authChanged = existingConfig ? existingConfig.auth !== selectedAuth : false;
   wizardChanges.modelChanged = existingConfig ? existingConfig.model !== selectedModel : false;
+  wizardChanges.embeddingsKeyChanged = previousEmbeddingKey !== currentEmbeddingKey;
   wizardChanges.newModel = selectedModel;
+
+  if (!wizardChanges.authChanged && hasCurrentAuthModel) {
+    const embeddingStatus = currentEmbeddingKey ? "configured" : "not configured";
+    clack.log.info(formatLabel("Embeddings", embeddingStatus));
+  }
 
   const platforms = initWizardRuntime.detectPlatforms();
   const currentPlatform =
