@@ -294,9 +294,10 @@ describe("scoreSession", () => {
       testRubric,
     );
 
+    // Both rules can match the same entry (no claiming/double-count prevention)
     expect(result.must_extract_scores[0]?.matched).toBe(true);
-    expect(result.must_extract_scores[1]?.matched).toBe(false);
-    expect(result.recall).toBeCloseTo(0.5, 6);
+    expect(result.must_extract_scores[1]?.matched).toBe(true);
+    expect(result.recall).toBeCloseTo(1.0, 6);
   });
 
   it("rules processed by specificity", () => {

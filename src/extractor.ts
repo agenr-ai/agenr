@@ -2147,6 +2147,8 @@ export async function extractKnowledgeFromChunks(params: {
   embedFn?: (texts: string[], apiKey: string) => Promise<number[][]>;
   /** Shared warning state across calls; pass one object per ingest run to dedupe one-time logs. */
   onceFlags?: ExtractRunOnceFlags;
+  /** Optional prefix prepended to the system prompt (e.g. known context for delta extraction). */
+  systemPromptPrefix?: string;
 }): Promise<ExtractChunksResult> {
   const warnings: string[] = [];
   const entries: KnowledgeEntry[] = [];
@@ -2261,7 +2263,7 @@ export async function extractKnowledgeFromChunks(params: {
     }
   }
 
-  const systemPrompt = buildExtractionSystemPrompt(params.platform, wholeFileMode);
+  const systemPrompt = (params.systemPromptPrefix ?? "") + buildExtractionSystemPrompt(params.platform, wholeFileMode);
 
   let successfulChunks = 0;
   let failedChunks = 0;

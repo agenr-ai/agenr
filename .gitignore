@@ -4,7 +4,7 @@ dist
 node_modules
 
 docs/internal/
-
+tmp/
 # Sandbox environment
 sandbox/
 

@@ -1,0 +1,59 @@
+{
+  "session": "02-coding-noise",
+  "description": "Release engineering session - version bumps, builds, publishes, CHANGELOG edits, with late-session agenr operational discussion (ingest, consolidate, watcher daemon, bug triage)",
+  "must_extract": [],
+  "must_skip": [
+    {
+      "pattern": "version 0.7",
+      "reason": "Transient version numbers (0.7.7 through 0.7.12 all appear)"
+    },
+    {
+      "pattern": "CHANGELOG",
+      "reason": "CHANGELOG content is release engineering noise, not durable knowledge"
+    },
+    {
+      "pattern": "804 tests",
+      "reason": "Transient test pass counts"
+    },
+    {
+      "pattern": "pnpm build",
+      "reason": "Build commands are ephemeral process noise"
+    },
+    {
+      "pattern": "pnpm test",
+      "reason": "Test run commands are ephemeral process noise"
+    },
+    {
+      "pattern": "npm publish",
+      "reason": "Publish events are operational noise, not knowledge"
+    },
+    {
+      "pattern": "7,934",
+      "reason": "Transient DB entry counts from consolidation output"
+    },
+    {
+      "pattern": "7,775",
+      "reason": "Transient DB entry counts from consolidation output"
+    },
+    {
+      "pattern": "156 clusters",
+      "reason": "Transient consolidation stats"
+    },
+    {
+      "pattern": "536/537",
+      "reason": "Transient ingest progress counts"
+    },
+    {
+      "pattern": "22.9MB",
+      "reason": "Transient session file sizes"
+    },
+    {
+      "pattern": "watcher is now tracking",
+      "reason": "Operational status updates, not durable knowledge"
+    }
+  ],
+  "acceptable_range": {
+    "min": 0,
+    "max": 3
+  }
+}
