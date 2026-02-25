@@ -155,6 +155,7 @@ If you cannot name a concrete topic, skip the entry.
 15. Obvious or tautological facts ("the project has a README", "the plugin contains files", "the config file has settings in it").
 16. File/directory existence observations ("I found that file X exists", "the project has a src/ folder"). Extract only if the organizational structure itself is an architectural or project convention decision worth preserving. Extractable example: "CLAUDE.md is a symlink to AGENTS.md" (deliberate project convention). Skip example: "the project has a src/ folder" (obvious structure).
 17. Release-engineering noise: version bumps, CHANGELOG edits, build/test/publish cycles, and batch operation counts. If the conversation is purely about releasing a version, the expected extraction count is 0. Only extract if a significant architectural decision or lasting workflow change emerged during the release process.
+18. Agent capability announcements and tool/integration setup confirmations: browser relay status, avatar display, voice message support, web search configuration, transcription tools, messaging platform policies, GitHub integration status. These describe the agent's current session capabilities, not durable user knowledge or architectural decisions. Skip unless the USER explicitly decided to enable/disable a capability or stated a preference about it.
 
 ## Explicit Memory Requests
 
@@ -454,7 +455,9 @@ WHY: Routine execution. No durable knowledge, decisions, or lessons.
 - content: clear declarative statement, not a quote. Min 20 chars.
 - source_context: one sentence, max 20 words.
 - tags: 1-4 lowercase descriptive tags.
-When related memories are injected before a chunk, they are reference material only. They do not lower the emission threshold.`;
+When related memories are injected before a chunk, they are reference material only. They do not lower the emission threshold.
+
+Content from files the agent reads (via toolResult from read/exec tools) is reference material, not user speech. Do not extract facts from file contents unless the USER explicitly discusses, decides, or affirms something about that content in their own messages. An agent reading HEARTBEAT.md, MEMORY.md, or project files on startup does not constitute the user stating those facts.`;
 
 export const OPENCLAW_CONFIDENCE_ADDENDUM = `
 ## Confidence Language (role-labeled transcripts)
@@ -722,17 +725,33 @@ const CHUNKED_CALIBRATION_BLOCK = `Calibration:
 - If more than 20% of your emitted entries are 8 or higher, you are inflating`;
 
 const WHOLE_FILE_CALIBRATION_BLOCK = `Calibration (whole-file mode - you have the FULL session context, not a fragment):
-- Typical session: 5-15 entries. Dense sessions may warrant 30-50.
-- You are seeing the complete conversation. Extract complete, coherent entries.
+
+STEP 1 - SESSION TRIAGE (do this BEFORE extracting):
+Read through the session and classify it:
+- If the session is mostly tool output, code dumps, release engineering, or system notifications with few USER messages: expect 0-5 entries. Most such sessions warrant 0.
+- If the session is a startup/reset with no substantive user interaction: expect 0-1 entries.
+- If the session contains rich personal disclosures or multi-topic conversation: expect 5-20 entries.
+- If the session is a dense working session with real decisions: expect 3-10 entries.
+An empty result is correct and expected for many sessions. Do not manufacture entries to fill a quota.
+
+STEP 2 - PRIORITIZE USER MESSAGES:
+USER messages are your primary extraction signal. Tool output (toolResult, exec output, file contents, system notifications) is secondary context.
+- Scan USER messages first. Most extractable knowledge comes from what the USER says or decides.
+- Tool output matters only when it reveals a durable fact that the user acted on or that represents a deliberate project convention (e.g., a git commit message showing an intentional structural decision like "symlink CLAUDE.md to AGENTS.md").
+- System notifications ("Exec finished", node IDs, tool call IDs) are NEVER extractable.
+- File contents read by the agent during startup or exploration are NOT user statements. Do not extract facts from files the agent reads unless the USER explicitly discusses or decides something about that content.
+
+STEP 3 - EXTRACT with these constraints:
+- Extract complete, coherent entries.
   For technical discussions, capture multi-part discussions as single entries, not fragments.
   For personal facts, extract each distinct fact separately - do NOT merge biographical details into one mega-entry.
-- Score 9 or 10: very rare, at most 1 per session, often 0
-- Score 8: at most 2-3 per session; ask the cross-session-alert question before assigning
+- Score 9 or 10: very rare, at most 1 per session, often 0. In coding/technical sessions the importance ceiling is 8.
+- Score 8: at most 1-2 per session; ask the cross-session-alert question before assigning
 - Score 7: solid durable knowledge worth preserving long-term; common but earned, not default
 - Score 6: this is your workhorse; most emitted entries should be 6
 - TODO completion: if a TODO is raised AND completed within this session, emit only
   the completion event - not the original todo.
-- If more than 30% of your emitted entries are score 8 or higher, you are inflating.
+- If more than 20% of your emitted entries are score 8 or higher, you are inflating.
 - Do NOT extract the same fact multiple times even if stated differently in the session.`;
 
 export function buildExtractionSystemPrompt(
