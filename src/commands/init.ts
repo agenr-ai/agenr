@@ -1120,19 +1120,51 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
     if (isWizardPlatformId(selectedPlatform.id)) {
       const globalProjects = getGlobalProjectMap(readConfig(env));
 
-      if (!selectedOpenclawDbPath) {
-        const resolvedDir = path.resolve(projectDir);
-        const otherSharedProjects = Object.entries(globalProjects)
-          .filter(([dirKey, entry]) => dirKey !== resolvedDir && !entry.dbPath)
-          .map(([, entry]) => `${entry.project} (${formatPathForDisplay(entry.projectDir)})`);
-        if (otherSharedProjects.length > 0) {
-          clack.log.info(
-            `This project shares the knowledge database with:\n${otherSharedProjects.map((item) => `  - ${item}`).join("\n")}\n` +
-              "All projects using the shared database can see each other's knowledge.\n" +
-              "Data is separated by project tag in recall queries.",
-          );
+        if (!selectedOpenclawDbPath) {
+          const resolvedDir = path.resolve(projectDir);
+          const otherSharedEntries = Object.entries(globalProjects)
+            .filter(([dirKey, entry]) => dirKey !== resolvedDir && !entry.dbPath);
+          const otherSharedSameSlug = otherSharedEntries
+            .filter(([, entry]) => entry.project === projectSlug);
+          const otherSharedDiffSlug = otherSharedEntries
+            .filter(([, entry]) => entry.project !== projectSlug);
+
+          if (otherSharedSameSlug.length > 0) {
+            const conflicting = otherSharedSameSlug
+              .map(([, entry]) => `  - ${formatPathForDisplay(entry.projectDir)}`)
+              .join("\n");
+            clack.log.warn(
+              `WARNING: This project uses the same name ("${projectSlug}") and the same database as:\n${conflicting}\n\n` +
+                "Entries from these instances will be completely indistinguishable.\n" +
+                "There is no way to isolate one instance's data from the other.\n\n" +
+                "To fix this, either:\n" +
+                "  1. Use a different project name for this instance\n" +
+                "  2. Use an isolated database instead of shared",
+            );
+
+            const proceed = await clack.confirm({
+              message: "Continue with shared database and same project name?",
+              initialValue: false,
+            });
+            if (clack.isCancel(proceed)) {
+              clack.cancel("Setup cancelled.");
+              return;
+            }
+            if (!proceed) {
+              projectSlug = null;
+              continue;
+            }
+          } else if (otherSharedDiffSlug.length > 0) {
+            const others = otherSharedDiffSlug
+              .map(([, entry]) => `  - ${entry.project} (${formatPathForDisplay(entry.projectDir)})`)
+              .join("\n");
+            clack.log.info(
+              `This project shares the knowledge database with:\n${others}\n` +
+                "All projects using the shared database can see each other's knowledge.\n" +
+                "Data is separated by project tag in recall queries.",
+            );
+          }
         }
-      }
     }
 
     break;
