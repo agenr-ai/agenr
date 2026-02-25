@@ -1914,7 +1914,9 @@ async function extractChunkOnce(params: {
   apiKey: string;
   systemPrompt?: string;
   maxTokens?: number;
+  temperature?: number;
   logDir?: string;
+  logAll?: boolean;
   verbose: boolean;
   onVerbose?: (line: string) => void;
   onStreamDelta?: (delta: string, kind: "text" | "thinking") => void;
@@ -2057,7 +2059,9 @@ async function extractWholeFileChunkWithRetry(params: {
   apiKey: string;
   systemPrompt: string;
   maxTokens: number;
+  temperature?: number;
   logDir?: string;
+  logAll?: boolean;
   verbose: boolean;
   onVerbose?: (line: string) => void;
   onStreamDelta?: (delta: string, kind: "text" | "thinking") => void;
@@ -2092,7 +2096,9 @@ async function extractWholeFileChunkWithRetry(params: {
         apiKey: params.apiKey,
         systemPrompt: params.systemPrompt,
         maxTokens: params.maxTokens,
+        temperature: params.temperature,
         logDir: params.logDir,
+        logAll: params.logAll,
         verbose: params.verbose,
         onVerbose: params.onVerbose,
         onStreamDelta: params.onStreamDelta,
