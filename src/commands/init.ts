@@ -548,7 +548,7 @@ export function formatPathForDisplay(filePath: string): string {
 function resolveInputPath(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) {
-    return path.resolve(trimmed);
+    throw new Error("Input path is empty.");
   }
   if (trimmed === "~") {
     return os.homedir();
@@ -1030,10 +1030,11 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
       return;
     }
 
+    const resolvedOpenclawDir = resolveInputPath(openclawDir.trim());
     selectedPlatform = {
       ...selectedPlatform,
-      configDir: resolveInputPath(openclawDir.trim()),
-      sessionsDir: path.join(resolveInputPath(openclawDir.trim()), "sessions"),
+      configDir: resolvedOpenclawDir,
+      sessionsDir: path.join(resolvedOpenclawDir, "sessions"),
     };
   }
 
@@ -1104,6 +1105,9 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
             if (!trimmed) {
               return "Project name is required";
             }
+            if (!normalizeSlug(trimmed)) {
+              return "Project name must include letters or numbers";
+            }
             return undefined;
           },
         });
@@ -1113,7 +1117,12 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
           return;
         }
 
-        projectSlug = enteredProject.trim();
+        projectSlug = normalizeSlug(enteredProject.trim());
+        if (!projectSlug) {
+          clack.log.warn("Project name must include letters or numbers.");
+          projectSlug = null;
+          continue;
+        }
         offeredKeepProjectSelection = true;
       }
     }

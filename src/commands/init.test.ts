@@ -451,7 +451,7 @@ describe("runInitCommand", () => {
     const openclawDbPath = path.join(path.resolve(dir), "agenr-data", "knowledge.db");
 
     await withTempHome(async () => {
-      const result = await runInitCommand({ path: dir, platform: "openclaw", openclawDbPath });
+      await runInitCommand({ path: dir, platform: "openclaw", openclawDbPath });
       const config = await readJson(getIsolatedConfigPath());
       const projects = config.projects as Record<string, { dbPath?: string }>;
       expect(projects[path.resolve(dir)]?.dbPath).toBe(openclawDbPath);
@@ -858,45 +858,47 @@ describe("runInitWizard", () => {
   });
 
   it("current config box includes projects before reconfigure prompt", async () => {
-    const dir = await createWizardProjectDir();
-    const existingConfig = {
-      auth: "openai-api-key" as const,
-      provider: "openai" as const,
-      model: "gpt-4.1-mini",
-      projects: {
-        "/tmp/.openclaw": {
-          project: "openclaw",
-          platform: "openclaw",
+    await withTempHome(async (homeDir) => {
+      const dir = await createWizardProjectDir();
+      const existingConfig = {
+        auth: "openai-api-key" as const,
+        provider: "openai" as const,
+        model: "gpt-4.1-mini",
+        projects: {
+          "/tmp/.openclaw": {
+            project: "openclaw",
+            platform: "openclaw",
+          },
+          "/tmp/.openclaw-sandbox": {
+            project: "openclaw",
+            platform: "openclaw",
+            dbPath: "/tmp/.openclaw-sandbox/agenr-data/knowledge.db",
+          },
         },
-        "/tmp/.openclaw-sandbox": {
-          project: "openclaw",
-          platform: "openclaw",
-          dbPath: "/tmp/.openclaw-sandbox/agenr-data/knowledge.db",
-        },
-      },
-    };
-    readConfigMock.mockReturnValue(existingConfig);
-    formatExistingConfigMock.mockReturnValue(
-      [
-        "Auth:     OpenAI API key",
-        "Provider: openai",
-        "Model:    gpt-4.1-mini",
-        "",
-        "Projects:",
-        "  openclaw",
-        "    Directory: /tmp/.openclaw",
-        "    Database:  ~/.agenr/knowledge.db (shared)",
-      ].join("\n"),
-    );
-    clackConfirmMock.mockResolvedValue(false);
+      };
+      readConfigMock.mockReturnValue(existingConfig);
+      formatExistingConfigMock.mockReturnValue(
+        [
+          "Auth:     OpenAI API key",
+          "Provider: openai",
+          "Model:    gpt-4.1-mini",
+          "",
+          "Projects:",
+          "  openclaw",
+          "    Directory: /tmp/.openclaw",
+          "    Database:  ~/.agenr/knowledge.db (shared)",
+        ].join("\n"),
+      );
+      clackConfirmMock.mockResolvedValue(false);
 
-    await runInitWizard({ isInteractive: true, path: dir });
+      await runInitWizard({ isInteractive: true, path: dir });
 
-    expect(formatExistingConfigMock).toHaveBeenCalledWith(
-      existingConfig,
-      path.join(os.homedir(), ".agenr", "knowledge.db"),
-    );
-    expect(clackNoteMock).toHaveBeenCalledWith(expect.stringContaining("Projects:\n  openclaw"), "Current config");
+      expect(formatExistingConfigMock).toHaveBeenCalledWith(
+        existingConfig,
+        path.join(homeDir, ".agenr", "knowledge.db"),
+      );
+      expect(clackNoteMock).toHaveBeenCalledWith(expect.stringContaining("Projects:\n  openclaw"), "Current config");
+    });
   });
 
   it("readExistingProjectSettings finds project in global config by projectDir", async () => {
@@ -1333,7 +1335,7 @@ describe("runInitWizard", () => {
     const runInitCommandSpy = vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
     vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(false, false));
     clackSelectMock.mockResolvedValueOnce("openclaw").mockResolvedValueOnce("shared");
-    clackTextMock.mockResolvedValueOnce(sandboxDir).mockResolvedValueOnce("openclaw").mockResolvedValueOnce("openclaw-sandbox");
+    clackTextMock.mockResolvedValueOnce(sandboxDir).mockResolvedValueOnce("OpenClaw").mockResolvedValueOnce("openclaw-sandbox");
 
     await runInitWizard({ isInteractive: true, path: dir });
 
@@ -1848,6 +1850,7 @@ describe("runInitWizard", () => {
       .find((call) => call.message === "Project name:");
 
     expect(textCall?.validate?.("   ")).toBe("Project name is required");
+    expect(textCall?.validate?.("___")).toBe("Project name must include letters or numbers");
     expect(textCall?.validate?.("my-project")).toBeUndefined();
   });
 
