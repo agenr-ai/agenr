@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.3 (2026-02-25)
+
+### Fixed
+- Test isolation hardening for init wizard coverage: `src/commands/init.test.ts` now forces `AGENR_CONFIG_PATH` to a per-test temp config path and restores it in teardown, preventing tests from reading or writing real `~/.agenr/config.json`
+- Updated global-config assertions in init tests to read the isolated config path, so tests no longer depend on home-directory config locations
+
 ## 0.9.2 (2026-02-25)
 
 ### Added

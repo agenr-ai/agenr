@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   readConfigMock,
@@ -119,8 +119,17 @@ async function pathExists(filePath: string): Promise<boolean> {
   }
 }
 
+function getIsolatedConfigPath(): string {
+  const configPath = process.env.AGENR_CONFIG_PATH;
+  if (!configPath) {
+    throw new Error("Expected AGENR_CONFIG_PATH to be set for test isolation.");
+  }
+  return configPath;
+}
+
 const tempDirs: string[] = [];
 const originalHome = process.env.HOME;
+const originalAgenrConfigPath = process.env.AGENR_CONFIG_PATH;
 
 function escapeTomlString(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\r/g, "\\r").replace(/\n/g, "\\n").replace(/\t/g, "\\t");
@@ -132,6 +141,12 @@ async function withTempHome<T>(fn: (homeDir: string) => Promise<T>): Promise<T> 
   process.env.HOME = homeDir;
   return await fn(homeDir);
 }
+
+beforeEach(async () => {
+  const configDir = await createTempDir("agenr-config-");
+  tempDirs.push(configDir);
+  process.env.AGENR_CONFIG_PATH = path.join(configDir, "config.json");
+});
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -156,6 +171,11 @@ afterEach(async () => {
     delete process.env.HOME;
   } else {
     process.env.HOME = originalHome;
+  }
+  if (originalAgenrConfigPath === undefined) {
+    delete process.env.AGENR_CONFIG_PATH;
+  } else {
+    process.env.AGENR_CONFIG_PATH = originalAgenrConfigPath;
   }
 
   while (tempDirs.length > 0) {
@@ -235,9 +255,9 @@ describe("runInitCommand", () => {
     const dir = await createTempDir();
     tempDirs.push(dir);
 
-    await withTempHome(async (homeDir) => {
+    await withTempHome(async () => {
       const result = await runInitCommand({ path: dir, platform: "openclaw" });
-      const configPath = path.join(homeDir, ".agenr", "config.json");
+      const configPath = getIsolatedConfigPath();
       const config = await readJson(configPath);
       const projects = config.projects as Record<string, unknown>;
 
@@ -318,9 +338,9 @@ describe("runInitCommand", () => {
     const dir = await createTempDir();
     tempDirs.push(dir);
 
-    await withTempHome(async (homeDir) => {
+    await withTempHome(async () => {
       const result = await runInitCommand({ path: dir, platform: "codex" });
-      const configPath = path.join(homeDir, ".agenr", "config.json");
+      const configPath = getIsolatedConfigPath();
       const config = await readJson(configPath);
       const projects = config.projects as Record<string, unknown>;
 
@@ -333,7 +353,7 @@ describe("runInitCommand", () => {
   });
 
   it("writeAgenrConfig preserves existing projects when adding new one", async () => {
-    await withTempHome(async (homeDir) => {
+    await withTempHome(async () => {
       const openclawDir = await createTempDir("agenr-openclaw-");
       const codexDir = await createTempDir("agenr-codex-");
       tempDirs.push(openclawDir);
@@ -342,7 +362,7 @@ describe("runInitCommand", () => {
       const openclawResult = await runInitCommand({ path: openclawDir, platform: "openclaw" });
       const codexResult = await runInitCommand({ path: codexDir, platform: "codex" });
 
-      const config = await readJson(path.join(homeDir, ".agenr", "config.json"));
+      const config = await readJson(getIsolatedConfigPath());
       const projects = config.projects as Record<string, unknown>;
       expect(projects[openclawResult.project]).toEqual({
         platform: "openclaw",
@@ -359,8 +379,8 @@ describe("runInitCommand", () => {
     const dir = await createTempDir();
     tempDirs.push(dir);
 
-    await withTempHome(async (homeDir) => {
-      const configPath = path.join(homeDir, ".agenr", "config.json");
+    await withTempHome(async () => {
+      const configPath = getIsolatedConfigPath();
       await fs.mkdir(path.dirname(configPath), { recursive: true });
       await fs.writeFile(
         configPath,
@@ -395,9 +415,9 @@ describe("runInitCommand", () => {
     tempDirs.push(dir);
     const openclawDbPath = path.join(path.resolve(dir), "agenr-data", "knowledge.db");
 
-    await withTempHome(async (homeDir) => {
+    await withTempHome(async () => {
       const result = await runInitCommand({ path: dir, platform: "openclaw", openclawDbPath });
-      const config = await readJson(path.join(homeDir, ".agenr", "config.json"));
+      const config = await readJson(getIsolatedConfigPath());
       const projects = config.projects as Record<string, { dbPath?: string }>;
       expect(projects[result.project]?.dbPath).toBe(openclawDbPath);
     });
@@ -407,9 +427,9 @@ describe("runInitCommand", () => {
     const dir = await createTempDir();
     tempDirs.push(dir);
 
-    await withTempHome(async (homeDir) => {
+    await withTempHome(async () => {
       const result = await runInitCommand({ path: dir, platform: "openclaw" });
-      const config = await readJson(path.join(homeDir, ".agenr", "config.json"));
+      const config = await readJson(getIsolatedConfigPath());
       const projects = config.projects as Record<string, unknown>;
       expect(projects[result.project]).toEqual({
         platform: "openclaw",
@@ -795,9 +815,9 @@ describe("runInitWizard", () => {
   });
 
   it("readExistingProjectSettings finds project in global config by projectDir", async () => {
-    await withTempHome(async (homeDir) => {
+    await withTempHome(async () => {
       const dir = await createWizardProjectDir();
-      const globalConfigPath = path.join(homeDir, ".agenr", "config.json");
+      const globalConfigPath = getIsolatedConfigPath();
       await fs.mkdir(path.dirname(globalConfigPath), { recursive: true });
       await fs.writeFile(
         globalConfigPath,
