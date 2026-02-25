@@ -2355,6 +2355,20 @@ export async function extractKnowledgeFromChunks(params: {
           } catch (error) {
             lastError = error;
 
+            // If temperature is unsupported, clear it and retry without it
+            if (
+              params.temperature !== undefined &&
+              error instanceof Error &&
+              error.message.toLowerCase().includes("temperature") &&
+              (error.message.toLowerCase().includes("unsupported") || error.message.toLowerCase().includes("not supported"))
+            ) {
+              if (params.verbose) {
+                params.onVerbose?.("[chunk] temperature not supported by model, disabling temperature for remaining chunks.");
+              }
+              params = { ...params, temperature: undefined };
+              continue;
+            }
+
             if (attempt < MAX_ATTEMPTS && isRetryableError(error)) {
               if (isRateLimitedError(error)) {
                 dynamicDelay = Math.min(5000, Math.max(baseDelay, dynamicDelay * 2));
