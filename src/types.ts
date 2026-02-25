@@ -46,6 +46,15 @@ export interface AgenrConfig {
   provider?: AgenrProvider;
   model?: string;
   labelProjectMap?: Record<string, string>;
+  projects?: Record<
+    string,
+    {
+      platform: string;
+      projectDir: string;
+      dbPath?: string;
+      dependencies?: string[];
+    }
+  >;
   forgetting?: {
     protect?: string[];
     scoreThreshold?: number;

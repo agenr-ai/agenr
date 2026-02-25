@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.9.1 (2026-02-25)
+
+### Changed
+- `agenr init` now stores OpenClaw and Codex project settings in the global config at `~/.agenr/config.json` under a new `projects` map instead of writing `<projectDir>/.agenr/config.json` for those global platforms
+- Reconfigure flow now checks the global `projects` map first (matched by `projectDir`) and falls back to per-repo `.agenr/config.json`, so existing per-repo platforms continue to work unchanged
+- Wizard summary now prints the resolved config path so global platforms show `~/.agenr/config.json` and per-repo platforms show `.agenr/config.json` under the project directory
+
+### Added
+- `AgenrConfig.projects` type and config normalization for global project entries (`platform`, `projectDir`, optional `dbPath`, optional `dependencies`)
+- `resolveProjectFromGlobalConfig(projectDir)` helper in `src/config.ts` for resolving global project metadata by directory
+- OpenClaw DB isolation follow-up integration in init flow: selected isolated DB path is now persisted as `projects.<slug>.dbPath`
+
 ## 0.9.0 (2026-02-25)
 
 ### Features
