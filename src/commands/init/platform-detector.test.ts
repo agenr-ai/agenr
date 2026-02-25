@@ -2,7 +2,13 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { detectPlatforms, isOnPath } from "./platform-detector.js";
+import {
+  detectPlatforms,
+  isDefaultOpenClawPath,
+  isOnPath,
+  resolveDefaultCodexConfigDir,
+  resolveDefaultOpenClawConfigDir,
+} from "./platform-detector.js";
 
 const tempDirs: string[] = [];
 
@@ -69,5 +75,35 @@ describe("isOnPath", () => {
 
   it("isOnPath returns false for nonexistent command", () => {
     expect(isOnPath("definitely-not-a-real-command-agenr")).toBe(false);
+  });
+});
+
+describe("default path helpers", () => {
+  it("resolveDefaultOpenClawConfigDir resolves from home directory", async () => {
+    const homeDir = await createTempDir();
+    vi.spyOn(os, "homedir").mockReturnValue(homeDir);
+
+    expect(resolveDefaultOpenClawConfigDir()).toBe(path.join(homeDir, ".openclaw"));
+  });
+
+  it("resolveDefaultCodexConfigDir resolves from home directory", async () => {
+    const homeDir = await createTempDir();
+    vi.spyOn(os, "homedir").mockReturnValue(homeDir);
+
+    expect(resolveDefaultCodexConfigDir()).toBe(path.join(homeDir, ".codex"));
+  });
+
+  it("isDefaultOpenClawPath returns true for default path", async () => {
+    const homeDir = await createTempDir();
+    vi.spyOn(os, "homedir").mockReturnValue(homeDir);
+
+    expect(isDefaultOpenClawPath(path.join(homeDir, ".openclaw"))).toBe(true);
+  });
+
+  it("isDefaultOpenClawPath returns false for custom path", async () => {
+    const homeDir = await createTempDir();
+    vi.spyOn(os, "homedir").mockReturnValue(homeDir);
+
+    expect(isDefaultOpenClawPath(path.join(homeDir, ".openclaw-sandbox"))).toBe(false);
   });
 });
