@@ -566,6 +566,34 @@ function formatWizardSummary(result: WizardSummary): string {
   ].join("\n");
 }
 
+export function formatWizardChanges(changes: WizardChanges): string {
+  const items: string[] = [];
+
+  if (changes.authChanged) {
+    items.push("Auth method updated");
+  }
+  if (changes.modelChanged) {
+    const previousModel = changes.previousModel ?? "(not set)";
+    const newModel = changes.newModel ?? "(not set)";
+    items.push(`Model changed: ${previousModel} -> ${newModel}`);
+  }
+  if (changes.embeddingsKeyChanged) {
+    items.push("Embeddings API key updated");
+  }
+  if (changes.platformChanged) {
+    items.push("Platform changed");
+  }
+  if (changes.projectChanged) {
+    items.push("Project slug changed");
+  }
+
+  if (items.length === 0) {
+    return "No changes detected.";
+  }
+
+  return items.map((item) => `- ${item}`).join("\n");
+}
+
 export async function runInitCommand(options: InitCommandOptions): Promise<InitCommandResult> {
   const projectDir = path.resolve(options.path?.trim() || process.cwd());
   if (projectDir === os.homedir()) {
@@ -881,6 +909,8 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
     "Setup summary",
   );
 
-  clack.log.info(`Wizard changes: ${JSON.stringify(wizardChanges)}`);
+  if (hasExistingConfig) {
+    clack.note(formatWizardChanges(wizardChanges), "Changes");
+  }
   clack.outro("Setup complete.");
 }

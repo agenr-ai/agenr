@@ -70,6 +70,7 @@ vi.mock("../embeddings/client.js", () => ({
 
 import {
   buildMcpEntry,
+  formatWizardChanges,
   formatInitSummary,
   initWizardRuntime,
   resolveAgenrCommand,
@@ -823,7 +824,7 @@ describe("runInitWizard", () => {
 
     await runInitWizard({ isInteractive: true, path: dir });
 
-    expect(clackLogInfoMock).toHaveBeenCalledWith(expect.stringContaining(`"authChanged":true`));
+    expect(clackNoteMock).toHaveBeenCalledWith(expect.stringContaining("Auth method updated"), "Changes");
   });
 
   it("reconfigure mode tracks model change in WizardChanges", async () => {
@@ -846,7 +847,10 @@ describe("runInitWizard", () => {
 
     await runInitWizard({ isInteractive: true, path: dir });
 
-    expect(clackLogInfoMock).toHaveBeenCalledWith(expect.stringContaining(`"modelChanged":true`));
+    expect(clackNoteMock).toHaveBeenCalledWith(
+      expect.stringContaining("Model changed: gpt-4.1-mini -> gpt-4.1"),
+      "Changes",
+    );
   });
 
   it("reconfigure tracks embeddingsKeyChanged when key changes", async () => {
@@ -870,7 +874,7 @@ describe("runInitWizard", () => {
 
     await runInitWizard({ isInteractive: true, path: dir });
 
-    expect(clackLogInfoMock).toHaveBeenCalledWith(expect.stringContaining(`"embeddingsKeyChanged":true`));
+    expect(clackNoteMock).toHaveBeenCalledWith(expect.stringContaining("Embeddings API key updated"), "Changes");
   });
 
   it("reconfigure does not set embeddingsKeyChanged when key is unchanged", async () => {
@@ -894,7 +898,8 @@ describe("runInitWizard", () => {
 
     await runInitWizard({ isInteractive: true, path: dir });
 
-    expect(clackLogInfoMock).toHaveBeenCalledWith(expect.stringContaining(`"embeddingsKeyChanged":false`));
+    const changesNote = clackNoteMock.mock.calls.find((call) => call[1] === "Changes");
+    expect(changesNote?.[0]).not.toContain("Embeddings API key updated");
   });
 
   it("reconfigure shows embeddings status when auth is kept", async () => {
@@ -940,11 +945,34 @@ describe("runInitWizard", () => {
 
     await runInitWizard({ isInteractive: true, path: dir });
 
-    expect(clackLogInfoMock).toHaveBeenCalledWith(expect.stringContaining(`"authChanged":false`));
-    expect(clackLogInfoMock).toHaveBeenCalledWith(expect.stringContaining(`"modelChanged":false`));
-    expect(clackLogInfoMock).toHaveBeenCalledWith(expect.stringContaining(`"platformChanged":false`));
-    expect(clackLogInfoMock).toHaveBeenCalledWith(expect.stringContaining(`"projectChanged":false`));
-    expect(clackLogInfoMock).toHaveBeenCalledWith(expect.stringContaining(`"embeddingsKeyChanged":false`));
+    expect(clackNoteMock).toHaveBeenCalledWith("No changes detected.", "Changes");
+  });
+
+  it("wizard does not log raw JSON for changes", async () => {
+    const dir = await createWizardProjectDir({
+      project: "my-project",
+      platform: "openclaw",
+    });
+    readConfigMock.mockReturnValue({
+      auth: "openai-api-key",
+      provider: "openai",
+      model: "gpt-4.1-mini",
+    });
+    describeAuthMock.mockReturnValue("OpenAI API key");
+    formatExistingConfigMock.mockReturnValue("auth summary");
+    runSetupCoreMock.mockResolvedValue(mockSetupResult({ auth: "anthropic-api-key", model: "gpt-4.1" }));
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackConfirmMock.mockResolvedValue(true);
+    clackSelectMock.mockResolvedValueOnce("change").mockResolvedValueOnce("keep").mockResolvedValueOnce("keep");
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    const logMessages = clackLogInfoMock.mock.calls
+      .map((call) => call[0])
+      .filter((value): value is string => typeof value === "string");
+    expect(logMessages.some((message) => message.includes("Wizard changes:"))).toBe(false);
+    expect(logMessages.some((message) => message.includes("\"authChanged\""))).toBe(false);
   });
 
   it("handles Ctrl+C gracefully at reconfigure prompt", async () => {
@@ -1080,5 +1108,38 @@ describe("formatInitSummary", () => {
       });
       expect(lines).toContain("- Wrote system prompt block to ~/.codex/AGENTS.md");
     });
+  });
+});
+
+describe("formatWizardChanges", () => {
+  it("formatWizardChanges shows human readable list for changed items", () => {
+    const formatted = formatWizardChanges({
+      authChanged: true,
+      modelChanged: true,
+      platformChanged: false,
+      projectChanged: true,
+      embeddingsKeyChanged: true,
+      previousModel: "claude-sonnet-4-20250514",
+      newModel: "openai/gpt-4.1",
+    });
+
+    expect(formatted).toContain("- Auth method updated");
+    expect(formatted).toContain("- Model changed: claude-sonnet-4-20250514 -> openai/gpt-4.1");
+    expect(formatted).toContain("- Embeddings API key updated");
+    expect(formatted).toContain("- Project slug changed");
+  });
+
+  it("formatWizardChanges shows no changes message when nothing changed", () => {
+    const formatted = formatWizardChanges({
+      authChanged: false,
+      modelChanged: false,
+      platformChanged: false,
+      projectChanged: false,
+      embeddingsKeyChanged: false,
+      previousModel: "gpt-4.1-mini",
+      newModel: "gpt-4.1-mini",
+    });
+
+    expect(formatted).toBe("No changes detected.");
   });
 });
