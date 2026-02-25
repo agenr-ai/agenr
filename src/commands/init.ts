@@ -799,15 +799,18 @@ export async function runInitCommand(options: InitCommandOptions): Promise<InitC
     await upsertPromptBlock(instructionsPath, buildSystemPromptBlock(project));
   }
   const { mcpPath, skipped: mcpSkipped } = await writeMcpConfig(projectDir, resolvedPlatform);
-  const gitignoreEntries = [".agenr/knowledge.db"];
-  if (resolvedPlatform === "cursor") {
-    gitignoreEntries.push(".cursor/rules/agenr.mdc");
-    if (instructionsPath !== null && isPathInsideProject(projectDir, instructionsPath)) {
-      const relativeInstructionsPath = path.relative(projectDir, instructionsPath).split(path.sep).join("/");
-      gitignoreEntries.push(relativeInstructionsPath);
+  let gitignoreUpdated = false;
+  if (resolvedPlatform !== "openclaw" && resolvedPlatform !== "codex") {
+    const gitignoreEntries = [".agenr/knowledge.db"];
+    if (resolvedPlatform === "cursor") {
+      gitignoreEntries.push(".cursor/rules/agenr.mdc");
+      if (instructionsPath !== null && isPathInsideProject(projectDir, instructionsPath)) {
+        const relativeInstructionsPath = path.relative(projectDir, instructionsPath).split(path.sep).join("/");
+        gitignoreEntries.push(relativeInstructionsPath);
+      }
     }
+    gitignoreUpdated = await addGitignoreEntries(projectDir, gitignoreEntries);
   }
-  const gitignoreUpdated = await addGitignoreEntries(projectDir, gitignoreEntries);
 
   return {
     platform: resolvedPlatform,
