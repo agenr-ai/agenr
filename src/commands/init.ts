@@ -100,6 +100,11 @@ interface WizardSummary {
 }
 
 type JsonRecord = Record<string, unknown>;
+type GlobalProjectEntry = {
+  platform: string;
+  projectDir: string;
+  dbPath?: string;
+};
 
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -674,6 +679,46 @@ function formatWizardSummary(result: WizardSummary): string {
   return lines.join("\n");
 }
 
+function getGlobalProjectMap(config: AgenrConfig | null | undefined): Record<string, GlobalProjectEntry> {
+  if (!config?.projects) {
+    return {};
+  }
+
+  const out: Record<string, GlobalProjectEntry> = {};
+  for (const [slug, entry] of Object.entries(config.projects)) {
+    out[slug] = {
+      platform: entry.platform,
+      projectDir: entry.projectDir,
+      ...(entry.dbPath ? { dbPath: entry.dbPath } : {}),
+    };
+  }
+  return out;
+}
+
+function formatRegisteredProjects(
+  projects: Record<string, GlobalProjectEntry>,
+  defaultDbPath: string,
+): string {
+  const entries = Object.entries(projects).sort(([slugA], [slugB]) => slugA.localeCompare(slugB));
+  if (entries.length === 0) {
+    return "";
+  }
+
+  const lines: string[] = [];
+  for (const [slug, entry] of entries) {
+    const dbDisplay = entry.dbPath
+      ? `${formatPathForDisplay(entry.dbPath)} (isolated)`
+      : `${formatPathForDisplay(defaultDbPath)} (shared)`;
+
+    lines.push(`  ${slug}`);
+    lines.push(`    Directory: ${formatPathForDisplay(entry.projectDir)}`);
+    lines.push(`    Database:  ${dbDisplay}`);
+    lines.push("");
+  }
+
+  return lines.join("\n").trimEnd();
+}
+
 export function formatWizardChanges(changes: WizardChanges): string {
   const items: string[] = [];
 
@@ -998,45 +1043,103 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
 
   const derivedSlug = resolveWizardProjectSlug(projectDir, selectedPlatform.id);
   let projectSlug: string | null = null;
+  let offeredKeepProjectSelection = false;
+  while (true) {
+    if (!projectSlug) {
+      if (existingProjectSettings.project && !offeredKeepProjectSelection) {
+        const projectAction = await clack.select<"keep" | "change">({
+          message: `Project: ${existingProjectSettings.project} (current)`,
+          options: [
+            { value: "keep", label: "Keep current" },
+            { value: "change", label: "Change..." },
+          ],
+        });
+        if (clack.isCancel(projectAction)) {
+          clack.cancel("Setup cancelled.");
+          return;
+        }
 
-  if (existingProjectSettings.project) {
-    const projectAction = await clack.select<"keep" | "change">({
-      message: `Project: ${existingProjectSettings.project} (current)`,
-      options: [
-        { value: "keep", label: "Keep current" },
-        { value: "change", label: "Change..." },
-      ],
-    });
-    if (clack.isCancel(projectAction)) {
-      clack.cancel("Setup cancelled.");
-      return;
+        offeredKeepProjectSelection = true;
+        if (projectAction === "keep") {
+          projectSlug = existingProjectSettings.project;
+        }
+      }
+
+      if (!projectSlug) {
+        const enteredProject = await clack.text({
+          message: "Project name:",
+          initialValue: existingProjectSettings.project ?? derivedSlug,
+          placeholder: derivedSlug,
+          validate: (value) => {
+            const trimmed = value.trim();
+            if (!trimmed) {
+              return "Project name is required";
+            }
+            return undefined;
+          },
+        });
+
+        if (clack.isCancel(enteredProject)) {
+          clack.cancel("Setup cancelled.");
+          return;
+        }
+
+        projectSlug = enteredProject.trim();
+        offeredKeepProjectSelection = true;
+      }
     }
 
-    if (projectAction === "keep") {
-      projectSlug = existingProjectSettings.project;
+    if (!projectSlug) {
+      continue;
     }
+
+    if (isWizardPlatformId(selectedPlatform.id)) {
+      const globalProjects = getGlobalProjectMap(readConfig(env));
+      const existingSlugEntry = globalProjects[projectSlug];
+      const slugCollision =
+        existingSlugEntry !== undefined && path.resolve(existingSlugEntry.projectDir) !== path.resolve(projectDir);
+
+      if (slugCollision) {
+        clack.log.warn(
+          `Project "${projectSlug}" is already registered at ${formatPathForDisplay(existingSlugEntry.projectDir)}.\n` +
+            `Continuing will replace that entry with ${formatPathForDisplay(projectDir)}.`,
+        );
+
+        const proceed = await clack.confirm({
+          message: `Replace existing "${projectSlug}" project entry?`,
+          initialValue: false,
+        });
+        if (clack.isCancel(proceed)) {
+          clack.cancel("Setup cancelled.");
+          return;
+        }
+        if (!proceed) {
+          clack.log.info("Change the project name to avoid the collision.");
+          projectSlug = null;
+          continue;
+        }
+      }
+
+      if (!selectedOpenclawDbPath) {
+        const otherSharedProjects = Object.entries(globalProjects)
+          .filter(([slug, entry]) => slug !== projectSlug && !entry.dbPath)
+          .map(([slug]) => slug);
+        if (otherSharedProjects.length > 0) {
+          clack.log.info(
+            `This project shares the knowledge database with: ${otherSharedProjects.join(", ")}\n` +
+              "All projects using the shared database can see each other's knowledge.\n" +
+              "Data is separated by project tag in recall queries.",
+          );
+        }
+      }
+    }
+
+    break;
   }
 
   if (!projectSlug) {
-    const enteredProject = await clack.text({
-      message: "Project name:",
-      initialValue: existingProjectSettings.project ?? derivedSlug,
-      placeholder: derivedSlug,
-      validate: (value) => {
-        const trimmed = value.trim();
-        if (!trimmed) {
-          return "Project name is required";
-        }
-        return undefined;
-      },
-    });
-
-    if (clack.isCancel(enteredProject)) {
-      clack.cancel("Setup cancelled.");
-      return;
-    }
-
-    projectSlug = enteredProject.trim();
+    clack.cancel("Setup cancelled.");
+    return;
   }
 
   wizardChanges.projectChanged = existingProjectSettings.project
@@ -1067,6 +1170,13 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
     }),
     "Setup summary",
   );
+
+  if (isWizardPlatformId(selectedPlatform.id)) {
+    const registeredProjects = getGlobalProjectMap(readConfig(env));
+    if (Object.keys(registeredProjects).length >= 2) {
+      clack.note(formatRegisteredProjects(registeredProjects, sharedDbPath), "Registered projects");
+    }
+  }
 
   if (hasExistingConfig) {
     clack.note(formatWizardChanges(wizardChanges), "Changes");
