@@ -283,7 +283,7 @@ export function credentialSetupGuidance(auth: AgenrAuthMethod): string {
 
   return [
     "No OpenAI API key found.",
-    "Get a key from platform.openai.com",
+    "Get a key from https://platform.openai.com/api-keys",
     "Then store it: agenr config set-key openai <key>",
   ].join(" ");
 }
