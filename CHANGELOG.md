@@ -11,6 +11,27 @@
 
 ### Tests
 - Add tests for ingest debug logging: file creation, sampling, dedup logs, graceful failure on bad logDir
+## [0.8.40] - 2026-02-25
+
+### Added
+- New `agenr benchmark` CLI command to run extraction against benchmark session
+  fixtures, score results against rubric JSON, and report per-session plus overall
+  metrics (recall, partial recall, precision proxy, composite, pass rate)
+- New benchmark scoring engine in `src/benchmark/scorer.ts` with continuous
+  rule scoring, entry claiming, regex-based must-skip checks, count/importance
+  gates, and composite score penalties
+- New benchmark types in `src/benchmark/types.ts` and JSON output schema with
+  reproducibility metadata (`prompt_hash`, `fixture_hash`, model/version/runs)
+- Multi-run benchmark aggregation with mean/min/stdev composite reporting and
+  pass-rate tracking
+- New scorer regression test suite (`src/benchmark/scorer.test.ts`) covering
+  perfect pass, partial credit paths, regex fallback, count and ceiling penalties,
+  case-insensitive matching, entry-claiming, and rule specificity ordering
+
+### Changed
+- Extraction pipeline now accepts optional `temperature`, `logDir`, and `logAll`
+  parameters so benchmark runs can force deterministic temperature (`0`) and
+  capture per-chunk LLM request/response debug logs
 
 ## [0.8.38] - 2026-02-24
 
