@@ -362,6 +362,7 @@ export async function runSetupCore(options: SetupCoreOptions): Promise<SetupResu
 
   // Embeddings require an OpenAI API key regardless of extraction provider.
   // If the selected auth method does not provide one, prompt for it.
+  // If it already exists, offer to update it.
   if (auth !== "openai-api-key") {
     let hasEmbeddingKey = false;
     try {
@@ -388,7 +389,36 @@ export async function runSetupCore(options: SetupCoreOptions): Promise<SetupResu
         working = setStoredCredential(working, "openai", normalizedEmbeddingKey);
         clack.log.info("OpenAI API key saved for embeddings.");
       } else {
-        clack.log.warn("No embedding key entered. You can set it later with " + "agenr config set-key openai <key>");
+        clack.log.warn("No embedding key entered. You can set it later with " + ui.bold("agenr config set-key openai <key>"));
+      }
+    } else if (options.existingConfig) {
+      const updateEmbeddingKey = await clack.confirm({
+        message: "Update OpenAI API key for embeddings?",
+        initialValue: false,
+      });
+
+      if (clack.isCancel(updateEmbeddingKey)) {
+        return null;
+      }
+
+      if (updateEmbeddingKey) {
+        clack.log.info("Get your key at https://platform.openai.com/api-keys");
+
+        const embeddingKey = await clack.password({
+          message: "Enter OpenAI API key for embeddings:",
+        });
+
+        if (clack.isCancel(embeddingKey)) {
+          return null;
+        }
+
+        const normalizedEmbeddingKey = (embeddingKey ?? "").trim();
+        if (normalizedEmbeddingKey) {
+          working = setStoredCredential(working, "openai", normalizedEmbeddingKey);
+          clack.log.info("Embedding API key updated.");
+        } else {
+          clack.log.warn("Embedding key not updated - empty input.");
+        }
       }
     }
   }
