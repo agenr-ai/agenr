@@ -439,6 +439,8 @@ agenr benchmark [options]
 - `--runs <n>`: number of repeated runs for averaging (default `1`).
 - `--json`: emit full benchmark result JSON.
 - `--verbose`: print per-rule match details, skip violations, and run variance.
+- `--user-only`: extract from user messages only (strip assistant messages).
+- `--context <file>`: seed extraction with known context from file (for example `USER.md`).
 
 Benchmarks force extraction temperature to `0` when supported by the provider/model.
 Output includes reproducibility fields: `prompt_hash`, `fixture_hash`, `agenr_version`,

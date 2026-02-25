@@ -285,15 +285,17 @@ async function runExtraction(
 
   // Re-chunk filtered messages
   const chunks = params.userOnly
-    ? [{
-        chunk_index: 0,
-        message_start: messages[0]?.index ?? 0,
-        message_end: messages[messages.length - 1]?.index ?? 0,
-        text: messages.map((m) => `[m${m.index}][${m.role}] ${m.text}`).join(""),
-        context_hint: "",
-        timestamp_start: messages[0]?.timestamp,
-        timestamp_end: messages[messages.length - 1]?.timestamp,
-      }]
+    ? messages.length === 0
+      ? []
+      : [{
+          chunk_index: 0,
+          message_start: messages[0]?.index ?? 0,
+          message_end: messages[messages.length - 1]?.index ?? 0,
+          text: messages.map((m) => `[m${m.index}][${m.role}] ${m.text}`).join("\n"),
+          context_hint: "",
+          timestamp_start: messages[0]?.timestamp,
+          timestamp_end: messages[messages.length - 1]?.timestamp,
+        }]
     : parsed.chunks;
 
   // Build context prefix for system prompt override

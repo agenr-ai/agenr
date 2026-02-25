@@ -263,6 +263,45 @@ describe("SYSTEM_PROMPT", () => {
   });
 });
 
+describe("extraction prompt quality (#240)", () => {
+  it("contains strengthened skip-by-default opening guidance", () => {
+    expect(SYSTEM_PROMPT).toContain("Your primary job is to SKIP");
+  });
+
+  it("contains EPHEMERAL vs DURABLE durability framing", () => {
+    expect(SYSTEM_PROMPT).toContain("EPHEMERAL");
+    expect(SYSTEM_PROMPT).toContain("DURABLE");
+  });
+
+  it("contains default importance shift to 6", () => {
+    expect(SYSTEM_PROMPT).toContain("Start every candidate at 6");
+  });
+
+  it("contains calibration workhorse at score 6", () => {
+    expect(SYSTEM_PROMPT).toContain("most emitted entries should be 6");
+  });
+
+  it("contains anti-pattern for typos and corrections", () => {
+    expect(SYSTEM_PROMPT).toContain("Typos, corrections, and naming mistakes");
+  });
+
+  it("contains anti-pattern for transient version bumps", () => {
+    expect(SYSTEM_PROMPT).toContain("Transient version numbers and version bumps");
+  });
+
+  it("contains skip example for bumped package version", () => {
+    expect(SYSTEM_PROMPT).toContain("Bumped package version to 0.8.34");
+  });
+
+  it("does not contain old importance default at 7", () => {
+    expect(SYSTEM_PROMPT).not.toContain("Start every candidate at 7");
+  });
+
+  it("does not contain old calibration workhorse at score 7", () => {
+    expect(SYSTEM_PROMPT).not.toContain("most emitted entries should be 7");
+  });
+});
+
 describe("buildExtractionSystemPrompt", () => {
   it("plaud is in KNOWLEDGE_PLATFORMS", () => {
     expect(KNOWLEDGE_PLATFORMS).toContain("plaud");

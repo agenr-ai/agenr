@@ -1062,9 +1062,7 @@ export async function runIngestCommand(
       let effectiveChunks = parsed.chunks;
       if (options.userOnly && parsed.messages) {
         effectiveMessages = parsed.messages.filter((m) => m.role === "user");
-        if (effectiveMessages.length > 0) {
-          effectiveChunks = chunkMessages(effectiveMessages);
-        }
+        effectiveChunks = chunkMessages(effectiveMessages);
       }
 
       const extracted = await resolvedDeps.extractKnowledgeFromChunksFn({

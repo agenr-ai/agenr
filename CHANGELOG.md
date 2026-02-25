@@ -28,10 +28,31 @@
   perfect pass, partial credit paths, regex fallback, count and ceiling penalties,
   case-insensitive matching, entry-claiming, and rule specificity ordering
 
+### Fixed
+- Fix: benchmark chunk text now joins messages with newline separator instead of empty string
+- Fix: --user-only on ingest now yields zero chunks when no user messages found (was falling back to full content)
+- Fix: added --user-only and --context options to CLI docs
+
 ### Changed
 - Extraction pipeline now accepts optional `temperature`, `logDir`, and `logAll`
   parameters so benchmark runs can force deterministic temperature (`0`) and
   capture per-chunk LLM request/response debug logs
+- Extraction prompt: strengthened skip-by-default opening, added EPHEMERAL vs DURABLE classification gate
+- Extraction prompt: shifted default importance from 7 to 6, recalibrated Score 6/7 descriptions across all calibration blocks
+- Extraction prompt: added 6 new anti-patterns (items 11-16) for concrete noise rejection (typos, version bumps, publish events, file observations, tautological facts)
+- Extraction prompt: added 6 new SKIP examples in few-shot section to rebalance extract:skip example ratio
+
+## [0.8.39] - 2025-02-25
+
+### Features
+- **ingest:** Add LLM debug logging via `--log-dir`, `--log-all`, and `--sample-rate` flags (#238)
+  - Captures raw LLM prompt input and response output per chunk
+  - Logs dedup before/after entry lists
+  - Best-effort writes, never blocks extraction
+  - Sampling defaults to 1-in-10 files; use `--log-all` for full capture
+
+### Tests
+- Add tests for ingest debug logging: file creation, sampling, dedup logs, graceful failure on bad logDir
 
 ## [0.8.38] - 2026-02-24
 
