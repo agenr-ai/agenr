@@ -1143,18 +1143,11 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
               "  2. Use an isolated database instead of shared",
           );
 
-          const proceed = await clack.confirm({
-            message: "Continue with shared database and same project name?",
-            initialValue: false,
-          });
-          if (clack.isCancel(proceed)) {
-            clack.cancel("Setup cancelled.");
-            return;
-          }
-          if (!proceed) {
-            projectSlug = null;
-            continue;
-          }
+          projectSlug = null;
+          clack.log.info(
+            "Choose a different project name, or restart and select an isolated database for this instance.",
+          );
+          continue;
         } else if (otherSharedDiffSlug.length > 0) {
           const others = otherSharedDiffSlug
             .map(([dirPath, entry]) => `  - ${entry.project} (${formatPathForDisplay(dirPath)})`)

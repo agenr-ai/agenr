@@ -484,6 +484,35 @@ describe("runSetupCore", () => {
 
     expect(mocks.runEmbeddingConnectionTestMock).toHaveBeenCalledWith("sk-openai-new");
   });
+
+  it("update-embeddings does not persist key when embedding test is cancelled", async () => {
+    const mocks = getMocks();
+    const env = await makeTempConfigEnv();
+
+    mocks.selectMock.mockResolvedValueOnce("update-embeddings");
+    mocks.passwordMock.mockResolvedValueOnce("sk-openai-new");
+    mocks.runEmbeddingConnectionTestMock.mockResolvedValueOnce({ ok: false, error: "invalid key" });
+    mocks.confirmMock.mockResolvedValueOnce(mocks.cancelToken);
+
+    const result = await setupModule.runSetupCore({
+      env,
+      existingConfig: {
+        auth: "anthropic-api-key",
+        provider: "anthropic",
+        model: "claude-sonnet-4-20250514",
+        credentials: {
+          anthropicApiKey: "sk-ant-existing",
+          openaiApiKey: "sk-openai-old",
+        },
+      },
+      skipIntroOutro: true,
+    });
+
+    expect(result).toBeNull();
+    expect(mocks.runEmbeddingConnectionTestMock).toHaveBeenCalledWith("sk-openai-new");
+    expect(mocks.logMock.info).not.toHaveBeenCalledWith("Embedding API key updated.");
+    expect(readConfig(env)).toBeNull();
+  });
 });
 
 describe("runSetup", () => {

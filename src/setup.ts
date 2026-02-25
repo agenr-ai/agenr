@@ -315,13 +315,13 @@ export async function runSetupCore(options: SetupCoreOptions): Promise<SetupResu
 
     const normalizedKey = (embeddingKey ?? "").trim();
     if (normalizedKey && options.existingConfig) {
-      const updated = setStoredCredential(options.existingConfig, "openai", normalizedKey);
-      writeConfig(updated, options.env);
-      clack.log.info("Embedding API key updated.");
       const embeddingTestResult = await runEmbeddingConnectionTestWithRetry(normalizedKey);
       if (embeddingTestResult === null) {
         return null;
       }
+      const updated = setStoredCredential(options.existingConfig, "openai", normalizedKey);
+      writeConfig(updated, options.env);
+      clack.log.info("Embedding API key updated.");
 
       let embeddingStatus: string;
       try {

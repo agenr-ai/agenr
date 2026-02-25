@@ -1316,7 +1316,7 @@ describe("runInitWizard", () => {
     expect(registeredProjectsNote?.[0]).toContain("(isolated)");
   });
 
-  it("wizard does not warn on same project slug with different directories", async () => {
+  it("wizard hard-blocks same project slug on shared DB and re-prompts project name", async () => {
     const dir = await createWizardProjectDir();
     const sandboxDir = await createTempDir("openclaw-sandbox-");
     tempDirs.push(sandboxDir);
@@ -1327,23 +1327,27 @@ describe("runInitWizard", () => {
       },
     });
     formatExistingConfigMock.mockReturnValue("current config");
+    readConfigMock.mockImplementationOnce(() => null);
     runSetupCoreMock.mockResolvedValue(mockSetupResult());
     const runInitCommandSpy = vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
     vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(false, false));
-    clackConfirmMock.mockResolvedValue(true);
     clackSelectMock.mockResolvedValueOnce("openclaw").mockResolvedValueOnce("shared");
-    clackTextMock.mockResolvedValueOnce(sandboxDir).mockResolvedValueOnce("openclaw");
+    clackTextMock.mockResolvedValueOnce(sandboxDir).mockResolvedValueOnce("openclaw").mockResolvedValueOnce("openclaw-sandbox");
 
     await runInitWizard({ isInteractive: true, path: dir });
 
-    expect(
-      clackLogWarnMock.mock.calls.some(
-        (call) => typeof call[0] === "string" && call[0].includes('Project "openclaw" is already registered at'),
-      ),
-    ).toBe(false);
+    expect(clackLogWarnMock).toHaveBeenCalledWith(expect.stringContaining("Entries from these instances will be completely indistinguishable."));
+    expect(clackLogInfoMock).toHaveBeenCalledWith(
+      "Choose a different project name, or restart and select an isolated database for this instance.",
+    );
+    expect(clackConfirmMock).not.toHaveBeenCalled();
+    const projectPrompts = clackTextMock.mock.calls
+      .map((call) => call[0] as { message?: string })
+      .filter((call) => call.message === "Project name:");
+    expect(projectPrompts).toHaveLength(2);
     expect(runInitCommandSpy).toHaveBeenCalledWith(
       expect.objectContaining({
-        project: "openclaw",
+        project: "openclaw-sandbox",
       }),
     );
   });
