@@ -1,0 +1,89 @@
+{
+  "session": "05-metadata-heavy",
+  "description": "Metadata-heavy session - system exec notifications echo every command result back into context, tool call chains for node execution, sub-agent (Codex) completions. Session is about Project Agora adapter generation CLI work on a MacBook via nodes.run.",
+  "must_extract": [
+    {
+      "type": "decision",
+      "subject_contains": "CLAUDE.md",
+      "content_contains": ["symlink", "AGENTS.md"],
+      "min_importance": 5,
+      "max_importance": 7,
+      "reason": "CLAUDE.md is a symlink to AGENTS.md - a durable project convention decision"
+    },
+    {
+      "type": "decision",
+      "subject_contains": "docs",
+      "content_contains": ["keep", "updated", "TODO"],
+      "min_importance": 5,
+      "max_importance": 7,
+      "reason": "Added explicit rule to keep docs updated after completing work - a workflow decision"
+    }
+  ],
+  "must_skip": [
+    {
+      "pattern": "Exec finished.*node=.*id=.*code",
+      "reason": "System exec notification - pure metadata noise"
+    },
+    {
+      "pattern": "toolu_[0-9a-zA-Z]+",
+      "reason": "Tool call IDs are ephemeral identifiers with zero recall value"
+    },
+    {
+      "pattern": "pi-ai.*OAuth.*token.*refresh",
+      "reason": "Implementation detail of how a library handles auth - not durable knowledge"
+    },
+    {
+      "pattern": "pi-ai.*complete\\(\\).*stream\\(\\)",
+      "reason": "Library API details that change with versions - implementation noise"
+    },
+    {
+      "pattern": "ChatGPT backend API.*codex/responses.*headers",
+      "reason": "API endpoint specifics change frequently - not worth memorizing"
+    },
+    {
+      "pattern": "resolveOAuthApiKey|resolveLlmRuntime|resolveCredentials",
+      "reason": "Internal function names are implementation details, not durable facts"
+    },
+    {
+      "pattern": "gpt-5\\.3.*codex.*model.*suffix",
+      "reason": "Model naming quirk that will change - ephemeral implementation detail"
+    },
+    {
+      "pattern": "temperature.*unsupported|maxTokens.*param",
+      "reason": "Provider-specific parameter limitations - transient API behavior"
+    },
+    {
+      "pattern": "thinking_delta.*thinking_start.*thinking_end",
+      "reason": "SSE event type names from a library - implementation detail"
+    },
+    {
+      "pattern": "credentials\\.json.*Keychain.*accessToken.*refreshToken",
+      "reason": "Token storage location details - implementation specifics that change"
+    },
+    {
+      "pattern": "model alias.*opus.*sonnet.*gpt4.*o3",
+      "reason": "Model alias mappings change constantly - not durable"
+    },
+    {
+      "pattern": "provider selection.*priority.*CLI credentials.*Config API key.*Env API key",
+      "reason": "Credential resolution order is implementation detail of the CLI"
+    },
+    {
+      "pattern": "generation pipeline.*retries.*type errors.*typecheck",
+      "reason": "Generator retry logic is implementation detail"
+    },
+    {
+      "pattern": "extractDelta|streamOptions|eventStream|textByIndex",
+      "reason": "Variable/function names from source code - pure implementation noise"
+    }
+  ],
+  "importance_ceiling": {
+    "max_allowed": 8,
+    "reason": "Nothing in a coding session about adapter implementation should be rated 9+. The extractor currently rates 18 entries at importance 8-10, with most at 9. Implementation details of a CLI tool, library API specifics, and model naming quirks are 5-7 at most."
+  },
+  "acceptable_range": {
+    "min": 2,
+    "max": 8
+  },
+  "notes": "The extractor produced 18 entries from this session, almost all at importance 8-10. This is a classic over-extraction problem: the session is ~90% system exec notifications echoing back command output, and the extractor treats every technical detail as critical. Real signal: maybe 2-3 project-level decisions (symlink convention, docs-update rule, Agora project architecture). Everything about pi-ai internals, OAuth token storage paths, model suffix requirements, and SSE event types is implementation noise that will be stale within weeks."
+}

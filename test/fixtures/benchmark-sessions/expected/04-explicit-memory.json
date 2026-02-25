@@ -1,0 +1,54 @@
+{
+  "session": "04-explicit-memory",
+  "description": "Explicit memory requests - user asks assistant to remember specific things like scripts and workflows",
+  "must_extract": [
+    {
+      "type": "fact",
+      "subject_contains": "plaud",
+      "content_contains": ["plaud", "script"],
+      "min_importance": 7,
+      "reason": "User explicitly said remember this script referring to the plaud export script at ~/code/plaud-export/plaud-export.js"
+    },
+    {
+      "type": "fact",
+      "subject_contains": "plaud",
+      "content_contains": ["plaud", "export"],
+      "min_importance": 7,
+      "reason": "User explicitly said remember this plaud script - reinforced the request to remember the plaud export workflow"
+    }
+  ],
+  "must_skip": [
+    {
+      "pattern": "browser tab listing|targetId|wsUrl",
+      "reason": "Raw browser automation output - tab lists, WebSocket URLs, DOM snapshots"
+    },
+    {
+      "pattern": "tool result|exec completed|process poll",
+      "reason": "Routine tool execution results and process polling output"
+    },
+    {
+      "pattern": "HEARTBEAT_OK|heartbeat-state",
+      "reason": "Heartbeat cron noise and state file updates"
+    },
+    {
+      "pattern": "bird bookmarks|twitter cookies",
+      "reason": "Routine X/Twitter bookmark checking during heartbeat rotation"
+    },
+    {
+      "pattern": "clawdbot update status|clawdhub search",
+      "reason": "Routine update checks and skill searches"
+    },
+    {
+      "pattern": "Exporting \\d+ file|exported, 0 failed",
+      "reason": "Plaud export execution output - transient command results, not knowledge"
+    },
+    {
+      "pattern": "gog gmail search|No results",
+      "reason": "Routine email checking during heartbeat"
+    }
+  ],
+  "acceptable_range": {
+    "min": 1,
+    "max": 5
+  }
+}

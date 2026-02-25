@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { parseTranscriptFile } from "../parser.js";
@@ -29,6 +30,8 @@ export interface BenchmarkCommandOptions {
   runs?: number | string;
   json?: boolean;
   verbose?: boolean;
+  userOnly?: boolean;
+  context?: string;
 }
 
 export interface BenchmarkCommandDeps {
@@ -267,20 +270,48 @@ async function runExtraction(
     verbose: boolean;
     logDir?: string;
     client: ReturnType<typeof createLlmClient>;
+    userOnly?: boolean;
+    context?: string;
   },
   deps: Pick<BenchmarkCommandDeps, "parseTranscriptFileFn" | "extractKnowledgeFromChunksFn">,
 ): Promise<{ result: ExtractChunksResult; temperatureUnsupported: boolean }> {
   const parsed = await deps.parseTranscriptFileFn(params.fixturePath, { verbose: params.verbose });
+
+  // Filter to user messages only if requested
+  let messages = parsed.messages;
+  if (params.userOnly) {
+    messages = messages.filter((m) => m.role === "user");
+  }
+
+  // Re-chunk filtered messages
+  const chunks = params.userOnly
+    ? [{
+        chunk_index: 0,
+        message_start: messages[0]?.index ?? 0,
+        message_end: messages[messages.length - 1]?.index ?? 0,
+        text: messages.map((m) => `[m${m.index}][${m.role}] ${m.text}`).join(""),
+        context_hint: "",
+        timestamp_start: messages[0]?.timestamp,
+        timestamp_end: messages[messages.length - 1]?.timestamp,
+      }]
+    : parsed.chunks;
+
+  // Build context prefix for system prompt override
+  const contextPrefix = params.context
+    ? `\n\n=== KNOWN CONTEXT (already stored - do NOT re-extract these facts) ===\n${params.context}\n=== END KNOWN CONTEXT ===\n\nExtract ONLY new facts not already covered above.\n\n`
+    : "";
+
   const runWithTemp = async (temperature: number | undefined): Promise<ExtractChunksResult> =>
     deps.extractKnowledgeFromChunksFn({
       file: params.fixturePath,
-      chunks: parsed.chunks,
-      messages: parsed.messages,
+      chunks,
+      messages,
       client: params.client,
       verbose: params.verbose,
       temperature,
       logAll: Boolean(params.logDir),
       logDir: params.logDir,
+      ...(contextPrefix ? { systemPromptPrefix: contextPrefix } : {}),
     });
 
   try {
@@ -422,6 +453,16 @@ export async function runBenchmarkCommand(
     env: process.env,
   });
 
+  // Load context file if provided
+  let contextContent: string | undefined;
+  if (options.context) {
+    try {
+      contextContent = readFileSync(options.context, "utf-8");
+    } catch (err) {
+      throw new Error(`Failed to read context file "${options.context}": ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   const promptHash = sha256(SYSTEM_PROMPT);
   const fixtureHash = await computeFixtureHash(selectedFixtures, resolvedDeps.readFileFn);
   const rangesBySession = new Map<string, { min: number; max: number }>();
@@ -448,6 +489,8 @@ export async function runBenchmarkCommand(
           verbose: options.verbose === true,
           logDir: runLogDir,
           client,
+          userOnly: options.userOnly,
+          context: contextContent,
         },
         resolvedDeps,
       );

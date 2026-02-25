@@ -1,0 +1,27 @@
+{
+  "session": "03-thin-reset",
+  "description": "Thin post-reset session - minimal content, version announcement. Just a /new startup where the agent reads HEARTBEAT.md and MEMORY.md, greets the user, and mentions agenr@0.8.28 is live. No durable knowledge worth extracting.",
+  "must_extract": [],
+  "must_skip": [
+    {
+      "pattern": "agenr@0.8.28",
+      "reason": "Transient version number - will be superseded by the next release, already documented in MEMORY.md"
+    },
+    {
+      "pattern": "pnpm add -g agenr",
+      "reason": "Generic update commands - procedural noise, not durable knowledge"
+    },
+    {
+      "pattern": "openclaw gateway restart",
+      "reason": "Routine operational command - not worth storing as knowledge"
+    },
+    {
+      "pattern": "update process",
+      "reason": "The update procedure is already well-documented in MEMORY.md and TOOLS.md - extracting it again is redundant"
+    }
+  ],
+  "acceptable_range": {
+    "min": 0,
+    "max": 1
+  }
+}

@@ -145,9 +145,7 @@ function buildMustExtractScores(entries: KnowledgeEntry[], rubric: BenchmarkRubr
       }
     }
 
-    if (bestEntryIndex >= 0 && bestScore.partialScore > 0) {
-      availableEntries.splice(bestEntryIndex, 1);
-    } else {
+    if (!(bestEntryIndex >= 0 && bestScore.partialScore > 0)) {
       bestEntry = undefined;
     }
 

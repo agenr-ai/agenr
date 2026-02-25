@@ -760,6 +760,8 @@ export function createProgram(): Command {
     .option("--runs <n>", "Number of runs for averaging", parseIntOption, 1)
     .option("--json", "Output benchmark result as JSON", false)
     .option("--verbose", "Show per-entry benchmark details", false)
+    .option("--user-only", "Extract from user messages only (strip assistant messages)", false)
+    .option("--context <file>", "Seed extraction with known context from file (e.g. USER.md)")
     .action(async (opts: BenchmarkCommandOptions) => {
       const result = await runBenchmarkCommand(opts);
       process.exitCode = result.exitCode;
