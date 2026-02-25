@@ -856,6 +856,48 @@ describe("runInitWizard", () => {
     expect(clackOutroMock).toHaveBeenCalledWith("Setup unchanged.");
   });
 
+  it("current config box includes projects before reconfigure prompt", async () => {
+    const dir = await createWizardProjectDir();
+    const existingConfig = {
+      auth: "openai-api-key" as const,
+      provider: "openai" as const,
+      model: "gpt-4.1-mini",
+      projects: {
+        "/tmp/.openclaw": {
+          project: "openclaw",
+          platform: "openclaw",
+        },
+        "/tmp/.openclaw-sandbox": {
+          project: "openclaw",
+          platform: "openclaw",
+          dbPath: "/tmp/.openclaw-sandbox/agenr-data/knowledge.db",
+        },
+      },
+    };
+    readConfigMock.mockReturnValue(existingConfig);
+    formatExistingConfigMock.mockReturnValue(
+      [
+        "Auth:     OpenAI API key",
+        "Provider: openai",
+        "Model:    gpt-4.1-mini",
+        "",
+        "Projects:",
+        "  openclaw",
+        "    Directory: /tmp/.openclaw",
+        "    Database:  ~/.agenr/knowledge.db (shared)",
+      ].join("\n"),
+    );
+    clackConfirmMock.mockResolvedValue(false);
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(formatExistingConfigMock).toHaveBeenCalledWith(
+      existingConfig,
+      path.join(os.homedir(), ".agenr", "knowledge.db"),
+    );
+    expect(clackNoteMock).toHaveBeenCalledWith(expect.stringContaining("Projects:\n  openclaw"), "Current config");
+  });
+
   it("readExistingProjectSettings finds project in global config by projectDir", async () => {
     await withTempHome(async () => {
       const dir = await createWizardProjectDir();

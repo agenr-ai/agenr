@@ -1,3 +1,4 @@
+import os from "node:os";
 import { getModels } from "@mariozechner/pi-ai";
 import * as clack from "@clack/prompts";
 import {
@@ -5,6 +6,7 @@ import {
   getAuthMethodDefinition,
   mergeConfigPatch,
   readConfig,
+  resolveDefaultKnowledgeDbPath,
   setStoredCredential,
   writeConfig,
 } from "./config.js";
@@ -183,6 +185,11 @@ function showAuthSetupGuidance(auth: AgenrAuthMethod): void {
   clack.log.info("This uses your existing subscription - no API key needed.");
 }
 
+function formatPathForDisplay(filePath: string): string {
+  const home = os.homedir();
+  return filePath.startsWith(home) ? `~${filePath.slice(home.length)}` : filePath;
+}
+
 async function runEmbeddingConnectionTestWithRetry(apiKey: string): Promise<boolean | null> {
   const spinner = clack.spinner();
   spinner.start("Testing embeddings connection...");
@@ -215,12 +222,42 @@ async function runEmbeddingConnectionTestWithRetry(apiKey: string): Promise<bool
   }
 }
 
-export function formatExistingConfig(config: AgenrConfig): string {
-  return [
+export function formatExistingConfig(config: AgenrConfig, defaultDbPath?: string): string {
+  const lines = [
     formatLabel("Auth", config.auth ? describeAuth(config.auth) : "(not set)"),
     formatLabel("Provider", config.provider ?? "(not set)"),
     formatLabel("Model", config.model ?? "(not set)"),
-  ].join("\n");
+  ];
+
+  if (config.projects && Object.keys(config.projects).length > 0 && defaultDbPath) {
+    lines.push("");
+    lines.push("Projects:");
+
+    const entries = Object.entries(config.projects).sort(([dirA, a], [dirB, b]) => {
+      const byProject = a.project.localeCompare(b.project);
+      if (byProject !== 0) {
+        return byProject;
+      }
+      return dirA.localeCompare(dirB);
+    });
+
+    for (const [dirKey, entry] of entries) {
+      const dbDisplay = entry.dbPath
+        ? `${formatPathForDisplay(entry.dbPath)} (isolated)`
+        : `${formatPathForDisplay(defaultDbPath)} (shared)`;
+
+      lines.push(`  ${entry.project}`);
+      lines.push(`    Directory: ${formatPathForDisplay(dirKey)}`);
+      lines.push(`    Database:  ${dbDisplay}`);
+      lines.push("");
+    }
+
+    if (lines[lines.length - 1] === "") {
+      lines.pop();
+    }
+  }
+
+  return lines.join("\n");
 }
 
 function buildConfigWithCredentials(base: AgenrConfig, credentials?: AgenrConfig["credentials"]): AgenrConfig {
@@ -584,7 +621,7 @@ export async function runSetup(env: NodeJS.ProcessEnv = process.env): Promise<vo
 
   const existing = readConfig(env);
   if (existing) {
-    clack.note(formatExistingConfig(existing), "Current config");
+    clack.note(formatExistingConfig(existing, resolveDefaultKnowledgeDbPath()), "Current config");
     const reconfigure = await clack.confirm({
       message: "Reconfigure?",
       initialValue: true,
