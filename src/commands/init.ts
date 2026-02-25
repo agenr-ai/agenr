@@ -702,8 +702,9 @@ function findBinaryPath(name: string): string | null {
 }
 
 async function installOpenClawPlugin(
-  _openclawConfigDir: string,
+  openclawConfigDir: string,
 ): Promise<PluginInstallResult> {
+  const env = { ...process.env, OPENCLAW_HOME: openclawConfigDir };
   const openclawBin = findBinaryPath("openclaw");
   if (!openclawBin) {
     return {
@@ -718,6 +719,7 @@ async function installOpenClawPlugin(
     const listOutput = execFileSync(openclawBin, ["plugins", "list"], {
       encoding: "utf8",
       timeout: 15000,
+      env,
     });
     if (listOutput.includes("agenr") && listOutput.includes("loaded")) {
       return { success: true, message: "agenr plugin already installed" };
@@ -730,6 +732,7 @@ async function installOpenClawPlugin(
     execFileSync(openclawBin, ["plugins", "install", "agenr"], {
       encoding: "utf8",
       timeout: 60000,
+      env,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -738,6 +741,7 @@ async function installOpenClawPlugin(
         execFileSync(openclawBin, ["plugins", "update", "agenr"], {
           encoding: "utf8",
           timeout: 60000,
+          env,
         });
       } catch {
         return {
@@ -759,6 +763,7 @@ async function installOpenClawPlugin(
     execFileSync(openclawBin, ["gateway", "restart"], {
       encoding: "utf8",
       timeout: 30000,
+      env,
     });
     return { success: true, message: "Plugin installed and gateway restarted" };
   } catch {
@@ -766,6 +771,7 @@ async function installOpenClawPlugin(
       execFileSync(openclawBin, ["gateway", "start"], {
         encoding: "utf8",
         timeout: 30000,
+        env,
       });
       return { success: true, message: "Plugin installed and gateway started" };
     } catch {

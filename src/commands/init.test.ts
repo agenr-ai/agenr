@@ -22,6 +22,7 @@ const {
   clackCancelMock,
   clackOutroMock,
   clackCancelToken,
+  execFileSyncMock,
   readConfigActualRef,
 } = vi.hoisted(() => ({
   readConfigMock: vi.fn(),
@@ -47,6 +48,7 @@ const {
   clackCancelMock: vi.fn(),
   clackOutroMock: vi.fn(),
   clackCancelToken: Symbol("cancel"),
+  execFileSyncMock: vi.fn(),
   readConfigActualRef: {
     value: undefined as undefined | typeof import("../config.js")["readConfig"],
   },
@@ -85,6 +87,10 @@ vi.mock("../setup.js", () => ({
 
 vi.mock("../embeddings/client.js", () => ({
   resolveEmbeddingApiKey: resolveEmbeddingApiKeyMock,
+}));
+
+vi.mock("node:child_process", () => ({
+  execFileSync: execFileSyncMock,
 }));
 
 import {
@@ -235,6 +241,7 @@ afterEach(async () => {
   clackSpinnerMock.mockReset();
   clackSpinnerStartMock.mockReset();
   clackSpinnerStopMock.mockReset();
+  execFileSyncMock.mockReset();
   clackTextMock.mockImplementation(async (options?: { message?: string; initialValue?: string }) => {
     if (options?.message === "OpenClaw directory:") {
       return options.initialValue ?? resolveDefaultOpenClawConfigDir();
@@ -2431,6 +2438,97 @@ describe("runInitWizard", () => {
           dir: path.join("/tmp/custom-openclaw-dir", "agents", "main", "sessions"),
         }),
       );
+    });
+  });
+});
+
+describe("installOpenClawPlugin", () => {
+  it("passes OPENCLAW_HOME to all OpenClaw CLI calls", async () => {
+    vi.restoreAllMocks();
+    execFileSyncMock.mockReset();
+
+    const targetDir = "/tmp/test-openclaw";
+    execFileSyncMock.mockImplementation(
+      (command: string, args: string[]) => {
+        if (command === "which" && args[0] === "openclaw") {
+          return "/usr/local/bin/openclaw\n";
+        }
+        if (command === "/usr/local/bin/openclaw" && args[0] === "plugins" && args[1] === "list") {
+          return "some-other-plugin\n";
+        }
+        if (command === "/usr/local/bin/openclaw" && args[0] === "plugins" && args[1] === "install") {
+          throw new Error("already exists");
+        }
+        if (command === "/usr/local/bin/openclaw" && args[0] === "plugins" && args[1] === "update") {
+          return "updated";
+        }
+        if (command === "/usr/local/bin/openclaw" && args[0] === "gateway" && args[1] === "restart") {
+          throw new Error("restart failed");
+        }
+        if (command === "/usr/local/bin/openclaw" && args[0] === "gateway" && args[1] === "start") {
+          return "started";
+        }
+        return "";
+      },
+    );
+
+    const result = await initWizardRuntime.installOpenClawPlugin(targetDir);
+    expect(result.success).toBe(true);
+    expect(result.message).toBe("Plugin installed and gateway started");
+
+    const openclawCalls = execFileSyncMock.mock.calls.filter(
+      (call) => call[0] === "/usr/local/bin/openclaw",
+    );
+    expect(openclawCalls).toHaveLength(5);
+
+    for (const call of openclawCalls) {
+      const options = call[2] as { env?: NodeJS.ProcessEnv } | undefined;
+      expect(options?.env?.OPENCLAW_HOME).toBe(targetDir);
+    }
+  });
+
+  it("non-default target directory does not touch default ~/.openclaw path", async () => {
+    vi.restoreAllMocks();
+    execFileSyncMock.mockReset();
+
+    await withTempHome(async (homeDir) => {
+      const defaultOpenclawDir = path.join(homeDir, ".openclaw");
+      const targetDir = "/tmp/test-openclaw-sandbox";
+
+      execFileSyncMock.mockImplementation((command: string, args: string[]) => {
+        if (command === "which" && args[0] === "openclaw") {
+          return "/usr/local/bin/openclaw\n";
+        }
+        if (command === "/usr/local/bin/openclaw" && args[0] === "plugins" && args[1] === "list") {
+          return "some-other-plugin\n";
+        }
+        if (command === "/usr/local/bin/openclaw" && args[0] === "plugins" && args[1] === "install") {
+          return "installed";
+        }
+        if (command === "/usr/local/bin/openclaw" && args[0] === "gateway" && args[1] === "restart") {
+          return "restarted";
+        }
+        return "";
+      });
+
+      await initWizardRuntime.installOpenClawPlugin(targetDir);
+
+      const openclawCalls = execFileSyncMock.mock.calls.filter(
+        (call) => call[0] === "/usr/local/bin/openclaw",
+      );
+      expect(openclawCalls.length).toBeGreaterThan(0);
+
+      for (const call of openclawCalls) {
+        const options = call[2] as { env?: NodeJS.ProcessEnv } | undefined;
+        expect(options?.env?.OPENCLAW_HOME).toBe(targetDir);
+
+        const payload = JSON.stringify({
+          command: call[0],
+          args: call[1],
+          env: options?.env?.OPENCLAW_HOME,
+        });
+        expect(payload.includes(defaultOpenclawDir)).toBe(false);
+      }
     });
   });
 });
