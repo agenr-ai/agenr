@@ -23,7 +23,7 @@ export function banner(): string {
     chalk.hex("#E0B830")("╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝╚═╝  ╚═╝"),
   ];
 
-  return `${lines.join("\n")}\n${ui.dim("  AGENt memoRy")}`;
+  return `\n${lines.join("\n")}\n${ui.dim("  AGENt memoRy")}`;
 }
 
 export function formatLabel(label: string, value: string): string {
