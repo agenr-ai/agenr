@@ -311,6 +311,7 @@ async function runExtraction(
       temperature,
       logAll: Boolean(params.logDir),
       logDir: params.logDir,
+      noDedup: true,
       ...(contextPrefix ? { systemPromptPrefix: contextPrefix } : {}),
     });
 

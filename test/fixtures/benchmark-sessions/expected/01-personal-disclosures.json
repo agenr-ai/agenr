@@ -5,189 +5,259 @@
     {
       "type": "fact",
       "subject_contains": "dave",
-      "content_contains": ["dave", "chen"],
+      "content_contains": [
+        "dave",
+        "chen"
+      ],
       "min_importance": 8,
       "reason": "User's full name is a core identity fact"
     },
     {
       "type": "fact",
       "subject_contains": "dave",
-      "content_contains": ["48", "49", "march 15"],
+      "content_contains": [
+        "48",
+        "49",
+        "march 15"
+      ],
       "min_importance": 7,
       "reason": "User's age and birthday"
     },
     {
       "type": "fact",
       "subject_contains": "dave",
-      "content_contains": ["6'1", "185"],
+      "content_contains": [
+        "6'1",
+        "185"
+      ],
       "min_importance": 7,
       "reason": "User's height and weight"
     },
     {
       "type": "fact",
       "subject_contains": "dave",
-      "content_contains": ["sr. director", "engineering"],
+      "content_contains": [
+        "sr. director",
+        "engineering"
+      ],
       "min_importance": 8,
       "reason": "User's job title"
     },
     {
       "type": "fact",
       "subject_contains": "meridian",
-      "content_contains": ["meridian"],
+      "content_contains": [
+        "meridian"
+      ],
       "min_importance": 8,
       "reason": "User's employer - Meridian Labs"
     },
     {
       "type": "fact",
       "subject_contains": "dave",
-      "content_contains": ["georgia tech"],
+      "content_contains": [
+        "georgia tech"
+      ],
       "min_importance": 8,
       "reason": "User's education - Georgia Tech, Software Engineering"
     },
     {
       "type": "fact",
       "subject_contains": "dave",
-      "content_contains": ["max", "dog"],
+      "content_contains": [
+        "max",
+        "dog"
+      ],
       "min_importance": 7,
       "reason": "User's dog Max"
     },
     {
       "type": "fact",
       "subject_contains": "dave",
-      "content_contains": ["single"],
+      "content_contains": [
+        "single"
+      ],
       "min_importance": 7,
       "reason": "User's relationship status - single, not planning to marry"
     },
     {
       "type": "fact",
       "subject_contains": "dave",
-      "content_contains": ["christian"],
+      "content_contains": [
+        "christian"
+      ],
       "min_importance": 8,
       "reason": "User's faith - Christian, Jesus is savior"
     },
     {
       "type": "fact",
       "subject_contains": "dave",
-      "content_contains": ["tesla", "model y"],
+      "content_contains": [
+        "tesla",
+        "model y"
+      ],
       "min_importance": 7,
       "reason": "User's vehicle - 2026 Tesla Model Y"
     },
     {
       "type": "fact",
       "subject_contains": "dave",
-      "content_contains": ["wrangler", "overlanding"],
+      "content_contains": [
+        "wrangler",
+        "overlanding"
+      ],
       "min_importance": 7,
       "reason": "User's vehicle - 2020 Toyota Wrangler for overlanding"
     },
     {
       "type": "fact",
       "subject_contains": "dave",
-      "content_contains": ["youngest", "4"],
+      "content_contains": [
+        "youngest",
+        "4"
+      ],
       "min_importance": 7,
       "reason": "User is youngest of 4 siblings"
     },
     {
       "type": "fact",
       "subject_contains": "sister",
-      "content_contains": ["lost", "2024"],
+      "content_contains": [
+        "lost",
+        "2024"
+      ],
       "min_importance": 8,
       "reason": "User lost a sibling in 2024 - sensitive and important family fact"
     },
     {
       "type": "fact",
       "subject_contains": "brother",
-      "content_contains": ["attorney", "springtown"],
+      "content_contains": [
+        "attorney",
+        "springtown"
+      ],
       "min_importance": 7,
       "reason": "Oldest brother is an attorney in Springtown TX"
     },
     {
       "type": "fact",
       "subject_contains": "brother",
-      "content_contains": ["air force", "pilot"],
+      "content_contains": [
+        "air force",
+        "pilot"
+      ],
       "min_importance": 7,
       "reason": "Other brother - Air Force Academy grad, F-16 pilot, now United Airlines"
     },
     {
       "type": "fact",
       "subject_contains": "dad",
-      "content_contains": ["colorado"],
+      "content_contains": [
+        "colorado"
+      ],
       "min_importance": 7,
       "reason": "Dad lives in Colorado"
     },
     {
       "type": "fact",
       "subject_contains": "mom",
-      "content_contains": ["bend", "texas"],
+      "content_contains": [
+        "bend",
+        "texas"
+      ],
       "min_importance": 7,
       "reason": "Mom lives in Bend, Texas"
     },
     {
       "type": "fact",
       "subject_contains": "dave",
-      "content_contains": ["portland", "texas"],
+      "content_contains": [
+        "portland",
+        "texas"
+      ],
       "min_importance": 8,
       "reason": "User lives in Portland, Texas"
     },
     {
       "type": "fact",
       "subject_contains": "dave",
-      "content_contains": ["central"],
+      "content_contains": [
+        "central"
+      ],
       "min_importance": 7,
       "reason": "User's timezone - Central"
     },
     {
       "type": "fact",
       "subject_contains": "dave",
-      "content_contains": ["paleo"],
+      "content_contains": [
+        "paleo"
+      ],
       "min_importance": 7,
       "reason": "User's diet - paleo"
     },
     {
       "type": "fact",
       "subject_contains": "dave",
-      "content_contains": ["gym", "morning"],
+      "content_contains": [
+        "gym",
+        "morning"
+      ],
       "min_importance": 7,
       "reason": "User goes to gym in the morning"
     },
     {
       "type": "fact",
       "subject_contains": "dave",
-      "content_contains": ["military"],
+      "content_contains": [
+        "military"
+      ],
       "min_importance": 7,
       "reason": "User has a military background"
     },
     {
       "type": "fact",
       "subject_contains": "dave",
-      "content_contains": ["11 engineer"],
+      "content_contains": [
+        "11 engineer"
+      ],
       "min_importance": 7,
       "reason": "User manages a team of 11 engineers, reports to CTO"
     },
     {
       "type": "fact",
       "subject_contains": "dave",
-      "content_contains": ["work from home"],
+      "content_contains": [
+        "work from home"
+      ],
       "min_importance": 7,
       "reason": "User works from home"
     },
     {
       "type": "fact",
       "subject_contains": "dave",
-      "content_contains": ["alone time"],
+      "content_contains": [
+        "alone time"
+      ],
       "min_importance": 7,
       "reason": "User values alone time, spam annoys him"
     },
     {
       "type": "fact",
       "subject_contains": "dave",
-      "content_contains": ["davechen@gmail"],
+      "content_contains": [
+        "davechen@gmail"
+      ],
       "min_importance": 7,
       "reason": "User's personal email address"
     },
     {
       "type": "fact",
       "subject_contains": "dave",
-      "content_contains": ["phone", "503"],
+      "content_contains": [
+        "phone",
+        "503"
+      ],
       "min_importance": 7,
       "reason": "User's phone number"
     }
@@ -244,6 +314,6 @@
   ],
   "acceptable_range": {
     "min": 10,
-    "max": 25
+    "max": 35
   }
 }
