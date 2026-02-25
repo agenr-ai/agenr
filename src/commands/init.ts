@@ -103,9 +103,11 @@ interface WizardSummary {
 
 type JsonRecord = Record<string, unknown>;
 type GlobalProjectEntry = {
+  project: string;
   platform: string;
   projectDir: string;
   dbPath?: string;
+  dependencies?: string[];
 };
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -309,7 +311,8 @@ async function writeGlobalProjectEntry(
   const projects: NonNullable<AgenrConfig["projects"]> = {
     ...(existingConfig.projects ?? {}),
   };
-  const existingEntry = projects[project];
+  const resolvedDir = path.resolve(projectDir);
+  const existingEntry = projects[resolvedDir];
 
   const currentDependencies = Array.isArray(existingEntry?.dependencies)
     ? existingEntry.dependencies.filter((value): value is string => typeof value === "string")
@@ -322,9 +325,9 @@ async function writeGlobalProjectEntry(
     nextDependencies = currentDependencies;
   }
 
-  projects[project] = {
+  projects[resolvedDir] = {
+    project,
     platform,
-    projectDir,
     ...(nextDependencies && nextDependencies.length > 0 ? { dependencies: nextDependencies } : {}),
     ...(dbPath ? { dbPath } : {}),
   };
@@ -340,7 +343,7 @@ async function writeGlobalProjectEntry(
     config: {
       project,
       platform,
-      projectDir,
+      projectDir: resolvedDir,
       ...(nextDependencies && nextDependencies.length > 0 ? { dependencies: nextDependencies } : {}),
       ...(dbPath ? { dbPath } : {}),
     },
@@ -687,11 +690,13 @@ function getGlobalProjectMap(config: AgenrConfig | null | undefined): Record<str
   }
 
   const out: Record<string, GlobalProjectEntry> = {};
-  for (const [slug, entry] of Object.entries(config.projects)) {
-    out[slug] = {
+  for (const [dirKey, entry] of Object.entries(config.projects)) {
+    out[dirKey] = {
+      project: entry.project,
       platform: entry.platform,
-      projectDir: entry.projectDir,
+      projectDir: dirKey,
       ...(entry.dbPath ? { dbPath: entry.dbPath } : {}),
+      ...(entry.dependencies ? { dependencies: entry.dependencies } : {}),
     };
   }
   return out;
@@ -701,19 +706,19 @@ function formatRegisteredProjects(
   projects: Record<string, GlobalProjectEntry>,
   defaultDbPath: string,
 ): string {
-  const entries = Object.entries(projects).sort(([slugA], [slugB]) => slugA.localeCompare(slugB));
+  const entries = Object.entries(projects).sort(([, a], [, b]) => a.project.localeCompare(b.project));
   if (entries.length === 0) {
     return "";
   }
 
   const lines: string[] = [];
-  for (const [slug, entry] of entries) {
+  for (const [dirKey, entry] of entries) {
     const dbDisplay = entry.dbPath
       ? `${formatPathForDisplay(entry.dbPath)} (isolated)`
       : `${formatPathForDisplay(defaultDbPath)} (shared)`;
 
-    lines.push(`  ${slug}`);
-    lines.push(`    Directory: ${formatPathForDisplay(entry.projectDir)}`);
+    lines.push(`  ${entry.project}`);
+    lines.push(`    Directory: ${formatPathForDisplay(dirKey)}`);
     lines.push(`    Database:  ${dbDisplay}`);
     lines.push("");
   }
@@ -1109,38 +1114,15 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
 
     if (isWizardPlatformId(selectedPlatform.id)) {
       const globalProjects = getGlobalProjectMap(readConfig(env));
-      const existingSlugEntry = globalProjects[projectSlug];
-      const slugCollision =
-        existingSlugEntry !== undefined && path.resolve(existingSlugEntry.projectDir) !== path.resolve(projectDir);
-
-      if (slugCollision) {
-        clack.log.warn(
-          `Project "${projectSlug}" is already registered at ${formatPathForDisplay(existingSlugEntry.projectDir)}.\n` +
-            `Continuing will replace that entry with ${formatPathForDisplay(projectDir)}.`,
-        );
-
-        const proceed = await clack.confirm({
-          message: `Replace existing "${projectSlug}" project entry?`,
-          initialValue: false,
-        });
-        if (clack.isCancel(proceed)) {
-          clack.cancel("Setup cancelled.");
-          return;
-        }
-        if (!proceed) {
-          clack.log.info("Change the project name to avoid the collision.");
-          projectSlug = null;
-          continue;
-        }
-      }
 
       if (!selectedOpenclawDbPath) {
+        const resolvedDir = path.resolve(projectDir);
         const otherSharedProjects = Object.entries(globalProjects)
-          .filter(([slug, entry]) => slug !== projectSlug && !entry.dbPath)
-          .map(([slug]) => slug);
+          .filter(([dirKey, entry]) => dirKey !== resolvedDir && !entry.dbPath)
+          .map(([, entry]) => `${entry.project} (${formatPathForDisplay(entry.projectDir)})`);
         if (otherSharedProjects.length > 0) {
           clack.log.info(
-            `This project shares the knowledge database with: ${otherSharedProjects.join(", ")}\n` +
+            `This project shares the knowledge database with:\n${otherSharedProjects.map((item) => `  - ${item}`).join("\n")}\n` +
               "All projects using the shared database can see each other's knowledge.\n" +
               "Data is separated by project tag in recall queries.",
           );
@@ -1162,12 +1144,11 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
 
   if (isWizardPlatformId(selectedPlatform.id)) {
     const existingProjects = getGlobalProjectMap(readConfig(env));
-    const existingEntry = existingProjects[projectSlug];
+    const resolvedDir = path.resolve(projectDir);
+    const existingEntry = existingProjects[resolvedDir];
 
     if (existingEntry) {
-      wizardChanges.directoryChanged =
-        path.resolve(existingEntry.projectDir) !== path.resolve(selectedPlatform.configDir);
-
+      wizardChanges.directoryChanged = false;
       const existingDbPath = existingEntry.dbPath ?? null;
       const newDbPath = selectedOpenclawDbPath ?? null;
       wizardChanges.dbPathChanged = existingDbPath !== newDbPath;

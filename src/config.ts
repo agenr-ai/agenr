@@ -276,34 +276,16 @@ function normalizeProjectsMap(input: unknown): AgenrConfig["projects"] | undefin
   }
 
   const out: NonNullable<AgenrConfig["projects"]> = {};
-  for (const [rawSlug, rawValue] of Object.entries(input as Record<string, unknown>)) {
+  for (const [rawDirKey, rawValue] of Object.entries(input as Record<string, unknown>)) {
     if (!rawValue || typeof rawValue !== "object" || Array.isArray(rawValue)) {
       continue;
     }
 
-    const slug = rawSlug.trim();
-    if (!slug) {
-      continue;
-    }
-
     const value = rawValue as Record<string, unknown>;
-    if (typeof value.platform !== "string" || !value.platform.trim()) {
-      continue;
-    }
-    if (typeof value.projectDir !== "string" || !value.projectDir.trim()) {
-      continue;
-    }
-
-    const entry: NonNullable<AgenrConfig["projects"]>[string] = {
-      platform: value.platform.trim(),
-      projectDir: value.projectDir.trim(),
-    };
-
-    if (typeof value.dbPath === "string" && value.dbPath.trim()) {
-      entry.dbPath = value.dbPath.trim();
-    }
-
-    if (Array.isArray(value.dependencies)) {
+    const normalizeDependencies = (): string[] | undefined => {
+      if (!Array.isArray(value.dependencies)) {
+        return undefined;
+      }
       const dependencies = Array.from(
         new Set(
           value.dependencies
@@ -312,12 +294,63 @@ function normalizeProjectsMap(input: unknown): AgenrConfig["projects"] | undefin
             .filter((dependency) => dependency.length > 0),
         ),
       );
-      if (dependencies.length > 0) {
+      return dependencies.length > 0 ? dependencies : undefined;
+    };
+
+    // New format: key is absolute project directory path and entry contains project slug.
+    if (
+      typeof value.project === "string" &&
+      value.project.trim() &&
+      typeof value.platform === "string" &&
+      value.platform.trim()
+    ) {
+      const dirKey = rawDirKey.trim();
+      if (!dirKey) {
+        continue;
+      }
+
+      const entry: NonNullable<AgenrConfig["projects"]>[string] = {
+        project: value.project.trim(),
+        platform: value.platform.trim(),
+      };
+      if (typeof value.dbPath === "string" && value.dbPath.trim()) {
+        entry.dbPath = value.dbPath.trim();
+      }
+      const dependencies = normalizeDependencies();
+      if (dependencies) {
         entry.dependencies = dependencies;
       }
+
+      out[path.resolve(dirKey)] = entry;
+      continue;
     }
 
-    out[slug] = entry;
+    // Legacy format fallback: key was project slug and value carried projectDir.
+    if (typeof value.platform !== "string" || !value.platform.trim()) {
+      continue;
+    }
+    if (typeof value.projectDir !== "string" || !value.projectDir.trim()) {
+      continue;
+    }
+
+    const legacyProject = rawDirKey.trim();
+    if (!legacyProject) {
+      continue;
+    }
+
+    const legacyEntry: NonNullable<AgenrConfig["projects"]>[string] = {
+      project: legacyProject,
+      platform: value.platform.trim(),
+    };
+    if (typeof value.dbPath === "string" && value.dbPath.trim()) {
+      legacyEntry.dbPath = value.dbPath.trim();
+    }
+    const dependencies = normalizeDependencies();
+    if (dependencies) {
+      legacyEntry.dependencies = dependencies;
+    }
+
+    out[path.resolve(value.projectDir.trim())] = legacyEntry;
   }
 
   return Object.keys(out).length > 0 ? out : undefined;
@@ -433,19 +466,17 @@ export function resolveProjectFromGlobalConfig(
     return null;
   }
 
-  const resolvedProjectDir = path.resolve(projectDir);
-  for (const [slug, entry] of Object.entries(config.projects)) {
-    if (path.resolve(entry.projectDir) !== resolvedProjectDir) {
-      continue;
-    }
-    return {
-      slug,
-      platform: entry.platform,
-      dbPath: entry.dbPath,
-    };
+  const resolvedDir = path.resolve(projectDir);
+  const entry = config.projects[resolvedDir];
+  if (!entry) {
+    return null;
   }
 
-  return null;
+  return {
+    slug: entry.project,
+    platform: entry.platform,
+    dbPath: entry.dbPath,
+  };
 }
 
 export function mergeConfigPatch(current: AgenrConfig | null, patch: AgenrConfig): AgenrConfig {
