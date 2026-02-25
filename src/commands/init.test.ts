@@ -1066,14 +1066,18 @@ describe("runInitWizard", () => {
     readConfigMock.mockReturnValue(null);
     runSetupCoreMock.mockResolvedValue(mockSetupResult());
     vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platforms);
-    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    const runInitCommandSpy = vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
     clackSelectMock.mockResolvedValueOnce("openclaw").mockResolvedValueOnce("shared");
     clackTextMock.mockResolvedValueOnce("/tmp/custom-openclaw").mockResolvedValueOnce("agenr");
 
     await runInitWizard({ isInteractive: true, path: dir });
 
-    expect(platforms[0]?.configDir).toBe(path.resolve("/tmp/custom-openclaw"));
-    expect(platforms[0]?.sessionsDir).toBe(path.join(path.resolve("/tmp/custom-openclaw"), "sessions"));
+    // The wizard spreads into a new object, so verify via runInitCommand args
+    expect(runInitCommandSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: path.resolve("/tmp/custom-openclaw"),
+      }),
+    );
   });
 
   it("wizard uses OpenClaw configDir as projectDir", async () => {
