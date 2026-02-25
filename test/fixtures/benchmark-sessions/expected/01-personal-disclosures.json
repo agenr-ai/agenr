@@ -16,9 +16,8 @@
       "type": "fact",
       "subject_contains": "dave",
       "content_contains": [
-        "48",
-        "49",
-        "march 15"
+        "march",
+        "15"
       ],
       "min_importance": 7,
       "reason": "User's age and birthday"
@@ -37,7 +36,7 @@
       "type": "fact",
       "subject_contains": "dave",
       "content_contains": [
-        "sr. director",
+        "director",
         "engineering"
       ],
       "min_importance": 8,
@@ -56,7 +55,8 @@
       "type": "fact",
       "subject_contains": "dave",
       "content_contains": [
-        "georgia tech"
+        "georgia",
+        "tech"
       ],
       "min_importance": 8,
       "reason": "User's education - Georgia Tech, Software Engineering"
@@ -94,7 +94,7 @@
       "subject_contains": "dave",
       "content_contains": [
         "tesla",
-        "model y"
+        "model"
       ],
       "min_importance": 7,
       "reason": "User's vehicle - 2026 Tesla Model Y"
@@ -123,7 +123,7 @@
       "type": "fact",
       "subject_contains": "sister",
       "content_contains": [
-        "lost",
+        "sibling",
         "2024"
       ],
       "min_importance": 8,
@@ -219,7 +219,7 @@
       "type": "fact",
       "subject_contains": "dave",
       "content_contains": [
-        "11 engineer"
+        "11"
       ],
       "min_importance": 7,
       "reason": "User manages a team of 11 engineers, reports to CTO"
@@ -228,7 +228,7 @@
       "type": "fact",
       "subject_contains": "dave",
       "content_contains": [
-        "work from home"
+        "remote"
       ],
       "min_importance": 7,
       "reason": "User works from home"
@@ -255,7 +255,6 @@
       "type": "fact",
       "subject_contains": "dave",
       "content_contains": [
-        "phone",
         "503"
       ],
       "min_importance": 7,

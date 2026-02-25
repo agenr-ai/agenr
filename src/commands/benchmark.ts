@@ -304,18 +304,26 @@ async function runExtraction(
     : "";
 
   const runWithTemp = async (temperature: number | undefined): Promise<ExtractChunksResult> =>
-    deps.extractKnowledgeFromChunksFn({
-      file: params.fixturePath,
-      chunks,
-      messages,
-      client: params.client,
-      verbose: params.verbose,
-      temperature,
-      logAll: Boolean(params.logDir),
-      logDir: params.logDir,
-      noDedup: true,
-      ...(contextPrefix ? { systemPromptPrefix: contextPrefix } : {}),
-    });
+    chunks.length === 0
+      ? {
+          entries: [],
+          successfulChunks: 0,
+          failedChunks: 0,
+          warnings: [],
+        }
+      : deps.extractKnowledgeFromChunksFn({
+          file: params.fixturePath,
+          chunks,
+          messages,
+          client: params.client,
+          verbose: params.verbose,
+          wholeFile: "force",
+          temperature,
+          logAll: Boolean(params.logDir),
+          logDir: params.logDir,
+          noDedup: true,
+          ...(contextPrefix ? { systemPromptPrefix: contextPrefix } : {}),
+        });
 
   try {
     const result = await runWithTemp(BENCHMARK_TEMPERATURE);

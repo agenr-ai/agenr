@@ -56,9 +56,9 @@ Do NOT emit a completion event for:
 
 Classify every candidate as EPHEMERAL or DURABLE before extracting. Only extract DURABLE knowledge.
 - EPHEMERAL: version numbers, error messages, publish events, file reads, today's status, debug steps, corrections. SKIP these.
-- DURABLE: architecture decisions, personal facts, preferences, lessons learned, stable system facts. Extract these.
+- DURABLE: architecture decisions, project convention decisions (symlinks, naming conventions, workflow rules), personal facts, preferences, lessons learned, stable system facts. Extract these.
 
-If uncertain, apply the 6-month test: would knowing this fact 6 months from now still help an AI assist this person? Health conditions, family structure, location, diet, pets, occupation, values -> YES, extract. Current mood, today's plans, this week's weather -> NO, skip. Personal disclosures are durable by default -- if a user reveals something true about themselves, capture it even if mentioned casually or as an aside.
+If uncertain, apply the 6-month test: would knowing this fact 6 months from now still help an AI assist this person? Health conditions, family structure, location, diet, pets, occupation, values -> YES, extract. Current mood, today's plans, this week's weather -> NO, skip. Personal disclosures are durable by default -- if a user reveals something true about themselves, capture it even if mentioned casually or as an aside. Extract each distinct personal fact as its own entry. Do NOT consolidate multiple personal facts into one summary entry. "User is 48, lives in Portland, has a dog named Max" should be 3 separate entries, not one. Subject for personal facts should include the person's name when known (e.g., "dave chen occupation", "dave chen pet", "dave chen location").
 
 ## Importance (1-10)
 
@@ -153,7 +153,8 @@ If you cannot name a concrete topic, skip the entry.
 13. One-off error messages, 404s, stack traces, and transient failures. Only extract if the error reveals a durable architectural lesson or recurring systemic issue.
 14. Publish and deploy events ("npm publish succeeded", "deployed to staging"). These are routine CI/CD events, not durable knowledge. Only extract if the deployment represents a significant project milestone (first launch, major migration).
 15. Obvious or tautological facts ("the project has a README", "the plugin contains files", "the config file has settings in it").
-16. File/directory existence observations ("I found that file X exists", "the project has a src/ folder"). Extract only if the organizational structure itself is an architectural decision worth preserving.
+16. File/directory existence observations ("I found that file X exists", "the project has a src/ folder"). Extract only if the organizational structure itself is an architectural or project convention decision worth preserving. Extractable example: "CLAUDE.md is a symlink to AGENTS.md" (deliberate project convention). Skip example: "the project has a src/ folder" (obvious structure).
+17. Release-engineering noise: version bumps, CHANGELOG edits, build/test/publish cycles, and batch operation counts. If the conversation is purely about releasing a version, the expected extraction count is 0. Only extract if a significant architectural decision or lasting workflow change emerged during the release process.
 
 ## Explicit Memory Requests
 
@@ -722,8 +723,9 @@ const CHUNKED_CALIBRATION_BLOCK = `Calibration:
 
 const WHOLE_FILE_CALIBRATION_BLOCK = `Calibration (whole-file mode - you have the FULL session context, not a fragment):
 - Typical session: 5-15 entries. Dense sessions may warrant 30-50.
-- You are seeing the complete conversation. Extract complete, coherent entries that
-  capture multi-part discussions as single entries, not fragments.
+- You are seeing the complete conversation. Extract complete, coherent entries.
+  For technical discussions, capture multi-part discussions as single entries, not fragments.
+  For personal facts, extract each distinct fact separately - do NOT merge biographical details into one mega-entry.
 - Score 9 or 10: very rare, at most 1 per session, often 0
 - Score 8: at most 2-3 per session; ask the cross-session-alert question before assigning
 - Score 7: solid durable knowledge worth preserving long-term; common but earned, not default

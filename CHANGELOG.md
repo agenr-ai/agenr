@@ -41,6 +41,13 @@
 - Extraction prompt: shifted default importance from 7 to 6, recalibrated Score 6/7 descriptions across all calibration blocks
 - Extraction prompt: added 6 new anti-patterns (items 11-16) for concrete noise rejection (typos, version bumps, publish events, file observations, tautological facts)
 - Extraction prompt: added 6 new SKIP examples in few-shot section to rebalance extract:skip example ratio
+- Extraction prompt: added anti-consolidation instruction for personal facts with per-fact granularity and subject naming guidance
+- Extraction prompt: added project convention decisions to DURABLE classification list
+- Extraction prompt: improved anti-pattern #16 with extractable vs skip examples for file observations
+- Extraction prompt: added anti-pattern #17 for release-engineering session noise
+- Extraction prompt: whole-file calibration now distinguishes technical (consolidate) vs personal (granular) entries
+- Benchmark: now runs in whole-file mode to match real ingest behavior
+- Benchmark: relaxed rubric content_contains matching for paraphrase resilience
 
 ## [0.8.39] - 2025-02-25
 
