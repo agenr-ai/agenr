@@ -2,7 +2,55 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildMcpEntry, formatInitSummary, resolveAgenrCommand, runInitCommand } from "./init.js";
+
+const {
+  readConfigMock,
+  runSetupCoreMock,
+  formatExistingConfigMock,
+  clackIntroMock,
+  clackNoteMock,
+  clackConfirmMock,
+  clackCancelMock,
+  clackOutroMock,
+  clackCancelToken,
+} = vi.hoisted(() => ({
+  readConfigMock: vi.fn(),
+  runSetupCoreMock: vi.fn(),
+  formatExistingConfigMock: vi.fn(),
+  clackIntroMock: vi.fn(),
+  clackNoteMock: vi.fn(),
+  clackConfirmMock: vi.fn(),
+  clackCancelMock: vi.fn(),
+  clackOutroMock: vi.fn(),
+  clackCancelToken: Symbol("cancel"),
+}));
+
+vi.mock("@clack/prompts", () => ({
+  intro: clackIntroMock,
+  note: clackNoteMock,
+  confirm: clackConfirmMock,
+  cancel: clackCancelMock,
+  outro: clackOutroMock,
+  isCancel: (value: unknown) => value === clackCancelToken,
+}));
+
+vi.mock("../config.js", () => ({
+  readConfig: readConfigMock,
+}));
+
+vi.mock("../setup.js", () => ({
+  runSetupCore: runSetupCoreMock,
+  formatExistingConfig: formatExistingConfigMock,
+}));
+
+import {
+  buildMcpEntry,
+  formatInitSummary,
+  initWizardRuntime,
+  resolveAgenrCommand,
+  runInitCommand,
+  runInitWizard,
+} from "./init.js";
 
 async function createTempDir(prefix = "agenr-init-"): Promise<string> {
   return await fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -38,6 +86,10 @@ async function withTempHome<T>(fn: (homeDir: string) => Promise<T>): Promise<T> 
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  vi.clearAllMocks();
+  readConfigMock.mockReset();
+  runSetupCoreMock.mockReset();
+  formatExistingConfigMock.mockReset();
   if (originalHome === undefined) {
     delete process.env.HOME;
   } else {
@@ -403,6 +455,118 @@ describe("runInitCommand", () => {
     await expect(runInitCommand({ path: os.homedir() })).rejects.toThrow(
       "Cannot initialize agenr in your home directory",
     );
+  });
+});
+
+describe("runInitWizard", () => {
+  function mockInitResult() {
+    return {
+      platform: "generic" as const,
+      project: "agenr",
+      projectDir: "/tmp/project",
+      dependencies: [],
+      configPath: "/tmp/project/.agenr/config.json",
+      instructionsPath: "/tmp/project/AGENTS.md",
+      mcpPath: "/tmp/project/.mcp.json",
+      mcpSkipped: false,
+      gitignoreUpdated: false,
+    };
+  }
+
+  it("runs non-interactive path when isInteractive is false", async () => {
+    const runInitCommandSpy = vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    vi.spyOn(initWizardRuntime, "formatInitSummary").mockReturnValue(["line one", "line two"]);
+    const writeSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    await runInitWizard({ isInteractive: false });
+
+    expect(runInitCommandSpy).toHaveBeenCalledOnce();
+    expect(clackIntroMock).not.toHaveBeenCalled();
+    expect(writeSpy).toHaveBeenCalledWith("line one\n");
+    expect(writeSpy).toHaveBeenCalledWith("line two\n");
+  });
+
+  it("runs non-interactive when --platform flag provided", async () => {
+    const runInitCommandSpy = vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    vi.spyOn(initWizardRuntime, "formatInitSummary").mockReturnValue(["line one"]);
+    const writeSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    await runInitWizard({ isInteractive: true, platform: "generic" });
+
+    expect(runInitCommandSpy).toHaveBeenCalledOnce();
+    expect(clackIntroMock).not.toHaveBeenCalled();
+    expect(writeSpy).toHaveBeenCalledWith("line one\n");
+  });
+
+  it("runs non-interactive when --project flag provided", async () => {
+    const runInitCommandSpy = vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    vi.spyOn(initWizardRuntime, "formatInitSummary").mockReturnValue(["line one"]);
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    await runInitWizard({ isInteractive: true, project: "agenr" });
+
+    expect(runInitCommandSpy).toHaveBeenCalledOnce();
+    expect(clackIntroMock).not.toHaveBeenCalled();
+  });
+
+  it("shows existing config and skips setup when user declines reconfigure", async () => {
+    readConfigMock.mockReturnValue({
+      auth: "openai-api-key",
+      provider: "openai",
+      model: "gpt-4.1-mini",
+    });
+    formatExistingConfigMock.mockReturnValue("current config");
+    clackConfirmMock.mockResolvedValue(false);
+
+    await runInitWizard({ isInteractive: true });
+
+    expect(clackNoteMock).toHaveBeenCalledWith("current config", "Current config");
+    expect(runSetupCoreMock).not.toHaveBeenCalled();
+    expect(clackOutroMock).toHaveBeenCalledWith("Setup unchanged.");
+  });
+
+  it("calls runSetupCore when no existing config", async () => {
+    readConfigMock.mockReturnValue(null);
+    runSetupCoreMock.mockResolvedValue({
+      auth: "openai-api-key",
+      provider: "openai",
+      model: "gpt-4.1-mini",
+      config: {
+        auth: "openai-api-key",
+        provider: "openai",
+        model: "gpt-4.1-mini",
+      },
+      changed: true,
+    });
+
+    await runInitWizard({ isInteractive: true });
+
+    expect(runSetupCoreMock).toHaveBeenCalledWith({
+      env: process.env,
+      existingConfig: null,
+      skipIntroOutro: true,
+    });
+    expect(clackOutroMock).toHaveBeenCalledWith(
+      expect.stringContaining("Setup complete. Run "),
+    );
+    expect(clackOutroMock).toHaveBeenCalledWith(
+      expect.stringContaining("again after the next update for the full wizard experience."),
+    );
+  });
+
+  it("handles Ctrl+C gracefully at reconfigure prompt", async () => {
+    readConfigMock.mockReturnValue({
+      auth: "openai-api-key",
+      provider: "openai",
+      model: "gpt-4.1-mini",
+    });
+    formatExistingConfigMock.mockReturnValue("current config");
+    clackConfirmMock.mockResolvedValue(clackCancelToken);
+
+    await runInitWizard({ isInteractive: true });
+
+    expect(runSetupCoreMock).not.toHaveBeenCalled();
+    expect(clackCancelMock).toHaveBeenCalledWith("Setup cancelled.");
   });
 });
 
