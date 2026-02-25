@@ -488,6 +488,13 @@ function formatPlatformLabel(platform: InitPlatform | DetectedPlatform["id"]): s
   return platform;
 }
 
+export function resolveWizardProjectSlug(projectDir: string, platformId: string): string {
+  if (platformId === "openclaw" || platformId === "codex") {
+    return platformId;
+  }
+  return resolveProjectSlug(projectDir);
+}
+
 async function readExistingProjectSettings(projectDir: string): Promise<ExistingProjectSettings> {
   const configPath = path.join(projectDir, ".agenr", "config.json");
   const config = await readJsonRecord(configPath);
@@ -810,7 +817,7 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
     ? existingProjectSettings.platform !== selectedPlatform.id
     : false;
 
-  const derivedSlug = resolveProjectSlug(projectDir);
+  const derivedSlug = resolveWizardProjectSlug(projectDir, selectedPlatform.id);
   let projectSlug: string | null = null;
 
   if (existingProjectSettings.project) {

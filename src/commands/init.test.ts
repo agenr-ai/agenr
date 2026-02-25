@@ -73,6 +73,7 @@ import {
   formatInitSummary,
   initWizardRuntime,
   resolveAgenrCommand,
+  resolveWizardProjectSlug,
   runInitCommand,
   runInitWizard,
 } from "./init.js";
@@ -646,6 +647,22 @@ describe("runInitWizard", () => {
     );
   });
 
+  it("wizard defaults project slug to openclaw when OpenClaw platform selected", async () => {
+    const dir = await createWizardProjectDir();
+    readConfigMock.mockReturnValue(null);
+    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackConfirmMock.mockResolvedValue(true);
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    const projectPrompt = clackTextMock.mock.calls
+      .map((call) => call[0] as { message?: string; initialValue?: string })
+      .find((call) => call.message === "Project name:");
+    expect(projectPrompt?.initialValue).toBe("openclaw");
+  });
+
   it("wizard shows selector when both platforms detected", async () => {
     const dir = await createWizardProjectDir();
     readConfigMock.mockReturnValue(null);
@@ -662,6 +679,27 @@ describe("runInitWizard", () => {
         message: "Which platform are you using?",
       }),
     );
+  });
+
+  it("wizard defaults project slug to codex when Codex platform selected", async () => {
+    const dir = await createWizardProjectDir();
+    readConfigMock.mockReturnValue(null);
+    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, true));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackSelectMock.mockResolvedValue("codex");
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    const projectPrompt = clackTextMock.mock.calls
+      .map((call) => call[0] as { message?: string; initialValue?: string })
+      .find((call) => call.message === "Project name:");
+    expect(projectPrompt?.initialValue).toBe("codex");
+  });
+
+  it("wizard still derives slug from cwd for other platforms", () => {
+    const slug = resolveWizardProjectSlug("/tmp/My Sample Project", "generic");
+    expect(slug).toBe("my-sample-project");
   });
 
   it("wizard updates sessionsDir when custom OpenClaw path provided", async () => {
