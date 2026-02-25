@@ -305,6 +305,31 @@ describe("extraction prompt quality (#240)", () => {
     expect(SYSTEM_PROMPT).toContain("Release-engineering noise");
   });
 
+  it("whole-file prompt includes session triage step", () => {
+    const prompt = buildExtractionSystemPrompt(undefined, true);
+    expect(prompt).toContain("SESSION TRIAGE");
+  });
+
+  it("whole-file prompt includes prioritize user messages step", () => {
+    const prompt = buildExtractionSystemPrompt(undefined, true);
+    expect(prompt).toContain("PRIORITIZE USER MESSAGES");
+  });
+
+  it("whole-file prompt includes technical-session importance ceiling", () => {
+    const prompt = buildExtractionSystemPrompt(undefined, true);
+    expect(prompt).toContain("importance ceiling is 8");
+  });
+
+  it("whole-file prompt includes startup session 0-1 entry expectation", () => {
+    const prompt = buildExtractionSystemPrompt(undefined, true);
+    expect(prompt).toContain("expect 0-1 entries");
+  });
+
+  it("whole-file prompt removes old dense-session 30-50 guidance", () => {
+    const prompt = buildExtractionSystemPrompt(undefined, true);
+    expect(prompt).not.toContain("Dense sessions may warrant 30-50");
+  });
+
   it("whole-file prompt keeps anti-consolidation note for biographical facts", () => {
     const prompt = buildExtractionSystemPrompt(undefined, true);
     expect(prompt).toContain("do NOT merge biographical details");
@@ -321,6 +346,18 @@ describe("extraction prompt quality (#240)", () => {
 
   it("does not contain old calibration workhorse at score 7", () => {
     expect(SYSTEM_PROMPT).not.toContain("most emitted entries should be 7");
+  });
+
+  it("contains instruction that file content is reference material", () => {
+    expect(SYSTEM_PROMPT).toContain("Content from files the agent reads");
+  });
+
+  it("contains startup file-read guard example", () => {
+    expect(SYSTEM_PROMPT).toContain("agent reading HEARTBEAT.md");
+  });
+
+  it("contains anti-pattern for agent capability announcements", () => {
+    expect(SYSTEM_PROMPT).toContain("Agent capability announcements");
   });
 });
 
@@ -394,7 +431,7 @@ describe("buildExtractionSystemPrompt", () => {
     expect(result).not.toContain("Max 8 entries");
     expect(result).not.toContain("Typical chunk: 0-3 entries");
     expect(result).toContain("whole-file mode");
-    expect(result).toContain("Typical session:");
+    expect(result).toContain("STEP 1 - SESSION TRIAGE");
   });
 
   it("wholeFile + openclaw: calibration replaced and OPENCLAW_CONFIDENCE_ADDENDUM present", () => {

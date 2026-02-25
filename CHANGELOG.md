@@ -48,6 +48,10 @@
 - Extraction prompt: whole-file calibration now distinguishes technical (consolidate) vs personal (granular) entries
 - Benchmark: now runs in whole-file mode to match real ingest behavior
 - Benchmark: relaxed rubric content_contains matching for paraphrase resilience
+- Extraction prompt: rewrote whole-file calibration with 3-step process (session triage, user message priority, constrained extraction)
+- Extraction prompt: added importance ceiling of 8 for coding/technical sessions, tightened inflation threshold from 30% to 20%
+- Extraction prompt: added anti-pattern #18 for agent capability/tool setup announcements
+- Extraction prompt: file contents read by agent during startup/exploration explicitly distinguished from user speech
 
 ## [0.8.39] - 2025-02-25
 
