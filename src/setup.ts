@@ -1,7 +1,6 @@
 import { getModels } from "@mariozechner/pi-ai";
 import * as clack from "@clack/prompts";
 import {
-  AUTH_METHOD_DEFINITIONS,
   describeAuth,
   getAuthMethodDefinition,
   mergeConfigPatch,
@@ -14,6 +13,9 @@ import { probeCredentials } from "./llm/credentials.js";
 import { resolveModel } from "./llm/models.js";
 import { banner, formatLabel, ui } from "./ui.js";
 import type { AgenrAuthMethod, AgenrConfig, AgenrProvider } from "./types.js";
+
+const ADVANCED_AUTH_NOTICE =
+  "Note: Subscription models may have limited extraction quality. API keys with gpt-4.1-mini are recommended for best results.";
 
 function credentialKeyForAuth(auth: AgenrAuthMethod): "anthropic-token" | "anthropic" | "openai" | null {
   if (auth === "anthropic-token") {
@@ -54,6 +56,9 @@ function modelChoicesForAuth(auth: AgenrAuthMethod, provider: AgenrProvider): st
   const fallback = allModels.filter((modelId) => !preferred.includes(modelId));
 
   if (provider === "openai") {
+    const preferredOpenAiOrder = ["gpt-4.1-mini", "gpt-4.1", "gpt-4.1-nano"];
+    const prioritizedPreferred = preferredOpenAiOrder.filter((modelId) => allModels.includes(modelId));
+    const remainingPreferred = preferred.filter((modelId) => !prioritizedPreferred.includes(modelId));
     const prioritizedFallback = fallback
       .filter(
         (modelId) =>
@@ -61,13 +66,108 @@ function modelChoicesForAuth(auth: AgenrAuthMethod, provider: AgenrProvider): st
       )
       .concat(fallback.filter((modelId) => !modelId.startsWith("gpt-") && modelId !== "o3" && modelId !== "o4-mini"));
 
-    return Array.from(new Set([...preferred, ...prioritizedFallback]));
+    return Array.from(new Set([...prioritizedPreferred, ...remainingPreferred, ...prioritizedFallback]));
   }
 
   return Array.from(new Set([...preferred, ...fallback]));
 }
 
-function formatExistingConfig(config: AgenrConfig): string {
+function modelHintForChoice(provider: AgenrProvider, modelId: string): string | undefined {
+  if (provider === "openai") {
+    if (modelId === "gpt-4.1-mini") {
+      return "recommended - good balance of quality and cost";
+    }
+    if (modelId === "gpt-4.1") {
+      return "best extraction quality - ~5x cost of mini";
+    }
+    if (modelId === "gpt-4.1-nano") {
+      return "cheapest - lower quality extraction";
+    }
+  }
+
+  const details = getModels(provider).find((modelInfo) => modelInfo.id === modelId);
+  return details?.name;
+}
+
+async function selectAuthMethod(): Promise<AgenrAuthMethod | null> {
+  while (true) {
+    const authSelection = await clack.select<AgenrAuthMethod | "advanced-options">({
+      message: "How would you like to authenticate?",
+      options: [
+        {
+          value: "openai-api-key",
+          label: "OpenAI API key",
+          hint: "recommended for extraction",
+        },
+        {
+          value: "anthropic-api-key",
+          label: "Anthropic API key",
+        },
+        {
+          value: "advanced-options",
+          label: "Advanced options...",
+        },
+      ],
+    });
+
+    if (clack.isCancel(authSelection)) {
+      return null;
+    }
+
+    if (authSelection !== "advanced-options") {
+      return authSelection;
+    }
+
+    const advancedSelection = await clack.select<AgenrAuthMethod | "back">({
+      message: "Advanced authentication:",
+      options: [
+        {
+          value: "anthropic-oauth",
+          label: "Anthropic - Claude subscription (OAuth)",
+        },
+        {
+          value: "anthropic-token",
+          label: "Anthropic - Claude subscription (long-lived token)",
+        },
+        {
+          value: "openai-subscription",
+          label: "OpenAI - Subscription (via Codex CLI)",
+        },
+        {
+          value: "back",
+          label: "Back",
+        },
+      ],
+    });
+
+    if (clack.isCancel(advancedSelection)) {
+      return null;
+    }
+
+    if (advancedSelection === "back") {
+      continue;
+    }
+
+    clack.log.info(ADVANCED_AUTH_NOTICE);
+    return advancedSelection;
+  }
+}
+
+function showAuthSetupGuidance(auth: AgenrAuthMethod): void {
+  if (auth === "openai-api-key") {
+    clack.log.info("Get your API key at https://platform.openai.com/api-keys");
+    return;
+  }
+
+  if (auth === "anthropic-api-key") {
+    clack.log.info("Get your API key at https://console.anthropic.com/settings/keys");
+    return;
+  }
+
+  clack.log.info("This uses your existing subscription - no API key needed.");
+}
+
+export function formatExistingConfig(config: AgenrConfig): string {
   return [
     formatLabel("Auth", config.auth ? describeAuth(config.auth) : "(not set)"),
     formatLabel("Provider", config.provider ?? "(not set)"),
@@ -90,45 +190,40 @@ function buildConfigWithCredentials(base: AgenrConfig, credentials?: AgenrConfig
   };
 }
 
-export async function runSetup(env: NodeJS.ProcessEnv = process.env): Promise<void> {
-  clack.intro(banner());
+export interface SetupResult {
+  auth: AgenrAuthMethod;
+  provider: AgenrProvider;
+  model: string;
+  config: AgenrConfig;
+  changed: boolean;
+}
 
-  const existing = readConfig(env);
-  let working = existing ? mergeConfigPatch(existing, {}) : {};
+export interface SetupCoreOptions {
+  env: NodeJS.ProcessEnv;
+  existingConfig: AgenrConfig | null;
+  skipIntroOutro: boolean;
+}
 
-  if (existing) {
-    clack.note(formatExistingConfig(existing), "Current config");
-    const reconfigure = await clack.confirm({
-      message: "Reconfigure?",
-      initialValue: true,
-    });
-
-    if (clack.isCancel(reconfigure) || !reconfigure) {
-      clack.cancel("Setup unchanged.");
-      return;
-    }
+export async function runSetupCore(options: SetupCoreOptions): Promise<SetupResult | null> {
+  if (!options.skipIntroOutro) {
+    clack.intro(banner());
   }
 
-  const auth = await clack.select<AgenrAuthMethod>({
-    message: "How would you like to authenticate?",
-    options: AUTH_METHOD_DEFINITIONS.map((definition) => ({
-      value: definition.id,
-      label: definition.title,
-      hint: definition.setupDescription,
-    })),
-  });
+  let working = options.existingConfig ? mergeConfigPatch(options.existingConfig, {}) : {};
 
-  if (clack.isCancel(auth)) {
-    clack.cancel("Setup cancelled.");
-    return;
+  const auth = await selectAuthMethod();
+  if (!auth) {
+    return null;
   }
+
+  showAuthSetupGuidance(auth);
 
   const provider = getAuthMethodDefinition(auth).provider;
 
   let probe = probeCredentials({
     auth,
     storedCredentials: working.credentials,
-    env,
+    env: options.env,
   });
 
   const credentialKey = credentialKeyForAuth(auth);
@@ -143,8 +238,7 @@ export async function runSetup(env: NodeJS.ProcessEnv = process.env): Promise<vo
       });
 
       if (clack.isCancel(shouldEnterNow)) {
-        clack.cancel("Setup cancelled.");
-        return;
+        return null;
       }
 
       if (shouldEnterNow) {
@@ -153,8 +247,7 @@ export async function runSetup(env: NodeJS.ProcessEnv = process.env): Promise<vo
         });
 
         if (clack.isCancel(entered)) {
-          clack.cancel("Setup cancelled.");
-          return;
+          return null;
         }
 
         const normalized = entered.trim();
@@ -163,12 +256,12 @@ export async function runSetup(env: NodeJS.ProcessEnv = process.env): Promise<vo
           probe = probeCredentials({
             auth,
             storedCredentials: working.credentials,
-            env,
+            env: options.env,
           });
         }
       }
     }
-  } else if (existing && credentialKey) {
+  } else if (options.existingConfig && credentialKey) {
     // Already configured and working. When reconfiguring, offer to update.
     const updateKey = await clack.confirm({
       message: "Update stored credential?",
@@ -176,8 +269,7 @@ export async function runSetup(env: NodeJS.ProcessEnv = process.env): Promise<vo
     });
 
     if (clack.isCancel(updateKey)) {
-      clack.cancel("Setup cancelled.");
-      return;
+      return null;
     }
 
     if (updateKey) {
@@ -186,8 +278,7 @@ export async function runSetup(env: NodeJS.ProcessEnv = process.env): Promise<vo
       });
 
       if (clack.isCancel(entered)) {
-        clack.cancel("Setup cancelled.");
-        return;
+        return null;
       }
 
       const normalized = entered.trim();
@@ -196,7 +287,7 @@ export async function runSetup(env: NodeJS.ProcessEnv = process.env): Promise<vo
         probe = probeCredentials({
           auth,
           storedCredentials: working.credentials,
-          env,
+          env: options.env,
         });
         clack.log.info("Credential updated.");
       } else {
@@ -212,19 +303,15 @@ export async function runSetup(env: NodeJS.ProcessEnv = process.env): Promise<vo
 
   const model = await clack.select<string>({
     message: "Select default model:",
-    options: modelChoices.map((id) => {
-      const details = getModels(provider).find((modelInfo) => modelInfo.id === id);
-      return {
-        value: id,
-        label: id,
-        hint: details?.name ?? undefined,
-      };
-    }),
+    options: modelChoices.map((id) => ({
+      value: id,
+      label: id,
+      hint: modelHintForChoice(provider, id),
+    })),
   });
 
   if (clack.isCancel(model)) {
-    clack.cancel("Setup cancelled.");
-    return;
+    return null;
   }
 
   const resolvedModel = resolveModel(provider, model);
@@ -254,8 +341,7 @@ export async function runSetup(env: NodeJS.ProcessEnv = process.env): Promise<vo
       });
 
       if (clack.isCancel(retry)) {
-        clack.cancel("Setup cancelled.");
-        return;
+        return null;
       }
 
       if (!retry) {
@@ -281,7 +367,7 @@ export async function runSetup(env: NodeJS.ProcessEnv = process.env): Promise<vo
     working.credentials,
   );
 
-  writeConfig(nextConfig, env);
+  writeConfig(nextConfig, options.env);
 
   clack.note(
     [
@@ -291,6 +377,55 @@ export async function runSetup(env: NodeJS.ProcessEnv = process.env): Promise<vo
     ].join("\n"),
     "Configuration saved",
   );
+
+  if (!options.skipIntroOutro) {
+    clack.outro("Try it: " + ui.bold("agenr extract <transcript.jsonl>"));
+  }
+
+  return {
+    auth,
+    provider,
+    model: resolvedModel.modelId,
+    config: nextConfig,
+    changed: true,
+  };
+}
+
+export const setupRuntime = {
+  runSetupCore,
+};
+
+export async function runSetup(env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  clack.intro(banner());
+
+  const existing = readConfig(env);
+  if (existing) {
+    clack.note(formatExistingConfig(existing), "Current config");
+    const reconfigure = await clack.confirm({
+      message: "Reconfigure?",
+      initialValue: true,
+    });
+
+    if (clack.isCancel(reconfigure)) {
+      clack.cancel("Setup cancelled.");
+      return;
+    }
+
+    if (!reconfigure) {
+      clack.cancel("Setup unchanged.");
+      return;
+    }
+  }
+
+  const result = await setupRuntime.runSetupCore({
+    env,
+    existingConfig: existing,
+    skipIntroOutro: true,
+  });
+  if (!result) {
+    clack.cancel("Setup cancelled.");
+    return;
+  }
 
   clack.outro("Try it: " + ui.bold("agenr extract <transcript.jsonl>"));
 }

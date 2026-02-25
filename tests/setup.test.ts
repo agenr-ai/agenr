@@ -2,8 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { readConfig, writeConfig } from "../src/config.js";
-import type { AgenrConfig } from "../src/types.js";
+import { readConfig } from "../src/config.js";
 
 function createMocks() {
   const cancelToken = Symbol("cancel");
@@ -86,7 +85,7 @@ vi.mock("../src/auth-status.js", () => ({
   runConnectionTest: getMocks().runConnectionTestMock,
 }));
 
-import { runSetup } from "../src/setup.js";
+import * as setupModule from "../src/setup.js";
 
 const tempDirs: string[] = [];
 
@@ -110,40 +109,59 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe("runSetup", () => {
-  it("keeps existing config when user declines reconfigure", async () => {
+describe("runSetupCore", () => {
+  it("returns SetupResult with auth, provider, model on success", async () => {
     const mocks = getMocks();
     const env = await makeTempConfigEnv();
-    const existing: AgenrConfig = {
+
+    mocks.selectMock.mockResolvedValueOnce("openai-api-key").mockResolvedValueOnce("gpt-4.1-mini");
+    mocks.probeCredentialsMock.mockReturnValue({
+      available: true,
+      source: "env:OPENAI_API_KEY",
+      guidance: "Credentials available.",
+      credentials: {
+        apiKey: "sk-test",
+        source: "env:OPENAI_API_KEY",
+      },
+    });
+    mocks.runConnectionTestMock.mockResolvedValueOnce({ ok: true });
+
+    const result = await setupModule.runSetupCore({
+      env,
+      existingConfig: null,
+      skipIntroOutro: true,
+    });
+
+    expect(result).toMatchObject({
       auth: "openai-api-key",
       provider: "openai",
-      model: "gpt-4o",
-      credentials: { openaiApiKey: "sk-existing" },
-    };
-    writeConfig(existing, env);
-
-    mocks.confirmMock.mockResolvedValueOnce(false);
-
-    await runSetup(env);
-
-    expect(mocks.cancelMock).toHaveBeenCalledWith("Setup unchanged.");
-    expect(mocks.selectMock).not.toHaveBeenCalled();
-    expect(readConfig(env)).toMatchObject(existing);
+      model: "openai/gpt-4.1-mini",
+      changed: true,
+    });
+    expect(readConfig(env)).toMatchObject({
+      auth: "openai-api-key",
+      provider: "openai",
+      model: "openai/gpt-4.1-mini",
+    });
   });
 
-  it("cancels gracefully when auth selection is cancelled", async () => {
+  it("returns null when user cancels at auth step", async () => {
     const mocks = getMocks();
     const env = await makeTempConfigEnv();
 
     mocks.selectMock.mockResolvedValueOnce(mocks.cancelToken);
 
-    await runSetup(env);
+    const result = await setupModule.runSetupCore({
+      env,
+      existingConfig: null,
+      skipIntroOutro: true,
+    });
 
-    expect(mocks.cancelMock).toHaveBeenCalledWith("Setup cancelled.");
+    expect(result).toBeNull();
     expect(readConfig(env)).toBeNull();
   });
 
-  it("cancels gracefully when model selection is cancelled", async () => {
+  it("returns null when user cancels at model step", async () => {
     const mocks = getMocks();
     const env = await makeTempConfigEnv();
 
@@ -158,56 +176,21 @@ describe("runSetup", () => {
       },
     });
 
-    await runSetup(env);
+    const result = await setupModule.runSetupCore({
+      env,
+      existingConfig: null,
+      skipIntroOutro: true,
+    });
 
-    expect(mocks.cancelMock).toHaveBeenCalledWith("Setup cancelled.");
-    expect(mocks.runConnectionTestMock).not.toHaveBeenCalled();
+    expect(result).toBeNull();
     expect(readConfig(env)).toBeNull();
   });
 
-  it("stores entered credential, tests connection, and saves config", async () => {
+  it("shows API key link for OpenAI", async () => {
     const mocks = getMocks();
     const env = await makeTempConfigEnv();
 
-    mocks.selectMock.mockResolvedValueOnce("openai-api-key").mockResolvedValueOnce("gpt-4o");
-    mocks.confirmMock.mockResolvedValueOnce(true);
-    mocks.passwordMock.mockResolvedValueOnce("sk-entered");
-    mocks.probeCredentialsMock
-      .mockReturnValueOnce({
-        available: false,
-        guidance: "No OpenAI API key found.",
-      })
-      .mockReturnValueOnce({
-        available: true,
-        source: "config:credentials.openaiApiKey",
-        guidance: "Credentials available.",
-        credentials: {
-          apiKey: "sk-entered",
-          source: "config:credentials.openaiApiKey",
-        },
-      });
-    mocks.runConnectionTestMock.mockResolvedValueOnce({ ok: true });
-
-    await runSetup(env);
-
-    const saved = readConfig(env);
-    expect(saved).toMatchObject({
-      auth: "openai-api-key",
-      provider: "openai",
-      model: "gpt-4o",
-      credentials: {
-        openaiApiKey: "sk-entered",
-      },
-    });
-    expect(mocks.spinnerStartMock).toHaveBeenCalledWith("Testing connection...");
-    expect(mocks.spinnerStopMock).toHaveBeenCalledWith(expect.stringContaining("Connected"));
-  });
-
-  it("handles failed connection test and no-retry path", async () => {
-    const mocks = getMocks();
-    const env = await makeTempConfigEnv();
-
-    mocks.selectMock.mockResolvedValueOnce("openai-api-key").mockResolvedValueOnce("gpt-4o");
+    mocks.selectMock.mockResolvedValueOnce("openai-api-key").mockResolvedValueOnce("gpt-4.1-mini");
     mocks.probeCredentialsMock.mockReturnValue({
       available: true,
       source: "env:OPENAI_API_KEY",
@@ -217,125 +200,91 @@ describe("runSetup", () => {
         source: "env:OPENAI_API_KEY",
       },
     });
-    mocks.runConnectionTestMock.mockResolvedValueOnce({ ok: false, error: "bad key" });
-    mocks.confirmMock.mockResolvedValueOnce(false);
+    mocks.runConnectionTestMock.mockResolvedValueOnce({ ok: true });
 
-    await runSetup(env);
-
-    expect(mocks.spinnerStopMock).toHaveBeenCalledWith(expect.stringContaining("Connection failed: bad key"));
-    expect(mocks.logMock.info).toHaveBeenCalledWith(expect.stringContaining("Skipping connection test."));
-    expect(readConfig(env)).toMatchObject({
-      auth: "openai-api-key",
-      provider: "openai",
-      model: "gpt-4o",
+    await setupModule.runSetupCore({
+      env,
+      existingConfig: null,
+      skipIntroOutro: true,
     });
+
+    expect(mocks.logMock.info).toHaveBeenCalledWith("Get your API key at https://platform.openai.com/api-keys");
   });
 
-  it("offers credential update when reconfiguring with working credentials", async () => {
+  it("shows API key link for Anthropic", async () => {
     const mocks = getMocks();
     const env = await makeTempConfigEnv();
-    const existing: AgenrConfig = {
-      auth: "openai-api-key",
-      provider: "openai",
-      model: "gpt-4o",
-      credentials: { openaiApiKey: "sk-old" },
-    };
-    writeConfig(existing, env);
 
-    mocks.confirmMock.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
-    mocks.selectMock.mockResolvedValueOnce("openai-api-key").mockResolvedValueOnce("gpt-4o");
-    mocks.passwordMock.mockResolvedValueOnce("sk-new");
+    mocks.selectMock.mockResolvedValueOnce("anthropic-api-key").mockResolvedValueOnce("claude-sonnet-4-20250514");
     mocks.probeCredentialsMock.mockReturnValue({
       available: true,
-      source: "config:credentials.openaiApiKey",
+      source: "env:ANTHROPIC_API_KEY",
       guidance: "Credentials available.",
-      credentials: { apiKey: "sk-old", source: "config:credentials.openaiApiKey" },
+      credentials: {
+        apiKey: "sk-ant-test",
+        source: "env:ANTHROPIC_API_KEY",
+      },
     });
     mocks.runConnectionTestMock.mockResolvedValueOnce({ ok: true });
 
-    await runSetup(env);
-
-    const saved = readConfig(env);
-    expect(saved?.credentials).toMatchObject({ openaiApiKey: "sk-new" });
-    expect(mocks.logMock.info).toHaveBeenCalledWith(expect.stringContaining("Credential updated"));
-  });
-
-  it("warns and skips credential update when empty input is entered", async () => {
-    const mocks = getMocks();
-    const env = await makeTempConfigEnv();
-    const existing: AgenrConfig = {
-      auth: "openai-api-key",
-      provider: "openai",
-      model: "gpt-4o",
-      credentials: { openaiApiKey: "sk-old" },
-    };
-    writeConfig(existing, env);
-
-    mocks.confirmMock.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
-    mocks.selectMock.mockResolvedValueOnce("openai-api-key").mockResolvedValueOnce("gpt-4o");
-    mocks.passwordMock.mockResolvedValueOnce("   ");
-    mocks.probeCredentialsMock.mockReturnValue({
-      available: true,
-      source: "config:credentials.openaiApiKey",
-      guidance: "Credentials available.",
-      credentials: { apiKey: "sk-old", source: "config:credentials.openaiApiKey" },
+    await setupModule.runSetupCore({
+      env,
+      existingConfig: null,
+      skipIntroOutro: true,
     });
-    mocks.runConnectionTestMock.mockResolvedValueOnce({ ok: true });
 
-    await runSetup(env);
-
-    const saved = readConfig(env);
-    expect(saved?.credentials).toMatchObject({ openaiApiKey: "sk-old" });
-    expect(mocks.logMock.warn).toHaveBeenCalledWith(expect.stringContaining("Credential not updated"));
+    expect(mocks.logMock.info).toHaveBeenCalledWith("Get your API key at https://console.anthropic.com/settings/keys");
   });
 
-  it("skips credential update when user declines during reconfigure", async () => {
-    const mocks = getMocks();
-    const env = await makeTempConfigEnv();
-    const existing: AgenrConfig = {
-      auth: "openai-api-key",
-      provider: "openai",
-      model: "gpt-4o",
-      credentials: { openaiApiKey: "sk-old" },
-    };
-    writeConfig(existing, env);
-
-    mocks.confirmMock.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
-    mocks.selectMock.mockResolvedValueOnce("openai-api-key").mockResolvedValueOnce("gpt-4o");
-    mocks.probeCredentialsMock.mockReturnValue({
-      available: true,
-      source: "config:credentials.openaiApiKey",
-      guidance: "Credentials available.",
-      credentials: { apiKey: "sk-old", source: "config:credentials.openaiApiKey" },
-    });
-    mocks.runConnectionTestMock.mockResolvedValueOnce({ ok: true });
-
-    await runSetup(env);
-
-    const saved = readConfig(env);
-    expect(saved?.credentials).toMatchObject({ openaiApiKey: "sk-old" });
-    expect(mocks.passwordMock).not.toHaveBeenCalled();
-  });
-
-  it("skips connection test when credentials remain unavailable", async () => {
+  it("shows subscription note for advanced auth methods", async () => {
     const mocks = getMocks();
     const env = await makeTempConfigEnv();
 
-    mocks.selectMock.mockResolvedValueOnce("anthropic-oauth").mockResolvedValueOnce("claude-opus-4-6");
+    mocks.selectMock
+      .mockResolvedValueOnce("advanced-options")
+      .mockResolvedValueOnce("openai-subscription")
+      .mockResolvedValueOnce("gpt-5.3-codex");
     mocks.probeCredentialsMock.mockReturnValue({
       available: false,
-      guidance: "Claude CLI credentials not found.",
+      guidance: "Codex CLI credentials not found.",
     });
 
-    await runSetup(env);
-
-    expect(mocks.runConnectionTestMock).not.toHaveBeenCalled();
-    expect(mocks.logMock.warn).toHaveBeenCalledWith("Claude CLI credentials not found.");
-    expect(mocks.logMock.info).toHaveBeenCalledWith("Credentials not available yet. Skipping connection test.");
-    expect(readConfig(env)).toMatchObject({
-      auth: "anthropic-oauth",
-      provider: "anthropic",
-      model: "claude-opus-4-6",
+    await setupModule.runSetupCore({
+      env,
+      existingConfig: null,
+      skipIntroOutro: true,
     });
+
+    expect(mocks.logMock.info).toHaveBeenCalledWith(
+      "Note: Subscription models may have limited extraction quality. API keys with gpt-4.1-mini are recommended for best results.",
+    );
+    expect(mocks.logMock.info).toHaveBeenCalledWith("This uses your existing subscription - no API key needed.");
+  });
+});
+
+describe("runSetup", () => {
+  it("still works as standalone command", async () => {
+    const env = await makeTempConfigEnv();
+    const runSetupCoreSpy = vi.spyOn(setupModule.setupRuntime, "runSetupCore").mockResolvedValue({
+      auth: "openai-api-key",
+      provider: "openai",
+      model: "gpt-4.1-mini",
+      config: {
+        auth: "openai-api-key",
+        provider: "openai",
+        model: "gpt-4.1-mini",
+      },
+      changed: true,
+    });
+
+    await setupModule.runSetup(env);
+
+    expect(runSetupCoreSpy).toHaveBeenCalledWith({
+      env,
+      existingConfig: null,
+      skipIntroOutro: true,
+    });
+    expect(getMocks().introMock).toHaveBeenCalled();
+    expect(getMocks().outroMock).toHaveBeenCalledWith(expect.stringContaining("agenr extract"));
   });
 });

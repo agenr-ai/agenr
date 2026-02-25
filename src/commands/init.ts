@@ -1,6 +1,10 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import * as clack from "@clack/prompts";
+import { readConfig } from "../config.js";
+import { formatExistingConfig, runSetupCore } from "../setup.js";
+import { banner, ui } from "../ui.js";
 
 function escapeTomlString(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\r/g, "\\r").replace(/\n/g, "\\n").replace(/\t/g, "\\t");
@@ -25,6 +29,14 @@ const PLATFORM_VALUES = ["claude-code", "cursor", "openclaw", "windsurf", "codex
 export type InitPlatform = (typeof PLATFORM_VALUES)[number];
 
 export interface InitCommandOptions {
+  platform?: string;
+  project?: string;
+  path?: string;
+  dependsOn?: string;
+}
+
+export interface WizardOptions {
+  isInteractive: boolean;
   platform?: string;
   project?: string;
   path?: string;
@@ -476,4 +488,65 @@ export async function runInitCommand(options: InitCommandOptions): Promise<InitC
     mcpSkipped,
     gitignoreUpdated,
   };
+}
+
+export const initWizardRuntime = {
+  runInitCommand,
+  formatInitSummary,
+  readConfig,
+  formatExistingConfig,
+  runSetupCore,
+};
+
+export async function runInitWizard(options: WizardOptions): Promise<void> {
+  const shouldRunInteractive = options.isInteractive && !options.platform && !options.project;
+
+  if (!shouldRunInteractive) {
+    const result = await initWizardRuntime.runInitCommand(options);
+    for (const line of initWizardRuntime.formatInitSummary(result)) {
+      process.stdout.write(`${line}\n`);
+    }
+    return;
+  }
+
+  clack.intro(banner());
+
+  const env = process.env;
+  const existingConfig = initWizardRuntime.readConfig(env);
+
+  if (existingConfig) {
+    clack.note(initWizardRuntime.formatExistingConfig(existingConfig), "Current config");
+    const reconfigure = await clack.confirm({
+      message: "Reconfigure?",
+      initialValue: false,
+    });
+    if (clack.isCancel(reconfigure)) {
+      clack.cancel("Setup cancelled.");
+      return;
+    }
+    if (!reconfigure) {
+      clack.outro("Setup unchanged.");
+      return;
+    }
+  }
+
+  const setupResult = await initWizardRuntime.runSetupCore({
+    env,
+    existingConfig,
+    skipIntroOutro: true,
+  });
+
+  if (!setupResult) {
+    clack.cancel("Setup cancelled.");
+    return;
+  }
+
+  // TODO Phase 2: platform selection, project wiring, reconfigure cascade
+  // TODO Phase 3: plugin install, first ingest, watcher setup
+
+  clack.outro(
+    "Setup complete. Run " +
+      ui.bold("agenr init") +
+      " again after the next update for the full wizard experience.",
+  );
 }

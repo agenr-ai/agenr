@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.9.0 (2026-02-25)
+
+### Features
+- Interactive onboarding wizard foundation for `agenr init` (#170 Phase 1)
+- Auth setup shows API key links (platform.openai.com, console.anthropic.com)
+- Subscription auth methods moved to "Advanced options" submenu
+- Default recommended model changed to gpt-4.1-mini
+
+### Changed
+- Refactored setup.ts: extracted `runSetupCore()` for programmatic use
+- Non-interactive init behavior preserved when CLI flags are provided
+- Version bumped to 0.9.0
+
 ## [0.8.39] - 2025-02-25
 
 ### Features

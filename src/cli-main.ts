@@ -29,7 +29,7 @@ import { runEvalRecallCommand } from "./commands/eval.js";
 import { runHealthCommand } from "./commands/health.js";
 import { runIngestCommand } from "./commands/ingest.js";
 import { runContextCommand } from "./commands/context.js";
-import { formatInitSummary, runInitCommand } from "./commands/init.js";
+import { runInitWizard } from "./commands/init.js";
 import { runMcpCommand } from "./commands/mcp.js";
 import { runRecallCommand } from "./commands/recall.js";
 import { runRetireCommand } from "./commands/retire.js";
@@ -821,10 +821,8 @@ export function createProgram(): Command {
     .option("--path <dir>", "Project directory (default: current working directory)")
     .option("--depends-on <slug,...>", "Comma-separated dependency project slugs")
     .action(async (opts: { platform?: string; project?: string; path?: string; dependsOn?: string }) => {
-      const result = await runInitCommand(opts);
-      for (const line of formatInitSummary(result)) {
-        process.stdout.write(`${line}\n`);
-      }
+      const isInteractive = Boolean(process.stdout.isTTY) && !opts.platform && !opts.project;
+      await runInitWizard({ ...opts, isInteractive });
       process.exitCode = 0;
     });
 
