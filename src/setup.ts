@@ -404,11 +404,21 @@ export async function runSetupCore(options: SetupCoreOptions): Promise<SetupResu
 
   writeConfig(nextConfig, options.env);
 
+  // Determine embeddings status for summary
+  let embeddingStatus: string;
+  try {
+    resolveEmbeddingApiKey(nextConfig, options.env);
+    embeddingStatus = "OpenAI (text-embedding-3-small)";
+  } catch {
+    embeddingStatus = ui.warn("not configured") + " - run: agenr config set-key openai <key>";
+  }
+
   clack.note(
     [
       formatLabel("Auth", describeAuth(auth)),
       formatLabel("Provider", provider),
       formatLabel("Model", resolvedModel.modelId),
+      formatLabel("Embeddings", embeddingStatus),
     ].join("\n"),
     "Configuration saved",
   );
