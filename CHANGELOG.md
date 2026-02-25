@@ -41,6 +41,9 @@
 
 ### Fixed
 - Test isolation: init wizard tests use isolated config path via `AGENR_CONFIG_PATH`
+- fix(init): `installOpenClawPlugin` now passes `OPENCLAW_HOME` env to all
+  OpenClaw CLI calls, preventing production config overwrites when targeting
+  a non-default directory (e.g. sandbox)
 
 ## [0.8.40] - 2026-02-25
 
