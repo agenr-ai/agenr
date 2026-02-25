@@ -421,6 +421,35 @@ Bulk dedup: 47 entries skipped (hash/MinHash).
 Duration: 38s
 ```
 
+## `benchmark`
+
+Run benchmark session fixtures and score extraction output against rubric files.
+
+### Syntax
+
+```bash
+agenr benchmark [options]
+```
+
+### Options
+- `--model <model>`: override model for this benchmark run.
+- `--provider <name>`: `anthropic|openai|openai-codex`.
+- `--log-dir <path>`: write per-chunk extraction request/response debug logs.
+- `--session <name>`: run one session only (for example `01-personal-disclosures`).
+- `--runs <n>`: number of repeated runs for averaging (default `1`).
+- `--json`: emit full benchmark result JSON.
+- `--verbose`: print per-rule match details, skip violations, and run variance.
+
+Benchmarks force extraction temperature to `0` when supported by the provider/model.
+Output includes reproducibility fields: `prompt_hash`, `fixture_hash`, `agenr_version`,
+model, and run count.
+
+### Example
+
+```bash
+$A benchmark --runs 3
+```
+
 ## `consolidate`
 
 ### Syntax

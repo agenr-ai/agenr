@@ -1614,6 +1614,7 @@ async function deduplicateBatchWithLlm(params: {
   model: Model<Api>;
   apiKey: string;
   verbose: boolean;
+  temperature?: number;
   onVerbose?: (line: string) => void;
   onStreamDelta?: (delta: string, kind: "text" | "thinking") => void;
   streamSimpleImpl?: StreamSimpleFn;
@@ -1636,13 +1637,16 @@ async function deduplicateBatchWithLlm(params: {
     tools: [SUBMIT_DEDUPED_KNOWLEDGE_TOOL],
   };
 
+  const streamOptions = {
+    apiKey: params.apiKey,
+    reasoning: params.verbose ? ("low" as const) : undefined,
+    temperature: params.temperature,
+  };
+
   const assistantMessage = await runSimpleStream({
     model: params.model,
     context,
-    options: {
-      apiKey: params.apiKey,
-      reasoning: params.verbose ? "low" : undefined,
-    },
+    options: streamOptions,
     verbose: params.verbose,
     onVerbose: params.onVerbose,
     onStreamDelta: params.onStreamDelta,
@@ -1675,6 +1679,7 @@ async function deduplicateEntriesWithLlm(params: {
   entries: KnowledgeEntry[];
   client: LlmClient;
   verbose: boolean;
+  temperature?: number;
   onVerbose?: (line: string) => void;
   onStreamDelta?: (delta: string, kind: "text" | "thinking") => void;
   streamSimpleImpl?: StreamSimpleFn;
@@ -1697,6 +1702,7 @@ async function deduplicateEntriesWithLlm(params: {
         model: params.client.resolvedModel.model,
         apiKey: params.client.credentials.apiKey,
         verbose: params.verbose,
+        temperature: params.temperature,
         onVerbose: params.onVerbose,
         onStreamDelta: params.onStreamDelta,
         streamSimpleImpl: params.streamSimpleImpl,
@@ -1754,6 +1760,75 @@ async function sleepMs(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function sanitizeLogSegment(value: string): string {
+  const cleaned = value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+  return cleaned.length > 0 ? cleaned.slice(0, 80) : "chunk";
+}
+
+async function writeExtractionDebugLog(params: {
+  logDir?: string;
+  logAll?: boolean;
+  file: string;
+  chunk: TranscriptChunk;
+  systemPrompt: string;
+  userPrompt: string;
+  maxTokens?: number;
+  temperature?: number;
+  response?: AssistantMessage;
+  error?: unknown;
+}): Promise<void> {
+  if (!params.logAll || !params.logDir) {
+    return;
+  }
+
+  try {
+    await fs.mkdir(params.logDir, { recursive: true });
+
+    const fileStem = sanitizeLogSegment(path.basename(params.file, path.extname(params.file)));
+    const chunkLabel = String(params.chunk.chunk_index + 1).padStart(4, "0");
+    const fileName = `${fileStem}-chunk-${chunkLabel}-${Date.now()}.json`;
+    const logPath = path.join(params.logDir, fileName);
+
+    const payload = {
+      at: new Date().toISOString(),
+      file: params.file,
+      chunk: {
+        chunk_index: params.chunk.chunk_index,
+        message_start: params.chunk.message_start,
+        message_end: params.chunk.message_end,
+        context_hint: params.chunk.context_hint,
+      },
+      request: {
+        systemPrompt: params.systemPrompt,
+        userPrompt: params.userPrompt,
+        maxTokens: params.maxTokens,
+        temperature: params.temperature,
+      },
+      response: params.response
+        ? {
+            stopReason: params.response.stopReason,
+            errorMessage: params.response.errorMessage,
+            content: params.response.content,
+          }
+        : undefined,
+      error:
+        params.error instanceof Error
+          ? {
+              name: params.error.name,
+              message: params.error.message,
+              stack: params.error.stack,
+            }
+          : params.error !== undefined
+            ? String(params.error)
+            : undefined,
+    };
+
+    await fs.writeFile(logPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  } catch {
+    // best-effort logging only
+  }
+}
+
 function validateExtractedEntries(
   rawEntries: KnowledgeEntry[],
   platform: KnowledgePlatform | (string & {}) | undefined,
@@ -1799,9 +1874,10 @@ async function extractChunkOnce(params: {
   related?: StoredEntry[];
 }): Promise<{ entries: KnowledgeEntry[]; warnings: string[] }> {
   const prompt = buildUserPrompt(params.chunk, params.related);
+  const effectiveSystemPrompt = params.systemPrompt ?? SYSTEM_PROMPT;
 
   const context: Context = {
-    systemPrompt: params.systemPrompt ?? SYSTEM_PROMPT,
+    systemPrompt: effectiveSystemPrompt,
     messages: [
       {
         role: "user",
@@ -1812,18 +1888,49 @@ async function extractChunkOnce(params: {
     tools: [SUBMIT_KNOWLEDGE_TOOL],
   };
 
-  const assistantMessage = await runSimpleStream({
-    model: params.model,
-    context,
-    options: {
-      apiKey: params.apiKey,
+  const streamOptions = {
+    apiKey: params.apiKey,
+    maxTokens: params.maxTokens,
+    reasoning: params.verbose ? ("low" as const) : undefined,
+    temperature: params.temperature,
+  };
+
+  let assistantMessage: AssistantMessage;
+  try {
+    assistantMessage = await runSimpleStream({
+      model: params.model,
+      context,
+      options: streamOptions,
+      verbose: params.verbose,
+      onVerbose: params.onVerbose,
+      onStreamDelta: params.onStreamDelta,
+      streamSimpleImpl: params.streamSimpleImpl,
+    });
+  } catch (error) {
+    await writeExtractionDebugLog({
+      logDir: params.logDir,
+      logAll: params.logAll,
+      file: params.file,
+      chunk: params.chunk,
+      systemPrompt: effectiveSystemPrompt,
+      userPrompt: prompt,
       maxTokens: params.maxTokens,
-      reasoning: params.verbose ? "low" : undefined,
-    },
-    verbose: params.verbose,
-    onVerbose: params.onVerbose,
-    onStreamDelta: params.onStreamDelta,
-    streamSimpleImpl: params.streamSimpleImpl,
+      temperature: params.temperature,
+      error,
+    });
+    throw error;
+  }
+
+  await writeExtractionDebugLog({
+    logDir: params.logDir,
+    logAll: params.logAll,
+    file: params.file,
+    chunk: params.chunk,
+    systemPrompt: effectiveSystemPrompt,
+    userPrompt: prompt,
+    maxTokens: params.maxTokens,
+    temperature: params.temperature,
+    response: assistantMessage,
   });
 
   const warnings: string[] = [];
@@ -2010,6 +2117,9 @@ export async function extractKnowledgeFromChunks(params: {
   watchMode?: boolean;
   platform?: KnowledgePlatform | (string & {});
   noDedup?: boolean;
+  temperature?: number;
+  logDir?: string;
+  logAll?: boolean;
   interChunkDelayMs?: number;
   llmConcurrency?: number;
   onVerbose?: (line: string) => void;
@@ -2021,7 +2131,6 @@ export async function extractKnowledgeFromChunks(params: {
   db?: Client;
   embeddingApiKey?: string;
   noPreFetch?: boolean;
-  logDir?: string;
   embedFn?: (texts: string[], apiKey: string) => Promise<number[][]>;
   /** Shared warning state across calls; pass one object per ingest run to dedupe one-time logs. */
   onceFlags?: ExtractRunOnceFlags;
@@ -2323,6 +2432,7 @@ export async function extractKnowledgeFromChunks(params: {
       entries: finalEntries,
       client: params.client,
       verbose: params.verbose,
+      temperature: params.temperature,
       onVerbose: params.onVerbose,
       onStreamDelta: params.onStreamDelta,
       streamSimpleImpl: params.streamSimpleImpl,

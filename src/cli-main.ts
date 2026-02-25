@@ -24,6 +24,7 @@ import {
   runDaemonUninstallCommand,
 } from "./commands/daemon.js";
 import { runConsolidateCommand } from "./commands/consolidate.js";
+import { runBenchmarkCommand } from "./commands/benchmark.js";
 import { runEvalRecallCommand } from "./commands/eval.js";
 import { runHealthCommand } from "./commands/health.js";
 import { runIngestCommand } from "./commands/ingest.js";
@@ -49,6 +50,7 @@ import { banner, formatError, formatLabel, formatSuccess, formatWarn, ui } from 
 import { APP_VERSION } from "./version.js";
 import type { ExtractionReport, ExtractionStats } from "./types.js";
 import type { ConsolidateCommandOptions } from "./commands/consolidate.js";
+import type { BenchmarkCommandOptions } from "./commands/benchmark.js";
 import type { DaemonInstallOptions, DaemonLogsOptions, DaemonStatusOptions, DaemonUninstallOptions } from "./commands/daemon.js";
 import type { IngestCommandOptions } from "./commands/ingest.js";
 import type { WatchCommandOptions } from "./commands/watch.js";
@@ -745,6 +747,21 @@ export function createProgram(): Command {
         ...opts,
         noPreFetch: opts.noPreFetch === true,
       });
+      process.exitCode = result.exitCode;
+    });
+
+  program
+    .command("benchmark")
+    .description("Run extraction benchmark sessions and score against rubrics")
+    .option("--model <model>", "LLM model to use")
+    .option("--provider <name>", "LLM provider: anthropic, openai, openai-codex")
+    .option("--log-dir <path>", "Write extraction debug logs to directory")
+    .option("--session <name>", "Run only one benchmark session")
+    .option("--runs <n>", "Number of runs for averaging", parseIntOption, 1)
+    .option("--json", "Output benchmark result as JSON", false)
+    .option("--verbose", "Show per-entry benchmark details", false)
+    .action(async (opts: BenchmarkCommandOptions) => {
+      const result = await runBenchmarkCommand(opts);
       process.exitCode = result.exitCode;
     });
 
