@@ -14,7 +14,16 @@ export const ui = {
 };
 
 export function banner(): string {
-  return ui.header("AGENR") + ui.dim(" -- AGENt memoRy");
+  const lines = [
+    chalk.hex("#8B5CF6")(" █████╗  ██████╗ ███████╗███╗   ██╗██████╗"),
+    chalk.hex("#9B6BF7")("██╔══██╗██╔════╝ ██╔════╝████╗  ██║██╔══██╗"),
+    chalk.hex("#B88DF0")("███████║██║  ███╗█████╗  ██╔██╗ ██║██████╔╝"),
+    chalk.hex("#C9A046")("██╔══██║██║   ██║██╔══╝  ██║╚██╗██║██╔══██╗"),
+    chalk.hex("#D4AA40")("██║  ██║╚██████╔╝███████╗██║ ╚████║██║  ██║"),
+    chalk.hex("#E0B830")("╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝╚═╝  ╚═╝"),
+  ];
+
+  return `${lines.join("\n")}\n${ui.dim("  AGENt memoRy")}`;
 }
 
 export function formatLabel(label: string, value: string): string {
