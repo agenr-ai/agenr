@@ -1,64 +1,34 @@
 # Changelog
 
-## 0.9.5 (2026-02-25)
-
-- Current config display now shows all registered projects with directories and database isolation status
-
-## 0.9.4 (2026-02-25)
-
-- Refactor: global projects map keyed by directory path instead of project slug
-- Multiple instances can now share the same project slug with isolated databases
-- Removed slug collision warning (no longer applicable)
-- `resolveProjectFromGlobalConfig` uses direct key lookup (O(1) instead of iteration)
-
-## 0.9.3 (2026-02-25)
-
-### Fixed
-- Test isolation hardening for init wizard coverage: `src/commands/init.test.ts` now forces `AGENR_CONFIG_PATH` to a per-test temp config path and restores it in teardown, preventing tests from reading or writing real `~/.agenr/config.json`
-- Updated global-config assertions in init tests to read the isolated config path, so tests no longer depend on home-directory config locations
-
-## 0.9.2 (2026-02-25)
-
-### Added
-- Added embeddings API key connectivity check in setup via new `runEmbeddingConnectionTest` helper
-  - Sends a minimal embeddings request (`"connection test"`) and verifies a non-empty vector is returned
-  - Handles API and transport errors with user-facing messages
-
-### Changed
-- Setup now tests embeddings connectivity immediately after entering or updating the OpenAI embeddings key
-  - Applies to embeddings-only update flow and the main setup flow for non-OpenAI extraction auth
-  - Uses spinner + retry prompt and allows explicit skip with guidance to run `agenr auth status`
-- `agenr auth status` now includes a separate embeddings diagnostics line in addition to extraction auth status
-- Added regression coverage for embeddings connection helper and setup retry/skip/update flows
-
-## 0.9.1 (2026-02-25)
-
-### Changed
-- `agenr init` now stores OpenClaw and Codex project settings in the global config at `~/.agenr/config.json` under a new `projects` map instead of writing `<projectDir>/.agenr/config.json` for those global platforms
-- Reconfigure flow now checks the global `projects` map first (matched by `projectDir`) and falls back to per-repo `.agenr/config.json`, so existing per-repo platforms continue to work unchanged
-- Wizard summary now prints the resolved config path so global platforms show `~/.agenr/config.json` and per-repo platforms show `.agenr/config.json` under the project directory
-
-### Added
-- `AgenrConfig.projects` type and config normalization for global project entries (`platform`, `projectDir`, optional `dbPath`, optional `dependencies`)
-- `resolveProjectFromGlobalConfig(projectDir)` helper in `src/config.ts` for resolving global project metadata by directory
-- OpenClaw DB isolation follow-up integration in init flow: selected isolated DB path is now persisted as `projects.<slug>.dbPath`
-
 ## 0.9.0 (2026-02-25)
 
 ### Features
-- Interactive onboarding wizard foundation for `agenr init` (#170 Phase 1)
-- Auth setup shows API key links (platform.openai.com, console.anthropic.com)
-- Subscription auth methods moved to "Advanced options" submenu
-- Default recommended model changed to gpt-4.1-mini
-- Platform auto-detection for OpenClaw and Codex (macOS, Linux, Windows paths)
-- Project slug derivation with interactive edit
-- Reconfigure mode: re-run `agenr init` to change individual settings with "keep current" defaults
-- Change tracking for auth/model to enable re-ingest offers (Phase 3)
+- Interactive onboarding wizard for `agenr init` (#170)
+  - Auth setup with API key links and connection testing
+  - Embeddings API key connectivity check during setup
+  - Platform auto-detection for OpenClaw and Codex (macOS, Linux, Windows)
+  - OpenClaw directory confirmation with custom path support
+  - DB isolation prompt for non-default OpenClaw paths (shared vs isolated)
+  - Project slug derivation with interactive edit
+  - Reconfigure mode with "keep current" defaults
+  - Change tracking for auth, model, embeddings, directory, and DB path
+- Global projects map in `~/.agenr/config.json` for OpenClaw and Codex
+  - Keyed by directory path (multiple instances can share the same project slug)
+  - Stores platform, project slug, and optional dbPath per instance
+  - Per-repo platforms (Cursor, Claude Code, Windsurf) unchanged
+- Current config display shows all registered projects with directories and DB isolation status
+- `resolveProjectFromGlobalConfig()` helper for O(1) project lookup by directory
+- Shared DB warning when same project slug and same database across instances
 
 ### Changed
 - Refactored setup.ts: extracted `runSetupCore()` for programmatic use
+- Subscription auth methods moved to "Advanced options" submenu
+- Default recommended model changed to gpt-4.1-mini
 - Non-interactive init behavior preserved when CLI flags are provided
-- Version bumped to 0.9.0
+- Skip .gitignore writes for OpenClaw and Codex (not git repos)
+
+### Fixed
+- Test isolation: init wizard tests use isolated config path via `AGENR_CONFIG_PATH`
 
 ## [0.8.39] - 2025-02-25
 
