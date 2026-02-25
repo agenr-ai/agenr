@@ -7,6 +7,10 @@
 - Auth setup shows API key links (platform.openai.com, console.anthropic.com)
 - Subscription auth methods moved to "Advanced options" submenu
 - Default recommended model changed to gpt-4.1-mini
+- Platform auto-detection for OpenClaw and Codex (macOS, Linux, Windows paths)
+- Project slug derivation with interactive edit
+- Reconfigure mode: re-run `agenr init` to change individual settings with "keep current" defaults
+- Change tracking for auth/model to enable re-ingest offers (Phase 3)
 
 ### Changed
 - Refactored setup.ts: extracted `runSetupCore()` for programmatic use

@@ -2,9 +2,11 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import * as clack from "@clack/prompts";
-import { readConfig } from "../config.js";
+import { describeAuth, readConfig } from "../config.js";
 import { formatExistingConfig, runSetupCore } from "../setup.js";
-import { banner, ui } from "../ui.js";
+import { banner } from "../ui.js";
+import { detectPlatforms } from "./init/platform-detector.js";
+import type { DetectedPlatform } from "./init/platform-detector.js";
 
 function escapeTomlString(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\r/g, "\\r").replace(/\n/g, "\\n").replace(/\t/g, "\\t");
@@ -43,6 +45,15 @@ export interface WizardOptions {
   dependsOn?: string;
 }
 
+export interface WizardChanges {
+  authChanged: boolean;
+  modelChanged: boolean;
+  platformChanged: boolean;
+  projectChanged: boolean;
+  previousModel: string | undefined;
+  newModel: string | undefined;
+}
+
 export interface InitCommandResult {
   platform: InitPlatform;
   project: string;
@@ -61,6 +72,18 @@ interface InitConfigFile {
   projectDir?: string;
   dependencies?: string[];
   [key: string]: unknown;
+}
+
+interface ExistingProjectSettings {
+  platform?: InitPlatform;
+  project?: string;
+}
+
+interface WizardSummary {
+  platform: string;
+  project: string;
+  authLabel: string;
+  model: string;
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -343,7 +366,7 @@ async function addGitignoreEntries(projectDir: string, entries: string[]): Promi
   return true;
 }
 
-function resolveProjectSlug(projectDir: string, explicitProject?: string): string {
+export function resolveProjectSlug(projectDir: string, explicitProject?: string): string {
   const source = explicitProject?.trim() || path.basename(projectDir);
   const slug = normalizeSlug(source);
   if (!slug) {
@@ -438,6 +461,91 @@ export function formatInitSummary(result: InitCommandResult): string[] {
   return lines;
 }
 
+function isWizardPlatformId(value: string): value is DetectedPlatform["id"] {
+  return value === "openclaw" || value === "codex";
+}
+
+function formatPlatformLabel(platform: InitPlatform | DetectedPlatform["id"]): string {
+  if (platform === "openclaw") {
+    return "OpenClaw";
+  }
+  if (platform === "codex") {
+    return "Codex";
+  }
+  return platform;
+}
+
+async function readExistingProjectSettings(projectDir: string): Promise<ExistingProjectSettings> {
+  const configPath = path.join(projectDir, ".agenr", "config.json");
+  const config = await readJsonRecord(configPath);
+  if (!config) {
+    return {};
+  }
+
+  const next: ExistingProjectSettings = {};
+  if (typeof config.project === "string" && config.project.trim().length > 0) {
+    next.project = config.project.trim();
+  }
+  if (typeof config.platform === "string" && isPlatform(config.platform)) {
+    next.platform = config.platform;
+  }
+  return next;
+}
+
+async function promptPlatformSelector(platforms: DetectedPlatform[]): Promise<DetectedPlatform | null> {
+  const selectedId = await clack.select<DetectedPlatform["id"]>({
+    message: "Which platform are you using?",
+    options: platforms.map((platform) => ({
+      value: platform.id,
+      label: platform.label,
+      hint: platform.detected ? `detected at ${platform.configDir}` : undefined,
+    })),
+  });
+
+  if (clack.isCancel(selectedId)) {
+    return null;
+  }
+
+  return platforms.find((platform) => platform.id === selectedId) ?? null;
+}
+
+async function choosePlatform(platforms: DetectedPlatform[]): Promise<DetectedPlatform | null> {
+  const detected = platforms.filter((platform) => platform.detected);
+
+  if (detected.length === 1) {
+    const detectedPlatform = detected[0];
+    const useDetected = await clack.confirm({
+      message: `Detected ${detectedPlatform.label} at ${detectedPlatform.configDir}. Use this platform?`,
+      initialValue: true,
+    });
+
+    if (clack.isCancel(useDetected)) {
+      return null;
+    }
+
+    if (useDetected) {
+      return detectedPlatform;
+    }
+    return await promptPlatformSelector(platforms);
+  }
+
+  if (detected.length > 1) {
+    return await promptPlatformSelector(detected);
+  }
+
+  clack.log.info("No known platform config detected. More platforms coming soon.");
+  return await promptPlatformSelector(platforms);
+}
+
+function formatWizardSummary(result: WizardSummary): string {
+  return [
+    `  Platform:  ${result.platform}`,
+    `  Project:   ${result.project}`,
+    `  Auth:      ${result.authLabel}`,
+    `  Model:     ${result.model}`,
+  ].join("\n");
+}
+
 export async function runInitCommand(options: InitCommandOptions): Promise<InitCommandResult> {
   const projectDir = path.resolve(options.path?.trim() || process.cwd());
   if (projectDir === os.homedir()) {
@@ -496,6 +604,7 @@ export const initWizardRuntime = {
   readConfig,
   formatExistingConfig,
   runSetupCore,
+  detectPlatforms,
 };
 
 export async function runInitWizard(options: WizardOptions): Promise<void> {
@@ -512,10 +621,27 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
   clack.intro(banner());
 
   const env = process.env;
+  const projectDir = path.resolve(options.path?.trim() || process.cwd());
   const existingConfig = initWizardRuntime.readConfig(env);
+  const existingProjectSettings = await readExistingProjectSettings(projectDir);
+  const hasExistingConfig =
+    existingConfig !== null || existingProjectSettings.platform !== undefined || existingProjectSettings.project !== undefined;
 
-  if (existingConfig) {
-    clack.note(initWizardRuntime.formatExistingConfig(existingConfig), "Current config");
+  if (hasExistingConfig) {
+    const summaryLines: string[] = [];
+    if (existingConfig) {
+      summaryLines.push(initWizardRuntime.formatExistingConfig(existingConfig));
+    }
+    if (existingProjectSettings.platform) {
+      summaryLines.push(`Platform: ${formatPlatformLabel(existingProjectSettings.platform)}`);
+    }
+    if (existingProjectSettings.project) {
+      summaryLines.push(`Project: ${existingProjectSettings.project}`);
+    }
+    if (summaryLines.length > 0) {
+      clack.note(summaryLines.join("\n"), "Current config");
+    }
+
     const reconfigure = await clack.confirm({
       message: "Reconfigure?",
       initialValue: false,
@@ -530,23 +656,177 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
     }
   }
 
-  const setupResult = await initWizardRuntime.runSetupCore({
-    env,
-    existingConfig,
-    skipIntroOutro: true,
-  });
+  const wizardChanges: WizardChanges = {
+    authChanged: false,
+    modelChanged: false,
+    platformChanged: false,
+    projectChanged: false,
+    previousModel: existingConfig?.model,
+    newModel: existingConfig?.model,
+  };
 
-  if (!setupResult) {
+  let selectedAuth = existingConfig?.auth;
+  let selectedModel = existingConfig?.model;
+  const hasCurrentAuthModel = Boolean(existingConfig?.auth && existingConfig.model && existingConfig.provider);
+
+  if (hasCurrentAuthModel && existingConfig?.auth) {
+    const authAction = await clack.select<"keep" | "change">({
+      message: `Auth: ${describeAuth(existingConfig.auth)} (current)`,
+      options: [
+        { value: "keep", label: "Keep current" },
+        { value: "change", label: "Change..." },
+      ],
+    });
+    if (clack.isCancel(authAction)) {
+      clack.cancel("Setup cancelled.");
+      return;
+    }
+
+    if (authAction === "change") {
+      const setupResult = await initWizardRuntime.runSetupCore({
+        env,
+        existingConfig,
+        skipIntroOutro: true,
+      });
+      if (!setupResult) {
+        clack.cancel("Setup cancelled.");
+        return;
+      }
+      selectedAuth = setupResult.auth;
+      selectedModel = setupResult.model;
+    }
+  } else {
+    const setupResult = await initWizardRuntime.runSetupCore({
+      env,
+      existingConfig,
+      skipIntroOutro: true,
+    });
+    if (!setupResult) {
+      clack.cancel("Setup cancelled.");
+      return;
+    }
+    selectedAuth = setupResult.auth;
+    selectedModel = setupResult.model;
+  }
+
+  wizardChanges.authChanged = existingConfig ? existingConfig.auth !== selectedAuth : false;
+  wizardChanges.modelChanged = existingConfig ? existingConfig.model !== selectedModel : false;
+  wizardChanges.newModel = selectedModel;
+
+  const platforms = initWizardRuntime.detectPlatforms();
+  const currentPlatform =
+    existingProjectSettings.platform && isWizardPlatformId(existingProjectSettings.platform)
+      ? existingProjectSettings.platform
+      : undefined;
+
+  let selectedPlatform: DetectedPlatform | null;
+  if (currentPlatform) {
+    const platformAction = await clack.select<"keep" | "change">({
+      message: `Platform: ${formatPlatformLabel(currentPlatform)} (current)`,
+      options: [
+        { value: "keep", label: "Keep current" },
+        { value: "change", label: "Change..." },
+      ],
+    });
+    if (clack.isCancel(platformAction)) {
+      clack.cancel("Setup cancelled.");
+      return;
+    }
+
+    if (platformAction === "keep") {
+      selectedPlatform =
+        platforms.find((platform) => platform.id === currentPlatform) ?? {
+          id: currentPlatform,
+          label: formatPlatformLabel(currentPlatform),
+          detected: false,
+          configDir: "",
+          sessionsDir: "",
+        };
+    } else {
+      selectedPlatform = await choosePlatform(platforms);
+    }
+  } else {
+    if (existingProjectSettings.platform) {
+      clack.log.info(
+        `Current platform "${existingProjectSettings.platform}" is not supported in this wizard yet. Choose OpenClaw or Codex.`,
+      );
+    }
+    selectedPlatform = await choosePlatform(platforms);
+  }
+
+  if (!selectedPlatform) {
     clack.cancel("Setup cancelled.");
     return;
   }
 
-  // TODO Phase 2: platform selection, project wiring, reconfigure cascade
-  // TODO Phase 3: plugin install, first ingest, watcher setup
+  wizardChanges.platformChanged = existingProjectSettings.platform
+    ? existingProjectSettings.platform !== selectedPlatform.id
+    : false;
 
-  clack.outro(
-    "Setup complete. Run " +
-      ui.bold("agenr init") +
-      " again after the next update for the full wizard experience.",
+  const derivedSlug = resolveProjectSlug(projectDir);
+  let projectSlug: string | null = null;
+
+  if (existingProjectSettings.project) {
+    const projectAction = await clack.select<"keep" | "change">({
+      message: `Project: ${existingProjectSettings.project} (current)`,
+      options: [
+        { value: "keep", label: "Keep current" },
+        { value: "change", label: "Change..." },
+      ],
+    });
+    if (clack.isCancel(projectAction)) {
+      clack.cancel("Setup cancelled.");
+      return;
+    }
+
+    if (projectAction === "keep") {
+      projectSlug = existingProjectSettings.project;
+    }
+  }
+
+  if (!projectSlug) {
+    const enteredProject = await clack.text({
+      message: "Project name:",
+      initialValue: existingProjectSettings.project ?? derivedSlug,
+      placeholder: derivedSlug,
+      validate: (value) => {
+        const trimmed = value.trim();
+        if (!trimmed) {
+          return "Project name is required";
+        }
+        return undefined;
+      },
+    });
+
+    if (clack.isCancel(enteredProject)) {
+      clack.cancel("Setup cancelled.");
+      return;
+    }
+
+    projectSlug = enteredProject.trim();
+  }
+
+  wizardChanges.projectChanged = existingProjectSettings.project
+    ? existingProjectSettings.project !== projectSlug
+    : false;
+
+  const initResult = await initWizardRuntime.runInitCommand({
+    platform: selectedPlatform.id,
+    project: projectSlug,
+    path: options.path,
+    dependsOn: options.dependsOn,
+  });
+
+  clack.note(
+    formatWizardSummary({
+      platform: formatPlatformLabel(initResult.platform),
+      project: initResult.project,
+      authLabel: selectedAuth ? describeAuth(selectedAuth) : "(not set)",
+      model: selectedModel ?? "(not set)",
+    }),
+    "Setup summary",
   );
+
+  clack.log.info(`Wizard changes: ${JSON.stringify(wizardChanges)}`);
+  clack.outro("Setup complete.");
 }
