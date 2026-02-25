@@ -52,7 +52,7 @@ export const AUTH_METHOD_DEFINITIONS: readonly AuthMethodDefinition[] = [
     id: "openai-api-key",
     provider: "openai",
     title: "OpenAI -- API key",
-    setupDescription: "Standard API key from platform.openai.com. Pay per token.",
+    setupDescription: "Standard API key from https://platform.openai.com/api-keys. Pay per token.",
     preferredModels: ["gpt-4.1-nano", "gpt-4.1-mini", "gpt-5-nano"],
   },
 ] as const;
