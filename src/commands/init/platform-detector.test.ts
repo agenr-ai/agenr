@@ -69,8 +69,9 @@ describe("detectPlatforms", () => {
 });
 
 describe("isOnPath", () => {
-  it("isOnPath returns true for node", () => {
-    expect(isOnPath("node")).toBe(true);
+  it("isOnPath returns true for sh (POSIX-guaranteed)", () => {
+    if (process.platform === "win32") return;
+    expect(isOnPath("sh")).toBe(true);
   });
 
   it("isOnPath returns false for nonexistent command", () => {
