@@ -783,6 +783,29 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
     return;
   }
 
+  if (selectedPlatform.id === "openclaw") {
+    const openclawDir = await clack.text({
+      message: "OpenClaw directory:",
+      initialValue: selectedPlatform.configDir,
+      placeholder: selectedPlatform.configDir,
+      validate: (value) => {
+        const trimmed = value.trim();
+        if (!trimmed) {
+          return "Path is required";
+        }
+        return undefined;
+      },
+    });
+
+    if (clack.isCancel(openclawDir)) {
+      clack.cancel("Setup cancelled.");
+      return;
+    }
+
+    selectedPlatform.configDir = path.resolve(openclawDir.trim());
+    selectedPlatform.sessionsDir = path.join(selectedPlatform.configDir, "sessions");
+  }
+
   wizardChanges.platformChanged = existingProjectSettings.platform
     ? existingProjectSettings.platform !== selectedPlatform.id
     : false;

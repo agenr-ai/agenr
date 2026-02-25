@@ -28,7 +28,12 @@ const {
   clackNoteMock: vi.fn(),
   clackConfirmMock: vi.fn(),
   clackSelectMock: vi.fn(),
-  clackTextMock: vi.fn(),
+  clackTextMock: vi.fn(async (options?: { message?: string; initialValue?: string }) => {
+    if (options?.message === "OpenClaw directory:") {
+      return options.initialValue ?? "/tmp/.openclaw";
+    }
+    return "agenr";
+  }),
   clackLogInfoMock: vi.fn(),
   clackCancelMock: vi.fn(),
   clackOutroMock: vi.fn(),
@@ -115,6 +120,12 @@ afterEach(async () => {
   formatExistingConfigMock.mockReset();
   clackSelectMock.mockReset();
   clackTextMock.mockReset();
+  clackTextMock.mockImplementation(async (options?: { message?: string; initialValue?: string }) => {
+    if (options?.message === "OpenClaw directory:") {
+      return options.initialValue ?? "/tmp/.openclaw";
+    }
+    return "agenr";
+  });
   clackLogInfoMock.mockReset();
   if (originalHome === undefined) {
     delete process.env.HOME;
@@ -607,7 +618,6 @@ describe("runInitWizard", () => {
     vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
     vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
     clackConfirmMock.mockResolvedValue(true);
-    clackTextMock.mockResolvedValue("agenr");
 
     await runInitWizard({ isInteractive: true, path: dir });
 
@@ -615,6 +625,25 @@ describe("runInitWizard", () => {
       message: "Detected OpenClaw at /tmp/.openclaw. Use this platform?",
       initialValue: true,
     });
+  });
+
+  it("wizard shows OpenClaw directory prompt with detected path as default", async () => {
+    const dir = await createWizardProjectDir();
+    readConfigMock.mockReturnValue(null);
+    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackConfirmMock.mockResolvedValue(true);
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(clackTextMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "OpenClaw directory:",
+        initialValue: "/tmp/.openclaw",
+        placeholder: "/tmp/.openclaw",
+      }),
+    );
   });
 
   it("wizard shows selector when both platforms detected", async () => {
@@ -633,6 +662,22 @@ describe("runInitWizard", () => {
         message: "Which platform are you using?",
       }),
     );
+  });
+
+  it("wizard updates sessionsDir when custom OpenClaw path provided", async () => {
+    const dir = await createWizardProjectDir();
+    const platforms = platformList(false, false);
+    readConfigMock.mockReturnValue(null);
+    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platforms);
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackSelectMock.mockResolvedValue("openclaw");
+    clackTextMock.mockResolvedValueOnce("/tmp/custom-openclaw").mockResolvedValueOnce("agenr");
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(platforms[0]?.configDir).toBe(path.resolve("/tmp/custom-openclaw"));
+    expect(platforms[0]?.sessionsDir).toBe(path.join(path.resolve("/tmp/custom-openclaw"), "sessions"));
   });
 
   it("wizard shows selector when no platform detected", async () => {
@@ -892,6 +937,21 @@ describe("runInitWizard", () => {
     expect(clackCancelMock).toHaveBeenCalledWith("Setup cancelled.");
   });
 
+  it("wizard handles Ctrl+C at OpenClaw directory prompt", async () => {
+    const dir = await createWizardProjectDir();
+    readConfigMock.mockReturnValue(null);
+    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    const runInitCommandSpy = vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(false, false));
+    clackSelectMock.mockResolvedValue("openclaw");
+    clackTextMock.mockResolvedValue(clackCancelToken);
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(clackCancelMock).toHaveBeenCalledWith("Setup cancelled.");
+    expect(runInitCommandSpy).not.toHaveBeenCalled();
+  });
+
   it("wizard handles Ctrl+C at project slug input", async () => {
     const dir = await createWizardProjectDir();
     readConfigMock.mockReturnValue(null);
@@ -899,7 +959,7 @@ describe("runInitWizard", () => {
     vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(false, false));
     vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
     clackSelectMock.mockResolvedValue("openclaw");
-    clackTextMock.mockResolvedValue(clackCancelToken);
+    clackTextMock.mockResolvedValueOnce("/tmp/.openclaw").mockResolvedValueOnce(clackCancelToken);
 
     await runInitWizard({ isInteractive: true, path: dir });
 
@@ -913,13 +973,15 @@ describe("runInitWizard", () => {
     vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(false, false));
     vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
     clackSelectMock.mockResolvedValue("openclaw");
-    clackTextMock.mockResolvedValue("agenr");
 
     await runInitWizard({ isInteractive: true, path: dir });
 
-    const textCall = clackTextMock.mock.calls[0]?.[0] as { validate?: (value: string) => string | undefined };
-    expect(textCall.validate?.("   ")).toBe("Project name is required");
-    expect(textCall.validate?.("my-project")).toBeUndefined();
+    const textCall = clackTextMock.mock.calls
+      .map((call) => call[0] as { message?: string; validate?: (value: string) => string | undefined })
+      .find((call) => call.message === "Project name:");
+
+    expect(textCall?.validate?.("   ")).toBe("Project name is required");
+    expect(textCall?.validate?.("my-project")).toBeUndefined();
   });
 
   it("calls runSetupCore when no existing config", async () => {
@@ -929,7 +991,6 @@ describe("runInitWizard", () => {
     vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(false, false));
     vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
     clackSelectMock.mockResolvedValue("openclaw");
-    clackTextMock.mockResolvedValue("agenr");
 
     await runInitWizard({ isInteractive: true, path: dir });
 
