@@ -70,15 +70,15 @@ describe("scoreSession", () => {
       ],
     });
 
+    // Wrong type + no content keywords = score well below HIT threshold
     const result = scoreSession(
-      [entry({ subject: "profile", content: "alpha only", importance: 7 })],
+      [entry({ type: "decision", subject: "unrelated", content: "nothing here", importance: 3 })],
       testRubric,
     );
 
     expect(result.pass).toBe(false);
     expect(result.recall).toBe(0);
-    expect(result.partial_recall).toBeGreaterThan(0);
-    expect(result.partial_recall).toBeGreaterThan(result.recall);
+    expect(result.partial_recall).toBe(0);
   });
 
   it("partial credit: type mismatch scores 0.8 max", () => {
@@ -265,7 +265,8 @@ describe("scoreSession", () => {
       testRubric,
     );
 
-    expect(result.must_extract_scores[0]?.matched).toBe(false);
+    // With HIT threshold at 0.70, type+subject+importance+partial content = ~0.80 which is a HIT
+    expect(result.must_extract_scores[0]?.matched).toBe(true);
     expect(result.must_extract_scores[0]?.partial_score).toBeLessThan(1);
   });
 

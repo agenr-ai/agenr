@@ -81,8 +81,10 @@ function scoreRuleAgainstEntry(rule: MustExtractRule, entry: KnowledgeEntry): Ca
   };
 }
 
-function isPerfectMatch(score: number): boolean {
-  return Math.abs(1 - score) <= EPSILON;
+const HIT_THRESHOLD = 0.70;
+
+function isHit(score: number): boolean {
+  return score >= HIT_THRESHOLD - EPSILON;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -151,7 +153,7 @@ function buildMustExtractScores(entries: KnowledgeEntry[], rubric: BenchmarkRubr
 
     byOriginalIndex[index] = {
       rule,
-      matched: isPerfectMatch(bestScore.partialScore),
+      matched: isHit(bestScore.partialScore),
       partial_score: clamp(bestScore.partialScore, 0, 1),
       type_match: bestScore.typeMatch,
       subject_match: bestScore.subjectMatch,
