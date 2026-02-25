@@ -8,7 +8,7 @@ import {
   setStoredCredential,
   writeConfig,
 } from "./config.js";
-import { runConnectionTest } from "./auth-status.js";
+import { runConnectionTest, runEmbeddingConnectionTest } from "./auth-status.js";
 import { probeCredentials } from "./llm/credentials.js";
 import { resolveModel } from "./llm/models.js";
 import { resolveEmbeddingApiKey } from "./embeddings/client.js";
@@ -183,6 +183,38 @@ function showAuthSetupGuidance(auth: AgenrAuthMethod): void {
   clack.log.info("This uses your existing subscription - no API key needed.");
 }
 
+async function runEmbeddingConnectionTestWithRetry(apiKey: string): Promise<boolean | null> {
+  const spinner = clack.spinner();
+  spinner.start("Testing embeddings connection...");
+
+  while (true) {
+    const test = await runEmbeddingConnectionTest(apiKey);
+
+    if (test.ok) {
+      spinner.stop(ui.success("Embeddings connected"));
+      return true;
+    }
+
+    spinner.stop(ui.error(`Embeddings connection failed: ${test.error ?? "unknown error"}`));
+
+    const retry = await clack.confirm({
+      message: "Retry embeddings test?",
+      initialValue: true,
+    });
+
+    if (clack.isCancel(retry)) {
+      return null;
+    }
+
+    if (!retry) {
+      clack.log.info("Skipping embeddings test. You can verify later with " + ui.bold("agenr auth status") + ".");
+      return false;
+    }
+
+    spinner.start("Testing embeddings connection...");
+  }
+}
+
 export function formatExistingConfig(config: AgenrConfig): string {
   return [
     formatLabel("Auth", config.auth ? describeAuth(config.auth) : "(not set)"),
@@ -249,6 +281,10 @@ export async function runSetupCore(options: SetupCoreOptions): Promise<SetupResu
       const updated = setStoredCredential(options.existingConfig, "openai", normalizedKey);
       writeConfig(updated, options.env);
       clack.log.info("Embedding API key updated.");
+      const embeddingTestResult = await runEmbeddingConnectionTestWithRetry(normalizedKey);
+      if (embeddingTestResult === null) {
+        return null;
+      }
 
       let embeddingStatus: string;
       try {
@@ -453,6 +489,10 @@ export async function runSetupCore(options: SetupCoreOptions): Promise<SetupResu
       if (normalizedEmbeddingKey) {
         working = setStoredCredential(working, "openai", normalizedEmbeddingKey);
         clack.log.info("OpenAI API key saved for embeddings.");
+        const embeddingTestResult = await runEmbeddingConnectionTestWithRetry(normalizedEmbeddingKey);
+        if (embeddingTestResult === null) {
+          return null;
+        }
       } else {
         clack.log.warn("No embedding key entered. You can set it later with " + ui.bold("agenr config set-key openai <key>"));
       }
@@ -481,6 +521,10 @@ export async function runSetupCore(options: SetupCoreOptions): Promise<SetupResu
         if (normalizedEmbeddingKey) {
           working = setStoredCredential(working, "openai", normalizedEmbeddingKey);
           clack.log.info("Embedding API key updated.");
+          const embeddingTestResult = await runEmbeddingConnectionTestWithRetry(normalizedEmbeddingKey);
+          if (embeddingTestResult === null) {
+            return null;
+          }
         } else {
           clack.log.warn("Embedding key not updated - empty input.");
         }

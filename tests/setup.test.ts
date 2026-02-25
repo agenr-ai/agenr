@@ -35,6 +35,7 @@ function createMocks() {
   };
   const probeCredentialsMock = vi.fn();
   const runConnectionTestMock = vi.fn();
+  const runEmbeddingConnectionTestMock = vi.fn();
 
   return {
     cancelToken,
@@ -51,6 +52,7 @@ function createMocks() {
     logMock,
     probeCredentialsMock,
     runConnectionTestMock,
+    runEmbeddingConnectionTestMock,
   };
 }
 
@@ -83,6 +85,7 @@ vi.mock("../src/llm/credentials.js", () => ({
 
 vi.mock("../src/auth-status.js", () => ({
   runConnectionTest: getMocks().runConnectionTestMock,
+  runEmbeddingConnectionTest: getMocks().runEmbeddingConnectionTestMock,
 }));
 
 import * as setupModule from "../src/setup.js";
@@ -95,6 +98,7 @@ async function makeTempConfigEnv(): Promise<NodeJS.ProcessEnv> {
   return {
     ...process.env,
     AGENR_CONFIG_PATH: path.join(dir, "config.json"),
+    OPENAI_API_KEY: "",
   };
 }
 
@@ -107,6 +111,9 @@ afterEach(async () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  const current = getMocks();
+  current.runConnectionTestMock.mockResolvedValue({ ok: true });
+  current.runEmbeddingConnectionTestMock.mockResolvedValue({ ok: true });
 });
 
 describe("runSetupCore", () => {
@@ -261,6 +268,128 @@ describe("runSetupCore", () => {
       "Note: Subscription models may have limited extraction quality. API keys with gpt-4.1-mini are recommended for best results.",
     );
     expect(mocks.logMock.info).toHaveBeenCalledWith("This uses your existing subscription - no API key needed.");
+  });
+
+  it("tests embedding key after entry", async () => {
+    const mocks = getMocks();
+    const env = await makeTempConfigEnv();
+
+    mocks.selectMock.mockResolvedValueOnce("anthropic-api-key").mockResolvedValueOnce("claude-sonnet-4-20250514");
+    mocks.probeCredentialsMock.mockReturnValue({
+      available: true,
+      source: "env:ANTHROPIC_API_KEY",
+      guidance: "Credentials available.",
+      credentials: {
+        apiKey: "sk-ant-test",
+        source: "env:ANTHROPIC_API_KEY",
+      },
+    });
+    mocks.passwordMock.mockResolvedValueOnce("sk-openai-test-embeddings");
+
+    await setupModule.runSetupCore({
+      env,
+      existingConfig: null,
+      skipIntroOutro: true,
+    });
+
+    expect(mocks.runEmbeddingConnectionTestMock).toHaveBeenCalledWith("sk-openai-test-embeddings");
+    expect(mocks.spinnerStartMock).toHaveBeenCalledWith("Testing embeddings connection...");
+  });
+
+  it("retries embedding test on failure", async () => {
+    const mocks = getMocks();
+    const env = await makeTempConfigEnv();
+
+    mocks.selectMock.mockResolvedValueOnce("anthropic-api-key").mockResolvedValueOnce("claude-sonnet-4-20250514");
+    mocks.probeCredentialsMock.mockReturnValue({
+      available: true,
+      source: "env:ANTHROPIC_API_KEY",
+      guidance: "Credentials available.",
+      credentials: {
+        apiKey: "sk-ant-test",
+        source: "env:ANTHROPIC_API_KEY",
+      },
+    });
+    mocks.passwordMock.mockResolvedValueOnce("sk-openai-test-embeddings");
+    mocks.runEmbeddingConnectionTestMock
+      .mockResolvedValueOnce({ ok: false, error: "invalid key" })
+      .mockResolvedValueOnce({ ok: true });
+    mocks.confirmMock.mockResolvedValueOnce(true);
+
+    await setupModule.runSetupCore({
+      env,
+      existingConfig: null,
+      skipIntroOutro: true,
+    });
+
+    expect(mocks.runEmbeddingConnectionTestMock).toHaveBeenCalledTimes(2);
+    expect(mocks.confirmMock).toHaveBeenCalledWith({
+      message: "Retry embeddings test?",
+      initialValue: true,
+    });
+  });
+
+  it("allows skipping embedding test", async () => {
+    const mocks = getMocks();
+    const env = await makeTempConfigEnv();
+
+    mocks.selectMock.mockResolvedValueOnce("anthropic-api-key").mockResolvedValueOnce("claude-sonnet-4-20250514");
+    mocks.probeCredentialsMock.mockReturnValue({
+      available: true,
+      source: "env:ANTHROPIC_API_KEY",
+      guidance: "Credentials available.",
+      credentials: {
+        apiKey: "sk-ant-test",
+        source: "env:ANTHROPIC_API_KEY",
+      },
+    });
+    mocks.passwordMock.mockResolvedValueOnce("sk-openai-test-embeddings");
+    mocks.runEmbeddingConnectionTestMock.mockResolvedValueOnce({ ok: false, error: "invalid key" });
+    mocks.confirmMock.mockResolvedValueOnce(false);
+
+    await setupModule.runSetupCore({
+      env,
+      existingConfig: null,
+      skipIntroOutro: true,
+    });
+
+    expect(mocks.logMock.info).toHaveBeenCalledWith(
+      expect.stringContaining("Skipping embeddings test. You can verify later with "),
+    );
+  });
+
+  it("tests embedding key on update path", async () => {
+    const mocks = getMocks();
+    const env = await makeTempConfigEnv();
+
+    mocks.selectMock.mockResolvedValueOnce("anthropic-api-key").mockResolvedValueOnce("claude-sonnet-4-20250514");
+    mocks.probeCredentialsMock.mockReturnValue({
+      available: true,
+      source: "config:credentials.anthropicApiKey",
+      guidance: "Credentials available.",
+      credentials: {
+        apiKey: "sk-ant-existing",
+        source: "config:credentials.anthropicApiKey",
+      },
+    });
+    mocks.confirmMock.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    mocks.passwordMock.mockResolvedValueOnce("sk-openai-new");
+
+    await setupModule.runSetupCore({
+      env,
+      existingConfig: {
+        auth: "anthropic-api-key",
+        provider: "anthropic",
+        model: "claude-sonnet-4-20250514",
+        credentials: {
+          anthropicApiKey: "sk-ant-existing",
+          openaiApiKey: "sk-openai-old",
+        },
+      },
+      skipIntroOutro: true,
+    });
+
+    expect(mocks.runEmbeddingConnectionTestMock).toHaveBeenCalledWith("sk-openai-new");
   });
 });
 
