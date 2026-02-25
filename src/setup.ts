@@ -90,29 +90,44 @@ function modelHintForChoice(provider: AgenrProvider, modelId: string): string | 
   return details?.name;
 }
 
-async function selectAuthMethod(): Promise<AgenrAuthMethod | null> {
+async function selectAuthMethod(hasExistingConfig: boolean): Promise<AgenrAuthMethod | "update-embeddings" | null> {
   while (true) {
-    const authSelection = await clack.select<AgenrAuthMethod | "advanced-options">({
+    const options: { value: AgenrAuthMethod | "advanced-options" | "update-embeddings"; label: string; hint?: string }[] = [
+      {
+        value: "openai-api-key",
+        label: "OpenAI API key",
+        hint: "recommended for extraction",
+      },
+      {
+        value: "anthropic-api-key",
+        label: "Anthropic API key",
+      },
+    ];
+
+    if (hasExistingConfig) {
+      options.push({
+        value: "update-embeddings",
+        label: "Update embeddings API key",
+        hint: "OpenAI key used for vector embeddings",
+      });
+    }
+
+    options.push({
+      value: "advanced-options",
+      label: "Advanced options...",
+    });
+
+    const authSelection = await clack.select<AgenrAuthMethod | "advanced-options" | "update-embeddings">({
       message: "How would you like to authenticate?",
-      options: [
-        {
-          value: "openai-api-key",
-          label: "OpenAI API key",
-          hint: "recommended for extraction",
-        },
-        {
-          value: "anthropic-api-key",
-          label: "Anthropic API key",
-        },
-        {
-          value: "advanced-options",
-          label: "Advanced options...",
-        },
-      ],
+      options,
     });
 
     if (clack.isCancel(authSelection)) {
       return null;
+    }
+
+    if (authSelection === "update-embeddings") {
+      return "update-embeddings";
     }
 
     if (authSelection !== "advanced-options") {
@@ -212,11 +227,61 @@ export async function runSetupCore(options: SetupCoreOptions): Promise<SetupResu
 
   let working = options.existingConfig ? mergeConfigPatch(options.existingConfig, {}) : {};
 
-  const auth = await selectAuthMethod();
-  if (!auth) {
+  const authSelection = await selectAuthMethod(options.existingConfig !== null);
+  if (!authSelection) {
     return null;
   }
 
+  // Handle embeddings-only update flow
+  if (authSelection === "update-embeddings") {
+    clack.log.info("Get your key at https://platform.openai.com/api-keys");
+
+    const embeddingKey = await clack.password({
+      message: "Enter OpenAI API key for embeddings:",
+    });
+
+    if (clack.isCancel(embeddingKey)) {
+      return null;
+    }
+
+    const normalizedKey = (embeddingKey ?? "").trim();
+    if (normalizedKey && options.existingConfig) {
+      const updated = setStoredCredential(options.existingConfig, "openai", normalizedKey);
+      writeConfig(updated, options.env);
+      clack.log.info("Embedding API key updated.");
+
+      let embeddingStatus: string;
+      try {
+        resolveEmbeddingApiKey(updated, options.env);
+        embeddingStatus = "OpenAI (text-embedding-3-small)";
+      } catch {
+        embeddingStatus = ui.warn("not configured");
+      }
+
+      clack.note(
+        [
+          formatLabel("Auth", updated.auth ? describeAuth(updated.auth) : "(not set)"),
+          formatLabel("Provider", updated.provider ?? "(not set)"),
+          formatLabel("Model", updated.model ?? "(not set)"),
+          formatLabel("Embeddings", embeddingStatus),
+        ].join("\n"),
+        "Configuration saved",
+      );
+
+      return {
+        auth: updated.auth!,
+        provider: updated.provider!,
+        model: updated.model!,
+        config: updated,
+        changed: true,
+      };
+    } else {
+      clack.log.warn("No key entered. Embedding key unchanged.");
+      return null;
+    }
+  }
+
+  const auth = authSelection;
   showAuthSetupGuidance(auth);
 
   const provider = getAuthMethodDefinition(auth).provider;
