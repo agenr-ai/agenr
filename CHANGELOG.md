@@ -19,6 +19,18 @@
 - Current config display shows all registered projects with directories and DB isolation status
 - `resolveProjectFromGlobalConfig()` helper for O(1) project lookup by directory
 - Shared DB warning when same project slug and same database across instances
+- Fix: OpenClaw sessionsDir correctly resolves to agents/main/sessions
+- OpenClaw plugin auto-install with gateway restart during wizard
+- Isolated DB path auto-written to OpenClaw plugin config (no manual editing)
+- Session file scanner with recursive discovery, mtime filtering, size totals
+- Cost estimation before ingest using model pricing from @mariozechner/pi-ai
+- "Recent" ingest passes only last-7-day file paths; "full" uses directory glob
+- Bulk ingest integration (--workers 10 --concurrency 1 --whole-file)
+- Post-ingest consolidation prompt (merges near-duplicates from bulk ingest)
+- Watcher daemon setup on macOS with launchd (120s interval)
+- Re-ingest flow on model/auth change: stops watcher, resets DB, re-ingests
+- Expanded setup summary with plugin/ingest/consolidate/watcher status
+- Next steps section for skipped or failed wizard steps
 
 ### Changed
 - Refactored setup.ts: extracted `runSetupCore()` for programmatic use

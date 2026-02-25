@@ -51,7 +51,10 @@ export function detectPlatforms(pathLookup: (command: string) => boolean = isOnP
   ];
 
   for (const platform of platforms) {
-    platform.sessionsDir = path.join(platform.configDir, "sessions");
+    platform.sessionsDir =
+      platform.id === "openclaw"
+        ? path.join(platform.configDir, "agents", "main", "sessions")
+        : path.join(platform.configDir, "sessions");
     platform.detected = existsSync(platform.configDir) || pathLookup(platform.id);
   }
 

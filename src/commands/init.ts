@@ -1,18 +1,29 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import * as clack from "@clack/prompts";
 import { describeAuth, readConfig, resolveConfigPath, resolveProjectFromGlobalConfig, writeConfig } from "../config.js";
+import { runConsolidateCommand } from "./consolidate.js";
+import { runDaemonInstallCommand, runDaemonStopCommand } from "./daemon.js";
+import { runDbResetCommand } from "./db.js";
+import { runIngestCommand, type IngestCommandResult } from "./ingest.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { formatExistingConfig, runSetupCore } from "../setup.js";
-import type { AgenrConfig } from "../types.js";
+import type { AgenrConfig, AgenrProvider } from "../types.js";
 import { banner, formatLabel } from "../ui.js";
+import {
+  estimateIngestCost,
+  formatCostUsd,
+  formatTokenCount,
+} from "./init/cost-estimator.js";
 import {
   detectPlatforms,
   isDefaultOpenClawPath,
   resolveDefaultCodexConfigDir,
   resolveDefaultOpenClawConfigDir,
 } from "./init/platform-detector.js";
+import { scanSessionFiles } from "./init/session-scanner.js";
 import type { DetectedPlatform } from "./init/platform-detector.js";
 
 function escapeTomlString(value: string): string {
@@ -99,6 +110,10 @@ interface WizardSummary {
   project: string;
   authLabel: string;
   model: string;
+  pluginStatus?: string;
+  ingestStatus?: string;
+  consolidateStatus?: string;
+  watcherStatus?: string;
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -672,7 +687,170 @@ async function choosePlatform(platforms: DetectedPlatform[]): Promise<DetectedPl
   return await promptPlatformSelector(platforms);
 }
 
+interface PluginInstallResult {
+  success: boolean;
+  message: string;
+}
+
+function findBinaryPath(name: string): string | null {
+  try {
+    const cmd = process.platform === "win32" ? "where" : "which";
+    return execFileSync(cmd, [name], { encoding: "utf8" }).trim().split("\n")[0];
+  } catch {
+    return null;
+  }
+}
+
+async function installOpenClawPlugin(
+  _openclawConfigDir: string,
+): Promise<PluginInstallResult> {
+  const openclawBin = findBinaryPath("openclaw");
+  if (!openclawBin) {
+    return {
+      success: false,
+      message:
+        "openclaw not found on PATH. Install it first, then run:\n" +
+        "  openclaw plugins install agenr",
+    };
+  }
+
+  try {
+    const listOutput = execFileSync(openclawBin, ["plugins", "list"], {
+      encoding: "utf8",
+      timeout: 15000,
+    });
+    if (listOutput.includes("agenr") && listOutput.includes("loaded")) {
+      return { success: true, message: "agenr plugin already installed" };
+    }
+  } catch {
+    // Continue and try install directly.
+  }
+
+  try {
+    execFileSync(openclawBin, ["plugins", "install", "agenr"], {
+      encoding: "utf8",
+      timeout: 60000,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("already exists")) {
+      try {
+        execFileSync(openclawBin, ["plugins", "update", "agenr"], {
+          encoding: "utf8",
+          timeout: 60000,
+        });
+      } catch {
+        return {
+          success: false,
+          message:
+            "Plugin exists but update failed. Try manually:\n" +
+            "  openclaw plugins uninstall agenr && openclaw plugins install agenr",
+        };
+      }
+    } else {
+      return {
+        success: false,
+        message: `Plugin install failed: ${message}`,
+      };
+    }
+  }
+
+  try {
+    execFileSync(openclawBin, ["gateway", "restart"], {
+      encoding: "utf8",
+      timeout: 30000,
+    });
+    return { success: true, message: "Plugin installed and gateway restarted" };
+  } catch {
+    try {
+      execFileSync(openclawBin, ["gateway", "start"], {
+        encoding: "utf8",
+        timeout: 30000,
+      });
+      return { success: true, message: "Plugin installed and gateway started" };
+    } catch {
+      return {
+        success: true,
+        message:
+          "Plugin installed but gateway needs restart. Run:\n" +
+          "  openclaw gateway restart",
+      };
+    }
+  }
+}
+
+async function writeOpenClawPluginDbPath(
+  openclawConfigDir: string,
+  dbPath: string,
+): Promise<void> {
+  const configPath = path.join(openclawConfigDir, "openclaw.json");
+  let config: JsonRecord = {};
+
+  try {
+    const raw = await fs.readFile(configPath, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (isRecord(parsed)) {
+      config = parsed;
+    }
+  } catch {
+    // Missing or invalid file - start with empty object.
+  }
+
+  if (!isRecord(config.plugins)) {
+    config.plugins = {};
+  }
+  const plugins = config.plugins as JsonRecord;
+  if (!isRecord(plugins.entries)) {
+    plugins.entries = {};
+  }
+  const entries = plugins.entries as JsonRecord;
+  if (!isRecord(entries.agenr)) {
+    entries.agenr = { enabled: true };
+  }
+  const agenr = entries.agenr as JsonRecord;
+  if (!isRecord(agenr.config)) {
+    agenr.config = {};
+  }
+  const agenrConfig = agenr.config as JsonRecord;
+  agenrConfig.dbPath = dbPath;
+
+  await fs.mkdir(openclawConfigDir, { recursive: true });
+  await fs.writeFile(
+    configPath,
+    `${JSON.stringify(config, null, 2)}\n`,
+    "utf8",
+  );
+}
+
 function formatWizardSummary(result: WizardSummary): string {
+  const hasActions = result.pluginStatus || result.ingestStatus || result.watcherStatus;
+  if (hasActions) {
+    const lines = [`  Platform:     ${result.platform}`];
+    if (result.directory) {
+      lines.push(`  Directory:    ${result.directory}`);
+    }
+    if (result.database) {
+      lines.push(`  Database:     ${result.database}`);
+    }
+    lines.push(`  Config:       ${result.configPath}`);
+    lines.push(`  Project:      ${result.project}`);
+    lines.push(`  Auth:         ${result.authLabel}`);
+    lines.push(`  Model:        ${result.model}`);
+    if (result.pluginStatus) {
+      lines.push(`  Plugin:       ${result.pluginStatus}`);
+    }
+    if (result.ingestStatus) {
+      lines.push(`  Ingest:       ${result.ingestStatus}`);
+    }
+    if (result.consolidateStatus) {
+      lines.push(`  Consolidate:  ${result.consolidateStatus}`);
+    }
+    if (result.watcherStatus) {
+      lines.push(`  Watcher:      ${result.watcherStatus}`);
+    }
+    return lines.join("\n");
+  }
+
   const lines = [`  Platform:  ${result.platform}`];
   if (result.directory) {
     lines.push(`  Directory: ${result.directory}`);
@@ -834,6 +1012,14 @@ export const initWizardRuntime = {
   formatExistingConfig,
   runSetupCore,
   detectPlatforms,
+  installOpenClawPlugin,
+  writeOpenClawPluginDbPath,
+  scanSessionFiles,
+  runIngestCommand,
+  runConsolidateCommand,
+  runDaemonInstallCommand,
+  runDaemonStopCommand,
+  runDbResetCommand,
 };
 
 export async function runInitWizard(options: WizardOptions): Promise<void> {
@@ -988,7 +1174,7 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
             currentPlatform === "openclaw" ? resolveDefaultOpenClawConfigDir() : resolveDefaultCodexConfigDir(),
           sessionsDir:
             currentPlatform === "openclaw"
-              ? path.join(resolveDefaultOpenClawConfigDir(), "sessions")
+              ? path.join(resolveDefaultOpenClawConfigDir(), "agents", "main", "sessions")
               : path.join(resolveDefaultCodexConfigDir(), "sessions"),
         };
     } else {
@@ -1034,7 +1220,7 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
     selectedPlatform = {
       ...selectedPlatform,
       configDir: resolvedOpenclawDir,
-      sessionsDir: path.join(resolvedOpenclawDir, "sessions"),
+      sessionsDir: path.join(resolvedOpenclawDir, "agents", "main", "sessions"),
     };
   }
 
@@ -1210,6 +1396,273 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
     openclawDbPath: selectedOpenclawDbPath,
   });
 
+  let pluginStatus = "";
+  if (selectedPlatform.id === "openclaw") {
+    const spinner = clack.spinner();
+    spinner.start("Installing agenr plugin for OpenClaw...");
+    const pluginResult = await initWizardRuntime.installOpenClawPlugin(selectedPlatform.configDir);
+    spinner.stop(pluginResult.message);
+    pluginStatus = pluginResult.message;
+
+    if (pluginResult.success && selectedOpenclawDbPath) {
+      await initWizardRuntime.writeOpenClawPluginDbPath(
+        selectedPlatform.configDir,
+        selectedOpenclawDbPath,
+      );
+      clack.log.info(
+        `Configured isolated database: ${formatPathForDisplay(selectedOpenclawDbPath)}`,
+      );
+    }
+  }
+
+  if (hasExistingConfig && (wizardChanges.authChanged || wizardChanges.modelChanged)) {
+    const modelChangeDesc = wizardChanges.previousModel && wizardChanges.newModel
+      ? `from ${wizardChanges.previousModel} to ${wizardChanges.newModel}`
+      : "your extraction model";
+
+    clack.log.warn(
+      `You changed ${modelChangeDesc}.\n\n` +
+        "Re-ingesting with a better model can significantly improve extraction quality,\n" +
+        "but requires clearing your existing knowledge database first.",
+    );
+
+    const reIngestChoice = await clack.select<"reingest" | "keep">({
+      message: "WARNING: Re-ingest will permanently delete all existing entries.",
+      options: [
+        {
+          value: "reingest",
+          label: "Re-ingest (reset DB + ingest with new model)",
+          hint: "recommended",
+        },
+        {
+          value: "keep",
+          label: "Keep existing data (new sessions use new model going forward)",
+        },
+      ],
+    });
+
+    if (clack.isCancel(reIngestChoice)) {
+      clack.cancel("Setup cancelled.");
+      return;
+    }
+
+    if (reIngestChoice === "reingest") {
+      const spinner = clack.spinner();
+
+      if (process.platform === "darwin") {
+        spinner.start("Stopping watcher...");
+        try {
+          await initWizardRuntime.runDaemonStopCommand({});
+        } catch {
+          // Daemon might not be running.
+        }
+        spinner.stop("Watcher stopped");
+      }
+
+      spinner.start("Resetting knowledge database...");
+      await initWizardRuntime.runDbResetCommand({
+        full: true,
+        confirmReset: true,
+        ...(selectedOpenclawDbPath ? { db: selectedOpenclawDbPath } : {}),
+      });
+      spinner.stop("Database reset");
+    }
+  }
+
+  let ingestStatus = "Skipped";
+  let ingestResult: IngestCommandResult | null = null;
+
+  const scan = await initWizardRuntime.scanSessionFiles(selectedPlatform.sessionsDir);
+  if (scan.totalFiles === 0) {
+    clack.log.info(
+      "No sessions found yet. The watcher will pick them up as you use " +
+        formatPlatformLabel(selectedPlatform.id) + ".",
+    );
+    ingestStatus = "No sessions found";
+  } else {
+    const config = initWizardRuntime.readConfig(env);
+    const provider = (config?.provider ?? "openai") as AgenrProvider;
+    const model = config?.model ?? "openai/gpt-4.1-mini";
+
+    const recentCost = estimateIngestCost(scan.recentSizeBytes, model, provider);
+    const fullCost = estimateIngestCost(scan.totalSizeBytes, model, provider);
+
+    const ingestChoice = await clack.select<"recent" | "full" | "skip">({
+      message:
+        `Found ${scan.totalFiles} sessions ` +
+        `(${scan.recentFiles.length} from last 7 days)\n\n` +
+        `Estimated cost with ${model}:\n` +
+        `  Last 7 days:  ${formatTokenCount(recentCost.inputTokens)} tokens  ` +
+        `${formatCostUsd(recentCost.totalCostUsd)}\n` +
+        `  Full history: ${formatTokenCount(fullCost.inputTokens)} tokens  ` +
+        `${formatCostUsd(fullCost.totalCostUsd)}`,
+      options: [
+        {
+          value: "recent",
+          label: `Ingest last 7 days (${formatCostUsd(recentCost.totalCostUsd)})`,
+          hint: "recommended",
+        },
+        {
+          value: "full",
+          label: `Ingest everything (${formatCostUsd(fullCost.totalCostUsd)})`,
+          hint: "may take a while",
+        },
+        {
+          value: "skip",
+          label: "Skip for now",
+        },
+      ],
+    });
+
+    if (clack.isCancel(ingestChoice)) {
+      clack.cancel("Setup cancelled.");
+      return;
+    }
+
+    if (ingestChoice !== "skip") {
+      const isRecent = ingestChoice === "recent";
+      const fileCount = isRecent ? scan.recentFiles.length : scan.totalFiles;
+      const spinner = clack.spinner();
+      spinner.start(`Ingesting ${fileCount} sessions...`);
+
+      const inputPaths = isRecent
+        ? scan.recentFiles
+        : [selectedPlatform.sessionsDir];
+
+      const ingestOptions = {
+        bulk: true,
+        workers: 10,
+        concurrency: 1,
+        platform: selectedPlatform.id,
+        project: projectSlug,
+        wholeFile: true,
+        ...(selectedOpenclawDbPath ? { db: selectedOpenclawDbPath } : {}),
+        ...(!isRecent ? { glob: "**/*.jsonl*" } : {}),
+      };
+
+      ingestResult = await initWizardRuntime.runIngestCommand(
+        inputPaths,
+        ingestOptions,
+      );
+
+      if (ingestResult.exitCode === 0) {
+        spinner.stop(
+          `${ingestResult.filesProcessed} sessions processed - ` +
+            `${ingestResult.totalEntriesStored} entries extracted`,
+        );
+        ingestStatus =
+          `${ingestResult.filesProcessed} sessions - ` +
+          `${ingestResult.totalEntriesStored} entries`;
+      } else {
+        spinner.stop(
+          `Ingest completed with errors (${ingestResult.filesFailed} failures)`,
+        );
+        ingestStatus = `Completed with ${ingestResult.filesFailed} errors`;
+      }
+    }
+  }
+
+  let consolidateStatus = "Skipped";
+  if (
+    ingestResult &&
+    ingestResult.exitCode === 0 &&
+    ingestResult.totalEntriesStored > 0
+  ) {
+    const runConsolidate = await clack.confirm({
+      message:
+        `Consolidate ${ingestResult.totalEntriesStored} entries? ` +
+        "Merges duplicates and related knowledge.",
+      initialValue: true,
+    });
+
+    if (clack.isCancel(runConsolidate)) {
+      clack.cancel("Setup cancelled.");
+      return;
+    }
+
+    if (runConsolidate) {
+      const spinner = clack.spinner();
+      spinner.start("Consolidating knowledge base...");
+
+      try {
+        const consolidateResult = await initWizardRuntime.runConsolidateCommand({
+          ...(selectedOpenclawDbPath ? { db: selectedOpenclawDbPath } : {}),
+          simThreshold: 0.76,
+        });
+
+        if (consolidateResult.exitCode === 0) {
+          spinner.stop("Consolidation complete");
+          consolidateStatus = "Complete";
+        } else {
+          spinner.stop(
+            "Consolidation finished with errors. Run manually: agenr consolidate",
+          );
+          consolidateStatus = "Failed";
+        }
+      } catch {
+        spinner.stop(
+          "Consolidation failed. Run manually: agenr consolidate",
+        );
+        consolidateStatus = "Failed";
+      }
+    }
+  }
+
+  let watcherStatus = "";
+  if (process.platform === "darwin") {
+    const setupWatcher = await clack.confirm({
+      message:
+        "Set up automatic ingestion? Watches for new sessions and extracts " +
+        "knowledge continuously.",
+      initialValue: true,
+    });
+
+    if (clack.isCancel(setupWatcher)) {
+      clack.cancel("Setup cancelled.");
+      return;
+    }
+
+    if (setupWatcher) {
+      const spinner = clack.spinner();
+      spinner.start("Installing watcher daemon...");
+
+      try {
+        const daemonResult = await initWizardRuntime.runDaemonInstallCommand({
+          force: true,
+          interval: 120,
+          dir: selectedPlatform.sessionsDir,
+          platform: selectedPlatform.id,
+        });
+
+        if (daemonResult.exitCode === 0) {
+          spinner.stop("Watcher daemon installed and running (120s interval)");
+          watcherStatus = "Running (120s interval)";
+        } else {
+          spinner.stop(
+            "Daemon install failed. Run manually:\n" +
+              `  agenr watch --dir ${selectedPlatform.sessionsDir} ` +
+              `--platform ${selectedPlatform.id}`,
+          );
+          watcherStatus = "Failed";
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        spinner.stop(`Daemon install failed: ${message}`);
+        watcherStatus = "Failed";
+      }
+    } else {
+      watcherStatus = "Skipped";
+    }
+  } else {
+    const osName = process.platform === "win32" ? "Windows" : "Linux";
+    clack.log.info(
+      `Automatic ingestion not yet supported on ${osName}. Run manually:\n` +
+        `  agenr watch --dir ${selectedPlatform.sessionsDir} ` +
+        `--platform ${selectedPlatform.id}`,
+    );
+    watcherStatus = `Not supported on ${osName}`;
+  }
+
   const openclawDatabase =
     selectedPlatform.id === "openclaw"
       ? `${formatPathForDisplay(selectedOpenclawDbPath ?? sharedDbPath)} (${selectedOpenclawDbPath ? "isolated" : "shared"})`
@@ -1223,9 +1676,34 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
       project: initResult.project,
       authLabel: selectedAuth ? describeAuth(selectedAuth) : "(not set)",
       model: selectedModel ?? "(not set)",
+      pluginStatus: pluginStatus || undefined,
+      ingestStatus,
+      consolidateStatus:
+        consolidateStatus !== "Skipped" ? consolidateStatus : undefined,
+      watcherStatus: watcherStatus || undefined,
     }),
     "Setup summary",
   );
+
+  const nextSteps: string[] = [];
+  if (selectedPlatform.id === "openclaw" && !pluginStatus.includes("installed")) {
+    nextSteps.push("Install plugin: openclaw plugins install agenr");
+  }
+  if (ingestStatus === "Skipped" || ingestStatus === "No sessions found") {
+    nextSteps.push(
+      `Run ingest: agenr ingest ${selectedPlatform.sessionsDir} --bulk ` +
+        `--platform ${selectedPlatform.id} --project ${projectSlug} --whole-file`,
+    );
+  }
+  if (watcherStatus === "Skipped" || watcherStatus.startsWith("Not supported")) {
+    nextSteps.push(
+      `Start watcher: agenr watch --dir ${selectedPlatform.sessionsDir} ` +
+        `--platform ${selectedPlatform.id}`,
+    );
+  }
+  if (nextSteps.length > 0) {
+    clack.note(nextSteps.map((step) => `  ${step}`).join("\n"), "Next steps");
+  }
 
   if (isWizardPlatformId(selectedPlatform.id)) {
     const registeredProjects = getGlobalProjectMap(readConfig(env));
