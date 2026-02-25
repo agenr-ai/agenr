@@ -26,7 +26,7 @@ import { acquireDbLock, releaseDbLock } from "../db/lockfile.js";
 import { composeEmbeddingText, embed, resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { extractKnowledgeFromChunks } from "../extractor.js";
 import { createLlmClient } from "../llm/client.js";
-import { expandInputFiles, parseTranscriptFile } from "../parser.js";
+import { expandInputFiles, parseTranscriptFile, chunkMessages } from "../parser.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
 import { parseProjectList } from "../project.js";
 import { KNOWLEDGE_PLATFORMS } from "../types.js";
@@ -73,6 +73,7 @@ export interface IngestCommandOptions {
   wholeFile?: boolean;
   chunk?: boolean;
   bulk?: boolean;
+  userOnly?: boolean;
 }
 
 export interface IngestFileResult {
@@ -1056,10 +1057,20 @@ export async function runIngestCommand(
         chunkTickets.push(queue.push(deduped, target.file, fileHash));
       };
 
+      // Filter to user messages only if requested
+      let effectiveMessages = parsed.messages;
+      let effectiveChunks = parsed.chunks;
+      if (options.userOnly && parsed.messages) {
+        effectiveMessages = parsed.messages.filter((m) => m.role === "user");
+        if (effectiveMessages.length > 0) {
+          effectiveChunks = chunkMessages(effectiveMessages);
+        }
+      }
+
       const extracted = await resolvedDeps.extractKnowledgeFromChunksFn({
         file: target.file,
-        chunks: parsed.chunks,
-        messages: parsed.messages,
+        chunks: effectiveChunks,
+        messages: effectiveMessages,
         client,
         verbose,
         wholeFile: resolvedWholeFile,

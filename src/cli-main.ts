@@ -742,6 +742,7 @@ export function createProgram(): Command {
     )
     .option("--max-retries <n>", "Maximum auto-retry attempts", parseIntOption, 3)
     .option("--force", "Clean re-ingest: delete previous rows for each file before processing", false)
+    .option("--user-only", "Extract from user messages only (strip assistant messages for cleaner personal fact extraction)", false)
     .action(async (paths: string[], opts: IngestCommandOptions) => {
       const result = await runIngestCommand(paths, {
         ...opts,
