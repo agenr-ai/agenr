@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.5 (2026-02-25)
+
+- Current config display now shows all registered projects with directories and database isolation status
+
 ## 0.9.4 (2026-02-25)
 
 - Refactor: global projects map keyed by directory path instead of project slug

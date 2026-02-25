@@ -855,13 +855,15 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
   if (hasExistingConfig) {
     const summaryLines: string[] = [];
     if (existingConfig) {
-      summaryLines.push(initWizardRuntime.formatExistingConfig(existingConfig));
-    }
-    if (existingProjectSettings.platform) {
-      summaryLines.push(`Platform: ${formatPlatformLabel(existingProjectSettings.platform)}`);
-    }
-    if (existingProjectSettings.project) {
-      summaryLines.push(`Project: ${existingProjectSettings.project}`);
+      const sharedDbPath = resolveSharedKnowledgeDbPath();
+      summaryLines.push(initWizardRuntime.formatExistingConfig(existingConfig, sharedDbPath));
+    } else {
+      if (existingProjectSettings.platform) {
+        summaryLines.push(`Platform: ${formatPlatformLabel(existingProjectSettings.platform)}`);
+      }
+      if (existingProjectSettings.project) {
+        summaryLines.push(`Project: ${existingProjectSettings.project}`);
+      }
     }
     if (summaryLines.length > 0) {
       clack.note(summaryLines.join("\n"), "Current config");

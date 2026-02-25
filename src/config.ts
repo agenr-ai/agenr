@@ -74,7 +74,7 @@ function resolveUserPath(inputPath: string): string {
   return path.join(os.homedir(), inputPath.slice(1));
 }
 
-function resolveDefaultKnowledgeDbPath(): string {
+export function resolveDefaultKnowledgeDbPath(): string {
   return path.join(os.homedir(), ".agenr", "knowledge.db");
 }
 

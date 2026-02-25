@@ -116,6 +116,99 @@ beforeEach(() => {
   current.runEmbeddingConnectionTestMock.mockResolvedValue({ ok: true });
 });
 
+describe("formatExistingConfig", () => {
+  it("shows projects when they exist", () => {
+    const sharedDbPath = path.join(os.homedir(), ".agenr", "knowledge.db");
+    const formatted = setupModule.formatExistingConfig(
+      {
+        auth: "openai-api-key",
+        provider: "openai",
+        model: "openai/gpt-4.1",
+        projects: {
+          [path.join(os.homedir(), ".openclaw")]: {
+            project: "openclaw",
+            platform: "openclaw",
+          },
+          [path.join(os.homedir(), ".openclaw-sandbox")]: {
+            project: "openclaw",
+            platform: "openclaw",
+            dbPath: path.join(os.homedir(), ".openclaw-sandbox", "agenr-data", "knowledge.db"),
+          },
+        },
+      },
+      sharedDbPath,
+    );
+
+    expect(formatted).toContain("Projects:");
+    expect(formatted).toContain("  openclaw");
+    expect(formatted).toContain("    Directory: ~/.openclaw");
+    expect(formatted).toContain("    Directory: ~/.openclaw-sandbox");
+  });
+
+  it("omits projects section when none exist", () => {
+    const formatted = setupModule.formatExistingConfig({
+      auth: "openai-api-key",
+      provider: "openai",
+      model: "openai/gpt-4.1",
+    });
+
+    expect(formatted).not.toContain("Projects:");
+  });
+
+  it("shows isolated and shared labels", () => {
+    const sharedDbPath = path.join(os.homedir(), ".agenr", "knowledge.db");
+    const formatted = setupModule.formatExistingConfig(
+      {
+        auth: "openai-api-key",
+        provider: "openai",
+        model: "openai/gpt-4.1",
+        projects: {
+          "/tmp/openclaw-main": {
+            project: "openclaw",
+            platform: "openclaw",
+          },
+          "/tmp/openclaw-sandbox": {
+            project: "openclaw",
+            platform: "openclaw",
+            dbPath: "/tmp/openclaw-sandbox/agenr-data/knowledge.db",
+          },
+        },
+      },
+      sharedDbPath,
+    );
+
+    expect(formatted).toContain("~/.agenr/knowledge.db (shared)");
+    expect(formatted).toContain("/tmp/openclaw-sandbox/agenr-data/knowledge.db (isolated)");
+  });
+
+  it("shows tilde paths for home directory", () => {
+    const sharedDbPath = path.join(os.homedir(), ".agenr", "knowledge.db");
+    const formatted = setupModule.formatExistingConfig(
+      {
+        auth: "openai-api-key",
+        provider: "openai",
+        model: "openai/gpt-4.1",
+        projects: {
+          [path.join(os.homedir(), ".openclaw")]: {
+            project: "openclaw",
+            platform: "openclaw",
+          },
+          [path.join(os.homedir(), ".openclaw-sandbox")]: {
+            project: "openclaw",
+            platform: "openclaw",
+            dbPath: path.join(os.homedir(), ".openclaw-sandbox", "agenr-data", "knowledge.db"),
+          },
+        },
+      },
+      sharedDbPath,
+    );
+
+    expect(formatted).toContain("Directory: ~/.openclaw-sandbox");
+    expect(formatted).toContain("Database:  ~/.openclaw-sandbox/agenr-data/knowledge.db (isolated)");
+    expect(formatted).toContain("~/.agenr/knowledge.db");
+  });
+});
+
 describe("runSetupCore", () => {
   it("returns SetupResult with auth, provider, model on success", async () => {
     const mocks = getMocks();
