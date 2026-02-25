@@ -1115,6 +1115,16 @@ export function createProgram(): Command {
           formatLabel("Auth", status.auth ? formatAuthSummary(status.auth) : "(not set)"),
           formatLabel("Model", status.model ?? "(not set)"),
           formatLabel("Credential", status.credentialSource ?? "not found"),
+          formatLabel(
+            "Embeddings",
+            status.embeddingsConfigured === false
+              ? ui.warn("not configured")
+              : status.embeddingsAuthenticated === true
+                ? ui.success("Connected")
+                : status.embeddingsAuthenticated === false
+                  ? ui.error(status.embeddingsError ?? "Connection failed")
+                  : "(not checked)",
+          ),
           "",
           status.authenticated ? ui.success("Ready to extract") : ui.error(status.error ?? status.guidance),
         ].join("\n"),

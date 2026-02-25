@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.9.2 (2026-02-25)
+
+### Added
+- Added embeddings API key connectivity check in setup via new `runEmbeddingConnectionTest` helper
+  - Sends a minimal embeddings request (`"connection test"`) and verifies a non-empty vector is returned
+  - Handles API and transport errors with user-facing messages
+
+### Changed
+- Setup now tests embeddings connectivity immediately after entering or updating the OpenAI embeddings key
+  - Applies to embeddings-only update flow and the main setup flow for non-OpenAI extraction auth
+  - Uses spinner + retry prompt and allows explicit skip with guidance to run `agenr auth status`
+- `agenr auth status` now includes a separate embeddings diagnostics line in addition to extraction auth status
+- Added regression coverage for embeddings connection helper and setup retry/skip/update flows
+
 ## 0.9.1 (2026-02-25)
 
 ### Changed
