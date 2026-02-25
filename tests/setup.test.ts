@@ -226,6 +226,7 @@ describe("runSetupCore", () => {
       },
     });
     mocks.runConnectionTestMock.mockResolvedValueOnce({ ok: true });
+    mocks.passwordMock.mockResolvedValueOnce("sk-openai-test-embeddings");
 
     await setupModule.runSetupCore({
       env,
@@ -248,6 +249,7 @@ describe("runSetupCore", () => {
       available: false,
       guidance: "Codex CLI credentials not found.",
     });
+    mocks.passwordMock.mockResolvedValueOnce("sk-openai-test-embeddings");
 
     await setupModule.runSetupCore({
       env,

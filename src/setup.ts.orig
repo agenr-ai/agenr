@@ -11,7 +11,6 @@ import {
 import { runConnectionTest } from "./auth-status.js";
 import { probeCredentials } from "./llm/credentials.js";
 import { resolveModel } from "./llm/models.js";
-import { resolveEmbeddingApiKey } from "./embeddings/client.js";
 import { banner, formatLabel, ui } from "./ui.js";
 import type { AgenrAuthMethod, AgenrConfig, AgenrProvider } from "./types.js";
 
@@ -357,40 +356,6 @@ export async function runSetupCore(options: SetupCoreOptions): Promise<SetupResu
     clack.log.info(
       "Add credentials later with " + ui.bold("agenr config set-key") + ", then run " + ui.bold("agenr auth status"),
     );
-  }
-
-
-  // Embeddings require an OpenAI API key regardless of extraction provider.
-  // If the selected auth method does not provide one, prompt for it.
-  if (auth !== "openai-api-key") {
-    let hasEmbeddingKey = false;
-    try {
-      resolveEmbeddingApiKey({ ...working, auth, provider, model: resolvedModel.modelId }, options.env);
-      hasEmbeddingKey = true;
-    } catch {
-      // No embedding key available
-    }
-
-    if (!hasEmbeddingKey) {
-      clack.log.info("Embeddings require an OpenAI API key (even when using a different provider for extraction).");
-      clack.log.info("Get your key at https://platform.openai.com/api-keys");
-
-      const embeddingKey = await clack.password({
-        message: "Enter OpenAI API key for embeddings:",
-      });
-
-      if (clack.isCancel(embeddingKey)) {
-        return null;
-      }
-
-      const normalizedEmbeddingKey = embeddingKey.trim();
-      if (normalizedEmbeddingKey) {
-        working = setStoredCredential(working, "openai", normalizedEmbeddingKey);
-        clack.log.info("OpenAI API key saved for embeddings.");
-      } else {
-        clack.log.warn("No embedding key entered. You can set it later with " + "agenr config set-key openai <key>");
-      }
-    }
   }
 
   const nextConfig = buildConfigWithCredentials(
