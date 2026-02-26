@@ -23,6 +23,8 @@
 - Added type-specific resolution: auto-supersede for facts and preferences, flag decisions and lessons for review (#266)
 - Added conflict log for tracking detected contradictions and their resolutions (#266)
 - Added contradiction judge benchmark: fixtures, scorer, and CLI flag --judge for regression testing the LLM judge (#266)
+- Rewrote contradiction judge prompt: singular vs additive attribute heuristic, shorter and more focused for nano (#266)
+- Tuned judge benchmark fixtures for clarity (#266)
 
 ## 0.9.2 (2026-02-26)
 

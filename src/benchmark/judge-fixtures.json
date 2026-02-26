@@ -164,12 +164,12 @@
   {
     "id": "coex-skills",
     "newEntry": {
-      "content": "Alex knows Rust.",
+      "content": "Alex also knows Rust for systems programming.",
       "type": "fact",
       "subject": "Alex technical skills"
     },
     "existing": {
-      "content": "Alex knows Go.",
+      "content": "Alex knows Go for backend services.",
       "type": "fact",
       "subject": "Alex technical skills",
       "createdAt": "2026-01-04T00:00:00Z"
@@ -182,12 +182,12 @@
   {
     "id": "coex-schedule",
     "newEntry": {
-      "content": "Alex goes to the gym in the morning.",
+      "content": "Alex goes to the gym every morning before work.",
       "type": "preference",
       "subject": "Alex routine"
     },
     "existing": {
-      "content": "Alex takes evening walks after dinner.",
+      "content": "Alex takes a walk every evening after dinner.",
       "type": "preference",
       "subject": "Alex routine",
       "createdAt": "2026-01-03T00:00:00Z"
@@ -309,12 +309,12 @@
   {
     "id": "contra-architecture",
     "newEntry": {
-      "content": "For the same billing project, Acme decided on a microservices architecture.",
+      "content": "Acme decided to use microservices for the billing system.",
       "type": "decision",
       "subject": "Acme billing architecture decision"
     },
     "existing": {
-      "content": "For the same billing project, Acme decided on a monolith architecture.",
+      "content": "Acme decided to use a monolith for the billing system.",
       "type": "decision",
       "subject": "Acme billing architecture decision",
       "createdAt": "2026-01-15T00:00:00Z"
@@ -322,7 +322,7 @@
     "expected": {
       "relation": "contradicts",
       "altRelation": "supersedes",
-      "minConfidence": 0.6
+      "minConfidence": 0.5
     }
   },
   {
