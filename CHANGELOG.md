@@ -19,6 +19,9 @@
 - Added alternate expected values to claim scorer for entity, attribute, predicate, object (#266)
 - Expanded predicate equivalence groups and soft matches (#266)
 - Removed personal information from claim extraction prompt and benchmark fixtures (#266)
+- Added contradiction detection core: LLM judge classifies entry pairs as supersedes/contradicts/coexists/unrelated (#266)
+- Added type-specific resolution: auto-supersede for facts and preferences, flag decisions and lessons for review (#266)
+- Added conflict log for tracking detected contradictions and their resolutions (#266)
 
 ## 0.9.2 (2026-02-26)
 
