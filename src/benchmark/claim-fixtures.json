@@ -1,15 +1,15 @@
 [
   {
     "id": "fact-weight",
-    "content": "Jim weighs 185 lbs after losing 55 lbs on keto",
+    "content": "Alex weighs 180 lbs after losing 50 lbs on paleo",
     "type": "fact",
-    "subject": "Jim weight",
+    "subject": "Alex weight",
     "expected": {
       "noClaim": false,
-      "subjectEntity": "jim",
+      "subjectEntity": "alex",
       "subjectAttribute": "weight",
       "predicate": "weighs",
-      "object": "185 lbs",
+      "object": "180 lbs",
       "minConfidence": 0.8
     }
   },
@@ -29,59 +29,59 @@
   },
   {
     "id": "fact-location",
-    "content": "Jim lives in Dallas Texas",
+    "content": "Alex lives in seattle washington",
     "type": "fact",
-    "subject": "Jim location",
+    "subject": "Alex location",
     "expected": {
       "noClaim": false,
-      "subjectEntity": "jim",
+      "subjectEntity": "alex",
       "subjectAttribute": "location",
       "predicate": "lives_in",
-      "object": "dallas texas",
+      "object": "seattle washington",
       "minConfidence": 0.75
     }
   },
   {
     "id": "fact-employer",
-    "content": "Jim works at Loopback Health",
+    "content": "Alex works at Acme Corp",
     "type": "fact",
-    "subject": "Jim employer",
+    "subject": "Alex employer",
     "expected": {
       "noClaim": false,
-      "subjectEntity": "jim",
+      "subjectEntity": "alex",
       "subjectAttribute": "employer",
       "predicate": "works_at",
-      "object": "loopback health",
+      "object": "acme corp",
       "minConfidence": 0.75
     }
   },
   {
     "id": "fact-pet",
-    "content": "Jim has a dog named Duke",
+    "content": "Alex has a dog named Buddy",
     "type": "fact",
-    "subject": "Jim pet",
+    "subject": "Alex pet",
     "expected": {
       "noClaim": false,
-      "subjectEntity": "jim",
+      "subjectEntity": "alex",
       "subjectAttribute": "pet",
       "predicate": "has",
-      "object": "duke",
+      "object": "buddy",
       "minConfidence": 0.75
     }
   },
   {
     "id": "fact-breed",
-    "content": "Duke is an Australian Labradoodle",
+    "content": "Buddy is a golden retriever",
     "type": "fact",
-    "subject": "Duke breed",
+    "subject": "Buddy breed",
     "expected": {
       "noClaim": false,
-      "subjectEntity": "duke",
+      "subjectEntity": "buddy",
       "subjectAttribute": "breed",
       "predicate": "is",
-      "object": "australian labradoodle",
+      "object": "golden retriever",
       "minConfidence": 0.75,
-      "altEntity": "jim",
+      "altEntity": "alex",
       "altAttribute": "pet_breed"
     }
   },
@@ -101,26 +101,26 @@
   },
   {
     "id": "fact-education",
-    "content": "Jim graduated from VMI",
+    "content": "Alex graduated from MIT",
     "type": "fact",
-    "subject": "Jim education",
+    "subject": "Alex education",
     "expected": {
       "noClaim": false,
-      "subjectEntity": "jim",
+      "subjectEntity": "alex",
       "subjectAttribute": "education",
       "predicate": "graduated_from",
-      "object": "vmi",
+      "object": "mit",
       "minConfidence": 0.75
     }
   },
   {
     "id": "pref-package-manager",
-    "content": "Jim prefers pnpm over npm",
+    "content": "Alex prefers pnpm over npm",
     "type": "preference",
-    "subject": "Jim package manager",
+    "subject": "Alex package manager",
     "expected": {
       "noClaim": false,
-      "subjectEntity": "jim",
+      "subjectEntity": "alex",
       "subjectAttribute": "package_manager",
       "predicate": "prefers",
       "object": "pnpm",
@@ -129,12 +129,12 @@
   },
   {
     "id": "pref-language",
-    "content": "Jim prefers TypeScript for new projects",
+    "content": "Alex prefers TypeScript for new projects",
     "type": "preference",
-    "subject": "Jim language",
+    "subject": "Alex language",
     "expected": {
       "noClaim": false,
-      "subjectEntity": "jim",
+      "subjectEntity": "alex",
       "subjectAttribute": "language",
       "predicate": "prefers",
       "object": "typescript",
@@ -143,26 +143,26 @@
   },
   {
     "id": "pref-diet",
-    "content": "Jim follows the keto diet",
+    "content": "Alex follows the paleo diet",
     "type": "preference",
-    "subject": "Jim diet",
+    "subject": "Alex diet",
     "expected": {
       "noClaim": false,
-      "subjectEntity": "jim",
+      "subjectEntity": "alex",
       "subjectAttribute": "diet",
       "predicate": "follows",
-      "object": "keto",
+      "object": "paleo",
       "minConfidence": 0.75
     }
   },
   {
     "id": "pref-values",
-    "content": "Jim values alone time and continuous improvement",
+    "content": "Alex values alone time and continuous improvement",
     "type": "preference",
-    "subject": "Jim values",
+    "subject": "Alex values",
     "expected": {
       "noClaim": false,
-      "subjectEntity": "jim",
+      "subjectEntity": "alex",
       "subjectAttribute": "values",
       "predicate": "values",
       "object": "alone time and continuous improvement",
@@ -171,15 +171,15 @@
   },
   {
     "id": "pref-formatting",
-    "content": "Jim dislikes em-dashes",
+    "content": "Alex dislikes semicolons",
     "type": "preference",
-    "subject": "Jim formatting",
+    "subject": "Alex formatting",
     "expected": {
       "noClaim": false,
-      "subjectEntity": "jim",
+      "subjectEntity": "alex",
       "subjectAttribute": "formatting",
       "predicate": "dislikes",
-      "object": "em-dashes",
+      "object": "semicolons",
       "minConfidence": 0.75
     }
   },
@@ -277,7 +277,7 @@
   },
   {
     "id": "noclaim-relationship",
-    "content": "Team relationships: Jim mentors Sam, Sarah pairs with Alex on backend work, and Priya reviews frontend changes for both teams.",
+    "content": "Team relationships: Alex mentors Sam, Sarah pairs with Alex on backend work, and Priya reviews frontend changes for both teams.",
     "type": "relationship",
     "subject": "team relationships",
     "expected": {
@@ -286,12 +286,12 @@
   },
   {
     "id": "edge-two-facts",
-    "content": "Jim switched from npm to pnpm for all projects",
+    "content": "Alex switched from npm to pnpm for all projects",
     "type": "fact",
-    "subject": "Jim tooling transitions",
+    "subject": "Alex tooling transitions",
     "expected": {
       "noClaim": false,
-      "subjectEntity": "jim",
+      "subjectEntity": "alex",
       "subjectAttribute": "package_manager",
       "predicate": "switched_to",
       "object": "pnpm",
@@ -309,7 +309,7 @@
   },
   {
     "id": "edge-short",
-    "content": "keto",
+    "content": "paleo",
     "type": "fact",
     "subject": "diet note",
     "expected": {

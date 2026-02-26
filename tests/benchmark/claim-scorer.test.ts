@@ -6,12 +6,12 @@ import type { ExtractedClaim } from "../../src/db/claim-extraction.js";
 function makeFixture(overrides: Partial<ClaimFixture> = {}): ClaimFixture {
   return {
     id: "fixture-1",
-    content: "Jim uses pnpm",
+    content: "Alex uses pnpm",
     type: "fact",
-    subject: "Jim package manager",
+    subject: "Alex package manager",
     expected: {
       noClaim: false,
-      subjectEntity: "jim",
+      subjectEntity: "alex",
       subjectAttribute: "package_manager",
       predicate: "uses",
       object: "pnpm",
@@ -23,9 +23,9 @@ function makeFixture(overrides: Partial<ClaimFixture> = {}): ClaimFixture {
 
 function makeClaim(overrides: Partial<ExtractedClaim> = {}): ExtractedClaim {
   return {
-    subjectEntity: "jim",
+    subjectEntity: "alex",
     subjectAttribute: "package_manager",
-    subjectKey: "jim/package_manager",
+    subjectKey: "alex/package_manager",
     predicate: "uses",
     object: "pnpm",
     confidence: 0.9,
@@ -40,12 +40,12 @@ describe("claim benchmark scorer", () => {
   });
 
   it("scores a case-insensitive entity match as 1.0", () => {
-    const result = scoreClaimFixture(makeFixture(), makeClaim({ subjectEntity: "JIM" }));
+    const result = scoreClaimFixture(makeFixture(), makeClaim({ subjectEntity: "ALEX" }));
     expect(result.scores.entityMatch).toBe(1);
   });
 
   it("scores entity mismatch as 0.0", () => {
-    const result = scoreClaimFixture(makeFixture(), makeClaim({ subjectEntity: "alex" }));
+    const result = scoreClaimFixture(makeFixture(), makeClaim({ subjectEntity: "taylor" }));
     expect(result.scores.entityMatch).toBe(0);
   });
 
@@ -54,11 +54,11 @@ describe("claim benchmark scorer", () => {
       makeFixture({
         expected: {
           ...makeFixture().expected,
-          subjectEntity: "duke",
-          altEntity: "jim",
+          subjectEntity: "buddy",
+          altEntity: "alex",
         },
       }),
-      makeClaim({ subjectEntity: "jim" }),
+      makeClaim({ subjectEntity: "alex" }),
     );
     expect(result.scores.entityMatch).toBe(1);
   });
@@ -68,8 +68,8 @@ describe("claim benchmark scorer", () => {
       makeFixture({
         expected: {
           ...makeFixture().expected,
-          subjectEntity: "duke",
-          altEntity: "jim",
+          subjectEntity: "buddy",
+          altEntity: "alex",
         },
       }),
       makeClaim({ subjectEntity: "sam" }),
@@ -98,8 +98,8 @@ describe("claim benchmark scorer", () => {
 
   it("scores partial object match (contains) as 0.7", () => {
     const result = scoreClaimFixture(
-      makeFixture({ expected: { ...makeFixture().expected, object: "185 lbs" } }),
-      makeClaim({ object: "Jim weighs 185 lbs" }),
+      makeFixture({ expected: { ...makeFixture().expected, object: "180 lbs" } }),
+      makeClaim({ object: "Alex weighs 180 lbs" }),
     );
     expect(result.scores.objectMatch).toBe(0.7);
   });
@@ -145,21 +145,21 @@ describe("claim benchmark scorer", () => {
       makeFixture({
         expected: {
           noClaim: false,
-          subjectEntity: "duke",
+          subjectEntity: "buddy",
           subjectAttribute: "breed",
           predicate: "is",
-          object: "australian labradoodle",
+          object: "golden retriever",
           minConfidence: 0.7,
-          altEntity: "jim",
+          altEntity: "alex",
           altAttribute: "pet_breed",
         },
       }),
       makeClaim({
-        subjectEntity: "jim",
+        subjectEntity: "alex",
         subjectAttribute: "pet_breed",
-        subjectKey: "jim/pet_breed",
+        subjectKey: "alex/pet_breed",
         predicate: "is",
-        object: "australian labradoodle",
+        object: "golden retriever",
         confidence: 0.9,
       }),
     );

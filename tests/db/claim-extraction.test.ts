@@ -66,22 +66,22 @@ describe("claim extraction", () => {
     vi.mocked(runSimpleStream).mockResolvedValueOnce(
       makeToolMessage({
         no_claim: false,
-        subject_entity: "jim",
+        subject_entity: "alex",
         subject_attribute: "weight",
         predicate: "weighs",
-        object: "185 lbs",
+        object: "180 lbs",
         confidence: 0.9,
       }),
     );
 
-    const claim = await extractClaim("Jim weighs 185 lbs", "fact", "Jim weight", makeClient());
+    const claim = await extractClaim("Alex weighs 180 lbs", "fact", "Alex weight", makeClient());
 
     expect(claim).toEqual({
-      subjectEntity: "jim",
+      subjectEntity: "alex",
       subjectAttribute: "weight",
-      subjectKey: "jim/weight",
+      subjectKey: "alex/weight",
       predicate: "weighs",
-      object: "185 lbs",
+      object: "180 lbs",
       confidence: 0.9,
     });
   });
@@ -90,7 +90,7 @@ describe("claim extraction", () => {
     vi.mocked(runSimpleStream).mockResolvedValueOnce(
       makeToolMessage({
         no_claim: false,
-        subject_entity: "Jim",
+        subject_entity: "Alex",
         subject_attribute: "package_manager",
         predicate: "prefers",
         object: "pnpm",
@@ -98,38 +98,38 @@ describe("claim extraction", () => {
       }),
     );
 
-    const claim = await extractClaim("Jim prefers pnpm", "preference", "Jim package manager", makeClient());
+    const claim = await extractClaim("Alex prefers pnpm", "preference", "Alex package manager", makeClient());
 
-    expect(claim?.subjectEntity).toBe("jim");
+    expect(claim?.subjectEntity).toBe("alex");
     expect(claim?.subjectAttribute).toBe("package_manager");
-    expect(claim?.subjectKey).toBe("jim/package_manager");
+    expect(claim?.subjectKey).toBe("alex/package_manager");
   });
 
   it("extracts primary claim when entry includes extra context", async () => {
     vi.mocked(runSimpleStream).mockResolvedValueOnce(
       makeToolMessage({
         no_claim: false,
-        subject_entity: "jim",
+        subject_entity: "alex",
         subject_attribute: "employer",
         predicate: "works_at",
-        object: "loopback health",
+        object: "acme corp",
         confidence: 0.9,
       }),
     );
 
     const claim = await extractClaim(
-      "Jim works at Loopback Health as Sr Director of Engineering",
+      "Alex works at Acme Corp as lead engineer",
       "fact",
-      "Jim employer",
+      "Alex employer",
       makeClient(),
     );
 
     expect(claim).toEqual({
-      subjectEntity: "jim",
+      subjectEntity: "alex",
       subjectAttribute: "employer",
-      subjectKey: "jim/employer",
+      subjectKey: "alex/employer",
       predicate: "works_at",
-      object: "loopback health",
+      object: "acme corp",
       confidence: 0.9,
     });
   });
@@ -154,21 +154,21 @@ describe("claim extraction", () => {
   it("returns null on llm error", async () => {
     vi.mocked(runSimpleStream).mockRejectedValueOnce(new Error("upstream failure"));
 
-    await expect(extractClaim("Jim weighs 185 lbs", "fact", "Jim weight", makeClient())).resolves.toBeNull();
+    await expect(extractClaim("Alex weighs 180 lbs", "fact", "Alex weight", makeClient())).resolves.toBeNull();
   });
 
   it("returns null on missing required fields", async () => {
     vi.mocked(runSimpleStream).mockResolvedValueOnce(
       makeToolMessage({
         no_claim: false,
-        subject_entity: "jim",
+        subject_entity: "alex",
         predicate: "weighs",
-        object: "185 lbs",
+        object: "180 lbs",
         confidence: 0.9,
       }),
     );
 
-    const claim = await extractClaim("Jim weighs 185 lbs", "fact", "Jim weight", makeClient());
+    const claim = await extractClaim("Alex weighs 180 lbs", "fact", "Alex weight", makeClient());
     expect(claim).toBeNull();
   });
 
@@ -176,16 +176,16 @@ describe("claim extraction", () => {
     vi.mocked(runSimpleStream).mockResolvedValueOnce(
       makeToolMessage({
         no_claim: false,
-        subject_entity: "Jim",
+        subject_entity: "Alex",
         subject_attribute: "Weight",
         predicate: "weighs",
-        object: "185 lbs",
+        object: "180 lbs",
         confidence: 0.9,
       }),
     );
 
-    const claim = await extractClaim("Jim weighs 185 lbs", "fact", "Jim weight", makeClient());
-    expect(claim?.subjectKey).toBe("jim/weight");
+    const claim = await extractClaim("Alex weighs 180 lbs", "fact", "Alex weight", makeClient());
+    expect(claim?.subjectKey).toBe("alex/weight");
   });
 
   it("extractClaimsBatch processes multiple entries sequentially", async () => {
@@ -193,10 +193,10 @@ describe("claim extraction", () => {
       .mockResolvedValueOnce(
         makeToolMessage({
           no_claim: false,
-          subject_entity: "jim",
+          subject_entity: "alex",
           subject_attribute: "weight",
           predicate: "weighs",
-          object: "185 lbs",
+          object: "180 lbs",
           confidence: 0.9,
         }),
       )
@@ -214,7 +214,7 @@ describe("claim extraction", () => {
 
     const results = await extractClaimsBatch(
       [
-        { content: "Jim weighs 185 lbs", type: "fact", subject: "Jim weight" },
+        { content: "Alex weighs 180 lbs", type: "fact", subject: "Alex weight" },
         { content: "Long meeting summary", type: "event", subject: "meeting" },
         { content: "agenr uses libsql", type: "fact", subject: "agenr storage" },
       ],
@@ -222,7 +222,7 @@ describe("claim extraction", () => {
     );
 
     expect(results).toHaveLength(3);
-    expect(results[0]?.subjectKey).toBe("jim/weight");
+    expect(results[0]?.subjectKey).toBe("alex/weight");
     expect(results[1]).toBeNull();
     expect(results[2]?.subjectKey).toBe("agenr/storage_backend");
     expect(runSimpleStream).toHaveBeenCalledTimes(3);
