@@ -68,6 +68,7 @@ export interface ConsolidationOrchestratorReport extends ConsolidationStats {
     types: Phase1TypeStats[];
   };
   phase2?: ClusterProcessingStats;
+  phase3?: ClusterProcessingStats;
   progress: ConsolidationProgress;
   summary: {
     totalLlmCalls: number;
@@ -124,6 +125,7 @@ interface RunContext {
   checkpoint: ConsolidationCheckpoint;
   processedPhase1: Map<string, Set<string>>;
   processedPhase2: Set<string>;
+  createdEntryIds: Set<string>;
   minCluster: number;
   phase1Threshold: number;
   phase2Threshold: number;
@@ -474,7 +476,7 @@ async function processPhaseClusters(
   params: {
     db: Client;
     clusters: Cluster[];
-    phase: 1 | 2;
+    phase: 1 | 2 | 3;
     type: string;
     projectIndex: number;
     typeIndex: number;
@@ -528,6 +530,9 @@ async function processPhaseClusters(
       stats.clustersMerged += 1;
       stats.entriesConsolidatedFrom += item.cluster.entries.length;
       stats.canonicalEntriesCreated += 1;
+      if (outcome.mergedEntryId) {
+        params.context.createdEntryIds.add(outcome.mergedEntryId);
+      }
     }
 
     params.checkpoint.phase = params.phase;
@@ -656,6 +661,7 @@ export async function runConsolidationOrchestrator(
     checkpoint,
     processedPhase1: processedMaps.phase1,
     processedPhase2: processedMaps.phase2,
+    createdEntryIds: new Set<string>(),
     minCluster,
     phase1Threshold,
     phase2Threshold,
@@ -979,6 +985,76 @@ export async function runConsolidationOrchestrator(
       }
     }
 
+    if (!context.batchReached && context.batchLimit && context.processedClustersInRun >= context.batchLimit) {
+      context.batchReached = true;
+    }
+
+    if (!context.batchReached && context.createdEntryIds.size >= 2) {
+      onLog(`Phase 3: Post-merge dedup (${context.createdEntryIds.size} new entries)...`);
+      const phase3Processed = new Set<string>();
+
+      for (let projectIndex = 0; projectIndex < phase1PlanByProject.length; projectIndex += 1) {
+        if (isShutdownRequested()) {
+          context.batchReached = true;
+          break;
+        }
+        if (context.batchReached) {
+          break;
+        }
+
+        const projectPlan = phase1PlanByProject[projectIndex];
+        const project = projectPlan.project;
+        const projectLabel = project ?? "(untagged)";
+        const dedupClusters = await resolvedDeps.buildClustersFn(db, {
+          simThreshold: phase1Threshold,
+          minCluster: 2,
+          maxClusterSize: phase1MaxClusterSize,
+          platform,
+          project,
+          idempotencyDays: 0,
+          verbose: options.verbose,
+          onLog: options.verbose ? onLog : undefined,
+        });
+
+        const relevantClusters = dedupClusters.filter((cluster) =>
+          cluster.entries.some((entry) => context.createdEntryIds.has(entry.id)),
+        );
+        if (relevantClusters.length === 0) {
+          continue;
+        }
+
+        onLog(`Phase 3: Found ${relevantClusters.length} dedup clusters for project=${projectLabel}`);
+
+        const phase3Stats = await processPhaseClusters(
+          {
+            db,
+            clusters: relevantClusters,
+            phase: 3,
+            projectIndex,
+            type: "post-merge-dedup",
+            typeIndex: 0,
+            llmClient,
+            embeddingApiKey,
+            options,
+            checkpoint: context.checkpoint,
+            processedSet: phase3Processed,
+            context,
+          },
+          resolvedDeps,
+        );
+
+        if (context.report.phase3) {
+          updateAggregateStats(context.report.phase3, phase3Stats);
+        } else {
+          context.report.phase3 = phase3Stats;
+        }
+
+        if (context.batchReached) {
+          break;
+        }
+      }
+    }
+
     context.report.phase1.types = phase1Types
       .map((type) => phase1StatsByType.get(type))
       .filter((item): item is Phase1TypeStats => Boolean(item));
@@ -990,26 +1066,32 @@ export async function runConsolidationOrchestrator(
     await Promise.all(projectGroups.map((project) => resolvedDeps.countActiveEntriesFn(db, platform, project)))
   ).reduce((sum, count) => sum + count, 0);
   context.report.progress.partial = context.batchReached;
+  const estimatedPhasesProcessed = context.report.phase1.totals.clustersProcessed + (context.report.phase2?.clustersProcessed ?? 0);
   context.report.progress.processedClusters =
-    context.report.phase1.totals.clustersProcessed + (context.report.phase2?.clustersProcessed ?? 0);
+    estimatedPhasesProcessed + (context.report.phase3?.clustersProcessed ?? 0);
   context.report.progress.remainingClusters = Math.max(
     context.report.estimate.totalClusters -
       context.report.phase1.totals.skippedByResume -
       (context.report.phase2?.skippedByResume ?? 0) -
-      context.report.progress.processedClusters,
+      estimatedPhasesProcessed,
     0,
   );
 
-  context.report.summary.totalLlmCalls = context.report.phase1.totals.llmCalls + (context.report.phase2?.llmCalls ?? 0);
+  context.report.summary.totalLlmCalls =
+    context.report.phase1.totals.llmCalls + (context.report.phase2?.llmCalls ?? 0) + (context.report.phase3?.llmCalls ?? 0);
   context.report.summary.totalFlagged =
-    context.report.phase1.totals.mergesFlagged + (context.report.phase2?.mergesFlagged ?? 0);
+    context.report.phase1.totals.mergesFlagged + (context.report.phase2?.mergesFlagged ?? 0) + (context.report.phase3?.mergesFlagged ?? 0);
   context.report.summary.totalCanonicalEntriesCreated =
-    context.report.phase1.totals.canonicalEntriesCreated + (context.report.phase2?.canonicalEntriesCreated ?? 0);
+    context.report.phase1.totals.canonicalEntriesCreated +
+    (context.report.phase2?.canonicalEntriesCreated ?? 0) +
+    (context.report.phase3?.canonicalEntriesCreated ?? 0);
   context.report.summary.totalEntriesConsolidatedFrom =
-    context.report.phase1.totals.entriesConsolidatedFrom + (context.report.phase2?.entriesConsolidatedFrom ?? 0);
+    context.report.phase1.totals.entriesConsolidatedFrom +
+    (context.report.phase2?.entriesConsolidatedFrom ?? 0) +
+    (context.report.phase3?.entriesConsolidatedFrom ?? 0);
 
   if (context.batchReached) {
-    context.checkpoint.phase = context.report.phase2 ? 2 : 1;
+    context.checkpoint.phase = context.report.phase3 ? 3 : context.report.phase2 ? 2 : 1;
     context.checkpoint.processed = processedMapsToCheckpoint(context.processedPhase1, context.processedPhase2);
     await saveCheckpoint(context.checkpoint);
   } else {
