@@ -58,6 +58,12 @@ describe("config", () => {
       maxAgeDays: 60,
       enabled: true,
     });
+    expect(loaded?.contradiction).toEqual({
+      enabled: true,
+      claimExtractionModel: "gpt-4.1-nano",
+      judgeModel: "gpt-4.1-nano",
+      autoSupersedeConfidence: 0.85,
+    });
   });
 
   it("returns null when config does not exist", async () => {
@@ -120,6 +126,12 @@ describe("config", () => {
         maxAgeDays: 60,
         enabled: true,
       },
+      contradiction: {
+        enabled: true,
+        claimExtractionModel: "gpt-4.1-nano",
+        judgeModel: "gpt-4.1-nano",
+        autoSupersedeConfidence: 0.85,
+      },
       provider: "anthropic",
       credentials: {
         anthropicApiKey: "sk-ant-test",
@@ -152,6 +164,34 @@ describe("config", () => {
       scoreThreshold: 0.05,
       maxAgeDays: 60,
       enabled: true,
+    });
+  });
+
+  it("preserves contradiction config through normalizeConfig", () => {
+    const normalized = normalizeConfig({
+      contradiction: {
+        enabled: false,
+        claimExtractionModel: "gpt-4.1-mini",
+        judgeModel: "gpt-4.1",
+        autoSupersedeConfidence: 0.91,
+      },
+    });
+
+    expect(normalized.contradiction).toEqual({
+      enabled: false,
+      claimExtractionModel: "gpt-4.1-mini",
+      judgeModel: "gpt-4.1",
+      autoSupersedeConfidence: 0.91,
+    });
+  });
+
+  it("applies contradiction defaults when missing", () => {
+    const normalized = normalizeConfig({});
+    expect(normalized.contradiction).toEqual({
+      enabled: true,
+      claimExtractionModel: "gpt-4.1-nano",
+      judgeModel: "gpt-4.1-nano",
+      autoSupersedeConfidence: 0.85,
     });
   });
 

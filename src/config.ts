@@ -66,6 +66,10 @@ const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
 const DEFAULT_EMBEDDING_DIMENSIONS = 1024;
 const DEFAULT_FORGETTING_SCORE_THRESHOLD = 0.05;
 const DEFAULT_FORGETTING_MAX_AGE_DAYS = 60;
+const DEFAULT_CONTRADICTION_ENABLED = true;
+const DEFAULT_CLAIM_EXTRACTION_MODEL = "gpt-4.1-nano";
+const DEFAULT_CONTRADICTION_JUDGE_MODEL = "gpt-4.1-nano";
+const DEFAULT_AUTO_SUPERSEDE_CONFIDENCE = 0.85;
 
 function resolveUserPath(inputPath: string): string {
   if (!inputPath.startsWith("~")) {
@@ -246,6 +250,44 @@ function normalizeDedupConfig(input: unknown): AgenrConfig["dedup"] | undefined 
   return Object.keys(normalized).length > 0 ? normalized : undefined;
 }
 
+function normalizeContradictionConfig(input: unknown): NonNullable<AgenrConfig["contradiction"]> {
+  const normalized: NonNullable<AgenrConfig["contradiction"]> = {
+    enabled: DEFAULT_CONTRADICTION_ENABLED,
+    claimExtractionModel: DEFAULT_CLAIM_EXTRACTION_MODEL,
+    judgeModel: DEFAULT_CONTRADICTION_JUDGE_MODEL,
+    autoSupersedeConfidence: DEFAULT_AUTO_SUPERSEDE_CONFIDENCE,
+  };
+
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return normalized;
+  }
+
+  const record = input as Record<string, unknown>;
+
+  if (typeof record.enabled === "boolean") {
+    normalized.enabled = record.enabled;
+  }
+
+  if (typeof record.claimExtractionModel === "string" && record.claimExtractionModel.trim()) {
+    normalized.claimExtractionModel = record.claimExtractionModel.trim();
+  }
+
+  if (typeof record.judgeModel === "string" && record.judgeModel.trim()) {
+    normalized.judgeModel = record.judgeModel.trim();
+  }
+
+  if (
+    typeof record.autoSupersedeConfidence === "number" &&
+    Number.isFinite(record.autoSupersedeConfidence) &&
+    record.autoSupersedeConfidence >= 0 &&
+    record.autoSupersedeConfidence <= 1
+  ) {
+    normalized.autoSupersedeConfidence = record.autoSupersedeConfidence;
+  }
+
+  return normalized;
+}
+
 function normalizeLabelProjectMap(input: unknown): Record<string, string> | undefined {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     return undefined;
@@ -362,6 +404,7 @@ export function normalizeConfig(input: unknown): AgenrConfig {
     embedding: normalizeEmbeddingConfig(record.embedding),
     db: normalizeDbConfig(record.db),
     forgetting: normalizeForgettingConfig(record.forgetting),
+    contradiction: normalizeContradictionConfig(record.contradiction),
   };
 
   if (typeof record.auth === "string") {
@@ -521,6 +564,13 @@ export function mergeConfigPatch(current: AgenrConfig | null, patch: AgenrConfig
     merged.dedup = {
       ...(current?.dedup ?? {}),
       ...(patch.dedup ?? {}),
+    };
+  }
+
+  if (current?.contradiction || patch.contradiction) {
+    merged.contradiction = {
+      ...(current?.contradiction ?? {}),
+      ...(patch.contradiction ?? {}),
     };
   }
 

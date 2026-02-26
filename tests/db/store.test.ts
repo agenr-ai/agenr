@@ -2,7 +2,9 @@ import { createClient, type Client } from "@libsql/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { initDb } from "../../src/db/client.js";
 import { hashText, storeEntries } from "../../src/db/store.js";
+import * as claimExtractionModule from "../../src/db/claim-extraction.js";
 import type { KnowledgeEntry } from "../../src/types.js";
+import type { LlmClient } from "../../src/types.js";
 
 function asNumber(value: unknown): number {
   if (typeof value === "number") {
@@ -62,6 +64,21 @@ function makeEntry(params: {
   };
 }
 
+function makeLlmClient(modelId = "gpt-4.1-nano"): LlmClient {
+  return {
+    auth: "openai-api-key",
+    resolvedModel: {
+      provider: "openai",
+      modelId,
+      model: {} as LlmClient["resolvedModel"]["model"],
+    },
+    credentials: {
+      apiKey: "sk-test",
+      source: "test",
+    },
+  };
+}
+
 describe("db store pipeline", () => {
   const clients: Client[] = [];
 
@@ -69,6 +86,7 @@ describe("db store pipeline", () => {
     while (clients.length > 0) {
       clients.pop()?.close();
     }
+    vi.restoreAllMocks();
   });
 
   function makeClient(): Client {
@@ -825,5 +843,198 @@ describe("db store pipeline", () => {
 
     expect(result.added).toBe(0);
     expect(result.updated).toBe(1);
+  });
+
+  it("runs claim extraction for add decisions and stores claim fields", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    const extractClaimSpy = vi.spyOn(claimExtractionModule, "extractClaim").mockResolvedValue({
+      subjectEntity: "jim",
+      subjectAttribute: "weight",
+      subjectKey: "jim/weight",
+      predicate: "weighs",
+      object: "185 lbs",
+      confidence: 0.9,
+    });
+
+    await storeEntries(
+      client,
+      [makeEntry({ content: "seed vec-base", sourceFile: "seed.jsonl", subject: "seed subject" })],
+      "sk-test",
+      { embedFn: mockEmbed, force: true },
+    );
+
+    const result = await storeEntries(
+      client,
+      [makeEntry({ content: "incoming vec-low", sourceFile: "incoming.jsonl", subject: "different subject" })],
+      "sk-test",
+      {
+        embedFn: mockEmbed,
+        onlineDedup: true,
+        llmClient: makeLlmClient(),
+      },
+    );
+
+    expect(result.added).toBe(1);
+    expect(extractClaimSpy).toHaveBeenCalledTimes(1);
+
+    const row = await client.execute({
+      sql: `
+        SELECT subject_entity, subject_attribute, subject_key, claim_predicate, claim_object, claim_confidence
+        FROM entries
+        WHERE content = ?
+      `,
+      args: ["incoming vec-low"],
+    });
+    expect(String(row.rows[0]?.subject_entity)).toBe("jim");
+    expect(String(row.rows[0]?.subject_attribute)).toBe("weight");
+    expect(String(row.rows[0]?.subject_key)).toBe("jim/weight");
+    expect(String(row.rows[0]?.claim_predicate)).toBe("weighs");
+    expect(String(row.rows[0]?.claim_object)).toBe("185 lbs");
+    expect(asNumber(row.rows[0]?.claim_confidence)).toBeCloseTo(0.9, 6);
+  });
+
+  it("does not run claim extraction when dedup decides SKIP", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    const extractClaimSpy = vi.spyOn(claimExtractionModule, "extractClaim").mockResolvedValue({
+      subjectEntity: "jim",
+      subjectAttribute: "weight",
+      subjectKey: "jim/weight",
+      predicate: "weighs",
+      object: "185 lbs",
+      confidence: 0.9,
+    });
+
+    await storeEntries(
+      client,
+      [makeEntry({ content: "seed vec-base", sourceFile: "seed.jsonl", subject: "Alpha" })],
+      "sk-test",
+      { embedFn: mockEmbed, force: true },
+    );
+
+    const seedRow = await client.execute({ sql: "SELECT id FROM entries WHERE content = ?", args: ["seed vec-base"] });
+    const seedId = String(seedRow.rows[0]?.id);
+
+    const result = await storeEntries(
+      client,
+      [makeEntry({ content: "incoming vec-89", sourceFile: "incoming.jsonl", subject: "Beta" })],
+      "sk-test",
+      {
+        embedFn: mockEmbed,
+        onlineDedup: true,
+        llmClient: makeLlmClient(),
+        onlineDedupFn: vi.fn(async () => ({
+          action: "SKIP",
+          target_id: seedId,
+          merged_content: null,
+          reasoning: "already captured",
+        })),
+      },
+    );
+
+    expect(result.skipped).toBe(1);
+    expect(extractClaimSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not run claim extraction when claimExtractionEnabled is false", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    const extractClaimSpy = vi.spyOn(claimExtractionModule, "extractClaim").mockResolvedValue({
+      subjectEntity: "jim",
+      subjectAttribute: "weight",
+      subjectKey: "jim/weight",
+      predicate: "weighs",
+      object: "185 lbs",
+      confidence: 0.9,
+    });
+
+    const result = await storeEntries(
+      client,
+      [makeEntry({ content: "entry vec-low", sourceFile: "incoming.jsonl", subject: "gamma" })],
+      "sk-test",
+      {
+        embedFn: mockEmbed,
+        force: true,
+        llmClient: makeLlmClient(),
+        claimExtractionEnabled: false,
+      },
+    );
+
+    expect(result.added).toBe(1);
+    expect(extractClaimSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not run claim extraction when llmClient is not provided", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    const extractClaimSpy = vi.spyOn(claimExtractionModule, "extractClaim").mockResolvedValue({
+      subjectEntity: "jim",
+      subjectAttribute: "weight",
+      subjectKey: "jim/weight",
+      predicate: "weighs",
+      object: "185 lbs",
+      confidence: 0.9,
+    });
+
+    const result = await storeEntries(
+      client,
+      [makeEntry({ content: "entry vec-v4", sourceFile: "incoming.jsonl", subject: "gamma" })],
+      "sk-test",
+      {
+        embedFn: mockEmbed,
+        force: true,
+      },
+    );
+
+    expect(result.added).toBe(1);
+    expect(extractClaimSpy).not.toHaveBeenCalled();
+  });
+
+  it("writes and reads claim fields through the store pipeline", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    vi.spyOn(claimExtractionModule, "extractClaim").mockResolvedValue({
+      subjectEntity: "agenr",
+      subjectAttribute: "storage_backend",
+      subjectKey: "agenr/storage_backend",
+      predicate: "uses",
+      object: "libsql",
+      confidence: 0.88,
+    });
+
+    await storeEntries(
+      client,
+      [makeEntry({ content: "agenr uses libsql vec-low", sourceFile: "claim-read.jsonl", subject: "agenr storage" })],
+      "sk-test",
+      {
+        embedFn: mockEmbed,
+        force: true,
+        llmClient: makeLlmClient(),
+      },
+    );
+
+    const row = await client.execute({
+      sql: `
+        SELECT subject_entity, subject_attribute, subject_key, claim_predicate, claim_object, claim_confidence
+        FROM entries
+        WHERE source_file = ?
+      `,
+      args: ["claim-read.jsonl"],
+    });
+
+    expect(row.rows[0]).toMatchObject({
+      subject_entity: "agenr",
+      subject_attribute: "storage_backend",
+      subject_key: "agenr/storage_backend",
+      claim_predicate: "uses",
+      claim_object: "libsql",
+    });
+    expect(asNumber(row.rows[0]?.claim_confidence)).toBeCloseTo(0.88, 6);
   });
 });

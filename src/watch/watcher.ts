@@ -277,6 +277,8 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
   });
 
   const config = resolvedDeps.readConfigFn(process.env);
+  const claimExtractionEnabled = config?.contradiction?.enabled !== false;
+  const claimExtractionModel = config?.contradiction?.claimExtractionModel?.trim() || undefined;
   const dbPath = options.dbPath?.trim() || config?.db?.path;
   const db = options.dryRun ? null : resolvedDeps.getDbFn(dbPath);
   let embeddingApiKey: string | null = null;
@@ -561,6 +563,8 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
               sourceFile: targetFilePath,
               onlineDedup: options.onlineDedup !== false,
               llmClient: options.onlineDedup === false ? undefined : client,
+              claimExtractionEnabled,
+              claimExtractionModel,
               dbPath,
             }),
           );

@@ -1,0 +1,312 @@
+[
+  {
+    "id": "fact-weight",
+    "content": "Jim weighs 185 lbs after losing 55 lbs on keto",
+    "type": "fact",
+    "subject": "Jim weight",
+    "expected": {
+      "noClaim": false,
+      "subjectEntity": "jim",
+      "subjectAttribute": "weight",
+      "predicate": "weighs",
+      "object": "185 lbs",
+      "minConfidence": 0.8
+    }
+  },
+  {
+    "id": "fact-storage-libsql",
+    "content": "agenr uses libsql for storage",
+    "type": "fact",
+    "subject": "agenr storage backend",
+    "expected": {
+      "noClaim": false,
+      "subjectEntity": "agenr",
+      "subjectAttribute": "storage_backend",
+      "predicate": "uses",
+      "object": "libsql",
+      "minConfidence": 0.8
+    }
+  },
+  {
+    "id": "fact-location",
+    "content": "Jim lives in Dallas Texas",
+    "type": "fact",
+    "subject": "Jim location",
+    "expected": {
+      "noClaim": false,
+      "subjectEntity": "jim",
+      "subjectAttribute": "location",
+      "predicate": "lives_in",
+      "object": "dallas texas",
+      "minConfidence": 0.75
+    }
+  },
+  {
+    "id": "fact-employer",
+    "content": "Jim works at Loopback Health",
+    "type": "fact",
+    "subject": "Jim employer",
+    "expected": {
+      "noClaim": false,
+      "subjectEntity": "jim",
+      "subjectAttribute": "employer",
+      "predicate": "works_at",
+      "object": "loopback health",
+      "minConfidence": 0.75
+    }
+  },
+  {
+    "id": "fact-pet",
+    "content": "Jim has a dog named Duke",
+    "type": "fact",
+    "subject": "Jim pet",
+    "expected": {
+      "noClaim": false,
+      "subjectEntity": "jim",
+      "subjectAttribute": "pet",
+      "predicate": "has",
+      "object": "duke",
+      "minConfidence": 0.75
+    }
+  },
+  {
+    "id": "fact-breed",
+    "content": "Duke is an Australian Labradoodle",
+    "type": "fact",
+    "subject": "Duke breed",
+    "expected": {
+      "noClaim": false,
+      "subjectEntity": "duke",
+      "subjectAttribute": "breed",
+      "predicate": "is",
+      "object": "australian labradoodle",
+      "minConfidence": 0.75
+    }
+  },
+  {
+    "id": "fact-storage-sqlite",
+    "content": "agenr stores entries in SQLite",
+    "type": "fact",
+    "subject": "agenr storage backend",
+    "expected": {
+      "noClaim": false,
+      "subjectEntity": "agenr",
+      "subjectAttribute": "storage_backend",
+      "predicate": "stores_in",
+      "object": "sqlite",
+      "minConfidence": 0.75
+    }
+  },
+  {
+    "id": "fact-education",
+    "content": "Jim graduated from VMI",
+    "type": "fact",
+    "subject": "Jim education",
+    "expected": {
+      "noClaim": false,
+      "subjectEntity": "jim",
+      "subjectAttribute": "education",
+      "predicate": "graduated_from",
+      "object": "vmi",
+      "minConfidence": 0.75
+    }
+  },
+  {
+    "id": "pref-package-manager",
+    "content": "Jim prefers pnpm over npm",
+    "type": "preference",
+    "subject": "Jim package manager",
+    "expected": {
+      "noClaim": false,
+      "subjectEntity": "jim",
+      "subjectAttribute": "package_manager",
+      "predicate": "prefers",
+      "object": "pnpm",
+      "minConfidence": 0.8
+    }
+  },
+  {
+    "id": "pref-language",
+    "content": "Jim prefers TypeScript for new projects",
+    "type": "preference",
+    "subject": "Jim language",
+    "expected": {
+      "noClaim": false,
+      "subjectEntity": "jim",
+      "subjectAttribute": "language",
+      "predicate": "prefers",
+      "object": "typescript",
+      "minConfidence": 0.8
+    }
+  },
+  {
+    "id": "pref-diet",
+    "content": "Jim follows the keto diet",
+    "type": "preference",
+    "subject": "Jim diet",
+    "expected": {
+      "noClaim": false,
+      "subjectEntity": "jim",
+      "subjectAttribute": "diet",
+      "predicate": "follows",
+      "object": "keto",
+      "minConfidence": 0.75
+    }
+  },
+  {
+    "id": "pref-values",
+    "content": "Jim values alone time and continuous improvement",
+    "type": "preference",
+    "subject": "Jim values",
+    "expected": {
+      "noClaim": false,
+      "subjectEntity": "jim",
+      "subjectAttribute": "values",
+      "predicate": "values",
+      "object": "alone time and continuous improvement",
+      "minConfidence": 0.7
+    }
+  },
+  {
+    "id": "pref-formatting",
+    "content": "Jim dislikes em-dashes",
+    "type": "preference",
+    "subject": "Jim formatting",
+    "expected": {
+      "noClaim": false,
+      "subjectEntity": "jim",
+      "subjectAttribute": "formatting",
+      "predicate": "dislikes",
+      "object": "em-dashes",
+      "minConfidence": 0.75
+    }
+  },
+  {
+    "id": "decision-extraction-model",
+    "content": "Decided to use gpt-4.1-nano for extraction",
+    "type": "decision",
+    "subject": "agenr extraction model",
+    "expected": {
+      "noClaim": false,
+      "subjectEntity": "agenr",
+      "subjectAttribute": "extraction_model",
+      "predicate": "uses",
+      "object": "gpt-4.1-nano",
+      "minConfidence": 0.75
+    }
+  },
+  {
+    "id": "decision-dedup-threshold",
+    "content": "agenr default dedup threshold is 0.72",
+    "type": "decision",
+    "subject": "agenr dedup threshold",
+    "expected": {
+      "noClaim": false,
+      "subjectEntity": "agenr",
+      "subjectAttribute": "dedup_threshold",
+      "predicate": "is",
+      "object": "0.72",
+      "minConfidence": 0.75
+    }
+  },
+  {
+    "id": "decision-release-strategy",
+    "content": "Version bump only when feature is end-to-end functional",
+    "type": "decision",
+    "subject": "agenr release strategy",
+    "expected": {
+      "noClaim": false,
+      "subjectEntity": "agenr",
+      "subjectAttribute": "release_strategy",
+      "predicate": "is",
+      "object": "bundled releases",
+      "minConfidence": 0.7
+    }
+  },
+  {
+    "id": "decision-web-ui-milestone",
+    "content": "Web UI moved from v0.9 to v1.0 milestone",
+    "type": "decision",
+    "subject": "agenr web ui milestone",
+    "expected": {
+      "noClaim": false,
+      "subjectEntity": "agenr",
+      "subjectAttribute": "web_ui_milestone",
+      "predicate": "moved_to",
+      "object": "v1.0",
+      "minConfidence": 0.7
+    }
+  },
+  {
+    "id": "noclaim-meeting",
+    "content": "Long meeting about Q3 roadmap. Discussed team hiring, budget allocation, and migration timeline. Sarah will own the migration. Budget approved for 2 new hires.",
+    "type": "event",
+    "subject": "Q3 planning meeting",
+    "expected": {
+      "noClaim": true
+    }
+  },
+  {
+    "id": "noclaim-handoff",
+    "content": "Session handoff: fixed parser retries, investigated watcher lag, and outlined follow-up tasks for schema migrations plus benchmark cleanup.",
+    "type": "event",
+    "subject": "session handoff",
+    "expected": {
+      "noClaim": true
+    }
+  },
+  {
+    "id": "noclaim-architecture",
+    "content": "Architecture decision discussed libsql versus postgres tradeoffs, data locality concerns, migration risk, and timeline constraints before deferring final decision.",
+    "type": "decision",
+    "subject": "storage architecture",
+    "expected": {
+      "noClaim": true
+    }
+  },
+  {
+    "id": "noclaim-changelog",
+    "content": "Release notes: improved recall ranking, added db health checks, fixed lockfile race, and updated CLI docs for ingest flags.",
+    "type": "event",
+    "subject": "release notes",
+    "expected": {
+      "noClaim": true
+    }
+  },
+  {
+    "id": "noclaim-relationship",
+    "content": "Team relationships: Jim mentors Sam, Sarah pairs with Alex on backend work, and Priya reviews frontend changes for both teams.",
+    "type": "relationship",
+    "subject": "team relationships",
+    "expected": {
+      "noClaim": true
+    }
+  },
+  {
+    "id": "edge-two-facts",
+    "content": "Jim switched from npm to pnpm and from JavaScript to TypeScript",
+    "type": "fact",
+    "subject": "Jim tooling transitions",
+    "expected": {
+      "noClaim": true
+    }
+  },
+  {
+    "id": "edge-ambiguous-entity",
+    "content": "The system uses vector search",
+    "type": "fact",
+    "subject": "system architecture",
+    "expected": {
+      "noClaim": true
+    }
+  },
+  {
+    "id": "edge-short",
+    "content": "keto",
+    "type": "fact",
+    "subject": "diet note",
+    "expected": {
+      "noClaim": true
+    }
+  }
+]

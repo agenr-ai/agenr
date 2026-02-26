@@ -77,6 +77,12 @@ export interface AgenrConfig {
     /** Override the LLM dedup similarity threshold (0.0-1.0). */
     threshold?: number;
   };
+  contradiction?: {
+    enabled?: boolean;
+    claimExtractionModel?: string;
+    judgeModel?: string;
+    autoSupersedeConfidence?: number;
+  };
 }
 
 export interface KnowledgeEntry {

@@ -17,6 +17,8 @@ export interface WriteQueueOptions {
   apiKey: string;
   llmClient: LlmClient;
   dbPath: string | undefined;
+  claimExtractionEnabled?: boolean;
+  claimExtractionModel?: string;
   batchSize?: number;
   highWatermark?: number;
   backpressureTimeoutMs?: number;
@@ -103,6 +105,8 @@ export class WriteQueue {
   private readonly apiKey: string;
   private readonly llmClient: LlmClient;
   private readonly dbPath: string | undefined;
+  private readonly claimExtractionEnabled: boolean | undefined;
+  private readonly claimExtractionModel: string | undefined;
   private readonly batchSize: number;
   private readonly highWatermark: number;
   private readonly backpressureTimeoutMs: number;
@@ -126,6 +130,8 @@ export class WriteQueue {
     this.apiKey = options.apiKey;
     this.llmClient = options.llmClient;
     this.dbPath = options.dbPath;
+    this.claimExtractionEnabled = options.claimExtractionEnabled;
+    this.claimExtractionModel = options.claimExtractionModel;
     this.batchSize = Math.max(1, Math.floor(options.batchSize ?? 40));
     this.highWatermark = Math.max(1, Math.floor(options.highWatermark ?? 2000));
     this.backpressureTimeoutMs = Math.max(1, options.backpressureTimeoutMs ?? 120_000);
@@ -380,6 +386,8 @@ export class WriteQueue {
           onlineDedup: true,
           skipLlmDedup: false,
           llmClient: this.llmClient,
+          claimExtractionEnabled: this.claimExtractionEnabled,
+          claimExtractionModel: this.claimExtractionModel,
           dbPath: this.dbPath,
         });
         return {
