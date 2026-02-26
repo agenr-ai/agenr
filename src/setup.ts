@@ -6,6 +6,7 @@ import {
   getAuthMethodDefinition,
   mergeConfigPatch,
   readConfig,
+  resolveModelForTask,
   resolveDefaultKnowledgeDbPath,
   setStoredCredential,
   writeConfig,
@@ -90,6 +91,100 @@ function modelHintForChoice(provider: AgenrProvider, modelId: string): string | 
 
   const details = getModels(provider).find((modelInfo) => modelInfo.id === modelId);
   return details?.name;
+}
+
+type TaskModelKey = "extraction" | "claimExtraction" | "contradictionJudge" | "handoffSummary";
+const TASK_MODEL_DEFAULT = "__use_default__";
+const TASK_MODEL_CUSTOM = "__custom__";
+
+const TASK_MODEL_PROMPTS: Array<{ task: TaskModelKey; title: string; options: string[] }> = [
+  {
+    task: "extraction",
+    title: "Extraction model (full transcript analysis)",
+    options: ["gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano"],
+  },
+  {
+    task: "claimExtraction",
+    title: "Claim extraction model (structured claim output)",
+    options: ["gpt-4.1-nano", "gpt-4.1-mini", "gpt-4.1"],
+  },
+  {
+    task: "contradictionJudge",
+    title: "Contradiction judge model (conflict classification)",
+    options: ["gpt-4.1-nano", "gpt-4.1-mini", "gpt-4.1"],
+  },
+  {
+    task: "handoffSummary",
+    title: "Handoff summary model (session handoff summaries)",
+    options: ["gpt-4.1-nano", "gpt-4.1-mini", "gpt-4.1"],
+  },
+];
+
+async function promptPerTaskModels(baseModel: string): Promise<AgenrConfig["models"] | null> {
+  const configure = await clack.select<"skip" | "configure">({
+    message: "Configure per-task models? (Advanced)\nMost users can skip this - the defaults work well.",
+    options: [
+      {
+        value: "skip",
+        label: "Skip (use defaults)",
+      },
+      {
+        value: "configure",
+        label: "Configure per-task models",
+      },
+    ],
+  });
+
+  if (clack.isCancel(configure)) {
+    return null;
+  }
+
+  if (configure !== "configure") {
+    return undefined;
+  }
+
+  const selectedModels: NonNullable<AgenrConfig["models"]> = {};
+
+  for (const taskConfig of TASK_MODEL_PROMPTS) {
+    const defaultModel = resolveModelForTask({ model: baseModel }, taskConfig.task);
+    const taskSelection = await clack.select<string>({
+      message: `${taskConfig.title}\nCurrent default: ${defaultModel}`,
+      options: [
+        { value: TASK_MODEL_DEFAULT, label: "Use default" },
+        ...taskConfig.options.map((modelId) => ({ value: modelId, label: modelId })),
+        { value: TASK_MODEL_CUSTOM, label: "Other (enter model ID)" },
+      ],
+    });
+
+    if (clack.isCancel(taskSelection)) {
+      return null;
+    }
+
+    if (taskSelection === TASK_MODEL_DEFAULT) {
+      continue;
+    }
+
+    let modelChoice = taskSelection;
+    if (taskSelection === TASK_MODEL_CUSTOM) {
+      const customModel = await clack.text({
+        message: `${taskConfig.title} - enter model ID:`,
+        placeholder: defaultModel,
+        validate: (value) => (value.trim().length > 0 ? undefined : "Model ID cannot be empty."),
+      });
+
+      if (clack.isCancel(customModel)) {
+        return null;
+      }
+
+      modelChoice = customModel.trim();
+    }
+
+    if (modelChoice !== defaultModel) {
+      selectedModels[taskConfig.task] = modelChoice;
+    }
+  }
+
+  return Object.keys(selectedModels).length > 0 ? selectedModels : undefined;
 }
 
 async function selectAuthMethod(hasExistingConfig: boolean): Promise<AgenrAuthMethod | "update-embeddings" | null> {
@@ -262,11 +357,7 @@ export function formatExistingConfig(config: AgenrConfig, defaultDbPath?: string
 
 function buildConfigWithCredentials(base: AgenrConfig, credentials?: AgenrConfig["credentials"]): AgenrConfig {
   if (!credentials || Object.keys(credentials).length === 0) {
-    return {
-      auth: base.auth,
-      provider: base.provider,
-      model: base.model,
-    };
+    return { ...base };
   }
 
   return {
@@ -497,6 +588,10 @@ export async function runSetupCore(options: SetupCoreOptions): Promise<SetupResu
     );
   }
 
+  const taskModels = await promptPerTaskModels(resolvedModel.modelId);
+  if (taskModels === null) {
+    return null;
+  }
 
   // Embeddings require an OpenAI API key regardless of extraction provider.
   // If the selected auth method does not provide one, prompt for it.
@@ -574,6 +669,7 @@ export async function runSetupCore(options: SetupCoreOptions): Promise<SetupResu
       auth,
       provider,
       model: resolvedModel.modelId,
+      ...(taskModels ? { models: taskModels } : {}),
     },
     working.credentials,
   );

@@ -2,7 +2,14 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { normalizeConfig, readConfig, resolveConfigPath, resolveProjectFromGlobalConfig, writeConfig } from "../src/config.js";
+import {
+  normalizeConfig,
+  readConfig,
+  resolveConfigPath,
+  resolveModelForTask,
+  resolveProjectFromGlobalConfig,
+  writeConfig,
+} from "../src/config.js";
 import type { AgenrConfig } from "../src/types.js";
 
 const tempDirs: string[] = [];
@@ -60,8 +67,6 @@ describe("config", () => {
     });
     expect(loaded?.contradiction).toEqual({
       enabled: true,
-      claimExtractionModel: "gpt-4.1-nano",
-      judgeModel: "gpt-4.1-nano",
       autoSupersedeConfidence: 0.85,
     });
   });
@@ -128,8 +133,6 @@ describe("config", () => {
       },
       contradiction: {
         enabled: true,
-        claimExtractionModel: "gpt-4.1-nano",
-        judgeModel: "gpt-4.1-nano",
         autoSupersedeConfidence: 0.85,
       },
       provider: "anthropic",
@@ -171,6 +174,20 @@ describe("config", () => {
     const normalized = normalizeConfig({
       contradiction: {
         enabled: false,
+        autoSupersedeConfidence: 0.91,
+      },
+    });
+
+    expect(normalized.contradiction).toEqual({
+      enabled: false,
+      autoSupersedeConfidence: 0.91,
+    });
+  });
+
+  it("migrates legacy contradiction model fields into config.models", () => {
+    const normalized = normalizeConfig({
+      contradiction: {
+        enabled: false,
         claimExtractionModel: "gpt-4.1-mini",
         judgeModel: "gpt-4.1",
         autoSupersedeConfidence: 0.91,
@@ -179,9 +196,11 @@ describe("config", () => {
 
     expect(normalized.contradiction).toEqual({
       enabled: false,
-      claimExtractionModel: "gpt-4.1-mini",
-      judgeModel: "gpt-4.1",
       autoSupersedeConfidence: 0.91,
+    });
+    expect(normalized.models).toEqual({
+      claimExtraction: "gpt-4.1-mini",
+      contradictionJudge: "gpt-4.1",
     });
   });
 
@@ -189,8 +208,6 @@ describe("config", () => {
     const normalized = normalizeConfig({});
     expect(normalized.contradiction).toEqual({
       enabled: true,
-      claimExtractionModel: "gpt-4.1-nano",
-      judgeModel: "gpt-4.1-nano",
       autoSupersedeConfidence: 0.85,
     });
   });
@@ -416,6 +433,46 @@ describe("normalizeConfig dedup", () => {
   it("normalizeConfig returns undefined dedup for empty object", () => {
     const config = normalizeConfig({ dedup: {} });
     expect(config.dedup).toBeUndefined();
+  });
+});
+
+describe("resolveModelForTask", () => {
+  it("returns task-specific model when configured", () => {
+    const config: AgenrConfig = {
+      models: {
+        claimExtraction: "gpt-4.1-mini",
+      },
+    };
+
+    expect(resolveModelForTask(config, "claimExtraction")).toBe("gpt-4.1-mini");
+  });
+
+  it("falls back to task default when not configured", () => {
+    expect(resolveModelForTask({}, "claimExtraction")).toBe("gpt-4.1-nano");
+  });
+
+  it("uses top-level model for extraction task", () => {
+    expect(resolveModelForTask({ model: "gpt-4.1" }, "extraction")).toBe("gpt-4.1");
+  });
+
+  it("falls back to gpt-4.1-nano when nothing configured", () => {
+    expect(resolveModelForTask({}, "extraction")).toBe("gpt-4.1-nano");
+  });
+
+  it("handles all task types", () => {
+    const config: AgenrConfig = {
+      model: "gpt-4.1",
+      models: {
+        claimExtraction: "gpt-4.1-mini",
+        contradictionJudge: "gpt-4.1",
+        handoffSummary: "gpt-4.1-nano",
+      },
+    };
+
+    expect(resolveModelForTask(config, "extraction")).toBe("gpt-4.1");
+    expect(resolveModelForTask(config, "claimExtraction")).toBe("gpt-4.1-mini");
+    expect(resolveModelForTask(config, "contradictionJudge")).toBe("gpt-4.1");
+    expect(resolveModelForTask(config, "handoffSummary")).toBe("gpt-4.1-nano");
   });
 });
 

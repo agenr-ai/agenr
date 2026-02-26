@@ -9,7 +9,9 @@
 - SubjectIndex: in-memory subject key index with lazy initialization (#266)
 - ConflictLogEntry type definition (#266)
 - Claim extraction: dedicated LLM call extracts structured claims (subject/predicate/object) from entries at store time (#266)
-- Config: contradiction.claimExtractionModel setting (#266)
+- Config: per-task model configuration via config.models (#266)
+- Setup: optional advanced per-task model selection in setup wizard (#266)
+- resolveModelForTask() helper for consistent model resolution (#266)
 
 ## 0.9.2 (2026-02-26)
 

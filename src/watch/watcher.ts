@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { Client } from "@libsql/client";
-import { readConfig } from "../config.js";
+import { readConfig, resolveModelForTask } from "../config.js";
 import { deduplicateEntries } from "../dedup.js";
 import { closeDb, getDb, initDb, walCheckpoint } from "../db/client.js";
 import { storeEntries } from "../db/store.js";
@@ -278,7 +278,7 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
 
   const config = resolvedDeps.readConfigFn(process.env);
   const claimExtractionEnabled = config?.contradiction?.enabled !== false;
-  const claimExtractionModel = config?.contradiction?.claimExtractionModel?.trim() || undefined;
+  const claimExtractionModel = resolveModelForTask(config ?? {}, "claimExtraction");
   const dbPath = options.dbPath?.trim() || config?.db?.path;
   const db = options.dryRun ? null : resolvedDeps.getDbFn(dbPath);
   let embeddingApiKey: string | null = null;

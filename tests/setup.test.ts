@@ -10,6 +10,7 @@ function createMocks() {
   const noteMock = vi.fn();
   const confirmMock = vi.fn();
   const selectMock = vi.fn();
+  const textMock = vi.fn();
   const passwordMock = vi.fn();
   const cancelMock = vi.fn();
   const outroMock = vi.fn();
@@ -43,6 +44,7 @@ function createMocks() {
     noteMock,
     confirmMock,
     selectMock,
+    textMock,
     passwordMock,
     cancelMock,
     outroMock,
@@ -71,6 +73,7 @@ vi.mock("@clack/prompts", () => ({
   note: getMocks().noteMock,
   confirm: getMocks().confirmMock,
   select: getMocks().selectMock,
+  text: getMocks().textMock,
   password: getMocks().passwordMock,
   cancel: getMocks().cancelMock,
   outro: getMocks().outroMock,
@@ -512,6 +515,43 @@ describe("runSetupCore", () => {
     expect(mocks.runEmbeddingConnectionTestMock).toHaveBeenCalledWith("sk-openai-new");
     expect(mocks.logMock.info).not.toHaveBeenCalledWith("Embedding API key updated.");
     expect(readConfig(env)).toBeNull();
+  });
+
+  it("stores only non-default per-task models when advanced config is enabled", async () => {
+    const mocks = getMocks();
+    const env = await makeTempConfigEnv();
+
+    mocks.selectMock
+      .mockResolvedValueOnce("openai-api-key")
+      .mockResolvedValueOnce("gpt-4.1-mini")
+      .mockResolvedValueOnce("configure")
+      .mockResolvedValueOnce("__use_default__")
+      .mockResolvedValueOnce("gpt-4.1-mini")
+      .mockResolvedValueOnce("__use_default__")
+      .mockResolvedValueOnce("__use_default__");
+    mocks.probeCredentialsMock.mockReturnValue({
+      available: true,
+      source: "env:OPENAI_API_KEY",
+      guidance: "Credentials available.",
+      credentials: {
+        apiKey: "sk-test",
+        source: "env:OPENAI_API_KEY",
+      },
+    });
+    mocks.runConnectionTestMock.mockResolvedValueOnce({ ok: true });
+
+    const result = await setupModule.runSetupCore({
+      env,
+      existingConfig: null,
+      skipIntroOutro: true,
+    });
+
+    expect(result?.config.models).toEqual({
+      claimExtraction: "gpt-4.1-mini",
+    });
+    expect(readConfig(env)?.models).toEqual({
+      claimExtraction: "gpt-4.1-mini",
+    });
   });
 });
 
