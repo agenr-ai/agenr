@@ -35,12 +35,20 @@ const {
   clackNoteMock: vi.fn(),
   clackConfirmMock: vi.fn(),
   clackSelectMock: vi.fn(),
-  clackTextMock: vi.fn(async (options?: { message?: string; initialValue?: string }) => {
-    if (options?.message === "OpenClaw config file path:") {      return options.initialValue ?? "openclaw.json";    }    if (options?.message === "Sessions directory:") {      return options.initialValue ?? "/tmp/sessions";    }    if (options?.message === "OpenClaw directory:") {
-      return options.initialValue ?? resolveDefaultOpenClawConfigDir();
-    }
-    return "agenr";
-  }),
+  clackTextMock: vi.fn(
+    async (options?: { message?: string; initialValue?: string }) => {
+      if (options?.message === "OpenClaw config file path:") {
+        return options.initialValue ?? "openclaw.json";
+      }
+      if (options?.message === "Sessions directory:") {
+        return options.initialValue ?? "/tmp/sessions";
+      }
+      if (options?.message === "OpenClaw directory:") {
+        return options.initialValue ?? resolveDefaultOpenClawConfigDir();
+      }
+      return "agenr";
+    },
+  ),
   clackSpinnerStartMock: vi.fn(),
   clackSpinnerStopMock: vi.fn(),
   clackSpinnerMock: vi.fn(),
@@ -247,12 +255,20 @@ afterEach(async () => {
   execFileSyncMock.mockReset();
   execFileMock.mockReset();
   execFileMock.mockImplementation((_cmd: string, _args: string[], _opts: unknown, cb: (err: Error | null, stdout: string, stderr: string) => void) => { cb(null, "", ""); });
-  clackTextMock.mockImplementation(async (options?: { message?: string; initialValue?: string }) => {
-    if (options?.message === "OpenClaw config file path:") {      return options.initialValue ?? "openclaw.json";    }    if (options?.message === "Sessions directory:") {      return options.initialValue ?? "/tmp/sessions";    }    if (options?.message === "OpenClaw directory:") {
-      return options.initialValue ?? resolveDefaultOpenClawConfigDir();
-    }
-    return "agenr";
-  });
+  clackTextMock.mockImplementation(
+    async (options?: { message?: string; initialValue?: string }) => {
+      if (options?.message === "OpenClaw config file path:") {
+        return options.initialValue ?? "openclaw.json";
+      }
+      if (options?.message === "Sessions directory:") {
+        return options.initialValue ?? "/tmp/sessions";
+      }
+      if (options?.message === "OpenClaw directory:") {
+        return options.initialValue ?? resolveDefaultOpenClawConfigDir();
+      }
+      return "agenr";
+    },
+  );
   clackLogInfoMock.mockReset();
   clackLogWarnMock.mockReset();
   if (originalHome === undefined) {
@@ -2494,8 +2510,6 @@ describe("installOpenClawPlugin", () => {
       (call: string[]) => call[0] === "/usr/local/bin/openclaw",
     );
     expect(openclawCalls).toHaveLength(2);
-
-    expect(openclawCalls).toHaveLength(2);
   });
 
   it("non-default target directory does not touch default ~/.openclaw path", async () => {
@@ -2505,6 +2519,9 @@ describe("installOpenClawPlugin", () => {
     await withTempHome(async (homeDir) => {
       const defaultOpenclawDir = path.join(homeDir, ".openclaw");
       const targetDir = "/tmp/test-openclaw-sandbox";
+      const statSpy = vi
+        .spyOn(fs, "stat")
+        .mockRejectedValue(Object.assign(new Error("ENOENT"), { code: "ENOENT" }));
 
       execFileSyncMock.mockImplementation((command: string, args: string[]) => {
         if (command === "which" && args[0] === "openclaw") {
@@ -2524,8 +2541,22 @@ describe("installOpenClawPlugin", () => {
         (call: string[]) => call[0] === "/usr/local/bin/openclaw",
       );
       expect(openclawCalls.length).toBeGreaterThan(0);
-
-      expect(openclawCalls.length).toBeGreaterThan(0);
+      expect(statSpy).toHaveBeenCalledWith(
+        path.join(
+          targetDir,
+          ".openclaw",
+          "extensions",
+          "agenr",
+          "dist",
+          "openclaw-plugin",
+          "index.js",
+        ),
+      );
+      expect(
+        statSpy.mock.calls.some(
+          (call) => typeof call[0] === "string" && (call[0] as string).includes(defaultOpenclawDir),
+        ),
+      ).toBe(false);
     });
   });
 });

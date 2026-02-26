@@ -27,7 +27,12 @@ import { scanSessionFiles } from "./init/session-scanner.js";
 import type { DetectedPlatform } from "./init/platform-detector.js";
 
 
-/** Resolve the OpenClaw config subdirectory. Default ~/.openclaw has config at root; custom homes use .openclaw subdir. */
+/**
+ * Resolve the OpenClaw config subdirectory.
+ * Default OpenClaw installs use ~/.openclaw as OPENCLAW_HOME where the directory itself
+ * is the .openclaw dir. Custom OPENCLAW_HOME paths get a .openclaw subdir added by
+ * OpenClaw automatically.
+ */
 function resolveOpenClawConfigSubdir(openclawDir: string): string {
   if (path.basename(openclawDir) === ".openclaw") {
     return openclawDir;
@@ -759,11 +764,11 @@ async function installOpenClawPlugin(
 
   // If a local dev path already loads agenr, skip npm install to avoid duplicates.
   try {
-    const configPath2 = path.join(resolveOpenClawConfigSubdir(openclawConfigDir), "openclaw.json");
-    const raw2 = await fs.readFile(configPath2, "utf8");
-    const parsed2 = JSON.parse(raw2) as unknown;
-    if (isRecord(parsed2) && isRecord(parsed2.plugins) && isRecord(parsed2.plugins.load)) {
-      const loadPaths = parsed2.plugins.load.paths;
+    const loadCheckPath = path.join(resolveOpenClawConfigSubdir(openclawConfigDir), "openclaw.json");
+    const loadCheckRaw = await fs.readFile(loadCheckPath, "utf8");
+    const loadCheckParsed = JSON.parse(loadCheckRaw) as unknown;
+    if (isRecord(loadCheckParsed) && isRecord(loadCheckParsed.plugins) && isRecord(loadCheckParsed.plugins.load)) {
+      const loadPaths = loadCheckParsed.plugins.load.paths;
       if (Array.isArray(loadPaths) && loadPaths.some((p: unknown) => typeof p === "string" && String(p).includes("agenr"))) {
         return { success: true, message: "agenr loaded via local path (skipped npm install)" };
       }
@@ -1466,6 +1471,10 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
         ? path.dirname(configFileDir)
         : configFileDir;
     }
+    selectedPlatform = {
+      ...selectedPlatform,
+      configDir: resolvedConfigDir,
+    };
 
     const confirmSessionsDir = await clack.text({
       message: "Sessions directory:",
@@ -1505,24 +1514,29 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
       }
 
       // Restart gateway to pick up the new plugin config.
-      spinner.start("Restarting gateway...");
-      try {
-        await execAsync(findBinaryPath("openclaw")!, ["gateway", "restart"], {
-          encoding: "utf8",
-          timeout: 30000,
-          env: { ...process.env },
-        });
-        spinner.stop("Gateway restarted");
-      } catch {
+      const openclawBin = findBinaryPath("openclaw");
+      if (!openclawBin) {
+        clack.log.warn("openclaw not found on PATH. Restart the gateway manually: openclaw gateway restart");
+      } else {
+        spinner.start("Restarting gateway...");
         try {
-          await execAsync(findBinaryPath("openclaw")!, ["gateway", "start"], {
+          await execAsync(openclawBin, ["gateway", "restart"], {
             encoding: "utf8",
             timeout: 30000,
             env: { ...process.env },
           });
-          spinner.stop("Gateway started");
+          spinner.stop("Gateway restarted");
         } catch {
-          spinner.stop("Gateway needs restart. Run: openclaw gateway restart");
+          try {
+            await execAsync(openclawBin, ["gateway", "start"], {
+              encoding: "utf8",
+              timeout: 30000,
+              env: { ...process.env },
+            });
+            spinner.stop("Gateway started");
+          } catch {
+            spinner.stop("Gateway needs restart. Run: openclaw gateway restart");
+          }
         }
       }
     }
