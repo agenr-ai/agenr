@@ -1,9 +1,8 @@
 import type { Context, Tool } from "@mariozechner/pi-ai";
 import { Type, type Static } from "@sinclair/typebox";
-import { resolveModelForTask } from "../config.js";
-import { resolveModel } from "../llm/models.js";
 import { runSimpleStream } from "../llm/stream.js";
 import type { AgenrConfig, LlmClient } from "../types.js";
+import { clampConfidence, extractToolCallArgs, resolveModelForLlmClient } from "./llm-helpers.js";
 
 const CLAIM_EXTRACTION_TOOL_SCHEMA = Type.Object({
   no_claim: Type.Boolean({
@@ -151,13 +150,6 @@ function normalizeObject(value: string): string {
   return value.trim();
 }
 
-function clampConfidence(value: number): number {
-  if (!Number.isFinite(value)) {
-    return 0.5;
-  }
-  return Math.min(1, Math.max(0, value));
-}
-
 function buildClaimExtractionContext(content: string, type: string, subject: string): Context {
   const userPrompt = [
     `Entry type: ${type}`,
@@ -178,41 +170,6 @@ function buildClaimExtractionContext(content: string, type: string, subject: str
   };
 }
 
-function extractToolArgs(
-  message: { content: Array<{ type: string; name?: string; arguments?: unknown }> },
-): ClaimExtractionToolArgs | null {
-  for (const block of message.content) {
-    if (block.type !== "toolCall" || block.name !== CLAIM_EXTRACTION_TOOL.name) {
-      continue;
-    }
-
-    const args = block.arguments as Partial<ClaimExtractionToolArgs> | undefined;
-    if (!args || typeof args.no_claim !== "boolean") {
-      return null;
-    }
-
-    return {
-      no_claim: args.no_claim,
-      ...(typeof args.subject_entity === "string" ? { subject_entity: args.subject_entity } : {}),
-      ...(typeof args.subject_attribute === "string" ? { subject_attribute: args.subject_attribute } : {}),
-      ...(typeof args.predicate === "string" ? { predicate: args.predicate } : {}),
-      ...(typeof args.object === "string" ? { object: args.object } : {}),
-      ...(typeof args.confidence === "number" ? { confidence: args.confidence } : {}),
-    };
-  }
-
-  return null;
-}
-
-function resolveClaimModel(
-  client: LlmClient,
-  model?: string,
-  config?: AgenrConfig,
-): ReturnType<typeof resolveModel>["model"] {
-  const modelId = model?.trim() || resolveModelForTask(config ?? {}, "claimExtraction");
-  return resolveModel(client.resolvedModel.provider, modelId).model;
-}
-
 export async function extractClaim(
   content: string,
   type: string,
@@ -227,7 +184,7 @@ export async function extractClaim(
 
   try {
     const response = await runSimpleStream({
-      model: resolveClaimModel(llmClient, model, config),
+      model: resolveModelForLlmClient(llmClient, "claimExtraction", model, config),
       context: buildClaimExtractionContext(content, type, subject),
       options: {
         apiKey: llmClient.credentials.apiKey,
@@ -239,24 +196,30 @@ export async function extractClaim(
       return null;
     }
 
-    const parsed = extractToolArgs(response);
-    if (!parsed || parsed.no_claim) {
+    const parsed = extractToolCallArgs<ClaimExtractionToolArgs>(
+      response,
+      CLAIM_EXTRACTION_TOOL.name,
+      ["no_claim"],
+    );
+    if (!parsed || typeof parsed.no_claim !== "boolean" || parsed.no_claim) {
       console.log(
         `[claim] no claim extracted (${parsed?.no_claim ? "no_claim=true" : "parse failed"})`,
       );
       return null;
     }
 
-    const subjectEntity = normalizeEntity(parsed.subject_entity ?? "");
-    const subjectAttribute = normalizeAttribute(parsed.subject_attribute ?? "");
-    const predicate = normalizePredicate(parsed.predicate ?? "");
-    const object = normalizeObject(parsed.object ?? "");
+    const subjectEntity = normalizeEntity(typeof parsed.subject_entity === "string" ? parsed.subject_entity : "");
+    const subjectAttribute = normalizeAttribute(
+      typeof parsed.subject_attribute === "string" ? parsed.subject_attribute : "",
+    );
+    const predicate = normalizePredicate(typeof parsed.predicate === "string" ? parsed.predicate : "");
+    const object = normalizeObject(typeof parsed.object === "string" ? parsed.object : "");
 
     if (!subjectEntity || !subjectAttribute || !predicate || !object) {
       return null;
     }
 
-    const confidence = clampConfidence(parsed.confidence ?? 0.5);
+    const confidence = clampConfidence(typeof parsed.confidence === "number" ? parsed.confidence : 0.5);
     console.log(
       `[claim] extracted: key=${subjectEntity}/${subjectAttribute} pred=${predicate} obj="${object.slice(0, 40)}" conf=${confidence.toFixed(2)}`,
     );

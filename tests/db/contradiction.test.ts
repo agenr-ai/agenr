@@ -188,6 +188,10 @@ function makeSubjectIndexMock(ids: string[]): SubjectIndex {
   return { lookup, remove: vi.fn() } as unknown as SubjectIndex;
 }
 
+function zeroEmbedding(dimensions = 1024): number[] {
+  return Array.from({ length: dimensions }, () => 0);
+}
+
 function buildConflict(params: {
   existingEntryId?: string;
   existingType?: string;
@@ -382,7 +386,7 @@ describe("contradiction", () => {
     });
   });
 
-  it("finds candidates via subject index when subjectKey is set", async () => {
+  it("finds candidates via subject index when subjectKey is set and still runs embedding lookup", async () => {
     const db = makeDetectDb([
       {
         id: "entry-1",
@@ -410,6 +414,7 @@ describe("contradiction", () => {
       },
     ]);
     const subjectIndex = makeSubjectIndexMock(["entry-1", "entry-2", "entry-3"]);
+    findSimilarMock.mockResolvedValue([]);
     vi.mocked(runSimpleStream)
       .mockResolvedValueOnce(
         makeToolMessage({
@@ -442,13 +447,13 @@ describe("contradiction", () => {
         subjectKey: "person:alex|attr:weight",
         importance: 7,
       },
-      new Float32Array(1024),
+      zeroEmbedding(),
       subjectIndex,
       makeLlmClient(),
     );
 
     expect(detected).toHaveLength(3);
-    expect(findSimilarMock).not.toHaveBeenCalled();
+    expect(findSimilarMock).toHaveBeenCalledTimes(1);
     expect(runSimpleStream).toHaveBeenCalledTimes(3);
   });
 
@@ -477,7 +482,7 @@ describe("contradiction", () => {
         subject: "new-subject",
         importance: 7,
       },
-      new Float32Array(1024),
+      zeroEmbedding(),
       subjectIndex,
       makeLlmClient(),
     );
@@ -536,12 +541,223 @@ describe("contradiction", () => {
         subjectKey: "person:alex|attr:weight",
         importance: 7,
       },
-      new Float32Array(1024),
+      zeroEmbedding(),
       subjectIndex,
       makeLlmClient(),
     );
 
     expect(detected.map((entry) => entry.existingEntryId).sort()).toEqual(["entry-sim", "entry-subject"]);
+  });
+
+  it("caps subject-index candidates to maxCandidates after sorting by recency", async () => {
+    const rows: DetectRow[] = Array.from({ length: 10 }, (_, index) => {
+      const rank = index + 1;
+      const day = String(rank).padStart(2, "0");
+      return {
+        id: `entry-${rank}`,
+        content: `content-${rank}`,
+        type: "fact",
+        subject: `subject-${rank}`,
+        importance: rank,
+        createdAt: `2026-02-${day}T00:00:00.000Z`,
+      };
+    });
+    const db = makeDetectDb(rows);
+    const subjectIndex = makeSubjectIndexMock(rows.map((row) => row.id).reverse());
+    findSimilarMock.mockResolvedValue([]);
+    vi.mocked(runSimpleStream).mockImplementation(async () =>
+      makeToolMessage({
+        relation: "coexists",
+        confidence: 0.8,
+        explanation: "related",
+      }),
+    );
+
+    const detected = await contradictionModule.detectContradictions(
+      db,
+      {
+        content: "new content",
+        type: "fact",
+        subject: "new-subject",
+        subjectKey: "person:alex|attr:weight",
+        importance: 7,
+      },
+      zeroEmbedding(),
+      subjectIndex,
+      makeLlmClient(),
+      { maxCandidates: 5 },
+    );
+
+    expect(detected.map((entry) => entry.existingEntryId)).toEqual([
+      "entry-10",
+      "entry-9",
+      "entry-8",
+      "entry-7",
+      "entry-6",
+    ]);
+    expect(runSimpleStream).toHaveBeenCalledTimes(5);
+    expect(findSimilarMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("always runs embedding search even when subject index returns at maxCandidates", async () => {
+    const rows: DetectRow[] = Array.from({ length: 5 }, (_, index) => ({
+      id: `entry-${index + 1}`,
+      content: `content-${index + 1}`,
+      type: "fact",
+      subject: `subject-${index + 1}`,
+      importance: 7,
+      createdAt: "2026-02-24T00:00:00.000Z",
+    }));
+    const db = makeDetectDb(rows);
+    const subjectIndex = makeSubjectIndexMock(rows.map((row) => row.id));
+    findSimilarMock.mockResolvedValue([]);
+    vi.mocked(runSimpleStream).mockImplementation(async () =>
+      makeToolMessage({
+        relation: "coexists",
+        confidence: 0.8,
+        explanation: "related",
+      }),
+    );
+
+    const detected = await contradictionModule.detectContradictions(
+      db,
+      {
+        content: "new content",
+        type: "fact",
+        subject: "new-subject",
+        subjectKey: "person:alex|attr:weight",
+        importance: 7,
+      },
+      zeroEmbedding(),
+      subjectIndex,
+      makeLlmClient(),
+      { maxCandidates: 5 },
+    );
+
+    expect(detected).toHaveLength(5);
+    expect(findSimilarMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("dedupes duplicate ids across subject and embedding candidates", async () => {
+    const db = makeDetectDb([
+      {
+        id: "entry-1",
+        content: "subject candidate",
+        type: "fact",
+        subject: "subject-1",
+        importance: 7,
+        createdAt: "2026-02-24T00:00:00.000Z",
+      },
+    ]);
+    const subjectIndex = makeSubjectIndexMock(["entry-1"]);
+    findSimilarMock.mockResolvedValue([
+      {
+        entry: makeStoredEntry({ id: "entry-1", content: "subject candidate", createdAt: "2026-02-23T00:00:00.000Z" }),
+        similarity: 0.95,
+      },
+      {
+        entry: makeStoredEntry({ id: "entry-2", content: "embedding candidate", createdAt: "2026-02-22T00:00:00.000Z" }),
+        similarity: 0.93,
+      },
+    ]);
+    vi.mocked(runSimpleStream)
+      .mockResolvedValueOnce(
+        makeToolMessage({
+          relation: "coexists",
+          confidence: 0.82,
+          explanation: "related",
+        }),
+      )
+      .mockResolvedValueOnce(
+        makeToolMessage({
+          relation: "coexists",
+          confidence: 0.83,
+          explanation: "related",
+        }),
+      );
+
+    const detected = await contradictionModule.detectContradictions(
+      db,
+      {
+        content: "new content",
+        type: "fact",
+        subject: "new-subject",
+        subjectKey: "person:alex|attr:weight",
+        importance: 7,
+      },
+      zeroEmbedding(),
+      subjectIndex,
+      makeLlmClient(),
+      { maxCandidates: 5 },
+    );
+
+    expect(detected.map((entry) => entry.existingEntryId).sort()).toEqual(["entry-1", "entry-2"]);
+    expect(runSimpleStream).toHaveBeenCalledTimes(2);
+  });
+
+  it("calls classifyConflict in parallel across candidates", async () => {
+    const db = makeDetectDb([
+      {
+        id: "entry-1",
+        content: "old one",
+        type: "fact",
+        subject: "subject-1",
+        importance: 6,
+        createdAt: "2026-02-24T00:00:00.000Z",
+      },
+      {
+        id: "entry-2",
+        content: "old two",
+        type: "fact",
+        subject: "subject-2",
+        importance: 7,
+        createdAt: "2026-02-24T00:00:00.000Z",
+      },
+      {
+        id: "entry-3",
+        content: "old three",
+        type: "fact",
+        subject: "subject-3",
+        importance: 8,
+        createdAt: "2026-02-24T00:00:00.000Z",
+      },
+    ]);
+    const subjectIndex = makeSubjectIndexMock(["entry-1", "entry-2", "entry-3"]);
+    findSimilarMock.mockResolvedValue([]);
+
+    let release: (() => void) | null = null;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.mocked(runSimpleStream).mockImplementation(async () => {
+      await gate;
+      return makeToolMessage({
+        relation: "coexists",
+        confidence: 0.8,
+        explanation: "related",
+      });
+    });
+
+    const pending = contradictionModule.detectContradictions(
+      db,
+      {
+        content: "new content",
+        type: "fact",
+        subject: "new-subject",
+        subjectKey: "person:alex|attr:weight",
+        importance: 7,
+      },
+      zeroEmbedding(),
+      subjectIndex,
+      makeLlmClient(),
+    );
+    await vi.waitFor(() => {
+      expect(runSimpleStream).toHaveBeenCalledTimes(3);
+    });
+
+    release?.();
+    const detected = await pending;
+    expect(detected).toHaveLength(3);
   });
 
   it("filters out unrelated results from returned conflicts", async () => {
@@ -576,7 +792,7 @@ describe("contradiction", () => {
     const detected = await contradictionModule.detectContradictions(
       db,
       { content: "new", type: "fact", subject: "s", importance: 7 },
-      new Float32Array(1024),
+      zeroEmbedding(),
       subjectIndex,
       makeLlmClient(),
     );
@@ -593,7 +809,7 @@ describe("contradiction", () => {
     const detected = await contradictionModule.detectContradictions(
       db,
       { content: "new", type: "fact", subject: "s", subjectKey: "k", importance: 7 },
-      new Float32Array(1024),
+      zeroEmbedding(),
       subjectIndex,
       makeLlmClient(),
     );
@@ -633,7 +849,7 @@ describe("contradiction", () => {
     const detected = await contradictionModule.detectContradictions(
       db,
       { content: "new", type: "fact", subject: "s", importance: 7 },
-      new Float32Array(1024),
+      zeroEmbedding(),
       subjectIndex,
       makeLlmClient(),
     );
@@ -703,7 +919,7 @@ describe("contradiction", () => {
     expect(resolution).toEqual({ action: "coexist", reason: "entries can coexist" });
   });
 
-  it("does not auto-supersede when existing importance is greater than new importance", async () => {
+  it("flags supersedes with confidence 0.9 and lower new importance for review", async () => {
     const client = makeClient();
     await initDb(client);
     await seedEntry(client, "new-entry", { type: "fact", importance: 6, subjectKey: "alex/weight" });
@@ -714,6 +930,23 @@ describe("contradiction", () => {
       "new-entry",
       { type: "fact", importance: 6 },
       buildConflict({ existingType: "fact", relation: "supersedes", confidence: 0.9, existingImportance: 9 }),
+      new SubjectIndex(),
+    );
+
+    expect(resolution.action).toBe("flagged");
+  });
+
+  it("coexists for supersedes with confidence exactly 0.85 and lower new importance", async () => {
+    const client = makeClient();
+    await initDb(client);
+    await seedEntry(client, "new-entry", { type: "fact", importance: 5, subjectKey: "alex/weight" });
+    await seedEntry(client, "existing-entry", { type: "fact", importance: 8, subjectKey: "alex/weight" });
+
+    const resolution = await contradictionModule.resolveConflict(
+      client,
+      "new-entry",
+      { type: "fact", importance: 5 },
+      buildConflict({ existingType: "fact", relation: "supersedes", confidence: 0.85, existingImportance: 8 }),
       new SubjectIndex(),
     );
 
@@ -765,6 +998,23 @@ describe("contradiction", () => {
       "new-entry",
       { type: "fact", importance: 7 },
       buildConflict({ existingType: "fact", relation: "coexists", confidence: 0.74 }),
+      new SubjectIndex(),
+    );
+
+    expect(resolution.action).toBe("flagged");
+  });
+
+  it("flags for review when confidence is exactly 0.75", async () => {
+    const client = makeClient();
+    await initDb(client);
+    await seedEntry(client, "new-entry", { type: "fact" });
+    await seedEntry(client, "existing-entry", { type: "fact" });
+
+    const resolution = await contradictionModule.resolveConflict(
+      client,
+      "new-entry",
+      { type: "fact", importance: 7 },
+      buildConflict({ existingType: "fact", relation: "coexists", confidence: 0.75 }),
       new SubjectIndex(),
     );
 

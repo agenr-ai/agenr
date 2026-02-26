@@ -29,8 +29,8 @@ function mapConflictLogRow(row: Record<string, unknown>): ConflictLogEntry {
 
 export async function logConflict(
   db: Client,
-  entryA: string,
-  entryB: string,
+  newEntryId: string,
+  existingEntryId: string,
   relation: string,
   confidence: number,
   resolution: string,
@@ -52,7 +52,7 @@ export async function logConflict(
       )
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `,
-    args: [id, entryA, entryB, relation, confidence, resolution, null, createdAt],
+    args: [id, newEntryId, existingEntryId, relation, confidence, resolution, null, createdAt],
   });
 
   return id;

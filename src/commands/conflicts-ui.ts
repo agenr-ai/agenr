@@ -1,4 +1,5 @@
-import { exec } from "node:child_process";
+import { execFile } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import http, { type IncomingMessage } from "node:http";
 import type { Client } from "@libsql/client";
 import { readConfig } from "../config.js";
@@ -45,8 +46,8 @@ export interface ConflictWithEntries {
 
 interface ConflictLogRow {
   id: string;
-  entryAId: string;
-  entryBId: string;
+  newEntryId: string;
+  existingEntryId: string;
   relation: string;
   confidence: number;
   resolution: string;
@@ -75,6 +76,14 @@ interface HttpResponse {
 }
 
 type ConflictResolution = "keep-new" | "keep-old" | "keep-both";
+const DEFAULT_MAX_REQUEST_BODY_BYTES = 64 * 1024;
+
+class RequestBodyTooLargeError extends Error {
+  constructor(maxBytes: number) {
+    super(`Request body exceeds ${maxBytes} bytes`);
+    this.name = "RequestBodyTooLargeError";
+  }
+}
 
 function resolveDefaultDbPath(dbOption: string | undefined): string {
   const config = readConfig(process.env);
@@ -115,8 +124,8 @@ function toConflictLogRow(row: Record<string, unknown>): ConflictLogRow {
   const confidence = toNumber(row.confidence);
   return {
     id: toStringValue(row.id),
-    entryAId: toStringValue(row.entry_a),
-    entryBId: toStringValue(row.entry_b),
+    newEntryId: toStringValue(row.entry_a),
+    existingEntryId: toStringValue(row.entry_b),
     relation: toStringValue(row.relation),
     confidence: Number.isFinite(confidence) ? confidence : 0,
     resolution: toStringValue(row.resolution),
@@ -161,15 +170,15 @@ async function buildConflictWithEntries(
 ): Promise<ConflictWithEntries[]> {
   const conflicts: ConflictWithEntries[] = [];
   for (const row of rows) {
-    const entryA = await getEntryById(db, row.entryAId);
-    const entryB = await getEntryById(db, row.entryBId);
-    if (!entryA || !entryB) {
+    const newEntry = await getEntryById(db, row.newEntryId);
+    const existingEntry = await getEntryById(db, row.existingEntryId);
+    if (!newEntry || !existingEntry) {
       continue;
     }
     conflicts.push({
       id: row.id,
-      entryA,
-      entryB,
+      entryA: newEntry,
+      entryB: existingEntry,
       relation: row.relation,
       confidence: row.confidence,
       resolution: row.resolution,
@@ -234,14 +243,16 @@ async function applyConflictResolution(
     if (resolution === "keep-new") {
       await db.execute({
         sql: "UPDATE entries SET retired = 1 WHERE id = ?",
-        args: [conflict.entryAId],
+        args: [conflict.existingEntryId],
       });
     } else if (resolution === "keep-old") {
       await db.execute({
         sql: "UPDATE entries SET retired = 1 WHERE id = ?",
-        args: [conflict.entryBId],
+        args: [conflict.newEntryId],
       });
     }
+    // SubjectIndex is process-scoped to the store pipeline and not shared with this UI process.
+    // Conflict UI mutations use direct DB queries, so no subject index updates are required here.
 
     await resolveConflictLog(db, conflict.id, resolution);
     await db.execute("COMMIT");
@@ -263,7 +274,7 @@ function getPathname(requestPath: string): string {
   }
 }
 
-function renderPage(): string {
+function renderPage(authToken: string): string {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -625,8 +636,8 @@ function renderPage(): string {
               "<span class='confidence'>confidence " + confidence + "</span>" +
             "</div>" +
             "<div class='entry-grid'>" +
-              entryHtml(conflict.entryA, "Entry A (existing/older)") +
-              entryHtml(conflict.entryB, "Entry B (newer)") +
+              entryHtml(conflict.entryA, "Entry A (newer)") +
+              entryHtml(conflict.entryB, "Entry B (older/existing)") +
             "</div>" +
             "<div class='actions'>" +
               "<button class='keep-new' data-resolution='keep-new'>Keep New</button>" +
@@ -687,7 +698,10 @@ function renderPage(): string {
       try {
         await fetchJson("/api/conflicts/" + encodeURIComponent(conflictId) + "/resolve", {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: {
+            "content-type": "application/json",
+            "authorization": "Bearer ${authToken}",
+          },
           body: JSON.stringify({ resolution }),
         });
       } catch (error) {
@@ -738,12 +752,25 @@ function renderPage(): string {
 </html>`;
 }
 
-async function readRequestBody(req: IncomingMessage): Promise<string> {
+async function readRequestBody(
+  req: IncomingMessage,
+  maxBytes = DEFAULT_MAX_REQUEST_BODY_BYTES,
+): Promise<string> {
   const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
   for await (const chunk of req) {
     if (typeof chunk === "string") {
-      chunks.push(Buffer.from(chunk));
+      const bufferChunk = Buffer.from(chunk);
+      totalBytes += bufferChunk.byteLength;
+      if (totalBytes > maxBytes) {
+        throw new RequestBodyTooLargeError(maxBytes);
+      }
+      chunks.push(bufferChunk);
       continue;
+    }
+    totalBytes += chunk.byteLength;
+    if (totalBytes > maxBytes) {
+      throw new RequestBodyTooLargeError(maxBytes);
     }
     chunks.push(chunk);
   }
@@ -759,20 +786,22 @@ export async function handleConflictsUiRequest(
   method: string,
   requestPath: string,
   rawBody?: string,
+  authHeader?: string,
+  authToken?: string,
 ): Promise<HttpResponse> {
   const normalizedMethod = method.toUpperCase();
   const pathname = getPathname(requestPath);
 
   if (normalizedMethod === "GET" && pathname === "/") {
-    return buildHtmlResponse(renderPage());
+    return buildHtmlResponse(renderPage(authToken ?? ""));
   }
 
   if (normalizedMethod === "GET" && pathname === "/api/conflicts") {
     const pending = await getPendingConflicts(db);
     const rows = pending.map((row) => ({
       id: row.id,
-      entryAId: row.entryA,
-      entryBId: row.entryB,
+      newEntryId: row.entryA,
+      existingEntryId: row.entryB,
       relation: row.relation,
       confidence: row.confidence,
       resolution: row.resolution,
@@ -797,6 +826,15 @@ export async function handleConflictsUiRequest(
   if (resolveMatch) {
     if (normalizedMethod !== "POST") {
       return buildJsonResponse(405, { error: "Method not allowed" });
+    }
+    if (!authToken) {
+      return buildJsonResponse(401, { error: "Unauthorized" });
+    }
+    if (authHeader !== `Bearer ${authToken}`) {
+      return buildJsonResponse(401, { error: "Unauthorized" });
+    }
+    if (rawBody && Buffer.byteLength(rawBody, "utf8") > DEFAULT_MAX_REQUEST_BODY_BYTES) {
+      return buildJsonResponse(413, { error: "Request body too large" });
     }
 
     const conflictId = decodeURIComponent(resolveMatch[1] ?? "");
@@ -839,16 +877,25 @@ export async function handleConflictsUiRequest(
 }
 
 function openBrowser(url: string): void {
-  let command: string;
-  if (process.platform === "darwin") {
-    command = `open "${url}"`;
-  } else if (process.platform === "win32") {
-    command = `start "" "${url}"`;
-  } else {
-    command = `xdg-open "${url}"`;
+  if (!/^http:\/\/localhost:\d{1,5}\/?$/.test(url)) {
+    process.stderr.write("[conflicts] Could not open browser automatically: invalid local URL\n");
+    return;
   }
 
-  exec(command, (error) => {
+  let command: string;
+  let args: string[];
+  if (process.platform === "darwin") {
+    command = "open";
+    args = [url];
+  } else if (process.platform === "win32") {
+    command = "cmd";
+    args = ["/c", "start", "", url];
+  } else {
+    command = "xdg-open";
+    args = [url];
+  }
+
+  execFile(command, args, (error) => {
     if (error) {
       process.stderr.write(
         `[conflicts] Could not open browser automatically: ${error instanceof Error ? error.message : String(error)}\n`,
@@ -919,16 +966,34 @@ export async function runConflictsUiCommand(
   const dbPath = resolveDefaultDbPath(opts.db);
   const db = getDb(dbPath);
   await initDb(db);
+  const authToken = randomBytes(16).toString("hex");
 
   const server = http.createServer(async (req, res) => {
     try {
       const method = req.method ?? "GET";
       const requestPath = req.url ?? "/";
-      const rawBody = method === "POST" ? await readRequestBody(req) : undefined;
-      const response = await handleConflictsUiRequest(db, method, requestPath, rawBody);
+      const rawBody =
+        method === "POST" ? await readRequestBody(req, DEFAULT_MAX_REQUEST_BODY_BYTES) : undefined;
+      const authHeader = typeof req.headers.authorization === "string" ? req.headers.authorization : undefined;
+      const response = await handleConflictsUiRequest(
+        db,
+        method,
+        requestPath,
+        rawBody,
+        authHeader,
+        authToken,
+      );
       res.writeHead(response.status, response.headers);
       res.end(response.body);
     } catch (error) {
+      if (error instanceof RequestBodyTooLargeError) {
+        res.writeHead(413, {
+          "content-type": "application/json; charset=utf-8",
+          "cache-control": "no-store",
+        });
+        res.end(JSON.stringify({ error: "Request body too large" }));
+        return;
+      }
       const body = JSON.stringify({
         error: error instanceof Error ? error.message : String(error),
       });
@@ -943,6 +1008,7 @@ export async function runConflictsUiCommand(
     await startServer(server, port);
     const url = `http://localhost:${port}`;
     process.stdout.write(`[conflicts] UI running at ${url}\n`);
+    process.stdout.write(`[conflicts] Auth token (POST endpoints): ${authToken}\n`);
     if (opts.open !== false) {
       openBrowser(url);
     }
