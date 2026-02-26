@@ -130,6 +130,18 @@ const CREATE_TABLE_AND_TRIGGER_STATEMENTS: readonly string[] = [
     updated_at TEXT NOT NULL
   )
   `,
+  `
+  CREATE TABLE IF NOT EXISTS conflict_log (
+    id TEXT PRIMARY KEY,
+    entry_a TEXT NOT NULL,
+    entry_b TEXT NOT NULL,
+    relation TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    resolution TEXT NOT NULL,
+    resolved_at TEXT,
+    created_at TEXT NOT NULL
+  )
+  `,
   CREATE_ENTRIES_FTS_TABLE_SQL,
   CREATE_ENTRIES_FTS_TRIGGER_AI_SQL,
   CREATE_ENTRIES_FTS_TRIGGER_AD_SQL,
@@ -245,6 +257,43 @@ const COLUMN_MIGRATIONS: readonly ColumnMigration[] = [
     table: "entries",
     column: "recall_intervals",
     sql: "ALTER TABLE entries ADD COLUMN recall_intervals TEXT DEFAULT NULL",
+  },
+  // Claim/subject fields for contradiction detection (#266)
+  {
+    table: "entries",
+    column: "subject_entity",
+    sql: "ALTER TABLE entries ADD COLUMN subject_entity TEXT",
+  },
+  {
+    table: "entries",
+    column: "subject_attribute",
+    sql: "ALTER TABLE entries ADD COLUMN subject_attribute TEXT",
+  },
+  {
+    table: "entries",
+    column: "subject_key",
+    sql: "ALTER TABLE entries ADD COLUMN subject_key TEXT",
+  },
+  {
+    table: "entries",
+    column: "claim_predicate",
+    sql: "ALTER TABLE entries ADD COLUMN claim_predicate TEXT",
+  },
+  {
+    table: "entries",
+    column: "claim_object",
+    sql: "ALTER TABLE entries ADD COLUMN claim_object TEXT",
+  },
+  {
+    table: "entries",
+    column: "claim_confidence",
+    sql: "ALTER TABLE entries ADD COLUMN claim_confidence REAL",
+  },
+  {
+    table: "entries",
+    column: "idx_entries_subject_key",
+    sql: "CREATE INDEX IF NOT EXISTS idx_entries_subject_key ON entries(subject_key) WHERE subject_key IS NOT NULL AND retired = 0 AND superseded_by IS NULL",
+    isIndex: true,
   },
 ];
 

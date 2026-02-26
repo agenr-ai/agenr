@@ -47,6 +47,12 @@ describe("db schema migrations", () => {
     expect(entries.has("retired_reason")).toBe(true);
     expect(entries.has("suppressed_contexts")).toBe(true);
     expect(entries.has("recall_intervals")).toBe(true);
+    expect(entries.has("subject_entity")).toBe(true);
+    expect(entries.has("subject_attribute")).toBe(true);
+    expect(entries.has("subject_key")).toBe(true);
+    expect(entries.has("claim_predicate")).toBe(true);
+    expect(entries.has("claim_object")).toBe(true);
+    expect(entries.has("claim_confidence")).toBe(true);
 
     expect(ingest.has("content_hash")).toBe(true);
     expect(ingest.has("entries_superseded")).toBe(true);
@@ -205,6 +211,12 @@ describe("db schema migrations", () => {
     const retiredReason = entriesColumns.find((row) => toStringValue(row.name) === "retired_reason");
     const suppressedContexts = entriesColumns.find((row) => toStringValue(row.name) === "suppressed_contexts");
     const recallIntervals = entriesColumns.find((row) => toStringValue(row.name) === "recall_intervals");
+    const subjectEntity = entriesColumns.find((row) => toStringValue(row.name) === "subject_entity");
+    const subjectAttribute = entriesColumns.find((row) => toStringValue(row.name) === "subject_attribute");
+    const subjectKey = entriesColumns.find((row) => toStringValue(row.name) === "subject_key");
+    const claimPredicate = entriesColumns.find((row) => toStringValue(row.name) === "claim_predicate");
+    const claimObject = entriesColumns.find((row) => toStringValue(row.name) === "claim_object");
+    const claimConfidence = entriesColumns.find((row) => toStringValue(row.name) === "claim_confidence");
 
     expect(canonicalKey).toBeTruthy();
     expect(scope).toBeTruthy();
@@ -223,6 +235,12 @@ describe("db schema migrations", () => {
     expect(retiredReason).toBeTruthy();
     expect(suppressedContexts).toBeTruthy();
     expect(recallIntervals).toBeTruthy();
+    expect(subjectEntity).toBeTruthy();
+    expect(subjectAttribute).toBeTruthy();
+    expect(subjectKey).toBeTruthy();
+    expect(claimPredicate).toBeTruthy();
+    expect(claimObject).toBeTruthy();
+    expect(claimConfidence).toBeTruthy();
 
     const ingestInfo = await client.execute("PRAGMA table_info(ingest_log)");
     const ingestColumns = ingestInfo.rows as Array<{ name?: unknown; dflt_value?: unknown }>;
@@ -428,5 +446,44 @@ describe("db schema migrations", () => {
     const entriesInfo = await client.execute("PRAGMA table_info(entries)");
     const entries = columnNames(entriesInfo.rows as Array<{ name?: unknown }>);
     expect(entries.has("canonical_key")).toBe(true);
+  });
+
+  it("creates conflict_log and subject_key index idempotently", async () => {
+    const client = makeClient();
+    await initSchema(client);
+
+    const conflictTable = await client.execute({
+      sql: "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+      args: ["conflict_log"],
+    });
+    expect(conflictTable.rows).toHaveLength(1);
+
+    const conflictInfo = await client.execute("PRAGMA table_info(conflict_log)");
+    const conflictColumns = columnNames(conflictInfo.rows as Array<{ name?: unknown }>);
+    expect(conflictColumns.has("id")).toBe(true);
+    expect(conflictColumns.has("entry_a")).toBe(true);
+    expect(conflictColumns.has("entry_b")).toBe(true);
+    expect(conflictColumns.has("relation")).toBe(true);
+    expect(conflictColumns.has("confidence")).toBe(true);
+    expect(conflictColumns.has("resolution")).toBe(true);
+    expect(conflictColumns.has("resolved_at")).toBe(true);
+    expect(conflictColumns.has("created_at")).toBe(true);
+
+    const subjectIndex = await client.execute({
+      sql: "SELECT name, sql FROM sqlite_master WHERE type = 'index' AND name = ? LIMIT 1",
+      args: ["idx_entries_subject_key"],
+    });
+    expect(subjectIndex.rows).toHaveLength(1);
+    expect(toStringValue((subjectIndex.rows[0] as { sql?: unknown } | undefined)?.sql)).toContain(
+      "WHERE subject_key IS NOT NULL AND retired = 0 AND superseded_by IS NULL",
+    );
+
+    await initSchema(client);
+
+    const duplicateIndex = await client.execute({
+      sql: "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'index' AND name = ?",
+      args: ["idx_entries_subject_key"],
+    });
+    expect(Number((duplicateIndex.rows[0] as { count?: unknown } | undefined)?.count ?? 0)).toBe(1);
   });
 });

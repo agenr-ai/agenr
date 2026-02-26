@@ -43,4 +43,25 @@ describe("mapRawStoredEntry", () => {
     const entry = mapRawStoredEntry(makeRow(JSON.stringify([])), { tags: [] });
     expect(entry.recall_intervals).toEqual([]);
   });
+
+  it("maps structured claim and subject fields", () => {
+    const entry = mapRawStoredEntry(
+      {
+        ...makeRow(undefined),
+        subject_entity: "  acme-inc  ",
+        subject_attribute: "  ceo  ",
+        subject_key: "  acme-inc::ceo  ",
+        claim_predicate: "  is  ",
+        claim_object: "  jane-doe  ",
+        claim_confidence: "0.75",
+      },
+      { tags: [] },
+    );
+    expect(entry.subjectEntity).toBe("acme-inc");
+    expect(entry.subjectAttribute).toBe("ceo");
+    expect(entry.subjectKey).toBe("acme-inc::ceo");
+    expect(entry.claimPredicate).toBe("is");
+    expect(entry.claimObject).toBe("jane-doe");
+    expect(entry.claimConfidence).toBe(0.75);
+  });
 });

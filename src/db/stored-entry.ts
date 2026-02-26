@@ -22,6 +22,12 @@ interface RawStoredEntryFields {
   confirmations?: unknown;
   contradictions?: unknown;
   superseded_by?: unknown;
+  subject_entity?: unknown;
+  subject_attribute?: unknown;
+  subject_key?: unknown;
+  claim_predicate?: unknown;
+  claim_object?: unknown;
+  claim_confidence?: unknown;
   retired?: unknown;
   retired_at?: unknown;
   retired_reason?: unknown;
@@ -45,6 +51,12 @@ export function mapRawStoredEntry(
   const recallCountRaw = toNumber(row.recall_count);
   const confirmationsRaw = toNumber(row.confirmations);
   const contradictionsRaw = toNumber(row.contradictions);
+  const subjectEntity = toStringValue(row.subject_entity).trim();
+  const subjectAttribute = toStringValue(row.subject_attribute).trim();
+  const subjectKey = toStringValue(row.subject_key).trim();
+  const claimPredicate = toStringValue(row.claim_predicate).trim();
+  const claimObject = toStringValue(row.claim_object).trim();
+  const claimConfidenceRaw = toNumber(row.claim_confidence);
   const retiredRaw = toNumber(row.retired);
   const suppressedContextsRaw = toStringValue(row.suppressed_contexts);
   let suppressedContexts: string[] | undefined;
@@ -100,6 +112,12 @@ export function mapRawStoredEntry(
     confirmations: Number.isFinite(confirmationsRaw) ? confirmationsRaw : 0,
     contradictions: Number.isFinite(contradictionsRaw) ? contradictionsRaw : 0,
     superseded_by: toStringValue(row.superseded_by) || undefined,
+    ...(subjectEntity ? { subjectEntity } : {}),
+    ...(subjectAttribute ? { subjectAttribute } : {}),
+    ...(subjectKey ? { subjectKey } : {}),
+    ...(claimPredicate ? { claimPredicate } : {}),
+    ...(claimObject ? { claimObject } : {}),
+    ...(Number.isFinite(claimConfidenceRaw) ? { claimConfidence: claimConfidenceRaw } : {}),
     retired: Number.isFinite(retiredRaw) ? retiredRaw > 0 : false,
     retired_at: toStringValue(row.retired_at) || undefined,
     retired_reason: toStringValue(row.retired_reason) || undefined,

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.3 (2026-02-26)
+
+### Added
+- Schema: subject_entity, subject_attribute, subject_key, claim_predicate, claim_object, claim_confidence columns on entries table (#266)
+- Schema: conflict_log table for contradiction audit trail (#266)
+- Schema: idx_entries_subject_key partial index (#266)
+- SubjectIndex: in-memory subject key index with lazy initialization (#266)
+- ConflictLogEntry type definition (#266)
+
 ## 0.9.2 (2026-02-26)
 
 ### Fixed

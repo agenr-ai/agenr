@@ -29,6 +29,7 @@ describe("db schema", () => {
       "ingest_log",
       "entry_sources",
       "signal_watermarks",
+      "conflict_log",
       "entries_fts",
       "idx_entries_embedding",
       "idx_entries_type",
@@ -40,6 +41,7 @@ describe("db schema", () => {
       "idx_entries_superseded",
       "idx_entries_content_hash",
       "idx_entries_norm_content_hash",
+      "idx_entries_subject_key",
       "idx_tags_tag",
       "idx_relations_source",
       "idx_relations_target",
@@ -83,6 +85,7 @@ describe("db schema", () => {
         'ingest_log',
         'entry_sources',
         'signal_watermarks',
+        'conflict_log',
         'entries_fts',
         'idx_entries_embedding',
         'idx_entries_type',
@@ -94,6 +97,7 @@ describe("db schema", () => {
         'idx_entries_superseded',
         'idx_entries_content_hash',
         'idx_entries_norm_content_hash',
+        'idx_entries_subject_key',
         'idx_tags_tag',
         'idx_relations_source',
         'idx_relations_target',
@@ -104,7 +108,7 @@ describe("db schema", () => {
       )
       GROUP BY name
     `);
-    expect(namesResult.rows).toHaveLength(24);
+    expect(namesResult.rows).toHaveLength(26);
     for (const row of namesResult.rows as Array<{ count?: unknown }>) {
       expect(Number(row.count)).toBe(1);
     }
@@ -133,6 +137,12 @@ describe("db schema", () => {
     expect(entryColumns.has("retired_reason")).toBe(true);
     expect(entryColumns.has("suppressed_contexts")).toBe(true);
     expect(entryColumns.has("recall_intervals")).toBe(true);
+    expect(entryColumns.has("subject_entity")).toBe(true);
+    expect(entryColumns.has("subject_attribute")).toBe(true);
+    expect(entryColumns.has("subject_key")).toBe(true);
+    expect(entryColumns.has("claim_predicate")).toBe(true);
+    expect(entryColumns.has("claim_object")).toBe(true);
+    expect(entryColumns.has("claim_confidence")).toBe(true);
     expect(ingestColumns.has("content_hash")).toBe(true);
     expect(ingestColumns.has("entries_superseded")).toBe(true);
     expect(ingestColumns.has("dedup_llm_calls")).toBe(true);
