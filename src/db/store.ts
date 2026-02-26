@@ -6,6 +6,7 @@ import { warnIfLocked } from "./lockfile.js";
 import { applyLedger } from "./retirements.js";
 import { composeEmbeddingText, embed } from "../embeddings/client.js";
 import { EmbeddingCache } from "../embeddings/cache.js";
+import { extractClaim } from "./claim-extraction.js";
 import { runSimpleStream } from "../llm/stream.js";
 import type { Expiry, KnowledgeEntry, LlmClient, RelationType, StoreResult, StoredEntry } from "../types.js";
 import { createRelation } from "./relations.js";
@@ -97,6 +98,8 @@ export interface StoreEntriesOptions {
     candidates: Array<{ entry: StoredEntry; similarity: number }>,
   ) => Promise<OnlineDedupDecision>;
   preBatchEmbedChunkSize?: number;
+  claimExtractionEnabled?: boolean;
+  claimExtractionModel?: string;
 }
 
 interface PlannedMutation {
@@ -800,10 +803,16 @@ export async function insertEntry(
         embedding,
         created_at,
         updated_at,
+        subject_entity,
+        subject_attribute,
+        subject_key,
+        claim_predicate,
+        claim_object,
+        claim_confidence,
         norm_content_hash,
         minhash_sig
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, vector32(?), ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, vector32(?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     args: [
       id,
@@ -821,6 +830,14 @@ export async function insertEntry(
       JSON.stringify(embedding),
       createdAt,
       now,
+      entry.subjectEntity?.trim().toLowerCase() ?? null,
+      entry.subjectAttribute?.trim().toLowerCase() ?? null,
+      entry.subjectKey?.trim().toLowerCase() ?? null,
+      entry.claimPredicate?.trim() ?? null,
+      entry.claimObject?.trim() ?? null,
+      typeof entry.claimConfidence === "number" && Number.isFinite(entry.claimConfidence)
+        ? Math.min(1, Math.max(0, entry.claimConfidence))
+        : null,
       normContentHash ?? null,
       minhashSig ?? null,
     ],
@@ -1645,6 +1662,28 @@ export async function storeEntries(
         llmDedupCalls += 1;
       },
     });
+
+    if (
+      (processed.mutation.kind === "add" || processed.mutation.kind === "add_related") &&
+      options.llmClient &&
+      options.claimExtractionEnabled !== false
+    ) {
+      const claim = await extractClaim(
+        normalizedEntry.content,
+        normalizedEntry.type,
+        normalizedEntry.subject,
+        options.llmClient,
+        options.claimExtractionModel,
+      );
+      if (claim) {
+        normalizedEntry.subjectEntity = claim.subjectEntity;
+        normalizedEntry.subjectAttribute = claim.subjectAttribute;
+        normalizedEntry.subjectKey = claim.subjectKey;
+        normalizedEntry.claimPredicate = claim.predicate;
+        normalizedEntry.claimObject = claim.object;
+        normalizedEntry.claimConfidence = claim.confidence;
+      }
+    }
 
     const applyAndCount = async (): Promise<StoreEntryDecision> => {
       const applied = await applyEntryMutation(db, processed, embedFn, apiKey, cache);

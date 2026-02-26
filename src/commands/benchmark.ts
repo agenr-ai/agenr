@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 
 import path from "node:path";
 import { createHash } from "node:crypto";
@@ -7,13 +8,23 @@ import { extractKnowledgeFromChunks, SYSTEM_PROMPT } from "../extractor.js";
 import { createLlmClient } from "../llm/client.js";
 import { APP_VERSION } from "../version.js";
 import { scoreSession } from "../benchmark/scorer.js";
+import { extractClaim } from "../db/claim-extraction.js";
+import claimFixturesData from "../benchmark/claim-fixtures.json";
+import { scoreClaimFixture, summarizeClaimBenchmark } from "../benchmark/claim-scorer.js";
 import type { BenchmarkResult, BenchmarkRubric, SessionRunResult } from "../benchmark/types.js";
+import type { ClaimBenchmarkResult, ClaimBenchmarkSummary, ClaimFixture } from "../benchmark/claim-scorer.js";
 import type { ExtractChunksResult } from "../extractor.js";
 import type { KnowledgeEntry } from "../types.js";
 
 const DEFAULT_FIXTURE_DIR = "test/fixtures/benchmark-sessions";
 const DEFAULT_RUNS = 1;
 const BENCHMARK_TEMPERATURE = 0;
+const DEFAULT_CLAIM_BENCHMARK_MODEL = "gpt-4.1-nano";
+const DEFAULT_CLAIM_BENCHMARK_PROVIDER = "openai";
+const CLAIM_BASELINE_FILENAME = "claim-benchmark-baseline.json";
+const CLAIM_BENCHMARK_COST_PER_FIXTURE_USD = 0.00012;
+
+const CLAIM_FIXTURES = claimFixturesData as ClaimFixture[];
 
 interface BenchmarkSessionFixture {
   session: string;
@@ -32,6 +43,9 @@ export interface BenchmarkCommandOptions {
   verbose?: boolean;
   userOnly?: boolean;
   context?: string;
+  claims?: boolean;
+  save?: boolean;
+  compare?: boolean;
 }
 
 export interface BenchmarkCommandDeps {
@@ -41,6 +55,23 @@ export interface BenchmarkCommandDeps {
   extractKnowledgeFromChunksFn: typeof extractKnowledgeFromChunks;
   createLlmClientFn: typeof createLlmClient;
 }
+
+interface ClaimBenchmarkComparison {
+  path: string;
+  deltaPassed: number;
+  deltaAverageScore: number;
+}
+
+export interface ClaimBenchmarkRunResult {
+  mode: "claims";
+  model: string;
+  summary: ClaimBenchmarkSummary;
+  results: ClaimBenchmarkResult[];
+  baselinePath: string;
+  comparedToBaseline?: ClaimBenchmarkComparison;
+}
+
+export type BenchmarkCommandResult = BenchmarkResult | ClaimBenchmarkRunResult;
 
 function parsePositiveInt(value: number | string | undefined, fallback: number, label: string): number {
   if (value === undefined || value === null || String(value).trim().length === 0) {
@@ -337,6 +368,73 @@ async function runExtraction(
   }
 }
 
+function resolveClaimBaselinePath(): string {
+  return path.join(os.homedir(), ".agenr", CLAIM_BASELINE_FILENAME);
+}
+
+function estimateClaimBenchmarkCost(fixtures: number): number {
+  return fixtures * CLAIM_BENCHMARK_COST_PER_FIXTURE_USD;
+}
+
+function formatClaimScore(value: number): string {
+  return value.toFixed(2);
+}
+
+function renderClaimBenchmarkTable(summary: ClaimBenchmarkSummary, results: ClaimBenchmarkResult[]): void {
+  const idWidth = Math.max("ID".length, ...results.map((result) => result.fixtureId.length));
+  const lines: string[] = [];
+
+  lines.push(`Claim Extraction Benchmark (model: ${summary.model})`);
+  lines.push("-------------------------------------------------");
+  lines.push(
+    `${"ID".padEnd(idWidth)}  Entity  Attr    Pred    Object  Conf    Overall  Pass`,
+  );
+
+  for (const result of results) {
+    const isNoClaimFixture = result.expected.noClaim;
+    const entity = isNoClaimFixture ? "-" : formatClaimScore(result.scores.entityMatch);
+    const attribute = isNoClaimFixture ? "-" : formatClaimScore(result.scores.attributeMatch);
+    const predicate = isNoClaimFixture ? "-" : formatClaimScore(result.scores.predicateMatch);
+    const object = isNoClaimFixture ? "-" : formatClaimScore(result.scores.objectMatch);
+    const confidence = isNoClaimFixture ? "-" : formatClaimScore(result.scores.confidenceInRange);
+
+    lines.push(
+      `${result.fixtureId.padEnd(idWidth)}  ` +
+        `${entity.padEnd(6)}  ` +
+        `${attribute.padEnd(6)}  ` +
+        `${predicate.padEnd(6)}  ` +
+        `${object.padEnd(6)}  ` +
+        `${confidence.padEnd(6)}  ` +
+        `${formatClaimScore(result.overall).padEnd(7)}  ` +
+        `${result.passed ? "yes" : "no"}`,
+    );
+  }
+
+  const passRate = summary.totalFixtures > 0 ? (summary.passed / summary.totalFixtures) * 100 : 0;
+  const avgLatencySeconds = summary.avgLatencyMs / 1000;
+  lines.push("-------------------------------------------------");
+  lines.push(
+    `Summary: ${summary.passed}/${summary.totalFixtures} passed (${passRate.toFixed(1)}%) | ` +
+      `avg score: ${summary.averageScore.toFixed(2)} | ` +
+      `${avgLatencySeconds.toFixed(1)}s avg | ` +
+      `~$${summary.estimatedCostUsd.toFixed(3)} total`,
+  );
+
+  process.stdout.write(`${lines.join("\n")}\n`);
+}
+
+function renderClaimBenchmarkComparison(comparison: ClaimBenchmarkComparison): void {
+  const passedDeltaLabel = comparison.deltaPassed > 0 ? `+${comparison.deltaPassed}` : `${comparison.deltaPassed}`;
+  const scoreDeltaLabel =
+    comparison.deltaAverageScore > 0
+      ? `+${comparison.deltaAverageScore.toFixed(3)}`
+      : comparison.deltaAverageScore.toFixed(3);
+
+  process.stdout.write(
+    `Comparison vs baseline (${comparison.path}): passed ${passedDeltaLabel}, avg score ${scoreDeltaLabel}\n`,
+  );
+}
+
 function renderSummary(
   result: BenchmarkResult,
   rangesBySession: Map<string, { min: number; max: number }>,
@@ -433,10 +531,114 @@ function renderVerboseDetails(result: BenchmarkResult): void {
   }
 }
 
+async function runClaimBenchmarkCommand(
+  options: BenchmarkCommandOptions,
+  deps: BenchmarkCommandDeps,
+): Promise<{ exitCode: number; result: ClaimBenchmarkRunResult }> {
+  const model = options.model?.trim() || DEFAULT_CLAIM_BENCHMARK_MODEL;
+  const provider = options.provider?.trim() || DEFAULT_CLAIM_BENCHMARK_PROVIDER;
+  const baselinePath = resolveClaimBaselinePath();
+
+  const client = deps.createLlmClientFn({
+    provider,
+    model,
+    env: process.env,
+  });
+
+  let totalLatencyMs = 0;
+  const results: ClaimBenchmarkResult[] = [];
+  for (const fixture of CLAIM_FIXTURES) {
+    const startedAt = Date.now();
+    const claim = await extractClaim(
+      fixture.content,
+      fixture.type,
+      fixture.subject,
+      client,
+      model,
+    );
+    const latencyMs = Date.now() - startedAt;
+    totalLatencyMs += latencyMs;
+    results.push(scoreClaimFixture(fixture, claim));
+  }
+
+  const summary = summarizeClaimBenchmark(
+    client.resolvedModel.modelId,
+    results,
+    totalLatencyMs,
+    estimateClaimBenchmarkCost(CLAIM_FIXTURES.length),
+  );
+
+  let comparison: ClaimBenchmarkComparison | undefined;
+  if (options.compare) {
+    const baselineRaw = await deps.readFileFn(baselinePath, "utf8");
+    const parsed = JSON.parse(baselineRaw) as { summary?: { passed?: number; averageScore?: number } };
+    const baselineSummary = parsed.summary;
+    if (!baselineSummary) {
+      throw new Error(`Baseline file is missing summary data: ${baselinePath}`);
+    }
+
+    const baselinePassed =
+      typeof baselineSummary.passed === "number" && Number.isFinite(baselineSummary.passed)
+        ? baselineSummary.passed
+        : 0;
+    const baselineAverage =
+      typeof baselineSummary.averageScore === "number" && Number.isFinite(baselineSummary.averageScore)
+        ? baselineSummary.averageScore
+        : 0;
+
+    comparison = {
+      path: baselinePath,
+      deltaPassed: summary.passed - baselinePassed,
+      deltaAverageScore: summary.averageScore - baselineAverage,
+    };
+  }
+
+  if (options.save) {
+    await fs.mkdir(path.dirname(baselinePath), { recursive: true });
+    await fs.writeFile(
+      baselinePath,
+      `${JSON.stringify(
+        {
+          savedAt: new Date().toISOString(),
+          model: summary.model,
+          summary,
+          results,
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+  }
+
+  const result: ClaimBenchmarkRunResult = {
+    mode: "claims",
+    model: summary.model,
+    summary,
+    results,
+    baselinePath,
+    ...(comparison ? { comparedToBaseline: comparison } : {}),
+  };
+
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  } else {
+    renderClaimBenchmarkTable(summary, results);
+    if (comparison) {
+      renderClaimBenchmarkComparison(comparison);
+    }
+  }
+
+  return {
+    exitCode: summary.failed === 0 ? 0 : 1,
+    result,
+  };
+}
+
 export async function runBenchmarkCommand(
   options: BenchmarkCommandOptions,
   deps?: Partial<BenchmarkCommandDeps>,
-): Promise<{ exitCode: number; result: BenchmarkResult }> {
+): Promise<{ exitCode: number; result: BenchmarkCommandResult }> {
   const resolvedDeps: BenchmarkCommandDeps = {
     readdirFn: deps?.readdirFn ?? fs.readdir,
     readFileFn: deps?.readFileFn ?? fs.readFile,
@@ -444,6 +646,10 @@ export async function runBenchmarkCommand(
     extractKnowledgeFromChunksFn: deps?.extractKnowledgeFromChunksFn ?? extractKnowledgeFromChunks,
     createLlmClientFn: deps?.createLlmClientFn ?? createLlmClient,
   };
+
+  if (options.claims) {
+    return runClaimBenchmarkCommand(options, resolvedDeps);
+  }
 
   const runs = parsePositiveInt(options.runs, DEFAULT_RUNS, "--runs");
   const fixtureRoot = path.resolve(DEFAULT_FIXTURE_DIR);

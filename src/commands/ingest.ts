@@ -686,6 +686,8 @@ export async function runIngestCommand(
   }
 
   const config = resolvedDeps.readConfigFn(process.env);
+  const claimExtractionEnabled = config?.contradiction?.enabled !== false;
+  const claimExtractionModel = config?.contradiction?.claimExtractionModel?.trim() || undefined;
   const client = resolvedDeps.createLlmClientFn({
     provider: options.provider,
     model: options.model,
@@ -869,6 +871,8 @@ export async function runIngestCommand(
       apiKey: embeddingApiKey ?? "",
       llmClient: client,
       dbPath,
+      claimExtractionEnabled,
+      claimExtractionModel,
       batchSize: bulkMode ? 500 : 40,
       highWatermark: queueHighWatermark,
       backpressureTimeoutMs: queueBackpressureTimeoutMs,

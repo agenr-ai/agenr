@@ -8,6 +8,8 @@
 - Schema: idx_entries_subject_key partial index (#266)
 - SubjectIndex: in-memory subject key index with lazy initialization (#266)
 - ConflictLogEntry type definition (#266)
+- Claim extraction: dedicated LLM call extracts structured claims (subject/predicate/object) from entries at store time (#266)
+- Config: contradiction.claimExtractionModel setting (#266)
 
 ## 0.9.2 (2026-02-26)
 

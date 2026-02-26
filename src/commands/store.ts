@@ -330,6 +330,8 @@ export async function runStoreCommand(
   const onlineDedup = options.onlineDedup !== false;
   const dedupThreshold = parseDedupThreshold(options.dedupThreshold);
   const llmClient = onlineDedup && hasAnyEntries ? resolvedDeps.createLlmClientFn({ env: process.env }) : undefined;
+  const claimExtractionEnabled = config?.contradiction?.enabled !== false;
+  const claimExtractionModel = config?.contradiction?.claimExtractionModel?.trim() || undefined;
 
   const dbPath = options.db?.trim() || config?.db?.path;
   const shouldLockDb = dbPath !== ":memory:";
@@ -377,6 +379,8 @@ export async function runStoreCommand(
         aggressiveDedup,
         dedupThreshold: dedupThreshold ?? configDedupThreshold,
         llmClient,
+        claimExtractionEnabled,
+        claimExtractionModel,
         dbPath,
         sourceFile: input.sourceFile,
         ingestContentHash: input.contentHash,
