@@ -232,8 +232,8 @@ beforeEach(async () => {
     results: [],
   });
   vi.spyOn(initWizardRuntime, "runConsolidateCommand").mockResolvedValue({ exitCode: 0 });
-  vi.spyOn(initWizardRuntime, "runDaemonInstallCommand").mockResolvedValue({ exitCode: 0 });
-  vi.spyOn(initWizardRuntime, "runDaemonStopCommand").mockResolvedValue({ exitCode: 0 });
+  vi.spyOn(initWizardRuntime, "runWatcherInstallCommand").mockResolvedValue({ exitCode: 0 });
+  vi.spyOn(initWizardRuntime, "runWatcherStopCommand").mockResolvedValue({ exitCode: 0 });
   vi.spyOn(initWizardRuntime, "runDbResetCommand").mockResolvedValue({ exitCode: 0 });
 });
 
@@ -2150,7 +2150,7 @@ describe("runInitWizard", () => {
         project: "my-project",
         platform: "openclaw",
       });
-      const stopSpy = vi.spyOn(initWizardRuntime, "runDaemonStopCommand").mockResolvedValue({ exitCode: 0 });
+      const stopSpy = vi.spyOn(initWizardRuntime, "runWatcherStopCommand").mockResolvedValue({ exitCode: 0 });
       const resetSpy = vi.spyOn(initWizardRuntime, "runDbResetCommand").mockResolvedValue({ exitCode: 0 });
       readConfigMock.mockReturnValue({
         auth: "openai-api-key",
@@ -2366,7 +2366,7 @@ describe("runInitWizard", () => {
   it("wizard installs daemon with force:true on macOS and corrected sessionsDir", async () => {
     await withMockedPlatform("darwin", async () => {
       const dir = await createWizardProjectDir();
-      const daemonSpy = vi.spyOn(initWizardRuntime, "runDaemonInstallCommand");
+      const watcherSpy = vi.spyOn(initWizardRuntime, "runWatcherInstallCommand");
       readConfigMock.mockReturnValue(null);
       runSetupCoreMock.mockResolvedValue(mockSetupResult());
       vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
@@ -2375,7 +2375,7 @@ describe("runInitWizard", () => {
 
       await runInitWizard({ isInteractive: true, path: dir });
 
-      expect(daemonSpy).toHaveBeenCalledWith({
+      expect(watcherSpy).toHaveBeenCalledWith({
         force: true,
         interval: 120,
         dir: path.join(resolveDefaultOpenClawConfigDir(), "agents", "main", "sessions"),
@@ -2471,7 +2471,7 @@ describe("runInitWizard", () => {
   it("OpenClaw directory confirmation sets sessionsDir to agents/main/sessions", async () => {
     await withMockedPlatform("darwin", async () => {
       const dir = await createWizardProjectDir();
-      const daemonSpy = vi.spyOn(initWizardRuntime, "runDaemonInstallCommand");
+      const watcherSpy = vi.spyOn(initWizardRuntime, "runWatcherInstallCommand");
       readConfigMock.mockReturnValue(null);
       runSetupCoreMock.mockResolvedValue(mockSetupResult());
       vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(false, false));
@@ -2482,7 +2482,7 @@ describe("runInitWizard", () => {
 
       await runInitWizard({ isInteractive: true, path: dir });
 
-      expect(daemonSpy).toHaveBeenCalledWith(
+      expect(watcherSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           dir: path.join("/tmp/custom-openclaw-dir", ".openclaw", "agents", "main", "sessions"),
         }),
