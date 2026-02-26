@@ -3,7 +3,14 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import * as clack from "@clack/prompts";
-import { describeAuth, readConfig, resolveConfigPath, resolveProjectFromGlobalConfig, writeConfig } from "../config.js";
+import {
+  describeAuth,
+  readConfig,
+  resolveConfigPath,
+  resolveModelForTask,
+  resolveProjectFromGlobalConfig,
+  writeConfig,
+} from "../config.js";
 import { runConsolidateCommand } from "./consolidate.js";
 import { runWatcherInstallCommand, runWatcherStopCommand } from "./watcher.js";
 import { runDbResetCommand } from "./db.js";
@@ -101,6 +108,7 @@ export interface WizardOptions {
 export interface WizardChanges {
   authChanged: boolean;
   modelChanged: boolean;
+  modelsChanged: boolean;
   platformChanged: boolean;
   projectChanged: boolean;
   embeddingsKeyChanged: boolean;
@@ -144,6 +152,7 @@ interface WizardSummary {
   project: string;
   authLabel: string;
   model: string;
+  taskModels?: AgenrConfig["models"];
   pluginStatus?: string;
   ingestStatus?: string;
   consolidateStatus?: string;
@@ -157,6 +166,43 @@ type GlobalProjectEntry = {
   dbPath?: string;
   dependencies?: string[];
 };
+type TaskModelKey = "extraction" | "claimExtraction" | "contradictionJudge" | "handoffSummary";
+type TaskModelRecord = Record<TaskModelKey, string>;
+
+interface TaskModelDefinition {
+  key: TaskModelKey;
+  name: string;
+  description: string;
+}
+
+const TASK_MODEL_DEFINITIONS: TaskModelDefinition[] = [
+  {
+    key: "extraction",
+    name: "Extraction",
+    description: "Knowledge extraction from text",
+  },
+  {
+    key: "claimExtraction",
+    name: "Claim extraction",
+    description: "Structured claim extraction (subject/predicate/object)",
+  },
+  {
+    key: "contradictionJudge",
+    name: "Contradiction judge",
+    description: "Conflict detection between entries",
+  },
+  {
+    key: "handoffSummary",
+    name: "Handoff summary",
+    description: "Session handoff summarization",
+  },
+];
+
+interface TaskModelPromptResult {
+  cancelled: boolean;
+  models: AgenrConfig["models"];
+  changed: boolean;
+}
 
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -867,7 +913,201 @@ async function writeOpenClawPluginDbPath(
   );
 }
 
+function normalizeTaskModels(models: AgenrConfig["models"]): AgenrConfig["models"] {
+  if (!models) {
+    return undefined;
+  }
+
+  const normalized: NonNullable<AgenrConfig["models"]> = {};
+  for (const task of TASK_MODEL_DEFINITIONS) {
+    const value = models[task.key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      normalized[task.key] = value.trim();
+    }
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function resolveTaskModelDefaults(baseModel: string | undefined): TaskModelRecord {
+  return {
+    extraction: resolveModelForTask({ model: baseModel }, "extraction"),
+    claimExtraction: resolveModelForTask({ model: baseModel }, "claimExtraction"),
+    contradictionJudge: resolveModelForTask({ model: baseModel }, "contradictionJudge"),
+    handoffSummary: resolveModelForTask({ model: baseModel }, "handoffSummary"),
+  };
+}
+
+function resolveTaskModelCurrentValues(
+  baseModel: string | undefined,
+  models: AgenrConfig["models"],
+): TaskModelRecord {
+  const defaults = resolveTaskModelDefaults(baseModel);
+  const normalizedModels = normalizeTaskModels(models);
+  return {
+    extraction: normalizedModels?.extraction ?? defaults.extraction,
+    claimExtraction: normalizedModels?.claimExtraction ?? defaults.claimExtraction,
+    contradictionJudge: normalizedModels?.contradictionJudge ?? defaults.contradictionJudge,
+    handoffSummary: normalizedModels?.handoffSummary ?? defaults.handoffSummary,
+  };
+}
+
+function taskModelsEqual(a: AgenrConfig["models"], b: AgenrConfig["models"]): boolean {
+  const normalizedA = normalizeTaskModels(a);
+  const normalizedB = normalizeTaskModels(b);
+  for (const task of TASK_MODEL_DEFINITIONS) {
+    if (normalizedA?.[task.key] !== normalizedB?.[task.key]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function toTaskModelOverrides(baseModel: string | undefined, selected: TaskModelRecord): AgenrConfig["models"] {
+  const defaults = resolveTaskModelDefaults(baseModel);
+  const overrides: NonNullable<AgenrConfig["models"]> = {};
+  for (const task of TASK_MODEL_DEFINITIONS) {
+    const value = selected[task.key].trim();
+    if (value !== defaults[task.key]) {
+      overrides[task.key] = value;
+    }
+  }
+  return Object.keys(overrides).length > 0 ? overrides : undefined;
+}
+
+async function promptTaskModelOverrides(
+  baseModel: string | undefined,
+  existingModels: AgenrConfig["models"],
+): Promise<TaskModelPromptResult> {
+  const currentModels = normalizeTaskModels(existingModels);
+  const configureSelection = await clack.select<"no" | "yes">({
+    message: "Configure per-task models? (Advanced)",
+    options: [
+      {
+        value: "no",
+        label: `No, use ${baseModel ?? "gpt-4.1-nano"} for everything`,
+      },
+      {
+        value: "yes",
+        label: "Yes, customize per-task models",
+      },
+    ],
+  });
+
+  if (clack.isCancel(configureSelection)) {
+    return {
+      cancelled: true,
+      models: currentModels,
+      changed: false,
+    };
+  }
+
+  if (configureSelection === "no") {
+    if (currentModels) {
+      const clearExisting = await clack.confirm({
+        message: "Clear existing per-task model overrides?",
+        initialValue: false,
+      });
+      if (clack.isCancel(clearExisting)) {
+        return {
+          cancelled: true,
+          models: currentModels,
+          changed: false,
+        };
+      }
+      if (clearExisting) {
+        return {
+          cancelled: false,
+          models: undefined,
+          changed: true,
+        };
+      }
+    }
+
+    return {
+      cancelled: false,
+      models: currentModels,
+      changed: false,
+    };
+  }
+
+  const current = resolveTaskModelCurrentValues(baseModel, currentModels);
+  clack.note(
+    TASK_MODEL_DEFINITIONS.map((task) => `${task.name}: ${current[task.key]} - ${task.description}`).join("\n"),
+    "Per-task model defaults",
+  );
+
+  const selected: TaskModelRecord = { ...current };
+  for (const task of TASK_MODEL_DEFINITIONS) {
+    const changeAction = await clack.select<"keep" | "change">({
+      message: `${task.name}: ${selected[task.key]} - Keep / Change`,
+      options: [
+        { value: "keep", label: "Keep" },
+        { value: "change", label: "Change" },
+      ],
+    });
+
+    if (clack.isCancel(changeAction)) {
+      return {
+        cancelled: true,
+        models: currentModels,
+        changed: false,
+      };
+    }
+
+    if (changeAction === "keep") {
+      continue;
+    }
+
+    const changedModel = await clack.text({
+      message: `New model for ${task.name}:`,
+      initialValue: selected[task.key],
+      validate: (value) => {
+        if (!value.trim()) {
+          return "Model is required";
+        }
+        return undefined;
+      },
+    });
+
+    if (clack.isCancel(changedModel)) {
+      return {
+        cancelled: true,
+        models: currentModels,
+        changed: false,
+      };
+    }
+
+    selected[task.key] = changedModel.trim();
+  }
+
+  const nextModels = toTaskModelOverrides(baseModel, selected);
+  return {
+    cancelled: false,
+    models: nextModels,
+    changed: !taskModelsEqual(currentModels, nextModels),
+  };
+}
+
+function formatTaskModelsForSummary(models: AgenrConfig["models"]): string[] {
+  const normalized = normalizeTaskModels(models);
+  if (!normalized) {
+    return [];
+  }
+
+  const lines: string[] = ["  Per-task models:"];
+  for (const task of TASK_MODEL_DEFINITIONS) {
+    const value = normalized[task.key];
+    if (!value) {
+      continue;
+    }
+    lines.push(`    ${task.name}: ${value}`);
+  }
+  return lines;
+}
+
 function formatWizardSummary(result: WizardSummary): string {
+  const taskModelLines = formatTaskModelsForSummary(result.taskModels);
   const hasActions = result.pluginStatus || result.ingestStatus || result.watcherStatus;
   if (hasActions) {
     const lines = [`  Platform:     ${result.platform}`];
@@ -881,6 +1121,7 @@ function formatWizardSummary(result: WizardSummary): string {
     lines.push(`  Project:      ${result.project}`);
     lines.push(`  Auth:         ${result.authLabel}`);
     lines.push(`  Model:        ${result.model}`);
+    lines.push(...taskModelLines);
     if (result.pluginStatus) {
       lines.push(`  Plugin:       ${result.pluginStatus}`);
     }
@@ -907,6 +1148,7 @@ function formatWizardSummary(result: WizardSummary): string {
   lines.push(`  Project:   ${result.project}`);
   lines.push(`  Auth:      ${result.authLabel}`);
   lines.push(`  Model:     ${result.model}`);
+  lines.push(...taskModelLines);
   return lines.join("\n");
 }
 
@@ -961,6 +1203,9 @@ export function formatWizardChanges(changes: WizardChanges): string {
     const previousModel = changes.previousModel ?? "(not set)";
     const newModel = changes.newModel ?? "(not set)";
     items.push(`Model changed: ${previousModel} -> ${newModel}`);
+  }
+  if (changes.modelsChanged) {
+    items.push("Per-task model overrides updated");
   }
   if (changes.embeddingsKeyChanged) {
     items.push("Embeddings API key updated");
@@ -1122,6 +1367,7 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
   const wizardChanges: WizardChanges = {
     authChanged: false,
     modelChanged: false,
+    modelsChanged: false,
     platformChanged: false,
     projectChanged: false,
     embeddingsKeyChanged: false,
@@ -1133,6 +1379,10 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
 
   let selectedAuth = existingConfig?.auth;
   let selectedModel = existingConfig?.model;
+  const previousTaskModels = normalizeTaskModels(existingConfig?.models);
+  let selectedTaskModels = normalizeTaskModels(existingConfig?.models);
+  let workingConfig = existingConfig;
+  let ranSetupCoreForAuthModel = false;
   const previousEmbeddingKey = resolveEmbeddingKeyOrNull(existingConfig, env);
   let currentEmbeddingKey = previousEmbeddingKey;
   const hasCurrentAuthModel = Boolean(existingConfig?.auth && existingConfig.model && existingConfig.provider);
@@ -1151,6 +1401,7 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
     }
 
     if (authAction === "change") {
+      ranSetupCoreForAuthModel = true;
       const setupResult = await initWizardRuntime.runSetupCore({
         env,
         existingConfig,
@@ -1162,9 +1413,12 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
       }
       selectedAuth = setupResult.auth;
       selectedModel = setupResult.model;
+      workingConfig = setupResult.config;
+      selectedTaskModels = normalizeTaskModels(setupResult.config.models);
       currentEmbeddingKey = resolveEmbeddingKeyOrNull(setupResult.config, env);
     }
   } else {
+    ranSetupCoreForAuthModel = true;
     const setupResult = await initWizardRuntime.runSetupCore({
       env,
       existingConfig,
@@ -1176,6 +1430,8 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
     }
     selectedAuth = setupResult.auth;
     selectedModel = setupResult.model;
+    workingConfig = setupResult.config;
+    selectedTaskModels = normalizeTaskModels(setupResult.config.models);
     currentEmbeddingKey = resolveEmbeddingKeyOrNull(setupResult.config, env);
   }
 
@@ -1188,6 +1444,28 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
     const embeddingStatus = currentEmbeddingKey ? "configured" : "not configured";
     clack.log.info(formatLabel("Embeddings", embeddingStatus));
   }
+
+  if (!ranSetupCoreForAuthModel) {
+    const taskModelResult = await promptTaskModelOverrides(selectedModel, selectedTaskModels);
+    if (taskModelResult.cancelled) {
+      clack.cancel("Setup cancelled.");
+      return;
+    }
+
+    selectedTaskModels = normalizeTaskModels(taskModelResult.models);
+    if (taskModelResult.changed) {
+      const nextConfig: AgenrConfig = {
+        ...(workingConfig ?? {}),
+        ...(selectedTaskModels ? { models: selectedTaskModels } : {}),
+      };
+      if (!selectedTaskModels) {
+        delete nextConfig.models;
+      }
+      writeConfig(nextConfig, env);
+      workingConfig = initWizardRuntime.readConfig(env) ?? nextConfig;
+    }
+  }
+  wizardChanges.modelsChanged = !taskModelsEqual(previousTaskModels, selectedTaskModels);
 
   const platforms = initWizardRuntime.detectPlatforms();
   const currentPlatform =
@@ -1820,6 +2098,7 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
       project: initResult.project,
       authLabel: selectedAuth ? describeAuth(selectedAuth) : "(not set)",
       model: selectedModel ?? "(not set)",
+      taskModels: selectedTaskModels,
       pluginStatus: pluginStatus || undefined,
       ingestStatus,
       consolidateStatus:
