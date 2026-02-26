@@ -25,6 +25,7 @@ import {
 } from "./commands/watcher.js";
 import { runConsolidateCommand } from "./commands/consolidate.js";
 import { runBenchmarkCommand } from "./commands/benchmark.js";
+import { runBackfillClaimsCommand } from "./commands/backfill-claims.js";
 import { runEvalRecallCommand } from "./commands/eval.js";
 import { runHealthCommand } from "./commands/health.js";
 import { runIngestCommand } from "./commands/ingest.js";
@@ -819,6 +820,20 @@ export function createProgram(): Command {
     .option("--db <path>", "Database path override")
     .action(async (opts: { db?: string }) => {
       const result = await runHealthCommand(opts);
+      process.exitCode = result.exitCode;
+    });
+
+  program
+    .command("backfill-claims")
+    .description("Extract claims for existing entries that lack them")
+    .option("--model <model>", "LLM model override for claim extraction")
+    .option("--limit <n>", "Max entries to process", parseIntOption)
+    .option("--batch-size <n>", "Entries per batch", parseIntOption, 10)
+    .option("--dry-run", "Show what would be processed", false)
+    .option("--db <path>", "Database path override")
+    .option("--verbose", "Show per-entry results", false)
+    .action(async (opts) => {
+      const result = await runBackfillClaimsCommand(opts);
       process.exitCode = result.exitCode;
     });
 
