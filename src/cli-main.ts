@@ -24,6 +24,7 @@ import {
   runWatcherUninstallCommand,
 } from "./commands/watcher.js";
 import { runConsolidateCommand } from "./commands/consolidate.js";
+import { runConflictsUiCommand } from "./commands/conflicts-ui.js";
 import { runBenchmarkCommand } from "./commands/benchmark.js";
 import { runBackfillClaimsCommand } from "./commands/backfill-claims.js";
 import { runEvalRecallCommand } from "./commands/eval.js";
@@ -820,6 +821,17 @@ export function createProgram(): Command {
     .option("--db <path>", "Database path override")
     .action(async (opts: { db?: string }) => {
       const result = await runHealthCommand(opts);
+      process.exitCode = result.exitCode;
+    });
+
+  program
+    .command("conflicts")
+    .description("Review and resolve detected conflicts in a web UI")
+    .option("--port <n>", "Port to serve on", parseIntOption, 4242)
+    .option("--db <path>", "Database path override")
+    .option("--no-open", "Do not auto-open browser")
+    .action(async (opts: { port?: number; db?: string; open?: boolean }) => {
+      const result = await runConflictsUiCommand(opts);
       process.exitCode = result.exitCode;
     });
 

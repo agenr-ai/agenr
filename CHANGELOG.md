@@ -31,6 +31,7 @@
 - Contradiction detection is enabled by default for all store paths (watcher, plugin, CLI, ingest) (#266)
 - Added production logging for claim extraction, contradiction detection, and conflict resolution (#266)
 - Added `agenr backfill-claims` command to extract claims for existing entries, enabling subject index and contradiction detection on older knowledge (#266)
+- Added `agenr conflicts` command: local web UI for reviewing and resolving detected contradictions (#266, seeds #171)
 
 ## 0.9.2 (2026-02-26)
 
