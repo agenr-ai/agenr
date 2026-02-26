@@ -9,7 +9,7 @@ export class SubjectIndex {
    * a non-null subject_key.
    */
   async rebuild(db: Client): Promise<void> {
-    this.index.clear();
+    const newIndex = new Map<string, Set<string>>();
     const result = await db.execute(
       "SELECT id, subject_key FROM entries WHERE subject_key IS NOT NULL AND retired = 0 AND superseded_by IS NULL",
     );
@@ -17,9 +17,15 @@ export class SubjectIndex {
       const id = String((row as Record<string, unknown>).id ?? "");
       const key = String((row as Record<string, unknown>).subject_key ?? "");
       if (id && key) {
-        this.add(key, id);
+        let set = newIndex.get(key);
+        if (!set) {
+          set = new Set();
+          newIndex.set(key, set);
+        }
+        set.add(id);
       }
     }
+    this.index = newIndex;
     this.initialized = true;
   }
 

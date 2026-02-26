@@ -1,12 +1,11 @@
 import type { Context, Tool } from "@mariozechner/pi-ai";
 import type { Client } from "@libsql/client";
 import { Type, type Static } from "@sinclair/typebox";
-import { resolveModelForTask } from "../config.js";
-import { resolveModel } from "../llm/models.js";
 import { runSimpleStream } from "../llm/stream.js";
 import type { AgenrConfig, LlmClient } from "../types.js";
 import { toNumber, toStringValue } from "../utils/entry-utils.js";
 import { logConflict } from "./conflict-log.js";
+import { clampConfidence, extractToolCallArgs, resolveModelForLlmClient } from "./llm-helpers.js";
 import type { SubjectIndex } from "./subject-index.js";
 import { findSimilar } from "./store.js";
 
@@ -104,19 +103,17 @@ export interface ConflictResolution {
   reason: string;
 }
 
-function clampConfidence(value: number): number {
-  if (!Number.isFinite(value)) {
-    return 0;
-  }
-  return Math.max(0, Math.min(1, value));
-}
-
 function llmErrorResult(): ConflictResult {
   return {
     relation: "unrelated",
     confidence: 0,
     explanation: "LLM error",
   };
+}
+
+function toEpoch(timestamp: string): number {
+  const parsed = Date.parse(timestamp);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function buildJudgeContext(
@@ -153,42 +150,29 @@ function extractJudgeArgs(
     content: Array<{ type: string; name?: string; arguments?: unknown }>;
   },
 ): ContradictionJudgeToolArgs | null {
-  for (const block of message.content) {
-    if (block.type !== "toolCall" || block.name !== CONTRADICTION_JUDGE_TOOL.name) {
-      continue;
-    }
-
-    const args = block.arguments as Partial<ContradictionJudgeToolArgs> | undefined;
-    if (!args) {
-      return null;
-    }
-
-    if (
-      typeof args.relation !== "string" ||
-      !CONFLICT_RELATIONS.has(args.relation) ||
-      typeof args.confidence !== "number" ||
-      typeof args.explanation !== "string"
-    ) {
-      return null;
-    }
-
-    return {
-      relation: args.relation as ConflictResult["relation"],
-      confidence: clampConfidence(args.confidence),
-      explanation: args.explanation.trim(),
-    };
+  const args = extractToolCallArgs<Partial<ContradictionJudgeToolArgs>>(
+    message,
+    CONTRADICTION_JUDGE_TOOL.name,
+    ["relation", "confidence", "explanation"],
+  );
+  if (!args) {
+    return null;
   }
 
-  return null;
-}
+  if (
+    typeof args.relation !== "string" ||
+    !CONFLICT_RELATIONS.has(args.relation) ||
+    typeof args.confidence !== "number" ||
+    typeof args.explanation !== "string"
+  ) {
+    return null;
+  }
 
-function resolveContradictionModel(
-  llmClient: LlmClient,
-  model?: string,
-  config?: AgenrConfig,
-): ReturnType<typeof resolveModel>["model"] {
-  const modelId = model?.trim() || resolveModelForTask(config ?? {}, "contradictionJudge");
-  return resolveModel(llmClient.resolvedModel.provider, modelId).model;
+  return {
+    relation: args.relation as ConflictResult["relation"],
+    confidence: clampConfidence(args.confidence, 0),
+    explanation: args.explanation.trim(),
+  };
 }
 
 async function getEntriesByIds(
@@ -250,7 +234,7 @@ export async function classifyConflict(
 ): Promise<ConflictResult> {
   try {
     const response = await runSimpleStream({
-      model: resolveContradictionModel(llmClient, model, config),
+      model: resolveModelForLlmClient(llmClient, "contradictionJudge", model, config),
       context: buildJudgeContext(newEntry, existing),
       options: {
         apiKey: llmClient.credentials.apiKey,
@@ -269,7 +253,7 @@ export async function classifyConflict(
 
     return {
       relation: parsed.relation as ConflictResult["relation"],
-      confidence: clampConfidence(parsed.confidence),
+      confidence: clampConfidence(parsed.confidence, 0),
       explanation: parsed.explanation,
     };
   } catch {
@@ -286,7 +270,7 @@ export async function detectContradictions(
     subjectKey?: string;
     importance: number;
   },
-  embedding: Float32Array,
+  embedding: number[],
   subjectIndex: SubjectIndex,
   llmClient: LlmClient,
   options?: {
@@ -296,6 +280,8 @@ export async function detectContradictions(
     config?: AgenrConfig;
   },
 ): Promise<DetectedConflict[]> {
+  // This runs before inserting new entries. Concurrent storeEntries calls can miss
+  // each other for the same subject key, which is acceptable for current single-user scale.
   const similarityThreshold = options?.similarityThreshold ?? 0.72;
   const maxCandidates = Math.max(1, options?.maxCandidates ?? 5);
   const seenIds = new Set<string>();
@@ -303,7 +289,9 @@ export async function detectContradictions(
 
   if (newEntry.subjectKey?.trim()) {
     const subjectIds = subjectIndex.lookup(newEntry.subjectKey.trim());
-    const subjectCandidates = await getEntriesByIds(db, subjectIds);
+    const subjectCandidates = (await getEntriesByIds(db, subjectIds))
+      .sort((a, b) => toEpoch(b.createdAt) - toEpoch(a.createdAt))
+      .slice(0, maxCandidates);
     for (const candidate of subjectCandidates) {
       if (seenIds.has(candidate.id)) {
         continue;
@@ -313,66 +301,69 @@ export async function detectContradictions(
     }
   }
 
-  if (candidates.length < 3) {
-    const similar = await findSimilar(db, Array.from(embedding), maxCandidates);
-    for (const match of similar) {
-      if (match.similarity < similarityThreshold) {
-        continue;
-      }
-      if (seenIds.has(match.entry.id)) {
-        continue;
-      }
-
-      seenIds.add(match.entry.id);
-      candidates.push({
-        id: match.entry.id,
-        content: match.entry.content,
-        type: match.entry.type,
-        subject: match.entry.subject,
-        importance: match.entry.importance,
-        createdAt: match.entry.created_at,
-      });
+  // Candidate strategy: always merge subject-key lookup and embedding lookup,
+  // dedupe by id, then cap total candidates to maxCandidates.
+  const similar = await findSimilar(db, embedding, maxCandidates);
+  for (const match of similar) {
+    if (match.similarity < similarityThreshold) {
+      continue;
     }
-  }
+    if (seenIds.has(match.entry.id)) {
+      continue;
+    }
+    if (candidates.length >= maxCandidates) {
+      continue;
+    }
 
+    seenIds.add(match.entry.id);
+    candidates.push({
+      id: match.entry.id,
+      content: match.entry.content,
+      type: match.entry.type,
+      subject: match.entry.subject,
+      importance: match.entry.importance,
+      createdAt: match.entry.created_at,
+    });
+  }
   if (candidates.length === 0) {
     return [];
   }
 
-  const detected: DetectedConflict[] = [];
-  for (const candidate of candidates) {
-    const result = await classifyConflict(
-      llmClient,
-      {
-        content: newEntry.content,
-        type: newEntry.type,
-        subject: newEntry.subject,
-      },
-      {
-        content: candidate.content,
-        type: candidate.type,
-        subject: candidate.subject,
-        createdAt: candidate.createdAt,
-      },
-      options?.model,
-      options?.config,
-    );
+  const detected = await Promise.all(
+    candidates.map(async (candidate) => {
+      const result = await classifyConflict(
+        llmClient,
+        {
+          content: newEntry.content,
+          type: newEntry.type,
+          subject: newEntry.subject,
+        },
+        {
+          content: candidate.content,
+          type: candidate.type,
+          subject: candidate.subject,
+          createdAt: candidate.createdAt,
+        },
+        options?.model,
+        options?.config,
+      );
 
-    if (result.relation === "unrelated") {
-      continue;
-    }
+      if (result.relation === "unrelated") {
+        return null;
+      }
 
-    detected.push({
-      existingEntryId: candidate.id,
-      existingContent: candidate.content,
-      existingType: candidate.type,
-      existingSubject: candidate.subject,
-      existingImportance: candidate.importance,
-      result,
-    });
-  }
+      return {
+        existingEntryId: candidate.id,
+        existingContent: candidate.content,
+        existingType: candidate.type,
+        existingSubject: candidate.subject,
+        existingImportance: candidate.importance,
+        result,
+      } satisfies DetectedConflict;
+    }),
+  );
 
-  return detected;
+  return detected.filter((entry): entry is DetectedConflict => entry !== null);
 }
 
 export async function resolveConflict(
@@ -439,7 +430,7 @@ export async function resolveConflict(
 
   if (
     conflict.result.relation === "contradicts" ||
-    conflict.result.confidence < 0.75 ||
+    conflict.result.confidence <= 0.75 ||
     conflict.existingType === "decision" ||
     conflict.existingType === "lesson"
   ) {
@@ -455,6 +446,26 @@ export async function resolveConflict(
       `[contradiction] resolution: flagged for review entry=${conflict.existingEntryId.slice(0, 8)} (${conflict.result.relation} confidence=${conflict.result.confidence.toFixed(2)})`,
     );
     return { action: "flagged", reason: "needs human review" };
+  }
+
+  if (
+    conflict.result.relation === "supersedes" &&
+    conflict.result.confidence > 0.85 &&
+    isTemporalType &&
+    newEntry.importance < conflict.existingImportance
+  ) {
+    await logConflict(
+      db,
+      newEntryId,
+      conflict.existingEntryId,
+      conflict.result.relation,
+      conflict.result.confidence,
+      "pending",
+    );
+    console.log(
+      `[contradiction] resolution: flagged for review entry=${conflict.existingEntryId.slice(0, 8)} (high-confidence supersedes blocked by importance)`,
+    );
+    return { action: "flagged", reason: "high-confidence supersession blocked by importance" };
   }
 
   await logConflict(
