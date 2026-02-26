@@ -1,5 +1,5 @@
 import { createClient, type Client } from "@libsql/client";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { handleConflictsUiRequest } from "../../src/commands/conflicts-ui.js";
 import { initDb } from "../../src/db/client.js";
 
@@ -472,7 +472,41 @@ describe("conflicts-ui command API routes", () => {
     expect(response.data).toEqual({ error: "Conflict is already resolved" });
   });
 
-  it("POST /api/conflicts/:id/resolve returns 401 without auth token", async () => {
+  it("POST /api/conflicts/:id/resolve returns 409 when conflict is resolved concurrently", async () => {
+    const db = makeClient();
+    await initDb(db);
+
+    await seedEntry(db, { id: "entry-a", type: "fact", subject: "A", content: "A" });
+    await seedEntry(db, { id: "entry-b", type: "fact", subject: "B", content: "B" });
+    await seedConflict(db, {
+      id: "conflict-race",
+      entryA: "entry-a",
+      entryB: "entry-b",
+      relation: "contradicts",
+      resolution: "pending",
+    });
+
+    const originalExecute = db.execute.bind(db);
+    vi.spyOn(db, "execute").mockImplementation(async (statement) => {
+      const sql = typeof statement === "string" ? statement : String(statement.sql);
+      const result = await originalExecute(statement as Parameters<Client["execute"]>[0]);
+      if (sql === "BEGIN IMMEDIATE") {
+        await originalExecute({
+          sql: "UPDATE conflict_log SET resolution = ?, resolved_at = ? WHERE id = ?",
+          args: ["keep-old", "2026-02-26T02:30:00.000Z", "conflict-race"],
+        });
+      }
+      return result;
+    });
+
+    const response = await handleRequest(db, "POST", "/api/conflicts/conflict-race/resolve", {
+      body: { resolution: "keep-new" },
+    });
+    expect(response.status).toBe(409);
+    expect(response.data).toEqual({ error: "Conflict is already resolved" });
+  });
+
+  it("POST /api/conflicts/:id/resolve returns 401 with empty Authorization header", async () => {
     const db = makeClient();
     await initDb(db);
 
