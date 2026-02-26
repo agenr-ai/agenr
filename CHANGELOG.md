@@ -12,6 +12,8 @@
 - Config: per-task model configuration via config.models (#266)
 - Setup: optional advanced per-task model selection in setup wizard (#266)
 - resolveModelForTask() helper for consistent model resolution (#266)
+- Tuned claim extraction prompt for entity normalization and reduced false no_claim results (#266)
+- Fixed benchmark fixtures for edge cases (#266)
 
 ## 0.9.2 (2026-02-26)
 
