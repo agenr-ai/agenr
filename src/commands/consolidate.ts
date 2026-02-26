@@ -417,6 +417,16 @@ function renderTextReport(stats: ConsolidationOrchestratorReport, dryRun: boolea
     );
   }
 
+  if (stats.phase3) {
+    lines.push(
+      "|",
+      "|  Phase 3: Post-Merge Dedup",
+      `|  +- Clusters processed: ${formatNumber(stats.phase3.clustersProcessed)} / ${formatNumber(stats.phase3.clustersFound)}`,
+      `|  +- Clusters merged: ${formatNumber(stats.phase3.clustersMerged)}`,
+      `|  +- LLM calls: ${formatNumber(stats.phase3.llmCalls)}`,
+    );
+  }
+
   lines.push(
     "|",
     "|  Summary",

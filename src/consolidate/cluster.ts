@@ -194,7 +194,8 @@ export async function buildClusters(db: Client, options: ClusterOptions = {}): P
   }
 
   for (const entry of candidates) {
-    const neighbors = await findSimilar(db, entry.embedding, neighborLimit);
+    const fetchLimit = typeFilter ? neighborLimit * 3 : neighborLimit;
+    const neighbors = await findSimilar(db, entry.embedding, fetchLimit);
     for (const neighbor of neighbors) {
       const candidate = entryById.get(neighbor.entry.id);
       if (!candidate || candidate.id === entry.id) {

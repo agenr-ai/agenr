@@ -48,6 +48,17 @@ function reportFixture(): ConsolidationOrchestratorReport {
       entriesConsolidatedFrom: 2,
       canonicalEntriesCreated: 1,
     },
+    phase3: {
+      entries: 3,
+      clustersFound: 1,
+      skippedByResume: 0,
+      clustersProcessed: 1,
+      clustersMerged: 1,
+      mergesFlagged: 0,
+      llmCalls: 1,
+      entriesConsolidatedFrom: 3,
+      canonicalEntriesCreated: 1,
+    },
     progress: {
       resumed: false,
       checkpointPath: "/tmp/checkpoint",
@@ -224,6 +235,7 @@ describe("consolidate command", () => {
     expect(warnSpy).not.toHaveBeenCalled();
     const output = stderrSpy.mock.calls.map((call) => String(call[0])).join("");
     expect(output).toContain("Knowledge Consolidation");
+    expect(output).toContain("Phase 3: Post-Merge Dedup");
     expect(output.includes("\u001b[")).toBe(false);
   });
 

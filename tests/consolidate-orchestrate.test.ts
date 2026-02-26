@@ -235,5 +235,134 @@ describe("consolidate orchestrator", () => {
     await expect(fs.access(mod.CONSOLIDATION_CHECKPOINT_PATH)).rejects.toThrow();
   });
 
+  it("runs Phase 3 post-merge dedup for newly created canonical entries", async () => {
+    const mod = await setupModule();
+    const phase1Clusters = [makeCluster(["a1", "a2"]), makeCluster(["b1", "b2"]), makeCluster(["c1", "c2"])];
+    const phase3Cluster = makeCluster(["merged-1", "merged-2", "merged-3"]);
+    const buildClustersFn = vi.fn(
+      async (_db: Client, options: { typeFilter?: string; idempotencyDays?: number }) => {
+        if (options.typeFilter === "fact") {
+          return phase1Clusters;
+        }
+        if (!options.typeFilter && options.idempotencyDays === 0) {
+          return [phase3Cluster];
+        }
+        return [];
+      },
+    );
+
+    const mergeOutcomes = [
+      { mergedEntryId: "merged-1", sourceIds: ["a1", "a2"], flagged: false },
+      { mergedEntryId: "merged-2", sourceIds: ["b1", "b2"], flagged: false },
+      { mergedEntryId: "merged-3", sourceIds: ["c1", "c2"], flagged: false },
+      { mergedEntryId: "merged-final", sourceIds: ["merged-1", "merged-2", "merged-3"], flagged: false },
+    ];
+    const mergeClusterFn = vi.fn(async () => mergeOutcomes.shift() ?? { mergedEntryId: "", sourceIds: [], flagged: true });
+
+    const report = await mod.runConsolidationOrchestrator(
+      {} as Client,
+      "/tmp/knowledge.db",
+      makeLlmClient(),
+      "embed-key",
+      { type: "fact", resume: false },
+      {
+        consolidateRulesFn: vi.fn(async () => baseRulesStats),
+        buildClustersFn,
+        mergeClusterFn,
+        rebuildVectorIndexFn: vi.fn(async () => ({ embeddingCount: 0, durationMs: 1 })),
+        walCheckpointFn: vi.fn(async () => undefined),
+        countActiveEntriesFn: vi.fn(async () => 70),
+        countActiveEmbeddedEntriesFn: vi.fn(async () => 10),
+        listDistinctProjectsFn: vi.fn(async () => [null]),
+      },
+    );
+
+    expect(mergeClusterFn).toHaveBeenCalledTimes(4);
+    expect(buildClustersFn.mock.calls.some((call) => (call[1] as { idempotencyDays?: number }).idempotencyDays === 0)).toBe(true);
+    expect(report.phase3?.clustersFound).toBe(1);
+    expect(report.phase3?.clustersProcessed).toBe(1);
+    expect(report.phase3?.clustersMerged).toBe(1);
+    expect(report.summary.totalCanonicalEntriesCreated).toBe(4);
+    expect(report.summary.totalLlmCalls).toBe(4);
+  });
+
+  it("skips Phase 3 when no new canonical entries were created", async () => {
+    const mod = await setupModule();
+    const buildClustersFn = vi.fn(async (_db: Client, options: { typeFilter?: string; idempotencyDays?: number }) => {
+      if (options.typeFilter === "fact") {
+        return [makeCluster(["a1", "a2"])];
+      }
+      if (!options.typeFilter && options.idempotencyDays === 0) {
+        return [makeCluster(["should-not-run-1", "should-not-run-2"])];
+      }
+      return [];
+    });
+    const mergeClusterFn = vi.fn(async () => ({ mergedEntryId: "flagged", sourceIds: ["a1", "a2"], flagged: true }));
+
+    const report = await mod.runConsolidationOrchestrator(
+      {} as Client,
+      "/tmp/knowledge.db",
+      makeLlmClient(),
+      "embed-key",
+      { type: "fact", resume: false },
+      {
+        consolidateRulesFn: vi.fn(async () => baseRulesStats),
+        buildClustersFn,
+        mergeClusterFn,
+        rebuildVectorIndexFn: vi.fn(async () => ({ embeddingCount: 0, durationMs: 1 })),
+        walCheckpointFn: vi.fn(async () => undefined),
+        countActiveEntriesFn: vi.fn(async () => 70),
+        countActiveEmbeddedEntriesFn: vi.fn(async () => 10),
+        listDistinctProjectsFn: vi.fn(async () => [null]),
+      },
+    );
+
+    expect(mergeClusterFn).toHaveBeenCalledTimes(1);
+    expect(buildClustersFn.mock.calls.some((call) => (call[1] as { idempotencyDays?: number }).idempotencyDays === 0)).toBe(false);
+    expect(report.phase3).toBeUndefined();
+  });
+
+  it("does not run Phase 3 when batch limit is reached", async () => {
+    const mod = await setupModule();
+    const buildClustersFn = vi.fn(async (_db: Client, options: { typeFilter?: string; idempotencyDays?: number }) => {
+      if (options.typeFilter === "fact") {
+        return [makeCluster(["a1", "a2"]), makeCluster(["b1", "b2"])];
+      }
+      if (!options.typeFilter && options.idempotencyDays === 0) {
+        return [makeCluster(["merged-1", "merged-2"])];
+      }
+      return [];
+    });
+
+    const mergeOutcomes = [
+      { mergedEntryId: "merged-1", sourceIds: ["a1", "a2"], flagged: false },
+      { mergedEntryId: "merged-2", sourceIds: ["b1", "b2"], flagged: false },
+    ];
+    const mergeClusterFn = vi.fn(async () => mergeOutcomes.shift() ?? { mergedEntryId: "", sourceIds: [], flagged: true });
+
+    const report = await mod.runConsolidationOrchestrator(
+      {} as Client,
+      "/tmp/knowledge.db",
+      makeLlmClient(),
+      "embed-key",
+      { type: "fact", batch: 2, resume: false },
+      {
+        consolidateRulesFn: vi.fn(async () => baseRulesStats),
+        buildClustersFn,
+        mergeClusterFn,
+        rebuildVectorIndexFn: vi.fn(async () => ({ embeddingCount: 0, durationMs: 1 })),
+        walCheckpointFn: vi.fn(async () => undefined),
+        countActiveEntriesFn: vi.fn(async () => 70),
+        countActiveEmbeddedEntriesFn: vi.fn(async () => 10),
+        listDistinctProjectsFn: vi.fn(async () => [null]),
+      },
+    );
+
+    expect(report.progress.partial).toBe(true);
+    expect(mergeClusterFn).toHaveBeenCalledTimes(2);
+    expect(buildClustersFn.mock.calls.some((call) => (call[1] as { idempotencyDays?: number }).idempotencyDays === 0)).toBe(false);
+    expect(report.phase3).toBeUndefined();
+  });
+
   // Orchestrator no longer owns database locks - callers are responsible.
 });

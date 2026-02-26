@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.2 (2026-02-26)
+
+### Fixed
+- fix(consolidate): fragmented clustering produced duplicate canonical entries instead of a single winner (#249)
+  - Phase 1 now over-fetches neighbors (3x) when type-filtered to preserve same-type neighborhood coverage
+  - Added a new Phase 3 post-merge dedup pass to merge near-duplicate canonical entries created in the same run
+  - Phase 3 disables idempotency and only processes clusters that include entries created during the current run
+
 ## 0.9.1 (2026-02-26)
 
 ### Changed
