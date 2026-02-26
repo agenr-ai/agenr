@@ -2144,7 +2144,7 @@ describe("runInitWizard", () => {
     ).toBe(false);
   });
 
-  it("wizard stops daemon before db reset during re-ingest", async () => {
+  it("wizard stops watcher before db reset during re-ingest", async () => {
     await withMockedPlatform("darwin", async () => {
       const dir = await createWizardProjectDir({
         project: "my-project",
@@ -2363,7 +2363,7 @@ describe("runInitWizard", () => {
     );
   });
 
-  it("wizard installs daemon with force:true on macOS and corrected sessionsDir", async () => {
+  it("wizard installs watcher with force:true on macOS and corrected sessionsDir", async () => {
     await withMockedPlatform("darwin", async () => {
       const dir = await createWizardProjectDir();
       const watcherSpy = vi.spyOn(initWizardRuntime, "runWatcherInstallCommand");
