@@ -33,6 +33,18 @@
 - Added `agenr backfill-claims` command to extract claims for existing entries, enabling subject index and contradiction detection on older knowledge (#266)
 - Added `agenr conflicts` command: local web UI for reviewing and resolving detected contradictions (#266, seeds #171)
 
+### Fixed
+- Critical: conflicts UI "keep-new"/"keep-old" resolution was retiring the wrong entry (swarm review)
+- Contradiction detection: cap subject-index candidates to maxCandidates, sort by recency
+- Contradiction detection: always run both subject-index and embedding search (removed hardcoded < 3 gate)
+- Contradiction detection: parallelize classifyConflict LLM calls via Promise.all
+- Contradiction detection: high-confidence supersession with lower importance now flags for review instead of silent coexist
+- Subject index rebuild is now atomic (swap instead of clear-then-populate)
+- Conflicts UI: request body size limit (64KB), auth token on POST endpoints, safe browser open
+- Extracted shared LLM helpers (clampConfidence, resolveModel, extractToolArgs) to src/db/llm-helpers.ts
+- Removed unnecessary Float32Array conversions in contradiction detection pipeline
+- Replaced __pendingConflicts side-channel with scoped Map
+
 ## 0.9.2 (2026-02-26)
 
 ### Fixed

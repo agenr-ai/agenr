@@ -122,7 +122,6 @@ interface PlannedMutation {
 interface ProcessedEntry {
   decision: StoreEntryDecision;
   mutation: PlannedMutation;
-  __pendingConflicts?: DetectedConflict[];
 }
 
 function normalize(value: string): string {
@@ -1499,6 +1498,7 @@ export async function storeEntries(
   let superseded = 0;
   let relationsCreated = 0;
   let llmDedupCalls = 0;
+  const pendingConflictsMap = new Map<number, DetectedConflict[]>();
 
   if (!options.force && !onlineDedup) {
     const seen = new Map<string, number>();
@@ -1561,7 +1561,7 @@ export async function storeEntries(
     }
   }
 
-  const processOne = async (entry: KnowledgeEntry): Promise<void> => {
+  const processOne = async (entry: KnowledgeEntry, entryIndex: number): Promise<void> => {
     const normalizedEntry: KnowledgeEntry = {
       ...entry,
       canonical_key: normalizeCanonicalKey(entry.canonical_key),
@@ -1715,7 +1715,7 @@ export async function storeEntries(
           subjectKey: normalizedEntry.subjectKey,
           importance: normalizedEntry.importance,
         },
-        new Float32Array(processed.mutation.embedding),
+        processed.mutation.embedding,
         contradictionSubjectIndex,
         options.llmClient,
         {
@@ -1736,7 +1736,7 @@ export async function storeEntries(
       }
 
       if (conflicts.length > 0) {
-        processed.__pendingConflicts = conflicts;
+        pendingConflictsMap.set(entryIndex, conflicts);
       }
     }
 
@@ -1757,7 +1757,7 @@ export async function storeEntries(
         relationsCreated += 1;
       }
 
-      const pendingConflicts = processed.__pendingConflicts;
+      const pendingConflicts = pendingConflictsMap.get(entryIndex);
       if (pendingConflicts && pendingConflicts.length > 0 && applied.newEntryId) {
         for (const conflict of pendingConflicts) {
           await resolveConflict(
@@ -1771,6 +1771,7 @@ export async function storeEntries(
             contradictionSubjectIndex,
           );
         }
+        pendingConflictsMap.delete(entryIndex);
       }
 
       if (
@@ -1804,8 +1805,8 @@ export async function storeEntries(
   if (!onlineDedup) {
     await db.execute("BEGIN");
     try {
-      for (const entry of entries) {
-        await processOne(entry);
+      for (const [entryIndex, entry] of entries.entries()) {
+        await processOne(entry, entryIndex);
       }
 
       const durationMs = Date.now() - startedAt;
@@ -1863,8 +1864,8 @@ export async function storeEntries(
     }
   }
 
-  for (const entry of entries) {
-    await processOne(entry);
+  for (const [entryIndex, entry] of entries.entries()) {
+    await processOne(entry, entryIndex);
   }
 
   const durationMs = Date.now() - startedAt;

@@ -40,6 +40,7 @@ function toNumber(value: unknown): number {
 
 describe("conflicts-ui command API routes", () => {
   const clients: Client[] = [];
+  const authToken = "test-auth-token";
 
   afterEach(() => {
     while (clients.length > 0) {
@@ -122,13 +123,27 @@ describe("conflicts-ui command API routes", () => {
     db: Client,
     method: string,
     routePath: string,
-    body?: unknown,
+    options: {
+      body?: unknown;
+      rawBody?: string;
+      authHeader?: string;
+      authToken?: string;
+    } = {},
   ): Promise<{ status: number; data: unknown }> {
+    const resolvedAuthToken = options.authToken ?? authToken;
+    const rawBody =
+      options.rawBody ??
+      (options.body === undefined ? undefined : JSON.stringify(options.body));
+    const authHeader =
+      options.authHeader ??
+      (method.toUpperCase() === "POST" ? `Bearer ${resolvedAuthToken}` : undefined);
     const response = await handleConflictsUiRequest(
       db,
       method,
       routePath,
-      body === undefined ? undefined : JSON.stringify(body),
+      rawBody,
+      authHeader,
+      resolvedAuthToken,
     );
     const contentType = response.headers["content-type"] ?? "";
     if (contentType.includes("application/json")) {
@@ -284,7 +299,7 @@ describe("conflicts-ui command API routes", () => {
     });
   });
 
-  it("POST /api/conflicts/:id/resolve with keep-new retires entry_a", async () => {
+  it("POST /api/conflicts/:id/resolve with keep-new retires the existing entry, not the new one", async () => {
     const db = makeClient();
     await initDb(db);
 
@@ -299,7 +314,7 @@ describe("conflicts-ui command API routes", () => {
     });
 
     const response = await handleRequest(db, "POST", "/api/conflicts/conflict-1/resolve", {
-      resolution: "keep-new",
+      body: { resolution: "keep-new" },
     });
     expect(response.status).toBe(200);
     expect(response.data).toEqual({ ok: true });
@@ -309,12 +324,12 @@ describe("conflicts-ui command API routes", () => {
       args: ["entry-a", "entry-b"],
     });
     expect(entries.rows.map((row) => ({ id: String(row.id), retired: toNumber(row.retired) }))).toEqual([
-      { id: "entry-a", retired: 1 },
-      { id: "entry-b", retired: 0 },
+      { id: "entry-a", retired: 0 },
+      { id: "entry-b", retired: 1 },
     ]);
   });
 
-  it("POST /api/conflicts/:id/resolve with keep-old retires entry_b", async () => {
+  it("POST /api/conflicts/:id/resolve with keep-old retires the new entry, not the existing one", async () => {
     const db = makeClient();
     await initDb(db);
 
@@ -329,7 +344,7 @@ describe("conflicts-ui command API routes", () => {
     });
 
     const response = await handleRequest(db, "POST", "/api/conflicts/conflict-2/resolve", {
-      resolution: "keep-old",
+      body: { resolution: "keep-old" },
     });
     expect(response.status).toBe(200);
     expect(response.data).toEqual({ ok: true });
@@ -339,8 +354,8 @@ describe("conflicts-ui command API routes", () => {
       args: ["entry-a", "entry-b"],
     });
     expect(entries.rows.map((row) => ({ id: String(row.id), retired: toNumber(row.retired) }))).toEqual([
-      { id: "entry-a", retired: 0 },
-      { id: "entry-b", retired: 1 },
+      { id: "entry-a", retired: 1 },
+      { id: "entry-b", retired: 0 },
     ]);
   });
 
@@ -359,7 +374,7 @@ describe("conflicts-ui command API routes", () => {
     });
 
     const response = await handleRequest(db, "POST", "/api/conflicts/conflict-3/resolve", {
-      resolution: "keep-both",
+      body: { resolution: "keep-both" },
     });
     expect(response.status).toBe(200);
     expect(response.data).toEqual({ ok: true });
@@ -389,7 +404,7 @@ describe("conflicts-ui command API routes", () => {
     });
 
     const response = await handleRequest(db, "POST", "/api/conflicts/conflict-4/resolve", {
-      resolution: "keep-both",
+      body: { resolution: "keep-both" },
     });
     expect(response.status).toBe(200);
 
@@ -406,10 +421,146 @@ describe("conflicts-ui command API routes", () => {
     await initDb(db);
 
     const response = await handleRequest(db, "POST", "/api/conflicts/missing-id/resolve", {
-      resolution: "keep-new",
+      body: { resolution: "keep-new" },
     });
     expect(response.status).toBe(404);
     expect(response.data).toEqual({ error: "Conflict not found" });
+  });
+
+  it("POST /api/conflicts/:id/resolve returns 400 for invalid resolution value", async () => {
+    const db = makeClient();
+    await initDb(db);
+
+    await seedEntry(db, { id: "entry-a", type: "fact", subject: "A", content: "A" });
+    await seedEntry(db, { id: "entry-b", type: "fact", subject: "B", content: "B" });
+    await seedConflict(db, {
+      id: "conflict-invalid-resolution",
+      entryA: "entry-a",
+      entryB: "entry-b",
+      relation: "contradicts",
+      resolution: "pending",
+    });
+
+    const response = await handleRequest(db, "POST", "/api/conflicts/conflict-invalid-resolution/resolve", {
+      body: { resolution: "drop-both" },
+    });
+    expect(response.status).toBe(400);
+    expect(response.data).toEqual({
+      error: "resolution must be one of: keep-new, keep-old, keep-both",
+    });
+  });
+
+  it("POST /api/conflicts/:id/resolve returns 409 for already-resolved conflicts", async () => {
+    const db = makeClient();
+    await initDb(db);
+
+    await seedEntry(db, { id: "entry-a", type: "fact", subject: "A", content: "A" });
+    await seedEntry(db, { id: "entry-b", type: "fact", subject: "B", content: "B" });
+    await seedConflict(db, {
+      id: "conflict-resolved",
+      entryA: "entry-a",
+      entryB: "entry-b",
+      relation: "contradicts",
+      resolution: "keep-both",
+      resolvedAt: "2026-02-26T02:00:00.000Z",
+    });
+
+    const response = await handleRequest(db, "POST", "/api/conflicts/conflict-resolved/resolve", {
+      body: { resolution: "keep-new" },
+    });
+    expect(response.status).toBe(409);
+    expect(response.data).toEqual({ error: "Conflict is already resolved" });
+  });
+
+  it("POST /api/conflicts/:id/resolve returns 401 without auth token", async () => {
+    const db = makeClient();
+    await initDb(db);
+
+    await seedEntry(db, { id: "entry-a", type: "fact", subject: "A", content: "A" });
+    await seedEntry(db, { id: "entry-b", type: "fact", subject: "B", content: "B" });
+    await seedConflict(db, {
+      id: "conflict-no-auth",
+      entryA: "entry-a",
+      entryB: "entry-b",
+      relation: "contradicts",
+      resolution: "pending",
+    });
+
+    const response = await handleRequest(db, "POST", "/api/conflicts/conflict-no-auth/resolve", {
+      body: { resolution: "keep-both" },
+      authHeader: "",
+    });
+    expect(response.status).toBe(401);
+    expect(response.data).toEqual({ error: "Unauthorized" });
+  });
+
+  it("POST /api/conflicts/:id/resolve returns 401 with wrong auth token", async () => {
+    const db = makeClient();
+    await initDb(db);
+
+    await seedEntry(db, { id: "entry-a", type: "fact", subject: "A", content: "A" });
+    await seedEntry(db, { id: "entry-b", type: "fact", subject: "B", content: "B" });
+    await seedConflict(db, {
+      id: "conflict-wrong-auth",
+      entryA: "entry-a",
+      entryB: "entry-b",
+      relation: "contradicts",
+      resolution: "pending",
+    });
+
+    const response = await handleRequest(db, "POST", "/api/conflicts/conflict-wrong-auth/resolve", {
+      body: { resolution: "keep-both" },
+      authHeader: "Bearer wrong-token",
+    });
+    expect(response.status).toBe(401);
+    expect(response.data).toEqual({ error: "Unauthorized" });
+  });
+
+  it("POST /api/conflicts/:id/resolve with correct auth token succeeds", async () => {
+    const db = makeClient();
+    await initDb(db);
+
+    await seedEntry(db, { id: "entry-a", type: "fact", subject: "A", content: "A" });
+    await seedEntry(db, { id: "entry-b", type: "fact", subject: "B", content: "B" });
+    await seedConflict(db, {
+      id: "conflict-good-auth",
+      entryA: "entry-a",
+      entryB: "entry-b",
+      relation: "contradicts",
+      resolution: "pending",
+    });
+
+    const response = await handleRequest(db, "POST", "/api/conflicts/conflict-good-auth/resolve", {
+      body: { resolution: "keep-both" },
+      authHeader: `Bearer ${authToken}`,
+    });
+    expect(response.status).toBe(200);
+    expect(response.data).toEqual({ ok: true });
+  });
+
+  it("POST /api/conflicts/:id/resolve returns 413 for oversized request body", async () => {
+    const db = makeClient();
+    await initDb(db);
+
+    await seedEntry(db, { id: "entry-a", type: "fact", subject: "A", content: "A" });
+    await seedEntry(db, { id: "entry-b", type: "fact", subject: "B", content: "B" });
+    await seedConflict(db, {
+      id: "conflict-big-body",
+      entryA: "entry-a",
+      entryB: "entry-b",
+      relation: "contradicts",
+      resolution: "pending",
+    });
+
+    const oversizedRawBody = JSON.stringify({
+      resolution: "keep-both",
+      payload: "x".repeat(70_000),
+    });
+    const response = await handleRequest(db, "POST", "/api/conflicts/conflict-big-body/resolve", {
+      rawBody: oversizedRawBody,
+    });
+    expect(response.status).toBe(413);
+    expect(response.data).toEqual({ error: "Request body too large" });
   });
 
   it("GET /api/history returns resolved conflicts ordered by resolved_at desc", async () => {

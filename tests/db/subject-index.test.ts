@@ -1,5 +1,5 @@
 import { createClient, type Client } from "@libsql/client";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { initSchema } from "../../src/db/schema.js";
 import { SubjectIndex } from "../../src/db/subject-index.js";
 
@@ -156,5 +156,26 @@ describe("SubjectIndex", () => {
     await index.rebuild(client);
 
     expect(index.lookup("person:alice|attr:role")).toEqual(["entry-1"]);
+  });
+
+  it("rebuild swaps index atomically and does not expose an empty lookup mid-rebuild", async () => {
+    const key = "person:alice|attr:role";
+    const index = new SubjectIndex();
+    index.add(key, "old-entry");
+
+    let lookupDuringRebuild: string[] = [];
+    const db = {
+      execute: vi.fn(async () => {
+        lookupDuringRebuild = index.lookup(key);
+        return {
+          rows: [{ id: "new-entry", subject_key: key }],
+        };
+      }),
+    } as unknown as Client;
+
+    await index.rebuild(db);
+
+    expect(lookupDuringRebuild).toEqual(["old-entry"]);
+    expect(index.lookup(key)).toEqual(["new-entry"]);
   });
 });
