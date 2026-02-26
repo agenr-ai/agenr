@@ -4,21 +4,21 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  runDaemonInstallCommand,
-  runDaemonLogsCommand,
-  runDaemonRestartCommand,
-  runDaemonStartCommand,
-  runDaemonStatusCommand,
-  runDaemonStopCommand,
-  runDaemonUninstallCommand,
+  runWatcherInstallCommand,
+  runWatcherLogsCommand,
+  runWatcherRestartCommand,
+  runWatcherStartCommand,
+  runWatcherStatusCommand,
+  runWatcherStopCommand,
+  runWatcherUninstallCommand,
   resolveStableNodePath,
-} from "../../src/commands/daemon.js";
+} from "../../src/commands/watcher.js";
 import type { WatcherHealth } from "../../src/watch/health.js";
 
 const tempDirs: string[] = [];
 
 async function makeTempDir(): Promise<string> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agenr-daemon-command-test-"));
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agenr-watcher-command-test-"));
   tempDirs.push(dir);
   return dir;
 }
@@ -31,14 +31,25 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-describe("daemon commands", () => {
+describe("watcher CLI wiring", () => {
+  it("registers both watcher and daemon compatibility commands", async () => {
+    const { createProgram } = await import("../../src/cli-main.js");
+    const program = createProgram();
+
+    const commandNames = program.commands.map((command) => command.name());
+    expect(commandNames).toContain("watcher");
+    expect(commandNames).toContain("daemon");
+  });
+});
+
+describe("watcher commands", () => {
   it("generates launchd plist and runs bootstrap on install", async () => {
     const home = await makeTempDir();
     const sessionsDir = path.join(home, "sessions");
     await fs.mkdir(sessionsDir, { recursive: true });
     const launchctlCalls: string[][] = [];
 
-    const result = await runDaemonInstallCommand(
+    const result = await runWatcherInstallCommand(
       { force: true, dir: sessionsDir, platform: "openclaw" },
       {
         platformFn: () => "darwin",
@@ -81,7 +92,7 @@ describe("daemon commands", () => {
     const sessionsDir = path.join(home, "sessions");
     await fs.mkdir(sessionsDir, { recursive: true });
 
-    const result = await runDaemonInstallCommand(
+    const result = await runWatcherInstallCommand(
       { force: true, context: "/tmp/CONTEXT.md", dir: sessionsDir, platform: "openclaw" },
       {
         platformFn: () => "darwin",
@@ -106,7 +117,7 @@ describe("daemon commands", () => {
     const cliPath = "/Users/test/.pnpm-global/lib/node_modules/agenr/dist/cli.js";
     await fs.mkdir(sessionsDir, { recursive: true });
 
-    const result = await runDaemonInstallCommand(
+    const result = await runWatcherInstallCommand(
       { force: true, dir: sessionsDir, platform: "openclaw" },
       {
         platformFn: () => "darwin",
@@ -130,7 +141,7 @@ describe("daemon commands", () => {
     const sessionsDir = path.join(home, "sessions");
     await fs.mkdir(sessionsDir, { recursive: true });
 
-    const result = await runDaemonInstallCommand(
+    const result = await runWatcherInstallCommand(
       { force: true, dir: sessionsDir, platform: "openclaw" },
       {
         platformFn: () => "darwin",
@@ -148,14 +159,14 @@ describe("daemon commands", () => {
     expect(plist).toContain("dist/cli.js");
   });
 
-  it("uninstalls daemon by bootout + plist removal", async () => {
+  it("uninstalls watcher by bootout + plist removal", async () => {
     const home = await makeTempDir();
     const plistPath = path.join(home, "Library", "LaunchAgents", "com.agenr.watch.plist");
     await fs.mkdir(path.dirname(plistPath), { recursive: true });
     await fs.writeFile(plistPath, "test", "utf8");
 
     const execCalls: string[][] = [];
-    const result = await runDaemonUninstallCommand(
+    const result = await runWatcherUninstallCommand(
       { yes: true },
       {
         platformFn: () => "darwin",
@@ -179,7 +190,7 @@ describe("daemon commands", () => {
     await fs.mkdir(logDir, { recursive: true });
     await fs.writeFile(path.join(logDir, "watch.log"), "one\ntwo\nthree\n", "utf8");
 
-    const result = await runDaemonStatusCommand(
+    const result = await runWatcherStatusCommand(
       { lines: 2 },
       {
         platformFn: () => "darwin",
@@ -229,7 +240,7 @@ describe("daemon commands", () => {
       entriesStored: 42,
     };
 
-    const result = await runDaemonStatusCommand(
+    const result = await runWatcherStatusCommand(
       {},
       {
         platformFn: () => "darwin",
@@ -258,7 +269,7 @@ describe("daemon commands", () => {
     const home = await makeTempDir();
     let noteText = "";
 
-    const result = await runDaemonStatusCommand(
+    const result = await runWatcherStatusCommand(
       {},
       {
         platformFn: () => "darwin",
@@ -294,7 +305,7 @@ describe("daemon commands", () => {
     };
     let noteText = "";
 
-    const result = await runDaemonStatusCommand(
+    const result = await runWatcherStatusCommand(
       {},
       {
         platformFn: () => "darwin",
@@ -330,7 +341,7 @@ describe("daemon commands", () => {
     };
     let noteText = "";
 
-    const result = await runDaemonStatusCommand(
+    const result = await runWatcherStatusCommand(
       {},
       {
         platformFn: () => "darwin",
@@ -358,7 +369,7 @@ describe("daemon commands", () => {
     const home = await makeTempDir();
     const warns: string[] = [];
 
-    const result = await runDaemonStatusCommand(
+    const result = await runWatcherStatusCommand(
       {},
       {
         platformFn: () => "darwin",
@@ -395,7 +406,7 @@ describe("daemon commands", () => {
       return true;
     });
 
-    const result = await runDaemonLogsCommand(
+    const result = await runWatcherLogsCommand(
       { lines: 2, follow: false },
       {
         platformFn: () => "darwin",
@@ -413,18 +424,18 @@ describe("daemon commands", () => {
   });
 
   it("returns an unsupported-platform error on non-macOS", async () => {
-    await expect(runDaemonInstallCommand({}, { platformFn: () => "linux" })).rejects.toThrow(
+    await expect(runWatcherInstallCommand({}, { platformFn: () => "linux" })).rejects.toThrow(
       "macOS only",
     );
   });
 });
 
-describe("daemon start", () => {
+describe("watcher start", () => {
   it("errors when plist not found", async () => {
     const home = await makeTempDir();
     await expect(
-      runDaemonStartCommand({}, { platformFn: () => "darwin", homedirFn: () => home, uidFn: () => 501 }),
-    ).rejects.toThrow("Daemon not installed. Run `agenr daemon install` first.");
+      runWatcherStartCommand({}, { platformFn: () => "darwin", homedirFn: () => home, uidFn: () => 501 }),
+    ).rejects.toThrow("Watcher not installed. Run `agenr watcher install` first.");
   });
 
   it("no-ops when already running", async () => {
@@ -434,7 +445,7 @@ describe("daemon start", () => {
     await fs.writeFile(plistPath, "test", "utf8");
 
     const calls: string[][] = [];
-    const result = await runDaemonStartCommand(
+    const result = await runWatcherStartCommand(
       {},
       {
         platformFn: () => "darwin",
@@ -461,7 +472,7 @@ describe("daemon start", () => {
     await fs.writeFile(plistPath, "test", "utf8");
 
     const calls: string[][] = [];
-    const result = await runDaemonStartCommand(
+    const result = await runWatcherStartCommand(
       {},
       {
         platformFn: () => "darwin",
@@ -491,7 +502,7 @@ describe("daemon start", () => {
     await fs.writeFile(plistPath, "test", "utf8");
 
     const calls: string[][] = [];
-    const result = await runDaemonStartCommand(
+    const result = await runWatcherStartCommand(
       {},
       {
         platformFn: () => "darwin",
@@ -516,12 +527,12 @@ describe("daemon start", () => {
   });
 });
 
-describe("daemon stop", () => {
+describe("watcher stop", () => {
   it("errors when plist not found", async () => {
     const home = await makeTempDir();
     await expect(
-      runDaemonStopCommand({}, { platformFn: () => "darwin", homedirFn: () => home, uidFn: () => 501 }),
-    ).rejects.toThrow("Daemon not installed. Run `agenr daemon install` first.");
+      runWatcherStopCommand({}, { platformFn: () => "darwin", homedirFn: () => home, uidFn: () => 501 }),
+    ).rejects.toThrow("Watcher not installed. Run `agenr watcher install` first.");
   });
 
   it("no-ops when not running", async () => {
@@ -531,7 +542,7 @@ describe("daemon stop", () => {
     await fs.writeFile(plistPath, "test", "utf8");
 
     const calls: string[][] = [];
-    const result = await runDaemonStopCommand(
+    const result = await runWatcherStopCommand(
       {},
       {
         platformFn: () => "darwin",
@@ -558,7 +569,7 @@ describe("daemon stop", () => {
     await fs.writeFile(plistPath, "test", "utf8");
 
     const calls: string[][] = [];
-    const result = await runDaemonStopCommand(
+    const result = await runWatcherStopCommand(
       {},
       {
         platformFn: () => "darwin",
@@ -588,7 +599,7 @@ describe("daemon stop", () => {
     await fs.writeFile(plistPath, "test", "utf8");
 
     const calls: string[][] = [];
-    const result = await runDaemonStopCommand(
+    const result = await runWatcherStopCommand(
       {},
       {
         platformFn: () => "darwin",
@@ -612,12 +623,12 @@ describe("daemon stop", () => {
   });
 });
 
-describe("daemon restart", () => {
+describe("watcher restart", () => {
   it("errors when not installed", async () => {
     const home = await makeTempDir();
     await expect(
-      runDaemonRestartCommand({}, { platformFn: () => "darwin", homedirFn: () => home, uidFn: () => 501 }),
-    ).rejects.toThrow("Daemon not installed.");
+      runWatcherRestartCommand({}, { platformFn: () => "darwin", homedirFn: () => home, uidFn: () => 501 }),
+    ).rejects.toThrow("Watcher not installed.");
   });
 
   it("restarts successfully (bootout + poll until unloaded + bootstrap)", async () => {
@@ -629,7 +640,7 @@ describe("daemon restart", () => {
     const calls: string[][] = [];
     let printCallCount = 0;
 
-    const result = await runDaemonRestartCommand(
+    const result = await runWatcherRestartCommand(
       {},
       {
         platformFn: () => "darwin",
@@ -661,7 +672,7 @@ describe("daemon restart", () => {
     ]);
   });
 
-  it("continues to bootstrap even when daemon never unloads (timeout path)", async () => {
+  it("continues to bootstrap even when watcher never unloads (timeout path)", async () => {
     const home = await makeTempDir();
     const plistPath = path.join(home, "Library", "LaunchAgents", "com.agenr.watch.plist");
     await fs.mkdir(path.dirname(plistPath), { recursive: true });
@@ -673,7 +684,7 @@ describe("daemon restart", () => {
     const calls: string[][] = [];
     const sleeps: number[] = [];
 
-    const result = await runDaemonRestartCommand(
+    const result = await runWatcherRestartCommand(
       {},
       {
         platformFn: () => "darwin",
@@ -740,12 +751,12 @@ describe("resolveStableNodePath", () => {
     ).resolves.toBe("/opt/homebrew/Cellar/node/25.5.0/bin/node");
   });
 
-  it("--node-path overrides auto-resolution in daemon install", async () => {
+  it("--node-path overrides auto-resolution in watcher install", async () => {
     const home = await makeTempDir();
     const sessionsDir = path.join(home, "sessions");
     await fs.mkdir(sessionsDir, { recursive: true });
 
-    const result = await runDaemonInstallCommand(
+    const result = await runWatcherInstallCommand(
       { force: true, dir: sessionsDir, platform: "openclaw", nodePath: "/custom/node" },
       {
         platformFn: () => "darwin",
@@ -763,13 +774,13 @@ describe("resolveStableNodePath", () => {
   });
 });
 
-describe("daemon install smart defaults", () => {
+describe("watcher install smart defaults", () => {
   it("detects OpenClaw sessions dir and generates correct ProgramArguments", async () => {
     const home = await makeTempDir();
     const openclawDir = path.join(home, ".openclaw", "agents", "main", "sessions");
     await fs.mkdir(openclawDir, { recursive: true });
 
-    const result = await runDaemonInstallCommand(
+    const result = await runWatcherInstallCommand(
       { force: true },
       {
         platformFn: () => "darwin",
@@ -794,7 +805,7 @@ describe("daemon install smart defaults", () => {
     const codexDir = path.join(home, ".codex", "sessions");
     await fs.mkdir(codexDir, { recursive: true });
 
-    const result = await runDaemonInstallCommand(
+    const result = await runWatcherInstallCommand(
       { force: true },
       {
         platformFn: () => "darwin",
@@ -817,7 +828,7 @@ describe("daemon install smart defaults", () => {
     const claudeDir = path.join(home, ".claude", "projects");
     await fs.mkdir(claudeDir, { recursive: true });
 
-    const result = await runDaemonInstallCommand(
+    const result = await runWatcherInstallCommand(
       { force: true },
       {
         platformFn: () => "darwin",
@@ -838,7 +849,7 @@ describe("daemon install smart defaults", () => {
   it("errors when no platform detected", async () => {
     const home = await makeTempDir();
     await expect(
-      runDaemonInstallCommand(
+      runWatcherInstallCommand(
         { force: true },
         {
           platformFn: () => "darwin",
@@ -858,7 +869,7 @@ describe("daemon install smart defaults", () => {
     const codexDir = path.join(home, ".codex", "sessions");
     await fs.mkdir(codexDir, { recursive: true });
 
-    const result = await runDaemonInstallCommand(
+    const result = await runWatcherInstallCommand(
       { force: true, platform: "codex" },
       {
         platformFn: () => "darwin",
@@ -881,7 +892,7 @@ describe("daemon install smart defaults", () => {
     const sessionsDir = path.join(home, "my-sessions");
     await fs.mkdir(sessionsDir, { recursive: true });
 
-    const result = await runDaemonInstallCommand(
+    const result = await runWatcherInstallCommand(
       { force: true, dir: sessionsDir, platform: "claude-code" },
       {
         platformFn: () => "darwin",

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.1 (2026-02-26)
+
+### Changed
+- Renamed `agenr daemon` CLI command to `agenr watcher` - "watcher" better describes what it does
+- `agenr daemon` still works as a hidden compatibility command
+- Updated user-facing command output to say "watcher" instead of "daemon"
+
+### Internal
+- Renamed `src/commands/daemon.ts` to `src/commands/watcher.ts`
+- Renamed daemon command interfaces and exports from `Daemon*`/`runDaemon*` to `Watcher*`/`runWatcher*`
+
 ## 0.9.0 (2026-02-25)
 
 ### Features

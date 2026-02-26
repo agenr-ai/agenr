@@ -73,7 +73,7 @@ describe("runResetCommand", () => {
 
     const stdoutLines = (deps.stdoutLine as ReturnType<typeof vi.fn>).mock.calls.map((call) => String(call[0]));
     expect(stdoutLines).toContain(
-      "WARNING: If the agenr watcher daemon is running, stop it before proceeding. Reset will not abort if the daemon is running.",
+      "WARNING: If the agenr watcher is running, stop it before proceeding. Reset will not abort if the watcher is running.",
     );
     expect(stdoutLines).toContain("Backup created: /tmp/knowledge.db.backup-pre-reset-2026-02-19T10-00-00-000Z");
     expect(stdoutLines).toContain("Reset complete.");

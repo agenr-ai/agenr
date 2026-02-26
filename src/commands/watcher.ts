@@ -13,7 +13,7 @@ const DEFAULT_INTERVAL_SECONDS = 120;
 const DEFAULT_STATUS_LOG_LINES = 20;
 const DEFAULT_LOG_LINES = 100;
 
-export interface DaemonInstallOptions {
+export interface WatcherInstallOptions {
   force?: boolean;
   interval?: number | string;
   context?: string;
@@ -22,22 +22,22 @@ export interface DaemonInstallOptions {
   nodePath?: string;
 }
 
-export interface DaemonUninstallOptions {
+export interface WatcherUninstallOptions {
   yes?: boolean;
 }
 
-export interface DaemonStartOptions {}
+export interface WatcherStartOptions {}
 
-export interface DaemonStopOptions {}
+export interface WatcherStopOptions {}
 
-export interface DaemonRestartOptions {}
+export interface WatcherRestartOptions {}
 
-export interface DaemonStatusOptions {
+export interface WatcherStatusOptions {
   lines?: number | string;
   configDir?: string;
 }
 
-export interface DaemonLogsOptions {
+export interface WatcherLogsOptions {
   lines?: number | string;
   follow?: boolean;
 }
@@ -48,7 +48,7 @@ interface CommandResult {
   exitCode: number;
 }
 
-export interface DaemonCommandDeps {
+export interface WatcherCommandDeps {
   platformFn: () => NodeJS.Platform;
   homedirFn: () => string;
   uidFn: () => number;
@@ -70,11 +70,11 @@ export interface DaemonCommandDeps {
   nowFn: () => number;
 }
 
-export interface DaemonCommandResult {
+export interface WatcherCommandResult {
   exitCode: number;
 }
 
-export interface DaemonStatusResult extends DaemonCommandResult {
+export interface WatcherStatusResult extends WatcherCommandResult {
   loaded: boolean;
   running: boolean;
   currentFile: string | null;
@@ -179,7 +179,7 @@ function defaultExecFile(file: string, args: string[]): Promise<CommandResult> {
   });
 }
 
-function resolveDeps(deps?: Partial<DaemonCommandDeps>): DaemonCommandDeps {
+function resolveDeps(deps?: Partial<WatcherCommandDeps>): WatcherCommandDeps {
   return {
     platformFn: deps?.platformFn ?? (() => process.platform),
     homedirFn: deps?.homedirFn ?? (() => os.homedir()),
@@ -210,12 +210,12 @@ function resolveDeps(deps?: Partial<DaemonCommandDeps>): DaemonCommandDeps {
 
 function ensureSupportedPlatform(platform: NodeJS.Platform): void {
   if (platform !== "darwin") {
-    throw new Error("Daemon commands are currently supported on macOS only.");
+    throw new Error("Watcher commands are currently supported on macOS only.");
   }
 }
 
 async function runLaunchctl(
-  deps: DaemonCommandDeps,
+  deps: WatcherCommandDeps,
   args: string[],
   strict: boolean,
 ): Promise<CommandResult> {
@@ -280,8 +280,8 @@ export async function resolveStableNodePath(execPath: string, statFn: typeof fs.
 }
 
 async function resolveInstallTarget(
-  options: DaemonInstallOptions,
-  deps: DaemonCommandDeps,
+  options: WatcherInstallOptions,
+  deps: WatcherCommandDeps,
   homeDir: string,
 ): Promise<{ sessionsDir: string; platform: WatchPlatform; detectionMessage: string | null }> {
   const hasDir = typeof options.dir === "string" && options.dir.trim().length > 0;
@@ -390,10 +390,10 @@ function printLines(lines: string[]): void {
   }
 }
 
-export async function runDaemonInstallCommand(
-  options: DaemonInstallOptions,
-  deps?: Partial<DaemonCommandDeps>,
-): Promise<DaemonCommandResult> {
+export async function runWatcherInstallCommand(
+  options: WatcherInstallOptions,
+  deps?: Partial<WatcherCommandDeps>,
+): Promise<WatcherCommandResult> {
   const resolvedDeps = resolveDeps(deps);
   ensureSupportedPlatform(resolvedDeps.platformFn());
 
@@ -407,7 +407,7 @@ export async function runDaemonInstallCommand(
   const { launchAgentsDir, plistPath, logDir, logPath } = getPaths(homeDir);
   const plistExists = await fileExists(resolvedDeps.statFn, plistPath);
   if (plistExists && options.force !== true) {
-    throw new Error(`Daemon plist already exists: ${plistPath}. Re-run with --force to overwrite.`);
+    throw new Error(`Watcher plist already exists: ${plistPath}. Re-run with --force to overwrite.`);
   }
 
   await resolvedDeps.mkdirFn(launchAgentsDir, { recursive: true });
@@ -447,13 +447,13 @@ export async function runDaemonInstallCommand(
   await runLaunchctl(resolvedDeps, ["bootout", `gui/${uid}/${LAUNCH_LABEL}`], false);
   await runLaunchctl(resolvedDeps, ["bootstrap", `gui/${uid}`, plistPath], true);
 
-  clack.log.success(`Installed daemon plist: ${plistPath}`);
+  clack.log.success(`Installed watcher plist: ${plistPath}`);
   clack.log.info(`Log file: ${logPath}`);
   return { exitCode: 0 };
 }
 
 async function getLaunchctlState(
-  deps: DaemonCommandDeps,
+  deps: WatcherCommandDeps,
   uid: number,
 ): Promise<{ loaded: boolean; running: boolean; raw: string }> {
   const statusResult = await runLaunchctl(deps, ["print", `gui/${uid}/${LAUNCH_LABEL}`], false);
@@ -463,7 +463,7 @@ async function getLaunchctlState(
   return { loaded, running, raw: combined };
 }
 
-async function requireInstalledPlist(deps: DaemonCommandDeps, homeDir: string, message: string): Promise<string> {
+async function requireInstalledPlist(deps: WatcherCommandDeps, homeDir: string, message: string): Promise<string> {
   const { plistPath } = getPaths(homeDir);
   const exists = await fileExists(deps.statFn, plistPath);
   if (!exists) {
@@ -472,10 +472,10 @@ async function requireInstalledPlist(deps: DaemonCommandDeps, homeDir: string, m
   return plistPath;
 }
 
-export async function runDaemonStartCommand(
-  _options: DaemonStartOptions = {},
-  deps?: Partial<DaemonCommandDeps>,
-): Promise<DaemonCommandResult> {
+export async function runWatcherStartCommand(
+  _options: WatcherStartOptions = {},
+  deps?: Partial<WatcherCommandDeps>,
+): Promise<WatcherCommandResult> {
   const resolvedDeps = resolveDeps(deps);
   ensureSupportedPlatform(resolvedDeps.platformFn());
 
@@ -488,12 +488,12 @@ export async function runDaemonStartCommand(
   const plistPath = await requireInstalledPlist(
     resolvedDeps,
     homeDir,
-    "Daemon not installed. Run `agenr daemon install` first.",
+    "Watcher not installed. Run `agenr watcher install` first.",
   );
 
   const state = await getLaunchctlState(resolvedDeps, uid);
   if (state.loaded && state.running) {
-    clack.log.info("Daemon is already running.");
+    clack.log.info("Watcher is already running.");
     return { exitCode: 0 };
   }
 
@@ -502,14 +502,14 @@ export async function runDaemonStartCommand(
   }
 
   await runLaunchctl(resolvedDeps, ["bootstrap", `gui/${uid}`, plistPath], true);
-  clack.log.success("Daemon started.");
+  clack.log.success("Watcher started.");
   return { exitCode: 0 };
 }
 
-export async function runDaemonStopCommand(
-  _options: DaemonStopOptions = {},
-  deps?: Partial<DaemonCommandDeps>,
-): Promise<DaemonCommandResult> {
+export async function runWatcherStopCommand(
+  _options: WatcherStopOptions = {},
+  deps?: Partial<WatcherCommandDeps>,
+): Promise<WatcherCommandResult> {
   const resolvedDeps = resolveDeps(deps);
   ensureSupportedPlatform(resolvedDeps.platformFn());
 
@@ -522,24 +522,24 @@ export async function runDaemonStopCommand(
   await requireInstalledPlist(
     resolvedDeps,
     homeDir,
-    "Daemon not installed. Run `agenr daemon install` first.",
+    "Watcher not installed. Run `agenr watcher install` first.",
   );
 
   const state = await getLaunchctlState(resolvedDeps, uid);
   if (!state.loaded) {
-    clack.log.info("Daemon is not loaded.");
+    clack.log.info("Watcher is not loaded.");
     return { exitCode: 0 };
   }
 
   await runLaunchctl(resolvedDeps, ["bootout", `gui/${uid}/${LAUNCH_LABEL}`], true);
-  clack.log.success("Daemon stopped.");
+  clack.log.success("Watcher stopped.");
   return { exitCode: 0 };
 }
 
-export async function runDaemonRestartCommand(
-  _options: DaemonRestartOptions = {},
-  deps?: Partial<DaemonCommandDeps>,
-): Promise<DaemonCommandResult> {
+export async function runWatcherRestartCommand(
+  _options: WatcherRestartOptions = {},
+  deps?: Partial<WatcherCommandDeps>,
+): Promise<WatcherCommandResult> {
   const resolvedDeps = resolveDeps(deps);
   ensureSupportedPlatform(resolvedDeps.platformFn());
 
@@ -549,7 +549,7 @@ export async function runDaemonRestartCommand(
     throw new Error("Unable to resolve current user ID for launchctl.");
   }
 
-  const plistPath = await requireInstalledPlist(resolvedDeps, homeDir, "Daemon not installed.");
+  const plistPath = await requireInstalledPlist(resolvedDeps, homeDir, "Watcher not installed.");
 
   await runLaunchctl(resolvedDeps, ["bootout", `gui/${uid}/${LAUNCH_LABEL}`], false);
 
@@ -566,19 +566,19 @@ export async function runDaemonRestartCommand(
   // Warn if timed out
   const finalState = await getLaunchctlState(resolvedDeps, uid);
   if (finalState.loaded) {
-    clack.log.warn("Daemon did not unload within 10s - attempting bootstrap anyway.");
+    clack.log.warn("Watcher did not unload within 10s - attempting bootstrap anyway.");
   }
 
   await runLaunchctl(resolvedDeps, ["bootstrap", `gui/${uid}`, plistPath], true);
 
-  clack.log.success("Daemon restarted.");
+  clack.log.success("Watcher restarted.");
   return { exitCode: 0 };
 }
 
-export async function runDaemonUninstallCommand(
-  options: DaemonUninstallOptions,
-  deps?: Partial<DaemonCommandDeps>,
-): Promise<DaemonCommandResult> {
+export async function runWatcherUninstallCommand(
+  options: WatcherUninstallOptions,
+  deps?: Partial<WatcherCommandDeps>,
+): Promise<WatcherCommandResult> {
   const resolvedDeps = resolveDeps(deps);
   ensureSupportedPlatform(resolvedDeps.platformFn());
 
@@ -591,12 +591,12 @@ export async function runDaemonUninstallCommand(
   const { plistPath } = getPaths(homeDir);
   const exists = await fileExists(resolvedDeps.statFn, plistPath);
   if (!exists) {
-    clack.log.info(`Daemon plist not found: ${plistPath}`);
+    clack.log.info(`Watcher plist not found: ${plistPath}`);
     return { exitCode: 0 };
   }
 
   if (options.yes !== true) {
-    const confirmed = await resolvedDeps.confirmFn("Remove agenr watch daemon?");
+    const confirmed = await resolvedDeps.confirmFn("Remove agenr watcher?");
     if (!confirmed) {
       clack.log.warn("Uninstall cancelled.");
       return { exitCode: 1 };
@@ -606,14 +606,14 @@ export async function runDaemonUninstallCommand(
   await runLaunchctl(resolvedDeps, ["bootout", `gui/${uid}/${LAUNCH_LABEL}`], false);
   await resolvedDeps.rmFn(plistPath, { force: true });
 
-  clack.log.success("Daemon uninstalled.");
+  clack.log.success("Watcher uninstalled.");
   return { exitCode: 0 };
 }
 
-export async function runDaemonStatusCommand(
-  options: DaemonStatusOptions,
-  deps?: Partial<DaemonCommandDeps>,
-): Promise<DaemonStatusResult> {
+export async function runWatcherStatusCommand(
+  options: WatcherStatusOptions,
+  deps?: Partial<WatcherCommandDeps>,
+): Promise<WatcherStatusResult> {
   const resolvedDeps = resolveDeps(deps);
   ensureSupportedPlatform(resolvedDeps.platformFn());
 
@@ -647,7 +647,7 @@ export async function runDaemonStatusCommand(
   const nowMs = resolvedDeps.nowFn();
 
   const daemonLines = [
-    "-- Daemon --",
+    "-- Watcher --",
     `Loaded: ${loaded ? "yes" : "no"}`,
     `Running: ${running ? "yes" : "no"}`,
     `Current file: ${currentFile ?? "(none)"}`,
@@ -691,7 +691,7 @@ export async function runDaemonStatusCommand(
 }
 
 async function followLog(
-  deps: DaemonCommandDeps,
+  deps: WatcherCommandDeps,
   logPath: string,
   lines: number,
 ): Promise<void> {
@@ -711,10 +711,10 @@ async function followLog(
   });
 }
 
-export async function runDaemonLogsCommand(
-  options: DaemonLogsOptions,
-  deps?: Partial<DaemonCommandDeps>,
-): Promise<DaemonCommandResult> {
+export async function runWatcherLogsCommand(
+  options: WatcherLogsOptions,
+  deps?: Partial<WatcherCommandDeps>,
+): Promise<WatcherCommandResult> {
   const resolvedDeps = resolveDeps(deps);
   ensureSupportedPlatform(resolvedDeps.platformFn());
 
@@ -723,7 +723,7 @@ export async function runDaemonLogsCommand(
 
   const logExists = await fileExists(resolvedDeps.statFn, logPath);
   if (!logExists) {
-    throw new Error(`Daemon log file not found: ${logPath}`);
+    throw new Error(`Watcher log file not found: ${logPath}`);
   }
 
   const lineCount = parsePositiveInt(options.lines, DEFAULT_LOG_LINES, "--lines");
