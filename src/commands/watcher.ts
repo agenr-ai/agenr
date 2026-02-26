@@ -26,11 +26,11 @@ export interface WatcherUninstallOptions {
   yes?: boolean;
 }
 
-export interface WatcherStartOptions {}
+export type WatcherStartOptions = Record<string, never>;
 
-export interface WatcherStopOptions {}
+export type WatcherStopOptions = Record<string, never>;
 
-export interface WatcherRestartOptions {}
+export type WatcherRestartOptions = Record<string, never>;
 
 export interface WatcherStatusOptions {
   lines?: number | string;
@@ -646,8 +646,8 @@ export async function runWatcherStatusCommand(
   const logTail = await readLastLines(resolvedDeps.readFileFn, logPath, lineCount);
   const nowMs = resolvedDeps.nowFn();
 
-  const daemonLines = [
-    "-- Watcher --",
+  const serviceLines = [
+    "-- Service --",
     `Loaded: ${loaded ? "yes" : "no"}`,
     `Running: ${running ? "yes" : "no"}`,
     `Current file: ${currentFile ?? "(none)"}`,
@@ -673,7 +673,7 @@ export async function runWatcherStatusCommand(
       ]
     : ["-- Watcher --", "Heartbeat: no data"];
 
-  resolvedDeps.noteFn([...daemonLines, "", ...watcherLines].join("\n"), "Status");
+  resolvedDeps.noteFn([...serviceLines, "", ...watcherLines].join("\n"), "Status");
 
   if (logTail.length > 0) {
     clack.log.info(`Last ${logTail.length} log lines:`);

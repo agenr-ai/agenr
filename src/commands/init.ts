@@ -1594,7 +1594,7 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
         try {
           await initWizardRuntime.runWatcherStopCommand({});
         } catch {
-          // Daemon might not be running.
+          // Watcher might not be running.
         }
         spinner.stop("Watcher stopped");
       }
@@ -1768,7 +1768,7 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
 
     if (setupWatcher) {
       const spinner = clack.spinner();
-      spinner.start("Installing watcher daemon...");
+      spinner.start("Installing watcher...");
 
       try {
         const watcherResult = await initWizardRuntime.runWatcherInstallCommand({
@@ -1779,11 +1779,11 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
         });
 
         if (watcherResult.exitCode === 0) {
-          spinner.stop("Watcher daemon installed and running (120s interval)");
+          spinner.stop("Watcher installed and running (120s interval)");
           watcherStatus = "Running (120s interval)";
         } else {
           spinner.stop(
-            "Daemon install failed. Run manually:\n" +
+            "Watcher install failed. Run manually:\n" +
               `  agenr watch --dir ${selectedPlatform.sessionsDir} ` +
               `--platform ${selectedPlatform.id}`,
           );
@@ -1791,7 +1791,7 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        spinner.stop(`Daemon install failed: ${message}`);
+        spinner.stop(`Watcher install failed: ${message}`);
         watcherStatus = "Failed";
       }
     } else {
