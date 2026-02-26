@@ -264,3 +264,71 @@ pnpm test:watch  # watch mode
 ```
 
 The sandbox is for **integration testing** the full plugin lifecycle against a real OpenClaw gateway.
+
+## Test Data Seeding
+
+The repo includes seed session fixtures (fixtures/seed-sessions/) and a script that copies them into the sandbox. These sessions contain deliberate contradictions, preference changes, events, todos, and relationships - everything needed to test the full pipeline (extraction, claim extraction, contradiction detection, conflicts UI).
+
+### What the seed creates
+
+| Session | Content | Contradiction targets |
+|---------|---------|----------------------|
+| seed-01 | Baseline facts: Alex Chen, 185lbs, Tesla Model 3, TechCorp, keto, Rust | - |
+| seed-02 | Work decisions (CockroachDB migration), preferences (pnpm, VS Code) | - |
+| seed-03 | Weight 175lbs, Rivian R1S, Mediterranean diet | Contradicts seed-01 |
+| seed-04 | Left TechCorp for DataFlow, CockroachDB canceled, Go > Rust | Contradicts seed-01, seed-02 |
+| seed-05 | Events (vet appt), todos (laptop setup, Go tutorial), relationships (Sarah Kim) | - |
+| seed-06 | Moved apartments, remote work, coworking space | Edge cases |
+
+### Usage
+
+```bash
+# Seed with fresh data (clears existing sandbox state)
+./sandbox-seed.sh --reset
+
+# Seed without clearing (adds to existing data)
+./sandbox-seed.sh
+```
+
+### Full pipeline test
+
+After seeding, run the pipeline to extract knowledge and detect contradictions:
+
+```bash
+# Build first (always)
+pnpm build
+
+# Ingest the seed sessions
+node dist/cli.js ingest ~/.openclaw-sandbox/.openclaw/agents/main/sessions \
+  --db ~/.openclaw-sandbox/agenr-data/knowledge.db
+
+# Review detected contradictions in the web UI
+node dist/cli.js conflicts --db ~/.openclaw-sandbox/agenr-data/knowledge.db
+
+# Or browse extracted knowledge
+node dist/cli.js recall --browse --limit 20 \
+  --db ~/.openclaw-sandbox/agenr-data/knowledge.db
+```
+
+### Test via sandbox gateway
+
+You can also test through the full OpenClaw plugin path:
+
+```bash
+sandbox-openclaw gateway run
+# Open http://localhost:18790
+# Chat triggers extraction + contradiction detection automatically
+```
+
+### Reset everything
+
+```bash
+./sandbox-seed.sh --reset   # clears sessions + DB, then re-seeds
+```
+
+Or manually:
+
+```bash
+rm -f ~/.openclaw-sandbox/.openclaw/agents/main/sessions/seed-*.jsonl
+rm -f ~/.openclaw-sandbox/agenr-data/knowledge.db*
+```
