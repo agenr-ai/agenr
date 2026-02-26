@@ -278,6 +278,7 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
 
   const config = resolvedDeps.readConfigFn(process.env);
   const claimExtractionEnabled = config?.contradiction?.enabled !== false;
+  const contradictionEnabled = config?.contradiction?.enabled !== false;
   const claimExtractionModel = resolveModelForTask(config ?? {}, "claimExtraction");
   const dbPath = options.dbPath?.trim() || config?.db?.path;
   const db = options.dryRun ? null : resolvedDeps.getDbFn(dbPath);
@@ -565,6 +566,8 @@ export async function runWatcher(options: WatcherOptions, deps?: Partial<Watcher
               llmClient: options.onlineDedup === false ? undefined : client,
               claimExtractionEnabled,
               claimExtractionModel,
+              contradictionEnabled,
+              config: config ?? undefined,
               dbPath,
             }),
           );

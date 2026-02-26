@@ -1,5 +1,5 @@
 import type { Client } from "@libsql/client";
-import type { KnowledgeEntry, LlmClient } from "../types.js";
+import type { AgenrConfig, KnowledgeEntry, LlmClient } from "../types.js";
 
 export interface BatchWriteResult {
   added: number;
@@ -19,6 +19,8 @@ export interface WriteQueueOptions {
   dbPath: string | undefined;
   claimExtractionEnabled?: boolean;
   claimExtractionModel?: string;
+  contradictionEnabled?: boolean;
+  config?: AgenrConfig;
   batchSize?: number;
   highWatermark?: number;
   backpressureTimeoutMs?: number;
@@ -107,6 +109,8 @@ export class WriteQueue {
   private readonly dbPath: string | undefined;
   private readonly claimExtractionEnabled: boolean | undefined;
   private readonly claimExtractionModel: string | undefined;
+  private readonly contradictionEnabled: boolean | undefined;
+  private readonly config: AgenrConfig | undefined;
   private readonly batchSize: number;
   private readonly highWatermark: number;
   private readonly backpressureTimeoutMs: number;
@@ -132,6 +136,8 @@ export class WriteQueue {
     this.dbPath = options.dbPath;
     this.claimExtractionEnabled = options.claimExtractionEnabled;
     this.claimExtractionModel = options.claimExtractionModel;
+    this.contradictionEnabled = options.contradictionEnabled;
+    this.config = options.config;
     this.batchSize = Math.max(1, Math.floor(options.batchSize ?? 40));
     this.highWatermark = Math.max(1, Math.floor(options.highWatermark ?? 2000));
     this.backpressureTimeoutMs = Math.max(1, options.backpressureTimeoutMs ?? 120_000);
@@ -388,6 +394,8 @@ export class WriteQueue {
           llmClient: this.llmClient,
           claimExtractionEnabled: this.claimExtractionEnabled,
           claimExtractionModel: this.claimExtractionModel,
+          contradictionEnabled: this.contradictionEnabled,
+          config: this.config,
           dbPath: this.dbPath,
         });
         return {

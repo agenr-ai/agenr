@@ -995,6 +995,7 @@ export function createMcpServer(
     const configDedupThreshold = typeof config?.dedup?.threshold === "number"
       ? config.dedup.threshold
       : undefined;
+    const contradictionEnabled = config?.contradiction?.enabled !== false;
     const dedupClient = resolvedDeps.createLlmClientFn({ config, env });
     const apiKey = resolvedDeps.resolveEmbeddingApiKeyFn(config, env);
     const result = await resolvedDeps.storeEntriesFn(db, entries, apiKey, {
@@ -1003,6 +1004,8 @@ export function createMcpServer(
       llmClient: dedupClient,
       aggressiveDedup,
       dedupThreshold: configDedupThreshold,
+      contradictionEnabled,
+      config: config ?? undefined,
       dbPath: options.dbPath,
     });
 
@@ -1049,10 +1052,13 @@ export function createMcpServer(
       if (shouldStore && extractedEntries.length > 0) {
         const db = await ensureDb();
         const apiKey = resolvedDeps.resolveEmbeddingApiKeyFn(config, env);
+        const contradictionEnabled = config?.contradiction?.enabled !== false;
         stored = await resolvedDeps.storeEntriesFn(db, extractedEntries, apiKey, {
           sourceFile: sourceLabel ?? "mcp:agenr_extract",
           onlineDedup: true,
           llmClient: client,
+          contradictionEnabled,
+          config: config ?? undefined,
           dbPath: options.dbPath,
         });
       } else if (shouldStore) {

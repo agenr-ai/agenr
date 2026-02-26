@@ -687,6 +687,7 @@ export async function runIngestCommand(
 
   const config = resolvedDeps.readConfigFn(process.env);
   const claimExtractionEnabled = config?.contradiction?.enabled !== false;
+  const contradictionEnabled = config?.contradiction?.enabled !== false;
   const claimExtractionModel = resolveModelForTask(config ?? {}, "claimExtraction");
   const client = resolvedDeps.createLlmClientFn({
     provider: options.provider,
@@ -873,6 +874,8 @@ export async function runIngestCommand(
       dbPath,
       claimExtractionEnabled,
       claimExtractionModel,
+      contradictionEnabled,
+      config: config ?? undefined,
       batchSize: bulkMode ? 500 : 40,
       highWatermark: queueHighWatermark,
       backpressureTimeoutMs: queueBackpressureTimeoutMs,
