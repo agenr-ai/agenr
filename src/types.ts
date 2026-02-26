@@ -96,6 +96,13 @@ export interface KnowledgeEntry {
     file: string;
     context: string;
   };
+  // Structured claim fields for contradiction detection (#266)
+  subjectEntity?: string;
+  subjectAttribute?: string;
+  subjectKey?: string;
+  claimPredicate?: string;
+  claimObject?: string;
+  claimConfidence?: number;
 }
 
 export interface ExtractionStats {
@@ -204,6 +211,17 @@ export interface StoredEntry extends KnowledgeEntry {
   confirmations: number;
   contradictions: number;
   superseded_by?: string;
+}
+
+export interface ConflictLogEntry {
+  id: string;
+  entryA: string;
+  entryB: string;
+  relation: "contradicts" | "supersedes" | "coexists";
+  confidence: number;
+  resolution: "auto-superseded" | "pending" | "user-resolved" | "coexist";
+  resolvedAt?: string;
+  createdAt: string;
 }
 
 export interface StoreResult {
