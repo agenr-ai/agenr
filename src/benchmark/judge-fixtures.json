@@ -1,0 +1,364 @@
+[
+  {
+    "id": "sup-weight",
+    "newEntry": {
+      "content": "Alex now weighs 180 lbs.",
+      "type": "fact",
+      "subject": "Alex weight"
+    },
+    "existing": {
+      "content": "Alex weighs 200 lbs.",
+      "type": "fact",
+      "subject": "Alex weight",
+      "createdAt": "2026-01-15T00:00:00Z"
+    },
+    "expected": {
+      "relation": "supersedes",
+      "minConfidence": 0.7
+    }
+  },
+  {
+    "id": "sup-package-manager",
+    "newEntry": {
+      "content": "Alex now prefers pnpm for JavaScript projects.",
+      "type": "preference",
+      "subject": "Alex package manager"
+    },
+    "existing": {
+      "content": "Alex prefers npm for JavaScript projects.",
+      "type": "preference",
+      "subject": "Alex package manager",
+      "createdAt": "2026-01-10T00:00:00Z"
+    },
+    "expected": {
+      "relation": "supersedes",
+      "minConfidence": 0.7
+    }
+  },
+  {
+    "id": "sup-diet",
+    "newEntry": {
+      "content": "Alex follows a paleo diet.",
+      "type": "preference",
+      "subject": "Alex diet"
+    },
+    "existing": {
+      "content": "Alex follows a keto diet.",
+      "type": "preference",
+      "subject": "Alex diet",
+      "createdAt": "2026-01-09T00:00:00Z"
+    },
+    "expected": {
+      "relation": "supersedes",
+      "minConfidence": 0.7
+    }
+  },
+  {
+    "id": "sup-storage",
+    "newEntry": {
+      "content": "Acme platform stores data in libsql.",
+      "type": "fact",
+      "subject": "Acme platform storage backend"
+    },
+    "existing": {
+      "content": "Acme platform stores data in postgres.",
+      "type": "fact",
+      "subject": "Acme platform storage backend",
+      "createdAt": "2026-01-12T00:00:00Z"
+    },
+    "expected": {
+      "relation": "supersedes",
+      "minConfidence": 0.7
+    }
+  },
+  {
+    "id": "sup-editor",
+    "newEntry": {
+      "content": "Alex now prefers neovim.",
+      "type": "preference",
+      "subject": "Alex editor preference"
+    },
+    "existing": {
+      "content": "Alex prefers vim.",
+      "type": "preference",
+      "subject": "Alex editor preference",
+      "createdAt": "2026-01-11T00:00:00Z"
+    },
+    "expected": {
+      "relation": "supersedes",
+      "minConfidence": 0.7
+    }
+  },
+  {
+    "id": "sup-framework",
+    "newEntry": {
+      "content": "For the new customer portal, Acme decided to use Svelte.",
+      "type": "decision",
+      "subject": "Acme customer portal framework decision"
+    },
+    "existing": {
+      "content": "For the new customer portal, Acme decided to use React.",
+      "type": "decision",
+      "subject": "Acme customer portal framework decision",
+      "createdAt": "2026-01-08T00:00:00Z"
+    },
+    "expected": {
+      "relation": "supersedes",
+      "minConfidence": 0.7
+    }
+  },
+  {
+    "id": "coex-languages",
+    "newEntry": {
+      "content": "Alex prefers TypeScript for backend services.",
+      "type": "preference",
+      "subject": "Alex language preferences"
+    },
+    "existing": {
+      "content": "Alex likes Python for quick scripts.",
+      "type": "preference",
+      "subject": "Alex language preferences",
+      "createdAt": "2026-01-07T00:00:00Z"
+    },
+    "expected": {
+      "relation": "coexists",
+      "minConfidence": 0.7
+    }
+  },
+  {
+    "id": "coex-tools",
+    "newEntry": {
+      "content": "Alex uses Docker for local testing.",
+      "type": "fact",
+      "subject": "Alex container tools"
+    },
+    "existing": {
+      "content": "Alex uses Podman on production servers.",
+      "type": "fact",
+      "subject": "Alex container tools",
+      "createdAt": "2026-01-06T00:00:00Z"
+    },
+    "expected": {
+      "relation": "coexists",
+      "minConfidence": 0.7
+    }
+  },
+  {
+    "id": "coex-values",
+    "newEntry": {
+      "content": "Alex values alone time to recharge.",
+      "type": "preference",
+      "subject": "Alex values"
+    },
+    "existing": {
+      "content": "Alex values teamwork when building products.",
+      "type": "preference",
+      "subject": "Alex values",
+      "createdAt": "2026-01-05T00:00:00Z"
+    },
+    "expected": {
+      "relation": "coexists",
+      "minConfidence": 0.7
+    }
+  },
+  {
+    "id": "coex-skills",
+    "newEntry": {
+      "content": "Alex knows Rust.",
+      "type": "fact",
+      "subject": "Alex technical skills"
+    },
+    "existing": {
+      "content": "Alex knows Go.",
+      "type": "fact",
+      "subject": "Alex technical skills",
+      "createdAt": "2026-01-04T00:00:00Z"
+    },
+    "expected": {
+      "relation": "coexists",
+      "minConfidence": 0.7
+    }
+  },
+  {
+    "id": "coex-schedule",
+    "newEntry": {
+      "content": "Alex goes to the gym in the morning.",
+      "type": "preference",
+      "subject": "Alex routine"
+    },
+    "existing": {
+      "content": "Alex takes evening walks after dinner.",
+      "type": "preference",
+      "subject": "Alex routine",
+      "createdAt": "2026-01-03T00:00:00Z"
+    },
+    "expected": {
+      "relation": "coexists",
+      "minConfidence": 0.7
+    }
+  },
+  {
+    "id": "unrel-diet-storage",
+    "newEntry": {
+      "content": "Alex follows a paleo diet.",
+      "type": "preference",
+      "subject": "Alex diet"
+    },
+    "existing": {
+      "content": "Acme platform stores entries in libsql.",
+      "type": "fact",
+      "subject": "Acme platform storage backend",
+      "createdAt": "2026-01-15T00:00:00Z"
+    },
+    "expected": {
+      "relation": "unrelated",
+      "minConfidence": 0.7
+    }
+  },
+  {
+    "id": "unrel-pet-framework",
+    "newEntry": {
+      "content": "Alex has a dog named Buddy.",
+      "type": "fact",
+      "subject": "Alex pet"
+    },
+    "existing": {
+      "content": "Acme decided to build the admin app with Svelte.",
+      "type": "decision",
+      "subject": "Acme admin app framework decision",
+      "createdAt": "2026-01-14T00:00:00Z"
+    },
+    "expected": {
+      "relation": "unrelated",
+      "minConfidence": 0.7
+    }
+  },
+  {
+    "id": "unrel-location-editor",
+    "newEntry": {
+      "content": "Alex lives in Denver.",
+      "type": "fact",
+      "subject": "Alex location"
+    },
+    "existing": {
+      "content": "Alex prefers neovim.",
+      "type": "preference",
+      "subject": "Alex editor preference",
+      "createdAt": "2026-01-13T00:00:00Z"
+    },
+    "expected": {
+      "relation": "unrelated",
+      "minConfidence": 0.7
+    }
+  },
+  {
+    "id": "unrel-meeting-weight",
+    "newEntry": {
+      "content": "Meeting summary: Acme reviewed the Q1 roadmap and assigned follow-up tasks.",
+      "type": "event",
+      "subject": "Q1 roadmap meeting"
+    },
+    "existing": {
+      "content": "Alex weighs 180 lbs.",
+      "type": "fact",
+      "subject": "Alex weight",
+      "createdAt": "2026-01-02T00:00:00Z"
+    },
+    "expected": {
+      "relation": "unrelated",
+      "minConfidence": 0.7
+    }
+  },
+  {
+    "id": "unrel-education-diet",
+    "newEntry": {
+      "content": "Alex graduated from Northeastern University.",
+      "type": "fact",
+      "subject": "Alex education"
+    },
+    "existing": {
+      "content": "Alex follows a paleo diet.",
+      "type": "preference",
+      "subject": "Alex diet",
+      "createdAt": "2026-01-01T00:00:00Z"
+    },
+    "expected": {
+      "relation": "unrelated",
+      "minConfidence": 0.7
+    }
+  },
+  {
+    "id": "contra-hq-location",
+    "newEntry": {
+      "content": "Acme Corp headquarters is in Austin.",
+      "type": "fact",
+      "subject": "Acme Corp headquarters location"
+    },
+    "existing": {
+      "content": "Acme Corp headquarters is in Seattle.",
+      "type": "fact",
+      "subject": "Acme Corp headquarters location",
+      "createdAt": "2026-01-15T00:00:00Z"
+    },
+    "expected": {
+      "relation": "contradicts",
+      "altRelation": "supersedes",
+      "minConfidence": 0.6
+    }
+  },
+  {
+    "id": "contra-architecture",
+    "newEntry": {
+      "content": "For the same billing project, Acme decided on a microservices architecture.",
+      "type": "decision",
+      "subject": "Acme billing architecture decision"
+    },
+    "existing": {
+      "content": "For the same billing project, Acme decided on a monolith architecture.",
+      "type": "decision",
+      "subject": "Acme billing architecture decision",
+      "createdAt": "2026-01-15T00:00:00Z"
+    },
+    "expected": {
+      "relation": "contradicts",
+      "altRelation": "supersedes",
+      "minConfidence": 0.6
+    }
+  },
+  {
+    "id": "edge-event-immutable",
+    "newEntry": {
+      "content": "On January 10, 2026, Alex presented the Q1 roadmap at the Acme town hall.",
+      "type": "event",
+      "subject": "Acme town hall January 10 2026"
+    },
+    "existing": {
+      "content": "At the Acme town hall on January 10, 2026, Alex gave a Q1 roadmap presentation.",
+      "type": "event",
+      "subject": "Acme town hall January 10 2026",
+      "createdAt": "2026-01-10T00:00:00Z"
+    },
+    "expected": {
+      "relation": "coexists",
+      "minConfidence": 0.65
+    }
+  },
+  {
+    "id": "edge-similar-different",
+    "newEntry": {
+      "content": "Alex weighs 180 lbs.",
+      "type": "fact",
+      "subject": "Alex weight"
+    },
+    "existing": {
+      "content": "Alex is 6 feet tall.",
+      "type": "fact",
+      "subject": "Alex height",
+      "createdAt": "2026-01-12T00:00:00Z"
+    },
+    "expected": {
+      "relation": "unrelated",
+      "minConfidence": 0.7
+    }
+  }
+]

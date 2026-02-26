@@ -22,6 +22,7 @@
 - Added contradiction detection core: LLM judge classifies entry pairs as supersedes/contradicts/coexists/unrelated (#266)
 - Added type-specific resolution: auto-supersede for facts and preferences, flag decisions and lessons for review (#266)
 - Added conflict log for tracking detected contradictions and their resolutions (#266)
+- Added contradiction judge benchmark: fixtures, scorer, and CLI flag --judge for regression testing the LLM judge (#266)
 
 ## 0.9.2 (2026-02-26)
 
