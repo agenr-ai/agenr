@@ -17,6 +17,8 @@ Then run commands as `$A <command>`.
 
 ## `setup`
 
+Interactive setup for provider, auth method, and default model.
+
 ### Syntax
 
 ```bash
@@ -43,6 +45,8 @@ Configuration saved
 ## `init`
 
 Initialize project-scoped agenr wiring for agent instructions, MCP config, and dependency-aware recall scope.
+
+When run in an interactive terminal without `--platform` or `--project` flags, launches a guided wizard that walks through platform detection, project naming, and dependency configuration.
 
 ### Syntax
 
@@ -122,11 +126,11 @@ agenr store [options] [files...]
 - `--verbose`: show per-entry dedup decisions.
 - `--force`: bypass dedup checks and insert all as new.
 - `--aggressive`: lower online dedup similarity threshold and increase candidate lookups.
-- `--platform <name>`: platform tag (`openclaw|claude-code|claude|codex`).
-- `--project <name>`: project tag (lowercase).
+- `--platform <name>`: platform tag (`openclaw|claude-code|codex|plaud`).
+- `--project <name>`: project tag (lowercase, repeatable).
 - `--online-dedup`: enable online LLM dedup at write time (default `true`).
 - `--no-online-dedup`: disable online LLM dedup.
-- `--dedup-threshold <n>`: similarity threshold for online dedup (`0.0..1.0`, default `0.8`).
+- `--dedup-threshold <n>`: similarity threshold for online dedup (`0.0..1.0`).
 
 ### Example
 
@@ -161,9 +165,9 @@ agenr recall [options] [query]
 - `--since <duration>`: recency filter (`1h`, `7d`, `30d`, `1y`, or ISO timestamp).
 - `--until <date>`: upper recency cap (`1h`, `7d`, `1m`, `1y`, or ISO timestamp). Includes entries at or before this time.
 - `--expiry <level>`: `core|permanent|temporary`.
-- `--platform <name>`: platform filter (`openclaw|claude-code|claude|codex`).
-- `--project <name>`: project filter (comma-separated for multiple).
-- `--exclude-project <name>`: exclude entries from project (comma-separated for multiple).
+- `--platform <name>`: platform filter (`openclaw|claude-code|codex|plaud`).
+- `--project <name>`: project filter (repeatable for multiple).
+- `--exclude-project <name>`: exclude entries from project (repeatable for multiple).
 - `--strict`: when used with `--project`, excludes NULL-project entries from results.
 - `--json`: emit JSON.
 - `--db <path>`: database path override.
@@ -227,9 +231,9 @@ agenr context [options]
 - `--budget <tokens>`: approximate token budget (default `2000`).
 - `--limit <n>`: max entries per category (default `10`).
 - `--db <path>`: database path override.
-- `--platform <name>`: platform filter (`openclaw|claude-code|claude|codex`).
-- `--project <name>`: project filter (comma-separated for multiple).
-- `--exclude-project <name>`: exclude entries from project (comma-separated for multiple).
+- `--platform <name>`: platform filter (`openclaw|claude-code|codex|plaud`).
+- `--project <name>`: project filter (repeatable for multiple).
+- `--exclude-project <name>`: exclude entries from project (repeatable for multiple).
 - `--strict`: when used with `--project`, excludes NULL-project entries from results.
 - `--json`: output JSON.
 - `--quiet`: suppress stderr output.
@@ -256,13 +260,14 @@ agenr watch [file] [options]
 
 ### Options
 - `--dir <path>`: watch a sessions directory and auto-follow active session file.
-- `--platform <name>`: resolver selection (`openclaw|claude-code|claude|codex|mtime`). When used without `--dir`, agenr resolves the platform default directory automatically.
+- `--platform <name>`: resolver selection (`openclaw|claude-code|codex|plaud|mtime`). When used without `--dir`, agenr resolves the platform default directory automatically.
 - `--auto`: deprecated. Equivalent to `--platform openclaw` (prints a warning).
 - `--interval <seconds>`: polling interval (default `300`).
 - `--min-chunk <chars>`: min appended chars before extract (default `2000`).
 - `--db <path>`: database path override.
 - `--model <model>`: override model.
 - `--provider <name>`: `anthropic|openai|openai-codex`.
+- `--raw`: bypass adapter filtering (pass transcripts through unmodified).
 - `--no-pre-fetch`: disable elaborative encoding pre-fetch in watch extraction cycles.
 - `--verbose`: verbose progress.
 - `--context <path>`: write or refresh context files (`--context` path, `context-mini.md`, and `context-hot.md`) after successful stores.
@@ -324,41 +329,46 @@ agenr todo <subcommand> <subject> [options]
 $A todo done "fix client test"
 ```
 
-## `daemon`
+## `watcher`
+
+Manage the background watcher daemon via launchd (macOS).
+
+The `agenr daemon` command is a hidden alias for `agenr watcher` and still works for backward compatibility.
 
 ### Syntax
 
 ```bash
-agenr daemon <subcommand> [options]
+agenr watcher <subcommand> [options]
 ```
 
 ### Subcommands
-- `install`: install + start watch daemon via launchd (macOS only).
+- `install`: install + start watcher via launchd (macOS only).
   - `--force`: overwrite existing plist.
   - `--interval <seconds>`: watch interval (default `120`).
   - `--dir <path>`: sessions directory to watch (overrides auto-detection).
-  - `--platform <name>`: platform name (`openclaw|claude-code|claude|codex`). If provided without `--dir`, uses the platform default directory.
+  - `--platform <name>`: platform name (`openclaw|claude-code|codex|plaud`). If provided without `--dir`, uses the platform default directory.
   - `--node-path <path>`: node binary path override (useful for nvm/fnm/volta setups without stable symlinks).
-- `start`: start the daemon if installed.
-- `stop`: stop the daemon without uninstalling (plist remains on disk).
-- `restart`: restart the daemon.
-- `uninstall`: stop + remove daemon plist.
+  - `--context <path>`: regenerate context file after each cycle.
+- `start`: start the watcher if installed.
+- `stop`: stop the watcher without uninstalling (plist remains on disk).
+- `restart`: restart the watcher.
+- `uninstall`: stop + remove watcher plist.
   - `--yes`: skip uninstall confirmation prompt.
 - `status`: show loaded/running status, current watched file, recent logs.
   - `--lines <n>`: log lines to include (default `20`).
-- `logs`: print/follow daemon log output.
+- `logs`: print/follow watcher log output.
   - `--lines <n>`: line count (default `100`).
   - `--follow`: follow continuously (`tail -f` behavior).
 
 ### Example
 
 ```bash
-$A daemon install --force
-$A daemon start
-$A daemon stop
-$A daemon restart
-$A daemon status
-$A daemon logs --lines 50
+$A watcher install --force
+$A watcher start
+$A watcher stop
+$A watcher restart
+$A watcher status
+$A watcher logs --lines 50
 ```
 
 ## `ingest`
@@ -374,21 +384,26 @@ agenr ingest [options] <paths...>
 - `--db <path>`: database path override.
 - `--model <model>`: override model.
 - `--provider <name>`: `anthropic|openai|openai-codex`.
-- `--platform <name>`: platform tag (`openclaw|claude-code|claude|codex`).
-- `--project <name>`: project tag (lowercase).
+- `--platform <name>`: platform tag (`openclaw|claude-code|codex|plaud`).
+- `--project <name>`: project tag (lowercase, repeatable).
 - `--verbose`: per-file details, including a `[X/N] file -- starting` line before extraction begins.
+- `--raw`: bypass adapter filtering (pass transcripts through unmodified).
 - `--dry-run`: extract without storing.
 - `--json`: emit JSON summary.
 - `--concurrency <n>`: parallel chunk extractions (default `5`).
 - `--workers <n>`: files to process in parallel (default `10`). Total concurrent LLM chunk calls can reach `workers x concurrency`.
 - `--queue-high-watermark <n>`: max pending write-queue entries before workers apply backpressure (default `2000`).
 - `--queue-backpressure-timeout-ms <n>`: max milliseconds workers wait for backpressure to clear before failing with guidance (default `120000ms = 2 min`).
+- `--log-dir <path>`: directory to write per-chunk extraction debug logs (request/response).
+- `--log-all`: log every file during ingest extraction debugging (default: sample only).
+- `--sample-rate <n>`: sample 1 in N files for debug logging (default `10`).
 - `--skip-ingested`: skip already-ingested file/hash pairs (default `true`).
 - `--no-pre-fetch`: disable elaborative encoding pre-fetch before per-chunk extraction.
-- `--whole-file`: force whole-file extraction mode (single LLM call per file).
-- `--chunk`: force chunked extraction mode (disables whole-file auto-detect).
 - `--no-retry`: disable auto-retry for failed files.
 - `--max-retries <n>`: maximum auto-retry attempts (default `3`).
+- `--whole-file`: force whole-file extraction mode (single LLM call per file).
+- `--chunk`: force chunked extraction mode (disables whole-file auto-detect).
+- `--user-only`: extract from user messages only (strip assistant messages for cleaner personal fact extraction).
 - `--force`: clean re-ingest each matched file by deleting previous rows for that source file first.
 - `--bulk`: bulk ingest mode for large datasets. Drops FTS triggers and the vector index before writing, uses larger batch sizes with `BEGIN IMMEDIATE` transactions per batch, and rebuilds FTS + the vector index in a single pass after all entries are written. Disables per-entry vector dedup during writes - run `agenr consolidate` after a bulk ingest to catch near-duplicates. Implies crash recovery on next startup if the run is interrupted.
 
@@ -465,9 +480,9 @@ agenr consolidate [options]
 - `--dry-run`: report actions without writing.
 - `--forget`: delete forgetting candidates (without this flag, forgetting pass is dry-run report only).
 - `--report`: print pre-run stats before consolidation; with `--dry-run`, this runs report-only mode.
-- `--platform <name>`: scope consolidation to platform (`openclaw|claude-code|claude|codex`).
-- `--project <name>`: scope consolidation to project (comma-separated for multiple).
-- `--exclude-project <name>`: exclude entries from project (comma-separated for multiple).
+- `--platform <name>`: scope consolidation to platform (`openclaw|claude-code|codex|plaud`).
+- `--project <name>`: scope consolidation to project (repeatable for multiple).
+- `--exclude-project <name>`: exclude entries from project (repeatable for multiple).
 - `--min-cluster <n>`: min cluster size for LLM phases (default `2`).
 - `--sim-threshold <n>`: Phase 1 clustering threshold (default `0.82`). Phase 2 uses `max(value, 0.88)`.
 - `--max-cluster-size <n>`: max cluster size for LLM phases. Defaults: Phase 1 `8`, Phase 2 `6`.
@@ -519,7 +534,7 @@ $A health --db ~/.agenr/knowledge.db
 ### Example Output
 
 ```text
-DB Health ────────────────────────────────
+DB Health
 Entries: 1,842 total | 194 todos | 122 preferences
 File size: 46.1MB
 Oldest: 2025-11-02 | Newest: today
@@ -548,25 +563,31 @@ Consolidation Health
 
 Retire a stale entry from active recall. The entry is hidden from recall but not deleted from the database.
 
+### Syntax
+
 ```bash
 agenr retire [subject] [options]
 ```
 
-Arguments:
-  subject    Subject to match (exact by default; mutually exclusive with --id)
+### Arguments
+- `subject`: subject to match (exact by default; mutually exclusive with `--id`).
 
-Options:
-  --id <id>          Retire a specific entry by ID (mutually exclusive with subject)
-  --contains         Use substring matching instead of exact match
-  --dry-run          Preview matches without retiring
-  --persist          Write to retirements ledger so retirement survives re-ingest
-  --reason <text>    Reason for retirement
-  --db <path>        Path to database file
+### Options
+- `--id <id>`: retire a specific entry by ID (mutually exclusive with subject).
+- `--contains`: use substring matching instead of exact match.
+- `--dry-run`: preview matches without retiring.
+- `--force`: skip confirmation prompts (for programmatic use).
+- `--persist`: write to retirements ledger so retirement survives re-ingest.
+- `--reason <text>`: reason for retirement.
+- `--db <path>`: path to database file.
 
-Examples:
-  agenr retire "AGENR platform" --persist --reason "project killed"
-  agenr retire "old project" --contains --dry-run
+### Examples
 
+```bash
+$A retire "AGENR platform" --persist --reason "project killed"
+$A retire "old project" --contains --dry-run
+$A retire --id abc123 --force --reason "stale handoff"
+```
 
 ## `mcp`
 
@@ -589,7 +610,7 @@ $A mcp --db ~/.agenr/knowledge.db
 ### Example Output
 
 ```text
-[mcp] agenr MCP server started (protocol 2024-11-05, version 0.7.7)
+[mcp] agenr MCP server started (protocol 2024-11-05, version 0.9.1)
 ```
 
 ## `auth status`
@@ -615,7 +636,7 @@ $A auth status
 Auth Status
 Provider: openai
 Auth: openai-api-key
-Model: gpt-5.2-codex
+Model: gpt-4.1-mini
 Ready to extract
 ```
 
@@ -642,8 +663,10 @@ $A config show
 Configuration
 Auth: OpenAI API key
 Provider: openai
-Model: gpt-5.2-codex
+Model: gpt-4.1-mini
 Credentials
+  Anthropic API Key: (not set)
+  Anthropic Token: (not set)
   OpenAI API Key: ****abcd
 Source: env:OPENAI_API_KEY
 Available: yes
@@ -668,14 +691,14 @@ agenr config set <key> <value>
 
 ```bash
 $A config set auth openai-api-key
-$A config set model gpt-5.2-codex
+$A config set model gpt-4.1-mini
 ```
 
 ### Example Output
 
 ```text
 Updated auth: openai-api-key
-Updated model: gpt-5.2-codex
+Updated model: gpt-4.1-mini
 ```
 
 ## `config set-key`
@@ -716,9 +739,9 @@ agenr db stats [options]
 
 ### Options
 - `--db <path>`: database path override.
-- `--platform <name>`: filter stats by platform (`openclaw|claude-code|claude|codex`).
-- `--project <name>`: filter stats by project (comma-separated for multiple).
-- `--exclude-project <name>`: exclude entries from project (comma-separated for multiple).
+- `--platform <name>`: filter stats by platform (`openclaw|claude-code|codex|plaud`).
+- `--project <name>`: filter stats by project (repeatable for multiple).
+- `--exclude-project <name>`: exclude entries from project (repeatable for multiple).
 
 ### Example
 
@@ -731,7 +754,7 @@ $A db stats
 ```text
 DB Stats
 Database: /Users/you/.agenr/knowledge.db
-Schema Version: 0.7.7
+Schema Version: 0.9.1
 Entries: 42
 By Type
 - decision: 10
@@ -769,10 +792,10 @@ $A db version
 ### Example Output
 
 ```text
-agenr v0.7.7
-Database schema version: 0.7.7
+agenr v0.9.1
+Database schema version: 0.9.1
 Database created: 2026-02-14 00:00:00
-Last migration: 2026-02-17 00:00:00
+Last migration: 2026-02-25 00:00:00
 ```
 
 ## `db export`
@@ -787,9 +810,9 @@ agenr db export [options]
 - `--json`: export JSON.
 - `--md`: export markdown.
 - `--db <path>`: database path override.
-- `--platform <name>`: platform filter (`openclaw|claude-code|claude|codex`).
-- `--project <name>`: project filter (comma-separated for multiple).
-- `--exclude-project <name>`: exclude entries from project (comma-separated for multiple).
+- `--platform <name>`: platform filter (`openclaw|claude-code|codex|plaud`).
+- `--project <name>`: project filter (repeatable for multiple).
+- `--exclude-project <name>`: exclude entries from project (repeatable for multiple).
 
 Exactly one of `--json` or `--md` is required.
 
@@ -854,7 +877,7 @@ Run with --confirm-reset to execute.
 ```
 
 ```text
-WARNING: If the agenr watcher daemon is running, stop it before proceeding. Reset will not abort if the daemon is running.
+WARNING: If the agenr watcher is running, stop it before proceeding.
 Backup created: /Users/you/.agenr/knowledge.db.backup-pre-reset-2026-02-19T12-01-10-111Z
 Reset complete.
   DB schema dropped and recreated: /Users/you/.agenr/knowledge.db
@@ -862,6 +885,44 @@ Reset complete.
   review-queue.json deleted (or was not present)
   context-mini.md deleted
   context-hot.md deleted
+```
+
+## `db check`
+
+Run database integrity checks including the vector index.
+
+### Syntax
+
+```bash
+agenr db check [options]
+```
+
+### Options
+- `--db <path>`: database path override.
+
+### Example
+
+```bash
+$A db check
+```
+
+## `db rebuild-index`
+
+Drop and recreate the DiskANN vector index. Run this after forced kills (SIGKILL, power loss) that may have corrupted the index.
+
+### Syntax
+
+```bash
+agenr db rebuild-index [options]
+```
+
+### Options
+- `--db <path>`: database path override.
+
+### Example
+
+```bash
+$A db rebuild-index
 ```
 
 ## `db path`
@@ -905,14 +966,14 @@ Scope is assigned when entries are stored. The default scope for CLI-stored entr
 
 The `--context` flag changes how recall behaves:
 
-- **`default`** (or omitted): Standard semantic search. Requires a query string. Returns entries ranked by the full scoring model (vector similarity × recency × memory strength, with contradiction penalties and optional full-text boost).
+- **`default`** (or omitted): Standard semantic search. Requires a query string. Returns entries ranked by the full scoring model (vector similarity x recency x memory strength, with contradiction penalties and optional full-text boost).
 
-  - **`session-start`**: Designed for AI agents to load at the beginning of a session. No query required. Fetches recent entries (up to 500) without vector search and groups them into categories:
+- **`session-start`**: Designed for AI agents to load at the beginning of a session. No query required. Fetches recent entries (up to 500) without vector search and groups them into categories:
   - **Core**: entries with `expiry=core` (always included, fetched separately)
   - **Active**: todos
   - **Preferences**: preferences and decisions
   - **Recent**: everything else, sorted by recency
-  
+
   When used with `--budget`, allocates tokens across categories dynamically via `computeBudgetSplit()` based on category counts: active receives ~10-30%, preferences ~20-40%, and the remainder goes to recent (with a minimum 20% floor for recent), with overflow redistribution.
 
 - **`topic:<query>`**: Prepends `[topic: <query>]` to the search text before embedding, biasing results toward that topic. Useful for scoping recall to a specific area (e.g., `--context topic:authentication`).
@@ -934,7 +995,7 @@ In **default** mode: entries are ranked by score, then consumed in order until t
 
 In **session-start** mode: the budget is split across categories dynamically via `computeBudgetSplit()` based on category counts (active ~10-30%, preferences ~20-40%, remainder to recent with a 20% minimum floor for recent). Each category consumes entries in score order until its quota is full. Leftover budget is redistributed to remaining entries across all categories.
 
-This is useful for keeping context windows manageable - e.g., `agenr recall --context session-start --budget 2000` loads ≈2000 tokens of the most relevant memories.
+This is useful for keeping context windows manageable - e.g., `agenr recall --context session-start --budget 2000` loads about 2000 tokens of the most relevant memories.
 
 
 ## Interrupted Processes and Data Safety
