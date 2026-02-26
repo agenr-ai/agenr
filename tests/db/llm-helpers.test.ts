@@ -47,6 +47,8 @@ describe("llm-helpers", () => {
     expect(clampConfidence(Number.POSITIVE_INFINITY)).toBe(0.5);
     expect(clampConfidence(Number.NEGATIVE_INFINITY)).toBe(0.5);
     expect(clampConfidence(Number.NaN, 0)).toBe(0);
+    expect(clampConfidence(Number.NaN, 5)).toBe(1);
+    expect(clampConfidence(Number.NaN, -1)).toBe(0);
   });
 
   it("resolveModelForLlmClient uses explicit model override when provided", () => {
@@ -128,6 +130,27 @@ describe("llm-helpers", () => {
     expect(
       extractToolCallArgs<{ no_claim: boolean; confidence: number }>(response, "extract_claim", ["no_claim"]),
     ).toBeNull();
+  });
+
+  it("extractToolCallArgs skips malformed matching blocks and returns later valid args", () => {
+    const response = {
+      content: [
+        {
+          type: "toolCall",
+          name: "extract_claim",
+          arguments: { confidence: 0.3 },
+        },
+        {
+          type: "toolCall",
+          name: "extract_claim",
+          arguments: { no_claim: true, confidence: 0.6 },
+        },
+      ],
+    };
+
+    expect(
+      extractToolCallArgs<{ no_claim: boolean; confidence: number }>(response, "extract_claim", ["no_claim"]),
+    ).toEqual({ no_claim: true, confidence: 0.6 });
   });
 
   it("extractToolCallArgs returns null when response has no tool calls", () => {
