@@ -284,18 +284,23 @@
   },
   {
     "id": "edge-two-facts",
-    "content": "Jim switched from npm to pnpm and from JavaScript to TypeScript",
+    "content": "Jim switched from npm to pnpm for all projects",
     "type": "fact",
     "subject": "Jim tooling transitions",
     "expected": {
-      "noClaim": true
+      "noClaim": false,
+      "subjectEntity": "jim",
+      "subjectAttribute": "package_manager",
+      "predicate": "switched_to",
+      "object": "pnpm",
+      "minConfidence": 0.7
     }
   },
   {
     "id": "edge-ambiguous-entity",
-    "content": "The system uses vector search",
-    "type": "fact",
-    "subject": "system architecture",
+    "content": "It might be better to use a different approach here",
+    "type": "lesson",
+    "subject": "approach consideration",
     "expected": {
       "noClaim": true
     }

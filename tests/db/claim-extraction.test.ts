@@ -105,6 +105,35 @@ describe("claim extraction", () => {
     expect(claim?.subjectKey).toBe("jim/package_manager");
   });
 
+  it("extracts primary claim when entry includes extra context", async () => {
+    vi.mocked(runSimpleStream).mockResolvedValueOnce(
+      makeToolMessage({
+        no_claim: false,
+        subject_entity: "jim",
+        subject_attribute: "employer",
+        predicate: "works_at",
+        object: "loopback health",
+        confidence: 0.9,
+      }),
+    );
+
+    const claim = await extractClaim(
+      "Jim works at Loopback Health as Sr Director of Engineering",
+      "fact",
+      "Jim employer",
+      makeClient(),
+    );
+
+    expect(claim).toEqual({
+      subjectEntity: "jim",
+      subjectAttribute: "employer",
+      subjectKey: "jim/employer",
+      predicate: "works_at",
+      object: "loopback health",
+      confidence: 0.9,
+    });
+  });
+
   it("returns null for complex entry when no_claim is true", async () => {
     vi.mocked(runSimpleStream).mockResolvedValueOnce(
       makeToolMessage({
