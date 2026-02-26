@@ -729,7 +729,8 @@ interface PluginInstallResult {
 function findBinaryPath(name: string): string | null {
   try {
     const cmd = process.platform === "win32" ? "where" : "which";
-    return execFileSync(cmd, [name], { encoding: "utf8" }).trim().split("\n")[0];
+    const result = execFileSync(cmd, [name], { encoding: "utf8" }).trim().split("\n")[0];
+    return result || null;
   } catch {
     return null;
   }
@@ -1453,7 +1454,7 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
     });
     if (clack.isCancel(confirmConfigPath)) {
       clack.cancel("Setup cancelled.");
-      process.exit(0);
+      return;
     }
     // If user accepted the default, use selectedPlatform.configDir as OPENCLAW_HOME.
     // If they changed it, derive OPENCLAW_HOME from the config file's parent,
@@ -1487,7 +1488,7 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
     });
     if (clack.isCancel(confirmSessionsDir)) {
       clack.cancel("Setup cancelled.");
-      process.exit(0);
+      return;
     }
     selectedPlatform = {
       ...selectedPlatform,
@@ -1608,7 +1609,11 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
     ingestStatus = "No sessions found";
   } else {
     const config = initWizardRuntime.readConfig(env);
-    const provider = (config?.provider ?? "openai") as AgenrProvider;
+    const rawProvider = config?.provider ?? "openai";
+    const VALID_PROVIDERS: AgenrProvider[] = ["openai", "anthropic", "openai-codex"];
+    const provider: AgenrProvider = VALID_PROVIDERS.includes(rawProvider as AgenrProvider)
+      ? (rawProvider as AgenrProvider)
+      : "openai";
     const model = config?.model ?? "openai/gpt-4.1-mini";
 
     const recentCost = estimateIngestCost(scan.recentSizeBytes, model, provider);
