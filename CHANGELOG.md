@@ -25,6 +25,7 @@
 - Added contradiction judge benchmark: fixtures, scorer, and CLI flag --judge for regression testing the LLM judge (#266)
 - Rewrote contradiction judge prompt: singular vs additive attribute heuristic, shorter and more focused for nano (#266)
 - Tuned judge benchmark fixtures for clarity (#266)
+- Fixed contradiction judge prompt regression: reverted temperature setting, restored original prompt structure with targeted additive-attribute guidance (#266)
 
 ## 0.9.2 (2026-02-26)
 
