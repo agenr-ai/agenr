@@ -35,6 +35,15 @@ describe("estimateIngestCost", () => {
     const estimate = estimateIngestCost(4000, "nonexistent-model", "openai");
     expect(estimate.totalCostUsd).toBe(0);
   });
+
+  it("estimateIngestCost clamps invalid byte sizes to zero", () => {
+    for (const input of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const estimate = estimateIngestCost(input, "gpt-4.1-mini", "openai");
+      expect(estimate.inputTokens).toBe(0);
+      expect(estimate.outputTokens).toBe(0);
+      expect(estimate.totalCostUsd).toBe(0);
+    }
+  });
 });
 
 describe("formatCostUsd", () => {

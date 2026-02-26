@@ -306,6 +306,44 @@ describe("config", () => {
       },
     });
   });
+
+  it("normalizeConfig resolves leading tilde in project directory keys", () => {
+    const normalized = normalizeConfig({
+      projects: {
+        "~/.openclaw-sandbox": {
+          project: "openclaw",
+          platform: "openclaw",
+        },
+      },
+    });
+
+    const expectedDir = path.resolve(path.join(os.homedir(), ".openclaw-sandbox"));
+    expect(normalized.projects).toEqual({
+      [expectedDir]: {
+        project: "openclaw",
+        platform: "openclaw",
+      },
+    });
+  });
+
+  it("normalizeConfig resolves leading tilde in legacy projectDir values", () => {
+    const normalized = normalizeConfig({
+      projects: {
+        openclaw: {
+          platform: "openclaw",
+          projectDir: "~/.openclaw-legacy",
+        },
+      },
+    });
+
+    const expectedDir = path.resolve(path.join(os.homedir(), ".openclaw-legacy"));
+    expect(normalized.projects).toEqual({
+      [expectedDir]: {
+        project: "openclaw",
+        platform: "openclaw",
+      },
+    });
+  });
 });
 
 describe("normalizeConfig dedup", () => {
@@ -383,5 +421,29 @@ describe("resolveProjectFromGlobalConfig", () => {
 
     const resolved = resolveProjectFromGlobalConfig("/Users/jmartin/.openclaw-sandbox", env);
     expect(resolved).toBeNull();
+  });
+
+  it("expands leading tilde when resolving projectDir lookup", async () => {
+    const configPath = await makeTempConfigPath();
+    const env = makeEnv(configPath);
+    const projectDir = path.join(os.homedir(), ".openclaw-sandbox");
+    writeConfig(
+      {
+        projects: {
+          [projectDir]: {
+            project: "openclaw",
+            platform: "openclaw",
+          },
+        },
+      },
+      env,
+    );
+
+    const resolved = resolveProjectFromGlobalConfig("~/.openclaw-sandbox", env);
+    expect(resolved).toEqual({
+      slug: "openclaw",
+      platform: "openclaw",
+      dbPath: undefined,
+    });
   });
 });

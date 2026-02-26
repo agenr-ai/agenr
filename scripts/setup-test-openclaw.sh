@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # Creates a clean OpenClaw test instance that mimics a normal user setup.
 # OPENCLAW_HOME=~/.openclaw-testenv
 # Config at ~/.openclaw-testenv/.openclaw/openclaw.json (OpenClaw's standard layout)
@@ -7,6 +8,8 @@
 
 TEST_HOME="$HOME/.openclaw-testenv"
 PORT=18791
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 case "${1:-start}" in
   start)
@@ -41,7 +44,7 @@ EOF
     echo "  OPENCLAW_HOME=$TEST_HOME openclaw gateway"
     echo ""
     echo "Terminal 2 - Run wizard:"
-    echo "  cd ~/Code/agenr && node dist/cli.js init"
+    echo "  cd $REPO_ROOT && node dist/cli.js init"
     echo ""
     echo "When the wizard asks for OpenClaw directory, enter:"
     echo "  $TEST_HOME"

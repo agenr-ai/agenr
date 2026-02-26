@@ -321,7 +321,7 @@ function normalizeProjectsMap(input: unknown): AgenrConfig["projects"] | undefin
         entry.dependencies = dependencies;
       }
 
-      out[path.resolve(dirKey)] = entry;
+      out[path.resolve(resolveUserPath(dirKey))] = entry;
       continue;
     }
 
@@ -350,7 +350,7 @@ function normalizeProjectsMap(input: unknown): AgenrConfig["projects"] | undefin
       legacyEntry.dependencies = dependencies;
     }
 
-    out[path.resolve(value.projectDir.trim())] = legacyEntry;
+    out[path.resolve(resolveUserPath(value.projectDir.trim()))] = legacyEntry;
   }
 
   return Object.keys(out).length > 0 ? out : undefined;
@@ -466,7 +466,7 @@ export function resolveProjectFromGlobalConfig(
     return null;
   }
 
-  const resolvedDir = path.resolve(projectDir);
+  const resolvedDir = path.resolve(resolveUserPath(projectDir));
   const entry = config.projects[resolvedDir];
   if (!entry) {
     return null;

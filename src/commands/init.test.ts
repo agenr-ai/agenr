@@ -1911,6 +1911,31 @@ describe("runInitWizard", () => {
     expect(runInitCommandSpy).not.toHaveBeenCalled();
   });
 
+  it("wizard returns on OpenClaw config path cancel without calling process.exit", async () => {
+    const dir = await createWizardProjectDir();
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(
+      ((code?: string | number | null | undefined) => {
+        throw new Error(`Unexpected process.exit(${String(code)})`);
+      }) as typeof process.exit,
+    );
+    readConfigMock.mockReturnValue(null);
+    runSetupCoreMock.mockResolvedValue(mockSetupResult());
+    vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
+    vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
+    clackConfirmMock.mockResolvedValue(true);
+    clackTextMock.mockImplementation(async (options?: { message?: string; initialValue?: string }) => {
+      if (options?.message === "OpenClaw config file path:") {
+        return clackCancelToken;
+      }
+      return options?.initialValue ?? "agenr";
+    });
+
+    await runInitWizard({ isInteractive: true, path: dir });
+
+    expect(clackCancelMock).toHaveBeenCalledWith("Setup cancelled.");
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
   it("wizard handles Ctrl+C at DB isolation prompt", async () => {
     const dir = await createWizardProjectDir();
     readConfigMock.mockReturnValue(null);

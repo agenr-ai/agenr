@@ -18,6 +18,7 @@ export function estimateIngestCost(
   modelId: string,
   provider: AgenrProvider,
 ): CostEstimate {
+  const safeTotalBytes = Number.isFinite(totalBytes) && totalBytes > 0 ? totalBytes : 0;
   const bareModelId = modelId.includes("/")
     ? modelId.slice(modelId.indexOf("/") + 1)
     : modelId;
@@ -28,7 +29,7 @@ export function estimateIngestCost(
   const inputCostPerMillion = model?.cost?.input ?? 0;
   const outputCostPerMillion = model?.cost?.output ?? 0;
 
-  const inputTokens = Math.ceil(totalBytes / CHARS_PER_TOKEN);
+  const inputTokens = Math.ceil(safeTotalBytes / CHARS_PER_TOKEN);
   const outputTokens = Math.ceil(inputTokens * OUTPUT_TOKEN_RATIO);
 
   const inputCostUsd = (inputTokens / 1_000_000) * inputCostPerMillion;

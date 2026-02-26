@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { scanSessionFiles } from "./session-scanner.js";
 
 const tempDirs: string[] = [];
@@ -18,6 +18,7 @@ async function writeFileWithContent(filePath: string, content: string): Promise<
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
     if (!dir) {
@@ -118,5 +119,26 @@ describe("scanSessionFiles", () => {
 
     expect(result.totalFiles).toBe(2);
     expect([...result.allFiles].sort()).toEqual([nestedA, nestedB].sort());
+  });
+
+  it("scanSessionFiles skips files that vanish between readdir and stat", async () => {
+    const sessionsDir = await createTempDir();
+    const survivor = path.join(sessionsDir, "survivor.jsonl");
+    const vanished = path.join(sessionsDir, "vanished.jsonl");
+    await writeFileWithContent(survivor, "still-here");
+    await writeFileWithContent(vanished, "soon-gone");
+
+    const realStat = fs.stat.bind(fs);
+    vi.spyOn(fs, "stat").mockImplementation(async (filePath) => {
+      if (filePath === vanished) {
+        throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      }
+      return await realStat(filePath);
+    });
+
+    const result = await scanSessionFiles(sessionsDir);
+
+    expect(result.totalFiles).toBe(1);
+    expect(result.allFiles).toEqual([survivor]);
   });
 });
