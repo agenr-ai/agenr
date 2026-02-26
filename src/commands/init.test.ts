@@ -2013,7 +2013,7 @@ describe("runInitWizard", () => {
     );
   });
 
-  it("wizard skips dbPath write for shared DB", async () => {
+  it("wizard calls writeOpenClawPluginDbPath with undefined dbPath for shared DB", async () => {
     const dir = await createWizardProjectDir();
     const customDir = "/tmp/.openclaw-shared";
     const writeSpy = vi.spyOn(initWizardRuntime, "writeOpenClawPluginDbPath");
@@ -2030,7 +2030,10 @@ describe("runInitWizard", () => {
 
     await runInitWizard({ isInteractive: true, path: dir });
 
-    expect(writeSpy).not.toHaveBeenCalled();
+    expect(writeSpy).toHaveBeenCalledWith(
+      path.resolve(customDir),
+      undefined,
+    );
   });
 
   it("wizard offers re-ingest when model changed", async () => {

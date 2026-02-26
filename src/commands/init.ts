@@ -787,7 +787,7 @@ async function installOpenClawPlugin(
 
 async function writeOpenClawPluginDbPath(
   openclawConfigDir: string,
-  dbPath: string,
+  dbPath: string | undefined,
 ): Promise<void> {
   const configPath = path.join(openclawConfigDir, "openclaw.json");
   let config: JsonRecord = {};
@@ -825,7 +825,9 @@ async function writeOpenClawPluginDbPath(
     agenr.config = {};
   }
   const agenrConfig = agenr.config as JsonRecord;
-  agenrConfig.dbPath = dbPath;
+  if (dbPath) {
+    agenrConfig.dbPath = dbPath;
+  }
 
   await fs.mkdir(openclawConfigDir, { recursive: true });
   await fs.writeFile(
@@ -1417,14 +1419,16 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
     spinner.stop(pluginResult.message);
     pluginStatus = pluginResult.message;
 
-    if (pluginResult.success && selectedOpenclawDbPath) {
+    if (pluginResult.success) {
       await initWizardRuntime.writeOpenClawPluginDbPath(
         selectedPlatform.configDir,
         selectedOpenclawDbPath,
       );
-      clack.log.info(
-        `Configured isolated database: ${formatPathForDisplay(selectedOpenclawDbPath)}`,
-      );
+      if (selectedOpenclawDbPath) {
+        clack.log.info(
+          `Configured isolated database: ${formatPathForDisplay(selectedOpenclawDbPath)}`,
+        );
+      }
     }
   }
 
