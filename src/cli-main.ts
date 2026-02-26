@@ -758,12 +758,13 @@ export function createProgram(): Command {
 
   program
     .command("benchmark")
-    .description("Run extraction session benchmarks or claim-extraction benchmarks")
+    .description("Run extraction session benchmarks, claim-extraction benchmarks, or contradiction judge benchmarks")
     .option("--model <model>", "LLM model to use")
     .option("--provider <name>", "LLM provider: anthropic, openai, openai-codex")
     .option("--claims", "Run claim extraction benchmark fixtures", false)
-    .option("--save", "Save claim benchmark baseline to ~/.agenr/claim-benchmark-baseline.json", false)
-    .option("--compare", "Compare claim benchmark run against saved baseline", false)
+    .option("--judge", "Run contradiction judge benchmark fixtures", false)
+    .option("--save", "Save benchmark baseline (~/.agenr/claim-benchmark-baseline.json or ~/.agenr/judge-benchmark-baseline.json)", false)
+    .option("--compare", "Compare claim/judge benchmark run against saved baseline", false)
     .option("--log-dir <path>", "Write extraction debug logs to directory")
     .option("--session <name>", "Run only one benchmark session")
     .option("--runs <n>", "Number of runs for averaging", parseIntOption, 1)

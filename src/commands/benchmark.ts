@@ -9,10 +9,14 @@ import { createLlmClient } from "../llm/client.js";
 import { APP_VERSION } from "../version.js";
 import { scoreSession } from "../benchmark/scorer.js";
 import { extractClaim } from "../db/claim-extraction.js";
+import { classifyConflict } from "../db/contradiction.js";
 import claimFixturesData from "../benchmark/claim-fixtures.json";
+import judgeFixturesData from "../benchmark/judge-fixtures.json";
 import { scoreClaimFixture, summarizeClaimBenchmark } from "../benchmark/claim-scorer.js";
+import { scoreJudgeFixture, summarizeJudgeBenchmark } from "../benchmark/judge-scorer.js";
 import type { BenchmarkResult, BenchmarkRubric, SessionRunResult } from "../benchmark/types.js";
 import type { ClaimBenchmarkResult, ClaimBenchmarkSummary, ClaimFixture } from "../benchmark/claim-scorer.js";
+import type { JudgeBenchmarkResult, JudgeBenchmarkSummary, JudgeFixture } from "../benchmark/judge-scorer.js";
 import type { ExtractChunksResult } from "../extractor.js";
 import type { KnowledgeEntry } from "../types.js";
 
@@ -21,10 +25,15 @@ const DEFAULT_RUNS = 1;
 const BENCHMARK_TEMPERATURE = 0;
 const DEFAULT_CLAIM_BENCHMARK_MODEL = "gpt-4.1-nano";
 const DEFAULT_CLAIM_BENCHMARK_PROVIDER = "openai";
+const DEFAULT_JUDGE_BENCHMARK_MODEL = "gpt-4.1-nano";
+const DEFAULT_JUDGE_BENCHMARK_PROVIDER = "openai";
 const CLAIM_BASELINE_FILENAME = "claim-benchmark-baseline.json";
+const JUDGE_BASELINE_FILENAME = "judge-benchmark-baseline.json";
 const CLAIM_BENCHMARK_COST_PER_FIXTURE_USD = 0.00012;
+const JUDGE_BENCHMARK_COST_PER_FIXTURE_USD = 0.00012;
 
 const CLAIM_FIXTURES = claimFixturesData as ClaimFixture[];
+const JUDGE_FIXTURES = judgeFixturesData as JudgeFixture[];
 
 interface BenchmarkSessionFixture {
   session: string;
@@ -44,6 +53,7 @@ export interface BenchmarkCommandOptions {
   userOnly?: boolean;
   context?: string;
   claims?: boolean;
+  judge?: boolean;
   save?: boolean;
   compare?: boolean;
 }
@@ -62,6 +72,12 @@ interface ClaimBenchmarkComparison {
   deltaAverageScore: number;
 }
 
+interface JudgeBenchmarkComparison {
+  path: string;
+  deltaPassed: number;
+  deltaAverageScore: number;
+}
+
 export interface ClaimBenchmarkRunResult {
   mode: "claims";
   model: string;
@@ -71,7 +87,18 @@ export interface ClaimBenchmarkRunResult {
   comparedToBaseline?: ClaimBenchmarkComparison;
 }
 
-export type BenchmarkCommandResult = BenchmarkResult | ClaimBenchmarkRunResult;
+export interface JudgeBenchmarkRunResult {
+  mode: "judge";
+  model: string;
+  runs: number;
+  summary: JudgeBenchmarkSummary;
+  results: JudgeBenchmarkResult[];
+  baselinePath: string;
+  runResults?: JudgeBenchmarkResult[][];
+  comparedToBaseline?: JudgeBenchmarkComparison;
+}
+
+export type BenchmarkCommandResult = BenchmarkResult | ClaimBenchmarkRunResult | JudgeBenchmarkRunResult;
 
 function parsePositiveInt(value: number | string | undefined, fallback: number, label: string): number {
   if (value === undefined || value === null || String(value).trim().length === 0) {
@@ -372,11 +399,23 @@ function resolveClaimBaselinePath(): string {
   return path.join(os.homedir(), ".agenr", CLAIM_BASELINE_FILENAME);
 }
 
+function resolveJudgeBaselinePath(): string {
+  return path.join(os.homedir(), ".agenr", JUDGE_BASELINE_FILENAME);
+}
+
 function estimateClaimBenchmarkCost(fixtures: number): number {
   return fixtures * CLAIM_BENCHMARK_COST_PER_FIXTURE_USD;
 }
 
+function estimateJudgeBenchmarkCost(fixtures: number): number {
+  return fixtures * JUDGE_BENCHMARK_COST_PER_FIXTURE_USD;
+}
+
 function formatClaimScore(value: number): string {
+  return value.toFixed(2);
+}
+
+function formatJudgeScore(value: number): string {
   return value.toFixed(2);
 }
 
@@ -432,6 +471,179 @@ function renderClaimBenchmarkComparison(comparison: ClaimBenchmarkComparison): v
 
   process.stdout.write(
     `Comparison vs baseline (${comparison.path}): passed ${passedDeltaLabel}, avg score ${scoreDeltaLabel}\n`,
+  );
+}
+
+function renderJudgeBenchmarkTable(summary: JudgeBenchmarkSummary, results: JudgeBenchmarkResult[]): void {
+  const idWidth = Math.max("ID".length, ...results.map((result) => result.fixtureId.length));
+  const lines: string[] = [];
+
+  lines.push(`Contradiction Judge Benchmark (model: ${summary.model})`);
+  lines.push("------------------------------------------------");
+  lines.push(`${"ID".padEnd(idWidth)}  Relation  Conf    Overall  Pass`);
+
+  for (const result of results) {
+    lines.push(
+      `${result.fixtureId.padEnd(idWidth)}  ` +
+        `${formatJudgeScore(result.relationMatch).padEnd(8)}  ` +
+        `${formatJudgeScore(result.confidenceOk).padEnd(6)}  ` +
+        `${formatJudgeScore(result.overall).padEnd(7)}  ` +
+        `${result.passed ? "yes" : "no"}`,
+    );
+  }
+
+  const passRate = summary.totalFixtures > 0 ? (summary.passed / summary.totalFixtures) * 100 : 0;
+  const avgLatencySeconds = summary.avgLatencyMs / 1000;
+  lines.push("------------------------------------------------");
+  lines.push(
+    `Summary: ${summary.passed}/${summary.totalFixtures} passed (${passRate.toFixed(1)}%) | ` +
+      `avg score: ${summary.averageScore.toFixed(2)} | ` +
+      `${avgLatencySeconds.toFixed(1)}s avg | ` +
+      `~$${summary.estimatedCostUsd.toFixed(3)} total`,
+  );
+
+  process.stdout.write(`${lines.join("\n")}\n`);
+}
+
+function renderJudgeBenchmarkComparison(comparison: JudgeBenchmarkComparison): void {
+  const passedDeltaLabel = comparison.deltaPassed > 0 ? `+${comparison.deltaPassed}` : `${comparison.deltaPassed}`;
+  const scoreDeltaLabel =
+    comparison.deltaAverageScore > 0
+      ? `+${comparison.deltaAverageScore.toFixed(3)}`
+      : comparison.deltaAverageScore.toFixed(3);
+
+  process.stdout.write(
+    `Comparison vs baseline (${comparison.path}): passed ${passedDeltaLabel}, avg score ${scoreDeltaLabel}\n`,
+  );
+}
+
+function renderJudgeBenchmarkVerbose(
+  fixtures: JudgeFixture[],
+  aggregated: JudgeBenchmarkResult[],
+  runResults: JudgeBenchmarkResult[][],
+): void {
+  const byFixture = new Map<string, JudgeBenchmarkResult[]>();
+  for (const run of runResults) {
+    for (const result of run) {
+      const bucket = byFixture.get(result.fixtureId);
+      if (bucket) {
+        bucket.push(result);
+      } else {
+        byFixture.set(result.fixtureId, [result]);
+      }
+    }
+  }
+
+  process.stdout.write("\nDetails\n=======\n");
+  for (const fixture of fixtures) {
+    const aggregate = aggregated.find((result) => result.fixtureId === fixture.id);
+    if (!aggregate) {
+      continue;
+    }
+    const runs = byFixture.get(fixture.id) ?? [];
+
+    process.stdout.write(`\n${fixture.id}\n`);
+    process.stdout.write(
+      `Expected: ${fixture.expected.relation}` +
+        `${fixture.expected.altRelation ? ` (alt: ${fixture.expected.altRelation})` : ""}` +
+        ` minConf=${fixture.expected.minConfidence ?? 0.7}\n`,
+    );
+    process.stdout.write(
+      `Averages: relation=${formatJudgeScore(aggregate.relationMatch)} conf=${formatJudgeScore(aggregate.confidenceOk)} overall=${formatJudgeScore(aggregate.overall)} pass=${aggregate.passed}\n`,
+    );
+
+    if (aggregate.extracted) {
+      process.stdout.write(
+        `Last extracted: relation=${aggregate.extracted.relation} confidence=${formatJudgeScore(aggregate.extracted.confidence)} explanation=${aggregate.extracted.explanation}\n`,
+      );
+    } else if (aggregate.error) {
+      process.stdout.write(`Last extracted: error=${aggregate.error}\n`);
+    }
+
+    if (runs.length > 1) {
+      const runLabel = runs
+        .map((result, index) => `#${index + 1}:${formatJudgeScore(result.overall)}${result.passed ? "Y" : "N"}`)
+        .join(" ");
+      process.stdout.write(`Runs: ${runLabel}\n`);
+    }
+  }
+}
+
+function normalizeRelation(value: string | undefined): string {
+  return (value ?? "").trim().toLowerCase();
+}
+
+function aggregateJudgeRunResults(
+  fixtures: JudgeFixture[],
+  runResults: JudgeBenchmarkResult[][],
+): JudgeBenchmarkResult[] {
+  const byFixture = new Map<string, JudgeBenchmarkResult[]>();
+
+  for (const run of runResults) {
+    for (const result of run) {
+      const bucket = byFixture.get(result.fixtureId);
+      if (bucket) {
+        bucket.push(result);
+      } else {
+        byFixture.set(result.fixtureId, [result]);
+      }
+    }
+  }
+
+  const aggregated: JudgeBenchmarkResult[] = [];
+  for (const fixture of fixtures) {
+    const fixtureRuns = byFixture.get(fixture.id) ?? [];
+    if (fixtureRuns.length === 0) {
+      aggregated.push({
+        fixtureId: fixture.id,
+        passed: false,
+        relationMatch: 0,
+        confidenceOk: 0,
+        overall: 0,
+        extracted: null,
+        expected: fixture.expected,
+        error: "No run results",
+      });
+      continue;
+    }
+
+    const relationMatch = mean(fixtureRuns.map((result) => result.relationMatch));
+    const confidenceOk = mean(fixtureRuns.map((result) => result.confidenceOk));
+    const overall = relationMatch * 0.8 + confidenceOk * 0.2;
+    const latest = fixtureRuns[fixtureRuns.length - 1];
+    const errors = fixtureRuns.filter((result) => typeof result.error === "string");
+    const errorLabel =
+      errors.length > 0 ? `${errors.length}/${fixtureRuns.length} runs returned errors` : undefined;
+
+    aggregated.push({
+      fixtureId: fixture.id,
+      passed: overall >= 0.7,
+      relationMatch,
+      confidenceOk,
+      overall,
+      extracted: latest?.extracted ?? null,
+      expected: fixture.expected,
+      ...(errorLabel ? { error: errorLabel } : {}),
+    });
+  }
+
+  return aggregated;
+}
+
+function isLlmErrorJudgeResult(
+  extracted: {
+    relation: string;
+    confidence: number;
+    explanation: string;
+  } | null,
+): boolean {
+  if (!extracted) {
+    return false;
+  }
+  return (
+    normalizeRelation(extracted.relation) === "unrelated" &&
+    extracted.confidence === 0 &&
+    extracted.explanation.trim() === "LLM error"
   );
 }
 
@@ -635,6 +847,145 @@ async function runClaimBenchmarkCommand(
   };
 }
 
+async function runJudgeBenchmarkCommand(
+  options: BenchmarkCommandOptions,
+  deps: BenchmarkCommandDeps,
+): Promise<{ exitCode: number; result: JudgeBenchmarkRunResult }> {
+  const runs = parsePositiveInt(options.runs, DEFAULT_RUNS, "--runs");
+  const model = options.model?.trim() || DEFAULT_JUDGE_BENCHMARK_MODEL;
+  const provider = options.provider?.trim() || DEFAULT_JUDGE_BENCHMARK_PROVIDER;
+  const baselinePath = resolveJudgeBaselinePath();
+
+  const client = deps.createLlmClientFn({
+    provider,
+    model,
+    env: process.env,
+  });
+
+  let totalLatencyMs = 0;
+  const perRunResults: JudgeBenchmarkResult[][] = [];
+  for (let runIndex = 0; runIndex < runs; runIndex += 1) {
+    const runResults: JudgeBenchmarkResult[] = [];
+    for (const fixture of JUDGE_FIXTURES) {
+      const startedAt = Date.now();
+      let extracted: {
+        relation: string;
+        confidence: number;
+        explanation: string;
+      } | null = null;
+      let error: string | undefined;
+
+      try {
+        const response = await classifyConflict(
+          client,
+          fixture.newEntry,
+          fixture.existing,
+          model,
+        );
+        if (isLlmErrorJudgeResult(response)) {
+          extracted = null;
+          error = "LLM error";
+        } else {
+          extracted = {
+            relation: response.relation,
+            confidence: response.confidence,
+            explanation: response.explanation,
+          };
+        }
+      } catch (runError) {
+        extracted = null;
+        error = runError instanceof Error ? runError.message : String(runError);
+      }
+
+      const latencyMs = Date.now() - startedAt;
+      totalLatencyMs += latencyMs;
+      runResults.push(scoreJudgeFixture(fixture, extracted, error));
+    }
+    perRunResults.push(runResults);
+  }
+
+  const aggregatedResults = aggregateJudgeRunResults(JUDGE_FIXTURES, perRunResults);
+  const summary = summarizeJudgeBenchmark(
+    client.resolvedModel.modelId,
+    aggregatedResults,
+    totalLatencyMs,
+    estimateJudgeBenchmarkCost(JUDGE_FIXTURES.length * runs),
+    JUDGE_FIXTURES.length * runs,
+  );
+
+  let comparison: JudgeBenchmarkComparison | undefined;
+  if (options.compare) {
+    const baselineRaw = await deps.readFileFn(baselinePath, "utf8");
+    const parsed = JSON.parse(baselineRaw) as { summary?: { passed?: number; averageScore?: number } };
+    const baselineSummary = parsed.summary;
+    if (!baselineSummary) {
+      throw new Error(`Baseline file is missing summary data: ${baselinePath}`);
+    }
+
+    const baselinePassed =
+      typeof baselineSummary.passed === "number" && Number.isFinite(baselineSummary.passed)
+        ? baselineSummary.passed
+        : 0;
+    const baselineAverage =
+      typeof baselineSummary.averageScore === "number" && Number.isFinite(baselineSummary.averageScore)
+        ? baselineSummary.averageScore
+        : 0;
+
+    comparison = {
+      path: baselinePath,
+      deltaPassed: summary.passed - baselinePassed,
+      deltaAverageScore: summary.averageScore - baselineAverage,
+    };
+  }
+
+  if (options.save) {
+    await fs.mkdir(path.dirname(baselinePath), { recursive: true });
+    await fs.writeFile(
+      baselinePath,
+      `${JSON.stringify(
+        {
+          savedAt: new Date().toISOString(),
+          runs,
+          model: summary.model,
+          summary,
+          results: aggregatedResults,
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+  }
+
+  const result: JudgeBenchmarkRunResult = {
+    mode: "judge",
+    model: summary.model,
+    runs,
+    summary,
+    results: aggregatedResults,
+    baselinePath,
+    ...(runs > 1 ? { runResults: perRunResults } : {}),
+    ...(comparison ? { comparedToBaseline: comparison } : {}),
+  };
+
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  } else {
+    renderJudgeBenchmarkTable(summary, aggregatedResults);
+    if (comparison) {
+      renderJudgeBenchmarkComparison(comparison);
+    }
+    if (options.verbose) {
+      renderJudgeBenchmarkVerbose(JUDGE_FIXTURES, aggregatedResults, perRunResults);
+    }
+  }
+
+  return {
+    exitCode: summary.failed === 0 ? 0 : 1,
+    result,
+  };
+}
+
 export async function runBenchmarkCommand(
   options: BenchmarkCommandOptions,
   deps?: Partial<BenchmarkCommandDeps>,
@@ -646,6 +997,14 @@ export async function runBenchmarkCommand(
     extractKnowledgeFromChunksFn: deps?.extractKnowledgeFromChunksFn ?? extractKnowledgeFromChunks,
     createLlmClientFn: deps?.createLlmClientFn ?? createLlmClient,
   };
+
+  if (options.claims && options.judge) {
+    throw new Error("Use either --claims or --judge, not both.");
+  }
+
+  if (options.judge) {
+    return runJudgeBenchmarkCommand(options, resolvedDeps);
+  }
 
   if (options.claims) {
     return runClaimBenchmarkCommand(options, resolvedDeps);
