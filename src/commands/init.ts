@@ -5,7 +5,7 @@ import path from "node:path";
 import * as clack from "@clack/prompts";
 import { describeAuth, readConfig, resolveConfigPath, resolveProjectFromGlobalConfig, writeConfig } from "../config.js";
 import { runConsolidateCommand } from "./consolidate.js";
-import { runDaemonInstallCommand, runDaemonStopCommand } from "./daemon.js";
+import { runWatcherInstallCommand, runWatcherStopCommand } from "./watcher.js";
 import { runDbResetCommand } from "./db.js";
 import { runIngestCommand, type IngestCommandResult } from "./ingest.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
@@ -1062,8 +1062,8 @@ export const initWizardRuntime = {
   scanSessionFiles,
   runIngestCommand,
   runConsolidateCommand,
-  runDaemonInstallCommand,
-  runDaemonStopCommand,
+  runWatcherInstallCommand,
+  runWatcherStopCommand,
   runDbResetCommand,
 };
 
@@ -1592,7 +1592,7 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
       if (process.platform === "darwin") {
         spinner.start("Stopping watcher...");
         try {
-          await initWizardRuntime.runDaemonStopCommand({});
+          await initWizardRuntime.runWatcherStopCommand({});
         } catch {
           // Daemon might not be running.
         }
@@ -1771,14 +1771,14 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
       spinner.start("Installing watcher daemon...");
 
       try {
-        const daemonResult = await initWizardRuntime.runDaemonInstallCommand({
+        const watcherResult = await initWizardRuntime.runWatcherInstallCommand({
           force: true,
           interval: 120,
           dir: selectedPlatform.sessionsDir,
           platform: selectedPlatform.id,
         });
 
-        if (daemonResult.exitCode === 0) {
+        if (watcherResult.exitCode === 0) {
           spinner.stop("Watcher daemon installed and running (120s interval)");
           watcherStatus = "Running (120s interval)";
         } else {
