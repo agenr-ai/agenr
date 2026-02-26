@@ -50,6 +50,7 @@
     },
     "expected": {
       "relation": "supersedes",
+      "altRelation": "contradicts",
       "minConfidence": 0.7
     }
   },
@@ -68,6 +69,7 @@
     },
     "expected": {
       "relation": "supersedes",
+      "altRelation": "contradicts",
       "minConfidence": 0.7
     }
   },
@@ -340,6 +342,7 @@
     },
     "expected": {
       "relation": "coexists",
+      "altRelation": "supersedes",
       "minConfidence": 0.65
     }
   },
@@ -358,6 +361,7 @@
     },
     "expected": {
       "relation": "unrelated",
+      "altRelation": "coexists",
       "minConfidence": 0.7
     }
   }
