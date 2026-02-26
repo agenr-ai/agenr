@@ -4,32 +4,62 @@ This document describes how agenr converts raw conversation text into durable, q
 
 ---
 
+## Table of Contents
+
+- [Entry Points](#entry-points)
+- [System Overview](#system-overview)
+- [Source Directory Structure](#source-directory-structure)
+- [Data Flow](#data-flow)
+- [Config System](#config-system)
+- [Storage Layer](#storage-layer)
+- [Entry Model](#entry-model)
+- [Embeddings](#embeddings)
+- [Platform Adapter System](#platform-adapter-system)
+- [Deduplication Strategy (Store Pipeline)](#deduplication-strategy-store-pipeline)
+- [Recall Scoring Model](#recall-scoring-model)
+- [Session-Start Context Injection](#session-start-context-injection)
+- [Cross-Session Handoff](#cross-session-handoff)
+- [Consolidation Architecture](#consolidation-architecture)
+- [Watch System](#watch-system)
+- [Watcher Management (CLI)](#watcher-management-cli)
+- [OpenClaw Plugin Architecture](#openclaw-plugin-architecture)
+- [Signal/Notification System](#signalnotification-system)
+- [Init Wizard](#init-wizard)
+- [CLI Commands](#cli-commands)
+- [MCP Server Architecture](#mcp-server-architecture)
+- [Auth and Model Resolution](#auth-and-model-resolution)
+- [Retirement System](#retirement-system)
+- [Benchmark and Eval](#benchmark-and-eval)
+
+---
+
 ## Entry Points
 
-There are three independent entry points into agenr, plus one host-level integration:
+There are four independent entry points into agenr:
 
-**CLI commands** (`src/commands/`)
-The primary interface for manual operation. Commands include `store`, `recall`, `ingest`, `consolidate`, and `retire`. Each command initializes the DB, runs its pipeline, and exits. CLI is also used for daemon management (`daemon install/start/stop/...`).
+**CLI commands** (`src/commands/`, `src/cli-main.ts`)
+The primary interface for manual operation. Commands include `store`, `recall`, `ingest`, `consolidate`, `retire`, `init`, `health`, `context`, `eval`, `todo`, `db`, and `watcher`. Each command initializes the DB, runs its pipeline, and exits.
 
-**Watch daemon** (`src/watch/watcher.ts`, `src/commands/daemon.ts`)
-A background process that monitors session transcript files continuously. This is the primary ingestion mode in production deployments. It detects new content by byte offset (not re-parsing), extracts knowledge, and stores it incrementally. Managed via macOS launchd. See [Watch System and Daemon](#watch-system-and-daemon).
+**Watch system** (`src/watch/watcher.ts`, `src/commands/watch.ts`)
+A background process that monitors session transcript files continuously. This is the primary ingestion mode in production deployments. It detects new content by byte offset (not re-parsing), extracts knowledge, and stores it incrementally. Managed via macOS launchd through the `agenr watcher` CLI.
 
 **MCP server** (`src/mcp/server.ts`)
 A stdio JSON-RPC 2.0 server that exposes four tools (`agenr_recall`, `agenr_store`, `agenr_extract`, `agenr_retire`) to any MCP-compatible AI assistant. The server is stateless per call; DB initialization is lazy.
 
 **OpenClaw plugin** (`src/openclaw-plugin/index.ts`)
-A host-level integration that hooks into the OpenClaw agent framework. Before each session prompt is built, the plugin injects session-start recall results and any pending signals into the agent context. It also registers the four MCP tools directly into OpenClaw. See [OpenClaw Plugin Architecture](#openclaw-plugin-architecture).
+A host-level integration that hooks into the OpenClaw agent framework. Before each session prompt is built, the plugin injects three-phase context (recent turns, browse recall, semantic recall) and any pending signals. It also handles cross-session handoff via `before_reset` and registers the four MCP tools directly into OpenClaw. See [OpenClaw Plugin Architecture](#openclaw-plugin-architecture).
 
 ---
 
 ## System Overview
 
-```text
+```
   +------------------+  +------------------+  +------------------+  +-------------------+
-  |    CLI Commands  |  |    MCP Server    |  |   Watch Daemon   |  | OpenClaw Plugin   |
+  |   CLI Commands   |  |   MCP Server     |  |  Watch System    |  |  OpenClaw Plugin  |
   | store/recall/    |  | stdio JSON-RPC   |  | launchd, fs-     |  | before_prompt_    |
   | ingest/retire/   |  | 4 tools exposed  |  | events + polling |  | build hook        |
-  | consolidate      |  |                  |  | incremental read |  | recall + signals  |
+  | consolidate/init |  |                  |  | incremental read |  | 3-phase recall    |
+  | health/context.. |  |                  |  |                  |  | handoff system    |
   +--------+---------+  +--------+---------+  +--------+---------+  +---------+---------+
            |                     |                     |                       |
            +---------------------+---------------------+-----------------------+
@@ -38,7 +68,8 @@ A host-level integration that hooks into the OpenClaw agent framework. Before ea
               +----------------------------+----------------------------+
               |           Platform Adapter / Input Parser               |
               |  detectAdapter() -> SourceAdapter.parse()               |
-              |  openclaw / claude-code / codex / plaud / text / ...    |
+              |  openclaw / claude-code / codex / plaud / text /        |
+              |  cursor / vscode-copilot                                |
               +----------------------------+----------------------------+
                                            |
                                            v
@@ -63,24 +94,151 @@ A host-level integration that hooks into the OpenClaw agent framework. Before ea
                                           v
                        +------------------+-------------------+
                        |  SQLite/libsql (local file DB)       |
-                       |  entries / tags / relations / FTS /  |
-                       |  vector / signal_watermarks /        |
-                       |  ingest_log / entry_sources          |
+                       |  entries / tags / relations / FTS /   |
+                       |  vector / signal_watermarks /         |
+                       |  ingest_log / entry_sources           |
                        +------------------+-------------------+
                                           |
-                                          v
-                       +------------------+-------------------+
-                       |  Recall Pipeline                     |
-                       |  vector top-k -> filter -> score ->  |
-                       |  rank (src/db/recall.ts)             |
-                       +------------------+-------------------+
-                                          |
-                                          v
-                       +------------------+-------------------+
-                       |  Consolidation                       |
-                       |  Tier 1: rules / expiry / forgetting |
-                       |  Tier 2: LLM cluster + merge         |
-                       +--------------------------------------+
+                  +-----------------------+-----------------------+
+                  |                                               |
+                  v                                               v
+  +---------------+----------------+            +----------------+---------------+
+  |  Recall Pipeline               |            |  Consolidation                 |
+  |  vector top-k -> filter ->     |            |  Tier 1: rules / expiry        |
+  |  score -> rank                 |            |  Tier 2: LLM cluster + merge   |
+  |  (src/db/recall.ts)            |            |  (src/consolidate/)            |
+  +--------------------------------+            +--------------------------------+
+```
+
+---
+
+## Source Directory Structure
+
+```
+src/
+  cli.ts                        # Process-level entry, warning suppression
+  cli-main.ts                   # Commander program definition, all subcommands
+  config.ts                     # Config read/write, auth method definitions
+  extractor.ts                  # LLM extraction (chunked + whole-file dispatch)
+  parser.ts                     # Transcript chunking (chunkMessages)
+  types.ts                      # Core types, enums (KnowledgeEntry, etc.)
+  schema.ts                     # Zod/Typebox validation schemas
+  platform.ts                   # Platform normalization
+  project.ts                    # Project filter parsing
+  setup.ts                      # Interactive setup wizard (auth, model, embedding)
+  output.ts                     # Output formatting utilities
+  ui.ts                         # Terminal UI helpers (clack wrappers)
+  version.ts                    # APP_VERSION constant
+  dedup.ts                      # Standalone dedup utilities
+  shutdown.ts                   # Graceful shutdown handler
+  auth-status.ts                # Auth probe + connection test
+
+  adapters/
+    types.ts                    # SourceAdapter interface, ParseResult, Message
+    registry.ts                 # detectAdapter() - selects adapter by file/content
+    jsonl-base.ts               # Shared JSONL parsing logic
+    jsonl-registry.ts           # JSONL format sniffing
+    jsonl-generic.ts            # Generic JSONL fallback
+    openclaw.ts                 # OpenClaw .jsonl adapter
+    claude-code.ts              # Claude Code .jsonl adapter
+    codex.ts                    # Codex .jsonl adapter
+    cursor.ts                   # Cursor IDE .vscdb adapter
+    vscode-copilot.ts           # VS Code Copilot .vscdb adapter
+    plaud.ts                    # Plaud voice memo .md adapter
+    text.ts                     # Plain text fallback adapter
+
+  benchmark/
+    scorer.ts                   # Benchmark scoring logic
+    types.ts                    # Benchmark types
+
+  cli/
+    option-parsers.ts           # CLI option parsing helpers
+
+  commands/
+    shared.ts                   # Shared command utilities (DB path resolution)
+    benchmark.ts                # `agenr benchmark` - recall quality benchmarks
+    consolidate.ts              # `agenr consolidate` - batch cleanup pipeline
+    context.ts                  # `agenr context` - generate CONTEXT.md snapshot
+    db.ts                       # `agenr db` - stats/export/check/reset/rebuild
+    eval.ts                     # `agenr eval` - recall evaluation + baselines
+    health.ts                   # `agenr health` - DB health + forgetting stats
+    ingest.ts                   # `agenr ingest` - file ingestion pipeline
+    init.ts                     # `agenr init` - project init wizard
+    mcp.ts                      # `agenr mcp` - start MCP stdio server
+    recall.ts                   # `agenr recall` - semantic search CLI
+    reset.ts                    # `agenr reset` - DB reset with backup
+    retire.ts                   # `agenr retire` - interactive entry retirement
+    store.ts                    # `agenr store` - store single entry
+    todo.ts                     # `agenr todo` - interactive todo management
+    watch.ts                    # `agenr watch` - foreground watcher
+    watcher.ts                  # `agenr watcher` - launchd service management
+
+  consolidate/
+    orchestrate.ts              # Two-tier consolidation orchestrator
+    rules.ts                    # Tier 1: rule-based expiry + forgetting
+    cluster.ts                  # Tier 2: union-find semantic clustering
+    merge.ts                    # Tier 2: LLM-assisted canonical merge
+    verify.ts                   # Post-merge semantic verification
+    util.ts                     # Shared consolidation utilities
+
+  db/
+    client.ts                   # DB connection, initDb, migrations, backup
+    schema.ts                   # Table DDL, migration steps, initSchema
+    store.ts                    # storeEntries() with online dedup
+    recall.ts                   # recall() with vector search + scoring
+    session-start.ts            # Session-start recall (budget-aware, categorized)
+    relations.ts                # Inter-entry relation management
+    retirements.ts              # Retirement DB operations
+    signals.ts                  # Signal watermark + fetch
+    stored-entry.ts             # StoredEntry mapping from DB rows
+    vector-index.ts             # Vector index rebuild/reindex
+    lockfile.ts                 # File-based locking
+    minhash.ts                  # MinHash signatures for bulk dedup
+
+  embeddings/
+    cache.ts                    # Embedding cache layer
+    client.ts                   # OpenAI embedding API client
+
+  ingest/
+    whole-file.ts               # Whole-file extraction mode logic
+    write-queue.ts              # Batched write queue for ingest
+
+  llm/
+    client.ts                   # LLM client factory (Anthropic/OpenAI)
+    credentials.ts              # Credential discovery (env, config, keychain)
+    models.ts                   # Model registry, alias resolution
+    stream.ts                   # Streaming LLM response handler
+
+  mcp/
+    server.ts                   # MCP stdio JSON-RPC server
+
+  openclaw-plugin/
+    index.ts                    # Plugin entry: hooks, lifecycle, handoff
+    recall.ts                   # Recall subprocess spawning for plugin
+    session-query.ts            # Session file parsing (turns, seeds, metadata)
+    signals.ts                  # Signal checking for plugin
+    tools.ts                    # Tool execution (store/recall/retire/extract)
+    types.ts                    # Plugin-specific types
+
+  utils/
+    entry-utils.ts              # Entry utility functions
+    string.ts                   # String utilities
+    time.ts                     # Time/date utilities
+
+  watch/
+    watcher.ts                  # Core watcher loop (fs events + polling)
+    health.ts                   # Health file write/read/staleness check
+    pid.ts                      # PID file management
+    state.ts                    # Watch state persistence (per-file offsets)
+    platform-defaults.ts        # Default watch directories per platform
+    session-resolver.ts         # SessionResolver interface
+    resolvers/
+      index.ts                  # Platform detection + resolver dispatch
+      auto.ts                   # Auto-detection resolver
+      claude-code.ts            # Claude Code session resolver
+      codex.ts                  # Codex session resolver
+      openclaw.ts               # OpenClaw session resolver
+      mtime.ts                  # Fallback: sort by mtime
 ```
 
 ---
@@ -89,32 +247,41 @@ A host-level integration that hooks into the OpenClaw agent framework. Before ea
 
 Source: `src/commands/`, `src/extractor.ts`, `src/db/store.ts`, `src/db/recall.ts`
 
-1. **Text ingestion**
-   Input comes from transcript files (`.jsonl`, `.md`, `.txt`) via the platform adapter system or directly from CLI/MCP arguments. Adapters normalize heterogeneous source formats into a uniform message list before any further processing, so the rest of the pipeline never needs to know the source format.
+```
+Session files (.jsonl, .md, .txt, .vscdb)
+        |
+        v
+  detectAdapter() selects SourceAdapter
+        |
+        v
+  adapter.parse() -> ParseResult { messages[], metadata }
+        |
+        v
+  extractKnowledgeFromChunks() or whole-file extraction
+        |  (LLM call: structured output -> KnowledgeEntry[])
+        v
+  Embedding generation (text-embedding-3-small, 1024 dims)
+        |
+        v
+  storeEntries() - online dedup (content hash -> vector -> LLM)
+        |
+        v
+  SQLite/libsql (entries + tags + relations + vectors)
+        |
+        +---> recall() - vector top-k -> filter -> score -> rank
+        |
+        +---> consolidate() - Tier 1 rules, Tier 2 LLM cluster+merge
+```
 
-2. **LLM extraction**
-   `extractKnowledgeFromChunks()` (`src/extractor.ts`) sends transcript text to the configured LLM and receives back `KnowledgeEntry[]`. Two extraction paths exist:
+### Extraction Modes
 
-   - **Whole-file mode** (default `auto`): when a transcript fits within the model context window, the full session is sent as a single LLM call. Text is reconstructed from the parsed message list via `renderTranscriptLine()` to avoid chunk-overlap duplication. The model sees the complete conversation, enabling correct TODO-completion detection and coherent multi-part entries. Pre-fetch and the post-extraction LLM dedup pass are both skipped. Whole-file output token budget is resolved per model, and high entry counts only emit a warning (threshold 500) instead of truncating entries. Retries up to 3 times with exponential backoff before falling back to chunked. Helpers live in `src/ingest/whole-file.ts`.
+Two extraction paths exist:
 
-   - **Chunked mode** (`--chunk` flag or when the file exceeds the context window): the transcript is split into ~3K-token chunks with 1,200-character overlap via `chunkMessages()` in `src/parser.ts`. Chunks are extracted in parallel up to `llmConcurrency`, then a post-extraction LLM dedup pass merges near-duplicates across chunk boundaries.
+- **Whole-file mode** (default `auto`): when a transcript fits within the model context window, the full session is sent as a single LLM call. Text is reconstructed from the parsed message list via `renderTranscriptLine()` to avoid chunk-overlap duplication. Pre-fetch and the post-extraction LLM dedup pass are both skipped. Retries up to 3 times with exponential backoff before falling back to chunked. Helpers live in `src/ingest/whole-file.ts`.
 
-   Mode is auto-detected per file against a model context window registry in `src/ingest/whole-file.ts`. Unknown models always fall back to chunked. Watch mode always uses chunked (whole-file would re-extract the full file on every append event). CLI flags `--whole-file` and `--chunk` override auto-detect; they are mutually exclusive.
+- **Chunked mode** (`--chunk` flag or when the file exceeds the context window): the transcript is split into ~3K-token chunks with 1,200-character overlap via `chunkMessages()` in `src/parser.ts`. Chunks are extracted in parallel up to `llmConcurrency`, then a post-extraction LLM dedup pass merges near-duplicates across chunk boundaries.
 
-3. **Structured entry normalization**
-   Types and enums from `src/types.ts` are enforced at this stage. Normalization catches out-of-range importance values, unknown types, and missing required fields before the entry reaches storage, preventing corrupt records from entering the DB.
-
-4. **Embedding generation**
-   `embed()` in `src/embeddings/client.ts` calls the OpenAI embeddings API. Embeddings are generated from the composed text `"<type>: <subject> - <content>"` so that the vector represents the semantic meaning of the full entry, not just its subject. See [Embeddings](#embeddings).
-
-5. **Storage and dedup**
-   `storeEntries()` in `src/db/store.ts` performs a similarity search against existing entries, runs dedup decisions (fast-path or LLM-assisted), creates inter-entry relations, and writes the final record. Dedup runs at write time rather than only at consolidation time because catching duplicates early prevents the vector index from accumulating redundant neighbors that degrade future recall quality. See [Deduplication Strategy](#deduplication-strategy-store-pipeline).
-
-6. **Recall**
-   `recall()` in `src/db/recall.ts` fetches vector candidates via the vector index, applies filters (scope, type, project, tags, since, until), computes the final composite score, and ranks results. The composite score combines multiple independent signals so that any single disqualifying factor (stale recency, high contradictions, staleness) suppresses the entry even if its vector similarity is high. See [Recall Scoring Model](#recall-scoring-model).
-
-7. **Consolidation**
-   A separate offline process that cleans accumulated entries. Tier 1 (rules) runs first and handles the common cases cheaply. Tier 2 (LLM-assisted clustering) runs on what remains and handles semantically similar but not identical entries. See [Consolidation Architecture](#consolidation-architecture).
+Mode is auto-detected per file against a model context window registry in `src/ingest/whole-file.ts`. Unknown models always fall back to chunked. Watch mode always uses chunked (whole-file would re-extract the full file on every append event). CLI flags `--whole-file` and `--chunk` override auto-detect; they are mutually exclusive.
 
 ---
 
@@ -175,62 +342,59 @@ agenr uses libsql/SQLite via `@libsql/client`. SQLite was chosen because agenr i
 
 Default DB path: `~/.agenr/knowledge.db` (resolved in `src/db/client.ts`). Override with `AGENR_DB_PATH` env var or `db.path` in config.
 
-Schema source: `src/db/schema.ts`
+Migrations are defined as a series of column-presence checks followed by `ALTER TABLE` statements in `src/db/schema.ts`. They apply automatically on first run after an upgrade. No manual migration steps are needed.
 
-Migrations are defined as a series of column-presence checks followed by `ALTER TABLE` statements. They apply automatically on first run after an upgrade. No manual migration steps are needed.
+### Database Schema
 
-### `entries` table columns
+**`entries` table columns:**
 
 | Column | Type | Description |
 |---|---|---|
 | `id` | TEXT PK | UUID |
-| `type` | TEXT | Knowledge type: fact, decision, preference, todo, relationship, event, lesson |
+| `type` | TEXT | Knowledge type (see Entry Model) |
 | `subject` | TEXT | Short subject line |
-| `canonical_key` | TEXT | Optional canonical key for stable identity across ingestion runs (see note below) |
+| `canonical_key` | TEXT | Optional stable identity for cross-ingestion dedup |
 | `content` | TEXT | Full entry content |
-| `importance` | INTEGER | 1-10 (higher means more important to remember) |
+| `importance` | INTEGER | 1-10 |
 | `expiry` | TEXT | core, permanent, temporary |
-| `scope` | TEXT | private (default), personal, or public |
-| `platform` | TEXT | Platform tag: openclaw, claude-code, codex |
-| `project` | TEXT | Project scoping key (from labelProjectMap or explicit) |
+| `scope` | TEXT | private, personal, public |
+| `platform` | TEXT | openclaw, claude-code, codex |
+| `project` | TEXT | Project scoping key |
 | `source_file` | TEXT | Originating file path |
 | `source_context` | TEXT | Extraction context |
-| `embedding` | F32_BLOB(1024) | 1024-dimensional float32 vector |
-| `content_hash` | TEXT | Content hash for idempotency (v2) |
-| `norm_content_hash` | TEXT | SHA-256 of lowercased, whitespace/punctuation-normalized content; used for exact-match dedup in bulk mode |
-| `minhash_sig` | BLOB | 512-byte (128x4) MinHash signature (5-gram, FNV32); used for near-duplicate dedup in bulk mode |
+| `embedding` | F32_BLOB(1024) | 1024-dim float32 vector |
+| `content_hash` | TEXT | Content hash for idempotency |
+| `norm_content_hash` | TEXT | SHA-256 of normalized content (bulk dedup) |
+| `minhash_sig` | BLOB | 512-byte MinHash signature (bulk dedup) |
 | `created_at` | TEXT | ISO timestamp |
 | `updated_at` | TEXT | ISO timestamp |
 | `last_recalled_at` | TEXT | ISO timestamp of last recall |
-| `recall_count` | INTEGER | Times this entry has been recalled |
-| `recall_intervals` | TEXT | JSON array of epoch-second timestamps; feeds computeSpacingFactor() for spaced-repetition scoring |
+| `recall_count` | INTEGER | Times recalled |
+| `recall_intervals` | TEXT | JSON array of epoch-second timestamps |
 | `confirmations` | INTEGER | Reinforcement count from dedup |
 | `contradictions` | INTEGER | Contradiction count |
 | `superseded_by` | TEXT FK | ID of superseding entry (soft delete) |
-| `merged_from` | INTEGER | Number of source entries merged (v3) |
-| `consolidated_at` | TEXT | ISO timestamp of last consolidation (v3) |
-| `suppressed_contexts` | TEXT | JSON array of context strings; entries with a matching context are excluded from session-start recall |
-| `retired` | INTEGER | Soft-delete flag; 1 = retired, 0 = active (default 0) |
-| `retired_at` | TEXT | ISO timestamp when entry was retired (nullable) |
-| `retired_reason` | TEXT | Free-text reason for retirement (nullable) |
+| `merged_from` | INTEGER | Number of source entries merged |
+| `consolidated_at` | TEXT | ISO timestamp of last consolidation |
+| `suppressed_contexts` | TEXT | JSON array; matching contexts excluded from session-start recall |
+| `retired` | INTEGER | Soft-delete flag (0/1) |
+| `retired_at` | TEXT | ISO timestamp |
+| `retired_reason` | TEXT | Free-text reason |
 
-> Note: (v2) and (v3) annotations in the table above indicate the schema migration that added the column. Migrations apply automatically on first run after an upgrade.
+**Additional tables:**
 
-**Note on `canonical_key`:** When two ingestion runs encounter logically identical facts (e.g., a user preference that appears in multiple transcripts), the canonical key provides a stable identity so that the dedup pipeline can recognize them as the same entry and update-in-place rather than creating a sibling duplicate. Without canonical keys, near-identical entries that differ only in phrasing may slip past similarity thresholds.
+| Table | Purpose |
+|---|---|
+| `tags` | Normalized tag mapping (`entry_id`, `tag`) |
+| `relations` | Inter-entry links: `supersedes`, `contradicts`, `elaborates`, `related` |
+| `ingest_log` | Ingest idempotency and run history |
+| `entry_sources` | Provenance snapshots for merged entries |
+| `signal_watermarks` | Per-consumer rowid cursor for signal delivery |
 
-**Note on `recall_intervals`:** Each time an entry is recalled, the current epoch-second timestamp is appended to this JSON array. `computeSpacingFactor()` uses the distribution of intervals between recalls to compute a spaced-repetition bonus: entries recalled at expanding intervals score higher than those recalled in rapid succession, reflecting stronger encoding.
+**Search and index objects:**
 
-Primary tables:
-- `entries`: core memory records, including metadata and `embedding F32_BLOB(1024)`.
-- `tags`: normalized tag mapping (`entry_id`, `tag`).
-- `relations`: inter-entry links (`supersedes`, `contradicts`, `elaborates`, `related`).
-- `ingest_log`: ingest idempotency and run history.
-- `entry_sources`: provenance snapshots for merged entries. Columns include `original_confirmations`, `original_recall_count`, and `original_created_at`.
-- `signal_watermarks`: per-consumer rowid cursor for the signal/notification system.
-
-Search and index objects:
-- Vector index: `idx_entries_embedding` using `libsql_vector_idx(... metric=cosine ...)`. Cosine similarity is the standard metric for comparing text embedding vectors.
-- Full-text index: `entries_fts` virtual table with insert/update/delete triggers.
+- Vector index: `idx_entries_embedding` using `libsql_vector_idx(... metric=cosine ...)`
+- Full-text index: `entries_fts` virtual table with insert/update/delete triggers
 
 ---
 
@@ -240,255 +404,33 @@ Source: `src/types.ts`
 
 Knowledge types (7): `fact`, `decision`, `preference`, `todo`, `relationship`, `event`, `lesson`
 
-Importance (integer 1..10):
-- Score 7 is the coached default; most stored entries should be 7.
-- Scores >= 8 trigger real-time cross-session signals in OpenClaw.
-- Score 10 is always protected from forgetting regardless of age.
-- Full per-score calibration is defined in the LLM prompt in `src/extractor.ts`.
+Importance (integer 1-10):
+- Score 7 is the coached default
+- Scores >= 8 trigger real-time cross-session signals in OpenClaw
+- Score 10 is always protected from forgetting regardless of age
+- Full per-score calibration is defined in the LLM prompt in `src/extractor.ts`
 
 Expiry levels: `core`, `permanent`, `temporary`
-- Only `temporary` entries are subject to forgetting/expiry.
+- Only `temporary` entries are subject to forgetting/expiry
 
 Scope levels: `private`, `personal`, `public`
-
-Stored entry metadata includes: `recall_count`, `last_recalled_at`, `recall_intervals`, `confirmations`, `contradictions`, `superseded_by`, and merge lineage fields from migration v3 (`merged_from`, `consolidated_at`).
 
 ---
 
 ## Embeddings
 
-Source: `src/embeddings/client.ts`
+Source: `src/embeddings/client.ts`, `src/embeddings/cache.ts`
 
 - Model: `text-embedding-3-small`
-- Dimensions: `1024`
+- Dimensions: `1024` (truncated from 1536 for 33% storage savings)
 - Batch size: `200`
 - Max concurrency: `3`
 - Input text format: `"<type>: <subject> - <content>"` (composed by `composeEmbeddingText`)
-
-**Why 1024 dimensions instead of 1536:** `text-embedding-3-small` supports a truncated 1024-dimension variant via the `dimensions` parameter. This trades a small amount of recall coverage for a 33% reduction in storage size and embedding API compute cost. For a personal knowledge base where entries number in the thousands rather than millions, the coverage tradeoff is acceptable and the storage savings are significant over time.
 
 Embedding API key resolution order (`resolveEmbeddingApiKey`):
 1. `config.embedding.apiKey`
 2. `config.credentials.openaiApiKey`
 3. `OPENAI_API_KEY` env var
-
-See also: [Recall Scoring Model](#recall-scoring-model) for how embeddings feed into the recall score.
-
----
-
-## Deduplication Strategy (Store Pipeline)
-
-Source: `src/db/store.ts`
-
-Store uses an online, per-entry dedup model. Online dedup is complementary to batch consolidation: online dedup prevents duplicates from accumulating at write time, which keeps the vector index clean and reduces the work consolidation must do. Batch consolidation handles semantic near-duplicates that slip through online dedup due to phrasing variation.
-
-**Why per-entry transactions:** LLM dedup calls take seconds. Holding a write lock across an LLM call would block all concurrent readers for the duration. Instead, each entry uses its own `BEGIN IMMEDIATE`/`COMMIT` so the lock is held only during the actual DB write.
-
-### Dedup steps
-
-1. **Content-hash fast path**
-   If `content_hash` already exists in the DB, the entry is skipped before any embedding or vector work. This catches exact re-ingestions cheaply.
-
-2. **Fast vector path**
-   Find top-k similar active entries (`superseded_by IS NULL`).
-   - `>= 0.95` + same type: skip as near-exact semantic duplicate.
-   - `>= 0.88` + same subject + same type: reinforce existing entry (`confirmations += 1`).
-   - `0.88..0.95` + same subject + different type: insert new entry and create a `related` relation.
-
-3. **Online LLM decision path**
-   For remaining candidates above `dedupThreshold` (default `0.72`; `0.62` in aggressive mode), the LLM returns one of:
-   - `ADD`: insert new entry.
-   - `UPDATE`: update target content, re-embed, bump confirmations.
-   - `SKIP`: skip insert, bump confirmations on target.
-   - `SUPERSEDE`: insert new entry, mark target `superseded_by`, create `supersedes` relation.
-
-4. **Failure fallback**
-   If the LLM fails or returns invalid output, fall back to `ADD` to avoid data loss.
-
-Ingest behavior: `ingest` uses the same online dedup path (including LLM decisions) as regular store writes.
-
-Transaction mode:
-- Online dedup enabled: per-entry `BEGIN IMMEDIATE`/`COMMIT`.
-- Online dedup disabled: single batch transaction for throughput.
-- Bulk mode (`--bulk`): see below.
-
-See also: [Consolidation Architecture](#consolidation-architecture) for the complementary batch dedup pipeline.
-
-### Bulk Ingest Mode (`--bulk`)
-
-For large-scale ingests (e.g. overnight import of thousands of files), the per-row overhead of FTS trigger maintenance and vector index updates becomes the dominant bottleneck. `--bulk` mode eliminates this by deferring both to a single post-write rebuild pass.
-
-**Write pipeline:**
-1. FTS triggers (`entries_ai`, `entries_ad`, `entries_au`) and `idx_entries_embedding` are dropped atomically before writes begin.
-2. A `bulk_ingest_state` flag is written to the `_meta` table (crash recovery signal).
-3. Entries are written in batches of 500 with `BEGIN IMMEDIATE`/`COMMIT` per batch. Embeddings are computed before the transaction opens so the lock is held only for the DB writes.
-4. After all writes complete, FTS content is rebuilt via `INSERT INTO entries_fts(entries_fts) VALUES('rebuild')` and the vector index is recreated via `REINDEX` (with DROP+CREATE atomic fallback wrapped in `BEGIN IMMEDIATE`).
-5. The `bulk_ingest_state` flag is cleared.
-
-**Dedup in bulk mode:**
-Per-entry vector similarity dedup is disabled during writes. Two cheaper mechanisms provide ingest-time dedup:
-- Exact hash: `norm_content_hash` (SHA-256 of lowercased, whitespace/punctuation-normalized content) matched against the DB before each entry.
-- MinHash: 128-hash signatures using 5-gram shingles and FNV32. Full-table scan of `minhash_sig` column (O(n) per entry; acceptable at current scale, LSH banding planned for issue #147).
-- In-memory `seenNormHashes` Set deduplicates across batches within a single run without DB round-trips.
-
-Because MinHash operates at lower fidelity than vector similarity, run `agenr consolidate --sim-threshold 0.76` after a bulk ingest to catch semantic near-duplicates that slipped through.
-
-**Crash recovery:**
-`checkAndRecoverBulkIngest()` is called during `initDb({ checkBulkRecovery: true })` (only in the ingest command). If `bulk_ingest_state` exists in `_meta`, an interrupted run is detected. Recovery checks the FTS trigger count and vector index presence, rebuilds whichever are missing, runs `PRAGMA integrity_check`, and clears the flag.
-
----
-
-## Recall Scoring Model
-
-Source: `src/db/recall.ts`
-
-Recall starts with vector top-k candidates from `idx_entries_embedding`, then applies filters (scope, type, project, tags, since, until) and scoring.
-
-**Why multiplicative scoring:** Each factor in the score is a multiplier. A single disqualifying factor - stale recency, many contradictions, a past-due todo - suppresses the entry even if its vector similarity is high. Additive scoring would merely reduce the score, allowing stale or contradicted entries to still appear in results. Multiplicative scoring makes bad signals disqualifying rather than just penalizing.
-
-### Scoring formula
-
-```pseudocode
-effectiveNow     = untilCeiling ?? now
-
-sim              = rawVectorSimilarity ^ 0.7
-
-rec              = recency(daysOld(effectiveNow), entry.expiry)
-                   -- expiry half-lives:
-                   --   core      = infinite (no decay)
-                   --   permanent = 365 days
-                   --   temporary = 30 days
-
-imp              = importanceScore(entry.importance)
-
-recallBase       = recallStrength(recall_count, daysSinceRecall(effectiveNow), expiry)
-
-spacingFactor    = computeSpacingFactor(recall_intervals)
-                   -- log-scale spaced-repetition bonus derived from
-                   -- the history of recall interval timestamps stored
-                   -- in the recall_intervals column
-
-spacedRecallBase = min(recallBase * spacingFactor, 1.0)
-
-fresh            = freshnessBoost(entry, now)
-                   -- 1.5x  if entry age < 1 hour
-                   -- 1.25x if entry age < 6 hours
-                   -- 1.1x  if entry age < 24 hours
-                   -- 1.0x  otherwise
-
-memoryStrength   = min(max(imp, spacedRecallBase) * fresh, 1.0)
-
-todoPenalty      = todoStaleness(entry, effectiveNow) if entry.type == "todo" else 1.0
-                   -- exponential decay with 7-day half-life
-                   -- penalizes todos that have not been updated recently
-
-contradictionPenalty = 0.8 if entry.contradictions >= 2 else 1.0
-
-fts              = 0.15 if ftsMatch else 0.0
-
-score = sim * (0.3 + 0.7 * rec) * memoryStrength * todoPenalty * contradictionPenalty + fts
-```
-
-### Temporal window filters
-
-Recall supports two time bounds parsed by `parseSince()`:
-- `since` is the lower bound (inclusive), expressed as ISO date or relative duration from now.
-- `until` is the upper bound (inclusive), expressed with the same subtraction semantics as `since` (`until: "7d"` means entries created at or before `now - 7 days`).
-- Using both defines a bounded window (`since <= created_at <= until`).
-
-If both bounds are present and `since > until`, recall throws an `Invalid date range` error instead of returning an empty list.
-
-When `until` is present, decay-based scoring anchors to `effectiveNow = until` so the newest in-window entry is not over-penalized by global time decay. `freshnessBoost` still anchors to real query `now` because it is a live-query signal rather than a historical-window signal.
-
-`recall_intervals` is a JSON array of epoch-second timestamps appended on each recall. `computeSpacingFactor()` uses the distribution of intervals between successive recalls to compute the spaced-repetition bonus: entries recalled at expanding intervals (spaced practice) score higher than entries recalled repeatedly in a short window.
-
-The `freshnessBoost` applies a temporary multiplier to entries created very recently, reflecting the observation that newly learned information is highly relevant before it has had time to be tested by recall patterns.
-
-`todoPenalty` applies only to `todo`-type entries and decays with a 7-day half-life. A todo that has not been marked done and has not been updated in weeks should surface less prominently than one created today.
-
-See also: [Embeddings](#embeddings) for how the vector component is generated.
-
----
-
-## Consolidation Architecture
-
-Source: `src/commands/consolidate.ts`, `src/consolidate/rules.ts`, `src/consolidate/cluster.ts`, `src/consolidate/merge.ts`, `src/consolidate/verify.ts`
-
-Consolidation is a two-tier offline pipeline. Tier 1 runs first and handles the common cases using cheap rule-based logic. Tier 2 runs on what remains after Tier 1 and handles semantically similar but not identical entries using LLM-assisted clustering and merging.
-
-Locking: File lock at `~/.agenr/consolidation.lock` prevents concurrent consolidation runs from creating conflicting writes.
-
-### Tier 1: Rules-based cleanup
-
-- Applies forgetting/expiry to low-scoring temporary entries (see [Forgetting and Decay](#forgetting-and-decay) below).
-- Merges near-exact duplicates with structural safeguards.
-- Cleans orphaned non-`supersedes` relations.
-
-### Tier 2: LLM-assisted clustering and merge
-
-- Builds semantic clusters using union-find with diameter-capped validation. The diameter cap prevents large heterogeneous clusters where a chain of pairwise similarities spans semantically unrelated entries.
-- Generates canonical entries via LLM tool-calling.
-- Verifies merged semantics before commit. Entries where verification fails are flagged to the review queue rather than committed. The review queue is a holding state where uncertain merges are logged for human inspection; they are not deleted or applied until manually reviewed.
-
-### Forgetting and Decay
-
-Source: `src/consolidate/rules.ts`
-
-Tier 1 expiry uses the same `recency()` function as recall scoring (see [Recall Scoring Model](#recall-scoring-model)). For `temporary`-expiry entries this is a 30-day half-life. An entry is deleted when:
-
-```pseudocode
-score = recency(ageDays, entry.expiry)   -- same formula as recall scoring recency term
-if score < EXPIRE_THRESHOLD (0.05):
-    expire entry
-```
-
-With a 30-day half-life, a `temporary` entry that has never been recalled falls below the 0.05 threshold after approximately 130 days. Recall activity resets the `last_recalled_at` timestamp and extends the effective life of the entry.
-
-Only `temporary`-expiry entries are subject to expiry. `core` and `permanent` entries are never expired by this mechanism.
-
-Protection rules (checked before expiry):
-- Entries with `importance >= 10` are always protected regardless of recency.
-- Entries whose `subject` matches any pattern in `forgetting.protect[]` are always protected. Patterns are matched case-insensitively; a trailing `*` acts as a prefix wildcard.
-
-`forgettingScore()` is also defined in `rules.ts` (90-day half-life, recall bonus, importance floor) and is exported for display and audit use, but is not the function that drives the consolidation expiry decision.
-
-Config keys: `forgetting.enabled`, `forgetting.scoreThreshold`, `forgetting.maxAgeDays`, `forgetting.protect[]`.
-
----
-
-## Watch System and Daemon
-
-Source: `src/watch/watcher.ts`, `src/commands/daemon.ts`, `src/watch/resolvers/`
-
-The watch system is the primary continuous-ingestion mode in production deployments. Rather than requiring manual `ingest` commands after each session, the daemon monitors session transcript files and processes new content as it appears.
-
-### Watcher
-
-`runWatcher()` in `src/watch/watcher.ts` operates as follows:
-
-- Detects file changes via filesystem events with debounce, plus a timed polling fallback for environments where FS events are unreliable.
-- Reads files incrementally by byte offset. It does NOT re-parse the whole file on each cycle; it picks up from the last known `byteOffset`. This means large transcript files are processed efficiently even after hundreds of sessions.
-- After each cycle, writes a health file to signal that the watcher is alive.
-- Writes its PID to `~/.agenr/watcher.pid`.
-
-Watch state is persisted at `~/.agenr/watch-state.json`. The state tracks per-file: `byteOffset`, `lastRunAt`, `totalEntriesStored`, `totalRunCount`.
-
-Platform detection (`WatchPlatform`): `"openclaw" | "claude-code" | "codex" | "mtime"`. The platform is auto-detected from the watched directory path:
-- `/.openclaw/` -> `openclaw`
-- `/.claude/` -> `claude-code`
-- `/.codex/` -> `codex`
-- no match -> `mtime` (sort by modification time)
-
-Per-platform session resolvers (`src/watch/resolvers/`) determine which file in a watched directory is the active session. Different platforms store their transcript files differently (naming conventions, directory layout), so each resolver implements platform-specific logic.
-
-### Daemon
-
-The daemon wraps the watcher as a macOS launchd service managed by `src/commands/daemon.ts`.
-
-- Plist installed at: `~/Library/LaunchAgents/com.agenr.watch.plist`
-- Logs written to: `~/.agenr/logs/`
-
-Daemon CLI commands: `install`, `uninstall`, `start`, `stop`, `restart`, `status`, `logs`
 
 ---
 
@@ -496,7 +438,7 @@ Daemon CLI commands: `install`, `uninstall`, `start`, `stop`, `restart`, `status
 
 Source: `src/adapters/registry.ts`, `src/adapters/`
 
-The adapter system normalizes heterogeneous input file formats into a uniform message list that the rest of the pipeline can process without knowing the source format.
+The adapter system normalizes heterogeneous input file formats into a uniform message list.
 
 ### SourceAdapter interface
 
@@ -508,7 +450,7 @@ interface SourceAdapter {
 }
 ```
 
-`detectAdapter()` in `src/adapters/registry.ts` selects the appropriate adapter by file extension and, for `.jsonl` files, first-line sniffing to distinguish between openclaw, claude-code, and codex formats.
+`detectAdapter()` in `src/adapters/registry.ts` selects the adapter by file extension and, for `.jsonl` files, first-line sniffing to distinguish between openclaw, claude-code, and codex formats.
 
 ### Adapters
 
@@ -517,65 +459,299 @@ interface SourceAdapter {
 | `openclaw` | `.jsonl` | OpenClaw session transcripts |
 | `claude-code` | `.jsonl` | Claude Code session transcripts |
 | `codex` | `.jsonl` | Codex session transcripts |
-| `plaud` | `.md` | Plaud voice memo transcripts |
-| `text` | `.txt`, fallback | Plain text, no structure assumed |
 | `cursor` | `.vscdb` | SQLite DB from Cursor IDE |
 | `vscode-copilot` | `.vscdb` | SQLite DB from VS Code Copilot |
+| `plaud` | `.md` | Plaud voice memo transcripts |
+| `text` | `.txt`, fallback | Plain text, no structure assumed |
 
-### ParseResult
-
-```typescript
-interface ParseResult {
-  messages: Message[];
-  warnings: string[];
-  metadata: {
-    sessionId?: string;
-    platform?: string;
-    model?: string;
-    cwd?: string;
-    sessionLabel?: string;
-  };
-}
-```
-
-### AdapterParseOptions
-
-- `raw`: bypass noise filtering (include all messages regardless of content).
-- `verbose`: emit detailed parsing diagnostics.
+Shared JSONL logic lives in `src/adapters/jsonl-base.ts`. The `jsonl-registry.ts` module handles format sniffing for JSONL variants. `jsonl-generic.ts` provides a fallback for unrecognized JSONL formats.
 
 ---
 
-## Signal/Notification System
+## Deduplication Strategy (Store Pipeline)
 
-Source: `src/db/signals.ts`, `src/openclaw-plugin/index.ts`
+Source: `src/db/store.ts`
 
-The signal system delivers real-time notifications when high-importance entries are stored, so that the host agent (e.g., OpenClaw) can surface them to the user without waiting for the next session-start recall.
+Store uses an online, per-entry dedup model. Online dedup prevents duplicates from accumulating at write time, keeping the vector index clean and reducing consolidation work.
 
-### Storage
+**Per-entry transactions:** LLM dedup calls take seconds. Each entry uses its own `BEGIN IMMEDIATE`/`COMMIT` so the lock is held only during the actual DB write, not during LLM calls.
 
-`signal_watermarks` table: one row per consumer, tracking a `rowid`-based monotonic cursor. This is the simplest at-least-once delivery mechanism compatible with SQLite's rowid sequence.
+### Dedup Steps
 
-### Delivery
+1. **Content-hash fast path** - If `content_hash` exists in DB, skip before any embedding work.
 
-`fetchNewSignalEntries()` queries entries where `importance >= N AND rowid > watermark AND retired = 0`, advances the watermark, and returns the results. New consumers are initialized at the current max rowid so they do not replay pre-existing high-importance entries.
+2. **Fast vector path** - Find top-k similar active entries (`superseded_by IS NULL`):
+   - >= 0.95 + same type: skip (near-exact duplicate)
+   - >= 0.88 + same subject + same type: reinforce (`confirmations += 1`)
+   - 0.88-0.95 + same subject + different type: insert + create `related` relation
 
-At-least-once delivery: the watermark is advanced before results are returned. Transient failures after the watermark advance may cause re-delivery of the same entries on the next call.
+3. **Online LLM decision** - For candidates above `dedupThreshold` (default 0.72; 0.62 in aggressive mode), LLM returns: `ADD`, `UPDATE`, `SKIP`, or `SUPERSEDE`.
 
-Formatted output:
+4. **Failure fallback** - LLM failure falls back to `ADD` to avoid data loss.
+
+### Bulk Ingest Mode (`--bulk`)
+
+For large-scale ingests, `--bulk` defers FTS trigger maintenance and vector index updates to a single post-write rebuild pass:
+
+1. Drop FTS triggers and vector index
+2. Write `bulk_ingest_state` to `_meta` table (crash recovery signal)
+3. Write entries in batches of 500
+4. Rebuild FTS content and recreate vector index
+5. Clear `bulk_ingest_state`
+
+Bulk dedup uses `norm_content_hash` (exact) and MinHash signatures (near-duplicate) instead of per-entry vector similarity. Run `agenr consolidate --sim-threshold 0.76` after bulk ingest to catch semantic near-duplicates.
+
+Crash recovery: `checkAndRecoverBulkIngest()` runs during `initDb({ checkBulkRecovery: true })` and rebuilds any missing indexes.
+
+---
+
+## Recall Scoring Model
+
+Source: `src/db/recall.ts`
+
+Recall starts with vector top-k candidates from `idx_entries_embedding`, then applies filters (scope, type, project, tags, since, until) and multiplicative scoring.
+
+**Why multiplicative scoring:** A single disqualifying factor (stale recency, many contradictions, past-due todo) suppresses the entry even if vector similarity is high.
+
+### Scoring Formula
+
 ```
-AGENR SIGNAL: N new high-importance entries
-- [type, imp:X] subject
+effectiveNow     = untilCeiling ?? now
+
+sim              = rawVectorSimilarity ^ 0.7
+
+rec              = recency(daysOld(effectiveNow), entry.expiry)
+                   -- half-lives: core=infinite, permanent=365d, temporary=30d
+
+imp              = importanceScore(entry.importance)
+
+recallBase       = recallStrength(recall_count, daysSinceRecall, expiry)
+spacingFactor    = computeSpacingFactor(recall_intervals)
+                   -- log-scale spaced-repetition bonus
+spacedRecallBase = min(recallBase * spacingFactor, 1.0)
+
+fresh            = freshnessBoost(entry, now)
+                   -- 1.5x < 1h, 1.25x < 6h, 1.1x < 24h, 1.0x otherwise
+
+memoryStrength   = min(max(imp, spacedRecallBase) * fresh, 1.0)
+
+todoPenalty      = todoStaleness(entry) if type == "todo" else 1.0
+                   -- exponential decay, 7-day half-life
+
+contradictionPenalty = 0.8 if contradictions >= 2 else 1.0
+
+fts              = 0.15 if ftsMatch else 0.0
+
+score = sim * (0.3 + 0.7 * rec) * memoryStrength * todoPenalty * contradictionPenalty + fts
 ```
 
-### Plugin-side signal config
+### Temporal Window Filters
 
-| Key | Default | Description |
+- `since`: lower bound (inclusive), ISO date or relative duration
+- `until`: upper bound (inclusive), same semantics
+- When `until` is present, decay scoring anchors to `effectiveNow = until`
+- `freshnessBoost` always anchors to real query time
+
+### Spaced Repetition
+
+`recall_intervals` is a JSON array of epoch-second timestamps appended on each recall. `computeSpacingFactor()` rewards entries recalled at expanding intervals (spaced practice) over entries recalled repeatedly in a short window.
+
+---
+
+## Session-Start Context Injection
+
+Source: `src/openclaw-plugin/index.ts`, `src/openclaw-plugin/recall.ts`, `src/openclaw-plugin/session-query.ts`, `src/db/session-start.ts`
+
+When the OpenClaw plugin fires `before_prompt_build` for a new session, it assembles context in three phases that run concurrently where possible:
+
+```
+Phase 1A: Recent Turns          Phase 1B: Browse Recall
+(previous session file)          (temporal, last 1d, limit 20)
+  |                                |
+  +-----> buildSemanticSeed() <----+
+                  |
+                  v
+          Phase 2: Semantic Recall
+          (query = seed from 1A + current prompt)
+          (deduplicated against Phase 1B results)
+```
+
+### Phase 1A - Recent Turns
+
+`findPreviousSessionFile()` locates the prior session transcript in the sessions directory. `extractRecentTurns()` pulls the last N user/assistant exchanges (default 7, capped at 300 chars each) to provide immediate continuity.
+
+### Phase 1B - Browse Recall
+
+A temporal browse query (`--browse --since 1d --limit 20`) fetches the most recent knowledge entries by date and importance. No semantic query is needed; this surfaces what was learned recently. Browse results also trigger handoff entry retirement (see [Cross-Session Handoff](#cross-session-handoff)).
+
+### Phase 2 - Semantic Recall
+
+`buildSemanticSeed()` combines the previous session turns and the current prompt into a query seed. This seed drives a semantic recall query. Results that already appeared in Phase 1B are filtered out by entry ID to avoid duplication.
+
+### Assembled Output
+
+The three phases are combined as markdown sections injected via `prependContext`:
+
+```markdown
+## Recent session
+<Phase 1A: last few turns from previous session>
+
+## Recent memory
+<Phase 1B: browse recall results>
+
+## Relevant memory
+<Phase 2: semantic recall results>
+```
+
+### Budget-Aware Session-Start Recall
+
+`src/db/session-start.ts` implements categorized budget allocation for session-start recall. Entries are classified into categories (`core`, `active`, `preferences`, `recent`) and the token budget is split across them. Token estimation uses a word-count heuristic with 1.3x multiplier.
+
+---
+
+## Cross-Session Handoff
+
+Source: `src/openclaw-plugin/index.ts` (functions: `runHandoffForSession`, `summarizeSessionForHandoff`)
+
+The handoff system ensures context flows between sessions. It triggers on two hooks:
+
+- **`before_reset`** - Fires when a session is about to be cleared
+- **`session_start`** (within `before_prompt_build`) - Fires for the previous session if it was not already handled by `before_reset`
+
+### Two-Phase Fallback+Upgrade Architecture
+
+```
+Session ends (before_reset or session_start)
+        |
+        v
+  Phase 1: FALLBACK (immediate, no LLM)
+    extractLastExchangeText() -> store as "session handoff <timestamp>"
+    Tagged: ["handoff", "session"]
+    This ensures the next session always has *something* to read.
+        |
+        v
+  Phase 2: LLM UPGRADE (awaited, may take seconds)
+    summarizeSessionForHandoff() -> LLM summarization of full transcript
+    If successful:
+      - Store LLM summary as new handoff entry
+      - Retire the Phase 1 fallback entry (superseded)
+    If failed:
+      - Phase 1 fallback remains as-is
+```
+
+### LLM Summarization
+
+`summarizeSessionForHandoff()` builds a transcript from the session messages, optionally including the prior session's context for continuity. It:
+
+1. Reads and normalizes messages from the session JSONL file
+2. Optionally reads the prior session's reset file for merged context
+3. Caps transcript length to fit within model context
+4. Sends to LLM with a dedicated system prompt
+5. Returns the summary text
+
+Skip conditions: too few messages, transcript too short, no API key available, LLM error.
+
+Handoff logs (request/response) can be written to disk when `handoff.logEnabled` is true in plugin config.
+
+### Handoff Lifecycle
+
+1. At `before_reset`: handoff runs with `source: "before_reset"`
+2. At next `session_start`: browse recall surfaces handoff entries
+3. Handoff entries with subject starting "session handoff" are retired after consumption
+4. `handoffSeenSessionIds` set prevents duplicate handoffs for the same session
+
+---
+
+## Consolidation Architecture
+
+Source: `src/consolidate/orchestrate.ts`, `src/consolidate/rules.ts`, `src/consolidate/cluster.ts`, `src/consolidate/merge.ts`, `src/consolidate/verify.ts`
+
+Consolidation is a two-tier offline pipeline. Tier 1 handles common cases cheaply. Tier 2 handles semantic near-duplicates with LLM assistance.
+
+Locking: File lock at `~/.agenr/consolidation.lock` prevents concurrent runs.
+
+### Tier 1: Rules-based Cleanup
+
+- Applies forgetting/expiry to low-scoring temporary entries
+- Merges near-exact duplicates with structural safeguards
+- Cleans orphaned non-`supersedes` relations
+
+### Tier 2: LLM-assisted Clustering and Merge
+
+- Builds semantic clusters using union-find with diameter-capped validation
+- Generates canonical entries via LLM tool-calling
+- Verifies merged semantics before commit (failed verifications go to review queue)
+
+### Forgetting and Decay
+
+Tier 1 expiry uses the same `recency()` function as recall scoring. For `temporary`-expiry entries (30-day half-life), an entry is deleted when its recency score falls below 0.05 (approximately 130 days without recall).
+
+Protection rules:
+- Entries with `importance >= 10` are always protected
+- Entries matching `forgetting.protect[]` patterns are always protected
+
+---
+
+## Watch System
+
+Source: `src/watch/watcher.ts`, `src/watch/state.ts`, `src/watch/health.ts`
+
+The watch system is the primary continuous-ingestion mode.
+
+### Watcher Loop
+
+`runWatcher()` in `src/watch/watcher.ts`:
+
+- Detects file changes via filesystem events with debounce, plus timed polling fallback
+- Reads files incrementally by byte offset (not re-parsing entire files)
+- Writes health file (`watcher.health.json`) on each cycle
+- Writes PID to `~/.agenr/watcher.pid`
+
+### Watch State
+
+Persisted at `~/.agenr/watch-state.json`. Per-file tracking: `byteOffset`, `lastRunAt`, `totalEntriesStored`, `totalRunCount`.
+
+### Session Resolvers
+
+Source: `src/watch/resolvers/`, `src/watch/session-resolver.ts`
+
+Each platform has a resolver that implements `SessionResolver`:
+
+```typescript
+interface SessionResolver {
+  filePattern: string;
+  resolveActiveSession(dir: string): Promise<string | null>;
+  findRenamedFile?(originalPath: string): Promise<string | null>;
+}
+```
+
+| Resolver | Platform | Detection |
 |---|---|---|
-| `signalMinImportance` | 8 | Minimum importance to trigger a signal |
-| `signalMaxPerSignal` | 3 | Max entries per signal batch |
-| `signalCooldownMs` | 30000 | Per-session cooldown between signals |
-| `signalMaxPerSession` | 10 | Max total signals per session |
-| `signalMaxAgeSec` | 300 | Max age of entries to include in a signal |
+| `openclaw.ts` | OpenClaw | `/.openclaw/` in path |
+| `claude-code.ts` | Claude Code | `/.claude/` in path |
+| `codex.ts` | Codex | `/.codex/` in path |
+| `mtime.ts` | Fallback | Sort by modification time |
+
+Platform auto-detection: `detectPlatformFromDir()` in `src/watch/resolvers/index.ts` inspects the watched directory path.
+
+### Health Monitoring
+
+`src/watch/health.ts` manages a health file that tracks: PID, start time, last heartbeat, sessions watched, entries stored. Staleness threshold: 5 minutes.
+
+---
+
+## Watcher Management (CLI)
+
+Source: `src/commands/watcher.ts`
+
+The `agenr watcher` command manages the watcher as a macOS launchd service.
+
+- Plist: `~/Library/LaunchAgents/com.agenr.watch.plist`
+- Logs: `~/.agenr/logs/`
+
+Subcommands: `install`, `uninstall`, `start`, `stop`, `restart`, `status`, `logs`
+
+`agenr watch` (without the 'er') runs the watcher in the foreground.
 
 ---
 
@@ -583,80 +759,142 @@ AGENR SIGNAL: N new high-importance entries
 
 Source: `src/openclaw-plugin/index.ts`, `openclaw.plugin.json`
 
-See also: `docs/OPENCLAW.md` for end-user setup and configuration details.
+### Plugin Manifest
 
-The OpenClaw plugin integrates agenr into the OpenClaw agent framework at the host level, providing automatic memory injection and tool registration without requiring manual recall commands.
-
-### Plugin manifest
-
-`openclaw.plugin.json` declares:
-- `id`: `"agenr"`
-- `skills`: the four registered tools
-- `configSchema`: plugin configuration keys
+`openclaw.plugin.json` declares the plugin ID (`"agenr"`), skills (the four tools), and config schema.
 
 ### Lifecycle
 
-The plugin entry point (`src/openclaw-plugin/index.ts`) registers a `before_prompt_build` hook. This hook:
+The plugin registers three hooks:
 
-1. Fires once per session (LRU dedup, max 1000 sessions tracked). Sessions already seen in this process lifetime are skipped.
-2. Skips subagent and cron sessions. Sessions whose label matches `:subagent:` or `:cron:` are excluded because injecting recall context into sub-processes would be redundant and wasteful.
-3. Runs session-start recall: queries the DB for relevant entries, formats them as markdown, and truncates to the configured budget.
-4. Fetches any pending signals from `fetchNewSignalEntries()`.
-5. Combines the recall markdown and signal string as `prependContext` added to the agent prompt.
+**`before_prompt_build`** - Fires on every prompt. For new sessions (LRU dedup, max 1000 tracked):
+1. Skips subagent (`:subagent:`) and cron (`:cron:`) sessions
+2. Runs three-phase context injection (see [Session-Start Context Injection](#session-start-context-injection))
+3. Triggers handoff for the previous session if not already handled
+4. Retires consumed handoff entries
+5. Checks for pending signals
+6. Returns combined context as `prependContext`
 
-Errors from any step are swallowed. The plugin must never block or crash a prompt build, since that would prevent the agent from responding.
+**`before_reset`** - Fires when a session is cleared:
+1. Runs cross-session handoff (see [Cross-Session Handoff](#cross-session-handoff))
 
-### Tools registered into OpenClaw
+**`command`** - Fires on explicit handoff commands:
+1. Runs handoff for the current session
 
-- `agenr_recall`: semantic search over the knowledge base.
-- `agenr_store`: store a new entry directly (single entry, bypasses extraction).
-- `agenr_extract`: extract and store knowledge from raw text using the LLM extractor.
-- `agenr_retire`: soft-delete an entry by ID with an optional reason.
+Errors from any hook are swallowed. The plugin must never block or crash a prompt build.
 
-### Plugin config keys
+### Tools Registered into OpenClaw
+
+| Tool | Description |
+|---|---|
+| `agenr_recall` | Semantic search over the knowledge base |
+| `agenr_store` | Store a single structured entry (bypasses extraction) |
+| `agenr_extract` | Extract and store knowledge from raw text via LLM |
+| `agenr_retire` | Soft-delete an entry by ID |
+
+### Plugin Config Keys
 
 | Key | Description |
 |---|---|
 | `agenrPath` | Path to the agenr installation |
 | `dbPath` | Override for the DB path |
-| `budget` | Token budget for session-start recall context |
+| `budget` | Token budget for session-start recall |
 | `enabled` | Enable/disable the plugin |
+| `project` | Default project for recall/store |
+| `sessionsDir` | Override sessions directory |
+| `handoff.includeBackground` | Include prior session in handoff transcript |
+| `handoff.logEnabled` | Write handoff LLM request/response logs |
+| `handoff.logDir` | Directory for handoff logs |
 | `signalMinImportance` | Minimum importance for signals (default 8) |
 | `signalMaxPerSignal` | Max entries per signal batch (default 3) |
-| `signalCooldownMs` | Per-session signal cooldown in ms (default 30000) |
+| `signalCooldownMs` | Per-session signal cooldown (default 30000) |
 | `signalMaxPerSession` | Max signals per session (default 10) |
 | `signalMaxAgeSec` | Max age of signal entries in seconds (default 300) |
-| `signalsEnabled` | Enable/disable the signal subsystem |
+| `signalsEnabled` | Enable/disable signal subsystem |
 
 ---
 
-## Retirement System
+## Signal/Notification System
 
-Source: `src/commands/retire.ts`, `src/db/retirements.ts`, `src/types.ts`
+Source: `src/db/signals.ts`, `src/openclaw-plugin/signals.ts`
 
-Retirement is the standard way to soft-delete an entry. Retired entries remain in the DB (for provenance) but are excluded from all recall, signal, and dedup queries via the `retired = 0` filter.
-
-### CLI
-
-`src/commands/retire.ts` implements an interactive CLI flow:
-1. Fuzzy or exact subject match to find candidates.
-2. Confirmation prompt before applying.
-3. Optional reason prompt.
-4. `--persist` flag to write the retirement to the ledger.
+Delivers real-time notifications when high-importance entries are stored, so the host agent can surface them without waiting for the next session-start recall.
 
 ### Storage
 
-`src/db/retirements.ts` sets `retired = 1`, `retired_at`, and `retired_reason` on matched entries.
+`signal_watermarks` table: one row per consumer, tracking a `rowid`-based monotonic cursor. Simplest at-least-once delivery compatible with SQLite.
 
-`RetirementRecord` is defined in `src/types.ts`. The retirement ledger is stored at `~/.agenr/retirements.json`.
+### Delivery
 
-### Persistence and replay
+`fetchNewSignalEntries()` queries entries where `importance >= N AND rowid > watermark AND retired = 0`, advances the watermark, and returns results.
 
-With `--persist`, the retirement is written to the ledger in addition to the DB. On DB initialization, the ledger is replayed so that retirements survive DB rebuilds (e.g., after deleting and recreating the DB file). Without `--persist`, the retirement applies only to the current DB and is lost if the DB is rebuilt.
+Rate limiting (plugin-side):
+- Per-session cooldown (`signalCooldownMs`, default 30s)
+- Per-session cap (`signalMaxPerSession`, default 10)
+- Max entry age (`signalMaxAgeSec`, default 300s)
 
-### MCP
+---
 
-The `agenr_retire` MCP tool accepts `entry_id` (required), `reason` (optional), and `persist` (optional, boolean). This allows AI assistants to retire entries on behalf of the user without requiring CLI access.
+## Init Wizard
+
+Source: `src/commands/init.ts`, `src/setup.ts`
+
+The `agenr init` command sets up agenr for a project. It operates in two modes:
+
+### Non-Interactive (CLI flags)
+
+When `--platform` and/or `--project` are provided:
+
+1. **Platform detection** - Auto-detects from project directory (`.claude/` -> claude-code, `.cursor/` -> cursor, `.windsurfrules` -> windsurf) or uses explicit `--platform`
+2. **Project slug** - Derived from directory name or explicit `--project`
+3. **Config write** - Creates `.agenr.json` in project root
+4. **Instructions file** - Injects agenr prompt block (with markers for idempotent updates) into platform-specific instructions file:
+   - Claude Code: `~/.claude/CLAUDE.md`
+   - Cursor: `.cursor/rules/agenr.mdc` or `.cursorrules`
+   - Windsurf: `~/.codeium/windsurf/memories/global_rules.md`
+   - Codex: `~/.codex/AGENTS.md` (special TOML config for Codex)
+   - OpenClaw: skipped (plugin handles injection)
+   - Generic: `AGENTS.md` in project root
+5. **MCP config** - Writes MCP server entry to platform-specific config
+6. **Gitignore** - Adds `.agenr.json` to `.gitignore`
+
+### Interactive Wizard
+
+`runInitWizard()` provides a guided setup using `@clack/prompts` for terminal UI. Currently handles initial config setup; full wizard features (platform selection, project wiring) are in progress.
+
+### Global Setup
+
+`src/setup.ts` handles the global `agenr setup` flow:
+1. Auth method selection (5 methods: anthropic-oauth, anthropic-token, anthropic-api-key, openai-subscription, openai-api-key)
+2. Credential entry and validation
+3. Model selection (provider-aware, with recommended defaults)
+4. Embedding API key configuration
+5. Connection test
+
+---
+
+## CLI Commands
+
+Source: `src/cli-main.ts`, `src/commands/`
+
+| Command | Description |
+|---|---|
+| `agenr setup` | Global config wizard (auth, model, embedding) |
+| `agenr init` | Project init wizard (platform, MCP, instructions) |
+| `agenr store` | Store a single knowledge entry |
+| `agenr recall` | Semantic search with scoring |
+| `agenr ingest` | Ingest transcript files (whole-file or chunked) |
+| `agenr consolidate` | Run consolidation pipeline (Tier 1 + Tier 2) |
+| `agenr retire` | Interactive entry retirement |
+| `agenr health` | DB health stats and forgetting analysis |
+| `agenr context` | Generate CONTEXT.md snapshot for static injection |
+| `agenr eval` | Recall quality evaluation with baselines |
+| `agenr benchmark` | Recall scoring benchmarks |
+| `agenr todo` | Interactive todo management |
+| `agenr watch` | Run watcher in foreground |
+| `agenr watcher` | Manage launchd watcher service |
+| `agenr db` | DB utilities: stats, export, check, reset, rebuild, path, version |
+| `agenr mcp` | Start MCP stdio server |
 
 ---
 
@@ -664,46 +902,72 @@ The `agenr_retire` MCP tool accepts `entry_id` (required), `reason` (optional), 
 
 Source: `src/mcp/server.ts`
 
-Transport: stdio
-Protocol: JSON-RPC 2.0, protocol version `2024-11-05`
+Transport: stdio. Protocol: JSON-RPC 2.0, version `2024-11-05`.
 
-The MCP server exposes four tools. Input validation is strict: enum values, numeric ranges, and required fields are checked before dispatch. Invalid calls return a structured error rather than throwing.
+Exposes four tools: `agenr_recall`, `agenr_store`, `agenr_extract`, `agenr_retire`. Input validation is strict with structured errors for invalid calls.
 
-### Exposed tools
-
-**`agenr_recall`**
-Semantic search over the knowledge base. Accepts a query string, optional filters (type, scope, project, tags, since, until), and a result limit. Returns a ranked list of matching entries with their scores. Updating `recall_count` and `last_recalled_at` (and appending to `recall_intervals`) is performed as a side effect.
-
-**`agenr_store`**
-Stores a single structured entry directly, bypassing LLM extraction. Accepts the full entry fields (type, subject, content, importance, expiry, scope, tags, canonical_key, platform, project). Runs online dedup before writing. Useful when the caller has already structured the knowledge and does not need extraction.
-
-**`agenr_extract`**
-Accepts raw text and runs the full LLM extraction pipeline (`extractKnowledgeFromChunks`) followed by `storeEntries`. The caller does not need to pre-structure the input; the extractor identifies and structures knowledge entries from natural language.
-
-**`agenr_retire`**
-Soft-deletes an entry by `entry_id`. Accepts an optional `reason` string and an optional `persist` boolean. When `persist` is true, the retirement is written to the ledger at `~/.agenr/retirements.json` so it survives DB rebuilds.
-
-### Lifecycle
-
-- Lazy DB initialization (`getDb` + migrations) on first tool call.
-- Per-call tool dispatch with structured text responses.
-- No persistent state between calls; the server process may be long-lived but each call is independent.
+Lazy DB initialization on first tool call. No persistent state between calls.
 
 ---
 
 ## Auth and Model Resolution
 
-Source: `src/config.ts`, `src/types.ts`, `src/llm/credentials.ts`, `src/llm/models.ts`, `src/llm/client.ts`
+Source: `src/config.ts`, `src/llm/credentials.ts`, `src/llm/models.ts`, `src/llm/client.ts`
 
-Supported auth methods (5):
-- `anthropic-oauth`
-- `anthropic-token`
-- `anthropic-api-key`
-- `openai-subscription`
-- `openai-api-key`
+### Auth Methods
 
-Credential resolution (`src/llm/credentials.ts`) supports env/config credentials plus local CLI credential discovery:
-- Codex: `~/.codex/auth.json` or keychain on macOS
-- Claude: `~/.claude/.credentials.json` / `credentials.json` or keychain on macOS
+| Method | Provider | Credential Source |
+|---|---|---|
+| `anthropic-oauth` | Anthropic | OAuth flow |
+| `anthropic-token` | Anthropic | Long-lived token |
+| `anthropic-api-key` | Anthropic | API key |
+| `openai-subscription` | OpenAI | Subscription auth |
+| `openai-api-key` | OpenAI | API key |
 
-Provider and model normalization: `src/llm/models.ts`, `src/llm/client.ts`
+### Credential Discovery
+
+`src/llm/credentials.ts` probes multiple sources:
+1. Config file credentials
+2. Environment variables
+3. Local CLI credential files:
+   - Codex: `~/.codex/auth.json` or macOS keychain
+   - Claude: `~/.claude/.credentials.json` / `credentials.json` or macOS keychain
+
+### Model Resolution
+
+`src/llm/models.ts` handles model alias resolution and validation. `src/llm/client.ts` creates the appropriate LLM client (Anthropic or OpenAI) based on provider config.
+
+---
+
+## Retirement System
+
+Source: `src/commands/retire.ts`, `src/db/retirements.ts`
+
+Retirement is the standard soft-delete mechanism. Retired entries remain in the DB for provenance but are excluded from all recall, signal, and dedup queries via `retired = 0` filters.
+
+### CLI Flow
+
+1. Fuzzy or exact subject match to find candidates
+2. Confirmation prompt
+3. Optional reason
+4. `--persist` writes to ledger at `~/.agenr/retirements.json`
+
+### Persistence
+
+With `--persist`, retirements are written to a ledger that is replayed on DB initialization, surviving DB rebuilds. Without `--persist`, retirement applies only to the current DB.
+
+The `agenr_retire` MCP tool also supports `persist` as an optional boolean parameter.
+
+---
+
+## Benchmark and Eval
+
+Source: `src/commands/benchmark.ts`, `src/commands/eval.ts`, `src/benchmark/`
+
+### Eval
+
+`agenr eval` tests recall quality against a set of queries (`~/.agenr/eval-queries.json`). Supports saving baselines and comparing against them to detect recall regressions.
+
+### Benchmark
+
+`agenr benchmark` runs scoring benchmarks using the scorer in `src/benchmark/scorer.ts`. Types are defined in `src/benchmark/types.ts`.
