@@ -18,6 +18,7 @@
 - Fixed benchmark fixtures: fact-breed alt values, decision-release-strategy realistic object (#266)
 - Added alternate expected values to claim scorer for entity, attribute, predicate, object (#266)
 - Expanded predicate equivalence groups and soft matches (#266)
+- Removed personal information from claim extraction prompt and benchmark fixtures (#266)
 
 ## 0.9.2 (2026-02-26)
 
