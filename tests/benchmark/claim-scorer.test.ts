@@ -49,6 +49,48 @@ describe("claim benchmark scorer", () => {
     expect(result.scores.entityMatch).toBe(0);
   });
 
+  it("scores entity match as 1.0 when extracted matches altEntity", () => {
+    const result = scoreClaimFixture(
+      makeFixture({
+        expected: {
+          ...makeFixture().expected,
+          subjectEntity: "duke",
+          altEntity: "jim",
+        },
+      }),
+      makeClaim({ subjectEntity: "jim" }),
+    );
+    expect(result.scores.entityMatch).toBe(1);
+  });
+
+  it("scores entity match as 0.0 when extracted matches neither primary nor altEntity", () => {
+    const result = scoreClaimFixture(
+      makeFixture({
+        expected: {
+          ...makeFixture().expected,
+          subjectEntity: "duke",
+          altEntity: "jim",
+        },
+      }),
+      makeClaim({ subjectEntity: "sam" }),
+    );
+    expect(result.scores.entityMatch).toBe(0);
+  });
+
+  it("scores attribute match as 1.0 when extracted matches altAttribute", () => {
+    const result = scoreClaimFixture(
+      makeFixture({
+        expected: {
+          ...makeFixture().expected,
+          subjectAttribute: "breed",
+          altAttribute: "pet_breed",
+        },
+      }),
+      makeClaim({ subjectAttribute: "pet_breed" }),
+    );
+    expect(result.scores.attributeMatch).toBe(1);
+  });
+
   it("scores exact object match as 1.0", () => {
     const result = scoreClaimFixture(makeFixture(), makeClaim({ object: "pnpm" }));
     expect(result.scores.objectMatch).toBe(1);
@@ -96,6 +138,54 @@ describe("claim benchmark scorer", () => {
       makeClaim({ predicate: "uses" }),
     );
     expect(result.scores.predicateMatch).toBe(1);
+  });
+
+  it("passes a fixture using alternate expected values", () => {
+    const result = scoreClaimFixture(
+      makeFixture({
+        expected: {
+          noClaim: false,
+          subjectEntity: "duke",
+          subjectAttribute: "breed",
+          predicate: "is",
+          object: "australian labradoodle",
+          minConfidence: 0.7,
+          altEntity: "jim",
+          altAttribute: "pet_breed",
+        },
+      }),
+      makeClaim({
+        subjectEntity: "jim",
+        subjectAttribute: "pet_breed",
+        subjectKey: "jim/pet_breed",
+        predicate: "is",
+        object: "australian labradoodle",
+        confidence: 0.9,
+      }),
+    );
+    expect(result.passed).toBe(true);
+  });
+
+  it("supports new strong predicate groups", () => {
+    const worksAtResult = scoreClaimFixture(
+      makeFixture({ expected: { ...makeFixture().expected, predicate: "works_at" } }),
+      makeClaim({ predicate: "works_for" }),
+    );
+    expect(worksAtResult.scores.predicateMatch).toBe(1);
+
+    const followsResult = scoreClaimFixture(
+      makeFixture({ expected: { ...makeFixture().expected, predicate: "follows" } }),
+      makeClaim({ predicate: "practices" }),
+    );
+    expect(followsResult.scores.predicateMatch).toBe(1);
+  });
+
+  it("supports new soft predicate equivalences", () => {
+    const dislikesResult = scoreClaimFixture(
+      makeFixture({ expected: { ...makeFixture().expected, predicate: "dislikes" } }),
+      makeClaim({ predicate: "avoids" }),
+    );
+    expect(dislikesResult.scores.predicateMatch).toBe(0.8);
   });
 
   it("handles null extraction result gracefully", () => {

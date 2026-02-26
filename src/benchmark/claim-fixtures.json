@@ -80,7 +80,9 @@
       "subjectAttribute": "breed",
       "predicate": "is",
       "object": "australian labradoodle",
-      "minConfidence": 0.75
+      "minConfidence": 0.75,
+      "altEntity": "jim",
+      "altAttribute": "pet_breed"
     }
   },
   {
@@ -219,7 +221,7 @@
       "subjectEntity": "agenr",
       "subjectAttribute": "release_strategy",
       "predicate": "is",
-      "object": "bundled releases",
+      "object": "end-to-end functional",
       "minConfidence": 0.7
     }
   },

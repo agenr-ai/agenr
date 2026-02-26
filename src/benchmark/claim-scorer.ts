@@ -10,11 +10,18 @@ const PASS_THRESHOLD = 0.7;
 const STRONG_PREDICATE_GROUPS: string[][] = [
   ["is", "equals"],
   ["uses", "use"],
+  ["works_at", "works_for", "employed_at"],
+  ["follows", "practices", "adheres_to"],
+  ["switched_to", "changed_to", "migrated_to"],
 ];
 
 const SOFT_PREDICATE_EQUIVALENCE = new Map<string, number>([
   ["prefers|likes", 0.8],
   ["likes|prefers", 0.8],
+  ["dislikes|avoids", 0.8],
+  ["avoids|dislikes", 0.8],
+  ["stores_in|uses", 0.8],
+  ["uses|stores_in", 0.8],
 ]);
 
 export interface ClaimFixtureExpected {
@@ -24,6 +31,10 @@ export interface ClaimFixtureExpected {
   predicate?: string;
   object?: string;
   minConfidence?: number;
+  altEntity?: string;
+  altAttribute?: string;
+  altPredicate?: string;
+  altObject?: string;
 }
 
 export interface ClaimFixture {
@@ -96,74 +107,104 @@ function avg(values: number[]): number {
   return sum / values.length;
 }
 
-function scoreEntityMatch(expected: string | undefined, extracted: ExtractedClaim | null): number {
-  if (!expected || !extracted) {
+function scoreEntityMatch(expected: ClaimFixtureExpected, extracted: ExtractedClaim | null): number {
+  if (!expected.subjectEntity || !extracted) {
     return 0;
   }
-  return normalizeLower(expected) === normalizeLower(extracted.subjectEntity) ? 1 : 0;
+  const extractedNorm = normalizeLower(extracted.subjectEntity);
+  if (extractedNorm === normalizeLower(expected.subjectEntity)) {
+    return 1;
+  }
+  if (expected.altEntity && extractedNorm === normalizeLower(expected.altEntity)) {
+    return 1;
+  }
+  return 0;
 }
 
-function scoreAttributeMatch(expected: string | undefined, extracted: ExtractedClaim | null): number {
-  if (!expected || !extracted) {
+function scoreAttributeMatch(expected: ClaimFixtureExpected, extracted: ExtractedClaim | null): number {
+  if (!expected.subjectAttribute || !extracted) {
     return 0;
   }
-  return normalizeSnakeCase(expected) === normalizeSnakeCase(extracted.subjectAttribute) ? 1 : 0;
+  const extractedNorm = normalizeSnakeCase(extracted.subjectAttribute);
+  if (extractedNorm === normalizeSnakeCase(expected.subjectAttribute)) {
+    return 1;
+  }
+  if (expected.altAttribute && extractedNorm === normalizeSnakeCase(expected.altAttribute)) {
+    return 1;
+  }
+  return 0;
 }
 
 function inSameStrongPredicateGroup(left: string, right: string): boolean {
   return STRONG_PREDICATE_GROUPS.some((group) => group.includes(left) && group.includes(right));
 }
 
-function scorePredicateMatch(expected: string | undefined, extracted: ExtractedClaim | null): number {
-  if (!expected || !extracted) {
+function scorePredicateMatch(expected: ClaimFixtureExpected, extracted: ExtractedClaim | null): number {
+  if (!expected.predicate || !extracted) {
     return 0;
   }
 
-  const left = normalizePredicate(expected);
   const right = normalizePredicate(extracted.predicate);
+  const expectedPredicates = [expected.predicate, expected.altPredicate]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .map((value) => normalizePredicate(value));
 
-  if (!left || !right) {
+  if (!right || expectedPredicates.length === 0) {
     return 0;
   }
 
-  if (left === right) {
-    return 1;
+  let best = 0;
+  for (const left of expectedPredicates) {
+    if (!left) {
+      continue;
+    }
+    if (left === right) {
+      return 1;
+    }
+    if (inSameStrongPredicateGroup(left, right)) {
+      return 1;
+    }
+    best = Math.max(best, SOFT_PREDICATE_EQUIVALENCE.get(`${left}|${right}`) ?? 0);
   }
 
-  if (inSameStrongPredicateGroup(left, right)) {
-    return 1;
-  }
-
-  return SOFT_PREDICATE_EQUIVALENCE.get(`${left}|${right}`) ?? 0;
+  return best;
 }
 
-function scoreObjectMatch(expected: string | undefined, extracted: ExtractedClaim | null): number {
-  if (!expected || !extracted) {
+function scoreObjectMatch(expected: ClaimFixtureExpected, extracted: ExtractedClaim | null): number {
+  if (!expected.object || !extracted) {
     return 0;
   }
 
   const target = normalizeLower(extracted.object);
-  const goal = normalizeLower(expected);
 
-  if (!target || !goal) {
+  if (!target) {
     return 0;
   }
 
-  if (target === goal) {
-    return 1;
+  const expectedObjects = [expected.object, expected.altObject]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .map((value) => normalizeLower(value));
+
+  let best = 0;
+  for (const goal of expectedObjects) {
+    if (!goal) {
+      continue;
+    }
+    if (target === goal) {
+      return 1;
+    }
+    if (target.includes(goal) || goal.includes(target)) {
+      best = Math.max(best, 0.7);
+      continue;
+    }
+    const targetTokens = new Set(tokenize(target));
+    const goalTokens = tokenize(goal);
+    if (goalTokens.some((token) => targetTokens.has(token))) {
+      best = Math.max(best, 0.3);
+    }
   }
 
-  if (target.includes(goal) || goal.includes(target)) {
-    return 0.7;
-  }
-
-  const targetTokens = new Set(tokenize(target));
-  const goalTokens = tokenize(goal);
-  if (goalTokens.some((token) => targetTokens.has(token))) {
-    return 0.3;
-  }
-
-  return 0;
+  return best;
 }
 
 function scoreNoClaimCorrect(expectedNoClaim: boolean, extracted: ExtractedClaim | null): number {
@@ -211,10 +252,10 @@ export function scoreClaimFixture(
     };
   }
 
-  const entityMatch = scoreEntityMatch(fixture.expected.subjectEntity, extracted);
-  const attributeMatch = scoreAttributeMatch(fixture.expected.subjectAttribute, extracted);
-  const predicateMatch = scorePredicateMatch(fixture.expected.predicate, extracted);
-  const objectMatch = scoreObjectMatch(fixture.expected.object, extracted);
+  const entityMatch = scoreEntityMatch(fixture.expected, extracted);
+  const attributeMatch = scoreAttributeMatch(fixture.expected, extracted);
+  const predicateMatch = scorePredicateMatch(fixture.expected, extracted);
+  const objectMatch = scoreObjectMatch(fixture.expected, extracted);
   const confidenceInRange = scoreConfidenceInRange(fixture.expected.minConfidence, extracted);
 
   const overall =

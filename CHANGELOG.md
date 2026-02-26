@@ -14,6 +14,10 @@
 - resolveModelForTask() helper for consistent model resolution (#266)
 - Tuned claim extraction prompt for entity normalization and reduced false no_claim results (#266)
 - Fixed benchmark fixtures for edge cases (#266)
+- Tuned claim extraction prompt: short-claim guidance, no-claim edge cases, entity hint from subject field (#266)
+- Fixed benchmark fixtures: fact-breed alt values, decision-release-strategy realistic object (#266)
+- Added alternate expected values to claim scorer for entity, attribute, predicate, object (#266)
+- Expanded predicate equivalence groups and soft matches (#266)
 
 ## 0.9.2 (2026-02-26)
 
