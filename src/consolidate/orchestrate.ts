@@ -116,7 +116,9 @@ interface ConsolidationCheckpoint {
   processed: {
     phase1: Record<string, string[]>;
     phase2: string[];
+    phase3: string[];
   };
+  createdEntryIds: string[];
   plan: CheckpointPlan;
 }
 
@@ -125,6 +127,7 @@ interface RunContext {
   checkpoint: ConsolidationCheckpoint;
   processedPhase1: Map<string, Set<string>>;
   processedPhase2: Set<string>;
+  processedPhase3: Set<string>;
   createdEntryIds: Set<string>;
   minCluster: number;
   phase1Threshold: number;
@@ -365,6 +368,7 @@ async function clearCheckpoint(): Promise<void> {
 function checkpointToProcessedMaps(checkpoint: ConsolidationCheckpoint): {
   phase1: Map<string, Set<string>>;
   phase2: Set<string>;
+  phase3: Set<string>;
 } {
   const phase1 = new Map<string, Set<string>>();
   for (const [type, fingerprints] of Object.entries(checkpoint.processed.phase1 ?? {})) {
@@ -373,12 +377,14 @@ function checkpointToProcessedMaps(checkpoint: ConsolidationCheckpoint): {
   return {
     phase1,
     phase2: new Set(checkpoint.processed.phase2 ?? []),
+    phase3: new Set(checkpoint.processed.phase3 ?? []),
   };
 }
 
 function processedMapsToCheckpoint(
   phase1: Map<string, Set<string>>,
   phase2: Set<string>,
+  phase3: Set<string>,
 ): ConsolidationCheckpoint["processed"] {
   const serializedPhase1: Record<string, string[]> = {};
   for (const [type, fingerprints] of phase1.entries()) {
@@ -387,6 +393,7 @@ function processedMapsToCheckpoint(
   return {
     phase1: serializedPhase1,
     phase2: [...phase2],
+    phase3: [...phase3],
   };
 }
 
@@ -421,7 +428,9 @@ function createDefaultCheckpoint(
     processed: {
       phase1: {},
       phase2: [],
+      phase3: [],
     },
+    createdEntryIds: [],
     plan: createEmptyPlan(types),
   };
 }
@@ -539,7 +548,7 @@ async function processPhaseClusters(
     params.checkpoint.projectIndex = params.projectIndex;
     params.checkpoint.typeIndex = params.typeIndex;
     params.checkpoint.clusterIndex = item.index + 1;
-    params.checkpoint.processed = processedMapsToCheckpoint(params.context.processedPhase1, params.context.processedPhase2);
+    params.checkpoint.processed = processedMapsToCheckpoint(params.context.processedPhase1, params.context.processedPhase2, params.context.processedPhase3);
     await saveCheckpoint(params.checkpoint);
 
     if (isShutdownRequested()) {
@@ -661,7 +670,8 @@ export async function runConsolidationOrchestrator(
     checkpoint,
     processedPhase1: processedMaps.phase1,
     processedPhase2: processedMaps.phase2,
-    createdEntryIds: new Set<string>(),
+    processedPhase3: processedMaps.phase3,
+    createdEntryIds: new Set<string>(checkpoint.createdEntryIds ?? []),
     minCluster,
     phase1Threshold,
     phase2Threshold,
@@ -991,7 +1001,7 @@ export async function runConsolidationOrchestrator(
 
     if (!context.batchReached && context.createdEntryIds.size >= 2) {
       onLog(`Phase 3: Post-merge dedup (${context.createdEntryIds.size} new entries)...`);
-      const phase3Processed = new Set<string>();
+
 
       for (let projectIndex = 0; projectIndex < phase1PlanByProject.length; projectIndex += 1) {
         if (isShutdownRequested()) {
@@ -1037,7 +1047,7 @@ export async function runConsolidationOrchestrator(
             embeddingApiKey,
             options,
             checkpoint: context.checkpoint,
-            processedSet: phase3Processed,
+            processedSet: context.processedPhase3,
             context,
           },
           resolvedDeps,
@@ -1092,7 +1102,8 @@ export async function runConsolidationOrchestrator(
 
   if (context.batchReached) {
     context.checkpoint.phase = context.report.phase3 ? 3 : context.report.phase2 ? 2 : 1;
-    context.checkpoint.processed = processedMapsToCheckpoint(context.processedPhase1, context.processedPhase2);
+    context.checkpoint.processed = processedMapsToCheckpoint(context.processedPhase1, context.processedPhase2, context.processedPhase3);
+    context.checkpoint.createdEntryIds = [...context.createdEntryIds];
     await saveCheckpoint(context.checkpoint);
   } else {
     await clearCheckpoint();
