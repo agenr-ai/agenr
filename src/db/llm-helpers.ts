@@ -14,7 +14,7 @@ interface ToolCallResponse {
 
 export function clampConfidence(value: number, defaultOnNaN = 0.5): number {
   if (!Number.isFinite(value)) {
-    return defaultOnNaN;
+    return Math.min(1, Math.max(0, defaultOnNaN));
   }
   return Math.min(1, Math.max(0, value));
 }
@@ -40,13 +40,13 @@ export function extractToolCallArgs<T extends Record<string, unknown>>(
     }
 
     if (!block.arguments || typeof block.arguments !== "object") {
-      return null;
+      continue;
     }
 
     const args = block.arguments as Record<string, unknown>;
     const hasRequired = requiredFields.every((field) => args[field] !== undefined);
     if (!hasRequired) {
-      return null;
+      continue;
     }
 
     return args as T;

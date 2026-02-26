@@ -41,7 +41,7 @@
 - Contradiction detection: high-confidence supersession with lower importance now flags for review instead of silent coexist
 - Subject index rebuild is now atomic (swap instead of clear-then-populate)
 - Conflicts UI: request body size limit (64KB), auth token on POST endpoints, safe browser open
-- Extracted shared LLM helpers (clampConfidence, resolveModel, extractToolArgs) to src/db/llm-helpers.ts
+- Extracted shared LLM helpers (clampConfidence, resolveModelForLlmClient, extractToolCallArgs) to src/db/llm-helpers.ts
 - Removed unnecessary Float32Array conversions in contradiction detection pipeline
 - Replaced __pendingConflicts side-channel with scoped Map
 

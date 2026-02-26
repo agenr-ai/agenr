@@ -85,6 +85,13 @@ class RequestBodyTooLargeError extends Error {
   }
 }
 
+class ConflictAlreadyResolvedError extends Error {
+  constructor() {
+    super("Conflict already resolved");
+    this.name = "ConflictAlreadyResolvedError";
+  }
+}
+
 function resolveDefaultDbPath(dbOption: string | undefined): string {
   const config = readConfig(process.env);
   return resolveDbPathFromOptions(dbOption, config?.db?.path);
@@ -147,31 +154,40 @@ function toConflictEntry(row: Record<string, unknown>): ConflictEntryRow {
   };
 }
 
-async function getEntryById(db: Client, entryId: string): Promise<ConflictEntryRow | null> {
+async function getEntriesByIds(db: Client, entryIds: string[]): Promise<Map<string, ConflictEntryRow>> {
+  const uniqueIds = Array.from(new Set(entryIds));
+  if (uniqueIds.length === 0) {
+    return new Map();
+  }
+  const placeholders = uniqueIds.map(() => "?").join(", ");
   const result = await db.execute({
     sql: `
       SELECT id, type, subject, content, importance, subject_key, created_at
       FROM entries
-      WHERE id = ?
-      LIMIT 1
+      WHERE id IN (${placeholders})
     `,
-    args: [entryId],
+    args: uniqueIds,
   });
-  const row = result.rows[0];
-  if (!row) {
-    return null;
-  }
-  return toConflictEntry(row as Record<string, unknown>);
+  return new Map(
+    result.rows.map((row) => {
+      const entry = toConflictEntry(row as Record<string, unknown>);
+      return [entry.id, entry] as const;
+    }),
+  );
 }
 
 async function buildConflictWithEntries(
   db: Client,
   rows: ConflictLogRow[],
 ): Promise<ConflictWithEntries[]> {
+  const entryById = await getEntriesByIds(
+    db,
+    rows.flatMap((row) => [row.newEntryId, row.existingEntryId]),
+  );
   const conflicts: ConflictWithEntries[] = [];
   for (const row of rows) {
-    const newEntry = await getEntryById(db, row.newEntryId);
-    const existingEntry = await getEntryById(db, row.existingEntryId);
+    const newEntry = entryById.get(row.newEntryId);
+    const existingEntry = entryById.get(row.existingEntryId);
     if (!newEntry || !existingEntry) {
       continue;
     }
@@ -240,6 +256,18 @@ async function applyConflictResolution(
 ): Promise<void> {
   await db.execute("BEGIN IMMEDIATE");
   try {
+    const recheck = await db.execute({
+      sql: "SELECT resolution FROM conflict_log WHERE id = ?",
+      args: [conflict.id],
+    });
+    const currentResolution = toStringValue(
+      (recheck.rows[0] as Record<string, unknown> | undefined)?.resolution,
+    );
+    if (currentResolution && currentResolution !== "pending") {
+      await db.execute("ROLLBACK");
+      throw new ConflictAlreadyResolvedError();
+    }
+
     if (resolution === "keep-new") {
       await db.execute({
         sql: "UPDATE entries SET retired = 1 WHERE id = ?",
@@ -268,7 +296,7 @@ async function applyConflictResolution(
 
 function getPathname(requestPath: string): string {
   try {
-    return new URL(requestPath, "http://localhost").pathname;
+    return new URL(requestPath, "http://127.0.0.1").pathname;
   } catch {
     return requestPath;
   }
@@ -861,7 +889,14 @@ export async function handleConflictsUiRequest(
       });
     }
 
-    await applyConflictResolution(db, conflict, resolution);
+    try {
+      await applyConflictResolution(db, conflict, resolution);
+    } catch (error) {
+      if (error instanceof ConflictAlreadyResolvedError) {
+        return buildJsonResponse(409, { error: "Conflict is already resolved" });
+      }
+      throw error;
+    }
     return buildJsonResponse(200, { ok: true });
   }
 
@@ -877,7 +912,7 @@ export async function handleConflictsUiRequest(
 }
 
 function openBrowser(url: string): void {
-  if (!/^http:\/\/localhost:\d{1,5}\/?$/.test(url)) {
+  if (!/^http:\/\/127\.0\.0\.1:\d{1,5}\/?$/.test(url)) {
     process.stderr.write("[conflicts] Could not open browser automatically: invalid local URL\n");
     return;
   }
@@ -955,7 +990,7 @@ async function startServer(server: http.Server, port: number): Promise<void> {
     };
     server.once("error", onError);
     server.once("listening", onListening);
-    server.listen(port);
+    server.listen(port, "127.0.0.1");
   });
 }
 
@@ -1006,7 +1041,7 @@ export async function runConflictsUiCommand(
 
   try {
     await startServer(server, port);
-    const url = `http://localhost:${port}`;
+    const url = `http://127.0.0.1:${port}`;
     process.stdout.write(`[conflicts] UI running at ${url}\n`);
     process.stdout.write(`[conflicts] Auth token (POST endpoints): ${authToken}\n`);
     if (opts.open !== false) {
