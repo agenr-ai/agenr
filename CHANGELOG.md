@@ -44,6 +44,9 @@
 - fix(init): `installOpenClawPlugin` now passes `OPENCLAW_HOME` env to all
   OpenClaw CLI calls, preventing production config overwrites when targeting
   a non-default directory (e.g. sandbox)
+- fix(init): wizard now adds `"agenr"` to `plugins.allow` in the target
+  OpenClaw config, ensuring the plugin is explicitly trusted and suppressing
+  the auto-load warning
 
 ## [0.8.40] - 2026-02-25
 

@@ -806,6 +806,13 @@ async function writeOpenClawPluginDbPath(
     config.plugins = {};
   }
   const plugins = config.plugins as JsonRecord;
+  if (!Array.isArray(plugins.allow)) {
+    plugins.allow = [];
+  }
+  const allow = plugins.allow as string[];
+  if (!allow.includes("agenr")) {
+    allow.push("agenr");
+  }
   if (!isRecord(plugins.entries)) {
     plugins.entries = {};
   }
