@@ -547,7 +547,7 @@ describe("conflicts-ui command API routes", () => {
       authHeader: "Bearer wrong-token",
     });
     expect(response.status).toBe(401);
-    expect(response.data).toEqual({ error: "Unauthorized" });
+    expect(response.data).toEqual({ error: "Missing or invalid Bearer token" });
   });
 
   it("POST /api/conflicts/:id/resolve with correct auth token succeeds", async () => {

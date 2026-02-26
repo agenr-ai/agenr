@@ -264,7 +264,6 @@ async function applyConflictResolution(
       (recheck.rows[0] as Record<string, unknown> | undefined)?.resolution,
     );
     if (currentResolution && currentResolution !== "pending") {
-      await db.execute("ROLLBACK");
       throw new ConflictAlreadyResolvedError();
     }
 
@@ -858,8 +857,11 @@ export async function handleConflictsUiRequest(
     if (!authToken) {
       return buildJsonResponse(401, { error: "Unauthorized" });
     }
-    if (authHeader !== `Bearer ${authToken}`) {
+    if (!authHeader) {
       return buildJsonResponse(401, { error: "Unauthorized" });
+    }
+    if (authHeader !== `Bearer ${authToken}`) {
+      return buildJsonResponse(401, { error: "Missing or invalid Bearer token" });
     }
     if (rawBody && Buffer.byteLength(rawBody, "utf8") > DEFAULT_MAX_REQUEST_BODY_BYTES) {
       return buildJsonResponse(413, { error: "Request body too large" });
