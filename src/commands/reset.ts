@@ -113,7 +113,7 @@ export async function runResetCommand(
   }
 
   resolvedDeps.stdoutLine(
-    "WARNING: If the agenr watcher daemon is running, stop it before proceeding. Reset will not abort if the daemon is running.",
+    "WARNING: If the agenr watcher is running, stop it before proceeding. Reset will not abort if the watcher is running.",
   );
 
   let backupPath: string;

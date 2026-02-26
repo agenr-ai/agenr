@@ -15,14 +15,14 @@ import {
   runDbVersionCommand,
 } from "./commands/db.js";
 import {
-  runDaemonInstallCommand,
-  runDaemonLogsCommand,
-  runDaemonRestartCommand,
-  runDaemonStartCommand,
-  runDaemonStatusCommand,
-  runDaemonStopCommand,
-  runDaemonUninstallCommand,
-} from "./commands/daemon.js";
+  runWatcherInstallCommand,
+  runWatcherLogsCommand,
+  runWatcherRestartCommand,
+  runWatcherStartCommand,
+  runWatcherStatusCommand,
+  runWatcherStopCommand,
+  runWatcherUninstallCommand,
+} from "./commands/watcher.js";
 import { runConsolidateCommand } from "./commands/consolidate.js";
 import { runBenchmarkCommand } from "./commands/benchmark.js";
 import { runEvalRecallCommand } from "./commands/eval.js";
@@ -51,7 +51,12 @@ import { APP_VERSION } from "./version.js";
 import type { ExtractionReport, ExtractionStats } from "./types.js";
 import type { ConsolidateCommandOptions } from "./commands/consolidate.js";
 import type { BenchmarkCommandOptions } from "./commands/benchmark.js";
-import type { DaemonInstallOptions, DaemonLogsOptions, DaemonStatusOptions, DaemonUninstallOptions } from "./commands/daemon.js";
+import type {
+  WatcherInstallOptions,
+  WatcherLogsOptions,
+  WatcherStatusOptions,
+  WatcherUninstallOptions,
+} from "./commands/watcher.js";
 import type { IngestCommandOptions } from "./commands/ingest.js";
 import type { WatchCommandOptions } from "./commands/watch.js";
 
@@ -835,73 +840,81 @@ export function createProgram(): Command {
       await runMcpCommand(opts);
     });
 
-  const daemonCommand = program.command("daemon").description("Manage the agenr watch daemon");
+  const registerWatcherSubcommands = (command: Command): void => {
+    command
+      .command("install")
+      .description("Install and start the watcher (macOS launchd)")
+      .option("--force", "Overwrite existing launchd plist", false)
+      .option("--interval <seconds>", "Watch interval for watcher mode", parseIntOption, 120)
+      .option("--dir <path>", "Sessions directory to watch (overrides auto-detection)")
+      .option("--platform <name>", "Platform name (openclaw, claude-code, codex, plaud)")
+      .option("--node-path <path>", "Node binary path override for launchd")
+      .option("--context <path>", "Regenerate context file after each cycle")
+      .action(async (opts: WatcherInstallOptions) => {
+        const result = await runWatcherInstallCommand(opts);
+        process.exitCode = result.exitCode;
+      });
 
-  daemonCommand
-    .command("install")
-    .description("Install and start the watch daemon (macOS launchd)")
-    .option("--force", "Overwrite existing launchd plist", false)
-    .option("--interval <seconds>", "Watch interval for daemon mode", parseIntOption, 120)
-    .option("--dir <path>", "Sessions directory to watch (overrides auto-detection)")
-    .option("--platform <name>", "Platform name (openclaw, claude-code, codex, plaud)")
-    .option("--node-path <path>", "Node binary path override for launchd")
-    .option("--context <path>", "Regenerate context file after each cycle")
-    .action(async (opts: DaemonInstallOptions) => {
-      const result = await runDaemonInstallCommand(opts);
-      process.exitCode = result.exitCode;
-    });
+    command
+      .command("start")
+      .description("Start the watcher if installed")
+      .action(async () => {
+        const result = await runWatcherStartCommand({});
+        process.exitCode = result.exitCode;
+      });
 
-  daemonCommand
-    .command("start")
-    .description("Start the watch daemon if installed")
-    .action(async () => {
-      const result = await runDaemonStartCommand({});
-      process.exitCode = result.exitCode;
-    });
+    command
+      .command("stop")
+      .description("Stop the watcher without uninstalling")
+      .action(async () => {
+        const result = await runWatcherStopCommand({});
+        process.exitCode = result.exitCode;
+      });
 
-  daemonCommand
-    .command("stop")
-    .description("Stop the watch daemon without uninstalling")
-    .action(async () => {
-      const result = await runDaemonStopCommand({});
-      process.exitCode = result.exitCode;
-    });
+    command
+      .command("restart")
+      .description("Restart the watcher")
+      .action(async () => {
+        const result = await runWatcherRestartCommand({});
+        process.exitCode = result.exitCode;
+      });
 
-  daemonCommand
-    .command("restart")
-    .description("Restart the watch daemon")
-    .action(async () => {
-      const result = await runDaemonRestartCommand({});
-      process.exitCode = result.exitCode;
-    });
+    command
+      .command("uninstall")
+      .description("Stop and remove the watcher")
+      .option("--yes", "Skip confirmation prompt", false)
+      .action(async (opts: WatcherUninstallOptions) => {
+        const result = await runWatcherUninstallCommand(opts);
+        process.exitCode = result.exitCode;
+      });
 
-  daemonCommand
-    .command("uninstall")
-    .description("Stop and remove the watch daemon")
-    .option("--yes", "Skip confirmation prompt", false)
-    .action(async (opts: DaemonUninstallOptions) => {
-      const result = await runDaemonUninstallCommand(opts);
-      process.exitCode = result.exitCode;
-    });
+    command
+      .command("status")
+      .description("Show watcher status and recent logs")
+      .option("--lines <n>", "Number of log lines to include", parseIntOption, 20)
+      .action(async (opts: WatcherStatusOptions) => {
+        const result = await runWatcherStatusCommand(opts);
+        process.exitCode = result.exitCode;
+      });
 
-  daemonCommand
-    .command("status")
-    .description("Show daemon status and recent logs")
-    .option("--lines <n>", "Number of log lines to include", parseIntOption, 20)
-    .action(async (opts: DaemonStatusOptions) => {
-      const result = await runDaemonStatusCommand(opts);
-      process.exitCode = result.exitCode;
-    });
+    command
+      .command("logs")
+      .description("Show or follow watcher logs")
+      .option("--lines <n>", "Number of log lines", parseIntOption, 100)
+      .option("--follow", "Follow logs continuously", false)
+      .action(async (opts: WatcherLogsOptions) => {
+        const result = await runWatcherLogsCommand(opts);
+        process.exitCode = result.exitCode;
+      });
+  };
 
-  daemonCommand
-    .command("logs")
-    .description("Show or follow daemon logs")
-    .option("--lines <n>", "Number of log lines", parseIntOption, 100)
-    .option("--follow", "Follow logs continuously", false)
-    .action(async (opts: DaemonLogsOptions) => {
-      const result = await runDaemonLogsCommand(opts);
-      process.exitCode = result.exitCode;
-    });
+  const watcherCommand = program.command("watcher").description("Manage the agenr watcher");
+  registerWatcherSubcommands(watcherCommand);
+
+  const daemonAliasCommand = program
+    .command("daemon", { hidden: true })
+    .description("Alias for watcher (deprecated)");
+  registerWatcherSubcommands(daemonAliasCommand);
 
   const dbCommand = program.command("db").description("Manage the local knowledge database");
 
