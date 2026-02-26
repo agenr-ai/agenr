@@ -7,8 +7,11 @@ import { applyLedger } from "./retirements.js";
 import { composeEmbeddingText, embed } from "../embeddings/client.js";
 import { EmbeddingCache } from "../embeddings/cache.js";
 import { extractClaim } from "./claim-extraction.js";
+import { detectContradictions, resolveConflict } from "./contradiction.js";
+import type { DetectedConflict } from "./contradiction.js";
+import { SubjectIndex } from "./subject-index.js";
 import { runSimpleStream } from "../llm/stream.js";
-import type { Expiry, KnowledgeEntry, LlmClient, RelationType, StoreResult, StoredEntry } from "../types.js";
+import type { AgenrConfig, Expiry, KnowledgeEntry, LlmClient, RelationType, StoreResult, StoredEntry } from "../types.js";
 import { createRelation } from "./relations.js";
 import { toNumber, toStringValue } from "../utils/entry-utils.js";
 import {
@@ -100,6 +103,10 @@ export interface StoreEntriesOptions {
   preBatchEmbedChunkSize?: number;
   claimExtractionEnabled?: boolean;
   claimExtractionModel?: string;
+  contradictionEnabled?: boolean;
+  contradictionModel?: string;
+  subjectIndex?: SubjectIndex;
+  config?: AgenrConfig;
 }
 
 interface PlannedMutation {
@@ -115,6 +122,7 @@ interface PlannedMutation {
 interface ProcessedEntry {
   decision: StoreEntryDecision;
   mutation: PlannedMutation;
+  __pendingConflicts?: DetectedConflict[];
 }
 
 function normalize(value: string): string {
@@ -1477,6 +1485,7 @@ export async function storeEntries(
   const totalBefore = await getTotalEntries(db);
   const effectiveDbPath = options.dbPath ?? (await inferDbPathFromConnection(db));
   const cache = new EmbeddingCache();
+  const contradictionSubjectIndex = options.subjectIndex ?? new SubjectIndex();
   const preBatchEmbedChunkSize =
     typeof options.preBatchEmbedChunkSize === "number" &&
     Number.isFinite(options.preBatchEmbedChunkSize) &&
@@ -1685,6 +1694,37 @@ export async function storeEntries(
       }
     }
 
+    if (
+      (processed.mutation.kind === "add" || processed.mutation.kind === "add_related") &&
+      options.llmClient &&
+      options.contradictionEnabled !== false &&
+      processed.mutation.embedding
+    ) {
+      await contradictionSubjectIndex.ensureInitialized(db);
+
+      const conflicts = await detectContradictions(
+        db,
+        {
+          content: normalizedEntry.content,
+          type: normalizedEntry.type,
+          subject: normalizedEntry.subject,
+          subjectKey: normalizedEntry.subjectKey,
+          importance: normalizedEntry.importance,
+        },
+        new Float32Array(processed.mutation.embedding),
+        contradictionSubjectIndex,
+        options.llmClient,
+        {
+          model: options.contradictionModel,
+          config: options.config,
+        },
+      );
+
+      if (conflicts.length > 0) {
+        processed.__pendingConflicts = conflicts;
+      }
+    }
+
     const applyAndCount = async (): Promise<StoreEntryDecision> => {
       const applied = await applyEntryMutation(db, processed, embedFn, apiKey, cache);
 
@@ -1700,6 +1740,30 @@ export async function storeEntries(
 
       if (applied.relation_type) {
         relationsCreated += 1;
+      }
+
+      const pendingConflicts = processed.__pendingConflicts;
+      if (pendingConflicts && pendingConflicts.length > 0 && applied.newEntryId) {
+        for (const conflict of pendingConflicts) {
+          await resolveConflict(
+            db,
+            applied.newEntryId,
+            {
+              type: normalizedEntry.type,
+              importance: normalizedEntry.importance,
+            },
+            conflict,
+            contradictionSubjectIndex,
+          );
+        }
+      }
+
+      if (
+        options.contradictionEnabled !== false &&
+        normalizedEntry.subjectKey &&
+        applied.newEntryId
+      ) {
+        contradictionSubjectIndex.add(normalizedEntry.subjectKey, applied.newEntryId);
       }
 
       return applied;

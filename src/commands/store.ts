@@ -331,6 +331,7 @@ export async function runStoreCommand(
   const dedupThreshold = parseDedupThreshold(options.dedupThreshold);
   const llmClient = onlineDedup && hasAnyEntries ? resolvedDeps.createLlmClientFn({ env: process.env }) : undefined;
   const claimExtractionEnabled = config?.contradiction?.enabled !== false;
+  const contradictionEnabled = config?.contradiction?.enabled !== false;
   const claimExtractionModel = resolveModelForTask(config ?? {}, "claimExtraction");
 
   const dbPath = options.db?.trim() || config?.db?.path;
@@ -381,6 +382,8 @@ export async function runStoreCommand(
         llmClient,
         claimExtractionEnabled,
         claimExtractionModel,
+        contradictionEnabled,
+        config: config ?? undefined,
         dbPath,
         sourceFile: input.sourceFile,
         ingestContentHash: input.contentHash,

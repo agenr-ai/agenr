@@ -27,6 +27,8 @@
 - Tuned judge benchmark fixtures for clarity (#266)
 - Fixed contradiction judge prompt regression: reverted temperature setting, restored original prompt structure with targeted additive-attribute guidance (#266)
 - Added alternate accepted relations to ambiguous judge benchmark fixtures: sup-diet, sup-storage, edge-event-immutable, edge-similar-different (#266)
+- Integrated contradiction detection into store pipeline: runs after claim extraction on ADD decisions, resolves conflicts with type-specific rules (#266)
+- Contradiction detection is enabled by default for all store paths (watcher, plugin, CLI, ingest) (#266)
 
 ## 0.9.2 (2026-02-26)
 
