@@ -1,10 +1,9 @@
 import type { Context, Tool } from "@mariozechner/pi-ai";
 import { Type, type Static } from "@sinclair/typebox";
+import { resolveModelForTask } from "../config.js";
 import { resolveModel } from "../llm/models.js";
 import { runSimpleStream } from "../llm/stream.js";
-import type { LlmClient } from "../types.js";
-
-const DEFAULT_CLAIM_EXTRACTION_MODEL = "gpt-4.1-nano";
+import type { AgenrConfig, LlmClient } from "../types.js";
 
 const CLAIM_EXTRACTION_TOOL_SCHEMA = Type.Object({
   no_claim: Type.Boolean({
@@ -159,8 +158,12 @@ function extractToolArgs(
   return null;
 }
 
-function resolveClaimModel(client: LlmClient, model?: string): ReturnType<typeof resolveModel>["model"] {
-  const modelId = model?.trim() || DEFAULT_CLAIM_EXTRACTION_MODEL;
+function resolveClaimModel(
+  client: LlmClient,
+  model?: string,
+  config?: AgenrConfig,
+): ReturnType<typeof resolveModel>["model"] {
+  const modelId = model?.trim() || resolveModelForTask(config ?? {}, "claimExtraction");
   return resolveModel(client.resolvedModel.provider, modelId).model;
 }
 
@@ -170,6 +173,7 @@ export async function extractClaim(
   subject: string,
   llmClient: LlmClient,
   model?: string,
+  config?: AgenrConfig,
 ): Promise<ExtractedClaim | null> {
   if (!content.trim()) {
     return null;
@@ -177,7 +181,7 @@ export async function extractClaim(
 
   try {
     const response = await runSimpleStream({
-      model: resolveClaimModel(llmClient, model),
+      model: resolveClaimModel(llmClient, model, config),
       context: buildClaimExtractionContext(content, type, subject),
       options: {
         apiKey: llmClient.credentials.apiKey,
@@ -220,11 +224,12 @@ export async function extractClaimsBatch(
   entries: Array<{ content: string; type: string; subject: string }>,
   llmClient: LlmClient,
   model?: string,
+  config?: AgenrConfig,
 ): Promise<Array<ExtractedClaim | null>> {
   const claims: Array<ExtractedClaim | null> = [];
 
   for (const entry of entries) {
-    claims.push(await extractClaim(entry.content, entry.type, entry.subject, llmClient, model));
+    claims.push(await extractClaim(entry.content, entry.type, entry.subject, llmClient, model, config));
   }
 
   return claims;

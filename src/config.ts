@@ -7,6 +7,7 @@ import { normalizeLabel } from "./utils/string.js";
 
 export type ConfigSetKey = "provider" | "model" | "auth";
 export type StoredCredentialKeyName = "anthropic" | "anthropic-token" | "openai";
+export type ModelTask = "extraction" | "claimExtraction" | "contradictionJudge" | "handoffSummary";
 
 export interface AuthMethodDefinition {
   id: AgenrAuthMethod;
@@ -67,8 +68,7 @@ const DEFAULT_EMBEDDING_DIMENSIONS = 1024;
 const DEFAULT_FORGETTING_SCORE_THRESHOLD = 0.05;
 const DEFAULT_FORGETTING_MAX_AGE_DAYS = 60;
 const DEFAULT_CONTRADICTION_ENABLED = true;
-const DEFAULT_CLAIM_EXTRACTION_MODEL = "gpt-4.1-nano";
-const DEFAULT_CONTRADICTION_JUDGE_MODEL = "gpt-4.1-nano";
+const DEFAULT_TASK_MODEL = "gpt-4.1-nano";
 const DEFAULT_AUTO_SUPERSEDE_CONFIDENCE = 0.85;
 
 function resolveUserPath(inputPath: string): string {
@@ -250,11 +250,55 @@ function normalizeDedupConfig(input: unknown): AgenrConfig["dedup"] | undefined 
   return Object.keys(normalized).length > 0 ? normalized : undefined;
 }
 
+function normalizeModelsConfig(input: unknown): AgenrConfig["models"] | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return undefined;
+  }
+
+  const record = input as Record<string, unknown>;
+  const normalized: NonNullable<AgenrConfig["models"]> = {};
+
+  if (typeof record.extraction === "string" && record.extraction.trim()) {
+    normalized.extraction = record.extraction.trim();
+  }
+
+  if (typeof record.claimExtraction === "string" && record.claimExtraction.trim()) {
+    normalized.claimExtraction = record.claimExtraction.trim();
+  }
+
+  if (typeof record.contradictionJudge === "string" && record.contradictionJudge.trim()) {
+    normalized.contradictionJudge = record.contradictionJudge.trim();
+  }
+
+  if (typeof record.handoffSummary === "string" && record.handoffSummary.trim()) {
+    normalized.handoffSummary = record.handoffSummary.trim();
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function normalizeLegacyContradictionModels(input: unknown): AgenrConfig["models"] | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return undefined;
+  }
+
+  const record = input as Record<string, unknown>;
+  const normalized: NonNullable<AgenrConfig["models"]> = {};
+
+  if (typeof record.claimExtractionModel === "string" && record.claimExtractionModel.trim()) {
+    normalized.claimExtraction = record.claimExtractionModel.trim();
+  }
+
+  if (typeof record.judgeModel === "string" && record.judgeModel.trim()) {
+    normalized.contradictionJudge = record.judgeModel.trim();
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
 function normalizeContradictionConfig(input: unknown): NonNullable<AgenrConfig["contradiction"]> {
   const normalized: NonNullable<AgenrConfig["contradiction"]> = {
     enabled: DEFAULT_CONTRADICTION_ENABLED,
-    claimExtractionModel: DEFAULT_CLAIM_EXTRACTION_MODEL,
-    judgeModel: DEFAULT_CONTRADICTION_JUDGE_MODEL,
     autoSupersedeConfidence: DEFAULT_AUTO_SUPERSEDE_CONFIDENCE,
   };
 
@@ -266,14 +310,6 @@ function normalizeContradictionConfig(input: unknown): NonNullable<AgenrConfig["
 
   if (typeof record.enabled === "boolean") {
     normalized.enabled = record.enabled;
-  }
-
-  if (typeof record.claimExtractionModel === "string" && record.claimExtractionModel.trim()) {
-    normalized.claimExtractionModel = record.claimExtractionModel.trim();
-  }
-
-  if (typeof record.judgeModel === "string" && record.judgeModel.trim()) {
-    normalized.judgeModel = record.judgeModel.trim();
   }
 
   if (
@@ -445,6 +481,26 @@ export function normalizeConfig(input: unknown): AgenrConfig {
     normalized.dedup = dedup;
   }
 
+  const explicitModels = normalizeModelsConfig(record.models);
+  const legacyModels = normalizeLegacyContradictionModels(record.contradiction);
+  if (explicitModels || legacyModels) {
+    const mergedModels: NonNullable<AgenrConfig["models"]> = {
+      ...(explicitModels ?? {}),
+    };
+
+    if (legacyModels?.claimExtraction && !mergedModels.claimExtraction) {
+      mergedModels.claimExtraction = legacyModels.claimExtraction;
+    }
+
+    if (legacyModels?.contradictionJudge && !mergedModels.contradictionJudge) {
+      mergedModels.contradictionJudge = legacyModels.contradictionJudge;
+    }
+
+    if (Object.keys(mergedModels).length > 0) {
+      normalized.models = mergedModels;
+    }
+  }
+
   return normalized;
 }
 
@@ -565,6 +621,17 @@ export function mergeConfigPatch(current: AgenrConfig | null, patch: AgenrConfig
       ...(current?.dedup ?? {}),
       ...(patch.dedup ?? {}),
     };
+  }
+
+  if (current?.models || patch.models) {
+    merged.models = {
+      ...(current?.models ?? {}),
+      ...(patch.models ?? {}),
+    };
+
+    if (Object.keys(merged.models).length === 0) {
+      delete merged.models;
+    }
   }
 
   if (current?.contradiction || patch.contradiction) {
@@ -716,4 +783,20 @@ export function describeAuth(auth: AgenrAuthMethod): string {
     return "OpenAI subscription (Codex CLI)";
   }
   return "OpenAI API key";
+}
+
+export function resolveModelForTask(config: AgenrConfig, task: ModelTask): string {
+  const taskModel = config.models?.[task];
+  if (taskModel) {
+    return taskModel;
+  }
+
+  const defaults: Record<ModelTask, string> = {
+    extraction: config.model ?? DEFAULT_TASK_MODEL,
+    claimExtraction: DEFAULT_TASK_MODEL,
+    contradictionJudge: DEFAULT_TASK_MODEL,
+    handoffSummary: DEFAULT_TASK_MODEL,
+  };
+
+  return defaults[task] ?? config.model ?? DEFAULT_TASK_MODEL;
 }

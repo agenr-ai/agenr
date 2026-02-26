@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import * as clack from "@clack/prompts";
-import { readConfig } from "../config.js";
+import { readConfig, resolveModelForTask } from "../config.js";
 import { closeDb, getDb, initDb, walCheckpoint } from "../db/client.js";
 import { hashText, storeEntries } from "../db/store.js";
 import { acquireDbLock, releaseDbLock } from "../db/lockfile.js";
@@ -331,7 +331,7 @@ export async function runStoreCommand(
   const dedupThreshold = parseDedupThreshold(options.dedupThreshold);
   const llmClient = onlineDedup && hasAnyEntries ? resolvedDeps.createLlmClientFn({ env: process.env }) : undefined;
   const claimExtractionEnabled = config?.contradiction?.enabled !== false;
-  const claimExtractionModel = config?.contradiction?.claimExtractionModel?.trim() || undefined;
+  const claimExtractionModel = resolveModelForTask(config ?? {}, "claimExtraction");
 
   const dbPath = options.db?.trim() || config?.db?.path;
   const shouldLockDb = dbPath !== ":memory:";

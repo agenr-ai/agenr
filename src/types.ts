@@ -45,6 +45,12 @@ export interface AgenrConfig {
   auth?: AgenrAuthMethod;
   provider?: AgenrProvider;
   model?: string;
+  models?: {
+    extraction?: string;
+    claimExtraction?: string;
+    contradictionJudge?: string;
+    handoffSummary?: string;
+  };
   labelProjectMap?: Record<string, string>;
   projects?: Record<
     string,
@@ -79,8 +85,6 @@ export interface AgenrConfig {
   };
   contradiction?: {
     enabled?: boolean;
-    claimExtractionModel?: string;
-    judgeModel?: string;
     autoSupersedeConfidence?: number;
   };
 }
