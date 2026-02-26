@@ -391,6 +391,9 @@ export async function resolveConflict(
       conflict.result.confidence,
       "coexist",
     );
+    console.log(
+      `[contradiction] resolution: coexist (events are immutable) entry=${conflict.existingEntryId.slice(0, 8)}`,
+    );
     return { action: "coexist", reason: "events are immutable" };
   }
 
@@ -425,6 +428,9 @@ export async function resolveConflict(
       "auto-superseded",
     );
 
+    console.log(
+      `[contradiction] resolution: auto-superseded entry=${conflict.existingEntryId.slice(0, 8)} (${conflict.existingType} confidence=${conflict.result.confidence.toFixed(2)})`,
+    );
     return {
       action: "auto-superseded",
       reason: "temporal type with high confidence supersession",
@@ -445,6 +451,9 @@ export async function resolveConflict(
       conflict.result.confidence,
       "pending",
     );
+    console.log(
+      `[contradiction] resolution: flagged for review entry=${conflict.existingEntryId.slice(0, 8)} (${conflict.result.relation} confidence=${conflict.result.confidence.toFixed(2)})`,
+    );
     return { action: "flagged", reason: "needs human review" };
   }
 
@@ -457,5 +466,8 @@ export async function resolveConflict(
     "coexist",
   );
 
+  console.log(
+    `[contradiction] resolution: coexist entry=${conflict.existingEntryId.slice(0, 8)}`,
+  );
   return { action: "coexist", reason: "entries can coexist" };
 }

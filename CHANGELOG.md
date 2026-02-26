@@ -29,6 +29,7 @@
 - Added alternate accepted relations to ambiguous judge benchmark fixtures: sup-diet, sup-storage, edge-event-immutable, edge-similar-different (#266)
 - Integrated contradiction detection into store pipeline: runs after claim extraction on ADD decisions, resolves conflicts with type-specific rules (#266)
 - Contradiction detection is enabled by default for all store paths (watcher, plugin, CLI, ingest) (#266)
+- Added production logging for claim extraction, contradiction detection, and conflict resolution (#266)
 
 ## 0.9.2 (2026-02-26)
 
