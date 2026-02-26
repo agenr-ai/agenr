@@ -2533,6 +2533,75 @@ describe("installOpenClawPlugin", () => {
   });
 });
 
+describe("writeOpenClawPluginDbPath", () => {
+  it("adds agenr to plugins.allow when missing", async () => {
+    vi.restoreAllMocks();
+
+    const readSpy = vi.spyOn(fs, "readFile").mockResolvedValue(
+      JSON.stringify({
+        plugins: {
+          entries: {
+            other: { enabled: true },
+          },
+        },
+      }),
+    );
+    const mkdirSpy = vi.spyOn(fs, "mkdir").mockResolvedValue(undefined);
+    const writeSpy = vi.spyOn(fs, "writeFile").mockResolvedValue(undefined);
+
+    await initWizardRuntime.writeOpenClawPluginDbPath(
+      "/tmp/test-openclaw",
+      "/tmp/test-openclaw/agenr-data/knowledge.db",
+    );
+
+    expect(readSpy).toHaveBeenCalled();
+    expect(mkdirSpy).toHaveBeenCalledWith("/tmp/test-openclaw", { recursive: true });
+    expect(writeSpy).toHaveBeenCalled();
+
+    const writtenRaw = writeSpy.mock.calls[0]?.[1];
+    expect(typeof writtenRaw).toBe("string");
+    const writtenConfig = JSON.parse(writtenRaw as string) as {
+      plugins?: { allow?: string[]; entries?: { agenr?: { config?: { dbPath?: string } } } };
+    };
+
+    expect(writtenConfig.plugins?.allow).toEqual(["agenr"]);
+    expect(writtenConfig.plugins?.entries?.agenr?.config?.dbPath).toBe(
+      "/tmp/test-openclaw/agenr-data/knowledge.db",
+    );
+  });
+
+  it("does not duplicate agenr in plugins.allow when already present", async () => {
+    vi.restoreAllMocks();
+
+    vi.spyOn(fs, "readFile").mockResolvedValue(
+      JSON.stringify({
+        plugins: {
+          allow: ["agenr"],
+          entries: {
+            agenr: {
+              enabled: true,
+              config: {},
+            },
+          },
+        },
+      }),
+    );
+    vi.spyOn(fs, "mkdir").mockResolvedValue(undefined);
+    const writeSpy = vi.spyOn(fs, "writeFile").mockResolvedValue(undefined);
+
+    await initWizardRuntime.writeOpenClawPluginDbPath(
+      "/tmp/test-openclaw",
+      "/tmp/test-openclaw/agenr-data/knowledge.db",
+    );
+
+    const writtenRaw = writeSpy.mock.calls[0]?.[1];
+    expect(typeof writtenRaw).toBe("string");
+    const writtenConfig = JSON.parse(writtenRaw as string) as { plugins?: { allow?: string[] } };
+    const allow = writtenConfig.plugins?.allow ?? [];
+    expect(allow.filter((entry) => entry === "agenr")).toHaveLength(1);
+  });
+});
+
 describe("resolveAgenrCommand", () => {
   it("returns process.execPath and process.argv[1] as base args", () => {
     const resolved = resolveAgenrCommand();
