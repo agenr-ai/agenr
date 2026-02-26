@@ -147,7 +147,7 @@ Controls deduplication behavior when storing entries. Applies globally to all st
 3. Lets you pick a default model
 4. Writes everything to `~/.agenr/config.json`
 
-Environment variables (`OPENAI_API_KEY`, etc.) take precedence over config file values for embedding API key resolution. See [Embedding](#embedding) for the full resolution order.
+Config file values take precedence over environment variables for embedding API key resolution: `embedding.apiKey` -> `credentials.openaiApiKey` -> `OPENAI_API_KEY` env var. See [Embedding](#embedding) for details.
 
 ## Migrations
 

@@ -1,4 +1,4 @@
-```
+```text
  █████╗  ██████╗ ███████╗███╗   ██╗██████╗
 ██╔══██╗██╔════╝ ██╔════╝████╗  ██║██╔══██╗
 ███████║██║  ███╗█████╗  ██╔██╗ ██║██████╔╝
@@ -30,7 +30,7 @@ That's it. The interactive wizard handles everything: auth setup, platform detec
 - **Recall** - Semantic search plus memory-aware ranking. Entries you recall often score higher. Stale entries decay. Contradicted entries get penalized.
 - **Consolidate** - Periodic cleanup: rule-based expiry first, then optional LLM-assisted merging for entries that say the same thing differently.
 
-```
+```text
 Transcript -> Filter -> Extract -> Store -> Recall
                80%       LLM      dedup    semantic
                noise     typed    + embed  + memory-
@@ -186,7 +186,7 @@ When running multiple OpenClaw instances (or mixing OpenClaw and Codex), each in
 
 For non-default OpenClaw paths, the init wizard offers isolated databases:
 
-```
+```text
 ~/.agenr/knowledge.db          # shared (default)
 ~/my-openclaw/agenr-data/knowledge.db  # isolated
 ```
