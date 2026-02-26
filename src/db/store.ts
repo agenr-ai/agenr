@@ -1702,6 +1702,10 @@ export async function storeEntries(
     ) {
       await contradictionSubjectIndex.ensureInitialized(db);
 
+      console.log(
+        `[contradiction] checking entry: type=${normalizedEntry.type} subject="${normalizedEntry.subject}" subjectKey=${normalizedEntry.subjectKey ?? "none"}`,
+      );
+
       const conflicts = await detectContradictions(
         db,
         {
@@ -1719,6 +1723,17 @@ export async function storeEntries(
           config: options.config,
         },
       );
+
+      if (conflicts.length === 0) {
+        console.log("[contradiction] no conflicts detected");
+      } else {
+        console.log(`[contradiction] found ${conflicts.length} conflict(s):`);
+        for (const c of conflicts) {
+          console.log(
+            `[contradiction]   vs entry=${c.existingEntryId.slice(0, 8)} relation=${c.result.relation} confidence=${c.result.confidence.toFixed(2)} explanation="${c.result.explanation.slice(0, 80)}"`,
+          );
+        }
+      }
 
       if (conflicts.length > 0) {
         processed.__pendingConflicts = conflicts;

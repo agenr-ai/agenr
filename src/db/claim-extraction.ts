@@ -241,6 +241,9 @@ export async function extractClaim(
 
     const parsed = extractToolArgs(response);
     if (!parsed || parsed.no_claim) {
+      console.log(
+        `[claim] no claim extracted (${parsed?.no_claim ? "no_claim=true" : "parse failed"})`,
+      );
       return null;
     }
 
@@ -253,13 +256,17 @@ export async function extractClaim(
       return null;
     }
 
+    const confidence = clampConfidence(parsed.confidence ?? 0.5);
+    console.log(
+      `[claim] extracted: key=${subjectEntity}/${subjectAttribute} pred=${predicate} obj="${object.slice(0, 40)}" conf=${confidence.toFixed(2)}`,
+    );
     return {
       subjectEntity,
       subjectAttribute,
       subjectKey: `${subjectEntity}/${subjectAttribute}`,
       predicate,
       object,
-      confidence: clampConfidence(parsed.confidence ?? 0.5),
+      confidence,
     };
   } catch {
     return null;
