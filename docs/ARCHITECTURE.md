@@ -860,7 +860,7 @@ When `--platform` and/or `--project` are provided:
 
 ### Interactive Wizard
 
-`runInitWizard()` provides a guided setup using `@clack/prompts` for terminal UI. Currently handles initial config setup; full wizard features (platform selection, project wiring) are in progress.
+`runInitWizard()` provides a guided setup using `@clack/prompts` for terminal UI. Handles the full onboarding flow including platform detection, project wiring, plugin installation, session scanning, cost estimation, ingestion, consolidation, and watcher setup.
 
 ### Global Setup
 

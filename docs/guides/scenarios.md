@@ -689,7 +689,7 @@ Cursor reads `.cursor/mcp.json`, not `.mcp.json` at the project root. `agenr ini
 
 **9. The watcher does not tag entries by project**
 
-Entries extracted by the watcher daemon have no `project` field. Only entries stored directly via `agenr_store` (when the agent follows the system prompt instructions) get project-tagged. This means watcher-extracted entries appear in global recall but not in project-scoped recall.
+Watcher-extracted entries can be project-tagged when `labelProjectMap` maps the resolved session label to a project. If no mapping is present, entries remain untagged and show up only in global recall. Entries stored directly via `agenr_store` (when the agent follows system prompt instructions) are always project-tagged.
 
 **10. Codex MCP config is global**
 
