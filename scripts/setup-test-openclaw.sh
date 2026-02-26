@@ -59,7 +59,7 @@ EOF
       exit 0
     fi
 
-    PID=$(lsof -ti :$PORT 2>/dev/null)
+    PID=$(lsof -ti :$PORT 2>/dev/null || true)
     if [ -n "$PID" ]; then
       echo "Stopping gateway (PID $PID)..."
       kill "$PID" 2>/dev/null

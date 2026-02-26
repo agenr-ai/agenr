@@ -855,6 +855,8 @@ async function writeOpenClawPluginDbPath(
   const agenrConfig = agenr.config as JsonRecord;
   if (dbPath) {
     agenrConfig.dbPath = dbPath;
+  } else {
+    delete agenrConfig.dbPath;
   }
 
   await fs.mkdir(configDir, { recursive: true });
@@ -1431,14 +1433,7 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
     }
   }
 
-  const initResult = await initWizardRuntime.runInitCommand({
-    platform: selectedPlatform.id,
-    project: projectSlug,
-    path: projectDir,
-    dependsOn: options.dependsOn,
-    openclawDbPath: selectedOpenclawDbPath,
-  });
-
+  let initResult: InitCommandResult;
   let pluginStatus = "";
   if (selectedPlatform.id === "openclaw") {
     const openclawConfigPath = path.join(resolveOpenClawConfigSubdir(selectedPlatform.configDir), "openclaw.json");
@@ -1495,6 +1490,15 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
       sessionsDir: resolveInputPath((confirmSessionsDir as string).trim()),
     };
 
+    projectDir = resolveWizardProjectDir(projectDir, selectedPlatform.id, selectedPlatform.configDir);
+    initResult = await initWizardRuntime.runInitCommand({
+      platform: selectedPlatform.id,
+      project: projectSlug,
+      path: projectDir,
+      dependsOn: options.dependsOn,
+      openclawDbPath: selectedOpenclawDbPath,
+    });
+
     const spinner = clack.spinner();
     spinner.start("Installing agenr plugin for OpenClaw...");
     const pluginResult = await initWizardRuntime.installOpenClawPlugin(resolvedConfigDir);
@@ -1541,6 +1545,14 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
         }
       }
     }
+  } else {
+    initResult = await initWizardRuntime.runInitCommand({
+      platform: selectedPlatform.id,
+      project: projectSlug,
+      path: projectDir,
+      dependsOn: options.dependsOn,
+      openclawDbPath: selectedOpenclawDbPath,
+    });
   }
 
   if (hasExistingConfig && (wizardChanges.authChanged || wizardChanges.modelChanged)) {
@@ -1818,7 +1830,12 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
   );
 
   const nextSteps: string[] = [];
-  if (selectedPlatform.id === "openclaw" && !pluginStatus.includes("installed")) {
+  if (
+    selectedPlatform.id === "openclaw" &&
+    !pluginStatus.includes("installed") &&
+    !pluginStatus.includes("loaded via local path") &&
+    !pluginStatus.includes("skipped npm install")
+  ) {
     nextSteps.push("Install plugin: openclaw plugins install agenr");
   }
   if (ingestStatus === "Skipped" || ingestStatus === "No sessions found") {

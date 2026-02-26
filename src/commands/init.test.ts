@@ -2653,6 +2653,34 @@ describe("writeOpenClawPluginDbPath", () => {
     const allow = writtenConfig.plugins?.allow ?? [];
     expect(allow.filter((entry) => entry === "agenr")).toHaveLength(1);
   });
+
+  it("removes existing dbPath when switching back to shared DB", async () => {
+    vi.restoreAllMocks();
+
+    vi.spyOn(fs, "readFile").mockResolvedValue(
+      JSON.stringify({
+        plugins: {
+          allow: ["agenr"],
+          entries: {
+            agenr: {
+              enabled: true,
+              config: { dbPath: "/tmp/old/knowledge.db" },
+            },
+          },
+        },
+      }),
+    );
+    vi.spyOn(fs, "mkdir").mockResolvedValue(undefined);
+    const writeSpy = vi.spyOn(fs, "writeFile").mockResolvedValue(undefined);
+
+    await initWizardRuntime.writeOpenClawPluginDbPath("/tmp/test-openclaw", undefined);
+
+    const writtenRaw = writeSpy.mock.calls[0]?.[1];
+    const written = JSON.parse(String(writtenRaw)) as {
+      plugins?: { entries?: { agenr?: { config?: { dbPath?: string } } } };
+    };
+    expect(written.plugins?.entries?.agenr?.config?.dbPath).toBeUndefined();
+  });
 });
 
 describe("resolveAgenrCommand", () => {
