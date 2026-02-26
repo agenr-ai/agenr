@@ -1573,7 +1573,11 @@ describe("runInitWizard", () => {
     vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
     vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
     clackConfirmMock.mockResolvedValue(true);
-    clackSelectMock.mockResolvedValueOnce("keep").mockResolvedValueOnce("keep").mockResolvedValueOnce("keep");
+    clackSelectMock
+      .mockResolvedValueOnce("keep")
+      .mockResolvedValueOnce("no")
+      .mockResolvedValueOnce("keep")
+      .mockResolvedValueOnce("keep");
 
     await runInitWizard({ isInteractive: true, path: dir });
 
@@ -1604,12 +1608,15 @@ describe("runInitWizard", () => {
     vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, true));
     vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
     clackConfirmMock.mockResolvedValue(true);
-    clackSelectMock.mockResolvedValueOnce("keep").mockResolvedValueOnce("keep").mockResolvedValueOnce("keep");
+    clackSelectMock
+      .mockResolvedValueOnce("keep")
+      .mockResolvedValueOnce("no")
+      .mockResolvedValueOnce("keep")
+      .mockResolvedValueOnce("keep");
 
     await runInitWizard({ isInteractive: true, path: dir });
 
-    expect(clackSelectMock).toHaveBeenNthCalledWith(
-      2,
+    expect(clackSelectMock).toHaveBeenCalledWith(
       expect.objectContaining({
         message: "Platform: OpenClaw (current)",
         options: [
@@ -1692,6 +1699,7 @@ describe("runInitWizard", () => {
     clackConfirmMock.mockResolvedValue(true);
     clackSelectMock
       .mockResolvedValueOnce("keep")
+      .mockResolvedValueOnce("no")
       .mockResolvedValueOnce("keep")
       .mockResolvedValueOnce("shared")
       .mockResolvedValueOnce("keep");
@@ -1727,6 +1735,7 @@ describe("runInitWizard", () => {
     clackConfirmMock.mockResolvedValue(true);
     clackSelectMock
       .mockResolvedValueOnce("keep")
+      .mockResolvedValueOnce("no")
       .mockResolvedValueOnce("keep")
       .mockResolvedValueOnce("isolated")
       .mockResolvedValueOnce("keep");
@@ -1805,7 +1814,11 @@ describe("runInitWizard", () => {
     vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, true));
     vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
     clackConfirmMock.mockResolvedValue(true);
-    clackSelectMock.mockResolvedValueOnce("keep").mockResolvedValueOnce("keep").mockResolvedValueOnce("keep");
+    clackSelectMock
+      .mockResolvedValueOnce("keep")
+      .mockResolvedValueOnce("no")
+      .mockResolvedValueOnce("keep")
+      .mockResolvedValueOnce("keep");
 
     await runInitWizard({ isInteractive: true, path: dir });
 
@@ -1834,7 +1847,11 @@ describe("runInitWizard", () => {
     vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, true));
     vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
     clackConfirmMock.mockResolvedValue(true);
-    clackSelectMock.mockResolvedValueOnce("keep").mockResolvedValueOnce("keep").mockResolvedValueOnce("keep");
+    clackSelectMock
+      .mockResolvedValueOnce("keep")
+      .mockResolvedValueOnce("no")
+      .mockResolvedValueOnce("keep")
+      .mockResolvedValueOnce("keep");
 
     await runInitWizard({ isInteractive: true, path: dir });
 
@@ -2131,7 +2148,11 @@ describe("runInitWizard", () => {
     vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
     vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
     clackConfirmMock.mockResolvedValue(true);
-    clackSelectMock.mockResolvedValueOnce("keep").mockResolvedValueOnce("keep").mockResolvedValueOnce("keep");
+    clackSelectMock
+      .mockResolvedValueOnce("keep")
+      .mockResolvedValueOnce("no")
+      .mockResolvedValueOnce("keep")
+      .mockResolvedValueOnce("keep");
 
     await runInitWizard({ isInteractive: true, path: dir });
 

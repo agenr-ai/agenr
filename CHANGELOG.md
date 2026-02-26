@@ -32,6 +32,7 @@
 - Added production logging for claim extraction, contradiction detection, and conflict resolution (#266)
 - Added `agenr backfill-claims` command to extract claims for existing entries, enabling subject index and contradiction detection on older knowledge (#266)
 - Added `agenr conflicts` command: local web UI for reviewing and resolving detected contradictions (#266, seeds #171)
+- Init wizard: per-task model selection for extraction, claim extraction, contradiction judge, and handoff summary (#266)
 
 ### Fixed
 - Critical: conflicts UI "keep-new"/"keep-old" resolution was retiring the wrong entry (swarm review)
