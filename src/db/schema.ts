@@ -143,6 +143,36 @@ const CREATE_TABLE_AND_TRIGGER_STATEMENTS: readonly string[] = [
     created_at TEXT NOT NULL
   )
   `,
+  `
+  CREATE TABLE IF NOT EXISTS co_recall_edges (
+    entry_a TEXT NOT NULL,
+    entry_b TEXT NOT NULL,
+    weight REAL NOT NULL DEFAULT 0.1,
+    session_count INTEGER NOT NULL DEFAULT 1,
+    last_co_recalled TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (entry_a, entry_b),
+    FOREIGN KEY (entry_a) REFERENCES entries(id),
+    FOREIGN KEY (entry_b) REFERENCES entries(id)
+  )
+  `,
+  "CREATE INDEX IF NOT EXISTS idx_co_recall_a ON co_recall_edges(entry_a)",
+  "CREATE INDEX IF NOT EXISTS idx_co_recall_b ON co_recall_edges(entry_b)",
+  `
+  CREATE TABLE IF NOT EXISTS review_queue (
+    id TEXT PRIMARY KEY,
+    entry_id TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    detail TEXT,
+    suggested_action TEXT NOT NULL DEFAULT 'review',
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TEXT NOT NULL,
+    resolved_at TEXT,
+    FOREIGN KEY (entry_id) REFERENCES entries(id)
+  )
+  `,
+  "CREATE INDEX IF NOT EXISTS idx_review_queue_status ON review_queue(status)",
+  "CREATE INDEX IF NOT EXISTS idx_review_queue_entry ON review_queue(entry_id)",
   CREATE_ENTRIES_FTS_TABLE_SQL,
   CREATE_ENTRIES_FTS_TRIGGER_AI_SQL,
   CREATE_ENTRIES_FTS_TRIGGER_AD_SQL,

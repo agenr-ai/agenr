@@ -28,6 +28,7 @@ import { runConflictsUiCommand } from "./commands/conflicts-ui.js";
 import { runBenchmarkCommand } from "./commands/benchmark.js";
 import { runBackfillClaimsCommand } from "./commands/backfill-claims.js";
 import { runEvalRecallCommand } from "./commands/eval.js";
+import { runEdgesCommand } from "./commands/edges.js";
 import { runHealthCommand } from "./commands/health.js";
 import { runIngestCommand } from "./commands/ingest.js";
 import { runContextCommand } from "./commands/context.js";
@@ -35,6 +36,7 @@ import { runInitWizard } from "./commands/init.js";
 import { runMcpCommand } from "./commands/mcp.js";
 import { runRecallCommand } from "./commands/recall.js";
 import { runRetireCommand } from "./commands/retire.js";
+import { runReviewCommand, runReviewDismissCommand, runReviewRetireCommand } from "./commands/review.js";
 import { runStoreCommand } from "./commands/store.js";
 import { runTodoCommand } from "./commands/todo.js";
 import { runWatchCommand } from "./commands/watch.js";
@@ -616,6 +618,49 @@ export function createProgram(): Command {
         reason: opts.reason as string | undefined,
         db: opts.db as string | undefined,
         id: entryId,
+      });
+      process.exitCode = result.exitCode;
+    });
+
+  const reviewCommand = program
+    .command("review")
+    .description("Review pending low-quality and contradiction flags")
+    .option("--db <path>", "Database path override")
+    .option("--limit <n>", "Maximum pending review rows to show", parseIntOption, 20)
+    .action(async (opts: { db?: string; limit?: number }) => {
+      const result = await runReviewCommand({ db: opts.db, limit: opts.limit });
+      process.exitCode = result.exitCode;
+    });
+
+  reviewCommand
+    .command("dismiss <id>")
+    .description("Dismiss a pending review item")
+    .option("--db <path>", "Database path override")
+    .action(async (id: string, opts: { db?: string }) => {
+      const result = await runReviewDismissCommand(id, { db: opts.db });
+      process.exitCode = result.exitCode;
+    });
+
+  reviewCommand
+    .command("retire <id>")
+    .description("Retire the entry referenced by a pending review item and resolve it")
+    .option("--db <path>", "Database path override")
+    .action(async (id: string, opts: { db?: string }) => {
+      const result = await runReviewRetireCommand(id, { db: opts.db });
+      process.exitCode = result.exitCode;
+    });
+
+  program
+    .command("edges")
+    .description("Inspect co-recall edges")
+    .option("--entry <id>", "Show neighbors for one entry ID instead of global top edges")
+    .option("--limit <n>", "Maximum rows to return", parseIntOption)
+    .option("--db <path>", "Database path override")
+    .action(async (opts: { entry?: string; limit?: number; db?: string }) => {
+      const result = await runEdgesCommand({
+        entry: opts.entry,
+        limit: opts.limit,
+        db: opts.db,
       });
       process.exitCode = result.exitCode;
     });

@@ -97,6 +97,8 @@ describe("health command", () => {
     expect(output).toContain("Entries:");
     expect(output).toContain("File size:");
     expect(output).toContain("Forgetting Candidates");
+    expect(output).toContain("Co-Recall Edges");
+    expect(output).toContain("Review Queue");
   });
 
   it("reports an empty database cleanly", async () => {
@@ -198,5 +200,69 @@ describe("health command", () => {
     expect(output).toContain("Medium (0.3-0.7):  1 entries");
     expect(output).toContain("Low (< 0.3):       1 entries");
     expect(output).toContain("Average:           0.53");
+  });
+
+  it("includes co-recall and review queue stats", async () => {
+    const client = createClient({ url: ":memory:" });
+    clients.push(client);
+    await initDb(client);
+
+    await insertEntry(client, {
+      id: "edge-a",
+      type: "fact",
+      subject: "Edge A",
+      createdAt: "2026-02-01T00:00:00.000Z",
+      updatedAt: "2026-02-01T00:00:00.000Z",
+    });
+    await insertEntry(client, {
+      id: "edge-b",
+      type: "fact",
+      subject: "Edge B",
+      createdAt: "2026-02-01T00:00:00.000Z",
+      updatedAt: "2026-02-01T00:00:00.000Z",
+    });
+
+    await client.execute({
+      sql: `
+        INSERT INTO co_recall_edges (
+          entry_a, entry_b, weight, session_count, last_co_recalled, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+      `,
+      args: [
+        "edge-a",
+        "edge-b",
+        0.9,
+        4,
+        "2026-02-17T12:00:00.000Z",
+        "2026-02-10T12:00:00.000Z",
+      ],
+    });
+
+    await client.execute({
+      sql: `
+        INSERT INTO review_queue (
+          id, entry_id, reason, detail, suggested_action, status, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `,
+      args: [
+        "review-1",
+        "edge-a",
+        "low_quality",
+        "quality_score 0.100 after 12 recalls",
+        "retire",
+        "pending",
+        "2026-02-10T00:00:00.000Z",
+      ],
+    });
+
+    const output = await runWithClient(client, "2026-02-18T00:00:00.000Z");
+    expect(output).toContain("Co-Recall Edges");
+    expect(output).toContain("Total edges:       1");
+    expect(output).toContain("Edge A <-> Edge B (0.90)");
+    expect(output).toContain("Review Queue");
+    expect(output).toContain("Total pending:     1");
+    expect(output).toContain("Pending by reason: low_quality=1");
   });
 });

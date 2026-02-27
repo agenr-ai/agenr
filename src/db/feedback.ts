@@ -22,6 +22,12 @@ interface EmbeddedEntry {
   embedding: number[];
 }
 
+export interface RecallFeedbackResult {
+  usedIds: string[];
+  correctedIds: string[];
+  updatedIds: string[];
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -291,14 +297,20 @@ export async function computeRecallFeedback(
   recalledEntryIds: Set<string>,
   config: AgenrConfig,
   logger: PluginLogger,
-): Promise<void> {
+): Promise<RecallFeedbackResult> {
+  const emptyResult: RecallFeedbackResult = {
+    usedIds: [],
+    correctedIds: [],
+    updatedIds: [],
+  };
+
   if (recalledEntryIds.size === 0) {
-    return;
+    return emptyResult;
   }
 
   const assistantText = collectAssistantText(messages);
   if (assistantText.length < RESPONSE_MIN_CHARS) {
-    return;
+    return emptyResult;
   }
 
   const responseCorpus = assistantText.slice(0, RESPONSE_MAX_CHARS);
@@ -310,7 +322,7 @@ export async function computeRecallFeedback(
     logger.warn(
       `[agenr] before_reset: feedback skipped for session=${sessionKey} - ${error instanceof Error ? error.message : String(error)}`,
     );
-    return;
+    return emptyResult;
   }
 
   let responseEmbedding: number[] | null = null;
@@ -321,16 +333,16 @@ export async function computeRecallFeedback(
     logger.warn(
       `[agenr] before_reset: feedback embedding failed for session=${sessionKey}: ${error instanceof Error ? error.message : String(error)}`,
     );
-    return;
+    return emptyResult;
   }
 
   if (!responseEmbedding || responseEmbedding.length === 0) {
-    return;
+    return emptyResult;
   }
 
   const recalledEntries = await fetchEmbeddedEntries(db, recalledEntryIds);
   if (recalledEntries.length === 0) {
-    return;
+    return emptyResult;
   }
 
   const storeContents = collectAgenrStoreContents(messages);
@@ -372,6 +384,12 @@ export async function computeRecallFeedback(
   if (updates.length > 0) {
     await updateQualityScores(db, updates);
   }
+
+  return {
+    usedIds: updates.filter((update) => update.signal === SIGNAL_USED).map((update) => update.id),
+    correctedIds: Array.from(correctedIds),
+    updatedIds: updates.map((update) => update.id),
+  };
 }
 
 export const __testing = {

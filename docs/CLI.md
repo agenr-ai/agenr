@@ -559,6 +559,17 @@ Forgetting Candidates
 Consolidation Health
 - Contradiction flags: 4 entries
 - Stale todos (>30d old, not recalled): 18
+
+Co-Recall Edges
+- Total edges:       214
+- Average weight:    0.28
+- Top 5 strongest pairs:
+  - release checklist <-> deployment playbook (0.90)
+
+Review Queue
+- Total pending:     7
+- Pending by reason: low_quality=5, stale=2
+- Oldest pending age: 4d
 ```
 
 ## `retire`
@@ -589,6 +600,52 @@ agenr retire [subject] [options]
 $A retire "AGENR platform" --persist --reason "project killed"
 $A retire "old project" --contains --dry-run
 $A retire --id abc123 --force --reason "stale handoff"
+```
+
+## `review`
+
+Inspect and resolve pending review queue items.
+
+### Syntax
+
+```bash
+agenr review [options]
+agenr review dismiss <id> [options]
+agenr review retire <id> [options]
+```
+
+### Options
+- `--db <path>`: database path override.
+- `--limit <n>`: max rows for `agenr review` (default `20`).
+
+### Examples
+
+```bash
+$A review
+$A review dismiss 3d3c47dc-b242-4ce0-bf95-1af5a1e957e1
+$A review retire 3d3c47dc-b242-4ce0-bf95-1af5a1e957e1
+```
+
+## `edges`
+
+Inspect co-recall edges learned from entries used together.
+
+### Syntax
+
+```bash
+agenr edges [options]
+```
+
+### Options
+- `--entry <id>`: show neighbors for a specific entry.
+- `--limit <n>`: max rows to return (default `20`; with `--entry`, default `10`).
+- `--db <path>`: database path override.
+
+### Examples
+
+```bash
+$A edges
+$A edges --entry 4a9f2e60-4fd1-4d2d-b1a0-e5a40f151876
 ```
 
 ## `mcp`

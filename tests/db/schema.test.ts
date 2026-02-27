@@ -30,7 +30,13 @@ describe("db schema", () => {
       "entry_sources",
       "signal_watermarks",
       "conflict_log",
+      "co_recall_edges",
+      "review_queue",
       "entries_fts",
+      "idx_co_recall_a",
+      "idx_co_recall_b",
+      "idx_review_queue_status",
+      "idx_review_queue_entry",
       "idx_entries_embedding",
       "idx_entries_type",
       "idx_entries_type_canonical_key",
@@ -86,7 +92,13 @@ describe("db schema", () => {
         'entry_sources',
         'signal_watermarks',
         'conflict_log',
+        'co_recall_edges',
+        'review_queue',
         'entries_fts',
+        'idx_co_recall_a',
+        'idx_co_recall_b',
+        'idx_review_queue_status',
+        'idx_review_queue_entry',
         'idx_entries_embedding',
         'idx_entries_type',
         'idx_entries_type_canonical_key',
@@ -108,7 +120,7 @@ describe("db schema", () => {
       )
       GROUP BY name
     `);
-    expect(namesResult.rows).toHaveLength(26);
+    expect(namesResult.rows).toHaveLength(32);
     for (const row of namesResult.rows as Array<{ count?: unknown }>) {
       expect(Number(row.count)).toBe(1);
     }
