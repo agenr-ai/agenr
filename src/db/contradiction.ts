@@ -244,11 +244,15 @@ export async function classifyConflict(
     });
 
     if (response.stopReason === "error" || response.errorMessage) {
+      console.warn(
+        `[contradiction] LLM judge error: ${response.errorMessage ?? "unknown stop reason"}`,
+      );
       return llmErrorResult();
     }
 
     const parsed = extractJudgeArgs(response);
     if (!parsed) {
+      console.warn("[contradiction] LLM judge returned unparseable response");
       return llmErrorResult();
     }
 
@@ -257,7 +261,10 @@ export async function classifyConflict(
       confidence: clampConfidence(parsed.confidence, 0),
       explanation: parsed.explanation,
     };
-  } catch {
+  } catch (err) {
+    console.warn(
+      `[contradiction] LLM judge call failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
     return llmErrorResult();
   }
 }
@@ -395,6 +402,7 @@ export async function resolveConflict(
   newEntry: { type: string; importance: number },
   conflict: DetectedConflict,
   subjectIndex: SubjectIndex,
+  autoSupersedeThreshold?: number,
 ): Promise<ConflictResolution> {
   if (conflict.existingType === "event") {
     await logConflict(
@@ -412,9 +420,10 @@ export async function resolveConflict(
   }
 
   const isTemporalType = conflict.existingType === "fact" || conflict.existingType === "preference";
+  const effectiveAutoSupersedeThreshold = autoSupersedeThreshold ?? 0.85;
   const shouldAutoSupersede =
     conflict.result.relation === "supersedes" &&
-    conflict.result.confidence > 0.85 &&
+    conflict.result.confidence > effectiveAutoSupersedeThreshold &&
     isTemporalType &&
     newEntry.importance >= conflict.existingImportance;
 
@@ -473,7 +482,7 @@ export async function resolveConflict(
 
   if (
     conflict.result.relation === "supersedes" &&
-    conflict.result.confidence > 0.85 &&
+    conflict.result.confidence > effectiveAutoSupersedeThreshold &&
     isTemporalType &&
     newEntry.importance < conflict.existingImportance
   ) {

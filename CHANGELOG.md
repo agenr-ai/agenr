@@ -39,6 +39,12 @@
 ### Fixed
 - fix: CLI banner now displays the current agenr version (#278)
 - fix: setup and init wizards now write explicitly selected task models even when they match defaults (#275)
+- fix: resolveConflict now reads autoSupersedeConfidence from config instead of hardcoding 0.85 (#275)
+- fix: claim fields explicitly propagated through mutation pipeline (#275)
+- fix: supersede + insert wrapped in transaction for online-dedup path (#275)
+- fix: entity names with slashes sanitized during claim extraction (#275)
+- fix: LLM judge errors now logged via console.warn instead of silent fallback (#275)
+- fix: entity alias resolution no longer depends on single-entity heuristic (#275)
 - Critical: conflicts UI "keep-new"/"keep-old" resolution was retiring the wrong entry (swarm review)
 - Contradiction detection: cap subject-index candidates to maxCandidates, sort by recency
 - Contradiction detection: always run both subject-index and embedding search (removed hardcoded < 3 gate)

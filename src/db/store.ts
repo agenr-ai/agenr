@@ -1709,6 +1709,20 @@ export async function storeEntries(
         normalizedEntry.claimPredicate = claim.predicate;
         normalizedEntry.claimObject = claim.object;
         normalizedEntry.claimConfidence = claim.confidence;
+
+        const mutationEntry: KnowledgeEntry = {
+          ...processed.decision.entry,
+          subjectEntity: normalizedEntry.subjectEntity,
+          subjectAttribute: normalizedEntry.subjectAttribute,
+          subjectKey: normalizedEntry.subjectKey,
+          claimPredicate: normalizedEntry.claimPredicate,
+          claimObject: normalizedEntry.claimObject,
+          claimConfidence: normalizedEntry.claimConfidence,
+        };
+        processed.decision = {
+          ...processed.decision,
+          entry: mutationEntry,
+        };
       }
     }
 
@@ -1758,7 +1772,8 @@ export async function storeEntries(
       }
     }
 
-    const applyAndCount = async (): Promise<StoreEntryDecision> => {
+    let inPerEntryTransaction = false;
+    const applyAndCountCore = async (): Promise<StoreEntryDecision> => {
       const applied = await applyEntryMutation(db, processed, embedFn, apiKey, cache);
 
       if (applied.action === "added") {
@@ -1787,6 +1802,7 @@ export async function storeEntries(
             },
             conflict,
             contradictionSubjectIndex,
+            options.config?.contradiction?.autoSupersedeConfidence,
           );
         }
         pendingConflictsMap.delete(entryIndex);
@@ -1803,12 +1819,43 @@ export async function storeEntries(
       return applied;
     };
 
+    const applyAndCount = async (): Promise<StoreEntryDecision> => {
+      const pendingConflicts = pendingConflictsMap.get(entryIndex);
+      const shouldWrapConflictsInTransaction =
+        onlineDedup &&
+        Boolean(pendingConflicts && pendingConflicts.length > 0) &&
+        !inPerEntryTransaction;
+
+      if (!shouldWrapConflictsInTransaction) {
+        return applyAndCountCore();
+      }
+
+      let appliedDecision: StoreEntryDecision | undefined;
+      await runPerEntryTransaction(db, options.dryRun === true, async () => {
+        inPerEntryTransaction = true;
+        try {
+          appliedDecision = await applyAndCountCore();
+        } finally {
+          inPerEntryTransaction = false;
+        }
+      });
+      if (!appliedDecision) {
+        throw new Error("Failed to apply per-entry transaction decision.");
+      }
+      return appliedDecision;
+    };
+
     const decision =
       onlineDedup
         ? await (async () => {
             let appliedDecision: StoreEntryDecision | undefined;
             await runPerEntryTransaction(db, options.dryRun === true, async () => {
-              appliedDecision = await applyAndCount();
+              inPerEntryTransaction = true;
+              try {
+                appliedDecision = await applyAndCount();
+              } finally {
+                inPerEntryTransaction = false;
+              }
             });
             if (!appliedDecision) {
               throw new Error("Failed to apply per-entry transaction decision.");

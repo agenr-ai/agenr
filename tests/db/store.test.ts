@@ -895,6 +895,49 @@ describe("db store pipeline", () => {
     expect(asNumber(row.rows[0]?.claim_confidence)).toBeCloseTo(0.9, 6);
   });
 
+  it("claim columns are populated in DB after storeEntries with claim extraction enabled", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    vi.spyOn(claimExtractionModule, "extractClaim").mockResolvedValue({
+      subjectEntity: "jim",
+      subjectAttribute: "favorite_editor",
+      subjectKey: "jim/favorite_editor",
+      predicate: "prefers",
+      object: "neovim",
+      confidence: 0.91,
+    });
+
+    await storeEntries(
+      client,
+      [makeEntry({ content: "Jim prefers neovim vec-low", sourceFile: "claim-columns.jsonl", subject: "Jim editor" })],
+      "sk-test",
+      {
+        embedFn: mockEmbed,
+        force: true,
+        llmClient: makeLlmClient(),
+      },
+    );
+
+    const row = await client.execute({
+      sql: `
+        SELECT subject_entity, subject_attribute, subject_key, claim_predicate, claim_object, claim_confidence
+        FROM entries
+        WHERE source_file = ?
+      `,
+      args: ["claim-columns.jsonl"],
+    });
+
+    expect(row.rows[0]).toMatchObject({
+      subject_entity: "jim",
+      subject_attribute: "favorite_editor",
+      subject_key: "jim/favorite_editor",
+      claim_predicate: "prefers",
+      claim_object: "neovim",
+    });
+    expect(asNumber(row.rows[0]?.claim_confidence)).toBeCloseTo(0.91, 6);
+  });
+
   it("loads entity hints once per batch and passes hints to claim extraction", async () => {
     const client = makeClient();
     await initDb(client);

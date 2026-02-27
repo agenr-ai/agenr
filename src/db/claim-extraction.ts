@@ -147,7 +147,7 @@ export interface ExtractClaimOptions {
 }
 
 function normalizeEntity(value: string): string {
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
+  return value.trim().toLowerCase().replace(/\//g, "-").replace(/\s+/g, " ");
 }
 
 function resolveEntityAlias(entity: string, existingEntities?: Set<string>): string {
@@ -156,10 +156,12 @@ function resolveEntityAlias(entity: string, existingEntities?: Set<string>): str
     return aliased;
   }
 
-  if (existingEntities && existingEntities.size > 0 && entity === "user" && existingEntities.size === 1) {
-    const existing = [...existingEntities][0];
-    if (existing && existing !== "user") {
-      return existing;
+  if (existingEntities && existingEntities.size > 0 && entity === "user") {
+    const nonUserEntities = [...existingEntities]
+      .filter((existingEntity) => existingEntity !== "user")
+      .sort((a, b) => a.localeCompare(b));
+    if (nonUserEntities.length > 0) {
+      return nonUserEntities[0];
     }
   }
 
@@ -198,6 +200,7 @@ function buildClaimExtractionSystemPrompt(entityHints?: string[]): string {
     "",
     `Known entities in the knowledge base: ${normalizedHints.join(", ")}`,
     "Use one of these entities if the entry is about any of them.",
+    "If the subject is the user/owner of the knowledge base, use their actual name from the entity hints rather than generic terms like \"user\", \"me\", or \"I\".",
     "Only create a new entity name if none of the known entities apply.",
   ].join("\n");
 }
