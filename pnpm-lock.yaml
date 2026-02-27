@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  fast-xml-parser: '>=5.3.6'
+  fast-xml-parser: ^5.3.6
 
 importers:
 
@@ -18,8 +18,8 @@ importers:
         specifier: ^0.17.0
         version: 0.17.0
       '@mariozechner/pi-ai':
-        specifier: ^0.52.0
-        version: 0.52.12(ws@8.19.0)(zod@3.25.76)
+        specifier: ^0.55.3
+        version: 0.55.3(ws@8.19.0)(zod@3.25.76)
       '@sinclair/typebox':
         specifier: ^0.34.48
         version: 0.34.48
@@ -440,8 +440,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@mariozechner/pi-ai@0.52.12':
-    resolution: {integrity: sha512-oF7OMJu1aUx7MXJeJoJ/3JDXzD2a5SqK9nHVK3mCA8DRQaykv9g+wcFZaANcCl0vAR2QSDr5KN3ZMARlFNWiVg==}
+  '@mariozechner/pi-ai@0.55.3':
+    resolution: {integrity: sha512-f9jWoDzJR9Wy/H8JPMbjoM4WvVUeFZ65QdYA9UHIfoOopDfwWE8F8JHQOj5mmmILMacXuzsqA3J7MYqNWZRvvQ==}
     engines: {node: '>=20.0.0'}
     hasBin: true
 
@@ -921,6 +921,7 @@ packages:
   basic-ftp@5.1.0:
     resolution: {integrity: sha512-RkaJzeJKDbaDWTIPiJwubyljaEPwpVWkm9Rt5h9Nd6h7tEXTJ3VB4qxdZBioV7JO5yLUaOKwz7vDOzlncUsegw==}
     engines: {node: '>=10.0.0'}
+    deprecated: Security vulnerability fixed in 5.2.0, please upgrade
 
   bignumber.js@9.3.1:
     resolution: {integrity: sha512-Ko0uX15oIUS7wJ3Rb30Fs6SkVbLmPBAKdlm7q9+ak9bbIeFf0MwuBsQV6z7+X768/cHsfg+WlysDWJcmthjsjQ==}
@@ -2272,7 +2273,7 @@ snapshots:
   '@libsql/win32-x64-msvc@0.5.22':
     optional: true
 
-  '@mariozechner/pi-ai@0.52.12(ws@8.19.0)(zod@3.25.76)':
+  '@mariozechner/pi-ai@0.55.3(ws@8.19.0)(zod@3.25.76)':
     dependencies:
       '@anthropic-ai/sdk': 0.73.0(zod@3.25.76)
       '@aws-sdk/client-bedrock-runtime': 3.990.0
