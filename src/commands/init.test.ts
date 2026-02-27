@@ -1584,10 +1584,11 @@ describe("runInitWizard", () => {
     expect(clackSelectMock).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
-        message: "Auth: OpenAI API key (current)",
+        message: "Auth: OpenAI API key | Model: gpt-4.1-mini (current)",
         options: [
-          expect.objectContaining({ label: "Keep current" }),
-          expect.objectContaining({ label: "Change..." }),
+          expect.objectContaining({ label: "Keep current auth and model" }),
+          expect.objectContaining({ label: "Change model only" }),
+          expect.objectContaining({ label: "Change auth and model..." }),
         ],
       }),
     );
@@ -1643,7 +1644,7 @@ describe("runInitWizard", () => {
     vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
     vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
     clackConfirmMock.mockResolvedValue(true);
-    clackSelectMock.mockResolvedValueOnce("change").mockResolvedValueOnce("keep").mockResolvedValueOnce("keep");
+    clackSelectMock.mockResolvedValueOnce("change-auth").mockResolvedValueOnce("keep").mockResolvedValueOnce("keep");
 
     await runInitWizard({ isInteractive: true, path: dir });
 
@@ -1666,7 +1667,7 @@ describe("runInitWizard", () => {
     vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
     vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
     clackConfirmMock.mockResolvedValue(true);
-    clackSelectMock.mockResolvedValueOnce("change").mockResolvedValueOnce("keep").mockResolvedValueOnce("keep");
+    clackSelectMock.mockResolvedValueOnce("change-auth").mockResolvedValueOnce("keep").mockResolvedValueOnce("keep");
 
     await runInitWizard({ isInteractive: true, path: dir });
 
@@ -1766,7 +1767,7 @@ describe("runInitWizard", () => {
     vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
     vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
     clackConfirmMock.mockResolvedValue(true);
-    clackSelectMock.mockResolvedValueOnce("change").mockResolvedValueOnce("keep").mockResolvedValueOnce("keep");
+    clackSelectMock.mockResolvedValueOnce("change-auth").mockResolvedValueOnce("keep").mockResolvedValueOnce("keep");
 
     await runInitWizard({ isInteractive: true, path: dir });
 
@@ -1790,7 +1791,7 @@ describe("runInitWizard", () => {
     vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
     vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
     clackConfirmMock.mockResolvedValue(true);
-    clackSelectMock.mockResolvedValueOnce("change").mockResolvedValueOnce("keep").mockResolvedValueOnce("keep");
+    clackSelectMock.mockResolvedValueOnce("change-auth").mockResolvedValueOnce("keep").mockResolvedValueOnce("keep");
 
     await runInitWizard({ isInteractive: true, path: dir });
 
@@ -1874,7 +1875,7 @@ describe("runInitWizard", () => {
     vi.spyOn(initWizardRuntime, "detectPlatforms").mockReturnValue(platformList(true, false));
     vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
     clackConfirmMock.mockResolvedValue(true);
-    clackSelectMock.mockResolvedValueOnce("change").mockResolvedValueOnce("keep").mockResolvedValueOnce("keep");
+    clackSelectMock.mockResolvedValueOnce("change-auth").mockResolvedValueOnce("keep").mockResolvedValueOnce("keep");
 
     await runInitWizard({ isInteractive: true, path: dir });
 
@@ -2116,7 +2117,7 @@ describe("runInitWizard", () => {
     vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
     clackConfirmMock.mockResolvedValue(true);
     clackSelectMock
-      .mockResolvedValueOnce("change")
+      .mockResolvedValueOnce("change-auth")
       .mockResolvedValueOnce("keep")
       .mockResolvedValueOnce("keep")
       .mockResolvedValueOnce("keep");
@@ -2185,7 +2186,7 @@ describe("runInitWizard", () => {
       vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
       clackConfirmMock.mockResolvedValue(true);
       clackSelectMock
-        .mockResolvedValueOnce("change")
+        .mockResolvedValueOnce("change-auth")
         .mockResolvedValueOnce("keep")
         .mockResolvedValueOnce("keep")
         .mockResolvedValueOnce("reingest");
@@ -2221,7 +2222,7 @@ describe("runInitWizard", () => {
       vi.spyOn(initWizardRuntime, "runInitCommand").mockResolvedValue(mockInitResult());
       clackConfirmMock.mockResolvedValue(true);
       clackSelectMock
-        .mockResolvedValueOnce("change")
+        .mockResolvedValueOnce("change-auth")
         .mockResolvedValueOnce("keep")
         .mockResolvedValueOnce("isolated")
         .mockResolvedValueOnce("keep")

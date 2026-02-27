@@ -16,7 +16,7 @@ import { runWatcherInstallCommand, runWatcherStopCommand } from "./watcher.js";
 import { runDbResetCommand } from "./db.js";
 import { runIngestCommand, type IngestCommandResult } from "./ingest.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
-import { formatExistingConfig, runSetupCore } from "../setup.js";
+import { formatExistingConfig, modelChoicesForAuth, modelHintForChoice, runSetupCore } from "../setup.js";
 import type { AgenrConfig, AgenrProvider } from "../types.js";
 import { banner, formatLabel } from "../ui.js";
 import {
@@ -1388,11 +1388,12 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
   const hasCurrentAuthModel = Boolean(existingConfig?.auth && existingConfig.model && existingConfig.provider);
 
   if (hasCurrentAuthModel && existingConfig?.auth) {
-    const authAction = await clack.select<"keep" | "change">({
-      message: `Auth: ${describeAuth(existingConfig.auth)} (current)`,
+    const authAction = await clack.select<"keep" | "change-model" | "change-auth">({
+      message: `Auth: ${describeAuth(existingConfig.auth)} | Model: ${existingConfig.model} (current)`,
       options: [
-        { value: "keep", label: "Keep current" },
-        { value: "change", label: "Change..." },
+        { value: "keep", label: "Keep current auth and model" },
+        { value: "change-model", label: "Change model only" },
+        { value: "change-auth", label: "Change auth and model..." },
       ],
     });
     if (clack.isCancel(authAction)) {
@@ -1400,7 +1401,7 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
       return;
     }
 
-    if (authAction === "change") {
+    if (authAction === "change-auth") {
       ranSetupCoreForAuthModel = true;
       const setupResult = await initWizardRuntime.runSetupCore({
         env,
@@ -1416,6 +1417,39 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
       workingConfig = setupResult.config;
       selectedTaskModels = normalizeTaskModels(setupResult.config.models);
       currentEmbeddingKey = resolveEmbeddingKeyOrNull(setupResult.config, env);
+    } else if (authAction === "change-model") {
+      const provider = existingConfig.provider;
+      if (!provider) {
+        throw new Error("Existing config is missing provider for model selection.");
+      }
+
+      const modelChoices = modelChoicesForAuth(existingConfig.auth, provider);
+      if (modelChoices.length === 0) {
+        throw new Error(`No models are available for provider "${provider}".`);
+      }
+
+      const newModel = await clack.select<string>({
+        message: "Select default model:",
+        options: modelChoices.map((id) => ({
+          value: id,
+          label: id,
+          hint: modelHintForChoice(provider, id),
+        })),
+        initialValue: existingConfig.model,
+      });
+      if (clack.isCancel(newModel)) {
+        clack.cancel("Setup cancelled.");
+        return;
+      }
+
+      selectedModel = newModel;
+      const nextConfig: AgenrConfig = {
+        ...existingConfig,
+        model: newModel,
+      };
+      writeConfig(nextConfig, env);
+      workingConfig = initWizardRuntime.readConfig(env) ?? nextConfig;
+      currentEmbeddingKey = resolveEmbeddingKeyOrNull(workingConfig, env);
     }
   } else {
     ranSetupCoreForAuthModel = true;
