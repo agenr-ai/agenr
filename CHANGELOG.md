@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.7 - 2026-02-27
+
+### Fixed
+- `agenr init` no longer pins MCP config to a version-specific path. It now
+  resolves the `agenr` shim or binary on PATH so upgrades take effect
+  automatically (#294).
+
 ## 0.9.6 - 2026-02-27
 
 ### Added

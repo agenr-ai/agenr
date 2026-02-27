@@ -200,6 +200,65 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
+describe("resolveAgenrCommand", () => {
+  it("returns shim path when agenr is on PATH", async () => {
+    const previousPath = process.env.PATH;
+    const shimDir = await makeTempDir("agenr-shim-path-test-");
+    const shimPath = path.join(shimDir, "agenr");
+    await fs.writeFile(shimPath, "#!/bin/sh\nexit 0\n", { encoding: "utf8", mode: 0o755 });
+    await fs.chmod(shimPath, 0o755);
+
+    try {
+      process.env.PATH = `${shimDir}${path.delimiter}${previousPath ?? ""}`;
+      const resolved = initModule.resolveAgenrCommand();
+
+      expect(resolved).toEqual({
+        command: shimPath,
+        baseArgs: [],
+      });
+    } finally {
+      if (previousPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = previousPath;
+      }
+    }
+  });
+
+  it("falls back to process argv when agenr is not on PATH", () => {
+    vi.spyOn(process, "execPath", "get").mockReturnValue("/usr/local/bin/node");
+    vi.spyOn(process, "argv", "get").mockReturnValue(["node", "/tmp/dist/cli.js"]);
+    const previousDebug = process.env.AGENR_DEBUG;
+    const previousPath = process.env.PATH;
+    try {
+      process.env.PATH = "";
+      process.env.AGENR_DEBUG = "1";
+      const debugSpy = vi.spyOn(console, "debug").mockImplementation(() => {});
+
+      const resolved = initModule.resolveAgenrCommand();
+
+      expect(resolved).toEqual({
+        command: "/usr/local/bin/node",
+        baseArgs: ["/tmp/dist/cli.js"],
+      });
+      expect(debugSpy).toHaveBeenCalledWith(
+        expect.stringContaining("falling back to process.execPath + process.argv[1]"),
+      );
+    } finally {
+      if (previousDebug === undefined) {
+        delete process.env.AGENR_DEBUG;
+      } else {
+        process.env.AGENR_DEBUG = previousDebug;
+      }
+      if (previousPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = previousPath;
+      }
+    }
+  });
+});
+
 describe("task model defaults", () => {
   it("resolveTaskModelDefaults applies the base model to all tasks", () => {
     expect(initModule.resolveTaskModelDefaults("claude-sonnet-4-20250514")).toEqual({
