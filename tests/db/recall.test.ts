@@ -943,6 +943,63 @@ describe("db recall", () => {
   });
 
   describe("around temporal targeting", () => {
+    it("throws on invalid around strings", async () => {
+      const client = makeClient();
+      await initDb(client);
+
+      await expect(
+        recall(
+          client,
+          {
+            text: "",
+            context: "session-start",
+            around: "not-a-date",
+            limit: 20,
+            noUpdate: true,
+          },
+          "sk-test",
+          { now: new Date("2026-03-01T00:00:00.000Z") },
+        ),
+      ).rejects.toThrow('Invalid around value "not-a-date"');
+    });
+
+    it("throws when aroundRadius is zero or negative", async () => {
+      const client = makeClient();
+      await initDb(client);
+
+      await expect(
+        recall(
+          client,
+          {
+            text: "",
+            context: "session-start",
+            around: "2026-02-15T00:00:00.000Z",
+            aroundRadius: 0,
+            limit: 20,
+            noUpdate: true,
+          },
+          "sk-test",
+          { now: new Date("2026-03-01T00:00:00.000Z") },
+        ),
+      ).rejects.toThrow('Invalid around-radius value "0"');
+
+      await expect(
+        recall(
+          client,
+          {
+            text: "",
+            context: "session-start",
+            around: "2026-02-15T00:00:00.000Z",
+            aroundRadius: -5,
+            limit: 20,
+            noUpdate: true,
+          },
+          "sk-test",
+          { now: new Date("2026-03-01T00:00:00.000Z") },
+        ),
+      ).rejects.toThrow('Invalid around-radius value "-5"');
+    });
+
     it("shifts semantic recall scoring to favor entries near the around date", async () => {
       const client = makeClient();
       await initDb(client);
@@ -1056,6 +1113,59 @@ describe("db recall", () => {
       expect(contents.has("around-window-high vec-work-strong")).toBe(true);
       expect(contents.has("around-window-old vec-work-strong")).toBe(false);
       expect(contents.has("around-window-new vec-work-strong")).toBe(false);
+    });
+
+    it("does not auto-set the missing bound when only one explicit date bound is provided", async () => {
+      const client = makeClient();
+      await initDb(client);
+
+      await storeEntries(
+        client,
+        [
+          makeEntry({ content: "around-partial-before vec-work-strong", importance: 7 }),
+          makeEntry({ content: "around-partial-near vec-work-strong", importance: 7 }),
+          makeEntry({ content: "around-partial-late vec-work-strong", importance: 7 }),
+        ],
+        "sk-test",
+        {
+          sourceFile: "recall-around-partial-window-test.jsonl",
+          ingestContentHash: "hash-around-partial-window",
+          embedFn: mockEmbed,
+          force: true,
+        },
+      );
+
+      await client.execute({
+        sql: "UPDATE entries SET created_at = ?, updated_at = ? WHERE content = ?",
+        args: ["2026-02-05T00:00:00.000Z", "2026-02-05T00:00:00.000Z", "around-partial-before vec-work-strong"],
+      });
+      await client.execute({
+        sql: "UPDATE entries SET created_at = ?, updated_at = ? WHERE content = ?",
+        args: ["2026-02-20T00:00:00.000Z", "2026-02-20T00:00:00.000Z", "around-partial-near vec-work-strong"],
+      });
+      await client.execute({
+        sql: "UPDATE entries SET created_at = ?, updated_at = ? WHERE content = ?",
+        args: ["2026-03-05T00:00:00.000Z", "2026-03-05T00:00:00.000Z", "around-partial-late vec-work-strong"],
+      });
+
+      const results = await recall(
+        client,
+        {
+          text: "",
+          context: "session-start",
+          around: "2026-02-15T00:00:00.000Z",
+          since: "2026-02-10T00:00:00.000Z",
+          limit: 20,
+          noUpdate: true,
+        },
+        "sk-test",
+        { now: new Date("2026-03-10T00:00:00.000Z") },
+      );
+
+      const contents = new Set(results.map((row) => row.entry.content));
+      expect(contents.has("around-partial-before vec-work-strong")).toBe(false);
+      expect(contents.has("around-partial-near vec-work-strong")).toBe(true);
+      expect(contents.has("around-partial-late vec-work-strong")).toBe(true);
     });
 
     it("respects explicit since/until when around is provided", async () => {

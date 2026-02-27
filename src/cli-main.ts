@@ -531,7 +531,17 @@ export function createProgram(): Command {
     .option("--since <duration>", "Filter by recency (1h, 7d, 30d, 1y) or ISO timestamp")
     .option("--until <date>", "Only entries at or before this time (ISO date or relative, e.g. 7d, 1m)")
     .option("--around <date>", "Center recency around this date (ISO date or relative, e.g. 7d)")
-    .option("--around-radius <days>", "Days on each side of --around for default window/scoring width", parseIntOption)
+    .option(
+      "--around-radius <days>",
+      "Days on each side of --around for default window/scoring width",
+      (value: string) => {
+        const parsed = Number.parseInt(value, 10);
+        if (!Number.isFinite(parsed) || parsed < 1) {
+          throw new Error("--around-radius must be a positive integer (days)");
+        }
+        return parsed;
+      },
+    )
     .option("--expiry <level>", "Filter by expiry: core|permanent|temporary")
     .option("--platform <name>", "Filter by platform: openclaw, claude-code, codex, plaud")
     .option("--project <name>", "Filter by project (repeatable)", (val: string, prev: string[]) => [...prev, val], [] as string[])
@@ -546,6 +556,10 @@ export function createProgram(): Command {
     .option("--no-boost", "Disable scoring boosts and use raw vector similarity", false)
     .option("--no-update", "Do not increment recall metadata", false)
     .action(async (query: string | undefined, opts: Record<string, unknown>) => {
+      if (opts.aroundRadius !== undefined && (typeof opts.around !== "string" || opts.around.trim().length === 0)) {
+        throw new Error("--around-radius requires --around");
+      }
+
       const result = await runRecallCommand(query, {
         limit: opts.limit as number | undefined,
         type: opts.type as string | undefined,

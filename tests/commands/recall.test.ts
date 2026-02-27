@@ -82,6 +82,27 @@ describe("recall command", () => {
     expect(firstCall?.[1].project).toEqual(["foo", "bar"]);
   });
 
+  it("rejects --around-radius without --around at CLI parse time", async () => {
+    const { createProgram } = await import("../../src/cli-main.js");
+    const program = createProgram();
+    await expect(program.parseAsync(["node", "agenr", "recall", "query", "--around-radius", "7"])).rejects.toThrow(
+      "--around-radius requires --around",
+    );
+  });
+
+  it("rejects non-positive --around-radius values at CLI parse time", async () => {
+    const { createProgram } = await import("../../src/cli-main.js");
+    const program = createProgram();
+    program.exitOverride();
+
+    await expect(
+      program.parseAsync(["node", "agenr", "recall", "query", "--around", "7d", "--around-radius", "0"]),
+    ).rejects.toThrow("--around-radius must be a positive integer (days)");
+    await expect(
+      program.parseAsync(["node", "agenr", "recall", "query", "--around", "7d", "--around-radius", "-3"]),
+    ).rejects.toThrow("--around-radius must be a positive integer (days)");
+  });
+
   it("parses duration strings into ISO cutoffs", () => {
     const now = new Date("2026-02-15T12:00:00.000Z");
     const oneHour = parseSinceToIso("1h", now);
