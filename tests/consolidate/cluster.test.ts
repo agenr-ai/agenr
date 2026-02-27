@@ -9,7 +9,7 @@ vi.mock("../../src/llm/stream.js", () => ({
   runSimpleStream: runSimpleStreamMock,
 }));
 
-import { buildClusters, llmDedupCheck } from "../../src/consolidate/cluster.js";
+import { buildClusters, llmDedupCheck, llmDedupCheckBatch } from "../../src/consolidate/cluster.js";
 import { initDb } from "../../src/db/client.js";
 import { hashText, insertEntry } from "../../src/db/store.js";
 import type { KnowledgeEntry, LlmClient } from "../../src/types.js";
@@ -221,10 +221,9 @@ describe("consolidate cluster tag mapping", () => {
       content: [
         {
           type: "toolCall",
-          name: "dedup_check",
+          name: "batch_dedup_check",
           arguments: {
-            same: true,
-            reason: "same knowledge",
+            results: [{ pair: 1, same: true, reason: "same knowledge" }],
           },
         },
       ],
@@ -288,6 +287,104 @@ describe("consolidate cluster tag mapping", () => {
     }
   });
 
+  it("llmDedupCheckBatch parses tool results for all pairs", async () => {
+    runSimpleStreamMock.mockResolvedValueOnce({
+      stopReason: "toolUse",
+      content: [
+        {
+          type: "toolCall",
+          name: "batch_dedup_check",
+          arguments: {
+            results: [
+              { pair: 1, same: true, reason: "same idea" },
+              { pair: 2, same: false, reason: "distinct" },
+              { pair: 3, same: true, reason: "same idea again" },
+            ],
+          },
+        },
+      ],
+    });
+
+    const results = await llmDedupCheckBatch(makeLlmClient(), [
+      {
+        entry: makeActiveEmbeddedEntry("a", "Subject A", "Entry A1"),
+        candidate: makeActiveEmbeddedEntry("b", "Subject B", "Entry B1"),
+      },
+      {
+        entry: makeActiveEmbeddedEntry("c", "Subject C", "Entry C1"),
+        candidate: makeActiveEmbeddedEntry("d", "Subject D", "Entry D1"),
+      },
+      {
+        entry: makeActiveEmbeddedEntry("e", "Subject E", "Entry E1"),
+        candidate: makeActiveEmbeddedEntry("f", "Subject F", "Entry F1"),
+      },
+    ]);
+
+    expect(results).toEqual([true, false, true]);
+  });
+
+  it("llmDedupCheckBatch returns false for all pairs on timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      runSimpleStreamMock.mockImplementationOnce(async () => new Promise(() => undefined));
+
+      const resultPromise = llmDedupCheckBatch(makeLlmClient(), [
+        {
+          entry: makeActiveEmbeddedEntry("a", "Subject A", "Entry A1"),
+          candidate: makeActiveEmbeddedEntry("b", "Subject B", "Entry B1"),
+        },
+        {
+          entry: makeActiveEmbeddedEntry("c", "Subject C", "Entry C1"),
+          candidate: makeActiveEmbeddedEntry("d", "Subject D", "Entry D1"),
+        },
+        {
+          entry: makeActiveEmbeddedEntry("e", "Subject E", "Entry E1"),
+          candidate: makeActiveEmbeddedEntry("f", "Subject F", "Entry F1"),
+        },
+      ]);
+
+      await vi.advanceTimersByTimeAsync(30_001);
+      await expect(resultPromise).resolves.toEqual([false, false, false]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("llmDedupCheckBatch treats missing pair results as false", async () => {
+    runSimpleStreamMock.mockResolvedValueOnce({
+      stopReason: "toolUse",
+      content: [
+        {
+          type: "toolCall",
+          name: "batch_dedup_check",
+          arguments: {
+            results: [
+              { pair: 1, same: true, reason: "same" },
+              { pair: 2, same: false, reason: "distinct" },
+            ],
+          },
+        },
+      ],
+    });
+
+    const results = await llmDedupCheckBatch(makeLlmClient(), [
+      {
+        entry: makeActiveEmbeddedEntry("a", "Subject A", "Entry A1"),
+        candidate: makeActiveEmbeddedEntry("b", "Subject B", "Entry B1"),
+      },
+      {
+        entry: makeActiveEmbeddedEntry("c", "Subject C", "Entry C1"),
+        candidate: makeActiveEmbeddedEntry("d", "Subject D", "Entry D1"),
+      },
+      {
+        entry: makeActiveEmbeddedEntry("e", "Subject E", "Entry E1"),
+        candidate: makeActiveEmbeddedEntry("f", "Subject F", "Entry F1"),
+      },
+    ]);
+
+    expect(results).toEqual([true, false, false]);
+  });
+
   it("does not union loose band entries when LLM says distinct", async () => {
     const db = await makeDb();
     await seed({
@@ -310,10 +407,9 @@ describe("consolidate cluster tag mapping", () => {
       content: [
         {
           type: "toolCall",
-          name: "dedup_check",
+          name: "batch_dedup_check",
           arguments: {
-            same: false,
-            reason: "distinct",
+            results: [{ pair: 1, same: false, reason: "distinct" }],
           },
         },
       ],
@@ -355,5 +451,48 @@ describe("consolidate cluster tag mapping", () => {
 
     expect(clusters).toHaveLength(0);
     expect(runSimpleStreamMock).not.toHaveBeenCalled();
+  });
+
+  it("buildClusters uses batch dedup tool calls for loose-band LLM checks", async () => {
+    const db = await makeDb();
+    await seed({
+      db,
+      subject: "Subject A",
+      content: "Jim prefers a keto diet for weekly meal planning",
+      tags: ["diet"],
+      angle: 0,
+    });
+    await seed({
+      db,
+      subject: "Subject B",
+      content: "Keto meals are used weekly in Jim's planning",
+      tags: ["diet"],
+      angle: 45,
+    });
+
+    runSimpleStreamMock.mockResolvedValueOnce({
+      stopReason: "toolUse",
+      content: [
+        {
+          type: "toolCall",
+          name: "batch_dedup_check",
+          arguments: {
+            results: [{ pair: 1, same: true, reason: "same knowledge" }],
+          },
+        },
+      ],
+    });
+
+    const clusters = await buildClusters(db, {
+      simThreshold: 0.82,
+      looseThreshold: 0.65,
+      minCluster: 2,
+      llmClient: makeLlmClient(),
+    });
+
+    expect(clusters).toHaveLength(1);
+    expect(runSimpleStreamMock).toHaveBeenCalledTimes(1);
+    const callContext = runSimpleStreamMock.mock.calls[0]?.[0]?.context;
+    expect(callContext?.tools?.[0]?.name).toBe("batch_dedup_check");
   });
 });
