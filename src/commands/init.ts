@@ -1489,8 +1489,7 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
       if (!selectedTaskModels) {
         delete nextConfig.models;
       }
-      writeConfig(nextConfig, env);
-      workingConfig = initWizardRuntime.readConfig(env) ?? nextConfig;
+      workingConfig = nextConfig;
     }
   }
   wizardChanges.modelsChanged = !taskModelsEqual(previousTaskModels, selectedTaskModels);
@@ -1861,6 +1860,20 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
     });
   }
 
+  if (wizardChanges.modelChanged || wizardChanges.modelsChanged) {
+    const latestConfig = initWizardRuntime.readConfig(env) ?? workingConfig ?? {};
+    const nextConfig: AgenrConfig = {
+      ...latestConfig,
+      ...(selectedModel ? { model: selectedModel } : {}),
+      ...(selectedTaskModels ? { models: selectedTaskModels } : {}),
+    };
+    if (!selectedTaskModels) {
+      delete nextConfig.models;
+    }
+    writeConfig(nextConfig, env);
+    workingConfig = nextConfig;
+  }
+
   if (hasExistingConfig && (wizardChanges.authChanged || wizardChanges.modelChanged)) {
     const modelChangeDesc = wizardChanges.previousModel && wizardChanges.newModel
       ? `from ${wizardChanges.previousModel} to ${wizardChanges.newModel}`
@@ -2111,20 +2124,6 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
         `--platform ${selectedPlatform.id}`,
     );
     watcherStatus = `Not supported on ${osName}`;
-  }
-
-  if (wizardChanges.modelChanged && selectedModel) {
-    const latestConfig = initWizardRuntime.readConfig(env) ?? workingConfig ?? {};
-    const nextConfig: AgenrConfig = {
-      ...latestConfig,
-      model: selectedModel,
-      ...(selectedTaskModels ? { models: selectedTaskModels } : {}),
-    };
-    if (!selectedTaskModels) {
-      delete nextConfig.models;
-    }
-    writeConfig(nextConfig, env);
-    workingConfig = nextConfig;
   }
 
   const openclawDatabase =
