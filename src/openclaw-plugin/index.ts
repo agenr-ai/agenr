@@ -6,7 +6,9 @@ import path from "node:path";
 import { createInterface } from "node:readline";
 import { readConfig } from "../config.js";
 import { closeDb, getDb, initDb } from "../db/client.js";
+import { strengthenCoRecallEdges } from "../db/co-recall.js";
 import { computeRecallFeedback } from "../db/feedback.js";
+import { checkAndFlagLowQuality } from "../db/review-queue.js";
 import { createLlmClient } from "../llm/client.js";
 import { runSimpleStream, type StreamSimpleFn } from "../llm/stream.js";
 import { KNOWLEDGE_TYPES, SCOPE_LEVELS } from "../types.js";
@@ -109,6 +111,58 @@ function stashSessionRecalledEntries(sessionKey: string, recalledIds: Set<string
     }
     sessionRecalledEntries.delete(oldestKey);
   }
+}
+
+interface RecalledEntryMetrics {
+  id: string;
+  qualityScore: number;
+  recallCount: number;
+}
+
+function toStringValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "bigint") {
+    return String(value);
+  }
+  return "";
+}
+
+function toNumberValue(value: unknown): number {
+  if (typeof value === "number") {
+    return value;
+  }
+  if (typeof value === "bigint") {
+    return Number(value);
+  }
+  if (typeof value === "string" && value.trim().length > 0) {
+    return Number(value);
+  }
+  return Number.NaN;
+}
+
+async function fetchRecalledEntryMetrics(db: Client, entryIds: Set<string>): Promise<RecalledEntryMetrics[]> {
+  const ids = Array.from(entryIds).map((id) => id.trim()).filter((id) => id.length > 0);
+  if (ids.length === 0) {
+    return [];
+  }
+
+  const placeholders = ids.map(() => "?").join(", ");
+  const result = await db.execute({
+    sql: `
+      SELECT id, quality_score, recall_count
+      FROM entries
+      WHERE id IN (${placeholders})
+    `,
+    args: ids,
+  });
+
+  return result.rows.map((row) => ({
+    id: toStringValue((row as { id?: unknown }).id),
+    qualityScore: toNumberValue((row as { quality_score?: unknown }).quality_score),
+    recallCount: toNumberValue((row as { recall_count?: unknown }).recall_count),
+  }));
 }
 
 function registerDbShutdown(): void {
@@ -1329,7 +1383,7 @@ const plugin = {
           if (runtimeConfig) {
             try {
               const db = await ensurePluginDb(config);
-              await computeRecallFeedback(
+              const feedbackResult = await computeRecallFeedback(
                 db,
                 sessionKey,
                 messages,
@@ -1337,6 +1391,13 @@ const plugin = {
                 runtimeConfig,
                 api.logger,
               );
+              const timestamp = new Date().toISOString();
+              await strengthenCoRecallEdges(db, feedbackResult.usedIds, timestamp);
+
+              const qualityMetrics = await fetchRecalledEntryMetrics(db, recalledEntryIds);
+              for (const metric of qualityMetrics) {
+                await checkAndFlagLowQuality(db, metric.id, metric.qualityScore, metric.recallCount);
+              }
             } catch (err) {
               api.logger.warn(
                 `agenr plugin before_reset feedback failed: ${err instanceof Error ? err.message : String(err)}`,

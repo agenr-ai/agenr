@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.9.8 - 2026-02-27
+
+### Added
+- Co-recall edge creation (Hebbian learning): entries that are both recalled and
+  used in the same session form weighted associations. Edges strengthen on
+  repeated co-occurrence and decay over time (#267 Phase 2).
+- Review queue: entries flagged for human review are tracked in a dedicated table.
+  Low-quality entries (quality_score < 0.2 after 10+ recalls) are auto-flagged
+  for retirement review (#267 Phase 2).
+- `agenr review` command to list, dismiss, or retire flagged entries.
+- `agenr edges` command to inspect co-recall edges.
+- Co-recall edge statistics and review queue summary in `agenr health` output.
+
 ## 0.9.7 - 2026-02-27
 
 ### Fixed

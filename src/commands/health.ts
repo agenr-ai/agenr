@@ -4,6 +4,7 @@ import path from "node:path";
 import { readConfig } from "../config.js";
 import { forgettingScore, isProtected } from "../consolidate/rules.js";
 import { closeDb, DEFAULT_DB_PATH, getDb, initDb } from "../db/client.js";
+import { getOldestPendingReviewCreatedAt, getPendingReviewCountsByReason } from "../db/review-queue.js";
 import { mapRawStoredEntry } from "../db/stored-entry.js";
 import { parseDaysBetween } from "../utils/entry-utils.js";
 import type { StoredEntry } from "../types.js";
@@ -54,6 +55,20 @@ interface HealthStats {
     medium: number;
     low: number;
     average: number;
+  };
+  coRecall: {
+    totalEdges: number;
+    averageWeight: number;
+    topPairs: Array<{
+      entryALabel: string;
+      entryBLabel: string;
+      weight: number;
+    }>;
+  };
+  reviewQueue: {
+    totalPending: number;
+    pendingByReason: Array<{ reason: string; count: number }>;
+    oldestPendingAgeDays: number | null;
   };
 }
 
@@ -263,6 +278,45 @@ async function collectHealthStats(
     }
   }
 
+  const coRecallSummary = await db.execute({
+    sql: `
+      SELECT
+        COUNT(*) AS total_edges,
+        AVG(weight) AS average_weight
+      FROM co_recall_edges
+    `,
+    args: [],
+  });
+  const coRecallSummaryRow = coRecallSummary.rows[0] as Record<string, unknown> | undefined;
+  const coRecallTotalEdges = Number(coRecallSummaryRow?.total_edges ?? 0);
+  const coRecallAverageWeight = Number(coRecallSummaryRow?.average_weight ?? 0);
+
+  const coRecallTopPairsResult = await db.execute({
+    sql: `
+      SELECT
+        co_recall_edges.weight AS weight,
+        COALESCE(NULLIF(TRIM(entry_a.subject), ''), SUBSTR(COALESCE(entry_a.content, ''), 1, 40)) AS entry_a_label,
+        COALESCE(NULLIF(TRIM(entry_b.subject), ''), SUBSTR(COALESCE(entry_b.content, ''), 1, 40)) AS entry_b_label
+      FROM co_recall_edges
+      LEFT JOIN entries AS entry_a ON entry_a.id = co_recall_edges.entry_a
+      LEFT JOIN entries AS entry_b ON entry_b.id = co_recall_edges.entry_b
+      ORDER BY co_recall_edges.weight DESC, co_recall_edges.session_count DESC
+      LIMIT 5
+    `,
+    args: [],
+  });
+  const coRecallTopPairs = coRecallTopPairsResult.rows.map((row) => ({
+    entryALabel: String((row as { entry_a_label?: unknown }).entry_a_label ?? "").trim(),
+    entryBLabel: String((row as { entry_b_label?: unknown }).entry_b_label ?? "").trim(),
+    weight: Number((row as { weight?: unknown }).weight ?? 0),
+  }));
+
+  const pendingByReason = await getPendingReviewCountsByReason(db);
+  const totalPending = pendingByReason.reduce((sum, item) => sum + item.count, 0);
+  const oldestPendingCreatedAt = await getOldestPendingReviewCreatedAt(db);
+  const oldestPendingAgeDays =
+    oldestPendingCreatedAt && totalPending > 0 ? parseDaysBetween(now, oldestPendingCreatedAt) : null;
+
   return {
     total,
     todos,
@@ -297,7 +351,30 @@ async function collectHealthStats(
       low: qualityLow,
       average: total > 0 ? qualitySum / total : 0,
     },
+    coRecall: {
+      totalEdges: Number.isFinite(coRecallTotalEdges) ? coRecallTotalEdges : 0,
+      averageWeight: Number.isFinite(coRecallAverageWeight) ? coRecallAverageWeight : 0,
+      topPairs: coRecallTopPairs,
+    },
+    reviewQueue: {
+      totalPending,
+      pendingByReason,
+      oldestPendingAgeDays,
+    },
   };
+}
+
+function formatAgeDays(ageDays: number | null): string {
+  if (ageDays === null || !Number.isFinite(ageDays)) {
+    return "n/a";
+  }
+  if (ageDays < 1 / 24) {
+    return "<1h";
+  }
+  if (ageDays < 1) {
+    return `${Math.max(1, Math.round(ageDays * 24))}h`;
+  }
+  return `${Math.round(ageDays)}d`;
 }
 
 function renderHealthOutput(stats: HealthStats, now: Date): string {
@@ -334,6 +411,24 @@ function renderHealthOutput(stats: HealthStats, now: Date): string {
     `- Medium (0.3-0.7):  ${formatInt(stats.quality.medium)} entries`,
     `- Low (< 0.3):       ${formatInt(stats.quality.low)} entries`,
     `- Average:           ${stats.quality.average.toFixed(2)}`,
+    "",
+    "Co-Recall Edges",
+    `- Total edges:       ${formatInt(stats.coRecall.totalEdges)}`,
+    `- Average weight:    ${stats.coRecall.averageWeight.toFixed(2)}`,
+    ...(stats.coRecall.topPairs.length === 0
+      ? ["- Top 5 strongest pairs: none"]
+      : [
+          "- Top 5 strongest pairs:",
+          ...stats.coRecall.topPairs.map(
+            (pair) =>
+              `  - ${pair.entryALabel || "(missing entry)"} <-> ${pair.entryBLabel || "(missing entry)"} (${pair.weight.toFixed(2)})`,
+          ),
+        ]),
+    "",
+    "Review Queue",
+    `- Total pending:     ${formatInt(stats.reviewQueue.totalPending)}`,
+    `- Pending by reason: ${stats.reviewQueue.pendingByReason.length > 0 ? stats.reviewQueue.pendingByReason.map((item) => `${item.reason}=${item.count}`).join(", ") : "none"}`,
+    `- Oldest pending age: ${formatAgeDays(stats.reviewQueue.oldestPendingAgeDays)}`,
     "",
   ];
 
