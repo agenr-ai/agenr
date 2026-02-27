@@ -2143,6 +2143,36 @@ describe("db recall", () => {
       expect(neighbors).toHaveLength(1);
       expect(neighbors[0]?.scores.graph).toBeCloseTo(0.7, 6);
     });
+
+    it("graph augmentation skipped when noBoost is set", async () => {
+      const client = makeClient();
+      await initDb(client);
+
+      await storeGraphEntries(client, [
+        makeEntry({ content: "graph-noboost-seed vec-work-strong" }),
+        makeEntry({ content: "graph-noboost-neighbor vec-random" }),
+      ]);
+
+      const seedId = await getEntryId(client, "graph-noboost-seed vec-work-strong");
+      const neighborId = await getEntryId(client, "graph-noboost-neighbor vec-random");
+      await addCoRecallEdge(client, seedId, neighborId, 0.8);
+
+      const now = new Date("2026-02-15T00:00:00.000Z");
+      const results = await recall(
+        client,
+        { text: "work", limit: 10, noUpdate: true, noBoost: true },
+        "sk-test",
+        {
+          embedFn: mockEmbed,
+          now,
+          vectorCandidateLimit: 1,
+        },
+      );
+
+      expect(results.every((row) => row.scores.graph === undefined)).toBe(true);
+      expect(results.some((row) => row.entry.id === neighborId)).toBe(false);
+    });
+
   });
 
   describe("browse mode", () => {
