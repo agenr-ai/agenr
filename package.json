@@ -1,6 +1,6 @@
 {
   "name": "agenr",
-  "version": "0.9.14",
+  "version": "0.9.15",
   "openclaw": {
     "extensions": [
       "dist/openclaw-plugin/index.js"
@@ -21,7 +21,7 @@
   "dependencies": {
     "@clack/prompts": "^1.0.1",
     "@libsql/client": "^0.17.0",
-    "@mariozechner/pi-ai": "^0.52.0",
+    "@mariozechner/pi-ai": "^0.55.3",
     "@sinclair/typebox": "^0.34.48",
     "chalk": "^5.6.2",
     "commander": "^14.0.0"
