@@ -137,6 +137,7 @@ describe("consolidate rules", () => {
       recall_count: 0,
       confirmations: 0,
       contradictions: 0,
+      quality_score: 0.5,
       ...overrides,
     };
   }

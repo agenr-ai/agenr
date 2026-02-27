@@ -11,6 +11,7 @@ import {
   scoreEntry,
   scoreEntryWithBreakdown,
   todoStaleness,
+  updateRecallMetadata,
 } from "../../src/db/recall.js";
 import { storeEntries } from "../../src/db/store.js";
 import type { KnowledgeEntry, StoredEntry } from "../../src/types.js";
@@ -84,6 +85,7 @@ function makeStoredEntry(overrides: Partial<StoredEntry> = {}): StoredEntry {
     recall_count: 0,
     confirmations: 0,
     contradictions: 0,
+    quality_score: 0.5,
     ...overrides,
   };
 }
@@ -166,6 +168,122 @@ describe("db recall", () => {
       expect(Math.abs(prev - next)).toBeLessThanOrEqual(0.10 + 1e-9);
       prev = next;
     }
+  });
+
+  it("includes quality in score breakdown", () => {
+    const now = new Date("2026-02-15T00:00:00.000Z");
+    const scored = scoreEntryWithBreakdown(makeStoredEntry({ quality_score: 0.8 }), 0.9, false, now, now);
+    expect(scored.scores.quality).toBeCloseTo(0.8, 8);
+  });
+
+  it("higher quality entries score higher than lower quality entries", () => {
+    const now = new Date("2026-02-15T00:00:00.000Z");
+    const high = scoreEntryWithBreakdown(makeStoredEntry({ quality_score: 0.9 }), 0.7, false, now, now);
+    const low = scoreEntryWithBreakdown(makeStoredEntry({ quality_score: 0.1 }), 0.7, false, now, now);
+    expect(high.score).toBeGreaterThan(low.score);
+  });
+
+  it("defaults nullish quality to 0.5", () => {
+    const now = new Date("2026-02-15T00:00:00.000Z");
+    const scored = scoreEntryWithBreakdown(
+      makeStoredEntry({ quality_score: undefined as unknown as number }),
+      0.7,
+      false,
+      now,
+      now,
+    );
+    expect(scored.scores.quality).toBeCloseTo(0.5, 8);
+  });
+
+  it("applies quality factor range from 0.7 to 1.3", () => {
+    const now = new Date("2026-02-15T00:00:00.000Z");
+    const base = makeStoredEntry({ quality_score: 0.5, recall_count: 1, importance: 6 });
+    const low = scoreEntryWithBreakdown({ ...base, quality_score: 0 }, 0.6, false, now, now);
+    const mid = scoreEntryWithBreakdown({ ...base, quality_score: 0.5 }, 0.6, false, now, now);
+    const high = scoreEntryWithBreakdown({ ...base, quality_score: 1 }, 0.6, false, now, now);
+    expect(low.score / mid.score).toBeCloseTo(0.7, 6);
+    expect(high.score / mid.score).toBeCloseTo(1.3, 6);
+  });
+
+  describe("auto-strengthen recall milestones", () => {
+    async function insertRecallEntry(
+      client: Client,
+      params: { id: string; importance: number; recallCount: number },
+    ): Promise<void> {
+      await client.execute({
+        sql: `
+          INSERT INTO entries (
+            id, type, subject, content, importance, expiry, scope, source_file, source_context,
+            created_at, updated_at, recall_count
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        args: [
+          params.id,
+          "fact",
+          `subject-${params.id}`,
+          `content-${params.id}`,
+          params.importance,
+          "temporary",
+          "private",
+          "recall-test.jsonl",
+          "auto-strengthen",
+          "2026-02-10T00:00:00.000Z",
+          "2026-02-10T00:00:00.000Z",
+          params.recallCount,
+        ],
+      });
+    }
+
+    async function readImportance(client: Client, id: string): Promise<number> {
+      const row = await client.execute({
+        sql: "SELECT importance FROM entries WHERE id = ?",
+        args: [id],
+      });
+      return Number((row.rows[0] as { importance?: unknown } | undefined)?.importance ?? 0);
+    }
+
+    it("bumps importance when recall_count reaches 3", async () => {
+      const client = makeClient();
+      await initDb(client);
+      await insertRecallEntry(client, { id: "milestone-3", importance: 5, recallCount: 2 });
+
+      await updateRecallMetadata(client, ["milestone-3"], new Date("2026-02-15T00:00:00.000Z"));
+      expect(await readImportance(client, "milestone-3")).toBe(6);
+    });
+
+    it("does not auto-promote beyond importance 9", async () => {
+      const client = makeClient();
+      await initDb(client);
+      await insertRecallEntry(client, { id: "milestone-cap", importance: 9, recallCount: 2 });
+
+      await updateRecallMetadata(client, ["milestone-cap"], new Date("2026-02-15T00:00:00.000Z"));
+      expect(await readImportance(client, "milestone-cap")).toBe(9);
+    });
+
+    it("does not bump on non-milestone recall counts", async () => {
+      const client = makeClient();
+      await initDb(client);
+      await insertRecallEntry(client, { id: "milestone-non", importance: 5, recallCount: 3 });
+
+      await updateRecallMetadata(client, ["milestone-non"], new Date("2026-02-15T00:00:00.000Z"));
+      expect(await readImportance(client, "milestone-non")).toBe(5);
+    });
+
+    it("bumps importance at milestones 10 and 25", async () => {
+      const client = makeClient();
+      await initDb(client);
+      await insertRecallEntry(client, { id: "milestone-10", importance: 4, recallCount: 9 });
+      await insertRecallEntry(client, { id: "milestone-25", importance: 7, recallCount: 24 });
+
+      await updateRecallMetadata(
+        client,
+        ["milestone-10", "milestone-25"],
+        new Date("2026-02-15T00:00:00.000Z"),
+      );
+      expect(await readImportance(client, "milestone-10")).toBe(5);
+      expect(await readImportance(client, "milestone-25")).toBe(8);
+    });
   });
 
   it("session-start scoring penalizes stale todos but not other types", async () => {
@@ -813,6 +931,7 @@ describe("db recall", () => {
     expect(columns.has("retired_at")).toBe(true);
     expect(columns.has("retired_reason")).toBe(true);
     expect(columns.has("suppressed_contexts")).toBe(true);
+    expect(columns.has("quality_score")).toBe(true);
   });
 
   it("filters by project (includes NULL by default, strict excludes NULL)", async () => {

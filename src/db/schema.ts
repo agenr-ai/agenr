@@ -67,6 +67,7 @@ const CREATE_TABLE_AND_TRIGGER_STATEMENTS: readonly string[] = [
     recall_count INTEGER DEFAULT 0,
     confirmations INTEGER DEFAULT 0,
     contradictions INTEGER DEFAULT 0,
+    quality_score REAL DEFAULT 0.5,
     superseded_by TEXT,
     content_hash TEXT,
     norm_content_hash TEXT,
@@ -257,6 +258,11 @@ const COLUMN_MIGRATIONS: readonly ColumnMigration[] = [
     table: "entries",
     column: "recall_intervals",
     sql: "ALTER TABLE entries ADD COLUMN recall_intervals TEXT DEFAULT NULL",
+  },
+  {
+    table: "entries",
+    column: "quality_score",
+    sql: "ALTER TABLE entries ADD COLUMN quality_score REAL DEFAULT 0.5",
   },
   // Claim/subject fields for contradiction detection (#266)
   {

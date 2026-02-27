@@ -23,6 +23,7 @@ function makeEntry(overrides: Partial<StoredEntry> = {}): StoredEntry {
     recall_count: 0,
     confirmations: 0,
     contradictions: 0,
+    quality_score: 0.5,
     ...overrides,
   };
 }
@@ -40,6 +41,7 @@ function makeResult(overrides: Partial<RecallResult> = {}): RecallResult {
       todoPenalty: 1,
       fts: 0.15,
       spacing: 1,
+      quality: 0.5,
     },
     ...overrides,
   };

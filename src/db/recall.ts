@@ -362,7 +362,10 @@ export function scoreEntryWithBreakdown(
   const memoryStrength = Math.min(Math.max(imp, spacedRecallBase) * fresh, 1.0);
   const todoPenalty = entry.type === "todo" ? todoStaleness(entry, now) : 1.0;
   const contradictionPenalty = entry.contradictions >= 2 ? 0.8 : 1.0;
-  const rawScore = sim * (0.3 + 0.7 * rec) * memoryStrength * todoPenalty * contradictionPenalty + fts;
+  const quality = clamp01(entry.quality_score ?? 0.5);
+  const qualityFactor = 0.7 + quality * 0.6;
+  const rawScore =
+    sim * (0.3 + 0.7 * rec) * memoryStrength * todoPenalty * contradictionPenalty * qualityFactor + fts;
   const score = Math.min(1.0, rawScore);
   return {
     score,
@@ -376,6 +379,7 @@ export function scoreEntryWithBreakdown(
       // FTS bonus component before the final score is capped at 1.0.
       fts,
       spacing: spacingFactor,
+      quality,
     },
   };
 }
@@ -462,6 +466,7 @@ async function fetchVectorCandidates(
         e.recall_intervals,
         e.confirmations,
         e.contradictions,
+        e.quality_score,
         e.superseded_by,
         e.retired,
         e.retired_at,
@@ -547,6 +552,7 @@ async function fetchSessionCandidates(
         recall_intervals,
         confirmations,
         contradictions,
+        quality_score,
         superseded_by,
         retired,
         retired_at,
@@ -657,6 +663,7 @@ async function fetchBrowseCandidates(
         recall_intervals,
         confirmations,
         contradictions,
+        quality_score,
         superseded_by,
         retired,
         retired_at,
@@ -755,6 +762,18 @@ export async function updateRecallMetadata(db: Client, ids: string[], now: Date)
     `,
     args: [now.toISOString(), epochSecs, ...ids],
   });
+
+  await db.execute({
+    sql: `
+      UPDATE entries
+      SET importance = MIN(importance + 1, 9),
+          updated_at = ?
+      WHERE id IN (${placeholders})
+        AND recall_count IN (3, 10, 25)
+        AND importance < 9
+    `,
+    args: [now.toISOString(), ...ids],
+  });
 }
 
 function scoreSessionEntry(
@@ -846,6 +865,7 @@ export async function recall(
           todoPenalty: 1,
           fts: 0,
           spacing: 1.0,
+          quality: candidate.entry.quality_score ?? 0.5,
         },
       };
     });
@@ -940,6 +960,7 @@ export async function recall(
           todoPenalty: 1,
           fts: 0,
           spacing: 1.0,
+          quality: candidate.entry.quality_score ?? 0.5,
         },
       };
     }
@@ -964,6 +985,9 @@ export async function recall(
     for (const result of results) {
       result.entry.recall_count += 1;
       result.entry.last_recalled_at = nowIso;
+      if ((result.entry.recall_count === 3 || result.entry.recall_count === 10 || result.entry.recall_count === 25) && result.entry.importance < 9) {
+        result.entry.importance += 1;
+      }
       result.entry.recall_intervals = [
         ...(result.entry.recall_intervals ?? []),
         epochSecs,

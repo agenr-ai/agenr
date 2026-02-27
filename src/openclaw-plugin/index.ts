@@ -4,7 +4,9 @@ import fs, { createReadStream } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
+import { readConfig } from "../config.js";
 import { closeDb, getDb, initDb } from "../db/client.js";
+import { computeRecallFeedback } from "../db/feedback.js";
 import { createLlmClient } from "../llm/client.js";
 import { runSimpleStream, type StreamSimpleFn } from "../llm/stream.js";
 import { KNOWLEDGE_TYPES, SCOPE_LEVELS } from "../types.js";
@@ -38,6 +40,8 @@ import type {
 const SKIP_SESSION_PATTERNS = [":subagent:", ":cron:"];
 const DEFAULT_MAX_SEEN_SESSIONS = 1000;
 const seenSessions = new Map<string, true>();
+const MAX_RECALLED_SESSIONS = 200;
+const sessionRecalledEntries = new Map<string, Set<string>>();
 
 interface SessionSignalState {
   lastSignalAt: number;
@@ -88,6 +92,22 @@ function markSessionSeen(sessionKey: string): void {
       break;
     }
     seenSessions.delete(oldestKey);
+  }
+}
+
+function stashSessionRecalledEntries(sessionKey: string, recalledIds: Set<string>): void {
+  if (!sessionKey || recalledIds.size === 0) {
+    return;
+  }
+
+  sessionRecalledEntries.delete(sessionKey);
+  sessionRecalledEntries.set(sessionKey, recalledIds);
+  while (sessionRecalledEntries.size > MAX_RECALLED_SESSIONS) {
+    const oldestKey = sessionRecalledEntries.keys().next().value;
+    if (!oldestKey) {
+      break;
+    }
+    sessionRecalledEntries.delete(oldestKey);
   }
 }
 
@@ -1023,6 +1043,7 @@ const testingApi = {
     seenSessions.clear();
     sessionSignalState.clear();
     handoffSeenSessionIds.clear();
+    sessionRecalledEntries.clear();
   },
   readSessionsJson,
   readAndParseSessionJsonl,
@@ -1224,6 +1245,27 @@ const plugin = {
               }
             }
             markdown = sections.length > 0 ? sections.join("\n\n") : undefined;
+
+            const recalledIds = new Set<string>();
+            for (const item of browseResult?.results ?? []) {
+              const id =
+                typeof item.entry?.id === "string" && item.entry.id.trim()
+                  ? item.entry.id.trim()
+                  : null;
+              if (id) {
+                recalledIds.add(id);
+              }
+            }
+            for (const item of semanticResult?.results ?? []) {
+              const id =
+                typeof item.entry?.id === "string" && item.entry.id.trim()
+                  ? item.entry.id.trim()
+                  : null;
+              if (id) {
+                recalledIds.add(id);
+              }
+            }
+            stashSessionRecalledEntries(sessionKey, recalledIds);
           }
 
           let signal: string | undefined;
@@ -1274,11 +1316,34 @@ const plugin = {
           return;
         }
 
+        const recalledEntryIds = sessionRecalledEntries.get(sessionKey);
+        sessionRecalledEntries.delete(sessionKey);
         const messages = event.messages;
         if (!Array.isArray(messages) || messages.length === 0) {
           return;
         }
         console.log("[agenr] before_reset: triggered sessionKey=" + sessionKey + " msgs=" + messages.length);
+
+        if (recalledEntryIds && recalledEntryIds.size > 0) {
+          const runtimeConfig = readConfig(process.env);
+          if (runtimeConfig) {
+            try {
+              const db = await ensurePluginDb(config);
+              await computeRecallFeedback(
+                db,
+                sessionKey,
+                messages,
+                recalledEntryIds,
+                runtimeConfig,
+                api.logger,
+              );
+            } catch (err) {
+              api.logger.warn(
+                `agenr plugin before_reset feedback failed: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
+          }
+        }
 
         const currentSessionFile =
           typeof event.sessionFile === "string" && event.sessionFile.trim()

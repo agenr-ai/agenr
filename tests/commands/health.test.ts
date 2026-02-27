@@ -28,15 +28,16 @@ describe("health command", () => {
       updatedAt: string;
       recallCount?: number;
       contradictions?: number;
+      qualityScore?: number;
     },
   ): Promise<void> {
     await client.execute({
       sql: `
         INSERT INTO entries (
           id, type, subject, content, importance, expiry, scope, source_file, source_context,
-          created_at, updated_at, recall_count, contradictions
+          created_at, updated_at, recall_count, contradictions, quality_score
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       args: [
         params.id,
@@ -52,6 +53,7 @@ describe("health command", () => {
         params.updatedAt,
         params.recallCount ?? 0,
         params.contradictions ?? 0,
+        params.qualityScore ?? 0.5,
       ],
     });
   }
@@ -158,5 +160,43 @@ describe("health command", () => {
     expect(output).toContain("Consolidation Health");
     expect(output).toContain("Contradiction flags: 1 entries");
     expect(output).toContain("Stale todos (>30d old, not recalled): 1");
+  });
+
+  it("includes quality score distribution", async () => {
+    const client = createClient({ url: ":memory:" });
+    clients.push(client);
+    await initDb(client);
+
+    await insertEntry(client, {
+      id: "quality-high",
+      type: "fact",
+      subject: "High quality",
+      qualityScore: 0.9,
+      createdAt: "2026-02-01T00:00:00.000Z",
+      updatedAt: "2026-02-01T00:00:00.000Z",
+    });
+    await insertEntry(client, {
+      id: "quality-medium",
+      type: "fact",
+      subject: "Medium quality",
+      qualityScore: 0.5,
+      createdAt: "2026-02-01T00:00:00.000Z",
+      updatedAt: "2026-02-01T00:00:00.000Z",
+    });
+    await insertEntry(client, {
+      id: "quality-low",
+      type: "fact",
+      subject: "Low quality",
+      qualityScore: 0.2,
+      createdAt: "2026-02-01T00:00:00.000Z",
+      updatedAt: "2026-02-01T00:00:00.000Z",
+    });
+
+    const output = await runWithClient(client);
+    expect(output).toContain("Quality Score Distribution");
+    expect(output).toContain("High (>= 0.7):      1 entries");
+    expect(output).toContain("Medium (0.3-0.7):  1 entries");
+    expect(output).toContain("Low (< 0.3):       1 entries");
+    expect(output).toContain("Average:           0.53");
   });
 });

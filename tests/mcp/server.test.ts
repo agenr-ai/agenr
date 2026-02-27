@@ -56,6 +56,7 @@ function makeRecallResult(overrides?: Partial<RecallResult>): RecallResult {
       todoPenalty: 1,
       fts: 0,
       spacing: 1,
+      quality: 0.5,
     },
     entry: {
       id: "entry-1",
@@ -72,6 +73,7 @@ function makeRecallResult(overrides?: Partial<RecallResult>): RecallResult {
       recall_count: 0,
       confirmations: 0,
       contradictions: 0,
+      quality_score: 0.5,
     },
     ...overrides,
   };

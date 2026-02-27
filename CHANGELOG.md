@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.9.5 - 2026-02-27
+
+### Added
+- Feedback-driven recall scoring (#267 Phase 1): recalled entries are tracked per
+  session and compared against agent responses at session end. Entries that are
+  used get quality score boosts; unused entries drift slightly downward.
+- Correction signal: if the agent stores a contradicting entry via agenr_store
+  during the session, the recalled entry that was corrected gets a strong
+  negative signal (quality score drops toward 0).
+- Rolling quality_score (0-1) per entry, integrated into recall ranking formula.
+  Consistently useful entries rank higher over time.
+- Entry-type quality floor: facts and preferences cannot drop below 0.35 to
+  prevent background-context entries from being unfairly penalized.
+- Auto-strengthen: entries reaching recall count milestones (3, 10, 25) get
+  importance bumped by 1 (capped at 9, never auto-promotes to 10).
+- Quality score distribution in `agenr health` output.
+
 ## 0.9.4 (2026-02-27)
 
 ### Changed

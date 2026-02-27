@@ -137,6 +137,7 @@ describe("db schema", () => {
     expect(entryColumns.has("retired_reason")).toBe(true);
     expect(entryColumns.has("suppressed_contexts")).toBe(true);
     expect(entryColumns.has("recall_intervals")).toBe(true);
+    expect(entryColumns.has("quality_score")).toBe(true);
     expect(entryColumns.has("subject_entity")).toBe(true);
     expect(entryColumns.has("subject_attribute")).toBe(true);
     expect(entryColumns.has("subject_key")).toBe(true);

@@ -21,6 +21,7 @@ interface RawStoredEntryFields {
   recall_intervals?: unknown;
   confirmations?: unknown;
   contradictions?: unknown;
+  quality_score?: unknown;
   superseded_by?: unknown;
   subject_entity?: unknown;
   subject_attribute?: unknown;
@@ -51,6 +52,7 @@ export function mapRawStoredEntry(
   const recallCountRaw = toNumber(row.recall_count);
   const confirmationsRaw = toNumber(row.confirmations);
   const contradictionsRaw = toNumber(row.contradictions);
+  const qualityScoreRaw = toNumber(row.quality_score);
   const subjectEntity = toStringValue(row.subject_entity).trim();
   const subjectAttribute = toStringValue(row.subject_attribute).trim();
   const subjectKey = toStringValue(row.subject_key).trim();
@@ -111,6 +113,7 @@ export function mapRawStoredEntry(
     ...(recallIntervals !== undefined ? { recall_intervals: recallIntervals } : {}),
     confirmations: Number.isFinite(confirmationsRaw) ? confirmationsRaw : 0,
     contradictions: Number.isFinite(contradictionsRaw) ? contradictionsRaw : 0,
+    quality_score: Number.isFinite(qualityScoreRaw) ? Math.min(1, Math.max(0, qualityScoreRaw)) : 0.5,
     superseded_by: toStringValue(row.superseded_by) || undefined,
     ...(subjectEntity ? { subjectEntity } : {}),
     ...(subjectAttribute ? { subjectAttribute } : {}),
