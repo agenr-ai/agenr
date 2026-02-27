@@ -76,7 +76,8 @@ function truncateContextContent(content: string, max = 200): string {
 const ENTRY_SELECT_COLUMNS = `
         id, type, subject, canonical_key, content, importance, expiry, scope,
         platform, project, source_file, source_context, embedding, retired,
-        created_at, updated_at, last_recalled_at, recall_count, confirmations, contradictions, superseded_by
+        created_at, updated_at, last_recalled_at, recall_count, confirmations, contradictions,
+        quality_score, superseded_by
 `;
 
 function toRecallResult(entry: StoredEntry, now: Date): RecallResult {

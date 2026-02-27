@@ -502,6 +502,7 @@ async function getStoredEntryById(db: Client, id: string): Promise<StoredEntry |
         recall_count,
         confirmations,
         contradictions,
+        quality_score,
         superseded_by
       FROM entries
       WHERE id = ?
@@ -739,6 +740,7 @@ export async function findSimilar(
         e.recall_count,
         e.confirmations,
         e.contradictions,
+        e.quality_score,
         e.superseded_by
       FROM vector_top_k('idx_entries_embedding', vector32(?), ?) AS v
       CROSS JOIN entries AS e ON e.rowid = v.id
@@ -935,6 +937,7 @@ async function findEntryByTypeAndCanonicalKey(
         recall_count,
         confirmations,
         contradictions,
+        quality_score,
         superseded_by
       FROM entries
       WHERE type = ?
@@ -981,6 +984,7 @@ export async function findRecentEntryBySubjectTypeAndSourceFile(
         recall_count,
         confirmations,
         contradictions,
+        quality_score,
         superseded_by
       FROM entries e
       WHERE lower(trim(e.subject)) = ?

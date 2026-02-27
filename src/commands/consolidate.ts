@@ -342,6 +342,7 @@ async function collectForgettingCandidates(
         recall_count,
         confirmations,
         contradictions,
+        quality_score,
         superseded_by
       FROM entries
       WHERE superseded_by IS NULL

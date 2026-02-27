@@ -196,6 +196,7 @@ async function runTypedEval(
         e.recall_count,
         e.confirmations,
         e.contradictions,
+        e.quality_score,
         e.superseded_by
       FROM entries AS e
       WHERE e.type = ?

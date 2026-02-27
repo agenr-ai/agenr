@@ -184,7 +184,12 @@ function collectAgenrStoreContents(messages: unknown[]): string[] {
       }
 
       if (typeof toolCall.name === "string" && toolCall.name === "agenr_store") {
-        contents.push(...extractStoreContentsFromInput(toolCall.input));
+        const namedArgs = parseFunctionArguments(toolCall.arguments);
+        if (namedArgs) {
+          contents.push(...extractStoreContentsFromInput(namedArgs));
+        } else {
+          contents.push(...extractStoreContentsFromInput(toolCall.input));
+        }
         continue;
       }
 
@@ -270,7 +275,11 @@ export async function updateQualityScores(
     }
     await db.execute("COMMIT");
   } catch (error) {
-    await db.execute("ROLLBACK");
+    try {
+      await db.execute("ROLLBACK");
+    } catch {
+      // Ignore rollback failures to preserve original error.
+    }
     throw error;
   }
 }
@@ -364,3 +373,8 @@ export async function computeRecallFeedback(
     await updateQualityScores(db, updates);
   }
 }
+
+export const __testing = {
+  collectAgenrStoreContents,
+  cosineSimilarity,
+};
