@@ -9,6 +9,7 @@ import type { KnowledgePlatform, RecallQuery, RecallResult, Scope, StoredEntry }
 
 const DEFAULT_VECTOR_CANDIDATE_LIMIT = 50;
 const DEFAULT_LIMIT = 10;
+const recallMetadataQueue = new WeakMap<Client, Promise<void>>();
 
 export interface CandidateRow {
   entry: StoredEntry;
@@ -746,34 +747,71 @@ export async function updateRecallMetadata(db: Client, ids: string[], now: Date)
     return;
   }
 
-  const placeholders = ids.map(() => "?").join(", ");
-  // TODO: cap recall_intervals to the 100 most recent entries to bound storage
-  // growth. computeSpacingFactor only needs maxGapDays, not the full history.
-  // Consider storing max_gap_days as a separate field instead.
-  // See: https://github.com/agenr-ai/agenr/issues/39
-  const epochSecs = Math.floor(now.getTime() / 1000);
-  await db.execute({
-    sql: `
-      UPDATE entries
-      SET recall_count = COALESCE(recall_count, 0) + 1,
-          last_recalled_at = ?,
-          recall_intervals = json_insert(COALESCE(recall_intervals, '[]'), '$[#]', ?)
-      WHERE id IN (${placeholders})
-    `,
-    args: [now.toISOString(), epochSecs, ...ids],
+  const previous = recallMetadataQueue.get(db) ?? Promise.resolve();
+  const current = previous.catch(() => undefined).then(async () => {
+    const placeholders = ids.map(() => "?").join(", ");
+    // TODO: cap recall_intervals to the 100 most recent entries to bound storage
+    // growth. computeSpacingFactor only needs maxGapDays, not the full history.
+    // Consider storing max_gap_days as a separate field instead.
+    // See: https://github.com/agenr-ai/agenr/issues/39
+    const epochSecs = Math.floor(now.getTime() / 1000);
+    const runUpdates = async (): Promise<void> => {
+      await db.execute({
+        sql: `
+          UPDATE entries
+          SET recall_count = COALESCE(recall_count, 0) + 1,
+              last_recalled_at = ?,
+              recall_intervals = json_insert(COALESCE(recall_intervals, '[]'), '$[#]', ?)
+          WHERE id IN (${placeholders})
+        `,
+        args: [now.toISOString(), epochSecs, ...ids],
+      });
+
+      await db.execute({
+        sql: `
+          UPDATE entries
+          SET importance = MIN(importance + 1, 9),
+              updated_at = ?
+          WHERE id IN (${placeholders})
+            AND recall_count IN (3, 10, 25)
+            AND importance < 9
+        `,
+        args: [now.toISOString(), ...ids],
+      });
+    };
+
+    try {
+      await db.execute("BEGIN IMMEDIATE");
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      if (!reason.includes("cannot start a transaction within a transaction")) {
+        throw error;
+      }
+      await runUpdates();
+      return;
+    }
+
+    try {
+      await runUpdates();
+      await db.execute("COMMIT");
+    } catch (error) {
+      try {
+        await db.execute("ROLLBACK");
+      } catch {
+        // Ignore rollback failures.
+      }
+      throw error;
+    }
   });
 
-  await db.execute({
-    sql: `
-      UPDATE entries
-      SET importance = MIN(importance + 1, 9),
-          updated_at = ?
-      WHERE id IN (${placeholders})
-        AND recall_count IN (3, 10, 25)
-        AND importance < 9
-    `,
-    args: [now.toISOString(), ...ids],
-  });
+  recallMetadataQueue.set(db, current);
+  try {
+    await current;
+  } finally {
+    if (recallMetadataQueue.get(db) === current) {
+      recallMetadataQueue.delete(db);
+    }
+  }
 }
 
 function scoreSessionEntry(
