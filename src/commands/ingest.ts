@@ -3,7 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Client } from "@libsql/client";
 import * as clack from "@clack/prompts";
-import { readConfig, resolveModelForTask } from "../config.js";
+import { DEFAULT_TASK_MODEL, readConfig } from "../config.js";
 import { deduplicateEntries } from "../dedup.js";
 import { closeDb, getDb, initDb, walCheckpoint } from "../db/client.js";
 import { computeMinhashSig, computeNormContentHash, minhashSigToBuffer } from "../db/minhash.js";
@@ -688,7 +688,7 @@ export async function runIngestCommand(
   const config = resolvedDeps.readConfigFn(process.env);
   const claimExtractionEnabled = config?.contradiction?.enabled !== false;
   const contradictionEnabled = config?.contradiction?.enabled !== false;
-  const claimExtractionModel = resolveModelForTask(config ?? {}, "claimExtraction");
+  const claimExtractionModel = config?.models?.claimExtraction ?? DEFAULT_TASK_MODEL;
   const client = resolvedDeps.createLlmClientFn({
     provider: options.provider,
     model: options.model,

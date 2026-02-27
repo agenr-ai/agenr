@@ -1,4 +1,4 @@
-import { resolveModelForTask, type ModelTask } from "../config.js";
+import { DEFAULT_TASK_MODEL, type ModelTask } from "../config.js";
 import { resolveModel } from "../llm/models.js";
 import type { AgenrConfig, LlmClient } from "../types.js";
 
@@ -25,7 +25,7 @@ export function resolveModelForLlmClient(
   model?: string,
   config?: AgenrConfig,
 ): ReturnType<typeof resolveModel>["model"] {
-  const modelId = model?.trim() || resolveModelForTask(config ?? {}, taskKey);
+  const modelId = model?.trim() || config?.models?.[taskKey]?.trim() || DEFAULT_TASK_MODEL;
   return resolveModel(client.resolvedModel.provider, modelId).model;
 }
 

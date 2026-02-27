@@ -1,13 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { LlmClient } from "../../src/types.js";
 
-const { resolveModelForTaskMock, resolveModelMock } = vi.hoisted(() => ({
-  resolveModelForTaskMock: vi.fn(),
+const { resolveModelMock } = vi.hoisted(() => ({
   resolveModelMock: vi.fn(),
 }));
 
 vi.mock("../../src/config.js", () => ({
-  resolveModelForTask: resolveModelForTaskMock,
+  DEFAULT_TASK_MODEL: "gpt-4.1-nano",
 }));
 
 vi.mock("../../src/llm/models.js", () => ({
@@ -56,30 +55,38 @@ describe("llm-helpers", () => {
       makeClient(),
       "claimExtraction",
       " custom-model ",
-      { model: "ignored-default" },
+      {
+        models: {
+          extraction: "ignored-default",
+          claimExtraction: "ignored-default",
+          contradictionJudge: "ignored-default",
+          handoffSummary: "ignored-default",
+        },
+      },
     );
 
-    expect(resolveModelForTaskMock).not.toHaveBeenCalled();
     expect(resolveModelMock).toHaveBeenCalledWith("openai", "custom-model");
     expect(model).toBe("resolved-model");
   });
 
   it("resolveModelForLlmClient uses config-based task model when no override exists", () => {
-    resolveModelForTaskMock.mockReturnValue("task-model");
+    resolveModelForLlmClient(makeClient(), "contradictionJudge", undefined, {
+      models: {
+        extraction: "gpt-4.1-mini",
+        claimExtraction: "gpt-4.1-mini",
+        contradictionJudge: "task-model",
+        handoffSummary: "gpt-4.1-mini",
+      },
+    });
 
-    resolveModelForLlmClient(makeClient(), "contradictionJudge", undefined, { models: {} });
-
-    expect(resolveModelForTaskMock).toHaveBeenCalledWith({ models: {} }, "contradictionJudge");
     expect(resolveModelMock).toHaveBeenCalledWith("openai", "task-model");
   });
 
-  it("resolveModelForLlmClient falls back through resolveModelForTask with empty config", () => {
-    resolveModelForTaskMock.mockReturnValue("fallback-model");
+  it("resolveModelForLlmClient falls back to DEFAULT_TASK_MODEL with empty config", () => {
 
     resolveModelForLlmClient(makeClient(), "claimExtraction");
 
-    expect(resolveModelForTaskMock).toHaveBeenCalledWith({}, "claimExtraction");
-    expect(resolveModelMock).toHaveBeenCalledWith("openai", "fallback-model");
+    expect(resolveModelMock).toHaveBeenCalledWith("openai", "gpt-4.1-nano");
   });
 
   it("extractToolCallArgs returns parsed args for matching tool and required fields", () => {

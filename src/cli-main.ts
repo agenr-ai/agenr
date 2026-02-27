@@ -51,7 +51,7 @@ import { expandInputFiles, parseTranscriptFile } from "./parser.js";
 import { runSetup } from "./setup.js";
 import { banner, formatError, formatLabel, formatSuccess, formatWarn, ui } from "./ui.js";
 import { APP_VERSION } from "./version.js";
-import type { ExtractionReport, ExtractionStats } from "./types.js";
+import type { AgenrConfig, ExtractionReport, ExtractionStats } from "./types.js";
 import type { ConsolidateCommandOptions } from "./commands/consolidate.js";
 import type { BenchmarkCommandOptions } from "./commands/benchmark.js";
 import type {
@@ -112,6 +112,19 @@ function createEmptyStats(warnings: string[] = []): ExtractionStats {
     deduped_entries: 0,
     warnings,
   };
+}
+
+function formatTaskModelLines(models: AgenrConfig["models"] | undefined): string[] {
+  if (!models) {
+    return [];
+  }
+
+  return [
+    formatLabel("  Extraction", models.extraction),
+    formatLabel("  Claim extraction", models.claimExtraction),
+    formatLabel("  Contradiction judge", models.contradictionJudge),
+    formatLabel("  Handoff summary", models.handoffSummary),
+  ];
 }
 
 function toReportKey(filePath: string, used: Set<string>): string {
@@ -421,6 +434,7 @@ export function createProgram(): Command {
           [
             formatLabel("Provider", quick.provider ?? "(not set)"),
             formatLabel("Model", quick.model ?? "(not set)"),
+            ...formatTaskModelLines(quick.models),
             formatLabel("Auth", quick.auth ? formatAuthSummary(quick.auth) : "(not set)"),
           ].join("\n"),
           "Ready",
@@ -430,6 +444,7 @@ export function createProgram(): Command {
           [
             formatLabel("Provider", quick.provider ?? "(not set)"),
             formatLabel("Model", quick.model ?? "(not set)"),
+            ...formatTaskModelLines(quick.models),
           ].join("\n"),
           "Not authenticated",
         );
@@ -1038,7 +1053,7 @@ export function createProgram(): Command {
 
   program
     .command("setup")
-    .description("Interactive setup for provider/auth/model defaults")
+    .description("Interactive setup for provider/auth/task-model defaults")
     .action(async () => {
       await runSetup(process.env);
     });
@@ -1047,12 +1062,12 @@ export function createProgram(): Command {
 
   configCommand
     .command("set")
-    .description("Set a config value (provider, model, auth, models.<task>)")
-    .argument("<key>", "Config key: provider, model, auth, models.<task>")
+    .description("Set a config value (provider, auth, models.<task>)")
+    .argument("<key>", "Config key: provider, auth, models.<task>")
     .argument("<value>", "Config value")
     .action((key: string, value: string) => {
-      if (key !== "provider" && key !== "model" && key !== "auth" && !key.startsWith("models.")) {
-        throw new Error('Invalid key. Expected one of: "provider", "model", "auth", or "models.<task>".');
+      if (key !== "provider" && key !== "auth" && !key.startsWith("models.")) {
+        throw new Error('Invalid key. Expected one of: "provider", "auth", or "models.<task>".');
       }
 
       const current = readConfig(process.env);
@@ -1110,7 +1125,8 @@ export function createProgram(): Command {
         [
           formatLabel("Auth", config.auth ? describeAuth(config.auth) : ui.dim("(not set)")),
           formatLabel("Provider", config.provider ?? ui.dim("(not set)")),
-          formatLabel("Model", config.model ?? ui.dim("(not set)")),
+          formatLabel("Model", config.models.extraction),
+          ...formatTaskModelLines(config.models),
           "",
           ui.bold("Credentials"),
           formatLabel("  Anthropic API Key", maskSecret(config.credentials?.anthropicApiKey)),
@@ -1159,6 +1175,7 @@ export function createProgram(): Command {
           formatLabel("Provider", status.provider ?? "(not set)"),
           formatLabel("Auth", status.auth ? formatAuthSummary(status.auth) : "(not set)"),
           formatLabel("Model", status.model ?? "(not set)"),
+          ...formatTaskModelLines(status.models),
           formatLabel("Credential", status.credentialSource ?? "not found"),
           formatLabel(
             "Embeddings",

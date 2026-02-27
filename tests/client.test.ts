@@ -48,7 +48,12 @@ describe("llm client", () => {
       {
         auth: "anthropic-api-key",
         provider: "anthropic",
-        model: "claude-opus-4-6",
+        models: {
+          extraction: "claude-opus-4-6",
+          claimExtraction: "claude-opus-4-6",
+          contradictionJudge: "claude-opus-4-6",
+          handoffSummary: "claude-opus-4-6",
+        },
       },
       env,
     );
@@ -66,7 +71,12 @@ describe("llm client", () => {
       {
         auth: "anthropic-api-key",
         provider: "anthropic",
-        model: "claude-opus-4-6",
+        models: {
+          extraction: "claude-opus-4-6",
+          claimExtraction: "claude-opus-4-6",
+          contradictionJudge: "claude-opus-4-6",
+          handoffSummary: "claude-opus-4-6",
+        },
       },
       env,
     );
@@ -93,7 +103,12 @@ describe("llm client", () => {
       {
         auth: "openai-subscription",
         provider: "openai-codex",
-        model: "gpt-5.3-codex",
+        models: {
+          extraction: "gpt-5.3-codex",
+          claimExtraction: "gpt-5.3-codex",
+          contradictionJudge: "gpt-5.3-codex",
+          handoffSummary: "gpt-5.3-codex",
+        },
       },
       env,
     );
@@ -113,7 +128,12 @@ describe("llm client", () => {
       {
         auth: "openai-api-key",
         provider: "openai",
-        model: "gpt-5.2-codex",
+        models: {
+          extraction: "gpt-5.2-codex",
+          claimExtraction: "gpt-5.2-codex",
+          contradictionJudge: "gpt-5.2-codex",
+          handoffSummary: "gpt-5.2-codex",
+        },
         credentials: {
           openaiApiKey: "sk-from-config",
         },

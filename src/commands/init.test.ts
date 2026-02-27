@@ -536,7 +536,7 @@ describe("runInitCommand", () => {
       const projects = config.projects as Record<string, unknown>;
       expect(config.auth).toBe("openai-api-key");
       expect(config.provider).toBe("openai");
-      expect(config.model).toBe("gpt-4.1-mini");
+      expect((config.models as Record<string, string>)?.extraction).toBe("gpt-4.1-mini");
       expect(projects[path.resolve(dir)]).toEqual({
         project: result.project,
         platform: "openclaw",
@@ -993,7 +993,17 @@ describe("runInitWizard", () => {
       await runInitWizard({ isInteractive: true, path: dir });
 
       expect(formatExistingConfigMock).toHaveBeenCalledWith(
-        existingConfig,
+        expect.objectContaining({
+          auth: "openai-api-key",
+          provider: "openai",
+          projects: existingConfig.projects,
+          models: {
+            extraction: "gpt-4.1-mini",
+            claimExtraction: "gpt-4.1-mini",
+            contradictionJudge: "gpt-4.1-mini",
+            handoffSummary: "gpt-4.1-mini",
+          },
+        }),
         path.join(homeDir, ".agenr", "knowledge.db"),
       );
       expect(clackNoteMock).toHaveBeenCalledWith(expect.stringContaining("Projects:\n  openclaw"), "Current config");

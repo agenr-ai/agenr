@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.4 (2026-02-27)
+
+### Changed
+- refactor: removed top-level `model` config field; `models` is now required with all four task keys (extraction, claimExtraction, contradictionJudge, handoffSummary) always explicit (#277)
+- `resolveModelForTask` simplified to direct lookup (no fallback chain)
+- `isCompleteConfig` now checks for complete `models` instead of top-level `model`
+- Old configs with top-level `model` auto-upgrade on read (value populates all task models)
+- `config set model <value>` removed; use `config set models.extraction <value>` etc.
+
 ## 0.9.3 (2026-02-26)
 
 ### Added

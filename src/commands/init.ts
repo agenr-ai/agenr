@@ -4,10 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import * as clack from "@clack/prompts";
 import {
+  DEFAULT_TASK_MODEL,
   describeAuth,
+  mergeConfigPatch,
   readConfig,
   resolveConfigPath,
-  resolveModelForTask,
   resolveProjectFromGlobalConfig,
   writeConfig,
 } from "../config.js";
@@ -200,7 +201,7 @@ const TASK_MODEL_DEFINITIONS: TaskModelDefinition[] = [
 
 interface TaskModelPromptResult {
   cancelled: boolean;
-  models: AgenrConfig["models"];
+  models: AgenrConfig["models"] | undefined;
   changed: boolean;
 }
 
@@ -913,12 +914,18 @@ async function writeOpenClawPluginDbPath(
   );
 }
 
-function normalizeTaskModels(models: AgenrConfig["models"]): AgenrConfig["models"] {
+function normalizeTaskModels(models: Partial<AgenrConfig["models"]> | undefined): AgenrConfig["models"] | undefined {
   if (!models) {
     return undefined;
   }
 
-  const normalized: NonNullable<AgenrConfig["models"]> = {};
+  const normalized: NonNullable<AgenrConfig["models"]> = {
+    extraction: DEFAULT_TASK_MODEL,
+    claimExtraction: DEFAULT_TASK_MODEL,
+    contradictionJudge: DEFAULT_TASK_MODEL,
+    handoffSummary: DEFAULT_TASK_MODEL,
+  };
+
   for (const task of TASK_MODEL_DEFINITIONS) {
     const value = models[task.key];
     if (typeof value === "string" && value.trim().length > 0) {
@@ -926,15 +933,16 @@ function normalizeTaskModels(models: AgenrConfig["models"]): AgenrConfig["models
     }
   }
 
-  return Object.keys(normalized).length > 0 ? normalized : undefined;
+  return normalized;
 }
 
 function resolveTaskModelDefaults(baseModel: string | undefined): TaskModelRecord {
+  const extractionModel = baseModel?.trim() || DEFAULT_TASK_MODEL;
   return {
-    extraction: resolveModelForTask({ model: baseModel }, "extraction"),
-    claimExtraction: resolveModelForTask({ model: baseModel }, "claimExtraction"),
-    contradictionJudge: resolveModelForTask({ model: baseModel }, "contradictionJudge"),
-    handoffSummary: resolveModelForTask({ model: baseModel }, "handoffSummary"),
+    extraction: extractionModel,
+    claimExtraction: DEFAULT_TASK_MODEL,
+    contradictionJudge: DEFAULT_TASK_MODEL,
+    handoffSummary: DEFAULT_TASK_MODEL,
   };
 }
 
@@ -945,10 +953,10 @@ function resolveTaskModelCurrentValues(
   const defaults = resolveTaskModelDefaults(baseModel);
   const normalizedModels = normalizeTaskModels(models);
   return {
-    extraction: normalizedModels?.extraction ?? defaults.extraction,
-    claimExtraction: normalizedModels?.claimExtraction ?? defaults.claimExtraction,
-    contradictionJudge: normalizedModels?.contradictionJudge ?? defaults.contradictionJudge,
-    handoffSummary: normalizedModels?.handoffSummary ?? defaults.handoffSummary,
+    extraction: normalizedModels?.extraction || defaults.extraction,
+    claimExtraction: normalizedModels?.claimExtraction || defaults.claimExtraction,
+    contradictionJudge: normalizedModels?.contradictionJudge || defaults.contradictionJudge,
+    handoffSummary: normalizedModels?.handoffSummary || defaults.handoffSummary,
   };
 }
 
@@ -963,12 +971,20 @@ function taskModelsEqual(a: AgenrConfig["models"], b: AgenrConfig["models"]): bo
   return true;
 }
 
-function toTaskModelOverrides(_baseModel: string | undefined, selected: TaskModelRecord): AgenrConfig["models"] {
-  const overrides: NonNullable<AgenrConfig["models"]> = {};
+function toTaskModels(selected: TaskModelRecord): AgenrConfig["models"] {
+  const models: NonNullable<AgenrConfig["models"]> = {
+    extraction: DEFAULT_TASK_MODEL,
+    claimExtraction: DEFAULT_TASK_MODEL,
+    contradictionJudge: DEFAULT_TASK_MODEL,
+    handoffSummary: DEFAULT_TASK_MODEL,
+  };
   for (const task of TASK_MODEL_DEFINITIONS) {
-    overrides[task.key] = selected[task.key].trim();
+    const value = selected[task.key].trim();
+    if (value) {
+      models[task.key] = value;
+    }
   }
-  return Object.keys(overrides).length > 0 ? overrides : undefined;
+  return models;
 }
 
 async function promptTaskModelOverrides(
@@ -976,12 +992,13 @@ async function promptTaskModelOverrides(
   existingModels: AgenrConfig["models"],
 ): Promise<TaskModelPromptResult> {
   const currentModels = normalizeTaskModels(existingModels);
+  const fallbackModels = resolveTaskModelDefaults(baseModel);
   const configureSelection = await clack.select<"no" | "yes">({
     message: "Configure per-task models? (Advanced)",
     options: [
       {
         value: "no",
-        label: `No, use ${baseModel ?? "gpt-4.1-nano"} for everything`,
+        label: currentModels ? "No, keep current task models" : `No, use ${fallbackModels.extraction} for extraction`,
       },
       {
         value: "yes",
@@ -999,31 +1016,11 @@ async function promptTaskModelOverrides(
   }
 
   if (configureSelection === "no") {
-    if (currentModels) {
-      const clearExisting = await clack.confirm({
-        message: "Clear existing per-task model overrides?",
-        initialValue: false,
-      });
-      if (clack.isCancel(clearExisting)) {
-        return {
-          cancelled: true,
-          models: currentModels,
-          changed: false,
-        };
-      }
-      if (clearExisting) {
-        return {
-          cancelled: false,
-          models: undefined,
-          changed: true,
-        };
-      }
-    }
-
+    const nextModels = currentModels ?? fallbackModels;
     return {
       cancelled: false,
-      models: currentModels,
-      changed: false,
+      models: nextModels,
+      changed: !taskModelsEqual(currentModels, nextModels),
     };
   }
 
@@ -1077,7 +1074,7 @@ async function promptTaskModelOverrides(
     selected[task.key] = changedModel.trim();
   }
 
-  const nextModels = toTaskModelOverrides(baseModel, selected);
+  const nextModels = toTaskModels(selected);
   return {
     cancelled: false,
     models: nextModels,
@@ -1085,7 +1082,7 @@ async function promptTaskModelOverrides(
   };
 }
 
-function formatTaskModelsForSummary(models: AgenrConfig["models"]): string[] {
+function formatTaskModelsForSummary(models: AgenrConfig["models"] | undefined): string[] {
   const normalized = normalizeTaskModels(models);
   if (!normalized) {
     return [];
@@ -1324,7 +1321,8 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
   const env = process.env;
   const baseProjectDir = path.resolve(options.path?.trim() || process.cwd());
   let projectDir = baseProjectDir;
-  const existingConfig = initWizardRuntime.readConfig(env);
+  const rawExistingConfig = initWizardRuntime.readConfig(env);
+  const existingConfig = rawExistingConfig ? mergeConfigPatch(rawExistingConfig, {}) : null;
   const existingProjectSettings = await readExistingProjectSettings(baseProjectDir);
   const hasExistingConfig =
     existingConfig !== null || existingProjectSettings.platform !== undefined || existingProjectSettings.project !== undefined;
@@ -1369,23 +1367,23 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
     embeddingsKeyChanged: false,
     directoryChanged: false,
     dbPathChanged: false,
-    previousModel: existingConfig?.model,
-    newModel: existingConfig?.model,
+    previousModel: existingConfig?.models?.extraction,
+    newModel: existingConfig?.models?.extraction,
   };
 
   let selectedAuth = existingConfig?.auth;
-  let selectedModel = existingConfig?.model;
+  let selectedModel = existingConfig?.models?.extraction;
   const previousTaskModels = normalizeTaskModels(existingConfig?.models);
   let selectedTaskModels = normalizeTaskModels(existingConfig?.models);
   let workingConfig = existingConfig;
   let ranSetupCoreForAuthModel = false;
   const previousEmbeddingKey = resolveEmbeddingKeyOrNull(existingConfig, env);
   let currentEmbeddingKey = previousEmbeddingKey;
-  const hasCurrentAuthModel = Boolean(existingConfig?.auth && existingConfig.model && existingConfig.provider);
+  const hasCurrentAuthModel = Boolean(existingConfig?.auth && selectedModel && existingConfig.provider);
 
   if (hasCurrentAuthModel && existingConfig?.auth) {
     const authAction = await clack.select<"keep" | "change-model" | "change-auth">({
-      message: `Auth: ${describeAuth(existingConfig.auth)} | Model: ${existingConfig.model} (current)`,
+      message: `Auth: ${describeAuth(existingConfig.auth)} | Model: ${selectedModel} (current)`,
       options: [
         { value: "keep", label: "Keep current auth and model" },
         { value: "change-model", label: "Change model only" },
@@ -1431,7 +1429,7 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
           label: id,
           hint: modelHintForChoice(provider, id),
         })),
-        initialValue: existingConfig.model,
+        initialValue: selectedModel,
       });
       if (clack.isCancel(newModel)) {
         clack.cancel("Setup cancelled.");
@@ -1439,9 +1437,13 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
       }
 
       selectedModel = newModel;
+      selectedTaskModels = {
+        ...(selectedTaskModels ?? resolveTaskModelDefaults(newModel)),
+        extraction: newModel,
+      };
       workingConfig = {
         ...existingConfig,
-        model: newModel,
+        models: selectedTaskModels,
       };
       currentEmbeddingKey = resolveEmbeddingKeyOrNull(workingConfig, env);
     }
@@ -1464,7 +1466,7 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
   }
 
   wizardChanges.authChanged = existingConfig ? existingConfig.auth !== selectedAuth : false;
-  wizardChanges.modelChanged = existingConfig ? existingConfig.model !== selectedModel : false;
+  wizardChanges.modelChanged = existingConfig ? existingConfig.models?.extraction !== selectedModel : false;
   wizardChanges.embeddingsKeyChanged = previousEmbeddingKey !== currentEmbeddingKey;
   wizardChanges.newModel = selectedModel;
 
@@ -1480,15 +1482,12 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
       return;
     }
 
-    selectedTaskModels = normalizeTaskModels(taskModelResult.models);
+    selectedTaskModels = normalizeTaskModels(taskModelResult.models) ?? resolveTaskModelDefaults(selectedModel);
     if (taskModelResult.changed) {
       const nextConfig: AgenrConfig = {
         ...(workingConfig ?? {}),
-        ...(selectedTaskModels ? { models: selectedTaskModels } : {}),
+        models: selectedTaskModels,
       };
-      if (!selectedTaskModels) {
-        delete nextConfig.models;
-      }
       workingConfig = nextConfig;
     }
   }
@@ -1861,15 +1860,12 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
   }
 
   if (wizardChanges.modelChanged || wizardChanges.modelsChanged) {
-    const latestConfig = initWizardRuntime.readConfig(env) ?? workingConfig ?? {};
+    const latestConfig = initWizardRuntime.readConfig(env) ?? workingConfig ?? { models: resolveTaskModelDefaults(selectedModel) };
+    const resolvedTaskModels = selectedTaskModels ?? resolveTaskModelDefaults(selectedModel);
     const nextConfig: AgenrConfig = {
       ...latestConfig,
-      ...(selectedModel ? { model: selectedModel } : {}),
-      ...(selectedTaskModels ? { models: selectedTaskModels } : {}),
+      models: resolvedTaskModels,
     };
-    if (!selectedTaskModels) {
-      delete nextConfig.models;
-    }
     writeConfig(nextConfig, env);
     workingConfig = nextConfig;
   }
@@ -1945,7 +1941,7 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
     const provider: AgenrProvider = VALID_PROVIDERS.includes(rawProvider as AgenrProvider)
       ? (rawProvider as AgenrProvider)
       : "openai";
-    const model = config?.model ?? "openai/gpt-4.1-mini";
+    const model = config?.models.extraction ?? DEFAULT_TASK_MODEL;
 
     const recentCost = estimateIngestCost(scan.recentSizeBytes, model, provider);
     const fullCost = estimateIngestCost(scan.totalSizeBytes, model, provider);

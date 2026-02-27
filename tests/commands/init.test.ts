@@ -109,7 +109,12 @@ async function setupExistingConfig(
   const base: AgenrConfig = {
     auth: "openai-api-key",
     provider: "openai",
-    model: "gpt-4.1-mini",
+    models: {
+      extraction: "gpt-4.1-mini",
+      claimExtraction: "gpt-4.1-nano",
+      contradictionJudge: "gpt-4.1-nano",
+      handoffSummary: "gpt-4.1-nano",
+    },
     projects: {
       [path.resolve(projectDir)]: {
         project: "codex-project",
@@ -158,7 +163,12 @@ function mockWizardRuntime(projectDir: string): void {
     config: {
       auth: "openai-api-key",
       provider: "openai",
-      model: "gpt-4.1-mini",
+      models: {
+        extraction: "gpt-4.1-mini",
+        claimExtraction: "gpt-4.1-nano",
+        contradictionJudge: "gpt-4.1-nano",
+        handoffSummary: "gpt-4.1-nano",
+      },
     },
     changed: false,
   });
@@ -206,7 +216,7 @@ describe("init wizard auth/model reconfigure", () => {
       path: projectDir,
     });
 
-    expect(readConfig(env)?.model).toBe("gpt-4.1");
+    expect(readConfig(env)?.models?.extraction).toBe("gpt-4.1");
     expect(initModule.initWizardRuntime.runSetupCore).not.toHaveBeenCalled();
 
     const messages = current.selectMock.mock.calls.map((call) => {
@@ -236,7 +246,7 @@ describe("init wizard auth/model reconfigure", () => {
     });
 
     expect(writeConfigSpy).not.toHaveBeenCalled();
-    expect(readConfig(env)?.model).toBe("gpt-4.1-mini");
+    expect(readConfig(env)?.models?.extraction).toBe("gpt-4.1-mini");
   });
 
   it("keeps current auth and model without showing model picker", async () => {
@@ -307,7 +317,7 @@ describe("init wizard auth/model reconfigure", () => {
 });
 
 describe("init wizard per-task model setup", () => {
-  it("keeps models undefined when user skips advanced per-task setup", async () => {
+  it("keeps existing task models when user skips advanced per-task setup", async () => {
     const current = getMocks();
     const projectDir = await makeTempDir("agenr-init-project-test-");
     const env = await setupExistingConfig(projectDir);
@@ -322,7 +332,12 @@ describe("init wizard per-task model setup", () => {
       path: projectDir,
     });
 
-    expect(readConfig(env)?.models).toBeUndefined();
+    expect(readConfig(env)?.models).toEqual({
+      extraction: "gpt-4.1-mini",
+      claimExtraction: "gpt-4.1-nano",
+      contradictionJudge: "gpt-4.1-nano",
+      handoffSummary: "gpt-4.1-nano",
+    });
 
     const taskPromptCall = current.selectMock.mock.calls.find((call) => {
       const args = call[0] as { message?: string; options?: Array<{ label: string }> };
@@ -330,7 +345,7 @@ describe("init wizard per-task model setup", () => {
     });
     expect(taskPromptCall).toBeDefined();
     const taskPromptOptions = (taskPromptCall?.[0] as { options: Array<{ label: string }> }).options;
-    expect(taskPromptOptions[0]?.label).toBe("No, use gpt-4.1-mini for everything");
+    expect(taskPromptOptions[0]?.label).toBe("No, keep current task models");
   });
 
   it("writes configured per-task overrides to config.models", async () => {
@@ -371,7 +386,9 @@ describe("init wizard per-task model setup", () => {
     const projectDir = await makeTempDir("agenr-init-project-test-");
     await setupExistingConfig(projectDir, {
       models: {
+        extraction: "gpt-4.1-mini",
         claimExtraction: "model-claims",
+        contradictionJudge: "gpt-4.1-nano",
         handoffSummary: "model-handoff",
       },
     });
@@ -398,17 +415,20 @@ describe("init wizard per-task model setup", () => {
     expect(messages).toContain("Handoff summary: model-handoff - Keep / Change");
   });
 
-  it("clears existing per-task overrides when requested", async () => {
+  it("keeps existing per-task models when skipping customization", async () => {
     const current = getMocks();
     const projectDir = await makeTempDir("agenr-init-project-test-");
     const env = await setupExistingConfig(projectDir, {
       models: {
+        extraction: "gpt-4.1-mini",
         claimExtraction: "model-claims",
+        contradictionJudge: "gpt-4.1-nano",
+        handoffSummary: "gpt-4.1-nano",
       },
     });
     mockWizardRuntime(projectDir);
 
-    queueResponses(current.confirmMock, [true, true], "confirm");
+    queueResponses(current.confirmMock, [true], "confirm");
     queueResponses(current.selectMock, ["keep", "no", "keep", "keep"], "select");
     queueResponses(current.textMock, [], "text");
 
@@ -417,11 +437,12 @@ describe("init wizard per-task model setup", () => {
       path: projectDir,
     });
 
-    expect(readConfig(env)?.models).toBeUndefined();
-
-    const changesNote = current.noteMock.mock.calls.find((call) => call[1] === "Changes");
-    expect(changesNote).toBeDefined();
-    expect(changesNote?.[0]).toContain("Per-task model overrides updated");
+    expect(readConfig(env)?.models).toEqual({
+      extraction: "gpt-4.1-mini",
+      claimExtraction: "model-claims",
+      contradictionJudge: "gpt-4.1-nano",
+      handoffSummary: "gpt-4.1-nano",
+    });
   });
 
   it("persists explicit task selections even when they match defaults", async () => {

@@ -23,7 +23,7 @@ export function resolveProviderAndModel(input: ResolveLlmClientInput): {
   }
 
   const providerRaw = input.provider?.trim() || config.provider?.trim();
-  const modelRaw = input.model?.trim() || config.model?.trim();
+  const modelRaw = input.model?.trim() || config?.models?.extraction?.trim();
 
   if (!providerRaw || !modelRaw) {
     throw new Error(

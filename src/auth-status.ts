@@ -11,6 +11,7 @@ export interface AuthStatusResult {
   provider?: AgenrProvider;
   auth?: AgenrAuthMethod;
   model?: string;
+  models?: AgenrConfig["models"];
   credentialAvailable: boolean;
   credentialSource?: string;
   authenticated?: boolean;
@@ -147,7 +148,8 @@ function configNotReadyResult(config: AgenrConfig | null): AuthStatusResult {
     configured: false,
     provider: config?.provider,
     auth: config?.auth,
-    model: config?.model,
+    model: config?.models?.extraction,
+    models: config?.models,
     credentialAvailable: false,
     guidance: "Not configured. Run `agenr setup`.",
   };
@@ -170,7 +172,8 @@ export function getQuickStatus(env: NodeJS.ProcessEnv = process.env): AuthStatus
       configured: true,
       provider: config.provider,
       auth: config.auth,
-      model: config.model,
+      model: config.models.extraction,
+      models: config.models,
       credentialAvailable: false,
       guidance: probe.guidance,
     };
@@ -180,7 +183,8 @@ export function getQuickStatus(env: NodeJS.ProcessEnv = process.env): AuthStatus
     configured: true,
     provider: config.provider,
     auth: config.auth,
-    model: config.model,
+    model: config.models.extraction,
+    models: config.models,
     credentialAvailable: true,
     credentialSource: probe.source,
     guidance: "Credentials available.",
@@ -210,7 +214,8 @@ export async function getAuthStatus(
               configured: true,
               provider: loadedConfig.provider,
               auth: loadedConfig.auth,
-              model: loadedConfig.model,
+              model: loadedConfig.models.extraction,
+              models: loadedConfig.models,
               credentialAvailable: false,
               guidance: probe.guidance,
             } satisfies AuthStatusResult;
@@ -220,7 +225,8 @@ export async function getAuthStatus(
             configured: true,
             provider: loadedConfig.provider,
             auth: loadedConfig.auth,
-            model: loadedConfig.model,
+            model: loadedConfig.models.extraction,
+            models: loadedConfig.models,
             credentialAvailable: true,
             credentialSource: probe.source,
             guidance: "Credentials available.",
