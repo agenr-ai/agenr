@@ -156,7 +156,7 @@ agenr recall "package manager"
    tags: tooling, package-manager
 ```
 
-Recall supports date range queries (`--since 14d --until 7d`) and temporal browse mode (`--browse --since 1d`) for recency-ordered lookups without embedding API calls.
+Recall supports date range queries (`--since 14d --until 7d`), temporal browse mode (`--browse --since 1d`), and around-date targeting (`--around 2026-02-15 --around-radius 14`) to rank entries by distance from a specific date.
 
 ### Cross-session Handoff
 
@@ -246,7 +246,7 @@ This exposes four tools: `agenr_recall`, `agenr_store`, `agenr_extract`, `agenr_
 | `agenr ingest <paths...>` | Bulk-ingest files and directories |
 | `agenr extract <files...>` | Extract knowledge entries from text files |
 | `agenr store [files...]` | Store entries with semantic dedup |
-| `agenr recall [query]` | Semantic + memory-aware recall. Use `--since`/`--until` for date ranges, `--browse` for temporal mode. |
+| `agenr recall [query]` | Semantic + memory-aware recall. Use `--since`/`--until` for date ranges, `--around` for target-date ranking, `--browse` for temporal mode. |
 | `agenr retire [subject]` | Retire a stale entry (hidden, not deleted). Match by subject or `--id`. |
 | `agenr watch [file]` | Live-watch files/directories, auto-extract knowledge |
 | `agenr watcher install` | Install background watch daemon (macOS launchd) |

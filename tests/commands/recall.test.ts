@@ -230,6 +230,26 @@ describe("recall command", () => {
     expect(firstCall?.[1]?.until).toBe("2026-02-01T00:00:00.000Z");
   });
 
+  it("passes --around into recall query when provided", async () => {
+    const recallFn = vi.fn(async () => []);
+    const deps = makeDeps({ recallFn });
+
+    await runRecallCommand("work", { context: "default", json: true, around: "7d" }, deps);
+
+    const firstCall = (recallFn.mock.calls as unknown[][])[0] as [unknown, { around?: string }] | undefined;
+    expect(firstCall?.[1]?.around).toBe("2026-02-08T00:00:00.000Z");
+  });
+
+  it("passes --around-radius into recall query when provided", async () => {
+    const recallFn = vi.fn(async () => []);
+    const deps = makeDeps({ recallFn });
+
+    await runRecallCommand("work", { context: "default", json: true, aroundRadius: "21" }, deps);
+
+    const firstCall = (recallFn.mock.calls as unknown[][])[0] as [unknown, { aroundRadius?: number }] | undefined;
+    expect(firstCall?.[1]?.aroundRadius).toBe(21);
+  });
+
   it("passes --project into recall query when provided", async () => {
     const recallFn = vi.fn(async () => []);
     const deps = makeDeps({ recallFn });

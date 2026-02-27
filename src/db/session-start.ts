@@ -238,8 +238,14 @@ export async function sessionStartRecall(db: Client, options: SessionStartRecall
   };
 
   const hasExplicitSince = Boolean(baseQuery.since && baseQuery.since.trim().length > 0);
-  const permanentSince = hasExplicitSince ? baseQuery.since : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-  const temporarySince = hasExplicitSince ? baseQuery.since : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const hasAroundTarget = Boolean(baseQuery.around && baseQuery.around.trim().length > 0);
+  const shouldApplyDefaultSince = !hasExplicitSince && !hasAroundTarget;
+  const permanentSince = shouldApplyDefaultSince
+    ? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
+    : baseQuery.since;
+  const temporarySince = shouldApplyDefaultSince
+    ? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+    : baseQuery.since;
 
   const coreResults = await recallFn(
     db,
@@ -263,7 +269,7 @@ export async function sessionStartRecall(db: Client, options: SessionStartRecall
   );
 
   // Preserve the shorter default "temporary" window without doubling DB work.
-  if (!hasExplicitSince) {
+  if (shouldApplyDefaultSince) {
     const cutoff = Date.parse(temporarySince);
     if (Number.isFinite(cutoff)) {
       nonCoreResults = nonCoreResults.filter((item) => {

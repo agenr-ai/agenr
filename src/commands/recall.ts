@@ -30,6 +30,8 @@ export interface RecallCommandOptions {
   minImportance?: string;
   since?: string;
   until?: string;
+  around?: string;
+  aroundRadius?: number | string;
   expiry?: string;
   platform?: string;
   project?: string | string[];
@@ -316,6 +318,10 @@ export async function runRecallCommand(
 
   const sinceIso = parseSinceToIso(options.since, now, "Invalid --since value. Use 1h, 7d, 1m, 1y, or an ISO date.");
   const untilIso = parseSinceToIso(options.until, now, "Invalid --until value. Use 1h, 7d, 1m, 1y, or an ISO date.");
+  const aroundIso = parseSinceToIso(options.around, now, "Invalid --around value. Use 1h, 7d, 1m, 1y, or an ISO date.");
+  const aroundRadius = options.aroundRadius !== undefined
+    ? parsePositiveInt(options.aroundRadius, 0, "--around-radius")
+    : undefined;
   const queryForRecall: RecallQuery = {
     text: queryText && !isBrowse ? shapeRecallText(queryText, context) : undefined,
     limit,
@@ -324,6 +330,8 @@ export async function runRecallCommand(
     minImportance,
     since: sinceIso,
     until: untilIso,
+    around: aroundIso,
+    aroundRadius,
     expiry,
     scope: scope ?? "private",
     platform,

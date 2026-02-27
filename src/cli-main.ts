@@ -530,6 +530,8 @@ export function createProgram(): Command {
     .option("--min-importance <n>", "Minimum importance: 1-10")
     .option("--since <duration>", "Filter by recency (1h, 7d, 30d, 1y) or ISO timestamp")
     .option("--until <date>", "Only entries at or before this time (ISO date or relative, e.g. 7d, 1m)")
+    .option("--around <date>", "Center recency around this date (ISO date or relative, e.g. 7d)")
+    .option("--around-radius <days>", "Days on each side of --around for default window/scoring width", parseIntOption)
     .option("--expiry <level>", "Filter by expiry: core|permanent|temporary")
     .option("--platform <name>", "Filter by platform: openclaw, claude-code, codex, plaud")
     .option("--project <name>", "Filter by project (repeatable)", (val: string, prev: string[]) => [...prev, val], [] as string[])
@@ -551,6 +553,8 @@ export function createProgram(): Command {
         minImportance: opts.minImportance as string | undefined,
         since: opts.since as string | undefined,
         until: opts.until as string | undefined,
+        around: opts.around as string | undefined,
+        aroundRadius: opts.aroundRadius as number | undefined,
         expiry: opts.expiry as string | undefined,
         platform: opts.platform as string | undefined,
         project: opts.project as string | string[] | undefined,

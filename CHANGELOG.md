@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.6 - 2026-02-27
+
+### Added
+- `--around <date>` flag for recall: shifts recency scoring to peak at a target
+  date instead of now. Entries closer to the target date rank higher regardless
+  of whether they are older or newer than it (#189).
+- `--around-radius <days>` flag: controls the window width for `--around` queries
+  (default: 14 days). Also auto-sets since/until bounds when not explicitly
+  provided.
+- `gaussianRecency` scoring function for temporal targeting.
+
 ## 0.9.5 - 2026-02-27
 
 ### Added
