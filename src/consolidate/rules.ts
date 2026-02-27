@@ -4,7 +4,6 @@ import type { Client, InValue } from "@libsql/client";
 import { rebuildVectorIndex } from "../db/vector-index.js";
 import { recency } from "../db/recall.js";
 import { createRelation } from "../db/relations.js";
-import { findSimilar } from "../db/store.js";
 import { buildProjectFilter } from "../project.js";
 import { parseDaysBetween, toNumber, toStringValue } from "../utils/entry-utils.js";
 import { UnionFind, cosineSim, type ActiveEmbeddedEntry, validateCluster } from "./util.js";
@@ -336,20 +335,13 @@ async function mergeNearExactDuplicates(
     unionFind.add(entry.id);
   }
 
-  const limit = Math.max(2, Math.min(MERGE_NEIGHBOR_LIMIT, entries.length));
-  for (const entry of entries) {
-    const neighbors = await findSimilar(db, entry.embedding, limit);
-    for (const neighbor of neighbors) {
-      const neighborId = neighbor.entry.id;
-      if (neighborId === entry.id) {
-        continue;
-      }
-      if (neighbor.similarity <= MERGE_SIMILARITY_THRESHOLD) {
-        continue;
-      }
+  for (let i = 0; i < entries.length; i += 1) {
+    const entry = entries[i];
+    for (let j = i + 1; j < entries.length; j += 1) {
+      const candidate = entries[j];
 
-      const candidate = entryById.get(neighborId);
-      if (!candidate) {
+      const similarity = cosineSim(entry.embedding, candidate.embedding);
+      if (similarity <= MERGE_SIMILARITY_THRESHOLD) {
         continue;
       }
 
@@ -363,7 +355,7 @@ async function mergeNearExactDuplicates(
         continue;
       }
 
-      unionFind.union(entry.id, neighborId);
+      unionFind.union(entry.id, candidate.id);
     }
   }
 
