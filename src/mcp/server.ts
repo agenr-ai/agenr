@@ -868,6 +868,9 @@ export function createMcpServer(
       }
     }
     const aroundRadius = typeof args.aroundRadius === "number" ? args.aroundRadius : undefined;
+    if (aroundRadius !== undefined && (!Number.isInteger(aroundRadius) || aroundRadius < 1)) {
+      throw new RpcError(JSON_RPC_INVALID_PARAMS, "aroundRadius must be a positive integer (days)");
+    }
     const platformRaw = typeof args.platform === "string" ? args.platform.trim() : "";
     const platform = platformRaw ? normalizeKnowledgePlatform(platformRaw) : null;
     if (platformRaw && !platform) {
