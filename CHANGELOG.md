@@ -6,6 +6,11 @@
 - Ingest creates co-recall edges between entries extracted from the same
   session file, seeding the graph for graph-augmented recall after fresh
   installs or DB resets (#300).
+- Ingest backfills co-recall edges for already-ingested files on re-ingest
+  without requiring --force (#300).
+- Consolidation clustering now uses in-memory pairwise cosine similarity
+  instead of per-entry SQLite vector queries, eliminating O(N) database
+  round-trips (#263).
 - Consolidation clustering now supports a loose similarity band with
   subject-aware auto-union and optional LLM pre-screening to catch
   semantically equivalent entries below the tight cosine threshold (#264).

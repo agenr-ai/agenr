@@ -1,7 +1,6 @@
 import type { Context, Tool } from "@mariozechner/pi-ai";
 import type { Client, InValue } from "@libsql/client";
 import { Type, type Static } from "@sinclair/typebox";
-import { findSimilar } from "../db/store.js";
 import { runSimpleStream } from "../llm/stream.js";
 import { UnionFind, cosineSim, type ActiveEmbeddedEntry, validateCluster } from "./util.js";
 import type { KnowledgePlatform, LlmClient } from "../types.js";
@@ -297,7 +296,6 @@ export async function buildClusters(db: Client, options: ClusterOptions = {}): P
 
   const entryById = new Map(candidates.map((entry) => [entry.id, entry]));
   const unionFind = new UnionFind();
-  const visitedPairs = new Set<string>();
   const looseUnionPairs = new Set<string>();
   let llmDedupCalls = 0;
   let llmDedupMatches = 0;
@@ -305,22 +303,13 @@ export async function buildClusters(db: Client, options: ClusterOptions = {}): P
     unionFind.add(entry.id);
   }
 
-  for (const entry of candidates) {
-    const fetchLimit = typeFilter ? neighborLimit * 3 : neighborLimit;
-    const neighbors = await findSimilar(db, entry.embedding, fetchLimit);
-    for (const neighbor of neighbors) {
-      const candidate = entryById.get(neighbor.entry.id);
-      if (!candidate || candidate.id === entry.id) {
-        continue;
-      }
-
-      const key = pairKey(entry.id, candidate.id);
-      if (visitedPairs.has(key)) {
-        continue;
-      }
-      visitedPairs.add(key);
+  for (let i = 0; i < candidates.length; i += 1) {
+    const entry = candidates[i];
+    for (let j = i + 1; j < candidates.length; j += 1) {
+      const candidate = candidates[j];
 
       const similarity = cosineSim(entry.embedding, candidate.embedding);
+      const key = pairKey(entry.id, candidate.id);
       const sameType = entry.type === candidate.type;
       const sameSubject = normalizeSubject(entry.subject) === normalizeSubject(candidate.subject);
 
