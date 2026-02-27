@@ -330,8 +330,10 @@ describe("init wizard per-task model setup", () => {
     });
 
     expect(readConfig(env)?.models).toEqual({
+      extraction: "gpt-4.1-mini",
       claimExtraction: "gpt-4.1",
       contradictionJudge: "o3-mini",
+      handoffSummary: "gpt-4.1-nano",
     });
 
     const summaryCall = current.noteMock.mock.calls.find((call) => call[1] === "Setup summary");
@@ -399,7 +401,7 @@ describe("init wizard per-task model setup", () => {
     expect(changesNote?.[0]).toContain("Per-task model overrides updated");
   });
 
-  it("persists only tasks that differ from defaults", async () => {
+  it("persists explicit task selections even when they match defaults", async () => {
     const current = getMocks();
     const projectDir = await makeTempDir("agenr-init-project-test-");
     const env = await setupExistingConfig(projectDir);
@@ -419,7 +421,10 @@ describe("init wizard per-task model setup", () => {
     });
 
     expect(readConfig(env)?.models).toEqual({
+      extraction: "gpt-4.1-mini",
       claimExtraction: "gpt-4.1",
+      contradictionJudge: "gpt-4.1-nano",
+      handoffSummary: "gpt-4.1-nano",
     });
   });
 });

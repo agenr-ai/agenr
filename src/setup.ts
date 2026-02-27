@@ -179,9 +179,7 @@ async function promptPerTaskModels(baseModel: string): Promise<AgenrConfig["mode
       modelChoice = customModel.trim();
     }
 
-    if (modelChoice !== defaultModel) {
-      selectedModels[taskConfig.task] = modelChoice;
-    }
+    selectedModels[taskConfig.task] = modelChoice;
   }
 
   return Object.keys(selectedModels).length > 0 ? selectedModels : undefined;

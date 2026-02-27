@@ -39,6 +39,7 @@ import { runStoreCommand } from "./commands/store.js";
 import { runTodoCommand } from "./commands/todo.js";
 import { runWatchCommand } from "./commands/watch.js";
 import { describeAuth, maskSecret, readConfig, setConfigKey, setStoredCredential, writeConfig } from "./config.js";
+import type { ConfigSetKey } from "./config.js";
 import { deduplicateEntries } from "./dedup.js";
 import { closeDb, getDb, initDb } from "./db/client.js";
 import { resolveEmbeddingApiKey } from "./embeddings/client.js";
@@ -1046,16 +1047,16 @@ export function createProgram(): Command {
 
   configCommand
     .command("set")
-    .description("Set one config value: provider, model, or auth")
-    .argument("<key>", "Config key: provider, model, auth")
+    .description("Set a config value (provider, model, auth, models.<task>)")
+    .argument("<key>", "Config key: provider, model, auth, models.<task>")
     .argument("<value>", "Config value")
     .action((key: string, value: string) => {
-      if (key !== "provider" && key !== "model" && key !== "auth") {
-        throw new Error('Invalid key. Expected one of: "provider", "model", "auth".');
+      if (key !== "provider" && key !== "model" && key !== "auth" && !key.startsWith("models.")) {
+        throw new Error('Invalid key. Expected one of: "provider", "model", "auth", or "models.<task>".');
       }
 
       const current = readConfig(process.env);
-      const result = setConfigKey(current, key, value);
+      const result = setConfigKey(current, key as ConfigSetKey, value);
       writeConfig(result.config, process.env);
       clack.log.success(formatLabel(`Updated ${key}`, value));
       for (const warning of result.warnings) {

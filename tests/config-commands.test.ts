@@ -43,6 +43,49 @@ describe("config command helpers", () => {
     expect(result.warnings.length).toBeGreaterThan(0);
   });
 
+  it("sets per-task model override via dot-path", () => {
+    const result = setConfigKey({}, "models.extraction", "gpt-4.1");
+
+    expect(result.config.models?.extraction).toBe("gpt-4.1");
+  });
+
+  it("removes per-task override when value is default", () => {
+    const first = setConfigKey({}, "models.extraction", "gpt-4.1");
+    const second = setConfigKey(first.config, "models.extraction", "default");
+
+    expect(second.config.models?.extraction).toBeUndefined();
+  });
+
+  it("rejects invalid task name in models dot-path", () => {
+    expect(() => setConfigKey({}, "models.invalidTask", "gpt-4.1")).toThrow(
+      'Invalid model task "invalidTask". Expected one of: extraction, claimExtraction, contradictionJudge, handoffSummary.',
+    );
+  });
+
+  it("preserves other task models when setting one", () => {
+    const first = setConfigKey({}, "models.extraction", "gpt-4.1");
+    const second = setConfigKey(first.config, "models.claimExtraction", "gpt-4.1-mini");
+    const third = setConfigKey(second.config, "models.extraction", "gpt-4.1-nano");
+
+    expect(third.config.models).toEqual({
+      extraction: "gpt-4.1-nano",
+      claimExtraction: "gpt-4.1-mini",
+    });
+  });
+
+  it("removes models field when last override is cleared", () => {
+    const first = setConfigKey({}, "models.handoffSummary", "gpt-4.1-mini");
+    const second = setConfigKey(first.config, "models.handoffSummary", "default");
+
+    expect(second.config.models).toBeUndefined();
+  });
+
+  it("writes task model override even when value matches task default", () => {
+    const result = setConfigKey({}, "models.contradictionJudge", "gpt-4.1-nano");
+
+    expect(result.config.models?.contradictionJudge).toBe("gpt-4.1-nano");
+  });
+
   it("stores and overwrites credential fields", () => {
     const first = setStoredCredential({}, "openai", "sk-old");
     const second = setStoredCredential(first, "openai", "sk-new");

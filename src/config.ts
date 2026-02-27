@@ -5,7 +5,7 @@ import { resolveModel } from "./llm/models.js";
 import type { AgenrAuthMethod, AgenrConfig, AgenrProvider } from "./types.js";
 import { normalizeLabel } from "./utils/string.js";
 
-export type ConfigSetKey = "provider" | "model" | "auth";
+export type ConfigSetKey = "provider" | "model" | "auth" | `models.${string}`;
 export type StoredCredentialKeyName = "anthropic" | "anthropic-token" | "openai";
 export type ModelTask = "extraction" | "claimExtraction" | "contradictionJudge" | "handoffSummary";
 
@@ -60,6 +60,7 @@ export const AUTH_METHOD_DEFINITIONS: readonly AuthMethodDefinition[] = [
 
 const AUTH_METHOD_SET = new Set<AgenrAuthMethod>(AUTH_METHOD_DEFINITIONS.map((item) => item.id));
 const PROVIDER_SET = new Set<AgenrProvider>(["anthropic", "openai", "openai-codex"]);
+const MODEL_TASK_KEYS: readonly ModelTask[] = ["extraction", "claimExtraction", "contradictionJudge", "handoffSummary"];
 const CONFIG_FILE_MODE = 0o600;
 const CONFIG_DIR_MODE = 0o700;
 const DEFAULT_EMBEDDING_PROVIDER = "openai";
@@ -70,6 +71,10 @@ const DEFAULT_FORGETTING_MAX_AGE_DAYS = 60;
 const DEFAULT_CONTRADICTION_ENABLED = true;
 const DEFAULT_TASK_MODEL = "gpt-4.1-nano";
 const DEFAULT_AUTO_SUPERSEDE_CONFIDENCE = 0.85;
+
+function isModelTask(value: string): value is ModelTask {
+  return MODEL_TASK_KEYS.includes(value as ModelTask);
+}
 
 function resolveUserPath(inputPath: string): string {
   if (!inputPath.startsWith("~")) {
@@ -672,6 +677,33 @@ export function isCompleteConfig(config: AgenrConfig | null): config is Required
 export function setConfigKey(current: AgenrConfig | null, key: ConfigSetKey, value: string): { config: AgenrConfig; warnings: string[] } {
   const warnings: string[] = [];
   const next = mergeConfigPatch(current, {});
+
+  if (key.startsWith("models.")) {
+    const task = key.slice("models.".length);
+    if (!isModelTask(task)) {
+      throw new Error(`Invalid model task "${task}". Expected one of: ${MODEL_TASK_KEYS.join(", ")}.`);
+    }
+
+    const trimmedValue = value.trim();
+    const currentModels = {
+      ...(next.models ?? {}),
+    };
+
+    if (!trimmedValue || trimmedValue.toLowerCase() === "default") {
+      delete currentModels[task];
+      if (Object.keys(currentModels).length === 0) {
+        delete next.models;
+      } else {
+        next.models = currentModels;
+      }
+      return { config: next, warnings };
+    }
+
+    currentModels[task] = normalizeValue(value);
+    next.models = currentModels;
+    return { config: next, warnings };
+  }
+
   const normalizedValue = normalizeValue(value);
 
   if (key === "auth") {
