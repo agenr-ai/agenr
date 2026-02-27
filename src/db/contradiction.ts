@@ -45,6 +45,7 @@ const CONTRADICTION_JUDGE_SYSTEM_PROMPT = [
 ].join("\n");
 
 const CONFLICT_RELATIONS = new Set(["contradicts", "supersedes", "coexists", "unrelated"]);
+const DEFAULT_CONTRADICTION_THRESHOLD = 0.55;
 
 const CONTRADICTION_JUDGE_TOOL_SCHEMA = Type.Object({
   relation: Type.Union(
@@ -282,13 +283,21 @@ export async function detectContradictions(
 ): Promise<DetectedConflict[]> {
   // This runs before inserting new entries. Concurrent storeEntries calls can miss
   // each other for the same subject key, which is acceptable for current single-user scale.
-  const similarityThreshold = options?.similarityThreshold ?? 0.72;
+  // Lower than dedup threshold (0.72) because contradiction detection needs to catch
+  // entries about the same topic that say different things, not just near-duplicates.
+  // Real contradictions (e.g., "weighs 185" vs "weighs 175") score 0.63-0.69.
+  const similarityThreshold = options?.similarityThreshold ?? DEFAULT_CONTRADICTION_THRESHOLD;
   const maxCandidates = Math.max(1, options?.maxCandidates ?? 5);
   const seenIds = new Set<string>();
   const candidates: ExistingCandidate[] = [];
 
   if (newEntry.subjectKey?.trim()) {
-    const subjectIds = subjectIndex.lookup(newEntry.subjectKey.trim());
+    const subjectKey = newEntry.subjectKey.trim();
+    let subjectIds = subjectIndex.lookup(subjectKey);
+    if (subjectIds.length === 0) {
+      subjectIds = subjectIndex.fuzzyLookup(subjectKey);
+    }
+
     const subjectCandidates = (await getEntriesByIds(db, subjectIds))
       .sort((a, b) => toEpoch(b.createdAt) - toEpoch(a.createdAt))
       .slice(0, maxCandidates);
@@ -298,6 +307,20 @@ export async function detectContradictions(
       }
       seenIds.add(candidate.id);
       candidates.push(candidate);
+    }
+
+    if (candidates.length < maxCandidates) {
+      const crossIds = subjectIndex.crossEntityLookup(subjectKey);
+      const crossCandidates = (await getEntriesByIds(db, crossIds))
+        .sort((a, b) => toEpoch(b.createdAt) - toEpoch(a.createdAt))
+        .slice(0, maxCandidates - candidates.length);
+      for (const candidate of crossCandidates) {
+        if (seenIds.has(candidate.id)) {
+          continue;
+        }
+        seenIds.add(candidate.id);
+        candidates.push(candidate);
+      }
     }
   }
 

@@ -1,5 +1,7 @@
 import type { AssistantMessage } from "@mariozechner/pi-ai";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createClient, type Client } from "@libsql/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { initDb } from "../../src/db/client.js";
 import type { LlmClient } from "../../src/types.js";
 
 vi.mock("../../src/llm/stream.js", () => ({
@@ -7,7 +9,7 @@ vi.mock("../../src/llm/stream.js", () => ({
 }));
 
 import { runSimpleStream } from "../../src/llm/stream.js";
-import { extractClaim, extractClaimsBatch } from "../../src/db/claim-extraction.js";
+import { extractClaim, extractClaimsBatch, getDistinctEntities } from "../../src/db/claim-extraction.js";
 
 function makeClient(): LlmClient {
   return {
@@ -58,9 +60,23 @@ function makeToolMessage(args: Record<string, unknown>): AssistantMessage {
 }
 
 describe("claim extraction", () => {
+  const clients: Client[] = [];
+
+  afterEach(() => {
+    while (clients.length > 0) {
+      clients.pop()?.close();
+    }
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
   });
+
+  function makeDbClient(): Client {
+    const client = createClient({ url: ":memory:" });
+    clients.push(client);
+    return client;
+  }
 
   it("extracts claim from a simple fact entry", async () => {
     vi.mocked(runSimpleStream).mockResolvedValueOnce(
@@ -188,6 +204,56 @@ describe("claim extraction", () => {
     expect(claim?.subjectKey).toBe("alex/weight");
   });
 
+  it("resolves entity alias the_user to user", async () => {
+    vi.mocked(runSimpleStream).mockResolvedValueOnce(
+      makeToolMessage({
+        no_claim: false,
+        subject_entity: "the_user",
+        subject_attribute: "weight",
+        predicate: "weighs",
+        object: "180 lbs",
+        confidence: 0.9,
+      }),
+    );
+
+    const claim = await extractClaim("I weigh 180 lbs", "fact", "weight", makeClient());
+    expect(claim?.subjectEntity).toBe("user");
+  });
+
+  it("uses single known entity hint when extracted entity is generic user", async () => {
+    vi.mocked(runSimpleStream).mockResolvedValueOnce(
+      makeToolMessage({
+        no_claim: false,
+        subject_entity: "user",
+        subject_attribute: "employer",
+        predicate: "works_at",
+        object: "dataflow",
+        confidence: 0.9,
+      }),
+    );
+
+    const claim = await extractClaim("Works at DataFlow", "fact", "employer", makeClient(), {
+      entityHints: ["alex"],
+    });
+    expect(claim?.subjectEntity).toBe("alex");
+  });
+
+  it("appends entity hints to claim extraction system prompt when provided", async () => {
+    vi.mocked(runSimpleStream).mockResolvedValueOnce(
+      makeToolMessage({
+        no_claim: true,
+      }),
+    );
+
+    await extractClaim("Alex weighs 180 lbs", "fact", "Alex weight", makeClient(), {
+      entityHints: ["alex", "dataflow"],
+    });
+
+    const call = vi.mocked(runSimpleStream).mock.calls[0]?.[0];
+    expect(call?.context.systemPrompt).toContain("Known entities in the knowledge base: alex, dataflow");
+    expect(call?.context.systemPrompt).toContain("Use one of these entities if the entry is about any of them.");
+  });
+
   it("extractClaimsBatch processes multiple entries sequentially", async () => {
     vi.mocked(runSimpleStream)
       .mockResolvedValueOnce(
@@ -232,5 +298,115 @@ describe("claim extraction", () => {
     const claim = await extractClaim("   ", "fact", "empty", makeClient());
     expect(claim).toBeNull();
     expect(runSimpleStream).not.toHaveBeenCalled();
+  });
+
+  it("getDistinctEntities returns unique normalized active entities", async () => {
+    const client = makeDbClient();
+    await initDb(client);
+
+    const now = "2026-02-27T00:00:00.000Z";
+    await client.execute({
+      sql: `
+        INSERT INTO entries (
+          id, type, subject, content, importance, expiry, scope, source_file, source_context, created_at, updated_at,
+          subject_entity, retired, superseded_by
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      args: [
+        "entry-1",
+        "fact",
+        "subject-1",
+        "content-1",
+        7,
+        "permanent",
+        "private",
+        "claim-extraction.test.ts",
+        "unit-test",
+        now,
+        now,
+        "Alex",
+        0,
+        null,
+      ],
+    });
+    await client.execute({
+      sql: `
+        INSERT INTO entries (
+          id, type, subject, content, importance, expiry, scope, source_file, source_context, created_at, updated_at,
+          subject_entity, retired, superseded_by
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      args: [
+        "entry-2",
+        "fact",
+        "subject-2",
+        "content-2",
+        7,
+        "permanent",
+        "private",
+        "claim-extraction.test.ts",
+        "unit-test",
+        now,
+        now,
+        "alex",
+        0,
+        null,
+      ],
+    });
+    await client.execute({
+      sql: `
+        INSERT INTO entries (
+          id, type, subject, content, importance, expiry, scope, source_file, source_context, created_at, updated_at,
+          subject_entity, retired, superseded_by
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      args: [
+        "entry-3",
+        "fact",
+        "subject-3",
+        "content-3",
+        7,
+        "permanent",
+        "private",
+        "claim-extraction.test.ts",
+        "unit-test",
+        now,
+        now,
+        "user",
+        1,
+        null,
+      ],
+    });
+    await client.execute({
+      sql: `
+        INSERT INTO entries (
+          id, type, subject, content, importance, expiry, scope, source_file, source_context, created_at, updated_at,
+          subject_entity, retired, superseded_by
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      args: [
+        "entry-4",
+        "fact",
+        "subject-4",
+        "content-4",
+        7,
+        "permanent",
+        "private",
+        "claim-extraction.test.ts",
+        "unit-test",
+        now,
+        now,
+        "sarah",
+        0,
+        "entry-1",
+      ],
+    });
+
+    const entities = await getDistinctEntities(client);
+    expect(entities).toEqual(["alex"]);
   });
 });

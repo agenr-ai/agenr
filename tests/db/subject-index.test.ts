@@ -72,6 +72,39 @@ describe("SubjectIndex", () => {
     expect(index.lookup("missing:key")).toEqual([]);
   });
 
+  it("fuzzyLookup matches token overlap for related attributes", () => {
+    const index = new SubjectIndex();
+    index.add("alex/dietary_change", "entry-1");
+    index.add("alex/location", "entry-2");
+
+    expect(index.fuzzyLookup("alex/diet")).toEqual(["entry-1"]);
+  });
+
+  it("fuzzyLookup returns empty for unrelated attributes", () => {
+    const index = new SubjectIndex();
+    index.add("alex/employer", "entry-1");
+    index.add("alex/location", "entry-2");
+
+    expect(index.fuzzyLookup("alex/vehicle")).toEqual([]);
+  });
+
+  it("crossEntityLookup matches same attribute across entities", () => {
+    const index = new SubjectIndex();
+    index.add("alex/weight", "entry-1");
+    index.add("user/weight", "entry-2");
+    index.add("alex/diet", "entry-3");
+
+    expect(index.crossEntityLookup("alex/weight")).toEqual(["entry-2"]);
+  });
+
+  it("crossEntityLookup returns empty when attribute is unique", () => {
+    const index = new SubjectIndex();
+    index.add("alex/weight", "entry-1");
+    index.add("alex/diet", "entry-2");
+
+    expect(index.crossEntityLookup("alex/weight")).toEqual([]);
+  });
+
   it("add inserts entries and deduplicates per key", () => {
     const index = new SubjectIndex();
     index.add("person:alice|attr:role", "entry-1");

@@ -6,7 +6,7 @@ import { warnIfLocked } from "./lockfile.js";
 import { applyLedger } from "./retirements.js";
 import { composeEmbeddingText, embed } from "../embeddings/client.js";
 import { EmbeddingCache } from "../embeddings/cache.js";
-import { extractClaim } from "./claim-extraction.js";
+import { extractClaim, getDistinctEntities } from "./claim-extraction.js";
 import { detectContradictions, resolveConflict } from "./contradiction.js";
 import type { DetectedConflict } from "./contradiction.js";
 import { SubjectIndex } from "./subject-index.js";
@@ -1491,6 +1491,19 @@ export async function storeEntries(
     options.preBatchEmbedChunkSize > 0
       ? Math.floor(options.preBatchEmbedChunkSize)
       : DEFAULT_PRE_BATCH_EMBED_CHUNK_SIZE;
+  const shouldUseEntityHints = Boolean(options.llmClient) && options.claimExtractionEnabled !== false;
+  let entityHintsPromise: Promise<string[]> | null = null;
+  const getBatchEntityHints = async (): Promise<string[]> => {
+    if (!shouldUseEntityHints) {
+      return [];
+    }
+
+    if (!entityHintsPromise) {
+      entityHintsPromise = getDistinctEntities(db);
+    }
+
+    return entityHintsPromise;
+  };
 
   let added = 0;
   let updated = 0;
@@ -1677,12 +1690,17 @@ export async function storeEntries(
       options.llmClient &&
       options.claimExtractionEnabled !== false
     ) {
+      const entityHints = await getBatchEntityHints();
       const claim = await extractClaim(
         normalizedEntry.content,
         normalizedEntry.type,
         normalizedEntry.subject,
         options.llmClient,
-        options.claimExtractionModel,
+        {
+          model: options.claimExtractionModel,
+          config: options.config,
+          entityHints,
+        },
       );
       if (claim) {
         normalizedEntry.subjectEntity = claim.subjectEntity;

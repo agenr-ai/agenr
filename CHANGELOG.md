@@ -40,6 +40,10 @@
 - Contradiction detection: always run both subject-index and embedding search (removed hardcoded < 3 gate)
 - Contradiction detection: parallelize classifyConflict LLM calls via Promise.all
 - Contradiction detection: high-confidence supersession with lower importance now flags for review instead of silent coexist
+- Contradiction detection: lowered default similarity threshold from 0.72 to 0.55 (matches real contradiction scores)
+- Contradiction detection: entity hint injection from DB for consistent claim extraction across sessions
+- Contradiction detection: fuzzy attribute matching fallback in subject index
+- Contradiction detection: cross-entity lookup for same-attribute conflicts across entity aliases
 - Subject index rebuild is now atomic (swap instead of clear-then-populate)
 - Conflicts UI: request body size limit (64KB), auth token on POST endpoints, safe browser open
 - Extracted shared LLM helpers (clampConfidence, resolveModelForLlmClient, extractToolCallArgs) to src/db/llm-helpers.ts

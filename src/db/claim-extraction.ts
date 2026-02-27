@@ -1,4 +1,5 @@
 import type { Context, Tool } from "@mariozechner/pi-ai";
+import type { Client } from "@libsql/client";
 import { Type, type Static } from "@sinclair/typebox";
 import { runSimpleStream } from "../llm/stream.js";
 import type { AgenrConfig, LlmClient } from "../types.js";
@@ -120,6 +121,16 @@ const CLAIM_EXTRACTION_SYSTEM_PROMPT = [
   "Call extract_claim with your final answer.",
 ].join("\n");
 
+const ENTITY_ALIASES: Record<string, string> = {
+  "the user": "user",
+  "current user": "user",
+  the_user: "user",
+  current_user: "user",
+  i: "user",
+  me: "user",
+  myself: "user",
+};
+
 export interface ExtractedClaim {
   subjectEntity: string;
   subjectAttribute: string;
@@ -129,8 +140,30 @@ export interface ExtractedClaim {
   confidence: number;
 }
 
+export interface ExtractClaimOptions {
+  model?: string;
+  config?: AgenrConfig;
+  entityHints?: string[];
+}
+
 function normalizeEntity(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function resolveEntityAlias(entity: string, existingEntities?: Set<string>): string {
+  const aliased = ENTITY_ALIASES[entity];
+  if (aliased) {
+    return aliased;
+  }
+
+  if (existingEntities && existingEntities.size > 0 && entity === "user" && existingEntities.size === 1) {
+    const existing = [...existingEntities][0];
+    if (existing && existing !== "user") {
+      return existing;
+    }
+  }
+
+  return entity;
 }
 
 function normalizeAttribute(value: string): string {
@@ -150,7 +183,26 @@ function normalizeObject(value: string): string {
   return value.trim();
 }
 
-function buildClaimExtractionContext(content: string, type: string, subject: string): Context {
+function buildClaimExtractionSystemPrompt(entityHints?: string[]): string {
+  if (!entityHints || entityHints.length === 0) {
+    return CLAIM_EXTRACTION_SYSTEM_PROMPT;
+  }
+
+  const normalizedHints = [...new Set(entityHints.map((entity) => normalizeEntity(entity)).filter((entity) => entity))];
+  if (normalizedHints.length === 0) {
+    return CLAIM_EXTRACTION_SYSTEM_PROMPT;
+  }
+
+  return [
+    CLAIM_EXTRACTION_SYSTEM_PROMPT,
+    "",
+    `Known entities in the knowledge base: ${normalizedHints.join(", ")}`,
+    "Use one of these entities if the entry is about any of them.",
+    "Only create a new entity name if none of the known entities apply.",
+  ].join("\n");
+}
+
+function buildClaimExtractionContext(content: string, type: string, subject: string, entityHints?: string[]): Context {
   const userPrompt = [
     `Entry type: ${type}`,
     `Entry subject: ${subject}`,
@@ -158,7 +210,7 @@ function buildClaimExtractionContext(content: string, type: string, subject: str
   ].join("\n");
 
   return {
-    systemPrompt: CLAIM_EXTRACTION_SYSTEM_PROMPT,
+    systemPrompt: buildClaimExtractionSystemPrompt(entityHints),
     messages: [
       {
         role: "user",
@@ -170,22 +222,67 @@ function buildClaimExtractionContext(content: string, type: string, subject: str
   };
 }
 
+function resolveExtractClaimOptions(
+  modelOrOptions?: string | ExtractClaimOptions,
+  config?: AgenrConfig,
+): ExtractClaimOptions {
+  if (typeof modelOrOptions === "string") {
+    return {
+      model: modelOrOptions,
+      config,
+    };
+  }
+
+  if (modelOrOptions) {
+    return modelOrOptions;
+  }
+
+  return config ? { config } : {};
+}
+
+export async function getDistinctEntities(db: Client): Promise<string[]> {
+  const result = await db.execute(
+    "SELECT DISTINCT subject_entity FROM entries WHERE subject_entity IS NOT NULL AND retired = 0 AND superseded_by IS NULL LIMIT 50",
+  );
+
+  const entities = new Set<string>();
+  for (const row of result.rows) {
+    const value = (row as Record<string, unknown>).subject_entity;
+    const normalized = normalizeEntity(typeof value === "string" ? value : "");
+    if (normalized) {
+      entities.add(normalized);
+    }
+  }
+
+  return [...entities];
+}
+
 export async function extractClaim(
   content: string,
   type: string,
   subject: string,
   llmClient: LlmClient,
-  model?: string,
+  modelOrOptions?: string | ExtractClaimOptions,
   config?: AgenrConfig,
 ): Promise<ExtractedClaim | null> {
   if (!content.trim()) {
     return null;
   }
 
+  const resolvedOptions = resolveExtractClaimOptions(modelOrOptions, config);
+  const existingEntities = resolvedOptions.entityHints
+    ? new Set(resolvedOptions.entityHints.map((entity) => normalizeEntity(entity)).filter((entity) => entity))
+    : undefined;
+
   try {
     const response = await runSimpleStream({
-      model: resolveModelForLlmClient(llmClient, "claimExtraction", model, config),
-      context: buildClaimExtractionContext(content, type, subject),
+      model: resolveModelForLlmClient(
+        llmClient,
+        "claimExtraction",
+        resolvedOptions.model,
+        resolvedOptions.config,
+      ),
+      context: buildClaimExtractionContext(content, type, subject, resolvedOptions.entityHints),
       options: {
         apiKey: llmClient.credentials.apiKey,
       },
@@ -208,7 +305,10 @@ export async function extractClaim(
       return null;
     }
 
-    const subjectEntity = normalizeEntity(typeof parsed.subject_entity === "string" ? parsed.subject_entity : "");
+    const subjectEntity = resolveEntityAlias(
+      normalizeEntity(typeof parsed.subject_entity === "string" ? parsed.subject_entity : ""),
+      existingEntities,
+    );
     const subjectAttribute = normalizeAttribute(
       typeof parsed.subject_attribute === "string" ? parsed.subject_attribute : "",
     );
