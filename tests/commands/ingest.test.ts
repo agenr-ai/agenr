@@ -40,6 +40,14 @@ function makeEntry(content: string): KnowledgeEntry {
   };
 }
 
+function makeDistinctEntries(): KnowledgeEntry[] {
+  return [
+    makeEntry("vec-base one"),
+    { ...makeEntry("vec-low two"), subject: "Pam" },
+    { ...makeEntry("vec-mid three"), subject: "Dwight" },
+  ];
+}
+
 function makeParsed(filePath: string): ParsedTranscript {
   return {
     file: filePath,
@@ -106,6 +114,15 @@ function vectorForText(text: string): number[] {
 
 async function mockEmbed(texts: string[]): Promise<number[][]> {
   return texts.map((text) => vectorForText(text));
+}
+
+function makeStoreEntriesFn(): IngestCommandDeps["storeEntriesFn"] {
+  return async (db, entries, apiKey, options) =>
+    storeEntries(db, entries, apiKey, {
+      ...options,
+      skipLlmDedup: true,
+      embedFn: async (texts: string[]) => mockEmbed(texts),
+    });
 }
 
 function makeDeps(overrides?: Partial<IngestCommandDeps> & { db?: { execute: ReturnType<typeof vi.fn> } }): IngestCommandDeps {
@@ -766,6 +783,234 @@ describe("ingest command", () => {
     expect(result.totalEntriesExtracted).toBeGreaterThan(0);
     expect(result.totalEntriesStored).toBe(0);
     expect(storeEntriesFn).not.toHaveBeenCalled();
+  });
+
+  it("creates co-recall edges between entries from the same session file", async () => {
+    const dir = await makeTempDir();
+    const filePath = path.join(dir, "edges.jsonl");
+    await fs.writeFile(filePath, '{"role":"user","content":"hello"}\n', "utf8");
+
+    const db = createClient({ url: ":memory:" });
+    const storeEntriesFn = makeStoreEntriesFn();
+    const extractKnowledgeFromChunksFn = vi.fn(
+      async (params: Parameters<IngestCommandDeps["extractKnowledgeFromChunksFn"]>[0]) => {
+        await params.onChunkComplete?.({
+          chunkIndex: 0,
+          totalChunks: 1,
+          entries: makeDistinctEntries(),
+          warnings: [],
+        });
+        return {
+          entries: [],
+          successfulChunks: 1,
+          failedChunks: 0,
+          warnings: [],
+        };
+      },
+    );
+
+    try {
+      const result = await runIngestCommand(
+        [filePath],
+        {},
+        makeDeps({
+          getDbFn: vi.fn(() => db) as IngestCommandDeps["getDbFn"],
+          initDbFn: vi.fn(async () => initDb(db)),
+          closeDbFn: vi.fn(() => undefined),
+          expandInputFilesFn: vi.fn(async () => [filePath]),
+          extractKnowledgeFromChunksFn: extractKnowledgeFromChunksFn as IngestCommandDeps["extractKnowledgeFromChunksFn"],
+          deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+          resolveEmbeddingApiKeyFn: vi.fn(() => "sk-test"),
+          storeEntriesFn,
+        }),
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.filesProcessed).toBe(1);
+      expect(result.filesFailed).toBe(0);
+
+      const edgeRows = await db.execute({ sql: "SELECT COUNT(*) AS cnt FROM co_recall_edges" });
+      const edgeCount = Number(edgeRows.rows[0]?.cnt);
+      expect(edgeCount).toBeGreaterThan(0);
+
+      const sameSourceEdges = await db.execute({
+        sql: `
+          SELECT COUNT(*) AS cnt
+          FROM co_recall_edges edge
+          JOIN entries entry_a ON entry_a.id = edge.entry_a
+          JOIN entries entry_b ON entry_b.id = edge.entry_b
+          WHERE entry_a.source_file = ? AND entry_b.source_file = ?
+        `,
+        args: [filePath, filePath],
+      });
+      expect(Number(sameSourceEdges.rows[0]?.cnt)).toBe(edgeCount);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("does not create edges for single-entry files", async () => {
+    const dir = await makeTempDir();
+    const filePath = path.join(dir, "single.jsonl");
+    await fs.writeFile(filePath, '{"role":"user","content":"hello"}\n', "utf8");
+
+    const db = createClient({ url: ":memory:" });
+    const storeEntriesFn = makeStoreEntriesFn();
+    const extractKnowledgeFromChunksFn = vi.fn(
+      async (params: Parameters<IngestCommandDeps["extractKnowledgeFromChunksFn"]>[0]) => {
+        await params.onChunkComplete?.({
+          chunkIndex: 0,
+          totalChunks: 1,
+          entries: [makeDistinctEntries()[0]!],
+          warnings: [],
+        });
+        return {
+          entries: [],
+          successfulChunks: 1,
+          failedChunks: 0,
+          warnings: [],
+        };
+      },
+    );
+
+    try {
+      const result = await runIngestCommand(
+        [filePath],
+        {},
+        makeDeps({
+          getDbFn: vi.fn(() => db) as IngestCommandDeps["getDbFn"],
+          initDbFn: vi.fn(async () => initDb(db)),
+          closeDbFn: vi.fn(() => undefined),
+          expandInputFilesFn: vi.fn(async () => [filePath]),
+          extractKnowledgeFromChunksFn: extractKnowledgeFromChunksFn as IngestCommandDeps["extractKnowledgeFromChunksFn"],
+          deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+          resolveEmbeddingApiKeyFn: vi.fn(() => "sk-test"),
+          storeEntriesFn,
+        }),
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.filesProcessed).toBe(1);
+      const edgeRows = await db.execute({ sql: "SELECT COUNT(*) AS cnt FROM co_recall_edges" });
+      expect(Number(edgeRows.rows[0]?.cnt)).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("does not create edges in dry-run mode", async () => {
+    const dir = await makeTempDir();
+    const filePath = path.join(dir, "dry-run.jsonl");
+    await fs.writeFile(filePath, '{"role":"user","content":"hello"}\n', "utf8");
+
+    const db = createClient({ url: ":memory:" });
+    const extractKnowledgeFromChunksFn = vi.fn(
+      async (params: Parameters<IngestCommandDeps["extractKnowledgeFromChunksFn"]>[0]) => {
+        await params.onChunkComplete?.({
+          chunkIndex: 0,
+          totalChunks: 1,
+          entries: makeDistinctEntries(),
+          warnings: [],
+        });
+        return {
+          entries: [],
+          successfulChunks: 1,
+          failedChunks: 0,
+          warnings: [],
+        };
+      },
+    );
+
+    try {
+      const result = await runIngestCommand(
+        [filePath],
+        { dryRun: true },
+        makeDeps({
+          getDbFn: vi.fn(() => db) as IngestCommandDeps["getDbFn"],
+          initDbFn: vi.fn(async () => initDb(db)),
+          closeDbFn: vi.fn(() => undefined),
+          expandInputFilesFn: vi.fn(async () => [filePath]),
+          extractKnowledgeFromChunksFn: extractKnowledgeFromChunksFn as IngestCommandDeps["extractKnowledgeFromChunksFn"],
+          deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+        }),
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.filesProcessed).toBe(1);
+      const edgeRows = await db.execute({ sql: "SELECT COUNT(*) AS cnt FROM co_recall_edges" });
+      expect(Number(edgeRows.rows[0]?.cnt)).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("continues ingest when co-recall edge creation fails", async () => {
+    const dir = await makeTempDir();
+    const filePath = path.join(dir, "edge-failure.txt");
+    await fs.writeFile(filePath, "hello", "utf8");
+
+    const pushMock = vi.fn(
+      async (entries: KnowledgeEntry[]): Promise<BatchWriteResult> => ({
+        added: entries.length,
+        updated: 0,
+        skipped: 0,
+        superseded: 0,
+        llm_dedup_calls: 0,
+      }),
+    );
+    const cancelMock = vi.fn(async () => undefined);
+    let runExclusiveCalls = 0;
+    const runExclusiveMock = vi.fn(async <T>(fn: () => Promise<T>) => {
+      runExclusiveCalls += 1;
+      if (runExclusiveCalls === 2) {
+        throw new Error("co-recall edge write failed");
+      }
+      return await fn();
+    });
+    const drainMock = vi.fn(async () => undefined);
+    const destroyMock = vi.fn(() => undefined);
+    const queueMock = {
+      pendingCount: 0,
+      push: pushMock,
+      cancel: cancelMock,
+      runExclusive: runExclusiveMock,
+      drain: drainMock,
+      destroy: destroyMock,
+    } as unknown as WriteQueue;
+
+    const extractKnowledgeFromChunksFn = vi.fn(
+      async (params: Parameters<IngestCommandDeps["extractKnowledgeFromChunksFn"]>[0]) => {
+        await params.onChunkComplete?.({
+          chunkIndex: 0,
+          totalChunks: 1,
+          entries: [makeDistinctEntries()[0]!, makeDistinctEntries()[1]!],
+          warnings: [],
+        });
+        return {
+          entries: [],
+          successfulChunks: 1,
+          failedChunks: 0,
+          warnings: [],
+        };
+      },
+    );
+
+    const result = await runIngestCommand(
+      [filePath],
+      {},
+      makeDeps({
+        expandInputFilesFn: vi.fn(async () => [filePath]),
+        createWriteQueueFn: vi.fn(() => queueMock) as IngestCommandDeps["createWriteQueueFn"],
+        extractKnowledgeFromChunksFn: extractKnowledgeFromChunksFn as IngestCommandDeps["extractKnowledgeFromChunksFn"],
+        deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+      }),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.filesProcessed).toBe(1);
+    expect(result.filesFailed).toBe(0);
+    expect(runExclusiveMock).toHaveBeenCalledTimes(2);
+    expect(cancelMock).not.toHaveBeenCalled();
   });
 
   it("resolves embedding API key even when --no-pre-fetch is set", async () => {

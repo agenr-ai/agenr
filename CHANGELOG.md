@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.10 - 2026-02-27
+
+### Added
+- Ingest creates co-recall edges between entries extracted from the same
+  session file, seeding the graph for graph-augmented recall after fresh
+  installs or DB resets (#300).
+
 ## 0.9.9 - 2026-02-27
 
 ### Added
