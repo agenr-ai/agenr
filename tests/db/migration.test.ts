@@ -47,6 +47,7 @@ describe("db schema migrations", () => {
     expect(entries.has("retired_reason")).toBe(true);
     expect(entries.has("suppressed_contexts")).toBe(true);
     expect(entries.has("recall_intervals")).toBe(true);
+    expect(entries.has("quality_score")).toBe(true);
     expect(entries.has("subject_entity")).toBe(true);
     expect(entries.has("subject_attribute")).toBe(true);
     expect(entries.has("subject_key")).toBe(true);
@@ -211,6 +212,7 @@ describe("db schema migrations", () => {
     const retiredReason = entriesColumns.find((row) => toStringValue(row.name) === "retired_reason");
     const suppressedContexts = entriesColumns.find((row) => toStringValue(row.name) === "suppressed_contexts");
     const recallIntervals = entriesColumns.find((row) => toStringValue(row.name) === "recall_intervals");
+    const qualityScore = entriesColumns.find((row) => toStringValue(row.name) === "quality_score");
     const subjectEntity = entriesColumns.find((row) => toStringValue(row.name) === "subject_entity");
     const subjectAttribute = entriesColumns.find((row) => toStringValue(row.name) === "subject_attribute");
     const subjectKey = entriesColumns.find((row) => toStringValue(row.name) === "subject_key");
@@ -235,6 +237,7 @@ describe("db schema migrations", () => {
     expect(retiredReason).toBeTruthy();
     expect(suppressedContexts).toBeTruthy();
     expect(recallIntervals).toBeTruthy();
+    expect(qualityScore).toBeTruthy();
     expect(subjectEntity).toBeTruthy();
     expect(subjectAttribute).toBeTruthy();
     expect(subjectKey).toBeTruthy();

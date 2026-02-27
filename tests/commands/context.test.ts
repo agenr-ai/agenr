@@ -30,6 +30,7 @@ function makeEntry(overrides: Partial<StoredEntry> = {}): StoredEntry {
     recall_count: 0,
     confirmations: 0,
     contradictions: 0,
+    quality_score: 0.5,
     ...overrides,
   };
 }
@@ -38,7 +39,7 @@ function makeResult(category: RecallCommandResult["category"], overrides: Partia
   return {
     entry: makeEntry(overrides),
     score: 0.8,
-    scores: { vector: 0, recency: 0, importance: 0, recall: 0, freshness: 1, todoPenalty: 1, fts: 0, spacing: 1 },
+    scores: { vector: 0, recency: 0, importance: 0, recall: 0, freshness: 1, todoPenalty: 1, fts: 0, spacing: 1, quality: 0.5 },
     category,
   };
 }

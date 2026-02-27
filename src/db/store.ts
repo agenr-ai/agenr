@@ -456,6 +456,7 @@ async function getTagsForEntryIds(db: Client, ids: string[]): Promise<Map<string
 function mapStoredEntry(row: Row, tags: string[]): StoredEntry {
   const importanceRaw = toNumber(row.importance);
   const importance = Number.isFinite(importanceRaw) ? Math.min(10, Math.max(1, Math.round(importanceRaw))) : 5;
+  const qualityScoreRaw = toNumber(row.quality_score);
   return {
     id: toStringValue(row.id),
     type: toStringValue(row.type) as StoredEntry["type"],
@@ -476,6 +477,7 @@ function mapStoredEntry(row: Row, tags: string[]): StoredEntry {
     recall_count: Number.isFinite(toNumber(row.recall_count)) ? toNumber(row.recall_count) : 0,
     confirmations: Number.isFinite(toNumber(row.confirmations)) ? toNumber(row.confirmations) : 0,
     contradictions: Number.isFinite(toNumber(row.contradictions)) ? toNumber(row.contradictions) : 0,
+    quality_score: Number.isFinite(qualityScoreRaw) ? Math.min(1, Math.max(0, qualityScoreRaw)) : 0.5,
     superseded_by: toStringValue(row.superseded_by) || undefined,
   };
 }

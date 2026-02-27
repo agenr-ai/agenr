@@ -47,6 +47,7 @@ function makeEntry(overrides: Partial<StoredEntry> = {}): StoredEntry {
     recall_intervals: undefined,
     confirmations: 0,
     contradictions: 0,
+    quality_score: 0.5,
     ...overrides,
   };
 }

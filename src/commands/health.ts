@@ -49,6 +49,12 @@ interface HealthStats {
     contradictionFlags: number;
     staleTodos: number;
   };
+  quality: {
+    high: number;
+    medium: number;
+    low: number;
+    average: number;
+  };
 }
 
 const MB = 1024 * 1024;
@@ -162,6 +168,7 @@ async function collectHealthStats(
         recall_count,
         confirmations,
         contradictions,
+        quality_score,
         superseded_by
       FROM entries
       WHERE superseded_by IS NULL
@@ -185,6 +192,10 @@ async function collectHealthStats(
   let forgettingProtected = 0;
   let contradictionFlags = 0;
   let staleTodos = 0;
+  let qualityHigh = 0;
+  let qualityMedium = 0;
+  let qualityLow = 0;
+  let qualitySum = 0;
 
   for (const raw of rowsResult.rows) {
     const entry = asStoredEntry(raw as Record<string, unknown>);
@@ -230,6 +241,16 @@ async function collectHealthStats(
       staleTodos += 1;
     }
 
+    const quality = Math.min(1, Math.max(0, entry.quality_score));
+    qualitySum += quality;
+    if (quality >= 0.7) {
+      qualityHigh += 1;
+    } else if (quality < 0.3) {
+      qualityLow += 1;
+    } else {
+      qualityMedium += 1;
+    }
+
     if (ageDays > forgettingMaxAgeDays) {
       const score = forgettingScore(entry, now);
       if (score < forgettingThreshold) {
@@ -270,6 +291,12 @@ async function collectHealthStats(
       contradictionFlags,
       staleTodos,
     },
+    quality: {
+      high: qualityHigh,
+      medium: qualityMedium,
+      low: qualityLow,
+      average: total > 0 ? qualitySum / total : 0,
+    },
   };
 }
 
@@ -301,6 +328,12 @@ function renderHealthOutput(stats: HealthStats, now: Date): string {
     "Consolidation Health",
     `- Contradiction flags: ${formatInt(stats.consolidation.contradictionFlags)} entries`,
     `- Stale todos (>30d old, not recalled): ${formatInt(stats.consolidation.staleTodos)}`,
+    "",
+    "Quality Score Distribution",
+    `- High (>= 0.7):      ${formatInt(stats.quality.high)} entries`,
+    `- Medium (0.3-0.7):  ${formatInt(stats.quality.medium)} entries`,
+    `- Low (< 0.3):       ${formatInt(stats.quality.low)} entries`,
+    `- Average:           ${stats.quality.average.toFixed(2)}`,
     "",
   ];
 
