@@ -72,7 +72,25 @@ function escapeTomlString(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\r/g, "\\r").replace(/\n/g, "\\n").replace(/\t/g, "\\t");
 }
 
+function logInitDebug(message: string): void {
+  if (process.env.AGENR_DEBUG === "1") {
+    console.debug(`[agenr init] ${message}`);
+  }
+}
+
 export function resolveAgenrCommand(): { command: string; baseArgs: string[] } {
+  const agenrShim = findBinaryPath("agenr");
+  if (agenrShim) {
+    return {
+      command: agenrShim,
+      baseArgs: [],
+    };
+  }
+
+  logInitDebug(
+    "agenr binary not found on PATH; falling back to process.execPath + process.argv[1], which may pin MCP config to the current installed version.",
+  );
+
   const nodeBin = process.execPath;
   const scriptPath = process.argv[1];
   if (!scriptPath) {
