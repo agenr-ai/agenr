@@ -109,11 +109,11 @@ describe("consolidate cluster", () => {
     expect(clusters).toHaveLength(0);
   });
 
-  it("respects diameter cap and rejects chained clusters below floor", async () => {
+  it("respects diameter cap and rejects chained clusters below floor when no loose-band links apply", async () => {
     const db = await makeDb();
-    await seed(db, { type: "fact", subject: "Chain", content: "a", angle: 0, confirmations: 3 });
-    await seed(db, { type: "fact", subject: "Chain", content: "b", angle: 20, confirmations: 2 });
-    await seed(db, { type: "fact", subject: "Chain", content: "c", angle: 40, confirmations: 1 });
+    await seed(db, { type: "fact", subject: "Chain A", content: "a", angle: 0, confirmations: 3 });
+    await seed(db, { type: "fact", subject: "Chain B", content: "b", angle: 20, confirmations: 2 });
+    await seed(db, { type: "fact", subject: "Chain C", content: "c", angle: 40, confirmations: 1 });
 
     const clusters = await buildClusters(db, { simThreshold: 0.85, minCluster: 3 });
     expect(clusters).toHaveLength(0);
