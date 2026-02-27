@@ -5,11 +5,17 @@ import { buildProjectFilter, parseProjectList } from "../project.js";
 import { parseDaysBetween, toNumber, toStringValue } from "../utils/entry-utils.js";
 import { parseSince } from "../utils/time.js";
 import { DEFAULT_SESSION_CANDIDATE_LIMIT } from "./session-start.js";
+import { getCoRecallNeighbors } from "./co-recall.js";
 import type { KnowledgePlatform, RecallQuery, RecallResult, Scope, StoredEntry } from "../types.js";
 
 const DEFAULT_VECTOR_CANDIDATE_LIMIT = 50;
 const DEFAULT_LIMIT = 10;
 export const DEFAULT_AROUND_RADIUS_DAYS = 14;
+const GRAPH_BONUS_WEIGHT = 0.15;
+const GRAPH_SEED_COUNT = 5;
+const GRAPH_NEIGHBOR_LIMIT_PER_SEED = 10;
+const GRAPH_MIN_EDGE_WEIGHT = 0.1;
+const GRAPH_MIN_SEED_VECTOR_SIM = 0.25;
 const recallMetadataQueue = new WeakMap<Client, Promise<void>>();
 
 export interface CandidateRow {
@@ -24,6 +30,10 @@ export interface RecallOptions {
   sessionCandidateLimit?: number;
   around?: Date;
   aroundRadius?: number;
+  graphEnabled?: boolean;
+  graphBonusWeight?: number;
+  graphSeedCount?: number;
+  graphMinEdgeWeight?: number;
 }
 
 function mapBufferToVector(value: InValue | undefined): number[] {
@@ -554,6 +564,76 @@ export async function fetchRelatedEntries(
   return fetchVectorCandidates(db, queryEmbedding, limit);
 }
 
+export async function fetchEntriesByIds(db: Client, ids: string[]): Promise<StoredEntry[]> {
+  if (ids.length === 0) {
+    return [];
+  }
+
+  const uniqueIds = Array.from(
+    new Set(
+      ids
+        .map((id) => id.trim())
+        .filter((id) => id.length > 0),
+    ),
+  );
+  if (uniqueIds.length === 0) {
+    return [];
+  }
+
+  const CHUNK_SIZE = 900;
+  const entriesById = new Map<string, StoredEntry>();
+
+  for (let i = 0; i < uniqueIds.length; i += CHUNK_SIZE) {
+    const chunk = uniqueIds.slice(i, i + CHUNK_SIZE);
+    const placeholders = chunk.map(() => "?").join(", ");
+    const result = await db.execute({
+      sql: `
+        SELECT
+          id,
+          type,
+          subject,
+          canonical_key,
+          content,
+          importance,
+          expiry,
+          scope,
+          platform,
+          project,
+          source_file,
+          source_context,
+          embedding,
+          created_at,
+          updated_at,
+          last_recalled_at,
+          recall_count,
+          recall_intervals,
+          confirmations,
+          contradictions,
+          quality_score,
+          superseded_by,
+          retired,
+          retired_at,
+          retired_reason,
+          suppressed_contexts
+        FROM entries
+        WHERE id IN (${placeholders})
+          AND superseded_by IS NULL
+          AND retired = 0
+      `,
+      args: chunk,
+    });
+
+    const resultIds = result.rows.map((row) => toStringValue(row.id)).filter((id) => id.length > 0);
+    const tagsByEntryId = await getTagsForEntryIds(db, resultIds);
+    for (const row of result.rows) {
+      const entryId = toStringValue(row.id);
+      entriesById.set(entryId, mapStoredEntry(row, tagsByEntryId.get(entryId) ?? []));
+    }
+  }
+
+  return uniqueIds.map((id) => entriesById.get(id)).filter((entry): entry is StoredEntry => entry !== undefined);
+}
+
 async function fetchSessionCandidates(
   db: Client,
   limit: number,
@@ -1006,12 +1086,13 @@ export async function recall(
   const hasDateBounds = cutoff !== undefined || ceiling !== undefined;
   let candidates: CandidateRow[];
   let effectiveText = text;
+  let queryEmbedding: number[] | undefined;
 
   if (text) {
     effectiveText = shapeRecallText(text, query.context);
     const embedFn = options.embedFn ?? embed;
     const embeddings = await embedFn([effectiveText], apiKey);
-    const queryEmbedding = embeddings[0];
+    queryEmbedding = embeddings[0];
     if (!queryEmbedding) {
       throw new Error("Embedding provider returned no vector for recall query.");
     }
@@ -1113,6 +1194,84 @@ export async function recall(
   });
 
   scored.sort((a, b) => b.score - a.score);
+
+  const graphEnabled = options.graphEnabled !== false;
+  if (graphEnabled && text && queryEmbedding && !isSessionStart) {
+    const seedCountRaw = options.graphSeedCount ?? GRAPH_SEED_COUNT;
+    const seedCount = Number.isFinite(seedCountRaw) && seedCountRaw > 0 ? Math.floor(seedCountRaw) : GRAPH_SEED_COUNT;
+    const minEdgeWeightRaw = options.graphMinEdgeWeight ?? GRAPH_MIN_EDGE_WEIGHT;
+    const minEdgeWeight = Number.isFinite(minEdgeWeightRaw) ? Math.max(minEdgeWeightRaw, 0) : GRAPH_MIN_EDGE_WEIGHT;
+    const bonusWeightRaw = options.graphBonusWeight ?? GRAPH_BONUS_WEIGHT;
+    const bonusWeight = Number.isFinite(bonusWeightRaw) ? bonusWeightRaw : GRAPH_BONUS_WEIGHT;
+
+    const seedCandidates = filtered
+      .filter((candidate) => candidate.vectorSim >= GRAPH_MIN_SEED_VECTOR_SIM)
+      .sort((a, b) => b.vectorSim - a.vectorSim)
+      .slice(0, seedCount);
+
+    if (seedCandidates.length > 0) {
+      const existingIds = new Set(scored.map((result) => result.entry.id));
+      const neighborWeights = new Map<string, number>();
+
+      for (const seed of seedCandidates) {
+        const neighbors = await getCoRecallNeighbors(
+          db,
+          seed.entry.id,
+          minEdgeWeight,
+          GRAPH_NEIGHBOR_LIMIT_PER_SEED,
+        );
+
+        for (const neighbor of neighbors) {
+          if (existingIds.has(neighbor.entryId)) {
+            continue;
+          }
+          const previous = neighborWeights.get(neighbor.entryId) ?? 0;
+          neighborWeights.set(neighbor.entryId, Math.max(previous, neighbor.weight));
+        }
+      }
+
+      if (neighborWeights.size > 0) {
+        const neighborEntries = await fetchEntriesByIds(db, Array.from(neighborWeights.keys()));
+        for (const entry of neighborEntries) {
+          if (
+            !passesFilters(entry, query, cutoff, ceiling, allowedScopes, normalizedTags, isSessionStart)
+            || existingIds.has(entry.id)
+          ) {
+            continue;
+          }
+
+          const vectorSim = entry.embedding && entry.embedding.length > 0
+            ? cosineSimilarity(queryEmbedding, entry.embedding)
+            : 0;
+          const ftsMatch = ftsMatches.has(entry.id);
+          const detailed = scoreEntryWithBreakdown(
+            entry,
+            vectorSim,
+            ftsMatch,
+            effectiveNow,
+            now,
+            aroundDate,
+            aroundRadiusDays,
+          );
+          const edgeWeight = neighborWeights.get(entry.id) ?? 0;
+          const finalScore = Math.min(1.0, detailed.score + edgeWeight * bonusWeight);
+
+          scored.push({
+            entry,
+            score: finalScore,
+            scores: {
+              ...detailed.scores,
+              graph: edgeWeight,
+            },
+          });
+          existingIds.add(entry.id);
+        }
+      }
+
+      scored.sort((a, b) => b.score - a.score);
+    }
+  }
+
   const limit = Number.isFinite(query.limit) && (query.limit ?? 0) > 0 ? Math.floor(query.limit as number) : DEFAULT_LIMIT;
   const results = scored.slice(0, limit);
 

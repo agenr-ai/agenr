@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.9 - 2026-02-27
+
+### Added
+- Graph-augmented recall: top embedding matches seed 1-hop traversal of
+  co-recall edges, pulling in associatively connected entries that similarity
+  alone would miss. Graph neighbors are scored with real embedding similarity
+  plus an additive graph bonus (0.15 * edge weight). Seeds are selected by
+  embedding similarity only to prevent recency bias (#297).
+
 ## 0.9.8 - 2026-02-27
 
 ### Added
