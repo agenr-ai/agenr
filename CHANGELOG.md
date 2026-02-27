@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.13 - 2026-02-27
+
+### Changed
+- LLM dedup pre-screening in consolidate is now opt-in via --loose-threshold.
+  Without it, consolidate uses subject-aware auto-union in the loose band but
+  skips LLM calls, avoiding potentially hundreds of sequential API round-trips.
+
 ## 0.9.12 - 2026-02-27
 
 ### Fixed
