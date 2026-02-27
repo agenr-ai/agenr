@@ -936,13 +936,13 @@ function normalizeTaskModels(models: Partial<AgenrConfig["models"]> | undefined)
   return normalized;
 }
 
-function resolveTaskModelDefaults(baseModel: string | undefined): TaskModelRecord {
-  const extractionModel = baseModel?.trim() || DEFAULT_TASK_MODEL;
+export function resolveTaskModelDefaults(baseModel: string | undefined): TaskModelRecord {
+  const model = baseModel?.trim() || DEFAULT_TASK_MODEL;
   return {
-    extraction: extractionModel,
-    claimExtraction: DEFAULT_TASK_MODEL,
-    contradictionJudge: DEFAULT_TASK_MODEL,
-    handoffSummary: DEFAULT_TASK_MODEL,
+    extraction: model,
+    claimExtraction: model,
+    contradictionJudge: model,
+    handoffSummary: model,
   };
 }
 

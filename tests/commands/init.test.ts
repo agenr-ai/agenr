@@ -200,6 +200,17 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
+describe("task model defaults", () => {
+  it("resolveTaskModelDefaults applies the base model to all tasks", () => {
+    expect(initModule.resolveTaskModelDefaults("claude-sonnet-4-20250514")).toEqual({
+      extraction: "claude-sonnet-4-20250514",
+      claimExtraction: "claude-sonnet-4-20250514",
+      contradictionJudge: "claude-sonnet-4-20250514",
+      handoffSummary: "claude-sonnet-4-20250514",
+    });
+  });
+});
+
 describe("init wizard auth/model reconfigure", () => {
   it("updates model via change-model without re-running auth setup", async () => {
     const current = getMocks();

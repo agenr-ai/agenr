@@ -834,6 +834,9 @@ export function describeAuth(auth: AgenrAuthMethod): string {
   return "OpenAI API key";
 }
 
-export function resolveModelForTask(config: AgenrConfig, task: ModelTask): string {
-  return config.models[task];
+export function resolveModelForTask(
+  config: AgenrConfig | null | undefined,
+  task: ModelTask,
+): string {
+  return config?.models?.[task] ?? DEFAULT_TASK_MODEL;
 }

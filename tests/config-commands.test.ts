@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { maskSecret, setConfigKey, setStoredCredential } from "../src/config.js";
+import { DEFAULT_TASK_MODEL, maskSecret, setConfigKey, setStoredCredential } from "../src/config.js";
 import type { AgenrConfig } from "../src/types.js";
 
 const DEFAULT_MODELS: AgenrConfig["models"] = {
-  extraction: "gpt-4.1-nano",
-  claimExtraction: "gpt-4.1-nano",
-  contradictionJudge: "gpt-4.1-nano",
-  handoffSummary: "gpt-4.1-nano",
+  extraction: DEFAULT_TASK_MODEL,
+  claimExtraction: DEFAULT_TASK_MODEL,
+  contradictionJudge: DEFAULT_TASK_MODEL,
+  handoffSummary: DEFAULT_TASK_MODEL,
 };
 
 describe("config command helpers", () => {
@@ -65,7 +65,7 @@ describe("config command helpers", () => {
     const first = setConfigKey({}, "models.extraction", "gpt-4.1");
     const second = setConfigKey(first.config, "models.extraction", "default");
 
-    expect(second.config.models.extraction).toBe("gpt-4.1-nano");
+    expect(second.config.models.extraction).toBe(DEFAULT_TASK_MODEL);
   });
 
   it("rejects invalid task name in models dot-path", () => {
