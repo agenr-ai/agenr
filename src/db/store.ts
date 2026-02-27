@@ -1777,7 +1777,6 @@ export async function storeEntries(
       }
     }
 
-    let inPerEntryTransaction = false;
     const applyAndCountCore = async (): Promise<StoreEntryDecision> => {
       const applied = await applyEntryMutation(db, processed, embedFn, apiKey, cache);
 
@@ -1824,50 +1823,19 @@ export async function storeEntries(
       return applied;
     };
 
-    const applyAndCount = async (): Promise<StoreEntryDecision> => {
-      const pendingConflicts = pendingConflictsMap.get(entryIndex);
-      const shouldWrapConflictsInTransaction =
-        onlineDedup &&
-        Boolean(pendingConflicts && pendingConflicts.length > 0) &&
-        !inPerEntryTransaction;
-
-      if (!shouldWrapConflictsInTransaction) {
-        return applyAndCountCore();
-      }
-
-      let appliedDecision: StoreEntryDecision | undefined;
-      await runPerEntryTransaction(db, options.dryRun === true, async () => {
-        inPerEntryTransaction = true;
-        try {
-          appliedDecision = await applyAndCountCore();
-        } finally {
-          inPerEntryTransaction = false;
-        }
-      });
-      if (!appliedDecision) {
-        throw new Error("Failed to apply per-entry transaction decision.");
-      }
-      return appliedDecision;
-    };
-
     const decision =
       onlineDedup
         ? await (async () => {
             let appliedDecision: StoreEntryDecision | undefined;
             await runPerEntryTransaction(db, options.dryRun === true, async () => {
-              inPerEntryTransaction = true;
-              try {
-                appliedDecision = await applyAndCount();
-              } finally {
-                inPerEntryTransaction = false;
-              }
+              appliedDecision = await applyAndCountCore();
             });
             if (!appliedDecision) {
               throw new Error("Failed to apply per-entry transaction decision.");
             }
             return appliedDecision;
           })()
-        : await applyAndCount();
+        : await applyAndCountCore();
 
     options.onDecision?.(decision);
   };

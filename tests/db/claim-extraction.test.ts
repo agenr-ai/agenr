@@ -256,6 +256,40 @@ describe("claim extraction", () => {
     expect(claim?.subjectEntity).toBe("alex");
   });
 
+  it("resolveEntityAlias resolves 'i' and 'me' to actual user name via existingEntities", async () => {
+    vi.mocked(runSimpleStream)
+      .mockResolvedValueOnce(
+        makeToolMessage({
+          no_claim: false,
+          subject_entity: "i",
+          subject_attribute: "editor",
+          predicate: "prefers",
+          object: "neovim",
+          confidence: 0.9,
+        }),
+      )
+      .mockResolvedValueOnce(
+        makeToolMessage({
+          no_claim: false,
+          subject_entity: "me",
+          subject_attribute: "editor",
+          predicate: "prefers",
+          object: "neovim",
+          confidence: 0.9,
+        }),
+      );
+
+    const firstClaim = await extractClaim("I prefer neovim", "preference", "editor", makeClient(), {
+      entityHints: ["sarah", "alex", "user"],
+    });
+    const secondClaim = await extractClaim("Me prefers neovim", "preference", "editor", makeClient(), {
+      entityHints: ["sarah", "alex", "user"],
+    });
+
+    expect(firstClaim?.subjectEntity).toBe("alex");
+    expect(secondClaim?.subjectEntity).toBe("alex");
+  });
+
   it("normalizeEntity replaces slashes with hyphens", async () => {
     vi.mocked(runSimpleStream).mockResolvedValueOnce(
       makeToolMessage({

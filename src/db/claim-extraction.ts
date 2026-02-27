@@ -152,8 +152,11 @@ function normalizeEntity(value: string): string {
 
 function resolveEntityAlias(entity: string, existingEntities?: Set<string>): string {
   const aliased = ENTITY_ALIASES[entity];
-  if (aliased) {
+  if (aliased && aliased !== "user") {
     return aliased;
+  }
+  if (aliased === "user") {
+    entity = "user";
   }
 
   if (existingEntities && existingEntities.size > 0 && entity === "user") {
