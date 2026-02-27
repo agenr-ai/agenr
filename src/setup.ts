@@ -44,7 +44,7 @@ function promptToEnterCredential(auth: AgenrAuthMethod): string {
   return "Enter OpenAI API key:";
 }
 
-function modelChoicesForAuth(auth: AgenrAuthMethod, provider: AgenrProvider): string[] {
+export function modelChoicesForAuth(auth: AgenrAuthMethod, provider: AgenrProvider): string[] {
   const definition = getAuthMethodDefinition(auth);
   const allModels = getModels(provider).map((model) => model.id);
 
@@ -76,7 +76,7 @@ function modelChoicesForAuth(auth: AgenrAuthMethod, provider: AgenrProvider): st
   return Array.from(new Set([...preferred, ...fallback]));
 }
 
-function modelHintForChoice(provider: AgenrProvider, modelId: string): string | undefined {
+export function modelHintForChoice(provider: AgenrProvider, modelId: string): string | undefined {
   if (provider === "openai") {
     if (modelId === "gpt-4.1-mini") {
       return "recommended - good balance of quality and cost";

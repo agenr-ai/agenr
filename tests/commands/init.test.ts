@@ -189,6 +189,100 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
+describe("init wizard auth/model reconfigure", () => {
+  it("updates model via change-model without re-running auth setup", async () => {
+    const current = getMocks();
+    const projectDir = await makeTempDir("agenr-init-project-test-");
+    const env = await setupExistingConfig(projectDir);
+    mockWizardRuntime(projectDir);
+
+    queueResponses(current.confirmMock, [true], "confirm");
+    queueResponses(current.selectMock, ["change-model", "gpt-4.1", "no", "keep", "keep", "keep"], "select");
+    queueResponses(current.textMock, [], "text");
+
+    await initModule.runInitWizard({
+      isInteractive: true,
+      path: projectDir,
+    });
+
+    expect(readConfig(env)?.model).toBe("gpt-4.1");
+    expect(initModule.initWizardRuntime.runSetupCore).not.toHaveBeenCalled();
+
+    const messages = current.selectMock.mock.calls.map((call) => {
+      const args = call[0] as { message?: string };
+      return args.message ?? "";
+    });
+    expect(messages).toContain("Select default model:");
+    expect(messages).toContain("Configure per-task models? (Advanced)");
+  });
+
+  it("keeps current auth and model without showing model picker", async () => {
+    const current = getMocks();
+    const projectDir = await makeTempDir("agenr-init-project-test-");
+    await setupExistingConfig(projectDir);
+    mockWizardRuntime(projectDir);
+
+    queueResponses(current.confirmMock, [true], "confirm");
+    queueResponses(current.selectMock, ["keep", "no", "keep", "keep"], "select");
+    queueResponses(current.textMock, [], "text");
+
+    await initModule.runInitWizard({
+      isInteractive: true,
+      path: projectDir,
+    });
+
+    expect(initModule.initWizardRuntime.runSetupCore).not.toHaveBeenCalled();
+    const messages = current.selectMock.mock.calls.map((call) => {
+      const args = call[0] as { message?: string };
+      return args.message ?? "";
+    });
+    expect(messages).not.toContain("Select default model:");
+  });
+
+  it("runs full setup for change-auth", async () => {
+    const current = getMocks();
+    const projectDir = await makeTempDir("agenr-init-project-test-");
+    await setupExistingConfig(projectDir);
+    mockWizardRuntime(projectDir);
+
+    queueResponses(current.confirmMock, [true], "confirm");
+    queueResponses(current.selectMock, ["change-auth", "keep", "keep"], "select");
+    queueResponses(current.textMock, [], "text");
+
+    await initModule.runInitWizard({
+      isInteractive: true,
+      path: projectDir,
+    });
+
+    expect(initModule.initWizardRuntime.runSetupCore).toHaveBeenCalledTimes(1);
+  });
+
+  it("prompts per-task models after selecting change-model", async () => {
+    const current = getMocks();
+    const projectDir = await makeTempDir("agenr-init-project-test-");
+    await setupExistingConfig(projectDir);
+    mockWizardRuntime(projectDir);
+
+    queueResponses(current.confirmMock, [true], "confirm");
+    queueResponses(current.selectMock, ["change-model", "gpt-4.1", "no", "keep", "keep", "keep"], "select");
+    queueResponses(current.textMock, [], "text");
+
+    await initModule.runInitWizard({
+      isInteractive: true,
+      path: projectDir,
+    });
+
+    const messages = current.selectMock.mock.calls.map((call) => {
+      const args = call[0] as { message?: string };
+      return args.message ?? "";
+    });
+    const modelSelectIndex = messages.indexOf("Select default model:");
+    const taskPromptIndex = messages.indexOf("Configure per-task models? (Advanced)");
+    expect(modelSelectIndex).toBeGreaterThan(-1);
+    expect(taskPromptIndex).toBeGreaterThan(modelSelectIndex);
+  });
+});
+
 describe("init wizard per-task model setup", () => {
   it("keeps models undefined when user skips advanced per-task setup", async () => {
     const current = getMocks();

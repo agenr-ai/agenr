@@ -49,6 +49,7 @@
 - Extracted shared LLM helpers (clampConfidence, resolveModelForLlmClient, extractToolCallArgs) to src/db/llm-helpers.ts
 - Removed unnecessary Float32Array conversions in contradiction detection pipeline
 - Replaced __pendingConflicts side-channel with scoped Map
+- Init wizard: change model without re-running auth setup (#275)
 
 ## 0.9.2 (2026-02-26)
 
