@@ -6,7 +6,15 @@ import type {
   Model,
   SimpleStreamOptions,
 } from "@mariozechner/pi-ai";
-import { streamSimple } from "@mariozechner/pi-ai";
+import { registerBuiltInApiProviders, streamSimple } from "@mariozechner/pi-ai";
+
+// Ensure pi-ai API providers are registered so streamSimple can resolve them.
+let _apiProvidersRegistered = false;
+function ensureApiProviders(): void {
+  if (_apiProvidersRegistered) return;
+  registerBuiltInApiProviders();
+  _apiProvidersRegistered = true;
+}
 
 export type SimpleAssistantStream = AsyncIterable<AssistantMessageEvent> & {
   result: () => Promise<AssistantMessage>;
@@ -38,6 +46,9 @@ function logVerbose(params: StreamRunParams, line: string): void {
 
 export async function runSimpleStream(params: StreamRunParams): Promise<AssistantMessage> {
   const streamFn = params.streamSimpleImpl ?? streamSimple;
+  if (!params.streamSimpleImpl) {
+    ensureApiProviders();
+  }
   const stream = streamFn(params.model, params.context, params.options);
 
   for await (const event of stream) {

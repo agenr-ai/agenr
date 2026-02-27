@@ -3,6 +3,10 @@
 ## 0.9.11 - 2026-02-27
 
 ### Fixed
+- Register pi-ai API providers before streamSimple calls so consolidate
+  LLM dedup and merge can resolve the OpenAI/Anthropic streaming backend.
+  Root cause: tsup tree-shook the side-effect import; now uses explicit
+  registration via ensureApiProviders() guard.
 - Added 15s timeout to LLM dedup pre-screening calls in consolidate clustering
   to prevent hangs from unresponsive LLM endpoints.
 
