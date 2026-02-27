@@ -9,7 +9,7 @@ vi.mock("../../src/llm/stream.js", () => ({
   runSimpleStream: runSimpleStreamMock,
 }));
 
-import { buildClusters } from "../../src/consolidate/cluster.js";
+import { buildClusters, llmDedupCheck } from "../../src/consolidate/cluster.js";
 import { initDb } from "../../src/db/client.js";
 import { hashText, insertEntry } from "../../src/db/store.js";
 import type { KnowledgeEntry, LlmClient } from "../../src/types.js";
@@ -54,6 +54,25 @@ function makeLlmClient(): LlmClient {
       apiKey: "test-key",
       source: "test",
     },
+  };
+}
+
+function makeActiveEmbeddedEntry(
+  id: string,
+  subject: string,
+  content: string,
+): Parameters<typeof llmDedupCheck>[1] {
+  return {
+    id,
+    type: "fact",
+    subject,
+    content,
+    tags: [],
+    embedding: [1, 0, 0],
+    importance: 6,
+    confirmations: 0,
+    recallCount: 0,
+    createdAt: "2026-01-01T00:00:00.000Z",
   };
 }
 
@@ -225,6 +244,48 @@ describe("consolidate cluster tag mapping", () => {
     expect(clusters).toHaveLength(1);
     expect(runSimpleStreamMock).toHaveBeenCalled();
     expect(stats).toEqual({ llmDedupCalls: 1, llmDedupMatches: 1 });
+  });
+
+  it("llmDedupCheck returns true when dedup_check tool says same", async () => {
+    runSimpleStreamMock.mockResolvedValueOnce({
+      stopReason: "toolUse",
+      content: [
+        {
+          type: "toolCall",
+          name: "dedup_check",
+          arguments: {
+            same: true,
+            reason: "same knowledge",
+          },
+        },
+      ],
+    });
+
+    const isSame = await llmDedupCheck(
+      makeLlmClient(),
+      makeActiveEmbeddedEntry("a", "Jim Martin", "Jim prefers keto meals"),
+      makeActiveEmbeddedEntry("b", "Diet Notes", "Keto meals are used in Jim's routine"),
+    );
+
+    expect(isSame).toBe(true);
+  });
+
+  it("llmDedupCheck returns false on timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      runSimpleStreamMock.mockImplementationOnce(async () => new Promise(() => undefined));
+
+      const resultPromise = llmDedupCheck(
+        makeLlmClient(),
+        makeActiveEmbeddedEntry("a", "Jim Martin", "Jim prefers keto meals"),
+        makeActiveEmbeddedEntry("b", "Diet Notes", "Keto meals are used in Jim's routine"),
+      );
+
+      await vi.advanceTimersByTimeAsync(15_001);
+      await expect(resultPromise).resolves.toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not union loose band entries when LLM says distinct", async () => {
