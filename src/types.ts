@@ -258,6 +258,7 @@ export interface RecallResult {
     fts: number;
     spacing: number;
     quality: number;
+    graph?: number;
   };
 }
 

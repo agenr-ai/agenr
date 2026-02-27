@@ -1733,6 +1733,418 @@ describe("db recall", () => {
     expect(results.every((item) => item.scores.spacing === 1.0)).toBe(true);
   });
 
+  describe("graph-augmented recall", () => {
+    let graphHashCounter = 0;
+
+    async function storeGraphEntries(client: Client, entries: KnowledgeEntry[]): Promise<void> {
+      graphHashCounter += 1;
+      await storeEntries(client, entries, "sk-test", {
+        sourceFile: "recall-graph-test.jsonl",
+        ingestContentHash: `hash-graph-${graphHashCounter}`,
+        embedFn: mockEmbed,
+        force: true,
+      });
+    }
+
+    async function getEntryId(client: Client, content: string): Promise<string> {
+      const result = await client.execute({
+        sql: "SELECT id FROM entries WHERE content = ? LIMIT 1",
+        args: [content],
+      });
+      const id = String(result.rows[0]?.id ?? "");
+      expect(id).toBeTruthy();
+      return id;
+    }
+
+    async function addCoRecallEdge(client: Client, entryIdA: string, entryIdB: string, weight: number): Promise<void> {
+      const [entryA, entryB] = entryIdA < entryIdB ? [entryIdA, entryIdB] : [entryIdB, entryIdA];
+      const now = "2026-02-15T00:00:00.000Z";
+      await client.execute({
+        sql: `
+          INSERT INTO co_recall_edges (
+            entry_a, entry_b, edge_type, weight, session_count, last_co_recalled, created_at
+          )
+          VALUES (?, ?, 'co_recalled', ?, 1, ?, ?)
+        `,
+        args: [entryA, entryB, weight, now, now],
+      });
+    }
+
+    it("graph neighbor appears in results when co-recall edge exists", async () => {
+      const client = makeClient();
+      await initDb(client);
+
+      await storeGraphEntries(client, [
+        makeEntry({ content: "graph-seed-a vec-work-strong" }),
+        makeEntry({ content: "graph-entry-b vec-health" }),
+        makeEntry({ content: "graph-neighbor-c vec-random" }),
+      ]);
+
+      const seedId = await getEntryId(client, "graph-seed-a vec-work-strong");
+      const neighborId = await getEntryId(client, "graph-neighbor-c vec-random");
+      await addCoRecallEdge(client, seedId, neighborId, 0.5);
+
+      const results = await recall(
+        client,
+        { text: "work", limit: 10, noUpdate: true },
+        "sk-test",
+        {
+          embedFn: mockEmbed,
+          now: new Date("2026-02-15T00:00:00.000Z"),
+          vectorCandidateLimit: 1,
+        },
+      );
+
+      expect(results.some((row) => row.entry.id === seedId)).toBe(true);
+      const neighbor = results.find((row) => row.entry.id === neighborId);
+      expect(neighbor).toBeTruthy();
+      expect(neighbor?.scores.graph).toBeCloseTo(0.5, 6);
+    });
+
+    it("graph neighbor has real vectorSim in score", async () => {
+      const client = makeClient();
+      await initDb(client);
+
+      await storeGraphEntries(client, [
+        makeEntry({ content: "graph-vector-seed vec-work-strong" }),
+        makeEntry({ content: "graph-vector-filler vec-health" }),
+        makeEntry({ content: "graph-vector-neighbor vec-work-low" }),
+      ]);
+
+      const seedId = await getEntryId(client, "graph-vector-seed vec-work-strong");
+      const neighborId = await getEntryId(client, "graph-vector-neighbor vec-work-low");
+      await addCoRecallEdge(client, seedId, neighborId, 0.5);
+
+      const results = await recall(
+        client,
+        { text: "work", limit: 10, noUpdate: true },
+        "sk-test",
+        {
+          embedFn: mockEmbed,
+          now: new Date("2026-02-15T00:00:00.000Z"),
+          vectorCandidateLimit: 1,
+        },
+      );
+
+      const neighbor = results.find((row) => row.entry.id === neighborId);
+      expect(neighbor).toBeTruthy();
+      expect((neighbor?.scores.vector ?? 0)).toBeGreaterThan(0);
+    });
+
+    it("graph bonus is additive and capped at 1.0", async () => {
+      const client = makeClient();
+      await initDb(client);
+
+      await storeGraphEntries(client, [
+        makeEntry({ content: "graph-cap-seed vec-work-strong" }),
+        makeEntry({ content: "graph-cap-neighbor vec-work-mid", importance: 10, expiry: "core" }),
+      ]);
+
+      const seedId = await getEntryId(client, "graph-cap-seed vec-work-strong");
+      const neighborId = await getEntryId(client, "graph-cap-neighbor vec-work-mid");
+      await addCoRecallEdge(client, seedId, neighborId, 1.0);
+
+      const now = new Date("2026-02-15T00:00:00.000Z");
+      const results = await recall(
+        client,
+        { text: "work", limit: 10, noUpdate: true },
+        "sk-test",
+        {
+          embedFn: mockEmbed,
+          now,
+          vectorCandidateLimit: 1,
+        },
+      );
+
+      const neighbor = results.find((row) => row.entry.id === neighborId);
+      expect(neighbor).toBeTruthy();
+      const reconstructedBase = scoreEntryWithBreakdown(
+        neighbor!.entry,
+        neighbor!.scores.vector,
+        (neighbor!.scores.fts ?? 0) > 0,
+        now,
+        now,
+      ).score;
+      const expected = Math.min(1.0, reconstructedBase + (neighbor!.scores.graph ?? 0) * 0.15);
+      expect(neighbor!.score).toBeCloseTo(expected, 8);
+      expect(neighbor!.score).toBe(1);
+    });
+
+    it("graph augmentation skipped in browse mode", async () => {
+      const client = makeClient();
+      await initDb(client);
+
+      await storeGraphEntries(client, [
+        makeEntry({ content: "graph-browse-a vec-work-strong", importance: 7 }),
+        makeEntry({ content: "graph-browse-b vec-random", importance: 7 }),
+      ]);
+
+      const aId = await getEntryId(client, "graph-browse-a vec-work-strong");
+      const bId = await getEntryId(client, "graph-browse-b vec-random");
+      await addCoRecallEdge(client, aId, bId, 0.8);
+
+      const results = await recall(
+        client,
+        { browse: true, limit: 10, noUpdate: true },
+        "",
+        { now: new Date("2026-02-15T00:00:00.000Z") },
+      );
+
+      expect(results.every((row) => row.scores.graph === undefined)).toBe(true);
+    });
+
+    it("graph augmentation skipped in session-start mode", async () => {
+      const client = makeClient();
+      await initDb(client);
+
+      await storeGraphEntries(client, [
+        makeEntry({ content: "graph-session-seed vec-work-strong" }),
+        makeEntry({ content: "graph-session-neighbor vec-random" }),
+      ]);
+
+      const seedId = await getEntryId(client, "graph-session-seed vec-work-strong");
+      const neighborId = await getEntryId(client, "graph-session-neighbor vec-random");
+      await addCoRecallEdge(client, seedId, neighborId, 0.8);
+
+      const results = await recall(
+        client,
+        { text: "work", context: "session-start", limit: 10, noUpdate: true },
+        "sk-test",
+        {
+          embedFn: mockEmbed,
+          now: new Date("2026-02-15T00:00:00.000Z"),
+          vectorCandidateLimit: 1,
+        },
+      );
+
+      expect(results.some((row) => row.entry.id === neighborId)).toBe(false);
+      expect(results.every((row) => row.scores.graph === undefined)).toBe(true);
+    });
+
+    it("graph augmentation skipped when no query text", async () => {
+      const client = makeClient();
+      await initDb(client);
+
+      await storeGraphEntries(client, [
+        makeEntry({ content: "graph-no-text-a vec-work-strong" }),
+        makeEntry({ content: "graph-no-text-b vec-random" }),
+      ]);
+
+      const aId = await getEntryId(client, "graph-no-text-a vec-work-strong");
+      const bId = await getEntryId(client, "graph-no-text-b vec-random");
+      await addCoRecallEdge(client, aId, bId, 0.7);
+
+      const results = await recall(
+        client,
+        { text: "", context: "session-start", limit: 10, noUpdate: true },
+        "sk-test",
+        { now: new Date("2026-02-15T00:00:00.000Z"), sessionCandidateLimit: 1 },
+      );
+
+      expect(results.every((row) => row.scores.graph === undefined)).toBe(true);
+    });
+
+    it("superseded neighbor is filtered out", async () => {
+      const client = makeClient();
+      await initDb(client);
+
+      await storeGraphEntries(client, [
+        makeEntry({ content: "graph-superseded-seed vec-work-strong" }),
+        makeEntry({ content: "graph-superseded-neighbor vec-random" }),
+      ]);
+
+      const seedId = await getEntryId(client, "graph-superseded-seed vec-work-strong");
+      const neighborId = await getEntryId(client, "graph-superseded-neighbor vec-random");
+      await client.execute({
+        sql: "UPDATE entries SET superseded_by = ? WHERE id = ?",
+        args: [seedId, neighborId],
+      });
+      await addCoRecallEdge(client, seedId, neighborId, 0.9);
+
+      const results = await recall(
+        client,
+        { text: "work", limit: 10, noUpdate: true },
+        "sk-test",
+        {
+          embedFn: mockEmbed,
+          now: new Date("2026-02-15T00:00:00.000Z"),
+          vectorCandidateLimit: 1,
+        },
+      );
+
+      expect(results.some((row) => row.entry.id === neighborId)).toBe(false);
+    });
+
+    it("retired neighbor is filtered out", async () => {
+      const client = makeClient();
+      await initDb(client);
+
+      await storeGraphEntries(client, [
+        makeEntry({ content: "graph-retired-seed vec-work-strong" }),
+        makeEntry({ content: "graph-retired-neighbor vec-random" }),
+      ]);
+
+      const seedId = await getEntryId(client, "graph-retired-seed vec-work-strong");
+      const neighborId = await getEntryId(client, "graph-retired-neighbor vec-random");
+      await client.execute({
+        sql: "UPDATE entries SET retired = 1, retired_at = ? WHERE id = ?",
+        args: ["2026-02-15T00:00:00.000Z", neighborId],
+      });
+      await addCoRecallEdge(client, seedId, neighborId, 0.9);
+
+      const results = await recall(
+        client,
+        { text: "work", limit: 10, noUpdate: true },
+        "sk-test",
+        {
+          embedFn: mockEmbed,
+          now: new Date("2026-02-15T00:00:00.000Z"),
+          vectorCandidateLimit: 1,
+        },
+      );
+
+      expect(results.some((row) => row.entry.id === neighborId)).toBe(false);
+    });
+
+    it("seeds selected by embedding similarity not full score", async () => {
+      const client = makeClient();
+      await initDb(client);
+
+      await storeGraphEntries(client, [
+        makeEntry({ content: "graph-seed-high-vector vec-work-strong", importance: 1 }),
+        makeEntry({ content: "graph-seed-high-score vec-work-mid", importance: 10, expiry: "core" }),
+        makeEntry({ content: "graph-seed-neighbor vec-random" }),
+      ]);
+
+      const vectorSeedId = await getEntryId(client, "graph-seed-high-vector vec-work-strong");
+      const scoreSeedId = await getEntryId(client, "graph-seed-high-score vec-work-mid");
+      const neighborId = await getEntryId(client, "graph-seed-neighbor vec-random");
+      await addCoRecallEdge(client, vectorSeedId, neighborId, 0.6);
+
+      await client.execute({
+        sql: "UPDATE entries SET created_at = ?, updated_at = ? WHERE id = ?",
+        args: ["2025-02-15T00:00:00.000Z", "2025-02-15T00:00:00.000Z", vectorSeedId],
+      });
+      await client.execute({
+        sql: "UPDATE entries SET created_at = ?, updated_at = ? WHERE id = ?",
+        args: ["2026-02-15T00:00:00.000Z", "2026-02-15T00:00:00.000Z", scoreSeedId],
+      });
+
+      const results = await recall(
+        client,
+        { text: "work", limit: 10, noUpdate: true },
+        "sk-test",
+        {
+          embedFn: mockEmbed,
+          now: new Date("2026-02-15T00:00:00.000Z"),
+          vectorCandidateLimit: 2,
+          graphSeedCount: 1,
+        },
+      );
+
+      const vectorSeed = results.find((row) => row.entry.id === vectorSeedId);
+      const scoreSeed = results.find((row) => row.entry.id === scoreSeedId);
+      expect(vectorSeed).toBeTruthy();
+      expect(scoreSeed).toBeTruthy();
+      expect((scoreSeed?.score ?? 0)).toBeGreaterThan(vectorSeed?.score ?? 0);
+      expect(results.some((row) => row.entry.id === neighborId)).toBe(true);
+    });
+
+    it("entry below vectorSim threshold does not seed graph traversal", async () => {
+      const client = makeClient();
+      await initDb(client);
+
+      await storeGraphEntries(client, [
+        makeEntry({ content: "graph-threshold-low default-vector" }),
+        makeEntry({ content: "graph-threshold-neighbor vec-random" }),
+      ]);
+
+      const lowSeedId = await getEntryId(client, "graph-threshold-low default-vector");
+      const neighborId = await getEntryId(client, "graph-threshold-neighbor vec-random");
+      await addCoRecallEdge(client, lowSeedId, neighborId, 0.8);
+
+      const results = await recall(
+        client,
+        { text: "work", limit: 10, noUpdate: true },
+        "sk-test",
+        {
+          embedFn: mockEmbed,
+          now: new Date("2026-02-15T00:00:00.000Z"),
+          vectorCandidateLimit: 1,
+        },
+      );
+
+      expect(results.some((row) => row.entry.id === lowSeedId)).toBe(true);
+      expect(results.some((row) => row.entry.id === neighborId)).toBe(false);
+    });
+
+    it("empty edge table produces identical results to no graph", async () => {
+      const client = makeClient();
+      await initDb(client);
+
+      await storeGraphEntries(client, [
+        makeEntry({ content: "graph-empty-a vec-work-strong" }),
+        makeEntry({ content: "graph-empty-b vec-work-mid" }),
+        makeEntry({ content: "graph-empty-c vec-health" }),
+      ]);
+
+      const now = new Date("2026-02-15T00:00:00.000Z");
+      const withGraph = await recall(
+        client,
+        { text: "work", limit: 10, noUpdate: true },
+        "sk-test",
+        { embedFn: mockEmbed, now, graphEnabled: true },
+      );
+      const withoutGraph = await recall(
+        client,
+        { text: "work", limit: 10, noUpdate: true },
+        "sk-test",
+        { embedFn: mockEmbed, now, graphEnabled: false },
+      );
+
+      const summarize = (rows: typeof withGraph) =>
+        rows.map((row) => ({
+          id: row.entry.id,
+          score: row.score,
+          graph: row.scores.graph ?? 0,
+        }));
+
+      expect(summarize(withGraph)).toEqual(summarize(withoutGraph));
+    });
+
+    it("graph neighbor deduplication across seeds keeps max edge weight", async () => {
+      const client = makeClient();
+      await initDb(client);
+
+      await storeGraphEntries(client, [
+        makeEntry({ content: "graph-dedupe-seed-a vec-work-strong" }),
+        makeEntry({ content: "graph-dedupe-seed-b vec-work-mid" }),
+        makeEntry({ content: "graph-dedupe-neighbor vec-random" }),
+      ]);
+
+      const seedAId = await getEntryId(client, "graph-dedupe-seed-a vec-work-strong");
+      const seedBId = await getEntryId(client, "graph-dedupe-seed-b vec-work-mid");
+      const neighborId = await getEntryId(client, "graph-dedupe-neighbor vec-random");
+      await addCoRecallEdge(client, seedAId, neighborId, 0.3);
+      await addCoRecallEdge(client, seedBId, neighborId, 0.7);
+
+      const results = await recall(
+        client,
+        { text: "work", limit: 10, noUpdate: true },
+        "sk-test",
+        {
+          embedFn: mockEmbed,
+          now: new Date("2026-02-15T00:00:00.000Z"),
+          vectorCandidateLimit: 2,
+        },
+      );
+
+      const neighbors = results.filter((row) => row.entry.id === neighborId);
+      expect(neighbors).toHaveLength(1);
+      expect(neighbors[0]?.scores.graph).toBeCloseTo(0.7, 6);
+    });
+  });
+
   describe("browse mode", () => {
     let hashCounter = 0;
 

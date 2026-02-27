@@ -136,6 +136,14 @@ function formatRecallCount(count: number): string {
   return `recalled ${count} times`;
 }
 
+function formatGraphScore(result: RecallCommandResult): string {
+  const graphScore = result.scores.graph;
+  if (graphScore === undefined || graphScore <= 0) {
+    return "";
+  }
+  return ` | graph=${graphScore.toFixed(2)}`;
+}
+
 function printHumanResults(results: RecallCommandResult[], elapsedMs: number, now: Date, isSessionStart: boolean): void {
   const clackOutput = { output: process.stderr };
   clack.log.info(`${ui.bold(String(results.length))} results (${elapsedMs}ms)`, clackOutput);
@@ -166,7 +174,7 @@ function printHumanResults(results: RecallCommandResult[], elapsedMs: number, no
           clackOutput,
         );
         clack.log.info(
-          `   importance=${result.entry.importance} | ${formatAge(result.entry.created_at, now)} | ${formatRecallCount(result.entry.recall_count)}`,
+          `   importance=${result.entry.importance} | ${formatAge(result.entry.created_at, now)} | ${formatRecallCount(result.entry.recall_count)}${formatGraphScore(result)}`,
           clackOutput,
         );
         clack.log.info(`   tags: ${result.entry.tags.length > 0 ? result.entry.tags.join(", ") : "none"}`, clackOutput);
@@ -180,7 +188,7 @@ function printHumanResults(results: RecallCommandResult[], elapsedMs: number, no
   for (const result of results) {
     clack.log.info(`${index}. [${result.entry.type}] ${result.entry.subject}: ${result.entry.content}`, clackOutput);
     clack.log.info(
-      `   importance=${result.entry.importance} | ${formatAge(result.entry.created_at, now)} | ${formatRecallCount(result.entry.recall_count)}`,
+      `   importance=${result.entry.importance} | ${formatAge(result.entry.created_at, now)} | ${formatRecallCount(result.entry.recall_count)}${formatGraphScore(result)}`,
       clackOutput,
     );
     clack.log.info(`   tags: ${result.entry.tags.length > 0 ? result.entry.tags.join(", ") : "none"}`, clackOutput);
