@@ -3,6 +3,8 @@
 ## 0.9.3 (2026-02-26)
 
 ### Added
+- feat: `config set` now supports per-task model overrides via dot-path keys (for example, `models.extraction`, `models.claimExtraction`) (#276)
+- Set value to `default` to remove an override and fall back to the global model
 - Schema: subject_entity, subject_attribute, subject_key, claim_predicate, claim_object, claim_confidence columns on entries table (#266)
 - Schema: conflict_log table for contradiction audit trail (#266)
 - Schema: idx_entries_subject_key partial index (#266)
@@ -35,6 +37,7 @@
 - Init wizard: per-task model selection for extraction, claim extraction, contradiction judge, and handoff summary (#266)
 
 ### Fixed
+- fix: setup and init wizards now write explicitly selected task models even when they match defaults (#275)
 - Critical: conflicts UI "keep-new"/"keep-old" resolution was retiring the wrong entry (swarm review)
 - Contradiction detection: cap subject-index candidates to maxCandidates, sort by recency
 - Contradiction detection: always run both subject-index and embedding search (removed hardcoded < 3 gate)

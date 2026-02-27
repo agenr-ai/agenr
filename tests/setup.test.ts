@@ -553,6 +553,43 @@ describe("runSetupCore", () => {
       claimExtraction: "gpt-4.1-mini",
     });
   });
+
+  it("stores explicitly selected task model even when it matches the default", async () => {
+    const mocks = getMocks();
+    const env = await makeTempConfigEnv();
+
+    mocks.selectMock
+      .mockResolvedValueOnce("openai-api-key")
+      .mockResolvedValueOnce("gpt-4.1-mini")
+      .mockResolvedValueOnce("configure")
+      .mockResolvedValueOnce("__use_default__")
+      .mockResolvedValueOnce("__use_default__")
+      .mockResolvedValueOnce("gpt-4.1-nano")
+      .mockResolvedValueOnce("__use_default__");
+    mocks.probeCredentialsMock.mockReturnValue({
+      available: true,
+      source: "env:OPENAI_API_KEY",
+      guidance: "Credentials available.",
+      credentials: {
+        apiKey: "sk-test",
+        source: "env:OPENAI_API_KEY",
+      },
+    });
+    mocks.runConnectionTestMock.mockResolvedValueOnce({ ok: true });
+
+    const result = await setupModule.runSetupCore({
+      env,
+      existingConfig: null,
+      skipIntroOutro: true,
+    });
+
+    expect(result?.config.models).toEqual({
+      contradictionJudge: "gpt-4.1-nano",
+    });
+    expect(readConfig(env)?.models).toEqual({
+      contradictionJudge: "gpt-4.1-nano",
+    });
+  });
 });
 
 describe("runSetup", () => {

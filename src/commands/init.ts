@@ -963,14 +963,10 @@ function taskModelsEqual(a: AgenrConfig["models"], b: AgenrConfig["models"]): bo
   return true;
 }
 
-function toTaskModelOverrides(baseModel: string | undefined, selected: TaskModelRecord): AgenrConfig["models"] {
-  const defaults = resolveTaskModelDefaults(baseModel);
+function toTaskModelOverrides(_baseModel: string | undefined, selected: TaskModelRecord): AgenrConfig["models"] {
   const overrides: NonNullable<AgenrConfig["models"]> = {};
   for (const task of TASK_MODEL_DEFINITIONS) {
-    const value = selected[task.key].trim();
-    if (value !== defaults[task.key]) {
-      overrides[task.key] = value;
-    }
+    overrides[task.key] = selected[task.key].trim();
   }
   return Object.keys(overrides).length > 0 ? overrides : undefined;
 }
