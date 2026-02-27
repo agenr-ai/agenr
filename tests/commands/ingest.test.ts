@@ -1013,6 +1013,64 @@ describe("ingest command", () => {
     expect(cancelMock).not.toHaveBeenCalled();
   });
 
+  it("backfills co-recall edges for already-ingested files on re-ingest", async () => {
+    const dir = await makeTempDir();
+    const filePath = path.join(dir, "backfill.jsonl");
+    await fs.writeFile(filePath, '{"role":"user","content":"hello"}\n', "utf8");
+
+    const db = createClient({ url: ":memory:" });
+    const storeEntriesFn = makeStoreEntriesFn();
+    const extractKnowledgeFromChunksFn = vi.fn(
+      async (params: Parameters<IngestCommandDeps["extractKnowledgeFromChunksFn"]>[0]) => {
+        await params.onChunkComplete?.({
+          chunkIndex: 0,
+          totalChunks: 1,
+          entries: makeDistinctEntries(),
+          warnings: [],
+        });
+        return {
+          entries: [],
+          successfulChunks: 1,
+          failedChunks: 0,
+          warnings: [],
+        };
+      },
+    );
+    const baseDeps = {
+      getDbFn: vi.fn(() => db) as IngestCommandDeps["getDbFn"],
+      initDbFn: vi.fn(async () => initDb(db)),
+      closeDbFn: vi.fn(() => undefined),
+      expandInputFilesFn: vi.fn(async () => [filePath]),
+      extractKnowledgeFromChunksFn: extractKnowledgeFromChunksFn as IngestCommandDeps["extractKnowledgeFromChunksFn"],
+      deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+      resolveEmbeddingApiKeyFn: vi.fn(() => "sk-test"),
+      storeEntriesFn,
+    };
+
+    try {
+      // First ingest - creates entries and edges.
+      const result1 = await runIngestCommand([filePath], {}, makeDeps(baseDeps));
+      expect(result1.exitCode).toBe(0);
+      expect(result1.filesProcessed).toBe(1);
+
+      // Delete all edges to simulate pre-edge-feature data.
+      await db.execute("DELETE FROM co_recall_edges");
+      const noEdges = await db.execute({ sql: "SELECT COUNT(*) AS cnt FROM co_recall_edges" });
+      expect(Number(noEdges.rows[0]?.cnt)).toBe(0);
+
+      // Second ingest - file is skipped but edges should be backfilled.
+      const result2 = await runIngestCommand([filePath], {}, makeDeps(baseDeps));
+      expect(result2.exitCode).toBe(0);
+
+      const edgeRows = await db.execute({ sql: "SELECT COUNT(*) AS cnt FROM co_recall_edges" });
+      expect(Number(edgeRows.rows[0]?.cnt)).toBeGreaterThan(0);
+    } finally {
+      db.close();
+    }
+  });
+
+
+
   it("resolves embedding API key even when --no-pre-fetch is set", async () => {
     const dir = await makeTempDir();
     const filePath = path.join(dir, "a.txt");
