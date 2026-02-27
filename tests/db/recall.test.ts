@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { initDb } from "../../src/db/client.js";
 import {
   freshnessBoost,
+  gaussianRecency,
   importanceScore,
   recall,
   recallStrength,
@@ -113,6 +114,26 @@ describe("db recall", () => {
     const permanent = recency(10, "permanent");
     expect(temporary).toBeLessThan(1);
     expect(temporary).toBeLessThan(permanent);
+  });
+
+  it("gaussianRecency is 1.0 when entry date matches around date", () => {
+    const around = new Date("2026-02-15T00:00:00.000Z");
+    const entryDate = new Date("2026-02-15T00:00:00.000Z");
+    expect(gaussianRecency(entryDate, around, 14)).toBeCloseTo(1, 8);
+  });
+
+  it("gaussianRecency decreases as entries move farther from around date", () => {
+    const around = new Date("2026-02-15T00:00:00.000Z");
+    const near = gaussianRecency(new Date("2026-02-16T00:00:00.000Z"), around, 14);
+    const far = gaussianRecency(new Date("2026-02-22T00:00:00.000Z"), around, 14);
+    expect(near).toBeGreaterThan(far);
+  });
+
+  it("gaussianRecency is symmetric around the target date", () => {
+    const around = new Date("2026-02-15T00:00:00.000Z");
+    const before = gaussianRecency(new Date("2026-02-10T00:00:00.000Z"), around, 14);
+    const after = gaussianRecency(new Date("2026-02-20T00:00:00.000Z"), around, 14);
+    expect(before).toBeCloseTo(after, 8);
   });
 
   it("importanceScore maps 1-10 to a bounded multiplier", () => {
@@ -921,6 +942,234 @@ describe("db recall", () => {
     });
   });
 
+  describe("around temporal targeting", () => {
+    it("shifts semantic recall scoring to favor entries near the around date", async () => {
+      const client = makeClient();
+      await initDb(client);
+
+      await storeEntries(
+        client,
+        [
+          makeEntry({ content: "around-center vec-work-strong", importance: 7 }),
+          makeEntry({ content: "around-recent vec-work-strong", importance: 7 }),
+          makeEntry({ content: "around-older vec-work-strong", importance: 7 }),
+        ],
+        "sk-test",
+        {
+          sourceFile: "recall-around-test.jsonl",
+          ingestContentHash: "hash-around-scoring",
+          embedFn: mockEmbed,
+          force: true,
+        },
+      );
+
+      await client.execute({
+        sql: "UPDATE entries SET created_at = ?, updated_at = ? WHERE content = ?",
+        args: ["2026-02-15T00:00:00.000Z", "2026-02-15T00:00:00.000Z", "around-center vec-work-strong"],
+      });
+      await client.execute({
+        sql: "UPDATE entries SET created_at = ?, updated_at = ? WHERE content = ?",
+        args: ["2026-02-26T00:00:00.000Z", "2026-02-26T00:00:00.000Z", "around-recent vec-work-strong"],
+      });
+      await client.execute({
+        sql: "UPDATE entries SET created_at = ?, updated_at = ? WHERE content = ?",
+        args: ["2026-02-04T00:00:00.000Z", "2026-02-04T00:00:00.000Z", "around-older vec-work-strong"],
+      });
+
+      const now = new Date("2026-02-27T00:00:00.000Z");
+      const defaultResults = await recall(
+        client,
+        { text: "work", limit: 3, noUpdate: true },
+        "sk-test",
+        { embedFn: mockEmbed, now },
+      );
+      expect(defaultResults[0]?.entry.content).toBe("around-recent vec-work-strong");
+
+      const aroundResults = await recall(
+        client,
+        { text: "work", around: "2026-02-15T00:00:00.000Z", limit: 3, noUpdate: true },
+        "sk-test",
+        { embedFn: mockEmbed, now },
+      );
+      expect(aroundResults[0]?.entry.content).toBe("around-center vec-work-strong");
+    });
+
+    it("auto-sets since/until around the target date when not explicitly provided", async () => {
+      const client = makeClient();
+      await initDb(client);
+
+      await storeEntries(
+        client,
+        [
+          makeEntry({ content: "around-window-old vec-work-strong", importance: 7 }),
+          makeEntry({ content: "around-window-low vec-work-strong", importance: 7 }),
+          makeEntry({ content: "around-window-center vec-work-strong", importance: 7 }),
+          makeEntry({ content: "around-window-high vec-work-strong", importance: 7 }),
+          makeEntry({ content: "around-window-new vec-work-strong", importance: 7 }),
+        ],
+        "sk-test",
+        {
+          sourceFile: "recall-around-window-test.jsonl",
+          ingestContentHash: "hash-around-window-defaults",
+          embedFn: mockEmbed,
+          force: true,
+        },
+      );
+
+      await client.execute({
+        sql: "UPDATE entries SET created_at = ?, updated_at = ? WHERE content = ?",
+        args: ["2026-01-20T00:00:00.000Z", "2026-01-20T00:00:00.000Z", "around-window-old vec-work-strong"],
+      });
+      await client.execute({
+        sql: "UPDATE entries SET created_at = ?, updated_at = ? WHERE content = ?",
+        args: ["2026-02-05T00:00:00.000Z", "2026-02-05T00:00:00.000Z", "around-window-low vec-work-strong"],
+      });
+      await client.execute({
+        sql: "UPDATE entries SET created_at = ?, updated_at = ? WHERE content = ?",
+        args: ["2026-02-15T00:00:00.000Z", "2026-02-15T00:00:00.000Z", "around-window-center vec-work-strong"],
+      });
+      await client.execute({
+        sql: "UPDATE entries SET created_at = ?, updated_at = ? WHERE content = ?",
+        args: ["2026-02-28T00:00:00.000Z", "2026-02-28T00:00:00.000Z", "around-window-high vec-work-strong"],
+      });
+      await client.execute({
+        sql: "UPDATE entries SET created_at = ?, updated_at = ? WHERE content = ?",
+        args: ["2026-03-05T00:00:00.000Z", "2026-03-05T00:00:00.000Z", "around-window-new vec-work-strong"],
+      });
+
+      const results = await recall(
+        client,
+        {
+          text: "",
+          context: "session-start",
+          around: "2026-02-15T00:00:00.000Z",
+          limit: 20,
+          noUpdate: true,
+        },
+        "sk-test",
+        { now: new Date("2026-03-01T00:00:00.000Z") },
+      );
+
+      const contents = new Set(results.map((row) => row.entry.content));
+      expect(contents.has("around-window-low vec-work-strong")).toBe(true);
+      expect(contents.has("around-window-center vec-work-strong")).toBe(true);
+      expect(contents.has("around-window-high vec-work-strong")).toBe(true);
+      expect(contents.has("around-window-old vec-work-strong")).toBe(false);
+      expect(contents.has("around-window-new vec-work-strong")).toBe(false);
+    });
+
+    it("respects explicit since/until when around is provided", async () => {
+      const client = makeClient();
+      await initDb(client);
+
+      await storeEntries(
+        client,
+        [
+          makeEntry({ content: "around-explicit-center vec-work-strong", importance: 7 }),
+          makeEntry({ content: "around-explicit-in-range vec-work-strong", importance: 7 }),
+        ],
+        "sk-test",
+        {
+          sourceFile: "recall-around-explicit-test.jsonl",
+          ingestContentHash: "hash-around-explicit-range",
+          embedFn: mockEmbed,
+          force: true,
+        },
+      );
+
+      await client.execute({
+        sql: "UPDATE entries SET created_at = ?, updated_at = ? WHERE content = ?",
+        args: ["2026-02-15T00:00:00.000Z", "2026-02-15T00:00:00.000Z", "around-explicit-center vec-work-strong"],
+      });
+      await client.execute({
+        sql: "UPDATE entries SET created_at = ?, updated_at = ? WHERE content = ?",
+        args: ["2026-02-24T00:00:00.000Z", "2026-02-24T00:00:00.000Z", "around-explicit-in-range vec-work-strong"],
+      });
+
+      const results = await recall(
+        client,
+        {
+          text: "",
+          context: "session-start",
+          around: "2026-02-15T00:00:00.000Z",
+          since: "2026-02-20T00:00:00.000Z",
+          until: "2026-02-26T00:00:00.000Z",
+          limit: 20,
+          noUpdate: true,
+        },
+        "sk-test",
+        { now: new Date("2026-03-01T00:00:00.000Z") },
+      );
+
+      expect(results.map((row) => row.entry.content)).toEqual(["around-explicit-in-range vec-work-strong"]);
+    });
+
+    it("around radius changes both gaussian width and default window size", async () => {
+      const around = new Date("2026-02-15T00:00:00.000Z");
+      const narrow = gaussianRecency(new Date("2026-02-21T00:00:00.000Z"), around, 6);
+      const wide = gaussianRecency(new Date("2026-02-21T00:00:00.000Z"), around, 20);
+      expect(wide).toBeGreaterThan(narrow);
+
+      const client = makeClient();
+      await initDb(client);
+      await storeEntries(
+        client,
+        [
+          makeEntry({ content: "around-radius-center vec-work-strong", importance: 7 }),
+          makeEntry({ content: "around-radius-edge vec-work-strong", importance: 7 }),
+        ],
+        "sk-test",
+        {
+          sourceFile: "recall-around-radius-test.jsonl",
+          ingestContentHash: "hash-around-radius-window",
+          embedFn: mockEmbed,
+          force: true,
+        },
+      );
+
+      await client.execute({
+        sql: "UPDATE entries SET created_at = ?, updated_at = ? WHERE content = ?",
+        args: ["2026-02-15T00:00:00.000Z", "2026-02-15T00:00:00.000Z", "around-radius-center vec-work-strong"],
+      });
+      await client.execute({
+        sql: "UPDATE entries SET created_at = ?, updated_at = ? WHERE content = ?",
+        args: ["2026-02-25T00:00:00.000Z", "2026-02-25T00:00:00.000Z", "around-radius-edge vec-work-strong"],
+      });
+
+      const narrowResults = await recall(
+        client,
+        {
+          text: "",
+          context: "session-start",
+          around: "2026-02-15T00:00:00.000Z",
+          aroundRadius: 7,
+          limit: 20,
+          noUpdate: true,
+        },
+        "sk-test",
+        { now: new Date("2026-03-01T00:00:00.000Z") },
+      );
+      expect(narrowResults.map((row) => row.entry.content)).toEqual(["around-radius-center vec-work-strong"]);
+
+      const wideResults = await recall(
+        client,
+        {
+          text: "",
+          context: "session-start",
+          around: "2026-02-15T00:00:00.000Z",
+          aroundRadius: 14,
+          limit: 20,
+          noUpdate: true,
+        },
+        "sk-test",
+        { now: new Date("2026-03-01T00:00:00.000Z") },
+      );
+      expect(new Set(wideResults.map((row) => row.entry.content))).toEqual(
+        new Set(["around-radius-center vec-work-strong", "around-radius-edge vec-work-strong"]),
+      );
+    });
+  });
+
   it("schema includes retirement and suppression columns", async () => {
     const client = makeClient();
     await initDb(client);
@@ -1512,6 +1761,36 @@ describe("db recall", () => {
           "browse-window-boundary-high vec-work-strong",
         ]),
       );
+    });
+
+    it("supports around targeting in browse mode", async () => {
+      const client = makeClient();
+      await initDb(client);
+      await storeBrowseEntries(client, [
+        makeEntry({ content: "browse-around-before vec-work-strong", importance: 7 }),
+        makeEntry({ content: "browse-around-center vec-work-strong", importance: 7 }),
+        makeEntry({ content: "browse-around-after vec-work-strong", importance: 7 }),
+        makeEntry({ content: "browse-around-too-old vec-work-strong", importance: 7 }),
+      ]);
+
+      await setCreatedAt(client, "browse-around-before vec-work-strong", "2026-02-10T00:00:00.000Z");
+      await setCreatedAt(client, "browse-around-center vec-work-strong", "2026-02-15T00:00:00.000Z");
+      await setCreatedAt(client, "browse-around-after vec-work-strong", "2026-02-20T00:00:00.000Z");
+      await setCreatedAt(client, "browse-around-too-old vec-work-strong", "2026-01-20T00:00:00.000Z");
+
+      const results = await recall(
+        client,
+        {
+          browse: true,
+          around: "2026-02-15T00:00:00.000Z",
+          limit: 10,
+        },
+        "",
+        { now: new Date("2026-02-27T00:00:00.000Z") },
+      );
+
+      expect(results.map((row) => row.entry.content)).not.toContain("browse-around-too-old vec-work-strong");
+      expect(results[0]?.entry.content).toBe("browse-around-center vec-work-strong");
     });
 
     it("respects limit in browse mode", async () => {

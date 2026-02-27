@@ -9,6 +9,7 @@ import type { KnowledgePlatform, RecallQuery, RecallResult, Scope, StoredEntry }
 
 const DEFAULT_VECTOR_CANDIDATE_LIMIT = 50;
 const DEFAULT_LIMIT = 10;
+export const DEFAULT_AROUND_RADIUS_DAYS = 14;
 const recallMetadataQueue = new WeakMap<Client, Promise<void>>();
 
 export interface CandidateRow {
@@ -21,6 +22,8 @@ export interface RecallOptions {
   now?: Date;
   vectorCandidateLimit?: number;
   sessionCandidateLimit?: number;
+  around?: Date;
+  aroundRadius?: number;
 }
 
 function mapBufferToVector(value: InValue | undefined): number[] {
@@ -262,6 +265,27 @@ export function recency(daysOld: number, tier: string): number {
   return Math.pow(1 + (FACTOR * Math.max(daysOld, 0)) / hl, DECAY);
 }
 
+function resolveAroundRadiusDays(radius: number | undefined): number {
+  const raw = radius ?? DEFAULT_AROUND_RADIUS_DAYS;
+  if (!Number.isFinite(raw) || raw <= 0) {
+    throw new Error("aroundRadius must be a positive number of days.");
+  }
+  return raw;
+}
+
+export function gaussianRecency(entryCreatedAt: Date, aroundDate: Date, radiusDays: number): number {
+  const entryMs = entryCreatedAt.getTime();
+  const aroundMs = aroundDate.getTime();
+  if (!Number.isFinite(entryMs) || !Number.isFinite(aroundMs)) {
+    return 0;
+  }
+
+  const resolvedRadius = resolveAroundRadiusDays(radiusDays);
+  const sigma = resolvedRadius / 2;
+  const deltaDays = (entryMs - aroundMs) / (1000 * 60 * 60 * 24);
+  return Math.exp(-0.5 * Math.pow(deltaDays / sigma, 2));
+}
+
 export function importanceScore(importance: number): number {
   const normalized = normalizeImportance(importance);
   return 0.55 + ((normalized - 1) / 9) * 0.45;
@@ -337,6 +361,8 @@ export function scoreEntryWithBreakdown(
   ftsMatch: boolean,
   now: Date,
   freshnessNow: Date = now,
+  aroundDate?: Date,
+  aroundRadius: number = DEFAULT_AROUND_RADIUS_DAYS,
 ): { score: number; scores: RecallResult["scores"] } {
   const daysOld = parseDaysBetween(now, entry.created_at);
   const daysSinceRecall = entry.last_recalled_at
@@ -345,7 +371,9 @@ export function scoreEntryWithBreakdown(
 
   const rawVector = clamp01(vectorSim);
   const sim = Math.pow(rawVector, 0.7);
-  const rec = recency(daysOld, entry.expiry);
+  const rec = aroundDate
+    ? gaussianRecency(new Date(entry.created_at), aroundDate, aroundRadius)
+    : recency(daysOld, entry.expiry);
   const imp = importanceScore(entry.importance);
   const recallBase = recallStrength(entry.recall_count, daysSinceRecall, entry.expiry);
 
@@ -389,10 +417,28 @@ export function scoreEntry(entry: StoredEntry, vectorSim: number, ftsMatch: bool
   return scoreEntryWithBreakdown(entry, vectorSim, ftsMatch, now).score;
 }
 
-export function scoreBrowseEntry(entry: StoredEntry, now: Date): number {
+function browseRecencyFactor(
+  entry: StoredEntry,
+  now: Date,
+  aroundDate?: Date,
+  aroundRadius: number = DEFAULT_AROUND_RADIUS_DAYS,
+): number {
+  if (aroundDate) {
+    return gaussianRecency(new Date(entry.created_at), aroundDate, aroundRadius);
+  }
+
   const daysOld = parseDaysBetween(now, entry.created_at);
   const HALF_LIFE_DAYS = 30.0;
-  const recencyFactor = Math.exp(-(daysOld / HALF_LIFE_DAYS) * Math.LN2);
+  return Math.exp(-(daysOld / HALF_LIFE_DAYS) * Math.LN2);
+}
+
+export function scoreBrowseEntry(
+  entry: StoredEntry,
+  now: Date,
+  aroundDate?: Date,
+  aroundRadius: number = DEFAULT_AROUND_RADIUS_DAYS,
+): number {
+  const recencyFactor = browseRecencyFactor(entry, now, aroundDate, aroundRadius);
   const impScore = importanceScore(entry.importance);
   return clamp01(impScore * recencyFactor);
 }
@@ -818,8 +864,10 @@ function scoreSessionEntry(
   entry: StoredEntry,
   effectiveNow: Date,
   freshnessNow: Date,
+  aroundDate?: Date,
+  aroundRadius: number = DEFAULT_AROUND_RADIUS_DAYS,
 ): { score: number; scores: RecallResult["scores"] } {
-  return scoreEntryWithBreakdown(entry, 1.0, false, effectiveNow, freshnessNow);
+  return scoreEntryWithBreakdown(entry, 1.0, false, effectiveNow, freshnessNow, aroundDate, aroundRadius);
 }
 
 export async function recall(
@@ -845,6 +893,30 @@ export async function recall(
     throw new Error("--no-boost requires query text.");
   }
 
+  let aroundDate = options.around;
+  if (aroundDate && !Number.isFinite(aroundDate.getTime())) {
+    throw new Error("Invalid around value: options.around must be a valid date.");
+  }
+  if (!aroundDate && query.around && query.around.trim().length > 0) {
+    try {
+      aroundDate = parseSince(query.around, now);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`Invalid around value "${query.around}": ${reason}`);
+    }
+  }
+
+  let aroundRadiusDays = DEFAULT_AROUND_RADIUS_DAYS;
+  if (aroundDate || query.aroundRadius !== undefined || options.aroundRadius !== undefined) {
+    try {
+      aroundRadiusDays = resolveAroundRadiusDays(query.aroundRadius ?? options.aroundRadius);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      const rawRadius = query.aroundRadius ?? options.aroundRadius;
+      throw new Error(`Invalid around-radius value "${rawRadius ?? ""}": ${reason}`);
+    }
+  }
+
   const normalizedTags = normalizeTags(query.tags);
   let cutoff: Date | undefined;
   try {
@@ -861,6 +933,16 @@ export async function recall(
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     throw new Error(`Invalid until value "${query.until ?? ""}": ${reason}`);
+  }
+
+  if (aroundDate) {
+    const radiusMs = aroundRadiusDays * 24 * 60 * 60 * 1000;
+    if (!cutoff) {
+      cutoff = new Date(aroundDate.getTime() - radiusMs);
+    }
+    if (!ceiling) {
+      ceiling = new Date(aroundDate.getTime() + radiusMs);
+    }
   }
 
   if (cutoff !== undefined && ceiling !== undefined && cutoff > ceiling) {
@@ -884,19 +966,27 @@ export async function recall(
       ? Math.floor(query.limit as number)
       : DEFAULT_LIMIT;
     const browseLimit = Math.max(requestedLimit * 3, 50);
-    const browseCandidates = await fetchBrowseCandidates(db, query, browseLimit, now);
+    const browseQuery: RecallQuery = {
+      ...query,
+      since: query.since ?? cutoff?.toISOString(),
+      until: query.until ?? ceiling?.toISOString(),
+    };
+    const browseCandidates = await fetchBrowseCandidates(db, browseQuery, browseLimit, now);
     const filtered = browseCandidates.filter((candidate) =>
       passesFilters(candidate.entry, query, cutoff, ceiling, allowedScopes, normalizedTags, false),
     );
 
     const scored: RecallResult[] = filtered.map((candidate) => {
-      const score = scoreBrowseEntry(candidate.entry, now);
+      const score = scoreBrowseEntry(candidate.entry, now, aroundDate, aroundRadiusDays);
+      const recencyScore = aroundDate
+        ? gaussianRecency(new Date(candidate.entry.created_at), aroundDate, aroundRadiusDays)
+        : recency(parseDaysBetween(now, candidate.entry.created_at), candidate.entry.expiry);
       return {
         entry: candidate.entry,
         score,
         scores: {
           vector: 0,
-          recency: recency(parseDaysBetween(now, candidate.entry.created_at), candidate.entry.expiry),
+          recency: recencyScore,
           importance: importanceScore(candidate.entry.importance),
           recall: 0,
           freshness: 1,
@@ -968,15 +1058,16 @@ export async function recall(
       ? await runFts(db, effectiveText, platform, project, excludeProject, projectStrict)
       : new Set<string>();
 
-  // effectiveNow shifts the recency decay anchor to the window end for historical queries.
+  // effectiveNow shifts the recency anchor for historical queries:
+  // aroundDate (if provided) -> window end (ceiling) -> real now.
   // freshnessBoost always uses real `now` -- it is a live-query signal, not a window signal.
-  const effectiveNow = ceiling ?? now;
+  const effectiveNow = aroundDate ?? ceiling ?? now;
 
   const scored: RecallResult[] = filtered.map((candidate) => {
     const ftsMatch = ftsMatches.has(candidate.entry.id);
 
     if (!text) {
-      const sessionScore = scoreSessionEntry(candidate.entry, effectiveNow, now);
+      const sessionScore = scoreSessionEntry(candidate.entry, effectiveNow, now, aroundDate, aroundRadiusDays);
       return {
         entry: candidate.entry,
         score: sessionScore.score,
@@ -1003,7 +1094,15 @@ export async function recall(
       };
     }
 
-    const detailed = scoreEntryWithBreakdown(candidate.entry, candidate.vectorSim, ftsMatch, effectiveNow, now);
+    const detailed = scoreEntryWithBreakdown(
+      candidate.entry,
+      candidate.vectorSim,
+      ftsMatch,
+      effectiveNow,
+      now,
+      aroundDate,
+      aroundRadiusDays,
+    );
     return {
       entry: candidate.entry,
       score: detailed.score,

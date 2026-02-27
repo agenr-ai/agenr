@@ -164,6 +164,8 @@ agenr recall [options] [query]
 - `--min-importance <n>`: minimum importance (1-10).
 - `--since <duration>`: recency filter (`1h`, `7d`, `30d`, `1y`, or ISO timestamp).
 - `--until <date>`: upper recency cap (`1h`, `7d`, `1m`, `1y`, or ISO timestamp). Includes entries at or before this time.
+- `--around <date>`: target date for temporal scoring (`1h`, `7d`, `1m`, `1y`, or ISO timestamp). Recency peaks at this date instead of now.
+- `--around-radius <days>`: radius for `--around` default window and gaussian recency width (default `14` days).
 - `--expiry <level>`: `core|permanent|temporary`.
 - `--platform <name>`: platform filter (`openclaw|claude-code|codex|plaud`).
 - `--project <name>`: project filter (repeatable for multiple).
@@ -992,6 +994,7 @@ The `--browse` flag activates a SQL-only temporal browse path:
 - Results are sorted by importance and date (with deterministic recency-decay scoring).
 - Zero embedding/OpenAI API calls are made.
 - Recall metadata is not incremented in browse mode.
+- With `--around`, browse mode uses gaussian temporal scoring centered on the target date and auto-applies a symmetric date window when `--since`/`--until` are omitted.
 
 ### `--budget` behavior
 

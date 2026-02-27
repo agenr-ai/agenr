@@ -111,6 +111,25 @@ describe("db session-start", () => {
     expect(Array.isArray(nonCoreCall?.expiry) ? [...nonCoreCall.expiry].sort().join(",") : "").toBe("permanent,temporary");
   });
 
+  it("session-start does not inject default --since when --around is provided", async () => {
+    const seen: Array<{ expiry: string | string[] | undefined; since: string | undefined; around: string | undefined }> = [];
+    const recallFn: NonNullable<Parameters<typeof sessionStartRecall>[1]["recallFn"]> = async (_db, query, _apiKey) => {
+      seen.push({ expiry: query.expiry, since: query.since, around: query.around });
+      return [];
+    };
+
+    await sessionStartRecall({} as unknown as Client, {
+      query: { text: "", around: "2026-02-15T00:00:00.000Z" },
+      apiKey: "sk-test",
+      nonCoreLimit: 10,
+      recallFn,
+    });
+
+    expect(seen.length).toBe(2);
+    expect(seen.every((call) => call.since === undefined)).toBe(true);
+    expect(seen.every((call) => call.around === "2026-02-15T00:00:00.000Z")).toBe(true);
+  });
+
   it("dynamic budget allocation: zero todos yields zero active budget", () => {
     const split = computeBudgetSplit({ active: 0, preferences: 20, recent: 80 }, 1000);
     expect(split.activeBudget).toBe(0);
