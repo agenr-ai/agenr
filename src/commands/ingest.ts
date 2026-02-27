@@ -996,6 +996,28 @@ export async function runIngestCommand(
       if (skipIngested && !force) {
         const alreadyIngested = await isAlreadyIngested(db, target.file, fileHash);
         if (alreadyIngested) {
+          // Backfill co-recall edges for already-ingested files that lack them.
+          if (!dryRun) {
+            try {
+              const existingIds = await queue.runExclusive(() => getSourceEntryIds(db, target.file));
+              if (existingIds.size >= 2) {
+                const idArr = [...existingIds];
+                const edgeCheck = await queue.runExclusive(async () =>
+                  db.execute({
+                    sql: "SELECT 1 FROM co_recall_edges WHERE entry_a = ? AND entry_b = ? LIMIT 1",
+                    args: [idArr[0]!, idArr[1]!],
+                  }),
+                );
+                if (edgeCheck.rows.length === 0) {
+                  const { strengthenCoRecallEdges } = await import("../db/co-recall.js");
+                  const edgeTimestamp = resolvedDeps.nowFn().toISOString();
+                  await queue.runExclusive(() => strengthenCoRecallEdges(db, idArr, edgeTimestamp));
+                }
+              }
+            } catch (_edgeError) {
+              // Non-fatal: edge backfill failure should not fail the skip path.
+            }
+          }
           fileResult.skipped = true;
           fileResult.skipReason = "already ingested";
           return fileResult;
