@@ -1,6 +1,6 @@
 {
   "name": "agenr",
-  "version": "0.9.10",
+  "version": "0.9.11",
   "openclaw": {
     "extensions": [
       "dist/openclaw-plugin/index.js"

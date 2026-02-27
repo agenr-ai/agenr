@@ -155,14 +155,20 @@ export async function llmDedupCheck(
   entryB: ActiveEmbeddedEntry,
 ): Promise<boolean> {
   try {
-    const response = await runSimpleStream({
-      model: llmClient.resolvedModel.model,
-      context: buildLlmDedupContext(entryA, entryB),
-      options: {
-        apiKey: llmClient.credentials.apiKey,
-      },
-      verbose: false,
-    });
+    const timeoutMs = 15_000;
+    const response = await Promise.race([
+      runSimpleStream({
+        model: llmClient.resolvedModel.model,
+        context: buildLlmDedupContext(entryA, entryB),
+        options: {
+          apiKey: llmClient.credentials.apiKey,
+        },
+        verbose: false,
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("llmDedupCheck timed out")), timeoutMs),
+      ),
+    ]);
 
     if (response.stopReason === "error" || response.errorMessage) {
       return false;
