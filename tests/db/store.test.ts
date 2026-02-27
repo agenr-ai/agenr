@@ -895,6 +895,44 @@ describe("db store pipeline", () => {
     expect(asNumber(row.rows[0]?.claim_confidence)).toBeCloseTo(0.9, 6);
   });
 
+  it("loads entity hints once per batch and passes hints to claim extraction", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    const getDistinctEntitiesSpy = vi.spyOn(claimExtractionModule, "getDistinctEntities").mockResolvedValue(["alex"]);
+    const extractClaimSpy = vi.spyOn(claimExtractionModule, "extractClaim").mockResolvedValue({
+      subjectEntity: "alex",
+      subjectAttribute: "weight",
+      subjectKey: "alex/weight",
+      predicate: "weighs",
+      object: "185 lbs",
+      confidence: 0.9,
+    });
+
+    const result = await storeEntries(
+      client,
+      [
+        makeEntry({ content: "entry one vec-low", sourceFile: "incoming-a.jsonl", subject: "first subject" }),
+        makeEntry({ content: "entry two vec-v4", sourceFile: "incoming-b.jsonl", subject: "second subject" }),
+      ],
+      "sk-test",
+      {
+        embedFn: mockEmbed,
+        force: true,
+        llmClient: makeLlmClient(),
+      },
+    );
+
+    expect(result.added).toBe(2);
+    expect(getDistinctEntitiesSpy).toHaveBeenCalledTimes(1);
+    expect(extractClaimSpy).toHaveBeenCalledTimes(2);
+
+    const firstCallOptions = extractClaimSpy.mock.calls[0]?.[4];
+    const secondCallOptions = extractClaimSpy.mock.calls[1]?.[4];
+    expect(firstCallOptions).toMatchObject({ entityHints: ["alex"] });
+    expect(secondCallOptions).toMatchObject({ entityHints: ["alex"] });
+  });
+
   it("does not run claim extraction when dedup decides SKIP", async () => {
     const client = makeClient();
     await initDb(client);

@@ -183,9 +183,14 @@ function makeDetectDb(rows: DetectRow[]): Client {
   return { execute } as unknown as Client;
 }
 
-function makeSubjectIndexMock(ids: string[]): SubjectIndex {
+function makeSubjectIndexMock(
+  ids: string[],
+  options?: { fuzzyIds?: string[]; crossEntityIds?: string[] },
+): SubjectIndex {
   const lookup = vi.fn(() => ids);
-  return { lookup, remove: vi.fn() } as unknown as SubjectIndex;
+  const fuzzyLookup = vi.fn(() => options?.fuzzyIds ?? []);
+  const crossEntityLookup = vi.fn(() => options?.crossEntityIds ?? []);
+  return { lookup, fuzzyLookup, crossEntityLookup, remove: vi.fn() } as unknown as SubjectIndex;
 }
 
 function zeroEmbedding(dimensions = 1024): number[] {
@@ -492,6 +497,191 @@ describe("contradiction", () => {
     expect(
       (subjectIndex as unknown as { lookup: ReturnType<typeof vi.fn> }).lookup,
     ).not.toHaveBeenCalled();
+  });
+
+  it("includes embedding candidates at similarity 0.6 with default contradiction threshold", async () => {
+    const db = makeDetectDb([]);
+    const subjectIndex = makeSubjectIndexMock([]);
+    findSimilarMock.mockResolvedValue([
+      {
+        entry: makeStoredEntry({ id: "sim-06", content: "similar contradiction candidate" }),
+        similarity: 0.6,
+      },
+    ]);
+    vi.mocked(runSimpleStream).mockResolvedValueOnce(
+      makeToolMessage({
+        relation: "contradicts",
+        confidence: 0.8,
+        explanation: "same attribute, conflicting value",
+      }),
+    );
+
+    const detected = await contradictionModule.detectContradictions(
+      db,
+      {
+        content: "new content",
+        type: "fact",
+        subject: "new-subject",
+        importance: 7,
+      },
+      zeroEmbedding(),
+      subjectIndex,
+      makeLlmClient(),
+    );
+
+    expect(detected).toHaveLength(1);
+    expect(detected[0]?.existingEntryId).toBe("sim-06");
+  });
+
+  it("falls back to fuzzy subject lookup when exact lookup has no results", async () => {
+    const db = makeDetectDb([
+      {
+        id: "entry-fuzzy",
+        content: "Alex switched to Mediterranean diet",
+        type: "fact",
+        subject: "Alex diet",
+        importance: 7,
+        createdAt: "2026-02-24T00:00:00.000Z",
+      },
+    ]);
+    const subjectIndex = makeSubjectIndexMock([], { fuzzyIds: ["entry-fuzzy"] });
+    findSimilarMock.mockResolvedValue([]);
+    vi.mocked(runSimpleStream).mockResolvedValueOnce(
+      makeToolMessage({
+        relation: "supersedes",
+        confidence: 0.9,
+        explanation: "new diet update",
+      }),
+    );
+
+    const detected = await contradictionModule.detectContradictions(
+      db,
+      {
+        content: "Alex is doing keto now",
+        type: "fact",
+        subject: "Alex diet",
+        subjectKey: "alex/diet",
+        importance: 7,
+      },
+      zeroEmbedding(),
+      subjectIndex,
+      makeLlmClient(),
+    );
+
+    expect(detected).toHaveLength(1);
+    expect(detected[0]?.existingEntryId).toBe("entry-fuzzy");
+    expect(
+      (subjectIndex as unknown as { fuzzyLookup: ReturnType<typeof vi.fn> }).fuzzyLookup,
+    ).toHaveBeenCalledWith("alex/diet");
+  });
+
+  it("uses cross-entity lookup for same attribute conflicts when subject key is present", async () => {
+    const db = makeDetectDb([
+      {
+        id: "entry-user-weight",
+        content: "User weighs 175 lbs",
+        type: "fact",
+        subject: "User weight",
+        importance: 7,
+        createdAt: "2026-02-24T00:00:00.000Z",
+      },
+    ]);
+    const subjectIndex = makeSubjectIndexMock([], { crossEntityIds: ["entry-user-weight"] });
+    findSimilarMock.mockResolvedValue([]);
+    vi.mocked(runSimpleStream).mockResolvedValueOnce(
+      makeToolMessage({
+        relation: "supersedes",
+        confidence: 0.88,
+        explanation: "same attribute, newer value",
+      }),
+    );
+
+    const detected = await contradictionModule.detectContradictions(
+      db,
+      {
+        content: "Alex weighs 185 lbs",
+        type: "fact",
+        subject: "Alex weight",
+        subjectKey: "alex/weight",
+        importance: 7,
+      },
+      zeroEmbedding(),
+      subjectIndex,
+      makeLlmClient(),
+    );
+
+    expect(detected).toHaveLength(1);
+    expect(detected[0]?.existingEntryId).toBe("entry-user-weight");
+    expect(
+      (subjectIndex as unknown as { crossEntityLookup: ReturnType<typeof vi.fn> }).crossEntityLookup,
+    ).toHaveBeenCalledWith("alex/weight");
+  });
+
+  it("dedupes candidate ids across fuzzy, cross-entity, and embedding sources", async () => {
+    const db = makeDetectDb([
+      {
+        id: "entry-shared",
+        content: "shared",
+        type: "fact",
+        subject: "shared",
+        importance: 7,
+        createdAt: "2026-02-24T00:00:00.000Z",
+      },
+      {
+        id: "entry-fuzzy-only",
+        content: "fuzzy only",
+        type: "fact",
+        subject: "fuzzy",
+        importance: 7,
+        createdAt: "2026-02-23T00:00:00.000Z",
+      },
+      {
+        id: "entry-cross-only",
+        content: "cross only",
+        type: "fact",
+        subject: "cross",
+        importance: 7,
+        createdAt: "2026-02-22T00:00:00.000Z",
+      },
+    ]);
+    const subjectIndex = makeSubjectIndexMock([], {
+      fuzzyIds: ["entry-shared", "entry-fuzzy-only"],
+      crossEntityIds: ["entry-shared", "entry-cross-only"],
+    });
+    findSimilarMock.mockResolvedValue([
+      {
+        entry: makeStoredEntry({ id: "entry-shared", content: "shared", createdAt: "2026-02-21T00:00:00.000Z" }),
+        similarity: 0.9,
+      },
+    ]);
+    vi.mocked(runSimpleStream).mockImplementation(async () =>
+      makeToolMessage({
+        relation: "coexists",
+        confidence: 0.8,
+        explanation: "related",
+      }),
+    );
+
+    const detected = await contradictionModule.detectContradictions(
+      db,
+      {
+        content: "new content",
+        type: "fact",
+        subject: "new-subject",
+        subjectKey: "alex/weight",
+        importance: 7,
+      },
+      zeroEmbedding(),
+      subjectIndex,
+      makeLlmClient(),
+    );
+
+    expect(detected.map((entry) => entry.existingEntryId).sort()).toEqual([
+      "entry-cross-only",
+      "entry-fuzzy-only",
+      "entry-shared",
+    ]);
+    expect(runSimpleStream).toHaveBeenCalledTimes(3);
   });
 
   it("uses both subject index and embedding when subject has fewer than 3 matches", async () => {
