@@ -1002,13 +1002,17 @@ export async function runIngestCommand(
               const existingIds = await queue.runExclusive(() => getSourceEntryIds(db, target.file));
               if (existingIds.size >= 2) {
                 const idArr = [...existingIds];
-                const edgeCheck = await queue.runExclusive(async () =>
-                  db.execute({
-                    sql: "SELECT 1 FROM co_recall_edges WHERE entry_a = ? AND entry_b = ? LIMIT 1",
-                    args: [idArr[0]!, idArr[1]!],
-                  }),
-                );
-                if (edgeCheck.rows.length === 0) {
+                const expectedEdges = (idArr.length * (idArr.length - 1)) / 2;
+                const edgeCount = await queue.runExclusive(async () => {
+                  const result = await db.execute({
+                    sql: `SELECT COUNT(*) AS cnt FROM co_recall_edges
+                          WHERE entry_a IN (${idArr.map(() => "?").join(",")})
+                            AND entry_b IN (${idArr.map(() => "?").join(",")})`,
+                    args: [...idArr, ...idArr],
+                  });
+                  return Number(result.rows[0]?.cnt ?? 0);
+                });
+                if (edgeCount < expectedEdges) {
                   const { strengthenCoRecallEdges } = await import("../db/co-recall.js");
                   const edgeTimestamp = resolvedDeps.nowFn().toISOString();
                   await queue.runExclusive(() => strengthenCoRecallEdges(db, idArr, edgeTimestamp));

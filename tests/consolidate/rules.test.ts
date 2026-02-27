@@ -404,6 +404,33 @@ describe("consolidate rules", () => {
     expect(supersedesRelations.rows.map((row) => asString(row.target_id)).sort()).toEqual([id1, id3].sort());
   });
 
+  it("merges near-duplicates with similar but not identical embeddings (in-memory cosine)", async () => {
+    // Seeds 10 and 11 produce cosine similarity ~0.9956, above MERGE_SIMILARITY_THRESHOLD (0.95).
+    // This verifies the in-memory cosineSim comparison works correctly for non-identical embeddings.
+    const id1 = await insertTestEntry({
+      content: "similar entry one",
+      subject: "Cosine Test",
+      type: "fact",
+      confirmations: 1,
+      seed: 10,
+      tags: ["x"],
+    });
+    const id2 = await insertTestEntry({
+      content: "similar entry two",
+      subject: "Cosine Test",
+      type: "fact",
+      confirmations: 3,
+      seed: 11,
+      tags: ["y"],
+    });
+
+    const stats = await consolidateRules(client, backupSourcePath);
+    expect(stats.mergedCount).toBe(1);
+
+    expect(await getSupersededBy(id1)).toBe(id2);
+    expect(await getSupersededBy(id2)).toBe(null);
+  });
+
   it("unions keeper tags from all merged sources", async () => {
     const idA = await insertTestEntry({
       content: "tag merge source",
