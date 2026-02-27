@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.9.14 - 2026-02-27
+
+### Fixed
+- Fixed a pi-ai dual module registry bug that caused bundled `streamSimple`
+  calls and consolidate LLM dedup pre-screening to silently fail. `tsup`
+  split pi-ai imports across separate ESM instances with separate API
+  registries; `runSimpleStream` now imports from
+  `@mariozechner/pi-ai/dist/stream.js` so provider registration and stream
+  lookup use the same registry instance.
+- Reverted the 0.9.13 workaround that made consolidate loose-band LLM dedup
+  opt-in only when `--loose-threshold` was set.
+
 ## 0.9.13 - 2026-02-27
 
 ### Changed
