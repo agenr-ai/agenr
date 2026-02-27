@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Client } from "@libsql/client";
-import { toNumber, toStringValue } from "../utils/entry-utils.js";
+import { toNumber, toRowsAffected, toStringValue } from "../utils/entry-utils.js";
 
 export const REVIEW_REASONS = ["low_quality", "contradicted", "stale", "manual"] as const;
 export const REVIEW_ACTIONS = ["retire", "review", "merge"] as const;
@@ -21,19 +21,6 @@ export interface PendingReviewItem {
   resolvedAt: string;
   entrySubject: string;
   entryContent: string;
-}
-
-function toRowsAffected(value: unknown): number {
-  if (typeof value === "number") {
-    return value;
-  }
-  if (typeof value === "bigint") {
-    return Number(value);
-  }
-  if (typeof value === "string" && value.trim().length > 0) {
-    return Number(value);
-  }
-  return 0;
 }
 
 function ensureReason(reason: string): ReviewReason {
@@ -65,29 +52,9 @@ export async function flagForReview(
     throw new Error("entryId is required");
   }
 
-  const existing = await db.execute({
-    sql: `
-      SELECT id
-      FROM review_queue
-      WHERE entry_id = ?
-        AND reason = ?
-        AND status = 'pending'
-      LIMIT 1
-    `,
-    args: [normalizedEntryId, normalizedReason],
-  });
-
-  if (existing.rows.length > 0) {
-    return {
-      created: false,
-      id: toStringValue((existing.rows[0] as { id?: unknown }).id) || null,
-    };
-  }
-
   const id = randomUUID();
   const createdAt = new Date().toISOString();
-
-  await db.execute({
+  const inserted = await db.execute({
     sql: `
       INSERT INTO review_queue (
         id,
@@ -99,9 +66,17 @@ export async function flagForReview(
         created_at
       )
       VALUES (?, ?, ?, ?, ?, 'pending', ?)
+      ON CONFLICT DO NOTHING
     `,
     args: [id, normalizedEntryId, normalizedReason, detail, normalizedAction, createdAt],
   });
+
+  if (toRowsAffected(inserted.rowsAffected) === 0) {
+    return {
+      created: false,
+      id: null,
+    };
+  }
 
   return { created: true, id };
 }
@@ -266,4 +241,20 @@ export async function getOldestPendingReviewCreatedAt(db: Client): Promise<strin
 
   const oldest = toStringValue((result.rows[0] as { oldest_created_at?: unknown } | undefined)?.oldest_created_at);
   return oldest || null;
+}
+
+export async function rehabilitateEntry(db: Client, entryId: string, floor = 0.3): Promise<void> {
+  const normalizedEntryId = entryId.trim();
+  if (!normalizedEntryId || !Number.isFinite(floor)) {
+    return;
+  }
+
+  await db.execute({
+    sql: `
+      UPDATE entries
+      SET quality_score = MAX(COALESCE(quality_score, 0.5), ?)
+      WHERE id = ?
+    `,
+    args: [floor, normalizedEntryId],
+  });
 }

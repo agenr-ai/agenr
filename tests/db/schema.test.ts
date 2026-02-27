@@ -37,6 +37,7 @@ describe("db schema", () => {
       "idx_co_recall_b",
       "idx_review_queue_status",
       "idx_review_queue_entry",
+      "idx_review_queue_pending_dedup",
       "idx_entries_embedding",
       "idx_entries_type",
       "idx_entries_type_canonical_key",
@@ -99,6 +100,7 @@ describe("db schema", () => {
         'idx_co_recall_b',
         'idx_review_queue_status',
         'idx_review_queue_entry',
+        'idx_review_queue_pending_dedup',
         'idx_entries_embedding',
         'idx_entries_type',
         'idx_entries_type_canonical_key',
@@ -120,7 +122,7 @@ describe("db schema", () => {
       )
       GROUP BY name
     `);
-    expect(namesResult.rows).toHaveLength(32);
+    expect(namesResult.rows).toHaveLength(33);
     for (const row of namesResult.rows as Array<{ count?: unknown }>) {
       expect(Number(row.count)).toBe(1);
     }

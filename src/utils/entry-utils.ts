@@ -23,6 +23,19 @@ export function toStringValue(value: unknown): string {
   return "";
 }
 
+export function toRowsAffected(value: unknown): number {
+  if (typeof value === "number") {
+    return value;
+  }
+  if (typeof value === "bigint") {
+    return Number(value);
+  }
+  if (typeof value === "string" && value.trim().length > 0) {
+    return Number(value);
+  }
+  return 0;
+}
+
 export function parseDaysBetween(now: Date, pastIso: string | undefined): number {
   if (!pastIso) {
     return 0;

@@ -1,8 +1,10 @@
 import type { Client } from "@libsql/client";
-import { toNumber, toStringValue } from "../utils/entry-utils.js";
+import { toNumber, toRowsAffected, toStringValue } from "../utils/entry-utils.js";
 
 const DEFAULT_EDGE_INCREMENT = 0.1;
+const MAX_USED_ENTRIES = 20;
 const MIN_EDGE_WEIGHT = 0.05;
+const CO_RECALL_EDGE_TYPE = "co_recalled";
 
 export interface CoRecallNeighbor {
   entryId: string;
@@ -23,19 +25,6 @@ function normalizePair(a: string, b: string): [string, string] {
   return a < b ? [a, b] : [b, a];
 }
 
-function toRowsAffected(value: unknown): number {
-  if (typeof value === "number") {
-    return value;
-  }
-  if (typeof value === "bigint") {
-    return Number(value);
-  }
-  if (typeof value === "string" && value.trim().length > 0) {
-    return Number(value);
-  }
-  return 0;
-}
-
 export async function strengthenCoRecallEdges(
   db: Client,
   usedEntryIds: string[],
@@ -47,7 +36,7 @@ export async function strengthenCoRecallEdges(
         .map((id) => id.trim())
         .filter((id) => id.length > 0),
     ),
-  );
+  ).slice(0, MAX_USED_ENTRIES);
 
   if (uniqueIds.length < 2) {
     return;
@@ -79,22 +68,22 @@ export async function strengthenCoRecallEdges(
       await db.execute({
         sql: `
           INSERT INTO co_recall_edges (
-            entry_a, entry_b, weight, session_count, last_co_recalled, created_at
+            entry_a, entry_b, edge_type, weight, session_count, last_co_recalled, created_at
           )
-          VALUES (?, ?, ?, 1, ?, ?)
-          ON CONFLICT(entry_a, entry_b)
+          VALUES (?, ?, ?, ?, 1, ?, ?)
+          ON CONFLICT
           DO UPDATE SET
-            weight = MIN(co_recall_edges.weight + ?, 1.0),
+            weight = MIN(co_recall_edges.weight + excluded.weight, 1.0),
             session_count = co_recall_edges.session_count + 1,
             last_co_recalled = excluded.last_co_recalled
         `,
         args: [
           entryA,
           entryB,
+          CO_RECALL_EDGE_TYPE,
           DEFAULT_EDGE_INCREMENT,
           now,
           now,
-          DEFAULT_EDGE_INCREMENT,
         ],
       });
     }
@@ -109,28 +98,47 @@ export async function strengthenCoRecallEdges(
   }
 }
 
+/**
+ * Decay all co-recall edge weights by the given factor and prune edges
+ * below the minimum threshold. Intended to run once per calendar day
+ * (not per session) via background maintenance. With decayFactor=0.95,
+ * this gives a half-life of ~14 days.
+ */
 export async function decayCoRecallEdges(db: Client, decayFactor = 0.95): Promise<number> {
   if (!Number.isFinite(decayFactor) || decayFactor < 0) {
     throw new Error("decayFactor must be a finite number >= 0");
   }
 
-  await db.execute({
-    sql: `
-      UPDATE co_recall_edges
-      SET weight = weight * ?
-    `,
-    args: [decayFactor],
-  });
+  await db.execute("BEGIN");
+  try {
+    await db.execute({
+      sql: `
+        UPDATE co_recall_edges
+        SET weight = weight * ?
+        WHERE edge_type = ?
+      `,
+      args: [decayFactor, CO_RECALL_EDGE_TYPE],
+    });
 
-  const pruned = await db.execute({
-    sql: `
-      DELETE FROM co_recall_edges
-      WHERE weight < ?
-    `,
-    args: [MIN_EDGE_WEIGHT],
-  });
+    const pruned = await db.execute({
+      sql: `
+        DELETE FROM co_recall_edges
+        WHERE edge_type = ?
+          AND weight < ?
+      `,
+      args: [CO_RECALL_EDGE_TYPE, MIN_EDGE_WEIGHT],
+    });
 
-  return toRowsAffected(pruned.rowsAffected);
+    await db.execute("COMMIT");
+    return toRowsAffected(pruned.rowsAffected);
+  } catch (error) {
+    try {
+      await db.execute("ROLLBACK");
+    } catch {
+      // Ignore rollback failures and rethrow original error.
+    }
+    throw error;
+  }
 }
 
 export async function getCoRecallNeighbors(
@@ -155,12 +163,13 @@ export async function getCoRecallNeighbors(
         session_count,
         last_co_recalled
       FROM co_recall_edges
-      WHERE (entry_a = ? OR entry_b = ?)
+      WHERE edge_type = ?
+        AND (entry_a = ? OR entry_b = ?)
         AND weight >= ?
       ORDER BY weight DESC, session_count DESC, last_co_recalled DESC
       LIMIT ?
     `,
-    args: [normalizedId, normalizedId, normalizedId, safeMinWeight, safeLimit],
+    args: [normalizedId, CO_RECALL_EDGE_TYPE, normalizedId, normalizedId, safeMinWeight, safeLimit],
   });
 
   return result.rows.map((row) => ({
@@ -177,10 +186,11 @@ export async function getTopCoRecallEdges(db: Client, limit = 20): Promise<CoRec
     sql: `
       SELECT entry_a, entry_b, weight, session_count, last_co_recalled
       FROM co_recall_edges
+      WHERE edge_type = ?
       ORDER BY weight DESC, session_count DESC, last_co_recalled DESC
       LIMIT ?
     `,
-    args: [safeLimit],
+    args: [CO_RECALL_EDGE_TYPE, safeLimit],
   });
 
   return result.rows.map((row) => ({
