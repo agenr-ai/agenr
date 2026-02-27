@@ -1071,6 +1071,75 @@ describe("ingest command", () => {
 
 
 
+  it("backfills missing co-recall edges for partially-edged files on re-ingest", async () => {
+    const dir = await makeTempDir();
+    const filePath = path.join(dir, "partial.jsonl");
+    await fs.writeFile(filePath, '{"role":"user","content":"hello"}\n', "utf8");
+
+    const db = createClient({ url: ":memory:" });
+    const storeEntriesFn = makeStoreEntriesFn();
+    const extractKnowledgeFromChunksFn = vi.fn(
+      async (params: Parameters<IngestCommandDeps["extractKnowledgeFromChunksFn"]>[0]) => {
+        await params.onChunkComplete?.({
+          chunkIndex: 0,
+          totalChunks: 1,
+          entries: makeDistinctEntries(),
+          warnings: [],
+        });
+        return {
+          entries: [],
+          successfulChunks: 1,
+          failedChunks: 0,
+          warnings: [],
+        };
+      },
+    );
+    const baseDeps = {
+      getDbFn: vi.fn(() => db) as IngestCommandDeps["getDbFn"],
+      initDbFn: vi.fn(async () => initDb(db)),
+      closeDbFn: vi.fn(() => undefined),
+      expandInputFilesFn: vi.fn(async () => [filePath]),
+      extractKnowledgeFromChunksFn: extractKnowledgeFromChunksFn as IngestCommandDeps["extractKnowledgeFromChunksFn"],
+      deduplicateEntriesFn: vi.fn((entries: KnowledgeEntry[]) => entries),
+      resolveEmbeddingApiKeyFn: vi.fn(() => "sk-test"),
+      storeEntriesFn,
+    };
+
+    try {
+      // First ingest - creates entries and all edges.
+      const result1 = await runIngestCommand([filePath], {}, makeDeps(baseDeps));
+      expect(result1.exitCode).toBe(0);
+
+      // Get all entry IDs for this file.
+      const allEntries = await db.execute({
+        sql: "SELECT id FROM entries WHERE source_file = ?",
+        args: [filePath],
+      });
+      const ids = allEntries.rows.map((r) => String(r.id));
+      expect(ids.length).toBe(3);
+
+      // Delete only SOME edges (keep first pair, delete rest) to simulate partial.
+      const firstA = ids[0]! < ids[1]! ? ids[0]! : ids[1]!;
+      const firstB = ids[0]! < ids[1]! ? ids[1]! : ids[0]!;
+      await db.execute({
+        sql: "DELETE FROM co_recall_edges WHERE NOT (entry_a = ? AND entry_b = ?)",
+        args: [firstA, firstB],
+      });
+      const partialCount = await db.execute({ sql: "SELECT COUNT(*) AS cnt FROM co_recall_edges" });
+      expect(Number(partialCount.rows[0]?.cnt)).toBe(1);
+
+      // Second ingest - file is skipped but partial edges should be backfilled.
+      const result2 = await runIngestCommand([filePath], {}, makeDeps(baseDeps));
+      expect(result2.exitCode).toBe(0);
+
+      // Should now have all 3 edges (3 entries = 3 pairs).
+      const fullCount = await db.execute({ sql: "SELECT COUNT(*) AS cnt FROM co_recall_edges" });
+      expect(Number(fullCount.rows[0]?.cnt)).toBe(3);
+    } finally {
+      db.close();
+    }
+  });
+
   it("resolves embedding API key even when --no-pre-fetch is set", async () => {
     const dir = await makeTempDir();
     const filePath = path.join(dir, "a.txt");
