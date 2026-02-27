@@ -137,6 +137,23 @@ function makeRetirementId(): string {
   return `ret_${randomUUID().replace(/-/g, "").slice(0, 8)}`;
 }
 
+async function deleteCoRecallEdgesForEntryIds(db: LibSQLDatabase, entryIds: string[]): Promise<void> {
+  const ids = Array.from(new Set(entryIds.map((id) => id.trim()).filter((id) => id.length > 0)));
+  if (ids.length === 0) {
+    return;
+  }
+
+  const placeholders = ids.map(() => "?").join(", ");
+  await db.execute({
+    sql: `
+      DELETE FROM co_recall_edges
+      WHERE entry_a IN (${placeholders})
+         OR entry_b IN (${placeholders})
+    `,
+    args: [...ids, ...ids],
+  });
+}
+
 async function queryMatchingEntries(
   db: LibSQLDatabase,
   opts: {
@@ -292,8 +309,17 @@ export async function retireEntries(opts: {
   });
 
   let count = 0;
+  const retiredIds: string[] = [];
   for (const match of matches) {
-    count += await markEntryRetired(opts.db, match.id, opts.reason ?? null, suppressedContexts);
+    const marked = await markEntryRetired(opts.db, match.id, opts.reason ?? null, suppressedContexts);
+    count += marked;
+    if (marked > 0) {
+      retiredIds.push(match.id);
+    }
+  }
+
+  if (retiredIds.length > 0) {
+    await deleteCoRecallEdgesForEntryIds(opts.db, retiredIds);
   }
 
   if (writeLedger && opts.subjectPattern && opts.subjectPattern.trim().length > 0) {

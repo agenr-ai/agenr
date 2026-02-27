@@ -4,6 +4,7 @@ import { initDb } from "../../src/db/client.js";
 import {
   decayCoRecallEdges,
   getCoRecallNeighbors,
+  getTopCoRecallEdges,
   strengthenCoRecallEdges,
 } from "../../src/db/co-recall.js";
 
@@ -187,5 +188,61 @@ describe("co-recall edges", () => {
 
     const neighbors = await getCoRecallNeighbors(client, "a", 0.1, 1);
     expect(neighbors).toHaveLength(1);
+  });
+
+  it("getTopCoRecallEdges returns edges sorted by weight desc", async () => {
+    const client = makeClient();
+    await initDb(client);
+    await insertEntry(client, "a");
+    await insertEntry(client, "b");
+    await insertEntry(client, "c");
+
+    await strengthenCoRecallEdges(client, ["a", "b"], "2026-02-27T00:00:00.000Z");
+    await strengthenCoRecallEdges(client, ["a", "c"], "2026-02-27T01:00:00.000Z");
+    await strengthenCoRecallEdges(client, ["a", "c"], "2026-02-27T02:00:00.000Z");
+
+    const edges = await getTopCoRecallEdges(client);
+    expect(edges).toHaveLength(2);
+    expect(edges[0]?.entryA).toBe("a");
+    expect(edges[0]?.entryB).toBe("c");
+    expect(edges[0]?.weight).toBeGreaterThanOrEqual(edges[1]?.weight ?? 0);
+  });
+
+  it("getTopCoRecallEdges respects limit", async () => {
+    const client = makeClient();
+    await initDb(client);
+    await insertEntry(client, "a");
+    await insertEntry(client, "b");
+    await insertEntry(client, "c");
+
+    await strengthenCoRecallEdges(client, ["a", "b", "c"], "2026-02-27T00:00:00.000Z");
+    const edges = await getTopCoRecallEdges(client, 2);
+    expect(edges).toHaveLength(2);
+  });
+
+  it("caps pair generation at 20 used entries", async () => {
+    const client = makeClient();
+    await initDb(client);
+    const used: string[] = [];
+    for (let i = 1; i <= 25; i += 1) {
+      const id = `e${String(i).padStart(2, "0")}`;
+      await insertEntry(client, id);
+      used.push(id);
+    }
+
+    await strengthenCoRecallEdges(client, used, "2026-02-27T00:00:00.000Z");
+
+    // C(20, 2) = 190 edges max from the first 20 entries.
+    expect(await countEdges(client)).toBe(190);
+
+    const outOfCap = await client.execute({
+      sql: `
+        SELECT COUNT(*) AS count
+        FROM co_recall_edges
+        WHERE entry_a = 'e21' OR entry_b = 'e21'
+      `,
+      args: [],
+    });
+    expect(Number((outOfCap.rows[0] as { count?: unknown } | undefined)?.count ?? 0)).toBe(0);
   });
 });

@@ -12,6 +12,7 @@ import { checkAndFlagLowQuality } from "../db/review-queue.js";
 import { createLlmClient } from "../llm/client.js";
 import { runSimpleStream, type StreamSimpleFn } from "../llm/stream.js";
 import { KNOWLEDGE_TYPES, SCOPE_LEVELS } from "../types.js";
+import { toNumber, toStringValue } from "../utils/entry-utils.js";
 import {
   formatRecallAsMarkdown,
   resolveAgenrPath,
@@ -119,29 +120,6 @@ interface RecalledEntryMetrics {
   recallCount: number;
 }
 
-function toStringValue(value: unknown): string {
-  if (typeof value === "string") {
-    return value;
-  }
-  if (typeof value === "number" || typeof value === "bigint") {
-    return String(value);
-  }
-  return "";
-}
-
-function toNumberValue(value: unknown): number {
-  if (typeof value === "number") {
-    return value;
-  }
-  if (typeof value === "bigint") {
-    return Number(value);
-  }
-  if (typeof value === "string" && value.trim().length > 0) {
-    return Number(value);
-  }
-  return Number.NaN;
-}
-
 async function fetchRecalledEntryMetrics(db: Client, entryIds: Set<string>): Promise<RecalledEntryMetrics[]> {
   const ids = Array.from(entryIds).map((id) => id.trim()).filter((id) => id.length > 0);
   if (ids.length === 0) {
@@ -160,8 +138,8 @@ async function fetchRecalledEntryMetrics(db: Client, entryIds: Set<string>): Pro
 
   return result.rows.map((row) => ({
     id: toStringValue((row as { id?: unknown }).id),
-    qualityScore: toNumberValue((row as { quality_score?: unknown }).quality_score),
-    recallCount: toNumberValue((row as { recall_count?: unknown }).recall_count),
+    qualityScore: toNumber((row as { quality_score?: unknown }).quality_score),
+    recallCount: toNumber((row as { recall_count?: unknown }).recall_count),
   }));
 }
 
@@ -1391,12 +1369,24 @@ const plugin = {
                 runtimeConfig,
                 api.logger,
               );
-              const timestamp = new Date().toISOString();
-              await strengthenCoRecallEdges(db, feedbackResult.usedIds, timestamp);
+              try {
+                const timestamp = new Date().toISOString();
+                await strengthenCoRecallEdges(db, feedbackResult.usedIds, timestamp);
+              } catch (err) {
+                api.logger.warn(
+                  `agenr plugin before_reset co-recall edges failed: ${err instanceof Error ? err.message : String(err)}`,
+                );
+              }
 
-              const qualityMetrics = await fetchRecalledEntryMetrics(db, recalledEntryIds);
-              for (const metric of qualityMetrics) {
-                await checkAndFlagLowQuality(db, metric.id, metric.qualityScore, metric.recallCount);
+              try {
+                const qualityMetrics = await fetchRecalledEntryMetrics(db, recalledEntryIds);
+                for (const metric of qualityMetrics) {
+                  await checkAndFlagLowQuality(db, metric.id, metric.qualityScore, metric.recallCount);
+                }
+              } catch (err) {
+                api.logger.warn(
+                  `agenr plugin before_reset quality check failed: ${err instanceof Error ? err.message : String(err)}`,
+                );
               }
             } catch (err) {
               api.logger.warn(

@@ -147,11 +147,12 @@ const CREATE_TABLE_AND_TRIGGER_STATEMENTS: readonly string[] = [
   CREATE TABLE IF NOT EXISTS co_recall_edges (
     entry_a TEXT NOT NULL,
     entry_b TEXT NOT NULL,
+    edge_type TEXT NOT NULL DEFAULT 'co_recalled',
     weight REAL NOT NULL DEFAULT 0.1,
     session_count INTEGER NOT NULL DEFAULT 1,
     last_co_recalled TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    PRIMARY KEY (entry_a, entry_b),
+    PRIMARY KEY (entry_a, entry_b, edge_type),
     FOREIGN KEY (entry_a) REFERENCES entries(id),
     FOREIGN KEY (entry_b) REFERENCES entries(id)
   )
@@ -173,6 +174,7 @@ const CREATE_TABLE_AND_TRIGGER_STATEMENTS: readonly string[] = [
   `,
   "CREATE INDEX IF NOT EXISTS idx_review_queue_status ON review_queue(status)",
   "CREATE INDEX IF NOT EXISTS idx_review_queue_entry ON review_queue(entry_id)",
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_review_queue_pending_dedup ON review_queue(entry_id, reason) WHERE status = 'pending'",
   CREATE_ENTRIES_FTS_TABLE_SQL,
   CREATE_ENTRIES_FTS_TRIGGER_AI_SQL,
   CREATE_ENTRIES_FTS_TRIGGER_AD_SQL,
@@ -182,6 +184,11 @@ const CREATE_TABLE_AND_TRIGGER_STATEMENTS: readonly string[] = [
 // Columns added after the initial schema shipped must be added via ALTER TABLE.
 // CREATE TABLE IF NOT EXISTS does not backfill columns for existing databases.
 const COLUMN_MIGRATIONS: readonly ColumnMigration[] = [
+  {
+    table: "co_recall_edges",
+    column: "edge_type",
+    sql: "ALTER TABLE co_recall_edges ADD COLUMN edge_type TEXT NOT NULL DEFAULT 'co_recalled'",
+  },
   {
     table: "entries",
     column: "importance",

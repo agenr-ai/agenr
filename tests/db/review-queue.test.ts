@@ -4,7 +4,11 @@ import { initDb } from "../../src/db/client.js";
 import {
   checkAndFlagLowQuality,
   flagForReview,
+  getOldestPendingReviewCreatedAt,
+  getPendingReviewById,
+  getPendingReviewCountsByReason,
   getPendingReviews,
+  rehabilitateEntry,
   resolveReview,
 } from "../../src/db/review-queue.js";
 
@@ -147,6 +151,75 @@ describe("review queue", () => {
     expect(String((row.rows[0] as { resolved_at?: unknown }).resolved_at ?? "").length).toBeGreaterThan(0);
   });
 
+  it("getPendingReviewById returns matching review item", async () => {
+    const client = makeClient();
+    await initDb(client);
+    await insertEntry(client, "lookup");
+
+    const created = await flagForReview(client, "lookup", "manual", "lookup detail", "review");
+    const found = await getPendingReviewById(client, created.id ?? "");
+
+    expect(found).not.toBeNull();
+    expect(found?.entryId).toBe("lookup");
+    expect(found?.detail).toBe("lookup detail");
+  });
+
+  it("getPendingReviewById returns null when review does not exist", async () => {
+    const client = makeClient();
+    await initDb(client);
+    await insertEntry(client, "missing");
+
+    const found = await getPendingReviewById(client, "does-not-exist");
+    expect(found).toBeNull();
+  });
+
+  it("getPendingReviewCountsByReason returns grouped counts", async () => {
+    const client = makeClient();
+    await initDb(client);
+    await insertEntry(client, "c1");
+    await insertEntry(client, "c2");
+    await insertEntry(client, "c3");
+
+    await flagForReview(client, "c1", "manual", "x", "review");
+    await flagForReview(client, "c2", "manual", "y", "review");
+    await flagForReview(client, "c3", "stale", "z", "review");
+
+    const counts = await getPendingReviewCountsByReason(client);
+    expect(counts).toEqual([
+      { reason: "manual", count: 2 },
+      { reason: "stale", count: 1 },
+    ]);
+  });
+
+  it("getOldestPendingReviewCreatedAt returns the oldest pending timestamp", async () => {
+    const client = makeClient();
+    await initDb(client);
+    await insertEntry(client, "o1");
+    await insertEntry(client, "o2");
+
+    await client.execute({
+      sql: `
+        INSERT INTO review_queue (id, entry_id, reason, detail, suggested_action, status, created_at)
+        VALUES
+          ('oldest-1', 'o1', 'manual', 'old', 'review', 'pending', '2026-02-20T00:00:00.000Z'),
+          ('oldest-2', 'o2', 'manual', 'new', 'review', 'pending', '2026-02-21T00:00:00.000Z')
+      `,
+      args: [],
+    });
+
+    const oldest = await getOldestPendingReviewCreatedAt(client);
+    expect(oldest).toBe("2026-02-20T00:00:00.000Z");
+  });
+
+  it("getOldestPendingReviewCreatedAt returns null when no pending items exist", async () => {
+    const client = makeClient();
+    await initDb(client);
+    await insertEntry(client, "none");
+
+    const oldest = await getOldestPendingReviewCreatedAt(client);
+    expect(oldest).toBeNull();
+  });
+
   it("flags low-quality entries when quality < 0.2 and recall >= 10", async () => {
     const client = makeClient();
     await initDb(client);
@@ -180,5 +253,42 @@ describe("review queue", () => {
 
     const pending = await getPendingReviews(client);
     expect(pending).toHaveLength(0);
+  });
+
+  it("resolveReview with dismissed does not auto-rehabilitate quality score", async () => {
+    const client = makeClient();
+    await initDb(client);
+    await insertEntry(client, "no-rehab");
+    await client.execute({
+      sql: "UPDATE entries SET quality_score = 0.1 WHERE id = ?",
+      args: ["no-rehab"],
+    });
+
+    const review = await flagForReview(client, "no-rehab", "manual", "detail", "review");
+    await resolveReview(client, review.id ?? "", "dismissed");
+
+    const row = await client.execute({
+      sql: "SELECT quality_score FROM entries WHERE id = ?",
+      args: ["no-rehab"],
+    });
+    expect(Number((row.rows[0] as { quality_score?: unknown } | undefined)?.quality_score ?? 0)).toBeCloseTo(0.1, 8);
+  });
+
+  it("rehabilitateEntry enforces a quality score floor", async () => {
+    const client = makeClient();
+    await initDb(client);
+    await insertEntry(client, "rehab");
+    await client.execute({
+      sql: "UPDATE entries SET quality_score = 0.1 WHERE id = ?",
+      args: ["rehab"],
+    });
+
+    await rehabilitateEntry(client, "rehab", 0.3);
+
+    const row = await client.execute({
+      sql: "SELECT quality_score FROM entries WHERE id = ?",
+      args: ["rehab"],
+    });
+    expect(Number((row.rows[0] as { quality_score?: unknown } | undefined)?.quality_score ?? 0)).toBeCloseTo(0.3, 8);
   });
 });

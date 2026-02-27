@@ -4,6 +4,7 @@ import path from "node:path";
 import { createClient, type Client } from "@libsql/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { initDb } from "../../src/db/client.js";
+import { strengthenCoRecallEdges } from "../../src/db/co-recall.js";
 import { appendToLedger, applyLedger, loadLedger, retireEntries } from "../../src/db/retirements.js";
 import { storeEntries } from "../../src/db/store.js";
 import type { KnowledgeEntry, RetirementRecord } from "../../src/types.js";
@@ -294,5 +295,43 @@ describe("db retirements ledger", () => {
     });
 
     await expect(fs.stat(ledgerPathForDb(dbPath))).rejects.toThrow();
+  });
+
+  it("retiring an entry deletes co-recall edges referencing that entry", async () => {
+    const dbPath = await makeTempDbPath();
+    const client = makeClient(dbPath);
+    await initDb(client);
+
+    await storeEntries(client, [makeEntry("Edge A", "edge-a"), makeEntry("Edge B", "edge-b")], "sk-test", {
+      force: true,
+      embedFn: mockEmbed,
+      dbPath,
+    });
+
+    const entries = await client.execute({
+      sql: "SELECT id, subject FROM entries WHERE subject IN (?, ?) ORDER BY subject ASC",
+      args: ["Edge A", "Edge B"],
+    });
+    const edgeAId = String((entries.rows[0] as { id?: unknown } | undefined)?.id ?? "");
+    const edgeBId = String((entries.rows[1] as { id?: unknown } | undefined)?.id ?? "");
+    expect(edgeAId).toBeTruthy();
+    expect(edgeBId).toBeTruthy();
+
+    await strengthenCoRecallEdges(client, [edgeAId, edgeBId], "2026-02-27T00:00:00.000Z");
+
+    const before = await client.execute("SELECT COUNT(*) AS count FROM co_recall_edges");
+    expect(Number((before.rows[0] as { count?: unknown } | undefined)?.count ?? 0)).toBe(1);
+
+    const retired = await retireEntries({
+      entryId: edgeAId,
+      reason: "cleanup",
+      writeLedger: false,
+      db: client,
+      dbPath,
+    });
+    expect(retired.count).toBe(1);
+
+    const after = await client.execute("SELECT COUNT(*) AS count FROM co_recall_edges");
+    expect(Number((after.rows[0] as { count?: unknown } | undefined)?.count ?? 0)).toBe(0);
   });
 });

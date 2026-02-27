@@ -4,6 +4,7 @@ import { retireEntries } from "../db/retirements.js";
 import {
   getPendingReviewById,
   getPendingReviews,
+  rehabilitateEntry,
   resolveReview,
   type PendingReviewItem,
 } from "../db/review-queue.js";
@@ -143,6 +144,10 @@ export async function runReviewDismissCommand(
     if (!updated) {
       process.stdout.write(`No pending review found for id: ${normalizedId}\n`);
       return { exitCode: 1 };
+    }
+    const review = await getPendingReviewById(db, normalizedId);
+    if (review) {
+      await rehabilitateEntry(db, review.entryId);
     }
 
     process.stdout.write(`Dismissed review ${normalizedId}.\n`);
