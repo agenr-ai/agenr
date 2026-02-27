@@ -1125,7 +1125,6 @@ export function createProgram(): Command {
         [
           formatLabel("Auth", config.auth ? describeAuth(config.auth) : ui.dim("(not set)")),
           formatLabel("Provider", config.provider ?? ui.dim("(not set)")),
-          formatLabel("Model", config.models.extraction),
           ...formatTaskModelLines(config.models),
           "",
           ui.bold("Credentials"),

@@ -120,13 +120,12 @@ const TASK_MODEL_PROMPTS: Array<{ task: TaskModelKey; title: string; options: st
   },
 ];
 
-function buildTaskModels(baseModel: string, overrides?: Partial<AgenrConfig["models"]>): AgenrConfig["models"] {
-  const extractionModel = overrides?.extraction?.trim() || baseModel;
+export function buildTaskModels(baseModel: string, overrides?: Partial<AgenrConfig["models"]>): AgenrConfig["models"] {
   return {
-    extraction: extractionModel,
-    claimExtraction: overrides?.claimExtraction?.trim() || DEFAULT_TASK_MODEL,
-    contradictionJudge: overrides?.contradictionJudge?.trim() || DEFAULT_TASK_MODEL,
-    handoffSummary: overrides?.handoffSummary?.trim() || DEFAULT_TASK_MODEL,
+    extraction: overrides?.extraction?.trim() || baseModel,
+    claimExtraction: overrides?.claimExtraction?.trim() || baseModel,
+    contradictionJudge: overrides?.contradictionJudge?.trim() || baseModel,
+    handoffSummary: overrides?.handoffSummary?.trim() || baseModel,
   };
 }
 

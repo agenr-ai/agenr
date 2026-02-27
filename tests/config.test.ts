@@ -464,8 +464,8 @@ describe("resolveModelForTask", () => {
       models: {
         extraction: "gpt-4.1",
         claimExtraction: "gpt-4.1-mini",
-        contradictionJudge: "gpt-4.1-nano",
-        handoffSummary: "gpt-4.1-nano",
+        contradictionJudge: DEFAULT_TASK_MODEL,
+        handoffSummary: DEFAULT_TASK_MODEL,
       },
     };
 
@@ -478,14 +478,22 @@ describe("resolveModelForTask", () => {
         extraction: "gpt-4.1",
         claimExtraction: "gpt-4.1-mini",
         contradictionJudge: "gpt-4.1",
-        handoffSummary: "gpt-4.1-nano",
+        handoffSummary: DEFAULT_TASK_MODEL,
       },
     };
 
     expect(resolveModelForTask(config, "extraction")).toBe("gpt-4.1");
     expect(resolveModelForTask(config, "claimExtraction")).toBe("gpt-4.1-mini");
     expect(resolveModelForTask(config, "contradictionJudge")).toBe("gpt-4.1");
-    expect(resolveModelForTask(config, "handoffSummary")).toBe("gpt-4.1-nano");
+    expect(resolveModelForTask(config, "handoffSummary")).toBe(DEFAULT_TASK_MODEL);
+  });
+
+  it("falls back to default when config is null", () => {
+    expect(resolveModelForTask(null, "claimExtraction")).toBe(DEFAULT_TASK_MODEL);
+  });
+
+  it("falls back to default when config is undefined", () => {
+    expect(resolveModelForTask(undefined, "claimExtraction")).toBe(DEFAULT_TASK_MODEL);
   });
 });
 

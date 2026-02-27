@@ -96,15 +96,15 @@ import * as setupModule from "../src/setup.js";
 const tempDirs: string[] = [];
 const OPENAI_BASE_MODELS = {
   extraction: "openai/gpt-4.1",
-  claimExtraction: "gpt-4.1-nano",
-  contradictionJudge: "gpt-4.1-nano",
-  handoffSummary: "gpt-4.1-nano",
+  claimExtraction: "openai/gpt-4.1",
+  contradictionJudge: "openai/gpt-4.1",
+  handoffSummary: "openai/gpt-4.1",
 } as const;
 const OPENAI_MINI_MODELS = {
   extraction: "openai/gpt-4.1-mini",
-  claimExtraction: "gpt-4.1-nano",
-  contradictionJudge: "gpt-4.1-nano",
-  handoffSummary: "gpt-4.1-nano",
+  claimExtraction: "openai/gpt-4.1-mini",
+  contradictionJudge: "openai/gpt-4.1-mini",
+  handoffSummary: "openai/gpt-4.1-mini",
 } as const;
 
 async function makeTempConfigEnv(): Promise<NodeJS.ProcessEnv> {
@@ -225,6 +225,15 @@ describe("formatExistingConfig", () => {
 });
 
 describe("runSetupCore", () => {
+  it("buildTaskModels defaults every task to the base model", () => {
+    expect(setupModule.buildTaskModels("claude-sonnet-4-20250514")).toEqual({
+      extraction: "claude-sonnet-4-20250514",
+      claimExtraction: "claude-sonnet-4-20250514",
+      contradictionJudge: "claude-sonnet-4-20250514",
+      handoffSummary: "claude-sonnet-4-20250514",
+    });
+  });
+
   it("returns SetupResult with auth, provider, model on success", async () => {
     const mocks = getMocks();
     const env = await makeTempConfigEnv();
@@ -571,14 +580,14 @@ describe("runSetupCore", () => {
     expect(result?.config.models).toEqual({
       extraction: "openai/gpt-4.1-mini",
       claimExtraction: "gpt-4.1-mini",
-      contradictionJudge: "gpt-4.1-nano",
-      handoffSummary: "gpt-4.1-nano",
+      contradictionJudge: "openai/gpt-4.1-mini",
+      handoffSummary: "openai/gpt-4.1-mini",
     });
     expect(readConfig(env)?.models).toEqual({
       extraction: "openai/gpt-4.1-mini",
       claimExtraction: "gpt-4.1-mini",
-      contradictionJudge: "gpt-4.1-nano",
-      handoffSummary: "gpt-4.1-nano",
+      contradictionJudge: "openai/gpt-4.1-mini",
+      handoffSummary: "openai/gpt-4.1-mini",
     });
   });
 
@@ -613,15 +622,15 @@ describe("runSetupCore", () => {
 
     expect(result?.config.models).toEqual({
       extraction: "openai/gpt-4.1-mini",
-      claimExtraction: "gpt-4.1-nano",
+      claimExtraction: "openai/gpt-4.1-mini",
       contradictionJudge: "gpt-4.1-nano",
-      handoffSummary: "gpt-4.1-nano",
+      handoffSummary: "openai/gpt-4.1-mini",
     });
     expect(readConfig(env)?.models).toEqual({
       extraction: "openai/gpt-4.1-mini",
-      claimExtraction: "gpt-4.1-nano",
+      claimExtraction: "openai/gpt-4.1-mini",
       contradictionJudge: "gpt-4.1-nano",
-      handoffSummary: "gpt-4.1-nano",
+      handoffSummary: "openai/gpt-4.1-mini",
     });
   });
 });
