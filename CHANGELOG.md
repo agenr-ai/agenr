@@ -10,6 +10,8 @@
   (default: 14 days). Also auto-sets since/until bounds when not explicitly
   provided.
 - `gaussianRecency` scoring function for temporal targeting.
+- `agenr_recall` native tool now exposes `around` and `aroundRadius` parameters
+  for temporal targeting in mid-session recall.
 
 ## 0.9.5 - 2026-02-27
 

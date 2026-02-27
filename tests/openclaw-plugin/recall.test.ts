@@ -1,6 +1,7 @@
+import { EventEmitter } from "node:events";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildSpawnArgs,
   formatRecallAsMarkdown,
@@ -148,5 +149,55 @@ describe("buildSpawnArgs", () => {
   it("spawns executable directly when agenrPath is a binary path", () => {
     const args = buildSpawnArgs("/usr/local/bin/agenr");
     expect(args).toEqual({ cmd: "/usr/local/bin/agenr", args: [] });
+  });
+});
+
+describe("runRecallTool", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  async function invokeRecallTool(params: Record<string, unknown>): Promise<string[]> {
+    const spawnMock = vi.fn(() => {
+      const child = new EventEmitter() as unknown as {
+        stdout: EventEmitter;
+        stderr: EventEmitter;
+        stdin: { write: (input: string) => void; end: () => void };
+        on: (event: string, handler: (...args: unknown[]) => void) => void;
+      };
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.stdin = {
+        write: () => undefined,
+        end: () => undefined,
+      };
+      process.nextTick(() => {
+        child.stdout.emit("data", Buffer.from('{"query":"q","results":[]}'));
+        (child as unknown as EventEmitter).emit("close", 0);
+      });
+      return child;
+    });
+
+    vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
+    const { runRecallTool } = await import("../../src/openclaw-plugin/tools.js");
+    await runRecallTool("/usr/local/bin/agenr", params);
+
+    const firstCall = (spawnMock.mock.calls as unknown[][])[0];
+    return (firstCall?.[1] as string[]) ?? [];
+  }
+
+  it("passes --around to the recall CLI", async () => {
+    const args = await invokeRecallTool({ query: "work", around: "2026-02-15T00:00:00.000Z" });
+    expect(args).toContain("--around");
+    const aroundIndex = args.indexOf("--around");
+    expect(args[aroundIndex + 1]).toBe("2026-02-15T00:00:00.000Z");
+  });
+
+  it("passes --around-radius to the recall CLI", async () => {
+    const args = await invokeRecallTool({ query: "work", aroundRadius: 21 });
+    expect(args).toContain("--around-radius");
+    const radiusIndex = args.indexOf("--around-radius");
+    expect(args[radiusIndex + 1]).toBe("21");
   });
 });
