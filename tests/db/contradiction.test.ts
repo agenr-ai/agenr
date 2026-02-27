@@ -360,6 +360,7 @@ describe("contradiction", () => {
   });
 
   it("returns unrelated with confidence 0 on LLM error", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.mocked(runSimpleStream).mockRejectedValueOnce(new Error("LLM failure"));
 
     const result = await contradictionModule.classifyConflict(
@@ -373,9 +374,11 @@ describe("contradiction", () => {
       confidence: 0,
       explanation: "LLM error",
     });
+    expect(warnSpy).toHaveBeenCalledWith("[contradiction] LLM judge call failed: LLM failure");
   });
 
   it("returns unrelated with confidence 0 on missing tool call", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.mocked(runSimpleStream).mockResolvedValueOnce(makeTextMessage());
 
     const result = await contradictionModule.classifyConflict(
@@ -389,6 +392,29 @@ describe("contradiction", () => {
       confidence: 0,
       explanation: "LLM error",
     });
+    expect(warnSpy).toHaveBeenCalledWith("[contradiction] LLM judge returned unparseable response");
+  });
+
+  it("returns unrelated with confidence 0 on LLM stop error response", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(runSimpleStream).mockResolvedValueOnce({
+      ...makeTextMessage(),
+      stopReason: "error",
+      errorMessage: "provider timeout",
+    } as AssistantMessage);
+
+    const result = await contradictionModule.classifyConflict(
+      makeLlmClient(),
+      { content: "new", type: "fact", subject: "s" },
+      { content: "old", type: "fact", subject: "s", createdAt: "2026-02-20T00:00:00.000Z" },
+    );
+
+    expect(result).toEqual({
+      relation: "unrelated",
+      confidence: 0,
+      explanation: "LLM error",
+    });
+    expect(warnSpy).toHaveBeenCalledWith("[contradiction] LLM judge error: provider timeout");
   });
 
   it("finds candidates via subject index when subjectKey is set and still runs embedding lookup", async () => {
@@ -1104,6 +1130,24 @@ describe("contradiction", () => {
       { type: "fact", importance: 7 },
       buildConflict({ existingType: "fact", relation: "supersedes", confidence: 0.85 }),
       new SubjectIndex(),
+    );
+
+    expect(resolution).toEqual({ action: "coexist", reason: "entries can coexist" });
+  });
+
+  it("resolveConflict uses custom autoSupersedeThreshold when provided", async () => {
+    const client = makeClient();
+    await initDb(client);
+    await seedEntry(client, "new-entry", { type: "fact", subjectKey: "alex/weight" });
+    await seedEntry(client, "existing-entry", { type: "fact", importance: 7, subjectKey: "alex/weight" });
+
+    const resolution = await contradictionModule.resolveConflict(
+      client,
+      "new-entry",
+      { type: "fact", importance: 7 },
+      buildConflict({ existingType: "fact", relation: "supersedes", confidence: 0.86 }),
+      new SubjectIndex(),
+      0.9,
     );
 
     expect(resolution).toEqual({ action: "coexist", reason: "entries can coexist" });

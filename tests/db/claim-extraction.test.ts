@@ -238,6 +238,46 @@ describe("claim extraction", () => {
     expect(claim?.subjectEntity).toBe("alex");
   });
 
+  it("resolveEntityAlias maps user to non-user entity even with multiple entities", async () => {
+    vi.mocked(runSimpleStream).mockResolvedValueOnce(
+      makeToolMessage({
+        no_claim: false,
+        subject_entity: "user",
+        subject_attribute: "editor",
+        predicate: "prefers",
+        object: "neovim",
+        confidence: 0.9,
+      }),
+    );
+
+    const claim = await extractClaim("I prefer neovim", "preference", "editor", makeClient(), {
+      entityHints: ["sarah", "alex", "user"],
+    });
+    expect(claim?.subjectEntity).toBe("alex");
+  });
+
+  it("normalizeEntity replaces slashes with hyphens", async () => {
+    vi.mocked(runSimpleStream).mockResolvedValueOnce(
+      makeToolMessage({
+        no_claim: false,
+        subject_entity: "owner/repo",
+        subject_attribute: "default branch",
+        predicate: "is",
+        object: "main",
+        confidence: 0.9,
+      }),
+    );
+
+    const claim = await extractClaim(
+      "owner/repo default branch is main",
+      "fact",
+      "owner repo branch",
+      makeClient(),
+    );
+    expect(claim?.subjectEntity).toBe("owner-repo");
+    expect(claim?.subjectKey).toBe("owner-repo/default_branch");
+  });
+
   it("appends entity hints to claim extraction system prompt when provided", async () => {
     vi.mocked(runSimpleStream).mockResolvedValueOnce(
       makeToolMessage({
@@ -252,6 +292,9 @@ describe("claim extraction", () => {
     const call = vi.mocked(runSimpleStream).mock.calls[0]?.[0];
     expect(call?.context.systemPrompt).toContain("Known entities in the knowledge base: alex, dataflow");
     expect(call?.context.systemPrompt).toContain("Use one of these entities if the entry is about any of them.");
+    expect(call?.context.systemPrompt).toContain(
+      "If the subject is the user/owner of the knowledge base, use their actual name from the entity hints rather than generic terms like \"user\", \"me\", or \"I\".",
+    );
   });
 
   it("extractClaimsBatch processes multiple entries sequentially", async () => {

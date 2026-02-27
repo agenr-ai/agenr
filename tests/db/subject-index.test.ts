@@ -105,6 +105,14 @@ describe("SubjectIndex", () => {
     expect(index.crossEntityLookup("alex/weight")).toEqual([]);
   });
 
+  it("parseSubjectKey handles entity names that originally contained slashes", () => {
+    const index = new SubjectIndex();
+    index.add("owner-repo/default_branch", "entry-1");
+    index.add("other-repo/default_branch", "entry-2");
+
+    expect(index.crossEntityLookup("owner-repo/default_branch")).toEqual(["entry-2"]);
+  });
+
   it("add inserts entries and deduplicates per key", () => {
     const index = new SubjectIndex();
     index.add("person:alice|attr:role", "entry-1");
