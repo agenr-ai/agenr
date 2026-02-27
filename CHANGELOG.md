@@ -37,6 +37,7 @@
 - Init wizard: per-task model selection for extraction, claim extraction, contradiction judge, and handoff summary (#266)
 
 ### Fixed
+- fix: CLI banner now displays the current agenr version (#278)
 - fix: setup and init wizards now write explicitly selected task models even when they match defaults (#275)
 - Critical: conflicts UI "keep-new"/"keep-old" resolution was retiring the wrong entry (swarm review)
 - Contradiction detection: cap subject-index candidates to maxCandidates, sort by recency

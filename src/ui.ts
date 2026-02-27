@@ -1,4 +1,5 @@
 import chalk from "chalk";
+import { APP_VERSION } from "./version.js";
 
 export const ui = {
   brand: chalk.hex("#8B5CF6"),
@@ -23,7 +24,7 @@ export function banner(): string {
     chalk.hex("#E0B830")("╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝╚═╝  ╚═╝"),
   ];
 
-  return `\n${lines.join("\n")}\n${ui.dim("  AGENt memoRy")}`;
+  return `\n${lines.join("\n")}\n${ui.dim("  AGENt memoRy")}  ${ui.dim(`v${APP_VERSION}`)}`;
 }
 
 export function formatLabel(label: string, value: string): string {
