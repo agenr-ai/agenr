@@ -7,7 +7,7 @@ import { walCheckpoint } from "../db/client.js";
 import { rebuildVectorIndex } from "../db/vector-index.js";
 import { buildProjectFilter } from "../project.js";
 import type { KnowledgePlatform, LlmClient } from "../types.js";
-import { buildClusters, type Cluster } from "./cluster.js";
+import { buildClusters, type Cluster, type ClusterBuildStats } from "./cluster.js";
 import { mergeCluster } from "./merge.js";
 import { consolidateRules, countActiveEntries, type ConsolidationStats } from "./rules.js";
 import { isShutdownRequested } from "../shutdown.js";
@@ -29,6 +29,8 @@ interface ClusterProcessingStats {
   clustersMerged: number;
   mergesFlagged: number;
   llmCalls: number;
+  llmDedupCalls: number;
+  llmDedupMatches: number;
   entriesConsolidatedFrom: number;
   canonicalEntriesCreated: number;
 }
@@ -72,6 +74,8 @@ export interface ConsolidationOrchestratorReport extends ConsolidationStats {
   progress: ConsolidationProgress;
   summary: {
     totalLlmCalls: number;
+    totalLlmDedupCalls: number;
+    totalLlmDedupMatches: number;
     totalFlagged: number;
     totalCanonicalEntriesCreated: number;
     totalEntriesConsolidatedFrom: number;
@@ -88,6 +92,7 @@ export interface ConsolidationOrchestratorOptions {
   minCluster?: number;
   simThreshold?: number;
   maxClusterSize?: number;
+  looseThreshold?: number;
   type?: string;
   idempotencyDays?: number;
   batch?: number;
@@ -192,6 +197,8 @@ function defaultClusterStats(): ClusterProcessingStats {
     clustersMerged: 0,
     mergesFlagged: 0,
     llmCalls: 0,
+    llmDedupCalls: 0,
+    llmDedupMatches: 0,
     entriesConsolidatedFrom: 0,
     canonicalEntriesCreated: 0,
   };
@@ -267,6 +274,7 @@ function resolvedOptionsSignature(options: ConsolidationOrchestratorOptions): st
       excludeProject: options.excludeProject ?? null,
       minCluster: options.minCluster ?? DEFAULT_MIN_CLUSTER,
       simThreshold: options.simThreshold ?? DEFAULT_PHASE1_SIM_THRESHOLD,
+      looseThreshold: options.looseThreshold ?? null,
       maxClusterSize: options.maxClusterSize ?? null,
       type: options.type?.trim() ?? null,
       idempotencyDays: options.idempotencyDays ?? null,
@@ -454,6 +462,8 @@ function updateAggregateStats(
   target.clustersMerged += source.clustersMerged;
   target.mergesFlagged += source.mergesFlagged;
   target.llmCalls += source.llmCalls;
+  target.llmDedupCalls += source.llmDedupCalls;
+  target.llmDedupMatches += source.llmDedupMatches;
   target.entriesConsolidatedFrom += source.entriesConsolidatedFrom;
   target.canonicalEntriesCreated += source.canonicalEntriesCreated;
 }
@@ -662,6 +672,8 @@ export async function runConsolidationOrchestrator(
       },
       summary: {
         totalLlmCalls: 0,
+        totalLlmDedupCalls: 0,
+        totalLlmDedupMatches: 0,
         totalFlagged: 0,
         totalCanonicalEntriesCreated: 0,
         totalEntriesConsolidatedFrom: 0,
@@ -770,9 +782,10 @@ export async function runConsolidationOrchestrator(
 
     const phase1PlanByProject: Array<{
       project: string | null;
-      phase1: Array<{ type: string; entries: number; clusters: Cluster[] }>;
+      phase1: Array<{ type: string; entries: number; clusters: Cluster[]; clusterStats: ClusterBuildStats }>;
       phase2Entries: number;
       phase2Clusters: Cluster[];
+      phase2ClusterStats: ClusterBuildStats;
     }> = [];
 
     const phase1TotalsByType = new Map<string, { entries: number; clusters: number }>();
@@ -785,7 +798,7 @@ export async function runConsolidationOrchestrator(
       }
 
       const project = projectGroups[projectIndex] ?? null;
-      const phase1ForProject: Array<{ type: string; entries: number; clusters: Cluster[] }> = [];
+      const phase1ForProject: Array<{ type: string; entries: number; clusters: Cluster[]; clusterStats: ClusterBuildStats }> = [];
 
       for (const type of phase1Types) {
         if (isShutdownRequested()) {
@@ -800,6 +813,7 @@ export async function runConsolidationOrchestrator(
           project,
           excludeProjects.length > 0 ? excludeProjects : undefined,
         );
+        let phase1ClusterStats: ClusterBuildStats = { llmDedupCalls: 0, llmDedupMatches: 0 };
         const clusters = await resolvedDeps.buildClustersFn(db, {
           simThreshold: phase1Threshold,
           minCluster,
@@ -807,11 +821,16 @@ export async function runConsolidationOrchestrator(
           typeFilter: type,
           platform,
           project,
+          llmClient,
+          looseThreshold: options.looseThreshold,
           idempotencyDays: options.idempotencyDays,
           verbose: options.verbose,
           onLog: options.verbose ? onLog : undefined,
+          onStats: (stats) => {
+            phase1ClusterStats = stats;
+          },
         });
-        phase1ForProject.push({ type, entries, clusters });
+        phase1ForProject.push({ type, entries, clusters, clusterStats: phase1ClusterStats });
 
         const totals = phase1TotalsByType.get(type) ?? { entries: 0, clusters: 0 };
         totals.entries += entries;
@@ -825,6 +844,7 @@ export async function runConsolidationOrchestrator(
 
       let phase2Entries = 0;
       let phase2Clusters: Cluster[] = [];
+      let phase2ClusterStats: ClusterBuildStats = { llmDedupCalls: 0, llmDedupMatches: 0 };
       if (shouldRunPhase2) {
         phase2Entries = await resolvedDeps.countActiveEmbeddedEntriesFn(
           db,
@@ -839,14 +859,19 @@ export async function runConsolidationOrchestrator(
           maxClusterSize: phase2MaxClusterSize,
           platform,
           project,
+          llmClient,
+          looseThreshold: options.looseThreshold,
           idempotencyDays: options.idempotencyDays,
           verbose: options.verbose,
           onLog: options.verbose ? onLog : undefined,
+          onStats: (stats) => {
+            phase2ClusterStats = stats;
+          },
         });
         phase2ClustersTotal += phase2Clusters.length;
       }
 
-      phase1PlanByProject.push({ project, phase1: phase1ForProject, phase2Entries, phase2Clusters });
+      phase1PlanByProject.push({ project, phase1: phase1ForProject, phase2Entries, phase2Clusters, phase2ClusterStats });
     }
 
     if (context.batchReached) {
@@ -941,6 +966,8 @@ export async function runConsolidationOrchestrator(
           },
           resolvedDeps,
         );
+        typeStats.llmDedupCalls += item.clusterStats.llmDedupCalls;
+        typeStats.llmDedupMatches += item.clusterStats.llmDedupMatches;
 
         const existing = phase1StatsByType.get(item.type);
         if (existing) {
@@ -986,6 +1013,8 @@ export async function runConsolidationOrchestrator(
           },
           resolvedDeps,
         );
+        phase2Stats.llmDedupCalls += projectPlan.phase2ClusterStats.llmDedupCalls;
+        phase2Stats.llmDedupMatches += projectPlan.phase2ClusterStats.llmDedupMatches;
 
         if (context.report.phase2) {
           updateAggregateStats(context.report.phase2, phase2Stats);
@@ -1015,15 +1044,21 @@ export async function runConsolidationOrchestrator(
         const projectPlan = phase1PlanByProject[projectIndex];
         const project = projectPlan.project;
         const projectLabel = project ?? "(untagged)";
+        let phase3ClusterStats: ClusterBuildStats = { llmDedupCalls: 0, llmDedupMatches: 0 };
         const dedupClusters = await resolvedDeps.buildClustersFn(db, {
           simThreshold: phase1Threshold,
           minCluster: 2,
           maxClusterSize: phase1MaxClusterSize,
           platform,
           project,
+          llmClient,
+          looseThreshold: options.looseThreshold,
           idempotencyDays: 0,
           verbose: options.verbose,
           onLog: options.verbose ? onLog : undefined,
+          onStats: (stats) => {
+            phase3ClusterStats = stats;
+          },
         });
 
         const relevantClusters = dedupClusters.filter((cluster) =>
@@ -1052,6 +1087,8 @@ export async function runConsolidationOrchestrator(
           },
           resolvedDeps,
         );
+        phase3Stats.llmDedupCalls += phase3ClusterStats.llmDedupCalls;
+        phase3Stats.llmDedupMatches += phase3ClusterStats.llmDedupMatches;
 
         if (context.report.phase3) {
           updateAggregateStats(context.report.phase3, phase3Stats);
@@ -1089,6 +1126,14 @@ export async function runConsolidationOrchestrator(
 
   context.report.summary.totalLlmCalls =
     context.report.phase1.totals.llmCalls + (context.report.phase2?.llmCalls ?? 0) + (context.report.phase3?.llmCalls ?? 0);
+  context.report.summary.totalLlmDedupCalls =
+    context.report.phase1.totals.llmDedupCalls +
+    (context.report.phase2?.llmDedupCalls ?? 0) +
+    (context.report.phase3?.llmDedupCalls ?? 0);
+  context.report.summary.totalLlmDedupMatches =
+    context.report.phase1.totals.llmDedupMatches +
+    (context.report.phase2?.llmDedupMatches ?? 0) +
+    (context.report.phase3?.llmDedupMatches ?? 0);
   context.report.summary.totalFlagged =
     context.report.phase1.totals.mergesFlagged + (context.report.phase2?.mergesFlagged ?? 0) + (context.report.phase3?.mergesFlagged ?? 0);
   context.report.summary.totalCanonicalEntriesCreated =

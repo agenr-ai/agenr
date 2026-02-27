@@ -1,9 +1,18 @@
 import { createClient, type Client } from "@libsql/client";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const { runSimpleStreamMock } = vi.hoisted(() => ({
+  runSimpleStreamMock: vi.fn(),
+}));
+
+vi.mock("../../src/llm/stream.js", () => ({
+  runSimpleStream: runSimpleStreamMock,
+}));
+
 import { buildClusters } from "../../src/consolidate/cluster.js";
 import { initDb } from "../../src/db/client.js";
 import { hashText, insertEntry } from "../../src/db/store.js";
-import type { KnowledgeEntry } from "../../src/types.js";
+import type { KnowledgeEntry, LlmClient } from "../../src/types.js";
 
 function vectorFromAngle(degrees: number): number[] {
   const radians = (degrees * Math.PI) / 180;
@@ -26,8 +35,47 @@ function makeEntry(subject: string, content: string, tags: string[]): KnowledgeE
   };
 }
 
+function makeLlmClient(): LlmClient {
+  return {
+    auth: "openai-api-key",
+    resolvedModel: {
+      provider: "openai",
+      modelId: "gpt-4o-mini",
+      model: {
+        api: "cluster-test-api",
+        provider: "openai",
+        id: "gpt-4o-mini",
+        maxTokens: 4096,
+        reasoning: false,
+        input: ["text"],
+      },
+    },
+    credentials: {
+      apiKey: "test-key",
+      source: "test",
+    },
+  };
+}
+
 describe("consolidate cluster tag mapping", () => {
   const clients: Client[] = [];
+
+  beforeEach(() => {
+    runSimpleStreamMock.mockReset();
+    runSimpleStreamMock.mockResolvedValue({
+      stopReason: "stop",
+      content: [
+        {
+          type: "toolCall",
+          name: "dedup_check",
+          arguments: {
+            same: false,
+            reason: "default false",
+          },
+        },
+      ],
+    });
+  });
 
   afterEach(() => {
     while (clients.length > 0) {
@@ -102,5 +150,149 @@ describe("consolidate cluster tag mapping", () => {
     expect(commaTagEntry?.tags).toContain("machine learning, nlp");
     expect(commaTagEntry?.tags).not.toContain("machine learning");
     expect(commaTagEntry?.tags).not.toContain("nlp");
+  });
+
+  it("auto-unions entries in loose band with same subject without LLM", async () => {
+    const db = await makeDb();
+    await seed({
+      db,
+      subject: "Jim Martin",
+      content: "Jim prefers a keto diet for weekly meal planning",
+      tags: ["diet"],
+      angle: 0,
+    });
+    await seed({
+      db,
+      subject: "Jim Martin",
+      content: "Jim Martin follows a ketogenic diet and avoids carbs",
+      tags: ["diet"],
+      angle: 45,
+    });
+
+    const clusters = await buildClusters(db, {
+      simThreshold: 0.82,
+      looseThreshold: 0.65,
+      minCluster: 2,
+    });
+
+    expect(clusters).toHaveLength(1);
+    expect(clusters[0]?.entries).toHaveLength(2);
+    expect(runSimpleStreamMock).not.toHaveBeenCalled();
+  });
+
+  it("calls LLM for loose band entries with different subjects", async () => {
+    const db = await makeDb();
+    await seed({
+      db,
+      subject: "Jim Martin",
+      content: "Jim prefers a keto diet for weekly meal planning",
+      tags: ["diet"],
+      angle: 0,
+    });
+    await seed({
+      db,
+      subject: "Diet Notes",
+      content: "Keto meals are used weekly in Jim's planning",
+      tags: ["diet"],
+      angle: 45,
+    });
+
+    runSimpleStreamMock.mockResolvedValueOnce({
+      stopReason: "toolUse",
+      content: [
+        {
+          type: "toolCall",
+          name: "dedup_check",
+          arguments: {
+            same: true,
+            reason: "same knowledge",
+          },
+        },
+      ],
+    });
+
+    let stats = { llmDedupCalls: 0, llmDedupMatches: 0 };
+    const clusters = await buildClusters(db, {
+      simThreshold: 0.82,
+      looseThreshold: 0.65,
+      minCluster: 2,
+      llmClient: makeLlmClient(),
+      onStats: (value) => {
+        stats = value;
+      },
+    });
+
+    expect(clusters).toHaveLength(1);
+    expect(runSimpleStreamMock).toHaveBeenCalled();
+    expect(stats).toEqual({ llmDedupCalls: 1, llmDedupMatches: 1 });
+  });
+
+  it("does not union loose band entries when LLM says distinct", async () => {
+    const db = await makeDb();
+    await seed({
+      db,
+      subject: "Jim Martin",
+      content: "Jim prefers a keto diet for weekly meal planning",
+      tags: ["diet"],
+      angle: 0,
+    });
+    await seed({
+      db,
+      subject: "Diet Notes",
+      content: "Jim Martin uses keto shots and is likely following keto",
+      tags: ["diet"],
+      angle: 45,
+    });
+
+    runSimpleStreamMock.mockResolvedValueOnce({
+      stopReason: "toolUse",
+      content: [
+        {
+          type: "toolCall",
+          name: "dedup_check",
+          arguments: {
+            same: false,
+            reason: "distinct",
+          },
+        },
+      ],
+    });
+
+    const clusters = await buildClusters(db, {
+      simThreshold: 0.82,
+      looseThreshold: 0.65,
+      minCluster: 2,
+      llmClient: makeLlmClient(),
+    });
+
+    expect(clusters).toHaveLength(0);
+    expect(runSimpleStreamMock).toHaveBeenCalled();
+  });
+
+  it("skips loose band entries with no llmClient", async () => {
+    const db = await makeDb();
+    await seed({
+      db,
+      subject: "Jim Martin",
+      content: "Jim prefers a keto diet for weekly meal planning",
+      tags: ["diet"],
+      angle: 0,
+    });
+    await seed({
+      db,
+      subject: "Diet Notes",
+      content: "Keto planning note",
+      tags: ["diet"],
+      angle: 45,
+    });
+
+    const clusters = await buildClusters(db, {
+      simThreshold: 0.82,
+      looseThreshold: 0.65,
+      minCluster: 2,
+    });
+
+    expect(clusters).toHaveLength(0);
+    expect(runSimpleStreamMock).not.toHaveBeenCalled();
   });
 });

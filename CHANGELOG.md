@@ -6,6 +6,11 @@
 - Ingest creates co-recall edges between entries extracted from the same
   session file, seeding the graph for graph-augmented recall after fresh
   installs or DB resets (#300).
+- Consolidation clustering now supports a loose similarity band with
+  subject-aware auto-union and optional LLM pre-screening to catch
+  semantically equivalent entries below the tight cosine threshold (#264).
+- Consolidation reports now include loose-band LLM dedup pre-screen call and
+  match counts across phases (#264).
 
 ## 0.9.9 - 2026-02-27
 

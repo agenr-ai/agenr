@@ -399,6 +399,7 @@ function renderTextReport(stats: ConsolidationOrchestratorReport, dryRun: boolea
     `|  +- Clusters merged: ${formatNumber(stats.phase1.totals.clustersMerged)}`,
     `|  +- Flagged for review: ${formatNumber(stats.phase1.totals.mergesFlagged)}`,
     `|  +- LLM calls: ${formatNumber(stats.phase1.totals.llmCalls)}`,
+    `|  +- LLM dedup checks: ${formatNumber(stats.phase1.totals.llmDedupCalls)} (${formatNumber(stats.phase1.totals.llmDedupMatches)} matched)`,
   ];
 
   for (const typeStats of stats.phase1.types) {
@@ -415,6 +416,7 @@ function renderTextReport(stats: ConsolidationOrchestratorReport, dryRun: boolea
       `|  +- Clusters merged: ${formatNumber(stats.phase2.clustersMerged)}`,
       `|  +- Flagged for review: ${formatNumber(stats.phase2.mergesFlagged)}`,
       `|  +- LLM calls: ${formatNumber(stats.phase2.llmCalls)}`,
+      `|  +- LLM dedup checks: ${formatNumber(stats.phase2.llmDedupCalls)} (${formatNumber(stats.phase2.llmDedupMatches)} matched)`,
     );
   }
 
@@ -425,6 +427,7 @@ function renderTextReport(stats: ConsolidationOrchestratorReport, dryRun: boolea
       `|  +- Clusters processed: ${formatNumber(stats.phase3.clustersProcessed)} / ${formatNumber(stats.phase3.clustersFound)}`,
       `|  +- Clusters merged: ${formatNumber(stats.phase3.clustersMerged)}`,
       `|  +- LLM calls: ${formatNumber(stats.phase3.llmCalls)}`,
+      `|  +- LLM dedup checks: ${formatNumber(stats.phase3.llmDedupCalls)} (${formatNumber(stats.phase3.llmDedupMatches)} matched)`,
     );
   }
 
@@ -439,6 +442,7 @@ function renderTextReport(stats: ConsolidationOrchestratorReport, dryRun: boolea
     stats.progress.partial
       ? `|  +- Status: partial (remaining ${formatNumber(stats.progress.remainingClusters)} clusters)`
       : "|  +- Status: completed",
+    `|  +- LLM dedup checks (total): ${formatNumber(stats.summary.totalLlmDedupCalls)} (${formatNumber(stats.summary.totalLlmDedupMatches)} matched)`,
     `|  +- Consolidated ${formatNumber(stats.entriesBefore)} -> ${formatNumber(stats.entriesAfter)} entries (${formatNumber(stats.summary.totalCanonicalEntriesCreated)} canonical entries created, ${formatNumber(stats.expiredCount)} expirations)`,
     "|",
     "+--  Done",
