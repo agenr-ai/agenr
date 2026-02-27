@@ -15,18 +15,43 @@ const DEFAULT_NEIGHBOR_LIMIT = 20;
 const MAX_ACTIVE_EMBEDDED_ENTRIES = 20_000;
 const MILLISECONDS_PER_DAY = 1000 * 60 * 60 * 24;
 const LLM_DEDUP_TOOL_NAME = "dedup_check";
+const LLM_DEDUP_BATCH_TOOL_NAME = "batch_dedup_check";
+const LLM_DEDUP_BATCH_SIZE = 10;
+const LLM_DEDUP_CONCURRENCY = 5;
 
 const LLM_DEDUP_TOOL_SCHEMA = Type.Object({
   same: Type.Boolean(),
   reason: Type.String(),
 });
 
+const LLM_DEDUP_BATCH_TOOL_SCHEMA = Type.Object({
+  results: Type.Array(
+    Type.Object({
+      pair: Type.Number(),
+      same: Type.Boolean(),
+      reason: Type.Optional(Type.String()),
+    }),
+  ),
+});
+
 type LlmDedupToolArgs = Static<typeof LLM_DEDUP_TOOL_SCHEMA>;
+type LlmDedupBatchToolArgs = Static<typeof LLM_DEDUP_BATCH_TOOL_SCHEMA>;
+
+interface LlmDedupPair {
+  entry: ActiveEmbeddedEntry;
+  candidate: ActiveEmbeddedEntry;
+}
 
 const LLM_DEDUP_TOOL: Tool<typeof LLM_DEDUP_TOOL_SCHEMA> = {
   name: LLM_DEDUP_TOOL_NAME,
   description: "Decide whether two knowledge entries express the same knowledge.",
   parameters: LLM_DEDUP_TOOL_SCHEMA,
+};
+
+const LLM_DEDUP_BATCH_TOOL: Tool<typeof LLM_DEDUP_BATCH_TOOL_SCHEMA> = {
+  name: LLM_DEDUP_BATCH_TOOL_NAME,
+  description: "Return dedup results for all pairs",
+  parameters: LLM_DEDUP_BATCH_TOOL_SCHEMA,
 };
 
 export interface ClusterOptions {
@@ -127,6 +152,36 @@ function buildLlmDedupContext(entryA: ActiveEmbeddedEntry, entryB: ActiveEmbedde
   };
 }
 
+function buildLlmDedupBatchContext(pairs: LlmDedupPair[]): Context {
+  const systemPrompt = [
+    "You are a deduplication assistant for knowledge entries.",
+    "For each numbered pair, decide if they express the same knowledge.",
+    "Call batch_dedup_check once with your results.",
+  ].join("\n");
+
+  const pairBlocks = pairs
+    .map((pair, index) =>
+      [
+        `Pair ${index + 1}:`,
+        `  Entry A: ${pair.entry.content}`,
+        `  Entry B: ${pair.candidate.content}`,
+      ].join("\n"),
+    )
+    .join("\n\n");
+
+  return {
+    systemPrompt,
+    messages: [
+      {
+        role: "user",
+        content: pairBlocks,
+        timestamp: Date.now(),
+      },
+    ],
+    tools: [LLM_DEDUP_BATCH_TOOL],
+  };
+}
+
 function extractLlmDedupFromToolCall(
   message: { content: Array<{ type: string; name?: string; arguments?: unknown }> },
 ): { same: boolean; reason: string } | null {
@@ -144,6 +199,39 @@ function extractLlmDedupFromToolCall(
       same: args.same,
       reason: typeof args.reason === "string" ? args.reason : "",
     };
+  }
+
+  return null;
+}
+
+function extractLlmDedupBatchFromToolCall(
+  message: { content: Array<{ type: string; name?: string; arguments?: unknown }> },
+): LlmDedupBatchToolArgs["results"] | null {
+  for (const block of message.content) {
+    if (block.type !== "toolCall" || block.name !== LLM_DEDUP_BATCH_TOOL_NAME) {
+      continue;
+    }
+
+    const args = block.arguments as Partial<LlmDedupBatchToolArgs> | undefined;
+    if (!args || !Array.isArray(args.results)) {
+      continue;
+    }
+
+    const parsed = args.results
+      .filter(
+        (result): result is { pair: number; same: boolean; reason?: string } =>
+          typeof result === "object" &&
+          result !== null &&
+          typeof result.pair === "number" &&
+          typeof result.same === "boolean",
+      )
+      .map((result) => ({
+        pair: result.pair,
+        same: result.same,
+        reason: typeof result.reason === "string" ? result.reason : undefined,
+      }));
+
+    return parsed;
   }
 
   return null;
@@ -179,6 +267,61 @@ export async function llmDedupCheck(
   } catch {
     return false;
   }
+}
+
+export async function llmDedupCheckBatch(llmClient: LlmClient, pairs: LlmDedupPair[]): Promise<boolean[]> {
+  if (pairs.length === 0) {
+    return [];
+  }
+
+  const fallback = Array.from({ length: pairs.length }, () => false);
+
+  try {
+    const timeoutMs = 30_000;
+    const response = await Promise.race([
+      runSimpleStream({
+        model: llmClient.resolvedModel.model,
+        context: buildLlmDedupBatchContext(pairs),
+        options: {
+          apiKey: llmClient.credentials.apiKey,
+        },
+        verbose: false,
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("llmDedupCheckBatch timed out")), timeoutMs),
+      ),
+    ]);
+
+    if (response.stopReason === "error" || response.errorMessage) {
+      return fallback;
+    }
+
+    const parsed = extractLlmDedupBatchFromToolCall(response);
+    if (!parsed) {
+      return fallback;
+    }
+
+    const results = [...fallback];
+    for (const result of parsed) {
+      const pairIndex = Math.trunc(result.pair) - 1;
+      if (pairIndex < 0 || pairIndex >= results.length) {
+        continue;
+      }
+      results[pairIndex] = result.same;
+    }
+
+    return results;
+  } catch {
+    return fallback;
+  }
+}
+
+function chunkPairs<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
 }
 
 function parseDaysSince(value: string, now: Date): number {
@@ -305,6 +448,7 @@ export async function buildClusters(db: Client, options: ClusterOptions = {}): P
   const looseUnionPairs = new Set<string>();
   const llmDedupQueue: Array<{ entry: ActiveEmbeddedEntry; candidate: ActiveEmbeddedEntry; key: string }> = [];
   let llmDedupCalls = 0;
+  let llmDedupCheckedPairs = 0;
   let llmDedupMatches = 0;
   for (const entry of candidates) {
     unionFind.add(entry.id);
@@ -344,18 +488,52 @@ export async function buildClusters(db: Client, options: ClusterOptions = {}): P
     }
   }
 
-  for (const pair of llmDedupQueue) {
-    if (!llmClient) {
-      break;
+  if (llmClient && llmDedupQueue.length > 0) {
+    const startedAt = Date.now();
+    const batches = chunkPairs(llmDedupQueue, LLM_DEDUP_BATCH_SIZE);
+
+    for (let i = 0; i < batches.length; i += LLM_DEDUP_CONCURRENCY) {
+      const batchGroup = batches.slice(i, i + LLM_DEDUP_CONCURRENCY);
+      const settled = await Promise.allSettled(
+        batchGroup.map((batch) =>
+          llmDedupCheckBatch(
+            llmClient,
+            batch.map((pair) => ({
+              entry: pair.entry,
+              candidate: pair.candidate,
+            })),
+          ),
+        ),
+      );
+
+      llmDedupCalls += batchGroup.length;
+      for (let batchIndex = 0; batchIndex < batchGroup.length; batchIndex += 1) {
+        const batch = batchGroup[batchIndex];
+        const result = settled[batchIndex];
+        const matches =
+          result && result.status === "fulfilled"
+            ? result.value
+            : Array.from({ length: batch.length }, () => false);
+
+        llmDedupCheckedPairs += batch.length;
+        for (let pairIndex = 0; pairIndex < batch.length; pairIndex += 1) {
+          const pair = batch[pairIndex];
+          if (matches[pairIndex] !== true) {
+            continue;
+          }
+          llmDedupMatches += 1;
+          looseUnionPairs.add(pair.key);
+          unionFind.union(pair.entry.id, pair.candidate.id);
+        }
+      }
+
+      const elapsedSeconds = Math.max(1, Math.floor((Date.now() - startedAt) / 1000));
+      const remainingPairs = Math.max(0, llmDedupQueue.length - llmDedupCheckedPairs);
+      const estimatedRemainingSeconds = Math.round((elapsedSeconds / llmDedupCheckedPairs) * remainingPairs);
+      onLog(
+        `[dedup] Checked ${llmDedupCheckedPairs}/${llmDedupQueue.length} pairs (${llmDedupMatches} matched) ~${estimatedRemainingSeconds}s remaining`,
+      );
     }
-    llmDedupCalls += 1;
-    const isSame = await llmDedupCheck(llmClient, pair.entry, pair.candidate);
-    if (isSame) {
-      llmDedupMatches += 1;
-      looseUnionPairs.add(pair.key);
-      unionFind.union(pair.entry.id, pair.candidate.id);
-    }
-    onLog(`[dedup] Checked ${llmDedupCalls}/${llmDedupQueue.length} pairs (${llmDedupMatches} matched)`);
   }
 
   const groups = new Map<string, ActiveEmbeddedEntry[]>();

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.17 - 2026-02-27
+
+### Changed
+- Optimized LLM dedup in consolidate clustering: batch up to 10 pairs per API
+  call with 5 concurrent batches. Reduces a 2400-pair dedup queue from ~60min
+  (sequential, 1 call per pair) to ~2min.
+
 ## 0.9.16 - 2026-02-27
 
 ### Added
