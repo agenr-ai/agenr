@@ -1499,7 +1499,12 @@ export async function storeEntries(
     }
 
     if (!entityHintsPromise) {
-      entityHintsPromise = getDistinctEntities(db);
+      entityHintsPromise = getDistinctEntities(db).catch((err) => {
+        console.warn(
+          `[store] entity hints lookup failed, proceeding without hints: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return [];
+      });
     }
 
     return entityHintsPromise;
