@@ -71,6 +71,15 @@ function collapsePreview(text: string, maxLength = 80): string {
   return `${collapsed.slice(0, maxLength - 3)}...`;
 }
 
+function formatSeconds(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  return `${seconds}s`;
+}
+
+function formatCount(value: number): string {
+  return value.toLocaleString("en-US");
+}
+
 export function forgettingScore(entry: StoredEntry, now: Date): number {
   const ageDays = parseDaysBetween(now, entry.created_at);
   const recallCount = entry.recall_count ?? 0;
@@ -329,6 +338,14 @@ async function mergeNearExactDuplicates(
     return 0;
   }
 
+  const totalComparisons = (entries.length * (entries.length - 1)) / 2;
+  options.onLog(
+    `[merge] Computing pairwise similarity for ${entries.length} entries (${formatCount(totalComparisons)} comparisons)...`,
+  );
+  const scanStartedAt = Date.now();
+  let checkedPairs = 0;
+  let nextProgressPercent = 10;
+
   const entryById = new Map(entries.map((entry) => [entry.id, entry]));
   const unionFind = new UnionFind();
   for (const entry of entries) {
@@ -339,6 +356,7 @@ async function mergeNearExactDuplicates(
     const entry = entries[i];
     for (let j = i + 1; j < entries.length; j += 1) {
       const candidate = entries[j];
+      checkedPairs += 1;
 
       const similarity = cosineSim(entry.embedding, candidate.embedding);
       if (similarity <= MERGE_SIMILARITY_THRESHOLD) {
@@ -357,6 +375,15 @@ async function mergeNearExactDuplicates(
 
       unionFind.union(entry.id, candidate.id);
     }
+
+    while (nextProgressPercent <= 100 && i + 1 >= Math.ceil((entries.length * nextProgressPercent) / 100)) {
+      const elapsedMs = Date.now() - scanStartedAt;
+      const remainingPairs = Math.max(totalComparisons - checkedPairs, 0);
+      const etaMs = checkedPairs > 0 ? (elapsedMs / checkedPairs) * remainingPairs : 0;
+      const etaSuffix = checkedPairs > 0 ? ` ~${formatSeconds(etaMs)} remaining` : "";
+      options.onLog(`[merge] ...${nextProgressPercent}% (${formatCount(checkedPairs)} pairs checked)${etaSuffix}`);
+      nextProgressPercent += 10;
+    }
   }
 
   const groups = new Map<string, ActiveEmbeddedEntry[]>();
@@ -366,6 +393,9 @@ async function mergeNearExactDuplicates(
     current.push(entry);
     groups.set(root, current);
   }
+  const groupedCount = Array.from(groups.values()).filter((group) => group.length >= 2).length;
+  const scanSeconds = ((Date.now() - scanStartedAt) / 1000).toFixed(1);
+  options.onLog(`[merge] Similarity scan complete: ${groupedCount} groups found in ${scanSeconds}s`);
 
   let mergedCount = 0;
 
@@ -564,18 +594,46 @@ export async function consolidateRules(
   let expiredCount = 0;
   let mergedCount = 0;
   let orphanedRelationsCleaned = 0;
+  const mergePassCount = 1;
+
+  const runRulePasses = async (): Promise<void> => {
+    for (let pass = 1; pass <= mergePassCount; pass += 1) {
+      onLog("[rules] Pruning expired entries...");
+      expiredCount += await expireDecayedEntries(db, now, {
+        dryRun,
+        verbose,
+        onLog,
+        platform,
+        project,
+        excludeProject,
+      });
+      onLog(`[rules] Pass ${pass}: merging near-exact duplicates...`);
+      mergedCount += await mergeNearExactDuplicates(db, {
+        dryRun,
+        verbose,
+        onLog,
+        platform,
+        project,
+        excludeProject,
+      });
+    }
+  };
 
   if (dryRun) {
-    expiredCount = await expireDecayedEntries(db, now, { dryRun, verbose, onLog, platform, project, excludeProject });
-    mergedCount = await mergeNearExactDuplicates(db, { dryRun, verbose, onLog, platform, project, excludeProject });
-    orphanedRelationsCleaned = skipOrphanCleanup ? 0 : await cleanOrphanedRelations(db, true);
+    await runRulePasses();
+    if (!skipOrphanCleanup) {
+      onLog("[rules] Cleaning orphaned relations...");
+      orphanedRelationsCleaned = await cleanOrphanedRelations(db, true);
+    }
   } else {
     await db.execute("BEGIN");
     try {
       await ensureExpiredSentinel(db);
-      expiredCount = await expireDecayedEntries(db, now, { dryRun, verbose, onLog, platform, project, excludeProject });
-      mergedCount = await mergeNearExactDuplicates(db, { dryRun, verbose, onLog, platform, project, excludeProject });
-      orphanedRelationsCleaned = skipOrphanCleanup ? 0 : await cleanOrphanedRelations(db, false);
+      await runRulePasses();
+      if (!skipOrphanCleanup) {
+        onLog("[rules] Cleaning orphaned relations...");
+        orphanedRelationsCleaned = await cleanOrphanedRelations(db, false);
+      }
       await db.execute("COMMIT");
     } catch (error) {
       try {

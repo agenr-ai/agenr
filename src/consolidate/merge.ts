@@ -281,6 +281,11 @@ export async function mergeCluster(
     }
   }
 
+  const subjectPreview = truncateContent(cluster.entries[0]?.subject ?? "", 60);
+  onLog(
+    `[merge-llm] Merging cluster of ${cluster.entries.length} entries (subject: "${subjectPreview || "unknown"}")`,
+  );
+
   let mergeResult: MergeResult | null = null;
   try {
     const response = await runSimpleStream({

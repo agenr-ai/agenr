@@ -156,6 +156,28 @@ describe("consolidate orchestrator", () => {
     expect(phase2Call?.simThreshold).toBe(0.88);
   });
 
+  it("logs Phase 1 per-cluster progress", async () => {
+    const mod = await setupModule();
+    const { deps } = makeDeps({
+      buildClustersFn: (typeFilter) => (typeFilter === "fact" ? [makeCluster(["f1", "f2"])] : []),
+    });
+    const logs: string[] = [];
+
+    await mod.runConsolidationOrchestrator(
+      {} as Client,
+      "/tmp/knowledge.db",
+      makeLlmClient(),
+      "embed-key",
+      {
+        type: "fact",
+        onLog: (line) => logs.push(line),
+      },
+      deps,
+    );
+
+    expect(logs).toContain("[phase 1] Processing cluster 1/1...");
+  });
+
   it("stops after batch limit and persists checkpoint", async () => {
     const mod = await setupModule();
     const { deps } = makeDeps({

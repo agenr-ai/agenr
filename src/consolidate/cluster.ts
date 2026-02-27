@@ -303,6 +303,7 @@ export async function buildClusters(db: Client, options: ClusterOptions = {}): P
   const entryById = new Map(candidates.map((entry) => [entry.id, entry]));
   const unionFind = new UnionFind();
   const looseUnionPairs = new Set<string>();
+  const llmDedupQueue: Array<{ entry: ActiveEmbeddedEntry; candidate: ActiveEmbeddedEntry; key: string }> = [];
   let llmDedupCalls = 0;
   let llmDedupMatches = 0;
   for (const entry of candidates) {
@@ -339,14 +340,22 @@ export async function buildClusters(db: Client, options: ClusterOptions = {}): P
         continue;
       }
 
-      llmDedupCalls += 1;
-      const isSame = await llmDedupCheck(llmClient, entry, candidate);
-      if (isSame) {
-        llmDedupMatches += 1;
-        looseUnionPairs.add(key);
-        unionFind.union(entry.id, candidate.id);
-      }
+      llmDedupQueue.push({ entry, candidate, key });
     }
+  }
+
+  for (const pair of llmDedupQueue) {
+    if (!llmClient) {
+      break;
+    }
+    llmDedupCalls += 1;
+    const isSame = await llmDedupCheck(llmClient, pair.entry, pair.candidate);
+    if (isSame) {
+      llmDedupMatches += 1;
+      looseUnionPairs.add(pair.key);
+      unionFind.union(pair.entry.id, pair.candidate.id);
+    }
+    onLog(`[dedup] Checked ${llmDedupCalls}/${llmDedupQueue.length} pairs (${llmDedupMatches} matched)`);
   }
 
   const groups = new Map<string, ActiveEmbeddedEntry[]>();

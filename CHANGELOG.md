@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.16 - 2026-02-27
+
+### Added
+- Added progress logging throughout the consolidate pipeline. Pairwise
+  similarity scan, rules phases, cluster processing, LLM dedup checks, and
+  LLM merge calls now report progress so users can see the system is working.
+  Phase-level progress logs are always shown (not gated behind `--verbose`).
+- Added live cluster progress updates with ETA during consolidation phases so
+  long-running Phase 1, Phase 2, and Phase 3 work shows continuous terminal
+  activity.
+
 ## 0.9.14 - 2026-02-27
 
 ### Fixed
