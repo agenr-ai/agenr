@@ -1196,7 +1196,7 @@ export async function recall(
   scored.sort((a, b) => b.score - a.score);
 
   const graphEnabled = options.graphEnabled !== false;
-  if (graphEnabled && text && queryEmbedding && !isSessionStart) {
+  if (graphEnabled && text && queryEmbedding && !isSessionStart && !query.noBoost) {
     const seedCountRaw = options.graphSeedCount ?? GRAPH_SEED_COUNT;
     const seedCount = Number.isFinite(seedCountRaw) && seedCountRaw > 0 ? Math.floor(seedCountRaw) : GRAPH_SEED_COUNT;
     const minEdgeWeightRaw = options.graphMinEdgeWeight ?? GRAPH_MIN_EDGE_WEIGHT;
