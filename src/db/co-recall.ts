@@ -2,7 +2,7 @@ import type { Client } from "@libsql/client";
 import { toNumber, toRowsAffected, toStringValue } from "../utils/entry-utils.js";
 
 const DEFAULT_EDGE_INCREMENT = 0.1;
-const MAX_USED_ENTRIES = 20;
+export const MAX_USED_ENTRIES = 20;
 const MIN_EDGE_WEIGHT = 0.05;
 const CO_RECALL_EDGE_TYPE = "co_recalled";
 

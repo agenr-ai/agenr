@@ -1001,7 +1001,8 @@ export async function runIngestCommand(
             try {
               const existingIds = await queue.runExclusive(() => getSourceEntryIds(db, target.file));
               if (existingIds.size >= 2) {
-                const idArr = [...existingIds];
+                const { strengthenCoRecallEdges, MAX_USED_ENTRIES } = await import("../db/co-recall.js");
+                const idArr = [...existingIds].slice(0, MAX_USED_ENTRIES);
                 const expectedEdges = (idArr.length * (idArr.length - 1)) / 2;
                 const edgeCount = await queue.runExclusive(async () => {
                   const result = await db.execute({
@@ -1013,7 +1014,6 @@ export async function runIngestCommand(
                   return Number(result.rows[0]?.cnt ?? 0);
                 });
                 if (edgeCount < expectedEdges) {
-                  const { strengthenCoRecallEdges } = await import("../db/co-recall.js");
                   const edgeTimestamp = resolvedDeps.nowFn().toISOString();
                   await queue.runExclusive(() => strengthenCoRecallEdges(db, idArr, edgeTimestamp));
                 }
@@ -1195,7 +1195,7 @@ export async function runIngestCommand(
       }
 
       // Build co-recall edges between entries from the same session file.
-      if (!dryRun && fileStoreStats.added >= 2) {
+      if (!dryRun && fileStoreStats.added > 0) {
         try {
           const fileEntryIds = await queue.runExclusive(() => getSourceEntryIds(db, target.file));
           if (fileEntryIds.size >= 2) {
