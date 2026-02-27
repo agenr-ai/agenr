@@ -1490,6 +1490,15 @@ const plugin = {
             until: Type.Optional(
               Type.String({ description: "Only entries older than this ceiling (ISO date or relative, e.g. 7d = entries created before 7 days ago). Use with since for a date window." }),
             ),
+            around: Type.Optional(
+              Type.String({
+                description:
+                  "Bias recall toward a specific date. Entries closer to this date rank higher. ISO date or relative (e.g. 7d = 7 days ago).",
+              }),
+            ),
+            aroundRadius: Type.Optional(
+              Type.Number({ description: "Window radius in days for --around (default: 14)." }),
+            ),
             platform: Type.Optional(Type.String({ description: "Platform filter: openclaw, claude-code, codex." })),
             project: Type.Optional(Type.String({ description: "Project scope. Pass * for all projects." })),
           }),

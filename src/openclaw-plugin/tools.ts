@@ -164,6 +164,8 @@ export async function runRecallTool(
   const types = asString(params.types);
   const since = asString(params.since);
   const until = asString(params.until);
+  const around = asString(params.around);
+  const aroundRadius = asNumber(params.aroundRadius);
   const platform = asString(params.platform);
   const project = asString(params.project) || defaultProject;
 
@@ -186,6 +188,12 @@ export async function runRecallTool(
   }
   if (until) {
     args.push("--until", until);
+  }
+  if (around) {
+    args.push("--around", around);
+  }
+  if (aroundRadius !== undefined) {
+    args.push("--around-radius", String(aroundRadius));
   }
   // threshold has no direct CLI equivalent in agenr recall
   if (platform) {
