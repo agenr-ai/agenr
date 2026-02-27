@@ -371,6 +371,8 @@ export function scoreEntryWithBreakdown(
 
   const rawVector = clamp01(vectorSim);
   const sim = Math.pow(rawVector, 0.7);
+  // Around targeting intentionally uses gaussian proximity regardless of expiry tier.
+  // When a user asks for a specific date, distance from that target is the primary recency signal.
   const rec = aroundDate
     ? gaussianRecency(new Date(entry.created_at), aroundDate, aroundRadius)
     : recency(daysOld, entry.expiry);
@@ -935,14 +937,13 @@ export async function recall(
     throw new Error(`Invalid until value "${query.until ?? ""}": ${reason}`);
   }
 
-  if (aroundDate) {
+  const hasExplicitSince = Boolean(query.since && query.since.trim().length > 0);
+  const hasExplicitUntil = Boolean(query.until && query.until.trim().length > 0);
+
+  if (aroundDate && !hasExplicitSince && !hasExplicitUntil) {
     const radiusMs = aroundRadiusDays * 24 * 60 * 60 * 1000;
-    if (!cutoff) {
-      cutoff = new Date(aroundDate.getTime() - radiusMs);
-    }
-    if (!ceiling) {
-      ceiling = new Date(aroundDate.getTime() + radiusMs);
-    }
+    cutoff = new Date(aroundDate.getTime() - radiusMs);
+    ceiling = new Date(aroundDate.getTime() + radiusMs);
   }
 
   if (cutoff !== undefined && ceiling !== undefined && cutoff > ceiling) {
@@ -1058,8 +1059,9 @@ export async function recall(
       ? await runFts(db, effectiveText, platform, project, excludeProject, projectStrict)
       : new Set<string>();
 
-  // effectiveNow shifts the recency anchor for historical queries:
-  // aroundDate (if provided) -> window end (ceiling) -> real now.
+  // effectiveNow shifts the recency anchor for historical queries.
+  // aroundDate takes priority so --around re-anchors recency to the target date.
+  // Otherwise use window end (ceiling), then fall back to real now.
   // freshnessBoost always uses real `now` -- it is a live-query signal, not a window signal.
   const effectiveNow = aroundDate ?? ceiling ?? now;
 
