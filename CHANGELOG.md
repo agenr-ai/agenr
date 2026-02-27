@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.9.11 - 2026-02-27
+## 0.9.12 - 2026-02-27
 
 ### Fixed
 - Register pi-ai API providers before streamSimple calls so consolidate
