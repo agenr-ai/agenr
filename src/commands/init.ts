@@ -1439,12 +1439,10 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
       }
 
       selectedModel = newModel;
-      const nextConfig: AgenrConfig = {
+      workingConfig = {
         ...existingConfig,
         model: newModel,
       };
-      writeConfig(nextConfig, env);
-      workingConfig = initWizardRuntime.readConfig(env) ?? nextConfig;
       currentEmbeddingKey = resolveEmbeddingKeyOrNull(workingConfig, env);
     }
   } else {
@@ -2113,6 +2111,20 @@ export async function runInitWizard(options: WizardOptions): Promise<void> {
         `--platform ${selectedPlatform.id}`,
     );
     watcherStatus = `Not supported on ${osName}`;
+  }
+
+  if (wizardChanges.modelChanged && selectedModel) {
+    const latestConfig = initWizardRuntime.readConfig(env) ?? workingConfig ?? {};
+    const nextConfig: AgenrConfig = {
+      ...latestConfig,
+      model: selectedModel,
+      ...(selectedTaskModels ? { models: selectedTaskModels } : {}),
+    };
+    if (!selectedTaskModels) {
+      delete nextConfig.models;
+    }
+    writeConfig(nextConfig, env);
+    workingConfig = nextConfig;
   }
 
   const openclawDatabase =

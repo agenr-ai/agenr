@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as configModule from "../../src/config.js";
 import { readConfig, writeConfig } from "../../src/config.js";
 import type { AgenrConfig } from "../../src/types.js";
 
@@ -214,6 +215,28 @@ describe("init wizard auth/model reconfigure", () => {
     });
     expect(messages).toContain("Select default model:");
     expect(messages).toContain("Configure per-task models? (Advanced)");
+  });
+
+  it("does not persist config when user cancels after model-only change", async () => {
+    const current = getMocks();
+    const projectDir = await makeTempDir("agenr-init-project-test-");
+    const env = await setupExistingConfig(projectDir);
+    mockWizardRuntime(projectDir);
+
+    const writeConfigSpy = vi.spyOn(configModule, "writeConfig");
+    writeConfigSpy.mockClear();
+
+    queueResponses(current.confirmMock, [true], "confirm");
+    queueResponses(current.selectMock, ["change-model", "gpt-4.1", current.cancelToken], "select");
+    queueResponses(current.textMock, [], "text");
+
+    await initModule.runInitWizard({
+      isInteractive: true,
+      path: projectDir,
+    });
+
+    expect(writeConfigSpy).not.toHaveBeenCalled();
+    expect(readConfig(env)?.model).toBe("gpt-4.1-mini");
   });
 
   it("keeps current auth and model without showing model picker", async () => {

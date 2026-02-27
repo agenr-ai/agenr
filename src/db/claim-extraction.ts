@@ -157,6 +157,9 @@ function resolveEntityAlias(entity: string, existingEntities?: Set<string>): str
   }
 
   if (existingEntities && existingEntities.size > 0 && entity === "user") {
+    // When "user" maps to multiple non-user entities, pick the first
+    // alphabetically for deterministic behavior. A most-recently-used
+    // strategy could be considered later.
     const nonUserEntities = [...existingEntities]
       .filter((existingEntity) => existingEntity !== "user")
       .sort((a, b) => a.localeCompare(b));

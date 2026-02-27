@@ -976,6 +976,49 @@ describe("db store pipeline", () => {
     expect(secondCallOptions).toMatchObject({ entityHints: ["alex"] });
   });
 
+  it("storeEntries continues when getDistinctEntities throws", async () => {
+    const client = makeClient();
+    await initDb(client);
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const getDistinctEntitiesSpy = vi
+      .spyOn(claimExtractionModule, "getDistinctEntities")
+      .mockRejectedValue(new Error("database unavailable"));
+    const extractClaimSpy = vi.spyOn(claimExtractionModule, "extractClaim").mockResolvedValue({
+      subjectEntity: "jim",
+      subjectAttribute: "weight",
+      subjectKey: "jim/weight",
+      predicate: "weighs",
+      object: "185 lbs",
+      confidence: 0.9,
+    });
+
+    const result = await storeEntries(
+      client,
+      [makeEntry({ content: "incoming with failed hints vec-low", sourceFile: "incoming-failed-hints.jsonl", subject: "Jim" })],
+      "sk-test",
+      {
+        embedFn: mockEmbed,
+        force: true,
+        llmClient: makeLlmClient(),
+      },
+    );
+
+    expect(result.added).toBe(1);
+    expect(getDistinctEntitiesSpy).toHaveBeenCalledTimes(1);
+    expect(extractClaimSpy).toHaveBeenCalledTimes(1);
+    expect(extractClaimSpy.mock.calls[0]?.[4]).toMatchObject({ entityHints: [] });
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("[store] entity hints lookup failed, proceeding without hints: database unavailable"),
+    );
+
+    const row = await client.execute({
+      sql: "SELECT content FROM entries WHERE source_file = ?",
+      args: ["incoming-failed-hints.jsonl"],
+    });
+    expect(String(row.rows[0]?.content)).toBe("incoming with failed hints vec-low");
+  });
+
   it("does not run claim extraction when dedup decides SKIP", async () => {
     const client = makeClient();
     await initDb(client);
