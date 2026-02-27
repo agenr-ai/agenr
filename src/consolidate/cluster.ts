@@ -244,6 +244,7 @@ export async function llmDedupCheck(
 ): Promise<boolean> {
   try {
     const timeoutMs = 15_000;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const response = await Promise.race([
       runSimpleStream({
         model: llmClient.resolvedModel.model,
@@ -253,10 +254,10 @@ export async function llmDedupCheck(
         },
         verbose: false,
       }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("llmDedupCheck timed out")), timeoutMs),
-      ),
-    ]);
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("llmDedupCheck timed out")), timeoutMs);
+      }),
+    ]).finally(() => clearTimeout(timer));
 
     if (response.stopReason === "error" || response.errorMessage) {
       return false;
@@ -278,6 +279,7 @@ export async function llmDedupCheckBatch(llmClient: LlmClient, pairs: LlmDedupPa
 
   try {
     const timeoutMs = 30_000;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const response = await Promise.race([
       runSimpleStream({
         model: llmClient.resolvedModel.model,
@@ -287,10 +289,10 @@ export async function llmDedupCheckBatch(llmClient: LlmClient, pairs: LlmDedupPa
         },
         verbose: false,
       }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("llmDedupCheckBatch timed out")), timeoutMs),
-      ),
-    ]);
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("llmDedupCheckBatch timed out")), timeoutMs);
+      }),
+    ]).finally(() => clearTimeout(timer));
 
     if (response.stopReason === "error" || response.errorMessage) {
       return fallback;
