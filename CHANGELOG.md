@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.11 - 2026-02-27
+
+### Fixed
+- Added 15s timeout to LLM dedup pre-screening calls in consolidate clustering
+  to prevent hangs from unresponsive LLM endpoints.
+
 ## 0.9.10 - 2026-02-27
 
 ### Added
