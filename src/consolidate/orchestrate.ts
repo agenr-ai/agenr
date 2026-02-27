@@ -510,6 +510,44 @@ async function processPhaseClusters(
 ): Promise<ClusterProcessingStats> {
   const stats = defaultClusterStats();
   stats.clustersFound = params.clusters.length;
+  const onLog = params.options.onLog ?? (() => undefined);
+  const showLiveProgress = process.stderr.isTTY && params.options.verbose !== true;
+  const liveLineWidth = 120;
+  const phaseStartedAt = Date.now();
+
+  const formatEta = (ms: number): string => {
+    const seconds = Math.max(0, Math.round(ms / 1000));
+    if (seconds < 60) {
+      return `${seconds}s`;
+    }
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    return remainingSeconds === 0 ? `${minutes}m` : `${minutes}m ${remainingSeconds}s`;
+  };
+
+  const updateLiveProgress = (clusterIndex: number, totalClusters: number): void => {
+    if (!showLiveProgress) {
+      return;
+    }
+    const completedClusters = clusterIndex - 1;
+    let etaSuffix = "";
+    if (completedClusters >= 2) {
+      const elapsedMs = Date.now() - phaseStartedAt;
+      const etaMs = (totalClusters - completedClusters) * (elapsedMs / completedClusters);
+      etaSuffix = ` ~${formatEta(etaMs)} remaining`;
+    }
+    process.stderr.write(
+      `\rPhase ${params.phase}: Processing cluster ${clusterIndex}/${totalClusters} (${params.type}) ...${etaSuffix}`,
+    );
+  };
+
+  const clearLiveProgress = (): void => {
+    if (!showLiveProgress) {
+      return;
+    }
+    process.stderr.write("\r");
+    process.stderr.write(`${" ".repeat(liveLineWidth)}\r`);
+  };
 
   const pending: Array<{ cluster: Cluster; index: number; fingerprint: string }> = [];
   for (let i = 0; i < params.clusters.length; i += 1) {
@@ -532,10 +570,15 @@ async function processPhaseClusters(
       break;
     }
 
+    clearLiveProgress();
+    const clusterNumber = stats.clustersProcessed + 1;
+    onLog(`[phase ${params.phase}] Processing cluster ${clusterNumber}/${pending.length}...`);
+    updateLiveProgress(clusterNumber, pending.length);
+
     const outcome = await deps.mergeClusterFn(params.db, item.cluster, params.llmClient, params.embeddingApiKey, {
       dryRun: params.options.dryRun,
       verbose: params.options.verbose,
-      onLog: params.options.verbose ? params.options.onLog : undefined,
+      onLog,
     });
 
     stats.clustersProcessed += 1;
@@ -566,6 +609,7 @@ async function processPhaseClusters(
       break;
     }
   }
+  clearLiveProgress();
 
   return stats;
 }
@@ -747,7 +791,7 @@ export async function runConsolidationOrchestrator(
       skipBackup: projectIndex > 0,
       backupPath: projectIndex > 0 ? sharedBackupPath : undefined,
       skipOrphanCleanup: projectIndex > 0,
-      onLog: options.verbose ? onLog : undefined,
+      onLog,
     });
 
     if (projectIndex === 0) {
@@ -825,7 +869,7 @@ export async function runConsolidationOrchestrator(
           looseThreshold: options.looseThreshold,
           idempotencyDays: options.idempotencyDays,
           verbose: options.verbose,
-          onLog: options.verbose ? onLog : undefined,
+          onLog,
           onStats: (stats) => {
             phase1ClusterStats = stats;
           },
@@ -863,7 +907,7 @@ export async function runConsolidationOrchestrator(
           looseThreshold: options.looseThreshold,
           idempotencyDays: options.idempotencyDays,
           verbose: options.verbose,
-          onLog: options.verbose ? onLog : undefined,
+          onLog,
           onStats: (stats) => {
             phase2ClusterStats = stats;
           },
@@ -1055,7 +1099,7 @@ export async function runConsolidationOrchestrator(
           looseThreshold: options.looseThreshold,
           idempotencyDays: 0,
           verbose: options.verbose,
-          onLog: options.verbose ? onLog : undefined,
+          onLog,
           onStats: (stats) => {
             phase3ClusterStats = stats;
           },

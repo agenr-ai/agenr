@@ -404,6 +404,37 @@ describe("consolidate rules", () => {
     expect(supersedesRelations.rows.map((row) => asString(row.target_id)).sort()).toEqual([id1, id3].sort());
   });
 
+  it("logs phase-level pruning progress even when verbose is false", async () => {
+    const onLog = vi.fn();
+    await consolidateRules(client, backupSourcePath, {
+      verbose: false,
+      onLog,
+    });
+
+    expect(onLog).toHaveBeenCalledWith("[rules] Pruning expired entries...");
+  });
+
+  it("logs pairwise similarity scan start when two embedded entries exist", async () => {
+    await insertTestEntry({
+      content: "pairwise scan entry one",
+      subject: "Pairwise Subject",
+      seed: 910,
+    });
+    await insertTestEntry({
+      content: "pairwise scan entry two",
+      subject: "Pairwise Subject",
+      seed: 911,
+    });
+
+    const onLog = vi.fn();
+    await consolidateRules(client, backupSourcePath, {
+      dryRun: true,
+      onLog,
+    });
+
+    expect(onLog).toHaveBeenCalledWith("[merge] Computing pairwise similarity for 2 entries (1 comparisons)...");
+  });
+
   it("merges near-duplicates with similar but not identical embeddings (in-memory cosine)", async () => {
     // Seeds 10 and 11 produce cosine similarity ~0.9956, above MERGE_SIMILARITY_THRESHOLD (0.95).
     // This verifies the in-memory cosineSim comparison works correctly for non-identical embeddings.
