@@ -1168,6 +1168,28 @@ export async function runIngestCommand(
         );
       }
 
+      // Build co-recall edges between entries from the same session file.
+      if (!dryRun && fileStoreStats.added >= 2) {
+        try {
+          const fileEntryIds = await queue.runExclusive(() => getSourceEntryIds(db, target.file));
+          if (fileEntryIds.size >= 2) {
+            const { strengthenCoRecallEdges } = await import("../db/co-recall.js");
+            const edgeTimestamp = resolvedDeps.nowFn().toISOString();
+            await queue.runExclusive(() => strengthenCoRecallEdges(db, [...fileEntryIds], edgeTimestamp));
+          }
+        } catch (edgeError) {
+          // Non-fatal: edge creation failure should not fail the ingest.
+          if (verbose) {
+            clack.log.warn(
+              formatWarn(
+                `Co-recall edge creation failed for ${path.basename(target.file)}: ${errorMessage(edgeError)}`,
+              ),
+              clackOutput,
+            );
+          }
+        }
+      }
+
       return fileResult;
     } catch (error) {
       if (fileHash.length > 0) {
