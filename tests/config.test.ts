@@ -3,16 +3,25 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  DEFAULT_TASK_MODEL,
+  isCompleteConfig,
   normalizeConfig,
   readConfig,
   resolveConfigPath,
   resolveModelForTask,
   resolveProjectFromGlobalConfig,
+  setConfigKey,
   writeConfig,
 } from "../src/config.js";
 import type { AgenrConfig } from "../src/types.js";
 
 const tempDirs: string[] = [];
+const DEFAULT_MODELS: AgenrConfig["models"] = {
+  extraction: DEFAULT_TASK_MODEL,
+  claimExtraction: DEFAULT_TASK_MODEL,
+  contradictionJudge: DEFAULT_TASK_MODEL,
+  handoffSummary: DEFAULT_TASK_MODEL,
+};
 
 function makeEnv(configPath: string): NodeJS.ProcessEnv {
   return {
@@ -42,7 +51,12 @@ describe("config", () => {
     const config: AgenrConfig = {
       auth: "anthropic-token",
       provider: "anthropic",
-      model: "claude-opus-4-6",
+      models: {
+        extraction: "claude-opus-4-6",
+        claimExtraction: "claude-opus-4-6",
+        contradictionJudge: "claude-opus-4-6",
+        handoffSummary: "claude-opus-4-6",
+      },
       credentials: {
         anthropicOauthToken: "token-123",
         anthropicApiKey: "sk-ant",
@@ -87,7 +101,12 @@ describe("config", () => {
       {
         auth: "openai-api-key",
         provider: "openai",
-        model: "gpt-5.2-codex",
+        models: {
+          extraction: "gpt-5.2-codex",
+          claimExtraction: "gpt-5.2-codex",
+          contradictionJudge: "gpt-5.2-codex",
+          handoffSummary: "gpt-5.2-codex",
+        },
       },
       env,
     );
@@ -135,6 +154,7 @@ describe("config", () => {
         enabled: true,
         autoSupersedeConfidence: 0.85,
       },
+      models: DEFAULT_MODELS,
       provider: "anthropic",
       credentials: {
         anthropicApiKey: "sk-ant-test",
@@ -199,8 +219,10 @@ describe("config", () => {
       autoSupersedeConfidence: 0.91,
     });
     expect(normalized.models).toEqual({
+      extraction: "gpt-4.1-nano",
       claimExtraction: "gpt-4.1-mini",
       contradictionJudge: "gpt-4.1",
+      handoffSummary: "gpt-4.1-nano",
     });
   });
 
@@ -437,32 +459,23 @@ describe("normalizeConfig dedup", () => {
 });
 
 describe("resolveModelForTask", () => {
-  it("returns task-specific model when configured", () => {
+  it("returns explicit task model from config.models", () => {
     const config: AgenrConfig = {
       models: {
+        extraction: "gpt-4.1",
         claimExtraction: "gpt-4.1-mini",
+        contradictionJudge: "gpt-4.1-nano",
+        handoffSummary: "gpt-4.1-nano",
       },
     };
 
     expect(resolveModelForTask(config, "claimExtraction")).toBe("gpt-4.1-mini");
   });
 
-  it("falls back to task default when not configured", () => {
-    expect(resolveModelForTask({}, "claimExtraction")).toBe("gpt-4.1-nano");
-  });
-
-  it("uses top-level model for extraction task", () => {
-    expect(resolveModelForTask({ model: "gpt-4.1" }, "extraction")).toBe("gpt-4.1");
-  });
-
-  it("falls back to gpt-4.1-nano when nothing configured", () => {
-    expect(resolveModelForTask({}, "extraction")).toBe("gpt-4.1-nano");
-  });
-
   it("handles all task types", () => {
     const config: AgenrConfig = {
-      model: "gpt-4.1",
       models: {
+        extraction: "gpt-4.1",
         claimExtraction: "gpt-4.1-mini",
         contradictionJudge: "gpt-4.1",
         handoffSummary: "gpt-4.1-nano",
@@ -473,6 +486,77 @@ describe("resolveModelForTask", () => {
     expect(resolveModelForTask(config, "claimExtraction")).toBe("gpt-4.1-mini");
     expect(resolveModelForTask(config, "contradictionJudge")).toBe("gpt-4.1");
     expect(resolveModelForTask(config, "handoffSummary")).toBe("gpt-4.1-nano");
+  });
+});
+
+describe("model normalization", () => {
+  it("normalizes legacy top-level model into full task models and removes model key", () => {
+    const normalized = normalizeConfig({
+      model: "gpt-4.1",
+    });
+
+    expect(normalized.models).toEqual({
+      extraction: "gpt-4.1",
+      claimExtraction: "gpt-4.1",
+      contradictionJudge: "gpt-4.1",
+      handoffSummary: "gpt-4.1",
+    });
+    expect((normalized as Record<string, unknown>).model).toBeUndefined();
+  });
+
+  it("fills missing model keys with defaults", () => {
+    const normalized = normalizeConfig({
+      models: {
+        extraction: "gpt-4.1-mini",
+      },
+    });
+
+    expect(normalized.models).toEqual({
+      extraction: "gpt-4.1-mini",
+      claimExtraction: "gpt-4.1-nano",
+      contradictionJudge: "gpt-4.1-nano",
+      handoffSummary: "gpt-4.1-nano",
+    });
+  });
+});
+
+describe("isCompleteConfig", () => {
+  it("returns true when auth/provider/models are complete", () => {
+    expect(
+      isCompleteConfig({
+        auth: "openai-api-key",
+        provider: "openai",
+        models: {
+          extraction: "gpt-4.1-mini",
+          claimExtraction: "gpt-4.1-nano",
+          contradictionJudge: "gpt-4.1-nano",
+          handoffSummary: "gpt-4.1-nano",
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it("returns false when any model key is missing", () => {
+    expect(
+      isCompleteConfig({
+        auth: "openai-api-key",
+        provider: "openai",
+        models: {
+          extraction: "gpt-4.1-mini",
+          claimExtraction: "gpt-4.1-nano",
+          contradictionJudge: "",
+          handoffSummary: "gpt-4.1-nano",
+        } as AgenrConfig["models"],
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("setConfigKey", () => {
+  it("rejects bare model key", () => {
+    expect(() => setConfigKey(null, "model", "gpt-4.1")).toThrow(
+      'Invalid key. Expected one of: "provider", "auth", or "models.<task>".',
+    );
   });
 });
 

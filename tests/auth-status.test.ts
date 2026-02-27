@@ -62,7 +62,12 @@ describe("auth status", () => {
     const config: AgenrConfig = {
       auth: "openai-api-key",
       provider: "openai",
-      model: "gpt-5.2-codex",
+      models: {
+        extraction: "gpt-5.2-codex",
+        claimExtraction: "gpt-5.2-codex",
+        contradictionJudge: "gpt-5.2-codex",
+        handoffSummary: "gpt-5.2-codex",
+      },
     };
 
     const status = await getAuthStatus(
@@ -84,7 +89,12 @@ describe("auth status", () => {
     const config: AgenrConfig = {
       auth: "openai-api-key",
       provider: "openai",
-      model: "gpt-5.2-codex",
+      models: {
+        extraction: "gpt-5.2-codex",
+        claimExtraction: "gpt-5.2-codex",
+        contradictionJudge: "gpt-5.2-codex",
+        handoffSummary: "gpt-5.2-codex",
+      },
       credentials: {
         openaiApiKey: "sk-test",
       },
@@ -107,7 +117,12 @@ describe("auth status", () => {
     const config: AgenrConfig = {
       auth: "openai-api-key",
       provider: "openai",
-      model: "gpt-5.2-codex",
+      models: {
+        extraction: "gpt-5.2-codex",
+        claimExtraction: "gpt-5.2-codex",
+        contradictionJudge: "gpt-5.2-codex",
+        handoffSummary: "gpt-5.2-codex",
+      },
       credentials: {
         openaiApiKey: "sk-test",
       },

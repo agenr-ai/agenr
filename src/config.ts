@@ -5,9 +5,12 @@ import { resolveModel } from "./llm/models.js";
 import type { AgenrAuthMethod, AgenrConfig, AgenrProvider } from "./types.js";
 import { normalizeLabel } from "./utils/string.js";
 
-export type ConfigSetKey = "provider" | "model" | "auth" | `models.${string}`;
+export type ConfigSetKey = "provider" | "auth" | `models.${string}`;
 export type StoredCredentialKeyName = "anthropic" | "anthropic-token" | "openai";
 export type ModelTask = "extraction" | "claimExtraction" | "contradictionJudge" | "handoffSummary";
+type TaskModels = AgenrConfig["models"];
+type PartialTaskModels = Partial<TaskModels>;
+type AgenrConfigPatch = Omit<Partial<AgenrConfig>, "models"> & { models?: PartialTaskModels };
 
 export interface AuthMethodDefinition {
   id: AgenrAuthMethod;
@@ -69,7 +72,7 @@ const DEFAULT_EMBEDDING_DIMENSIONS = 1024;
 const DEFAULT_FORGETTING_SCORE_THRESHOLD = 0.05;
 const DEFAULT_FORGETTING_MAX_AGE_DAYS = 60;
 const DEFAULT_CONTRADICTION_ENABLED = true;
-const DEFAULT_TASK_MODEL = "gpt-4.1-nano";
+export const DEFAULT_TASK_MODEL = "gpt-4.1-nano";
 const DEFAULT_AUTO_SUPERSEDE_CONFIDENCE = 0.85;
 
 function isModelTask(value: string): value is ModelTask {
@@ -255,13 +258,13 @@ function normalizeDedupConfig(input: unknown): AgenrConfig["dedup"] | undefined 
   return Object.keys(normalized).length > 0 ? normalized : undefined;
 }
 
-function normalizeModelsConfig(input: unknown): AgenrConfig["models"] | undefined {
+function normalizeModelsConfig(input: unknown): PartialTaskModels | undefined {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     return undefined;
   }
 
   const record = input as Record<string, unknown>;
-  const normalized: NonNullable<AgenrConfig["models"]> = {};
+  const normalized: PartialTaskModels = {};
 
   if (typeof record.extraction === "string" && record.extraction.trim()) {
     normalized.extraction = record.extraction.trim();
@@ -282,13 +285,13 @@ function normalizeModelsConfig(input: unknown): AgenrConfig["models"] | undefine
   return Object.keys(normalized).length > 0 ? normalized : undefined;
 }
 
-function normalizeLegacyContradictionModels(input: unknown): AgenrConfig["models"] | undefined {
+function normalizeLegacyContradictionModels(input: unknown): PartialTaskModels | undefined {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     return undefined;
   }
 
   const record = input as Record<string, unknown>;
-  const normalized: NonNullable<AgenrConfig["models"]> = {};
+  const normalized: PartialTaskModels = {};
 
   if (typeof record.claimExtractionModel === "string" && record.claimExtractionModel.trim()) {
     normalized.claimExtraction = record.claimExtractionModel.trim();
@@ -299,6 +302,39 @@ function normalizeLegacyContradictionModels(input: unknown): AgenrConfig["models
   }
 
   return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function toLegacyBaseModel(input: unknown): string | undefined {
+  if (typeof input !== "string" || !input.trim()) {
+    return undefined;
+  }
+  return input.trim();
+}
+
+function resolveTaskModels(
+  explicitModels: PartialTaskModels | undefined,
+  legacyModels: PartialTaskModels | undefined,
+  legacyBaseModel: string | undefined,
+): TaskModels {
+  const mergedModels: PartialTaskModels = {
+    ...(explicitModels ?? {}),
+  };
+
+  if (legacyModels?.claimExtraction && !mergedModels.claimExtraction) {
+    mergedModels.claimExtraction = legacyModels.claimExtraction;
+  }
+
+  if (legacyModels?.contradictionJudge && !mergedModels.contradictionJudge) {
+    mergedModels.contradictionJudge = legacyModels.contradictionJudge;
+  }
+
+  const fallbackModel = legacyBaseModel ?? DEFAULT_TASK_MODEL;
+  return {
+    extraction: mergedModels.extraction ?? fallbackModel,
+    claimExtraction: mergedModels.claimExtraction ?? fallbackModel,
+    contradictionJudge: mergedModels.contradictionJudge ?? fallbackModel,
+    handoffSummary: mergedModels.handoffSummary ?? fallbackModel,
+  };
 }
 
 function normalizeContradictionConfig(input: unknown): NonNullable<AgenrConfig["contradiction"]> {
@@ -441,7 +477,11 @@ function normalizeProjectsMap(input: unknown): AgenrConfig["projects"] | undefin
 
 export function normalizeConfig(input: unknown): AgenrConfig {
   const record = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const explicitModels = normalizeModelsConfig(record.models);
+  const legacyModels = normalizeLegacyContradictionModels(record.contradiction);
+  const legacyBaseModel = toLegacyBaseModel(record.model);
   const normalized: AgenrConfig = {
+    models: resolveTaskModels(explicitModels, legacyModels, legacyBaseModel),
     embedding: normalizeEmbeddingConfig(record.embedding),
     db: normalizeDbConfig(record.db),
     forgetting: normalizeForgettingConfig(record.forgetting),
@@ -462,10 +502,6 @@ export function normalizeConfig(input: unknown): AgenrConfig {
     }
   }
 
-  if (typeof record.model === "string" && record.model.trim()) {
-    normalized.model = record.model.trim();
-  }
-
   const credentials = normalizeStoredCredentials(record.credentials);
   if (credentials) {
     normalized.credentials = credentials;
@@ -484,26 +520,6 @@ export function normalizeConfig(input: unknown): AgenrConfig {
   const dedup = normalizeDedupConfig(record.dedup);
   if (dedup) {
     normalized.dedup = dedup;
-  }
-
-  const explicitModels = normalizeModelsConfig(record.models);
-  const legacyModels = normalizeLegacyContradictionModels(record.contradiction);
-  if (explicitModels || legacyModels) {
-    const mergedModels: NonNullable<AgenrConfig["models"]> = {
-      ...(explicitModels ?? {}),
-    };
-
-    if (legacyModels?.claimExtraction && !mergedModels.claimExtraction) {
-      mergedModels.claimExtraction = legacyModels.claimExtraction;
-    }
-
-    if (legacyModels?.contradictionJudge && !mergedModels.contradictionJudge) {
-      mergedModels.contradictionJudge = legacyModels.contradictionJudge;
-    }
-
-    if (Object.keys(mergedModels).length > 0) {
-      normalized.models = mergedModels;
-    }
   }
 
   return normalized;
@@ -583,8 +599,8 @@ export function resolveProjectFromGlobalConfig(
   };
 }
 
-export function mergeConfigPatch(current: AgenrConfig | null, patch: AgenrConfig): AgenrConfig {
-  const merged: AgenrConfig = {
+export function mergeConfigPatch(current: AgenrConfig | null, patch: AgenrConfigPatch): AgenrConfig {
+  const merged: AgenrConfigPatch = {
     ...(current ?? {}),
     ...patch,
   };
@@ -633,10 +649,6 @@ export function mergeConfigPatch(current: AgenrConfig | null, patch: AgenrConfig
       ...(current?.models ?? {}),
       ...(patch.models ?? {}),
     };
-
-    if (Object.keys(merged.models).length === 0) {
-      delete merged.models;
-    }
   }
 
   if (current?.contradiction || patch.contradiction) {
@@ -658,6 +670,30 @@ function modelIsValid(provider: AgenrProvider, model: string): boolean {
   }
 }
 
+function hasCompleteTaskModels(models: unknown): models is TaskModels {
+  if (!models || typeof models !== "object") {
+    return false;
+  }
+
+  const record = models as Record<string, unknown>;
+  return MODEL_TASK_KEYS.every((task) => typeof record[task] === "string" && record[task].trim().length > 0);
+}
+
+function appendInvalidTaskModelWarnings(config: AgenrConfig, warnings: string[]): void {
+  if (!config.provider) {
+    return;
+  }
+
+  for (const task of MODEL_TASK_KEYS) {
+    const model = config.models[task];
+    if (!modelIsValid(config.provider, model)) {
+      warnings.push(
+        `Warning: models.${task} \"${model}\" is not available for provider \"${config.provider}\". Update it with: agenr config set models.${task} <model>.`,
+      );
+    }
+  }
+}
+
 function normalizeValue(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -666,15 +702,15 @@ function normalizeValue(value: string): string {
   return trimmed;
 }
 
-export function isCompleteConfig(config: AgenrConfig | null): config is Required<Pick<AgenrConfig, "auth" | "provider" | "model">> & AgenrConfig {
-  if (!config?.auth || !config.provider || !config.model) {
+export function isCompleteConfig(config: AgenrConfig | null): config is Required<Pick<AgenrConfig, "auth" | "provider" | "models">> & AgenrConfig {
+  if (!config?.auth || !config.provider || !hasCompleteTaskModels(config.models)) {
     return false;
   }
 
   return authMethodToProvider(config.auth) === config.provider;
 }
 
-export function setConfigKey(current: AgenrConfig | null, key: ConfigSetKey, value: string): { config: AgenrConfig; warnings: string[] } {
+export function setConfigKey(current: AgenrConfig | null, key: ConfigSetKey | string, value: string): { config: AgenrConfig; warnings: string[] } {
   const warnings: string[] = [];
   const next = mergeConfigPatch(current, {});
 
@@ -685,22 +721,18 @@ export function setConfigKey(current: AgenrConfig | null, key: ConfigSetKey, val
     }
 
     const trimmedValue = value.trim();
-    const currentModels = {
-      ...(next.models ?? {}),
+    const currentModels: TaskModels = {
+      ...next.models,
     };
+    currentModels[task] = trimmedValue.toLowerCase() === "default" ? DEFAULT_TASK_MODEL : normalizeValue(value);
+    next.models = currentModels;
 
-    if (!trimmedValue || trimmedValue.toLowerCase() === "default") {
-      delete currentModels[task];
-      if (Object.keys(currentModels).length === 0) {
-        delete next.models;
-      } else {
-        next.models = currentModels;
-      }
-      return { config: next, warnings };
+    if (next.provider && !modelIsValid(next.provider, currentModels[task])) {
+      warnings.push(
+        `Warning: models.${task} \"${currentModels[task]}\" is not available for provider \"${next.provider}\".`,
+      );
     }
 
-    currentModels[task] = normalizeValue(value);
-    next.models = currentModels;
     return { config: next, warnings };
   }
 
@@ -716,11 +748,7 @@ export function setConfigKey(current: AgenrConfig | null, key: ConfigSetKey, val
     next.auth = normalizedValue;
     next.provider = authMethodToProvider(normalizedValue);
 
-    if (next.model && !modelIsValid(next.provider, next.model)) {
-      warnings.push(
-        `Warning: model \"${next.model}\" is not available for provider \"${next.provider}\". Update it with: agenr config set model <model>.`,
-      );
-    }
+    appendInvalidTaskModelWarnings(next, warnings);
 
     return { config: next, warnings };
   }
@@ -742,23 +770,12 @@ export function setConfigKey(current: AgenrConfig | null, key: ConfigSetKey, val
 
     next.provider = provider;
 
-    if (next.model && !modelIsValid(next.provider, next.model)) {
-      warnings.push(
-        `Warning: model \"${next.model}\" is not available for provider \"${next.provider}\". Update it with: agenr config set model <model>.`,
-      );
-    }
+    appendInvalidTaskModelWarnings(next, warnings);
 
     return { config: next, warnings };
   }
 
-  if (!next.provider) {
-    throw new Error("Cannot set model before provider. Configure auth first: agenr config set auth <method>");
-  }
-
-  const resolved = resolveModel(next.provider, normalizedValue);
-  next.model = resolved.modelId;
-
-  return { config: next, warnings };
+  throw new Error('Invalid key. Expected one of: "provider", "auth", or "models.<task>".');
 }
 
 export function setStoredCredential(
@@ -818,17 +835,5 @@ export function describeAuth(auth: AgenrAuthMethod): string {
 }
 
 export function resolveModelForTask(config: AgenrConfig, task: ModelTask): string {
-  const taskModel = config.models?.[task];
-  if (taskModel) {
-    return taskModel;
-  }
-
-  const defaults: Record<ModelTask, string> = {
-    extraction: config.model ?? DEFAULT_TASK_MODEL,
-    claimExtraction: DEFAULT_TASK_MODEL,
-    contradictionJudge: DEFAULT_TASK_MODEL,
-    handoffSummary: DEFAULT_TASK_MODEL,
-  };
-
-  return defaults[task] ?? config.model ?? DEFAULT_TASK_MODEL;
+  return config.models[task];
 }

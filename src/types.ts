@@ -44,12 +44,11 @@ export interface AgenrStoredCredentials {
 export interface AgenrConfig {
   auth?: AgenrAuthMethod;
   provider?: AgenrProvider;
-  model?: string;
-  models?: {
-    extraction?: string;
-    claimExtraction?: string;
-    contradictionJudge?: string;
-    handoffSummary?: string;
+  models: {
+    extraction: string;
+    claimExtraction: string;
+    contradictionJudge: string;
+    handoffSummary: string;
   };
   labelProjectMap?: Record<string, string>;
   projects?: Record<

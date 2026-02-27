@@ -664,6 +664,10 @@ Configuration
 Auth: OpenAI API key
 Provider: openai
 Model: gpt-4.1-mini
+  Extraction: gpt-4.1-mini
+  Claim extraction: gpt-4.1-nano
+  Contradiction judge: gpt-4.1-nano
+  Handoff summary: gpt-4.1-nano
 Credentials
   Anthropic API Key: (not set)
   Anthropic Token: (not set)
@@ -681,7 +685,7 @@ agenr config set <key> <value>
 ```
 
 ### Arguments
-- `key`: `provider|model|auth`
+- `key`: `provider|auth|models.<task>`
 - `value`: new value
 
 ### Options
@@ -691,14 +695,16 @@ agenr config set <key> <value>
 
 ```bash
 $A config set auth openai-api-key
-$A config set model gpt-4.1-mini
+$A config set models.extraction gpt-4.1-mini
+$A config set models.claimExtraction gpt-4.1-nano
 ```
 
 ### Example Output
 
 ```text
 Updated auth: openai-api-key
-Updated model: gpt-4.1-mini
+Updated models.extraction: gpt-4.1-mini
+Updated models.claimExtraction: gpt-4.1-nano
 ```
 
 ## `config set-key`

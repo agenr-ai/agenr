@@ -19,7 +19,7 @@ Created and updated by `agenr setup`. You can also edit it directly or use `agen
 |-----|------|-------------|
 | `auth` | string | Authentication method (see [Auth Methods](#auth-methods)). |
 | `provider` | string | LLM provider: `anthropic`, `openai`, or `openai-codex`. |
-| `model` | string | Model name for extraction. |
+| `models` | object | Per-task model map with required keys: `extraction`, `claimExtraction`, `contradictionJudge`, `handoffSummary`. |
 | `credentials` | object | Stored API keys (see [Credentials](#credentials)). |
 | `embedding` | object | Embedding provider settings (see [Embedding](#embedding)). |
 | `db` | object | Database path configuration (see [Database](#database)). |
@@ -144,7 +144,7 @@ Controls deduplication behavior when storing entries. Applies globally to all st
 `agenr setup` is interactive. It:
 1. Asks which auth method to use
 2. Prompts for credentials if needed (API keys, OAuth login)
-3. Lets you pick a default model
+3. Lets you pick extraction and per-task models
 4. Writes everything to `~/.agenr/config.json`
 
 Config file values take precedence over environment variables for embedding API key resolution: `embedding.apiKey` -> `credentials.openaiApiKey` -> `OPENAI_API_KEY` env var. See [Embedding](#embedding) for details.
@@ -156,3 +156,19 @@ Database migrations auto-apply on first run after an upgrade. We recommend backi
 ```bash
 cp ~/.agenr/knowledge.db ~/.agenr/knowledge.db.backup
 ```
+### Models
+
+`models` is required and always contains all task keys:
+
+```json
+{
+  "models": {
+    "extraction": "gpt-4.1-nano",
+    "claimExtraction": "gpt-4.1-nano",
+    "contradictionJudge": "gpt-4.1-nano",
+    "handoffSummary": "gpt-4.1-nano"
+  }
+}
+```
+
+Use `agenr config set models.<task> <value>` to update one task model.

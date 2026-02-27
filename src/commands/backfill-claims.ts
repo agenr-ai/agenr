@@ -1,4 +1,4 @@
-import { readConfig, resolveModelForTask } from "../config.js";
+import { DEFAULT_TASK_MODEL, readConfig } from "../config.js";
 import { closeDb, DEFAULT_DB_PATH, getDb, initDb } from "../db/client.js";
 import { extractClaim } from "../db/claim-extraction.js";
 import { SubjectIndex } from "../db/subject-index.js";
@@ -128,7 +128,7 @@ export async function runBackfillClaimsCommand(
 
     const total = candidates.entries.length;
     if (total > 0) {
-      const model = opts.model?.trim() || resolveModelForTask(config ?? {}, "claimExtraction");
+      const model = opts.model?.trim() || config?.models?.claimExtraction || DEFAULT_TASK_MODEL;
       const llmClient = createLlmClient({
         model,
         env: process.env,

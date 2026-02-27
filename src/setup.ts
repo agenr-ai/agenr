@@ -2,11 +2,11 @@ import os from "node:os";
 import { getModels } from "@mariozechner/pi-ai";
 import * as clack from "@clack/prompts";
 import {
+  DEFAULT_TASK_MODEL,
   describeAuth,
   getAuthMethodDefinition,
   mergeConfigPatch,
   readConfig,
-  resolveModelForTask,
   resolveDefaultKnowledgeDbPath,
   setStoredCredential,
   writeConfig,
@@ -120,7 +120,32 @@ const TASK_MODEL_PROMPTS: Array<{ task: TaskModelKey; title: string; options: st
   },
 ];
 
+function buildTaskModels(baseModel: string, overrides?: Partial<AgenrConfig["models"]>): AgenrConfig["models"] {
+  const extractionModel = overrides?.extraction?.trim() || baseModel;
+  return {
+    extraction: extractionModel,
+    claimExtraction: overrides?.claimExtraction?.trim() || DEFAULT_TASK_MODEL,
+    contradictionJudge: overrides?.contradictionJudge?.trim() || DEFAULT_TASK_MODEL,
+    handoffSummary: overrides?.handoffSummary?.trim() || DEFAULT_TASK_MODEL,
+  };
+}
+
+function formatTaskModels(models: AgenrConfig["models"] | undefined, indent = ""): string[] {
+  if (!models) {
+    return [];
+  }
+
+  return [
+    formatLabel(`${indent}Extraction`, models.extraction),
+    formatLabel(`${indent}Claim extraction`, models.claimExtraction),
+    formatLabel(`${indent}Contradiction judge`, models.contradictionJudge),
+    formatLabel(`${indent}Handoff summary`, models.handoffSummary),
+  ];
+}
+
 async function promptPerTaskModels(baseModel: string): Promise<AgenrConfig["models"] | null> {
+  const selectedModels = buildTaskModels(baseModel);
+
   const configure = await clack.select<"skip" | "configure">({
     message: "Configure per-task models? (Advanced)\nMost users can skip this - the defaults work well.",
     options: [
@@ -140,17 +165,15 @@ async function promptPerTaskModels(baseModel: string): Promise<AgenrConfig["mode
   }
 
   if (configure !== "configure") {
-    return undefined;
+    return selectedModels;
   }
 
-  const selectedModels: NonNullable<AgenrConfig["models"]> = {};
-
   for (const taskConfig of TASK_MODEL_PROMPTS) {
-    const defaultModel = resolveModelForTask({ model: baseModel }, taskConfig.task);
+    const defaultModel = selectedModels[taskConfig.task];
     const taskSelection = await clack.select<string>({
       message: `${taskConfig.title}\nCurrent default: ${defaultModel}`,
       options: [
-        { value: TASK_MODEL_DEFAULT, label: "Use default" },
+        { value: TASK_MODEL_DEFAULT, label: `Use ${defaultModel}` },
         ...taskConfig.options.map((modelId) => ({ value: modelId, label: modelId })),
         { value: TASK_MODEL_CUSTOM, label: "Other (enter model ID)" },
       ],
@@ -182,7 +205,7 @@ async function promptPerTaskModels(baseModel: string): Promise<AgenrConfig["mode
     selectedModels[taskConfig.task] = modelChoice;
   }
 
-  return Object.keys(selectedModels).length > 0 ? selectedModels : undefined;
+  return selectedModels;
 }
 
 async function selectAuthMethod(hasExistingConfig: boolean): Promise<AgenrAuthMethod | "update-embeddings" | null> {
@@ -319,7 +342,7 @@ export function formatExistingConfig(config: AgenrConfig, defaultDbPath?: string
   const lines = [
     formatLabel("Auth", config.auth ? describeAuth(config.auth) : "(not set)"),
     formatLabel("Provider", config.provider ?? "(not set)"),
-    formatLabel("Model", config.model ?? "(not set)"),
+    ...formatTaskModels(config.models),
   ];
 
   if (config.projects && Object.keys(config.projects).length > 0 && defaultDbPath) {
@@ -424,7 +447,7 @@ export async function runSetupCore(options: SetupCoreOptions): Promise<SetupResu
         [
           formatLabel("Auth", updated.auth ? describeAuth(updated.auth) : "(not set)"),
           formatLabel("Provider", updated.provider ?? "(not set)"),
-          formatLabel("Model", updated.model ?? "(not set)"),
+          ...formatTaskModels(updated.models),
           formatLabel("Embeddings", embeddingStatus),
         ].join("\n"),
         "Configuration saved",
@@ -433,7 +456,7 @@ export async function runSetupCore(options: SetupCoreOptions): Promise<SetupResu
       return {
         auth: updated.auth!,
         provider: updated.provider!,
-        model: updated.model!,
+        model: updated.models.extraction,
         config: updated,
         changed: true,
       };
@@ -597,7 +620,7 @@ export async function runSetupCore(options: SetupCoreOptions): Promise<SetupResu
   if (auth !== "openai-api-key") {
     let hasEmbeddingKey = false;
     try {
-      resolveEmbeddingApiKey({ ...working, auth, provider, model: resolvedModel.modelId }, options.env);
+      resolveEmbeddingApiKey({ ...working, auth, provider, models: taskModels }, options.env);
       hasEmbeddingKey = true;
     } catch {
       // No embedding key available
@@ -666,8 +689,7 @@ export async function runSetupCore(options: SetupCoreOptions): Promise<SetupResu
     {
       auth,
       provider,
-      model: resolvedModel.modelId,
-      ...(taskModels ? { models: taskModels } : {}),
+      models: taskModels,
     },
     working.credentials,
   );
@@ -687,7 +709,7 @@ export async function runSetupCore(options: SetupCoreOptions): Promise<SetupResu
     [
       formatLabel("Auth", describeAuth(auth)),
       formatLabel("Provider", provider),
-      formatLabel("Model", resolvedModel.modelId),
+      ...formatTaskModels(taskModels),
       formatLabel("Embeddings", embeddingStatus),
     ].join("\n"),
     "Configuration saved",
@@ -700,7 +722,7 @@ export async function runSetupCore(options: SetupCoreOptions): Promise<SetupResu
   return {
     auth,
     provider,
-    model: resolvedModel.modelId,
+    model: taskModels.extraction,
     config: nextConfig,
     changed: true,
   };
