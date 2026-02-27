@@ -139,6 +139,16 @@ const TOOL_DEFINITIONS: McpToolDefinition[] = [
           description:
             "Only entries created before this point in time (ISO date or relative, e.g. 7d = entries older than 7 days). Use with since for a date range: since sets the lower bound, until the upper bound.",
         },
+        around: {
+          type: "string",
+          description:
+            "Bias recall toward a specific date. Entries closer to this date rank higher. ISO date or relative (e.g. 7d = 7 days ago).",
+        },
+        aroundRadius: {
+          type: "integer",
+          description: "Window radius in days for around targeting (default: 14).",
+          minimum: 1,
+        },
         threshold: {
           type: "number",
           description: "Minimum relevance score from 0.0 to 1.0.",
@@ -849,6 +859,15 @@ export function createMcpServer(
         throw new RpcError(JSON_RPC_INVALID_PARAMS, "Invalid until value");
       }
     }
+    let around: string | undefined;
+    if (typeof args.around === "string" && args.around.trim().length > 0) {
+      try {
+        around = parseSinceToIso(args.around, now);
+      } catch {
+        throw new RpcError(JSON_RPC_INVALID_PARAMS, "Invalid around value");
+      }
+    }
+    const aroundRadius = typeof args.aroundRadius === "number" ? args.aroundRadius : undefined;
     const platformRaw = typeof args.platform === "string" ? args.platform.trim() : "";
     const platform = platformRaw ? normalizeKnowledgePlatform(platformRaw) : null;
     if (platformRaw && !platform) {
@@ -896,6 +915,8 @@ export function createMcpServer(
           types,
           since,
           until,
+          around,
+          aroundRadius,
           platform: platform ?? undefined,
           project,
           projectStrict: projectStrict ? true : undefined,
@@ -913,6 +934,8 @@ export function createMcpServer(
           types,
           since,
           until,
+          around,
+          aroundRadius,
           platform: platform ?? undefined,
           project,
           projectStrict: projectStrict ? true : undefined,
@@ -934,6 +957,8 @@ export function createMcpServer(
           types,
           since,
           until,
+          around,
+          aroundRadius,
           platform: platform ?? undefined,
           project,
           projectStrict: projectStrict ? true : undefined,

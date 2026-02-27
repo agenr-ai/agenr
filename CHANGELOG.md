@@ -12,6 +12,8 @@
 - `gaussianRecency` scoring function for temporal targeting.
 - `agenr_recall` native tool now exposes `around` and `aroundRadius` parameters
   for temporal targeting in mid-session recall.
+- MCP server `agenr_recall` tool now exposes `around` and `aroundRadius`
+  parameters for temporal targeting.
 
 ## 0.9.5 - 2026-02-27
 

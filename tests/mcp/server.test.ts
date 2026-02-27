@@ -433,6 +433,88 @@ describe("mcp server", () => {
     expect(Math.abs(actualIso - expectedIso)).toBeLessThanOrEqual(1000);
   });
 
+  it("passes around to recall query when provided", async () => {
+    const harness = makeHarness();
+    await runServer(
+      [
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 204,
+          method: "tools/call",
+          params: {
+            name: "agenr_recall",
+            arguments: {
+              query: "Jim's diet",
+              around: "7d",
+            },
+          },
+        }),
+      ],
+      harness.deps,
+    );
+
+    expect(harness.recallFn).toHaveBeenCalledTimes(1);
+    const recallQuery = harness.recallFn.mock.calls[0]?.[1] as { around?: string };
+    const expectedIso = new Date("2026-02-08T00:00:00.000Z").getTime();
+    const actualIso = new Date(String(recallQuery.around)).getTime();
+    expect(Math.abs(actualIso - expectedIso)).toBeLessThanOrEqual(1000);
+  });
+
+  it("passes aroundRadius to recall query when provided", async () => {
+    const harness = makeHarness();
+    await runServer(
+      [
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 205,
+          method: "tools/call",
+          params: {
+            name: "agenr_recall",
+            arguments: {
+              query: "Jim's diet",
+              aroundRadius: 21,
+            },
+          },
+        }),
+      ],
+      harness.deps,
+    );
+
+    expect(harness.recallFn).toHaveBeenCalledTimes(1);
+    const recallQuery = harness.recallFn.mock.calls[0]?.[1] as { aroundRadius?: number };
+    expect(recallQuery.aroundRadius).toBe(21);
+  });
+
+  it("throws RpcError for invalid around value", async () => {
+    const harness = makeHarness();
+    const responses = await runServer(
+      [
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 206,
+          method: "tools/call",
+          params: {
+            name: "agenr_recall",
+            arguments: {
+              query: "Jim's diet",
+              around: "not-a-date",
+            },
+          },
+        }),
+      ],
+      harness.deps,
+    );
+
+    expect(responses[0]).toMatchObject({
+      jsonrpc: "2.0",
+      id: 206,
+      error: {
+        code: -32602,
+        message: "Invalid around value",
+      },
+    });
+  });
+
   it("ignores since_seq parameter without error", async () => {
     const harness = makeHarness();
     const responses = await runServer(
