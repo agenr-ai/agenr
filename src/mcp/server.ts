@@ -9,13 +9,12 @@ import { closeDb, getDb, initDb } from "../db/client.js";
 import { recall, updateRecallMetadata } from "../db/recall.js";
 import { retireEntries } from "../db/retirements.js";
 import { sessionStartRecall } from "../db/session-start.js";
-import { storeEntries } from "../db/store.js";
 import { resolveEmbeddingApiKey } from "../embeddings/client.js";
 import { extractKnowledgeFromChunks } from "../extractor.js";
 import { createLlmClient } from "../llm/client.js";
 import { parseTranscriptFile } from "../parser.js";
-import { KNOWLEDGE_PLATFORMS, KNOWLEDGE_TYPES, SCOPE_LEVELS } from "../types.js";
-import type { KnowledgeEntry, RecallResult, Scope, StoreResult } from "../types.js";
+import { KNOWLEDGE_PLATFORMS, KNOWLEDGE_TYPES } from "../types.js";
+import type { KnowledgeEntry, RecallResult } from "../types.js";
 import { APP_VERSION } from "../version.js";
 import { normalizeKnowledgePlatform } from "../platform.js";
 import { normalizeProject } from "../project.js";
@@ -99,7 +98,6 @@ class RpcError extends Error {
 }
 
 const KNOWLEDGE_TYPE_SET = new Set<string>(KNOWLEDGE_TYPES);
-const SCOPE_LEVEL_SET = new Set<string>(SCOPE_LEVELS);
 
 const TOOL_DEFINITIONS: McpToolDefinition[] = [
   {
@@ -169,56 +167,6 @@ const TOOL_DEFINITIONS: McpToolDefinition[] = [
     },
   },
   {
-    name: "agenr_store",
-    description: "Store new knowledge entries in the database.",
-    inputSchema: {
-      type: "object",
-      additionalProperties: false,
-      required: ["entries"],
-      properties: {
-        platform: {
-          type: "string",
-          description: "Optional platform tag for all entries: openclaw, claude-code, codex.",
-        },
-        project: {
-          type: "string",
-          description: "Optional project tag for all entries (lowercase).",
-        },
-        entries: {
-          type: "array",
-          items: {
-            type: "object",
-            additionalProperties: false,
-            required: ["content", "type"],
-            properties: {
-              content: { type: "string", minLength: 1 },
-              type: {
-                type: "string",
-                enum: [...KNOWLEDGE_TYPES],
-              },
-              importance: {
-                type: "integer",
-                minimum: 1,
-                maximum: 10,
-                default: 7,
-              },
-              source: { type: "string" },
-              tags: {
-                type: "array",
-                items: { type: "string" },
-              },
-              scope: {
-                type: "string",
-                enum: [...SCOPE_LEVELS],
-                default: "personal",
-              },
-            },
-          },
-        },
-      },
-    },
-  },
-  {
     name: "agenr_extract",
     description: "Extract knowledge entries from raw text.",
     inputSchema: {
@@ -230,11 +178,6 @@ const TOOL_DEFINITIONS: McpToolDefinition[] = [
           type: "string",
           minLength: 1,
           description: "Raw text to extract knowledge from.",
-        },
-        store: {
-          type: "boolean",
-          default: false,
-          description: "Whether to store extracted entries.",
         },
         source: {
           type: "string",
@@ -279,7 +222,6 @@ export interface McpServerDeps {
   closeDbFn: typeof closeDb;
   recallFn: typeof recall;
   updateRecallMetadataFn: typeof updateRecallMetadata;
-  storeEntriesFn: typeof storeEntries;
   parseTranscriptFileFn: typeof parseTranscriptFile;
   extractKnowledgeFromChunksFn: typeof extractKnowledgeFromChunks;
   retireEntriesFn: typeof retireEntries;
@@ -471,115 +413,6 @@ function parseCsvProjects(input: string): string[] {
   return parsed;
 }
 
-function normalizeTags(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return Array.from(
-    new Set(
-      value
-        .filter((item): item is string => typeof item === "string")
-        .map((item) => item.trim().toLowerCase())
-        .filter((item) => item.length > 0),
-    ),
-  );
-}
-
-function parseScope(value: unknown): Scope {
-  if (value === undefined || value === null || String(value).trim().length === 0) {
-    return "personal";
-  }
-
-  if (typeof value !== "string") {
-    throw new RpcError(JSON_RPC_INVALID_PARAMS, "scope must be a string");
-  }
-
-  const normalized = value.trim().toLowerCase();
-  if (!SCOPE_LEVEL_SET.has(normalized)) {
-    throw new RpcError(JSON_RPC_INVALID_PARAMS, `Invalid scope: ${value}`);
-  }
-
-  return normalized as Scope;
-}
-
-function normalizeImportance(value: unknown): number {
-  const parsed = value === undefined ? 7 : Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 10) {
-    throw new RpcError(JSON_RPC_INVALID_PARAMS, "importance must be an integer between 1 and 10");
-  }
-  return parsed;
-}
-
-function inferSubject(content: string): string {
-  const trimmed = content.trim();
-  if (!trimmed) {
-    return "memory";
-  }
-
-  const firstClause = trimmed.split(/[.!?:;]\s/)[0].trim();
-  if (!firstClause) {
-    return "memory";
-  }
-  if (firstClause.length <= 80) {
-    return firstClause;
-  }
-  const cut = firstClause.lastIndexOf(" ", 80);
-  return cut > 0 ? firstClause.slice(0, cut) : firstClause.slice(0, 80);
-}
-
-function parseStoreEntries(rawEntries: unknown): KnowledgeEntry[] {
-  if (!Array.isArray(rawEntries)) {
-    throw new RpcError(JSON_RPC_INVALID_PARAMS, "entries must be an array");
-  }
-
-  return rawEntries.map((raw, index) => {
-    if (!isRecord(raw)) {
-      throw new RpcError(JSON_RPC_INVALID_PARAMS, `entries[${index}] must be an object`);
-    }
-
-    const type = typeof raw.type === "string" ? raw.type.trim().toLowerCase() : "";
-    if (!type || !KNOWLEDGE_TYPE_SET.has(type)) {
-      throw new RpcError(JSON_RPC_INVALID_PARAMS, `entries[${index}].type is invalid`);
-    }
-
-    const content = typeof raw.content === "string" ? raw.content.trim() : "";
-    if (!content) {
-      throw new RpcError(JSON_RPC_INVALID_PARAMS, `entries[${index}].content is required`);
-    }
-
-    const importance = (() => {
-      try {
-        return normalizeImportance(raw.importance);
-      } catch {
-        throw new RpcError(
-          JSON_RPC_INVALID_PARAMS,
-          `entries[${index}].importance must be an integer between 1 and 10`,
-        );
-      }
-    })();
-
-    const source = typeof raw.source === "string" && raw.source.trim().length > 0 ? raw.source.trim() : "mcp:agenr_store";
-    const subject =
-      typeof raw.subject === "string" && raw.subject.trim().length > 0 ? raw.subject.trim() : inferSubject(content);
-    const scope = parseScope(raw.scope);
-
-    return {
-      type: type as KnowledgeEntry["type"],
-      subject,
-      content,
-      importance,
-      expiry: "temporary",
-      tags: normalizeTags(raw.tags),
-      scope,
-      source: {
-        file: source,
-        context: "stored via MCP tool",
-      },
-    };
-  });
-}
-
 function formatDate(value: string | undefined): string {
   if (!value) {
     return "unknown-date";
@@ -638,16 +471,7 @@ function formatBrowseText(results: RecallResult[]): string {
   return lines.join("\n");
 }
 
-function formatStoreSummary(result: StoreResult): string {
-  const total = result.added + result.updated + result.skipped + result.superseded;
-  const parts = [`${result.added} new`, `${result.updated} updated`, `${result.skipped} duplicates skipped`];
-  if (result.superseded > 0) {
-    parts.push(`${result.superseded} superseded`);
-  }
-  return `Stored ${total} entries (${parts.join(", ")}).`;
-}
-
-function formatExtractedText(entries: KnowledgeEntry[], stored?: StoreResult): string {
+function formatExtractedText(entries: KnowledgeEntry[]): string {
   const lines: string[] = [`Extracted ${entries.length} entries from text:`, ""];
 
   for (let i = 0; i < entries.length; i += 1) {
@@ -656,13 +480,6 @@ function formatExtractedText(entries: KnowledgeEntry[], stored?: StoreResult): s
       continue;
     }
     lines.push(`[${i + 1}] (${entry.type}) ${entry.content}`);
-  }
-
-  if (stored) {
-    lines.push("");
-    lines.push(
-      `Stored: ${stored.added} new, ${stored.updated} updated, ${stored.skipped} duplicates skipped, ${stored.superseded} superseded.`,
-    );
   }
 
   return lines.join("\n");
@@ -711,7 +528,6 @@ export function createMcpServer(
     closeDbFn: deps.closeDbFn ?? closeDb,
     recallFn: deps.recallFn ?? recall,
     updateRecallMetadataFn: deps.updateRecallMetadataFn ?? updateRecallMetadata,
-    storeEntriesFn: deps.storeEntriesFn ?? storeEntries,
     retireEntriesFn: deps.retireEntriesFn ?? retireEntries,
     parseTranscriptFileFn: deps.parseTranscriptFileFn ?? parseTranscriptFile,
     extractKnowledgeFromChunksFn: deps.extractKnowledgeFromChunksFn ?? extractKnowledgeFromChunks,
@@ -986,67 +802,12 @@ export function createMcpServer(
     return formatRecallText(query || context, filtered);
   }
 
-  async function callStoreTool(args: Record<string, unknown>): Promise<string> {
-    if (!hasOwn(args, "entries")) {
-      throw new RpcError(JSON_RPC_INVALID_PARAMS, "entries is required");
-    }
-
-    const platformRaw = typeof args.platform === "string" ? args.platform.trim() : "";
-    const platform = platformRaw ? normalizeKnowledgePlatform(platformRaw) : null;
-    if (platformRaw && !platform) {
-      throw new RpcError(
-        JSON_RPC_INVALID_PARAMS,
-        `platform must be one of: ${KNOWLEDGE_PLATFORMS.join(", ")}`,
-      );
-    }
-
-    const projectRaw = typeof args.project === "string" ? args.project.trim() : "";
-    const explicitProject = projectRaw ? normalizeProject(projectRaw) : null;
-    if (projectRaw && !explicitProject) {
-      throw new RpcError(JSON_RPC_INVALID_PARAMS, "project must be a non-empty string");
-    }
-    const scoped = !explicitProject ? await loadScopedProjectConfig() : null;
-    const project = explicitProject ?? scoped?.project ?? null;
-
-    const parsed = parseStoreEntries(args.entries);
-    const entries =
-      platform || project
-        ? parsed.map((entry) => ({
-            ...entry,
-            ...(platform ? { platform } : {}),
-            ...(project ? { project } : {}),
-          }))
-        : parsed;
-    const db = await ensureDb();
-    const config = resolvedDeps.readConfigFn(env);
-    const aggressiveDedup = config?.dedup?.aggressive === true;
-    const configDedupThreshold = typeof config?.dedup?.threshold === "number"
-      ? config.dedup.threshold
-      : undefined;
-    const contradictionEnabled = config?.contradiction?.enabled !== false;
-    const dedupClient = resolvedDeps.createLlmClientFn({ config, env });
-    const apiKey = resolvedDeps.resolveEmbeddingApiKeyFn(config, env);
-    const result = await resolvedDeps.storeEntriesFn(db, entries, apiKey, {
-      sourceFile: "mcp:agenr_store",
-      onlineDedup: true,
-      llmClient: dedupClient,
-      aggressiveDedup,
-      dedupThreshold: configDedupThreshold,
-      contradictionEnabled,
-      config: config ?? undefined,
-      dbPath: options.dbPath,
-    });
-
-    return formatStoreSummary(result);
-  }
-
   async function callExtractTool(args: Record<string, unknown>): Promise<string> {
     const text = typeof args.text === "string" ? args.text : "";
     if (!text.trim()) {
       throw new RpcError(JSON_RPC_INVALID_PARAMS, "text is required");
     }
 
-    const shouldStore = args.store === true;
     const sourceLabel =
       typeof args.source === "string" && args.source.trim().length > 0 ? args.source.trim() : undefined;
 
@@ -1076,33 +837,7 @@ export function createMcpServer(
         },
       }));
 
-      let stored: StoreResult | undefined;
-      if (shouldStore && extractedEntries.length > 0) {
-        const db = await ensureDb();
-        const apiKey = resolvedDeps.resolveEmbeddingApiKeyFn(config, env);
-        const contradictionEnabled = config?.contradiction?.enabled !== false;
-        stored = await resolvedDeps.storeEntriesFn(db, extractedEntries, apiKey, {
-          sourceFile: sourceLabel ?? "mcp:agenr_extract",
-          onlineDedup: true,
-          llmClient: client,
-          contradictionEnabled,
-          config: config ?? undefined,
-          dbPath: options.dbPath,
-        });
-      } else if (shouldStore) {
-        stored = {
-          added: 0,
-          updated: 0,
-          skipped: 0,
-          superseded: 0,
-          llm_dedup_calls: 0,
-          relations_created: 0,
-          total_entries: 0,
-          duration_ms: 0,
-        };
-      }
-
-      return formatExtractedText(extractedEntries, stored);
+      return formatExtractedText(extractedEntries);
     } finally {
       await resolvedDeps.rmFn(tempDir, { recursive: true, force: true });
     }
@@ -1164,23 +899,6 @@ export function createMcpServer(
           tool: "agenr_recall",
           query: typeof params.args.query === "string" ? (params.args.query as string).slice(0, 120) : undefined,
           context: typeof params.args.context === "string" ? (params.args.context as string) : undefined,
-          project: typeof params.args.project === "string" ? (params.args.project as string) : undefined,
-        });
-        return {
-          content: [{ type: "text", text: result }],
-        };
-      }
-
-      if (params.name === "agenr_store") {
-        const result = await callStoreTool(params.args);
-        const storeArgsEntries = Array.isArray(params.args.entries) ? params.args.entries : [];
-        const firstEntry = storeArgsEntries[0] as Record<string, unknown> | undefined;
-        await appendMcpLog({
-          tool: "agenr_store",
-          count: storeArgsEntries.length,
-          firstType: typeof firstEntry?.type === "string" ? firstEntry.type : undefined,
-          firstSubject: typeof firstEntry?.subject === "string" ? firstEntry.subject.slice(0, 80) : undefined,
-          firstImportance: typeof firstEntry?.importance === "number" ? firstEntry.importance : undefined,
           project: typeof params.args.project === "string" ? (params.args.project as string) : undefined,
         });
         return {

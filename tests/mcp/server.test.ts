@@ -9,7 +9,6 @@ import type {
   LlmClient,
   ParsedTranscript,
   RecallResult,
-  StoreResult,
   TranscriptChunk,
 } from "../../src/types.js";
 import { parseSince, parseSinceToIso } from "../../src/utils/time.js";
@@ -88,7 +87,6 @@ interface TestHarness {
   closeDbFn: ReturnType<typeof vi.fn>;
   recallFn: ReturnType<typeof vi.fn>;
   updateRecallMetadataFn: ReturnType<typeof vi.fn>;
-  storeEntriesFn: ReturnType<typeof vi.fn>;
   retireEntriesFn: ReturnType<typeof vi.fn>;
   parseTranscriptFileFn: ReturnType<typeof vi.fn>;
   extractKnowledgeFromChunksFn: ReturnType<typeof vi.fn>;
@@ -119,19 +117,6 @@ function makeHarness(): TestHarness {
 
   const recallFn = vi.fn(async () => [makeRecallResult()]);
   const updateRecallMetadataFn = vi.fn(async () => undefined);
-  const storeEntriesFn = vi.fn(async () => {
-    const result: StoreResult = {
-      added: 1,
-      updated: 0,
-      skipped: 0,
-      superseded: 0,
-      llm_dedup_calls: 0,
-      relations_created: 0,
-      total_entries: 1,
-      duration_ms: 1,
-    };
-    return result;
-  });
   const retireEntriesFn = vi.fn(async () => ({ count: 1 }));
 
   const parseTranscriptFileFn = vi.fn(async (filePath: string): Promise<ParsedTranscript> => {
@@ -194,7 +179,6 @@ function makeHarness(): TestHarness {
       closeDbFn,
       recallFn,
       updateRecallMetadataFn,
-      storeEntriesFn,
       retireEntriesFn,
       parseTranscriptFileFn,
       extractKnowledgeFromChunksFn,
@@ -211,7 +195,6 @@ function makeHarness(): TestHarness {
     closeDbFn,
     recallFn,
     updateRecallMetadataFn,
-    storeEntriesFn,
     retireEntriesFn,
     parseTranscriptFileFn,
     extractKnowledgeFromChunksFn,
@@ -333,7 +316,7 @@ describe("mcp server", () => {
     const result = responses[0]?.result as { tools?: Array<{ name: string; inputSchema?: { type?: string } }> };
     const toolNames = (result.tools ?? []).map((tool) => tool.name).sort();
 
-    expect(toolNames).toEqual(["agenr_extract", "agenr_recall", "agenr_retire", "agenr_store"]);
+    expect(toolNames).toEqual(["agenr_extract", "agenr_recall", "agenr_retire"]);
     expect(result.tools?.every((tool) => tool.inputSchema?.type === "object")).toBe(true);
   });
 
@@ -362,6 +345,8 @@ describe("mcp server", () => {
     expect(recallTool?.inputSchema?.properties).not.toHaveProperty("since_seq");
     const contextProperty = recallTool?.inputSchema?.properties?.context as { enum?: string[] } | undefined;
     expect(contextProperty?.enum).toContain("browse");
+    const extractTool = (result.tools ?? []).find((tool) => tool.name === "agenr_extract");
+    expect(extractTool?.inputSchema?.properties).not.toHaveProperty("store");
   });
 
   it("calls agenr_recall and formats results", async () => {
@@ -1063,37 +1048,6 @@ describe("mcp server", () => {
     expect(recallQuery.projectStrict).toBe(true);
   });
 
-  it("agenr_store uses scoped project from AGENR_PROJECT_DIR when project is omitted", async () => {
-    const harness = makeHarness();
-    const scopedDir = await createScopedProjectConfig({ project: "frontend" }, { tempDirs, prefix: "agenr-mcp-scope-" });
-
-    await runServer(
-      [
-        JSON.stringify({
-          jsonrpc: "2.0",
-          id: 39,
-          method: "tools/call",
-          params: {
-            name: "agenr_store",
-            arguments: {
-              entries: [
-                {
-                  type: "fact",
-                  content: "Scoped store entry",
-                },
-              ],
-            },
-          },
-        }),
-      ],
-      harness.deps,
-      { env: { ...process.env, AGENR_PROJECT_DIR: scopedDir } },
-    );
-
-    const storedEntries = harness.storeEntriesFn.mock.calls[0]?.[1] as KnowledgeEntry[];
-    expect(storedEntries[0]?.project).toBe("frontend");
-  });
-
   it("agenr_recall remains global when AGENR_PROJECT_DIR is not set", async () => {
     const harness = makeHarness();
 
@@ -1163,142 +1117,63 @@ describe("mcp server", () => {
     );
   });
 
-  it("calls agenr_store and returns storage summary", async () => {
+  it("keeps stdout JSON-RPC clean when diagnostics are written to stderr", async () => {
     const harness = makeHarness();
-    harness.storeEntriesFn.mockResolvedValueOnce({
-      added: 1,
-      updated: 1,
-      skipped: 0,
-      superseded: 0,
-      llm_dedup_calls: 2,
-      relations_created: 0,
-      total_entries: 2,
-      duration_ms: 5,
-    } satisfies StoreResult);
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const errorOutput = new PassThrough();
+    let rawOutput = "";
+    output.on("data", (chunk: Buffer | string) => {
+      rawOutput += chunk.toString();
+    });
 
-    const responses = await runServer(
-      [
-        JSON.stringify({
-          jsonrpc: "2.0",
-          id: 4,
-          method: "tools/call",
-          params: {
-            name: "agenr_store",
-            arguments: {
-              entries: [
-                {
-                  type: "fact",
-                  content: "Jim tracks macros and avoids carbs.",
-                  importance: 9,
-                  source: "chat-1",
-                  tags: ["diet", "health"],
-                },
-                {
-                  type: "decision",
-                  content: "Decided to continue keto through March.",
-                },
-              ],
-            },
-          },
-        }),
-      ],
+    harness.extractKnowledgeFromChunksFn.mockImplementationOnce(async () => {
+      console.error("[contradiction] diagnostic test line");
+      return {
+        entries: [],
+        successfulChunks: 1,
+        failedChunks: 0,
+        warnings: [],
+      };
+    });
+
+    const server = createMcpServer(
+      {
+        input,
+        output,
+        errorOutput,
+        serverVersion: "9.9.9-test",
+        env: { ...process.env, AGENR_PROJECT_DIR: "" },
+      },
       harness.deps,
     );
 
-    const result = responses[0]?.result as { content?: Array<{ text?: string }> };
-    expect(result.content?.[0]?.text).toBe("Stored 2 entries (1 new, 1 updated, 0 duplicates skipped).");
-    expect(harness.storeEntriesFn).toHaveBeenCalledTimes(1);
-    const storeOptions = harness.storeEntriesFn.mock.calls[0]?.[3] as { onlineDedup?: boolean; llmClient?: unknown } | undefined;
-    expect(storeOptions?.onlineDedup).toBe(true);
-    expect(storeOptions?.llmClient).toBeTruthy();
-
-    const storedEntries = harness.storeEntriesFn.mock.calls[0]?.[1] as KnowledgeEntry[];
-    expect(storedEntries).toHaveLength(2);
-    expect(storedEntries[0]?.scope).toBe("personal");
-    expect(storedEntries[0]?.source.file).toBe("chat-1");
-    expect(storedEntries[1]?.importance).toBe(7);
-  });
-
-  it("agenr_store tags entries with platform when provided", async () => {
-    const harness = makeHarness();
-    harness.storeEntriesFn.mockResolvedValueOnce({
-      added: 1,
-      updated: 0,
-      skipped: 0,
-      superseded: 0,
-      llm_dedup_calls: 0,
-      relations_created: 0,
-      total_entries: 1,
-      duration_ms: 1,
-    } satisfies StoreResult);
-
-    await runServer(
-      [
-        JSON.stringify({
-          jsonrpc: "2.0",
-          id: 99,
-          method: "tools/call",
-          params: {
-            name: "agenr_store",
-            arguments: {
-              platform: "codex",
-              entries: [
-                {
-                  type: "fact",
-                  content: "Tagged entry.",
-                },
-              ],
-            },
+    const running = server.startServer();
+    input.write(
+      `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: 42,
+        method: "tools/call",
+        params: {
+          name: "agenr_extract",
+          arguments: {
+            text: "diagnostic text",
           },
-        }),
-      ],
-      harness.deps,
+        },
+      })}\n`,
     );
+    input.end();
+    await running;
 
-    const storedEntries = harness.storeEntriesFn.mock.calls[0]?.[1] as KnowledgeEntry[];
-    expect(storedEntries).toHaveLength(1);
-    expect(storedEntries[0]?.platform).toBe("codex");
-  });
+    const lines = rawOutput
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
 
-  it("agenr_store tags entries with project when provided", async () => {
-    const harness = makeHarness();
-    harness.storeEntriesFn.mockResolvedValueOnce({
-      added: 1,
-      updated: 0,
-      skipped: 0,
-      superseded: 0,
-      llm_dedup_calls: 0,
-      relations_created: 0,
-      total_entries: 1,
-      duration_ms: 1,
-    } satisfies StoreResult);
-
-    await runServer(
-      [
-        JSON.stringify({
-          jsonrpc: "2.0",
-          id: 100,
-          method: "tools/call",
-          params: {
-            name: "agenr_store",
-            arguments: {
-              project: "Agenr",
-              entries: [
-                {
-                  type: "fact",
-                  content: "Tagged project entry.",
-                },
-              ],
-            },
-          },
-        }),
-      ],
-      harness.deps,
-    );
-
-    const storedEntries = harness.storeEntriesFn.mock.calls[0]?.[1] as KnowledgeEntry[];
-    expect(storedEntries).toHaveLength(1);
-    expect(storedEntries[0]?.project).toBe("agenr");
+    expect(lines.length).toBeGreaterThan(0);
+    for (const line of lines) {
+      expect(() => JSON.parse(line)).not.toThrow();
+    }
   });
 
   it("agenr_retire with valid entry_id retires entry and returns success message", async () => {
@@ -1428,7 +1303,7 @@ describe("mcp server", () => {
     expect(recallResult.content?.[0]?.text).toContain('Found 0 results for "Jim".');
   });
 
-  it("calls agenr_extract and optionally stores extracted entries", async () => {
+  it("calls agenr_extract and returns extracted entries", async () => {
     const harness = makeHarness();
     harness.extractKnowledgeFromChunksFn.mockResolvedValueOnce({
       entries: [
@@ -1455,16 +1330,6 @@ describe("mcp server", () => {
       failedChunks: 0,
       warnings: [],
     });
-    harness.storeEntriesFn.mockResolvedValueOnce({
-      added: 1,
-      updated: 0,
-      skipped: 1,
-      superseded: 0,
-      llm_dedup_calls: 1,
-      relations_created: 0,
-      total_entries: 3,
-      duration_ms: 2,
-    } satisfies StoreResult);
 
     const responses = await runServer(
       [
@@ -1476,7 +1341,6 @@ describe("mcp server", () => {
             name: "agenr_extract",
             arguments: {
               text: "Jim uses pnpm and prefers robust solutions.",
-              store: true,
               source: "transcript-42",
             },
           },
@@ -1487,17 +1351,12 @@ describe("mcp server", () => {
 
     const result = responses[0]?.result as { content?: Array<{ text?: string }> };
     expect(result.content?.[0]?.text).toContain("Extracted 2 entries from text:");
-    expect(result.content?.[0]?.text).toContain("Stored: 1 new, 0 updated, 1 duplicates skipped, 0 superseded.");
     expect(harness.mkdtempFn).toHaveBeenCalledTimes(1);
     expect(harness.writeFileFn).toHaveBeenCalledTimes(1);
     expect(harness.parseTranscriptFileFn).toHaveBeenCalledTimes(1);
     expect(harness.extractKnowledgeFromChunksFn).toHaveBeenCalledTimes(1);
     expect(harness.extractKnowledgeFromChunksFn.mock.calls[0]?.[0]?.messages).toHaveLength(1);
-    expect(harness.storeEntriesFn).toHaveBeenCalledTimes(1);
     expect(harness.rmFn).toHaveBeenCalledTimes(1);
-
-    const storedEntries = harness.storeEntriesFn.mock.calls[0]?.[1] as KnowledgeEntry[];
-    expect(storedEntries[0]?.source.file).toBe("transcript-42");
   });
 
   it("handles parse errors, unknown methods, and invalid params", async () => {
@@ -1592,9 +1451,9 @@ describe("mcp server", () => {
           id: 11,
           method: "tools/call",
           params: {
-            name: "agenr_store",
+            name: "agenr_retire",
             arguments: {
-              entries: [{ type: "fact", content: "Jim tracks macros." }],
+              entry_id: "entry-1",
             },
           },
         }),

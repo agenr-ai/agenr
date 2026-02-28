@@ -361,7 +361,7 @@ describe("contradiction", () => {
   });
 
   it("returns unrelated with confidence 0 on LLM error", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.mocked(runSimpleStream).mockRejectedValueOnce(new Error("LLM failure"));
 
     const result = await contradictionModule.classifyConflict(
@@ -375,11 +375,11 @@ describe("contradiction", () => {
       confidence: 0,
       explanation: "LLM error",
     });
-    expect(warnSpy).toHaveBeenCalledWith("[contradiction] LLM judge call failed: LLM failure");
+    expect(errorSpy).toHaveBeenCalledWith("[contradiction] LLM judge call failed: LLM failure");
   });
 
   it("returns unrelated with confidence 0 on missing tool call", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.mocked(runSimpleStream).mockResolvedValueOnce(makeTextMessage());
 
     const result = await contradictionModule.classifyConflict(
@@ -393,11 +393,11 @@ describe("contradiction", () => {
       confidence: 0,
       explanation: "LLM error",
     });
-    expect(warnSpy).toHaveBeenCalledWith("[contradiction] LLM judge returned unparseable response");
+    expect(errorSpy).toHaveBeenCalledWith("[contradiction] LLM judge returned unparseable response");
   });
 
   it("returns unrelated with confidence 0 on LLM stop error response", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.mocked(runSimpleStream).mockResolvedValueOnce({
       ...makeTextMessage(),
       stopReason: "error",
@@ -415,7 +415,7 @@ describe("contradiction", () => {
       confidence: 0,
       explanation: "LLM error",
     });
-    expect(warnSpy).toHaveBeenCalledWith("[contradiction] LLM judge error: provider timeout");
+    expect(errorSpy).toHaveBeenCalledWith("[contradiction] LLM judge error: provider timeout");
   });
 
   it("finds candidates via subject index when subjectKey is set and still runs embedding lookup", async () => {
