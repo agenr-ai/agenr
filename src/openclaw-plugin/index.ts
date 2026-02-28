@@ -172,8 +172,14 @@ interface StoreNudgeConfig {
 function resolveStoreNudgeConfig(config: AgenrPluginConfig | undefined): StoreNudgeConfig {
   return {
     enabled: config?.storeNudge?.enabled !== false,
-    threshold: config?.storeNudge?.threshold ?? DEFAULT_STORE_NUDGE_THRESHOLD,
-    maxPerSession: config?.storeNudge?.maxPerSession ?? DEFAULT_STORE_NUDGE_MAX_PER_SESSION,
+    threshold: resolveMidSessionLimit(
+      config?.storeNudge?.threshold,
+      DEFAULT_STORE_NUDGE_THRESHOLD,
+    ),
+    maxPerSession: resolveMidSessionLimit(
+      config?.storeNudge?.maxPerSession,
+      DEFAULT_STORE_NUDGE_MAX_PER_SESSION,
+    ),
   };
 }
 
@@ -1208,6 +1214,7 @@ const plugin = {
         ctx: PluginHookAgentContext,
       ): Promise<BeforePromptBuildResult | undefined> => {
         try {
+          sessionRef.current = "";
           const sessionKey = ctx.sessionKey ?? "";
           if (!sessionKey) {
             return;
@@ -1675,6 +1682,12 @@ const plugin = {
             const resetKey = event.sessionKey;
             if (resetKey) {
               clearMidSessionState(resetKey);
+            }
+            const resetSessionId =
+              (event.context?.sessionEntry as { sessionId?: string } | undefined)
+                ?.sessionId?.trim() ?? "";
+            if (resetSessionId && resetSessionId !== resetKey) {
+              clearMidSessionState(resetSessionId);
             }
           }
 
