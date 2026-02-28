@@ -363,6 +363,8 @@ export interface MidSessionState {
   lastRecallQuery: string | null;
   recalledIds: Set<string>;
   turnCount: number;
+  lastStoreTurn: number;
+  nudgeCount: number;
 }
 
 const midSessionStates = new Map<string, MidSessionState>();
@@ -375,6 +377,8 @@ export function getMidSessionState(key: string): MidSessionState {
       lastRecallQuery: null,
       recalledIds: new Set<string>(),
       turnCount: 0,
+      lastStoreTurn: 0,
+      nudgeCount: 0,
     };
   }
 
@@ -388,9 +392,19 @@ export function getMidSessionState(key: string): MidSessionState {
     lastRecallQuery: null,
     recalledIds: new Set<string>(),
     turnCount: 0,
+    lastStoreTurn: 0,
+    nudgeCount: 0,
   };
   midSessionStates.set(normalizedKey, nextState);
   return nextState;
+}
+
+export function markStoreCall(key: string): void {
+  if (typeof key !== "string" || key.trim().length === 0) {
+    return;
+  }
+  const state = getMidSessionState(key);
+  state.lastStoreTurn = state.turnCount;
 }
 
 export function clearMidSessionStates(): void {

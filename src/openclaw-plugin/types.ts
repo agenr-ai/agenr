@@ -134,6 +134,14 @@ export type AgenrPluginConfig = {
   signalsEnabled?: boolean;
   /** Mid-session recall tuning */
   midSessionRecall?: MidSessionRecallConfig;
+  storeNudge?: {
+    /** Set to false to disable store nudging (default: true) */
+    enabled?: boolean;
+    /** Turns without agenr_store before nudging (default: 8) */
+    threshold?: number;
+    /** Max nudges per session (default: 3) */
+    maxPerSession?: number;
+  };
   /** Minimum importance for signal entries (default: 8) */
   signalMinImportance?: number;
   /** Max entries per signal notification (default: 3) */

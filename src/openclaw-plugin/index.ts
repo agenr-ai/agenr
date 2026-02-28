@@ -20,6 +20,7 @@ import {
   clearMidSessionStates,
   formatMidSessionRecall,
   getMidSessionState,
+  markStoreCall,
   shouldRecall,
 } from "./mid-session-recall.js";
 import {
@@ -56,7 +57,12 @@ const MAX_RECALLED_SESSIONS = 200;
 const DEFAULT_MID_SESSION_NORMAL_LIMIT = 5;
 const DEFAULT_MID_SESSION_COMPLEX_LIMIT = 8;
 const DEFAULT_MID_SESSION_QUERY_SIMILARITY_THRESHOLD = 0.85;
+const DEFAULT_STORE_NUDGE_THRESHOLD = 8;
+const DEFAULT_STORE_NUDGE_MAX_PER_SESSION = 3;
 const sessionRecalledEntries = new Map<string, Set<string>>();
+// Single-concurrency assumption: OpenClaw processes one turn at a time per session.
+// sessionRef.current is set at the start of before_prompt_build and read by tool execute wrappers.
+const sessionRef = { current: "" };
 
 function isDebugEnabled(config: AgenrPluginConfig | undefined): boolean {
   return process.env.AGENR_DEBUG === "1" || config?.debug === true;
@@ -155,6 +161,20 @@ function resolveMidSessionSimilarityThreshold(raw: unknown): number {
     return DEFAULT_MID_SESSION_QUERY_SIMILARITY_THRESHOLD;
   }
   return raw;
+}
+
+interface StoreNudgeConfig {
+  enabled: boolean;
+  threshold: number;
+  maxPerSession: number;
+}
+
+function resolveStoreNudgeConfig(config: AgenrPluginConfig | undefined): StoreNudgeConfig {
+  return {
+    enabled: config?.storeNudge?.enabled !== false,
+    threshold: config?.storeNudge?.threshold ?? DEFAULT_STORE_NUDGE_THRESHOLD,
+    maxPerSession: config?.storeNudge?.maxPerSession ?? DEFAULT_STORE_NUDGE_MAX_PER_SESSION,
+  };
 }
 
 function getRecallEntryId(item: unknown): string | null {
@@ -1147,6 +1167,7 @@ const testingApi = {
     clearMidSessionStates();
     handoffSeenSessionIds.clear();
     sessionRecalledEntries.clear();
+    sessionRef.current = "";
   },
   readSessionsJson,
   readAndParseSessionJsonl,
@@ -1200,12 +1221,18 @@ const plugin = {
           }
 
           const dedupeKey = ctx.sessionId ?? sessionKey;
+          sessionRef.current = dedupeKey || sessionKey;
           const agenrPath = resolveAgenrPath(config);
           const budget = resolveBudget(config);
           const project = config?.project?.trim() || undefined;
           let markdown: string | undefined;
           let midSessionMarkdown: string | undefined;
           const isFirstInSession = dedupeKey ? !hasSeenSession(dedupeKey) : true;
+          const stateKey = dedupeKey || sessionKey;
+          const state = isFirstInSession ? undefined : getMidSessionState(stateKey);
+          if (state) {
+            state.turnCount += 1;
+          }
 
           if (isFirstInSession) {
             debugLog(debug, "session-start", `sessionKey=${sessionKey} dedupeKey=${dedupeKey} isFirst=true`);
@@ -1385,11 +1412,7 @@ const plugin = {
             debugLog(debug, "prompt-build", `sessionKey=${sessionKey} isFirst=false`);
           }
 
-          if (!isFirstInSession && config?.midSessionRecall?.enabled !== false) {
-            const stateKey = dedupeKey || sessionKey;
-            const state = getMidSessionState(stateKey);
-            state.turnCount += 1;
-
+          if (state && config?.midSessionRecall?.enabled !== false) {
             const rawPrompt = typeof event.prompt === "string" ? stripPromptMetadata(event.prompt) : "";
             const userMessage = rawPrompt.trim();
             if (userMessage) {
@@ -1494,11 +1517,40 @@ const plugin = {
             debugLog(debug, "signals", `cooldown=${isCooldown} maxReached=${isMaxReached} injected=${!!signal}`);
           }
 
-          const prependContext = [markdown, midSessionMarkdown, signal].filter(Boolean).join("\n\n");
+          let storeNudge: string | undefined;
+          if (!isFirstInSession && state) {
+            const nudgeConfig = resolveStoreNudgeConfig(config);
+            if (nudgeConfig.enabled) {
+              const gap = state.turnCount - state.lastStoreTurn;
+              debugLog(
+                debug,
+                "store-nudge",
+                `check gap=${gap} threshold=${nudgeConfig.threshold} nudgeCount=${state.nudgeCount} maxPerSession=${nudgeConfig.maxPerSession}`,
+              );
+              if (gap >= nudgeConfig.threshold && state.nudgeCount < nudgeConfig.maxPerSession) {
+                storeNudge = "[MEMORY CHECK] You have not stored any knowledge recently. Review the conversation for decisions, preferences, lessons, or facts worth remembering.";
+                state.nudgeCount += 1;
+                debugLog(debug, "store-nudge", `injecting nudge #${state.nudgeCount}`);
+              } else {
+                const reason = gap < nudgeConfig.threshold
+                  ? "gap_below_threshold"
+                  : state.nudgeCount >= nudgeConfig.maxPerSession
+                  ? "max_reached"
+                  : "disabled";
+                debugLog(debug, "store-nudge", `skipped reason=${reason}`);
+              }
+            } else {
+              debugLog(debug, "store-nudge", "skipped reason=disabled");
+            }
+          }
+
+          const prependContext = [markdown, midSessionMarkdown, signal, storeNudge]
+            .filter(Boolean)
+            .join("\n\n");
           debugLog(
             debug,
             "prompt-build",
-            `prependContext total chars=${prependContext.length} (recall=${markdown?.length ?? 0} midSession=${midSessionMarkdown?.length ?? 0} signal=${signal?.length ?? 0})`,
+            `prependContext total chars=${prependContext.length} (recall=${markdown?.length ?? 0} midSession=${midSessionMarkdown?.length ?? 0} signal=${signal?.length ?? 0} nudge=${storeNudge?.length ?? 0})`,
           );
           if (!prependContext) {
             return;
@@ -1797,6 +1849,11 @@ const plugin = {
             const runtimeConfig = api.pluginConfig as AgenrPluginConfig | undefined;
             if (runtimeConfig?.enabled === false) {
               return makeDisabledToolResult();
+            }
+            const key = sessionRef.current;
+            if (key) {
+              markStoreCall(key);
+              debugLog(debug, "store-nudge", `store detected session=${key}`);
             }
             const agenrPath = resolveAgenrPath(runtimeConfig);
             const defaultProject = runtimeConfig?.project?.trim() || undefined;
