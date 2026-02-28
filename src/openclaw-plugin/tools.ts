@@ -52,7 +52,7 @@ function resolveWarn(pluginConfig?: Record<string, unknown>): (message: string) 
     }
   }
   return (message: string) => {
-    console.warn(message);
+    console.warn(`[AGENR] ${message}`);
   };
 }
 

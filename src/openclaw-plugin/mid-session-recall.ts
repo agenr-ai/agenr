@@ -64,6 +64,7 @@ const FALSE_POSITIVE_NOUNS = new Set([
   "Who",
   "Which",
   "Can",
+  "Check",
   "Could",
   "Would",
   "Should",
@@ -96,6 +97,7 @@ const FALSE_POSITIVE_NOUNS = new Set([
   "Thanks",
   "So",
   "Now",
+  "Really",
   "Well",
   "Still",
   "Yet",
@@ -116,6 +118,9 @@ const FALSE_POSITIVE_NOUNS = new Set([
   "Her",
   "Its",
   "Their",
+  "She",
+  "They",
+  "You",
   "Some",
   "Any",
   "All",
@@ -210,7 +215,7 @@ function collectEntities(text: string): Set<string> {
   return entities;
 }
 
-function countEntities(text: string): number {
+export function countEntities(text: string): number {
   return collectEntities(text).size;
 }
 
