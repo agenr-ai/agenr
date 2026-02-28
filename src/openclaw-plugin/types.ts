@@ -40,9 +40,11 @@ export type BeforeResetEvent = {
 export type MidSessionRecallConfig = {
   /** Set to false to disable mid-session recall (default: true) */
   enabled?: boolean;
-  /** Max entries to fetch for normal messages (default: 5) */
+  /** Max entries to fetch for non-trivial messages (default: 8) */
+  limit?: number;
+  /** @deprecated Ignored. Use limit instead. */
   normalLimit?: number;
-  /** Max entries to fetch for complex messages (default: 8) */
+  /** @deprecated Ignored. Use limit instead. */
   complexLimit?: number;
   /** Skip recall when query Jaccard similarity exceeds this threshold (default: 0.85) */
   querySimilarityThreshold?: number;

@@ -54,8 +54,7 @@ const SKIP_SESSION_PATTERNS = [":subagent:", ":cron:"];
 const DEFAULT_MAX_SEEN_SESSIONS = 1000;
 const seenSessions = new Map<string, true>();
 const MAX_RECALLED_SESSIONS = 200;
-const DEFAULT_MID_SESSION_NORMAL_LIMIT = 5;
-const DEFAULT_MID_SESSION_COMPLEX_LIMIT = 8;
+const DEFAULT_MID_SESSION_RECALL_LIMIT = 8;
 const DEFAULT_MID_SESSION_QUERY_SIMILARITY_THRESHOLD = 0.85;
 const DEFAULT_STORE_NUDGE_THRESHOLD = 8;
 const DEFAULT_STORE_NUDGE_MAX_PER_SESSION = 3;
@@ -1435,15 +1434,10 @@ const plugin = {
                 config?.midSessionRecall?.querySimilarityThreshold,
               );
               if (shouldRecall(query, state.lastRecallQuery, threshold)) {
-                const limit = classification === "complex"
-                  ? resolveMidSessionLimit(
-                    config?.midSessionRecall?.complexLimit,
-                    DEFAULT_MID_SESSION_COMPLEX_LIMIT,
-                  )
-                  : resolveMidSessionLimit(
-                    config?.midSessionRecall?.normalLimit,
-                    DEFAULT_MID_SESSION_NORMAL_LIMIT,
-                  );
+                const limit = resolveMidSessionLimit(
+                  config?.midSessionRecall?.limit,
+                  DEFAULT_MID_SESSION_RECALL_LIMIT,
+                );
                 debugLog(
                   debug,
                   "mid-session-recall",
