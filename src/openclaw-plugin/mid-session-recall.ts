@@ -41,9 +41,9 @@ const TRIVIAL_EXACT = new Set([
 ]);
 
 const TRIVIAL_PHRASES =
-  /^(?:do it|go ahead|ship it|sounds good|got it|makes sense|go for it|lgtm ship it|yes please|no thanks|that works|perfect thanks|will do)$/i;
+  /^(?:do it|go ahead|ship it|sounds good|sounds like a plan|got it|makes sense|go for it|lgtm ship it|yes please|no thanks|that works|perfect thanks|will do|that(?:'|)s okay|one sec|one second|one moment|let me check|i(?:'|)ll take a look|let me see|hold on|brb|good call|fair enough|works for me|i(?:'|)m good|all good|no worries|no problem)$/i;
 const TEMPORAL_PATTERNS =
-  /\b(?:remember|remind|forgot|last time|last (?:week|month|year|night|session)|before|previously|earlier|the other day|a while ago|we decided|did we decide|have we|were we|you said|you told me|you mentioned|we discussed|we talked about|what was|who is|who was|who's|when did|how did|what happened)\b/i;
+  /\b(?:remember|remind|forgot|last time|last (?:week|month|year|night|session)|previously|earlier|the other day|a while ago|we decided|did we decide|have we|were we|you said|you told me|you mentioned|we discussed|we talked about|what was|who is|who was|who's|when did|how did|what happened)\b/i;
 const EXPLICIT_RECALL =
   /\b(?:tell me about|what do you know about|what do we know about|can you recall|do you remember|remind me|fill me in on|catch me up|what's the (?:deal|story|status) with)\b/i;
 
@@ -131,6 +131,7 @@ const FALSE_POSITIVE_NOUNS = new Set([
 
 const MAX_RECENT_MESSAGES = 5;
 const MAX_BUFFERED_MESSAGE_CHARS = 200;
+const MAX_QUERY_CHARS = 200;
 
 function normalizeBufferedMessage(text: string): string {
   const trimmed = text.trim();
@@ -209,10 +210,6 @@ function collectEntities(text: string): Set<string> {
   return entities;
 }
 
-function containsEntity(text: string): boolean {
-  return collectEntities(text).size > 0;
-}
-
 function countEntities(text: string): number {
   return collectEntities(text).size;
 }
@@ -234,6 +231,9 @@ export function classifyMessage(text: string): MessageClassification {
   const wordCount = words.length;
   const lower = trimmed.toLowerCase();
   const stripped = lower.replace(/[.!?,;:]+$/g, "");
+  const hasExplicitRecall = EXPLICIT_RECALL.test(trimmed);
+  const hasTemporalPattern = TEMPORAL_PATTERNS.test(trimmed);
+  const entityCount = countEntities(trimmed);
 
   if (wordCount === 1) {
     if (TRIVIAL_EXACT.has(stripped)) {
@@ -245,7 +245,7 @@ export function classifyMessage(text: string): MessageClassification {
     if (isSingleEmoji(trimmed)) {
       return "trivial";
     }
-    if (containsEntity(trimmed)) {
+    if (entityCount > 0) {
       return "normal";
     }
     return "trivial";
@@ -254,73 +254,47 @@ export function classifyMessage(text: string): MessageClassification {
   if (TRIVIAL_PHRASES.test(stripped)) {
     return "trivial";
   }
-  if (wordCount <= 3 && !containsEntity(trimmed)) {
+  if (wordCount <= 3 && entityCount === 0) {
+    return "trivial";
+  }
+  if (
+    wordCount <= 8 &&
+    entityCount === 0 &&
+    !hasTemporalPattern &&
+    !hasExplicitRecall &&
+    !trimmed.endsWith("?")
+  ) {
     return "trivial";
   }
 
-  if (EXPLICIT_RECALL.test(trimmed)) {
+  if (hasExplicitRecall) {
     return "complex";
   }
-  if (TEMPORAL_PATTERNS.test(trimmed)) {
+  if (hasTemporalPattern) {
     return "complex";
   }
-  if (wordCount <= 6 && containsEntity(trimmed)) {
+  if (wordCount <= 6 && entityCount > 0) {
     return "complex";
   }
-  if (countEntities(trimmed) >= 2) {
+  if (entityCount >= 2) {
     return "complex";
+  }
+  if (wordCount > 6 && entityCount === 0 && !hasTemporalPattern && !hasExplicitRecall) {
+    return "normal";
   }
 
   return "normal";
 }
 
-function isStopWordMessage(text: string): boolean {
-  const normalized = text.trim().toLowerCase().replace(/[.!?,;:]+$/g, "");
-  if (!normalized) {
-    return true;
-  }
-  if (TRIVIAL_EXACT.has(normalized)) {
-    return true;
-  }
-  return TRIVIAL_PHRASES.test(normalized);
-}
-
-function extractKeyTerms(text: string): string {
-  const tokens = text.split(/\s+/).map(normalizeToken).filter(Boolean);
-  const keyTerms = tokens.filter((token) => {
-    if (token.length > 5) {
-      return true;
-    }
-    if (/^[A-Z]/.test(token)) {
-      return true;
-    }
-    return /[-_.]/.test(token) && token.length > 3;
-  });
-  return keyTerms.join(" ");
-}
-
-export function buildQuery(messages: string[]): string {
-  if (!Array.isArray(messages) || messages.length === 0) {
+export function buildQuery(message: string): string {
+  if (typeof message !== "string") {
     return "";
   }
-
-  const meaningful = messages
-    .map(normalizeBufferedMessage)
-    .filter((message) => message.length > 0)
-    .filter((message) => !isStopWordMessage(message));
-
-  if (meaningful.length === 0) {
+  const trimmed = message.trim();
+  if (!trimmed) {
     return "";
   }
-
-  const recentMessages = meaningful.slice(-2).join(" ");
-  const olderMessages = meaningful
-    .slice(0, -2)
-    .map((message) => extractKeyTerms(message))
-    .filter((value) => value.length > 0)
-    .join(" ");
-
-  return `${olderMessages} ${recentMessages}`.trim();
+  return trimmed.slice(0, MAX_QUERY_CHARS);
 }
 
 function tokenizeForSimilarity(text: string): Set<string> {

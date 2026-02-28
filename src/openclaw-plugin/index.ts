@@ -1422,9 +1422,6 @@ const plugin = {
           if (state && config?.midSessionRecall?.enabled !== false) {
             const rawPrompt = typeof event.prompt === "string" ? stripPromptMetadata(event.prompt) : "";
             const userMessage = rawPrompt.trim();
-            if (userMessage) {
-              state.recentMessages.push(userMessage);
-            }
 
             const classification = classifyMessage(userMessage);
             debugLog(
@@ -1433,7 +1430,7 @@ const plugin = {
               `turn=${state.turnCount} classification=${classification} msg="${userMessage.slice(0, 80)}"`,
             );
             if (classification !== "trivial") {
-              const query = buildQuery(state.recentMessages.toArray());
+              const query = buildQuery(userMessage);
               const threshold = resolveMidSessionSimilarityThreshold(
                 config?.midSessionRecall?.querySimilarityThreshold,
               );

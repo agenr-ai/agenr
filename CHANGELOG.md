@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.9.20 (2026-02-28)
+
+### Bug Fixes
+- OpenClaw plugin: mid-session recall query now uses the raw current
+  message instead of accumulating a sliding window with stop-word
+  stripping. Fixes garbled queries that returned irrelevant context.
+- OpenClaw plugin: tightened message classifier to avoid marking
+  conversational acks as complex. Messages with no entities, temporal
+  patterns, or recall phrases now correctly classify as normal or
+  trivial regardless of length.
+- OpenClaw plugin: expanded trivial phrase list and added word-count
+  gate so low-signal conversational messages skip recall entirely.
+- OpenClaw plugin: recall queries are capped at 200 chars to prevent
+  large data pastes from producing oversized embedding queries. (#323)
+
 ## 0.9.19 (2026-02-28)
 
 ### Features
