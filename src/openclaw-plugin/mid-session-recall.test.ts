@@ -21,7 +21,7 @@ describe("classifyMessage", () => {
     { input: "what do you think?", expected: "normal" },
     { input: "How's Duke doing?", expected: "complex" },
     { input: "Can you check PR #312?", expected: "complex" },
-    { input: "yeah put it in the web ui", expected: "normal" },
+    { input: "yeah put it in the web ui", expected: "trivial" },
     { input: "What did we decide about the extraction pipeline?", expected: "complex" },
     { input: "fix the bug", expected: "trivial" },
     { input: "Jim mentioned something about the Tesla last week", expected: "complex" },
@@ -35,36 +35,48 @@ describe("classifyMessage", () => {
     },
     { input: "nice", expected: "trivial" },
     { input: "Tell me about Ava", expected: "complex" },
+    { input: "sounds like a plan", expected: "trivial" },
+    { input: "one sec", expected: "trivial" },
+    { input: "no worries", expected: "trivial" },
+    { input: "fair enough", expected: "trivial" },
+    { input: "all good", expected: "trivial" },
+    { input: "Let me check", expected: "trivial" },
+    { input: "I'm tailing it right now. Do you want me to paste something in?", expected: "normal" },
+    {
+      input: "That's okay. I don't need a reminder. I'm just going to do it probably before my haircut.",
+      expected: "normal",
+    },
+    {
+      input:
+        "i can finish this soon and share a detailed update once everything looks stable on my machine today",
+      expected: "normal",
+    },
   ])("$input -> $expected", ({ input, expected }) => {
     expect(classifyMessage(input)).toBe(expected);
+  });
+
+  it("does not classify short reminder ack as complex", () => {
+    const classification = classifyMessage("That's okay. I don't need a reminder.");
+    expect(classification === "trivial" || classification === "normal").toBe(true);
   });
 });
 
 describe("buildQuery", () => {
-  it("returns a single meaningful message as-is", () => {
-    expect(buildQuery(["Need extraction pipeline context"])).toBe("Need extraction pipeline context");
-  });
-
-  it("filters out stopword-only messages", () => {
-    expect(buildQuery(["yes", "do it", "thanks", "no thanks"])).toBe("");
-  });
-
-  it("keeps the last two messages in full and compresses older messages", () => {
-    const first = "Working on extraction pipeline reliability improvements";
-    const second = "Investigated agenr-ai/agenr state handling";
-    const third = "Need to fix PR #312 merge conflict handling";
-    const fourth = "Tell me about Kevin's notes on consolidation";
-
-    const query = buildQuery([first, second, third, fourth]);
-    expect(query).toContain(third);
-    expect(query).toContain(fourth);
-    expect(query).toContain("Working");
-    expect(query).toContain("Investigated");
-    expect(query).not.toContain(second);
+  it("returns a single message trimmed", () => {
+    expect(buildQuery("  Need extraction pipeline context  ")).toBe("Need extraction pipeline context");
   });
 
   it("returns empty string for empty input", () => {
-    expect(buildQuery([])).toBe("");
+    expect(buildQuery("")).toBe("");
+  });
+
+  it("truncates long messages to 200 chars", () => {
+    const query = buildQuery("a".repeat(600));
+    expect(query).toHaveLength(200);
+  });
+
+  it("trims whitespace-only messages to empty", () => {
+    expect(buildQuery("   \n\t   ")).toBe("");
   });
 });
 
@@ -91,6 +103,12 @@ describe("shouldRecall", () => {
 
   it("returns true for two-token entity queries", () => {
     expect(shouldRecall("check Tesla", null, 0.85)).toBe(true);
+  });
+
+  it("works with single-message buildQuery output", () => {
+    const query = buildQuery("Tell me about Ava and release checklist");
+    const lastQuery = buildQuery("Tell me about Ava release checklist");
+    expect(shouldRecall(query, lastQuery, 0.7)).toBe(false);
   });
 });
 
