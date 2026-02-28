@@ -1,4 +1,4 @@
-type MessageClassification = "trivial" | "normal" | "complex";
+type MessageClassification = "trivial" | "recall";
 
 const TRIVIAL_EXACT = new Set([
   "yes",
@@ -246,7 +246,7 @@ export function classifyMessage(text: string): MessageClassification {
       return "trivial";
     }
     if (entityCount > 0) {
-      return "normal";
+      return "recall";
     }
     return "trivial";
   }
@@ -267,23 +267,7 @@ export function classifyMessage(text: string): MessageClassification {
     return "trivial";
   }
 
-  if (hasExplicitRecall) {
-    return "complex";
-  }
-  if (hasTemporalPattern) {
-    return "complex";
-  }
-  if (wordCount <= 6 && entityCount > 0) {
-    return "complex";
-  }
-  if (entityCount >= 2) {
-    return "complex";
-  }
-  if (wordCount > 6 && entityCount === 0 && !hasTemporalPattern && !hasExplicitRecall) {
-    return "normal";
-  }
-
-  return "normal";
+  return "recall";
 }
 
 export function buildQuery(message: string): string {

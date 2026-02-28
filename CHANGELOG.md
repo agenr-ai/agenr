@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.21 (2026-02-28)
+
+### Improvements
+- OpenClaw plugin: simplified mid-session recall from three-tier
+  classification (trivial/normal/complex) to two-tier (trivial/recall).
+  All non-trivial messages now use a single recall limit of 8, eliminating
+  fragile regex-driven classification that missed edge cases like
+  "What's the status of X?" being classified as normal instead of complex.
+  Config fields normalLimit and complexLimit are deprecated in favor of
+  a single limit field. (#326)
+
 ## 0.9.20 (2026-02-28)
 
 ### Bug Fixes

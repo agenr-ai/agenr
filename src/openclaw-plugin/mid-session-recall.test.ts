@@ -18,38 +18,41 @@ describe("classifyMessage", () => {
     { input: "thanks!", expected: "trivial" },
     { input: "sure.", expected: "trivial" },
     { input: "do it", expected: "trivial" },
-    { input: "what do you think?", expected: "normal" },
-    { input: "How's Duke doing?", expected: "complex" },
-    { input: "Can you check PR #312?", expected: "complex" },
+    { input: "what do you think?", expected: "recall" },
+    { input: "How's Duke doing?", expected: "recall" },
+    { input: "Can you check PR #312?", expected: "recall" },
     { input: "yeah put it in the web ui", expected: "trivial" },
-    { input: "What did we decide about the extraction pipeline?", expected: "complex" },
+    { input: "What did we decide about the extraction pipeline?", expected: "recall" },
     { input: "fix the bug", expected: "trivial" },
-    { input: "Jim mentioned something about the Tesla last week", expected: "complex" },
-    { input: "send Kevin a message", expected: "complex" },
+    { input: "Jim mentioned something about the Tesla last week", expected: "recall" },
+    { input: "send Kevin a message", expected: "recall" },
     { input: "lgtm ship it", expected: "trivial" },
-    { input: "How does consolidate handle crashes?", expected: "normal" },
+    { input: "How does consolidate handle crashes?", expected: "recall" },
     { input: "1", expected: "trivial" },
     {
       input: "can you remind me what agenr-ai/agenr's default branch is?",
-      expected: "complex",
+      expected: "recall",
     },
     { input: "nice", expected: "trivial" },
-    { input: "Tell me about Ava", expected: "complex" },
+    { input: "Tell me about Ava", expected: "recall" },
+    { input: "What's the status of the exploration agents idea?", expected: "recall" },
+    { input: "What's the status with the recall bug?", expected: "recall" },
+    { input: "remember to check the PR", expected: "recall" },
     { input: "sounds like a plan", expected: "trivial" },
     { input: "one sec", expected: "trivial" },
     { input: "no worries", expected: "trivial" },
     { input: "fair enough", expected: "trivial" },
     { input: "all good", expected: "trivial" },
     { input: "Let me check", expected: "trivial" },
-    { input: "I'm tailing it right now. Do you want me to paste something in?", expected: "normal" },
+    { input: "I'm tailing it right now. Do you want me to paste something in?", expected: "recall" },
     {
       input: "That's okay. I don't need a reminder. I'm just going to do it probably before my haircut.",
-      expected: "normal",
+      expected: "recall",
     },
     {
       input:
         "i can finish this soon and share a detailed update once everything looks stable on my machine today",
-      expected: "normal",
+      expected: "recall",
     },
   ])("$input -> $expected", ({ input, expected }) => {
     expect(classifyMessage(input)).toBe(expected);
@@ -57,7 +60,7 @@ describe("classifyMessage", () => {
 
   it("does not classify short reminder ack as complex", () => {
     const classification = classifyMessage("That's okay. I don't need a reminder.");
-    expect(classification === "trivial" || classification === "normal").toBe(true);
+    expect(classification).toBe("trivial");
   });
 });
 
