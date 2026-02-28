@@ -704,7 +704,7 @@ describe("summarizeSessionForHandoff", () => {
       },
     });
     const logger = makeLogger();
-    const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const dir = await makeTempDir("agenr-handoff-summary-");
     const currentSessionFile = path.join(dir, "current-uuid.jsonl");
     await fs.writeFile(currentSessionFile, "", "utf8");
@@ -716,12 +716,15 @@ describe("summarizeSessionForHandoff", () => {
       logger,
       false,
       makeStreamSimple({ message: makeAssistantMessage("summary text") }),
+      false,
+      undefined,
+      true,
     );
 
     expect(summary).toBe("summary text");
-    expect(consoleLogSpy).toHaveBeenCalledWith(
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
       expect.stringMatching(
-        /^\[agenr\] before_reset: sending to LLM model=gpt-4\.1-nano chars=\d+ msgs=5$/,
+        /^\[before_reset\] sending to LLM model=gpt-4\.1-nano chars=\d+ msgs=5$/,
       ),
     );
   });
@@ -739,7 +742,7 @@ describe("summarizeSessionForHandoff", () => {
         source: "env:OPENAI_API_KEY",
       },
     });
-    const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const dir = await makeTempDir("agenr-handoff-summary-");
     const currentSessionFile = path.join(dir, "current-uuid.jsonl");
     await fs.writeFile(currentSessionFile, "", "utf8");
@@ -751,12 +754,15 @@ describe("summarizeSessionForHandoff", () => {
       makeLogger(),
       false,
       makeStreamSimple({ message: makeAssistantMessage("summary text") }),
+      false,
+      undefined,
+      true,
     );
 
     expect(summary).toBe("summary text");
-    const sendingLog = consoleLogSpy.mock.calls
+    const sendingLog = consoleErrorSpy.mock.calls
       .map((call) => (typeof call[0] === "string" ? call[0] : ""))
-      .find((line) => line.includes("[agenr] before_reset: sending to LLM"));
+      .find((line) => line.includes("[before_reset] sending to LLM"));
     expect(sendingLog).toContain("model=gpt-4.1-nano-test");
     expect(sendingLog).not.toContain("[object Object]");
   });
@@ -1189,7 +1195,7 @@ describe("summarizeSessionForHandoff", () => {
       throw new Error("Not configured. Run `agenr setup`.");
     });
     const logger = makeLogger();
-    const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const dir = await makeTempDir("agenr-handoff-summary-");
     const currentSessionFile = path.join(dir, "current-uuid.jsonl");
     await fs.writeFile(currentSessionFile, "", "utf8");
@@ -1201,10 +1207,15 @@ describe("summarizeSessionForHandoff", () => {
       logger,
       false,
       makeStreamSimple({ message: makeAssistantMessage("unused") }),
+      false,
+      undefined,
+      true,
     );
 
     expect(summary).toBeNull();
-    expect(consoleLogSpy).toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "[before_reset] skipping LLM summary - reason: LLM client init failed",
+    );
   });
 
   it("returns null and logs when credentials.apiKey is missing", async () => {
@@ -1218,7 +1229,7 @@ describe("summarizeSessionForHandoff", () => {
       credentials: {} as { apiKey?: string },
     });
     const logger = makeLogger();
-    const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const dir = await makeTempDir("agenr-handoff-summary-");
     const currentSessionFile = path.join(dir, "current-uuid.jsonl");
     await fs.writeFile(currentSessionFile, "", "utf8");
@@ -1230,11 +1241,14 @@ describe("summarizeSessionForHandoff", () => {
       logger,
       false,
       makeStreamSimple({ message: makeAssistantMessage("unused") }),
+      false,
+      undefined,
+      true,
     );
 
     expect(summary).toBeNull();
-    expect(consoleLogSpy).toHaveBeenCalledWith(
-      "[agenr] before_reset: no apiKey available, skipping LLM summary",
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "[before_reset] no apiKey available, skipping LLM summary",
     );
   });
 });

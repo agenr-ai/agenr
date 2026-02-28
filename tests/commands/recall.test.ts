@@ -221,6 +221,66 @@ describe("recall command", () => {
     expect(parsed.results.some((item) => item.category === "core")).toBe(true);
   });
 
+  it("caps session-start output by --limit", async () => {
+    const freshIso = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const recallFn = vi.fn(async (_db: unknown, query: { expiry?: string | string[] }) => {
+      if (query.expiry === "core") {
+        return [
+          makeResult({
+            entry: makeEntry({
+              id: "core-1",
+              expiry: "core",
+              created_at: freshIso,
+              updated_at: freshIso,
+            }),
+          }),
+          makeResult({
+            entry: makeEntry({
+              id: "core-2",
+              expiry: "core",
+              created_at: freshIso,
+              updated_at: freshIso,
+            }),
+          }),
+          makeResult({
+            entry: makeEntry({
+              id: "core-3",
+              expiry: "core",
+              created_at: freshIso,
+              updated_at: freshIso,
+            }),
+          }),
+        ];
+      }
+
+      return [
+        makeResult({
+          entry: makeEntry({
+            id: "todo-1",
+            type: "todo",
+            expiry: "temporary",
+            created_at: freshIso,
+            updated_at: freshIso,
+          }),
+        }),
+        makeResult({
+          entry: makeEntry({
+            id: "todo-2",
+            type: "todo",
+            expiry: "temporary",
+            created_at: freshIso,
+            updated_at: freshIso,
+          }),
+        }),
+      ];
+    });
+
+    const deps = makeDeps({ recallFn });
+    const output = await runRecallCommand(undefined, { context: "session-start", json: true, limit: 2 }, deps);
+
+    expect(output.payload.results).toHaveLength(2);
+  });
+
   it("shapes topic context text as [topic: value] <query>", async () => {
     const recallFn = vi.fn(async () => []);
     const deps = makeDeps({ recallFn });

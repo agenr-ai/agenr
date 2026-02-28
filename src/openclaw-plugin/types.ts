@@ -117,6 +117,8 @@ export type AgenrPluginConfig = {
   project?: string;
   /** Set to false to disable memory injection without removing the plugin */
   enabled?: boolean;
+  /** Enable debug logging to stderr (default: false) */
+  debug?: boolean;
   /** Path to agenr DB. Defaults to AGENR_DB_PATH env or ~/.agenr/knowledge.db */
   dbPath?: string;
   /** Handoff summarizer options */
