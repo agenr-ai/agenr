@@ -675,7 +675,7 @@ describe("before_prompt_build store nudging", () => {
     expect(hasMemoryCheck(eighthTurn)).toBe(true);
   });
 
-  it("does not inject a nudge when agenr_store was called within the threshold window", async () => {
+  it("fires again only after the full gap re-accumulates after agenr_store", async () => {
     vi.spyOn(pluginRecall, "runRecall").mockResolvedValue({
       query: "[browse]",
       results: [],
@@ -705,9 +705,11 @@ describe("before_prompt_build store nudging", () => {
       const result = await handler({ prompt: `turn-${turn}` }, ctx);
       expect(hasMemoryCheck(result)).toBe(false);
     }
+    const twelfthTurn = await handler({ prompt: "turn-12" }, ctx);
+    expect(hasMemoryCheck(twelfthTurn)).toBe(true);
   });
 
-  it("does not inject nudges after the per-session max is reached", async () => {
+  it("spaces nudges by threshold after each delivery", async () => {
     vi.spyOn(pluginRecall, "runRecall").mockResolvedValue({
       query: "[browse]",
       results: [],
@@ -720,17 +722,103 @@ describe("before_prompt_build store nudging", () => {
     });
     plugin.register(api);
     const handler = getBeforePromptBuildHandler(api);
+    const ctx = { sessionKey: "agent:main:store-nudge-spacing", sessionId: "uuid-store-nudge-spacing" };
+
+    await handler({ prompt: "start" }, ctx);
+    for (let turn = 1; turn <= 7; turn += 1) {
+      const result = await handler({ prompt: `turn-${turn}` }, ctx);
+      expect(hasMemoryCheck(result)).toBe(false);
+    }
+    const eighthTurn = await handler({ prompt: "turn-8" }, ctx);
+    const ninthTurn = await handler({ prompt: "turn-9" }, ctx);
+    for (let turn = 10; turn <= 15; turn += 1) {
+      const result = await handler({ prompt: `turn-${turn}` }, ctx);
+      expect(hasMemoryCheck(result)).toBe(false);
+    }
+    const sixteenthTurn = await handler({ prompt: "turn-16" }, ctx);
+
+    expect(hasMemoryCheck(eighthTurn)).toBe(true);
+    expect(hasMemoryCheck(ninthTurn)).toBe(false);
+    expect(hasMemoryCheck(sixteenthTurn)).toBe(true);
+  });
+
+  it("allows store on the threshold turn and nudges again after a full gap", async () => {
+    vi.spyOn(pluginRecall, "runRecall").mockResolvedValue({
+      query: "[browse]",
+      results: [],
+    });
+    const registerTool = vi.fn();
+    const api = makeApi({
+      registerTool,
+      pluginConfig: {
+        signalsEnabled: false,
+        midSessionRecall: { enabled: false },
+      },
+    });
+    plugin.register(api);
+    const handler = getBeforePromptBuildHandler(api);
+    const storeTool = getRegisteredTool(api, "agenr_store");
+    const ctx = {
+      sessionKey: "agent:main:store-nudge-threshold-store",
+      sessionId: "uuid-store-nudge-threshold-store",
+    };
+
+    await handler({ prompt: "start" }, ctx);
+    for (let turn = 1; turn <= 7; turn += 1) {
+      const result = await handler({ prompt: `turn-${turn}` }, ctx);
+      expect(hasMemoryCheck(result)).toBe(false);
+    }
+    const eighthTurn = await handler({ prompt: "turn-8" }, ctx);
+    expect(hasMemoryCheck(eighthTurn)).toBe(true);
+
+    await storeTool.execute("tool-call-threshold-turn", {
+      entries: [{ content: "store on turn 8", type: "fact" }],
+    });
+
+    for (let turn = 9; turn <= 15; turn += 1) {
+      const result = await handler({ prompt: `turn-${turn}` }, ctx);
+      expect(hasMemoryCheck(result)).toBe(false);
+    }
+    const sixteenthTurn = await handler({ prompt: "turn-16" }, ctx);
+    expect(hasMemoryCheck(sixteenthTurn)).toBe(true);
+  });
+
+  it("does not inject nudges after the per-session max is reached", async () => {
+    vi.spyOn(pluginRecall, "runRecall").mockResolvedValue({
+      query: "[browse]",
+      results: [],
+    });
+    const api = makeApi({
+      pluginConfig: {
+        signalsEnabled: false,
+        midSessionRecall: { enabled: false },
+        storeNudge: { threshold: 2, maxPerSession: 3 },
+      },
+    });
+    plugin.register(api);
+    const handler = getBeforePromptBuildHandler(api);
     const ctx = { sessionKey: "agent:main:store-nudge-cap", sessionId: "uuid-store-nudge-cap" };
 
     await handler({ prompt: "start" }, ctx);
-    for (let turn = 1; turn <= 10; turn += 1) {
-      await handler({ prompt: `turn-${turn}` }, ctx);
-    }
-    const cappedTurn = await handler({ prompt: "turn-11" }, ctx);
+    const turn1 = await handler({ prompt: "turn-1" }, ctx);
+    const turn2 = await handler({ prompt: "turn-2" }, ctx);
+    const turn3 = await handler({ prompt: "turn-3" }, ctx);
+    const turn4 = await handler({ prompt: "turn-4" }, ctx);
+    const turn5 = await handler({ prompt: "turn-5" }, ctx);
+    const turn6 = await handler({ prompt: "turn-6" }, ctx);
+    const turn7 = await handler({ prompt: "turn-7" }, ctx);
+    const turn8 = await handler({ prompt: "turn-8" }, ctx);
     const state = getMidSessionState(ctx.sessionId);
 
+    expect(hasMemoryCheck(turn1)).toBe(false);
+    expect(hasMemoryCheck(turn2)).toBe(true);
+    expect(hasMemoryCheck(turn3)).toBe(false);
+    expect(hasMemoryCheck(turn4)).toBe(true);
+    expect(hasMemoryCheck(turn5)).toBe(false);
+    expect(hasMemoryCheck(turn6)).toBe(true);
+    expect(hasMemoryCheck(turn7)).toBe(false);
+    expect(hasMemoryCheck(turn8)).toBe(false);
     expect(state.nudgeCount).toBe(3);
-    expect(hasMemoryCheck(cappedTurn)).toBe(false);
   });
 
   it("does not inject nudges when storeNudge is disabled", async () => {
@@ -814,10 +902,12 @@ describe("before_prompt_build store nudging", () => {
     await handler({ prompt: "turn-1" }, ctx);
     const secondTurn = await handler({ prompt: "turn-2" }, ctx);
     const thirdTurn = await handler({ prompt: "turn-3" }, ctx);
+    const fourthTurn = await handler({ prompt: "turn-4" }, ctx);
     const state = getMidSessionState(ctx.sessionId);
 
     expect(hasMemoryCheck(secondTurn)).toBe(true);
-    expect(hasMemoryCheck(thirdTurn)).toBe(true);
+    expect(hasMemoryCheck(thirdTurn)).toBe(false);
+    expect(hasMemoryCheck(fourthTurn)).toBe(true);
     expect(state.nudgeCount).toBe(2);
   });
 });
