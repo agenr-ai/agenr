@@ -393,8 +393,12 @@ export function clearMidSessionStates(): void {
   midSessionStates.clear();
 }
 
+export function clearMidSessionState(key: string): void {
+  midSessionStates.delete(key.trim());
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 type MidSessionRecallRow = {

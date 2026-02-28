@@ -537,6 +537,67 @@ describe("before_prompt_build mid-session recall", () => {
     expect(third).toBeUndefined();
   });
 
+  it("retries the same query after a failed mid-session recall attempt", async () => {
+    const runRecallMock = vi.spyOn(pluginRecall, "runRecall");
+    runRecallMock
+      .mockResolvedValueOnce({
+        query: "[browse]",
+        results: [],
+      })
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        query: "Tell me about Ava",
+        results: [
+          {
+            entry: {
+              id: "ava-retry",
+              type: "fact",
+              subject: "Ava",
+              content: "Retry recall succeeded",
+            },
+            score: 0.93,
+          },
+        ],
+      });
+    vi.spyOn(pluginSignals, "checkSignals").mockResolvedValue(null);
+    vi.spyOn(dbClient, "getDb").mockReturnValue({} as never);
+    vi.spyOn(dbClient, "initDb").mockResolvedValue(undefined);
+
+    const api = makeApi({ pluginConfig: { signalCooldownMs: 0, signalMaxPerSession: 10 } });
+    plugin.register(api);
+    const handler = getBeforePromptBuildHandler(api);
+    const sessionKey = "agent:main:mid-retry-after-failure";
+
+    await handler({ prompt: "hello" }, { sessionKey, sessionId: "uuid-mid-retry-after-failure" });
+    await handler({ prompt: "Tell me about Ava" }, { sessionKey, sessionId: "uuid-mid-retry-after-failure" });
+    const third = await handler(
+      { prompt: "Tell me about Ava" },
+      { sessionKey, sessionId: "uuid-mid-retry-after-failure" },
+    );
+
+    expect(runRecallMock).toHaveBeenCalledTimes(3);
+    expect(runRecallMock).toHaveBeenNthCalledWith(
+      2,
+      expect.any(String),
+      expect.any(Number),
+      undefined,
+      expect.stringContaining("Tell me about Ava"),
+      { limit: 8 },
+      undefined,
+    );
+    expect(runRecallMock).toHaveBeenNthCalledWith(
+      3,
+      expect.any(String),
+      expect.any(Number),
+      undefined,
+      expect.stringContaining("Tell me about Ava"),
+      { limit: 8 },
+      undefined,
+    );
+    expect(third?.prependContext).toContain("## Recalled context");
+    expect(third?.prependContext).toContain("[Ava] Retry recall succeeded");
+  });
+
   it("disables mid-session recall when configured off", async () => {
     const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue({
       query: "[browse]",
