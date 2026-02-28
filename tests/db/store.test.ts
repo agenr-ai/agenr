@@ -980,7 +980,7 @@ describe("db store pipeline", () => {
     const client = makeClient();
     await initDb(client);
 
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const getDistinctEntitiesSpy = vi
       .spyOn(claimExtractionModule, "getDistinctEntities")
       .mockRejectedValue(new Error("database unavailable"));
@@ -1008,7 +1008,7 @@ describe("db store pipeline", () => {
     expect(getDistinctEntitiesSpy).toHaveBeenCalledTimes(1);
     expect(extractClaimSpy).toHaveBeenCalledTimes(1);
     expect(extractClaimSpy.mock.calls[0]?.[4]).toMatchObject({ entityHints: [] });
-    expect(warnSpy).toHaveBeenCalledWith(
+    expect(errorSpy).toHaveBeenCalledWith(
       expect.stringContaining("[store] entity hints lookup failed, proceeding without hints: database unavailable"),
     );
 

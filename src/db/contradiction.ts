@@ -244,7 +244,7 @@ export async function classifyConflict(
     });
 
     if (response.stopReason === "error" || response.errorMessage) {
-      console.warn(
+      console.error(
         `[contradiction] LLM judge error: ${response.errorMessage ?? "unknown stop reason"}`,
       );
       return llmErrorResult();
@@ -252,7 +252,7 @@ export async function classifyConflict(
 
     const parsed = extractJudgeArgs(response);
     if (!parsed) {
-      console.warn("[contradiction] LLM judge returned unparseable response");
+      console.error("[contradiction] LLM judge returned unparseable response");
       return llmErrorResult();
     }
 
@@ -262,7 +262,7 @@ export async function classifyConflict(
       explanation: parsed.explanation,
     };
   } catch (err) {
-    console.warn(
+    console.error(
       `[contradiction] LLM judge call failed: ${err instanceof Error ? err.message : String(err)}`,
     );
     return llmErrorResult();
@@ -413,7 +413,7 @@ export async function resolveConflict(
       conflict.result.confidence,
       "coexist",
     );
-    console.log(
+    console.error(
       `[contradiction] resolution: coexist (events are immutable) entry=${conflict.existingEntryId.slice(0, 8)}`,
     );
     return { action: "coexist", reason: "events are immutable" };
@@ -451,7 +451,7 @@ export async function resolveConflict(
       "auto-superseded",
     );
 
-    console.log(
+    console.error(
       `[contradiction] resolution: auto-superseded entry=${conflict.existingEntryId.slice(0, 8)} (${conflict.existingType} confidence=${conflict.result.confidence.toFixed(2)})`,
     );
     return {
@@ -474,7 +474,7 @@ export async function resolveConflict(
       conflict.result.confidence,
       "pending",
     );
-    console.log(
+    console.error(
       `[contradiction] resolution: flagged for review entry=${conflict.existingEntryId.slice(0, 8)} (${conflict.result.relation} confidence=${conflict.result.confidence.toFixed(2)})`,
     );
     return { action: "flagged", reason: "needs human review" };
@@ -494,7 +494,7 @@ export async function resolveConflict(
       conflict.result.confidence,
       "pending",
     );
-    console.log(
+    console.error(
       `[contradiction] resolution: flagged for review entry=${conflict.existingEntryId.slice(0, 8)} (high-confidence supersedes blocked by importance)`,
     );
     return { action: "flagged", reason: "high-confidence supersession blocked by importance" };
@@ -509,7 +509,7 @@ export async function resolveConflict(
     "coexist",
   );
 
-  console.log(
+  console.error(
     `[contradiction] resolution: coexist entry=${conflict.existingEntryId.slice(0, 8)}`,
   );
   return { action: "coexist", reason: "entries can coexist" };

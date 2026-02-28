@@ -11,10 +11,25 @@
   deduplicated against session-start context. Configurable via
   midSessionRecall plugin config.
 
+### Bug Fixes
+- MCP: fix stdout corruption during store and contradiction checks.
+  Diagnostic logs in db/store.ts and db/contradiction.ts were writing to
+  stdout via console.log, corrupting MCP JSON-RPC framing. Routed all
+  diagnostic logging to stderr via console.error.
+
+### Changed
+- Removed agenr_store tool from MCP server. Coding agents should rely on
+  Watcher for knowledge ingest from session transcripts. Reduces MCP
+  surface area and eliminates stdout corruption risk.
+- Removed store option from agenr_extract MCP tool. Extract now returns
+  extracted entries without storing them.
+
 ### Tests
 - 16-case message classifier test suite
 - Query builder, similarity check, and state management tests
 - Integration tests for mid-session recall in before_prompt_build
+- MCP stdout corruption test
+- Updated MCP server tests for removed store tool and extract store option
 
 ## 0.9.17 - 2026-02-27
 
