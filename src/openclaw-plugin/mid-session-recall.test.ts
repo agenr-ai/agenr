@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   buildQuery,
   classifyMessage,
+  clearMidSessionState,
   clearMidSessionStates,
   formatMidSessionRecall,
   getMidSessionState,
@@ -123,6 +124,22 @@ describe("mid-session state", () => {
     expect(stateBNext).not.toBe(stateB);
     expect(stateANext.turnCount).toBe(0);
     expect(stateBNext.turnCount).toBe(0);
+  });
+
+  it("clears only the targeted state entry", () => {
+    const stateA = getMidSessionState("session-a");
+    const stateB = getMidSessionState("session-b");
+    stateA.turnCount = 4;
+    stateB.turnCount = 2;
+
+    clearMidSessionState("session-a");
+
+    const stateANext = getMidSessionState("session-a");
+    const stateBNext = getMidSessionState("session-b");
+    expect(stateANext).not.toBe(stateA);
+    expect(stateANext.turnCount).toBe(0);
+    expect(stateBNext).toBe(stateB);
+    expect(stateBNext.turnCount).toBe(2);
   });
 
   it("caps window buffer at five messages", () => {

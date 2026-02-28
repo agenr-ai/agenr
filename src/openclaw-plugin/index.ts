@@ -16,6 +16,7 @@ import { toNumber, toStringValue } from "../utils/entry-utils.js";
 import {
   buildQuery,
   classifyMessage,
+  clearMidSessionState,
   clearMidSessionStates,
   formatMidSessionRecall,
   getMidSessionState,
@@ -1383,7 +1384,9 @@ const plugin = {
                   { limit },
                   config?.dbPath,
                 );
-                state.lastRecallQuery = query;
+                if (midSessionResult) {
+                  state.lastRecallQuery = query;
+                }
 
                 if (midSessionResult && midSessionResult.results.length > 0) {
                   const alreadyRecalledIds = sessionRecalledEntries.get(sessionKey) ?? new Set<string>();
@@ -1561,7 +1564,10 @@ const plugin = {
           }
 
           if (event.action === "new") {
-            clearMidSessionStates();
+            const resetKey = event.sessionKey;
+            if (resetKey) {
+              clearMidSessionState(resetKey);
+            }
           }
 
           const sessionKey = event.sessionKey;
