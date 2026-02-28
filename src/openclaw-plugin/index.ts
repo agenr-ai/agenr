@@ -1530,13 +1530,12 @@ const plugin = {
               if (gap >= nudgeConfig.threshold && state.nudgeCount < nudgeConfig.maxPerSession) {
                 storeNudge = "[MEMORY CHECK] You have not stored any knowledge recently. Review the conversation for decisions, preferences, lessons, or facts worth remembering.";
                 state.nudgeCount += 1;
+                state.lastStoreTurn = state.turnCount;
                 debugLog(debug, "store-nudge", `injecting nudge #${state.nudgeCount}`);
               } else {
                 const reason = gap < nudgeConfig.threshold
                   ? "gap_below_threshold"
-                  : state.nudgeCount >= nudgeConfig.maxPerSession
-                  ? "max_reached"
-                  : "disabled";
+                  : "max_reached";
                 debugLog(debug, "store-nudge", `skipped reason=${reason}`);
               }
             } else {

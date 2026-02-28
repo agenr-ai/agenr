@@ -5,7 +5,8 @@
 ### Features
 - OpenClaw plugin: store nudging - injects a system nudge when the
   agent has not called agenr_store in 8+ turns (configurable via
-  storeNudge plugin config). Caps at 3 nudges per session. (#290)
+  storeNudge plugin config). Nudges are spaced by the threshold
+  interval, capped at 3 per session. (#290)
 
 ## 0.9.18 (2026-02-28)
 
