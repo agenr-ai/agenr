@@ -2054,9 +2054,9 @@ describe("command hook handoff", () => {
     expect(payload.entries[0]?.importance).toBe(9);
     expect(payload.entries[0]?.tags).toContain("handoff");
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      "[command] triggered action=new sessionKey=agent:main:command-new",
+      "[AGENR:command] triggered action=new sessionKey=agent:main:command-new",
     );
-    expect(consoleErrorSpy).toHaveBeenCalledWith("[command] handoff complete");
+    expect(consoleErrorSpy).toHaveBeenCalledWith("[AGENR:command] handoff complete");
   });
 
   it("skips handoff for action=stop", async () => {
@@ -2209,7 +2209,7 @@ describe("command hook handoff", () => {
 
     expect(runStoreMock).toHaveBeenCalledTimes(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      "[command] dedup skip sessionId=session-210-cmd-dedup",
+      "[AGENR:command] dedup skip sessionId=session-210-cmd-dedup",
     );
   });
 

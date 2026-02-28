@@ -724,7 +724,7 @@ describe("summarizeSessionForHandoff", () => {
     expect(summary).toBe("summary text");
     expect(consoleErrorSpy).toHaveBeenCalledWith(
       expect.stringMatching(
-        /^\[before_reset\] sending to LLM model=gpt-4\.1-nano chars=\d+ msgs=5$/,
+        /^\[AGENR:before_reset\] sending to LLM model=gpt-4\.1-nano chars=\d+ msgs=5$/,
       ),
     );
   });
@@ -762,7 +762,7 @@ describe("summarizeSessionForHandoff", () => {
     expect(summary).toBe("summary text");
     const sendingLog = consoleErrorSpy.mock.calls
       .map((call) => (typeof call[0] === "string" ? call[0] : ""))
-      .find((line) => line.includes("[before_reset] sending to LLM"));
+      .find((line) => line.includes("[AGENR:before_reset] sending to LLM"));
     expect(sendingLog).toContain("model=gpt-4.1-nano-test");
     expect(sendingLog).not.toContain("[object Object]");
   });
@@ -1214,7 +1214,7 @@ describe("summarizeSessionForHandoff", () => {
 
     expect(summary).toBeNull();
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      "[before_reset] skipping LLM summary - reason: LLM client init failed",
+      "[AGENR:before_reset] skipping LLM summary - reason: LLM client init failed",
     );
   });
 
@@ -1248,7 +1248,7 @@ describe("summarizeSessionForHandoff", () => {
 
     expect(summary).toBeNull();
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      "[before_reset] no apiKey available, skipping LLM summary",
+      "[AGENR:before_reset] no apiKey available, skipping LLM summary",
     );
   });
 });

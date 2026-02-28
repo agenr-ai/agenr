@@ -69,7 +69,7 @@ function isDebugEnabled(config: AgenrPluginConfig | undefined): boolean {
 
 function debugLog(enabled: boolean, tag: string, message: string): void {
   if (enabled) {
-    console.error(`[${tag}] ${message}`);
+    console.error(`[AGENR:${tag}] ${message}`);
   }
 }
 
@@ -895,7 +895,7 @@ async function summarizeSessionForHandoff(
         debugLog(debugEnabled, "handoff", `logged LLM request/response to ${normalizedLogDir}`);
       } catch (err) {
         console.error(
-          `[agenr] handoff: failed to write LLM request/response logs: ${err instanceof Error ? err.message : String(err)}`,
+          `[AGENR:handoff] failed to write LLM request/response logs: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }
@@ -905,7 +905,7 @@ async function summarizeSessionForHandoff(
     return summaryText;
   } catch (err) {
     console.error(
-      `[agenr] before_reset: summarize handoff failed: ${err instanceof Error ? err.message : String(err)}`,
+      `[AGENR:before_reset] summarize handoff failed: ${err instanceof Error ? err.message : String(err)}`,
     );
     return null;
   }
@@ -1099,7 +1099,7 @@ async function runHandoffForSession(opts: {
       debugLog(Boolean(opts.debugEnabled), opts.source, "fallback handoff stored");
     } catch (err) {
       console.error(
-        `[agenr] ${opts.source}: fallback store failed: ${err instanceof Error ? err.message : String(err)}`,
+        `[AGENR:${opts.source}] fallback store failed: ${err instanceof Error ? err.message : String(err)}`,
       );
       fallbackEntrySubject = null;
     }
@@ -1158,7 +1158,7 @@ async function runHandoffForSession(opts: {
         debugLog(Boolean(opts.debugEnabled), opts.source, "LLM handoff stored");
       } catch (err) {
         console.error(
-          `[agenr] ${opts.source}: LLM handoff store failed: ${err instanceof Error ? err.message : String(err)}`,
+          `[AGENR:${opts.source}] LLM handoff store failed: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }
@@ -1301,7 +1301,7 @@ const plugin = {
                   debugLog(debug, "session-start", "runHandoffForSession completed");
                 } catch (err) {
                   console.error(
-                    `[agenr] session_start: handoff failed: ${err instanceof Error ? err.message : String(err)}`,
+                    `[AGENR:session_start] handoff failed: ${err instanceof Error ? err.message : String(err)}`,
                   );
                 }
               }
@@ -1363,7 +1363,7 @@ const plugin = {
                       })
                       .catch((err) => {
                         console.error(
-                          `[agenr] session-start: retire handoff ${entryId} failed: ${err instanceof Error ? err.message : String(err)}`,
+                          `[AGENR:session-start] retire handoff ${entryId} failed: ${err instanceof Error ? err.message : String(err)}`,
                         );
                       }),
                   );

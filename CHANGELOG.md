@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.22 (2026-02-28)
+
+### Bug Fixes
+- OpenClaw plugin: added missing pronouns (You, She, They) to
+  FALSE_POSITIVE_NOUNS so short messages like "You there?" correctly
+  classify as trivial instead of triggering recall. (#329)
+
+### Improvements
+- OpenClaw plugin: standardized all log output with `[AGENR:tag]`
+  prefix for easy filtering from OpenClaw internal logs. (#329)
+
 ## 0.9.21 (2026-02-28)
 
 ### Improvements
