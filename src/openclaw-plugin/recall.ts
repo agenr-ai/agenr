@@ -74,7 +74,7 @@ export async function runRecall(
     const args = isBrowse
       ? ["recall", "--browse", "--since", options?.since ?? "1d", "--json"]
       : ["recall", "--context", "session-start", "--budget", String(budget), "--json"];
-    if (isBrowse && options?.limit !== undefined) {
+    if (options?.limit !== undefined) {
       args.push("--limit", String(options.limit));
     }
     if (project) {

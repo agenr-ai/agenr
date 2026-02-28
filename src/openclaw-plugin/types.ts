@@ -37,6 +37,17 @@ export type BeforeResetEvent = {
   [key: string]: unknown;
 };
 
+export type MidSessionRecallConfig = {
+  /** Set to false to disable mid-session recall (default: true) */
+  enabled?: boolean;
+  /** Max entries to fetch for normal messages (default: 5) */
+  normalLimit?: number;
+  /** Max entries to fetch for complex messages (default: 8) */
+  complexLimit?: number;
+  /** Skip recall when query Jaccard similarity exceeds this threshold (default: 0.85) */
+  querySimilarityThreshold?: number;
+};
+
 export type PluginLogger = {
   debug?: (message: string) => void;
   info?: (message: string) => void;
@@ -119,6 +130,8 @@ export type AgenrPluginConfig = {
   };
   /** Set to false to disable mid-session signals (default: true) */
   signalsEnabled?: boolean;
+  /** Mid-session recall tuning */
+  midSessionRecall?: MidSessionRecallConfig;
   /** Minimum importance for signal entries (default: 8) */
   signalMinImportance?: number;
   /** Max entries per signal notification (default: 3) */

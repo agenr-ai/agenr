@@ -291,6 +291,285 @@ describe("before_prompt_build recall behavior", () => {
   });
 });
 
+describe("before_prompt_build mid-session recall", () => {
+  it("skips recall for trivial subsequent messages and still checks signals", async () => {
+    const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue({
+      query: "[browse]",
+      results: [],
+    });
+    vi.spyOn(dbClient, "getDb").mockReturnValue({} as never);
+    vi.spyOn(dbClient, "initDb").mockResolvedValue(undefined);
+    const checkSignalsMock = vi
+      .spyOn(pluginSignals, "checkSignals")
+      .mockResolvedValue("AGENR SIGNAL: 1 new high-importance entry");
+
+    const api = makeApi({
+      pluginConfig: {
+        signalCooldownMs: 0,
+        signalMaxPerSession: 10,
+      },
+    });
+    plugin.register(api);
+    const handler = getBeforePromptBuildHandler(api);
+    const sessionKey = "agent:main:mid-trivial";
+
+    await handler({ prompt: "hello" }, { sessionKey, sessionId: "uuid-mid-trivial" });
+    const second = await handler({ prompt: "yes" }, { sessionKey, sessionId: "uuid-mid-trivial" });
+
+    expect(runRecallMock).toHaveBeenCalledTimes(1);
+    expect(checkSignalsMock).toHaveBeenCalledTimes(2);
+    expect(second?.prependContext).toContain("AGENR SIGNAL");
+    expect(second?.prependContext).not.toContain("## Recalled context");
+  });
+
+  it("fires recall for complex subsequent messages and injects recalled context", async () => {
+    const runRecallMock = vi.spyOn(pluginRecall, "runRecall");
+    runRecallMock
+      .mockResolvedValueOnce({
+        query: "[browse]",
+        results: [],
+      })
+      .mockResolvedValueOnce({
+        query: "Tell me about Ava",
+        results: [
+          {
+            entry: {
+              id: "ava-1",
+              type: "fact",
+              subject: "Ava",
+              content: "Maintains the release checklist",
+            },
+            score: 0.92,
+          },
+        ],
+      });
+    vi.spyOn(pluginSignals, "checkSignals").mockResolvedValue(null);
+    vi.spyOn(dbClient, "getDb").mockReturnValue({} as never);
+    vi.spyOn(dbClient, "initDb").mockResolvedValue(undefined);
+
+    const api = makeApi({ pluginConfig: { signalCooldownMs: 0, signalMaxPerSession: 10 } });
+    plugin.register(api);
+    const handler = getBeforePromptBuildHandler(api);
+    const sessionKey = "agent:main:mid-complex";
+
+    await handler({ prompt: "hello" }, { sessionKey, sessionId: "uuid-mid-complex" });
+    const second = await handler(
+      { prompt: "Tell me about Ava" },
+      { sessionKey, sessionId: "uuid-mid-complex" },
+    );
+
+    expect(runRecallMock).toHaveBeenCalledTimes(2);
+    expect(runRecallMock).toHaveBeenNthCalledWith(
+      2,
+      expect.any(String),
+      expect.any(Number),
+      undefined,
+      expect.stringContaining("Tell me about Ava"),
+      { context: "session-start", limit: 8 },
+      undefined,
+    );
+    expect(second?.prependContext).toContain("## Recalled context");
+    expect(second?.prependContext).toContain("[Ava] Maintains the release checklist");
+  });
+
+  it("deduplicates mid-session recall results against session-start recalled ids", async () => {
+    const runRecallMock = vi.spyOn(pluginRecall, "runRecall");
+    runRecallMock
+      .mockResolvedValueOnce({
+        query: "[browse]",
+        results: [
+          {
+            entry: {
+              id: "dup-id",
+              type: "fact",
+              subject: "Duplicate subject",
+              content: "session-start content",
+            },
+            score: 0.9,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        query: "Tell me about Ava",
+        results: [
+          {
+            entry: {
+              id: "dup-id",
+              type: "fact",
+              subject: "Duplicate subject",
+              content: "mid-session duplicate content",
+            },
+            score: 0.8,
+          },
+          {
+            entry: {
+              id: "fresh-id",
+              type: "fact",
+              subject: "Fresh subject",
+              content: "fresh content",
+            },
+            score: 0.7,
+          },
+        ],
+      });
+    vi.spyOn(pluginSignals, "checkSignals").mockResolvedValue(null);
+    vi.spyOn(dbClient, "getDb").mockReturnValue({} as never);
+    vi.spyOn(dbClient, "initDb").mockResolvedValue(undefined);
+
+    const api = makeApi({ pluginConfig: { signalCooldownMs: 0, signalMaxPerSession: 10 } });
+    plugin.register(api);
+    const handler = getBeforePromptBuildHandler(api);
+    const sessionKey = "agent:main:mid-dedup-start";
+
+    await handler({ prompt: "hello" }, { sessionKey, sessionId: "uuid-mid-dedup-start" });
+    const second = await handler(
+      { prompt: "Tell me about Ava" },
+      { sessionKey, sessionId: "uuid-mid-dedup-start" },
+    );
+
+    expect(second?.prependContext).toContain("[Fresh subject] fresh content");
+    expect(second?.prependContext).not.toContain("mid-session duplicate content");
+  });
+
+  it("deduplicates mid-session recall results against prior mid-session recalls", async () => {
+    const runRecallMock = vi.spyOn(pluginRecall, "runRecall");
+    runRecallMock
+      .mockResolvedValueOnce({
+        query: "[browse]",
+        results: [],
+      })
+      .mockResolvedValueOnce({
+        query: "Tell me about Ava",
+        results: [
+          {
+            entry: {
+              id: "repeat-id",
+              type: "fact",
+              subject: "Repeat subject",
+              content: "repeat content",
+            },
+            score: 0.95,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        query: "Can you check PR #312?",
+        results: [
+          {
+            entry: {
+              id: "repeat-id",
+              type: "fact",
+              subject: "Repeat subject",
+              content: "repeat content",
+            },
+            score: 0.9,
+          },
+          {
+            entry: {
+              id: "fresh-id",
+              type: "fact",
+              subject: "Fresh second pass",
+              content: "new content",
+            },
+            score: 0.85,
+          },
+        ],
+      });
+    vi.spyOn(pluginSignals, "checkSignals").mockResolvedValue(null);
+    vi.spyOn(dbClient, "getDb").mockReturnValue({} as never);
+    vi.spyOn(dbClient, "initDb").mockResolvedValue(undefined);
+
+    const api = makeApi({ pluginConfig: { signalCooldownMs: 0, signalMaxPerSession: 10 } });
+    plugin.register(api);
+    const handler = getBeforePromptBuildHandler(api);
+    const sessionKey = "agent:main:mid-dedup-mid";
+
+    await handler({ prompt: "hello" }, { sessionKey, sessionId: "uuid-mid-dedup-mid" });
+    await handler({ prompt: "Tell me about Ava" }, { sessionKey, sessionId: "uuid-mid-dedup-mid" });
+    const third = await handler(
+      { prompt: "Can you check PR #312?" },
+      { sessionKey, sessionId: "uuid-mid-dedup-mid" },
+    );
+
+    expect(runRecallMock).toHaveBeenCalledTimes(3);
+    expect(third?.prependContext).toContain("[Fresh second pass] new content");
+    expect(third?.prependContext).not.toContain("repeat content");
+  });
+
+  it("skips recall when a subsequent query is too similar to the previous one", async () => {
+    const runRecallMock = vi.spyOn(pluginRecall, "runRecall");
+    runRecallMock
+      .mockResolvedValueOnce({
+        query: "[browse]",
+        results: [],
+      })
+      .mockResolvedValueOnce({
+        query: "Tell me about Ava",
+        results: [
+          {
+            entry: {
+              id: "ava-1",
+              type: "fact",
+              subject: "Ava",
+              content: "Maintains the release checklist",
+            },
+            score: 0.92,
+          },
+        ],
+      });
+    vi.spyOn(pluginSignals, "checkSignals").mockResolvedValue(null);
+    vi.spyOn(dbClient, "getDb").mockReturnValue({} as never);
+    vi.spyOn(dbClient, "initDb").mockResolvedValue(undefined);
+
+    const api = makeApi({ pluginConfig: { signalCooldownMs: 0, signalMaxPerSession: 10 } });
+    plugin.register(api);
+    const handler = getBeforePromptBuildHandler(api);
+    const sessionKey = "agent:main:mid-similar";
+
+    await handler({ prompt: "hello" }, { sessionKey, sessionId: "uuid-mid-similar" });
+    await handler({ prompt: "Tell me about Ava" }, { sessionKey, sessionId: "uuid-mid-similar" });
+    const third = await handler(
+      { prompt: "Tell me about Ava" },
+      { sessionKey, sessionId: "uuid-mid-similar" },
+    );
+
+    expect(runRecallMock).toHaveBeenCalledTimes(2);
+    expect(third).toBeUndefined();
+  });
+
+  it("disables mid-session recall when configured off", async () => {
+    const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue({
+      query: "[browse]",
+      results: [],
+    });
+    vi.spyOn(pluginSignals, "checkSignals").mockResolvedValue(null);
+    vi.spyOn(dbClient, "getDb").mockReturnValue({} as never);
+    vi.spyOn(dbClient, "initDb").mockResolvedValue(undefined);
+
+    const api = makeApi({
+      pluginConfig: {
+        signalCooldownMs: 0,
+        signalMaxPerSession: 10,
+        midSessionRecall: {
+          enabled: false,
+        },
+      },
+    });
+    plugin.register(api);
+    const handler = getBeforePromptBuildHandler(api);
+    const sessionKey = "agent:main:mid-disabled";
+
+    await handler({ prompt: "hello" }, { sessionKey, sessionId: "uuid-mid-disabled" });
+    const second = await handler(
+      { prompt: "Tell me about Ava" },
+      { sessionKey, sessionId: "uuid-mid-disabled" },
+    );
+
+    expect(runRecallMock).toHaveBeenCalledTimes(1);
+    expect(second).toBeUndefined();
+  });
+});
+
 describe("before_prompt_build cross-session context injection", () => {
   it("first message in new session always runs Phase 1B browse recall", async () => {
     const runRecallMock = vi.spyOn(pluginRecall, "runRecall").mockResolvedValue(null);

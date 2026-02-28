@@ -49,6 +49,29 @@
         "type": "boolean",
         "description": "Set false to disable mid-session signals without uninstalling."
       },
+      "midSessionRecall": {
+        "type": "object",
+        "description": "Mid-session recall tuning and controls.",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Set false to disable heuristic-gated mid-session recall (default: true)."
+          },
+          "normalLimit": {
+            "type": "number",
+            "description": "Max recall results for normal messages (default: 5)."
+          },
+          "complexLimit": {
+            "type": "number",
+            "description": "Max recall results for complex messages (default: 8)."
+          },
+          "querySimilarityThreshold": {
+            "type": "number",
+            "description": "Skip repeat recall when query Jaccard similarity exceeds this value (default: 0.85)."
+          }
+        }
+      },
       "dbPath": {
         "type": "string",
         "description": "Path to agenr DB. Defaults to AGENR_DB_PATH env or ~/.agenr/knowledge.db."
