@@ -409,6 +409,22 @@ describe("runInitCommand", () => {
     expect(instructions).toContain("<!-- agenr:end -->");
   });
 
+  it("writes recall-only system prompt block and explicit no-store warning", async () => {
+    const dir = await createTempDir();
+    tempDirs.push(dir);
+
+    const result = await runInitCommand({ path: dir, platform: "generic" });
+    expect(result.instructionsPath).toBe(path.join(dir, "AGENTS.md"));
+
+    const instructions = await fs.readFile(path.join(dir, "AGENTS.md"), "utf8");
+    expect(instructions).toContain("You have access to agenr_recall for persistent memory across sessions.");
+    expect(instructions).toContain("Do NOT call agenr_store. That tool has been removed.");
+
+    const lower = instructions.toLowerCase();
+    const storeMentions = lower.match(/\bagenr_store\b/g) ?? [];
+    expect(storeMentions).toHaveLength(1);
+  });
+
   it("auto-detects windsurf from .windsurfrules", async () => {
     const dir = await createTempDir();
     tempDirs.push(dir);

@@ -251,15 +251,13 @@ function isPlatform(value: string): value is InitPlatform {
   return PLATFORM_VALUES.includes(value as InitPlatform);
 }
 
-function buildSystemPromptBlock(projectSlug: string): string {
+function buildSystemPromptBlock(_projectSlug: string): string {
   return [
-    "You have access to agenr_recall and agenr_store for persistent memory across sessions.",
+    "You have access to agenr_recall for persistent memory across sessions.",
     "",
     'On session start, call agenr_recall with context="session-start" to load prior knowledge for this project. Mid-session, call agenr_recall with a query when you need context you do not have.',
     "",
-    `After any decision, user preference, lesson learned, or important event, immediately call agenr_store. Do not ask - just store it. Each entry needs: type (fact|decision|preference|todo|lesson|event), content (what and why), importance (1-10, default 7, use 9 for critical, 10 sparingly), project="${projectSlug}".`,
-    "",
-    "Do not store: secrets/credentials, temporary state, verbatim conversation, or information already in files.",
+    "Do NOT call agenr_store. That tool has been removed. Your session transcript is automatically ingested by the Watcher, which extracts valuable knowledge after the session ends. Focus on your task - the memory system captures insights for you.",
   ].join("\n");
 }
 
