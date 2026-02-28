@@ -25,6 +25,10 @@
         "type": "boolean",
         "description": "Set false to disable memory injection without uninstalling."
       },
+      "debug": {
+        "type": "boolean",
+        "description": "Enable debug logging to stderr (default: false)."
+      },
       "signalMinImportance": {
         "type": "number",
         "description": "Minimum importance for mid-session signals (1-10, default: 8). Raise to reduce noise."

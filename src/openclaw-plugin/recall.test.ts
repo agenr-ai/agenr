@@ -123,6 +123,28 @@ describe("runRecall query args", () => {
       "status update",
     ]);
   });
+
+  it("passes --limit for non-browse semantic recall used by mid-session recall", async () => {
+    let capturedArgs: string[] = [];
+    spawnMock.mockImplementationOnce((_cmd: string, args: string[]) => {
+      capturedArgs = args;
+      return createMockChild(JSON.stringify({ query: "Tell me about Ava", results: [] }));
+    });
+
+    await runRecall("/path/to/agenr", 1234, undefined, "Tell me about Ava", { limit: 8 });
+
+    expect(capturedArgs).toEqual([
+      "recall",
+      "--context",
+      "session-start",
+      "--budget",
+      "1234",
+      "--json",
+      "--limit",
+      "8",
+      "Tell me about Ava",
+    ]);
+  });
 });
 
 describe("runRecall browse mode args", () => {

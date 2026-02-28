@@ -227,12 +227,16 @@ export function classifyMessage(text: string): MessageClassification {
     return "trivial";
   }
 
-  const words = trimmed.split(/\s+/).filter(Boolean);
+  const words = trimmed
+    .split(/\s+/)
+    .map((word) => word.replace(/^[.!?,;:]+|[.!?,;:]+$/g, ""))
+    .filter(Boolean);
   const wordCount = words.length;
   const lower = trimmed.toLowerCase();
+  const stripped = lower.replace(/[.!?,;:]+$/g, "");
 
   if (wordCount === 1) {
-    if (TRIVIAL_EXACT.has(lower)) {
+    if (TRIVIAL_EXACT.has(stripped)) {
       return "trivial";
     }
     if (/^\d+$/.test(trimmed)) {
@@ -247,7 +251,7 @@ export function classifyMessage(text: string): MessageClassification {
     return "trivial";
   }
 
-  if (TRIVIAL_PHRASES.test(trimmed)) {
+  if (TRIVIAL_PHRASES.test(stripped)) {
     return "trivial";
   }
   if (wordCount <= 3 && !containsEntity(trimmed)) {
@@ -271,7 +275,7 @@ export function classifyMessage(text: string): MessageClassification {
 }
 
 function isStopWordMessage(text: string): boolean {
-  const normalized = text.trim().toLowerCase();
+  const normalized = text.trim().toLowerCase().replace(/[.!?,;:]+$/g, "");
   if (!normalized) {
     return true;
   }

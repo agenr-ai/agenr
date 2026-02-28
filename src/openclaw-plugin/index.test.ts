@@ -7,6 +7,7 @@ import * as pluginRecall from "./recall.js";
 import * as sessionQuery from "./session-query.js";
 import * as pluginSignals from "./signals.js";
 import * as pluginTools from "./tools.js";
+import { getMidSessionState } from "./mid-session-recall.js";
 import { runExtractTool, runRecallTool, runRetireTool, runStoreTool } from "./tools.js";
 import type { BeforePromptBuildResult, PluginApi } from "./types.js";
 
@@ -1699,12 +1700,12 @@ describe("command hook handoff", () => {
       { role: "assistant", content: "Acknowledged, capturing handoff now." },
       { role: "user", content: "Focus on issue #210 command reset path." },
     ]);
-    const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const runStoreMock = vi.spyOn(pluginTools, "runStoreTool").mockResolvedValue({
       content: [{ type: "text", text: "Stored 1 entries." }],
     });
 
-    const api = makeApi();
+    const api = makeApi({ pluginConfig: { debug: true } });
     plugin.register(api);
     const handler = getCommandHandler(api);
 
@@ -1733,10 +1734,10 @@ describe("command hook handoff", () => {
     expect(payload.entries[0]?.type).toBe("event");
     expect(payload.entries[0]?.importance).toBe(9);
     expect(payload.entries[0]?.tags).toContain("handoff");
-    expect(consoleLogSpy).toHaveBeenCalledWith(
-      "[agenr] command: triggered action=new sessionKey=agent:main:command-new",
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "[command] triggered action=new sessionKey=agent:main:command-new",
     );
-    expect(consoleLogSpy).toHaveBeenCalledWith("[agenr] command: handoff complete");
+    expect(consoleErrorSpy).toHaveBeenCalledWith("[command] handoff complete");
   });
 
   it("skips handoff for action=stop", async () => {
@@ -1766,6 +1767,43 @@ describe("command hook handoff", () => {
     );
 
     expect(runStoreMock).not.toHaveBeenCalled();
+  });
+
+  it("clears mid-session recall state for action=reset", async () => {
+    const state = getMidSessionState("agent:main:command-reset-clears");
+    state.turnCount = 3;
+    state.lastRecallQuery = "Tell me about Ava";
+    state.recalledIds.add("entry-1");
+    state.recentMessages.push("Tell me about Ava");
+
+    vi.spyOn(__testing, "readAndParseSessionJsonl").mockResolvedValue([]);
+    const api = makeApi();
+    plugin.register(api);
+    const handler = getCommandHandler(api);
+
+    await handler(
+      {
+        type: "command",
+        action: "reset",
+        sessionKey: "agent:main:command-reset-clears",
+        timestamp: new Date(),
+        messages: [],
+        context: {
+          sessionEntry: {
+            sessionId: "session-reset-clears",
+            sessionFile: "/tmp/session-reset-clears.jsonl",
+          },
+        },
+      },
+      { sessionKey: "agent:main:command-reset-clears", agentId: "main" },
+    );
+
+    const refreshed = getMidSessionState("agent:main:command-reset-clears");
+    expect(refreshed).not.toBe(state);
+    expect(refreshed.turnCount).toBe(0);
+    expect(refreshed.lastRecallQuery).toBeNull();
+    expect(refreshed.recalledIds.size).toBe(0);
+    expect(refreshed.recentMessages.length).toBe(0);
   });
 
   it("skips handoff when no messages parsed from JSONL", async () => {
@@ -1804,12 +1842,12 @@ describe("command hook handoff", () => {
       { role: "user", content: "First handoff call should store." },
       { role: "assistant", content: "Second call should dedup skip." },
     ]);
-    const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const runStoreMock = vi.spyOn(pluginTools, "runStoreTool").mockResolvedValue({
       content: [{ type: "text", text: "Stored 1 entries." }],
     });
 
-    const api = makeApi();
+    const api = makeApi({ pluginConfig: { debug: true } });
     plugin.register(api);
     const handler = getCommandHandler(api);
     const event = {
@@ -1830,8 +1868,8 @@ describe("command hook handoff", () => {
     await handler(event, { sessionKey: "agent:main:command-dedup", agentId: "main" });
 
     expect(runStoreMock).toHaveBeenCalledTimes(1);
-    expect(consoleLogSpy).toHaveBeenCalledWith(
-      "[agenr] command: dedup skip sessionId=session-210-cmd-dedup",
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "[command] dedup skip sessionId=session-210-cmd-dedup",
     );
   });
 

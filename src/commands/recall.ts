@@ -378,8 +378,8 @@ export async function runRecallCommand(
         budget,
         nonCoreLimit: limit,
       });
-      finalResults = grouped.results;
-      budgetUsed = grouped.budgetUsed;
+      finalResults = grouped.results.slice(0, limit);
+      budgetUsed = finalResults.reduce((sum, item) => sum + estimateEntryTokens(item), 0);
     } else {
       const baseResults = await resolvedDeps.recallFn(db, queryForRecall, apiKey);
       if (budget === undefined) {

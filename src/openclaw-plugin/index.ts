@@ -58,6 +58,16 @@ const DEFAULT_MID_SESSION_COMPLEX_LIMIT = 8;
 const DEFAULT_MID_SESSION_QUERY_SIMILARITY_THRESHOLD = 0.85;
 const sessionRecalledEntries = new Map<string, Set<string>>();
 
+function isDebugEnabled(config: AgenrPluginConfig | undefined): boolean {
+  return process.env.AGENR_DEBUG === "1" || config?.debug === true;
+}
+
+function debugLog(enabled: boolean, tag: string, message: string): void {
+  if (enabled) {
+    console.error(`[${tag}] ${message}`);
+  }
+}
+
 interface SessionSignalState {
   lastSignalAt: number;
   signalCount: number;
@@ -703,6 +713,7 @@ async function summarizeSessionForHandoff(
   streamSimpleImpl?: StreamSimpleFn,
   logEnabled = false,
   logDir?: string,
+  debugEnabled = false,
 ): Promise<string | null> {
   try {
     const sessionsJson = await readSessionsJson(sessionsDir);
@@ -715,7 +726,7 @@ async function summarizeSessionForHandoff(
       -Math.min(currentMessages.length, HANDOFF_TRANSCRIPT_MAX_MESSAGES),
     );
     if (currentSlice.length < 4) {
-      console.log("[agenr] before_reset: skipping LLM summary - reason: too few messages");
+      debugLog(debugEnabled, "before_reset", "skipping LLM summary - reason: too few messages");
       return null;
     }
 
@@ -737,7 +748,7 @@ async function summarizeSessionForHandoff(
 
     const nonHeaderLineCount = countTranscriptContentLines(transcript);
     if (nonHeaderLineCount < 3) {
-      console.log("[agenr] before_reset: skipping LLM summary - reason: short transcript");
+      debugLog(debugEnabled, "before_reset", "skipping LLM summary - reason: short transcript");
       return null;
     }
 
@@ -769,7 +780,7 @@ async function summarizeSessionForHandoff(
     try {
       llmClient = createLlmClient({});
     } catch (err) {
-      console.log("[agenr] before_reset: skipping LLM summary - reason: LLM client init failed");
+      debugLog(debugEnabled, "before_reset", "skipping LLM summary - reason: LLM client init failed");
       return null;
     }
 
@@ -777,7 +788,7 @@ async function summarizeSessionForHandoff(
     const credentials = llmClient.credentials;
     const apiKey = typeof credentials.apiKey === "string" ? credentials.apiKey.trim() : "";
     if (!apiKey) {
-      console.log("[agenr] before_reset: no apiKey available, skipping LLM summary");
+      debugLog(debugEnabled, "before_reset", "no apiKey available, skipping LLM summary");
       return null;
     }
 
@@ -791,12 +802,16 @@ async function summarizeSessionForHandoff(
     };
 
     if (includeBackground) {
-      console.log(
-        `[agenr] before_reset: sending to LLM model=${resolvedModel.modelId} chars=${transcript.length} currentMsgs=${currentSlice.length} priorMsgs=${priorSlice.length}`,
+      debugLog(
+        debugEnabled,
+        "before_reset",
+        `sending to LLM model=${resolvedModel.modelId} chars=${transcript.length} currentMsgs=${currentSlice.length} priorMsgs=${priorSlice.length}`,
       );
     } else {
-      console.log(
-        `[agenr] before_reset: sending to LLM model=${resolvedModel.modelId} chars=${transcript.length} msgs=${currentSlice.length}`,
+      debugLog(
+        debugEnabled,
+        "before_reset",
+        `sending to LLM model=${resolvedModel.modelId} chars=${transcript.length} msgs=${currentSlice.length}`,
       );
     }
     const assistantMsg = await runSimpleStream({
@@ -807,13 +822,13 @@ async function summarizeSessionForHandoff(
       streamSimpleImpl,
     });
     if (assistantMsg.stopReason === "error") {
-      console.log("[agenr] before_reset: skipping LLM summary - reason: LLM error stop");
+      debugLog(debugEnabled, "before_reset", "skipping LLM summary - reason: LLM error stop");
       return null;
     }
 
     const summaryText = extractAssistantSummaryText(assistantMsg);
     if (!summaryText) {
-      console.log("[agenr] before_reset: skipping LLM summary - reason: empty summary text");
+      debugLog(debugEnabled, "before_reset", "skipping LLM summary - reason: empty summary text");
       return null;
     }
 
@@ -852,19 +867,19 @@ async function summarizeSessionForHandoff(
           fs.promises.writeFile(requestPath, requestPayload, "utf8"),
           fs.promises.writeFile(responsePath, responsePayload, "utf8"),
         ]);
-        console.log(`[agenr] handoff: logged LLM request/response to ${normalizedLogDir}`);
+        debugLog(debugEnabled, "handoff", `logged LLM request/response to ${normalizedLogDir}`);
       } catch (err) {
-        console.log(
+        console.error(
           `[agenr] handoff: failed to write LLM request/response logs: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }
 
 
-    console.log(`[agenr] before_reset: LLM summary received chars=${summaryText.length}`);
+    debugLog(debugEnabled, "before_reset", `LLM summary received chars=${summaryText.length}`);
     return summaryText;
   } catch (err) {
-    console.log(
+    console.error(
       `[agenr] before_reset: summarize handoff failed: ${err instanceof Error ? err.message : String(err)}`,
     );
     return null;
@@ -910,6 +925,7 @@ async function retireFallbackHandoffEntries(params: {
   dbPath?: string;
   fallbackSubject: string;
   logger: PluginApi["logger"];
+  debugEnabled?: boolean;
   source: "before_reset" | "command" | "session_start";
 }): Promise<void> {
   try {
@@ -957,7 +973,9 @@ async function retireFallbackHandoffEntries(params: {
           entry_id: entryId,
           reason: "superseded by LLM handoff",
         }, params.dbPath)
-          .then(() => { console.log(`[agenr] session-start: retired handoff ${entryId}`); })
+          .then(() => {
+            debugLog(Boolean(params.debugEnabled), "session-start", `retired handoff ${entryId}`);
+          })
           .catch((err) => {
             params.logger.debug?.(
               `[agenr] ${params.source}: fallback retire failed for ${entryId}: ${err instanceof Error ? err.message : String(err)}`,
@@ -1007,13 +1025,14 @@ async function runHandoffForSession(opts: {
   includeBackground?: boolean;
   logEnabled?: boolean;
   logDir?: string;
+  debugEnabled?: boolean;
   logger: PluginLogger | undefined;
   source: "before_reset" | "command" | "session_start";
   dbPath?: string;
 }): Promise<void> {
   const sessionId = opts.sessionId.trim() || opts.sessionKey;
   if (handoffSeenSessionIds.has(sessionId)) {
-    console.log(`[agenr] ${opts.source}: dedup skip sessionId=${sessionId}`);
+    debugLog(Boolean(opts.debugEnabled), opts.source, `dedup skip sessionId=${sessionId}`);
     return;
   }
   handoffSeenSessionIds.add(sessionId);
@@ -1052,9 +1071,9 @@ async function runHandoffForSession(opts: {
     };
     try {
       await runStoreTool(opts.agenrPath, fallbackEntry, opts.storeConfig, opts.defaultProject, opts.dbPath);
-      console.log(`[agenr] ${opts.source}: fallback handoff stored`);
+      debugLog(Boolean(opts.debugEnabled), opts.source, "fallback handoff stored");
     } catch (err) {
-      console.log(
+      console.error(
         `[agenr] ${opts.source}: fallback store failed: ${err instanceof Error ? err.message : String(err)}`,
       );
       fallbackEntrySubject = null;
@@ -1076,6 +1095,7 @@ async function runHandoffForSession(opts: {
       undefined,
       opts.logEnabled ?? false,
       opts.logDir,
+      opts.debugEnabled ?? false,
     );
 
     if (summary) {
@@ -1090,6 +1110,7 @@ async function runHandoffForSession(opts: {
             warn: () => undefined,
             error: () => undefined,
           },
+          debugEnabled: opts.debugEnabled,
           source: opts.source,
         });
       }
@@ -1109,9 +1130,9 @@ async function runHandoffForSession(opts: {
 
       try {
         await runStoreTool(opts.agenrPath, llmEntry, opts.storeConfig, opts.defaultProject, opts.dbPath);
-        console.log(`[agenr] ${opts.source}: LLM handoff stored`);
+        debugLog(Boolean(opts.debugEnabled), opts.source, "LLM handoff stored");
       } catch (err) {
-        console.log(
+        console.error(
           `[agenr] ${opts.source}: LLM handoff store failed: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
@@ -1150,6 +1171,7 @@ const plugin = {
 
   register(api: PluginApi): void {
     const config = api.pluginConfig as AgenrPluginConfig | undefined;
+    const debug = isDebugEnabled(config);
     const includeBackground = config?.handoff?.includeBackground ?? false;
     const handoffLogEnabled = config?.handoff?.logEnabled === true;
     const handoffLogDirRaw = config?.handoff?.logDir;
@@ -1186,6 +1208,7 @@ const plugin = {
           const isFirstInSession = dedupeKey ? !hasSeenSession(dedupeKey) : true;
 
           if (isFirstInSession) {
+            debugLog(debug, "session-start", `sessionKey=${sessionKey} dedupeKey=${dedupeKey} isFirst=true`);
             if (dedupeKey) {
               markSessionSeen(dedupeKey);
             }
@@ -1216,7 +1239,7 @@ const plugin = {
 
               if (Array.isArray(messages) && messages.length > 0) {
                 const sessionKey = ctx.sessionKey ?? "";
-                console.log("[agenr] session_start: triggered sessionKey=" + sessionKey);
+                debugLog(debug, "session-start", "triggered sessionKey=" + sessionKey);
                 try {
                   await testingApi.runHandoffForSession({
                     messages,
@@ -1237,13 +1260,14 @@ const plugin = {
                     includeBackground,
                     logEnabled: handoffLogEnabled,
                     logDir: handoffLogDir,
+                    debugEnabled: debug,
                     logger: api.logger,
                     source: "session_start",
                     dbPath: config?.dbPath,
                   });
-                  console.log("[agenr] session_start: runHandoffForSession completed");
+                  debugLog(debug, "session-start", "runHandoffForSession completed");
                 } catch (err) {
-                  console.log(
+                  console.error(
                     `[agenr] session_start: handoff failed: ${err instanceof Error ? err.message : String(err)}`,
                   );
                 }
@@ -1278,9 +1302,15 @@ const plugin = {
                 semanticResult = rawSemantic.results.length > 0 ? rawSemantic : null;
               }
             }
+            debugLog(debug, "session-start", `browse returned ${browseResult?.results.length ?? 0} entries`);
+            debugLog(debug, "session-start", `semantic recall returned ${semanticResult?.results.length ?? 0} entries`);
 
             if (browseResult) {
-              console.log(`[agenr] session-start: browse returned ${browseResult.results.length} entries, checking for handoffs to retire`);
+              debugLog(
+                debug,
+                "session-start",
+                `browse returned ${browseResult.results.length} entries, checking for handoffs to retire`,
+              );
               const retirePromises: Promise<void>[] = [];
               for (const item of browseResult.results) {
                 const entry = item.entry;
@@ -1295,17 +1325,17 @@ const plugin = {
                       entry_id: entryId,
                       reason: "consumed at session start",
                     }, config?.dbPath)
-                      .then(() => { console.log(`[agenr] session-start: retired handoff ${entryId}`); })
+                      .then(() => {
+                        debugLog(debug, "session-start", `retired handoff ${entryId}`);
+                      })
                       .catch((err) => {
-                        console.log(
+                        console.error(
                           `[agenr] session-start: retire handoff ${entryId} failed: ${err instanceof Error ? err.message : String(err)}`,
                         );
                       }),
                   );
                 } else {
-                  console.log(
-                    "[agenr] session-start: handoff entry missing id, skipping retire",
-                  );
+                  debugLog(debug, "session-start", "handoff entry missing id, skipping retire");
                 }
               }
               await Promise.allSettled(retirePromises);
@@ -1328,6 +1358,7 @@ const plugin = {
               }
             }
             markdown = sections.length > 0 ? sections.join("\n\n") : undefined;
+            debugLog(debug, "session-start", `prependContext chars=${markdown?.length ?? 0}`);
 
             const recalledIds = new Set<string>();
             for (const item of browseResult?.results ?? []) {
@@ -1349,7 +1380,12 @@ const plugin = {
               }
             }
             stashSessionRecalledEntries(sessionKey, recalledIds);
-          } else if (config?.midSessionRecall?.enabled !== false) {
+            debugLog(debug, "session-start", `stashed ${recalledIds.size} recalled IDs`);
+          } else {
+            debugLog(debug, "prompt-build", `sessionKey=${sessionKey} isFirst=false`);
+          }
+
+          if (!isFirstInSession && config?.midSessionRecall?.enabled !== false) {
             const stateKey = dedupeKey || sessionKey;
             const state = getMidSessionState(stateKey);
             state.turnCount += 1;
@@ -1361,6 +1397,11 @@ const plugin = {
             }
 
             const classification = classifyMessage(userMessage);
+            debugLog(
+              debug,
+              "mid-session-recall",
+              `turn=${state.turnCount} classification=${classification} msg="${userMessage.slice(0, 80)}"`,
+            );
             if (classification !== "trivial") {
               const query = buildQuery(state.recentMessages.toArray());
               const threshold = resolveMidSessionSimilarityThreshold(
@@ -1376,6 +1417,11 @@ const plugin = {
                     config?.midSessionRecall?.normalLimit,
                     DEFAULT_MID_SESSION_NORMAL_LIMIT,
                   );
+                debugLog(
+                  debug,
+                  "mid-session-recall",
+                  `firing recall query="${query.slice(0, 100)}" limit=${limit}`,
+                );
                 const midSessionResult = await runRecall(
                   agenrPath,
                   budget,
@@ -1412,6 +1458,11 @@ const plugin = {
                   }
 
                   midSessionMarkdown = formatMidSessionRecall(freshResults);
+                  debugLog(
+                    debug,
+                    "mid-session-recall",
+                    `raw=${midSessionResult.results.length} alreadyRecalled=${alreadyRecalledIds.size} stateRecalled=${state.recalledIds.size} fresh=${freshResults.length} injected=${!!midSessionMarkdown}`,
+                  );
                 }
               }
             }
@@ -1424,26 +1475,31 @@ const plugin = {
             // This prevents stale-watermark bursts when cooldown expires.
             const db = await ensurePluginDb(config);
             const candidateSignal = await checkSignals(db, sessionKey, signalConfig);
-            if (candidateSignal) {
-              const state = sessionSignalState.get(sessionKey) ?? { lastSignalAt: 0, signalCount: 0 };
+            debugLog(debug, "signals", `check result=${candidateSignal ? "found" : "none"}`);
+            const state = sessionSignalState.get(sessionKey) ?? { lastSignalAt: 0, signalCount: 0 };
 
-              // Suppress delivery (but NOT watermark advance) during cooldown or session cap.
-              const inCooldown =
-                signalConfig.cooldownMs > 0 && Date.now() - state.lastSignalAt < signalConfig.cooldownMs;
-              const overCap =
-                signalConfig.maxPerSession > 0 && state.signalCount >= signalConfig.maxPerSession;
+            // Suppress delivery (but NOT watermark advance) during cooldown or session cap.
+            const isCooldown =
+              signalConfig.cooldownMs > 0 && Date.now() - state.lastSignalAt < signalConfig.cooldownMs;
+            const isMaxReached =
+              signalConfig.maxPerSession > 0 && state.signalCount >= signalConfig.maxPerSession;
 
-              if (!inCooldown && !overCap) {
-                sessionSignalState.set(sessionKey, {
-                  lastSignalAt: Date.now(),
-                  signalCount: state.signalCount + 1,
-                });
-                signal = candidateSignal;
-              }
+            if (candidateSignal && !isCooldown && !isMaxReached) {
+              sessionSignalState.set(sessionKey, {
+                lastSignalAt: Date.now(),
+                signalCount: state.signalCount + 1,
+              });
+              signal = candidateSignal;
             }
+            debugLog(debug, "signals", `cooldown=${isCooldown} maxReached=${isMaxReached} injected=${!!signal}`);
           }
 
           const prependContext = [markdown, midSessionMarkdown, signal].filter(Boolean).join("\n\n");
+          debugLog(
+            debug,
+            "prompt-build",
+            `prependContext total chars=${prependContext.length} (recall=${markdown?.length ?? 0} midSession=${midSessionMarkdown?.length ?? 0} signal=${signal?.length ?? 0})`,
+          );
           if (!prependContext) {
             return;
           }
@@ -1471,7 +1527,7 @@ const plugin = {
         if (!Array.isArray(messages) || messages.length === 0) {
           return;
         }
-        console.log("[agenr] before_reset: triggered sessionKey=" + sessionKey + " msgs=" + messages.length);
+        debugLog(debug, "before_reset", "triggered sessionKey=" + sessionKey + " msgs=" + messages.length);
 
         if (recalledEntryIds && recalledEntryIds.size > 0) {
           const runtimeConfig = readConfig(process.env);
@@ -1543,6 +1599,7 @@ const plugin = {
           includeBackground,
           logEnabled: handoffLogEnabled,
           logDir: handoffLogDir,
+          debugEnabled: debug,
           logger: api.logger,
           source: "before_reset",
           dbPath: config?.dbPath,
@@ -1558,12 +1615,12 @@ const plugin = {
       "command",
       async (event: CommandHookEvent, ctx: PluginHookAgentContext): Promise<void> => {
         try {
-          console.log("[agenr] command: triggered action=" + event.action + " sessionKey=" + event.sessionKey);
+          debugLog(debug, "command", "triggered action=" + event.action + " sessionKey=" + event.sessionKey);
           if (event.action !== "new" && event.action !== "reset") {
             return;
           }
 
-          if (event.action === "new") {
+          if (event.action === "new" || event.action === "reset") {
             const resetKey = event.sessionKey;
             if (resetKey) {
               clearMidSessionState(resetKey);
@@ -1617,12 +1674,13 @@ const plugin = {
             includeBackground,
             logEnabled: handoffLogEnabled,
             logDir: handoffLogDir,
+            debugEnabled: debug,
             logger: api.logger,
             source: "command",
             dbPath: config?.dbPath,
           });
 
-          console.log("[agenr] command: handoff complete");
+          debugLog(debug, "command", "handoff complete");
         } catch (err) {
           api.logger.warn(
             `agenr plugin command hook failed: ${err instanceof Error ? err.message : String(err)}`,

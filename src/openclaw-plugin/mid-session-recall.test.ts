@@ -12,6 +12,10 @@ import {
 describe("classifyMessage", () => {
   it.each([
     { input: "yes", expected: "trivial" },
+    { input: "ok", expected: "trivial" },
+    { input: "Okay.", expected: "trivial" },
+    { input: "thanks!", expected: "trivial" },
+    { input: "sure.", expected: "trivial" },
     { input: "do it", expected: "trivial" },
     { input: "what do you think?", expected: "normal" },
     { input: "How's Duke doing?", expected: "complex" },
