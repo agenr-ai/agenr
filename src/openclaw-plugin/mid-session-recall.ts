@@ -143,19 +143,36 @@ function normalizeBufferedMessage(text: string): string {
   return trimmed;
 }
 
-class RecentMessagesBuffer extends Array<string> {
-  push(...items: string[]): number {
-    for (const item of items) {
-      const normalized = normalizeBufferedMessage(item);
+export class RecentMessagesBuffer {
+  private items: string[] = [];
+
+  get length(): number {
+    return this.items.length;
+  }
+
+  push(...messages: string[]): void {
+    for (const msg of messages) {
+      const normalized = normalizeBufferedMessage(msg);
       if (!normalized) {
         continue;
       }
-      super.push(normalized);
+      this.items.push(normalized);
     }
-    while (this.length > MAX_RECENT_MESSAGES) {
-      super.shift();
+    while (this.items.length > MAX_RECENT_MESSAGES) {
+      this.items.shift();
     }
-    return this.length;
+  }
+
+  slice(start?: number, end?: number): string[] {
+    return this.items.slice(start, end);
+  }
+
+  toArray(): string[] {
+    return [...this.items];
+  }
+
+  [Symbol.iterator](): Iterator<string> {
+    return this.items[Symbol.iterator]();
   }
 }
 
@@ -327,7 +344,7 @@ function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
 
 export function shouldRecall(query: string, lastQuery: string | null, threshold: number): boolean {
   const queryTokens = tokenizeForSimilarity(query);
-  if (queryTokens.size < 3) {
+  if (queryTokens.size < 2) {
     return false;
   }
   if (!lastQuery) {
@@ -338,7 +355,7 @@ export function shouldRecall(query: string, lastQuery: string | null, threshold:
 }
 
 export interface MidSessionState {
-  recentMessages: string[];
+  recentMessages: RecentMessagesBuffer;
   lastRecallQuery: string | null;
   recalledIds: Set<string>;
   turnCount: number;
