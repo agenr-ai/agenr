@@ -98,6 +98,31 @@ describe("runRecall query args", () => {
     expect(positionalQuery.length).toBe(500);
     expect(positionalQuery).toBe("x".repeat(500));
   });
+
+  it("passes --limit for session-start context when provided", async () => {
+    let capturedArgs: string[] = [];
+    spawnMock.mockImplementationOnce((_cmd: string, args: string[]) => {
+      capturedArgs = args;
+      return createMockChild(JSON.stringify({ query: "session-start", results: [] }));
+    });
+
+    await runRecall("/path/to/agenr", 1234, undefined, "status update", {
+      context: "session-start",
+      limit: 8,
+    });
+
+    expect(capturedArgs).toEqual([
+      "recall",
+      "--context",
+      "session-start",
+      "--budget",
+      "1234",
+      "--json",
+      "--limit",
+      "8",
+      "status update",
+    ]);
+  });
 });
 
 describe("runRecall browse mode args", () => {

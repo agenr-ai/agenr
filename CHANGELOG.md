@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.9.18 (2026-02-28)
+
+### Features
+- OpenClaw plugin: subsequent-turn auto-recall with heuristic message
+  classifier. Messages are classified as trivial (skip), normal (5 results),
+  or complex (8 results) based on entity detection, temporal references,
+  and explicit recall phrases. Queries built from a sliding window of
+  recent messages with Jaccard similarity dedup. Recalled entries are
+  deduplicated against session-start context. Configurable via
+  midSessionRecall plugin config.
+
+### Tests
+- 16-case message classifier test suite
+- Query builder, similarity check, and state management tests
+- Integration tests for mid-session recall in before_prompt_build
+
 ## 0.9.17 - 2026-02-27
 
 ### Changed

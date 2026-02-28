@@ -14,6 +14,14 @@ import { runSimpleStream, type StreamSimpleFn } from "../llm/stream.js";
 import { KNOWLEDGE_TYPES, SCOPE_LEVELS } from "../types.js";
 import { toNumber, toStringValue } from "../utils/entry-utils.js";
 import {
+  buildQuery,
+  classifyMessage,
+  clearMidSessionStates,
+  formatMidSessionRecall,
+  getMidSessionState,
+  shouldRecall,
+} from "./mid-session-recall.js";
+import {
   formatRecallAsMarkdown,
   resolveAgenrPath,
   resolveBudget,
@@ -44,6 +52,9 @@ const SKIP_SESSION_PATTERNS = [":subagent:", ":cron:"];
 const DEFAULT_MAX_SEEN_SESSIONS = 1000;
 const seenSessions = new Map<string, true>();
 const MAX_RECALLED_SESSIONS = 200;
+const DEFAULT_MID_SESSION_NORMAL_LIMIT = 5;
+const DEFAULT_MID_SESSION_COMPLEX_LIMIT = 8;
+const DEFAULT_MID_SESSION_QUERY_SIMILARITY_THRESHOLD = 0.85;
 const sessionRecalledEntries = new Map<string, Set<string>>();
 
 interface SessionSignalState {
@@ -112,6 +123,43 @@ function stashSessionRecalledEntries(sessionKey: string, recalledIds: Set<string
     }
     sessionRecalledEntries.delete(oldestKey);
   }
+}
+
+function resolveMidSessionLimit(raw: unknown, fallback: number): number {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) {
+    return fallback;
+  }
+  const normalized = Math.trunc(raw);
+  if (normalized <= 0) {
+    return fallback;
+  }
+  return normalized;
+}
+
+function resolveMidSessionSimilarityThreshold(raw: unknown): number {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) {
+    return DEFAULT_MID_SESSION_QUERY_SIMILARITY_THRESHOLD;
+  }
+  if (raw < 0 || raw > 1) {
+    return DEFAULT_MID_SESSION_QUERY_SIMILARITY_THRESHOLD;
+  }
+  return raw;
+}
+
+function getRecallEntryId(item: unknown): string | null {
+  if (typeof item !== "object" || item === null) {
+    return null;
+  }
+  const rawEntry = (item as { entry?: unknown }).entry;
+  if (typeof rawEntry !== "object" || rawEntry === null) {
+    return null;
+  }
+  const rawId = (rawEntry as { id?: unknown }).id;
+  if (typeof rawId !== "string") {
+    return null;
+  }
+  const normalized = rawId.trim();
+  return normalized.length > 0 ? normalized : null;
 }
 
 interface RecalledEntryMetrics {
@@ -1074,6 +1122,7 @@ const testingApi = {
   clearState(): void {
     seenSessions.clear();
     sessionSignalState.clear();
+    clearMidSessionStates();
     handoffSeenSessionIds.clear();
     sessionRecalledEntries.clear();
   },
@@ -1128,7 +1177,11 @@ const plugin = {
           }
 
           const dedupeKey = ctx.sessionId ?? sessionKey;
+          const agenrPath = resolveAgenrPath(config);
+          const budget = resolveBudget(config);
+          const project = config?.project?.trim() || undefined;
           let markdown: string | undefined;
+          let midSessionMarkdown: string | undefined;
           const isFirstInSession = dedupeKey ? !hasSeenSession(dedupeKey) : true;
 
           if (isFirstInSession) {
@@ -1136,9 +1189,6 @@ const plugin = {
               markSessionSeen(dedupeKey);
             }
 
-            const agenrPath = resolveAgenrPath(config);
-            const budget = resolveBudget(config);
-            const project = config?.project?.trim() || undefined;
             const agentId = ctx.agentId?.trim() || "main";
             const sessionsDir =
               config?.sessionsDir ?? path.join(os.homedir(), `.openclaw/agents/${agentId}/sessions`);
@@ -1298,6 +1348,70 @@ const plugin = {
               }
             }
             stashSessionRecalledEntries(sessionKey, recalledIds);
+          } else if (config?.midSessionRecall?.enabled !== false) {
+            const stateKey = dedupeKey || sessionKey;
+            const state = getMidSessionState(stateKey);
+            state.turnCount += 1;
+
+            const rawPrompt = typeof event.prompt === "string" ? stripPromptMetadata(event.prompt) : "";
+            const userMessage = rawPrompt.trim();
+            if (userMessage) {
+              state.recentMessages.push(userMessage);
+            }
+
+            const classification = classifyMessage(userMessage);
+            if (classification !== "trivial") {
+              const query = buildQuery(state.recentMessages);
+              const threshold = resolveMidSessionSimilarityThreshold(
+                config?.midSessionRecall?.querySimilarityThreshold,
+              );
+              if (shouldRecall(query, state.lastRecallQuery, threshold)) {
+                const limit = classification === "complex"
+                  ? resolveMidSessionLimit(
+                    config?.midSessionRecall?.complexLimit,
+                    DEFAULT_MID_SESSION_COMPLEX_LIMIT,
+                  )
+                  : resolveMidSessionLimit(
+                    config?.midSessionRecall?.normalLimit,
+                    DEFAULT_MID_SESSION_NORMAL_LIMIT,
+                  );
+                const midSessionResult = await runRecall(
+                  agenrPath,
+                  budget,
+                  project,
+                  query,
+                  { context: "session-start", limit },
+                  config?.dbPath,
+                );
+                state.lastRecallQuery = query;
+
+                if (midSessionResult && midSessionResult.results.length > 0) {
+                  const alreadyRecalledIds = sessionRecalledEntries.get(sessionKey) ?? new Set<string>();
+                  const freshResults = midSessionResult.results.filter((item) => {
+                    const id = getRecallEntryId(item);
+                    if (!id) {
+                      return true;
+                    }
+                    if (alreadyRecalledIds.has(id)) {
+                      return false;
+                    }
+                    if (state.recalledIds.has(id)) {
+                      return false;
+                    }
+                    return true;
+                  });
+
+                  for (const item of freshResults) {
+                    const id = getRecallEntryId(item);
+                    if (id) {
+                      state.recalledIds.add(id);
+                    }
+                  }
+
+                  midSessionMarkdown = formatMidSessionRecall(freshResults);
+                }
+              }
+            }
           }
 
           let signal: string | undefined;
@@ -1326,7 +1440,7 @@ const plugin = {
             }
           }
 
-          const prependContext = [markdown, signal].filter(Boolean).join("\n\n");
+          const prependContext = [markdown, midSessionMarkdown, signal].filter(Boolean).join("\n\n");
           if (!prependContext) {
             return;
           }
@@ -1444,6 +1558,10 @@ const plugin = {
           console.log("[agenr] command: triggered action=" + event.action + " sessionKey=" + event.sessionKey);
           if (event.action !== "new" && event.action !== "reset") {
             return;
+          }
+
+          if (event.action === "new") {
+            clearMidSessionStates();
           }
 
           const sessionKey = event.sessionKey;
