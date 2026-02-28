@@ -9,7 +9,7 @@ import * as pluginSignals from "./signals.js";
 import * as pluginTools from "./tools.js";
 import { getMidSessionState } from "./mid-session-recall.js";
 import { runExtractTool, runRecallTool, runRetireTool, runStoreTool } from "./tools.js";
-import type { BeforePromptBuildResult, PluginApi } from "./types.js";
+import type { BeforePromptBuildResult, PluginApi, PluginTool } from "./types.js";
 
 const { spawnMock } = vi.hoisted(() => ({
   spawnMock: vi.fn(),
@@ -175,6 +175,20 @@ function getCommandHandler(
     },
     ctx: { sessionKey?: string; sessionId?: string; agentId?: string },
   ) => Promise<void>;
+}
+
+function getRegisteredTool(api: PluginApi, name: string): PluginTool {
+  const registerToolMock = api.registerTool as ReturnType<typeof vi.fn> | undefined;
+  if (!registerToolMock) {
+    throw new Error("registerTool mock is required");
+  }
+  const call = registerToolMock.mock.calls.find(
+    (args) => ((args[0] as { name?: unknown }).name === name),
+  );
+  if (!call) {
+    throw new Error(`tool not registered: ${name}`);
+  }
+  return call[0] as PluginTool;
 }
 
 describe("openclaw plugin tool registration", () => {
@@ -629,6 +643,182 @@ describe("before_prompt_build mid-session recall", () => {
 
     expect(runRecallMock).toHaveBeenCalledTimes(1);
     expect(second).toBeUndefined();
+  });
+});
+
+describe("before_prompt_build store nudging", () => {
+  const hasMemoryCheck = (result: BeforePromptBuildResult | undefined): boolean =>
+    result?.prependContext?.includes("[MEMORY CHECK]") ?? false;
+
+  it("injects a nudge after 8 turns without agenr_store calls", async () => {
+    vi.spyOn(pluginRecall, "runRecall").mockResolvedValue({
+      query: "[browse]",
+      results: [],
+    });
+    const api = makeApi({
+      pluginConfig: {
+        signalsEnabled: false,
+        midSessionRecall: { enabled: false },
+      },
+    });
+    plugin.register(api);
+    const handler = getBeforePromptBuildHandler(api);
+    const ctx = { sessionKey: "agent:main:store-nudge-threshold", sessionId: "uuid-store-nudge-threshold" };
+
+    await handler({ prompt: "start" }, ctx);
+    for (let turn = 1; turn <= 7; turn += 1) {
+      const result = await handler({ prompt: `turn-${turn}` }, ctx);
+      expect(hasMemoryCheck(result)).toBe(false);
+    }
+    const eighthTurn = await handler({ prompt: "turn-8" }, ctx);
+
+    expect(hasMemoryCheck(eighthTurn)).toBe(true);
+  });
+
+  it("does not inject a nudge when agenr_store was called within the threshold window", async () => {
+    vi.spyOn(pluginRecall, "runRecall").mockResolvedValue({
+      query: "[browse]",
+      results: [],
+    });
+    const registerTool = vi.fn();
+    const api = makeApi({
+      registerTool,
+      pluginConfig: {
+        signalsEnabled: false,
+        midSessionRecall: { enabled: false },
+      },
+    });
+    plugin.register(api);
+    const handler = getBeforePromptBuildHandler(api);
+    const storeTool = getRegisteredTool(api, "agenr_store");
+    const ctx = { sessionKey: "agent:main:store-nudge-store-call", sessionId: "uuid-store-nudge-store-call" };
+
+    await handler({ prompt: "start" }, ctx);
+    for (let turn = 1; turn <= 4; turn += 1) {
+      await handler({ prompt: `turn-${turn}` }, ctx);
+    }
+    await storeTool.execute("tool-call-store", {
+      entries: [{ content: "remember this", type: "fact" }],
+    });
+
+    for (let turn = 5; turn <= 11; turn += 1) {
+      const result = await handler({ prompt: `turn-${turn}` }, ctx);
+      expect(hasMemoryCheck(result)).toBe(false);
+    }
+  });
+
+  it("does not inject nudges after the per-session max is reached", async () => {
+    vi.spyOn(pluginRecall, "runRecall").mockResolvedValue({
+      query: "[browse]",
+      results: [],
+    });
+    const api = makeApi({
+      pluginConfig: {
+        signalsEnabled: false,
+        midSessionRecall: { enabled: false },
+      },
+    });
+    plugin.register(api);
+    const handler = getBeforePromptBuildHandler(api);
+    const ctx = { sessionKey: "agent:main:store-nudge-cap", sessionId: "uuid-store-nudge-cap" };
+
+    await handler({ prompt: "start" }, ctx);
+    for (let turn = 1; turn <= 10; turn += 1) {
+      await handler({ prompt: `turn-${turn}` }, ctx);
+    }
+    const cappedTurn = await handler({ prompt: "turn-11" }, ctx);
+    const state = getMidSessionState(ctx.sessionId);
+
+    expect(state.nudgeCount).toBe(3);
+    expect(hasMemoryCheck(cappedTurn)).toBe(false);
+  });
+
+  it("does not inject nudges when storeNudge is disabled", async () => {
+    vi.spyOn(pluginRecall, "runRecall").mockResolvedValue({
+      query: "[browse]",
+      results: [],
+    });
+    const api = makeApi({
+      pluginConfig: {
+        signalsEnabled: false,
+        midSessionRecall: { enabled: false },
+        storeNudge: { enabled: false },
+      },
+    });
+    plugin.register(api);
+    const handler = getBeforePromptBuildHandler(api);
+    const ctx = { sessionKey: "agent:main:store-nudge-disabled", sessionId: "uuid-store-nudge-disabled" };
+
+    await handler({ prompt: "start" }, ctx);
+    for (let turn = 1; turn <= 12; turn += 1) {
+      const result = await handler({ prompt: `turn-${turn}` }, ctx);
+      expect(hasMemoryCheck(result)).toBe(false);
+    }
+  });
+
+  it("marks store calls from the agenr_store tool wrapper", async () => {
+    vi.spyOn(pluginRecall, "runRecall").mockResolvedValue({
+      query: "[browse]",
+      results: [],
+    });
+    const registerTool = vi.fn();
+    const api = makeApi({
+      registerTool,
+      pluginConfig: {
+        signalsEnabled: false,
+        midSessionRecall: { enabled: false },
+      },
+    });
+    plugin.register(api);
+    const handler = getBeforePromptBuildHandler(api);
+    const storeTool = getRegisteredTool(api, "agenr_store");
+    const ctx = {
+      sessionKey: "agent:main:store-wrapper",
+      sessionId: "uuid-store-wrapper",
+    };
+
+    await handler({ prompt: "start" }, ctx);
+    await handler({ prompt: "turn-1" }, ctx);
+    await handler({ prompt: "turn-2" }, ctx);
+    const state = getMidSessionState(ctx.sessionId);
+    expect(state.turnCount).toBe(2);
+    expect(state.lastStoreTurn).toBe(0);
+
+    await storeTool.execute("tool-call-store-wrapper", {
+      entries: [{ content: "store marker", type: "fact" }],
+    });
+
+    expect(state.lastStoreTurn).toBe(2);
+  });
+
+  it("increments nudgeCount on each delivered nudge", async () => {
+    vi.spyOn(pluginRecall, "runRecall").mockResolvedValue({
+      query: "[browse]",
+      results: [],
+    });
+    const api = makeApi({
+      pluginConfig: {
+        signalsEnabled: false,
+        midSessionRecall: { enabled: false },
+        storeNudge: { threshold: 2, maxPerSession: 5 },
+      },
+    });
+    plugin.register(api);
+    const handler = getBeforePromptBuildHandler(api);
+    const ctx = {
+      sessionKey: "agent:main:store-nudge-count",
+      sessionId: "uuid-store-nudge-count",
+    };
+
+    await handler({ prompt: "start" }, ctx);
+    await handler({ prompt: "turn-1" }, ctx);
+    const secondTurn = await handler({ prompt: "turn-2" }, ctx);
+    const thirdTurn = await handler({ prompt: "turn-3" }, ctx);
+    const state = getMidSessionState(ctx.sessionId);
+
+    expect(hasMemoryCheck(secondTurn)).toBe(true);
+    expect(hasMemoryCheck(thirdTurn)).toBe(true);
+    expect(state.nudgeCount).toBe(2);
   });
 });
 

@@ -6,6 +6,7 @@ import {
   clearMidSessionStates,
   formatMidSessionRecall,
   getMidSessionState,
+  markStoreCall,
   shouldRecall,
 } from "./mid-session-recall.js";
 
@@ -104,6 +105,8 @@ describe("mid-session state", () => {
     expect(state.lastRecallQuery).toBeNull();
     expect(state.recentMessages.toArray()).toEqual([]);
     expect(state.recalledIds.size).toBe(0);
+    expect(state.lastStoreTurn).toBe(0);
+    expect(state.nudgeCount).toBe(0);
   });
 
   it("returns the same state object for the same key", () => {
@@ -162,6 +165,27 @@ describe("mid-session state", () => {
     state.recentMessages.push("x".repeat(240));
     expect(state.recentMessages.length).toBe(1);
     expect(state.recentMessages.slice(0, 1)[0]).toHaveLength(200);
+  });
+
+  it("markStoreCall updates lastStoreTurn to current turnCount", () => {
+    const state = getMidSessionState("session-store");
+    state.turnCount = 6;
+
+    markStoreCall("session-store");
+
+    expect(state.lastStoreTurn).toBe(6);
+  });
+
+  it("markStoreCall with empty key is a no-op", () => {
+    expect(() => markStoreCall("")).not.toThrow();
+  });
+
+  it("markStoreCall with a new key creates state and sets lastStoreTurn to zero", () => {
+    markStoreCall("session-new");
+
+    const state = getMidSessionState("session-new");
+    expect(state.turnCount).toBe(0);
+    expect(state.lastStoreTurn).toBe(0);
   });
 });
 
