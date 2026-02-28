@@ -365,7 +365,7 @@ describe("before_prompt_build mid-session recall", () => {
       expect.any(Number),
       undefined,
       expect.stringContaining("Tell me about Ava"),
-      { context: "session-start", limit: 8 },
+      { limit: 8 },
       undefined,
     );
     expect(second?.prependContext).toContain("## Recalled context");

@@ -63,8 +63,8 @@ describe("buildQuery", () => {
 });
 
 describe("shouldRecall", () => {
-  it("returns false for query with fewer than three tokens", () => {
-    expect(shouldRecall("one two", null, 0.85)).toBe(false);
+  it("returns false for single-token queries", () => {
+    expect(shouldRecall("one", null, 0.85)).toBe(false);
   });
 
   it("returns false when Jaccard similarity exceeds threshold", () => {
@@ -82,6 +82,10 @@ describe("shouldRecall", () => {
   it("returns true when lastQuery is null", () => {
     expect(shouldRecall("analyze consolidation cluster verification", null, 0.85)).toBe(true);
   });
+
+  it("returns true for two-token entity queries", () => {
+    expect(shouldRecall("check Tesla", null, 0.85)).toBe(true);
+  });
 });
 
 describe("mid-session state", () => {
@@ -93,7 +97,7 @@ describe("mid-session state", () => {
     const state = getMidSessionState("session-a");
     expect(state.turnCount).toBe(0);
     expect(state.lastRecallQuery).toBeNull();
-    expect(state.recentMessages).toEqual([]);
+    expect(state.recentMessages.toArray()).toEqual([]);
     expect(state.recalledIds.size).toBe(0);
   });
 
@@ -126,16 +130,17 @@ describe("mid-session state", () => {
     for (let index = 1; index <= 7; index += 1) {
       state.recentMessages.push(`message-${index}`);
     }
-    expect(state.recentMessages).toHaveLength(5);
-    expect(state.recentMessages[0]).toBe("message-3");
-    expect(state.recentMessages[4]).toBe("message-7");
+    expect(state.recentMessages.length).toBe(5);
+    const values = state.recentMessages.toArray();
+    expect(values[0]).toBe("message-3");
+    expect(values[4]).toBe("message-7");
   });
 
   it("truncates buffered messages to 200 chars", () => {
     const state = getMidSessionState("session-truncate");
     state.recentMessages.push("x".repeat(240));
-    expect(state.recentMessages).toHaveLength(1);
-    expect(state.recentMessages[0]).toHaveLength(200);
+    expect(state.recentMessages.length).toBe(1);
+    expect(state.recentMessages.slice(0, 1)[0]).toHaveLength(200);
   });
 });
 

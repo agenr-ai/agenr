@@ -1361,7 +1361,7 @@ const plugin = {
 
             const classification = classifyMessage(userMessage);
             if (classification !== "trivial") {
-              const query = buildQuery(state.recentMessages);
+              const query = buildQuery(state.recentMessages.toArray());
               const threshold = resolveMidSessionSimilarityThreshold(
                 config?.midSessionRecall?.querySimilarityThreshold,
               );
@@ -1380,7 +1380,7 @@ const plugin = {
                   budget,
                   project,
                   query,
-                  { context: "session-start", limit },
+                  { limit },
                   config?.dbPath,
                 );
                 state.lastRecallQuery = query;
