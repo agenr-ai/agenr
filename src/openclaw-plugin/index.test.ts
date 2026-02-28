@@ -879,6 +879,45 @@ describe("before_prompt_build store nudging", () => {
     expect(state.lastStoreTurn).toBe(2);
   });
 
+  it("clears sessionRef on early return so store does not target a stale session", async () => {
+    vi.spyOn(pluginRecall, "runRecall").mockResolvedValue({
+      query: "[browse]",
+      results: [],
+    });
+    vi.spyOn(pluginTools, "runStoreTool").mockResolvedValue({
+      content: [{ type: "text", text: "Stored 1 entries." }],
+    });
+
+    const registerTool = vi.fn();
+    const api = makeApi({
+      registerTool,
+      pluginConfig: {
+        signalsEnabled: false,
+        midSessionRecall: { enabled: false },
+      },
+    });
+    plugin.register(api);
+    const handler = getBeforePromptBuildHandler(api);
+    const storeTool = getRegisteredTool(api, "agenr_store");
+    const ctx = {
+      sessionKey: "agent:main:store-session-ref-clear",
+      sessionId: "uuid-store-session-ref-clear",
+    };
+
+    await handler({ prompt: "start" }, ctx);
+    await handler({ prompt: "turn-1" }, ctx);
+    const state = getMidSessionState(ctx.sessionId);
+    expect(state.turnCount).toBe(1);
+    expect(state.lastStoreTurn).toBe(0);
+
+    await handler({ prompt: "missing session key" }, { sessionKey: "", sessionId: "uuid-empty" });
+    await storeTool.execute("tool-call-after-empty-session", {
+      entries: [{ content: "store after empty session key", type: "fact" }],
+    });
+
+    expect(state.lastStoreTurn).toBe(0);
+  });
+
   it("increments nudgeCount on each delivered nudge", async () => {
     vi.spyOn(pluginRecall, "runRecall").mockResolvedValue({
       query: "[browse]",
@@ -2050,11 +2089,21 @@ describe("command hook handoff", () => {
   });
 
   it("clears mid-session recall state for action=reset", async () => {
-    const state = getMidSessionState("agent:main:command-reset-clears");
-    state.turnCount = 3;
-    state.lastRecallQuery = "Tell me about Ava";
-    state.recalledIds.add("entry-1");
-    state.recentMessages.push("Tell me about Ava");
+    const stateBySessionKey = getMidSessionState("agent:main:command-reset-clears");
+    stateBySessionKey.turnCount = 3;
+    stateBySessionKey.lastRecallQuery = "Tell me about Ava";
+    stateBySessionKey.recalledIds.add("entry-1");
+    stateBySessionKey.recentMessages.push("Tell me about Ava");
+    stateBySessionKey.lastStoreTurn = 2;
+    stateBySessionKey.nudgeCount = 1;
+
+    const stateBySessionId = getMidSessionState("session-reset-clears");
+    stateBySessionId.turnCount = 5;
+    stateBySessionId.lastRecallQuery = "Need reset by sessionId";
+    stateBySessionId.recalledIds.add("entry-2");
+    stateBySessionId.recentMessages.push("Need reset by sessionId");
+    stateBySessionId.lastStoreTurn = 4;
+    stateBySessionId.nudgeCount = 2;
 
     vi.spyOn(__testing, "readAndParseSessionJsonl").mockResolvedValue([]);
     const api = makeApi();
@@ -2078,12 +2127,23 @@ describe("command hook handoff", () => {
       { sessionKey: "agent:main:command-reset-clears", agentId: "main" },
     );
 
-    const refreshed = getMidSessionState("agent:main:command-reset-clears");
-    expect(refreshed).not.toBe(state);
-    expect(refreshed.turnCount).toBe(0);
-    expect(refreshed.lastRecallQuery).toBeNull();
-    expect(refreshed.recalledIds.size).toBe(0);
-    expect(refreshed.recentMessages.length).toBe(0);
+    const refreshedBySessionKey = getMidSessionState("agent:main:command-reset-clears");
+    expect(refreshedBySessionKey).not.toBe(stateBySessionKey);
+    expect(refreshedBySessionKey.turnCount).toBe(0);
+    expect(refreshedBySessionKey.lastRecallQuery).toBeNull();
+    expect(refreshedBySessionKey.recalledIds.size).toBe(0);
+    expect(refreshedBySessionKey.recentMessages.length).toBe(0);
+    expect(refreshedBySessionKey.lastStoreTurn).toBe(0);
+    expect(refreshedBySessionKey.nudgeCount).toBe(0);
+
+    const refreshedBySessionId = getMidSessionState("session-reset-clears");
+    expect(refreshedBySessionId).not.toBe(stateBySessionId);
+    expect(refreshedBySessionId.turnCount).toBe(0);
+    expect(refreshedBySessionId.lastRecallQuery).toBeNull();
+    expect(refreshedBySessionId.recalledIds.size).toBe(0);
+    expect(refreshedBySessionId.recentMessages.length).toBe(0);
+    expect(refreshedBySessionId.lastStoreTurn).toBe(0);
+    expect(refreshedBySessionId.nudgeCount).toBe(0);
   });
 
   it("skips handoff when no messages parsed from JSONL", async () => {
