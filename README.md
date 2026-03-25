@@ -29,4 +29,4 @@ pnpm check        # format + lint + typecheck + test
 
 ## License
 
-MIT
+AGPL-3.0
