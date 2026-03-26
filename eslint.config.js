@@ -1,5 +1,6 @@
 import js from "@eslint/js";
 import globals from "globals";
+import jsdoc from "eslint-plugin-jsdoc";
 import tseslint from "typescript-eslint";
 
 const tsFiles = ["**/*.{ts,mts,cts}"];
@@ -32,6 +33,7 @@ export default tseslint.config(
   },
   {
     files: tsFiles,
+    plugins: { jsdoc },
     rules: {
       "@typescript-eslint/no-explicit-any": "warn",
       "@typescript-eslint/no-unused-vars": [
@@ -50,6 +52,29 @@ export default tseslint.config(
           fixStyle: "separate-type-imports",
         },
       ],
+      // Require Google-style JSDoc on all exported functions, interfaces, and types
+      "jsdoc/require-jsdoc": [
+        "warn",
+        {
+          publicOnly: true,
+          require: {
+            FunctionDeclaration: true,
+            MethodDefinition: true,
+            ClassDeclaration: true,
+            ArrowFunctionExpression: false,
+            FunctionExpression: false,
+          },
+          contexts: [
+            "TSInterfaceDeclaration",
+            "TSTypeAliasDeclaration",
+            "ExportNamedDeclaration > VariableDeclaration",
+          ],
+        },
+      ],
+      "jsdoc/require-description": ["warn", { contexts: ["any"] }],
+      "jsdoc/require-param": "off",
+      "jsdoc/require-returns": "off",
+      "jsdoc/check-tag-names": ["warn", { typed: true }],
     },
   },
   // THE HEXAGONAL BOUNDARY RULE:

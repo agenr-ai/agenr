@@ -228,6 +228,7 @@ pnpm check             # Full validation: format + lint + typecheck + test
 - No em-dashes — use hyphens
 - Prefer composition over inheritance
 - Use `type` imports (enforced by ESLint)
+- **Google-style JSDoc on all exported functions, interfaces, and types.** Every public API must have a `/** */` docstring explaining what it does, its parameters, and return value. Internal/private helpers are encouraged but not required.
 - Follow SOLID principles
 
 ## Repo workflow
