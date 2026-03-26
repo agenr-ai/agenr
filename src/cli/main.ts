@@ -1,5 +1,7 @@
 import { Command } from "commander";
 
+import { APP_VERSION } from "../version.js";
+import { banner } from "../ui.js";
 import { registerIngestCommand } from "./commands/ingest.js";
 
 /**
@@ -10,7 +12,11 @@ import { registerIngestCommand } from "./commands/ingest.js";
 export function createProgram(): Command {
   const program = new Command();
 
-  program.name("agenr").description("Agent memory — local-first knowledge infrastructure for AI agents").version("0.1.0");
+  program
+    .name("agenr")
+    .description("Agent memory - local-first knowledge infrastructure for AI agents")
+    .version(APP_VERSION)
+    .addHelpText("beforeAll", `${banner()}\n\n`);
 
   registerIngestCommand(program);
 

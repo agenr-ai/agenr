@@ -64,6 +64,13 @@ describe("extractFromTranscript", () => {
       chunks: 1,
       successfulChunks: 1,
       failedChunks: 0,
+      chunkDetails: [
+        {
+          chunkIndex: 0,
+          messageRange: [0, 1],
+          success: true,
+        },
+      ],
       warnings: [],
     });
   });

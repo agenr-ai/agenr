@@ -7,6 +7,9 @@ settings:
 importers:
   .:
     dependencies:
+      "@clack/prompts":
+        specifier: ^1.1.0
+        version: 1.1.0
       "@libsql/client":
         specifier: ^0.17.2
         version: 0.17.2
@@ -201,6 +204,12 @@ packages:
   "@babel/runtime@7.29.2":
     resolution: { integrity: sha512-JiDShH45zKHWyGe4ZNVRrCjBz8Nh9TMmZG1kh4QTK8hCBTWBi8Da+i7s1fJw7/lYpM4ccepSNfqzZ/QvABBi5g== }
     engines: { node: ">=6.9.0" }
+
+  "@clack/core@1.1.0":
+    resolution: { integrity: sha512-SVcm4Dqm2ukn64/8Gub2wnlA5nS2iWJyCkdNHcvNHPIeBTGojpdJ+9cZKwLfmqy7irD4N5qLteSilJlE0WLAtA== }
+
+  "@clack/prompts@1.1.0":
+    resolution: { integrity: sha512-pkqbPGtohJAvm4Dphs2M8xE29ggupihHdy1x84HNojZuMtFsHiUlRvqD24tM2+XmI+61LlfNceM3Wr7U5QES5g== }
 
   "@es-joy/jsdoccomment@0.84.0":
     resolution: { integrity: sha512-0xew1CxOam0gV5OMjh2KjFQZsKL2bByX1+q4j3E73MpYIdyUxcZb/xQct9ccUb+ve5KGUYbCUxyPnYB7RbuP+w== }
@@ -1652,6 +1661,9 @@ packages:
   siginfo@2.0.0:
     resolution: { integrity: sha512-ybx0WO1/8bSBLEWXZvEd7gMW3Sn3JFlW3TvX1nREbDLRNQNaeNN8WK0meBwPdAaOI7TtRRRJn/Es1zhrrCHu7g== }
 
+  sisteransi@1.0.5:
+    resolution: { integrity: sha512-bLGGlR1QxBcynn2d5YmDX4MGjlZvy2MRBDRNHLJ8VI6l6+9FUiyTFNJ0IveOSP0bcXgVDPRcfGqA0pjaqUpfVg== }
+
   smart-buffer@4.2.0:
     resolution: { integrity: sha512-94hK0Hh8rPqQl2xXc3HsaBoOXKV20MToPkcXvwbISWLEs+64sBq5kFgn2kJDHb1Pry9yrP0dxrCI9RRci7RXKg== }
     engines: { node: ">= 6.0.0", npm: ">= 3.0.0" }
@@ -2322,6 +2334,15 @@ snapshots:
   "@aws/lambda-invoke-store@0.2.4": {}
 
   "@babel/runtime@7.29.2": {}
+
+  "@clack/core@1.1.0":
+    dependencies:
+      sisteransi: 1.0.5
+
+  "@clack/prompts@1.1.0":
+    dependencies:
+      "@clack/core": 1.1.0
+      sisteransi: 1.0.5
 
   "@es-joy/jsdoccomment@0.84.0":
     dependencies:
@@ -3828,6 +3849,8 @@ snapshots:
   shebang-regex@3.0.0: {}
 
   siginfo@2.0.0: {}
+
+  sisteransi@1.0.5: {}
 
   smart-buffer@4.2.0: {}
 

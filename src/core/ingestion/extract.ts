@@ -35,6 +35,12 @@ export interface ExtractionResult {
   chunks: number;
   successfulChunks: number;
   failedChunks: number;
+  /** Per-chunk extraction outcomes for verbose diagnostics. */
+  chunkDetails: Array<{
+    chunkIndex: number;
+    messageRange: [number, number];
+    success: boolean;
+  }>;
   warnings: string[];
 }
 
@@ -101,6 +107,7 @@ export async function extractFromTranscript(
       chunks: 0,
       successfulChunks: 0,
       failedChunks: 0,
+      chunkDetails: [],
       warnings: [],
     };
   }
@@ -112,6 +119,7 @@ export async function extractFromTranscript(
   const systemPrompt = buildExtractionSystemPrompt({ wholeFile });
   const entries: StoreEntryInput[] = [];
   const warnings: string[] = [];
+  const chunkDetails: ExtractionResult["chunkDetails"] = [];
   const previouslyExtracted: PreviouslyExtractedSubject[] = [];
   let successfulChunks = 0;
   let failedChunks = 0;
@@ -121,11 +129,21 @@ export async function extractFromTranscript(
 
     if (parsed) {
       successfulChunks += 1;
+      chunkDetails.push({
+        chunkIndex: chunk.chunk_index,
+        messageRange: chunk.message_range,
+        success: true,
+      });
       entries.push(...parsed.entries);
       warnings.push(...parsed.warnings.map((warning) => `Chunk ${chunk.chunk_index + 1}: ${warning}`));
       previouslyExtracted.push(...parsed.entries.map(toPreviouslyExtractedSubject));
     } else {
       failedChunks += 1;
+      chunkDetails.push({
+        chunkIndex: chunk.chunk_index,
+        messageRange: chunk.message_range,
+        success: false,
+      });
       warnings.push(`Chunk ${chunk.chunk_index + 1}: extraction failed after ${MAX_ATTEMPTS} attempts.`);
     }
 
@@ -140,6 +158,7 @@ export async function extractFromTranscript(
     chunks: chunks.length,
     successfulChunks,
     failedChunks,
+    chunkDetails,
     warnings,
   };
 }

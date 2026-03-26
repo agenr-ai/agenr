@@ -33,6 +33,18 @@ export interface IngestFileResult {
   messageCount: number;
   /** Number of entries extracted by the LLM. */
   entriesExtracted: number;
+  /** Total extraction chunks attempted for the file. */
+  chunkCount: number;
+  /** Number of extraction chunks that completed successfully. */
+  successfulChunks: number;
+  /** Number of extraction chunks that failed after retries. */
+  failedChunks: number;
+  /** Per-chunk extraction outcomes for verbose diagnostics. */
+  chunkDetails: Array<{
+    chunkIndex: number;
+    messageRange: [number, number];
+    success: boolean;
+  }>;
   /** Store pipeline counts when the file reached the store step. */
   storeResult: StoreResult | null;
   /** Extraction or parsing warnings accumulated during ingest. */
@@ -64,6 +76,10 @@ export async function ingestFile(
   const startedAt = Date.now();
   let messageCount = 0;
   let entriesExtracted = 0;
+  let chunkCount = 0;
+  let successfulChunks = 0;
+  let failedChunks = 0;
+  let chunkDetails: IngestFileResult["chunkDetails"] = [];
   const warnings: string[] = [];
 
   try {
@@ -76,6 +92,10 @@ export async function ingestFile(
         skipped: true,
         messageCount: 0,
         entriesExtracted: 0,
+        chunkCount: 0,
+        successfulChunks: 0,
+        failedChunks: 0,
+        chunkDetails: [],
         storeResult: null,
         warnings: [],
         durationMs: Date.now() - startedAt,
@@ -93,6 +113,10 @@ export async function ingestFile(
       maxOutputTokens: options.maxOutputTokens,
     });
     entriesExtracted = extraction.entries.length;
+    chunkCount = extraction.chunks;
+    successfulChunks = extraction.successfulChunks;
+    failedChunks = extraction.failedChunks;
+    chunkDetails = extraction.chunkDetails;
     warnings.push(...extraction.warnings);
 
     const storeResult = await storeEntries(extraction.entries, ports.db, ports.embedding, {
@@ -110,6 +134,10 @@ export async function ingestFile(
       skipped: false,
       messageCount,
       entriesExtracted,
+      chunkCount,
+      successfulChunks,
+      failedChunks,
+      chunkDetails,
       storeResult,
       warnings,
       durationMs: Date.now() - startedAt,
@@ -123,6 +151,10 @@ export async function ingestFile(
       skipped: false,
       messageCount,
       entriesExtracted,
+      chunkCount,
+      successfulChunks,
+      failedChunks,
+      chunkDetails,
       storeResult: null,
       warnings,
       error: message,
