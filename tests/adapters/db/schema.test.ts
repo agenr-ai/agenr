@@ -33,9 +33,7 @@ describe("initSchema", () => {
       }),
     );
 
-    expect(tableNames).toEqual(
-      new Set(["entries", "entries_fts", "ingest_log", "recall_events", "surgeon_runs", "_meta"]),
-    );
+    expect(tableNames).toEqual(new Set(["entries", "entries_fts", "ingest_log", "recall_events", "surgeon_runs", "_meta"]));
 
     const triggersResult = await client.execute({
       sql: `

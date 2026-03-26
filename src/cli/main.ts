@@ -8,10 +8,7 @@ import { Command } from "commander";
 export function createProgram(): Command {
   const program = new Command();
 
-  program
-    .name("agenr")
-    .description("Agent memory — local-first knowledge infrastructure for AI agents")
-    .version("0.1.0");
+  program.name("agenr").description("Agent memory — local-first knowledge infrastructure for AI agents").version("0.1.0");
 
   // Commands will be registered here as modules are built:
   // registerIngestCommand(program);

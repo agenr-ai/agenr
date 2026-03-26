@@ -99,11 +99,7 @@ export function parseJsonObjectLine(line: string): Record<string, unknown> | nul
  * @param warnings - Warning accumulator for malformed lines.
  * @param onRecord - Callback invoked with each parsed object record and line number.
  */
-export function parseJsonlLines(
-  raw: string,
-  warnings: string[],
-  onRecord: (record: Record<string, unknown>, lineNumber: number) => void,
-): void {
+export function parseJsonlLines(raw: string, warnings: string[], onRecord: (record: Record<string, unknown>, lineNumber: number) => void): void {
   const lines = raw.split(/\r?\n/);
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index]?.trim();
@@ -207,10 +203,7 @@ async function getFileMtimeTimestamp(filePath: string): Promise<string | undefin
  * @param candidates - Candidate timestamps to try in order.
  * @returns ISO timestamp guaranteed to be present.
  */
-export async function resolveTimestampFallback(
-  filePath: string,
-  ...candidates: Array<string | undefined>
-): Promise<string> {
+export async function resolveTimestampFallback(filePath: string, ...candidates: Array<string | undefined>): Promise<string> {
   for (const candidate of candidates) {
     const parsed = parseTimestampValue(candidate);
     if (parsed) {
@@ -414,12 +407,7 @@ function extractAssistantTextParts(content: unknown): string[] {
   return textParts;
 }
 
-function pushMessage(
-  messages: TranscriptMessage[],
-  role: "user" | "assistant",
-  text: string,
-  timestamp?: string,
-): void {
+function pushMessage(messages: TranscriptMessage[], role: "user" | "assistant", text: string, timestamp?: string): void {
   messages.push({
     index: messages.length,
     role,
@@ -474,11 +462,7 @@ export class OpenClawTranscriptParser implements TranscriptPort {
     };
 
     const resolveToolContext = (message: Record<string, unknown>): ToolCallContext | null => {
-      const toolCallId =
-        getString(message.toolCallId) ??
-        getString(message.tool_call_id) ??
-        getString(message.call_id) ??
-        getString(message.id);
+      const toolCallId = getString(message.toolCallId) ?? getString(message.tool_call_id) ?? getString(message.call_id) ?? getString(message.id);
       if (toolCallId && pendingToolCallsById.has(toolCallId)) {
         const context = pendingToolCallsById.get(toolCallId) ?? null;
         pendingToolCallsById.delete(toolCallId);
@@ -560,10 +544,7 @@ export class OpenClawTranscriptParser implements TranscriptPort {
         }
 
         const assistantText = normalizeWhitespace(
-          [
-            ...extractAssistantTextParts(message.content),
-            ...toolCalls.map((toolCall) => summarizeToolCall(toolCall)),
-          ].join("\n"),
+          [...extractAssistantTextParts(message.content), ...toolCalls.map((toolCall) => summarizeToolCall(toolCall))].join("\n"),
         );
         addModelUsed(message.model);
 
@@ -585,12 +566,7 @@ export class OpenClawTranscriptParser implements TranscriptPort {
       }
 
       const toolContext = resolveToolContext(message);
-      const toolName =
-        getString(message.name) ??
-        getString(message.tool) ??
-        getString(record.name) ??
-        getString(record.tool) ??
-        toolContext?.name;
+      const toolName = getString(message.name) ?? getString(message.tool) ?? getString(record.name) ?? getString(record.tool) ?? toolContext?.name;
       const toolArgs = toolContext?.args ?? {};
       const toolText = normalizeMessageText(message.content);
 
@@ -606,12 +582,7 @@ export class OpenClawTranscriptParser implements TranscriptPort {
       const decision = shouldKeepToolResult(toolName, toolText, TOOL_RESULT_POLICY);
       if (decision.keep) {
         stats.toolResultsKept += 1;
-        pushMessage(
-          messages,
-          "assistant",
-          decision.truncateTo ? truncateWithMarker(toolText, decision.truncateTo) : toolText,
-          timestamp,
-        );
+        pushMessage(messages, "assistant", decision.truncateTo ? truncateWithMarker(toolText, decision.truncateTo) : toolText, timestamp);
         return;
       }
 

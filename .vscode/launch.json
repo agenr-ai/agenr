@@ -7,11 +7,7 @@
       "request": "launch",
       "cwd": "${workspaceFolder}",
       "program": "${workspaceFolder}/dist/cli.js",
-      "args": [
-        "ingest",
-        "/Users/jmartin/.openclaw-sandbox/.openclaw/agents/main/real_seed_sessions_2_days/",
-        "--verbose"
-      ],
+      "args": ["ingest", "/Users/jmartin/.openclaw-sandbox/.openclaw/agents/main/real_seed_sessions_2_days/", "--verbose"],
       "env": {
         "AGENR_DB_PATH": "/Users/jmartin/.openclaw-sandbox/agenr-data/knowledge.db",
         "AGENR_CONFIG_PATH": "/Users/jmartin/.openclaw-sandbox/agenr-data/config.json"

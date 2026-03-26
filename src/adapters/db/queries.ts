@@ -39,12 +39,7 @@ export interface SqlExecutor {
  * @param contentHash - Stable content hash for dedup checks.
  * @returns Persisted entry ID.
  */
-export async function insertEntry(
-  executor: SqlExecutor,
-  entry: Entry,
-  embedding: number[],
-  contentHash: string,
-): Promise<string> {
+export async function insertEntry(executor: SqlExecutor, entry: Entry, embedding: number[], contentHash: string): Promise<string> {
   const now = new Date().toISOString();
   const id = entry.id.trim().length > 0 ? entry.id.trim() : randomUUID();
   const createdAt = normalizeTimestamp(entry.created_at) ?? now;
@@ -174,11 +169,7 @@ export async function insertEntry(
  * @param limit - Maximum number of matches to return.
  * @returns Entry IDs paired with cosine similarity scores.
  */
-export async function vectorSearch(
-  executor: SqlExecutor,
-  embedding: number[],
-  limit: number,
-): Promise<Array<{ id: string; score: number }>> {
+export async function vectorSearch(executor: SqlExecutor, embedding: number[], limit: number): Promise<Array<{ id: string; score: number }>> {
   if (limit <= 0 || embedding.length === 0) {
     return [];
   }
@@ -224,11 +215,7 @@ export async function vectorSearch(
  * @param limit - Maximum number of matches to return.
  * @returns Entry IDs paired with lexical relevance scores.
  */
-export async function textSearch(
-  executor: SqlExecutor,
-  query: string,
-  limit: number,
-): Promise<Array<{ id: string; score: number }>> {
+export async function textSearch(executor: SqlExecutor, query: string, limit: number): Promise<Array<{ id: string; score: number }>> {
   if (limit <= 0) {
     return [];
   }
@@ -414,11 +401,7 @@ export async function retireEntry(executor: SqlExecutor, id: string, reason?: st
  * @param fields - Mutable fields supported by the port contract.
  * @returns True when an active row was updated.
  */
-export async function updateEntry(
-  executor: SqlExecutor,
-  id: string,
-  fields: { importance?: number; expiry?: string },
-): Promise<boolean> {
+export async function updateEntry(executor: SqlExecutor, id: string, fields: { importance?: number; expiry?: string }): Promise<boolean> {
   const assignments: string[] = [];
   const args: Array<number | string> = [];
 
@@ -462,12 +445,7 @@ export async function updateEntry(
  * @param sessionKey - Optional session key for attribution.
  * @returns Promise that resolves after the write completes.
  */
-export async function recordRecallEvent(
-  executor: SqlExecutor,
-  entryId: string,
-  query: string,
-  sessionKey?: string,
-): Promise<void> {
+export async function recordRecallEvent(executor: SqlExecutor, entryId: string, query: string, sessionKey?: string): Promise<void> {
   const now = new Date().toISOString();
   const updateResult = await executor.execute({
     sql: `
@@ -507,10 +485,7 @@ export async function recordRecallEvent(
  * @param filePath - Source file path to resolve.
  * @returns Stored hash and ingest timestamp, or null when absent.
  */
-export async function getIngestLogEntry(
-  executor: SqlExecutor,
-  filePath: string,
-): Promise<{ fileHash: string; ingestedAt: string } | null> {
+export async function getIngestLogEntry(executor: SqlExecutor, filePath: string): Promise<{ fileHash: string; ingestedAt: string } | null> {
   const result = await executor.execute({
     sql: `
       SELECT file_hash, ingested_at
@@ -541,12 +516,7 @@ export async function getIngestLogEntry(
  * @param entryCount - Number of entries produced from the file.
  * @returns Promise that resolves after the write completes.
  */
-export async function insertIngestLogEntry(
-  executor: SqlExecutor,
-  filePath: string,
-  fileHash: string,
-  entryCount: number,
-): Promise<void> {
+export async function insertIngestLogEntry(executor: SqlExecutor, filePath: string, fileHash: string, entryCount: number): Promise<void> {
   await executor.execute({
     sql: `
       INSERT INTO ingest_log (

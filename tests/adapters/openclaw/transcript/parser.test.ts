@@ -286,10 +286,7 @@ describe("OpenClawTranscriptParser", () => {
     const transcript = await parser.parseFile(filePath);
 
     expect(transcript.metadata.startedAt).toBe("2026-03-06T08:30:00.000Z");
-    expect(transcript.messages.map((message) => message.timestamp)).toEqual([
-      "2026-03-06T08:30:00.000Z",
-      "2026-03-06T08:30:00.000Z",
-    ]);
+    expect(transcript.messages.map((message) => message.timestamp)).toEqual(["2026-03-06T08:30:00.000Z", "2026-03-06T08:30:00.000Z"]);
   });
 
   it("handles malformed JSONL lines without crashing", async () => {

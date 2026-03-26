@@ -8,16 +8,7 @@
 /**
  * Supported durable knowledge entry categories.
  */
-export const ENTRY_TYPES = [
-  "fact",
-  "decision",
-  "preference",
-  "lesson",
-  "todo",
-  "relationship",
-  "event",
-  "reflection",
-] as const;
+export const ENTRY_TYPES = ["fact", "decision", "preference", "lesson", "todo", "relationship", "event", "reflection"] as const;
 /**
  * Union of all supported knowledge entry categories.
  */

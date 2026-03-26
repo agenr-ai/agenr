@@ -17,8 +17,11 @@ export interface AgenrConfig {
   /** Default model for extraction and other LLM tasks. */
   model?: string;
 
-  /** API key (prefer env var AGENR_API_KEY). */
+  /** API key for LLM extraction (prefer env var AGENR_API_KEY). */
   apiKey?: string;
+
+  /** API key specifically for embeddings. Falls back to apiKey if not set. */
+  embeddingApiKey?: string;
 
   /** Embedding model. */
   embeddingModel?: string;

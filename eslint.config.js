@@ -64,11 +64,7 @@ export default tseslint.config(
             ArrowFunctionExpression: false,
             FunctionExpression: false,
           },
-          contexts: [
-            "TSInterfaceDeclaration",
-            "TSTypeAliasDeclaration",
-            "ExportNamedDeclaration > VariableDeclaration",
-          ],
+          contexts: ["TSInterfaceDeclaration", "TSTypeAliasDeclaration", "ExportNamedDeclaration > VariableDeclaration"],
         },
       ],
       "jsdoc/require-description": ["warn", { contexts: ["any"] }],

@@ -25,15 +25,7 @@ export interface ToolResultPolicy {
 /**
  * Tool names whose raw results should be dropped from normalized transcripts by default.
  */
-export const DEFAULT_TOOL_RESULT_DROP_NAMES = [
-  "read",
-  "web_fetch",
-  "browser",
-  "screenshot",
-  "snapshot",
-  "canvas",
-  "tts",
-] as const;
+export const DEFAULT_TOOL_RESULT_DROP_NAMES = ["read", "web_fetch", "browser", "screenshot", "snapshot", "canvas", "tts"] as const;
 
 /**
  * Tool names whose results are preserved by default because they often contain useful context.
@@ -164,11 +156,7 @@ export function extractToolCallBlocks(content: unknown): ToolCallContext[] {
     const type = typeof record.type === "string" ? record.type.trim().toLowerCase() : "";
     const name = getString(record.name) ?? getString(record.tool) ?? getString(record.tool_name);
     const args = asRecord(record.arguments) ?? asRecord(record.args) ?? asRecord(record.input) ?? {};
-    const id =
-      getString(record.id) ??
-      getString(record.toolCallId) ??
-      getString(record.tool_call_id) ??
-      getString(record.call_id);
+    const id = getString(record.id) ?? getString(record.toolCallId) ?? getString(record.tool_call_id) ?? getString(record.call_id);
 
     if ((type === "toolcall" || type === "tool_call" || type === "tool_use" || type === "tooluse") && name) {
       toolCalls.push({ name, args, id });
@@ -321,11 +309,7 @@ export function toolResultPlaceholder(toolName: string, args: Record<string, unk
  * @param policy - Optional policy overrides for drop and keep sets.
  * @returns Keep decision and optional truncation limit.
  */
-export function shouldKeepToolResult(
-  toolName: string | undefined,
-  text: string,
-  policy?: ToolResultPolicy,
-): { keep: boolean; truncateTo?: number } {
+export function shouldKeepToolResult(toolName: string | undefined, text: string, policy?: ToolResultPolicy): { keep: boolean; truncateTo?: number } {
   const normalizedToolName = (toolName ?? "").trim().toLowerCase();
   const dropToolNames = policy?.dropToolNames ?? DEFAULT_TOOL_RESULT_DROP_NAME_SET;
   const keepToolNames = policy?.keepToolNames ?? DEFAULT_TOOL_RESULT_KEEP_NAME_SET;
