@@ -1,5 +1,7 @@
 import { Command } from "commander";
 
+import { registerIngestCommand } from "./commands/ingest.js";
+
 /**
  * Creates the root CLI program and applies global agenr metadata.
  *
@@ -10,8 +12,9 @@ export function createProgram(): Command {
 
   program.name("agenr").description("Agent memory — local-first knowledge infrastructure for AI agents").version("0.1.0");
 
+  registerIngestCommand(program);
+
   // Commands will be registered here as modules are built:
-  // registerIngestCommand(program);
   // registerRecallCommand(program);
   // registerStoreCommand(program);
   // registerRetireCommand(program);
