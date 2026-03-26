@@ -176,6 +176,7 @@ pnpm check             # Full validation: format + lint + typecheck + test
 - No em-dashes — use hyphens
 - Prefer composition over inheritance
 - Use `type` imports (enforced by ESLint)
+- Follow SOLID principles
 
 ## Repo workflow
 
@@ -188,7 +189,7 @@ pnpm check             # Full validation: format + lint + typecheck + test
 ## Completion checklist
 
 Before pushing:
-- [ ] `pnpm check` passes
+- [ ] `pnpm check` passes and no warnings
 - [ ] Docs updated for user-facing changes
 - [ ] No `any` types introduced
 - [ ] No em-dashes in modified files
