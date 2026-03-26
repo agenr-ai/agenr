@@ -5,19 +5,17 @@
 
 // ── Entry types ──────────────────────────────────────────────────────
 
-/**
- * Supported durable knowledge entry categories.
- */
-export const ENTRY_TYPES = ["fact", "decision", "preference", "lesson", "todo", "relationship", "event", "reflection"] as const;
+/** Ordered list of supported durable knowledge entry categories. */
+const ENTRY_TYPES = ["fact", "decision", "preference", "lesson", "todo", "relationship", "event", "reflection"] as const;
 /**
  * Union of all supported knowledge entry categories.
  */
 export type EntryType = (typeof ENTRY_TYPES)[number];
 
-/**
- * Supported recall durability levels.
- */
-export const EXPIRY_LEVELS = ["core", "permanent", "temporary"] as const;
+/** Ordered list of supported recall durability levels. */
+const EXPIRY_LEVELS = ["core", "permanent", "temporary"] as const;
+
+export { ENTRY_TYPES, EXPIRY_LEVELS };
 
 /**
  * Union of all supported recall durability levels.

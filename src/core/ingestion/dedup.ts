@@ -68,6 +68,7 @@ export interface DedupResult {
   similarityThreshold: number;
 }
 
+/** Raw dedup decision shape returned by the arbitration model. */
 interface DedupDecision {
   keep: number[];
   drop: number[];
@@ -75,6 +76,7 @@ interface DedupDecision {
   merged_content?: string;
 }
 
+/** Sanitized dedup decision with validated local cluster indexes. */
 interface NormalizedDedupDecision {
   keep: number[];
   drop: number[];
@@ -187,6 +189,7 @@ export async function dedupBatch(entries: StoreEntryInput[], llm: LlmPort, embed
   };
 }
 
+/** Runs LLM arbitration for one similarity cluster and records debug detail. */
 async function arbitrateCluster(
   clusterIndex: number,
   cluster: number[],
@@ -256,6 +259,7 @@ async function arbitrateCluster(
   }
 }
 
+/** Builds a no-op dedup result when arbitration is skipped. */
 function buildPassthroughResult(entries: StoreEntryInput[], embeddings: number[][], similarityThreshold: number): DedupResult {
   return {
     survivors: [...entries],
@@ -301,6 +305,7 @@ function clusterBySimilarity(embeddings: number[][], threshold: number): number[
   return [...groups.values()].map((cluster) => [...cluster].sort((left, right) => left - right)).sort((left, right) => left[0]! - right[0]!);
 }
 
+/** Computes the maximum pairwise similarity inside one cluster. */
 function calculateClusterMaxSimilarity(cluster: number[], embeddings: number[][]): number {
   let maxSimilarity = 0;
 
@@ -319,6 +324,7 @@ function calculateClusterMaxSimilarity(cluster: number[], embeddings: number[][]
   return maxSimilarity;
 }
 
+/** Computes cosine similarity for two embeddings of equal dimensionality. */
 function cosineSimilarity(left: number[], right: number[]): number {
   if (left.length !== right.length) {
     throw new Error(`Embedding dimension mismatch: ${left.length} vs ${right.length}.`);
@@ -347,6 +353,7 @@ function cosineSimilarity(left: number[], right: number[]): number {
   return dot / (Math.sqrt(leftNorm) * Math.sqrt(rightNorm));
 }
 
+/** Finds the union-find root for an entry index with path compression. */
 function find(index: number, parents: number[]): number {
   if (parents[index] === index) {
     return index;
@@ -356,6 +363,7 @@ function find(index: number, parents: number[]): number {
   return parents[index] ?? index;
 }
 
+/** Merges two union-find sets using union by rank. */
 function union(left: number, right: number, parents: number[], ranks: number[]): void {
   const leftRoot = find(left, parents);
   const rightRoot = find(right, parents);
@@ -381,6 +389,7 @@ function union(left: number, right: number, parents: number[], ranks: number[]):
   ranks[leftRoot] = leftRank + 1;
 }
 
+/** Builds the system prompt for cluster-level dedup arbitration. */
 function buildDedupSystemPrompt(): string {
   return [
     "You are a memory dedup classifier.",
@@ -395,6 +404,7 @@ function buildDedupSystemPrompt(): string {
   ].join("\n");
 }
 
+/** Builds the user prompt describing one similarity cluster. */
 function buildDedupUserPrompt(cluster: number[], entries: StoreEntryInput[]): string {
   const lines = [`Cluster of ${cluster.length} similar entries:`];
 
@@ -415,6 +425,7 @@ function buildDedupUserPrompt(cluster: number[], entries: StoreEntryInput[]): st
   return lines.join("\n");
 }
 
+/** Parses a raw model response into the expected dedup decision shape. */
 function parseDedupDecision(rawResponse: string): DedupDecision {
   const candidate = JSON.parse(extractJsonObject(stripCodeFence(rawResponse))) as Partial<DedupDecision>;
 
@@ -426,6 +437,7 @@ function parseDedupDecision(rawResponse: string): DedupDecision {
   };
 }
 
+/** Normalizes a raw dedup decision against the current cluster size. */
 function normalizeDedupDecision(decision: DedupDecision, clusterSize: number): NormalizedDedupDecision {
   const keep = dedupeIndexes(decision.keep, clusterSize);
   if (keep.length === 0) {
@@ -459,6 +471,7 @@ function normalizeDedupDecision(decision: DedupDecision, clusterSize: number): N
   };
 }
 
+/** Applies merged cluster content to the kept survivor entry. */
 function mergeClusterEntry(cluster: number[], keptIndex: number, mergedContent: string, entries: StoreEntryInput[]): StoreEntryInput {
   const keptEntry = entries[keptIndex];
   if (!keptEntry) {
@@ -476,12 +489,14 @@ function mergeClusterEntry(cluster: number[], keptIndex: number, mergedContent: 
   };
 }
 
+/** Removes a single outer Markdown code fence from LLM output. */
 function stripCodeFence(text: string): string {
   const trimmed = text.trim();
   const match = /^```(?:json)?\s*([\s\S]+?)\s*```$/i.exec(trimmed);
   return match?.[1]?.trim() ?? trimmed;
 }
 
+/** Extracts the outermost JSON object substring from model output. */
 function extractJsonObject(text: string): string {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
@@ -493,6 +508,7 @@ function extractJsonObject(text: string): string {
   return text.slice(start, end + 1);
 }
 
+/** Converts an unknown value into an array of integer indexes. */
 function toIndexArray(value: unknown): number[] {
   if (!Array.isArray(value)) {
     return [];
@@ -501,10 +517,12 @@ function toIndexArray(value: unknown): number[] {
   return value.flatMap((entry) => (Number.isInteger(entry) ? [entry] : []));
 }
 
+/** Converts an unknown value into an optional integer index. */
 function toOptionalIndex(value: unknown): number | undefined {
   return Number.isInteger(value) ? (value as number) : undefined;
 }
 
+/** Deduplicates and bounds-checks local cluster indexes. */
 function dedupeIndexes(indexes: number[], clusterSize: number): number[] {
   const seen = new Set<number>();
   const deduped: number[] = [];
@@ -521,10 +539,12 @@ function dedupeIndexes(indexes: number[], clusterSize: number): number[] {
   return deduped;
 }
 
+/** Builds a contiguous local index list for a cluster. */
 function buildFullIndexList(length: number): number[] {
   return Array.from({ length }, (_, index) => index);
 }
 
+/** Removes duplicate strings while preserving first-seen order. */
 function dedupeStrings(values: string[]): string[] {
   const seen = new Set<string>();
   const deduped: string[] = [];
@@ -541,10 +561,12 @@ function dedupeStrings(values: string[]): string[] {
   return deduped;
 }
 
+/** Formats structured dedup debug context as a single log line. */
 function formatLogMessage(message: string, context: Record<string, unknown>): string {
   return `${message} ${JSON.stringify(context)}`;
 }
 
+/** Narrows away `undefined` values in array filters. */
 function isDefined<T>(value: T | undefined): value is T {
   return value !== undefined;
 }

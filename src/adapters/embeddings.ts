@@ -6,20 +6,22 @@ const OPENAI_EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings";
 /**
  * Default OpenAI embedding model used by agenr.
  */
-export const EMBEDDING_MODEL = "text-embedding-3-small";
+const EMBEDDING_MODEL = "text-embedding-3-small";
 /**
  * Embedding vector size produced by the default model.
  */
-export const EMBEDDING_DIMENSIONS = 1024;
+const EMBEDDING_DIMENSIONS = 1024;
 const EMBEDDING_BATCH_SIZE = 200;
 const EMBEDDING_MAX_CONCURRENCY = 3;
 const EMBEDDING_MAX_RETRIES = 5;
 
+/** Single embedding item returned by the OpenAI embeddings API. */
 interface OpenAIEmbeddingItem {
   index: number;
   embedding: unknown;
 }
 
+/** OpenAI embeddings API response payload used by the adapter. */
 interface OpenAIEmbeddingResponse {
   data?: OpenAIEmbeddingItem[];
   error?: {
@@ -78,7 +80,9 @@ export function resolveEmbeddingModel(config?: AgenrConfig): string {
 }
 
 export { composeEmbeddingText };
+export { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL };
 
+/** Embeds a list of texts in bounded concurrent batches. */
 async function embedTexts(texts: string[], apiKey: string, model: string): Promise<number[][]> {
   if (texts.length === 0) {
     return [];
@@ -106,6 +110,7 @@ async function embedTexts(texts: string[], apiKey: string, model: string): Promi
   return chunkResults.flat();
 }
 
+/** Sends one embedding batch request with retry handling. */
 async function requestEmbeddingBatch(texts: string[], apiKey: string, model: string): Promise<number[][]> {
   let lastError: Error | null = null;
 
@@ -148,6 +153,7 @@ async function requestEmbeddingBatch(texts: string[], apiKey: string, model: str
   throw lastError ?? new Error("OpenAI embeddings request failed.");
 }
 
+/** Parses and validates an embeddings API response body. */
 function parseEmbeddingResponse(rawBody: string, expectedLength: number): number[][] {
   let parsed: OpenAIEmbeddingResponse;
   try {
@@ -181,6 +187,7 @@ function parseEmbeddingResponse(rawBody: string, expectedLength: number): number
   });
 }
 
+/** Normalizes fetch failures into `Error` instances. */
 function normalizeFetchError(error: unknown): Error {
   if (error instanceof Error) {
     return error;
@@ -188,10 +195,12 @@ function normalizeFetchError(error: unknown): Error {
   return new Error(String(error));
 }
 
+/** Checks whether an HTTP status should trigger an embedding retry. */
 function isRetryableStatus(status: number): boolean {
   return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
 }
 
+/** Checks whether a normalized fetch error should trigger a retry. */
 function isRetryableError(error: Error): boolean {
   const message = error.message.toLowerCase();
   return (
@@ -207,6 +216,7 @@ function isRetryableError(error: Error): boolean {
   );
 }
 
+/** Builds a descriptive error for a failed embeddings HTTP response. */
 function buildHttpError(status: number, rawBody: string): Error {
   const detail = getErrorSnippet(rawBody);
 
@@ -221,6 +231,7 @@ function buildHttpError(status: number, rawBody: string): Error {
   return new Error(`OpenAI embeddings request failed (${status}): ${detail}`);
 }
 
+/** Extracts a short human-readable snippet from an error response body. */
 function getErrorSnippet(rawBody: string): string {
   const trimmed = rawBody.trim();
   if (trimmed.length === 0) {
@@ -241,6 +252,7 @@ function getErrorSnippet(rawBody: string): string {
   return trimmed.length <= maxLength ? trimmed : `${trimmed.slice(0, maxLength)}...`;
 }
 
+/** Splits an array into fixed-size embedding request batches. */
 function chunkValues<T>(values: T[], chunkSize: number): T[][] {
   const chunks: T[][] = [];
   for (let index = 0; index < values.length; index += chunkSize) {
@@ -249,10 +261,12 @@ function chunkValues<T>(values: T[], chunkSize: number): T[][] {
   return chunks;
 }
 
+/** Computes exponential backoff for repeated embedding failures. */
 function backoffMs(attempt: number): number {
   return Math.min(2000 * 2 ** (attempt - 1), 60_000);
 }
 
+/** Waits for the provided duration before retrying. */
 async function sleep(durationMs: number): Promise<void> {
   await new Promise((resolve) => {
     setTimeout(resolve, durationMs);

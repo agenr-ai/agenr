@@ -3,7 +3,7 @@ import chalk from "chalk";
 import { APP_VERSION } from "./version.js";
 
 /** Brand color palette for CLI output. */
-export const ui = {
+const ui = {
   brand: chalk.hex("#8B5CF6"),
   success: chalk.green,
   error: chalk.red,
@@ -15,6 +15,8 @@ export const ui = {
   muted: chalk.gray,
   header: chalk.bold.hex("#8B5CF6"),
 };
+
+export { ui };
 
 /** Returns the agenr ASCII banner with the current version. */
 export function banner(): string {

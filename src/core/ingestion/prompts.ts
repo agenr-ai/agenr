@@ -1,5 +1,6 @@
 import type { Entry, TranscriptChunk } from "../types.js";
 
+/** Previously extracted entry summary used to suppress chunk-local duplicates. */
 type PreviouslyExtracted = {
   type: string;
   subject: string;

@@ -50,76 +50,95 @@ export async function createDatabase(dbPath: string): Promise<TransactionalDatab
   return database;
 }
 
+/** libSQL-backed implementation of the transactional database port. */
 class LibsqlDatabase implements TransactionalDatabasePort {
+  /** Creates a database adapter over a shared client and SQL executor. */
   public constructor(
     private readonly client: Client,
     private readonly executor: SqlExecutor,
   ) {}
 
+  /** Inserts a new entry row and its derived storage fields. */
   public async insertEntry(entry: Entry, embedding: number[], contentHash: string): Promise<string> {
     return insertEntry(this.executor, entry, embedding, contentHash);
   }
 
+  /** Drops indexes and triggers that slow down bulk ingest writes. */
   public async prepareForBulkWrites(): Promise<void> {
     await prepareBulkWrites(this.client);
   }
 
+  /** Restores indexes and triggers after bulk ingest writes complete. */
   public async finalizeBulkWrites(): Promise<void> {
     await finalizeBulkWrites(this.client);
   }
 
+  /** Runs a vector similarity search over stored entry embeddings. */
   public async vectorSearch(embedding: number[], limit: number): Promise<Array<{ id: string; score: number }>> {
     return vectorSearch(this.executor, embedding, limit);
   }
 
+  /** Runs a full-text search over active entries. */
   public async textSearch(query: string, limit: number): Promise<Array<{ id: string; score: number }>> {
     return textSearch(this.executor, query, limit);
   }
 
+  /** Loads entries by identifier while preserving caller order when possible. */
   public async getEntries(ids: string[]): Promise<Entry[]> {
     return getEntries(this.executor, ids);
   }
 
+  /** Loads a single entry by identifier. */
   public async getEntry(id: string): Promise<Entry | null> {
     return getEntry(this.executor, id);
   }
 
+  /** Finds which exact content hashes already exist in storage. */
   public async findExistingHashes(hashes: string[]): Promise<Set<string>> {
     return findExistingHashes(this.executor, hashes);
   }
 
+  /** Finds which normalized content hashes already exist in storage. */
   public async findExistingNormHashes(hashes: string[]): Promise<Set<string>> {
     return findExistingNormHashes(this.executor, hashes);
   }
 
+  /** Marks an entry as retired with an optional reason. */
   public async retireEntry(id: string, reason?: string): Promise<boolean> {
     return retireEntry(this.executor, id, reason);
   }
 
+  /** Updates mutable entry fields such as importance and expiry. */
   public async updateEntry(id: string, fields: { importance?: number; expiry?: string }): Promise<boolean> {
     return updateEntry(this.executor, id, fields);
   }
 
+  /** Records that an entry was surfaced during recall. */
   public async recordRecallEvent(entryId: string, query: string, sessionKey?: string): Promise<void> {
     return recordRecallEvent(this.executor, entryId, query, sessionKey);
   }
 
+  /** Looks up the ingest log row for a previously processed file. */
   public async getIngestLogEntry(filePath: string): Promise<{ fileHash: string; ingestedAt: string } | null> {
     return getIngestLogEntry(this.executor, filePath);
   }
 
+  /** Upserts ingest metadata for a processed transcript file. */
   public async insertIngestLogEntry(filePath: string, fileHash: string, entryCount: number): Promise<void> {
     return insertIngestLogEntry(this.executor, filePath, fileHash, entryCount);
   }
 
+  /** Ensures the schema exists before the adapter is used. */
   public async init(): Promise<void> {
     await initSchema(this.client);
   }
 
+  /** Closes the underlying libSQL client. */
   public async close(): Promise<void> {
     this.client.close();
   }
 
+  /** Executes a callback inside a write transaction when supported. */
   public async withTransaction<T>(fn: (db: TransactionalDatabasePort) => Promise<T>): Promise<T> {
     if (this.executor !== this.client) {
       return fn(this);
@@ -141,6 +160,7 @@ class LibsqlDatabase implements TransactionalDatabasePort {
   }
 }
 
+/** Opens a libSQL client and applies required SQLite pragmas. */
 async function openClient(dbPath: string): Promise<Client> {
   const trimmedPath = dbPath.trim();
   if (trimmedPath.length === 0) {
@@ -163,6 +183,7 @@ async function openClient(dbPath: string): Promise<Client> {
   return client;
 }
 
+/** Converts a database path into the libSQL client URL format. */
 function resolveClientUrl(dbPath: string): string {
   if (dbPath === ":memory:") {
     return dbPath;
@@ -174,6 +195,7 @@ function resolveClientUrl(dbPath: string): string {
   return `file:${path.resolve(dbPath)}`;
 }
 
+/** Rolls back an open libSQL transaction when it is still active. */
 async function rollbackTransaction(transaction: Transaction): Promise<void> {
   if (transaction.closed) {
     return;

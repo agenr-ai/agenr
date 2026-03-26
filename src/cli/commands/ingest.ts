@@ -27,9 +27,12 @@ const DEFAULT_INGEST_CONCURRENCY = 10;
 const MIN_INGEST_CONCURRENCY = 1;
 const MAX_INGEST_CONCURRENCY = 16;
 
+/** Non-null whole-file extraction mode accepted by the ingest CLI. */
 type WholeFileMode = NonNullable<IngestFileOptions["wholeFile"]>;
+/** Concrete LLM client shape returned by the CLI adapter factory. */
 type CliLlmClient = ReturnType<typeof createLlmClient>;
 
+/** Commander options accepted by the `agenr ingest` command. */
 interface IngestCommandOptions {
   verbose?: boolean;
   dryRun?: boolean;
@@ -39,23 +42,27 @@ interface IngestCommandOptions {
   concurrency?: number;
 }
 
+/** Per-file LLM usage summary used in CLI output. */
 interface FileUsageSummary {
   fileCost: number;
   fileCalls: number;
   runningCost: number;
 }
 
+/** Extraction result paired with the usage consumed for that file. */
 interface ExtractionExecutionResult {
   result: ExtractedFileResult;
   usage: UsageStats;
 }
 
+/** Ports and factories needed to execute one extraction worker. */
 interface ExtractionPorts {
   transcript: TranscriptPort;
   db: DatabasePort;
   createLlm: () => CliLlmClient;
 }
 
+/** Extracted entry annotated with its source file and original flattened index. */
 interface TaggedEntry {
   entry: StoreEntryInput;
   fileIndex: number;
@@ -317,6 +324,7 @@ export function registerIngestCommand(program: Command): void {
   });
 }
 
+/** Prints verbose per-file ingest diagnostics and warnings. */
 function printVerboseFileDetails(result: IngestFileResult, options: IngestCommandOptions, usage: FileUsageSummary): void {
   if (options.verbose !== true) {
     return;
@@ -377,6 +385,7 @@ function printVerboseFileDetails(result: IngestFileResult, options: IngestComman
   }
 }
 
+/** Builds the one-line success summary shown for a completed file. */
 function buildSuccessMessage(
   fileLabel: string,
   result: IngestFileResult,
@@ -410,10 +419,12 @@ function buildSuccessMessage(
   return `${fileLabel}: ${details.join(" -> ")}${formatFileCost(usage.fileCost, usage.runningCost, isFirstFile)}`;
 }
 
+/** Builds the one-line summary for an unchanged skipped file. */
 function buildSkippedMessage(fileLabel: string): string {
   return `${fileLabel}: skipped (unchanged)`;
 }
 
+/** Builds the one-line failure summary shown for a file. */
 function buildFailureMessage(
   fileLabel: string,
   result: IngestFileResult,
@@ -431,6 +442,7 @@ function buildFailureMessage(
   return `${fileLabel}: ${details.join(" -> ")}${formatFileCost(usage.fileCost, usage.runningCost, isFirstFile)}`;
 }
 
+/** Formats store counts for verbose per-file output. */
 function formatStoreSummary(result: IngestFileResult): string {
   const storeResult = result.storeResult ?? emptyStoreResult();
   const parts = [`${storeResult.stored} stored`, `${storeResult.skipped} deduped`, `${storeResult.rejected} rejected`];
@@ -442,25 +454,30 @@ function formatStoreSummary(result: IngestFileResult): string {
   return parts.join(", ");
 }
 
+/** Formats one chunk-level extraction outcome for verbose logging. */
 function formatChunkDetail(filePath: string, chunkDetail: { chunkIndex: number; messageRange: [number, number]; success: boolean }): string {
   const status = chunkDetail.success ? "ok" : "failed after retries";
   return `${filePath}: chunk ${chunkDetail.chunkIndex + 1} messages ${chunkDetail.messageRange[0]}-${chunkDetail.messageRange[1]} ${status}`;
 }
 
+/** Creates an embedding port that returns empty vectors for every input. */
 function createNoopEmbeddingPort(): EmbeddingPort {
   return {
     embed: async (texts: string[]): Promise<number[][]> => texts.map(() => []),
   };
 }
 
+/** Formats a duration in milliseconds as seconds with one decimal place. */
 function formatDurationMs(durationMs: number): string {
   return `${(durationMs / 1000).toFixed(1)}s`;
 }
 
+/** Formats a USD cost value for CLI output. */
 function formatCost(cost: number): string {
   return `$${cost.toFixed(4)}`;
 }
 
+/** Formats per-file and running LLM cost suffixes for result lines. */
 function formatFileCost(fileCost: number, runningCost: number, isFirstFile: boolean): string {
   if (fileCost === 0) {
     return "";
@@ -473,6 +490,7 @@ function formatFileCost(fileCost: number, runningCost: number, isFirstFile: bool
   return ` (${formatCost(fileCost)}, running ${formatCost(runningCost)})`;
 }
 
+/** Formats the verbose usage line for a single file when usage is non-zero. */
 function formatVerboseUsageLine(fileLabel: string, usage: FileUsageSummary): string | undefined {
   if (usage.fileCost === 0 && usage.fileCalls === 0) {
     return undefined;
@@ -481,6 +499,7 @@ function formatVerboseUsageLine(fileLabel: string, usage: FileUsageSummary): str
   return `${fileLabel}: cost ${formatCost(usage.fileCost)} (${usage.fileCalls} ${pluralize(usage.fileCalls, "LLM call")})`;
 }
 
+/** Converts an unknown thrown value into a displayable error string. */
 function formatUnknownError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -497,6 +516,7 @@ export function pluralize(value: number, singular: string, plural?: string): str
   return value === 1 ? singular : (plural ?? `${singular}s`);
 }
 
+/** Runs file extraction workers in parallel while preserving input order. */
 async function runParallelExtractions(
   files: string[],
   ports: ExtractionPorts,
@@ -552,6 +572,7 @@ async function runParallelExtractions(
   return results;
 }
 
+/** Resolves the final display result for one extracted file. */
 function getDisplayResult(result: ExtractedFileResult, storeResults: Map<string, IngestFileResult>): IngestFileResult {
   if (result.skipped || result.error) {
     return toIngestFileResult(result, null);
@@ -560,6 +581,7 @@ function getDisplayResult(result: ExtractedFileResult, storeResults: Map<string,
   return storeResults.get(result.file) ?? toIngestFileResult(result, emptyStoreResult());
 }
 
+/** Creates an LLM port that returns benign placeholder dedup responses. */
 function createNoopLlmPort(): LlmPort {
   return {
     complete: async (): Promise<string> => '{"keep":[],"drop":[]}',
@@ -567,6 +589,7 @@ function createNoopLlmPort(): LlmPort {
   };
 }
 
+/** Creates an empty dedup result for batches with no extracted entries. */
 function buildEmptyDedupResult(): DedupResult {
   return {
     survivors: [],
@@ -582,6 +605,7 @@ function buildEmptyDedupResult(): DedupResult {
   };
 }
 
+/** Flattens extracted entries while tracking their source file and order. */
 function collectTaggedEntries(results: ExtractedFileResult[]): TaggedEntry[] {
   const taggedEntries: TaggedEntry[] = [];
   let originalIndex = 0;
@@ -600,6 +624,7 @@ function collectTaggedEntries(results: ExtractedFileResult[]): TaggedEntry[] {
   return taggedEntries;
 }
 
+/** Rebuilds per-file extraction results using the dedup survivor set. */
 function rebuildResultsWithSurvivors(results: ExtractedFileResult[], taggedEntries: TaggedEntry[], dedupResult: DedupResult): ExtractedFileResult[] {
   const survivorsByOriginalIndex = new Map<number, StoreEntryInput>();
   for (const [offset, originalIndex] of dedupResult.survivorIndices.entries()) {
@@ -627,6 +652,7 @@ function rebuildResultsWithSurvivors(results: ExtractedFileResult[], taggedEntri
   }));
 }
 
+/** Keys dedup survivor embeddings by entry object identity for store reuse. */
 function buildPrecomputedEmbeddingMap(dedupResult: DedupResult): Map<StoreEntryInput, number[]> {
   return new Map(
     dedupResult.survivors.map((entry, index) => {
@@ -640,6 +666,7 @@ function buildPrecomputedEmbeddingMap(dedupResult: DedupResult): Map<StoreEntryI
   );
 }
 
+/** Prints the aggregate and optional verbose within-batch dedup summary. */
 function printDedupSummary(dedupResult: DedupResult, taggedEntries: TaggedEntry[], options: IngestCommandOptions, dedupCost: number): void {
   if (taggedEntries.length === 0) {
     clack.log.step("Dedup: 0 entries extracted, nothing to arbitrate.");
@@ -674,6 +701,7 @@ function printDedupSummary(dedupResult: DedupResult, taggedEntries: TaggedEntry[
   );
 }
 
+/** Formats one verbose dedup cluster arbitration detail block. */
 function formatDedupClusterDetail(clusterIndex: number, detail: DedupResult["clusterDetails"][number], taggedEntries: TaggedEntry[]): string {
   const localIndexByOriginal = new Map<number, number>();
   detail.entryIndices.forEach((entryIndex, localIndex) => {
@@ -707,6 +735,7 @@ function formatDedupClusterDetail(clusterIndex: number, detail: DedupResult["clu
   return lines.join("\n");
 }
 
+/** Formats the keep/drop decision line for a verbose dedup cluster. */
 function formatDedupDecisionLine(kept: number[], dropped: number[], merged: boolean): string {
   if (dropped.length === 0) {
     return `Kept ${formatIndexList(kept)} (genuinely different knowledge)`;
@@ -716,10 +745,12 @@ function formatDedupDecisionLine(kept: number[], dropped: number[], merged: bool
   return `Kept ${formatIndexList(kept)}, dropped ${formatIndexList(dropped)}${mergedSuffix}`;
 }
 
+/** Formats a list of local cluster indexes for CLI output. */
 function formatIndexList(indexes: number[]): string {
   return `[${indexes.join(",")}]`;
 }
 
+/** Converts an extracted file result into the CLI display result shape. */
 function toIngestFileResult(result: ExtractedFileResult, storeResult: StoreResult | null): IngestFileResult {
   return {
     file: result.file,
@@ -737,6 +768,7 @@ function toIngestFileResult(result: ExtractedFileResult, storeResult: StoreResul
   };
 }
 
+/** Creates an empty store result accumulator for CLI aggregation. */
 function emptyStoreResult(): StoreResult {
   return {
     stored: 0,
@@ -745,6 +777,7 @@ function emptyStoreResult(): StoreResult {
   };
 }
 
+/** Reports ingest bulk-write lifecycle events through the CLI logger. */
 function reportBulkWriteProgress(event: StoreExtractedResultsProgressEvent): void {
   switch (event.phase) {
     case "prepare_start":
@@ -762,10 +795,12 @@ function reportBulkWriteProgress(event: StoreExtractedResultsProgressEvent): voi
   }
 }
 
+/** Formats a similarity threshold with two decimal places. */
 function formatThreshold(value: number): string {
   return value.toFixed(2);
 }
 
+/** Truncates long free-form text for concise CLI output. */
 function truncateText(text: string, maxLength: number): string {
   const normalized = text.replace(/\s+/g, " ").trim();
   if (normalized.length <= maxLength) {
@@ -775,10 +810,12 @@ function truncateText(text: string, maxLength: number): string {
   return `${normalized.slice(0, maxLength - 3)}...`;
 }
 
+/** Narrows away `undefined` values in filtered arrays. */
 function isDefined<T>(value: T | undefined): value is T {
   return value !== undefined;
 }
 
+/** Clones usage totals so worker-local clients can be discarded safely. */
 function cloneUsageStats(usage: UsageStats): UsageStats {
   return {
     calls: usage.calls,
@@ -791,6 +828,7 @@ function cloneUsageStats(usage: UsageStats): UsageStats {
   };
 }
 
+/** Creates a zeroed usage accumulator for CLI accounting. */
 function createEmptyUsageStats(): UsageStats {
   return {
     calls: 0,
@@ -803,6 +841,7 @@ function createEmptyUsageStats(): UsageStats {
   };
 }
 
+/** Adds one usage record into a running total. */
 function addUsageStats(total: UsageStats, usage: UsageStats): UsageStats {
   total.calls += usage.calls;
   total.inputTokens += usage.inputTokens;
@@ -814,6 +853,7 @@ function addUsageStats(total: UsageStats, usage: UsageStats): UsageStats {
   return total;
 }
 
+/** Converts raw usage totals into the per-file summary used in output. */
 function toFileUsageSummary(usage: UsageStats, runningCost: number): FileUsageSummary {
   return {
     fileCost: usage.totalCost,
@@ -822,6 +862,7 @@ function toFileUsageSummary(usage: UsageStats, runningCost: number): FileUsageSu
   };
 }
 
+/** Parses and validates the ingest concurrency CLI option. */
 function parseConcurrency(value: string): number {
   const parsed = Number.parseInt(value, 10);
 

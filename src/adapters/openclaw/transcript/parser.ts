@@ -14,6 +14,7 @@ import {
   type ToolCallContext,
 } from "./tool-summarization.js";
 
+/** Normalized OpenClaw message roles used during transcript parsing. */
 type OpenClawRole = "user" | "assistant" | "toolResult" | "system" | "unknown";
 
 const TEXT_BLOCK_TYPES = new Set(["input_text", "output_text", "text"]);
@@ -23,6 +24,7 @@ const TOOL_RESULT_POLICY = {
   keepToolNames: new Set(DEFAULT_TOOL_RESULT_KEEP_NAMES.filter((name) => name !== "image")),
 };
 
+/** Collapses whitespace to keep transcript text compact and stable. */
 function normalizeWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
@@ -123,6 +125,7 @@ export function parseJsonlLines(raw: string, warnings: string[], onRecord: (reco
   }
 }
 
+/** Extracts normalized text blocks from mixed OpenClaw content arrays. */
 function extractTextBlocks(content: unknown): string[] {
   if (typeof content === "string") {
     const normalized = normalizeWhitespace(content);
@@ -187,6 +190,7 @@ export function normalizeMessageText(content: unknown): string {
   return normalizeWhitespace(extractTextBlocks(content).join("\n"));
 }
 
+/** Reads the transcript file modification time as an ISO timestamp fallback. */
 async function getFileMtimeTimestamp(filePath: string): Promise<string | undefined> {
   try {
     const stat = await fs.stat(filePath);
@@ -240,6 +244,7 @@ export async function applyMessageTimestampFallbacks(
   return fallbackTimestamp;
 }
 
+/** Maps OpenClaw role values into the parser's normalized role set. */
 function normalizeOpenClawRole(value: unknown): OpenClawRole {
   if (typeof value !== "string") {
     return "unknown";
@@ -265,6 +270,7 @@ function normalizeOpenClawRole(value: unknown): OpenClawRole {
   return "unknown";
 }
 
+/** Truncates long transcript text and appends a truncation marker. */
 function truncateWithMarker(text: string, maxChars: number): string {
   if (text.length <= maxChars) {
     return text;
@@ -273,6 +279,7 @@ function truncateWithMarker(text: string, maxChars: number): string {
   return `${text.slice(0, maxChars)}\n[...truncated]`;
 }
 
+/** Detects large base64-like blobs that should be dropped from transcripts. */
 function isPureBase64(text: string): boolean {
   const trimmed = text.trim();
   if (trimmed.length < 500) {
@@ -286,6 +293,7 @@ function isPureBase64(text: string): boolean {
   return /^[A-Za-z0-9+/=\s]{500,}$/.test(trimmed);
 }
 
+/** Normalizes a free-form label into a slug-like session label. */
 function normalizeLabel(value: string): string {
   return value
     .trim()
@@ -294,11 +302,13 @@ function normalizeLabel(value: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
+/** Normalizes a session label and drops empty results. */
 function normalizeSessionLabel(value: string): string | undefined {
   const normalized = normalizeLabel(value);
   return normalized.length > 0 ? normalized : undefined;
 }
 
+/** Extracts raw text blocks without whitespace normalization. */
 function extractRawTextBlocks(content: unknown): string[] {
   if (typeof content === "string") {
     return [content];
@@ -334,6 +344,7 @@ function extractRawTextBlocks(content: unknown): string[] {
   return textBlocks;
 }
 
+/** Extracts an embedded conversation label from fenced JSON metadata. */
 function extractConversationLabel(content: unknown): string | undefined {
   const rawTextBlocks = extractRawTextBlocks(content);
 
@@ -362,6 +373,7 @@ function extractConversationLabel(content: unknown): string | undefined {
   return undefined;
 }
 
+/** Extracts normalized assistant-visible text blocks from mixed content. */
 function extractAssistantTextParts(content: unknown): string[] {
   if (typeof content === "string") {
     const normalized = normalizeWhitespace(content);
@@ -407,6 +419,7 @@ function extractAssistantTextParts(content: unknown): string[] {
   return textParts;
 }
 
+/** Appends a normalized transcript message with the next sequential index. */
 function pushMessage(messages: TranscriptMessage[], role: "user" | "assistant", text: string, timestamp?: string): void {
   messages.push({
     index: messages.length,
@@ -617,4 +630,6 @@ export class OpenClawTranscriptParser implements TranscriptPort {
 /**
  * Shared OpenClaw transcript parser instance for adapter wiring.
  */
-export const openClawTranscriptParser = new OpenClawTranscriptParser();
+const openClawTranscriptParser = new OpenClawTranscriptParser();
+
+export { openClawTranscriptParser };

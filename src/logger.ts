@@ -68,10 +68,12 @@ export function createLogger(prefix: string): Logger {
   };
 }
 
+/** Writes a formatted log line to stderr. */
 function writeLine(tag: string, message: string): void {
   process.stderr.write(`${timestamp()} ${tag} ${message}\n`);
 }
 
+/** Formats the current time for logger prefixes. */
 function timestamp(): string {
   const now = new Date();
   const hours = String(now.getHours()).padStart(2, "0");

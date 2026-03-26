@@ -517,6 +517,7 @@ export async function insertIngestLogEntry(executor: SqlExecutor, filePath: stri
   });
 }
 
+/** Builds the SQL predicate that filters out retired and superseded entries. */
 function buildActiveEntryClause(alias?: string): string {
   if (!alias) {
     return ACTIVE_ENTRY_CLAUSE;
@@ -524,10 +525,12 @@ function buildActiveEntryClause(alias?: string): string {
   return `${alias}.retired = 0 AND ${alias}.superseded_by IS NULL`;
 }
 
+/** Trims and deduplicates non-empty string values. */
 function dedupeStrings(values: string[]): string[] {
   return Array.from(new Set(values.map((value) => value.trim()).filter((value) => value.length > 0)));
 }
 
+/** Splits an array into fixed-size chunks. */
 function chunkValues<T>(values: T[], size: number): T[][] {
   const chunks: T[][] = [];
   for (let index = 0; index < values.length; index += size) {
@@ -536,6 +539,7 @@ function chunkValues<T>(values: T[], size: number): T[][] {
   return chunks;
 }
 
+/** Normalizes optional strings into nullable trimmed values. */
 function normalizeOptionalString(value: string | undefined): string | null {
   if (value === undefined) {
     return null;
@@ -545,19 +549,23 @@ function normalizeOptionalString(value: string | undefined): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+/** Normalizes optional timestamps into nullable trimmed values. */
 function normalizeTimestamp(value: string | undefined): string | null {
   return normalizeOptionalString(value);
 }
 
+/** Falls back when a numeric value is missing or non-finite. */
 function normalizeNumber(value: number, fallback: number): number {
   return Number.isFinite(value) ? value : fallback;
 }
 
+/** Coerces a numeric value to a finite integer fallback-safe form. */
 function normalizeInteger(value: number, fallback: number): number {
   const normalized = Number.isFinite(value) ? Math.trunc(value) : fallback;
   return Number.isFinite(normalized) ? normalized : fallback;
 }
 
+/** Serializes an embedding for libSQL vector index queries. */
 function serializeEmbeddingForVector(embedding: number[]): string | null {
   if (embedding.length === 0) {
     return null;
@@ -566,11 +574,13 @@ function serializeEmbeddingForVector(embedding: number[]): string | null {
   return JSON.stringify(embedding.map((value) => (Number.isFinite(value) ? value : 0)));
 }
 
+/** Serializes entry tags for JSON storage. */
 function serializeTags(tags: string[]): string {
   const normalizedTags = tags.map((tag) => tag.trim()).filter((tag) => tag.length > 0);
   return JSON.stringify(normalizedTags);
 }
 
+/** Deserializes a JSON-backed tag list from a database row. */
 function deserializeTags(value: unknown): string[] {
   if (typeof value !== "string" || value.trim().length === 0) {
     return [];
@@ -587,6 +597,7 @@ function deserializeTags(value: unknown): string[] {
   }
 }
 
+/** Reads a required string column from a result row. */
 function readRequiredString(row: Row, key: string): string {
   const value = row[key];
   if (typeof value !== "string") {
@@ -595,11 +606,13 @@ function readRequiredString(row: Row, key: string): string {
   return value;
 }
 
+/** Reads an optional string column from a result row. */
 function readOptionalString(row: Row, key: string): string | undefined {
   const value = row[key];
   return typeof value === "string" ? value : undefined;
 }
 
+/** Reads a numeric column from a result row with fallback coercion. */
 function readNumber(row: Row, key: string, fallback = 0): number {
   const value = row[key];
   if (typeof value === "number") {
@@ -616,10 +629,12 @@ function readNumber(row: Row, key: string, fallback = 0): number {
   return fallback;
 }
 
+/** Reads a boolean-like column from a result row. */
 function readBoolean(row: Row, key: string): boolean {
   return readNumber(row, key, 0) !== 0;
 }
 
+/** Reads an embedding blob column into a numeric vector. */
 function readEmbedding(row: Row, key: string): number[] {
   const value = row[key];
   if (value instanceof ArrayBuffer) {
@@ -644,6 +659,7 @@ function readEmbedding(row: Row, key: string): number[] {
   return [];
 }
 
+/** Maps a raw database row into the core entry shape. */
 function mapEntryRow(row: Row): Entry {
   const type = readRequiredString(row, "type");
   const expiry = readRequiredString(row, "expiry");
@@ -674,6 +690,7 @@ function mapEntryRow(row: Row): Entry {
   };
 }
 
+/** Expands a search string into a small set of FTS query variants. */
 function buildFtsQueries(query: string): string[] {
   const normalized = query.trim();
   if (normalized.length === 0) {
@@ -693,6 +710,7 @@ function buildFtsQueries(query: string): string[] {
   return Array.from(queries);
 }
 
+/** Converts an FTS rank into a descending lexical relevance score. */
 function lexicalScore(rank: number): number {
   if (!Number.isFinite(rank)) {
     return 0;
@@ -700,6 +718,7 @@ function lexicalScore(rank: number): number {
   return 1 / (1 + Math.max(rank, 0));
 }
 
+/** Computes cosine similarity between two numeric vectors. */
 function cosineSimilarity(left: number[], right: number[]): number {
   const size = Math.min(left.length, right.length);
   if (size === 0) {
@@ -724,6 +743,7 @@ function cosineSimilarity(left: number[], right: number[]): number {
   return dot / (Math.sqrt(leftNorm) * Math.sqrt(rightNorm));
 }
 
+/** Wraps vector-search failures in a consistent adapter error. */
 function wrapVectorError(error: unknown): Error {
   const message = error instanceof Error ? error.message : String(error);
   return new Error(`Vector search is unavailable: ${message}`);

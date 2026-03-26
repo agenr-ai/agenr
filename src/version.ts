@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
 /** Application version loaded from `package.json` with an env fallback. */
-export const APP_VERSION: string = ((): string => {
+const APP_VERSION: string = ((): string => {
   try {
     const raw = require("../package.json") as { version?: unknown };
     if (typeof raw.version === "string" && raw.version.trim().length > 0) {
@@ -20,3 +20,5 @@ export const APP_VERSION: string = ((): string => {
 
   return "0.0.0";
 })();
+
+export { APP_VERSION };

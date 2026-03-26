@@ -9,6 +9,7 @@ import { createDatabase } from "../../adapters/db/client.js";
 import { readConfig, resolveDbPath } from "../../config.js";
 import { banner, ui } from "../../ui.js";
 
+/** CLI flags accepted by the `agenr db reset` command. */
 interface ResetCommandOptions {
   yes?: boolean;
 }
@@ -61,6 +62,7 @@ export function registerDbCommand(program: Command): void {
     });
 }
 
+/** Resolves the on-disk path details used by the reset command. */
 function resolveResetPath(dbPath: string): { deletePath?: string; displayPath: string } {
   if (dbPath === ":memory:") {
     return { displayPath: dbPath };
@@ -89,6 +91,7 @@ function resolveResetPath(dbPath: string): { deletePath?: string; displayPath: s
   };
 }
 
+/** Deletes the SQLite database file and its sidecar WAL files when present. */
 async function deleteDatabaseFile(dbPath: string): Promise<void> {
   const filesToDelete = [dbPath, `${dbPath}-shm`, `${dbPath}-wal`];
   for (const file of filesToDelete) {
@@ -103,10 +106,12 @@ async function deleteDatabaseFile(dbPath: string): Promise<void> {
   }
 }
 
+/** Checks whether an unknown error represents a missing file. */
 function isMissingFileError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 
+/** Converts an unknown thrown value into a human-readable error message. */
 function formatUnknownError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }

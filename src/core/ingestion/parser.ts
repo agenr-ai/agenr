@@ -92,6 +92,7 @@ export function parseExtractionResponse(raw: unknown): ExtractionResponse {
   return { entries, warnings };
 }
 
+/** Coerces a raw extraction payload into an object wrapper. */
 function coerceResponseObject(raw: unknown): Record<string, unknown> | null {
   if (typeof raw === "string") {
     try {
@@ -111,6 +112,7 @@ function coerceResponseObject(raw: unknown): Record<string, unknown> | null {
   return null;
 }
 
+/** Parses and validates one candidate extracted entry. */
 function parseEntry(value: unknown, index: number, warnings: string[]): StoreEntryInput | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     warnings.push(`Dropped entry ${index + 1}: entry must be an object.`);
@@ -160,6 +162,7 @@ function parseEntry(value: unknown, index: number, warnings: string[]): StoreEnt
   };
 }
 
+/** Maps raw type values into supported store entry types. */
 function coerceType(value: unknown): StoreEntryInput["type"] | null {
   if (typeof value !== "string") {
     return null;
@@ -168,6 +171,7 @@ function coerceType(value: unknown): StoreEntryInput["type"] | null {
   return TYPE_ALIAS_MAP[normalizeToken(value)] ?? null;
 }
 
+/** Coerces numeric or tiered importance values into the 1-10 scale. */
 function coerceImportance(value: unknown): number {
   if (typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 10) {
     return value;
@@ -189,6 +193,7 @@ function coerceImportance(value: unknown): number {
   return 6;
 }
 
+/** Coerces raw expiry values while reserving `core` for system-managed entries. */
 function coerceExpiry(value: unknown, index: number, warnings: string[]): Exclude<Expiry, "core"> {
   if (typeof value !== "string") {
     return "temporary";
@@ -207,6 +212,7 @@ function coerceExpiry(value: unknown, index: number, warnings: string[]): Exclud
   return normalized;
 }
 
+/** Normalizes and caps extracted tags. */
 function coerceTags(value: unknown): string[] {
   if (!Array.isArray(value)) {
     return [];
@@ -232,6 +238,7 @@ function coerceTags(value: unknown): string[] {
   return Array.from(unique);
 }
 
+/** Coerces scalar values into optional normalized strings. */
 function coerceOptionalString(value: unknown): string | undefined {
   if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") {
     return undefined;
@@ -241,18 +248,22 @@ function coerceOptionalString(value: unknown): string | undefined {
   return normalized.length > 0 ? normalized : undefined;
 }
 
+/** Normalizes extracted string fields into trimmed single-line text. */
 function normalizeString(value: unknown): string {
   return typeof value === "string" ? normalizeWhitespace(value) : "";
 }
 
+/** Collapses internal whitespace and trims surrounding space. */
 function normalizeWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
+/** Normalizes a token for case-insensitive matching. */
 function normalizeToken(value: string): string {
   return normalizeWhitespace(value).toLowerCase();
 }
 
+/** Removes a single outer Markdown code fence from model output. */
 function stripCodeFence(text: string): string {
   const trimmed = text.trim();
   const match = /^```(?:json)?\s*([\s\S]+?)\s*```$/i.exec(trimmed);

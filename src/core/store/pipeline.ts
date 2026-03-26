@@ -24,6 +24,7 @@ export interface StoreEntriesOptions extends StorePipelineOptions {
   precomputedEmbeddings?: number[][];
 }
 
+/** Validated entry enriched with hashes needed by the store pipeline. */
 interface PreparedEntry {
   input: StoreEntryInput;
   inputIndex: number;
@@ -31,7 +32,9 @@ interface PreparedEntry {
   normContentHash: string;
 }
 
+/** Final pipeline outcome assigned to one store input. */
 type StoreEntryOutcome = "stored" | "skipped" | "rejected" | "dry_run";
+/** Reason code recorded for a skipped or rejected store input. */
 type StoreEntryReason = "content_hash" | "norm_content_hash" | "validation" | "dry_run";
 
 /**
@@ -50,6 +53,7 @@ export interface StoreEntriesDetailedResult extends StoreResult {
   details: StoreEntryDetail[];
 }
 
+/** Database port variant that can wrap multiple writes in one transaction. */
 interface TransactionCapableDatabasePort extends DatabasePort {
   withTransaction<T>(fn: (db: DatabasePort) => Promise<T>): Promise<T>;
 }
@@ -142,6 +146,7 @@ export async function storeEntriesDetailed(
   };
 }
 
+/** Resolves embeddings for pending entries from precomputed vectors or the embedding port. */
 async function resolvePendingEmbeddings(
   inputs: StoreEntryInput[],
   entries: PreparedEntry[],
@@ -166,6 +171,7 @@ async function resolvePendingEmbeddings(
   });
 }
 
+/** Embeds each pending entry using its canonical embedding text. */
 async function embedPendingEntries(entries: PreparedEntry[], embedding: EmbeddingPort): Promise<number[][]> {
   const texts = entries.map(({ input }) => composeEmbeddingText(input));
   const vectors = await embedding.embed(texts);
@@ -177,6 +183,7 @@ async function embedPendingEntries(entries: PreparedEntry[], embedding: Embeddin
   return vectors;
 }
 
+/** Persists prepared entries, using a transaction when the adapter supports it. */
 async function persistEntries(db: DatabasePort, preparedEntries: PreparedEntry[], embeddings: number[][]): Promise<number> {
   const writeBatch = async (targetDb: DatabasePort): Promise<number> => {
     let stored = 0;
@@ -197,6 +204,7 @@ async function persistEntries(db: DatabasePort, preparedEntries: PreparedEntry[]
   return writeBatch(db);
 }
 
+/** Builds the canonical stored entry record for persistence. */
 function buildEntry(preparedEntry: PreparedEntry, embedding: number[]): Entry {
   const timestamp = new Date().toISOString();
 
@@ -221,10 +229,12 @@ function buildEntry(preparedEntry: PreparedEntry, embedding: number[]): Entry {
   };
 }
 
+/** Detects whether the database adapter exposes transactional batching support. */
 function hasTransactionSupport(db: DatabasePort): db is TransactionCapableDatabasePort {
   return typeof (db as Partial<TransactionCapableDatabasePort>).withTransaction === "function";
 }
 
+/** Validates inputs and filters out entries that should not reach persistence. */
 async function buildStorePlan(
   inputs: StoreEntryInput[],
   db: DatabasePort,
@@ -263,6 +273,7 @@ async function buildStorePlan(
   };
 }
 
+/** Removes duplicate prepared entries within the current batch by hash field. */
 function dedupePreparedEntries(
   entries: PreparedEntry[],
   field: "contentHash" | "normContentHash",
@@ -290,6 +301,7 @@ function dedupePreparedEntries(
   return deduped;
 }
 
+/** Filters out prepared entries whose hash field already exists in storage. */
 function filterExistingPreparedEntries(
   entries: PreparedEntry[],
   existing: Set<string>,
@@ -311,6 +323,7 @@ function filterExistingPreparedEntries(
   });
 }
 
+/** Sorts per-input store details back into original input order. */
 function sortStoreDetails(details: StoreEntryDetail[]): StoreEntryDetail[] {
   return [...details].sort((left, right) => left.inputIndex - right.inputIndex);
 }

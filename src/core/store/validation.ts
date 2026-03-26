@@ -117,6 +117,7 @@ export function validateEntriesWithIndexes(inputs: StoreEntryInput[]): IndexedVa
   };
 }
 
+/** Clamps optional importance values into the supported 1-10 range. */
 function clampImportance(value?: number): number {
   if (value === undefined) {
     return 7;
@@ -125,19 +126,23 @@ function clampImportance(value?: number): number {
   return Math.min(10, Math.max(1, Math.round(value)));
 }
 
+/** Trims required string fields during validation. */
 function normalizeString(value: string): string {
   return value.trim();
 }
 
+/** Trims optional string fields and drops empty results. */
 function normalizeOptionalString(value?: string): string | undefined {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : undefined;
 }
 
+/** Checks whether a value is an array of string tags. */
 function areValidTags(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((tag) => typeof tag === "string");
 }
 
+/** Trims tags and removes empty tag values. */
 function normalizeTags(tags?: string[]): string[] {
   if (!tags) {
     return [];

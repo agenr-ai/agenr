@@ -3,18 +3,19 @@ import type { Client } from "@libsql/client";
 /**
  * Logical schema version stored in the metadata table.
  */
-export const SCHEMA_VERSION = "1";
+const SCHEMA_VERSION = "1";
 
 /**
  * libSQL vector index name for entry embeddings.
  */
-export const VECTOR_INDEX_NAME = "idx_entries_embedding";
+const VECTOR_INDEX_NAME = "idx_entries_embedding";
 
 /**
  * Metadata key used to detect interrupted bulk-write phases.
  */
-export const BULK_WRITE_STATE_META_KEY = "bulk_write_state";
+const BULK_WRITE_STATE_META_KEY = "bulk_write_state";
 
+/** SQL statement that creates the canonical entries table. */
 const CREATE_ENTRIES_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS entries (
     id TEXT PRIMARY KEY,
@@ -43,6 +44,7 @@ const CREATE_ENTRIES_TABLE_SQL = `
   )
 `;
 
+/** SQL statement that creates the FTS shadow table for active entries. */
 const CREATE_ENTRIES_FTS_TABLE_SQL = `
   CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
     content,
@@ -55,7 +57,7 @@ const CREATE_ENTRIES_FTS_TABLE_SQL = `
 /**
  * SQL statement that recreates the FTS insert trigger for active entries.
  */
-export const CREATE_ENTRIES_FTS_INSERT_TRIGGER_SQL = `
+const CREATE_ENTRIES_FTS_INSERT_TRIGGER_SQL = `
   CREATE TRIGGER IF NOT EXISTS entries_ai AFTER INSERT ON entries
   WHEN new.retired = 0 AND new.superseded_by IS NULL BEGIN
     INSERT INTO entries_fts(rowid, content, subject)
@@ -66,7 +68,7 @@ export const CREATE_ENTRIES_FTS_INSERT_TRIGGER_SQL = `
 /**
  * SQL statement that recreates the FTS delete trigger for active entries.
  */
-export const CREATE_ENTRIES_FTS_DELETE_TRIGGER_SQL = `
+const CREATE_ENTRIES_FTS_DELETE_TRIGGER_SQL = `
   CREATE TRIGGER IF NOT EXISTS entries_ad AFTER DELETE ON entries
   WHEN old.retired = 0 AND old.superseded_by IS NULL BEGIN
     INSERT INTO entries_fts(entries_fts, rowid, content, subject)
@@ -77,7 +79,7 @@ export const CREATE_ENTRIES_FTS_DELETE_TRIGGER_SQL = `
 /**
  * SQL statement that recreates the FTS update trigger for active entries.
  */
-export const CREATE_ENTRIES_FTS_UPDATE_TRIGGER_SQL = `
+const CREATE_ENTRIES_FTS_UPDATE_TRIGGER_SQL = `
   CREATE TRIGGER IF NOT EXISTS entries_au AFTER UPDATE ON entries BEGIN
     INSERT INTO entries_fts(entries_fts, rowid, content, subject)
     SELECT 'delete', old.rowid, old.content, old.subject
@@ -89,6 +91,7 @@ export const CREATE_ENTRIES_FTS_UPDATE_TRIGGER_SQL = `
   END
 `;
 
+/** SQL statement that records per-file ingest metadata. */
 const CREATE_INGEST_LOG_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS ingest_log (
     file_path TEXT PRIMARY KEY,
@@ -98,6 +101,7 @@ const CREATE_INGEST_LOG_TABLE_SQL = `
   )
 `;
 
+/** SQL statement that records each recall event. */
 const CREATE_RECALL_EVENTS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS recall_events (
     id TEXT PRIMARY KEY,
@@ -108,6 +112,7 @@ const CREATE_RECALL_EVENTS_TABLE_SQL = `
   )
 `;
 
+/** SQL statement that stores surgeon maintenance run metadata. */
 const CREATE_SURGEON_RUNS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS surgeon_runs (
     id TEXT PRIMARY KEY,
@@ -118,6 +123,7 @@ const CREATE_SURGEON_RUNS_TABLE_SQL = `
   )
 `;
 
+/** SQL statement that stores key-value metadata for the database. */
 const CREATE_META_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS _meta (
     key TEXT PRIMARY KEY,
@@ -125,6 +131,7 @@ const CREATE_META_TABLE_SQL = `
   )
 `;
 
+/** SQL statement that indexes exact content hashes. */
 const CREATE_ENTRIES_CONTENT_HASH_INDEX_SQL = `
   CREATE INDEX IF NOT EXISTS idx_entries_content_hash
   ON entries(content_hash)
@@ -168,7 +175,7 @@ const CREATE_RECALL_EVENTS_RECALLED_AT_INDEX_SQL = `
 /**
  * SQL statement that recreates the libSQL vector index for entry embeddings.
  */
-export const CREATE_ENTRIES_EMBEDDING_INDEX_SQL = `
+const CREATE_ENTRIES_EMBEDDING_INDEX_SQL = `
   CREATE INDEX IF NOT EXISTS idx_entries_embedding ON entries (
     libsql_vector_idx(
       embedding,
@@ -201,6 +208,16 @@ const SCHEMA_STATEMENTS = [
   CREATE_RECALL_EVENTS_ENTRY_ID_INDEX_SQL,
   CREATE_RECALL_EVENTS_RECALLED_AT_INDEX_SQL,
 ] as const;
+
+export {
+  BULK_WRITE_STATE_META_KEY,
+  CREATE_ENTRIES_EMBEDDING_INDEX_SQL,
+  CREATE_ENTRIES_FTS_DELETE_TRIGGER_SQL,
+  CREATE_ENTRIES_FTS_INSERT_TRIGGER_SQL,
+  CREATE_ENTRIES_FTS_UPDATE_TRIGGER_SQL,
+  SCHEMA_VERSION,
+  VECTOR_INDEX_NAME,
+};
 
 /**
  * Creates the agenr database schema and supporting indexes.
@@ -291,6 +308,7 @@ export async function finalizeBulkWrites(db: Client): Promise<void> {
   });
 }
 
+/** Reads the stored schema version when the metadata table exists. */
 async function getSchemaVersion(db: Client): Promise<string | null> {
   try {
     const result = await db.execute("SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1");
@@ -306,6 +324,7 @@ async function getSchemaVersion(db: Client): Promise<string | null> {
   }
 }
 
+/** Checks whether a SQLite table already exists. */
 async function tableExists(db: Client, tableName: string): Promise<boolean> {
   const result = await db.execute({
     sql: `
@@ -321,6 +340,7 @@ async function tableExists(db: Client, tableName: string): Promise<boolean> {
   return result.rows.length > 0;
 }
 
+/** Checks whether a prior bulk-write phase was interrupted. */
 async function hasActiveBulkWriteState(db: Client): Promise<boolean> {
   try {
     const result = await db.execute({
@@ -334,6 +354,7 @@ async function hasActiveBulkWriteState(db: Client): Promise<boolean> {
   }
 }
 
+/** Recreates the vector index when the SQLite build supports it. */
 async function ensureVectorIndex(db: Client): Promise<void> {
   try {
     await db.execute(CREATE_ENTRIES_EMBEDDING_INDEX_SQL);
@@ -344,6 +365,7 @@ async function ensureVectorIndex(db: Client): Promise<void> {
   }
 }
 
+/** Drops the vector index when the SQLite build supports it. */
 async function dropVectorIndex(db: Client): Promise<void> {
   try {
     await db.execute(`DROP INDEX IF EXISTS ${VECTOR_INDEX_NAME}`);
@@ -354,6 +376,7 @@ async function dropVectorIndex(db: Client): Promise<void> {
   }
 }
 
+/** Runs a callback inside a `BEGIN IMMEDIATE` transaction. */
 async function runImmediateTransaction(db: Client, fn: () => Promise<void>): Promise<void> {
   await db.execute("BEGIN IMMEDIATE");
   try {
@@ -369,6 +392,7 @@ async function runImmediateTransaction(db: Client, fn: () => Promise<void>): Pro
   }
 }
 
+/** Detects vector-extension errors that should be tolerated in SQLite builds without support. */
 function isVectorUnavailableError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return /libsql_vector_idx|vector32|vector_top_k|vector|no such function|unsupported/i.test(message);

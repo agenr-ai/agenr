@@ -25,15 +25,17 @@ export interface ToolResultPolicy {
 /**
  * Tool names whose raw results should be dropped from normalized transcripts by default.
  */
-export const DEFAULT_TOOL_RESULT_DROP_NAMES = ["read", "web_fetch", "browser", "screenshot", "snapshot", "canvas", "tts"] as const;
+const DEFAULT_TOOL_RESULT_DROP_NAMES = ["read", "web_fetch", "browser", "screenshot", "snapshot", "canvas", "tts"] as const;
 
 /**
  * Tool names whose results are preserved by default because they often contain useful context.
  */
-export const DEFAULT_TOOL_RESULT_KEEP_NAMES = ["web_search", "memory_search", "memory_get", "image"] as const;
+const DEFAULT_TOOL_RESULT_KEEP_NAMES = ["web_search", "memory_search", "memory_get", "image"] as const;
 
 const DEFAULT_TOOL_RESULT_DROP_NAME_SET = new Set<string>(DEFAULT_TOOL_RESULT_DROP_NAMES);
 const DEFAULT_TOOL_RESULT_KEEP_NAME_SET = new Set<string>(DEFAULT_TOOL_RESULT_KEEP_NAMES);
+
+export { DEFAULT_TOOL_RESULT_DROP_NAMES, DEFAULT_TOOL_RESULT_KEEP_NAMES };
 
 /**
  * Safely narrows an unknown value to a plain record.
@@ -55,6 +57,7 @@ export function getString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value : undefined;
 }
 
+/** Truncates inline text without adding ellipses or extra formatting. */
 function truncateInline(value: string, max: number): string {
   if (value.length <= max) {
     return value;
@@ -63,6 +66,7 @@ function truncateInline(value: string, max: number): string {
   return value.slice(0, max);
 }
 
+/** Returns the first non-empty string argument value from a tool call. */
 function firstStringArgValue(args: Record<string, unknown>, max: number): string | undefined {
   for (const value of Object.values(args)) {
     if (typeof value === "string" && value.trim().length > 0) {
@@ -73,6 +77,7 @@ function firstStringArgValue(args: Record<string, unknown>, max: number): string
   return undefined;
 }
 
+/** Builds a stable human-readable identifier for a tool invocation. */
 function toolIdentifier(toolName: string, args: Record<string, unknown>): string {
   const normalizedToolName = toolName.trim().toLowerCase();
 

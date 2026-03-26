@@ -5,11 +5,13 @@ import type { LlmPort } from "../core/ports.js";
 
 const DEFAULT_REASONING = "medium";
 
+/** Optional runtime overrides for the pi-ai-backed LLM client. */
 type CreateLlmClientOptions = {
   apiKey?: string;
   reasoning?: "medium" | "high";
 };
 
+/** Stringly typed `getModel` signature used to avoid provider narrowing friction. */
 type GetModelWithStrings = (provider: string, modelId: string) => Model<Api>;
 
 const getModelWithStrings = getModel as unknown as GetModelWithStrings;
@@ -164,6 +166,7 @@ export function stripCodeFence(text: string): string {
   return match?.[1]?.trim() ?? trimmed;
 }
 
+/** Returns the default model ID for a given ingestion pipeline stage. */
 function defaultModelForStage(stage: "extraction" | "dedup"): string {
   switch (stage) {
     case "extraction":
@@ -173,11 +176,13 @@ function defaultModelForStage(stage: "extraction" | "dedup"): string {
   }
 }
 
+/** Normalizes optional strings into trimmed non-empty values. */
 function normalizeOptionalString(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
 }
 
+/** Creates a zeroed usage counter object for a new client. */
 function createEmptyUsageStats(): UsageStats {
   return {
     calls: 0,
@@ -190,6 +195,7 @@ function createEmptyUsageStats(): UsageStats {
   };
 }
 
+/** Adds a completion response's usage metrics into the running totals. */
 function accumulateUsage(
   target: UsageStats,
   usage: {
@@ -212,6 +218,7 @@ function accumulateUsage(
   target.totalCost += usage.cost.total;
 }
 
+/** Concatenates text blocks from a pi-ai completion response. */
 function extractText(response: Awaited<ReturnType<typeof completeSimple>>): string {
   const blocks: string[] = [];
   for (const contentBlock of response.content) {

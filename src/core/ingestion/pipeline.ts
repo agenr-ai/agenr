@@ -169,6 +169,7 @@ export async function ingestFile(
   return storeResults.get(filePath) ?? toIngestFileResult(dedupedExtracted, emptyStoreResult());
 }
 
+/** Computes the SHA-256 digest for a transcript file. */
 async function computeFileHash(filePath: string): Promise<string> {
   const content = await fs.readFile(filePath, "utf-8");
   return createHash("sha256").update(content).digest("hex");
@@ -368,6 +369,7 @@ export async function storeExtractedResults(
   return finalResults;
 }
 
+/** Aligns identity-keyed precomputed embeddings to flattened store input order. */
 function alignPrecomputedEmbeddings(entries: StoreEntryInput[], precomputedEmbeddings?: Map<StoreEntryInput, number[]>): number[][] | undefined {
   if (!precomputedEmbeddings) {
     return undefined;
@@ -383,6 +385,7 @@ function alignPrecomputedEmbeddings(entries: StoreEntryInput[], precomputedEmbed
   });
 }
 
+/** Creates an empty store result accumulator. */
 function emptyStoreResult(): StoreResult {
   return {
     stored: 0,
@@ -391,6 +394,7 @@ function emptyStoreResult(): StoreResult {
   };
 }
 
+/** Combines extraction output and store statistics into the final file result shape. */
 function toIngestFileResult(result: ExtractedFileResult, storeResult: StoreResult | null, additionalDurationMs = 0): IngestFileResult {
   return {
     file: result.file,

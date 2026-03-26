@@ -11,6 +11,7 @@ const SYSTEM_PROMPT_BUDGET_TOKENS = 4_500;
 const DEFAULT_INTER_CHUNK_DELAY_MS = 150;
 const MAX_ATTEMPTS = 3;
 
+/** Previously extracted subject summary used to suppress duplicate chunk output. */
 type PreviouslyExtractedSubject = {
   type: string;
   subject: string;
@@ -165,6 +166,7 @@ export async function extractFromTranscript(
   };
 }
 
+/** Retries one chunk extraction until parsing succeeds or attempts are exhausted. */
 async function extractChunkWithRetry(
   chunk: TranscriptChunk,
   llm: LlmPort,
@@ -187,6 +189,7 @@ async function extractChunkWithRetry(
   return null;
 }
 
+/** Decides whether extraction can safely process the transcript as one chunk. */
 function resolveWholeFileMode(
   messages: TranscriptMessage[],
   options: ExtractionOptions & {
@@ -222,10 +225,12 @@ function resolveWholeFileMode(
   return estimatedTranscriptTokens <= usableWindowTokens;
 }
 
+/** Computes the transcript token budget after reserving output and prompt space. */
 function calculateUsableWindowTokens(contextWindowTokens: number, maxOutputTokens: number): number {
   return contextWindowTokens - maxOutputTokens - SYSTEM_PROMPT_BUDGET_TOKENS;
 }
 
+/** Builds one transcript chunk from a contiguous message range. */
 function buildChunk(messages: TranscriptMessage[], startIndex: number, endIndex: number, chunkIndex: number, preRenderedLines?: string[]): TranscriptChunk {
   const chunkMessages = messages.slice(startIndex, endIndex + 1);
   const lines = preRenderedLines ?? chunkMessages.map(renderTranscriptMessage);
@@ -243,18 +248,22 @@ function buildChunk(messages: TranscriptMessage[], startIndex: number, endIndex:
   };
 }
 
+/** Estimates token usage for a rendered transcript. */
 function estimateTranscriptTokens(messages: TranscriptMessage[]): number {
   return messages.reduce((total, message) => total + estimateTextTokens(renderTranscriptMessage(message)), 0);
 }
 
+/** Estimates token usage for plain text using a character heuristic. */
 function estimateTextTokens(text: string): number {
   return Math.max(1, Math.ceil(text.length / CHARS_PER_TOKEN));
 }
 
+/** Renders a transcript message into the extraction prompt format. */
 function renderTranscriptMessage(message: TranscriptMessage): string {
   return `[m${String(message.index).padStart(5, "0")}][${message.role}] ${message.text}`;
 }
 
+/** Converts an extracted entry into the duplicate-suppression summary form. */
 function toPreviouslyExtractedSubject(entry: StoreEntryInput): PreviouslyExtractedSubject {
   return {
     type: entry.type,
@@ -263,6 +272,7 @@ function toPreviouslyExtractedSubject(entry: StoreEntryInput): PreviouslyExtract
   };
 }
 
+/** Produces a short one-line summary of extracted entry content. */
 function summarizeContent(content: string): string {
   const normalized = content.replace(/\s+/g, " ").trim();
   if (normalized.length <= 80) {
@@ -272,10 +282,12 @@ function summarizeContent(content: string): string {
   return `${normalized.slice(0, 77).trimEnd()}...`;
 }
 
+/** Computes exponential backoff between extraction retries. */
 function backoffMs(attempt: number): number {
   return 200 * 2 ** (attempt - 1);
 }
 
+/** Waits before the next extraction retry or chunk request. */
 async function sleep(durationMs: number): Promise<void> {
   await new Promise((resolve) => {
     setTimeout(resolve, durationMs);
