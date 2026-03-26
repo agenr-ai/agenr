@@ -52,11 +52,12 @@ export default tseslint.config(
           fixStyle: "separate-type-imports",
         },
       ],
-      // Require Google-style JSDoc on all exported functions, interfaces, and types
+      // Require Google-style JSDoc on all functions, interfaces, and types (not just exported)
+      // This helps coding agents (Codex, Claude Code) understand internal intent
       "jsdoc/require-jsdoc": [
         "warn",
         {
-          publicOnly: true,
+          publicOnly: false,
           require: {
             FunctionDeclaration: true,
             MethodDefinition: true,
