@@ -90,13 +90,16 @@ function resolveResetPath(dbPath: string): { deletePath?: string; displayPath: s
 }
 
 async function deleteDatabaseFile(dbPath: string): Promise<void> {
-  try {
-    await fs.unlink(dbPath);
-  } catch (error) {
-    if (isMissingFileError(error)) {
-      return;
+  const filesToDelete = [dbPath, `${dbPath}-shm`, `${dbPath}-wal`];
+  for (const file of filesToDelete) {
+    try {
+      await fs.unlink(file);
+    } catch (error) {
+      if (isMissingFileError(error)) {
+        continue;
+      }
+      throw error;
     }
-    throw error;
   }
 }
 
