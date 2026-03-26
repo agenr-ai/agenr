@@ -2,10 +2,10 @@
 
 `agenr ingest <path>` runs the end-to-end ingestion pipeline for OpenClaw transcript files:
 
-1. Parse the transcript
-2. Extract durable knowledge with the extraction model
-3. Store accepted entries in the database
-4. Record the file hash in the ingest log
+1. Check the ingest log for unchanged files
+2. Parse transcripts and extract durable knowledge with the extraction model
+3. Batch accepted entries into one serial store phase
+4. Record file hashes in the ingest log
 
 ## Supported inputs
 
@@ -21,13 +21,14 @@ Directory ingestion walks subdirectories recursively and processes files in sort
 ## Options
 
 ```bash
-agenr ingest <path> [--verbose] [--dry-run] [--whole-file auto|force|never] [--skip-embeddings]
+agenr ingest <path> [--verbose] [--dry-run] [--whole-file auto|force|never] [--skip-embeddings] [--concurrency 4]
 ```
 
 - `--verbose` shows per-file warnings, timing, and per-file cost
 - `--dry-run` parses and extracts without writing entries or ingest-log records
 - `--whole-file <mode>` controls extraction chunking behavior
 - `--skip-embeddings` stores entries without computing embeddings
+- `--concurrency <n>` limits how many files run through parse and extract in parallel (default: `4`, range: `1-16`)
 
 The ingest summary reports aggregate token usage, LLM call count, and total cost before the final outro line.
 

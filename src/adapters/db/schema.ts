@@ -193,6 +193,8 @@ const SCHEMA_STATEMENTS = [
  */
 export async function initSchema(db: Client): Promise<void> {
   await db.execute("PRAGMA foreign_keys = ON");
+  const currentVersion = await getSchemaVersion(db);
+  const hadEntriesFts = await tableExists(db, "entries_fts");
 
   for (const statement of SCHEMA_STATEMENTS) {
     await db.execute(statement);
@@ -207,7 +209,9 @@ export async function initSchema(db: Client): Promise<void> {
     args: [SCHEMA_VERSION],
   });
 
-  await db.execute("INSERT INTO entries_fts(entries_fts) VALUES ('rebuild')");
+  if (currentVersion !== SCHEMA_VERSION || !hadEntriesFts) {
+    await rebuildFts(db);
+  }
 
   try {
     await db.execute(CREATE_ENTRIES_EMBEDDING_INDEX_SQL);
@@ -216,6 +220,46 @@ export async function initSchema(db: Client): Promise<void> {
       throw error;
     }
   }
+}
+
+/**
+ * Rebuilds the FTS shadow table from the canonical entries table.
+ *
+ * @param db - libSQL client connected to the target database.
+ * @returns Promise that resolves once the rebuild completes.
+ */
+export async function rebuildFts(db: Client): Promise<void> {
+  await db.execute("INSERT INTO entries_fts(entries_fts) VALUES ('rebuild')");
+}
+
+async function getSchemaVersion(db: Client): Promise<string | null> {
+  try {
+    const result = await db.execute("SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1");
+    const row = result.rows[0];
+    if (!row) {
+      return null;
+    }
+
+    const value = row.value;
+    return typeof value === "string" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+async function tableExists(db: Client, tableName: string): Promise<boolean> {
+  const result = await db.execute({
+    sql: `
+      SELECT 1
+      FROM sqlite_master
+      WHERE type = 'table'
+        AND name = ?
+      LIMIT 1
+    `,
+    args: [tableName],
+  });
+
+  return result.rows.length > 0;
 }
 
 function isVectorUnavailableError(error: unknown): boolean {

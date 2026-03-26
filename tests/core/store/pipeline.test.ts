@@ -31,6 +31,23 @@ describe("storeEntries", () => {
     expect(embedding.calls).toEqual([]);
   });
 
+  it("skips entries whose normalized content hash already exists", async () => {
+    const input = createInput({
+      content: "Hello,   WORLD!",
+      source_file: "/tmp/source-a.md",
+    });
+    const db = new MockDatabase({
+      existingNormHashes: new Set([computeNormContentHash(input.content)]),
+    });
+    const embedding = new MockEmbeddingPort();
+
+    const result = await storeEntries([input], db, embedding);
+
+    expect(result).toEqual({ stored: 0, skipped: 1, rejected: 0 });
+    expect(db.insertions).toEqual([]);
+    expect(embedding.calls).toEqual([]);
+  });
+
   it("stores three entries and skips two duplicates in a batch of five", async () => {
     const inputs = [
       createInput({ subject: "one", content: "content-one" }),
@@ -49,6 +66,29 @@ describe("storeEntries", () => {
     expect(result).toEqual({ stored: 3, skipped: 2, rejected: 0 });
     expect(db.insertions).toHaveLength(3);
     expect(db.transactionCount).toBe(1);
+  });
+
+  it("stores only the first entry when a batch contains duplicate normalized content hashes", async () => {
+    const inputs = [
+      createInput({
+        subject: "one",
+        content: "Normalize me",
+        source_file: "/tmp/source-a.md",
+      }),
+      createInput({
+        subject: "two",
+        content: " normalize   me ",
+        source_file: "/tmp/source-b.md",
+      }),
+    ];
+    const db = new MockDatabase();
+    const embedding = new MockEmbeddingPort();
+
+    const result = await storeEntries(inputs, db, embedding);
+
+    expect(result).toEqual({ stored: 1, skipped: 1, rejected: 0 });
+    expect(db.insertions).toHaveLength(1);
+    expect(db.insertions[0]?.entry.source_file).toBe("/tmp/source-a.md");
   });
 
   it("returns zero counts for empty input", async () => {
@@ -125,10 +165,12 @@ describe("storeEntries", () => {
 class MockDatabase implements DatabasePort {
   public readonly insertions: Array<{ entry: Entry; embedding: number[]; contentHash: string }> = [];
   public readonly existingHashes: Set<string>;
+  public readonly existingNormHashes: Set<string>;
   public transactionCount = 0;
 
-  public constructor(options: { existingHashes?: Set<string> } = {}) {
+  public constructor(options: { existingHashes?: Set<string>; existingNormHashes?: Set<string> } = {}) {
     this.existingHashes = options.existingHashes ?? new Set();
+    this.existingNormHashes = options.existingNormHashes ?? new Set();
   }
 
   public async insertEntry(entry: Entry, embedding: number[], contentHash: string): Promise<string> {
@@ -158,6 +200,10 @@ class MockDatabase implements DatabasePort {
 
   public async findExistingHashes(hashes: string[]): Promise<Set<string>> {
     return new Set(hashes.filter((hash) => this.existingHashes.has(hash)));
+  }
+
+  public async findExistingNormHashes(hashes: string[]): Promise<Set<string>> {
+    return new Set(hashes.filter((hash) => this.existingNormHashes.has(hash)));
   }
 
   public async retireEntry(): Promise<boolean> {

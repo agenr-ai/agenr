@@ -1,30 +1,55 @@
 import path from "node:path";
 
 import * as clack from "@clack/prompts";
-import { resolveEmbeddingApiKey, resolveEmbeddingModel, createEmbeddingClient } from "../../adapters/embeddings.js";
-import { createLlmClient, resolveLlmApiKey, resolveModel } from "../../adapters/llm.js";
-import { openClawTranscriptParser } from "../../adapters/openclaw/transcript/parser.js";
 import { createDatabase } from "../../adapters/db/client.js";
+import { createEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../../adapters/embeddings.js";
+import { createLlmClient, resolveLlmApiKey, resolveModel, type UsageStats } from "../../adapters/llm.js";
+import { openClawTranscriptParser } from "../../adapters/openclaw/transcript/parser.js";
 import { readConfig, resolveDbPath } from "../../config.js";
-import { discoverFiles, ingestFile, type IngestFileOptions, type IngestFileResult } from "../../core/ingestion/index.js";
-import type { EmbeddingPort } from "../../core/ports.js";
+import {
+  discoverFiles,
+  extractFile,
+  storeExtractedResults,
+  type ExtractedFileResult,
+  type IngestFileOptions,
+  type IngestFileResult,
+} from "../../core/ingestion/index.js";
+import type { DatabasePort, EmbeddingPort, TranscriptPort } from "../../core/ports.js";
+import type { StoreResult } from "../../core/types.js";
 import { setVerbose } from "../../logger.js";
 import { banner, formatLabel, ui } from "../../ui.js";
-import { Option, type Command } from "commander";
+import { InvalidArgumentError, Option, type Command } from "commander";
+
+const DEFAULT_INGEST_CONCURRENCY = 4;
+const MIN_INGEST_CONCURRENCY = 1;
+const MAX_INGEST_CONCURRENCY = 16;
 
 type WholeFileMode = NonNullable<IngestFileOptions["wholeFile"]>;
+type CliLlmClient = ReturnType<typeof createLlmClient>;
 
 interface IngestCommandOptions {
   verbose?: boolean;
   dryRun?: boolean;
   wholeFile?: WholeFileMode;
   skipEmbeddings?: boolean;
+  concurrency?: number;
 }
 
 interface FileUsageSummary {
   fileCost: number;
   fileCalls: number;
   runningCost: number;
+}
+
+interface ExtractionExecutionResult {
+  result: ExtractedFileResult;
+  usage: UsageStats;
+}
+
+interface ExtractionPorts {
+  transcript: TranscriptPort;
+  db: DatabasePort;
+  createLlm: () => CliLlmClient;
 }
 
 /**
@@ -39,7 +64,8 @@ export function registerIngestCommand(program: Command): void {
     .option("--verbose", "Show detailed progress")
     .option("--dry-run", "Parse and extract without storing")
     .addOption(new Option("--whole-file <mode>", "Whole-file mode: auto|force|never").choices(["auto", "force", "never"]).default("auto"))
-    .option("--skip-embeddings", "Skip embedding computation");
+    .option("--skip-embeddings", "Skip embedding computation")
+    .addOption(new Option("--concurrency <n>", "Max files to extract in parallel").argParser(parseConcurrency).default(DEFAULT_INGEST_CONCURRENCY));
 
   ingestCommand.action(async (targetPath: string, options: IngestCommandOptions) => {
     const startedAt = Date.now();
@@ -55,7 +81,7 @@ export function registerIngestCommand(program: Command): void {
 
       const { provider, modelId } = resolveModel(config, "extraction");
       const llmApiKey = resolveLlmApiKey(config, provider);
-      const llm = createLlmClient(provider, modelId, { apiKey: llmApiKey });
+      const llmTemplate = createLlmClient(provider, modelId, { apiKey: llmApiKey });
       const embedding =
         options.skipEmbeddings === true ? createNoopEmbeddingPort() : createEmbeddingClient(resolveEmbeddingApiKey(config), resolveEmbeddingModel(config));
 
@@ -77,11 +103,63 @@ export function registerIngestCommand(program: Command): void {
           formatLabel("Files", `${files.length} ${pluralize(files.length, "file")} found`),
           formatLabel("Whole-file", options.wholeFile ?? "auto"),
           formatLabel("Embeddings", options.skipEmbeddings === true ? "skipped" : "enabled"),
+          formatLabel("Concurrency", `${options.concurrency ?? DEFAULT_INGEST_CONCURRENCY}`),
         ].join("\n"),
       );
 
       if (options.dryRun === true) {
         clack.log.warn("Dry run mode - no entries will be stored.");
+      }
+
+      const spinner = clack.spinner();
+      spinner.start(`Extracting transcripts... (0/${files.length} complete)`);
+
+      const extractionRuns = await runParallelExtractions(
+        files,
+        {
+          transcript: openClawTranscriptParser,
+          db,
+          createLlm: () => createLlmClient(provider, modelId, { apiKey: llmApiKey }),
+        },
+        {
+          verbose: options.verbose,
+          wholeFile: options.wholeFile,
+          contextWindowTokens: llmTemplate.metadata.contextWindowTokens,
+          maxOutputTokens: llmTemplate.metadata.maxOutputTokens,
+          extractionContext: config.extractionContext,
+        },
+        options.concurrency ?? DEFAULT_INGEST_CONCURRENCY,
+        (completed, total) => {
+          spinner.message(`Extracting transcripts... (${completed}/${total} complete)`);
+        },
+      );
+
+      spinner.stop(`Extraction complete (${files.length}/${files.length}).`);
+
+      const extractedResults = extractionRuns.map(({ result }) => result);
+      const resultsToStore = extractedResults.filter((result) => result.skipped !== true && result.error === undefined);
+      let storeResults = new Map<string, IngestFileResult>();
+
+      if (resultsToStore.length > 0) {
+        const entryCount = resultsToStore.reduce((total, result) => total + result.entries.length, 0);
+        spinner.start(
+          entryCount > 0
+            ? `Storing ${entryCount} ${pluralize(entryCount, "entry", "entries")} from ${resultsToStore.length} ${pluralize(resultsToStore.length, "file")}...`
+            : `Finalizing ${resultsToStore.length} ${pluralize(resultsToStore.length, "file")}...`,
+        );
+        storeResults = await storeExtractedResults(
+          resultsToStore,
+          {
+            db,
+            embedding,
+          },
+          {
+            dryRun: options.dryRun,
+            verbose: options.verbose,
+            skipEmbeddings: options.skipEmbeddings,
+          },
+        );
+        spinner.stop(entryCount > 0 ? "Store phase complete." : "Finalize phase complete.");
       }
 
       const totals = {
@@ -92,71 +170,46 @@ export function registerIngestCommand(program: Command): void {
         failedFiles: 0,
         warnings: 0,
       };
-      const spinner = clack.spinner();
+      const usageTotals = extractionRuns.reduce(sumUsageStats, createEmptyUsageStats());
+      let runningCost = 0;
 
-      for (const [index, file] of files.entries()) {
-        const spinnerLabel = path.basename(file);
-        spinner.start(`Ingesting ${spinnerLabel}...`);
-        const costBefore = llm.metadata.usage.totalCost;
-        const callsBefore = llm.metadata.usage.calls;
-
-        const result = await ingestFile(
-          file,
-          {
-            transcript: openClawTranscriptParser,
-            llm,
-            embedding,
-            db,
-          },
-          {
-            verbose: options.verbose,
-            dryRun: options.dryRun,
-            wholeFile: options.wholeFile,
-            skipEmbeddings: options.skipEmbeddings,
-            contextWindowTokens: llm.metadata.contextWindowTokens,
-            maxOutputTokens: llm.metadata.maxOutputTokens,
-            extractionContext: config.extractionContext,
-          },
-        );
-        const usage: FileUsageSummary = {
-          fileCost: Math.max(0, llm.metadata.usage.totalCost - costBefore),
-          fileCalls: Math.max(0, llm.metadata.usage.calls - callsBefore),
-          runningCost: llm.metadata.usage.totalCost,
-        };
+      for (const [index, extractionRun] of extractionRuns.entries()) {
+        runningCost += extractionRun.usage.totalCost;
+        const usage = toFileUsageSummary(extractionRun.usage, runningCost);
+        const extractedResult = extractionRun.result;
+        const result = getDisplayResult(extractedResult, storeResults);
 
         totals.warnings += result.warnings.length;
 
         if (result.skipped) {
           totals.skippedFiles += 1;
           if (options.verbose === true) {
-            spinner.stop(spinnerLabel);
             printVerboseFileDetails(result, options, usage);
-            clack.log.step(buildSkippedMessage(spinnerLabel));
+            clack.log.step(buildSkippedMessage(path.basename(result.file)));
           } else {
-            spinner.stop(buildSkippedMessage(spinnerLabel));
+            clack.log.step(buildSkippedMessage(path.basename(result.file)));
           }
-        } else if (result.error) {
+          continue;
+        }
+
+        if (result.error) {
           totals.failedFiles += 1;
           if (options.verbose === true) {
-            spinner.error(spinnerLabel);
             printVerboseFileDetails(result, options, usage);
-            clack.log.error(buildFailureMessage(spinnerLabel, result, options, usage, index === 0));
-          } else {
-            spinner.error(buildFailureMessage(spinnerLabel, result, options, usage, index === 0));
           }
-        } else {
-          const storeResult = result.storeResult ?? { stored: 0, skipped: 0, rejected: 0 };
-          totals.stored += storeResult.stored;
-          totals.deduped += storeResult.skipped;
-          totals.rejected += storeResult.rejected;
-          if (options.verbose === true) {
-            spinner.stop(spinnerLabel);
-            printVerboseFileDetails(result, options, usage);
-            clack.log.step(buildSuccessMessage(spinnerLabel, result, options, usage, index === 0));
-          } else {
-            spinner.stop(buildSuccessMessage(spinnerLabel, result, options, usage, index === 0));
-          }
+          clack.log.error(buildFailureMessage(path.basename(result.file), result, options, usage, index === 0));
+          continue;
         }
+
+        const storeResult = result.storeResult ?? emptyStoreResult();
+        totals.stored += storeResult.stored;
+        totals.deduped += storeResult.skipped;
+        totals.rejected += storeResult.rejected;
+
+        if (options.verbose === true) {
+          printVerboseFileDetails(result, options, usage);
+        }
+        clack.log.step(buildSuccessMessage(path.basename(result.file), result, options, usage, index === 0));
       }
 
       const summaryParts = [`${totals.stored} ${pluralize(totals.stored, "entry", "entries")} stored`, `${totals.deduped} deduped`];
@@ -174,22 +227,21 @@ export function registerIngestCommand(program: Command): void {
         summaryParts.push(`${totals.warnings} ${pluralize(totals.warnings, "warning")}`);
       }
 
-      const usage = llm.metadata.usage;
-      if (usage.calls > 0) {
+      if (usageTotals.calls > 0) {
         clack.log.info(
           [
             formatLabel(
               "Tokens",
-              `${usage.inputTokens.toLocaleString()} in / ${usage.outputTokens.toLocaleString()} out / ${usage.totalTokens.toLocaleString()} total`,
+              `${usageTotals.inputTokens.toLocaleString()} in / ${usageTotals.outputTokens.toLocaleString()} out / ${usageTotals.totalTokens.toLocaleString()} total`,
             ),
-            formatLabel("Cost", formatCost(usage.totalCost)),
-            formatLabel("LLM calls", `${usage.calls}`),
+            formatLabel("Cost", formatCost(usageTotals.totalCost)),
+            formatLabel("LLM calls", `${usageTotals.calls}`),
           ].join("\n"),
         );
       }
 
       const dryRunSuffix = options.dryRun === true ? " Dry run only." : "";
-      clack.outro(`Done: ${summaryParts.join(", ")}. (${formatCost(usage.totalCost)}, ${formatDurationMs(Date.now() - startedAt)})${dryRunSuffix}`);
+      clack.outro(`Done: ${summaryParts.join(", ")}. (${formatCost(usageTotals.totalCost)}, ${formatDurationMs(Date.now() - startedAt)})${dryRunSuffix}`);
     } catch (error) {
       process.exitCode = 1;
       clack.log.error(formatUnknownError(error));
@@ -267,7 +319,7 @@ function buildSuccessMessage(
   usage: FileUsageSummary,
   isFirstFile: boolean,
 ): string {
-  const storeResult = result.storeResult ?? { stored: 0, skipped: 0, rejected: 0 };
+  const storeResult = result.storeResult ?? emptyStoreResult();
   const details = [
     `${result.messageCount} ${pluralize(result.messageCount, "message")}`,
     `${result.entriesExtracted} extracted`,
@@ -315,7 +367,7 @@ function buildFailureMessage(
 }
 
 function formatStoreSummary(result: IngestFileResult): string {
-  const storeResult = result.storeResult ?? { stored: 0, skipped: 0, rejected: 0 };
+  const storeResult = result.storeResult ?? emptyStoreResult();
   const parts = [`${storeResult.stored} stored`, `${storeResult.skipped} deduped`, `${storeResult.rejected} rejected`];
 
   if (result.failedChunks > 0) {
@@ -378,4 +430,149 @@ function formatUnknownError(error: unknown): string {
  */
 export function pluralize(value: number, singular: string, plural?: string): string {
   return value === 1 ? singular : (plural ?? `${singular}s`);
+}
+
+async function runParallelExtractions(
+  files: string[],
+  ports: ExtractionPorts,
+  options: IngestFileOptions,
+  concurrency: number,
+  onProgress?: (completed: number, total: number) => void,
+): Promise<ExtractionExecutionResult[]> {
+  if (files.length === 0) {
+    return [];
+  }
+
+  const results = new Array<ExtractionExecutionResult>(files.length);
+  let nextIndex = 0;
+  let completed = 0;
+  const workerCount = Math.min(concurrency, files.length);
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (true) {
+        const currentIndex = nextIndex;
+        nextIndex += 1;
+
+        if (currentIndex >= files.length) {
+          return;
+        }
+
+        const llm = ports.createLlm();
+        const result = await extractFile(
+          files[currentIndex],
+          {
+            transcript: ports.transcript,
+            llm,
+            db: ports.db,
+          },
+          {
+            ...options,
+            contextWindowTokens: llm.metadata.contextWindowTokens,
+            maxOutputTokens: llm.metadata.maxOutputTokens,
+          },
+        );
+
+        results[currentIndex] = {
+          result,
+          usage: cloneUsageStats(llm.metadata.usage),
+        };
+
+        completed += 1;
+        onProgress?.(completed, files.length);
+      }
+    }),
+  );
+
+  return results;
+}
+
+function getDisplayResult(result: ExtractedFileResult, storeResults: Map<string, IngestFileResult>): IngestFileResult {
+  if (result.skipped || result.error) {
+    return toIngestFileResult(result, null);
+  }
+
+  return storeResults.get(result.file) ?? toIngestFileResult(result, emptyStoreResult());
+}
+
+function toIngestFileResult(result: ExtractedFileResult, storeResult: StoreResult | null): IngestFileResult {
+  return {
+    file: result.file,
+    skipped: result.skipped,
+    messageCount: result.messageCount,
+    entriesExtracted: result.entries.length,
+    chunkCount: result.chunkCount,
+    successfulChunks: result.successfulChunks,
+    failedChunks: result.failedChunks,
+    chunkDetails: result.chunkDetails,
+    storeResult,
+    warnings: result.warnings,
+    error: result.error,
+    durationMs: result.durationMs,
+  };
+}
+
+function emptyStoreResult(): StoreResult {
+  return {
+    stored: 0,
+    skipped: 0,
+    rejected: 0,
+  };
+}
+
+function cloneUsageStats(usage: UsageStats): UsageStats {
+  return {
+    calls: usage.calls,
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    cacheReadTokens: usage.cacheReadTokens,
+    cacheWriteTokens: usage.cacheWriteTokens,
+    totalTokens: usage.totalTokens,
+    totalCost: usage.totalCost,
+  };
+}
+
+function createEmptyUsageStats(): UsageStats {
+  return {
+    calls: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    totalTokens: 0,
+    totalCost: 0,
+  };
+}
+
+function sumUsageStats(total: UsageStats, usage: ExtractionExecutionResult): UsageStats {
+  total.calls += usage.usage.calls;
+  total.inputTokens += usage.usage.inputTokens;
+  total.outputTokens += usage.usage.outputTokens;
+  total.cacheReadTokens += usage.usage.cacheReadTokens;
+  total.cacheWriteTokens += usage.usage.cacheWriteTokens;
+  total.totalTokens += usage.usage.totalTokens;
+  total.totalCost += usage.usage.totalCost;
+  return total;
+}
+
+function toFileUsageSummary(usage: UsageStats, runningCost: number): FileUsageSummary {
+  return {
+    fileCost: usage.totalCost,
+    fileCalls: usage.calls,
+    runningCost,
+  };
+}
+
+function parseConcurrency(value: string): number {
+  const parsed = Number.parseInt(value, 10);
+
+  if (!Number.isInteger(parsed)) {
+    throw new InvalidArgumentError("Concurrency must be an integer.");
+  }
+
+  if (parsed < MIN_INGEST_CONCURRENCY || parsed > MAX_INGEST_CONCURRENCY) {
+    throw new InvalidArgumentError(`Concurrency must be between ${MIN_INGEST_CONCURRENCY} and ${MAX_INGEST_CONCURRENCY}.`);
+  }
+
+  return parsed;
 }

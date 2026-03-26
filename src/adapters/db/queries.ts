@@ -368,6 +368,40 @@ export async function findExistingHashes(executor: SqlExecutor, hashes: string[]
 }
 
 /**
+ * Finds which normalized content hashes already exist among active entries.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @param hashes - Candidate normalized hashes to check.
+ * @returns Set of normalized hashes that already exist.
+ */
+export async function findExistingNormHashes(executor: SqlExecutor, hashes: string[]): Promise<Set<string>> {
+  const normalizedHashes = dedupeStrings(hashes);
+  if (normalizedHashes.length === 0) {
+    return new Set();
+  }
+
+  const matches = new Set<string>();
+  for (const chunk of chunkValues(normalizedHashes, LOOKUP_CHUNK_SIZE)) {
+    const placeholders = chunk.map(() => "?").join(", ");
+    const result = await executor.execute({
+      sql: `
+        SELECT DISTINCT norm_content_hash
+        FROM entries
+        WHERE norm_content_hash IN (${placeholders})
+          AND ${ACTIVE_ENTRY_CLAUSE}
+      `,
+      args: chunk,
+    });
+
+    for (const row of result.rows) {
+      matches.add(readRequiredString(row, "norm_content_hash"));
+    }
+  }
+
+  return matches;
+}
+
+/**
  * Marks an active entry as retired.
  *
  * @param executor - SQL executor used for the update.

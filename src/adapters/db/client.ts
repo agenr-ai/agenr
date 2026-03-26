@@ -7,6 +7,7 @@ import type { DatabasePort } from "../../core/ports.js";
 import type { Entry } from "../../core/types.js";
 import {
   findExistingHashes,
+  findExistingNormHashes,
   getEntries,
   getEntry,
   getIngestLogEntry,
@@ -77,6 +78,10 @@ class LibsqlDatabase implements TransactionalDatabasePort {
 
   public async findExistingHashes(hashes: string[]): Promise<Set<string>> {
     return findExistingHashes(this.executor, hashes);
+  }
+
+  public async findExistingNormHashes(hashes: string[]): Promise<Set<string>> {
+    return findExistingNormHashes(this.executor, hashes);
   }
 
   public async retireEntry(id: string, reason?: string): Promise<boolean> {

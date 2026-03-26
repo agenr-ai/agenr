@@ -43,7 +43,16 @@ describe("registerIngestCommand", () => {
       throw new Error("Ingest command was not registered.");
     }
 
-    const parsed = ingestCommand.parseOptions(["/tmp/session.jsonl", "--verbose", "--dry-run", "--whole-file", "force", "--skip-embeddings"]);
+    const parsed = ingestCommand.parseOptions([
+      "/tmp/session.jsonl",
+      "--verbose",
+      "--dry-run",
+      "--whole-file",
+      "force",
+      "--skip-embeddings",
+      "--concurrency",
+      "6",
+    ]);
 
     expect(parsed.operands).toEqual(["/tmp/session.jsonl"]);
     expect(ingestCommand.opts()).toEqual(
@@ -52,6 +61,25 @@ describe("registerIngestCommand", () => {
         dryRun: true,
         wholeFile: "force",
         skipEmbeddings: true,
+        concurrency: 6,
+      }),
+    );
+  });
+
+  it("defaults ingest concurrency to 4", () => {
+    const program = new Command();
+    registerIngestCommand(program);
+
+    const ingestCommand = program.commands.find((command) => command.name() === "ingest");
+    if (!ingestCommand) {
+      throw new Error("Ingest command was not registered.");
+    }
+
+    ingestCommand.parseOptions(["/tmp/session.jsonl"]);
+
+    expect(ingestCommand.opts()).toEqual(
+      expect.objectContaining({
+        concurrency: 4,
       }),
     );
   });

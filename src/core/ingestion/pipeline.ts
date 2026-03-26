@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 
 import type { DatabasePort, EmbeddingPort, LlmPort, TranscriptPort } from "../ports.js";
-import { storeEntries } from "../store/pipeline.js";
-import type { StoreResult } from "../types.js";
+import { type StorePipelineOptions, storeEntriesDetailed } from "../store/pipeline.js";
+import type { StoreEntryInput, StoreResult } from "../types.js";
 import { extractFromTranscript } from "./extract.js";
 
 /**
@@ -58,6 +58,28 @@ export interface IngestFileResult {
 }
 
 /**
+ * Parse and extract result for a single transcript file before the store phase runs.
+ */
+export interface ExtractedFileResult {
+  file: string;
+  skipped: boolean;
+  messageCount: number;
+  entries: StoreEntryInput[];
+  chunkCount: number;
+  successfulChunks: number;
+  failedChunks: number;
+  chunkDetails: Array<{
+    chunkIndex: number;
+    messageRange: [number, number];
+    success: boolean;
+  }>;
+  warnings: string[];
+  error?: string;
+  durationMs: number;
+  fileHash: string;
+}
+
+/**
  * Ingests a single transcript file by parsing, extracting, and storing entries.
  *
  * @param filePath - Transcript file path to ingest.
@@ -75,32 +97,82 @@ export async function ingestFile(
   },
   options: IngestFileOptions = {},
 ): Promise<IngestFileResult> {
+  const extracted = await extractFile(
+    filePath,
+    {
+      transcript: ports.transcript,
+      llm: ports.llm,
+      db: ports.db,
+    },
+    options,
+  );
+
+  if (extracted.skipped || extracted.error) {
+    return toIngestFileResult(extracted, null);
+  }
+
+  const storeResults = await storeExtractedResults(
+    [extracted],
+    {
+      db: ports.db,
+      embedding: ports.embedding,
+    },
+    {
+      dryRun: options.dryRun,
+      verbose: options.verbose,
+      skipEmbeddings: options.skipEmbeddings,
+    },
+  );
+
+  return storeResults.get(filePath) ?? toIngestFileResult(extracted, emptyStoreResult());
+}
+
+async function computeFileHash(filePath: string): Promise<string> {
+  const content = await fs.readFile(filePath, "utf-8");
+  return createHash("sha256").update(content).digest("hex");
+}
+
+/**
+ * Runs the parse and extract phase for a single file without storing any entries.
+ *
+ * @param filePath - Transcript file path to extract.
+ * @param ports - Core ports used by the extract phase.
+ * @param options - Optional execution controls for parsing and extraction.
+ * @returns File-level extraction outcome with extracted entries and diagnostics.
+ */
+export async function extractFile(
+  filePath: string,
+  ports: {
+    transcript: TranscriptPort;
+    llm: LlmPort;
+    db: DatabasePort;
+  },
+  options: IngestFileOptions = {},
+): Promise<ExtractedFileResult> {
   const startedAt = Date.now();
   let messageCount = 0;
-  let entriesExtracted = 0;
   let chunkCount = 0;
   let successfulChunks = 0;
   let failedChunks = 0;
-  let chunkDetails: IngestFileResult["chunkDetails"] = [];
+  let chunkDetails: ExtractedFileResult["chunkDetails"] = [];
   const warnings: string[] = [];
+  const fileHash = await computeFileHash(filePath);
 
   try {
     const ingestLogEntry = await ports.db.getIngestLogEntry(filePath);
-    const fileHash = await computeFileHash(filePath);
-
     if (ingestLogEntry?.fileHash === fileHash) {
       return {
         file: filePath,
         skipped: true,
         messageCount: 0,
-        entriesExtracted: 0,
+        entries: [],
         chunkCount: 0,
         successfulChunks: 0,
         failedChunks: 0,
         chunkDetails: [],
-        storeResult: null,
         warnings: [],
         durationMs: Date.now() - startedAt,
+        fileHash,
       };
     }
 
@@ -115,35 +187,24 @@ export async function ingestFile(
       maxOutputTokens: options.maxOutputTokens,
       extractionContext: options.extractionContext,
     });
-    entriesExtracted = extraction.entries.length;
     chunkCount = extraction.chunks;
     successfulChunks = extraction.successfulChunks;
     failedChunks = extraction.failedChunks;
     chunkDetails = extraction.chunkDetails;
     warnings.push(...extraction.warnings);
 
-    const storeResult = await storeEntries(extraction.entries, ports.db, ports.embedding, {
-      dryRun: options.dryRun,
-      verbose: options.verbose,
-      skipEmbeddings: options.skipEmbeddings,
-    });
-
-    if (options.dryRun !== true) {
-      await ports.db.insertIngestLogEntry(filePath, fileHash, storeResult.stored);
-    }
-
     return {
       file: filePath,
       skipped: false,
       messageCount,
-      entriesExtracted,
+      entries: extraction.entries,
       chunkCount,
       successfulChunks,
       failedChunks,
       chunkDetails,
-      storeResult,
       warnings,
       durationMs: Date.now() - startedAt,
+      fileHash,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -153,20 +214,110 @@ export async function ingestFile(
       file: filePath,
       skipped: false,
       messageCount,
-      entriesExtracted,
+      entries: [],
       chunkCount,
       successfulChunks,
       failedChunks,
       chunkDetails,
-      storeResult: null,
       warnings,
       error: message,
       durationMs: Date.now() - startedAt,
+      fileHash,
     };
   }
 }
 
-async function computeFileHash(filePath: string): Promise<string> {
-  const content = await fs.readFile(filePath, "utf-8");
-  return createHash("sha256").update(content).digest("hex");
+/**
+ * Batches embedding and storage for entries extracted from multiple files.
+ *
+ * @param results - Successful extracted file results to finalize.
+ * @param ports - Core ports used by the store phase.
+ * @param options - Store pipeline controls, including dry-run handling.
+ * @returns Final per-file ingest results keyed by source file path.
+ */
+export async function storeExtractedResults(
+  results: ExtractedFileResult[],
+  ports: {
+    db: DatabasePort;
+    embedding: EmbeddingPort;
+  },
+  options: StorePipelineOptions = {},
+): Promise<Map<string, IngestFileResult>> {
+  const storeStartedAt = Date.now();
+  const finalResults = new Map<string, IngestFileResult>();
+  const successfulResults = results.filter((result) => result.skipped !== true && result.error === undefined);
+  const perFileStoreResults = new Map<string, StoreResult>();
+  const allEntries: StoreEntryInput[] = [];
+  const entryOwners: string[] = [];
+
+  for (const result of successfulResults) {
+    perFileStoreResults.set(result.file, emptyStoreResult());
+    for (const entry of result.entries) {
+      allEntries.push(entry);
+      entryOwners.push(result.file);
+    }
+  }
+
+  const storeResult = await storeEntriesDetailed(allEntries, ports.db, ports.embedding, options);
+  for (const detail of storeResult.details) {
+    const owner = entryOwners[detail.inputIndex];
+    if (!owner) {
+      continue;
+    }
+
+    const perFileStoreResult = perFileStoreResults.get(owner) ?? emptyStoreResult();
+    switch (detail.outcome) {
+      case "stored":
+        perFileStoreResult.stored += 1;
+        break;
+      case "skipped":
+        perFileStoreResult.skipped += 1;
+        break;
+      case "rejected":
+        perFileStoreResult.rejected += 1;
+        break;
+      case "dry_run":
+        break;
+    }
+    perFileStoreResults.set(owner, perFileStoreResult);
+  }
+
+  if (options.dryRun !== true) {
+    for (const result of successfulResults) {
+      const perFileStoreResult = perFileStoreResults.get(result.file) ?? emptyStoreResult();
+      await ports.db.insertIngestLogEntry(result.file, result.fileHash, perFileStoreResult.stored);
+    }
+  }
+
+  const storePhaseDurationMs = Date.now() - storeStartedAt;
+  for (const result of successfulResults) {
+    finalResults.set(result.file, toIngestFileResult(result, perFileStoreResults.get(result.file) ?? emptyStoreResult(), storePhaseDurationMs));
+  }
+
+  return finalResults;
+}
+
+function emptyStoreResult(): StoreResult {
+  return {
+    stored: 0,
+    skipped: 0,
+    rejected: 0,
+  };
+}
+
+function toIngestFileResult(result: ExtractedFileResult, storeResult: StoreResult | null, additionalDurationMs = 0): IngestFileResult {
+  return {
+    file: result.file,
+    skipped: result.skipped,
+    messageCount: result.messageCount,
+    entriesExtracted: result.entries.length,
+    chunkCount: result.chunkCount,
+    successfulChunks: result.successfulChunks,
+    failedChunks: result.failedChunks,
+    chunkDetails: result.chunkDetails,
+    storeResult,
+    warnings: result.warnings,
+    error: result.error,
+    durationMs: result.durationMs + additionalDurationMs,
+  };
 }

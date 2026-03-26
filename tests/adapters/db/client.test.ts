@@ -54,6 +54,21 @@ describe("createDatabase", () => {
     expect(matches).toEqual(new Set(["hash-existing"]));
   });
 
+  it("finds existing normalized hashes in batches and ignores missing hashes", async () => {
+    const database = await createTestDatabase();
+    const entry = createEntry({
+      norm_content_hash: "norm-existing",
+    });
+
+    await database.insertEntry(entry, createEmbedding(0, 1), "hash-existing");
+
+    const hashes = Array.from({ length: 205 }, (_, index) => `norm-${index}`);
+    hashes[23] = "norm-existing";
+    const matches = await database.findExistingNormHashes(["norm-existing", "missing", ...hashes]);
+
+    expect(matches).toEqual(new Set(["norm-existing"]));
+  });
+
   it("returns vector matches when vector search is supported", async () => {
     const database = await createTestDatabase();
     const left = createEntry({ subject: "vector left" });
@@ -91,6 +106,7 @@ describe("createDatabase", () => {
     const entry = createEntry({
       subject: "retired memory",
       content: "This entry should disappear from active queries.",
+      norm_content_hash: "retired-norm",
     });
 
     await database.insertEntry(entry, createEmbedding(0, 1), "retired-hash");
@@ -98,6 +114,7 @@ describe("createDatabase", () => {
 
     expect(await database.getEntry(entry.id)).toBeNull();
     expect(await database.findExistingHashes(["retired-hash"])).toEqual(new Set());
+    expect(await database.findExistingNormHashes(["retired-norm"])).toEqual(new Set());
     expect(await database.textSearch("disappear", 5)).toEqual([]);
   });
 

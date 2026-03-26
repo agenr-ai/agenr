@@ -31,6 +31,9 @@ export interface DatabasePort {
   /** Check if content hashes already exist. Returns the set of existing hashes. */
   findExistingHashes(hashes: string[]): Promise<Set<string>>;
 
+  /** Check if normalized content hashes already exist. Returns the set of existing hashes. */
+  findExistingNormHashes(hashes: string[]): Promise<Set<string>>;
+
   /** Mark an entry as retired. */
   retireEntry(id: string, reason?: string): Promise<boolean>;
 

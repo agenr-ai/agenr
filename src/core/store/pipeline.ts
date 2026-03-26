@@ -4,7 +4,7 @@ import type { DatabasePort, EmbeddingPort } from "../ports.js";
 import type { Entry, StoreEntryInput, StoreResult } from "../types.js";
 import { composeEmbeddingText } from "./embedding-text.js";
 import { computeContentHash, computeNormContentHash } from "./hashing.js";
-import { validateEntries } from "./validation.js";
+import { validateEntriesWithIndexes } from "./validation.js";
 
 /**
  * Runtime switches for the store pipeline.
@@ -18,8 +18,28 @@ export interface StorePipelineOptions {
 
 interface PreparedEntry {
   input: StoreEntryInput;
+  inputIndex: number;
   contentHash: string;
   normContentHash: string;
+}
+
+type StoreEntryOutcome = "stored" | "skipped" | "rejected" | "dry_run";
+type StoreEntryReason = "content_hash" | "norm_content_hash" | "validation" | "dry_run";
+
+/**
+ * Per-input store decision emitted by the store pipeline.
+ */
+export interface StoreEntryDetail {
+  inputIndex: number;
+  outcome: StoreEntryOutcome;
+  reason?: StoreEntryReason;
+}
+
+/**
+ * Store result enriched with per-input decisions.
+ */
+export interface StoreEntriesDetailedResult extends StoreResult {
+  details: StoreEntryDetail[];
 }
 
 interface TransactionCapableDatabasePort extends DatabasePort {
@@ -41,40 +61,73 @@ export async function storeEntries(
   embedding: EmbeddingPort,
   options: StorePipelineOptions = {},
 ): Promise<StoreResult> {
+  const result = await storeEntriesDetailed(inputs, db, embedding, options);
+  return {
+    stored: result.stored,
+    skipped: result.skipped,
+    rejected: result.rejected,
+  };
+}
+
+/**
+ * Validates, deduplicates, embeds, and persists a batch of entries while preserving per-input decisions.
+ *
+ * @param inputs - Candidate entries to store.
+ * @param db - Database port used for dedup checks and persistence.
+ * @param embedding - Embedding port used for batch vector generation.
+ * @param options - Optional pipeline execution flags.
+ * @returns Aggregate store counts plus per-input outcomes.
+ */
+export async function storeEntriesDetailed(
+  inputs: StoreEntryInput[],
+  db: DatabasePort,
+  embedding: EmbeddingPort,
+  options: StorePipelineOptions = {},
+): Promise<StoreEntriesDetailedResult> {
   if (inputs.length === 0) {
-    return { stored: 0, skipped: 0, rejected: 0 };
+    return { stored: 0, skipped: 0, rejected: 0, details: [] };
   }
 
-  const validation = validateEntries(inputs);
-  if (validation.valid.length === 0) {
-    return { stored: 0, skipped: 0, rejected: validation.rejected };
-  }
-
-  const preparedEntries = validation.valid.map((input) => ({
-    input,
-    contentHash: computeContentHash(input.content, input.source_file),
-    normContentHash: computeNormContentHash(input.content),
-  }));
-
-  const existingHashes = await db.findExistingHashes(preparedEntries.map((entry) => entry.contentHash));
-  const pendingEntries = preparedEntries.filter((entry) => !existingHashes.has(entry.contentHash));
-  const skipped = preparedEntries.length - pendingEntries.length;
-
-  if (pendingEntries.length === 0 || options.dryRun === true) {
+  const plan = await buildStorePlan(inputs, db);
+  if (plan.pendingEntries.length === 0) {
     return {
       stored: 0,
-      skipped,
-      rejected: validation.rejected,
+      skipped: plan.skipped,
+      rejected: plan.rejected,
+      details: sortStoreDetails(plan.details),
     };
   }
 
-  const embeddings = options.skipEmbeddings === true ? pendingEntries.map(() => []) : await embedPendingEntries(pendingEntries, embedding);
+  if (options.dryRun === true) {
+    return {
+      stored: 0,
+      skipped: plan.skipped,
+      rejected: plan.rejected,
+      details: sortStoreDetails([
+        ...plan.details,
+        ...plan.pendingEntries.map((entry) => ({
+          inputIndex: entry.inputIndex,
+          outcome: "dry_run" as const,
+          reason: "dry_run" as const,
+        })),
+      ]),
+    };
+  }
 
-  const stored = await persistEntries(db, pendingEntries, embeddings);
+  const pendingEntries = plan.pendingEntries;
+  const embeddings = options.skipEmbeddings === true ? pendingEntries.map(() => []) : await embedPendingEntries(pendingEntries, embedding);
+  await persistEntries(db, pendingEntries, embeddings);
   return {
-    stored,
-    skipped,
-    rejected: validation.rejected,
+    stored: pendingEntries.length,
+    skipped: plan.skipped,
+    rejected: plan.rejected,
+    details: sortStoreDetails([
+      ...plan.details,
+      ...pendingEntries.map((entry) => ({
+        inputIndex: entry.inputIndex,
+        outcome: "stored" as const,
+      })),
+    ]),
   };
 }
 
@@ -135,4 +188,94 @@ function buildEntry(preparedEntry: PreparedEntry, embedding: number[]): Entry {
 
 function hasTransactionSupport(db: DatabasePort): db is TransactionCapableDatabasePort {
   return typeof (db as Partial<TransactionCapableDatabasePort>).withTransaction === "function";
+}
+
+async function buildStorePlan(
+  inputs: StoreEntryInput[],
+  db: DatabasePort,
+): Promise<{
+  pendingEntries: PreparedEntry[];
+  skipped: number;
+  rejected: number;
+  details: StoreEntryDetail[];
+}> {
+  const validation = validateEntriesWithIndexes(inputs);
+  const details: StoreEntryDetail[] = validation.rejectedInputIndexes.map((inputIndex) => ({
+    inputIndex,
+    outcome: "rejected",
+    reason: "validation",
+  }));
+  const preparedEntries = validation.valid.map(({ input, inputIndex }) => ({
+    input,
+    inputIndex,
+    contentHash: computeContentHash(input.content, input.source_file),
+    normContentHash: computeNormContentHash(input.content),
+  }));
+
+  const afterBatchContentHash = dedupePreparedEntries(preparedEntries, "contentHash", "content_hash", details);
+  const existingHashes = await db.findExistingHashes(afterBatchContentHash.map((entry) => entry.contentHash));
+  const afterExistingContentHash = filterExistingPreparedEntries(afterBatchContentHash, existingHashes, "contentHash", "content_hash", details);
+
+  const afterBatchNormHash = dedupePreparedEntries(afterExistingContentHash, "normContentHash", "norm_content_hash", details);
+  const existingNormHashes = await db.findExistingNormHashes(afterBatchNormHash.map((entry) => entry.normContentHash));
+  const pendingEntries = filterExistingPreparedEntries(afterBatchNormHash, existingNormHashes, "normContentHash", "norm_content_hash", details);
+
+  return {
+    pendingEntries,
+    skipped: details.filter((detail) => detail.outcome === "skipped").length,
+    rejected: validation.rejected,
+    details,
+  };
+}
+
+function dedupePreparedEntries(
+  entries: PreparedEntry[],
+  field: "contentHash" | "normContentHash",
+  reason: Exclude<StoreEntryReason, "validation" | "dry_run">,
+  details: StoreEntryDetail[],
+): PreparedEntry[] {
+  const seen = new Set<string>();
+  const deduped: PreparedEntry[] = [];
+
+  for (const entry of entries) {
+    const key = entry[field];
+    if (seen.has(key)) {
+      details.push({
+        inputIndex: entry.inputIndex,
+        outcome: "skipped",
+        reason,
+      });
+      continue;
+    }
+
+    seen.add(key);
+    deduped.push(entry);
+  }
+
+  return deduped;
+}
+
+function filterExistingPreparedEntries(
+  entries: PreparedEntry[],
+  existing: Set<string>,
+  field: "contentHash" | "normContentHash",
+  reason: Exclude<StoreEntryReason, "validation" | "dry_run">,
+  details: StoreEntryDetail[],
+): PreparedEntry[] {
+  return entries.filter((entry) => {
+    if (!existing.has(entry[field])) {
+      return true;
+    }
+
+    details.push({
+      inputIndex: entry.inputIndex,
+      outcome: "skipped",
+      reason,
+    });
+    return false;
+  });
+}
+
+function sortStoreDetails(details: StoreEntryDetail[]): StoreEntryDetail[] {
+  return [...details].sort((left, right) => left.inputIndex - right.inputIndex);
 }
