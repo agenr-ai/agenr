@@ -5,6 +5,9 @@
 
 // ── Entry types ──────────────────────────────────────────────────────
 
+/**
+ * Supported durable knowledge entry categories.
+ */
 export const ENTRY_TYPES = [
   "fact",
   "decision",
@@ -15,11 +18,24 @@ export const ENTRY_TYPES = [
   "event",
   "reflection",
 ] as const;
+/**
+ * Union of all supported knowledge entry categories.
+ */
 export type EntryType = (typeof ENTRY_TYPES)[number];
 
+/**
+ * Supported recall durability levels.
+ */
 export const EXPIRY_LEVELS = ["core", "permanent", "temporary"] as const;
+
+/**
+ * Union of all supported recall durability levels.
+ */
 export type Expiry = (typeof EXPIRY_LEVELS)[number];
 
+/**
+ * Canonical stored knowledge record.
+ */
 export interface Entry {
   id: string;
   type: EntryType;
@@ -47,6 +63,9 @@ export interface Entry {
 
 // ── Store types ──────────────────────────────────────────────────────
 
+/**
+ * User-supplied fields for storing a new entry.
+ */
 export interface StoreEntryInput {
   type: EntryType;
   subject: string;
@@ -58,6 +77,9 @@ export interface StoreEntryInput {
   source_context?: string;
 }
 
+/**
+ * Summary of a store operation outcome.
+ */
 export interface StoreResult {
   stored: number;
   skipped: number;
@@ -66,6 +88,9 @@ export interface StoreResult {
 
 // ── Recall types ─────────────────────────────────────────────────────
 
+/**
+ * Inputs that shape a recall search.
+ */
 export interface RecallQuery {
   query: string;
   limit?: number;
@@ -74,11 +99,17 @@ export interface RecallQuery {
   types?: EntryType[];
 }
 
+/**
+ * Paginated recall response with scored entries.
+ */
 export interface RecallResult {
   entries: ScoredEntry[];
   total: number;
 }
 
+/**
+ * Entry paired with its recall ranking score.
+ */
 export interface ScoredEntry {
   entry: Entry;
   score: number;
@@ -86,6 +117,9 @@ export interface ScoredEntry {
 
 // ── Ingestion types ──────────────────────────────────────────────────
 
+/**
+ * Normalized transcript message emitted by transcript adapters.
+ */
 export interface TranscriptMessage {
   index: number;
   role: "user" | "assistant";
@@ -93,12 +127,18 @@ export interface TranscriptMessage {
   timestamp?: string;
 }
 
+/**
+ * Chunk of transcript text prepared for extraction or summarization.
+ */
 export interface TranscriptChunk {
   chunk_index: number;
   text: string;
   message_range: [number, number];
 }
 
+/**
+ * Parsed transcript with normalized messages and source metadata.
+ */
 export interface ParsedTranscript {
   messages: TranscriptMessage[];
   metadata: {

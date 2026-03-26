@@ -1,5 +1,10 @@
 import { Command } from "commander";
 
+/**
+ * Creates the root CLI program and applies global agenr metadata.
+ *
+ * @returns Configured Commander program instance.
+ */
 export function createProgram(): Command {
   const program = new Command();
 

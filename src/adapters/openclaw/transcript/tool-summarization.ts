@@ -1,18 +1,30 @@
+/**
+ * Normalized representation of a tool call embedded in transcript content.
+ */
 export interface ToolCallContext {
   name: string;
   args: Record<string, unknown>;
   id?: string;
 }
 
+/**
+ * Optional per-tool overrides for tool call summarization.
+ */
 export interface ToolSummaryOptions {
   overrides?: Readonly<Record<string, (call: ToolCallContext) => string | undefined>>;
 }
 
+/**
+ * Inclusion and truncation policy inputs for tool result filtering.
+ */
 export interface ToolResultPolicy {
   dropToolNames?: ReadonlySet<string>;
   keepToolNames?: ReadonlySet<string>;
 }
 
+/**
+ * Tool names whose raw results should be dropped from normalized transcripts by default.
+ */
 export const DEFAULT_TOOL_RESULT_DROP_NAMES = [
   "read",
   "web_fetch",
@@ -23,15 +35,30 @@ export const DEFAULT_TOOL_RESULT_DROP_NAMES = [
   "tts",
 ] as const;
 
+/**
+ * Tool names whose results are preserved by default because they often contain useful context.
+ */
 export const DEFAULT_TOOL_RESULT_KEEP_NAMES = ["web_search", "memory_search", "memory_get", "image"] as const;
 
 const DEFAULT_TOOL_RESULT_DROP_NAME_SET = new Set<string>(DEFAULT_TOOL_RESULT_DROP_NAMES);
 const DEFAULT_TOOL_RESULT_KEEP_NAME_SET = new Set<string>(DEFAULT_TOOL_RESULT_KEEP_NAMES);
 
+/**
+ * Safely narrows an unknown value to a plain record.
+ *
+ * @param value - Value to inspect.
+ * @returns Record form when the value is an object, otherwise `null`.
+ */
 export function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
+/**
+ * Returns a non-empty string when the input is a usable string value.
+ *
+ * @param value - Value to inspect.
+ * @returns Trimmed string presence indicator, or `undefined`.
+ */
 export function getString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value : undefined;
 }
@@ -116,6 +143,12 @@ function toolIdentifier(toolName: string, args: Record<string, unknown>): string
   return firstStringArgValue(args, 80) ?? "(unknown)";
 }
 
+/**
+ * Extracts tool call blocks from structured OpenClaw message content.
+ *
+ * @param content - Message content array to inspect.
+ * @returns Ordered list of normalized tool call contexts.
+ */
 export function extractToolCallBlocks(content: unknown): ToolCallContext[] {
   if (!Array.isArray(content)) {
     return [];
@@ -150,6 +183,13 @@ export function extractToolCallBlocks(content: unknown): ToolCallContext[] {
   return toolCalls;
 }
 
+/**
+ * Produces a concise transcript-safe summary for a tool call.
+ *
+ * @param call - Normalized tool call to summarize.
+ * @param options - Optional per-tool summary overrides.
+ * @returns Human-readable summary line for transcript storage.
+ */
 export function summarizeToolCall(call: ToolCallContext, options?: ToolSummaryOptions): string {
   const normalizedToolName = call.name.trim().toLowerCase();
   const override = options?.overrides?.[normalizedToolName];
@@ -260,12 +300,27 @@ export function summarizeToolCall(call: ToolCallContext, options?: ToolSummaryOp
   return `[called ${call.name}: ${relevantArgValue}]`;
 }
 
+/**
+ * Generates a placeholder message for filtered tool results.
+ *
+ * @param toolName - Tool that produced the result.
+ * @param args - Tool arguments used to build a stable identifier.
+ * @returns Placeholder text describing the omitted result.
+ */
 export function toolResultPlaceholder(toolName: string, args: Record<string, unknown>): string {
   const normalizedToolName = toolName.trim().length > 0 ? toolName.trim() : "unknown";
   const identifier = toolIdentifier(normalizedToolName, args);
   return `[tool result from ${normalizedToolName}: ${identifier} - filtered]`;
 }
 
+/**
+ * Decides whether a raw tool result should be preserved in the normalized transcript.
+ *
+ * @param toolName - Tool that produced the output, when known.
+ * @param text - Raw tool result text.
+ * @param policy - Optional policy overrides for drop and keep sets.
+ * @returns Keep decision and optional truncation limit.
+ */
 export function shouldKeepToolResult(
   toolName: string | undefined,
   text: string,

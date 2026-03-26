@@ -27,6 +27,12 @@ function normalizeWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
+/**
+ * Normalizes supported timestamp inputs to ISO-8601 strings.
+ *
+ * @param value - Candidate timestamp value from transcript data.
+ * @returns ISO timestamp when parsing succeeds, otherwise `undefined`.
+ */
 export function parseTimestampValue(value: unknown): string | undefined {
   if (typeof value === "string" && value.trim().length > 0) {
     const parsed = new Date(value);
@@ -46,6 +52,12 @@ export function parseTimestampValue(value: unknown): string | undefined {
   return undefined;
 }
 
+/**
+ * Extracts the first usable timestamp from a transcript record.
+ *
+ * @param record - Transcript record to inspect.
+ * @returns ISO timestamp when a supported timestamp field is present.
+ */
 export function extractTimestamp(record: Record<string, unknown>): string | undefined {
   for (const field of ["timestamp", "ts", "created_at", "createdAt", "time", "date"]) {
     const parsed = parseTimestampValue(record[field]);
@@ -57,6 +69,12 @@ export function extractTimestamp(record: Record<string, unknown>): string | unde
   return undefined;
 }
 
+/**
+ * Parses a single JSON line when it contains an object payload.
+ *
+ * @param line - Raw JSONL line text.
+ * @returns Parsed object record, or `null` when the line is empty or invalid.
+ */
 export function parseJsonObjectLine(line: string): Record<string, unknown> | null {
   if (!line || line.trim().length === 0) {
     return null;
@@ -74,6 +92,13 @@ export function parseJsonObjectLine(line: string): Record<string, unknown> | nul
   return null;
 }
 
+/**
+ * Iterates JSONL lines and invokes a callback for each valid object record.
+ *
+ * @param raw - Raw JSONL document contents.
+ * @param warnings - Warning accumulator for malformed lines.
+ * @param onRecord - Callback invoked with each parsed object record and line number.
+ */
 export function parseJsonlLines(
   raw: string,
   warnings: string[],
@@ -156,6 +181,12 @@ function extractTextBlocks(content: unknown): string[] {
   return textBlocks;
 }
 
+/**
+ * Collapses message content blocks into a single normalized text string.
+ *
+ * @param content - Raw OpenClaw message content.
+ * @returns Whitespace-normalized transcript text.
+ */
 export function normalizeMessageText(content: unknown): string {
   return normalizeWhitespace(extractTextBlocks(content).join("\n"));
 }
@@ -169,6 +200,13 @@ async function getFileMtimeTimestamp(filePath: string): Promise<string | undefin
   }
 }
 
+/**
+ * Resolves a fallback timestamp using candidate values, file metadata, and current time.
+ *
+ * @param filePath - Transcript file path used for metadata fallback.
+ * @param candidates - Candidate timestamps to try in order.
+ * @returns ISO timestamp guaranteed to be present.
+ */
 export async function resolveTimestampFallback(
   filePath: string,
   ...candidates: Array<string | undefined>
@@ -188,6 +226,14 @@ export async function resolveTimestampFallback(
   return new Date().toISOString();
 }
 
+/**
+ * Ensures every parsed message has a usable timestamp.
+ *
+ * @param filePath - Transcript file path used for fallback resolution.
+ * @param messages - Parsed transcript messages to update in place.
+ * @param options - Optional session-level timestamp hints.
+ * @returns The fallback timestamp applied to messages missing timestamps.
+ */
 export async function applyMessageTimestampFallbacks(
   filePath: string,
   messages: TranscriptMessage[],
@@ -382,7 +428,17 @@ function pushMessage(
   });
 }
 
+/**
+ * Parses OpenClaw JSONL session exports into normalized agenr transcripts.
+ */
 export class OpenClawTranscriptParser implements TranscriptPort {
+  /**
+   * Parses an OpenClaw JSONL transcript file into agenr transcript data.
+   *
+   * @param filePath - Absolute or relative path to the transcript file.
+   * @param options - Optional parser flags for verbose diagnostics.
+   * @returns Parsed transcript messages, warnings, and metadata.
+   */
   async parseFile(filePath: string, options?: { verbose?: boolean }): Promise<ParsedTranscript> {
     const raw = await fs.readFile(filePath, "utf8");
     const warnings: string[] = [];
@@ -587,4 +643,7 @@ export class OpenClawTranscriptParser implements TranscriptPort {
   }
 }
 
+/**
+ * Shared OpenClaw transcript parser instance for adapter wiring.
+ */
 export const openClawTranscriptParser = new OpenClawTranscriptParser();

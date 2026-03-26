@@ -9,6 +9,9 @@ import type { Entry } from "./types.js";
 
 // ── Database ─────────────────────────────────────────────────────────
 
+/**
+ * Storage contract for persisting, updating, and querying knowledge entries.
+ */
 export interface DatabasePort {
   /** Insert a new entry with its embedding. */
   insertEntry(entry: Entry, embedding: number[], contentHash: string): Promise<string>;
@@ -52,6 +55,9 @@ export interface DatabasePort {
 
 // ── Embeddings ───────────────────────────────────────────────────────
 
+/**
+ * Embedding provider contract used by core ranking and storage flows.
+ */
 export interface EmbeddingPort {
   /** Compute embeddings for one or more texts. */
   embed(texts: string[]): Promise<number[][]>;
@@ -59,6 +65,9 @@ export interface EmbeddingPort {
 
 // ── LLM ──────────────────────────────────────────────────────────────
 
+/**
+ * LLM provider contract for free-form and structured completions.
+ */
 export interface LlmPort {
   /** Generate a completion from a system prompt and user message. */
   complete(systemPrompt: string, userMessage: string): Promise<string>;
@@ -69,6 +78,9 @@ export interface LlmPort {
 
 // ── Transcript ───────────────────────────────────────────────────────
 
+/**
+ * Transcript source contract for parsing external session files into core types.
+ */
 export interface TranscriptPort {
   /** Parse a raw session file into a structured transcript. */
   parseFile(filePath: string, options?: { verbose?: boolean }): Promise<import("./types.js").ParsedTranscript>;
