@@ -61,11 +61,19 @@ docs/                        # Documentation
 The plugin at `adapters/openclaw/` is the most complex adapter but must stay disciplined. It is a **translator, not a brain.**
 
 Every piece of code in the plugin should be one of:
-1. **A core call** — `core.recall()`, `core.store()`, `core.sessionStart()`, etc.
-2. **OpenClaw protocol translation** — mapping OpenClaw events/hooks (`before_prompt_build`, `before_reset`, tool invocations) to core calls
-3. **OpenClaw-specific state** — session predecessor lookup, handoff dedup, tool registration
+1. **A core call** — `core.recall()`, `core.store()`, `core.handoffSession()`, etc.
+2. **OpenClaw protocol translation** — mapping OpenClaw events/hooks (`before_prompt_build`, `before_reset`, tool invocations) to core calls, and formatting core results for OpenClaw's prompt injection format
+3. **OpenClaw-specific logic** — session predecessor lookup (parsing OpenClaw session keys), transcript building from OpenClaw's message format, handoff dedup, tool registration
 
-If recall scoring, dedup logic, extraction, or importance rules appear in the plugin, they belong in `core/`. The plugin formats core results for OpenClaw's prompt injection format and manages session lifecycle - that's it.
+The test for where logic belongs: **would a Cursor or Windsurf adapter need the same logic?** If yes, it belongs in `core/`. If it's specific to how OpenClaw structures sessions, messages, or hooks, it belongs in the plugin.
+
+Examples:
+- Recall scoring and ranking → `core/` (any adapter needs this)
+- Handoff workflow (store fallback → LLM summarize → retire fallback) → `core/` (any adapter would do this)
+- Building a transcript from OpenClaw `.jsonl` messages → plugin (OpenClaw-specific format)
+- Parsing OpenClaw session keys to find predecessors → plugin (OpenClaw-specific)
+- Formatting recalled entries for system prompt injection → plugin (OpenClaw's prompt format)
+- Importance rules, dedup logic, extraction → `core/` (never in the plugin)
 
 File responsibilities:
 - `index.ts` — plugin entry point, hook registration, wiring
