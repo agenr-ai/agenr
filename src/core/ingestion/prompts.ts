@@ -106,12 +106,27 @@ const WHOLE_FILE_CALIBRATION_BLOCK = [
  * @param options - Prompt mode switches such as whole-file calibration.
  * @returns System prompt text for the extraction LLM.
  */
-export function buildExtractionSystemPrompt(options: { wholeFile?: boolean } = {}): string {
+export function buildExtractionSystemPrompt(options: { wholeFile?: boolean; extractionContext?: string; currentDate?: string } = {}): string {
   const calibrationBlock = options.wholeFile ? WHOLE_FILE_CALIBRATION_BLOCK : CHUNK_CALIBRATION_BLOCK;
+  const dateString = options.currentDate ?? new Date().toISOString().slice(0, 10);
+
+  const contextSection = options.extractionContext
+    ? [
+        "## User Context",
+        "",
+        options.extractionContext,
+        "",
+        "Use this to inform what is relevant, current, and worth extracting versus what is historical or stale.",
+        "",
+      ]
+    : [];
 
   return [
     "You are a highly selective memory extraction engine.",
     "",
+    `Current date: ${dateString}. Use transcript timestamps to judge recency and relevance.`,
+    "",
+    ...contextSection,
     "Default action: SKIP. Most transcript chunks should produce zero entries.",
     "Extract only durable knowledge that would still help months from now.",
     "Long-term memory is not a changelog, debug diary, release log, doc mirror, or conversation summary.",

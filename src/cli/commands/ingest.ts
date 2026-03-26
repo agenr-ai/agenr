@@ -107,6 +107,7 @@ export function registerIngestCommand(program: Command): void {
             skipEmbeddings: options.skipEmbeddings,
             contextWindowTokens: llm.metadata.contextWindowTokens,
             maxOutputTokens: llm.metadata.maxOutputTokens,
+            extractionContext: config.extractionContext,
           },
         );
 

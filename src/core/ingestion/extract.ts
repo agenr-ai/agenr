@@ -25,6 +25,8 @@ export interface ExtractionOptions {
   verbose?: boolean;
   /** Delay between chunk extractions in milliseconds. */
   interChunkDelayMs?: number;
+  /** User-provided context injected into the extraction system prompt. */
+  extractionContext?: string;
 }
 
 /**
@@ -116,7 +118,7 @@ export async function extractFromTranscript(
   const chunks = wholeFile
     ? [buildChunk(transcript.messages, 0, transcript.messages.length - 1, 0)]
     : chunkTranscript(transcript.messages, DEFAULT_MAX_TOKENS_PER_CHUNK);
-  const systemPrompt = buildExtractionSystemPrompt({ wholeFile });
+  const systemPrompt = buildExtractionSystemPrompt({ wholeFile, extractionContext: options.extractionContext });
   const entries: StoreEntryInput[] = [];
   const warnings: string[] = [];
   const chunkDetails: ExtractionResult["chunkDetails"] = [];

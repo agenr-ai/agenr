@@ -20,6 +20,8 @@ export interface IngestFileOptions {
   maxOutputTokens?: number;
   /** Skip embedding generation during store. */
   skipEmbeddings?: boolean;
+  /** User-provided extraction context from config. */
+  extractionContext?: string;
 }
 
 /**
@@ -111,6 +113,7 @@ export async function ingestFile(
       wholeFile: options.wholeFile,
       contextWindowTokens: options.contextWindowTokens,
       maxOutputTokens: options.maxOutputTokens,
+      extractionContext: options.extractionContext,
     });
     entriesExtracted = extraction.entries.length;
     chunkCount = extraction.chunks;

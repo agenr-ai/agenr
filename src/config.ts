@@ -38,6 +38,9 @@ export interface AgenrConfig {
   /** Embedding model. */
   embeddingModel?: string;
 
+  /** User-provided context injected into the extraction prompt. Helps the LLM understand what's relevant to this user. */
+  extractionContext?: string;
+
   /** Model override for extraction (the main LLM extraction pipeline). */
   extractionModel?: ModelConfig;
 
