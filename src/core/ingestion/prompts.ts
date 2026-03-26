@@ -6,7 +6,7 @@ type PreviouslyExtracted = {
   summary: string;
 };
 
-const GOOD_EXAMPLE_FACT = `{
+const GOOD_EXAMPLE_FACT_HIGH = `{
   "type": "fact",
   "subject": "jim martin penicillin allergy",
   "content": "Jim Martin is allergic to penicillin and related antibiotics, so medication suggestions must avoid them.",
@@ -16,9 +16,19 @@ const GOOD_EXAMPLE_FACT = `{
   "source_context": "User mentioned a medication constraint"
 }`;
 
+const GOOD_EXAMPLE_FACT_STANDARD = `{
+  "type": "fact",
+  "subject": "production postgres port",
+  "content": "The production Postgres instance runs on port 5433, not the default 5432. The staging instance uses the default port.",
+  "importance": "standard",
+  "expiry": "permanent",
+  "tags": ["infrastructure", "database"],
+  "source_context": "Connection details confirmed during deployment"
+}`;
+
 const GOOD_EXAMPLE_DECISION = `{
   "type": "decision",
-  "subject": "agenr package manager",
+  "subject": "project package manager",
   "content": "This project uses pnpm rather than npm for installs, scripts, and dependency changes.",
   "importance": "high",
   "expiry": "permanent",
@@ -26,20 +36,40 @@ const GOOD_EXAMPLE_DECISION = `{
   "source_context": "User stated a standing project convention"
 }`;
 
+const GOOD_EXAMPLE_PREFERENCE = `{
+  "type": "preference",
+  "subject": "communication style preference",
+  "content": "Jim prefers short, direct answers over verbose explanations and will ask follow-ups if he wants more detail.",
+  "importance": "standard",
+  "expiry": "permanent",
+  "tags": ["communication", "style"],
+  "source_context": "User stated how they want responses formatted"
+}`;
+
 const GOOD_EXAMPLE_LESSON = `{
   "type": "lesson",
-  "subject": "cli flag handling",
-  "content": "The CLI only honors --db on subcommands, so direct top-level invocation can silently ignore the database override.",
+  "subject": "cli flag handling gotcha",
+  "content": "The CLI only honors --db on subcommands that open a database connection. Passing --db to other subcommands silently ignores it, which caused a 30-minute debugging detour.",
   "importance": "standard",
   "expiry": "temporary",
-  "tags": ["cli", "debugging", "lesson"],
-  "source_context": "Durable behavior discovered during troubleshooting"
+  "tags": ["cli", "debugging"],
+  "source_context": "Surprising behavior discovered during troubleshooting"
+}`;
+
+const GOOD_EXAMPLE_EVENT = `{
+  "type": "event",
+  "subject": "auth service token migration",
+  "content": "Migrated the auth service from JWT to session tokens on 2026-02-15. The old JWT validation middleware was removed entirely.",
+  "importance": "low",
+  "expiry": "temporary",
+  "tags": ["migration", "auth"],
+  "source_context": "Migration completed and deployed to production"
 }`;
 
 const GOOD_EXAMPLE_TODO = `{
   "type": "todo",
-  "subject": "agenr semantic deduplication",
-  "content": "Implement semantic deduplication in the store pipeline so near-duplicate memories do not accumulate.",
+  "subject": "semantic deduplication implementation",
+  "content": "Implement semantic deduplication in the store pipeline so near-duplicate memories do not accumulate across ingestion runs.",
   "importance": "standard",
   "expiry": "temporary",
   "tags": ["dedup", "pipeline"],
@@ -55,7 +85,7 @@ const BAD_EXAMPLE_META = `BAD:
   "expiry": "temporary",
   "tags": ["session"]
 }
-WHY: Conversation summaries are meta and not durable knowledge.`;
+WHY: Conversation summaries are meta-narration, not durable knowledge.`;
 
 const BAD_EXAMPLE_PATCH = `BAD:
 {
@@ -79,25 +109,66 @@ const BAD_EXAMPLE_MEMORY = `BAD:
 }
 WHY: Replayed memory in an injected block is not fresh evidence unless the user confirms it live.`;
 
+const BAD_EXAMPLE_GENERIC = `BAD:
+{
+  "type": "lesson",
+  "subject": "api error debugging",
+  "content": "When debugging API errors, always check the response headers for rate limit information before retrying.",
+  "importance": "standard",
+  "expiry": "permanent",
+  "tags": ["api", "debugging"]
+}
+WHY: Generic advice not grounded in a specific discovery. This reads like a textbook tip, not something learned from a concrete experience in this session.`;
+
+const BAD_EXAMPLE_OBVIOUS = `BAD:
+{
+  "type": "lesson",
+  "subject": "http content type",
+  "content": "The fetch call needed a Content-Type header set to application/json for the POST request to work.",
+  "importance": "standard",
+  "expiry": "temporary",
+  "tags": ["http", "api"]
+}
+WHY: Standard API behavior, not a non-obvious insight. Extract only when the behavior was surprising or project-specific.`;
+
+const BAD_EXAMPLE_NEARDUPE = `BAD (near-duplicate pair — emit only one):
+{
+  "type": "lesson",
+  "subject": "dedup architecture",
+  "content": "The dedup pipeline uses a multi-stage approach with embedding similarity checks.",
+  ...
+}
+{
+  "type": "lesson",
+  "subject": "dedup simplicity",
+  "content": "Keep the dedup pipeline simple rather than over-engineering multi-stage processing.",
+  ...
+}
+WHY: These describe the same system from different angles. Merge into one entry that captures the decision and its rationale.`;
+
 const EMPTY_EXAMPLE = `If nothing qualifies, return exactly:
 {"entries":[]}`;
 
 const CHUNK_CALIBRATION_BLOCK = [
   "## Chunk Calibration",
   "",
-  "- Most chunks should emit 0 entries.",
-  "- Typical good output is 0-3 entries.",
-  "- Hard maximum is 8 entries, but hitting that cap should be rare.",
-  "- Prefer one strong entry over several overlapping paraphrases.",
+  "- Most chunks yield 0 entries. That is correct — do not force extractions.",
+  "- Typical good output per chunk: 0-2 entries.",
+  "- Hard maximum: 5 entries per chunk. Reaching this cap means you are probably over-extracting.",
+  "- One grounded, specific entry beats three paraphrases of the same insight. If two candidate entries would answer the same future recall query, keep only the stronger one.",
+  "- Before emitting a lesson, ask: is this genuinely a non-obvious insight from a specific experience, or is it standard practice anyone would know? If a software engineering textbook would contain this advice, skip it.",
+  "- Type balance: if your draft extractions are more than 50% any single type, re-examine. Are lessons actually preferences or decisions? Is a fact really an event?",
+  "- Importance guide: most entries should be standard. Use high only for entries where forgetting would cause meaningful harm. Use low for narrow-scope or single-project knowledge. If you never produce low entries, your threshold is miscalibrated.",
 ];
 
 const WHOLE_FILE_CALIBRATION_BLOCK = [
   "## Whole-File Calibration",
   "",
-  "When the full session fits in context, calibrate in three steps:",
-  "1. Session triage: decide whether this is mostly durable signal or mostly implementation churn before extracting anything.",
-  "2. Prioritize user messages: direct user facts, preferences, and committed constraints outrank assistant narration, tool chatter, and procedural steps.",
-  "3. Extract with the same constraints: whole-file mode gives broader context, not permission to lower the skip threshold.",
+  "When the full session fits in context, calibrate in four steps:",
+  "1. Session triage: decide whether this session contains durable signal or is mostly implementation churn before extracting anything. A pure debugging session may yield zero entries.",
+  "2. Prioritize user statements: direct user facts, preferences, stated decisions, and committed constraints outrank assistant narration, tool output, and procedural steps. The user saying 'I want X' is signal. The assistant executing X is not.",
+  "3. Check type balance: if your draft extractions are more than 50% any single type, re-examine. Are lessons actually preferences or decisions in disguise? Is a fact really an event? Type diversity usually indicates correct classification.",
+  "4. Check importance balance: most entries should be standard. Use high only for entries where getting this wrong would cause meaningful harm or wasted effort in a future session. Use low for context that is useful but narrow in scope or where the primary source of truth is elsewhere (code, docs, config).",
 ];
 
 /**
@@ -133,17 +204,30 @@ export function buildExtractionSystemPrompt(options: { wholeFile?: boolean; extr
     "",
     "## Types",
     "",
-    "- fact: Verified descriptive information about a person, project, system, or concept.",
-    "- decision: A lasting rule, requirement, convention, ownership assignment, or architecture choice that constrains future work.",
-    "- preference: A stated preference that should influence future behavior.",
-    "- lesson: A reusable insight learned from experience or debugging.",
-    "- event: A significant one-time milestone or life/project moment worth remembering.",
+    "- fact: Verified descriptive information about a person, project, system, or concept. What something IS.",
+    "- decision: A lasting rule, requirement, convention, ownership assignment, or architecture choice that constrains future work. What to DO going forward.",
+    "- preference: A stated preference, opinion, or value that should influence future behavior. What someone WANTS.",
+    "- lesson: A non-obvious insight learned from a specific experience that would prevent repeating a mistake or missing a shortcut. Must reference what went wrong or what was discovered — not general advice.",
+    "- event: A significant one-time milestone, transition, or life/project moment worth remembering. What HAPPENED.",
     "- relationship: A connection between named entities or people.",
     "- todo: A persistent future action that remains open beyond the immediate step.",
     "",
+    "## Type Selection",
+    "",
+    "When choosing a type, apply these tests in order:",
+    "1. Does it describe what something IS (a property, behavior, or state)? → fact",
+    "2. Does it prescribe what to DO going forward (a rule, convention, or constraint)? → decision",
+    "3. Does it state what someone WANTS or PREFERS? → preference",
+    "4. Does it record something that HAPPENED once (a migration, launch, or shift)? → event",
+    "5. Does it connect two NAMED things? → relationship",
+    "6. Does it flag an OPEN action? → todo",
+    "7. Only if none of the above: does it capture a non-obvious WHY learned from a specific failure or surprise? → lesson",
+    "",
+    "Lesson is the residual category, not the default. If an entry could be a fact or a lesson, it is a fact. If it could be a decision or a lesson, it is a decision.",
+    "",
     "## Commitment Posture",
     "",
-    "- Preserve durable commitments as decisions. Do not neutralize lasting directives into bland facts.",
+    "- Preserve durable commitments as decisions. Do not neutralize lasting directives into bland facts or generic lessons.",
     "- A decision must still matter after the current task succeeds. If it only helps finish this step, skip it.",
     "- Skip one-time instructions such as rename X, add field Y, update test Z, write doc Q, or send link R.",
     "- Use fact instead of decision when the transcript describes current system behavior without adopting it as a standing rule.",
@@ -154,8 +238,8 @@ export function buildExtractionSystemPrompt(options: { wholeFile?: boolean; extr
     "Classify every candidate as EPHEMERAL or DURABLE before extracting.",
     "",
     "- EPHEMERAL: routine bug fixes, temporary status, debug steps, issue choreography, branch chatter, tool narration, error output, current paths, and local sandbox state.",
-    "- DURABLE: personal facts, strong preferences, recurring lessons, architecture boundaries, standing workflow rules, ownership rules, and committed constraints.",
-    "- For coding sessions, default to skip. Extract only architecture boundaries, reusable lessons, stable system facts, or explicit standing rules.",
+    "- DURABLE: personal facts, system behavior facts, strong preferences, architecture decisions, standing workflow rules, ownership rules, committed constraints, and hard-won lessons from specific failures.",
+    "- For coding sessions, default to skip. Extract only architecture decisions, stable system facts, stated preferences, reusable lessons from specific failures, or explicit standing rules.",
     "- The 6-month test: if knowing this six months from now would still help an agent assist the user, it may be durable.",
     "",
     "## State And Transition Distinctions",
@@ -177,7 +261,7 @@ export function buildExtractionSystemPrompt(options: { wholeFile?: boolean; extr
     "- Implementation and debugging sessions usually yield 0-1 entries total.",
     "- Skip function-level semantics, handler internals, branch behavior, helper sequencing, and patch-site details unless they are promoted to a stable external contract or architecture boundary.",
     "- Local rebuild or restart advice, current DB paths, and sandbox troubleshooting are ephemeral unless adopted as standing operator policy.",
-    "- Descriptive tool behavior discovered during debugging is fact or lesson at most; use decision only for explicit human commitments.",
+    "- Descriptive tool behavior discovered during debugging is a fact, not a lesson, unless the behavior was genuinely surprising. Use decision only for explicit human commitments.",
     "",
     "## Doc-Shaped Sources",
     "",
@@ -207,15 +291,26 @@ export function buildExtractionSystemPrompt(options: { wholeFile?: boolean; extr
     "- One-off errors, stack traces, or transient failures with no lasting lesson.",
     "- Current issue framing and optimization goals that have not become durable policy.",
     "- Memory operation receipts such as 'stored 3 entries' or 'recalled 2 memories'.",
+    "- Generic best-practice advice that could appear in any tutorial or textbook. If the content reads like a fortune cookie or standard engineering advice, it is not specific enough to extract. If an entry wraps a specific story around a generic conclusion, the generic conclusion is not worth storing unless the entry also captures project-specific context that the generic advice alone would not convey.",
+    "",
+    "## Dedup Discipline",
+    "",
+    "Before adding each entry to your output, check: does this entry's core knowledge overlap with any entry you have already decided to emit?",
+    "",
+    "Two entries are near-duplicates when they would cause the same agent behavior when recalled, even if worded differently or assigned different types. Test: if you deleted one, would the other still cover the knowledge? If yes, keep only the more complete one.",
+    "",
+    "Facets of the same system or decision (for example, 'X uses approach A' and 'X avoids approach B because of A') are ONE entry, not two. Combine them.",
+    "",
+    "After generating all entries, do a final scan: if any pair shares the same subject noun or a closely related subject, justify keeping both or merge them.",
     "",
     "## Importance",
     "",
     'Rate each entry as one of three tiers: "high", "standard", or "low".',
     "",
-    "- high: Architecture decisions with rationale, strong preferences, critical personal facts, recurring lessons, foundational constraints.",
-    "- standard: Verified facts, routine decisions, basic preferences, and one-time context worth keeping.",
-    "- low: Tentative observations, uncertain context, or weak signals worth storing but not prioritizing.",
-    "- Most entries should be standard.",
+    "- high: Entries where forgetting would cause the agent to make a wrong architectural decision or repeat a costly mistake. Critical personal facts, foundational constraints, strong preferences that affect most interactions.",
+    "- standard: The default tier. Verified facts, routine decisions, basic preferences, confirmed lessons, and solid context.",
+    "- low: Narrow-scope knowledge that is real but limited in applicability. Single-project conventions, environment-specific behaviors, terminology clarifications, aspirational preferences without concrete constraints, or context where the primary source of truth is elsewhere (code, docs, config).",
+    "- Target distribution: roughly 15-25% high, 55-65% standard, 15-25% low. If you have zero low entries, re-evaluate your weakest standard entries — some likely belong in low.",
     "",
     "## Expiry",
     "",
@@ -235,12 +330,8 @@ export function buildExtractionSystemPrompt(options: { wholeFile?: boolean; extr
     "2. The knowledge is durable beyond the immediate step.",
     "3. The entry is not a near-duplicate of another output entry or previously extracted subject.",
     "4. The content states the durable knowledge itself, not the extraction process.",
-    "",
-    "## Final Dedup Pass",
-    "",
-    "- Merge near-duplicates into one canonical entry.",
-    "- Keep separate entries only when the durable state, durable value, relationship, or governing scope is genuinely different.",
-    "- If the same personal fact appears once with a generic subject and once with the person's name, keep the named-person version only.",
+    "5. The content names the specific system, tool, project, or situation — not generic advice that could apply to any software project.",
+    "6. A lesson must describe a specific failure, surprise, or non-obvious discovery — not standard engineering practice.",
     "",
     ...calibrationBlock,
     "",
@@ -250,20 +341,29 @@ export function buildExtractionSystemPrompt(options: { wholeFile?: boolean; extr
     'Use {"entries":[]} when nothing qualifies.',
     "",
     "Each entry must have:",
-    '{ "type": "fact|decision|preference|lesson|event|relationship|todo", "subject": "2-6 word topic noun phrase", "content": "clear declarative statement, min 20 chars", "importance": "high|standard|low", "expiry": "permanent|temporary", "tags": ["1-4", "lowercase", "tags"], "source_context": "one sentence, max 20 words" }',
+    '{ "type": "fact|decision|preference|lesson|event|relationship|todo", "subject": "2-6 word topic noun phrase", "content": "specific declarative statement grounded in the concrete system, project, or situation, min 20 chars", "importance": "high|standard|low", "expiry": "permanent|temporary", "tags": ["1-4", "lowercase", "tags"], "source_context": "one sentence, max 20 words" }',
     "",
     "## Few-Shot Examples",
     "",
-    "GOOD:",
-    GOOD_EXAMPLE_FACT,
+    "GOOD (fact, high — critical personal safety information):",
+    GOOD_EXAMPLE_FACT_HIGH,
     "",
-    "GOOD:",
+    "GOOD (fact, standard — useful infrastructure detail):",
+    GOOD_EXAMPLE_FACT_STANDARD,
+    "",
+    "GOOD (decision, high — foundational project constraint):",
     GOOD_EXAMPLE_DECISION,
     "",
-    "GOOD:",
+    "GOOD (preference, standard — communication style):",
+    GOOD_EXAMPLE_PREFERENCE,
+    "",
+    "GOOD (lesson, standard — specific surprising behavior):",
     GOOD_EXAMPLE_LESSON,
     "",
-    "GOOD:",
+    "GOOD (event, low — historical context, code is the source of truth now):",
+    GOOD_EXAMPLE_EVENT,
+    "",
+    "GOOD (todo, standard — acknowledged open work item):",
     GOOD_EXAMPLE_TODO,
     "",
     BAD_EXAMPLE_META,
@@ -271,6 +371,12 @@ export function buildExtractionSystemPrompt(options: { wholeFile?: boolean; extr
     BAD_EXAMPLE_PATCH,
     "",
     BAD_EXAMPLE_MEMORY,
+    "",
+    BAD_EXAMPLE_GENERIC,
+    "",
+    BAD_EXAMPLE_OBVIOUS,
+    "",
+    BAD_EXAMPLE_NEARDUPE,
     "",
     EMPTY_EXAMPLE,
   ].join("\n");
