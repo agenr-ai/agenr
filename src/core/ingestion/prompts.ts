@@ -131,20 +131,20 @@ const BAD_EXAMPLE_OBVIOUS = `BAD:
 }
 WHY: Standard API behavior, not a non-obvious insight. Extract only when the behavior was surprising or project-specific.`;
 
-const BAD_EXAMPLE_NEARDUPE = `BAD (near-duplicate pair — emit only one):
+const BAD_EXAMPLE_NEARDUPE = `BAD (near-duplicate pair - emit only one):
 {
-  "type": "lesson",
-  "subject": "dedup architecture",
-  "content": "The dedup pipeline uses a multi-stage approach with embedding similarity checks.",
+  "type": "preference",
+  "subject": "architecture priority",
+  "content": "Jim prefers getting the system design right before rushing implementation.",
   ...
 }
 {
-  "type": "lesson",
-  "subject": "dedup simplicity",
-  "content": "Keep the dedup pipeline simple rather than over-engineering multi-stage processing.",
+  "type": "decision",
+  "subject": "agenr architecture priority",
+  "content": "Agenr planning should prioritize correct system boundaries over quick implementation churn.",
   ...
 }
-WHY: These describe the same system from different angles. Merge into one entry that captures the decision and its rationale.`;
+WHY: These express the same underlying policy from two angles. Emit one entry only. Use preference when the transcript is mainly about a named person's priority or value. Use decision only when the transcript shows the project adopted it as a standing rule.`;
 
 const EMPTY_EXAMPLE = `If nothing qualifies, return exactly:
 {"entries":[]}`;
@@ -152,13 +152,14 @@ const EMPTY_EXAMPLE = `If nothing qualifies, return exactly:
 const CHUNK_CALIBRATION_BLOCK = [
   "## Chunk Calibration",
   "",
-  "- Most chunks yield 0 entries. That is correct — do not force extractions.",
+  "- Most chunks yield 0 entries. That is correct - do not force extractions.",
   "- Typical good output per chunk: 0-2 entries.",
   "- Hard maximum: 5 entries per chunk. Reaching this cap means you are probably over-extracting.",
   "- One grounded, specific entry beats three paraphrases of the same insight. If two candidate entries would answer the same future recall query, keep only the stronger one.",
   "- Before emitting a lesson, ask: is this genuinely a non-obvious insight from a specific experience, or is it standard practice anyone would know? If a software engineering textbook would contain this advice, skip it.",
-  "- Type balance: if your draft extractions are more than 50% any single type, re-examine. Are lessons actually preferences or decisions? Is a fact really an event?",
-  "- Importance guide: most entries should be standard. Use high only for entries where forgetting would cause meaningful harm. Use low for narrow-scope or single-project knowledge. If you never produce low entries, your threshold is miscalibrated.",
+  "- Type balance: if your draft extractions are more than 50% any single type, re-examine. Are lessons actually preferences or decisions? Are decisions actually personal priorities or values?",
+  "- Importance guide: start every accepted entry at standard. Promote to high only when forgetting it would likely cause a wrong cross-session action, violate a foundational constraint, or repeat a costly mistake. Use low for narrow-scope or environment-specific knowledge, especially when code, docs, or config remain the source of truth. Some sessions will have zero low entries.",
+  "- If more than 30% of your accepted entries are high, re-rate the weakest highs.",
 ];
 
 const WHOLE_FILE_CALIBRATION_BLOCK = [
@@ -167,8 +168,8 @@ const WHOLE_FILE_CALIBRATION_BLOCK = [
   "When the full session fits in context, calibrate in four steps:",
   "1. Session triage: decide whether this session contains durable signal or is mostly implementation churn before extracting anything. A pure debugging session may yield zero entries.",
   "2. Prioritize user statements: direct user facts, preferences, stated decisions, and committed constraints outrank assistant narration, tool output, and procedural steps. The user saying 'I want X' is signal. The assistant executing X is not.",
-  "3. Check type balance: if your draft extractions are more than 50% any single type, re-examine. Are lessons actually preferences or decisions in disguise? Is a fact really an event? Type diversity usually indicates correct classification.",
-  "4. Check importance balance: most entries should be standard. Use high only for entries where getting this wrong would cause meaningful harm or wasted effort in a future session. Use low for context that is useful but narrow in scope or where the primary source of truth is elsewhere (code, docs, config).",
+  "3. Check type balance: if your draft extractions are more than 50% any single type, re-examine. Are lessons actually preferences or decisions in disguise? Are decisions actually personal priorities or values? Is a fact really an event?",
+  "4. Check importance balance: standard is the default. Promote to high only when forgetting the entry would likely cause a wrong cross-session action, violate a foundational constraint, or repeat a costly mistake. Use low for narrow-scope durable context, especially when code, docs, or config remain the primary source of truth.",
 ];
 
 /**
@@ -207,23 +208,28 @@ export function buildExtractionSystemPrompt(options: { wholeFile?: boolean; extr
     "- fact: Verified descriptive information about a person, project, system, or concept. What something IS.",
     "- decision: A lasting rule, requirement, convention, ownership assignment, or architecture choice that constrains future work. What to DO going forward.",
     "- preference: A stated preference, opinion, or value that should influence future behavior. What someone WANTS.",
-    "- lesson: A non-obvious insight learned from a specific experience that would prevent repeating a mistake or missing a shortcut. Must reference what went wrong or what was discovered — not general advice.",
+    "- lesson: A non-obvious insight learned from a specific experience that would prevent repeating a mistake or missing a shortcut. Must reference what went wrong or what was discovered - not general advice.",
     "- event: A significant one-time milestone, transition, or life/project moment worth remembering. What HAPPENED.",
     "- relationship: A connection between named entities or people.",
     "- todo: A persistent future action that remains open beyond the immediate step.",
     "",
     "## Type Selection",
     "",
+    "Before the ordered type checks, apply this discriminator:",
+    "- If the statement is mainly about a named person's desired style, values, priorities, or opinions, classify it as preference even if it implies future behavior.",
+    "- Use decision only when the transcript shows the project, team, or system adopted the rule as a standing policy or architecture constraint.",
+    "- Never emit both a preference and a decision for the same underlying policy.",
+    "",
     "When choosing a type, apply these tests in order:",
     "1. Does it describe what something IS (a property, behavior, or state)? → fact",
-    "2. Does it prescribe what to DO going forward (a rule, convention, or constraint)? → decision",
-    "3. Does it state what someone WANTS or PREFERS? → preference",
+    "2. Does it state what someone WANTS or PREFERS? → preference",
+    "3. Does it prescribe what to DO going forward because the project, team, or system has adopted it? → decision",
     "4. Does it record something that HAPPENED once (a migration, launch, or shift)? → event",
     "5. Does it connect two NAMED things? → relationship",
     "6. Does it flag an OPEN action? → todo",
     "7. Only if none of the above: does it capture a non-obvious WHY learned from a specific failure or surprise? → lesson",
     "",
-    "Lesson is the residual category, not the default. If an entry could be a fact or a lesson, it is a fact. If it could be a decision or a lesson, it is a decision.",
+    "Lesson is the residual category, not the default. If an entry could be a fact or a lesson, it is a fact. If it could be a preference or a decision, prefer preference unless the transcript clearly establishes an adopted standing rule.",
     "",
     "## Commitment Posture",
     "",
@@ -307,10 +313,11 @@ export function buildExtractionSystemPrompt(options: { wholeFile?: boolean; extr
     "",
     'Rate each entry as one of three tiers: "high", "standard", or "low".',
     "",
-    "- high: Entries where forgetting would cause the agent to make a wrong architectural decision or repeat a costly mistake. Critical personal facts, foundational constraints, strong preferences that affect most interactions.",
-    "- standard: The default tier. Verified facts, routine decisions, basic preferences, confirmed lessons, and solid context.",
+    "- Default every accepted entry to standard. Promotion requires a clear reason.",
+    "- high: Entries where forgetting would likely cause a materially wrong cross-session action, violate a foundational constraint, create a safety-critical error, or repeat a costly mistake.",
+    "- standard: The default tier. Verified facts, routine decisions, stated preferences, confirmed lessons, and solid durable context.",
     "- low: Narrow-scope knowledge that is real but limited in applicability. Single-project conventions, environment-specific behaviors, terminology clarifications, aspirational preferences without concrete constraints, or context where the primary source of truth is elsewhere (code, docs, config).",
-    "- Target distribution: roughly 15-25% high, 55-65% standard, 15-25% low. If you have zero low entries, re-evaluate your weakest standard entries — some likely belong in low.",
+    "- Some sessions will have zero low entries. That is acceptable. If more than 30% of accepted entries are high, re-rate the weakest highs.",
     "",
     "## Expiry",
     "",
@@ -330,8 +337,8 @@ export function buildExtractionSystemPrompt(options: { wholeFile?: boolean; extr
     "2. The knowledge is durable beyond the immediate step.",
     "3. The entry is not a near-duplicate of another output entry or previously extracted subject.",
     "4. The content states the durable knowledge itself, not the extraction process.",
-    "5. The content names the specific system, tool, project, or situation — not generic advice that could apply to any software project.",
-    "6. A lesson must describe a specific failure, surprise, or non-obvious discovery — not standard engineering practice.",
+    "5. The content names the specific person, system, tool, project, or situation - not generic advice that could apply to any software project.",
+    "6. A lesson must describe a specific failure, surprise, or non-obvious discovery - not standard engineering practice.",
     "",
     ...calibrationBlock,
     "",
@@ -345,25 +352,25 @@ export function buildExtractionSystemPrompt(options: { wholeFile?: boolean; extr
     "",
     "## Few-Shot Examples",
     "",
-    "GOOD (fact, high — critical personal safety information):",
+    "GOOD (fact, high - critical personal safety information):",
     GOOD_EXAMPLE_FACT_HIGH,
     "",
-    "GOOD (fact, standard — useful infrastructure detail):",
+    "GOOD (fact, standard - useful infrastructure detail):",
     GOOD_EXAMPLE_FACT_STANDARD,
     "",
-    "GOOD (decision, high — foundational project constraint):",
+    "GOOD (decision, high - foundational project constraint):",
     GOOD_EXAMPLE_DECISION,
     "",
-    "GOOD (preference, standard — communication style):",
+    "GOOD (preference, standard - communication style):",
     GOOD_EXAMPLE_PREFERENCE,
     "",
-    "GOOD (lesson, standard — specific surprising behavior):",
+    "GOOD (lesson, standard - specific surprising behavior):",
     GOOD_EXAMPLE_LESSON,
     "",
-    "GOOD (event, low — historical context, code is the source of truth now):",
+    "GOOD (event, low - historical context, code is the source of truth now):",
     GOOD_EXAMPLE_EVENT,
     "",
-    "GOOD (todo, standard — acknowledged open work item):",
+    "GOOD (todo, standard - acknowledged open work item):",
     GOOD_EXAMPLE_TODO,
     "",
     BAD_EXAMPLE_META,

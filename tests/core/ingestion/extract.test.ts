@@ -207,6 +207,19 @@ describe("extractFromTranscript", () => {
 
     expect((llm.completeJson as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).not.toContain("## Whole-File Calibration");
   });
+
+  it("uses a conservative system prompt budget when resolving whole-file auto mode", async () => {
+    const transcript = buildTranscript([buildMessage(0, "user", "x".repeat(18_400))]);
+    const llm = buildLlm(async () => ({ entries: [] }));
+
+    await extractFromTranscript(transcript, llm, {
+      contextWindowTokens: 10_000,
+      maxOutputTokens: 1_000,
+      interChunkDelayMs: 0,
+    });
+
+    expect((llm.completeJson as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).not.toContain("## Whole-File Calibration");
+  });
 });
 
 describe("chunkTranscript", () => {

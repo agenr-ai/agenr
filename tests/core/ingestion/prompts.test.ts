@@ -37,6 +37,27 @@ describe("buildExtractionSystemPrompt", () => {
     expect(prompt).toContain("## Whole-File Calibration");
     expect(prompt).toContain("Session triage");
   });
+
+  it("classifies personal priorities as preferences before decisions", () => {
+    const prompt = buildExtractionSystemPrompt();
+    const preferenceCheck = "2. Does it state what someone WANTS or PREFERS? → preference";
+    const decisionCheck = "3. Does it prescribe what to DO going forward because the project, team, or system has adopted it? → decision";
+
+    expect(prompt).toContain(
+      "If the statement is mainly about a named person's desired style, values, priorities, or opinions, classify it as preference even if it implies future behavior.",
+    );
+    expect(prompt).toContain("Never emit both a preference and a decision for the same underlying policy.");
+    expect(prompt.indexOf(preferenceCheck)).toBeGreaterThan(-1);
+    expect(prompt.indexOf(decisionCheck)).toBeGreaterThan(prompt.indexOf(preferenceCheck));
+  });
+
+  it("treats standard as the default importance tier and caps high inflation", () => {
+    const prompt = buildExtractionSystemPrompt();
+
+    expect(prompt).toContain("Default every accepted entry to standard. Promotion requires a clear reason.");
+    expect(prompt).toContain("If more than 30% of accepted entries are high, re-rate the weakest highs.");
+    expect(prompt).not.toContain("Target distribution: roughly 15-25% high, 55-65% standard, 15-25% low.");
+  });
 });
 
 describe("buildChunkPrompt", () => {
