@@ -1,9 +1,7 @@
 node_modules/
 dist/
 coverage/
-docs/internal/
 *.db
 *.db-shm
 *.db-wal
 .DS_Store
-.vscode/
