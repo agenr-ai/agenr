@@ -252,7 +252,11 @@ If `--skip-embeddings` is set, stored entries get empty vectors.
 
 The lower-level store pipeline can include `source_file` in the exact content hash when callers provide it.
 
-The current ingest CLI does not stamp `source_file` onto extracted entries before storage, so ingest-produced entries are effectively deduped by content and normalized content rather than file-aware exact hashes. The file path is still preserved in the ingest log.
+The ingest pipeline stamps each extracted entry with its transcript file path before dedup and store. That means:
+
+- stored entries retain source-file provenance
+- exact-match content hashes can be source-file-aware
+- the ingest log still tracks file-level change detection separately
 
 ## 7. Ingest log semantics
 

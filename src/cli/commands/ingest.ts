@@ -10,6 +10,7 @@ import {
   dedupBatch,
   discoverFiles,
   extractFile,
+  getDefaultDedupSimilarityThreshold,
   storeExtractedResults,
   type DedupResult,
   type ExtractedFileResult,
@@ -601,7 +602,7 @@ function buildEmptyDedupResult(): DedupResult {
     singletonsPassedThrough: 0,
     llmCalls: 0,
     clusterDetails: [],
-    similarityThreshold: 0.85,
+    similarityThreshold: getDefaultDedupSimilarityThreshold(),
   };
 }
 

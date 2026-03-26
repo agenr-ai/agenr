@@ -59,6 +59,7 @@ describe("extractFile", () => {
       warnings: ["Parser warning"],
     });
     expect(result.entries).toHaveLength(1);
+    expect(result.entries[0]?.source_file).toBe(filePath);
     expect(db.insertions).toEqual([]);
     expect(db.ingestLogInsertions).toEqual([]);
     expect(transcript.parseCalls).toEqual([filePath]);
@@ -355,6 +356,7 @@ describe("ingestFile", () => {
         entryCount: 1,
       },
     ]);
+    expect(db.insertions[0]?.entry.source_file).toBe(filePath);
   });
 
   it("still skips an unchanged file", async () => {

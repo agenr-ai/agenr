@@ -4,13 +4,23 @@ import { composeEmbeddingText } from "../store/embedding-text.js";
 import type { StoreEntryInput } from "../types.js";
 
 const DEFAULT_SIMILARITY_THRESHOLD = 0.75;
+/** Logger used for verbose semantic dedup diagnostics. */
 const logger = createLogger("ingestion:dedup");
+
+/**
+ * Returns the default cosine similarity threshold used for semantic dedup clustering.
+ *
+ * @returns Default clustering threshold for within-batch semantic dedup.
+ */
+export function getDefaultDedupSimilarityThreshold(): number {
+  return DEFAULT_SIMILARITY_THRESHOLD;
+}
 
 /**
  * Runtime controls for within-batch semantic deduplication.
  */
 export interface DedupOptions {
-  /** Cosine similarity threshold for clustering. Default: 0.85. */
+  /** Cosine similarity threshold for clustering. Default: 0.75. */
   similarityThreshold?: number;
   /** Skip LLM arbitration and pass every extracted entry through. */
   skip?: boolean;

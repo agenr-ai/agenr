@@ -235,12 +235,16 @@ export async function extractFile(
     failedChunks = extraction.failedChunks;
     chunkDetails = extraction.chunkDetails;
     warnings.push(...extraction.warnings);
+    const extractedEntries = extraction.entries.map((entry) => ({
+      ...entry,
+      source_file: entry.source_file ?? filePath,
+    }));
 
     return {
       file: filePath,
       skipped: false,
       messageCount,
-      entries: extraction.entries,
+      entries: extractedEntries,
       chunkCount,
       successfulChunks,
       failedChunks,
