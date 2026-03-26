@@ -1,6 +1,3 @@
-import { createHash } from "node:crypto";
-import fs from "node:fs/promises";
-
 import type { DatabasePort, EmbeddingPort, LlmPort, TranscriptPort } from "../ports.js";
 import { type StoreEntriesDetailedResult, type StoreEntriesOptions, type StorePipelineOptions, storeEntriesDetailed } from "../store/pipeline.js";
 import type { StoreEntryInput, StoreResult } from "../types.js";
@@ -83,11 +80,21 @@ export interface ExtractedFileResult {
 }
 
 /**
+ * Stable source metadata required to ingest one transcript file.
+ */
+export interface IngestSource {
+  /** Absolute or relative transcript file path. */
+  filePath: string;
+  /** Stable content hash computed by the caller. */
+  fileHash: string;
+}
+
+/**
  * Runtime switches for finalizing extracted file batches into stored entries.
  */
 export interface StoreExtractedResultsOptions extends StorePipelineOptions {
-  /** Precomputed embeddings keyed by surviving entry object identity. */
-  precomputedEmbeddings?: Map<StoreEntryInput, number[]>;
+  /** Precomputed embeddings aligned to the flattened successful entry order. */
+  precomputedEmbeddings?: number[][];
   /** Optional progress hook for ingest-specific bulk write phases. */
   onBulkWriteProgress?: (event: StoreExtractedResultsProgressEvent) => void;
 }
@@ -103,13 +110,13 @@ export interface StoreExtractedResultsProgressEvent {
 /**
  * Ingests a single transcript file by parsing, extracting, and storing entries.
  *
- * @param filePath - Transcript file path to ingest.
+ * @param source - Source file path and precomputed content hash.
  * @param ports - Core ports used by the ingest pipeline.
  * @param options - Optional execution controls for parsing, extraction, and storage.
  * @returns File-level ingest outcome with parse, extract, and store statistics.
  */
 export async function ingestFile(
-  filePath: string,
+  source: IngestSource,
   ports: {
     transcript: TranscriptPort;
     llm: LlmPort;
@@ -120,7 +127,7 @@ export async function ingestFile(
   options: IngestFileOptions = {},
 ): Promise<IngestFileResult> {
   const extracted = await extractFile(
-    filePath,
+    source,
     {
       transcript: ports.transcript,
       llm: ports.llm,
@@ -137,16 +144,6 @@ export async function ingestFile(
     skip: options.skipDedup,
     verbose: options.verbose,
   });
-  const precomputedEmbeddings = new Map(
-    dedupResult.survivors.map((entry, index) => {
-      const embedding = dedupResult.embeddings[index];
-      if (!embedding) {
-        throw new Error(`Missing precomputed embedding for dedup survivor ${index}.`);
-      }
-
-      return [entry, embedding];
-    }),
-  );
   const dedupedExtracted: ExtractedFileResult = {
     ...extracted,
     entries: dedupResult.survivors,
@@ -162,29 +159,23 @@ export async function ingestFile(
       dryRun: options.dryRun,
       verbose: options.verbose,
       skipEmbeddings: options.skipEmbeddings,
-      precomputedEmbeddings,
+      precomputedEmbeddings: dedupResult.embeddings,
     },
   );
 
-  return storeResults.get(filePath) ?? toIngestFileResult(dedupedExtracted, emptyStoreResult());
-}
-
-/** Computes the SHA-256 digest for a transcript file. */
-async function computeFileHash(filePath: string): Promise<string> {
-  const content = await fs.readFile(filePath, "utf-8");
-  return createHash("sha256").update(content).digest("hex");
+  return storeResults.get(source.filePath) ?? toIngestFileResult(dedupedExtracted, emptyStoreResult());
 }
 
 /**
  * Runs the parse and extract phase for a single file without storing any entries.
  *
- * @param filePath - Transcript file path to extract.
+ * @param source - Source file path and precomputed content hash.
  * @param ports - Core ports used by the extract phase.
  * @param options - Optional execution controls for parsing and extraction.
  * @returns File-level extraction outcome with extracted entries and diagnostics.
  */
 export async function extractFile(
-  filePath: string,
+  source: IngestSource,
   ports: {
     transcript: TranscriptPort;
     llm: LlmPort;
@@ -193,13 +184,14 @@ export async function extractFile(
   options: IngestFileOptions = {},
 ): Promise<ExtractedFileResult> {
   const startedAt = Date.now();
+  const filePath = source.filePath;
   let messageCount = 0;
   let chunkCount = 0;
   let successfulChunks = 0;
   let failedChunks = 0;
   let chunkDetails: ExtractedFileResult["chunkDetails"] = [];
   const warnings: string[] = [];
-  const fileHash = await computeFileHash(filePath);
+  const fileHash = source.fileHash;
 
   try {
     const ingestLogEntry = await ports.db.getIngestLogEntry(filePath);
@@ -307,7 +299,7 @@ export async function storeExtractedResults(
 
   const storeOptions: StoreEntriesOptions = {
     ...options,
-    precomputedEmbeddings: alignPrecomputedEmbeddings(allEntries, options.precomputedEmbeddings),
+    precomputedEmbeddings: options.precomputedEmbeddings,
   };
 
   const shouldUseBulkWrites = options.dryRun !== true && allEntries.length > 0;
@@ -371,22 +363,6 @@ export async function storeExtractedResults(
   }
 
   return finalResults;
-}
-
-/** Aligns identity-keyed precomputed embeddings to flattened store input order. */
-function alignPrecomputedEmbeddings(entries: StoreEntryInput[], precomputedEmbeddings?: Map<StoreEntryInput, number[]>): number[][] | undefined {
-  if (!precomputedEmbeddings) {
-    return undefined;
-  }
-
-  return entries.map((entry, index) => {
-    const vector = precomputedEmbeddings.get(entry);
-    if (!vector) {
-      throw new Error(`Missing precomputed embedding for extracted entry ${index}.`);
-    }
-
-    return vector;
-  });
 }
 
 /** Creates an empty store result accumulator. */

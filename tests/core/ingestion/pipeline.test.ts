@@ -40,7 +40,10 @@ describe("extractFile", () => {
     ]);
 
     const result = await extractFile(
-      filePath,
+      {
+        filePath,
+        fileHash,
+      },
       {
         transcript,
         llm,
@@ -77,7 +80,7 @@ describe("extractFile", () => {
     const transcript = new MockTranscriptPort(buildTranscript());
     const llm = new MockLlmPort([{ entries: [] }]);
 
-    const result = await extractFile(filePath, { transcript, llm, db });
+    const result = await extractFile({ filePath, fileHash }, { transcript, llm, db });
 
     expect(result).toMatchObject({
       file: filePath,
@@ -96,7 +99,7 @@ describe("extractFile", () => {
     const transcript = new MockTranscriptPort(new Error("Malformed transcript"));
     const llm = new MockLlmPort([{ entries: [] }]);
 
-    const result = await extractFile(filePath, { transcript, llm, db });
+    const result = await extractFile({ filePath, fileHash }, { transcript, llm, db });
 
     expect(result).toMatchObject({
       file: filePath,
@@ -227,10 +230,10 @@ describe("storeExtractedResults", () => {
         entries: [secondEntry],
       }),
     ];
-    const precomputedEmbeddings = new Map<StoreEntryInput, number[]>([
-      [firstEntry, [10, 11]],
-      [secondEntry, [20, 21]],
-    ]);
+    const precomputedEmbeddings = [
+      [10, 11],
+      [20, 21],
+    ];
 
     await storeExtractedResults(
       results,
@@ -332,7 +335,10 @@ describe("ingestFile", () => {
     const embedding = new MockEmbeddingPort();
 
     const result = await ingestFile(
-      filePath,
+      {
+        filePath,
+        fileHash,
+      },
       {
         transcript,
         llm,
@@ -371,7 +377,7 @@ describe("ingestFile", () => {
     const llm = new MockLlmPort([{ entries: [] }]);
     const embedding = new MockEmbeddingPort();
 
-    const result = await ingestFile(filePath, { transcript, llm, embedding, db });
+    const result = await ingestFile({ filePath, fileHash }, { transcript, llm, embedding, db });
 
     expect(result).toMatchObject({
       file: filePath,

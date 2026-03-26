@@ -1,37 +1,25 @@
 import path from "node:path";
 
 import * as clack from "@clack/prompts";
+import { DEFAULT_INGEST_CONCURRENCY, ingestDiscoveredFiles, type IngestPathOptions } from "../../app/ingestion/index.js";
 import { createDatabase } from "../../adapters/db/client.js";
 import { createEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../../adapters/embeddings.js";
+import { localTranscriptFiles } from "../../adapters/files/transcript-files.js";
 import { createLlmClient, resolveLlmApiKey, resolveModel, type UsageStats } from "../../adapters/llm.js";
 import { openClawTranscriptParser } from "../../adapters/openclaw/transcript/parser.js";
 import { readConfig, resolveDbPath } from "../../config.js";
-import {
-  dedupBatch,
-  discoverFiles,
-  extractFile,
-  getDefaultDedupSimilarityThreshold,
-  storeExtractedResults,
-  type DedupResult,
-  type ExtractedFileResult,
-  type IngestFileOptions,
-  type IngestFileResult,
-  type StoreExtractedResultsProgressEvent,
-} from "../../core/ingestion/index.js";
-import type { DatabasePort, EmbeddingPort, LlmPort, TranscriptPort } from "../../core/ports.js";
+import { type DedupResult, type ExtractedFileResult, type IngestFileResult, type StoreExtractedResultsProgressEvent } from "../../core/ingestion/index.js";
+import type { EmbeddingPort } from "../../core/ports.js";
 import type { StoreEntryInput, StoreResult } from "../../core/types.js";
 import { setVerbose } from "../../logger.js";
 import { banner, formatLabel, ui } from "../../ui.js";
 import { InvalidArgumentError, Option, type Command } from "commander";
 
-const DEFAULT_INGEST_CONCURRENCY = 10;
 const MIN_INGEST_CONCURRENCY = 1;
 const MAX_INGEST_CONCURRENCY = 16;
 
 /** Non-null whole-file extraction mode accepted by the ingest CLI. */
-type WholeFileMode = NonNullable<IngestFileOptions["wholeFile"]>;
-/** Concrete LLM client shape returned by the CLI adapter factory. */
-type CliLlmClient = ReturnType<typeof createLlmClient>;
+type WholeFileMode = NonNullable<IngestPathOptions["wholeFile"]>;
 
 /** Commander options accepted by the `agenr ingest` command. */
 interface IngestCommandOptions {
@@ -48,19 +36,6 @@ interface FileUsageSummary {
   fileCost: number;
   fileCalls: number;
   runningCost: number;
-}
-
-/** Extraction result paired with the usage consumed for that file. */
-interface ExtractionExecutionResult {
-  result: ExtractedFileResult;
-  usage: UsageStats;
-}
-
-/** Ports and factories needed to execute one extraction worker. */
-interface ExtractionPorts {
-  transcript: TranscriptPort;
-  db: DatabasePort;
-  createLlm: () => CliLlmClient;
 }
 
 /** Extracted entry annotated with its source file and original flattened index. */
@@ -101,19 +76,16 @@ export function registerIngestCommand(program: Command): void {
       const { provider, modelId } = resolveModel(config, "extraction");
       const { provider: dedupProvider, modelId: dedupModelId } = resolveModel(config, "dedup");
       const llmApiKey = resolveLlmApiKey(config, provider);
-      const llmTemplate = createLlmClient(provider, modelId, { apiKey: llmApiKey });
-      let dedupLlm: CliLlmClient | null = null;
       const needsRealEmbeddings = options.skipDedup !== true || options.skipEmbeddings !== true;
       const sharedEmbedding = needsRealEmbeddings
         ? createEmbeddingClient(resolveEmbeddingApiKey(config), resolveEmbeddingModel(config))
         : createNoopEmbeddingPort();
-      const storeEmbedding = options.skipEmbeddings === true ? createNoopEmbeddingPort() : sharedEmbedding;
 
       if (options.verbose === true) {
         clack.log.step(`Discovering transcript files in ${path.resolve(targetPath)}...`);
       }
 
-      const files = await discoverFiles(targetPath);
+      const files = await localTranscriptFiles.discoverFiles(targetPath);
       if (files.length === 0) {
         clack.log.warn(`No transcript files found at ${path.resolve(targetPath)}.`);
         clack.outro("Nothing to ingest.");
@@ -137,101 +109,47 @@ export function registerIngestCommand(program: Command): void {
         clack.log.warn("Dry run mode - no entries will be stored.");
       }
 
-      const spinner = clack.spinner();
-      spinner.start(`Extracting transcripts... (0/${files.length} complete)`);
+      const useVerboseBulkWriteProgress = options.verbose === true && options.dryRun !== true;
+      const spinner = useVerboseBulkWriteProgress ? null : clack.spinner();
+      spinner?.start(`Processing transcripts... (0/${files.length} extracted)`);
 
-      const extractionRuns = await runParallelExtractions(
+      const ingestResult = await ingestDiscoveredFiles(
         files,
         {
+          files: localTranscriptFiles,
           transcript: openClawTranscriptParser,
           db,
-          createLlm: () => createLlmClient(provider, modelId, { apiKey: llmApiKey }),
+          embedding: sharedEmbedding,
+          createExtractionLlm: () => createLlmClient(provider, modelId, { apiKey: llmApiKey }),
+          createDedupLlm: () => createLlmClient(dedupProvider, dedupModelId, { apiKey: resolveLlmApiKey(config, dedupProvider) }),
         },
         {
+          concurrency: options.concurrency ?? DEFAULT_INGEST_CONCURRENCY,
+          dryRun: options.dryRun,
           verbose: options.verbose,
           wholeFile: options.wholeFile,
-          contextWindowTokens: llmTemplate.metadata.contextWindowTokens,
-          maxOutputTokens: llmTemplate.metadata.maxOutputTokens,
+          skipDedup: options.skipDedup,
+          skipEmbeddings: options.skipEmbeddings,
           extractionContext: config.extractionContext,
-        },
-        options.concurrency ?? DEFAULT_INGEST_CONCURRENCY,
-        (completed, total) => {
-          spinner.message(`Extracting transcripts... (${completed}/${total} complete)`);
+          onExtractionProgress: (completed, total) => {
+            spinner?.message(`Processing transcripts... (${completed}/${total} extracted)`);
+          },
+          onBulkWriteProgress: useVerboseBulkWriteProgress ? reportBulkWriteProgress : undefined,
         },
       );
 
-      spinner.stop(`Extraction complete (${files.length}/${files.length}).`);
+      spinner?.stop("Ingest pipeline complete.");
 
+      const extractionRuns = ingestResult.extractionRuns;
       const extractedResults = extractionRuns.map(({ result }) => result);
       const extractedSuccesses = extractedResults.filter((result) => result.skipped !== true && result.error === undefined);
       const taggedEntries = collectTaggedEntries(extractedSuccesses);
-      const dedupStartedAt = Date.now();
-      let dedupResult = buildEmptyDedupResult();
-      let dedupUsage = createEmptyUsageStats();
-      let resultsToStore = extractedSuccesses;
-      let precomputedEmbeddings: Map<StoreEntryInput, number[]> | undefined;
-      let storeResults = new Map<string, IngestFileResult>();
+      const dedupResult = ingestResult.dedupResult;
+      const dedupUsage = ingestResult.dedupUsage;
+      const storeResults = ingestResult.storeResults;
 
       if (extractedSuccesses.length > 0) {
-        const dedupSpinnerMessage =
-          options.skipDedup === true
-            ? `Preparing ${taggedEntries.length} extracted ${pluralize(taggedEntries.length, "entry", "entries")} for store...`
-            : `Deduplicating ${taggedEntries.length} extracted ${pluralize(taggedEntries.length, "entry", "entries")}...`;
-        spinner.start(dedupSpinnerMessage);
-
-        if (taggedEntries.length > 0) {
-          const llm =
-            options.skipDedup === true
-              ? createNoopLlmPort()
-              : (dedupLlm ??= createLlmClient(dedupProvider, dedupModelId, { apiKey: resolveLlmApiKey(config, dedupProvider) }));
-          dedupResult = await dedupBatch(
-            taggedEntries.map((taggedEntry) => taggedEntry.entry),
-            llm,
-            sharedEmbedding,
-            {
-              skip: options.skipDedup,
-              verbose: options.verbose,
-            },
-          );
-          resultsToStore = rebuildResultsWithSurvivors(extractedSuccesses, taggedEntries, dedupResult);
-          precomputedEmbeddings = buildPrecomputedEmbeddingMap(dedupResult);
-        }
-
-        dedupUsage = dedupLlm ? cloneUsageStats(dedupLlm.metadata.usage) : createEmptyUsageStats();
-        spinner.stop(`Dedup phase complete (${formatDurationMs(Date.now() - dedupStartedAt)}).`);
         printDedupSummary(dedupResult, taggedEntries, options, dedupUsage.totalCost);
-      }
-
-      if (resultsToStore.length > 0) {
-        const entryCount = resultsToStore.reduce((total, result) => total + result.entries.length, 0);
-        const useVerboseBulkWriteProgress = options.verbose === true && options.dryRun !== true && entryCount > 0;
-
-        if (!useVerboseBulkWriteProgress) {
-          spinner.start(
-            entryCount > 0
-              ? `Storing ${entryCount} ${pluralize(entryCount, "entry", "entries")} from ${resultsToStore.length} ${pluralize(resultsToStore.length, "file")}...`
-              : `Finalizing ${resultsToStore.length} ${pluralize(resultsToStore.length, "file")}...`,
-          );
-        }
-
-        storeResults = await storeExtractedResults(
-          resultsToStore,
-          {
-            db,
-            embedding: storeEmbedding,
-          },
-          {
-            dryRun: options.dryRun,
-            verbose: options.verbose,
-            skipEmbeddings: options.skipEmbeddings,
-            precomputedEmbeddings,
-            onBulkWriteProgress: useVerboseBulkWriteProgress ? reportBulkWriteProgress : undefined,
-          },
-        );
-
-        if (!useVerboseBulkWriteProgress) {
-          spinner.stop(entryCount > 0 ? "Store phase complete." : "Finalize phase complete.");
-        }
       }
 
       const totals = {
@@ -517,62 +435,6 @@ export function pluralize(value: number, singular: string, plural?: string): str
   return value === 1 ? singular : (plural ?? `${singular}s`);
 }
 
-/** Runs file extraction workers in parallel while preserving input order. */
-async function runParallelExtractions(
-  files: string[],
-  ports: ExtractionPorts,
-  options: IngestFileOptions,
-  concurrency: number,
-  onProgress?: (completed: number, total: number) => void,
-): Promise<ExtractionExecutionResult[]> {
-  if (files.length === 0) {
-    return [];
-  }
-
-  const results = new Array<ExtractionExecutionResult>(files.length);
-  let nextIndex = 0;
-  let completed = 0;
-  const workerCount = Math.min(concurrency, files.length);
-
-  await Promise.all(
-    Array.from({ length: workerCount }, async () => {
-      while (true) {
-        const currentIndex = nextIndex;
-        nextIndex += 1;
-
-        if (currentIndex >= files.length) {
-          return;
-        }
-
-        const llm = ports.createLlm();
-        const result = await extractFile(
-          files[currentIndex],
-          {
-            transcript: ports.transcript,
-            llm,
-            db: ports.db,
-          },
-          {
-            ...options,
-            contextWindowTokens: llm.metadata.contextWindowTokens,
-            maxOutputTokens: llm.metadata.maxOutputTokens,
-          },
-        );
-
-        results[currentIndex] = {
-          result,
-          usage: cloneUsageStats(llm.metadata.usage),
-        };
-
-        completed += 1;
-        onProgress?.(completed, files.length);
-      }
-    }),
-  );
-
-  return results;
-}
-
 /** Resolves the final display result for one extracted file. */
 function getDisplayResult(result: ExtractedFileResult, storeResults: Map<string, IngestFileResult>): IngestFileResult {
   if (result.skipped || result.error) {
@@ -580,30 +442,6 @@ function getDisplayResult(result: ExtractedFileResult, storeResults: Map<string,
   }
 
   return storeResults.get(result.file) ?? toIngestFileResult(result, emptyStoreResult());
-}
-
-/** Creates an LLM port that returns benign placeholder dedup responses. */
-function createNoopLlmPort(): LlmPort {
-  return {
-    complete: async (): Promise<string> => '{"keep":[],"drop":[]}',
-    completeJson: async <T>(): Promise<T> => ({}) as T,
-  };
-}
-
-/** Creates an empty dedup result for batches with no extracted entries. */
-function buildEmptyDedupResult(): DedupResult {
-  return {
-    survivors: [],
-    survivorIndices: [],
-    embeddings: [],
-    inputCount: 0,
-    removedCount: 0,
-    clustersArbitrated: 0,
-    singletonsPassedThrough: 0,
-    llmCalls: 0,
-    clusterDetails: [],
-    similarityThreshold: getDefaultDedupSimilarityThreshold(),
-  };
 }
 
 /** Flattens extracted entries while tracking their source file and order. */
@@ -623,48 +461,6 @@ function collectTaggedEntries(results: ExtractedFileResult[]): TaggedEntry[] {
   }
 
   return taggedEntries;
-}
-
-/** Rebuilds per-file extraction results using the dedup survivor set. */
-function rebuildResultsWithSurvivors(results: ExtractedFileResult[], taggedEntries: TaggedEntry[], dedupResult: DedupResult): ExtractedFileResult[] {
-  const survivorsByOriginalIndex = new Map<number, StoreEntryInput>();
-  for (const [offset, originalIndex] of dedupResult.survivorIndices.entries()) {
-    const survivor = dedupResult.survivors[offset];
-    if (survivor) {
-      survivorsByOriginalIndex.set(originalIndex, survivor);
-    }
-  }
-
-  const entriesByFileIndex = new Map<number, StoreEntryInput[]>();
-  for (const taggedEntry of taggedEntries) {
-    const survivor = survivorsByOriginalIndex.get(taggedEntry.originalIndex);
-    if (!survivor) {
-      continue;
-    }
-
-    const entries = entriesByFileIndex.get(taggedEntry.fileIndex) ?? [];
-    entries.push(survivor);
-    entriesByFileIndex.set(taggedEntry.fileIndex, entries);
-  }
-
-  return results.map((result, fileIndex) => ({
-    ...result,
-    entries: entriesByFileIndex.get(fileIndex) ?? [],
-  }));
-}
-
-/** Keys dedup survivor embeddings by entry object identity for store reuse. */
-function buildPrecomputedEmbeddingMap(dedupResult: DedupResult): Map<StoreEntryInput, number[]> {
-  return new Map(
-    dedupResult.survivors.map((entry, index) => {
-      const embedding = dedupResult.embeddings[index];
-      if (!embedding) {
-        throw new Error(`Missing dedup embedding for survivor index ${index}.`);
-      }
-
-      return [entry, embedding];
-    }),
-  );
 }
 
 /** Prints the aggregate and optional verbose within-batch dedup summary. */
@@ -688,6 +484,10 @@ function printDedupSummary(dedupResult: DedupResult, taggedEntries: TaggedEntry[
   clack.log.step(
     `Dedup: ${dedupResult.survivors.length} ${pluralize(dedupResult.survivors.length, "entry", "entries")} survived, ${dedupResult.removedCount} removed (${formatCost(dedupCost)})`,
   );
+
+  for (const warning of dedupResult.warnings) {
+    clack.log.warn(`Dedup: ${warning}`);
+  }
 
   if (options.verbose !== true) {
     return;
@@ -814,19 +614,6 @@ function truncateText(text: string, maxLength: number): string {
 /** Narrows away `undefined` values in filtered arrays. */
 function isDefined<T>(value: T | undefined): value is T {
   return value !== undefined;
-}
-
-/** Clones usage totals so worker-local clients can be discarded safely. */
-function cloneUsageStats(usage: UsageStats): UsageStats {
-  return {
-    calls: usage.calls,
-    inputTokens: usage.inputTokens,
-    outputTokens: usage.outputTokens,
-    cacheReadTokens: usage.cacheReadTokens,
-    cacheWriteTokens: usage.cacheWriteTokens,
-    totalTokens: usage.totalTokens,
-    totalCost: usage.totalCost,
-  };
 }
 
 /** Creates a zeroed usage accumulator for CLI accounting. */

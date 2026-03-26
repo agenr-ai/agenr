@@ -1,11 +1,8 @@
-import { createLogger } from "../../logger.js";
 import type { EmbeddingPort, LlmPort } from "../ports.js";
 import { composeEmbeddingText } from "../store/embedding-text.js";
 import type { StoreEntryInput } from "../types.js";
 
 const DEFAULT_SIMILARITY_THRESHOLD = 0.75;
-/** Logger used for verbose semantic dedup diagnostics. */
-const logger = createLogger("ingestion:dedup");
 
 /**
  * Returns the default cosine similarity threshold used for semantic dedup clustering.
@@ -74,6 +71,8 @@ export interface DedupResult {
   llmCalls: number;
   /** Per-cluster arbitration details for verbose logging and debugging. */
   clusterDetails: DedupClusterDetail[];
+  /** Non-fatal arbitration warnings collected during the dedup pass. */
+  warnings: string[];
   /** Similarity threshold used for clustering. */
   similarityThreshold: number;
 }
@@ -92,6 +91,12 @@ interface NormalizedDedupDecision {
   drop: number[];
   mergeInto?: number;
   mergedContent?: string;
+}
+
+/** Detail plus optional warning emitted by one arbitration attempt. */
+interface ArbitrationResult {
+  detail: DedupClusterDetail;
+  warning?: string;
 }
 
 /**
@@ -117,6 +122,7 @@ export async function dedupBatch(entries: StoreEntryInput[], llm: LlmPort, embed
       singletonsPassedThrough: 0,
       llmCalls: 0,
       clusterDetails: [],
+      warnings: [],
       similarityThreshold,
     };
   }
@@ -134,6 +140,7 @@ export async function dedupBatch(entries: StoreEntryInput[], llm: LlmPort, embed
   const clusters = clusterBySimilarity(embeddings, similarityThreshold);
   const survivorByIndex = new Map<number, StoreEntryInput>();
   const clusterDetails: DedupClusterDetail[] = [];
+  const warnings: string[] = [];
   let singletonsPassedThrough = 0;
   let llmCalls = 0;
 
@@ -148,23 +155,17 @@ export async function dedupBatch(entries: StoreEntryInput[], llm: LlmPort, embed
     }
 
     const maxSimilarity = calculateClusterMaxSimilarity(cluster, embeddings);
-    logger.debug(
-      formatLogMessage("Dedup cluster formed", {
-        clusterIndex,
-        entryIndices: cluster,
-        maxSimilarity,
-        subjects: cluster.map((index) => entries[index]?.subject ?? ""),
-      }),
-    );
-
-    const detail = await arbitrateCluster(clusterIndex, cluster, entries, llm, maxSimilarity);
+    const arbitration = await arbitrateCluster(clusterIndex, cluster, entries, llm, maxSimilarity);
     llmCalls += 1;
-    clusterDetails.push(detail);
+    clusterDetails.push(arbitration.detail);
+    if (arbitration.warning) {
+      warnings.push(arbitration.warning);
+    }
 
-    for (const keptIndex of detail.kept) {
+    for (const keptIndex of arbitration.detail.kept) {
       const updatedEntry =
-        detail.merged === true && detail.mergedContent && keptIndex === detail.mergeTarget
-          ? mergeClusterEntry(cluster, keptIndex, detail.mergedContent, entries)
+        arbitration.detail.merged === true && arbitration.detail.mergedContent && keptIndex === arbitration.detail.mergeTarget
+          ? mergeClusterEntry(cluster, keptIndex, arbitration.detail.mergedContent, entries)
           : entries[keptIndex];
       survivorByIndex.set(keptIndex, updatedEntry);
     }
@@ -195,6 +196,7 @@ export async function dedupBatch(entries: StoreEntryInput[], llm: LlmPort, embed
     singletonsPassedThrough,
     llmCalls,
     clusterDetails,
+    warnings,
     similarityThreshold,
   };
 }
@@ -206,65 +208,46 @@ async function arbitrateCluster(
   entries: StoreEntryInput[],
   llm: LlmPort,
   maxSimilarity: number,
-): Promise<DedupClusterDetail> {
+): Promise<ArbitrationResult> {
   const systemPrompt = buildDedupSystemPrompt();
   const userPrompt = buildDedupUserPrompt(cluster, entries);
   let rawResponse: string | undefined;
-
-  logger.debug(
-    formatLogMessage("Dedup LLM prompt", {
-      clusterIndex,
-      maxSimilarity,
-      userPrompt,
-    }),
-  );
 
   try {
     rawResponse = await llm.complete(systemPrompt, userPrompt);
     const parsed = parseDedupDecision(rawResponse);
     const normalized = normalizeDedupDecision(parsed, cluster.length);
 
-    logger.debug(
-      formatLogMessage("Dedup LLM response", {
-        clusterIndex,
-        rawResponse,
-        parsed,
-        normalized,
-      }),
-    );
-
     const kept = normalized.keep.map((localIndex) => cluster[localIndex]).filter(isDefined);
     const dropped = normalized.drop.map((localIndex) => cluster[localIndex]).filter(isDefined);
 
     return {
-      entryIndices: [...cluster],
-      subjects: cluster.map((index) => entries[index]?.subject ?? ""),
-      maxSimilarity,
-      kept,
-      dropped,
-      merged: Boolean(normalized.mergedContent),
-      mergeTarget: normalized.mergeInto !== undefined ? cluster[normalized.mergeInto] : undefined,
-      mergedContent: normalized.mergedContent,
-      rawResponse,
+      detail: {
+        entryIndices: [...cluster],
+        subjects: cluster.map((index) => entries[index]?.subject ?? ""),
+        maxSimilarity,
+        kept,
+        dropped,
+        merged: Boolean(normalized.mergedContent),
+        mergeTarget: normalized.mergeInto !== undefined ? cluster[normalized.mergeInto] : undefined,
+        mergedContent: normalized.mergedContent,
+        rawResponse,
+      },
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    logger.warn(
-      formatLogMessage("Dedup arbitration failed, keeping all entries in cluster", {
-        clusterIndex,
-        entryIndices: cluster,
-        error: message,
-        rawResponse,
-      }),
-    );
 
     return {
-      entryIndices: [...cluster],
-      subjects: cluster.map((index) => entries[index]?.subject ?? ""),
-      maxSimilarity,
-      kept: [...cluster],
-      dropped: [],
-      merged: false,
+      detail: {
+        entryIndices: [...cluster],
+        subjects: cluster.map((index) => entries[index]?.subject ?? ""),
+        maxSimilarity,
+        kept: [...cluster],
+        dropped: [],
+        merged: false,
+        rawResponse,
+      },
+      warning: `Cluster ${clusterIndex + 1}: dedup arbitration failed, keeping all entries (${message}).`,
     };
   }
 }
@@ -281,6 +264,7 @@ function buildPassthroughResult(entries: StoreEntryInput[], embeddings: number[]
     singletonsPassedThrough: entries.length,
     llmCalls: 0,
     clusterDetails: [],
+    warnings: [],
     similarityThreshold,
   };
 }
@@ -569,11 +553,6 @@ function dedupeStrings(values: string[]): string[] {
   }
 
   return deduped;
-}
-
-/** Formats structured dedup debug context as a single log line. */
-function formatLogMessage(message: string, context: Record<string, unknown>): string {
-  return `${message} ${JSON.stringify(context)}`;
 }
 
 /** Narrows away `undefined` values in array filters. */

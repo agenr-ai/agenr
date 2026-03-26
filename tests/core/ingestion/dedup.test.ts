@@ -209,6 +209,7 @@ describe("dedupBatch", () => {
     expect(result.removedCount).toBe(0);
     expect(result.llmCalls).toBe(0);
     expect(llm.completeCalls).toBe(0);
+    expect(result.warnings).toEqual([]);
   });
 
   it("returns an empty result for empty input", async () => {
@@ -225,6 +226,7 @@ describe("dedupBatch", () => {
       singletonsPassedThrough: 0,
       llmCalls: 0,
       clusterDetails: [],
+      warnings: [],
       similarityThreshold: 0.75,
     });
     expect(embedding.calls).toEqual([]);
@@ -242,6 +244,7 @@ describe("dedupBatch", () => {
     expect(result.singletonsPassedThrough).toBe(1);
     expect(result.llmCalls).toBe(0);
     expect(llm.completeCalls).toBe(0);
+    expect(result.warnings).toEqual([]);
   });
 
   it("keeps every entry when the LLM response cannot be parsed", async () => {
@@ -264,6 +267,7 @@ describe("dedupBatch", () => {
       dropped: [],
       merged: false,
     });
+    expect(result.warnings).toEqual(["Cluster 1: dedup arbitration failed, keeping all entries (Dedup response did not contain a JSON object.)."]);
   });
 
   it("returns survivor embeddings aligned with the surviving entries", async () => {

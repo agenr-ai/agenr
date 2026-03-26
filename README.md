@@ -12,9 +12,10 @@ Ingest conversation transcripts, extract durable knowledge, store it, recall it,
 
 Pragmatic hexagonal (ports & adapters):
 
-- **`src/core/`** — pure logic, zero infrastructure dependencies. Depends only on port interfaces.
-- **`src/adapters/`** — infrastructure implementations (database, embeddings, LLM, OpenClaw plugin, MCP, HTTP API).
-- **`src/cli/`** — thin CLI commands that wire adapters to core.
+- **`src/core/`** - pure logic, zero infrastructure dependencies. Depends only on port interfaces.
+- **`src/app/`** - application orchestration. Composes ports, coordinates workflows, and keeps CLI adapters thin.
+- **`src/adapters/`** - infrastructure implementations (database, embeddings, LLM, OpenClaw plugin, MCP, HTTP API).
+- **`src/cli/`** - thin CLI commands that wire adapters to core.
 
 The one rule: `core/` never imports from `adapters/` or `cli/`.
 

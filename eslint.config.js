@@ -87,6 +87,14 @@ export default tseslint.config(
               group: ["**/adapters/**", "**/cli/**"],
               message: "core/ must not import from adapters/ or cli/. Use port interfaces instead.",
             },
+            {
+              group: ["**/logger.js"],
+              message: "core/ must not depend on process-global logging. Use core return values or an application-layer callback.",
+            },
+            {
+              group: ["node:fs", "node:fs/promises"],
+              message: "core/ must not perform filesystem IO. Move it behind a port or application-layer service.",
+            },
           ],
         },
       ],

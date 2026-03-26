@@ -19,7 +19,7 @@ Memory infrastructure for AI agents. Ingest conversation transcripts, extract du
 
 ## Architecture: Hexagonal (Ports & Adapters)
 
-**The one rule: `src/core/` never imports from `src/adapters/` or `src/cli/`.** This is enforced by ESLint.
+**The one rule: `src/core/` never imports from `src/adapters/`, `src/cli/`, or process-global logging/file-system helpers.** This is enforced by ESLint.
 
 ```
 src/
@@ -28,11 +28,15 @@ src/
 │   ├── ports.ts             # ALL port interfaces: DatabasePort, EmbeddingPort, LlmPort, TranscriptPort
 │   ├── store/               # Entry validation, dedup logic, store pipeline
 │   ├── recall/              # Scoring, ranking, candidate selection, session-start
-│   ├── ingestion/           # Chunking, extraction orchestration, prompts
+│   ├── ingestion/           # Chunking, extraction primitives, prompts
 │   └── surgeon/             # Consolidation, dedup, retirement rules
+│
+├── app/                     # Application orchestration — composes ports into workflows
+│   └── ingestion/           # Multi-file ingest services, concurrency, progress, file ports
 │
 ├── adapters/                # THE OUTSIDE — infrastructure implementations
 │   ├── db/                  # SQLite: schema, queries, client (implements DatabasePort)
+│   ├── files/               # Local transcript discovery + hashing adapters
 │   ├── embeddings.ts        # Embedding API client (implements EmbeddingPort)
 │   ├── llm.ts               # LLM API client (implements LlmPort)
 │   ├── api/                 # HTTP REST API — universal adapter for any agent
@@ -51,9 +55,10 @@ docs/                        # Documentation
 
 ### Layering rules
 
-- **`core/`** is pure logic. No IO, no database, no HTTP, no file system access. It depends only on port interfaces defined in `core/ports.ts`. All domain types live in `core/types.ts`.
+- **`core/`** is pure logic. No IO, no database, no HTTP, no file system access, and no process-global logging. It depends only on port interfaces defined in `core/ports.ts`. All domain types live in `core/types.ts`.
+- **`app/`** coordinates workflows that compose multiple ports or adapters. Concurrency, file discovery/hashing, cross-step orchestration, and progress reporting belong here when they are not pure domain logic.
 - **`adapters/`** implement port interfaces and translate external protocols (SQLite, HTTP, OpenClaw plugin API, MCP, embedding APIs) into core API calls. Adapters may import from `core/` (types + ports). Adapters must NOT import from other adapters.
-- **`cli/`** is a thin shell. Commands parse args, wire adapters to core, call core functions, format output. No business logic lives here.
+- **`cli/`** is a thin shell. Commands parse args, wire adapters and app services, call core/app functions, format output. No workflow orchestration or business logic lives here.
 - **`config.ts`** is shared infrastructure — both core and adapters may reference config types.
 
 ### OpenClaw plugin architecture
