@@ -27,11 +27,7 @@
       "request": "launch",
       "cwd": "${workspaceFolder}",
       "program": "${workspaceFolder}/dist/cli.js",
-      "args": [
-        "ingest",
-        "${input:sessionFile}",
-        "--verbose"
-      ],
+      "args": ["ingest", "${input:sessionFile}", "--verbose"],
       "env": {
         "AGENR_DB_PATH": "/Users/jmartin/.openclaw-sandbox/agenr-data/knowledge.db",
         "AGENR_CONFIG_PATH": "/Users/jmartin/.openclaw-sandbox/agenr-data/config.json"
@@ -47,11 +43,7 @@
       "request": "launch",
       "cwd": "${workspaceFolder}",
       "program": "${workspaceFolder}/dist/cli.js",
-      "args": [
-        "recall",
-        "${input:recallQuery}",
-        "--verbose"
-      ],
+      "args": ["recall", "${input:recallQuery}", "--verbose"],
       "env": {
         "AGENR_DB_PATH": "/Users/jmartin/.openclaw-sandbox/agenr-data/knowledge.db",
         "AGENR_CONFIG_PATH": "/Users/jmartin/.openclaw-sandbox/agenr-data/config.json"
@@ -67,12 +59,7 @@
       "request": "launch",
       "cwd": "${workspaceFolder}",
       "runtimeExecutable": "node",
-      "runtimeArgs": [
-        "--inspect-brk",
-        "${workspaceFolder}/node_modules/vitest/vitest.mjs",
-        "run",
-        "${file}"
-      ],
+      "runtimeArgs": ["--inspect-brk", "${workspaceFolder}/node_modules/vitest/vitest.mjs", "run", "${file}"],
       "skipFiles": ["<node_internals>/**"],
       "console": "integratedTerminal"
     }

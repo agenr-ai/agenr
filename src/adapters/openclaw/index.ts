@@ -11,3 +11,5 @@
 export const id = "agenr";
 export const name = "agenr";
 export const version = "0.1.0";
+
+export { OpenClawTranscriptParser, openClawTranscriptParser } from "./transcript/parser.js";

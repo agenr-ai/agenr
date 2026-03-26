@@ -8,6 +8,7 @@ Status: Draft
 The current codebase is 99K lines / 539 files, and even after removing watcher (14K) and agent tool special treatment, the architecture carries assumptions from features we no longer want. The surgery-to-remove approach has diminishing returns — every cut exposes tendrils, and the file structure was designed for a bloated system.
 
 Starting fresh lets us:
+
 - Design the schema for exactly what we need (23 tables → ~8)
 - Build only the modules that earn their existence
 - Establish clean module boundaries from day one instead of retrofitting them
@@ -27,17 +28,20 @@ Starting fresh lets us:
 ## Repository Setup
 
 ### Old repo
+
 - Rename to `agenr-v0` (or archive)
 - Keep all history and issues for reference
 - Do not maintain
 
 ### New repo: `agenr`
+
 - Clean git history starting from initial commit
 - Fresh issues board — create issues only as work is needed
 - Same npm packages: `agenr` (CLI) and `@agenr/openclaw-plugin` (plugin)
 - Version: `0.1.0` — signals "this is early, intentionally"
 
 ### Tooling (carry over)
+
 - TypeScript + ESM
 - tsup for build
 - vitest for tests
@@ -229,6 +233,7 @@ CREATE TABLE _meta (
 ```
 
 ### What's gone
+
 - `tags` table → denormalized as JSON array in `entries.tags`
 - `relations` table → evaluate if surgeon needs it; if so, add back minimal
 - `clusters` table → keep only if surgeon clustering is ported
@@ -294,6 +299,7 @@ Core modules (4-7) are built against port interfaces, tested with in-memory test
    - Done. No breadcrumb persistence, no family policy engine, no explicit predecessor resolution chains.
 
 **What should NOT port from the current plugin:**
+
 - Surfaced memory ledger (782 lines) — tracks which entries were shown to the agent. Unclear value.
 - Memory surface contract (877 lines) — complex partitioning/admission logic for what to show. Simplify.
 - Session start selector analysis (527 lines) — over-engineered selection logic for which entries to inject.
@@ -302,6 +308,7 @@ Core modules (4-7) are built against port interfaces, tested with in-memory test
 - Session continuity diagnostics (135 lines) — debug logging for the complex system. Unnecessary if simplified.
 
 **What to re-think and simplify:**
+
 - Session continuity: collapse the 6-file system into a single `session-predecessor.ts` (~100-200 lines)
 - Handoff: the two-phase approach (fallback + LLM upgrade) is good. Port the logic, simplify the code.
 - Recall formatting: how entries are rendered into the system prompt. Port but simplify.
@@ -369,6 +376,7 @@ The sandbox infrastructure already exists and should be re-purposed from the sta
 1. **`sandbox-agenr`** — update `cd` target from `~/Code/agenr` to wherever the new repo lives (probably still `~/Code/agenr` after renaming the old one)
 
 2. **`sandbox-openclaw` config** — update `plugins.load.paths` to point at the new repo, strip `coreProjects` (no project concept), simplify plugin config:
+
    ```json
    {
      "plugins": {
@@ -393,7 +401,7 @@ The sandbox infrastructure already exists and should be re-purposed from the sta
    - `agenr: sandbox ingest (debug)` — ingest against sandbox DB with sourcemaps
    - `agenr: sandbox ingest single file (debug)` — single session file
    - `agenr: debug vitest current file` — test runner
-   
+
    All with `AGENR_DB_PATH` and `AGENR_CONFIG_PATH` env vars pointing at sandbox data.
 
 5. **Build with sourcemaps** — `tsup --sourcemap` as a `build:debug` script from the start
@@ -401,11 +409,13 @@ The sandbox infrastructure already exists and should be re-purposed from the sta
 ### Dev loop
 
 **Human (VS Code):**
+
 ```
 edit → pnpm build:debug → F5 → step through with breakpoints
 ```
 
 **Agent (headless):**
+
 ```
 pnpm build → sandbox-agenr ingest <file> --verbose → inspect output
 pnpm build → sandbox-agenr recall "query" --verbose → verify recall
@@ -414,6 +424,7 @@ sqlite3 ~/.openclaw-sandbox/agenr-data/knowledge.db "SELECT ..." → verify DB s
 ```
 
 **Plugin testing:**
+
 ```
 pnpm build → sandbox-openclaw gateway run → test at localhost:18790
 ```

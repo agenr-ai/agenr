@@ -5,7 +5,16 @@
 
 // ── Entry types ──────────────────────────────────────────────────────
 
-export const ENTRY_TYPES = ["fact", "decision", "preference", "lesson", "todo", "relationship", "event", "reflection"] as const;
+export const ENTRY_TYPES = [
+  "fact",
+  "decision",
+  "preference",
+  "lesson",
+  "todo",
+  "relationship",
+  "event",
+  "reflection",
+] as const;
 export type EntryType = (typeof ENTRY_TYPES)[number];
 
 export const EXPIRY_LEVELS = ["core", "permanent", "temporary"] as const;

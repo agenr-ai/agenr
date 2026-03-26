@@ -5,7 +5,7 @@
  * Adapters implement these interfaces to connect core to infrastructure.
  */
 
-import type { Entry, RecallQuery, RecallResult, StoreEntryInput, StoreResult, TranscriptChunk } from "./types.js";
+import type { Entry } from "./types.js";
 
 // ── Database ─────────────────────────────────────────────────────────
 

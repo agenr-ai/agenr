@@ -61,6 +61,7 @@ docs/                        # Documentation
 The plugin at `adapters/openclaw/` is the most complex adapter but must stay disciplined. It is a **translator, not a brain.**
 
 Every piece of code in the plugin should be one of:
+
 1. **A core call** — `core.recall()`, `core.store()`, `core.handoffSession()`, etc.
 2. **OpenClaw protocol translation** — mapping OpenClaw events/hooks (`before_prompt_build`, `before_reset`, tool invocations) to core calls, and formatting core results for OpenClaw's prompt injection format
 3. **OpenClaw-specific logic** — session predecessor lookup (parsing OpenClaw session keys), transcript building from OpenClaw's message format, handoff dedup, tool registration
@@ -68,6 +69,7 @@ Every piece of code in the plugin should be one of:
 The test for where logic belongs: **would a Cursor or Windsurf adapter need the same logic?** If yes, it belongs in `core/`. If it's specific to how OpenClaw structures sessions, messages, or hooks, it belongs in the plugin.
 
 Examples:
+
 - Recall scoring and ranking → `core/` (any adapter needs this)
 - Handoff workflow (store fallback → LLM summarize → retire fallback) → `core/` (any adapter would do this)
 - Building a transcript from OpenClaw `.jsonl` messages → plugin (OpenClaw-specific format)
@@ -97,6 +99,7 @@ adapters/openclaw/
 ```
 
 Organizing principles:
+
 - **`hooks/`** — one file per OpenClaw lifecycle event, each translates to core calls
 - **`session/`** — OpenClaw-specific session lifecycle (predecessor, state, transcript building)
 - **`transcript/`** and **`format/`** — input parsing and output formatting
@@ -105,6 +108,7 @@ Organizing principles:
 ### Why hexagonal?
 
 The core API is the real product. Adapters translate protocols:
+
 - OpenClaw plugin → `core.recall()`, `core.store()`, `core.sessionStart()`
 - HTTP API → same core calls
 - CLI → same core calls
@@ -126,6 +130,7 @@ Adding a new agent system = write an adapter. Zero core changes.
 ## Importance scale (1-10)
 
 The extraction LLM assigns importance based on knowledge type and signal strength:
+
 - **9-10:** Foundational constraints, identity, core values, critical infrastructure
 - **7-8:** Decisions with rationale, strong preferences, recurring lessons, architectural choices
 - **5-6:** Verified facts, routine observations, one-time context
@@ -165,6 +170,7 @@ Development uses an isolated sandbox environment:
 ```
 
 Shell wrappers:
+
 - `sandbox-agenr` — runs agenr CLI against sandbox DB
 - `sandbox-openclaw` — runs OpenClaw gateway loading plugin from local build
 
@@ -235,6 +241,7 @@ pnpm check             # Full validation: format + lint + typecheck + test
 ## Completion checklist
 
 Before pushing:
+
 - [ ] `pnpm check` passes and no warnings
 - [ ] Docs updated for user-facing changes
 - [ ] No `any` types introduced
