@@ -75,18 +75,32 @@ Examples:
 - Formatting recalled entries for system prompt injection → plugin (OpenClaw's prompt format)
 - Importance rules, dedup logic, extraction → `core/` (never in the plugin)
 
-File responsibilities:
-- `index.ts` — plugin entry point, hook registration, wiring
-- `tools.ts` — register agenr tools (store, retire, update, trace, recall), translate tool params to core calls
-- `session-start.ts` — `before_prompt_build` hook: call `core.recall.sessionStart()`, format results for injection
-- `mid-session-recall.ts` — on-demand recall during a session
-- `handoff.ts` — `before_reset` hook: build transcript, call core for summary, store handoff entry
-- `handoff-transcript.ts` — transcript building from OpenClaw session messages (OpenClaw-specific format)
-- `session-predecessor.ts` — determine which prior session provides continuity (parse session key, find prior handoff)
-- `session-state.ts` — in-memory session tracking (handoff dedup, seen sessions)
-- `recall-format.ts` — format recalled entries for OpenClaw's system prompt format
-- `openclaw-adapter.ts` — JSONL transcript parsing (implements TranscriptPort)
-- `types.ts` — OpenClaw-specific type definitions
+Plugin directory structure - grouped by concern:
+
+```
+adapters/openclaw/
+├── index.ts                    # Plugin entry point, hook registration, wiring
+├── types.ts                    # OpenClaw-specific type definitions
+├── tools.ts                    # Tool registration + handlers (store, retire, update, trace, recall)
+├── transcript/                 # Ingestion: JSONL parsing
+│   └── parser.ts              # TranscriptPort implementation
+├── hooks/                      # OpenClaw lifecycle event handlers
+│   ├── session-start.ts       # before_prompt_build → core.recall.sessionStart()
+│   ├── handoff.ts             # before_reset → core.handoff()
+│   └── mid-session-recall.ts  # On-demand recall during session
+├── session/                    # Session lifecycle + state (OpenClaw-specific)
+│   ├── predecessor.ts         # Parse session key, find prior handoff entry
+│   ├── state.ts               # In-memory tracking (handoff dedup, seen sessions)
+│   └── handoff-transcript.ts  # Build transcript from OpenClaw messages
+└── format/                     # Output formatting
+    └── recall-format.ts       # Format entries for OpenClaw prompt injection
+```
+
+Organizing principles:
+- **`hooks/`** — one file per OpenClaw lifecycle event, each translates to core calls
+- **`session/`** — OpenClaw-specific session lifecycle (predecessor, state, transcript building)
+- **`transcript/`** and **`format/`** — input parsing and output formatting
+- Root files (`index.ts`, `tools.ts`, `types.ts`) are cross-cutting
 
 ### Why hexagonal?
 
