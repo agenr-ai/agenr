@@ -12,8 +12,16 @@ import { validateEntriesWithIndexes } from "./validation.js";
 export interface StorePipelineOptions {
   dryRun?: boolean;
   verbose?: boolean;
-  /** Skip embedding computation. Useful in tests or offline execution. */
+  /** Store entries with empty embeddings instead of persisted vectors. */
   skipEmbeddings?: boolean;
+}
+
+/**
+ * Runtime switches for batch store calls that can reuse precomputed embeddings.
+ */
+export interface StoreEntriesOptions extends StorePipelineOptions {
+  /** Precomputed embeddings aligned with the original input array. */
+  precomputedEmbeddings?: number[][];
 }
 
 interface PreparedEntry {
@@ -59,7 +67,7 @@ export async function storeEntries(
   inputs: StoreEntryInput[],
   db: DatabasePort,
   embedding: EmbeddingPort,
-  options: StorePipelineOptions = {},
+  options: StoreEntriesOptions = {},
 ): Promise<StoreResult> {
   const result = await storeEntriesDetailed(inputs, db, embedding, options);
   return {
@@ -82,7 +90,7 @@ export async function storeEntriesDetailed(
   inputs: StoreEntryInput[],
   db: DatabasePort,
   embedding: EmbeddingPort,
-  options: StorePipelineOptions = {},
+  options: StoreEntriesOptions = {},
 ): Promise<StoreEntriesDetailedResult> {
   if (inputs.length === 0) {
     return { stored: 0, skipped: 0, rejected: 0, details: [] };
@@ -115,7 +123,10 @@ export async function storeEntriesDetailed(
   }
 
   const pendingEntries = plan.pendingEntries;
-  const embeddings = options.skipEmbeddings === true ? pendingEntries.map(() => []) : await embedPendingEntries(pendingEntries, embedding);
+  const embeddings =
+    options.skipEmbeddings === true
+      ? pendingEntries.map(() => [])
+      : await resolvePendingEmbeddings(inputs, pendingEntries, embedding, options.precomputedEmbeddings);
   await persistEntries(db, pendingEntries, embeddings);
   return {
     stored: pendingEntries.length,
@@ -129,6 +140,30 @@ export async function storeEntriesDetailed(
       })),
     ]),
   };
+}
+
+async function resolvePendingEmbeddings(
+  inputs: StoreEntryInput[],
+  entries: PreparedEntry[],
+  embedding: EmbeddingPort,
+  precomputedEmbeddings?: number[][],
+): Promise<number[][]> {
+  if (!precomputedEmbeddings) {
+    return embedPendingEntries(entries, embedding);
+  }
+
+  if (precomputedEmbeddings.length !== inputs.length) {
+    throw new Error(`Precomputed embedding length mismatch: expected ${inputs.length}, received ${precomputedEmbeddings.length}.`);
+  }
+
+  return entries.map((entry) => {
+    const vector = precomputedEmbeddings[entry.inputIndex];
+    if (!vector) {
+      throw new Error(`Missing precomputed embedding for input index ${entry.inputIndex}.`);
+    }
+
+    return vector;
+  });
 }
 
 async function embedPendingEntries(entries: PreparedEntry[], embedding: EmbeddingPort): Promise<number[][]> {

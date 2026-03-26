@@ -207,6 +207,43 @@ describe("storeExtractedResults", () => {
     ]);
   });
 
+  it("passes precomputed survivor embeddings through to the store pipeline", async () => {
+    const db = new MockDatabase();
+    const embedding = new MockEmbeddingPort();
+    const firstEntry = createInput({ subject: "one", content: "content-one", source_file: "/tmp/session-a.jsonl" });
+    const secondEntry = createInput({ subject: "two", content: "content-two", source_file: "/tmp/session-b.jsonl" });
+    const results = [
+      createExtractedFileResult({
+        file: "/tmp/session-a.jsonl",
+        fileHash: "hash-a",
+        entries: [firstEntry],
+      }),
+      createExtractedFileResult({
+        file: "/tmp/session-b.jsonl",
+        fileHash: "hash-b",
+        entries: [secondEntry],
+      }),
+    ];
+    const precomputedEmbeddings = new Map<StoreEntryInput, number[]>([
+      [firstEntry, [10, 11]],
+      [secondEntry, [20, 21]],
+    ]);
+
+    await storeExtractedResults(
+      results,
+      { db, embedding },
+      {
+        precomputedEmbeddings,
+      },
+    );
+
+    expect(embedding.calls).toEqual([]);
+    expect(db.insertions.map(({ embedding: vector }) => vector)).toEqual([
+      [10, 11],
+      [20, 21],
+    ]);
+  });
+
   it("skips store writes and ingest-log updates during a dry run", async () => {
     const db = new MockDatabase();
     const embedding = new MockEmbeddingPort();

@@ -4,8 +4,9 @@
 
 1. Check the ingest log for unchanged files
 2. Parse transcripts and extract durable knowledge with the extraction model
-3. Batch accepted entries into one serial store phase
-4. Record file hashes in the ingest log
+3. Cluster extracted entries within the current batch and arbitrate near-duplicates with the dedup model
+4. Batch surviving entries into one serial store phase
+5. Record file hashes in the ingest log
 
 ## Supported inputs
 
@@ -21,16 +22,19 @@ Directory ingestion walks subdirectories recursively and processes files in sort
 ## Options
 
 ```bash
-agenr ingest <path> [--verbose] [--dry-run] [--whole-file auto|force|never] [--skip-embeddings] [--concurrency 4]
+agenr ingest <path> [--verbose] [--dry-run] [--whole-file auto|force|never] [--skip-dedup] [--skip-embeddings] [--concurrency 4]
 ```
 
 - `--verbose` shows per-file warnings, timing, and per-file cost
 - `--dry-run` parses and extracts without writing entries or ingest-log records
 - `--whole-file <mode>` controls extraction chunking behavior
-- `--skip-embeddings` stores entries without computing embeddings
+- `--skip-dedup` bypasses within-batch semantic dedup and passes raw extracted entries through
+- `--skip-embeddings` stores entries without persisted embeddings
 - `--concurrency <n>` limits how many files run through parse and extract in parallel (default: `10`, range: `1-16`)
 
-The ingest summary reports aggregate token usage, LLM call count, and total cost before the final outro line.
+The ingest summary reports aggregate token usage, LLM call count, and total cost before the final outro line. When dedup is enabled, the CLI also reports the number of arbitrated clusters, removed entries, and dedup-model cost for the batch.
+
+If you combine `--skip-embeddings` with dedup enabled, the dedup pass still computes temporary embeddings so it can cluster near-duplicates before store.
 
 ## Resetting the database
 

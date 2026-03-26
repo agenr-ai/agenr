@@ -2,8 +2,9 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 
 import type { DatabasePort, EmbeddingPort, LlmPort, TranscriptPort } from "../ports.js";
-import { type StorePipelineOptions, storeEntriesDetailed } from "../store/pipeline.js";
+import { type StoreEntriesOptions, type StorePipelineOptions, storeEntriesDetailed } from "../store/pipeline.js";
 import type { StoreEntryInput, StoreResult } from "../types.js";
+import { dedupBatch } from "./dedup.js";
 import { extractFromTranscript } from "./extract.js";
 
 /**
@@ -14,6 +15,8 @@ export interface IngestFileOptions {
   dryRun?: boolean;
   /** Whole-file mode override. */
   wholeFile?: "auto" | "force" | "never";
+  /** Skip within-batch semantic dedup and pass extracted entries through. */
+  skipDedup?: boolean;
   /** Context window tokens from the LLM model metadata. */
   contextWindowTokens?: number;
   /** Max output tokens from the LLM model metadata. */
@@ -80,6 +83,14 @@ export interface ExtractedFileResult {
 }
 
 /**
+ * Runtime switches for finalizing extracted file batches into stored entries.
+ */
+export interface StoreExtractedResultsOptions extends StorePipelineOptions {
+  /** Precomputed embeddings keyed by surviving entry object identity. */
+  precomputedEmbeddings?: Map<StoreEntryInput, number[]>;
+}
+
+/**
  * Ingests a single transcript file by parsing, extracting, and storing entries.
  *
  * @param filePath - Transcript file path to ingest.
@@ -92,6 +103,7 @@ export async function ingestFile(
   ports: {
     transcript: TranscriptPort;
     llm: LlmPort;
+    dedupLlm?: LlmPort;
     embedding: EmbeddingPort;
     db: DatabasePort;
   },
@@ -111,8 +123,27 @@ export async function ingestFile(
     return toIngestFileResult(extracted, null);
   }
 
+  const dedupResult = await dedupBatch(extracted.entries, ports.dedupLlm ?? ports.llm, ports.embedding, {
+    skip: options.skipDedup,
+    verbose: options.verbose,
+  });
+  const precomputedEmbeddings = new Map(
+    dedupResult.survivors.map((entry, index) => {
+      const embedding = dedupResult.embeddings[index];
+      if (!embedding) {
+        throw new Error(`Missing precomputed embedding for dedup survivor ${index}.`);
+      }
+
+      return [entry, embedding];
+    }),
+  );
+  const dedupedExtracted: ExtractedFileResult = {
+    ...extracted,
+    entries: dedupResult.survivors,
+  };
+
   const storeResults = await storeExtractedResults(
-    [extracted],
+    [dedupedExtracted],
     {
       db: ports.db,
       embedding: ports.embedding,
@@ -121,10 +152,11 @@ export async function ingestFile(
       dryRun: options.dryRun,
       verbose: options.verbose,
       skipEmbeddings: options.skipEmbeddings,
+      precomputedEmbeddings,
     },
   );
 
-  return storeResults.get(filePath) ?? toIngestFileResult(extracted, emptyStoreResult());
+  return storeResults.get(filePath) ?? toIngestFileResult(dedupedExtracted, emptyStoreResult());
 }
 
 async function computeFileHash(filePath: string): Promise<string> {
@@ -241,7 +273,7 @@ export async function storeExtractedResults(
     db: DatabasePort;
     embedding: EmbeddingPort;
   },
-  options: StorePipelineOptions = {},
+  options: StoreExtractedResultsOptions = {},
 ): Promise<Map<string, IngestFileResult>> {
   const storeStartedAt = Date.now();
   const finalResults = new Map<string, IngestFileResult>();
@@ -258,7 +290,12 @@ export async function storeExtractedResults(
     }
   }
 
-  const storeResult = await storeEntriesDetailed(allEntries, ports.db, ports.embedding, options);
+  const storeOptions: StoreEntriesOptions = {
+    ...options,
+    precomputedEmbeddings: alignPrecomputedEmbeddings(allEntries, options.precomputedEmbeddings),
+  };
+
+  const storeResult = await storeEntriesDetailed(allEntries, ports.db, ports.embedding, storeOptions);
   for (const detail of storeResult.details) {
     const owner = entryOwners[detail.inputIndex];
     if (!owner) {
@@ -295,6 +332,21 @@ export async function storeExtractedResults(
   }
 
   return finalResults;
+}
+
+function alignPrecomputedEmbeddings(entries: StoreEntryInput[], precomputedEmbeddings?: Map<StoreEntryInput, number[]>): number[][] | undefined {
+  if (!precomputedEmbeddings) {
+    return undefined;
+  }
+
+  return entries.map((entry, index) => {
+    const vector = precomputedEmbeddings.get(entry);
+    if (!vector) {
+      throw new Error(`Missing precomputed embedding for extracted entry ${index}.`);
+    }
+
+    return vector;
+  });
 }
 
 function emptyStoreResult(): StoreResult {

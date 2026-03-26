@@ -7,15 +7,17 @@ import { createLlmClient, resolveLlmApiKey, resolveModel, type UsageStats } from
 import { openClawTranscriptParser } from "../../adapters/openclaw/transcript/parser.js";
 import { readConfig, resolveDbPath } from "../../config.js";
 import {
+  dedupBatch,
   discoverFiles,
   extractFile,
   storeExtractedResults,
+  type DedupResult,
   type ExtractedFileResult,
   type IngestFileOptions,
   type IngestFileResult,
 } from "../../core/ingestion/index.js";
-import type { DatabasePort, EmbeddingPort, TranscriptPort } from "../../core/ports.js";
-import type { StoreResult } from "../../core/types.js";
+import type { DatabasePort, EmbeddingPort, LlmPort, TranscriptPort } from "../../core/ports.js";
+import type { StoreEntryInput, StoreResult } from "../../core/types.js";
 import { setVerbose } from "../../logger.js";
 import { banner, formatLabel, ui } from "../../ui.js";
 import { InvalidArgumentError, Option, type Command } from "commander";
@@ -31,6 +33,7 @@ interface IngestCommandOptions {
   verbose?: boolean;
   dryRun?: boolean;
   wholeFile?: WholeFileMode;
+  skipDedup?: boolean;
   skipEmbeddings?: boolean;
   concurrency?: number;
 }
@@ -52,6 +55,12 @@ interface ExtractionPorts {
   createLlm: () => CliLlmClient;
 }
 
+interface TaggedEntry {
+  entry: StoreEntryInput;
+  fileIndex: number;
+  originalIndex: number;
+}
+
 /**
  * Registers the `agenr ingest` CLI command.
  *
@@ -64,7 +73,8 @@ export function registerIngestCommand(program: Command): void {
     .option("--verbose", "Show detailed progress")
     .option("--dry-run", "Parse and extract without storing")
     .addOption(new Option("--whole-file <mode>", "Whole-file mode: auto|force|never").choices(["auto", "force", "never"]).default("auto"))
-    .option("--skip-embeddings", "Skip embedding computation")
+    .option("--skip-dedup", "Skip within-batch semantic dedup")
+    .option("--skip-embeddings", "Store entries without persisted embeddings")
     .addOption(new Option("--concurrency <n>", "Max files to extract in parallel").argParser(parseConcurrency).default(DEFAULT_INGEST_CONCURRENCY));
 
   ingestCommand.action(async (targetPath: string, options: IngestCommandOptions) => {
@@ -80,10 +90,15 @@ export function registerIngestCommand(program: Command): void {
       db = await createDatabase(dbPath);
 
       const { provider, modelId } = resolveModel(config, "extraction");
+      const { provider: dedupProvider, modelId: dedupModelId } = resolveModel(config, "dedup");
       const llmApiKey = resolveLlmApiKey(config, provider);
       const llmTemplate = createLlmClient(provider, modelId, { apiKey: llmApiKey });
-      const embedding =
-        options.skipEmbeddings === true ? createNoopEmbeddingPort() : createEmbeddingClient(resolveEmbeddingApiKey(config), resolveEmbeddingModel(config));
+      let dedupLlm: CliLlmClient | null = null;
+      const needsRealEmbeddings = options.skipDedup !== true || options.skipEmbeddings !== true;
+      const sharedEmbedding = needsRealEmbeddings
+        ? createEmbeddingClient(resolveEmbeddingApiKey(config), resolveEmbeddingModel(config))
+        : createNoopEmbeddingPort();
+      const storeEmbedding = options.skipEmbeddings === true ? createNoopEmbeddingPort() : sharedEmbedding;
 
       if (options.verbose === true) {
         clack.log.step(`Discovering transcript files in ${path.resolve(targetPath)}...`);
@@ -98,11 +113,13 @@ export function registerIngestCommand(program: Command): void {
 
       clack.log.info(
         [
-          formatLabel("Model", `${provider}/${modelId}`),
+          formatLabel("Extraction model", `${provider}/${modelId}`),
+          formatLabel("Dedup model", options.skipDedup === true ? "skipped" : `${dedupProvider}/${dedupModelId}`),
           formatLabel("Database", dbPath),
           formatLabel("Files", `${files.length} ${pluralize(files.length, "file")} found`),
           formatLabel("Whole-file", options.wholeFile ?? "auto"),
-          formatLabel("Embeddings", options.skipEmbeddings === true ? "skipped" : "enabled"),
+          formatLabel("Within-batch dedup", options.skipDedup === true ? "skipped" : "enabled"),
+          formatLabel("Embeddings", options.skipEmbeddings === true ? "not stored" : "stored"),
           formatLabel("Concurrency", `${options.concurrency ?? DEFAULT_INGEST_CONCURRENCY}`),
         ].join("\n"),
       );
@@ -137,8 +154,44 @@ export function registerIngestCommand(program: Command): void {
       spinner.stop(`Extraction complete (${files.length}/${files.length}).`);
 
       const extractedResults = extractionRuns.map(({ result }) => result);
-      const resultsToStore = extractedResults.filter((result) => result.skipped !== true && result.error === undefined);
+      const extractedSuccesses = extractedResults.filter((result) => result.skipped !== true && result.error === undefined);
+      const taggedEntries = collectTaggedEntries(extractedSuccesses);
+      const dedupStartedAt = Date.now();
+      let dedupResult = buildEmptyDedupResult();
+      let dedupUsage = createEmptyUsageStats();
+      let resultsToStore = extractedSuccesses;
+      let precomputedEmbeddings: Map<StoreEntryInput, number[]> | undefined;
       let storeResults = new Map<string, IngestFileResult>();
+
+      if (extractedSuccesses.length > 0) {
+        const dedupSpinnerMessage =
+          options.skipDedup === true
+            ? `Preparing ${taggedEntries.length} extracted ${pluralize(taggedEntries.length, "entry", "entries")} for store...`
+            : `Deduplicating ${taggedEntries.length} extracted ${pluralize(taggedEntries.length, "entry", "entries")}...`;
+        spinner.start(dedupSpinnerMessage);
+
+        if (taggedEntries.length > 0) {
+          const llm =
+            options.skipDedup === true
+              ? createNoopLlmPort()
+              : (dedupLlm ??= createLlmClient(dedupProvider, dedupModelId, { apiKey: resolveLlmApiKey(config, dedupProvider) }));
+          dedupResult = await dedupBatch(
+            taggedEntries.map((taggedEntry) => taggedEntry.entry),
+            llm,
+            sharedEmbedding,
+            {
+              skip: options.skipDedup,
+              verbose: options.verbose,
+            },
+          );
+          resultsToStore = rebuildResultsWithSurvivors(extractedSuccesses, taggedEntries, dedupResult);
+          precomputedEmbeddings = buildPrecomputedEmbeddingMap(dedupResult);
+        }
+
+        dedupUsage = dedupLlm ? cloneUsageStats(dedupLlm.metadata.usage) : createEmptyUsageStats();
+        spinner.stop(`Dedup phase complete (${formatDurationMs(Date.now() - dedupStartedAt)}).`);
+        printDedupSummary(dedupResult, taggedEntries, options, dedupUsage.totalCost);
+      }
 
       if (resultsToStore.length > 0) {
         const entryCount = resultsToStore.reduce((total, result) => total + result.entries.length, 0);
@@ -151,12 +204,13 @@ export function registerIngestCommand(program: Command): void {
           resultsToStore,
           {
             db,
-            embedding,
+            embedding: storeEmbedding,
           },
           {
             dryRun: options.dryRun,
             verbose: options.verbose,
             skipEmbeddings: options.skipEmbeddings,
+            precomputedEmbeddings,
           },
         );
         spinner.stop(entryCount > 0 ? "Store phase complete." : "Finalize phase complete.");
@@ -164,13 +218,14 @@ export function registerIngestCommand(program: Command): void {
 
       const totals = {
         stored: 0,
-        deduped: 0,
+        deduped: dedupResult.removedCount,
         rejected: 0,
         skippedFiles: 0,
         failedFiles: 0,
         warnings: 0,
       };
-      const usageTotals = extractionRuns.reduce(sumUsageStats, createEmptyUsageStats());
+      const usageTotals = extractionRuns.reduce((total, run) => addUsageStats(total, run.usage), createEmptyUsageStats());
+      addUsageStats(usageTotals, dedupUsage);
       let runningCost = 0;
 
       for (const [index, extractionRun] of extractionRuns.entries()) {
@@ -495,6 +550,166 @@ function getDisplayResult(result: ExtractedFileResult, storeResults: Map<string,
   return storeResults.get(result.file) ?? toIngestFileResult(result, emptyStoreResult());
 }
 
+function createNoopLlmPort(): LlmPort {
+  return {
+    complete: async (): Promise<string> => '{"keep":[],"drop":[]}',
+    completeJson: async <T>(): Promise<T> => ({}) as T,
+  };
+}
+
+function buildEmptyDedupResult(): DedupResult {
+  return {
+    survivors: [],
+    survivorIndices: [],
+    embeddings: [],
+    inputCount: 0,
+    removedCount: 0,
+    clustersArbitrated: 0,
+    singletonsPassedThrough: 0,
+    llmCalls: 0,
+    clusterDetails: [],
+    similarityThreshold: 0.85,
+  };
+}
+
+function collectTaggedEntries(results: ExtractedFileResult[]): TaggedEntry[] {
+  const taggedEntries: TaggedEntry[] = [];
+  let originalIndex = 0;
+
+  for (const [fileIndex, result] of results.entries()) {
+    for (const entry of result.entries) {
+      taggedEntries.push({
+        entry,
+        fileIndex,
+        originalIndex,
+      });
+      originalIndex += 1;
+    }
+  }
+
+  return taggedEntries;
+}
+
+function rebuildResultsWithSurvivors(results: ExtractedFileResult[], taggedEntries: TaggedEntry[], dedupResult: DedupResult): ExtractedFileResult[] {
+  const survivorsByOriginalIndex = new Map<number, StoreEntryInput>();
+  for (const [offset, originalIndex] of dedupResult.survivorIndices.entries()) {
+    const survivor = dedupResult.survivors[offset];
+    if (survivor) {
+      survivorsByOriginalIndex.set(originalIndex, survivor);
+    }
+  }
+
+  const entriesByFileIndex = new Map<number, StoreEntryInput[]>();
+  for (const taggedEntry of taggedEntries) {
+    const survivor = survivorsByOriginalIndex.get(taggedEntry.originalIndex);
+    if (!survivor) {
+      continue;
+    }
+
+    const entries = entriesByFileIndex.get(taggedEntry.fileIndex) ?? [];
+    entries.push(survivor);
+    entriesByFileIndex.set(taggedEntry.fileIndex, entries);
+  }
+
+  return results.map((result, fileIndex) => ({
+    ...result,
+    entries: entriesByFileIndex.get(fileIndex) ?? [],
+  }));
+}
+
+function buildPrecomputedEmbeddingMap(dedupResult: DedupResult): Map<StoreEntryInput, number[]> {
+  return new Map(
+    dedupResult.survivors.map((entry, index) => {
+      const embedding = dedupResult.embeddings[index];
+      if (!embedding) {
+        throw new Error(`Missing dedup embedding for survivor index ${index}.`);
+      }
+
+      return [entry, embedding];
+    }),
+  );
+}
+
+function printDedupSummary(dedupResult: DedupResult, taggedEntries: TaggedEntry[], options: IngestCommandOptions, dedupCost: number): void {
+  if (taggedEntries.length === 0) {
+    clack.log.step("Dedup: 0 entries extracted, nothing to arbitrate.");
+    return;
+  }
+
+  if (options.skipDedup === true) {
+    clack.log.step(`Dedup: skipped (--skip-dedup), ${taggedEntries.length} ${pluralize(taggedEntries.length, "entry", "entries")} passed through.`);
+    return;
+  }
+
+  clack.log.step(
+    `Dedup: ${dedupResult.inputCount} ${pluralize(dedupResult.inputCount, "entry", "entries")} -> ${dedupResult.clustersArbitrated} similar ${pluralize(dedupResult.clustersArbitrated, "cluster")} found (similarity > ${formatThreshold(dedupResult.similarityThreshold)})`,
+  );
+  clack.log.step(
+    `Dedup: ${dedupResult.clustersArbitrated} ${pluralize(dedupResult.clustersArbitrated, "cluster")} arbitrated (${dedupResult.llmCalls} ${pluralize(dedupResult.llmCalls, "LLM call")})`,
+  );
+  clack.log.step(
+    `Dedup: ${dedupResult.survivors.length} ${pluralize(dedupResult.survivors.length, "entry", "entries")} survived, ${dedupResult.removedCount} removed (${formatCost(dedupCost)})`,
+  );
+
+  if (options.verbose !== true) {
+    return;
+  }
+
+  for (const [clusterIndex, detail] of dedupResult.clusterDetails.entries()) {
+    clack.log.step(formatDedupClusterDetail(clusterIndex, detail, taggedEntries));
+  }
+
+  clack.log.step(
+    `Dedup: ${dedupResult.singletonsPassedThrough} ${pluralize(dedupResult.singletonsPassedThrough, "singleton")} passed through (no similar neighbors)`,
+  );
+}
+
+function formatDedupClusterDetail(clusterIndex: number, detail: DedupResult["clusterDetails"][number], taggedEntries: TaggedEntry[]): string {
+  const localIndexByOriginal = new Map<number, number>();
+  detail.entryIndices.forEach((entryIndex, localIndex) => {
+    localIndexByOriginal.set(entryIndex, localIndex);
+  });
+
+  const lines = [
+    `Dedup cluster ${clusterIndex + 1} (${detail.entryIndices.length} ${pluralize(detail.entryIndices.length, "entry", "entries")}, max similarity ${detail.maxSimilarity.toFixed(2)}):`,
+  ];
+
+  for (const [localIndex, originalIndex] of detail.entryIndices.entries()) {
+    const taggedEntry = taggedEntries.find((entry) => entry.originalIndex === originalIndex);
+    const entry = taggedEntry?.entry;
+    if (!entry) {
+      continue;
+    }
+
+    lines.push(
+      `  [${localIndex}] ${entry.type}|${entry.importance ?? 7} ${JSON.stringify(entry.subject)}: ${JSON.stringify(truncateText(entry.content, 180))}`,
+    );
+  }
+
+  const keptLocal = detail.kept.map((index) => localIndexByOriginal.get(index)).filter(isDefined);
+  const droppedLocal = detail.dropped.map((index) => localIndexByOriginal.get(index)).filter(isDefined);
+  lines.push(`  -> ${formatDedupDecisionLine(keptLocal, droppedLocal, detail.merged)}`);
+
+  if (detail.mergedContent) {
+    lines.push(`  -> Merged: ${JSON.stringify(truncateText(detail.mergedContent, 220))}`);
+  }
+
+  return lines.join("\n");
+}
+
+function formatDedupDecisionLine(kept: number[], dropped: number[], merged: boolean): string {
+  if (dropped.length === 0) {
+    return `Kept ${formatIndexList(kept)} (genuinely different knowledge)`;
+  }
+
+  const mergedSuffix = merged ? ", merged content" : "";
+  return `Kept ${formatIndexList(kept)}, dropped ${formatIndexList(dropped)}${mergedSuffix}`;
+}
+
+function formatIndexList(indexes: number[]): string {
+  return `[${indexes.join(",")}]`;
+}
+
 function toIngestFileResult(result: ExtractedFileResult, storeResult: StoreResult | null): IngestFileResult {
   return {
     file: result.file,
@@ -518,6 +733,23 @@ function emptyStoreResult(): StoreResult {
     skipped: 0,
     rejected: 0,
   };
+}
+
+function formatThreshold(value: number): string {
+  return value.toFixed(2);
+}
+
+function truncateText(text: string, maxLength: number): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, maxLength - 3)}...`;
+}
+
+function isDefined<T>(value: T | undefined): value is T {
+  return value !== undefined;
 }
 
 function cloneUsageStats(usage: UsageStats): UsageStats {
@@ -544,14 +776,14 @@ function createEmptyUsageStats(): UsageStats {
   };
 }
 
-function sumUsageStats(total: UsageStats, usage: ExtractionExecutionResult): UsageStats {
-  total.calls += usage.usage.calls;
-  total.inputTokens += usage.usage.inputTokens;
-  total.outputTokens += usage.usage.outputTokens;
-  total.cacheReadTokens += usage.usage.cacheReadTokens;
-  total.cacheWriteTokens += usage.usage.cacheWriteTokens;
-  total.totalTokens += usage.usage.totalTokens;
-  total.totalCost += usage.usage.totalCost;
+function addUsageStats(total: UsageStats, usage: UsageStats): UsageStats {
+  total.calls += usage.calls;
+  total.inputTokens += usage.inputTokens;
+  total.outputTokens += usage.outputTokens;
+  total.cacheReadTokens += usage.cacheReadTokens;
+  total.cacheWriteTokens += usage.cacheWriteTokens;
+  total.totalTokens += usage.totalTokens;
+  total.totalCost += usage.totalCost;
   return total;
 }
 

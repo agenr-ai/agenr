@@ -160,6 +160,49 @@ describe("storeEntries", () => {
     expect(db.insertions[0]?.entry.content_hash).toBe(computeContentHash(input.content, input.source_file));
     expect(db.insertions[0]?.entry.norm_content_hash).toBe(computeNormContentHash(input.content));
   });
+
+  it("reuses precomputed embeddings instead of calling the embedding port", async () => {
+    const db = new MockDatabase();
+    const embedding = new MockEmbeddingPort();
+    const inputs = [createInput({ subject: "one", content: "content-one" }), createInput({ subject: "two", content: "content-two" })];
+    const precomputedEmbeddings = [
+      [10, 11],
+      [20, 21],
+    ];
+
+    const result = await storeEntries(inputs, db, embedding, { precomputedEmbeddings });
+
+    expect(result).toEqual({ stored: 2, skipped: 0, rejected: 0 });
+    expect(embedding.calls).toEqual([]);
+    expect(db.insertions.map(({ embedding: vector }) => vector)).toEqual(precomputedEmbeddings);
+  });
+
+  it("keeps precomputed embeddings aligned after hash dedup filters inputs", async () => {
+    const inputs = [
+      createInput({ subject: "one", content: "content-one" }),
+      createInput({ subject: "two", content: "content-two" }),
+      createInput({ subject: "three", content: "content-three" }),
+    ];
+    const db = new MockDatabase({
+      existingHashes: new Set([computeContentHash(inputs[1].content, inputs[1].source_file)]),
+    });
+    const embedding = new MockEmbeddingPort();
+    const precomputedEmbeddings = [
+      [10, 11],
+      [20, 21],
+      [30, 31],
+    ];
+
+    const result = await storeEntries(inputs, db, embedding, { precomputedEmbeddings });
+
+    expect(result).toEqual({ stored: 2, skipped: 1, rejected: 0 });
+    expect(embedding.calls).toEqual([]);
+    expect(db.insertions.map(({ entry }) => entry.subject)).toEqual(["one", "three"]);
+    expect(db.insertions.map(({ embedding: vector }) => vector)).toEqual([
+      [10, 11],
+      [30, 31],
+    ]);
+  });
 });
 
 class MockDatabase implements DatabasePort {

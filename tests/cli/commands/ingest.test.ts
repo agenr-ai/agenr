@@ -49,6 +49,7 @@ describe("registerIngestCommand", () => {
       "--dry-run",
       "--whole-file",
       "force",
+      "--skip-dedup",
       "--skip-embeddings",
       "--concurrency",
       "6",
@@ -60,8 +61,27 @@ describe("registerIngestCommand", () => {
         verbose: true,
         dryRun: true,
         wholeFile: "force",
+        skipDedup: true,
         skipEmbeddings: true,
         concurrency: 6,
+      }),
+    );
+  });
+
+  it("parses --skip-dedup as a boolean flag", () => {
+    const program = new Command();
+    registerIngestCommand(program);
+
+    const ingestCommand = program.commands.find((command) => command.name() === "ingest");
+    if (!ingestCommand) {
+      throw new Error("Ingest command was not registered.");
+    }
+
+    ingestCommand.parseOptions(["/tmp/session.jsonl", "--skip-dedup"]);
+
+    expect(ingestCommand.opts()).toEqual(
+      expect.objectContaining({
+        skipDedup: true,
       }),
     );
   });
