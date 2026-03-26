@@ -15,6 +15,26 @@ type GetModelWithStrings = (provider: string, modelId: string) => Model<Api>;
 const getModelWithStrings = getModel as unknown as GetModelWithStrings;
 
 /**
+ * Accumulated token and cost usage for an LLM client instance.
+ */
+export interface UsageStats {
+  /** Number of completion calls made. */
+  calls: number;
+  /** Total prompt/input tokens sent. */
+  inputTokens: number;
+  /** Total completion/output tokens received. */
+  outputTokens: number;
+  /** Total cached input tokens read. */
+  cacheReadTokens: number;
+  /** Total cached input tokens written. */
+  cacheWriteTokens: number;
+  /** Total tokens consumed across all calls. */
+  totalTokens: number;
+  /** Total model cost in USD. */
+  totalCost: number;
+}
+
+/**
  * Metadata exposed by the pi-ai-backed LLM client.
  */
 export interface LlmClientMetadata {
@@ -26,6 +46,8 @@ export interface LlmClientMetadata {
   maxOutputTokens: number;
   /** Whether the model supports reasoning/thinking. */
   supportsReasoning: boolean;
+  /** Accumulated usage stats since client creation. */
+  usage: UsageStats;
 }
 
 /**
@@ -43,6 +65,7 @@ export function createLlmClient(provider: string, modelId: string, options: Crea
     contextWindowTokens: model.contextWindow,
     maxOutputTokens: model.maxTokens,
     supportsReasoning: model.reasoning,
+    usage: createEmptyUsageStats(),
   };
 
   const resolvedApiKey = normalizeOptionalString(options.apiKey);
@@ -65,6 +88,8 @@ export function createLlmClient(provider: string, modelId: string, options: Crea
         reasoning: metadata.supportsReasoning ? (options.reasoning ?? DEFAULT_REASONING) : undefined,
       },
     );
+
+    accumulateUsage(metadata.usage, response.usage);
 
     if (response.stopReason === "error") {
       throw new Error(response.errorMessage ?? `LLM completion failed for ${provider}/${modelId}.`);
@@ -152,4 +177,38 @@ function defaultModelForStage(stage: "extraction" | "dedup"): string {
 function normalizeOptionalString(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+function createEmptyUsageStats(): UsageStats {
+  return {
+    calls: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    totalTokens: 0,
+    totalCost: 0,
+  };
+}
+
+function accumulateUsage(
+  target: UsageStats,
+  usage: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    totalTokens: number;
+    cost: {
+      total: number;
+    };
+  },
+): void {
+  target.calls += 1;
+  target.inputTokens += usage.input;
+  target.outputTokens += usage.output;
+  target.cacheReadTokens += usage.cacheRead;
+  target.cacheWriteTokens += usage.cacheWrite;
+  target.totalTokens += usage.totalTokens;
+  target.totalCost += usage.cost.total;
 }

@@ -2,6 +2,7 @@ import { Command } from "commander";
 
 import { APP_VERSION } from "../version.js";
 import { banner } from "../ui.js";
+import { registerDbCommand } from "./commands/db.js";
 import { registerIngestCommand } from "./commands/ingest.js";
 
 /**
@@ -19,6 +20,7 @@ export function createProgram(): Command {
     .addHelpText("beforeAll", `${banner()}\n\n`);
 
   registerIngestCommand(program);
+  registerDbCommand(program);
 
   // Commands will be registered here as modules are built:
   // registerRecallCommand(program);
@@ -28,7 +30,6 @@ export function createProgram(): Command {
   // registerTraceCommand(program);
   // registerSurgeonCommand(program);
   // registerMcpCommand(program);
-  // registerDbCommand(program);
   // registerSetupCommand(program);
   // registerConfigCommand(program);
 

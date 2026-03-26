@@ -44,22 +44,36 @@ function buildAssistantMessage(text: string): AssistantMessage {
     provider: "openai",
     model: "gpt-5.4-mini",
     content: [{ type: "text", text }],
-    usage: {
-      input: 1,
-      output: 1,
-      cacheRead: 0,
-      cacheWrite: 0,
-      totalTokens: 2,
-      cost: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        total: 0,
-      },
-    },
+    usage: buildUsage(),
     stopReason: "stop",
     timestamp: Date.now(),
+  };
+}
+
+function buildUsage(
+  overrides: Partial<AssistantMessage["usage"]> & {
+    cost?: Partial<AssistantMessage["usage"]["cost"]>;
+  } = {},
+): AssistantMessage["usage"] {
+  const defaultCost = {
+    input: 0.001,
+    output: 0.002,
+    cacheRead: 0,
+    cacheWrite: 0,
+    total: 0.003,
+  };
+
+  return {
+    input: 1,
+    output: 1,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 2,
+    ...overrides,
+    cost: {
+      ...defaultCost,
+      ...(overrides.cost ?? {}),
+    },
   };
 }
 
@@ -179,9 +193,116 @@ describe("createLlmClient", () => {
       contextWindowTokens: 200_000,
       maxOutputTokens: 8_192,
       supportsReasoning: false,
+      usage: {
+        calls: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        totalTokens: 0,
+        totalCost: 0,
+      },
     });
 
     await expect(client.complete("system", "user")).resolves.toBe("hello");
+  });
+
+  it("initializes usage stats to zero", () => {
+    piAiMocks.getModel.mockReturnValue(buildModel());
+
+    const client = createLlmClient("openai", "gpt-5.4-mini");
+
+    expect(client.metadata.usage).toEqual({
+      calls: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      totalTokens: 0,
+      totalCost: 0,
+    });
+  });
+
+  it("accumulates usage stats after multiple completion calls", async () => {
+    piAiMocks.getModel.mockReturnValue(buildModel());
+    piAiMocks.completeSimple
+      .mockResolvedValueOnce({
+        ...buildAssistantMessage("hello"),
+        usage: buildUsage({
+          input: 10,
+          output: 4,
+          cacheRead: 2,
+          cacheWrite: 1,
+          totalTokens: 17,
+          cost: {
+            input: 0.002,
+            output: 0.003,
+            cacheRead: 0.0001,
+            cacheWrite: 0.0002,
+            total: 0.0053,
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ...buildAssistantMessage('{"entries":[]}'),
+        usage: buildUsage({
+          input: 7,
+          output: 3,
+          cacheRead: 5,
+          cacheWrite: 0,
+          totalTokens: 15,
+          cost: {
+            input: 0.001,
+            output: 0.002,
+            cacheRead: 0.0004,
+            cacheWrite: 0,
+            total: 0.0034,
+          },
+        }),
+      });
+
+    const client = createLlmClient("openai", "gpt-5.4-mini");
+
+    await expect(client.complete("system", "user")).resolves.toBe("hello");
+    await expect(client.completeJson("system", "user")).resolves.toEqual({ entries: [] });
+
+    expect(client.metadata.usage).toEqual({
+      calls: 2,
+      inputTokens: 17,
+      outputTokens: 7,
+      cacheReadTokens: 7,
+      cacheWriteTokens: 1,
+      totalTokens: 32,
+      totalCost: 0.0087,
+    });
+  });
+
+  it("accumulates total cost across multiple calls", async () => {
+    piAiMocks.getModel.mockReturnValue(buildModel());
+    piAiMocks.completeSimple
+      .mockResolvedValueOnce({
+        ...buildAssistantMessage("first"),
+        usage: buildUsage({
+          cost: {
+            total: 0.0042,
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ...buildAssistantMessage("second"),
+        usage: buildUsage({
+          cost: {
+            total: 0.0095,
+          },
+        }),
+      });
+
+    const client = createLlmClient("openai", "gpt-5.4-mini");
+
+    await client.complete("system", "user");
+    await client.complete("system", "user");
+
+    expect(client.metadata.usage.totalCost).toBeCloseTo(0.0137, 10);
   });
 });
 

@@ -24,10 +24,18 @@ Directory ingestion walks subdirectories recursively and processes files in sort
 agenr ingest <path> [--verbose] [--dry-run] [--whole-file auto|force|never] [--skip-embeddings]
 ```
 
-- `--verbose` shows per-file warnings and timing
+- `--verbose` shows per-file warnings, timing, and per-file cost
 - `--dry-run` parses and extracts without writing entries or ingest-log records
 - `--whole-file <mode>` controls extraction chunking behavior
 - `--skip-embeddings` stores entries without computing embeddings
+
+The ingest summary reports aggregate token usage, LLM call count, and total cost before the final outro line.
+
+## Resetting the database
+
+Use `agenr db reset [--yes]` to delete and recreate the configured knowledge database.
+
+For sandbox work, `sandbox-agenr db reset --yes` resets the isolated sandbox database and immediately recreates the schema.
 
 ## Sandbox config
 

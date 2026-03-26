@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import { describe, expect, it } from "vitest";
 
-import { registerIngestCommand } from "../../../src/cli/commands/ingest.js";
+import { pluralize, registerIngestCommand } from "../../../src/cli/commands/ingest.js";
 import { createProgram } from "../../../src/cli/main.js";
 import { APP_VERSION } from "../../../src/version.js";
 
@@ -79,6 +79,24 @@ describe("registerIngestCommand", () => {
 
     expect(help).toContain("agenr");
     expect(help).toContain(APP_VERSION.toLowerCase());
+  });
+});
+
+describe("pluralize", () => {
+  it('returns "entries" for zero entries', () => {
+    expect(pluralize(0, "entry", "entries")).toBe("entries");
+  });
+
+  it('returns "entry" for one entry', () => {
+    expect(pluralize(1, "entry", "entries")).toBe("entry");
+  });
+
+  it('returns "entries" for multiple entries', () => {
+    expect(pluralize(2, "entry", "entries")).toBe("entries");
+  });
+
+  it("falls back to appending s for regular plurals", () => {
+    expect(pluralize(2, "file")).toBe("files");
   });
 });
 

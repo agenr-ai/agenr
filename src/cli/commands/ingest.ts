@@ -91,6 +91,7 @@ export function registerIngestCommand(program: Command): void {
       for (const file of files) {
         const spinnerLabel = path.basename(file);
         spinner.start(`Ingesting ${spinnerLabel}...`);
+        const costBefore = llm.metadata.usage.totalCost;
 
         const result = await ingestFile(
           file,
@@ -110,27 +111,44 @@ export function registerIngestCommand(program: Command): void {
             extractionContext: config.extractionContext,
           },
         );
+        const fileCost = Math.max(0, llm.metadata.usage.totalCost - costBefore);
 
         totals.warnings += result.warnings.length;
 
         if (result.skipped) {
           totals.skippedFiles += 1;
-          spinner.stop(`${spinnerLabel}: skipped (unchanged)`);
+          if (options.verbose === true) {
+            spinner.stop(spinnerLabel);
+            printVerboseFileDetails(result, options);
+            clack.log.step(buildSkippedMessage(spinnerLabel));
+          } else {
+            spinner.stop(buildSkippedMessage(spinnerLabel));
+          }
         } else if (result.error) {
           totals.failedFiles += 1;
-          spinner.error(`${spinnerLabel}: failed (${result.error})`);
+          if (options.verbose === true) {
+            spinner.error(spinnerLabel);
+            printVerboseFileDetails(result, options);
+            clack.log.error(buildFailureMessage(spinnerLabel, result, options, fileCost));
+          } else {
+            spinner.error(buildFailureMessage(spinnerLabel, result, options, fileCost));
+          }
         } else {
           const storeResult = result.storeResult ?? { stored: 0, skipped: 0, rejected: 0 };
           totals.stored += storeResult.stored;
           totals.deduped += storeResult.skipped;
           totals.rejected += storeResult.rejected;
-          spinner.stop(buildSuccessMessage(spinnerLabel, result, options));
+          if (options.verbose === true) {
+            spinner.stop(spinnerLabel);
+            printVerboseFileDetails(result, options);
+            clack.log.step(buildSuccessMessage(spinnerLabel, result, options, fileCost));
+          } else {
+            spinner.stop(buildSuccessMessage(spinnerLabel, result, options, fileCost));
+          }
         }
-
-        printVerboseFileDetails(result, options);
       }
 
-      const summaryParts = [`${totals.stored} ${pluralize(totals.stored, "entry")} stored`, `${totals.deduped} deduped`];
+      const summaryParts = [`${totals.stored} ${pluralize(totals.stored, "entry", "entries")} stored`, `${totals.deduped} deduped`];
 
       if (totals.rejected > 0) {
         summaryParts.push(`${totals.rejected} rejected`);
@@ -145,8 +163,22 @@ export function registerIngestCommand(program: Command): void {
         summaryParts.push(`${totals.warnings} ${pluralize(totals.warnings, "warning")}`);
       }
 
+      const usage = llm.metadata.usage;
+      if (usage.calls > 0) {
+        clack.log.info(
+          [
+            formatLabel(
+              "Tokens",
+              `${usage.inputTokens.toLocaleString()} in / ${usage.outputTokens.toLocaleString()} out / ${usage.totalTokens.toLocaleString()} total`,
+            ),
+            formatLabel("Cost", formatCost(usage.totalCost)),
+            formatLabel("LLM calls", `${usage.calls}`),
+          ].join("\n"),
+        );
+      }
+
       const dryRunSuffix = options.dryRun === true ? " Dry run only." : "";
-      clack.outro(`Done: ${summaryParts.join(", ")}. (${formatDurationMs(Date.now() - startedAt)})${dryRunSuffix}`);
+      clack.outro(`Done: ${summaryParts.join(", ")}. (${formatCost(usage.totalCost)}, ${formatDurationMs(Date.now() - startedAt)})${dryRunSuffix}`);
     } catch (error) {
       process.exitCode = 1;
       clack.log.error(formatUnknownError(error));
@@ -209,7 +241,7 @@ function printVerboseFileDetails(result: IngestFileResult, options: IngestComman
   }
 }
 
-function buildSuccessMessage(fileLabel: string, result: IngestFileResult, options: IngestCommandOptions): string {
+function buildSuccessMessage(fileLabel: string, result: IngestFileResult, options: IngestCommandOptions, fileCost = 0): string {
   const storeResult = result.storeResult ?? { stored: 0, skipped: 0, rejected: 0 };
   const details = [
     `${result.messageCount} ${pluralize(result.messageCount, "message")}`,
@@ -231,6 +263,28 @@ function buildSuccessMessage(fileLabel: string, result: IngestFileResult, option
   }
   if (options.verbose === true) {
     details.push(formatDurationMs(result.durationMs));
+    if (fileCost > 0) {
+      details.push(formatCost(fileCost));
+    }
+  }
+
+  return `${fileLabel}: ${details.join(" -> ")}`;
+}
+
+function buildSkippedMessage(fileLabel: string): string {
+  return `${fileLabel}: skipped (unchanged)`;
+}
+
+function buildFailureMessage(fileLabel: string, result: IngestFileResult, options: IngestCommandOptions, fileCost = 0): string {
+  const errorMessage = result.error ?? "unknown error";
+
+  if (options.verbose !== true) {
+    return `${fileLabel}: failed (${errorMessage})`;
+  }
+
+  const details = [`failed (${errorMessage})`, formatDurationMs(result.durationMs)];
+  if (fileCost > 0) {
+    details.push(formatCost(fileCost));
   }
 
   return `${fileLabel}: ${details.join(" -> ")}`;
@@ -262,10 +316,22 @@ function formatDurationMs(durationMs: number): string {
   return `${(durationMs / 1000).toFixed(1)}s`;
 }
 
+function formatCost(cost: number): string {
+  return `$${cost.toFixed(4)}`;
+}
+
 function formatUnknownError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function pluralize(value: number, singular: string): string {
-  return value === 1 ? singular : `${singular}s`;
+/**
+ * Returns a singular or plural noun based on the provided count.
+ *
+ * @param value - Numeric count that determines singular or plural output.
+ * @param singular - Singular form of the noun.
+ * @param plural - Optional explicit plural form for irregular nouns.
+ * @returns Singular or pluralized noun.
+ */
+export function pluralize(value: number, singular: string, plural?: string): string {
+  return value === 1 ? singular : (plural ?? `${singular}s`);
 }
