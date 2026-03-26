@@ -158,8 +158,7 @@ const CHUNK_CALIBRATION_BLOCK = [
   "- One grounded, specific entry beats three paraphrases of the same insight. If two candidate entries would answer the same future recall query, keep only the stronger one.",
   "- Before emitting a lesson, ask: is this genuinely a non-obvious insight from a specific experience, or is it standard practice anyone would know? If a software engineering textbook would contain this advice, skip it.",
   "- Type balance: if your draft extractions are more than 50% any single type, re-examine. Are lessons actually preferences or decisions? Are decisions actually personal priorities or values?",
-  "- Importance guide: start every accepted entry at standard. Promote to high only when forgetting it would likely cause a wrong cross-session action, violate a foundational constraint, or repeat a costly mistake. Use low for narrow-scope or environment-specific knowledge, especially when code, docs, or config remain the source of truth. Some sessions will have zero low entries.",
-  "- If more than 30% of your accepted entries are high, re-rate the weakest highs.",
+  "- Importance guide: standard is the default. Use high for entries where forgetting would cause wrong decisions or costly mistakes. Use low for narrow-scope or environment-specific knowledge, especially when code, docs, or config remain the source of truth. Target roughly 15-25% high, 55-65% standard, 15-25% low.",
 ];
 
 const WHOLE_FILE_CALIBRATION_BLOCK = [
@@ -169,7 +168,7 @@ const WHOLE_FILE_CALIBRATION_BLOCK = [
   "1. Session triage: decide whether this session contains durable signal or is mostly implementation churn before extracting anything. A pure debugging session may yield zero entries.",
   "2. Prioritize user statements: direct user facts, preferences, stated decisions, and committed constraints outrank assistant narration, tool output, and procedural steps. The user saying 'I want X' is signal. The assistant executing X is not.",
   "3. Check type balance: if your draft extractions are more than 50% any single type, re-examine. Are lessons actually preferences or decisions in disguise? Are decisions actually personal priorities or values? Is a fact really an event?",
-  "4. Check importance balance: standard is the default. Promote to high only when forgetting the entry would likely cause a wrong cross-session action, violate a foundational constraint, or repeat a costly mistake. Use low for narrow-scope durable context, especially when code, docs, or config remain the primary source of truth.",
+  "4. Check importance balance: standard is the default. High is for entries where forgetting causes wrong decisions or costly mistakes. Low is for narrow-scope context where code, docs, or config are the primary source of truth. Target roughly 15-25% high, 55-65% standard, 15-25% low.",
 ];
 
 /**
@@ -313,11 +312,10 @@ export function buildExtractionSystemPrompt(options: { wholeFile?: boolean; extr
     "",
     'Rate each entry as one of three tiers: "high", "standard", or "low".',
     "",
-    "- Default every accepted entry to standard. Promotion requires a clear reason.",
-    "- high: Entries where forgetting would likely cause a materially wrong cross-session action, violate a foundational constraint, create a safety-critical error, or repeat a costly mistake.",
+    "- high: Entries where forgetting would cause the agent to make a wrong architectural decision, violate a foundational constraint, or repeat a costly mistake. Critical personal facts, strong preferences that affect most interactions, and architecture decisions with lasting rationale.",
     "- standard: The default tier. Verified facts, routine decisions, stated preferences, confirmed lessons, and solid durable context.",
     "- low: Narrow-scope knowledge that is real but limited in applicability. Single-project conventions, environment-specific behaviors, terminology clarifications, aspirational preferences without concrete constraints, or context where the primary source of truth is elsewhere (code, docs, config).",
-    "- Some sessions will have zero low entries. That is acceptable. If more than 30% of accepted entries are high, re-rate the weakest highs.",
+    "- Target distribution: roughly 15-25% high, 55-65% standard, 15-25% low. Standard is the default. If more than 40% of entries are high, re-rate the weakest highs. If you have zero low entries, re-evaluate your weakest standard entries.",
     "",
     "## Expiry",
     "",

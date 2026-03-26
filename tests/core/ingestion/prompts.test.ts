@@ -51,12 +51,13 @@ describe("buildExtractionSystemPrompt", () => {
     expect(prompt.indexOf(decisionCheck)).toBeGreaterThan(prompt.indexOf(preferenceCheck));
   });
 
-  it("treats standard as the default importance tier and caps high inflation", () => {
+  it("treats standard as the default importance tier with target distribution", () => {
     const prompt = buildExtractionSystemPrompt();
 
-    expect(prompt).toContain("Default every accepted entry to standard. Promotion requires a clear reason.");
-    expect(prompt).toContain("If more than 30% of accepted entries are high, re-rate the weakest highs.");
-    expect(prompt).not.toContain("Target distribution: roughly 15-25% high, 55-65% standard, 15-25% low.");
+    expect(prompt).toContain("standard: The default tier.");
+    expect(prompt).toContain("Target distribution: roughly 15-25% high, 55-65% standard, 15-25% low.");
+    expect(prompt).toContain("If more than 40% of entries are high, re-rate the weakest highs.");
+    expect(prompt).toContain("If you have zero low entries, re-evaluate your weakest standard entries.");
   });
 });
 
