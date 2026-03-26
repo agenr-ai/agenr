@@ -56,6 +56,30 @@ docs/                        # Documentation
 - **`cli/`** is a thin shell. Commands parse args, wire adapters to core, call core functions, format output. No business logic lives here.
 - **`config.ts`** is shared infrastructure — both core and adapters may reference config types.
 
+### OpenClaw plugin architecture
+
+The plugin at `adapters/openclaw/` is the most complex adapter but must stay disciplined. It is a **translator, not a brain.**
+
+Every piece of code in the plugin should be one of:
+1. **A core call** — `core.recall()`, `core.store()`, `core.sessionStart()`, etc.
+2. **OpenClaw protocol translation** — mapping OpenClaw events/hooks (`before_prompt_build`, `before_reset`, tool invocations) to core calls
+3. **OpenClaw-specific state** — session predecessor lookup, handoff dedup, tool registration
+
+If recall scoring, dedup logic, extraction, or importance rules appear in the plugin, they belong in `core/`. The plugin formats core results for OpenClaw's prompt injection format and manages session lifecycle - that's it.
+
+File responsibilities:
+- `index.ts` — plugin entry point, hook registration, wiring
+- `tools.ts` — register agenr tools (store, retire, update, trace, recall), translate tool params to core calls
+- `session-start.ts` — `before_prompt_build` hook: call `core.recall.sessionStart()`, format results for injection
+- `mid-session-recall.ts` — on-demand recall during a session
+- `handoff.ts` — `before_reset` hook: build transcript, call core for summary, store handoff entry
+- `handoff-transcript.ts` — transcript building from OpenClaw session messages (OpenClaw-specific format)
+- `session-predecessor.ts` — determine which prior session provides continuity (parse session key, find prior handoff)
+- `session-state.ts` — in-memory session tracking (handoff dedup, seen sessions)
+- `recall-format.ts` — format recalled entries for OpenClaw's system prompt format
+- `openclaw-adapter.ts` — JSONL transcript parsing (implements TranscriptPort)
+- `types.ts` — OpenClaw-specific type definitions
+
 ### Why hexagonal?
 
 The core API is the real product. Adapters translate protocols:
