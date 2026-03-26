@@ -20,7 +20,7 @@ import { setVerbose } from "../../logger.js";
 import { banner, formatLabel, ui } from "../../ui.js";
 import { InvalidArgumentError, Option, type Command } from "commander";
 
-const DEFAULT_INGEST_CONCURRENCY = 4;
+const DEFAULT_INGEST_CONCURRENCY = 10;
 const MIN_INGEST_CONCURRENCY = 1;
 const MAX_INGEST_CONCURRENCY = 16;
 

@@ -66,7 +66,7 @@ describe("registerIngestCommand", () => {
     );
   });
 
-  it("defaults ingest concurrency to 4", () => {
+  it("defaults ingest concurrency to 10", () => {
     const program = new Command();
     registerIngestCommand(program);
 
@@ -79,7 +79,7 @@ describe("registerIngestCommand", () => {
 
     expect(ingestCommand.opts()).toEqual(
       expect.objectContaining({
-        concurrency: 4,
+        concurrency: 10,
       }),
     );
   });

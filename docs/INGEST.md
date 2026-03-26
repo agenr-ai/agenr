@@ -28,7 +28,7 @@ agenr ingest <path> [--verbose] [--dry-run] [--whole-file auto|force|never] [--s
 - `--dry-run` parses and extracts without writing entries or ingest-log records
 - `--whole-file <mode>` controls extraction chunking behavior
 - `--skip-embeddings` stores entries without computing embeddings
-- `--concurrency <n>` limits how many files run through parse and extract in parallel (default: `4`, range: `1-16`)
+- `--concurrency <n>` limits how many files run through parse and extract in parallel (default: `10`, range: `1-16`)
 
 The ingest summary reports aggregate token usage, LLM call count, and total cost before the final outro line.
 
