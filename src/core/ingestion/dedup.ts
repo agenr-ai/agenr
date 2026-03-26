@@ -3,7 +3,7 @@ import type { EmbeddingPort, LlmPort } from "../ports.js";
 import { composeEmbeddingText } from "../store/embedding-text.js";
 import type { StoreEntryInput } from "../types.js";
 
-const DEFAULT_SIMILARITY_THRESHOLD = 0.85;
+const DEFAULT_SIMILARITY_THRESHOLD = 0.75;
 const logger = createLogger("ingestion:dedup");
 
 /**

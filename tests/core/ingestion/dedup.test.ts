@@ -225,7 +225,7 @@ describe("dedupBatch", () => {
       singletonsPassedThrough: 0,
       llmCalls: 0,
       clusterDetails: [],
-      similarityThreshold: 0.85,
+      similarityThreshold: 0.75,
     });
     expect(embedding.calls).toEqual([]);
     expect(llm.completeCalls).toBe(0);
