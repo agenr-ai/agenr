@@ -216,6 +216,37 @@ describe("OpenClawTranscriptParser", () => {
     expect(transcript.warnings.at(-1)).toContain("1 base64 dropped");
   });
 
+  it("omits the misleading kept-message count from verbose filter warnings", async () => {
+    const filePath = await writeSessionFile([
+      JSON.stringify({
+        type: "session",
+        id: "session-4b",
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "assistant",
+          content: [{ type: "tool_call", name: "Read", arguments: { path: "src/parser.ts" }, id: "call-read-1" }],
+        },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "tool_result",
+          tool_call_id: "call-read-1",
+          content: "export const parser = true;",
+        },
+      }),
+    ]);
+
+    const transcript = await parser.parseFile(filePath, { verbose: true });
+    const filterWarning = transcript.warnings.find((warning) => warning.startsWith("Filtered transcript:"));
+
+    expect(filterWarning).toBeDefined();
+    expect(filterWarning).toContain("1 tool results dropped");
+    expect(filterWarning).not.toContain("messages kept");
+  });
+
   it("extracts session metadata from session and user message records", async () => {
     const filePath = await writeSessionFile([
       JSON.stringify({

@@ -223,6 +223,41 @@ describe("createLlmClient", () => {
     });
   });
 
+  it("accumulates usage stats for completeJson calls", async () => {
+    piAiMocks.getModel.mockReturnValue(buildModel());
+    piAiMocks.completeSimple.mockResolvedValue({
+      ...buildAssistantMessage('{"entries":["kept"]}'),
+      usage: buildUsage({
+        input: 12,
+        output: 5,
+        cacheRead: 3,
+        cacheWrite: 2,
+        totalTokens: 22,
+        cost: {
+          input: 0.002,
+          output: 0.003,
+          cacheRead: 0.0002,
+          cacheWrite: 0.0001,
+          total: 0.0053,
+        },
+      }),
+    });
+
+    const client = createLlmClient("openai", "gpt-5.4-mini");
+
+    await expect(client.completeJson("system", "user")).resolves.toEqual({ entries: ["kept"] });
+
+    expect(client.metadata.usage).toEqual({
+      calls: 1,
+      inputTokens: 12,
+      outputTokens: 5,
+      cacheReadTokens: 3,
+      cacheWriteTokens: 2,
+      totalTokens: 22,
+      totalCost: 0.0053,
+    });
+  });
+
   it("accumulates usage stats after multiple completion calls", async () => {
     piAiMocks.getModel.mockReturnValue(buildModel());
     piAiMocks.completeSimple

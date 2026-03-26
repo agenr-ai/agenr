@@ -597,7 +597,7 @@ export class OpenClawTranscriptParser implements TranscriptPort {
 
     if (verbose) {
       warnings.push(
-        `Filtered transcript: ${stats.toolResultsDropped} tool results dropped, ${stats.toolResultsKept} kept, ${stats.systemDropped} system dropped, ${stats.base64Dropped} base64 dropped, ${messages.length}/${stats.totalMessageRecords} messages kept.`,
+        `Filtered transcript: ${stats.toolResultsDropped} tool results dropped, ${stats.toolResultsKept} kept, ${stats.systemDropped} system dropped, ${stats.base64Dropped} base64 dropped.`,
       );
     }
 

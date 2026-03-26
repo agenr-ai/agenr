@@ -70,7 +70,7 @@ export function createLlmClient(provider: string, modelId: string, options: Crea
 
   const resolvedApiKey = normalizeOptionalString(options.apiKey);
 
-  const complete = async (systemPrompt: string, userMessage: string): Promise<string> => {
+  const requestCompletion = async (systemPrompt: string, userMessage: string) => {
     const response = await completeSimple(
       model,
       {
@@ -95,21 +95,20 @@ export function createLlmClient(provider: string, modelId: string, options: Crea
       throw new Error(response.errorMessage ?? `LLM completion failed for ${provider}/${modelId}.`);
     }
 
-    const blocks: string[] = [];
-    for (const contentBlock of response.content) {
-      if (contentBlock.type === "text") {
-        blocks.push(contentBlock.text);
-      }
-    }
+    return response;
+  };
 
-    return blocks.join("");
+  const complete = async (systemPrompt: string, userMessage: string): Promise<string> => {
+    const response = await requestCompletion(systemPrompt, userMessage);
+    return extractText(response);
   };
 
   return {
     metadata,
     complete,
     completeJson: async <T>(systemPrompt: string, userMessage: string): Promise<T> => {
-      const text = await complete(systemPrompt, userMessage);
+      const response = await requestCompletion(systemPrompt, userMessage);
+      const text = extractText(response);
       return JSON.parse(stripCodeFence(text)) as T;
     },
   };
@@ -211,4 +210,15 @@ function accumulateUsage(
   target.cacheWriteTokens += usage.cacheWrite;
   target.totalTokens += usage.totalTokens;
   target.totalCost += usage.cost.total;
+}
+
+function extractText(response: Awaited<ReturnType<typeof completeSimple>>): string {
+  const blocks: string[] = [];
+  for (const contentBlock of response.content) {
+    if (contentBlock.type === "text") {
+      blocks.push(contentBlock.text);
+    }
+  }
+
+  return blocks.join("");
 }

@@ -21,6 +21,12 @@ interface IngestCommandOptions {
   skipEmbeddings?: boolean;
 }
 
+interface FileUsageSummary {
+  fileCost: number;
+  fileCalls: number;
+  runningCost: number;
+}
+
 /**
  * Registers the `agenr ingest` CLI command.
  *
@@ -88,10 +94,11 @@ export function registerIngestCommand(program: Command): void {
       };
       const spinner = clack.spinner();
 
-      for (const file of files) {
+      for (const [index, file] of files.entries()) {
         const spinnerLabel = path.basename(file);
         spinner.start(`Ingesting ${spinnerLabel}...`);
         const costBefore = llm.metadata.usage.totalCost;
+        const callsBefore = llm.metadata.usage.calls;
 
         const result = await ingestFile(
           file,
@@ -111,7 +118,11 @@ export function registerIngestCommand(program: Command): void {
             extractionContext: config.extractionContext,
           },
         );
-        const fileCost = Math.max(0, llm.metadata.usage.totalCost - costBefore);
+        const usage: FileUsageSummary = {
+          fileCost: Math.max(0, llm.metadata.usage.totalCost - costBefore),
+          fileCalls: Math.max(0, llm.metadata.usage.calls - callsBefore),
+          runningCost: llm.metadata.usage.totalCost,
+        };
 
         totals.warnings += result.warnings.length;
 
@@ -119,7 +130,7 @@ export function registerIngestCommand(program: Command): void {
           totals.skippedFiles += 1;
           if (options.verbose === true) {
             spinner.stop(spinnerLabel);
-            printVerboseFileDetails(result, options);
+            printVerboseFileDetails(result, options, usage);
             clack.log.step(buildSkippedMessage(spinnerLabel));
           } else {
             spinner.stop(buildSkippedMessage(spinnerLabel));
@@ -128,10 +139,10 @@ export function registerIngestCommand(program: Command): void {
           totals.failedFiles += 1;
           if (options.verbose === true) {
             spinner.error(spinnerLabel);
-            printVerboseFileDetails(result, options);
-            clack.log.error(buildFailureMessage(spinnerLabel, result, options, fileCost));
+            printVerboseFileDetails(result, options, usage);
+            clack.log.error(buildFailureMessage(spinnerLabel, result, options, usage, index === 0));
           } else {
-            spinner.error(buildFailureMessage(spinnerLabel, result, options, fileCost));
+            spinner.error(buildFailureMessage(spinnerLabel, result, options, usage, index === 0));
           }
         } else {
           const storeResult = result.storeResult ?? { stored: 0, skipped: 0, rejected: 0 };
@@ -140,10 +151,10 @@ export function registerIngestCommand(program: Command): void {
           totals.rejected += storeResult.rejected;
           if (options.verbose === true) {
             spinner.stop(spinnerLabel);
-            printVerboseFileDetails(result, options);
-            clack.log.step(buildSuccessMessage(spinnerLabel, result, options, fileCost));
+            printVerboseFileDetails(result, options, usage);
+            clack.log.step(buildSuccessMessage(spinnerLabel, result, options, usage, index === 0));
           } else {
-            spinner.stop(buildSuccessMessage(spinnerLabel, result, options, fileCost));
+            spinner.stop(buildSuccessMessage(spinnerLabel, result, options, usage, index === 0));
           }
         }
       }
@@ -189,7 +200,7 @@ export function registerIngestCommand(program: Command): void {
   });
 }
 
-function printVerboseFileDetails(result: IngestFileResult, options: IngestCommandOptions): void {
+function printVerboseFileDetails(result: IngestFileResult, options: IngestCommandOptions, usage: FileUsageSummary): void {
   if (options.verbose !== true) {
     return;
   }
@@ -206,13 +217,17 @@ function printVerboseFileDetails(result: IngestFileResult, options: IngestComman
       clack.log.step(formatChunkDetail(result.file, chunkDetail));
     }
 
-    clack.log.step(
-      [
-        `${fileLabel}: ${result.messageCount} ${pluralize(result.messageCount, "message")} parsed before failure`,
-        `${fileLabel}: extraction ${result.successfulChunks}/${result.chunkCount} chunks succeeded`,
-        `${fileLabel}: duration ${formatDurationMs(result.durationMs)}`,
-      ].join("\n"),
-    );
+    const lines = [
+      `${fileLabel}: ${result.messageCount} ${pluralize(result.messageCount, "message")} parsed before failure`,
+      `${fileLabel}: extraction ${result.successfulChunks}/${result.chunkCount} chunks succeeded`,
+    ];
+    const usageLine = formatVerboseUsageLine(fileLabel, usage);
+    if (usageLine) {
+      lines.push(usageLine);
+    }
+    lines.push(`${fileLabel}: duration ${formatDurationMs(result.durationMs)}`);
+
+    clack.log.step(lines.join("\n"));
 
     for (const warning of result.warnings) {
       if (warning !== result.error) {
@@ -227,21 +242,31 @@ function printVerboseFileDetails(result: IngestFileResult, options: IngestComman
     clack.log.step(formatChunkDetail(result.file, chunkDetail));
   }
 
-  clack.log.step(
-    [
-      `${fileLabel}: ${result.messageCount} ${pluralize(result.messageCount, "message")} parsed`,
-      `${fileLabel}: extraction ${result.successfulChunks}/${result.chunkCount} chunks succeeded`,
-      `${fileLabel}: store ${formatStoreSummary(result)}`,
-      `${fileLabel}: duration ${formatDurationMs(result.durationMs)}`,
-    ].join("\n"),
-  );
+  const lines = [
+    `${fileLabel}: ${result.messageCount} ${pluralize(result.messageCount, "message")} parsed`,
+    `${fileLabel}: extraction ${result.successfulChunks}/${result.chunkCount} chunks succeeded`,
+    `${fileLabel}: store ${formatStoreSummary(result)}`,
+  ];
+  const usageLine = formatVerboseUsageLine(fileLabel, usage);
+  if (usageLine) {
+    lines.push(usageLine);
+  }
+  lines.push(`${fileLabel}: duration ${formatDurationMs(result.durationMs)}`);
+
+  clack.log.step(lines.join("\n"));
 
   for (const warning of result.warnings) {
     clack.log.warn(`${fileLabel}: ${warning}`);
   }
 }
 
-function buildSuccessMessage(fileLabel: string, result: IngestFileResult, options: IngestCommandOptions, fileCost = 0): string {
+function buildSuccessMessage(
+  fileLabel: string,
+  result: IngestFileResult,
+  options: IngestCommandOptions,
+  usage: FileUsageSummary,
+  isFirstFile: boolean,
+): string {
   const storeResult = result.storeResult ?? { stored: 0, skipped: 0, rejected: 0 };
   const details = [
     `${result.messageCount} ${pluralize(result.messageCount, "message")}`,
@@ -263,31 +288,30 @@ function buildSuccessMessage(fileLabel: string, result: IngestFileResult, option
   }
   if (options.verbose === true) {
     details.push(formatDurationMs(result.durationMs));
-    if (fileCost > 0) {
-      details.push(formatCost(fileCost));
-    }
   }
 
-  return `${fileLabel}: ${details.join(" -> ")}`;
+  return `${fileLabel}: ${details.join(" -> ")}${formatFileCost(usage.fileCost, usage.runningCost, isFirstFile)}`;
 }
 
 function buildSkippedMessage(fileLabel: string): string {
   return `${fileLabel}: skipped (unchanged)`;
 }
 
-function buildFailureMessage(fileLabel: string, result: IngestFileResult, options: IngestCommandOptions, fileCost = 0): string {
+function buildFailureMessage(
+  fileLabel: string,
+  result: IngestFileResult,
+  options: IngestCommandOptions,
+  usage: FileUsageSummary,
+  isFirstFile: boolean,
+): string {
   const errorMessage = result.error ?? "unknown error";
 
   if (options.verbose !== true) {
-    return `${fileLabel}: failed (${errorMessage})`;
+    return `${fileLabel}: failed (${errorMessage})${formatFileCost(usage.fileCost, usage.runningCost, isFirstFile)}`;
   }
 
   const details = [`failed (${errorMessage})`, formatDurationMs(result.durationMs)];
-  if (fileCost > 0) {
-    details.push(formatCost(fileCost));
-  }
-
-  return `${fileLabel}: ${details.join(" -> ")}`;
+  return `${fileLabel}: ${details.join(" -> ")}${formatFileCost(usage.fileCost, usage.runningCost, isFirstFile)}`;
 }
 
 function formatStoreSummary(result: IngestFileResult): string {
@@ -318,6 +342,26 @@ function formatDurationMs(durationMs: number): string {
 
 function formatCost(cost: number): string {
   return `$${cost.toFixed(4)}`;
+}
+
+function formatFileCost(fileCost: number, runningCost: number, isFirstFile: boolean): string {
+  if (fileCost === 0) {
+    return "";
+  }
+
+  if (isFirstFile) {
+    return ` (${formatCost(fileCost)})`;
+  }
+
+  return ` (${formatCost(fileCost)}, running ${formatCost(runningCost)})`;
+}
+
+function formatVerboseUsageLine(fileLabel: string, usage: FileUsageSummary): string | undefined {
+  if (usage.fileCost === 0 && usage.fileCalls === 0) {
+    return undefined;
+  }
+
+  return `${fileLabel}: cost ${formatCost(usage.fileCost)} (${usage.fileCalls} ${pluralize(usage.fileCalls, "LLM call")})`;
 }
 
 function formatUnknownError(error: unknown): string {
