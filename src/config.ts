@@ -8,16 +8,28 @@ import path from "node:path";
 import os from "node:os";
 
 /**
+ * Per-pipeline model configuration.
+ * Each pipeline stage can use a different provider/model combination.
+ * Falls back to the top-level provider/model when not set.
+ */
+export interface ModelConfig {
+  /** Provider name (e.g., "openai", "anthropic"). */
+  provider?: string;
+  /** Model ID (e.g., "gpt-5.4", "gpt-5.4-nano"). */
+  model?: string;
+}
+
+/**
  * Runtime configuration loaded from disk or environment overrides.
  */
 export interface AgenrConfig {
-  /** LLM provider (e.g., "openai", "anthropic"). */
+  /** Default LLM provider (e.g., "openai", "anthropic"). */
   provider?: string;
 
-  /** Default model for extraction and other LLM tasks. */
+  /** Default model for LLM tasks. */
   model?: string;
 
-  /** API key for LLM extraction (prefer env var AGENR_API_KEY). */
+  /** API key for LLM calls (prefer env var AGENR_API_KEY or provider-specific env vars). */
   apiKey?: string;
 
   /** API key specifically for embeddings. Falls back to apiKey if not set. */
@@ -25,6 +37,12 @@ export interface AgenrConfig {
 
   /** Embedding model. */
   embeddingModel?: string;
+
+  /** Model override for extraction (the main LLM extraction pipeline). */
+  extractionModel?: ModelConfig;
+
+  /** Model override for LLM dedup (typically a smaller/cheaper model). */
+  dedupModel?: ModelConfig;
 
   /** Database file path (overridden by AGENR_DB_PATH env var). */
   dbPath?: string;
