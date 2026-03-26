@@ -44,119 +44,67 @@ export async function insertEntry(executor: SqlExecutor, entry: Entry, embedding
   const id = entry.id.trim().length > 0 ? entry.id.trim() : randomUUID();
   const createdAt = normalizeTimestamp(entry.created_at) ?? now;
   const updatedAt = normalizeTimestamp(entry.updated_at) ?? now;
-  const serializedEmbedding = encodeEmbedding(embedding);
   const vectorJson = serializeEmbeddingForVector(embedding);
-  const baseArgs = [
-    id,
-    entry.type,
-    entry.subject,
-    entry.content,
-    normalizeInteger(entry.importance, 0),
-    entry.expiry,
-    serializeTags(entry.tags),
-    normalizeOptionalString(entry.source_file),
-    normalizeOptionalString(entry.source_context),
-    contentHash.trim(),
-    normalizeOptionalString(entry.norm_content_hash),
-    null,
-    normalizeNumber(entry.quality_score, DEFAULT_QUALITY_SCORE),
-    normalizeInteger(entry.recall_count, 0),
-    normalizeOptionalString(entry.last_recalled_at),
-    normalizeOptionalString(entry.superseded_by),
-    normalizeOptionalString(entry.cluster_id),
-    entry.retired ? 1 : 0,
-    normalizeOptionalString(entry.retired_at),
-    normalizeOptionalString(entry.retired_reason),
-    createdAt,
-    updatedAt,
-  ] as const;
-
-  try {
-    await executor.execute({
-      sql: `
-        INSERT INTO entries (
-          id,
-          type,
-          subject,
-          content,
-          importance,
-          expiry,
-          tags,
-          source_file,
-          source_context,
-          embedding,
-          content_hash,
-          norm_content_hash,
-          minhash_sig,
-          quality_score,
-          recall_count,
-          last_recalled_at,
-          superseded_by,
-          cluster_id,
-          retired,
-          retired_at,
-          retired_reason,
-          created_at,
-          updated_at
-        )
-        VALUES (
-          ?, ?, ?, ?, ?, ?, ?, ?, ?,
-          CASE WHEN ? IS NULL THEN NULL ELSE vector32(?) END,
-          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-        )
-      `,
-      args: [
+  await executor.execute({
+    sql: `
+      INSERT INTO entries (
         id,
-        entry.type,
-        entry.subject,
-        entry.content,
-        normalizeInteger(entry.importance, 0),
-        entry.expiry,
-        serializeTags(entry.tags),
-        normalizeOptionalString(entry.source_file),
-        normalizeOptionalString(entry.source_context),
-        vectorJson,
-        vectorJson,
-        ...baseArgs.slice(9),
-      ],
-    });
-  } catch (error) {
-    if (serializedEmbedding === null || !isVectorUnavailableError(error)) {
-      throw error;
-    }
-
-    await executor.execute({
-      sql: `
-        INSERT INTO entries (
-          id,
-          type,
-          subject,
-          content,
-          importance,
-          expiry,
-          tags,
-          source_file,
-          source_context,
-          embedding,
-          content_hash,
-          norm_content_hash,
-          minhash_sig,
-          quality_score,
-          recall_count,
-          last_recalled_at,
-          superseded_by,
-          cluster_id,
-          retired,
-          retired_at,
-          retired_reason,
-          created_at,
-          updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-      args: [...baseArgs.slice(0, 9), serializedEmbedding, ...baseArgs.slice(9)],
-    });
-  }
+        type,
+        subject,
+        content,
+        importance,
+        expiry,
+        tags,
+        source_file,
+        source_context,
+        embedding,
+        content_hash,
+        norm_content_hash,
+        minhash_sig,
+        quality_score,
+        recall_count,
+        last_recalled_at,
+        superseded_by,
+        cluster_id,
+        retired,
+        retired_at,
+        retired_reason,
+        created_at,
+        updated_at
+      )
+      VALUES (
+        ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        CASE WHEN ? IS NULL THEN NULL ELSE vector32(?) END,
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      )
+    `,
+    args: [
+      id,
+      entry.type,
+      entry.subject,
+      entry.content,
+      normalizeInteger(entry.importance, 0),
+      entry.expiry,
+      serializeTags(entry.tags),
+      normalizeOptionalString(entry.source_file),
+      normalizeOptionalString(entry.source_context),
+      vectorJson,
+      vectorJson,
+      contentHash.trim(),
+      normalizeOptionalString(entry.norm_content_hash),
+      null,
+      normalizeNumber(entry.quality_score, DEFAULT_QUALITY_SCORE),
+      normalizeInteger(entry.recall_count, 0),
+      normalizeOptionalString(entry.last_recalled_at),
+      normalizeOptionalString(entry.superseded_by),
+      normalizeOptionalString(entry.cluster_id),
+      entry.retired ? 1 : 0,
+      normalizeOptionalString(entry.retired_at),
+      normalizeOptionalString(entry.retired_reason),
+      createdAt,
+      updatedAt,
+    ],
+  });
 
   return id;
 }
@@ -610,20 +558,6 @@ function normalizeInteger(value: number, fallback: number): number {
   return Number.isFinite(normalized) ? normalized : fallback;
 }
 
-function encodeEmbedding(embedding: number[]): ArrayBuffer | null {
-  if (embedding.length === 0) {
-    return null;
-  }
-
-  const normalized = new Float32Array(embedding.length);
-  for (let index = 0; index < embedding.length; index += 1) {
-    const value = embedding[index];
-    normalized[index] = Number.isFinite(value) ? value : 0;
-  }
-
-  return normalized.buffer.slice(0);
-}
-
 function serializeEmbeddingForVector(embedding: number[]): string | null {
   if (embedding.length === 0) {
     return null;
@@ -793,9 +727,4 @@ function cosineSimilarity(left: number[], right: number[]): number {
 function wrapVectorError(error: unknown): Error {
   const message = error instanceof Error ? error.message : String(error);
   return new Error(`Vector search is unavailable: ${message}`);
-}
-
-function isVectorUnavailableError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /libsql_vector_idx|vector32|vector_top_k|vector|no such function|unsupported/i.test(message);
 }

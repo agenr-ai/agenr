@@ -163,6 +163,8 @@ describe("storeExtractedResults", () => {
     const stored = await storeExtractedResults(results, { db, embedding });
 
     expect(db.insertions).toHaveLength(1);
+    expect(db.prepareCalls).toBe(1);
+    expect(db.finalizeCalls).toBe(1);
     expect(stored.get("/tmp/session-a.jsonl")?.storeResult).toEqual({
       stored: 1,
       skipped: 0,
@@ -244,6 +246,43 @@ describe("storeExtractedResults", () => {
     ]);
   });
 
+  it("prepares for bulk writes before storing and finalizes afterward", async () => {
+    const db = new MockDatabase();
+    const embedding = new MockEmbeddingPort();
+    const results = [
+      createExtractedFileResult({
+        file: "/tmp/session-a.jsonl",
+        fileHash: "hash-a",
+        entries: [createInput({ content: "content-a", source_file: "/tmp/session-a.jsonl" })],
+      }),
+    ];
+
+    await storeExtractedResults(results, { db, embedding });
+
+    expect(db.prepareCalls).toBe(1);
+    expect(db.finalizeCalls).toBe(1);
+    expect(db.callOrder).toEqual(["prepare", "insert", "finalize"]);
+  });
+
+  it("finalizes bulk writes even when the store phase throws", async () => {
+    const db = new MockDatabase({
+      failInsertMessage: "insert failed",
+    });
+    const embedding = new MockEmbeddingPort();
+    const results = [
+      createExtractedFileResult({
+        file: "/tmp/session-a.jsonl",
+        fileHash: "hash-a",
+        entries: [createInput({ content: "content-a", source_file: "/tmp/session-a.jsonl" })],
+      }),
+    ];
+
+    await expect(storeExtractedResults(results, { db, embedding })).rejects.toThrow("insert failed");
+    expect(db.prepareCalls).toBe(1);
+    expect(db.finalizeCalls).toBe(1);
+    expect(db.callOrder).toEqual(["prepare", "insert", "finalize"]);
+  });
+
   it("skips store writes and ingest-log updates during a dry run", async () => {
     const db = new MockDatabase();
     const embedding = new MockEmbeddingPort();
@@ -269,6 +308,8 @@ describe("storeExtractedResults", () => {
     expect(db.insertions).toEqual([]);
     expect(db.ingestLogInsertions).toEqual([]);
     expect(embedding.calls).toEqual([]);
+    expect(db.prepareCalls).toBe(0);
+    expect(db.finalizeCalls).toBe(0);
     expect(stored.get("/tmp/session-a.jsonl")?.storeResult).toEqual({
       stored: 0,
       skipped: 0,
@@ -346,24 +387,44 @@ class MockDatabase implements DatabasePort {
   public readonly ingestLogInsertions: Array<{ filePath: string; fileHash: string; entryCount: number }> = [];
   public readonly existingHashes: Set<string>;
   public readonly existingNormHashes: Set<string>;
+  public readonly callOrder: string[] = [];
   public transactionCount = 0;
+  public prepareCalls = 0;
+  public finalizeCalls = 0;
   private readonly ingestLogEntry: { fileHash: string; ingestedAt: string } | null;
+  private readonly failInsertMessage?: string;
 
   public constructor(
     options: {
       ingestLogEntry?: { fileHash: string; ingestedAt: string } | null;
       existingHashes?: Set<string>;
       existingNormHashes?: Set<string>;
+      failInsertMessage?: string;
     } = {},
   ) {
     this.ingestLogEntry = options.ingestLogEntry ?? null;
     this.existingHashes = options.existingHashes ?? new Set();
     this.existingNormHashes = options.existingNormHashes ?? new Set();
+    this.failInsertMessage = options.failInsertMessage;
   }
 
   public async insertEntry(entry: Entry, embedding: number[], contentHash: string): Promise<string> {
+    this.callOrder.push("insert");
+    if (this.failInsertMessage) {
+      throw new Error(this.failInsertMessage);
+    }
     this.insertions.push({ entry, embedding, contentHash });
     return entry.id;
+  }
+
+  public async prepareForBulkWrites(): Promise<void> {
+    this.prepareCalls += 1;
+    this.callOrder.push("prepare");
+  }
+
+  public async finalizeBulkWrites(): Promise<void> {
+    this.finalizeCalls += 1;
+    this.callOrder.push("finalize");
   }
 
   public async vectorSearch(): Promise<Array<{ id: string; score: number }>> {

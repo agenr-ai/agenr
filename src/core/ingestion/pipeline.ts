@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 
 import type { DatabasePort, EmbeddingPort, LlmPort, TranscriptPort } from "../ports.js";
-import { type StoreEntriesOptions, type StorePipelineOptions, storeEntriesDetailed } from "../store/pipeline.js";
+import { type StoreEntriesDetailedResult, type StoreEntriesOptions, type StorePipelineOptions, storeEntriesDetailed } from "../store/pipeline.js";
 import type { StoreEntryInput, StoreResult } from "../types.js";
 import { dedupBatch } from "./dedup.js";
 import { extractFromTranscript } from "./extract.js";
@@ -88,6 +88,16 @@ export interface ExtractedFileResult {
 export interface StoreExtractedResultsOptions extends StorePipelineOptions {
   /** Precomputed embeddings keyed by surviving entry object identity. */
   precomputedEmbeddings?: Map<StoreEntryInput, number[]>;
+  /** Optional progress hook for ingest-specific bulk write phases. */
+  onBulkWriteProgress?: (event: StoreExtractedResultsProgressEvent) => void;
+}
+
+/**
+ * Progress event emitted around ingest bulk-write preparation and rebuild phases.
+ */
+export interface StoreExtractedResultsProgressEvent {
+  phase: "prepare_start" | "store_complete" | "finalize_start" | "finalize_complete";
+  durationMs?: number;
 }
 
 /**
@@ -295,34 +305,58 @@ export async function storeExtractedResults(
     precomputedEmbeddings: alignPrecomputedEmbeddings(allEntries, options.precomputedEmbeddings),
   };
 
-  const storeResult = await storeEntriesDetailed(allEntries, ports.db, ports.embedding, storeOptions);
-  for (const detail of storeResult.details) {
-    const owner = entryOwners[detail.inputIndex];
-    if (!owner) {
-      continue;
-    }
+  const shouldUseBulkWrites = options.dryRun !== true && allEntries.length > 0;
+  let storeResult: StoreEntriesDetailedResult;
 
-    const perFileStoreResult = perFileStoreResults.get(owner) ?? emptyStoreResult();
-    switch (detail.outcome) {
-      case "stored":
-        perFileStoreResult.stored += 1;
-        break;
-      case "skipped":
-        perFileStoreResult.skipped += 1;
-        break;
-      case "rejected":
-        perFileStoreResult.rejected += 1;
-        break;
-      case "dry_run":
-        break;
-    }
-    perFileStoreResults.set(owner, perFileStoreResult);
+  if (shouldUseBulkWrites) {
+    options.onBulkWriteProgress?.({ phase: "prepare_start" });
+    await ports.db.prepareForBulkWrites();
   }
 
-  if (options.dryRun !== true) {
-    for (const result of successfulResults) {
-      const perFileStoreResult = perFileStoreResults.get(result.file) ?? emptyStoreResult();
-      await ports.db.insertIngestLogEntry(result.file, result.fileHash, perFileStoreResult.stored);
+  try {
+    storeResult = await storeEntriesDetailed(allEntries, ports.db, ports.embedding, storeOptions);
+    for (const detail of storeResult.details) {
+      const owner = entryOwners[detail.inputIndex];
+      if (!owner) {
+        continue;
+      }
+
+      const perFileStoreResult = perFileStoreResults.get(owner) ?? emptyStoreResult();
+      switch (detail.outcome) {
+        case "stored":
+          perFileStoreResult.stored += 1;
+          break;
+        case "skipped":
+          perFileStoreResult.skipped += 1;
+          break;
+        case "rejected":
+          perFileStoreResult.rejected += 1;
+          break;
+        case "dry_run":
+          break;
+      }
+      perFileStoreResults.set(owner, perFileStoreResult);
+    }
+
+    if (shouldUseBulkWrites) {
+      options.onBulkWriteProgress?.({ phase: "store_complete" });
+    }
+
+    if (options.dryRun !== true) {
+      for (const result of successfulResults) {
+        const perFileStoreResult = perFileStoreResults.get(result.file) ?? emptyStoreResult();
+        await ports.db.insertIngestLogEntry(result.file, result.fileHash, perFileStoreResult.stored);
+      }
+    }
+  } finally {
+    if (shouldUseBulkWrites) {
+      options.onBulkWriteProgress?.({ phase: "finalize_start" });
+      const finalizeStartedAt = Date.now();
+      await ports.db.finalizeBulkWrites();
+      options.onBulkWriteProgress?.({
+        phase: "finalize_complete",
+        durationMs: Date.now() - finalizeStartedAt,
+      });
     }
   }
 

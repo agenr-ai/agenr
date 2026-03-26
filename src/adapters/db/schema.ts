@@ -10,6 +10,11 @@ export const SCHEMA_VERSION = "1";
  */
 export const VECTOR_INDEX_NAME = "idx_entries_embedding";
 
+/**
+ * Metadata key used to detect interrupted bulk-write phases.
+ */
+export const BULK_WRITE_STATE_META_KEY = "bulk_write_state";
+
 const CREATE_ENTRIES_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS entries (
     id TEXT PRIMARY KEY,
@@ -47,7 +52,10 @@ const CREATE_ENTRIES_FTS_TABLE_SQL = `
   )
 `;
 
-const CREATE_ENTRIES_FTS_INSERT_TRIGGER_SQL = `
+/**
+ * SQL statement that recreates the FTS insert trigger for active entries.
+ */
+export const CREATE_ENTRIES_FTS_INSERT_TRIGGER_SQL = `
   CREATE TRIGGER IF NOT EXISTS entries_ai AFTER INSERT ON entries
   WHEN new.retired = 0 AND new.superseded_by IS NULL BEGIN
     INSERT INTO entries_fts(rowid, content, subject)
@@ -55,7 +63,10 @@ const CREATE_ENTRIES_FTS_INSERT_TRIGGER_SQL = `
   END
 `;
 
-const CREATE_ENTRIES_FTS_DELETE_TRIGGER_SQL = `
+/**
+ * SQL statement that recreates the FTS delete trigger for active entries.
+ */
+export const CREATE_ENTRIES_FTS_DELETE_TRIGGER_SQL = `
   CREATE TRIGGER IF NOT EXISTS entries_ad AFTER DELETE ON entries
   WHEN old.retired = 0 AND old.superseded_by IS NULL BEGIN
     INSERT INTO entries_fts(entries_fts, rowid, content, subject)
@@ -63,7 +74,10 @@ const CREATE_ENTRIES_FTS_DELETE_TRIGGER_SQL = `
   END
 `;
 
-const CREATE_ENTRIES_FTS_UPDATE_TRIGGER_SQL = `
+/**
+ * SQL statement that recreates the FTS update trigger for active entries.
+ */
+export const CREATE_ENTRIES_FTS_UPDATE_TRIGGER_SQL = `
   CREATE TRIGGER IF NOT EXISTS entries_au AFTER UPDATE ON entries BEGIN
     INSERT INTO entries_fts(entries_fts, rowid, content, subject)
     SELECT 'delete', old.rowid, old.content, old.subject
@@ -151,7 +165,10 @@ const CREATE_RECALL_EVENTS_RECALLED_AT_INDEX_SQL = `
   ON recall_events(recalled_at)
 `;
 
-const CREATE_ENTRIES_EMBEDDING_INDEX_SQL = `
+/**
+ * SQL statement that recreates the libSQL vector index for entry embeddings.
+ */
+export const CREATE_ENTRIES_EMBEDDING_INDEX_SQL = `
   CREATE INDEX IF NOT EXISTS idx_entries_embedding ON entries (
     libsql_vector_idx(
       embedding,
@@ -209,17 +226,16 @@ export async function initSchema(db: Client): Promise<void> {
     args: [SCHEMA_VERSION],
   });
 
+  if (await hasActiveBulkWriteState(db)) {
+    await finalizeBulkWrites(db);
+    return;
+  }
+
   if (currentVersion !== SCHEMA_VERSION || !hadEntriesFts) {
     await rebuildFts(db);
   }
 
-  try {
-    await db.execute(CREATE_ENTRIES_EMBEDDING_INDEX_SQL);
-  } catch (error) {
-    if (!isVectorUnavailableError(error)) {
-      throw error;
-    }
-  }
+  await ensureVectorIndex(db);
 }
 
 /**
@@ -230,6 +246,49 @@ export async function initSchema(db: Client): Promise<void> {
  */
 export async function rebuildFts(db: Client): Promise<void> {
   await db.execute("INSERT INTO entries_fts(entries_fts) VALUES ('rebuild')");
+}
+
+/**
+ * Drops FTS triggers and the vector index before an ingest bulk-write phase.
+ *
+ * @param db - libSQL client connected to the target database.
+ * @returns Promise that resolves once bulk-write preparation completes.
+ */
+export async function prepareBulkWrites(db: Client): Promise<void> {
+  await runImmediateTransaction(db, async () => {
+    await db.execute({
+      sql: `
+        INSERT INTO _meta (key, value)
+        VALUES (?, 'active')
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+      `,
+      args: [BULK_WRITE_STATE_META_KEY],
+    });
+    await db.execute("DROP TRIGGER IF EXISTS entries_ai");
+    await db.execute("DROP TRIGGER IF EXISTS entries_ad");
+    await db.execute("DROP TRIGGER IF EXISTS entries_au");
+    await dropVectorIndex(db);
+  });
+}
+
+/**
+ * Recreates FTS triggers, rebuilds FTS, and recreates the vector index after bulk writes.
+ *
+ * @param db - libSQL client connected to the target database.
+ * @returns Promise that resolves once bulk-write finalization completes.
+ */
+export async function finalizeBulkWrites(db: Client): Promise<void> {
+  await runImmediateTransaction(db, async () => {
+    await db.execute(CREATE_ENTRIES_FTS_INSERT_TRIGGER_SQL);
+    await db.execute(CREATE_ENTRIES_FTS_DELETE_TRIGGER_SQL);
+    await db.execute(CREATE_ENTRIES_FTS_UPDATE_TRIGGER_SQL);
+    await rebuildFts(db);
+    await ensureVectorIndex(db);
+    await db.execute({
+      sql: "DELETE FROM _meta WHERE key = ?",
+      args: [BULK_WRITE_STATE_META_KEY],
+    });
+  });
 }
 
 async function getSchemaVersion(db: Client): Promise<string | null> {
@@ -262,7 +321,55 @@ async function tableExists(db: Client, tableName: string): Promise<boolean> {
   return result.rows.length > 0;
 }
 
+async function hasActiveBulkWriteState(db: Client): Promise<boolean> {
+  try {
+    const result = await db.execute({
+      sql: "SELECT value FROM _meta WHERE key = ? LIMIT 1",
+      args: [BULK_WRITE_STATE_META_KEY],
+    });
+    const row = result.rows[0];
+    return row?.value === "active";
+  } catch {
+    return false;
+  }
+}
+
+async function ensureVectorIndex(db: Client): Promise<void> {
+  try {
+    await db.execute(CREATE_ENTRIES_EMBEDDING_INDEX_SQL);
+  } catch (error) {
+    if (!isVectorUnavailableError(error)) {
+      throw error;
+    }
+  }
+}
+
+async function dropVectorIndex(db: Client): Promise<void> {
+  try {
+    await db.execute(`DROP INDEX IF EXISTS ${VECTOR_INDEX_NAME}`);
+  } catch (error) {
+    if (!isVectorUnavailableError(error)) {
+      throw error;
+    }
+  }
+}
+
+async function runImmediateTransaction(db: Client, fn: () => Promise<void>): Promise<void> {
+  await db.execute("BEGIN IMMEDIATE");
+  try {
+    await fn();
+    await db.execute("COMMIT");
+  } catch (error) {
+    try {
+      await db.execute("ROLLBACK");
+    } catch {
+      // Ignore rollback failures.
+    }
+    throw error;
+  }
+}
+
 function isVectorUnavailableError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return /libsql_vector_idx|vector|no such function|unsupported/i.test(message);
+  return /libsql_vector_idx|vector32|vector_top_k|vector|no such function|unsupported/i.test(message);
 }

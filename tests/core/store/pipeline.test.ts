@@ -225,6 +225,10 @@ class MockDatabase implements DatabasePort {
     return entry.id;
   }
 
+  public async prepareForBulkWrites(): Promise<void> {}
+
+  public async finalizeBulkWrites(): Promise<void> {}
+
   public async vectorSearch(): Promise<Array<{ id: string; score: number }>> {
     return [];
   }

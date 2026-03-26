@@ -15,6 +15,7 @@ import {
   type ExtractedFileResult,
   type IngestFileOptions,
   type IngestFileResult,
+  type StoreExtractedResultsProgressEvent,
 } from "../../core/ingestion/index.js";
 import type { DatabasePort, EmbeddingPort, LlmPort, TranscriptPort } from "../../core/ports.js";
 import type { StoreEntryInput, StoreResult } from "../../core/types.js";
@@ -195,11 +196,16 @@ export function registerIngestCommand(program: Command): void {
 
       if (resultsToStore.length > 0) {
         const entryCount = resultsToStore.reduce((total, result) => total + result.entries.length, 0);
-        spinner.start(
-          entryCount > 0
-            ? `Storing ${entryCount} ${pluralize(entryCount, "entry", "entries")} from ${resultsToStore.length} ${pluralize(resultsToStore.length, "file")}...`
-            : `Finalizing ${resultsToStore.length} ${pluralize(resultsToStore.length, "file")}...`,
-        );
+        const useVerboseBulkWriteProgress = options.verbose === true && options.dryRun !== true && entryCount > 0;
+
+        if (!useVerboseBulkWriteProgress) {
+          spinner.start(
+            entryCount > 0
+              ? `Storing ${entryCount} ${pluralize(entryCount, "entry", "entries")} from ${resultsToStore.length} ${pluralize(resultsToStore.length, "file")}...`
+              : `Finalizing ${resultsToStore.length} ${pluralize(resultsToStore.length, "file")}...`,
+          );
+        }
+
         storeResults = await storeExtractedResults(
           resultsToStore,
           {
@@ -211,9 +217,13 @@ export function registerIngestCommand(program: Command): void {
             verbose: options.verbose,
             skipEmbeddings: options.skipEmbeddings,
             precomputedEmbeddings,
+            onBulkWriteProgress: useVerboseBulkWriteProgress ? reportBulkWriteProgress : undefined,
           },
         );
-        spinner.stop(entryCount > 0 ? "Store phase complete." : "Finalize phase complete.");
+
+        if (!useVerboseBulkWriteProgress) {
+          spinner.stop(entryCount > 0 ? "Store phase complete." : "Finalize phase complete.");
+        }
       }
 
       const totals = {
@@ -733,6 +743,23 @@ function emptyStoreResult(): StoreResult {
     skipped: 0,
     rejected: 0,
   };
+}
+
+function reportBulkWriteProgress(event: StoreExtractedResultsProgressEvent): void {
+  switch (event.phase) {
+    case "prepare_start":
+      clack.log.step("Store: dropping FTS triggers and vector index for bulk writes...");
+      break;
+    case "store_complete":
+      clack.log.step("Store phase complete.");
+      break;
+    case "finalize_start":
+      clack.log.step("Store: rebuilding FTS and vector index...");
+      break;
+    case "finalize_complete":
+      clack.log.step(`Store: indexes rebuilt (${formatDurationMs(event.durationMs ?? 0)}).`);
+      break;
+  }
 }
 
 function formatThreshold(value: number): string {

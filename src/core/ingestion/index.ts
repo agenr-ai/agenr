@@ -9,6 +9,7 @@ export {
   type ExtractedFileResult,
   type IngestFileOptions,
   type IngestFileResult,
+  type StoreExtractedResultsProgressEvent,
   type StoreExtractedResultsOptions,
 } from "./pipeline.js";
 export { buildExtractionSystemPrompt, buildChunkPrompt } from "./prompts.js";

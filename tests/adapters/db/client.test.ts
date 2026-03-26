@@ -101,6 +101,41 @@ describe("createDatabase", () => {
     expect(results.map((result) => result.id)).toContain(entry.id);
   });
 
+  it("inserts entries while FTS triggers are dropped and makes them searchable after finalize", async () => {
+    const database = await createTestDatabase();
+    const entry = createEntry({
+      subject: "bulk insert",
+      content: "Bulk mode should rebuild FTS after insert.",
+    });
+
+    await database.prepareForBulkWrites();
+    await database.insertEntry(entry, createEmbedding(0, 1), "bulk-insert-hash");
+
+    expect(await database.getEntry(entry.id)).not.toBeNull();
+    expect(await database.textSearch("rebuild FTS", 5)).toEqual([]);
+
+    await database.finalizeBulkWrites();
+
+    const results = await database.textSearch("rebuild FTS", 5);
+    expect(results.map((result) => result.id)).toContain(entry.id);
+  });
+
+  it("inserts entries while the vector index is dropped", async () => {
+    const database = await createTestDatabase();
+    const entry = createEntry({
+      subject: "vector drop",
+      content: "Insert should still succeed without the vector index.",
+    });
+
+    await database.prepareForBulkWrites();
+    await expect(database.insertEntry(entry, createEmbedding(0, 1), "vector-drop-hash")).resolves.toBe(entry.id);
+
+    const stored = await database.getEntry(entry.id);
+    expect(stored?.embedding?.[0]).toBeCloseTo(1);
+
+    await database.finalizeBulkWrites();
+  });
+
   it("excludes retired entries from active queries", async () => {
     const database = await createTestDatabase();
     const entry = createEntry({

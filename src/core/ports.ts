@@ -16,6 +16,12 @@ export interface DatabasePort {
   /** Insert a new entry with its embedding. */
   insertEntry(entry: Entry, embedding: number[], contentHash: string): Promise<string>;
 
+  /** Drop expensive indexes and triggers before a bulk write phase begins. */
+  prepareForBulkWrites(): Promise<void>;
+
+  /** Rebuild expensive indexes and triggers after a bulk write phase ends. */
+  finalizeBulkWrites(): Promise<void>;
+
   /** Find entries by vector similarity. */
   vectorSearch(embedding: number[], limit: number): Promise<Array<{ id: string; score: number }>>;
 

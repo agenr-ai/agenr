@@ -20,7 +20,7 @@ import {
   updateEntry,
   vectorSearch,
 } from "./queries.js";
-import { initSchema } from "./schema.js";
+import { finalizeBulkWrites, initSchema, prepareBulkWrites } from "./schema.js";
 
 const DEFAULT_BUSY_TIMEOUT_MS = 3000;
 
@@ -58,6 +58,14 @@ class LibsqlDatabase implements TransactionalDatabasePort {
 
   public async insertEntry(entry: Entry, embedding: number[], contentHash: string): Promise<string> {
     return insertEntry(this.executor, entry, embedding, contentHash);
+  }
+
+  public async prepareForBulkWrites(): Promise<void> {
+    await prepareBulkWrites(this.client);
+  }
+
+  public async finalizeBulkWrites(): Promise<void> {
+    await finalizeBulkWrites(this.client);
   }
 
   public async vectorSearch(embedding: number[], limit: number): Promise<Array<{ id: string; score: number }>> {
