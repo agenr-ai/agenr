@@ -258,7 +258,7 @@ export function createRecallEvalDiagnosticsCollector(request: RecallEvalCaseRequ
         retrieval: retrievalObserved ? retrieval : undefined,
         ranking: traceObserved ? ranking : undefined,
         filtering: traceObserved ? filtering : undefined,
-        candidateCounts: retrievalObserved || traceObserved ? candidateCounts : undefined,
+        candidateCounts,
       };
     },
     buildTimings(totalMs: number): RecallEvalCaseTimings | undefined {
@@ -286,7 +286,7 @@ export function createRecallEvalDiagnosticsCollector(request: RecallEvalCaseRequ
   };
 }
 
-/** Returns true when diagnostics were requested directly or via candidate visibility. */
+/** Returns true when diagnostics were requested directly or via aggregate candidate diagnostics. */
 function wantsRecallEvalDiagnostics(request: RecallEvalCaseRequest): boolean {
   return request.options?.includeDiagnostics === true || request.options?.includeCandidates === true;
 }

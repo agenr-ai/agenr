@@ -2,7 +2,7 @@
 
 Date: 2026-03-27
 
-This note now captures the Phase 3 diagnostics slice for the internal recall eval adapter in `agenr`.
+This note now captures the Phase 4 hardening slice for the internal recall eval adapter in `agenr`.
 
 ## Route
 
@@ -25,6 +25,16 @@ Top-level fields:
 
 Fixture entries stay explicit and narrow. They align to current `EntryType` and `Expiry` values and do not add project-scoped concepts that `agenr` does not support.
 
+Phase 4 now rejects unexpected fields at the HTTP boundary for:
+
+- the top-level request envelope
+- `sandbox`
+- each `memoryPool` entry
+- `recallRequest`
+- `options`
+
+That hardening is deliberate. The internal seam is meant to stay narrow, typed, and recall-specific rather than silently absorbing extra transport fields.
+
 ## Response contract
 
 `RecallEvalCaseResponse` also lives in [src/app/evals/recall/contracts.ts](/Users/jmartin/Code/agenr/src/app/evals/recall/contracts.ts).
@@ -39,7 +49,7 @@ Top-level fields:
 - `sandbox`
 - `error`
 
-Phase 3 keeps the Phase 2 execution seam intact:
+Phase 4 keeps the Phase 2 and Phase 3 execution seam intact:
 
 - create an isolated case-local sandbox DB
 - seed the request `memoryPool` directly into that isolated storage
@@ -49,7 +59,17 @@ Phase 3 keeps the Phase 2 execution seam intact:
 
 Successful responses include real `result.entries` and `result.entryIds`.
 
-When diagnostics are requested, the stable response sections are now:
+The response still uses one bounded set of top-level sections only:
+
+- `status`
+- `caseId`
+- `result`
+- `diagnostics`
+- `timings`
+- `sandbox`
+- `error`
+
+When diagnostics are requested, the stable diagnostics sections are:
 
 - `mode: "isolated-case"`
 - `provisioning: "exact-fixture-seed"`
@@ -63,9 +83,11 @@ When diagnostics are requested, the stable response sections are now:
 
 Sandbox references now point at the actual case-local DB path used for execution. When `sandbox.preserve` is `true`, that DB remains on disk for inspection after the run.
 
-No new trace-artifact files are written in Phase 3. The only inspection references remain the existing sandbox paths in the response.
+Phase 4 still does **not** write `trace.json`, candidate snapshots, or any other preserved-run artifact file. The only inspection references remain the existing sandbox paths in the response.
 
 Invalid request payloads are still rejected at the HTTP boundary with a structured `invalid_request` error response. If the request envelope exposes a confidently parseable non-empty `caseId`, that error response now echoes it for batch correlation. If the body is too malformed to parse `caseId` safely, the field is omitted.
+
+Unexpected internal route failures also keep the boundary error envelope small. When the request already validated successfully, the route echoes the validated `caseId` on the `internal_error` response.
 
 ## Fixture provisioning decision
 
@@ -98,7 +120,9 @@ Best-effort when the run reaches those stages before a failure:
 - `diagnostics.ranking`
 - `diagnostics.filtering`
 
-The error envelope stays small and typed. Failures return the same top-level response shape and only include diagnostics that were actually collected.
+`options.includeCandidates` does **not** authorize raw candidate dumps. In the current seam it only requests the same small aggregate diagnostics needed for machine-readable evaluation and debugging.
+
+The error envelope stays small and typed. Failures return the same bounded top-level section set and only include diagnostics that were actually collected.
 
 ## How diagnostics are collected
 
@@ -128,7 +152,7 @@ The core trace seam is optional and null-object by default. It emits one typed s
 
 ## Seeded state vs post-recall state
 
-Phase 3 makes an explicit distinction between:
+The adapter makes an explicit distinction between:
 
 - seeded fixture state before recall runs
 - post-execution storage state after normal recall telemetry updates rows
@@ -144,7 +168,7 @@ This matters because the normal recall path updates returned active rows through
 - `updated_at`
 - `recall_count`
 
-Phase 3 does not suppress or special-case that telemetry for evals. Instead, the response exposes seeded-state facts from the provisioning step and execution facts from the live recall run so the two states are not blurred.
+The adapter does not suppress or special-case that telemetry for evals. Instead, the response exposes seeded-state facts from the provisioning step and execution facts from the live recall run so the two states are not blurred.
 
 ## Ownership split
 
@@ -157,6 +181,7 @@ Phase 3 does not suppress or special-case that telemetry for evals. Instead, the
 - one recall-case request and response shape
 - one exact fixture-seed provisioning mode
 - no eval CLI
+- no preserved-run trace file or candidate snapshot contract
 - no suite orchestration
 - no scoring or benchmark summaries
 - no artifact-writing system in `core/`

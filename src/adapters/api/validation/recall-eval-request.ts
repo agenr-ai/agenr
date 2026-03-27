@@ -7,6 +7,28 @@ import type {
   RecallEvalSandboxRequest,
 } from "../../../app/evals/recall/index.js";
 
+const ROOT_REQUEST_KEYS = new Set<string>(["caseId", "description", "sandbox", "memoryPool", "recallRequest", "options"]);
+const SANDBOX_REQUEST_KEYS = new Set<string>(["root", "preserve"]);
+const FIXTURE_ENTRY_KEYS = new Set<string>([
+  "id",
+  "type",
+  "subject",
+  "content",
+  "importance",
+  "expiry",
+  "tags",
+  "source_file",
+  "source_context",
+  "created_at",
+  "updated_at",
+  "retired",
+  "retired_at",
+  "retired_reason",
+  "superseded_by",
+]);
+const RECALL_REQUEST_KEYS = new Set<string>(["text", "limit", "threshold", "budget", "types", "tags", "since", "until", "around", "aroundRadius"]);
+const OPTIONS_KEYS = new Set<string>(["includeDiagnostics", "includeCandidates", "includeTimings"]);
+
 /**
  * Structured request validation issue emitted at the HTTP boundary.
  */
@@ -63,6 +85,7 @@ export function parseRecallEvalCaseRequest(input: unknown): RecallEvalCaseReques
   }
 
   const issues: RecallEvalValidationIssue[] = [];
+  pushUnexpectedFields(input, ROOT_REQUEST_KEYS, "", issues);
   const parsedCaseId = parseRequiredString(input.caseId, "caseId", issues);
   const description = parseOptionalString(input.description, "description", issues);
   const sandbox = parseSandbox(input.sandbox, issues);
@@ -100,6 +123,22 @@ const extractParseableCaseId = (value: unknown): string | undefined => {
 /** Appends a structured validation issue to the collector. */
 const pushIssue = (issues: RecallEvalValidationIssue[], path: string, message: string): void => {
   issues.push({ path, message });
+};
+
+/** Records any unsupported object keys so the HTTP contract stays narrow. */
+const pushUnexpectedFields = (
+  value: Record<string, unknown>,
+  allowedKeys: ReadonlySet<string>,
+  basePath: string,
+  issues: RecallEvalValidationIssue[],
+): void => {
+  for (const key of Object.keys(value)) {
+    if (allowedKeys.has(key)) {
+      continue;
+    }
+
+    pushIssue(issues, basePath.length > 0 ? `${basePath}.${key}` : key, "Unexpected field.");
+  }
 };
 
 /** Parses a required trimmed string field. */
@@ -163,6 +202,8 @@ const parseSandbox = (value: unknown, issues: RecallEvalValidationIssue[]): Reca
     return undefined;
   }
 
+  pushUnexpectedFields(value, SANDBOX_REQUEST_KEYS, "sandbox", issues);
+
   return {
     root: parseOptionalString(value.root, "sandbox.root", issues),
     preserve: parseOptionalBoolean(value.preserve, "sandbox.preserve", issues),
@@ -189,6 +230,8 @@ const parseFixtureEntry = (value: unknown, index: number, issues: RecallEvalVali
     pushIssue(issues, basePath, "Expected an object.");
     return undefined;
   }
+
+  pushUnexpectedFields(value, FIXTURE_ENTRY_KEYS, basePath, issues);
 
   const type = parseEntryType(value.type, `${basePath}.type`, issues);
   const subject = parseRequiredString(value.subject, `${basePath}.subject`, issues);
@@ -224,6 +267,8 @@ const parseRecallRequest = (value: unknown, issues: RecallEvalValidationIssue[])
     return undefined;
   }
 
+  pushUnexpectedFields(value, RECALL_REQUEST_KEYS, "recallRequest", issues);
+
   const text = parseRequiredString(value.text, "recallRequest.text", issues);
   if (!text) {
     return undefined;
@@ -253,6 +298,8 @@ const parseOptions = (value: unknown, issues: RecallEvalValidationIssue[]): Reca
     pushIssue(issues, "options", "Expected an object.");
     return undefined;
   }
+
+  pushUnexpectedFields(value, OPTIONS_KEYS, "options", issues);
 
   return {
     includeDiagnostics: parseOptionalBoolean(value.includeDiagnostics, "options.includeDiagnostics", issues),

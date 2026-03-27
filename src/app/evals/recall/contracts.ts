@@ -62,7 +62,7 @@ export type RecallEvalQueryRequest = Pick<
 export interface RecallEvalCaseOptions {
   /** Include structured diagnostics in the response when available. */
   includeDiagnostics?: boolean;
-  /** Include candidate-level diagnostics when available in later phases. */
+  /** Request stable aggregate candidate diagnostics, not raw candidate payload dumps. */
   includeCandidates?: boolean;
   /** Include timing metadata in the response. */
   includeTimings?: boolean;
@@ -251,7 +251,7 @@ export interface RecallEvalCaseDiagnostics {
     provisionedCount: number;
     /** Whether diagnostics were explicitly requested by the caller. */
     requestedDiagnostics: boolean;
-    /** Whether candidate-level details were requested by the caller. */
+    /** Whether aggregate candidate diagnostics were requested by the caller. */
     requestedCandidates: boolean;
   };
   /** Exact fixture-seeding facts captured before recall execution. */
@@ -262,7 +262,7 @@ export interface RecallEvalCaseDiagnostics {
   ranking?: RecallEvalRankingDiagnostics;
   /** Active filtering summary for the executed recall query. */
   filtering?: RecallEvalFilteringDiagnostics;
-  /** Stage-by-stage candidate counts across the recall pipeline. */
+  /** Stage-by-stage candidate counts across the recall pipeline. Always present when diagnostics are included. */
   candidateCounts?: RecallEvalCandidateCounts;
 }
 

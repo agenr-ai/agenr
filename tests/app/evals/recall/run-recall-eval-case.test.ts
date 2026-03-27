@@ -188,6 +188,7 @@ describe("runRecallEvalCase", () => {
     expect(response.timings?.totalMs).toBeGreaterThanOrEqual(response.timings?.recallMs ?? 0);
 
     await expect(access(response.sandbox?.dbPath ?? "")).resolves.toBeUndefined();
+    await expect(access(path.join(response.sandbox?.root ?? "", "trace.json"))).rejects.toBeDefined();
 
     const sandboxDatabase = await createDatabase(response.sandbox?.dbPath ?? "");
     try {
@@ -292,6 +293,17 @@ describe("runRecallEvalCase", () => {
           provisionedCount: 0,
           requestedDiagnostics: true,
           requestedCandidates: false,
+        },
+        candidateCounts: {
+          vectorRetrieved: 0,
+          lexicalRetrieved: 0,
+          merged: 0,
+          thresholdQualified: 0,
+          budgetAccepted: 0,
+          finalRanked: 0,
+          hydrated: 0,
+          returned: 0,
+          telemetryAttempted: 0,
         },
       },
       error: {

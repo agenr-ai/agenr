@@ -19,28 +19,28 @@ export interface InternalApiRoute {
 export type RecallEvalCaseRunner = (request: RecallEvalCaseRequest) => Promise<RecallEvalCaseResponse>;
 
 /**
- * Structured invalid-request response returned from the HTTP boundary.
+ * Structured boundary error response returned from the HTTP adapter.
  */
-export interface RecallEvalInvalidRequestResponse {
-  /** Normalized status for boundary validation failures. */
+export interface RecallEvalBoundaryErrorResponse {
+  /** Normalized status for boundary-level failures. */
   status: "error";
-  /** Parseable case identifier echoed when the request envelope exposed one. */
+  /** Parseable case identifier echoed when the boundary can do so safely. */
   caseId?: string;
   /** Structured error payload with stable machine-readable details. */
   error: {
-    /** Stable code used for request-validation failures. */
-    code: "invalid_request";
-    /** Human-readable validation failure summary. */
+    /** Stable boundary error code. */
+    code: "invalid_request" | "internal_error";
+    /** Human-readable boundary failure summary. */
     message: string;
-    /** Structured field-level validation details. */
-    details: RecallEvalValidationIssue[];
+    /** Structured field-level validation details for invalid requests. */
+    details?: RecallEvalValidationIssue[];
   };
 }
 
 /**
  * JSON response union returned by the internal recall eval route.
  */
-export type InternalRecallEvalRouteResponse = RecallEvalCaseResponse | RecallEvalInvalidRequestResponse;
+export type InternalRecallEvalRouteResponse = RecallEvalCaseResponse | RecallEvalBoundaryErrorResponse;
 
 const INTERNAL_RECALL_EVAL_ROUTE: Pick<InternalApiRoute, "method" | "path"> = {
   method: "POST",
@@ -57,9 +57,11 @@ export function createInternalRecallEvalRoute(runner: RecallEvalCaseRunner = run
   return {
     ...INTERNAL_RECALL_EVAL_ROUTE,
     handler: async (request: Request): Promise<Response> => {
+      let validatedRequest: RecallEvalCaseRequest | undefined;
+
       try {
         const payload = await parseJsonBody(request);
-        const validatedRequest = parseRecallEvalCaseRequest(payload);
+        validatedRequest = parseRecallEvalCaseRequest(payload);
         const result = await runner(validatedRequest);
         return jsonResponse(result, 200);
       } catch (error) {
@@ -81,6 +83,7 @@ export function createInternalRecallEvalRoute(runner: RecallEvalCaseRunner = run
         return jsonResponse(
           {
             status: "error",
+            caseId: validatedRequest?.caseId,
             error: {
               code: "internal_error",
               message: "Internal recall eval adapter error.",
@@ -108,7 +111,7 @@ const parseJsonBody = async (request: Request): Promise<unknown> => {
 };
 
 /** Encodes a stable JSON response body for the internal API route. */
-const jsonResponse = (body: InternalRecallEvalRouteResponse | { status: "error"; error: { code: string; message: string } }, status: number): Response =>
+const jsonResponse = (body: InternalRecallEvalRouteResponse, status: number): Response =>
   new Response(JSON.stringify(body), {
     status,
     headers: {

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -27,6 +27,12 @@ afterEach(async () => {
 });
 
 describe("createInternalRecallEvalRoute", () => {
+  it("keeps the eval HTTP surface to one internal route file", async () => {
+    const routeFiles = (await readdir(new URL("../../../../src/adapters/api/routes/", import.meta.url))).filter((file) => file.endsWith(".ts")).sort();
+
+    expect(routeFiles).toEqual(["internal-recall-eval.ts"]);
+  });
+
   it("exposes the expected internal POST route and returns JSON from the runner", async () => {
     const runner = vi.fn<RecallEvalCaseRunner>(async (request) => ({
       status: "ok",
@@ -88,7 +94,10 @@ describe("createInternalRecallEvalRoute", () => {
       },
       options: undefined,
     });
-    await expect(response.json()).resolves.toEqual({
+    const body = await response.json();
+
+    expect(Object.keys(body).sort()).toEqual(["caseId", "diagnostics", "result", "status"]);
+    expect(body).toEqual({
       status: "ok",
       caseId: "case-route",
       result: {
@@ -176,7 +185,10 @@ describe("createInternalRecallEvalRoute", () => {
     );
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
+    const body = await response.json();
+
+    expect(Object.keys(body).sort()).toEqual(["caseId", "diagnostics", "result", "sandbox", "status", "timings"]);
+    expect(body).toMatchObject({
       status: "ok",
       caseId: "case-route-e2e",
       result: {
@@ -267,7 +279,10 @@ describe("createInternalRecallEvalRoute", () => {
     );
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
+    const body = await response.json();
+
+    expect(Object.keys(body).sort()).toEqual(["caseId", "error", "status"]);
+    expect(body).toEqual({
       status: "error",
       caseId: "case-invalid",
       error: {
@@ -301,7 +316,10 @@ describe("createInternalRecallEvalRoute", () => {
     );
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
+    const body = await response.json();
+
+    expect(Object.keys(body).sort()).toEqual(["error", "status"]);
+    expect(body).toEqual({
       status: "error",
       error: {
         code: "invalid_request",
@@ -312,6 +330,43 @@ describe("createInternalRecallEvalRoute", () => {
             message: "Request body must be valid JSON.",
           },
         ],
+      },
+    });
+  });
+
+  it("echoes the validated caseId on unexpected internal adapter failures", async () => {
+    const runner = vi.fn<RecallEvalCaseRunner>(async () => {
+      throw new Error("unexpected failure");
+    });
+    const route = createInternalRecallEvalRoute(runner);
+
+    const response = await route.handler(
+      new Request("http://localhost/internal/evals/recall/run", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          caseId: "case-internal-error",
+          memoryPool: [],
+          recallRequest: {
+            text: "what do we know?",
+          },
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(500);
+
+    const body = await response.json();
+
+    expect(Object.keys(body).sort()).toEqual(["caseId", "error", "status"]);
+    expect(body).toEqual({
+      status: "error",
+      caseId: "case-internal-error",
+      error: {
+        code: "internal_error",
+        message: "Internal recall eval adapter error.",
       },
     });
   });

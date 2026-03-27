@@ -202,4 +202,84 @@ describe("parseRecallEvalCaseRequest", () => {
       ]);
     }
   });
+
+  it("rejects unexpected fields so the HTTP seam stays narrow", () => {
+    expect(() =>
+      parseRecallEvalCaseRequest({
+        caseId: "case-004",
+        extraTopLevel: true,
+        sandbox: {
+          root: "/tmp/evals/case-004",
+          extraSandbox: true,
+        },
+        memoryPool: [
+          {
+            type: "fact",
+            subject: "subject",
+            content: "content",
+            extraFixture: true,
+          },
+        ],
+        recallRequest: {
+          text: "question",
+          extraRecall: true,
+        },
+        options: {
+          includeDiagnostics: true,
+          extraOption: true,
+        },
+      }),
+    ).toThrowError(RecallEvalRequestValidationError);
+
+    try {
+      parseRecallEvalCaseRequest({
+        caseId: "case-004",
+        extraTopLevel: true,
+        sandbox: {
+          root: "/tmp/evals/case-004",
+          extraSandbox: true,
+        },
+        memoryPool: [
+          {
+            type: "fact",
+            subject: "subject",
+            content: "content",
+            extraFixture: true,
+          },
+        ],
+        recallRequest: {
+          text: "question",
+          extraRecall: true,
+        },
+        options: {
+          includeDiagnostics: true,
+          extraOption: true,
+        },
+      });
+    } catch (error) {
+      expect(error).toBeInstanceOf(RecallEvalRequestValidationError);
+      expect((error as RecallEvalRequestValidationError).issues).toEqual([
+        {
+          path: "extraTopLevel",
+          message: "Unexpected field.",
+        },
+        {
+          path: "sandbox.extraSandbox",
+          message: "Unexpected field.",
+        },
+        {
+          path: "memoryPool[0].extraFixture",
+          message: "Unexpected field.",
+        },
+        {
+          path: "recallRequest.extraRecall",
+          message: "Unexpected field.",
+        },
+        {
+          path: "options.extraOption",
+          message: "Unexpected field.",
+        },
+      ]);
+    }
+  });
 });
