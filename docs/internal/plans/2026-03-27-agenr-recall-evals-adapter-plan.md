@@ -188,6 +188,13 @@ The service should emit diagnostics that an external eval runner can store as ar
 
 This matters because recall failures are often not visible from the final ranked output alone.
 
+The key design rule is:
+
+1. `core/` may emit structured execution facts
+2. `app/` may collect, trim, and persist those facts
+3. `adapters/api/` may transport them over HTTP
+4. human-readable logging and artifact writing should stay out of `core/`
+
 ## Proposed request contract
 
 The exact schema can evolve, but the request should be organized around a single eval case and should reflect the real `agenr` data model.
@@ -383,6 +390,9 @@ Conceptually:
 
 ```text
 src/
+  core/
+    recall/
+      trace.ts
   app/
     evals/
       recall/
@@ -390,6 +400,8 @@ src/
         run-recall-eval-case.ts
         sandbox.ts
         provision-fixtures.ts
+        instrumented-recall-ports.ts
+        artifacts.ts
         collect-diagnostics.ts
         normalize-response.ts
   adapters/
@@ -447,15 +459,70 @@ This will make external runners much easier to implement and debug.
 
 ## Diagnostics and trace design
 
-The current recall path returns ranked outputs and score breakdowns, but richer eval diagnostics will likely require explicit trace collection.
+The current recall path returns ranked outputs and score breakdowns, but richer eval diagnostics will require explicit trace collection. The important constraint is to do that without turning `core/` into a pile of conditional logging.
 
-That means the implementation should decide early whether to:
+The clean split is:
 
-1. add optional trace hooks to the recall execution path
-2. collect stage counts in the app service around existing calls
-3. return only diagnostics that are actually stable enough to support
+1. facts that already exist at port boundaries should be collected by app-level port decorators
+2. facts that exist only inside the recall algorithm should be emitted through a small typed trace seam
+3. artifact creation should happen in `app/`, never in `core/`
 
-The first version should be honest about guaranteed diagnostics versus best-effort diagnostics.
+### Port-boundary diagnostics
+
+For timings and raw adapter-stage counts, prefer wrapping the real recall ports in `app/`.
+
+Examples:
+
+1. query embedding latency
+2. vector search latency and candidate count
+3. FTS search latency and candidate count
+4. hydrate latency and hydrated result count
+
+This avoids changing core ranking code just to observe adapter behavior.
+
+### Core-level trace seam
+
+Some facts only exist inside the recall algorithm itself. Those should be emitted through a small typed trace seam, not through logging and not through ad hoc `if (debug)` branches.
+
+Examples:
+
+1. merged candidate count
+2. thresholded candidate count
+3. budget-pruned candidate count
+4. final ranked count
+5. no-result reason
+6. active filter summary
+
+The preferred shape is a null-object trace sink or equivalent typed collector that can be passed optionally into recall execution. When no diagnostics are requested, the sink should default to a no-op implementation so the main execution path stays clean.
+
+### What core should not do
+
+To keep `core/` disciplined:
+
+1. do not write logs
+2. do not write files
+3. do not know about artifact directories
+4. do not branch repeatedly on eval-mode booleans
+5. do not emit human-readable strings as the contract
+
+Core should emit only small, typed, structured execution facts where those facts are intrinsic to the algorithm.
+
+### Artifact ownership
+
+Artifact policy belongs entirely in `app/`.
+
+That means the app service may choose to write files such as:
+
+1. `request.json`
+2. `response.json`
+3. `trace.json`
+4. optional candidate snapshots
+
+The HTTP adapter should return references to those artifacts when preservation is enabled, but the recall core should not know whether any artifact was written.
+
+### Stability rule
+
+The first version should be honest about guaranteed diagnostics versus best-effort diagnostics. Only stable, structured fields should become part of the contract.
 
 ## Exposure model
 
@@ -513,10 +580,11 @@ Goal: make failures explainable.
 Tasks:
 
 1. add fixture provisioning diagnostics
-2. add retrieval and ranking diagnostics where practical
-3. include timings
-4. support sandbox preservation for debugging
-5. return stable artifact references when available
+2. add app-level decorated recall ports for timing and boundary counts
+3. add a small typed recall trace seam for algorithm-only facts
+4. include timings
+5. support sandbox preservation for debugging
+6. return stable artifact references when available
 
 Exit criteria:
 
@@ -542,7 +610,7 @@ Exit criteria:
 
 ## Testing strategy
 
-The adapter needs tests at three levels.
+The adapter needs tests at five levels.
 
 ### 1. Contract tests
 
@@ -569,7 +637,16 @@ Verify:
 2. app-service errors map to stable HTTP responses
 3. JSON encoding stays stable
 
-### 4. Recall behavior smoke tests
+### 4. Diagnostics tests
+
+Verify:
+
+1. app-level port decorators capture timings and counts without changing recall behavior
+2. the trace sink captures algorithm-level facts without writing logs
+3. no-op tracing leaves the normal execution path unchanged
+4. artifact writers run only in `app/`
+
+### 5. Recall behavior smoke tests
 
 Verify:
 
@@ -591,6 +668,8 @@ To keep this adapter clean:
 7. do not let route handlers become the place where recall experimentation logic lives
 8. keep the adapter as a thin transport layer over app-level execution
 9. keep the first HTTP surface narrow and internal
+10. keep diagnostic collection structured and typed - not log-driven
+11. keep artifact writing outside `core/`
 
 ## Definition of done
 
@@ -610,9 +689,10 @@ The first bounded implementation slice should produce:
 2. request and response TypeScript types for the app service
 3. an app-level `runRecallEvalCase` service
 4. isolated sandbox creation and exact fixture provisioning
-5. a narrow internal HTTP route for one recall eval case
-6. JSON response normalization
-7. one end-to-end integration test proving an external runner could use it over HTTP
+5. app-level decorated recall ports plus a small trace sink design
+6. a narrow internal HTTP route for one recall eval case
+7. JSON response normalization
+8. one end-to-end integration test proving an external runner could use it over HTTP
 
 ## Bottom line
 
