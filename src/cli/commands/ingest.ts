@@ -9,7 +9,6 @@ import { createLlmClient, resolveLlmApiKey, resolveModel, type UsageStats } from
 import { openClawTranscriptParser } from "../../adapters/openclaw/transcript/parser.js";
 import { readConfig, resolveDbPath } from "../../config.js";
 import { type DedupResult, type ExtractedFileResult, type IngestFileResult, type StoreExtractedResultsProgressEvent } from "../../core/ingestion/index.js";
-import type { EmbeddingPort } from "../../core/ports.js";
 import type { StoreEntryInput, StoreResult } from "../../core/types.js";
 import { setVerbose } from "../../logger.js";
 import { banner, formatLabel, ui } from "../../ui.js";
@@ -27,7 +26,6 @@ interface IngestCommandOptions {
   dryRun?: boolean;
   wholeFile?: WholeFileMode;
   skipDedup?: boolean;
-  skipEmbeddings?: boolean;
   concurrency?: number;
 }
 
@@ -58,7 +56,6 @@ export function registerIngestCommand(program: Command): void {
     .option("--dry-run", "Parse and extract without storing")
     .addOption(new Option("--whole-file <mode>", "Whole-file mode: auto|force|never").choices(["auto", "force", "never"]).default("auto"))
     .option("--skip-dedup", "Skip within-batch semantic dedup")
-    .option("--skip-embeddings", "Store entries without persisted embeddings")
     .addOption(new Option("--concurrency <n>", "Max files to extract in parallel").argParser(parseConcurrency).default(DEFAULT_INGEST_CONCURRENCY));
 
   ingestCommand.action(async (targetPath: string, options: IngestCommandOptions) => {
@@ -76,10 +73,7 @@ export function registerIngestCommand(program: Command): void {
       const { provider, modelId } = resolveModel(config, "extraction");
       const { provider: dedupProvider, modelId: dedupModelId } = resolveModel(config, "dedup");
       const llmApiKey = resolveLlmApiKey(config, provider);
-      const needsRealEmbeddings = options.skipDedup !== true || options.skipEmbeddings !== true;
-      const sharedEmbedding = needsRealEmbeddings
-        ? createEmbeddingClient(resolveEmbeddingApiKey(config), resolveEmbeddingModel(config))
-        : createNoopEmbeddingPort();
+      const sharedEmbedding = createEmbeddingClient(resolveEmbeddingApiKey(config), resolveEmbeddingModel(config));
 
       if (options.verbose === true) {
         clack.log.step(`Discovering transcript files in ${path.resolve(targetPath)}...`);
@@ -100,7 +94,7 @@ export function registerIngestCommand(program: Command): void {
           formatLabel("Files", `${files.length} ${pluralize(files.length, "file")} found`),
           formatLabel("Whole-file", options.wholeFile ?? "auto"),
           formatLabel("Within-batch dedup", options.skipDedup === true ? "skipped" : "enabled"),
-          formatLabel("Embeddings", options.skipEmbeddings === true ? "not stored" : "stored"),
+          formatLabel("Embeddings", "stored"),
           formatLabel("Concurrency", `${options.concurrency ?? DEFAULT_INGEST_CONCURRENCY}`),
         ].join("\n"),
       );
@@ -129,7 +123,6 @@ export function registerIngestCommand(program: Command): void {
           verbose: options.verbose,
           wholeFile: options.wholeFile,
           skipDedup: options.skipDedup,
-          skipEmbeddings: options.skipEmbeddings,
           extractionContext: config.extractionContext,
           onExtractionProgress: (completed, total) => {
             spinner?.message(`Processing transcripts... (${completed}/${total} extracted)`);
@@ -377,13 +370,6 @@ function formatStoreSummary(result: IngestFileResult): string {
 function formatChunkDetail(filePath: string, chunkDetail: { chunkIndex: number; messageRange: [number, number]; success: boolean }): string {
   const status = chunkDetail.success ? "ok" : "failed after retries";
   return `${filePath}: chunk ${chunkDetail.chunkIndex + 1} messages ${chunkDetail.messageRange[0]}-${chunkDetail.messageRange[1]} ${status}`;
-}
-
-/** Creates an embedding port that returns empty vectors for every input. */
-function createNoopEmbeddingPort(): EmbeddingPort {
-  return {
-    embed: async (texts: string[]): Promise<number[][]> => texts.map(() => []),
-  };
 }
 
 /** Formats a duration in milliseconds as seconds with one decimal place. */

@@ -18,8 +18,6 @@ export interface IngestFileOptions {
   contextWindowTokens?: number;
   /** Max output tokens from the LLM model metadata. */
   maxOutputTokens?: number;
-  /** Skip embedding generation during store. */
-  skipEmbeddings?: boolean;
   /** User-provided extraction context from config. */
   extractionContext?: string;
 }
@@ -158,7 +156,6 @@ export async function ingestFile(
     {
       dryRun: options.dryRun,
       verbose: options.verbose,
-      skipEmbeddings: options.skipEmbeddings,
       precomputedEmbeddings: dedupResult.embeddings,
     },
   );

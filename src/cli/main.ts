@@ -4,6 +4,7 @@ import { APP_VERSION } from "../version.js";
 import { banner } from "../ui.js";
 import { registerDbCommand } from "./commands/db.js";
 import { registerIngestCommand } from "./commands/ingest.js";
+import { registerRecallCommand } from "./commands/recall.js";
 
 /**
  * Creates the root CLI program and applies global agenr metadata.
@@ -21,9 +22,9 @@ export function createProgram(): Command {
 
   registerIngestCommand(program);
   registerDbCommand(program);
+  registerRecallCommand(program);
 
   // Commands will be registered here as modules are built:
-  // registerRecallCommand(program);
   // registerStoreCommand(program);
   // registerRetireCommand(program);
   // registerUpdateCommand(program);

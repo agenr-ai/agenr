@@ -23,12 +23,6 @@ export interface DatabasePort {
   /** Rebuild expensive indexes and triggers after a bulk write phase ends. */
   finalizeBulkWrites(): Promise<void>;
 
-  /** Find entries by vector similarity. */
-  vectorSearch(embedding: number[], limit: number): Promise<Array<{ id: string; score: number }>>;
-
-  /** Find entries by full-text search. */
-  textSearch(query: string, limit: number): Promise<Array<{ id: string; score: number }>>;
-
   /** Get entries by IDs. */
   getEntries(ids: string[]): Promise<Entry[]>;
 
@@ -46,9 +40,6 @@ export interface DatabasePort {
 
   /** Update entry fields (importance, expiry). */
   updateEntry(id: string, fields: { importance?: number; expiry?: string }): Promise<boolean>;
-
-  /** Record a recall event. */
-  recordRecallEvent(entryId: string, query: string, sessionKey?: string): Promise<void>;
 
   /** Check if a file has been ingested (by path + hash). */
   getIngestLogEntry(filePath: string): Promise<{ fileHash: string; ingestedAt: string } | null>;

@@ -129,14 +129,6 @@ class MockDatabase implements DatabasePort {
     this.finalizeCalls += 1;
   }
 
-  public async vectorSearch(): Promise<Array<{ id: string; score: number }>> {
-    return [];
-  }
-
-  public async textSearch(): Promise<Array<{ id: string; score: number }>> {
-    return [];
-  }
-
   public async getEntries(): Promise<Entry[]> {
     return [];
   }
@@ -160,8 +152,6 @@ class MockDatabase implements DatabasePort {
   public async updateEntry(): Promise<boolean> {
     return false;
   }
-
-  public async recordRecallEvent(): Promise<void> {}
 
   public async getIngestLogEntry(): Promise<{ fileHash: string; ingestedAt: string } | null> {
     return null;

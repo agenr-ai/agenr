@@ -72,14 +72,12 @@ There is no CLI option surface yet, but the pipeline supports these programmatic
 interface StoreEntriesOptions {
   dryRun?: boolean;
   verbose?: boolean;
-  skipEmbeddings?: boolean;
   precomputedEmbeddings?: number[][];
 }
 ```
 
 - `dryRun` runs validation and dedup planning but skips embedding calls and persistence.
 - `verbose` exists in the option type, but the current store pipeline does not use it.
-- `skipEmbeddings` stores entries without persisted vectors.
 - `precomputedEmbeddings` lets callers reuse vectors computed earlier, aligned to the original input array.
 
 ## End-to-end flow
@@ -180,8 +178,7 @@ But dry runs do not perform:
 
 For entries that survive validation and dedup:
 
-- if `skipEmbeddings` is `true`, the pipeline uses `[]` for every pending entry
-- otherwise, if `precomputedEmbeddings` is provided, the pipeline reuses those vectors by original input index
+- if `precomputedEmbeddings` is provided, the pipeline reuses those vectors by original input index
 - otherwise, it calls the embedding port on the canonical embedding text
 
 Embedding text is currently:
@@ -193,8 +190,6 @@ Embedding text is currently:
 Precomputed embeddings must match the original input array length exactly. If the array length is wrong or a survivor is missing its aligned vector, the store call throws.
 
 If the embedding provider returns a different number of vectors than pending entries, the store call also throws.
-
-One subtle adapter detail: the core pipeline uses `[]` for skipped-embedding entries, but the libSQL adapter serializes that as `NULL`, so those rows do not participate in vector search until a real embedding exists.
 
 ### 6. Persistence
 

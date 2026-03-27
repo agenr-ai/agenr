@@ -64,7 +64,6 @@ agenr ingest <path> \
   [--dry-run] \
   [--whole-file auto|force|never] \
   [--skip-dedup] \
-  [--skip-embeddings] \
   [--concurrency <n>]
 ```
 
@@ -72,7 +71,6 @@ agenr ingest <path> \
 - `--dry-run` performs discovery, hashing, parsing, extraction, and dedup, but skips persistence and ingest-log writes.
 - `--whole-file auto|force|never` controls whether extraction uses one full-session prompt or message-bounded chunks.
 - `--skip-dedup` disables the semantic dedup arbitration pass.
-- `--skip-embeddings` stores empty vectors instead of persisted embeddings.
 - `--concurrency <n>` sets extraction worker count. Default: `10`. Allowed range: `1-16`.
 
 ## End-to-end flow
@@ -208,10 +206,7 @@ Current runtime details:
 
 When `--skip-dedup` is set, semantic arbitration is bypassed and every extracted entry passes through.
 
-Embedding behavior still depends on the store settings:
-
-- if embeddings will be stored, the dedup stage still computes them so the store phase can reuse them
-- if both `--skip-dedup` and `--skip-embeddings` are set, no real embeddings are needed and the CLI uses a no-op embedding port
+Embeddings are still computed so the store phase can persist real vectors for every surviving entry.
 
 ## 6. Store phase
 
@@ -245,8 +240,6 @@ The store layer is what protects against cross-run duplicates that were already 
 ### Embedding reuse
 
 If semantic dedup ran, the store phase reuses the survivor embeddings produced during dedup instead of embedding the survivors again.
-
-If `--skip-embeddings` is set, stored entries get empty vectors.
 
 ### Source-file nuance
 

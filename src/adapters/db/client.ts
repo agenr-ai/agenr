@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { createClient, type Client, type Transaction } from "@libsql/client";
+import { createClient, type Client, type InArgs, type InStatement, type ResultSet, type Transaction } from "@libsql/client";
 
 import type { DatabasePort } from "../../core/ports.js";
 import type { Entry } from "../../core/types.js";
@@ -13,12 +13,9 @@ import {
   getIngestLogEntry,
   insertEntry,
   insertIngestLogEntry,
-  recordRecallEvent,
   retireEntry,
   type SqlExecutor,
-  textSearch,
   updateEntry,
-  vectorSearch,
 } from "./queries.js";
 import { finalizeBulkWrites, initSchema, prepareBulkWrites } from "./schema.js";
 
@@ -38,12 +35,17 @@ export interface TransactionalDatabasePort extends DatabasePort {
 }
 
 /**
+ * libSQL database adapter surface that also exposes raw SQL execution for other adapters.
+ */
+export interface SqlDatabase extends TransactionalDatabasePort, SqlExecutor {}
+
+/**
  * Creates and initializes a libSQL-backed database adapter.
  *
  * @param dbPath - SQLite file path or `:memory:` for in-memory tests.
  * @returns Initialized database adapter that implements the core database port.
  */
-export async function createDatabase(dbPath: string): Promise<TransactionalDatabasePort> {
+export async function createDatabase(dbPath: string): Promise<SqlDatabase> {
   const client = await openClient(dbPath);
   const database = new LibsqlDatabase(client, client);
   await database.init();
@@ -51,7 +53,7 @@ export async function createDatabase(dbPath: string): Promise<TransactionalDatab
 }
 
 /** libSQL-backed implementation of the transactional database port. */
-class LibsqlDatabase implements TransactionalDatabasePort {
+class LibsqlDatabase implements SqlDatabase {
   /** Creates a database adapter over a shared client and SQL executor. */
   public constructor(
     private readonly client: Client,
@@ -71,16 +73,6 @@ class LibsqlDatabase implements TransactionalDatabasePort {
   /** Restores indexes and triggers after bulk ingest writes complete. */
   public async finalizeBulkWrites(): Promise<void> {
     await finalizeBulkWrites(this.client);
-  }
-
-  /** Runs a vector similarity search over stored entry embeddings. */
-  public async vectorSearch(embedding: number[], limit: number): Promise<Array<{ id: string; score: number }>> {
-    return vectorSearch(this.executor, embedding, limit);
-  }
-
-  /** Runs a full-text search over active entries. */
-  public async textSearch(query: string, limit: number): Promise<Array<{ id: string; score: number }>> {
-    return textSearch(this.executor, query, limit);
   }
 
   /** Loads entries by identifier while preserving caller order when possible. */
@@ -111,11 +103,6 @@ class LibsqlDatabase implements TransactionalDatabasePort {
   /** Updates mutable entry fields such as importance and expiry. */
   public async updateEntry(id: string, fields: { importance?: number; expiry?: string }): Promise<boolean> {
     return updateEntry(this.executor, id, fields);
-  }
-
-  /** Records that an entry was surfaced during recall. */
-  public async recordRecallEvent(entryId: string, query: string, sessionKey?: string): Promise<void> {
-    return recordRecallEvent(this.executor, entryId, query, sessionKey);
   }
 
   /** Looks up the ingest log row for a previously processed file. */
@@ -157,6 +144,21 @@ class LibsqlDatabase implements TransactionalDatabasePort {
     } finally {
       transaction.close();
     }
+  }
+
+  /** Executes a single SQL statement through the underlying executor. */
+  public async execute(stmt: InStatement): Promise<ResultSet>;
+
+  /** Executes a SQL statement with positional or named arguments. */
+  public async execute(sql: string, args?: InArgs): Promise<ResultSet>;
+
+  /** Executes one statement through the shared libSQL executor. */
+  public async execute(statementOrSql: InStatement | string, args?: InArgs): Promise<ResultSet> {
+    if (typeof statementOrSql === "string") {
+      return this.executor.execute(statementOrSql, args);
+    }
+
+    return this.executor.execute(statementOrSql);
   }
 }
 

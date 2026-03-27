@@ -5,11 +5,12 @@ import { rm } from "node:fs/promises";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createDatabase, type TransactionalDatabasePort } from "../../../src/adapters/db/client.js";
+import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";
+import { createRecallAdapter } from "../../../src/adapters/db/recall-adapter.js";
 import type { Entry } from "../../../src/core/types.js";
 
 describe("createDatabase", () => {
-  const databases: TransactionalDatabasePort[] = [];
+  const databases: SqlDatabase[] = [];
   const databasePaths: string[] = [];
 
   afterEach(async () => {
@@ -71,6 +72,7 @@ describe("createDatabase", () => {
 
   it("returns vector matches when vector search is supported", async () => {
     const database = await createTestDatabase();
+    const adapter = createRecallAdapter(database, createEmbeddingPort());
     const left = createEntry({ subject: "vector left" });
     const right = createEntry({ subject: "vector right" });
 
@@ -78,10 +80,13 @@ describe("createDatabase", () => {
     await database.insertEntry(right, createEmbedding(1, 1), "vector-right");
 
     try {
-      const results = await database.vectorSearch(createEmbedding(0, 1), 2);
+      const results = await adapter.vectorSearch({
+        embedding: createEmbedding(0, 1),
+        limit: 2,
+      });
       expect(results.length).toBeGreaterThan(0);
-      expect(results.map((result) => result.id)).toContain(left.id);
-      expect(results.some((result) => result.score > 0)).toBe(true);
+      expect(results.map((result) => result.entry.id)).toContain(left.id);
+      expect(results.some((result) => result.vectorSim > 0)).toBe(true);
     } catch (error) {
       expect(String(error)).toMatch(/vector search is unavailable/i);
     }
@@ -89,6 +94,7 @@ describe("createDatabase", () => {
 
   it("returns FTS matches for active entries", async () => {
     const database = await createTestDatabase();
+    const adapter = createRecallAdapter(database, createEmbeddingPort());
     const entry = createEntry({
       subject: "batch write design",
       content: "Batch write operations avoid the v0 pressure bottleneck.",
@@ -96,13 +102,14 @@ describe("createDatabase", () => {
 
     await database.insertEntry(entry, createEmbedding(0, 1), "fts-hash");
 
-    const results = await database.textSearch("pressure bottleneck", 5);
+    const results = await adapter.ftsSearch({ text: "pressure bottleneck", limit: 5 });
 
-    expect(results.map((result) => result.id)).toContain(entry.id);
+    expect(results.map((result) => result.entry.id)).toContain(entry.id);
   });
 
   it("inserts entries while FTS triggers are dropped and makes them searchable after finalize", async () => {
     const database = await createTestDatabase();
+    const adapter = createRecallAdapter(database, createEmbeddingPort());
     const entry = createEntry({
       subject: "bulk insert",
       content: "Bulk mode should rebuild FTS after insert.",
@@ -112,12 +119,12 @@ describe("createDatabase", () => {
     await database.insertEntry(entry, createEmbedding(0, 1), "bulk-insert-hash");
 
     expect(await database.getEntry(entry.id)).not.toBeNull();
-    expect(await database.textSearch("rebuild FTS", 5)).toEqual([]);
+    expect(await adapter.ftsSearch({ text: "rebuild FTS", limit: 5 })).toEqual([]);
 
     await database.finalizeBulkWrites();
 
-    const results = await database.textSearch("rebuild FTS", 5);
-    expect(results.map((result) => result.id)).toContain(entry.id);
+    const results = await adapter.ftsSearch({ text: "rebuild FTS", limit: 5 });
+    expect(results.map((result) => result.entry.id)).toContain(entry.id);
   });
 
   it("inserts entries while the vector index is dropped", async () => {
@@ -138,6 +145,7 @@ describe("createDatabase", () => {
 
   it("excludes retired entries from active queries", async () => {
     const database = await createTestDatabase();
+    const adapter = createRecallAdapter(database, createEmbeddingPort());
     const entry = createEntry({
       subject: "retired memory",
       content: "This entry should disappear from active queries.",
@@ -150,7 +158,7 @@ describe("createDatabase", () => {
     expect(await database.getEntry(entry.id)).toBeNull();
     expect(await database.findExistingHashes(["retired-hash"])).toEqual(new Set());
     expect(await database.findExistingNormHashes(["retired-norm"])).toEqual(new Set());
-    expect(await database.textSearch("disappear", 5)).toEqual([]);
+    expect(await adapter.ftsSearch({ text: "disappear", limit: 5 })).toEqual([]);
   });
 
   it("updates entry importance and expiry", async () => {
@@ -171,10 +179,16 @@ describe("createDatabase", () => {
 
   it("records recall events by updating recall counters", async () => {
     const database = await createTestDatabase();
+    const adapter = createRecallAdapter(database, createEmbeddingPort());
     const entry = createEntry();
 
     await database.insertEntry(entry, createEmbedding(0, 1), "recall-hash");
-    await database.recordRecallEvent(entry.id, "hexagonal", "session-1");
+    await adapter.recordRecallEvents({
+      entryIds: [entry.id],
+      query: "hexagonal",
+      sessionKey: "session-1",
+    });
+    await adapter.flush();
 
     const stored = await database.getEntry(entry.id);
 
@@ -220,7 +234,7 @@ describe("createDatabase", () => {
     expect(stored?.tags).toEqual(["arch", "decision", "batch-write"]);
   });
 
-  async function createTestDatabase(): Promise<TransactionalDatabasePort> {
+  async function createTestDatabase(): Promise<SqlDatabase> {
     // libSQL opens separate logical connections for transactions, so temp files
     // are more stable than raw :memory: databases for adapter-level tests.
     const databasePath = path.join(os.tmpdir(), `agenr-db-${randomUUID()}.sqlite`);
@@ -264,4 +278,10 @@ function createEmbedding(index: number, value: number): number[] {
   const vector = Array.from({ length: 1024 }, () => 0);
   vector[index] = value;
   return vector;
+}
+
+function createEmbeddingPort() {
+  return {
+    embed: async (texts: string[]): Promise<number[][]> => texts.map((_, index) => createEmbedding(index, 1)),
+  };
 }

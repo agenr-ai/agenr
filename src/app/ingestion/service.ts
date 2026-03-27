@@ -134,7 +134,6 @@ export async function ingestDiscoveredFiles(files: string[], ports: IngestPathPo
           {
             dryRun: options.dryRun,
             verbose: options.verbose,
-            skipEmbeddings: options.skipEmbeddings,
             precomputedEmbeddings,
             onBulkWriteProgress: options.onBulkWriteProgress,
           },

@@ -123,17 +123,6 @@ describe("storeEntries", () => {
     expect(embedding.calls).toEqual([]);
   });
 
-  it("stores entries with empty embeddings when skipEmbeddings is true", async () => {
-    const db = new MockDatabase();
-    const embedding = new MockEmbeddingPort();
-
-    const result = await storeEntries([createInput()], db, embedding, { skipEmbeddings: true });
-
-    expect(result).toEqual({ stored: 1, skipped: 0, rejected: 0 });
-    expect(embedding.calls).toEqual([]);
-    expect(db.insertions[0]?.embedding).toEqual([]);
-  });
-
   it("calls the embedding port with composed entry texts", async () => {
     const db = new MockDatabase();
     const embedding = new MockEmbeddingPort();
@@ -229,14 +218,6 @@ class MockDatabase implements DatabasePort {
 
   public async finalizeBulkWrites(): Promise<void> {}
 
-  public async vectorSearch(): Promise<Array<{ id: string; score: number }>> {
-    return [];
-  }
-
-  public async textSearch(): Promise<Array<{ id: string; score: number }>> {
-    return [];
-  }
-
   public async getEntries(): Promise<Entry[]> {
     return [];
   }
@@ -260,8 +241,6 @@ class MockDatabase implements DatabasePort {
   public async updateEntry(): Promise<boolean> {
     return false;
   }
-
-  public async recordRecallEvent(): Promise<void> {}
 
   public async getIngestLogEntry(): Promise<{ fileHash: string; ingestedAt: string } | null> {
     return null;

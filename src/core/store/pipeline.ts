@@ -12,8 +12,6 @@ import { validateEntriesWithIndexes } from "./validation.js";
 export interface StorePipelineOptions {
   dryRun?: boolean;
   verbose?: boolean;
-  /** Store entries with empty embeddings instead of persisted vectors. */
-  skipEmbeddings?: boolean;
 }
 
 /**
@@ -127,10 +125,7 @@ export async function storeEntriesDetailed(
   }
 
   const pendingEntries = plan.pendingEntries;
-  const embeddings =
-    options.skipEmbeddings === true
-      ? pendingEntries.map(() => [])
-      : await resolvePendingEmbeddings(inputs, pendingEntries, embedding, options.precomputedEmbeddings);
+  const embeddings = await resolvePendingEmbeddings(inputs, pendingEntries, embedding, options.precomputedEmbeddings);
   await persistEntries(db, pendingEntries, embeddings);
   return {
     stored: pendingEntries.length,
