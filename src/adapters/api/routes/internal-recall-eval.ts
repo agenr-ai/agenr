@@ -24,6 +24,8 @@ export type RecallEvalCaseRunner = (request: RecallEvalCaseRequest) => Promise<R
 export interface RecallEvalInvalidRequestResponse {
   /** Normalized status for boundary validation failures. */
   status: "error";
+  /** Parseable case identifier echoed when the request envelope exposed one. */
+  caseId?: string;
   /** Structured error payload with stable machine-readable details. */
   error: {
     /** Stable code used for request-validation failures. */
@@ -65,6 +67,7 @@ export function createInternalRecallEvalRoute(runner: RecallEvalCaseRunner = run
           return jsonResponse(
             {
               status: "error",
+              caseId: error.caseId,
               error: {
                 code: "invalid_request",
                 message: error.message,

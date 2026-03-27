@@ -1,56 +1,118 @@
-import type {
-  RecallEvalCaseDiagnostics,
-  RecallEvalCaseRequest,
-  RecallEvalCaseResponse,
-  RecallEvalSandboxRequest,
-  RecallEvalSandboxResult,
-} from "./contracts.js";
+import { createRecallAdapter } from "../../../adapters/db/recall-adapter.js";
+import { createEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../../../adapters/embeddings.js";
+import { readConfig } from "../../../config.js";
+import type { EmbeddingPort } from "../../../core/ports.js";
+import { recall } from "../../../core/recall/index.js";
+import type { RecallEvalCaseRequest, RecallEvalCaseResponse } from "./contracts.js";
+import { buildRecallEvalErrorResponse, buildRecallEvalSuccessResponse } from "./normalize-response.js";
+import { provisionRecallEvalFixtures } from "./provision-fixtures.js";
+import { setupRecallEvalSandbox, type RecallEvalSandboxContext } from "./sandbox.js";
 
 /**
  * Executes one recall eval case behind a stable app-layer service seam.
- *
- * Phase 1 intentionally returns a placeholder success envelope only. Later
- * phases will replace the placeholder internals with real sandbox provisioning
- * and real recall execution without changing the route boundary.
  *
  * @param request - Typed recall eval case request from the HTTP adapter.
  * @returns Stable response envelope for the requested recall eval case.
  */
 export async function runRecallEvalCase(request: RecallEvalCaseRequest): Promise<RecallEvalCaseResponse> {
   const startedAt = Date.now();
-  const includeDiagnostics = request.options?.includeDiagnostics === true || request.options?.includeCandidates === true;
+  const provisionedAt = new Date(startedAt).toISOString();
+  let sandbox: RecallEvalSandboxContext | undefined;
+  let sharedEmbeddingPort: EmbeddingPort | undefined;
 
-  return {
-    status: "ok",
-    caseId: request.caseId,
-    result: {
-      entries: [],
-      entryIds: [],
-    },
-    diagnostics: includeDiagnostics ? buildPlaceholderDiagnostics(request) : undefined,
-    timings: request.options?.includeTimings === true ? { totalMs: Math.max(0, Date.now() - startedAt) } : undefined,
-    sandbox: buildSandboxResult(request.sandbox),
+  const getEmbeddingPort = (): EmbeddingPort => {
+    if (sharedEmbeddingPort) {
+      return sharedEmbeddingPort;
+    }
+
+    const config = readConfig();
+    sharedEmbeddingPort = createEmbeddingClient(resolveEmbeddingApiKey(config), resolveEmbeddingModel(config));
+    return sharedEmbeddingPort;
   };
+
+  try {
+    try {
+      sandbox = await setupRecallEvalSandbox(request.sandbox);
+    } catch (error) {
+      return buildRecallEvalErrorResponse({
+        request,
+        code: "sandbox_setup_failed",
+        message: "Failed to create isolated recall eval sandbox.",
+        details: toErrorDetails(error),
+        totalMs: elapsedMs(startedAt),
+      });
+    }
+
+    let provisionedCount = 0;
+    if (request.memoryPool.length > 0) {
+      try {
+        const provisionResult = await provisionRecallEvalFixtures({
+          caseId: request.caseId,
+          memoryPool: request.memoryPool,
+          database: sandbox.database,
+          embedding: getEmbeddingPort(),
+          provisionedAt,
+        });
+        provisionedCount = provisionResult.provisionedCount;
+      } catch (error) {
+        return buildRecallEvalErrorResponse({
+          request,
+          code: "fixture_provision_failed",
+          message: "Failed to provision recall eval fixtures into isolated storage.",
+          details: toErrorDetails(error),
+          totalMs: elapsedMs(startedAt),
+          sandbox,
+        });
+      }
+    }
+
+    try {
+      const results = await recall(request.recallRequest, createRecallAdapter(sandbox.database, getEmbeddingPort()));
+      return buildRecallEvalSuccessResponse({
+        request,
+        results,
+        provisionedCount,
+        totalMs: elapsedMs(startedAt),
+        sandbox,
+      });
+    } catch (error) {
+      return buildRecallEvalErrorResponse({
+        request,
+        code: "recall_execution_failed",
+        message: "Failed to execute real recall against isolated eval state.",
+        details: toErrorDetails(error),
+        totalMs: elapsedMs(startedAt),
+        sandbox,
+      });
+    }
+  } catch (error) {
+    return buildRecallEvalErrorResponse({
+      request,
+      code: "internal_error",
+      message: "Recall eval execution failed unexpectedly.",
+      details: toErrorDetails(error),
+      totalMs: elapsedMs(startedAt),
+      sandbox,
+    });
+  } finally {
+    await sandbox?.cleanup().catch(() => undefined);
+  }
 }
 
-/** Builds the small typed Phase 1 diagnostics payload. */
-const buildPlaceholderDiagnostics = (request: RecallEvalCaseRequest): RecallEvalCaseDiagnostics => ({
-  execution: {
-    mode: "phase1-placeholder",
-    memoryPoolCount: request.memoryPool.length,
-    requestedDiagnostics: request.options?.includeDiagnostics === true,
-    requestedCandidates: request.options?.includeCandidates === true,
-  },
-});
-
-/** Maps request sandbox controls into the stable response sandbox shape. */
-const buildSandboxResult = (sandbox: RecallEvalSandboxRequest | undefined): RecallEvalSandboxResult | undefined => {
-  if (!sandbox) {
-    return undefined;
+/** Converts unknown failures into structured non-stack error details. */
+function toErrorDetails(error: unknown): { cause: string } {
+  if (error instanceof Error) {
+    return {
+      cause: error.message,
+    };
   }
 
   return {
-    root: sandbox.root,
-    preserved: sandbox.preserve === true,
+    cause: String(error),
   };
-};
+}
+
+/** Computes non-negative elapsed milliseconds since the execution start. */
+function elapsedMs(startedAt: number): number {
+  return Math.max(0, Date.now() - startedAt);
+}

@@ -122,15 +122,19 @@ export interface RecallEvalCaseResult {
 }
 
 /**
- * Small typed diagnostics emitted by the Phase 1 placeholder implementation.
+ * Small typed diagnostics emitted by the isolated recall eval execution flow.
  */
 export interface RecallEvalCaseDiagnostics {
-  /** Execution metadata for the current Phase 1 placeholder seam. */
+  /** Execution metadata for the current isolated-case recall seam. */
   execution: {
-    /** Placeholder mode marker until real sandboxed recall lands in Phase 2. */
-    mode: "phase1-placeholder";
+    /** Stable mode marker for the Phase 2 isolated execution slice. */
+    mode: "isolated-case";
+    /** Default fixture provisioning mode used by recall eval execution. */
+    provisioning: "exact-fixture-seed";
     /** Number of fixture entries supplied in the request. */
     memoryPoolCount: number;
+    /** Number of fixture entries provisioned into isolated storage. */
+    provisionedCount: number;
     /** Whether diagnostics were explicitly requested by the caller. */
     requestedDiagnostics: boolean;
     /** Whether candidate-level details were requested by the caller. */
@@ -163,7 +167,7 @@ export interface RecallEvalSandboxResult {
  */
 export interface RecallEvalCaseError {
   /** Stable machine-readable error code when available. */
-  code?: string;
+  code?: "sandbox_setup_failed" | "fixture_provision_failed" | "recall_execution_failed" | "internal_error";
   /** Human-readable error summary. */
   message: string;
   /** Optional structured details for callers that need more context. */

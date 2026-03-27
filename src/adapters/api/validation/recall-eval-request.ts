@@ -21,6 +21,8 @@ export interface RecallEvalValidationIssue {
  * Error thrown when a recall eval HTTP request fails boundary validation.
  */
 export class RecallEvalRequestValidationError extends Error {
+  /** Parseable case identifier echoed for invalid request correlation when available. */
+  public readonly caseId?: string;
   /** Structured list of request validation issues. */
   public readonly issues: RecallEvalValidationIssue[];
 
@@ -28,11 +30,13 @@ export class RecallEvalRequestValidationError extends Error {
    * Creates a request validation error with stable issue details.
    *
    * @param issues - Structured validation issues collected during parsing.
+   * @param caseId - Parseable request case identifier when available.
    */
-  public constructor(issues: RecallEvalValidationIssue[]) {
+  public constructor(issues: RecallEvalValidationIssue[], caseId?: string) {
     super("Invalid recall eval request.");
     this.name = "RecallEvalRequestValidationError";
     this.issues = issues;
+    this.caseId = caseId;
   }
 }
 
@@ -44,29 +48,34 @@ export class RecallEvalRequestValidationError extends Error {
  * @throws RecallEvalRequestValidationError When the payload is invalid.
  */
 export function parseRecallEvalCaseRequest(input: unknown): RecallEvalCaseRequest {
+  const caseId = extractParseableCaseId(input);
+
   if (!isRecord(input)) {
-    throw new RecallEvalRequestValidationError([
-      {
-        path: "$",
-        message: "Request body must be a JSON object.",
-      },
-    ]);
+    throw new RecallEvalRequestValidationError(
+      [
+        {
+          path: "$",
+          message: "Request body must be a JSON object.",
+        },
+      ],
+      caseId,
+    );
   }
 
   const issues: RecallEvalValidationIssue[] = [];
-  const caseId = parseRequiredString(input.caseId, "caseId", issues);
+  const parsedCaseId = parseRequiredString(input.caseId, "caseId", issues);
   const description = parseOptionalString(input.description, "description", issues);
   const sandbox = parseSandbox(input.sandbox, issues);
   const memoryPool = parseMemoryPool(input.memoryPool, issues);
   const recallRequest = parseRecallRequest(input.recallRequest, issues);
   const options = parseOptions(input.options, issues);
 
-  if (issues.length > 0 || caseId === undefined || memoryPool === undefined || recallRequest === undefined) {
-    throw new RecallEvalRequestValidationError(issues);
+  if (issues.length > 0 || parsedCaseId === undefined || memoryPool === undefined || recallRequest === undefined) {
+    throw new RecallEvalRequestValidationError(issues, caseId);
   }
 
   return {
-    caseId,
+    caseId: parsedCaseId,
     description,
     sandbox,
     memoryPool,
@@ -77,6 +86,16 @@ export function parseRecallEvalCaseRequest(input: unknown): RecallEvalCaseReques
 
 /** Checks whether a value is a plain object record. */
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** Extracts a confidently parseable case identifier from a raw request envelope. */
+const extractParseableCaseId = (value: unknown): string | undefined => {
+  if (!isRecord(value) || typeof value.caseId !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.caseId.trim();
+  return normalized.length > 0 ? normalized : undefined;
+};
 
 /** Appends a structured validation issue to the collector. */
 const pushIssue = (issues: RecallEvalValidationIssue[], path: string, message: string): void => {

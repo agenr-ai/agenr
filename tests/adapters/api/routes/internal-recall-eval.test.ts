@@ -1,6 +1,30 @@
-import { describe, expect, it, vi } from "vitest";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { createDatabase } from "../../../../src/adapters/db/client.js";
 import { createInternalRecallEvalRoute, type RecallEvalCaseRunner } from "../../../../src/adapters/api/routes/internal-recall-eval.js";
+import { composeEmbeddingText } from "../../../../src/core/store/embedding-text.js";
+import type { Entry } from "../../../../src/core/types.js";
+
+const tempPaths: string[] = [];
+
+afterEach(async () => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+
+  delete process.env.OPENAI_API_KEY;
+  delete process.env.AGENR_DB_PATH;
+  delete process.env.AGENR_CONFIG_DIR;
+  delete process.env.AGENR_CONFIG_PATH;
+
+  while (tempPaths.length > 0) {
+    await rm(tempPaths.pop() ?? "", { recursive: true, force: true });
+  }
+});
 
 describe("createInternalRecallEvalRoute", () => {
   it("exposes the expected internal POST route and returns JSON from the runner", async () => {
@@ -13,8 +37,10 @@ describe("createInternalRecallEvalRoute", () => {
       },
       diagnostics: {
         execution: {
-          mode: "phase1-placeholder",
+          mode: "isolated-case",
+          provisioning: "exact-fixture-seed",
           memoryPoolCount: request.memoryPool.length,
+          provisionedCount: request.memoryPool.length,
           requestedDiagnostics: false,
           requestedCandidates: false,
         },
@@ -71,8 +97,10 @@ describe("createInternalRecallEvalRoute", () => {
       },
       diagnostics: {
         execution: {
-          mode: "phase1-placeholder",
+          mode: "isolated-case",
+          provisioning: "exact-fixture-seed",
           memoryPoolCount: 0,
+          provisionedCount: 0,
           requestedDiagnostics: false,
           requestedCandidates: false,
         },
@@ -80,7 +108,99 @@ describe("createInternalRecallEvalRoute", () => {
     });
   });
 
-  it("returns a structured invalid_request response for malformed payloads", async () => {
+  it("runs one real recall eval case end to end through the HTTP route against isolated state", async () => {
+    const tempRoot = await createTempDirectory("agenr-eval-route-");
+    const liveDbPath = path.join(tempRoot, "live.sqlite");
+    await seedLiveEntry(
+      liveDbPath,
+      createEntry({
+        id: "live-only",
+        subject: "live state leak",
+        content: "Morgan is on call in the live database only.",
+      }),
+    );
+
+    process.env.OPENAI_API_KEY = "test-key";
+    process.env.AGENR_DB_PATH = liveDbPath;
+    vi.stubGlobal("fetch", createEmbeddingFetchStub());
+
+    const route = createInternalRecallEvalRoute();
+    const response = await route.handler(
+      new Request("http://localhost/internal/evals/recall/run", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          caseId: "case-route-e2e",
+          sandbox: {
+            root: path.join(tempRoot, "sandbox"),
+            preserve: true,
+          },
+          memoryPool: [
+            {
+              id: "fixture-old",
+              type: "decision",
+              subject: "pager policy",
+              content: "Jordan is on call this week.",
+              superseded_by: "fixture-new",
+            },
+            {
+              id: "fixture-new",
+              type: "decision",
+              subject: "pager policy",
+              content: "Taylor is on call this week.",
+              tags: ["ops"],
+              created_at: "2026-03-11T00:00:00.000Z",
+            },
+            {
+              id: "fixture-retired",
+              type: "fact",
+              subject: "retired note",
+              content: "Casey covered the old rotation.",
+              retired: true,
+              retired_at: "2026-03-09T00:00:00.000Z",
+              retired_reason: "obsolete",
+            },
+          ],
+          recallRequest: {
+            text: "who is on call this week",
+            limit: 5,
+          },
+          options: {
+            includeDiagnostics: true,
+            includeTimings: true,
+          },
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      status: "ok",
+      caseId: "case-route-e2e",
+      result: {
+        entryIds: ["fixture-new"],
+      },
+      diagnostics: {
+        execution: {
+          mode: "isolated-case",
+          provisioning: "exact-fixture-seed",
+          memoryPoolCount: 3,
+          provisionedCount: 3,
+          requestedDiagnostics: true,
+          requestedCandidates: false,
+        },
+      },
+      sandbox: {
+        root: path.join(tempRoot, "sandbox"),
+        dbPath: path.join(tempRoot, "sandbox", "knowledge.db"),
+        preserved: true,
+      },
+    });
+  });
+
+  it("returns a structured invalid_request response and echoes a parseable caseId", async () => {
     const route = createInternalRecallEvalRoute();
 
     const response = await route.handler(
@@ -108,6 +228,7 @@ describe("createInternalRecallEvalRoute", () => {
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({
       status: "error",
+      caseId: "case-invalid",
       error: {
         code: "invalid_request",
         message: "Invalid recall eval request.",
@@ -124,4 +245,121 @@ describe("createInternalRecallEvalRoute", () => {
       },
     });
   });
+
+  it("omits caseId from invalid_request responses when the envelope does not expose one safely", async () => {
+    const route = createInternalRecallEvalRoute();
+
+    const response = await route.handler(
+      new Request("http://localhost/internal/evals/recall/run", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: "{not-valid-json",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      status: "error",
+      error: {
+        code: "invalid_request",
+        message: "Invalid recall eval request.",
+        details: [
+          {
+            path: "$",
+            message: "Request body must be valid JSON.",
+          },
+        ],
+      },
+    });
+  });
 });
+
+/** Creates a temp directory and tracks it for cleanup. */
+async function createTempDirectory(prefix: string): Promise<string> {
+  const directory = await mkdtemp(path.join(os.tmpdir(), prefix));
+  tempPaths.push(directory);
+  return directory;
+}
+
+/** Seeds a live database entry that should never affect isolated eval execution. */
+async function seedLiveEntry(databasePath: string, entry: Entry): Promise<void> {
+  const database = await createDatabase(databasePath);
+  try {
+    await database.insertEntry(entry, hashToVector(composeEmbeddingText(entry), 1024), hashText(entry.content));
+  } finally {
+    await database.close();
+  }
+}
+
+/** Creates a canonical entry used for live-state isolation tests. */
+function createEntry(overrides: Partial<Entry>): Entry {
+  const createdAt = overrides.created_at ?? "2026-03-01T00:00:00.000Z";
+
+  return {
+    id: overrides.id ?? randomUUID(),
+    type: overrides.type ?? "fact",
+    subject: overrides.subject ?? "subject",
+    content: overrides.content ?? "content",
+    importance: overrides.importance ?? 6,
+    expiry: overrides.expiry ?? "permanent",
+    tags: overrides.tags ?? [],
+    source_file: overrides.source_file,
+    source_context: overrides.source_context,
+    quality_score: overrides.quality_score ?? 0.5,
+    recall_count: overrides.recall_count ?? 0,
+    last_recalled_at: overrides.last_recalled_at,
+    superseded_by: overrides.superseded_by,
+    cluster_id: overrides.cluster_id,
+    retired: overrides.retired ?? false,
+    retired_at: overrides.retired_at,
+    retired_reason: overrides.retired_reason,
+    created_at: createdAt,
+    updated_at: overrides.updated_at ?? createdAt,
+  };
+}
+
+/** Creates a deterministic embeddings API stub for eval tests. */
+function createEmbeddingFetchStub(): (url: string | URL | Request, init?: RequestInit) => Promise<Response> {
+  return async (_url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const body = JSON.parse(String(init?.body)) as { input: string[] };
+    return new Response(
+      JSON.stringify({
+        data: body.input.map((text, index) => ({
+          index,
+          embedding: hashToVector(text, 1024),
+        })),
+      }),
+      { status: 200 },
+    );
+  };
+}
+
+/** Creates a stable SHA-256 hash string for deterministic test writes. */
+function hashText(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+/** Converts input text into a deterministic normalized vector. */
+function hashToVector(text: string, dimensions: number): number[] {
+  const vector: number[] = [];
+  let counter = 0;
+
+  while (vector.length < dimensions) {
+    const block = createHash("sha256").update(text).update(String(counter)).digest();
+
+    for (let offset = 0; offset + 4 <= block.length && vector.length < dimensions; offset += 4) {
+      vector.push(block.readInt32LE(offset) / 0x7fffffff);
+    }
+
+    counter += 1;
+  }
+
+  const magnitude = Math.sqrt(vector.reduce((total, value) => total + value * value, 0));
+  if (magnitude === 0) {
+    return Array.from({ length: dimensions }, (_, index) => (index === 0 ? 1 : 0));
+  }
+
+  return vector.map((value) => value / magnitude);
+}
