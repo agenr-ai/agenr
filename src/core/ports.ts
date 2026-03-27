@@ -6,6 +6,7 @@
  */
 
 import type { Entry } from "./types.js";
+import type { EntryFilters, FtsCandidate, VectorCandidate } from "./recall/types.js";
 
 // ── Database ─────────────────────────────────────────────────────────
 
@@ -70,6 +71,26 @@ export interface DatabasePort {
 export interface EmbeddingPort {
   /** Compute embeddings for one or more texts. */
   embed(texts: string[]): Promise<number[][]>;
+}
+
+/**
+ * Query-time retrieval contract used by the v1 recall pipeline.
+ */
+export interface RecallPorts {
+  /** Compute a single embedding for a recall query string. */
+  embed(text: string): Promise<number[]>;
+
+  /** Search vector candidates with adapter-level filtering applied. */
+  vectorSearch(params: { embedding: number[]; limit: number; filters?: EntryFilters }): Promise<VectorCandidate[]>;
+
+  /** Search FTS candidates with adapter-level filtering applied. */
+  ftsSearch(params: { text: string; limit: number; filters?: EntryFilters }): Promise<FtsCandidate[]>;
+
+  /** Persist recall events for the returned entry set. */
+  recordRecallEvents(params: { entryIds: string[]; query: string; sessionKey?: string }): Promise<void>;
+
+  /** Flush any buffered writes needed by the adapter implementation. */
+  flush(): Promise<void>;
 }
 
 // ── LLM ──────────────────────────────────────────────────────────────
