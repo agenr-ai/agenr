@@ -100,4 +100,44 @@ export default tseslint.config(
       ],
     },
   },
+  // Recall eval adapter guardrails:
+  // 1. Route handlers should stay thin and should not reach into core/ directly.
+  // 2. Eval app orchestration should not depend on CLI modules.
+  // 3. Keep artifact policy and filesystem behavior out of core/.
+  {
+    files: ["src/adapters/api/routes/**/*.{ts,mts,cts}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["**/core/**"],
+              message: "API route handlers must stay thin. Call app services instead of importing core/ directly.",
+            },
+            {
+              group: ["**/cli/**"],
+              message: "API route handlers must not depend on CLI modules.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["src/app/evals/**/*.{ts,mts,cts}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["**/cli/**"],
+              message: "Eval app services must not depend on CLI modules.",
+            },
+          ],
+        },
+      ],
+    },
+  },
 );

@@ -61,6 +61,19 @@ docs/                        # Documentation
 - **`cli/`** is a thin shell. Commands parse args, wire adapters and app services, call core/app functions, format output. No workflow orchestration or business logic lives here.
 - **`config.ts`** is shared infrastructure — both core and adapters may reference config types.
 
+### Recall eval adapter scope guardrails
+
+If the recall eval HTTP adapter lands, keep it narrow.
+
+1. `agenr` owns only the execution seam for recall evals.
+2. `agenr-evals` owns manifests, suite orchestration, scoring, summaries, and benchmark reporting.
+3. The first version should expose one narrow internal recall-case HTTP route only.
+4. Route handlers must stay thin and delegate to an app service.
+5. `core/` may expose typed execution facts for observability, but must not gain eval-specific logging, file writing, or artifact policy.
+6. Do not add eval-only CLI commands as the main transport.
+7. Do not add a second eval family, second provisioning mode, or broad memory-management API without an explicit design review.
+8. Before adding new adapter fields or behaviors, ask whether they belong in `agenr-evals` instead.
+
 ### OpenClaw plugin architecture
 
 The plugin at `adapters/openclaw/` is the most complex adapter but must stay disciplined. It is a **translator, not a brain.**
