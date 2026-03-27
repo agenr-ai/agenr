@@ -10,6 +10,7 @@
     "build": "tsup",
     "build:debug": "tsup --sourcemap",
     "dev": "tsup --watch",
+    "internal:recall-eval-server": "pnpm build && node dist/internal-recall-eval-server.js",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
