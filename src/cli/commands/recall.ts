@@ -46,19 +46,17 @@ export function registerRecallCommand(program: Command): void {
       clack.intro(banner());
 
       let db: Awaited<ReturnType<typeof createDatabase>> | null = null;
-      let adapter: ReturnType<typeof createRecallAdapter> | null = null;
 
       try {
         const config = readConfig();
         const dbPath = resolveDbPath(config);
         const embeddingClient = createEmbeddingClient(resolveEmbeddingApiKey(config), resolveEmbeddingModel(config));
         db = await createDatabase(dbPath);
-        adapter = createRecallAdapter(db, embeddingClient);
+        const adapter = createRecallAdapter(db, embeddingClient);
 
         const spinner = clack.spinner();
         spinner.start("Searching knowledge...");
         const results = await recall(buildRecallInput(query, options), adapter);
-        await adapter.flush();
         spinner.stop(`Found ${results.length} ${pluralize(results.length, "result")}.`);
 
         if (results.length === 0) {
@@ -76,12 +74,6 @@ export function registerRecallCommand(program: Command): void {
         clack.log.error(formatUnknownError(error));
         clack.outro(ui.error("Recall failed"));
       } finally {
-        try {
-          await adapter?.flush();
-        } catch {
-          // Ignore flush errors during shutdown because recall already completed or failed.
-        }
-
         await db?.close();
       }
     });

@@ -111,6 +111,23 @@ describe("recall integration", () => {
     expect(results.every((result) => result.entry.tags.includes("codex"))).toBe(true);
   });
 
+  it("matches literal tag values instead of wildcard-like patterns", async () => {
+    const fixture = await createRecallFixture();
+
+    const results = await recall(
+      {
+        text: "literal wildcard-like tag",
+        tags: ["ops_100%"],
+        limit: 10,
+      },
+      fixture.adapter,
+    );
+
+    expect(results).toHaveLength(1);
+    expect(results[0]?.entry.subject).toBe("literal special tag");
+    expect(results[0]?.entry.tags).toEqual(["ops_100%"]);
+  });
+
   it("applies the since filter", async () => {
     const fixture = await createRecallFixture();
 
@@ -141,6 +158,22 @@ describe("recall integration", () => {
 
     expect(results.length).toBeGreaterThan(0);
     expect(results.every((result) => new Date(result.entry.created_at) <= daysAgo(30))).toBe(true);
+  });
+
+  it("supports natural-language explicit around values", async () => {
+    const fixture = await createRecallFixture();
+
+    const [first] = await recall(
+      {
+        text: "temporal anchor matching entry",
+        around: "yesterday",
+        aroundRadius: 1,
+        limit: 5,
+      },
+      fixture.adapter,
+    );
+
+    expect(first?.entry.created_at).toBe(daysAgo(1).toISOString());
   });
 
   it("returns empty when every result falls below the threshold", async () => {
@@ -273,7 +306,6 @@ describe("recall concurrency", () => {
     const queries = ["hybrid retrieval", "weighted scoring", "json output preferences", "embedding model selection", "workflow branching"];
 
     const results = await Promise.all(queries.map((text) => recall({ text, limit: 5 }, fixture.adapter)));
-    await fixture.adapter.flush();
 
     expect(results).toHaveLength(queries.length);
     expect(results.every((result) => Array.isArray(result))).toBe(true);
@@ -309,7 +341,6 @@ describe("recall concurrency", () => {
     finishWrite.resolve();
 
     const [results] = await Promise.all([recallPromise, storePromise.then(() => undefined)]);
-    await fixture.adapter.flush();
 
     expect(results.length).toBeGreaterThan(0);
   });
@@ -428,6 +459,40 @@ async function seedEntries(database: SqlDatabase): Promise<SeedMetadata> {
       expiry: "permanent",
       tags: ["codex", "workflow"],
       created_at: daysAgo(5).toISOString(),
+    }),
+    buildEntry({
+      subject: "temporal anchor entry",
+      content: "Temporal anchor matching entry for explicit around date queries.",
+      type: "event",
+      importance: 6,
+      expiry: "permanent",
+      created_at: daysAgo(1).toISOString(),
+    }),
+    buildEntry({
+      subject: "temporal anchor entry",
+      content: "Temporal anchor matching entry for explicit around date queries.",
+      type: "event",
+      importance: 6,
+      expiry: "permanent",
+      created_at: daysAgo(240).toISOString(),
+    }),
+    buildEntry({
+      subject: "literal special tag",
+      content: "Exact tag filtering should match only the literal wildcard-like tag.",
+      type: "fact",
+      importance: 6,
+      expiry: "permanent",
+      tags: ["ops_100%"],
+      created_at: daysAgo(12).toISOString(),
+    }),
+    buildEntry({
+      subject: "wildcard decoy tag",
+      content: "Exact tag filtering should not match similar wildcard-like tags.",
+      type: "fact",
+      importance: 6,
+      expiry: "permanent",
+      tags: ["opsA100x"],
+      created_at: daysAgo(12).toISOString(),
     }),
     buildEntry({
       subject: "pipeline merge",

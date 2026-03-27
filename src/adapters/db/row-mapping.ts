@@ -1,5 +1,6 @@
 import type { Row } from "@libsql/client";
 
+export { cosineSimilarity } from "../../core/recall/scoring.js";
 import type { Entry } from "../../core/types.js";
 
 const DEFAULT_QUALITY_SCORE = 0.5;
@@ -212,48 +213,4 @@ export function mapEntryRow(row: Row): Entry {
     created_at: readRequiredString(row, "created_at"),
     updated_at: readRequiredString(row, "updated_at"),
   };
-}
-
-/**
- * Computes cosine similarity between two numeric vectors.
- *
- * Negative and non-finite values are clamped away because recall scoring treats
- * similarity as a 0-1 relevance signal.
- *
- * @param left - Left-hand vector.
- * @param right - Right-hand vector.
- * @returns Cosine similarity in the 0-1 range.
- */
-export function cosineSimilarity(left: number[], right: number[]): number {
-  const size = Math.min(left.length, right.length);
-  if (size === 0) {
-    return 0;
-  }
-
-  let dot = 0;
-  let leftNorm = 0;
-  let rightNorm = 0;
-  for (let index = 0; index < size; index += 1) {
-    const leftValue = sanitizeFinite(left[index]);
-    const rightValue = sanitizeFinite(right[index]);
-    dot += leftValue * rightValue;
-    leftNorm += leftValue * leftValue;
-    rightNorm += rightValue * rightValue;
-  }
-
-  if (leftNorm <= 0 || rightNorm <= 0) {
-    return 0;
-  }
-
-  return clampUnit(dot / (Math.sqrt(leftNorm) * Math.sqrt(rightNorm)));
-}
-
-/** Converts non-finite numbers into zero and preserves finite values. */
-function sanitizeFinite(value: number | undefined): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
-/** Clamps a number into the inclusive 0-1 range. */
-function clampUnit(value: number): number {
-  return Math.min(1, Math.max(0, sanitizeFinite(value)));
 }

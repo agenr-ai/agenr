@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { STOP_WORDS, buildFtsQueries, computeLexicalScore, tokenize } from "./lexical.js";
+import { STOP_WORDS, buildLexicalPlan, computeLexicalScore, tokenize } from "./lexical.js";
 
 describe("STOP_WORDS", () => {
   it("includes common operators that should not survive tokenization", () => {
@@ -31,25 +31,36 @@ describe("tokenize", () => {
   });
 });
 
-describe("buildFtsQueries", () => {
+describe("buildLexicalPlan", () => {
   it("returns the three expected tiers for a normal multi-token query", () => {
-    expect(buildFtsQueries("latest handoff summary")).toEqual(['"latest handoff summary"', "latest handoff summary", "latest OR handoff OR summary"]);
+    expect(buildLexicalPlan("latest handoff summary")).toEqual([
+      { tier: "exact", text: "latest handoff summary" },
+      { tier: "all_tokens", tokens: ["latest", "handoff", "summary"] },
+      { tier: "any_tokens", tokens: ["latest", "handoff", "summary"] },
+    ]);
   });
 
   it("returns exact and single-token tiers for a single-token query", () => {
-    expect(buildFtsQueries("handoff")).toEqual(['"handoff"', "handoff"]);
+    expect(buildLexicalPlan("handoff")).toEqual([
+      { tier: "exact", text: "handoff" },
+      { tier: "all_tokens", tokens: ["handoff"] },
+    ]);
   });
 
   it("returns only the exact phrase when tokenization removes everything", () => {
-    expect(buildFtsQueries("the and of")).toEqual(['"the and of"']);
+    expect(buildLexicalPlan("the and of")).toEqual([{ tier: "exact", text: "the and of" }]);
   });
 
   it("returns an empty array for empty input", () => {
-    expect(buildFtsQueries("   ")).toEqual([]);
+    expect(buildLexicalPlan("   ")).toEqual([]);
   });
 
-  it("sanitizes FTS special syntax in token tiers", () => {
-    expect(buildFtsQueries('subject:"alpha" OR beta*')).toEqual(['"subject:""alpha"" OR beta*"', "subject alpha beta", "subject OR alpha OR beta"]);
+  it("keeps backend syntax out of the lexical plan", () => {
+    expect(buildLexicalPlan('subject:"alpha" OR beta*')).toEqual([
+      { tier: "exact", text: 'subject:"alpha" OR beta*' },
+      { tier: "all_tokens", tokens: ["subject", "alpha", "beta"] },
+      { tier: "any_tokens", tokens: ["subject", "alpha", "beta"] },
+    ]);
   });
 });
 

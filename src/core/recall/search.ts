@@ -1,10 +1,9 @@
 import type { RecallPorts } from "../ports.js";
-import type { Entry } from "../types.js";
 
 import { computeLexicalScore } from "./lexical.js";
 import { cosineSimilarity, gaussianRecency, importanceScore, recencyScore, scoreCandidate } from "./scoring.js";
 import { inferAroundDate, parseRelativeDate } from "./temporal.js";
-import type { EntryFilters, FtsCandidate, RecallInput, RecallOutput, VectorCandidate } from "./types.js";
+import type { EntryFilters, FtsCandidate, RecallCandidateEntry, RecallInput, RecallOutput, VectorCandidate } from "./types.js";
 
 /**
  * Execute the v1 recall pipeline against the provided adapter ports.
@@ -20,9 +19,13 @@ export async function recall(query: RecallInput, ports: RecallPorts): Promise<Re
   }
 
   const limit = normalizeLimit(query.limit);
+  if (limit === 0) {
+    return [];
+  }
+
   const threshold = normalizeThreshold(query.threshold);
   const budget = normalizeBudget(query.budget);
-  const aroundDate = query.around !== undefined ? parseRelativeDate(query.around) : inferAroundDate(text);
+  const aroundDate = query.around !== undefined ? parseAroundDate(query.around) : inferAroundDate(text);
   const since = query.since ? parseRelativeDate(query.since) : null;
   const until = query.until ? parseRelativeDate(query.until) : null;
   const filters = buildEntryFilters(query.types, query.tags, since, until);
@@ -51,10 +54,30 @@ export async function recall(query: RecallInput, ports: RecallPorts): Promise<Re
   }
 
   const budgeted = budget === null ? thresholded : applyBudget(thresholded, budget);
-  const results = budgeted.slice(0, limit);
+  const ranked = budgeted.slice(0, limit);
+  if (ranked.length === 0) {
+    return [];
+  }
+
+  const hydratedEntries = await ports.hydrateEntries(ranked.map((result) => result.entry.id));
+  const hydratedById = new Map(hydratedEntries.map((entry) => [entry.id, entry]));
+  const results = ranked.flatMap((result) => {
+    const entry = hydratedById.get(result.entry.id);
+    if (!entry) {
+      return [];
+    }
+
+    return [
+      {
+        entry,
+        score: result.score,
+        scores: result.scores,
+      },
+    ];
+  });
 
   if (results.length > 0) {
-    void ports
+    await ports
       .recordRecallEvents({
         entryIds: results.map((result) => result.entry.id),
         query: text,
@@ -74,7 +97,7 @@ export async function recall(query: RecallInput, ports: RecallPorts): Promise<Re
  * @param queryEmbedding - Query embedding vector.
  * @param aroundDate - Optional temporal anchor for gaussian recency scoring.
  * @param aroundRadius - Optional gaussian radius override in days.
- * @returns Ranked recall output with score breakdown.
+ * @returns Ranked candidate with score breakdown metadata.
  */
 function scoreMergedCandidate(
   candidate: MergedCandidate,
@@ -82,7 +105,7 @@ function scoreMergedCandidate(
   queryEmbedding: number[],
   aroundDate: Date | null,
   aroundRadius?: number,
-): RecallOutput {
+): RankedCandidate {
   const vector = candidate.vectorSim ?? cosineSimilarity(candidate.entry.embedding ?? [], queryEmbedding);
   const lexical = computeLexicalScore(queryText, candidate.entry.subject, candidate.entry.content);
   const recency = aroundDate
@@ -175,12 +198,12 @@ function buildEntryFilters(types: RecallInput["types"], tags: RecallInput["tags"
  * @param budget - Maximum approximate token budget.
  * @returns Budget-constrained result list.
  */
-function applyBudget(results: RecallOutput[], budget: number): RecallOutput[] {
+function applyBudget(results: RankedCandidate[], budget: number): RankedCandidate[] {
   if (results.length === 0) {
     return [];
   }
 
-  const accepted: RecallOutput[] = [results[0]!];
+  const accepted: RankedCandidate[] = [results[0]!];
   let consumed = estimateTokens(results[0]!.entry);
 
   for (const result of results.slice(1)) {
@@ -202,8 +225,19 @@ function applyBudget(results: RecallOutput[], budget: number): RecallOutput[] {
  * @param entry - Recall result entry.
  * @returns Approximate token count for the entry payload.
  */
-function estimateTokens(entry: Entry): number {
+function estimateTokens(entry: RecallCandidateEntry): number {
   return (entry.subject.length + entry.content.length) / 4;
+}
+
+/**
+ * Parse an explicit around-date value using both strict date parsing and
+ * natural-language temporal inference.
+ *
+ * @param value - Raw user-supplied around-date text.
+ * @returns Parsed temporal anchor, or null when unsupported.
+ */
+function parseAroundDate(value: string): Date | null {
+  return parseRelativeDate(value) ?? inferAroundDate(value);
 }
 
 /**
@@ -266,6 +300,15 @@ function normalizeAroundRadius(value?: number): number {
  * Candidate shape after vector and FTS admission paths are merged.
  */
 interface MergedCandidate {
-  entry: Entry;
+  entry: RecallCandidateEntry;
   vectorSim?: number;
+}
+
+/**
+ * Ranked candidate shape before the final full-entry hydration step.
+ */
+interface RankedCandidate {
+  entry: RecallCandidateEntry;
+  score: number;
+  scores: RecallOutput["scores"];
 }

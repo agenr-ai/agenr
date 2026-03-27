@@ -1,8 +1,9 @@
-import type { ResultSet } from "@libsql/client";
+import type { ResultSet, Row } from "@libsql/client";
 
-import { buildFtsQueries } from "../../core/recall/lexical.js";
-import type { EntryFilters, FtsCandidate } from "../../core/recall/types.js";
+import { buildLexicalPlan, type LexicalSearchTier } from "../../core/recall/lexical.js";
+import type { EntryFilters, FtsCandidate, RecallCandidateEntry } from "../../core/recall/types.js";
 import type { EmbeddingPort, RecallPorts } from "../../core/ports.js";
+import type { Entry } from "../../core/types.js";
 import { recordRecallEvent, type SqlExecutor } from "./queries.js";
 import {
   buildActiveEntryClause,
@@ -39,6 +40,16 @@ const ENTRY_SELECT_COLUMNS = `
   e.updated_at
 `;
 
+const RECALL_CANDIDATE_SELECT_COLUMNS = `
+  e.id,
+  e.subject,
+  e.content,
+  e.importance,
+  e.expiry,
+  e.embedding,
+  e.created_at
+`;
+
 const FTS_TIERS = ["exact", "all_tokens", "any_tokens"] as const;
 
 /**
@@ -73,12 +84,12 @@ class LibsqlRecallAdapter implements RecallPorts {
     return results[0] ?? [];
   }
 
-  /** Finds hydrated vector candidates with SQL-level filters applied. */
+  /** Finds ranking-time vector candidates with SQL-level filters applied. */
   public async vectorSearch(params: {
     embedding: number[];
     limit: number;
     filters?: EntryFilters;
-  }): Promise<Array<{ entry: import("../../core/types.js").Entry; vectorSim: number }>> {
+  }): Promise<Array<{ entry: RecallCandidateEntry; vectorSim: number }>> {
     if (params.limit <= 0 || params.embedding.length === 0) {
       return [];
     }
@@ -95,7 +106,7 @@ class LibsqlRecallAdapter implements RecallPorts {
       result = await this.executor.execute({
         sql: `
           SELECT
-            ${ENTRY_SELECT_COLUMNS}
+            ${RECALL_CANDIDATE_SELECT_COLUMNS}
           FROM vector_top_k('idx_entries_embedding', vector32(?), ?) AS v
           JOIN entries AS e ON e.rowid = v.id
           WHERE ${buildActiveEntryClause("e")}
@@ -110,7 +121,7 @@ class LibsqlRecallAdapter implements RecallPorts {
 
     return result.rows
       .map((row) => ({
-        entry: mapEntryRow(row),
+        entry: mapRecallCandidateRow(row),
         vectorSim: cosineSimilarity(params.embedding, readEmbedding(row, "embedding")),
       }))
       .filter((candidate) => candidate.vectorSim > 0)
@@ -118,27 +129,28 @@ class LibsqlRecallAdapter implements RecallPorts {
       .slice(0, params.limit);
   }
 
-  /** Finds hydrated FTS candidates using the exact -> AND -> OR cascade. */
+  /** Finds ranking-time FTS candidates using the exact -> AND -> OR cascade. */
   public async ftsSearch(params: { text: string; limit: number; filters?: EntryFilters }): Promise<FtsCandidate[]> {
     if (params.limit <= 0) {
       return [];
     }
 
-    const queries = buildFtsQueries(params.text);
-    if (queries.length === 0) {
+    const plan = buildLexicalPlan(params.text);
+    if (plan.length === 0) {
       return [];
     }
 
     const filters = buildEntryFilterClause(params.filters, "e");
     const matches = new Map<string, FtsCandidate>();
 
-    for (const [index, query] of queries.entries()) {
+    for (const tier of plan) {
+      const query = compileLexicalTier(tier);
       let result: ResultSet;
       try {
         result = await this.executor.execute({
           sql: `
             SELECT
-              ${ENTRY_SELECT_COLUMNS},
+              ${RECALL_CANDIDATE_SELECT_COLUMNS},
               bm25(entries_fts, 1.0, 2.0) AS rank
             FROM entries_fts
             JOIN entries AS e ON e.rowid = entries_fts.rowid
@@ -154,7 +166,6 @@ class LibsqlRecallAdapter implements RecallPorts {
         continue;
       }
 
-      const tier = FTS_TIERS[index] ?? FTS_TIERS[FTS_TIERS.length - 1];
       for (const row of result.rows) {
         const entryId = readRequiredString(row, "id");
         if (matches.has(entryId)) {
@@ -162,9 +173,9 @@ class LibsqlRecallAdapter implements RecallPorts {
         }
 
         matches.set(entryId, {
-          entry: mapEntryRow(row),
+          entry: mapRecallCandidateRow(row),
           rank: readNumber(row, "rank", Number.POSITIVE_INFINITY),
-          tier,
+          tier: tier.tier,
         });
       }
     }
@@ -174,8 +185,30 @@ class LibsqlRecallAdapter implements RecallPorts {
       .slice(0, params.limit);
   }
 
+  /** Hydrates full entries for the final ranked result set. */
+  public async hydrateEntries(ids: string[]): Promise<Entry[]> {
+    const normalizedIds = normalizeStrings(ids);
+    if (normalizedIds.length === 0) {
+      return [];
+    }
+
+    const placeholders = normalizedIds.map(() => "?").join(", ");
+    const result = await this.executor.execute({
+      sql: `
+        SELECT
+          ${ENTRY_SELECT_COLUMNS}
+        FROM entries AS e
+        WHERE ${buildActiveEntryClause("e")}
+          AND e.id IN (${placeholders})
+      `,
+      args: normalizedIds,
+    });
+
+    return result.rows.map((row) => mapEntryRow(row));
+  }
+
   /**
-   * Queues recall telemetry writes so callers can fire-and-forget and still flush later.
+   * Queues telemetry writes internally while keeping recall callers synchronous.
    *
    * Errors are swallowed per entry because telemetry must never fail recall.
    */
@@ -191,11 +224,6 @@ class LibsqlRecallAdapter implements RecallPorts {
     });
 
     this.pendingWrites = task.catch(() => undefined);
-    await task;
-  }
-
-  /** Waits for any in-flight recall telemetry writes to finish. */
-  public async flush(): Promise<void> {
     await this.pendingWrites;
   }
 }
@@ -223,8 +251,12 @@ function buildEntryFilterClause(filters: EntryFilters | undefined, alias: string
 
   const tags = normalizeStrings(filters.tags);
   for (const tag of tags) {
-    clauses.push(`(${alias}.tags LIKE '%|' || ? || '|%' OR ${alias}.tags LIKE '%' || ? || '%')`);
-    args.push(tag, JSON.stringify(tag));
+    clauses.push(`EXISTS (
+      SELECT 1
+      FROM json_each(CASE WHEN json_valid(${alias}.tags) THEN ${alias}.tags ELSE '[]' END)
+      WHERE json_each.value = ?
+    )`);
+    args.push(tag);
   }
 
   if (filters.since) {
@@ -269,6 +301,40 @@ function compareFtsCandidates(left: FtsCandidate, right: FtsCandidate): number {
 /** Resolves a stable numeric sort priority for one FTS cascade tier. */
 function ftsTierPriority(tier: FtsCandidate["tier"]): number {
   return FTS_TIERS.indexOf(tier);
+}
+
+/**
+ * Compile one backend-agnostic lexical tier into a SQLite FTS5 MATCH expression.
+ *
+ * @param tier - Planned lexical tier from the core recall module.
+ * @returns SQLite FTS5 MATCH text for that tier.
+ */
+function compileLexicalTier(tier: LexicalSearchTier): string {
+  if (tier.tier === "exact") {
+    return `"${tier.text.replaceAll('"', '""')}"`;
+  }
+
+  return tier.tier === "all_tokens" ? tier.tokens.join(" ") : tier.tokens.join(" OR ");
+}
+
+/**
+ * Map a ranking-time recall candidate row into the minimal core candidate shape.
+ *
+ * @param row - Raw libSQL result row.
+ * @returns Candidate entry used during ranking.
+ */
+function mapRecallCandidateRow(row: Row): RecallCandidateEntry {
+  const expiry = readRequiredString(row, "expiry");
+
+  return {
+    id: readRequiredString(row, "id"),
+    subject: readRequiredString(row, "subject"),
+    content: readRequiredString(row, "content"),
+    importance: readNumber(row, "importance", 0),
+    expiry: expiry as RecallCandidateEntry["expiry"],
+    embedding: readEmbedding(row, "embedding"),
+    created_at: readRequiredString(row, "created_at"),
+  };
 }
 
 /** Wraps vector-search failures in a consistent adapter error. */

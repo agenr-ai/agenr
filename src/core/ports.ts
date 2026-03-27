@@ -77,11 +77,11 @@ export interface RecallPorts {
   /** Search FTS candidates with adapter-level filtering applied. */
   ftsSearch(params: { text: string; limit: number; filters?: EntryFilters }): Promise<FtsCandidate[]>;
 
+  /** Hydrate fully populated entries for the final ranked result set. */
+  hydrateEntries(ids: string[]): Promise<Entry[]>;
+
   /** Persist recall events for the returned entry set. */
   recordRecallEvents(params: { entryIds: string[]; query: string; sessionKey?: string }): Promise<void>;
-
-  /** Flush any buffered writes needed by the adapter implementation. */
-  flush(): Promise<void>;
 }
 
 // ── LLM ──────────────────────────────────────────────────────────────

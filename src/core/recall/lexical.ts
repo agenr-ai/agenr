@@ -101,6 +101,19 @@ export { STOP_WORDS };
 const FTS_OPERATOR_TOKENS = new Set(["or", "not", "near"]);
 
 /**
+ * Backend-agnostic lexical search tier used to plan adapter queries.
+ */
+export type LexicalSearchTier =
+  | {
+      tier: "exact";
+      text: string;
+    }
+  | {
+      tier: "all_tokens" | "any_tokens";
+      tokens: string[];
+    };
+
+/**
  * Tokenize free-form text into normalized lexical terms.
  *
  * @param text - Source text to tokenize.
@@ -112,29 +125,55 @@ export function tokenize(text: string): string[] {
 }
 
 /**
- * Build a cascade of FTS5 MATCH query strings from raw user text.
+ * Build a lexical search plan from raw user text.
  *
  * @param text - Raw query text.
  * @returns Exact, all-token, and any-token tiers in cascade order.
  */
-export function buildFtsQueries(text: string): string[] {
+export function buildLexicalPlan(text: string): LexicalSearchTier[] {
   const trimmed = text.trim();
   if (trimmed.length === 0) {
     return [];
   }
 
-  const exactPhrase = `"${trimmed.replaceAll('"', '""')}"`;
   const tokens = tokenize(trimmed).filter((token) => !FTS_OPERATOR_TOKENS.has(token));
 
   if (tokens.length === 0) {
-    return [exactPhrase];
+    return [
+      {
+        tier: "exact",
+        text: trimmed,
+      },
+    ];
   }
 
   if (tokens.length === 1) {
-    return [exactPhrase, tokens[0]!];
+    return [
+      {
+        tier: "exact",
+        text: trimmed,
+      },
+      {
+        tier: "all_tokens",
+        tokens,
+      },
+    ];
   }
 
-  return [exactPhrase, tokens.join(" "), tokens.join(" OR ")];
+  return [
+    {
+      tier: "exact",
+      text: trimmed,
+    },
+    {
+      tier: "all_tokens",
+      tokens,
+    },
+    {
+      tier: "any_tokens",
+      tokens,
+    },
+  ];
 }
 
 /**

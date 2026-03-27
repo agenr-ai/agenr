@@ -75,35 +75,6 @@ export interface StoreResult {
   rejected: number;
 }
 
-// ── Recall types ─────────────────────────────────────────────────────
-
-/**
- * Inputs that shape a recall search.
- */
-export interface RecallQuery {
-  query: string;
-  limit?: number;
-  tags?: string[];
-  since?: string;
-  types?: EntryType[];
-}
-
-/**
- * Paginated recall response with scored entries.
- */
-export interface RecallResult {
-  entries: ScoredEntry[];
-  total: number;
-}
-
-/**
- * Entry paired with its recall ranking score.
- */
-export interface ScoredEntry {
-  entry: Entry;
-  score: number;
-}
-
 // ── Ingestion types ──────────────────────────────────────────────────
 
 /**

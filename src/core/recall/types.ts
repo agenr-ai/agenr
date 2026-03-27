@@ -33,20 +33,25 @@ export interface RecallOutput {
 }
 
 /**
- * A candidate returned from vector search with hydrated entry data.
+ * Minimal entry fields needed during recall scoring before final hydration.
+ */
+export type RecallCandidateEntry = Pick<Entry, "id" | "subject" | "content" | "importance" | "expiry" | "created_at" | "embedding">;
+
+/**
+ * A candidate returned from vector search with ranking-time entry data.
  */
 export interface VectorCandidate {
-  entry: Entry;
+  entry: RecallCandidateEntry;
   vectorSim: number;
 }
 
 /**
- * A candidate returned from lexical FTS search with hydrated entry data.
+ * A candidate returned from lexical FTS search with ranking-time entry data.
  *
  * BM25 rank is used for admission only and is not part of the final score.
  */
 export interface FtsCandidate {
-  entry: Entry;
+  entry: RecallCandidateEntry;
   rank: number;
   tier: "exact" | "all_tokens" | "any_tokens";
 }

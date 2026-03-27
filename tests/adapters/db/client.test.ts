@@ -188,7 +188,6 @@ describe("createDatabase", () => {
       query: "hexagonal",
       sessionKey: "session-1",
     });
-    await adapter.flush();
 
     const stored = await database.getEntry(entry.id);
 
