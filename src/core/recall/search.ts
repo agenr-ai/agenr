@@ -6,6 +6,8 @@ import { inferAroundDate, parseRelativeDate } from "./temporal.js";
 import { createNoopRecallTraceSink, type RecallExecutionOptions, type RecallExecutionTraceSummary, type RecallNoResultReason } from "./trace.js";
 import type { EntryFilters, FtsCandidate, RecallCandidateEntry, RecallInput, RecallOutput, VectorCandidate } from "./types.js";
 
+const MIN_VECTOR_ONLY_EVIDENCE = 0.3;
+
 /**
  * Execute the v1 recall pipeline against the provided adapter ports.
  *
@@ -81,7 +83,7 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
     summary.timings.scoreCandidatesMs = elapsedMs(scoreStartedAt);
 
     const thresholdStartedAt = Date.now();
-    const thresholded = scored.filter((result) => result.score >= threshold);
+    const thresholded = scored.filter((result) => hasSufficientReturnEvidence(result) && result.score >= threshold);
     summary.candidateCounts.thresholdQualified = thresholded.length;
     summary.timings.thresholdMs = elapsedMs(thresholdStartedAt);
     if (thresholded.length === 0) {
@@ -248,6 +250,24 @@ function scoreMergedCandidate(
     score: scored.score,
     scores: scored.scores,
   };
+}
+
+/**
+ * Require raw retrieval evidence before score shaping can return a candidate.
+ *
+ * Lexical overlap is already a direct support signal. Vector-only matches must
+ * clear a separate floor so recency and importance cannot rescue weak semantic
+ * drift into a returned answer.
+ *
+ * @param candidate - Ranked candidate with raw score breakdowns.
+ * @returns True when the candidate is return-worthy.
+ */
+function hasSufficientReturnEvidence(candidate: RankedCandidate): boolean {
+  if (candidate.scores.lexical > 0) {
+    return true;
+  }
+
+  return candidate.scores.vector >= MIN_VECTOR_ONLY_EVIDENCE;
 }
 
 /**

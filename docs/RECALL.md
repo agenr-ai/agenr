@@ -274,15 +274,22 @@ All component scores and the final score are clamped into `0-1`.
 
 After scoring:
 
-1. results below `threshold` are dropped
-2. the optional token budget is applied greedily in score order
-3. the list is sliced to `limit`
+1. weak vector-only candidates without meaningful raw evidence are dropped
+2. results below `threshold` are dropped
+3. the optional token budget is applied greedily in score order
+4. the list is sliced to `limit`
 
 ### Threshold behavior
 
 Thresholding happens after scoring, not during retrieval.
 
 So vector and FTS still overfetch first, and only then does recall discard low-score candidates.
+
+Recall also applies a raw-evidence gate before the score threshold is considered final:
+
+- lexical support is always considered sufficient raw evidence
+- vector-only candidates must clear a minimum raw vector similarity floor
+- recency and importance cannot rescue weak vector-only drift into a returned result
 
 ### Budget behavior
 
