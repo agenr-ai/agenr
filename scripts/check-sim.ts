@@ -61,6 +61,13 @@ const entries: StoreEntryInput[] = [
 const texts = entries.map((e) => composeEmbeddingText(e));
 const vectors = await client.embed(texts);
 
+/**
+ * Computes cosine similarity for two embedding vectors.
+ *
+ * @param a First vector.
+ * @param b Second vector.
+ * @returns Similarity score in the unit interval.
+ */
 function cosine(a: number[], b: number[]): number {
   let dot = 0,
     normA = 0,

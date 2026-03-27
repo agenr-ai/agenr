@@ -52,13 +52,13 @@ export default tseslint.config(
           fixStyle: "separate-type-imports",
         },
       ],
-      // Require Google-style JSDoc on public APIs.
-      // Internal helpers are encouraged to document intent, but tests and one-off
-      // implementation details should not produce lint noise.
+      // Require Google-style JSDoc on functions, interfaces, and types.
+      // Tests are exempted below because helper-heavy fixtures otherwise create
+      // low-signal lint noise.
       "jsdoc/require-jsdoc": [
         "warn",
         {
-          publicOnly: true,
+          publicOnly: false,
           require: {
             FunctionDeclaration: true,
             MethodDefinition: true,
@@ -73,6 +73,12 @@ export default tseslint.config(
       "jsdoc/require-param": "off",
       "jsdoc/require-returns": "off",
       "jsdoc/check-tag-names": ["warn", { typed: true }],
+    },
+  },
+  {
+    files: ["tests/**/*.{ts,mts,cts}"],
+    rules: {
+      "jsdoc/require-jsdoc": "off",
     },
   },
   // THE HEXAGONAL BOUNDARY RULE:
