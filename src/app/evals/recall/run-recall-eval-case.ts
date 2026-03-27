@@ -3,7 +3,9 @@ import { createEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } 
 import { readConfig } from "../../../config.js";
 import type { EmbeddingPort } from "../../../core/ports.js";
 import { recall } from "../../../core/recall/index.js";
+import { createRecallEvalDiagnosticsCollector } from "./collect-diagnostics.js";
 import type { RecallEvalCaseRequest, RecallEvalCaseResponse } from "./contracts.js";
+import { createInstrumentedRecallPorts } from "./instrumented-recall-ports.js";
 import { buildRecallEvalErrorResponse, buildRecallEvalSuccessResponse } from "./normalize-response.js";
 import { provisionRecallEvalFixtures } from "./provision-fixtures.js";
 import { setupRecallEvalSandbox, type RecallEvalSandboxContext } from "./sandbox.js";
@@ -17,6 +19,7 @@ import { setupRecallEvalSandbox, type RecallEvalSandboxContext } from "./sandbox
 export async function runRecallEvalCase(request: RecallEvalCaseRequest): Promise<RecallEvalCaseResponse> {
   const startedAt = Date.now();
   const provisionedAt = new Date(startedAt).toISOString();
+  const diagnostics = createRecallEvalDiagnosticsCollector(request);
   let sandbox: RecallEvalSandboxContext | undefined;
   let sharedEmbeddingPort: EmbeddingPort | undefined;
 
@@ -31,20 +34,24 @@ export async function runRecallEvalCase(request: RecallEvalCaseRequest): Promise
   };
 
   try {
+    const sandboxStartedAt = Date.now();
     try {
       sandbox = await setupRecallEvalSandbox(request.sandbox);
+      diagnostics.recordSandboxSetup(elapsedMs(sandboxStartedAt));
     } catch (error) {
+      diagnostics.recordSandboxSetup(elapsedMs(sandboxStartedAt));
       return buildRecallEvalErrorResponse({
         request,
         code: "sandbox_setup_failed",
         message: "Failed to create isolated recall eval sandbox.",
         details: toErrorDetails(error),
-        totalMs: elapsedMs(startedAt),
+        diagnostics: diagnostics.buildDiagnostics(),
+        timings: diagnostics.buildTimings(elapsedMs(startedAt)),
       });
     }
 
-    let provisionedCount = 0;
     if (request.memoryPool.length > 0) {
+      const provisionStartedAt = Date.now();
       try {
         const provisionResult = await provisionRecallEvalFixtures({
           caseId: request.caseId,
@@ -53,35 +60,43 @@ export async function runRecallEvalCase(request: RecallEvalCaseRequest): Promise
           embedding: getEmbeddingPort(),
           provisionedAt,
         });
-        provisionedCount = provisionResult.provisionedCount;
+        diagnostics.recordProvision(provisionResult, elapsedMs(provisionStartedAt));
       } catch (error) {
+        diagnostics.recordFixtureProvisionTiming(elapsedMs(provisionStartedAt));
         return buildRecallEvalErrorResponse({
           request,
           code: "fixture_provision_failed",
           message: "Failed to provision recall eval fixtures into isolated storage.",
           details: toErrorDetails(error),
-          totalMs: elapsedMs(startedAt),
+          diagnostics: diagnostics.buildDiagnostics(),
+          timings: diagnostics.buildTimings(elapsedMs(startedAt)),
           sandbox,
         });
       }
     }
 
+    const recallStartedAt = Date.now();
     try {
-      const results = await recall(request.recallRequest, createRecallAdapter(sandbox.database, getEmbeddingPort()));
+      const basePorts = createRecallAdapter(sandbox.database, getEmbeddingPort());
+      const recallPorts = diagnostics.isObservationEnabled() ? createInstrumentedRecallPorts(basePorts, diagnostics) : basePorts;
+      const results = await recall(request.recallRequest, recallPorts, diagnostics.isObservationEnabled() ? { trace: diagnostics.traceSink } : undefined);
+      diagnostics.recordRecall(elapsedMs(recallStartedAt));
       return buildRecallEvalSuccessResponse({
         request,
         results,
-        provisionedCount,
-        totalMs: elapsedMs(startedAt),
+        diagnostics: diagnostics.buildDiagnostics(),
+        timings: diagnostics.buildTimings(elapsedMs(startedAt)),
         sandbox,
       });
     } catch (error) {
+      diagnostics.recordRecall(elapsedMs(recallStartedAt));
       return buildRecallEvalErrorResponse({
         request,
         code: "recall_execution_failed",
         message: "Failed to execute real recall against isolated eval state.",
         details: toErrorDetails(error),
-        totalMs: elapsedMs(startedAt),
+        diagnostics: diagnostics.buildDiagnostics(),
+        timings: diagnostics.buildTimings(elapsedMs(startedAt)),
         sandbox,
       });
     }
@@ -91,7 +106,8 @@ export async function runRecallEvalCase(request: RecallEvalCaseRequest): Promise
       code: "internal_error",
       message: "Recall eval execution failed unexpectedly.",
       details: toErrorDetails(error),
-      totalMs: elapsedMs(startedAt),
+      diagnostics: diagnostics.buildDiagnostics(),
+      timings: diagnostics.buildTimings(elapsedMs(startedAt)),
       sandbox,
     });
   } finally {

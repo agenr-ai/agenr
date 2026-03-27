@@ -1,5 +1,5 @@
 import type { RecallOutput } from "../../../core/recall/types.js";
-import type { RecallEvalCaseRequest, RecallEvalCaseResponse, RecallEvalSandboxResult } from "./contracts.js";
+import type { RecallEvalCaseDiagnostics, RecallEvalCaseRequest, RecallEvalCaseResponse, RecallEvalCaseTimings, RecallEvalSandboxResult } from "./contracts.js";
 import type { RecallEvalSandboxContext } from "./sandbox.js";
 
 /**
@@ -11,8 +11,8 @@ import type { RecallEvalSandboxContext } from "./sandbox.js";
 export function buildRecallEvalSuccessResponse(params: {
   request: RecallEvalCaseRequest;
   results: RecallOutput[];
-  provisionedCount: number;
-  totalMs: number;
+  diagnostics?: RecallEvalCaseDiagnostics;
+  timings?: RecallEvalCaseTimings;
   sandbox: RecallEvalSandboxContext;
 }): RecallEvalCaseResponse {
   return {
@@ -33,19 +33,8 @@ export function buildRecallEvalSuccessResponse(params: {
       })),
       entryIds: params.results.map((result) => result.entry.id),
     },
-    diagnostics: shouldIncludeDiagnostics(params.request)
-      ? {
-          execution: {
-            mode: "isolated-case",
-            provisioning: "exact-fixture-seed",
-            memoryPoolCount: params.request.memoryPool.length,
-            provisionedCount: params.provisionedCount,
-            requestedDiagnostics: params.request.options?.includeDiagnostics === true,
-            requestedCandidates: params.request.options?.includeCandidates === true,
-          },
-        }
-      : undefined,
-    timings: params.request.options?.includeTimings === true ? { totalMs: params.totalMs } : undefined,
+    diagnostics: params.diagnostics,
+    timings: params.timings,
     sandbox: buildSandboxResult(params.sandbox),
   };
 }
@@ -61,7 +50,8 @@ export function buildRecallEvalErrorResponse(params: {
   code: NonNullable<NonNullable<RecallEvalCaseResponse["error"]>["code"]>;
   message: string;
   details?: unknown;
-  totalMs: number;
+  diagnostics?: RecallEvalCaseDiagnostics;
+  timings?: RecallEvalCaseTimings;
   sandbox?: RecallEvalSandboxContext;
 }): RecallEvalCaseResponse {
   return {
@@ -72,14 +62,10 @@ export function buildRecallEvalErrorResponse(params: {
       message: params.message,
       details: params.details,
     },
-    timings: params.request.options?.includeTimings === true ? { totalMs: params.totalMs } : undefined,
+    diagnostics: params.diagnostics,
+    timings: params.timings,
     sandbox: params.sandbox ? buildSandboxResult(params.sandbox) : undefined,
   };
-}
-
-/** Returns true when the caller requested diagnostics in the response. */
-function shouldIncludeDiagnostics(request: RecallEvalCaseRequest): boolean {
-  return request.options?.includeDiagnostics === true || request.options?.includeCandidates === true;
 }
 
 /** Maps sandbox execution context into the stable response sandbox shape. */

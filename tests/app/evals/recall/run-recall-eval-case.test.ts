@@ -98,6 +98,62 @@ describe("runRecallEvalCase", () => {
           requestedDiagnostics: true,
           requestedCandidates: false,
         },
+        provision: {
+          requestedCount: 3,
+          provisionedCount: 3,
+          providedIdCount: 3,
+          generatedIdCount: 0,
+          retiredCount: 1,
+          supersededCount: 1,
+          createdAtDefaultedCount: 0,
+          updatedAtDefaultedCount: 2,
+          seededEntries: [
+            {
+              id: "policy-old",
+              created_at: "2026-03-10T00:00:00.000Z",
+              updated_at: "2026-03-10T00:00:00.000Z",
+              retired: false,
+              superseded_by: "policy-new",
+            },
+            {
+              id: "policy-new",
+              created_at: "2026-03-11T00:00:00.000Z",
+              updated_at: "2026-03-12T00:00:00.000Z",
+              retired: false,
+            },
+            {
+              id: "policy-retired",
+              created_at: "2026-03-08T00:00:00.000Z",
+              updated_at: "2026-03-08T00:00:00.000Z",
+              retired: true,
+            },
+          ],
+        },
+        retrieval: {
+          queryEmbeddingDimensions: 1024,
+          vectorSearchLimit: 20,
+          lexicalSearchLimit: 10,
+        },
+        ranking: {
+          limit: 5,
+          threshold: 0,
+          budget: null,
+        },
+        filtering: {
+          types: [],
+          tags: [],
+        },
+        candidateCounts: {
+          vectorRetrieved: 1,
+          lexicalRetrieved: 1,
+          merged: 1,
+          thresholdQualified: 1,
+          budgetAccepted: 1,
+          finalRanked: 1,
+          hydrated: 1,
+          returned: 1,
+          telemetryAttempted: 1,
+        },
       },
       sandbox: {
         root: sandboxRoot,
@@ -111,7 +167,25 @@ describe("runRecallEvalCase", () => {
       created_at: "2026-03-11T00:00:00.000Z",
       tags: ["ops"],
     });
-    expect(response.timings?.totalMs).toBeGreaterThanOrEqual(0);
+    expect(response.timings).toEqual(
+      expect.objectContaining({
+        totalMs: expect.any(Number),
+        sandboxSetupMs: expect.any(Number),
+        fixtureProvisionMs: expect.any(Number),
+        recallMs: expect.any(Number),
+        queryEmbeddingMs: expect.any(Number),
+        vectorSearchMs: expect.any(Number),
+        lexicalSearchMs: expect.any(Number),
+        mergeCandidatesMs: expect.any(Number),
+        scoreCandidatesMs: expect.any(Number),
+        thresholdMs: expect.any(Number),
+        budgetMs: expect.any(Number),
+        hydrateEntriesMs: expect.any(Number),
+        shapeResultsMs: expect.any(Number),
+        recordRecallEventsMs: expect.any(Number),
+      }),
+    );
+    expect(response.timings?.totalMs).toBeGreaterThanOrEqual(response.timings?.recallMs ?? 0);
 
     await expect(access(response.sandbox?.dbPath ?? "")).resolves.toBeUndefined();
 
@@ -168,6 +242,20 @@ describe("runRecallEvalCase", () => {
           last_recalled_at: undefined,
         },
       ]);
+
+      const seededPolicyNew = response.diagnostics?.provision?.seededEntries.find((entry) => entry.id === "policy-new");
+      const storedPolicyNew = rows.rows.find((row) => String(row.id) === "policy-new");
+
+      expect(seededPolicyNew).toEqual({
+        id: "policy-new",
+        created_at: "2026-03-11T00:00:00.000Z",
+        updated_at: "2026-03-12T00:00:00.000Z",
+        retired: false,
+        superseded_by: undefined,
+      });
+      expect(typeof storedPolicyNew?.updated_at).toBe("string");
+      expect(storedPolicyNew?.updated_at).not.toBe(seededPolicyNew?.updated_at);
+      expect(typeof storedPolicyNew?.last_recalled_at).toBe("string");
     } finally {
       await sandboxDatabase.close();
     }
@@ -188,6 +276,7 @@ describe("runRecallEvalCase", () => {
         text: "anything",
       },
       options: {
+        includeDiagnostics: true,
         includeTimings: true,
       },
     });
@@ -195,6 +284,16 @@ describe("runRecallEvalCase", () => {
     expect(response).toMatchObject({
       status: "error",
       caseId: "case-sandbox-fail",
+      diagnostics: {
+        execution: {
+          mode: "isolated-case",
+          provisioning: "exact-fixture-seed",
+          memoryPoolCount: 0,
+          provisionedCount: 0,
+          requestedDiagnostics: true,
+          requestedCandidates: false,
+        },
+      },
       error: {
         code: "sandbox_setup_failed",
         message: "Failed to create isolated recall eval sandbox.",
@@ -276,6 +375,7 @@ describe("runRecallEvalCase", () => {
         text: "who is on call",
       },
       options: {
+        includeDiagnostics: true,
         includeTimings: true,
       },
     });
@@ -286,6 +386,41 @@ describe("runRecallEvalCase", () => {
       error: {
         code: "recall_execution_failed",
         message: "Failed to execute real recall against isolated eval state.",
+      },
+      diagnostics: {
+        execution: {
+          mode: "isolated-case",
+          provisioning: "exact-fixture-seed",
+          memoryPoolCount: 1,
+          provisionedCount: 1,
+          requestedDiagnostics: true,
+          requestedCandidates: false,
+        },
+        provision: {
+          requestedCount: 1,
+          provisionedCount: 1,
+          seededEntries: [
+            {
+              id: "fixture-id",
+            },
+          ],
+        },
+        retrieval: {
+          queryEmbeddingDimensions: 0,
+          vectorSearchLimit: 0,
+          lexicalSearchLimit: 0,
+        },
+        candidateCounts: {
+          vectorRetrieved: 0,
+          lexicalRetrieved: 0,
+          merged: 0,
+          thresholdQualified: 0,
+          budgetAccepted: 0,
+          finalRanked: 0,
+          hydrated: 0,
+          returned: 0,
+          telemetryAttempted: 0,
+        },
       },
       sandbox: {
         preserved: true,

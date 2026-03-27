@@ -3,6 +3,7 @@ import type { RecallPorts } from "../ports.js";
 import { computeLexicalScore } from "./lexical.js";
 import { cosineSimilarity, gaussianRecency, importanceScore, recencyScore, scoreCandidate } from "./scoring.js";
 import { inferAroundDate, parseRelativeDate } from "./temporal.js";
+import { createNoopRecallTraceSink, type RecallExecutionOptions, type RecallExecutionTraceSummary, type RecallNoResultReason } from "./trace.js";
 import type { EntryFilters, FtsCandidate, RecallCandidateEntry, RecallInput, RecallOutput, VectorCandidate } from "./types.js";
 
 /**
@@ -10,83 +11,206 @@ import type { EntryFilters, FtsCandidate, RecallCandidateEntry, RecallInput, Rec
  *
  * @param query - Recall query and optional filters.
  * @param ports - Adapter implementations for embedding, retrieval, and event recording.
+ * @param options - Optional execution controls such as a typed trace sink.
  * @returns Ranked recall results with score breakdowns.
  */
-export async function recall(query: RecallInput, ports: RecallPorts): Promise<RecallOutput[]> {
+export async function recall(query: RecallInput, ports: RecallPorts, options: RecallExecutionOptions = {}): Promise<RecallOutput[]> {
   const text = query.text.trim();
-  if (text.length === 0) {
-    return [];
-  }
-
   const limit = normalizeLimit(query.limit);
-  if (limit === 0) {
-    return [];
-  }
-
   const threshold = normalizeThreshold(query.threshold);
   const budget = normalizeBudget(query.budget);
   const aroundDate = query.around !== undefined ? parseAroundDate(query.around) : inferAroundDate(text);
   const since = query.since ? parseRelativeDate(query.since) : null;
   const until = query.until ? parseRelativeDate(query.until) : null;
   const filters = buildEntryFilters(query.types, query.tags, since, until);
-  const queryEmbedding = await ports.embed(text);
+  const trace = options.trace ?? createNoopRecallTraceSink();
+  const summary = buildRecallTraceSummary({
+    filters,
+    limit,
+    threshold,
+    budget,
+    aroundDate,
+    aroundSource: query.around !== undefined ? "explicit" : "inferred",
+    aroundRadius: aroundDate ? normalizeAroundRadius(query.aroundRadius) : undefined,
+  });
+  let traceReported = false;
+  const reportTrace = (noResultReason?: RecallNoResultReason): void => {
+    if (traceReported) {
+      return;
+    }
 
-  const [vectorCandidates, ftsCandidates] = await Promise.all([
-    ports.vectorSearch({
-      embedding: queryEmbedding,
-      limit: limit * 4,
-      filters,
-    }),
-    ports.ftsSearch({
-      text,
-      limit: limit * 2,
-      filters,
-    }),
-  ]);
+    traceReported = true;
+    finishRecallTrace(summary, trace, noResultReason);
+  };
 
-  const scored = Array.from(mergeCandidates(vectorCandidates, ftsCandidates).values())
-    .map((candidate) => scoreMergedCandidate(candidate, text, queryEmbedding, aroundDate, query.aroundRadius))
-    .sort((left, right) => right.score - left.score);
-
-  const thresholded = scored.filter((result) => result.score >= threshold);
-  if (thresholded.length === 0) {
+  if (text.length === 0) {
+    reportTrace("empty_query");
     return [];
   }
 
-  const budgeted = budget === null ? thresholded : applyBudget(thresholded, budget);
-  const ranked = budgeted.slice(0, limit);
-  if (ranked.length === 0) {
+  if (limit === 0) {
+    reportTrace("limit_zero");
     return [];
   }
 
-  const hydratedEntries = await ports.hydrateEntries(ranked.map((result) => result.entry.id));
-  const hydratedById = new Map(hydratedEntries.map((entry) => [entry.id, entry]));
-  const results = ranked.flatMap((result) => {
-    const entry = hydratedById.get(result.entry.id);
-    if (!entry) {
+  try {
+    const queryEmbedding = await ports.embed(text);
+
+    const [vectorCandidates, ftsCandidates] = await Promise.all([
+      ports.vectorSearch({
+        embedding: queryEmbedding,
+        limit: limit * 4,
+        filters,
+      }),
+      ports.ftsSearch({
+        text,
+        limit: limit * 2,
+        filters,
+      }),
+    ]);
+
+    const mergeStartedAt = Date.now();
+    const mergedCandidates = mergeCandidates(vectorCandidates, ftsCandidates);
+    summary.candidateCounts.merged = mergedCandidates.size;
+    summary.timings.mergeCandidatesMs = elapsedMs(mergeStartedAt);
+
+    const scoreStartedAt = Date.now();
+    const scored = Array.from(mergedCandidates.values())
+      .map((candidate) => scoreMergedCandidate(candidate, text, queryEmbedding, aroundDate, query.aroundRadius))
+      .sort((left, right) => right.score - left.score);
+    summary.timings.scoreCandidatesMs = elapsedMs(scoreStartedAt);
+
+    const thresholdStartedAt = Date.now();
+    const thresholded = scored.filter((result) => result.score >= threshold);
+    summary.candidateCounts.thresholdQualified = thresholded.length;
+    summary.timings.thresholdMs = elapsedMs(thresholdStartedAt);
+    if (thresholded.length === 0) {
+      reportTrace(scored.length === 0 ? "no_candidates" : "below_threshold");
       return [];
     }
 
-    return [
-      {
-        entry,
-        score: result.score,
-        scores: result.scores,
-      },
-    ];
-  });
+    const budgetStartedAt = Date.now();
+    const budgeted = budget === null ? thresholded : applyBudget(thresholded, budget);
+    summary.candidateCounts.budgetAccepted = budgeted.length;
+    summary.timings.budgetMs = budget === null ? 0 : elapsedMs(budgetStartedAt);
+    const ranked = budgeted.slice(0, limit);
+    summary.candidateCounts.finalRanked = ranked.length;
+    if (ranked.length === 0) {
+      reportTrace("limit_zero");
+      return [];
+    }
 
-  if (results.length > 0) {
-    await ports
-      .recordRecallEvents({
-        entryIds: results.map((result) => result.entry.id),
-        query: text,
-        sessionKey: query.sessionKey,
-      })
-      .catch(() => undefined);
+    const hydratedEntries = await ports.hydrateEntries(ranked.map((result) => result.entry.id));
+    const shapeStartedAt = Date.now();
+    const hydratedById = new Map(hydratedEntries.map((entry) => [entry.id, entry]));
+    const results = ranked.flatMap((result) => {
+      const entry = hydratedById.get(result.entry.id);
+      if (!entry) {
+        return [];
+      }
+
+      return [
+        {
+          entry,
+          score: result.score,
+          scores: result.scores,
+        },
+      ];
+    });
+    summary.candidateCounts.returned = results.length;
+    summary.timings.shapeResultsMs = elapsedMs(shapeStartedAt);
+
+    if (results.length === 0) {
+      reportTrace("hydrate_missing");
+      return [];
+    }
+
+    if (results.length > 0) {
+      await ports
+        .recordRecallEvents({
+          entryIds: results.map((result) => result.entry.id),
+          query: text,
+          sessionKey: query.sessionKey,
+        })
+        .catch(() => undefined);
+    }
+
+    reportTrace();
+    return results;
+  } catch (error) {
+    reportTrace();
+    throw error;
+  }
+}
+
+/**
+ * Build the typed execution summary that can be emitted after recall completes.
+ *
+ * @param params - Normalized recall inputs and active filters.
+ * @returns Mutable summary object populated during recall execution.
+ */
+function buildRecallTraceSummary(params: {
+  filters: EntryFilters | undefined;
+  limit: number;
+  threshold: number;
+  budget: number | null;
+  aroundDate: Date | null;
+  aroundSource: "explicit" | "inferred";
+  aroundRadius?: number;
+}): RecallExecutionTraceSummary {
+  return {
+    filtering: {
+      types: params.filters?.types ?? [],
+      tags: params.filters?.tags ?? [],
+      since: params.filters?.since?.toISOString(),
+      until: params.filters?.until?.toISOString(),
+      around: params.aroundDate
+        ? {
+            source: params.aroundSource,
+            anchor: params.aroundDate.toISOString(),
+            radiusDays: params.aroundRadius ?? 14,
+          }
+        : undefined,
+    },
+    ranking: {
+      limit: params.limit,
+      threshold: params.threshold,
+      budget: params.budget,
+    },
+    candidateCounts: {
+      merged: 0,
+      thresholdQualified: 0,
+      budgetAccepted: 0,
+      finalRanked: 0,
+      returned: 0,
+    },
+    timings: {
+      mergeCandidatesMs: 0,
+      scoreCandidatesMs: 0,
+      thresholdMs: 0,
+      budgetMs: 0,
+      shapeResultsMs: 0,
+    },
+  };
+}
+
+/**
+ * Emit the final typed recall trace summary exactly once before returning.
+ *
+ * @param summary - Mutable execution summary accumulated during recall.
+ * @param trace - Optional typed trace sink supplied by the caller.
+ * @param noResultReason - Stable no-result reason when recall returns no entries.
+ */
+function finishRecallTrace(
+  summary: RecallExecutionTraceSummary,
+  trace: { reportSummary(summary: RecallExecutionTraceSummary): void },
+  noResultReason?: RecallNoResultReason,
+): void {
+  if (noResultReason) {
+    summary.ranking.noResultReason = noResultReason;
   }
 
-  return results;
+  trace.reportSummary(summary);
 }
 
 /**
@@ -294,6 +418,11 @@ function normalizeAroundRadius(value?: number): number {
   }
 
   return value!;
+}
+
+/** Returns a non-negative elapsed millisecond count for one stage. */
+function elapsedMs(startedAt: number): number {
+  return Math.max(0, Date.now() - startedAt);
 }
 
 /**

@@ -1,5 +1,6 @@
 export { runRecallEvalCase } from "./run-recall-eval-case.js";
 export type {
+  RecallEvalCandidateCounts,
   RecallEvalCaseDiagnostics,
   RecallEvalCaseError,
   RecallEvalCaseOptions,
@@ -7,8 +8,13 @@ export type {
   RecallEvalCaseResponse,
   RecallEvalCaseResult,
   RecallEvalCaseTimings,
+  RecallEvalFilteringDiagnostics,
   RecallEvalFixtureEntry,
+  RecallEvalProvisionDiagnostics,
+  RecallEvalProvisionedEntrySummary,
   RecallEvalQueryRequest,
+  RecallEvalRankingDiagnostics,
+  RecallEvalRetrievalDiagnostics,
   RecallEvalResultEntry,
   RecallEvalSandboxRequest,
   RecallEvalSandboxResult,

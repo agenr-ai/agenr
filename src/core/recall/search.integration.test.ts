@@ -13,6 +13,7 @@ import type { EmbeddingPort } from "../ports.js";
 import { composeEmbeddingText } from "../store/embedding-text.js";
 import type { Entry } from "../types.js";
 import { recall } from "./search.js";
+import { createNoopRecallTraceSink, type RecallExecutionTraceSummary } from "./trace.js";
 
 const TEST_NOW = new Date("2026-03-26T12:00:00.000Z");
 
@@ -63,6 +64,80 @@ describe("recall integration", () => {
       },
     });
     expect(results.some((result) => result.entry.subject === "agenr architecture")).toBe(true);
+  });
+
+  it("keeps recall behavior unchanged when tracing is disabled or no-op", async () => {
+    const baselineFixture = await createRecallFixture();
+    const tracedFixture = await createRecallFixture();
+    const noOpFixture = await createRecallFixture();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const summaries: RecallExecutionTraceSummary[] = [];
+
+    const baseline = await recall(
+      {
+        text: "hybrid retrieval recall pipeline",
+        limit: 5,
+      },
+      baselineFixture.adapter,
+    );
+    const traced = await recall(
+      {
+        text: "hybrid retrieval recall pipeline",
+        limit: 5,
+      },
+      tracedFixture.adapter,
+      {
+        trace: {
+          reportSummary(summary): void {
+            summaries.push(summary);
+          },
+        },
+      },
+    );
+    const noOp = await recall(
+      {
+        text: "hybrid retrieval recall pipeline",
+        limit: 5,
+      },
+      noOpFixture.adapter,
+      {
+        trace: createNoopRecallTraceSink(),
+      },
+    );
+
+    expect(projectRecallResults(traced)).toEqual(projectRecallResults(baseline));
+    expect(projectRecallResults(noOp)).toEqual(projectRecallResults(baseline));
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]).toMatchObject({
+      filtering: {
+        types: [],
+        tags: [],
+      },
+      ranking: {
+        limit: 5,
+        threshold: 0,
+        budget: null,
+      },
+      candidateCounts: {
+        merged: expect.any(Number),
+        thresholdQualified: expect.any(Number),
+        budgetAccepted: expect.any(Number),
+        finalRanked: expect.any(Number),
+        returned: expect.any(Number),
+      },
+      timings: {
+        mergeCandidatesMs: expect.any(Number),
+        scoreCandidatesMs: expect.any(Number),
+        thresholdMs: expect.any(Number),
+        budgetMs: expect.any(Number),
+        shapeResultsMs: expect.any(Number),
+      },
+    });
+    expect(logSpy).not.toHaveBeenCalled();
+    expect(warnSpy).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 
   it("respects the requested result limit", async () => {
@@ -644,6 +719,31 @@ function emptySeedMetadata(): SeedMetadata {
     retiredId: "",
     supersededId: "",
   };
+}
+
+/** Projects recall results onto stable fields so repeated isolated fixtures can be compared. */
+function projectRecallResults(results: Awaited<ReturnType<typeof recall>>): Array<{
+  subject: string;
+  content: string;
+  type: Entry["type"];
+  importance: number;
+  expiry: Entry["expiry"];
+  tags: string[];
+  created_at: string;
+  score: number;
+  scores: Awaited<ReturnType<typeof recall>>[number]["scores"];
+}> {
+  return results.map((result) => ({
+    subject: result.entry.subject,
+    content: result.entry.content,
+    type: result.entry.type,
+    importance: result.entry.importance,
+    expiry: result.entry.expiry,
+    tags: result.entry.tags,
+    created_at: result.entry.created_at,
+    score: result.score,
+    scores: result.scores,
+  }));
 }
 
 /**

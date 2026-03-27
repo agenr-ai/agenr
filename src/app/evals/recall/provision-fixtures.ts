@@ -4,7 +4,7 @@ import type { SqlDatabase } from "../../../adapters/db/client.js";
 import type { EmbeddingPort } from "../../../core/ports.js";
 import { composeEmbeddingText } from "../../../core/store/embedding-text.js";
 import type { Entry, Expiry } from "../../../core/types.js";
-import type { RecallEvalFixtureEntry } from "./contracts.js";
+import type { RecallEvalFixtureEntry, RecallEvalProvisionedEntrySummary } from "./contracts.js";
 
 const DEFAULT_IMPORTANCE = 6;
 const DEFAULT_EXPIRY: Expiry = "permanent";
@@ -16,6 +16,20 @@ const DEFAULT_QUALITY_SCORE = 0.5;
 export interface RecallEvalProvisioningResult {
   /** Number of fixture entries written into the isolated database. */
   provisionedCount: number;
+  /** Number of fixture entries that supplied explicit IDs. */
+  providedIdCount: number;
+  /** Number of fixture entries that received generated IDs. */
+  generatedIdCount: number;
+  /** Number of retired fixture entries seeded into storage. */
+  retiredCount: number;
+  /** Number of fixture entries that reference a successor entry. */
+  supersededCount: number;
+  /** Number of fixture entries that defaulted `created_at` during seeding. */
+  createdAtDefaultedCount: number;
+  /** Number of fixture entries that defaulted `updated_at` during seeding. */
+  updatedAtDefaultedCount: number;
+  /** Seeded-state summary captured before recall telemetry can mutate rows. */
+  seededEntries: RecallEvalProvisionedEntrySummary[];
 }
 
 /** Prepared direct-seed fixture ready for isolated database insertion. */
@@ -24,6 +38,18 @@ interface PreparedFixture {
   entry: Entry;
   contentHash: string;
   embeddingText: string;
+}
+
+/** Prepared fixture batch plus exact seeded-state diagnostics. */
+interface PreparedFixtureBatch {
+  insertionOrder: PreparedFixture[];
+  providedIdCount: number;
+  generatedIdCount: number;
+  retiredCount: number;
+  supersededCount: number;
+  createdAtDefaultedCount: number;
+  updatedAtDefaultedCount: number;
+  seededEntries: RecallEvalProvisionedEntrySummary[];
 }
 
 /**
@@ -43,29 +69,45 @@ export async function provisionRecallEvalFixtures(params: {
   embedding: EmbeddingPort;
   provisionedAt: string;
 }): Promise<RecallEvalProvisioningResult> {
-  const preparedFixtures = prepareFixtures(params.caseId, params.memoryPool, params.provisionedAt);
-  if (preparedFixtures.length === 0) {
-    return { provisionedCount: 0 };
+  const preparedBatch = prepareFixtures(params.caseId, params.memoryPool, params.provisionedAt);
+  if (preparedBatch.insertionOrder.length === 0) {
+    return {
+      provisionedCount: 0,
+      providedIdCount: 0,
+      generatedIdCount: 0,
+      retiredCount: 0,
+      supersededCount: 0,
+      createdAtDefaultedCount: 0,
+      updatedAtDefaultedCount: 0,
+      seededEntries: [],
+    };
   }
 
-  const embeddings = await params.embedding.embed(preparedFixtures.map((fixture) => fixture.embeddingText));
-  if (embeddings.length !== preparedFixtures.length) {
-    throw new Error(`Fixture embedding count mismatch: expected ${preparedFixtures.length}, received ${embeddings.length}.`);
+  const embeddings = await params.embedding.embed(preparedBatch.insertionOrder.map((fixture) => fixture.embeddingText));
+  if (embeddings.length !== preparedBatch.insertionOrder.length) {
+    throw new Error(`Fixture embedding count mismatch: expected ${preparedBatch.insertionOrder.length}, received ${embeddings.length}.`);
   }
 
   await params.database.withTransaction(async (database) => {
-    for (const [index, fixture] of preparedFixtures.entries()) {
+    for (const [index, fixture] of preparedBatch.insertionOrder.entries()) {
       await database.insertEntry(fixture.entry, embeddings[index] ?? [], fixture.contentHash);
     }
   });
 
   return {
-    provisionedCount: preparedFixtures.length,
+    provisionedCount: preparedBatch.insertionOrder.length,
+    providedIdCount: preparedBatch.providedIdCount,
+    generatedIdCount: preparedBatch.generatedIdCount,
+    retiredCount: preparedBatch.retiredCount,
+    supersededCount: preparedBatch.supersededCount,
+    createdAtDefaultedCount: preparedBatch.createdAtDefaultedCount,
+    updatedAtDefaultedCount: preparedBatch.updatedAtDefaultedCount,
+    seededEntries: preparedBatch.seededEntries,
   };
 }
 
 /** Prepares validated fixture entries for exact insertion order and storage defaults. */
-function prepareFixtures(caseId: string, fixtures: RecallEvalFixtureEntry[], provisionedAt: string): PreparedFixture[] {
+function prepareFixtures(caseId: string, fixtures: RecallEvalFixtureEntry[], provisionedAt: string): PreparedFixtureBatch {
   const resolvedIds = fixtures.map((fixture, index) => fixture.id ?? createFixtureId(caseId, index, fixture));
   const duplicateIds = findDuplicateIds(resolvedIds);
   if (duplicateIds.length > 0) {
@@ -88,7 +130,16 @@ function prepareFixtures(caseId: string, fixtures: RecallEvalFixtureEntry[], pro
     };
   });
 
-  return topologicallySortFixtures(prepared);
+  return {
+    insertionOrder: topologicallySortFixtures(prepared),
+    providedIdCount: fixtures.filter((fixture) => fixture.id !== undefined).length,
+    generatedIdCount: fixtures.filter((fixture) => fixture.id === undefined).length,
+    retiredCount: prepared.filter((fixture) => fixture.entry.retired).length,
+    supersededCount: prepared.filter((fixture) => fixture.entry.superseded_by !== undefined).length,
+    createdAtDefaultedCount: fixtures.filter((fixture) => fixture.created_at === undefined).length,
+    updatedAtDefaultedCount: fixtures.filter((fixture) => fixture.updated_at === undefined).length,
+    seededEntries: prepared.map((fixture) => summarizePreparedFixture(fixture.entry)),
+  };
 }
 
 /** Builds the canonical entry row used for direct isolated fixture seeding. */
@@ -114,6 +165,17 @@ function buildEntry(fixture: RecallEvalFixtureEntry, id: string, provisionedAt: 
     retired_reason: fixture.retired_reason,
     created_at: createdAt,
     updated_at: updatedAt,
+  };
+}
+
+/** Captures the exact seeded state that existed before recall telemetry mutations. */
+function summarizePreparedFixture(entry: Entry): RecallEvalProvisionedEntrySummary {
+  return {
+    id: entry.id,
+    created_at: entry.created_at,
+    updated_at: entry.updated_at,
+    retired: entry.retired,
+    superseded_by: entry.superseded_by,
   };
 }
 

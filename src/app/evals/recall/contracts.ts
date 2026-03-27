@@ -1,4 +1,5 @@
 import type { RecallInput, RecallOutput } from "../../../core/recall/types.js";
+import type { RecallNoResultReason } from "../../../core/recall/trace.js";
 import type { EntryType, Expiry } from "../../../core/types.js";
 
 /**
@@ -122,6 +123,119 @@ export interface RecallEvalCaseResult {
 }
 
 /**
+ * Minimal seeded-state summary for one provisioned fixture entry.
+ */
+export interface RecallEvalProvisionedEntrySummary {
+  /** Stable entry identifier after exact fixture seeding. */
+  id: string;
+  /** Seeded created-at timestamp before recall telemetry runs. */
+  created_at: string;
+  /** Seeded updated-at timestamp before recall telemetry runs. */
+  updated_at: string;
+  /** Whether the seeded fixture entry was retired. */
+  retired: boolean;
+  /** Optional successor entry ID preserved during exact seeding. */
+  superseded_by?: string;
+}
+
+/**
+ * Structured provisioning diagnostics for the isolated fixture seed step.
+ */
+export interface RecallEvalProvisionDiagnostics {
+  /** Number of fixture entries supplied in the request. */
+  requestedCount: number;
+  /** Number of fixture entries written into isolated storage. */
+  provisionedCount: number;
+  /** Number of fixtures that supplied their own IDs. */
+  providedIdCount: number;
+  /** Number of fixtures that received deterministic generated IDs. */
+  generatedIdCount: number;
+  /** Number of retired fixtures seeded into isolated storage. */
+  retiredCount: number;
+  /** Number of fixtures that reference a successor entry. */
+  supersededCount: number;
+  /** Number of fixtures that defaulted `created_at` during seeding. */
+  createdAtDefaultedCount: number;
+  /** Number of fixtures that defaulted `updated_at` during seeding. */
+  updatedAtDefaultedCount: number;
+  /** Seeded-state summary captured before recall telemetry can mutate rows. */
+  seededEntries: RecallEvalProvisionedEntrySummary[];
+}
+
+/**
+ * Structured retrieval diagnostics collected at adapter boundaries.
+ */
+export interface RecallEvalRetrievalDiagnostics {
+  /** Query embedding dimensionality observed during recall execution. */
+  queryEmbeddingDimensions: number;
+  /** Effective vector-search candidate limit used by the recall path. */
+  vectorSearchLimit: number;
+  /** Effective lexical candidate limit used by the recall path. */
+  lexicalSearchLimit: number;
+}
+
+/**
+ * Structured ranking diagnostics emitted by the real recall algorithm.
+ */
+export interface RecallEvalRankingDiagnostics {
+  /** Effective result limit after recall input normalization. */
+  limit: number;
+  /** Effective score threshold after recall input normalization. */
+  threshold: number;
+  /** Effective token budget after recall input normalization, or null when disabled. */
+  budget: number | null;
+  /** Stable no-result reason when recall returned no final entries. */
+  noResultReason?: RecallNoResultReason;
+}
+
+/**
+ * Active filtering summary for the executed recall query.
+ */
+export interface RecallEvalFilteringDiagnostics {
+  /** Active type filters applied during candidate retrieval. */
+  types: EntryType[];
+  /** Active tag filters applied during candidate retrieval. */
+  tags: string[];
+  /** Applied lower created-at bound in ISO format when present. */
+  since?: string;
+  /** Applied upper created-at bound in ISO format when present. */
+  until?: string;
+  /** Applied around-date anchor when present or inferred. */
+  around?: {
+    /** Whether the around-date came from explicit input or query inference. */
+    source: "explicit" | "inferred";
+    /** Normalized around-date anchor in ISO format. */
+    anchor: string;
+    /** Effective gaussian radius in days. */
+    radiusDays: number;
+  };
+}
+
+/**
+ * Candidate counts observed across retrieval, ranking, and telemetry stages.
+ */
+export interface RecallEvalCandidateCounts {
+  /** Candidates returned by vector search after adapter-level filtering. */
+  vectorRetrieved: number;
+  /** Candidates returned by lexical search after adapter-level filtering. */
+  lexicalRetrieved: number;
+  /** Unique merged candidates admitted into scoring. */
+  merged: number;
+  /** Candidates that survived the score threshold. */
+  thresholdQualified: number;
+  /** Candidates retained after the token budget step. */
+  budgetAccepted: number;
+  /** Candidates retained after the final limit slice. */
+  finalRanked: number;
+  /** Fully hydrated entries fetched for the final ranked IDs. */
+  hydrated: number;
+  /** Entries returned after hydration and shaping. */
+  returned: number;
+  /** Entries targeted by standard recall telemetry writes. */
+  telemetryAttempted: number;
+}
+
+/**
  * Small typed diagnostics emitted by the isolated recall eval execution flow.
  */
 export interface RecallEvalCaseDiagnostics {
@@ -140,6 +254,16 @@ export interface RecallEvalCaseDiagnostics {
     /** Whether candidate-level details were requested by the caller. */
     requestedCandidates: boolean;
   };
+  /** Exact fixture-seeding facts captured before recall execution. */
+  provision?: RecallEvalProvisionDiagnostics;
+  /** Retrieval-stage facts captured at adapter boundaries. */
+  retrieval?: RecallEvalRetrievalDiagnostics;
+  /** Ranking-stage facts emitted by the real recall algorithm. */
+  ranking?: RecallEvalRankingDiagnostics;
+  /** Active filtering summary for the executed recall query. */
+  filtering?: RecallEvalFilteringDiagnostics;
+  /** Stage-by-stage candidate counts across the recall pipeline. */
+  candidateCounts?: RecallEvalCandidateCounts;
 }
 
 /**
@@ -148,6 +272,32 @@ export interface RecallEvalCaseDiagnostics {
 export interface RecallEvalCaseTimings {
   /** End-to-end execution time for the app-level service call. */
   totalMs: number;
+  /** Time spent creating the isolated sandbox. */
+  sandboxSetupMs: number;
+  /** Time spent exact-seeding fixture entries into isolated storage. */
+  fixtureProvisionMs: number;
+  /** Time spent inside the real recall call. */
+  recallMs: number;
+  /** Time spent computing the query embedding. */
+  queryEmbeddingMs: number;
+  /** Time spent retrieving vector candidates. */
+  vectorSearchMs: number;
+  /** Time spent retrieving lexical candidates. */
+  lexicalSearchMs: number;
+  /** Time spent merging vector and lexical candidates. */
+  mergeCandidatesMs: number;
+  /** Time spent scoring and sorting merged candidates. */
+  scoreCandidatesMs: number;
+  /** Time spent applying the score threshold. */
+  thresholdMs: number;
+  /** Time spent applying the token budget. */
+  budgetMs: number;
+  /** Time spent hydrating the final ranked entries. */
+  hydrateEntriesMs: number;
+  /** Time spent shaping hydrated entries into the response payload. */
+  shapeResultsMs: number;
+  /** Time spent attempting normal recall telemetry writes. */
+  recordRecallEventsMs: number;
 }
 
 /**
