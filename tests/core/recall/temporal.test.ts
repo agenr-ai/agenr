@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { inferAroundDate, parseRelativeDate } from "./temporal.js";
+import { inferAroundDate, parseRelativeDate } from "../../../src/core/recall/temporal.js";
 
 const NOW = new Date("2026-03-26T00:00:00.000Z");
 const toIsoDate = (value: Date | null): string | null => value?.toISOString().slice(0, 10) ?? null;

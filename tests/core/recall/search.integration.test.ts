@@ -1,5 +1,3 @@
-/* eslint-disable no-restricted-imports -- real-db integration coverage intentionally exercises adapter wiring from a test file. */
-
 import { createHash, randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import os from "node:os";
@@ -7,13 +5,13 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createDatabase, type SqlDatabase } from "../../adapters/db/client.js";
-import { createRecallAdapter } from "../../adapters/db/recall-adapter.js";
-import type { EmbeddingPort } from "../ports.js";
-import { composeEmbeddingText } from "../store/embedding-text.js";
-import type { Entry } from "../types.js";
-import { recall } from "./search.js";
-import { createNoopRecallTraceSink, type RecallExecutionTraceSummary } from "./trace.js";
+import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";
+import { createRecallAdapter } from "../../../src/adapters/db/recall-adapter.js";
+import type { EmbeddingPort } from "../../../src/core/ports.js";
+import { composeEmbeddingText } from "../../../src/core/store/embedding-text.js";
+import type { Entry } from "../../../src/core/types.js";
+import { recall } from "../../../src/core/recall/search.js";
+import { createNoopRecallTraceSink, type RecallExecutionTraceSummary } from "../../../src/core/recall/trace.js";
 
 const TEST_NOW = new Date("2026-03-26T12:00:00.000Z");
 

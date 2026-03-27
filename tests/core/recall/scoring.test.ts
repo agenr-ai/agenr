@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { combinedRelevance, gaussianRecency, importanceScore, recencyScore, scoreCandidate } from "./scoring.js";
+import { combinedRelevance, gaussianRecency, importanceScore, recencyScore, scoreCandidate } from "../../../src/core/recall/scoring.js";
 
 const NOW = new Date("2026-03-26T00:00:00.000Z");
 

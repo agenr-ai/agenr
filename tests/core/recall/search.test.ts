@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { RecallPorts } from "../ports.js";
-import type { Entry } from "../types.js";
-import { recall } from "./search.js";
-import type { RecallExecutionTraceSummary } from "./trace.js";
-import type { FtsCandidate, RecallCandidateEntry, VectorCandidate } from "./types.js";
+import type { RecallPorts } from "../../../src/core/ports.js";
+import type { Entry } from "../../../src/core/types.js";
+import { recall } from "../../../src/core/recall/search.js";
+import type { RecallExecutionTraceSummary } from "../../../src/core/recall/trace.js";
+import type { FtsCandidate, RecallCandidateEntry, VectorCandidate } from "../../../src/core/recall/types.js";
 
 const NOW = new Date("2026-03-26T12:00:00.000Z");
 

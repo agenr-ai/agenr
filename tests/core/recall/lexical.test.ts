@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { STOP_WORDS, buildLexicalPlan, computeLexicalScore, tokenize } from "./lexical.js";
+import { STOP_WORDS, buildLexicalPlan, computeLexicalScore, tokenize } from "../../../src/core/recall/lexical.js";
 
 describe("STOP_WORDS", () => {
   it("includes common operators that should not survive tokenization", () => {
