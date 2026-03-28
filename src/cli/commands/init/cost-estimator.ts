@@ -3,6 +3,12 @@ import { getModels } from "@mariozechner/pi-ai";
 import type { SetupProvider } from "../setup.js";
 
 const CHARS_PER_TOKEN = 4;
+// Observed full-history OpenClaw ingests cost about $14 in practice, while a
+// raw-byte estimate for the same corpus landed around $146. Most JSONL bytes
+// never reach the extraction LLM because transcript parsing strips metadata,
+// summarizes tool calls, removes bookkeeping noise, and chunks the remaining
+// conversation content. Model only 10% of raw bytes as effective LLM input.
+const EFFECTIVE_CONTENT_RATIO = 0.1;
 const OUTPUT_TOKEN_RATIO = 0.1;
 
 /** Cost estimate for a potential bulk ingest run. */
@@ -36,7 +42,7 @@ export function estimateIngestCost(totalBytes: number, modelId: string, provider
   const inputCostPerMillion = pricingModel?.cost?.input ?? 0;
   const outputCostPerMillion = pricingModel?.cost?.output ?? 0;
 
-  const inputTokens = Math.ceil(safeTotalBytes / CHARS_PER_TOKEN);
+  const inputTokens = Math.ceil((safeTotalBytes * EFFECTIVE_CONTENT_RATIO) / CHARS_PER_TOKEN);
   const outputTokens = Math.ceil(inputTokens * OUTPUT_TOKEN_RATIO);
 
   const inputCostUsd = (inputTokens / 1_000_000) * inputCostPerMillion;
