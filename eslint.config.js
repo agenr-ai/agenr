@@ -147,4 +147,26 @@ export default tseslint.config(
       ],
     },
   },
+  // OpenClaw plugin adapter boundary:
+  // The plugin is an adapter over core, not a consumer of the CLI or eval infrastructure.
+  {
+    files: ["src/adapters/openclaw/**/*.{ts,mts,cts}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["**/cli/**"],
+              message: "OpenClaw plugin must not import from cli/. Both are sibling adapters over core.",
+            },
+            {
+              group: ["**/app/evals/**"],
+              message: "OpenClaw plugin must not import from eval infrastructure.",
+            },
+          ],
+        },
+      ],
+    },
+  },
 );
