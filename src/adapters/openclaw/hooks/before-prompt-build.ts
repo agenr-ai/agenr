@@ -148,9 +148,9 @@ async function runRelevantRecall(
   }
 }
 
-/** Emits a debug log only when the host logger exposes that level. */
+/** Emits session-start detail logs at info level. */
 function logDebug(logger: PluginLogger, message: string): void {
-  logger.debug?.(message);
+  logger.info(message);
 }
 
 /** Formats stable session identifiers for OpenClaw adapter log messages. */

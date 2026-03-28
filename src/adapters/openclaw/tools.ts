@@ -15,6 +15,9 @@ const ENTRY_TYPE_DESCRIPTION =
 const EXPIRY_DESCRIPTION =
   "Lifetime bucket: core (always injected at session start, use sparingly), permanent (durable and recalled on demand), or temporary (short-horizon).";
 
+const DEFAULT_RECALL_LIMIT = 10;
+const RESULT_SUBJECT_LOG_LIMIT = 5;
+
 const STORE_TOOL_PARAMETERS = {
   type: "object",
   additionalProperties: false,
@@ -306,6 +309,7 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
         const query = readStringParam(params, "query", { required: true, label: "query" });
         const limit = readNumberParam(params, "limit", { integer: true, strict: true });
         const threshold = readNumberParam(params, "threshold", { strict: true });
+        const project = typeof params.project === "string" && params.project.trim().length > 0 ? params.project.trim() : undefined;
         const services = await servicesPromise;
         const types = parseEntryTypes(readStringArrayParam(params, "types"));
         const tags = normalizeStringArray(readStringArrayParam(params, "tags"));
@@ -330,7 +334,17 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
           logger,
           "agenr_recall",
           ctx,
-          `query=${JSON.stringify(truncate(query, 80))}`,
+          formatRecallToolSummary({
+            query,
+            limit,
+            types,
+            tags,
+            since,
+            until,
+            around,
+            aroundRadius,
+            project,
+          }),
           sanitizeRecallToolParams({
             query,
             limit,
@@ -341,6 +355,7 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
             until,
             around,
             aroundRadius,
+            project,
           }),
         );
 
@@ -353,7 +368,7 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
         }
 
         const results = await recall(request, services.recall);
-        logger.info(`[agenr] tool=agenr_recall ${formatToolSessionContext(ctx)} result: ${results.length} entries`);
+        logger.info(`[agenr] tool=agenr_recall ${formatToolSessionContext(ctx)} result: ${results.length} entries${formatRecallResultSubjects(results)}`);
 
         if (results.length === 0) {
           return textResult("No matching agenr memories found.", {
@@ -645,10 +660,10 @@ function buildSessionSourceFile(ctx: OpenClawPluginToolContext): string {
   return `openclaw-session:${target}`;
 }
 
-/** Logs one tool call at info and debug levels using the shared OpenClaw logger. */
+/** Logs one tool call summary plus sanitized parameters at info level. */
 function logToolCall(logger: PluginLogger, toolName: string, ctx: OpenClawPluginToolContext, summary: string, sanitizedParams: Record<string, unknown>): void {
   logger.info(`[agenr] tool=${toolName} ${formatToolSessionContext(ctx)} ${summary}`);
-  logger.debug?.(`[agenr] tool=${toolName} ${formatToolSessionContext(ctx)} params=${JSON.stringify(sanitizedParams)}`);
+  logger.info(`[agenr] tool=${toolName} ${formatToolSessionContext(ctx)} params=${JSON.stringify(sanitizedParams)}`);
 }
 
 /** Logs a warning when one OpenClaw tool call fails. */
@@ -714,7 +729,56 @@ function sanitizeStoreToolParams(params: {
   };
 }
 
-/** Sanitizes recall parameters before debug logging. */
+/** Formats the visible recall call summary for tool logging. */
+function formatRecallToolSummary(params: {
+  query: string;
+  limit: number | undefined;
+  types: EntryType[];
+  tags: string[];
+  since: string | undefined;
+  until: string | undefined;
+  around: string | undefined;
+  aroundRadius: number | undefined;
+  project: string | undefined;
+}): string {
+  const parts = [`query=${JSON.stringify(truncate(params.query, 80))}`];
+
+  if (params.since) {
+    parts.push(`since=${params.since}`);
+  }
+
+  if (params.until) {
+    parts.push(`until=${params.until}`);
+  }
+
+  if (params.around) {
+    parts.push(`around=${params.around}`);
+  }
+
+  if (params.aroundRadius !== undefined) {
+    parts.push(`radius=${params.aroundRadius}`);
+  }
+
+  if (params.project) {
+    parts.push(`project=${JSON.stringify(params.project)}`);
+  }
+
+  if (params.limit !== undefined && params.limit !== DEFAULT_RECALL_LIMIT) {
+    parts.push(`limit=${params.limit}`);
+  }
+
+  if (params.types.length > 0) {
+    parts.push(`types=${JSON.stringify(params.types)}`);
+  }
+
+  if (params.tags.length > 0) {
+    parts.push(`tags=${JSON.stringify(params.tags)}`);
+  }
+
+  return parts.join(" ");
+}
+
+/** Sanitizes recall parameters before info logging. */
 function sanitizeRecallToolParams(params: {
   query: string;
   limit: number | undefined;
@@ -725,6 +789,7 @@ function sanitizeRecallToolParams(params: {
   until: string | undefined;
   around: string | undefined;
   aroundRadius: number | undefined;
+  project: string | undefined;
 }): Record<string, unknown> {
   return {
     query: params.query,
@@ -736,6 +801,7 @@ function sanitizeRecallToolParams(params: {
     ...(params.until ? { until: params.until } : {}),
     ...(params.around ? { around: params.around } : {}),
     ...(params.aroundRadius !== undefined ? { aroundRadius: params.aroundRadius } : {}),
+    ...(params.project ? { project: params.project } : {}),
   };
 }
 
@@ -789,6 +855,26 @@ function formatRecallResults(
   }
 
   return lines.join("\n");
+}
+
+/** Formats a bounded subject list for recall result logging. */
+function formatRecallResultSubjects(
+  results: Array<{
+    entry: Pick<Entry, "subject">;
+  }>,
+): string {
+  const subjects = results.map((result) => result.entry.subject.trim()).filter((subject) => subject.length > 0);
+  if (subjects.length === 0) {
+    return "";
+  }
+
+  const displayed = subjects.slice(0, RESULT_SUBJECT_LOG_LIMIT).map((subject) => JSON.stringify(truncate(subject, 80)));
+  const remaining = subjects.length - RESULT_SUBJECT_LOG_LIMIT;
+  if (remaining > 0) {
+    displayed.push(`... and ${remaining} more`);
+  }
+
+  return ` [subjects: ${displayed.join(", ")}]`;
 }
 
 /** Formats the limited Phase 1 provenance view returned by `agenr_trace`. */

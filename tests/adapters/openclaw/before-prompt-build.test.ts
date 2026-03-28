@@ -92,15 +92,12 @@ describe("handleAgenrBeforePromptBuild", () => {
       expect.arrayContaining([
         "[agenr] session-start recall for session=session-1 key=agent:main:webchat:test",
         "[agenr] session-start recall skipped (already ran) for session=session-1 key=agent:main:webchat:test",
-      ]),
-    );
-    expect(getMessages(logger.debug)).toEqual(
-      expect.arrayContaining([
         "[agenr] session tracker: first start for session=session-1 key=agent:main:webchat:test",
         "[agenr] session tracker: duplicate start blocked for session=session-1 key=agent:main:webchat:test",
         "[agenr] session tracker: now tracking 1 active sessions",
       ]),
     );
+    expect(logger.debug).not.toHaveBeenCalled();
   });
 
   it("logs detailed session-start recall facts for core, handoff, relevant, and recent entries", async () => {
@@ -170,10 +167,6 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
         "[agenr] session-start recall: 1 core, 1 handoffs, 1 relevant, 1 recent entries for session=session-2 key=agent:main:webchat:isolated",
-      ]),
-    );
-    expect(getMessages(logger.debug)).toEqual(
-      expect.arrayContaining([
         expect.stringContaining(
           '[agenr] session-start relevant query for session=session-2 key=agent:main:webchat:isolated: "Verify each TUI session stays isolated and the right handoff was injected."',
         ),
@@ -191,6 +184,7 @@ describe("handleAgenrBeforePromptBuild", () => {
         expect.stringContaining("[agenr] session-start prependContext length for session=session-2 key=agent:main:webchat:isolated: "),
       ]),
     );
+    expect(logger.debug).not.toHaveBeenCalled();
   });
 
   it("logs when session-start recall has nothing to inject", async () => {

@@ -88,9 +88,9 @@ describe("agenr OpenClaw tools", () => {
         '[agenr] tool=agenr_retire session=session-1 key=agent:main:webchat:test target=subject:"feature flag policy"',
       ]),
     );
-    const storeDebugMessage = getMessages(logger.debug).find((message) => message.includes("tool=agenr_store"));
-    expect(storeDebugMessage).toContain('"contentLength":77');
-    expect(storeDebugMessage).not.toContain("Gate risky rollout work behind a feature flag until verification is complete.");
+    const storeParamsMessage = getMessages(logger.info).find((message) => message.includes("tool=agenr_store") && message.includes("params="));
+    expect(storeParamsMessage).toContain('"contentLength":77');
+    expect(storeParamsMessage).not.toContain("Gate risky rollout work behind a feature flag until verification is complete.");
   });
 
   it("runs recall through the core pipeline using injected recall ports", async () => {
@@ -155,11 +155,66 @@ describe("agenr OpenClaw tools", () => {
     expect(recordedRecallEvents).toBe(1);
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
-        expect.stringContaining(`[agenr] tool=agenr_recall session=session-1 key=agent:main:webchat:test query=${JSON.stringify(truncateForLog(query, 80))}`),
-        "[agenr] tool=agenr_recall session=session-1 key=agent:main:webchat:test result: 1 entries",
+        expect.stringContaining(
+          `[agenr] tool=agenr_recall session=session-1 key=agent:main:webchat:test query=${JSON.stringify(truncateForLog(query, 80))} limit=3`,
+        ),
+        expect.stringContaining(
+          '[agenr] tool=agenr_recall session=session-1 key=agent:main:webchat:test params={"query":"relevant prior context for the current session so the operator can verify recall isolation across multiple TUI sessions","limit":3}',
+        ),
+        '[agenr] tool=agenr_recall session=session-1 key=agent:main:webchat:test result: 1 entries [subjects: "session recall"]',
       ]),
     );
-    expect(getMessages(logger.debug)).toEqual(expect.arrayContaining([expect.stringContaining(`"query":"${query}"`), expect.stringContaining('"limit":3')]));
+    expect(logger.debug).not.toHaveBeenCalled();
+  });
+
+  it("logs recall filters and truncates result subjects at info level", async () => {
+    const database = await createTestDatabase();
+    const logger = createLogger();
+    const entries = [
+      createEntry({ subject: "session handoff 2026-03-27", type: "decision", tags: ["openclaw", "debugging"] }),
+      createEntry({ subject: "agenr logger format", type: "lesson", tags: ["openclaw", "debugging"] }),
+      createEntry({ subject: "temporal recall filters", type: "decision", tags: ["openclaw", "debugging"] }),
+      createEntry({ subject: "sandbox gateway restart", type: "lesson", tags: ["openclaw", "debugging"] }),
+      createEntry({ subject: "prompt build diagnostics", type: "decision", tags: ["openclaw", "debugging"] }),
+      createEntry({ subject: "openclaw plugin logger gap", type: "lesson", tags: ["openclaw", "debugging"] }),
+    ];
+    const services = createServices(database, {
+      available: true,
+      recall: createVectorRecallPorts(entries),
+    });
+    const recallTool = createAgenrRecallTool(createToolContext(), Promise.resolve(services), logger);
+
+    const result = await recallTool.execute("tool-9", {
+      query: "what was I working on",
+      since: "14d",
+      until: "3d",
+      around: "21d",
+      aroundRadius: 4,
+      project: "sandbox",
+      limit: 6,
+      threshold: 0.25,
+      types: ["decision", "lesson"],
+      tags: ["openclaw", "debugging"],
+    });
+
+    expect(result.details).toMatchObject({
+      status: "ok",
+      count: 6,
+    });
+    expect(getMessages(logger.info)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          '[agenr] tool=agenr_recall session=session-1 key=agent:main:webchat:test query="what was I working on" since=14d until=3d around=21d radius=4 project="sandbox" limit=6 types=["decision","lesson"] tags=["openclaw","debugging"]',
+        ),
+        expect.stringContaining(
+          '[agenr] tool=agenr_recall session=session-1 key=agent:main:webchat:test params={"query":"what was I working on","limit":6,"threshold":0.25,"types":["decision","lesson"],"tags":["openclaw","debugging"],"since":"14d","until":"3d","around":"21d","aroundRadius":4,"project":"sandbox"}',
+        ),
+        expect.stringContaining(
+          '[agenr] tool=agenr_recall session=session-1 key=agent:main:webchat:test result: 6 entries [subjects: "session handoff 2026-03-27", "agenr logger format", "temporal recall filters", "sandbox gateway restart", "prompt build diagnostics", ... and 1 more]',
+        ),
+      ]),
+    );
+    expect(logger.debug).not.toHaveBeenCalled();
   });
 
   it("traces the most recent entry when last is true", async () => {
@@ -244,6 +299,37 @@ function createServices(
     },
     async close() {
       await database.close();
+    },
+  };
+}
+
+function createVectorRecallPorts(entries: Entry[]): RecallPorts {
+  return {
+    async embed() {
+      return createEmbedding(0, 1);
+    },
+    async vectorSearch() {
+      return entries.map((entry, index) => ({
+        entry: {
+          id: entry.id,
+          subject: entry.subject,
+          content: entry.content,
+          importance: entry.importance,
+          expiry: entry.expiry,
+          created_at: entry.created_at,
+          embedding: createEmbedding(index, 1),
+        },
+        vectorSim: 0.95 - index * 0.05,
+      }));
+    },
+    async ftsSearch() {
+      return [];
+    },
+    async hydrateEntries(ids) {
+      return entries.filter((entry) => ids.includes(entry.id));
+    },
+    async recordRecallEvents() {
+      return;
     },
   };
 }
