@@ -178,26 +178,6 @@ pnpm check        # format + lint + typecheck + test
 | SQLite says the database is locked                                | Avoid running multiple writers against the same DB at once. Stop overlapping ingest/reset runs, restart the OpenClaw gateway if needed, then retry.                                                                                  |
 | OpenClaw does not pick up the plugin                              | Restart the gateway, confirm `plugins.slots.memory` is `agenr`, confirm `plugins.allow` contains `agenr`, and for dev installs confirm `plugins.load.paths` points at the built `dist/adapters/openclaw` directory.                  |
 
-## Project Status
-
-Current version: `0.15.0`.
-
-Working today:
-
-- OpenClaw memory plugin
-- CLI `init`, `setup`, `ingest`, `recall`, and `db reset`
-- session continuity through predecessor lookup, transcript tails, and sidecar summaries
-- OpenClaw agent tools for store/recall/retire/update/trace
-
-Still in progress:
-
-- broader adapter surface beyond OpenClaw
-- public MCP and HTTP adapters
-- standalone CLI commands for `store`, `retire`, `update`, and `trace`
-- wider operational tooling around the database
-
-Track current work in [GitHub issues](https://github.com/agenr-ai/agenr/issues).
-
 ## License
 
 AGPL-3.0
