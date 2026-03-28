@@ -24,10 +24,10 @@ export default definePluginEntry({
     });
 
     api.registerMemoryPromptSection(buildAgenrMemoryPromptSection);
-    memoryApi.registerMemoryFlushPlan?.(buildAgenrMemoryFlushPlan);
+    memoryApi.registerMemoryFlushPlan?.((params) => buildAgenrMemoryFlushPlan(params, api.logger));
     memoryApi.registerMemoryRuntime?.(createAgenrMemoryRuntime(servicesPromise));
 
-    registerAgenrOpenClawTools(api, servicesPromise);
+    registerAgenrOpenClawTools(api, servicesPromise, api.logger);
 
     api.on("before_prompt_build", (event, ctx) =>
       handleAgenrBeforePromptBuild(event, ctx, {

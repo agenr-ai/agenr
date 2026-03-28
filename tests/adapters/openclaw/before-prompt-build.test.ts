@@ -3,7 +3,7 @@ import { rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";
 import { handleAgenrBeforePromptBuild } from "../../../src/adapters/openclaw/hooks/before-prompt-build.js";
@@ -28,6 +28,7 @@ afterEach(async () => {
 describe("handleAgenrBeforePromptBuild", () => {
   it("injects session-start memory once per session even without embeddings", async () => {
     const database = await createTestDatabase();
+    const logger = createLogger();
     await database.insertEntry(
       createEntry({
         type: "decision",
@@ -62,7 +63,7 @@ describe("handleAgenrBeforePromptBuild", () => {
         sessionKey: "agent:main:webchat:test",
       },
       {
-        logger: createLogger(),
+        logger,
         servicesPromise: Promise.resolve(createServices(database)),
         tracker,
       },
@@ -77,7 +78,7 @@ describe("handleAgenrBeforePromptBuild", () => {
         sessionKey: "agent:main:webchat:test",
       },
       {
-        logger: createLogger(),
+        logger,
         servicesPromise: Promise.resolve(createServices(database)),
         tracker,
       },
@@ -87,32 +88,173 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(result?.prependContext).toContain("master branch workflow");
     expect(result?.prependContext).toContain("latest plugin work");
     expect(secondResult).toBeUndefined();
+    expect(getMessages(logger.info)).toEqual(
+      expect.arrayContaining([
+        "[agenr] session-start recall for session=session-1 key=agent:main:webchat:test",
+        "[agenr] session-start recall skipped (already ran) for session=session-1 key=agent:main:webchat:test",
+      ]),
+    );
+    expect(getMessages(logger.debug)).toEqual(
+      expect.arrayContaining([
+        "[agenr] session tracker: first start for session=session-1 key=agent:main:webchat:test",
+        "[agenr] session tracker: duplicate start blocked for session=session-1 key=agent:main:webchat:test",
+        "[agenr] session tracker: now tracking 1 active sessions",
+      ]),
+    );
+  });
+
+  it("logs detailed session-start recall facts for core, handoff, relevant, and recent entries", async () => {
+    const database = await createTestDatabase();
+    const logger = createLogger();
+    const coreEntry = createEntry({
+      type: "decision",
+      subject: "session isolation rule",
+      content: "Keep each TUI session pinned to its own session key and handoff chain.",
+      expiry: "core",
+      importance: 10,
+    });
+    const handoffEntry = createEntry({
+      type: "reflection",
+      subject: "session handoff - openclaw recall verification",
+      content: "Carry forward the last verified handoff summary and confirm it matches the active session key.",
+      expiry: "temporary",
+      importance: 8,
+      tags: ["handoff"],
+    });
+    const relevantEntry = createEntry({
+      type: "lesson",
+      subject: "multi-session drift check",
+      content: "Operators grep gateway.err.log by session key to verify recall stayed isolated.",
+      expiry: "permanent",
+      importance: 8,
+      tags: ["openclaw", "debugging"],
+    });
+    const recentEntry = createEntry({
+      type: "event",
+      subject: "latest plugin work",
+      content: "Structured OpenClaw logging is being wired into session-start recall.",
+      expiry: "temporary",
+      importance: 8,
+    });
+
+    await database.insertEntry(coreEntry, createEmbedding(0, 1), "core-workflow");
+    await database.insertEntry(handoffEntry, createEmbedding(1, 1), "handoff-workflow");
+    await database.insertEntry(relevantEntry, createEmbedding(2, 1), "relevant-workflow");
+    await database.insertEntry(recentEntry, createEmbedding(3, 1), "recent-workflow");
+
+    const result = await handleAgenrBeforePromptBuild(
+      {
+        prompt: "Verify each TUI session stays isolated and the right handoff was injected.",
+        messages: [],
+      },
+      {
+        sessionId: "session-2",
+        sessionKey: "agent:main:webchat:isolated",
+      },
+      {
+        logger,
+        servicesPromise: Promise.resolve(
+          createServices(database, {
+            available: true,
+            recall: createRelevantRecallPorts(relevantEntry),
+          }),
+        ),
+        tracker: createSessionStartTracker(),
+      },
+    );
+
+    expect(result?.prependContext).toContain("Core Memory");
+    expect(result?.prependContext).toContain("Recent Handoffs");
+    expect(result?.prependContext).toContain("Relevant Recall");
+    expect(result?.prependContext).toContain("Recent Context");
+    expect(getMessages(logger.info)).toEqual(
+      expect.arrayContaining([
+        "[agenr] session-start recall: 1 core, 1 handoffs, 1 relevant, 1 recent entries for session=session-2 key=agent:main:webchat:isolated",
+      ]),
+    );
+    expect(getMessages(logger.debug)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          '[agenr] session-start relevant query for session=session-2 key=agent:main:webchat:isolated: "Verify each TUI session stays isolated and the right handoff was injected."',
+        ),
+        expect.stringContaining(
+          `[agenr] session-start core entries for session=session-2 key=agent:main:webchat:isolated: ${coreEntry.subject} [${coreEntry.id}]`,
+        ),
+        expect.stringContaining(
+          `[agenr] session-start handoff entries for session=session-2 key=agent:main:webchat:isolated: ${handoffEntry.subject} [${handoffEntry.id}]`,
+        ),
+        expect.stringContaining(`[agenr] session-start relevant entries for session=session-2 key=agent:main:webchat:isolated: `),
+        expect.stringContaining(`${relevantEntry.subject} [${relevantEntry.id}]`),
+        expect.stringContaining(
+          `[agenr] session-start recent entries for session=session-2 key=agent:main:webchat:isolated: ${recentEntry.subject} [${recentEntry.id}]`,
+        ),
+        expect.stringContaining("[agenr] session-start prependContext length for session=session-2 key=agent:main:webchat:isolated: "),
+      ]),
+    );
+  });
+
+  it("logs when session-start recall has nothing to inject", async () => {
+    const database = await createTestDatabase();
+    const logger = createLogger();
+
+    const result = await handleAgenrBeforePromptBuild(
+      {
+        prompt: "Anything to remember?",
+        messages: [],
+      },
+      {
+        sessionId: "session-empty",
+        sessionKey: "agent:main:webchat:empty",
+      },
+      {
+        logger,
+        servicesPromise: Promise.resolve(createServices(database)),
+        tracker: createSessionStartTracker(),
+      },
+    );
+
+    expect(result).toBeUndefined();
+    expect(getMessages(logger.info)).toEqual(
+      expect.arrayContaining([
+        "[agenr] session-start recall: 0 core, 0 handoffs, 0 relevant, 0 recent entries for session=session-empty key=agent:main:webchat:empty",
+        "[agenr] session-start recall: nothing to inject for session=session-empty key=agent:main:webchat:empty",
+      ]),
+    );
   });
 });
 
-function createServices(database: SqlDatabase): AgenrOpenClawServices {
+function createServices(
+  database: SqlDatabase,
+  options: {
+    available?: boolean;
+    recall?: RecallPorts;
+  } = {},
+): AgenrOpenClawServices {
+  const available = options.available ?? false;
   const embedding: EmbeddingPort = {
     async embed(): Promise<number[][]> {
       throw new Error("Embeddings unavailable in this test.");
     },
   };
-  const recall: RecallPorts = {
-    async embed(): Promise<number[]> {
-      throw new Error("Recall should not run when embeddings are unavailable.");
-    },
-    async vectorSearch() {
-      return [];
-    },
-    async ftsSearch() {
-      return [];
-    },
-    async hydrateEntries() {
-      return [];
-    },
-    async recordRecallEvents() {
-      return;
-    },
-  };
+  const recall =
+    options.recall ??
+    ({
+      async embed(): Promise<number[]> {
+        throw new Error("Recall should not run when embeddings are unavailable.");
+      },
+      async vectorSearch() {
+        return [];
+      },
+      async ftsSearch() {
+        return [];
+      },
+      async hydrateEntries() {
+        return [];
+      },
+      async recordRecallEvents() {
+        return;
+      },
+    } satisfies RecallPorts);
 
   return {
     config: {
@@ -123,11 +265,11 @@ function createServices(database: SqlDatabase): AgenrOpenClawServices {
     embedding,
     recall,
     embeddingStatus: {
-      available: false,
-      provider: "unconfigured",
+      available,
+      provider: available ? "openai" : "unconfigured",
       requestedProvider: "openai",
       model: "text-embedding-3-small",
-      error: "Embedding API key is required.",
+      ...(available ? {} : { error: "Embedding API key is required." }),
     },
     async close() {
       await database.close();
@@ -135,13 +277,51 @@ function createServices(database: SqlDatabase): AgenrOpenClawServices {
   };
 }
 
+function createRelevantRecallPorts(entry: Entry): RecallPorts {
+  return {
+    async embed(): Promise<number[]> {
+      return createEmbedding(0, 1);
+    },
+    async vectorSearch() {
+      return [];
+    },
+    async ftsSearch() {
+      return [
+        {
+          entry: {
+            id: entry.id,
+            subject: entry.subject,
+            content: entry.content,
+            importance: entry.importance,
+            expiry: entry.expiry,
+            created_at: entry.created_at,
+            embedding: createEmbedding(0, 1),
+          },
+          rank: 0,
+          tier: "exact",
+        },
+      ];
+    },
+    async hydrateEntries(ids) {
+      return ids.includes(entry.id) ? [entry] : [];
+    },
+    async recordRecallEvents() {
+      return;
+    },
+  };
+}
+
 function createLogger() {
   return {
-    debug() {},
-    info() {},
-    warn() {},
-    error() {},
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
   };
+}
+
+function getMessages(logFn: ReturnType<typeof vi.fn>): string[] {
+  return logFn.mock.calls.map(([message]) => message as string);
 }
 
 async function createTestDatabase(): Promise<SqlDatabase> {

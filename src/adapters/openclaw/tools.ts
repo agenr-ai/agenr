@@ -1,6 +1,6 @@
 import type { AnyAgentTool } from "openclaw/plugin-sdk/agent-runtime";
 import { failedTextResult, readNumberParam, readStringArrayParam, readStringParam, textResult } from "openclaw/plugin-sdk/agent-runtime";
-import type { OpenClawPluginToolContext } from "openclaw/plugin-sdk/core";
+import type { OpenClawPluginToolContext, PluginLogger } from "openclaw/plugin-sdk/core";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 
 import { recall } from "../../core/recall/search.js";
@@ -180,14 +180,15 @@ const TRACE_TOOL_PARAMETERS = {
  *
  * @param api - OpenClaw plugin registration API.
  * @param servicesPromise - Shared agenr adapters reused for the process lifetime.
+ * @param logger - Host logger supplied by the OpenClaw plugin runtime.
  * @returns Nothing.
  */
-export function registerAgenrOpenClawTools(api: OpenClawPluginApi, servicesPromise: Promise<AgenrOpenClawServices>): void {
-  api.registerTool((ctx) => createAgenrStoreTool(ctx, servicesPromise), { names: ["agenr_store"] });
-  api.registerTool((ctx) => createAgenrRecallTool(ctx, servicesPromise), { names: ["agenr_recall"] });
-  api.registerTool((ctx) => createAgenrRetireTool(ctx, servicesPromise), { names: ["agenr_retire"] });
-  api.registerTool((ctx) => createAgenrUpdateTool(ctx, servicesPromise), { names: ["agenr_update"] });
-  api.registerTool((ctx) => createAgenrTraceTool(ctx, servicesPromise), { names: ["agenr_trace"] });
+export function registerAgenrOpenClawTools(api: OpenClawPluginApi, servicesPromise: Promise<AgenrOpenClawServices>, logger: PluginLogger): void {
+  api.registerTool((ctx) => createAgenrStoreTool(ctx, servicesPromise, logger), { names: ["agenr_store"] });
+  api.registerTool((ctx) => createAgenrRecallTool(ctx, servicesPromise, logger), { names: ["agenr_recall"] });
+  api.registerTool((ctx) => createAgenrRetireTool(ctx, servicesPromise, logger), { names: ["agenr_retire"] });
+  api.registerTool((ctx) => createAgenrUpdateTool(ctx, servicesPromise, logger), { names: ["agenr_update"] });
+  api.registerTool((ctx) => createAgenrTraceTool(ctx, servicesPromise, logger), { names: ["agenr_trace"] });
 }
 
 /**
@@ -195,9 +196,10 @@ export function registerAgenrOpenClawTools(api: OpenClawPluginApi, servicesPromi
  *
  * @param ctx - Trusted OpenClaw tool context.
  * @param servicesPromise - Shared agenr adapters reused for the process lifetime.
+ * @param logger - Host logger supplied by the OpenClaw plugin runtime.
  * @returns Agent tool definition for `agenr_store`.
  */
-export function createAgenrStoreTool(ctx: OpenClawPluginToolContext, servicesPromise: Promise<AgenrOpenClawServices>): AnyAgentTool {
+export function createAgenrStoreTool(ctx: OpenClawPluginToolContext, servicesPromise: Promise<AgenrOpenClawServices>, logger: PluginLogger): AnyAgentTool {
   return {
     name: "agenr_store",
     label: "Agenr Store",
@@ -214,6 +216,21 @@ export function createAgenrStoreTool(ctx: OpenClawPluginToolContext, servicesPro
         const expiry = parseExpiry(readStringParam(params, "expiry"));
         const tags = normalizeStringArray(readStringArrayParam(params, "tags"));
         const sourceContext = readStringParam(params, "sourceContext");
+        logToolCall(
+          logger,
+          "agenr_store",
+          ctx,
+          `store 1 entry subject=${JSON.stringify(subject)} type=${type}`,
+          sanitizeStoreToolParams({
+            type,
+            subject,
+            content,
+            importance,
+            expiry,
+            tags,
+            sourceContext,
+          }),
+        );
         const services = await servicesPromise;
 
         const result = await storeEntriesDetailed(
@@ -258,6 +275,7 @@ export function createAgenrStoreTool(ctx: OpenClawPluginToolContext, servicesPro
           result,
         });
       } catch (error) {
+        logToolFailure(logger, "agenr_store", ctx, error);
         return toolFailureResult(error);
       }
     },
@@ -269,9 +287,10 @@ export function createAgenrStoreTool(ctx: OpenClawPluginToolContext, servicesPro
  *
  * @param ctx - Trusted OpenClaw tool context.
  * @param servicesPromise - Shared agenr adapters reused for the process lifetime.
+ * @param logger - Host logger supplied by the OpenClaw plugin runtime.
  * @returns Agent tool definition for `agenr_recall`.
  */
-export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPromise: Promise<AgenrOpenClawServices>): AnyAgentTool {
+export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPromise: Promise<AgenrOpenClawServices>, logger: PluginLogger): AnyAgentTool {
   return {
     name: "agenr_recall",
     label: "Agenr Recall",
@@ -281,37 +300,57 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
     async execute(_toolCallId, rawParams) {
       try {
         const params = asRecord(rawParams);
+        const query = readStringParam(params, "query", { required: true, label: "query" });
+        const limit = readNumberParam(params, "limit", { integer: true, strict: true });
+        const threshold = readNumberParam(params, "threshold", { strict: true });
         const services = await servicesPromise;
+        const types = parseEntryTypes(readStringArrayParam(params, "types"));
+        const tags = normalizeStringArray(readStringArrayParam(params, "tags"));
+        const since = readStringParam(params, "since");
+        const until = readStringParam(params, "until");
+        const around = readStringParam(params, "around");
+        const aroundRadius = readNumberParam(params, "aroundRadius", { integer: true, strict: true });
+        const request = {
+          text: query,
+          ...(limit !== undefined ? { limit } : {}),
+          ...(threshold !== undefined ? { threshold } : {}),
+          ...(types.length > 0 ? { types } : {}),
+          ...(tags.length > 0 ? { tags } : {}),
+          ...(since ? { since } : {}),
+          ...(until ? { until } : {}),
+          ...(around ? { around } : {}),
+          ...(aroundRadius !== undefined ? { aroundRadius } : {}),
+          sessionKey: ctx.sessionKey,
+        };
+
+        logToolCall(
+          logger,
+          "agenr_recall",
+          ctx,
+          `query=${JSON.stringify(truncate(query, 80))}`,
+          sanitizeRecallToolParams({
+            query,
+            limit,
+            threshold,
+            types,
+            tags,
+            since,
+            until,
+            around,
+            aroundRadius,
+          }),
+        );
+
         if (!services.embeddingStatus.available) {
-          return failedTextResult(services.embeddingStatus.error ?? "Embeddings are unavailable, so agenr recall cannot run.", {
+          const message = services.embeddingStatus.error ?? "Embeddings are unavailable, so agenr recall cannot run.";
+          logToolFailure(logger, "agenr_recall", ctx, message);
+          return failedTextResult(message, {
             status: "failed",
           });
         }
 
-        const types = parseEntryTypes(readStringArrayParam(params, "types"));
-        const results = await recall(
-          {
-            text: readStringParam(params, "query", { required: true, label: "query" }),
-            ...(readNumberParam(params, "limit", { integer: true, strict: true }) !== undefined
-              ? { limit: readNumberParam(params, "limit", { integer: true, strict: true }) }
-              : {}),
-            ...(readNumberParam(params, "threshold", { strict: true }) !== undefined
-              ? { threshold: readNumberParam(params, "threshold", { strict: true }) }
-              : {}),
-            ...(types.length > 0 ? { types } : {}),
-            ...(normalizeStringArray(readStringArrayParam(params, "tags")).length > 0
-              ? { tags: normalizeStringArray(readStringArrayParam(params, "tags")) }
-              : {}),
-            ...(readStringParam(params, "since") ? { since: readStringParam(params, "since") } : {}),
-            ...(readStringParam(params, "until") ? { until: readStringParam(params, "until") } : {}),
-            ...(readStringParam(params, "around") ? { around: readStringParam(params, "around") } : {}),
-            ...(readNumberParam(params, "aroundRadius", { integer: true, strict: true }) !== undefined
-              ? { aroundRadius: readNumberParam(params, "aroundRadius", { integer: true, strict: true }) }
-              : {}),
-            sessionKey: ctx.sessionKey,
-          },
-          services.recall,
-        );
+        const results = await recall(request, services.recall);
+        logger.info(`[agenr] tool=agenr_recall ${formatToolSessionContext(ctx)} result: ${results.length} entries`);
 
         if (results.length === 0) {
           return textResult("No matching agenr memories found.", {
@@ -336,6 +375,7 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
           })),
         });
       } catch (error) {
+        logToolFailure(logger, "agenr_recall", ctx, error);
         return toolFailureResult(error);
       }
     },
@@ -347,9 +387,10 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
  *
  * @param ctx - Trusted OpenClaw tool context.
  * @param servicesPromise - Shared agenr adapters reused for the process lifetime.
+ * @param logger - Host logger supplied by the OpenClaw plugin runtime.
  * @returns Agent tool definition for `agenr_retire`.
  */
-export function createAgenrRetireTool(ctx: OpenClawPluginToolContext, servicesPromise: Promise<AgenrOpenClawServices>): AnyAgentTool {
+export function createAgenrRetireTool(ctx: OpenClawPluginToolContext, servicesPromise: Promise<AgenrOpenClawServices>, logger: PluginLogger): AnyAgentTool {
   return {
     name: "agenr_retire",
     label: "Agenr Retire",
@@ -358,9 +399,12 @@ export function createAgenrRetireTool(ctx: OpenClawPluginToolContext, servicesPr
     async execute(_toolCallId, rawParams) {
       try {
         const params = asRecord(rawParams);
+        const id = readStringParam(params, "id");
+        const subject = readStringParam(params, "subject");
+        const reason = readStringParam(params, "reason");
+        logToolCall(logger, "agenr_retire", ctx, `target=${formatTargetSelector(id, subject)}`, sanitizeRetireToolParams({ id, subject, reason }));
         const services = await servicesPromise;
         const entry = await resolveTargetEntry(services, params);
-        const reason = readStringParam(params, "reason");
         const retired = await services.database.retireEntry(entry.id, reason);
 
         if (!retired) {
@@ -377,6 +421,7 @@ export function createAgenrRetireTool(ctx: OpenClawPluginToolContext, servicesPr
           sessionKey: ctx.sessionKey,
         });
       } catch (error) {
+        logToolFailure(logger, "agenr_retire", ctx, error);
         return toolFailureResult(error);
       }
     },
@@ -388,9 +433,10 @@ export function createAgenrRetireTool(ctx: OpenClawPluginToolContext, servicesPr
  *
  * @param ctx - Trusted OpenClaw tool context.
  * @param servicesPromise - Shared agenr adapters reused for the process lifetime.
+ * @param logger - Host logger supplied by the OpenClaw plugin runtime.
  * @returns Agent tool definition for `agenr_update`.
  */
-export function createAgenrUpdateTool(ctx: OpenClawPluginToolContext, servicesPromise: Promise<AgenrOpenClawServices>): AnyAgentTool {
+export function createAgenrUpdateTool(ctx: OpenClawPluginToolContext, servicesPromise: Promise<AgenrOpenClawServices>, logger: PluginLogger): AnyAgentTool {
   return {
     name: "agenr_update",
     label: "Agenr Update",
@@ -399,10 +445,21 @@ export function createAgenrUpdateTool(ctx: OpenClawPluginToolContext, servicesPr
     async execute(_toolCallId, rawParams) {
       try {
         const params = asRecord(rawParams);
-        const services = await servicesPromise;
-        const entry = await resolveTargetEntry(services, params);
+        const id = readStringParam(params, "id");
+        const subject = readStringParam(params, "subject");
         const importance = readNumberParam(params, "importance", { integer: true, strict: true });
         const expiry = parseExpiry(readStringParam(params, "expiry"));
+        logToolCall(
+          logger,
+          "agenr_update",
+          ctx,
+          `target=${formatTargetSelector(id, subject)}${importance !== undefined ? ` importance=${importance}` : ""}${
+            expiry !== undefined ? ` expiry=${expiry}` : ""
+          }`,
+          sanitizeUpdateToolParams({ id, subject, importance, expiry }),
+        );
+        const services = await servicesPromise;
+        const entry = await resolveTargetEntry(services, params);
 
         if (importance === undefined && expiry === undefined) {
           throw new Error("Provide at least one update field: importance or expiry.");
@@ -429,6 +486,7 @@ export function createAgenrUpdateTool(ctx: OpenClawPluginToolContext, servicesPr
           ...(expiry !== undefined ? { expiry } : {}),
         });
       } catch (error) {
+        logToolFailure(logger, "agenr_update", ctx, error);
         return toolFailureResult(error);
       }
     },
@@ -440,9 +498,10 @@ export function createAgenrUpdateTool(ctx: OpenClawPluginToolContext, servicesPr
  *
  * @param ctx - Trusted OpenClaw tool context.
  * @param servicesPromise - Shared agenr adapters reused for the process lifetime.
+ * @param logger - Host logger supplied by the OpenClaw plugin runtime.
  * @returns Agent tool definition for `agenr_trace`.
  */
-export function createAgenrTraceTool(ctx: OpenClawPluginToolContext, servicesPromise: Promise<AgenrOpenClawServices>): AnyAgentTool {
+export function createAgenrTraceTool(ctx: OpenClawPluginToolContext, servicesPromise: Promise<AgenrOpenClawServices>, logger: PluginLogger): AnyAgentTool {
   return {
     name: "agenr_trace",
     label: "Agenr Trace",
@@ -452,6 +511,10 @@ export function createAgenrTraceTool(ctx: OpenClawPluginToolContext, servicesPro
     async execute(_toolCallId, rawParams) {
       try {
         const params = asRecord(rawParams);
+        const id = readStringParam(params, "id");
+        const subject = readStringParam(params, "subject");
+        const last = readBooleanParam(params, "last");
+        logToolCall(logger, "agenr_trace", ctx, `target=${formatTargetSelector(id, subject, last)}`, sanitizeTraceToolParams({ id, subject, last }));
         const services = await servicesPromise;
         const entry = await resolveTargetEntry(services, params, { allowLast: true });
         const trace = await getOpenClawEntryTrace(services.database, entry.id);
@@ -474,6 +537,7 @@ export function createAgenrTraceTool(ctx: OpenClawPluginToolContext, servicesPro
           },
         });
       } catch (error) {
+        logToolFailure(logger, "agenr_trace", ctx, error);
         return toolFailureResult(error);
       }
     },
@@ -576,6 +640,133 @@ function normalizeStringArray(values: string[] | undefined): string[] {
 function buildSessionSourceFile(ctx: OpenClawPluginToolContext): string {
   const target = ctx.sessionKey ?? ctx.sessionId ?? ctx.agentId ?? "unknown";
   return `openclaw-session:${target}`;
+}
+
+/** Logs one tool call at info and debug levels using the shared OpenClaw logger. */
+function logToolCall(logger: PluginLogger, toolName: string, ctx: OpenClawPluginToolContext, summary: string, sanitizedParams: Record<string, unknown>): void {
+  logger.info(`[agenr] tool=${toolName} ${formatToolSessionContext(ctx)} ${summary}`);
+  logger.debug?.(`[agenr] tool=${toolName} ${formatToolSessionContext(ctx)} params=${JSON.stringify(sanitizedParams)}`);
+}
+
+/** Logs a warning when one OpenClaw tool call fails. */
+function logToolFailure(logger: PluginLogger, toolName: string, ctx: OpenClawPluginToolContext, error: unknown): void {
+  logger.warn(`[agenr] tool=${toolName} ${formatToolSessionContext(ctx)} failed: ${formatErrorMessage(error)}`);
+}
+
+/** Formats stable session identifiers for tool-level OpenClaw logs. */
+function formatToolSessionContext(ctx: OpenClawPluginToolContext): string {
+  const normalizedSessionId = ctx.sessionId?.trim();
+  const normalizedSessionKey = ctx.sessionKey?.trim();
+
+  if (normalizedSessionId && normalizedSessionKey) {
+    return `session=${normalizedSessionId} key=${normalizedSessionKey}`;
+  }
+
+  if (normalizedSessionId) {
+    return `session=${normalizedSessionId}`;
+  }
+
+  if (normalizedSessionKey) {
+    return `key=${normalizedSessionKey}`;
+  }
+
+  return "session=unknown";
+}
+
+/** Formats a compact id-or-subject selector summary for tool call logs. */
+function formatTargetSelector(id?: string, subject?: string, last?: boolean): string {
+  if (last === true) {
+    return "last";
+  }
+
+  if (id) {
+    return `id:${JSON.stringify(id)}`;
+  }
+
+  if (subject) {
+    return `subject:${JSON.stringify(subject)}`;
+  }
+
+  return "unknown";
+}
+
+/** Sanitizes store parameters before debug logging. */
+function sanitizeStoreToolParams(params: {
+  type: EntryType;
+  subject: string;
+  content: string;
+  importance: number | undefined;
+  expiry: Expiry | undefined;
+  tags: string[];
+  sourceContext: string | undefined;
+}): Record<string, unknown> {
+  return {
+    type: params.type,
+    subject: params.subject,
+    ...(params.importance !== undefined ? { importance: params.importance } : {}),
+    ...(params.expiry !== undefined ? { expiry: params.expiry } : {}),
+    ...(params.tags.length > 0 ? { tags: params.tags } : {}),
+    contentLength: params.content.length,
+    ...(params.sourceContext !== undefined ? { sourceContextLength: params.sourceContext.length } : {}),
+  };
+}
+
+/** Sanitizes recall parameters before debug logging. */
+function sanitizeRecallToolParams(params: {
+  query: string;
+  limit: number | undefined;
+  threshold: number | undefined;
+  types: EntryType[];
+  tags: string[];
+  since: string | undefined;
+  until: string | undefined;
+  around: string | undefined;
+  aroundRadius: number | undefined;
+}): Record<string, unknown> {
+  return {
+    query: params.query,
+    ...(params.limit !== undefined ? { limit: params.limit } : {}),
+    ...(params.threshold !== undefined ? { threshold: params.threshold } : {}),
+    ...(params.types.length > 0 ? { types: params.types } : {}),
+    ...(params.tags.length > 0 ? { tags: params.tags } : {}),
+    ...(params.since ? { since: params.since } : {}),
+    ...(params.until ? { until: params.until } : {}),
+    ...(params.around ? { around: params.around } : {}),
+    ...(params.aroundRadius !== undefined ? { aroundRadius: params.aroundRadius } : {}),
+  };
+}
+
+/** Sanitizes retire parameters before debug logging. */
+function sanitizeRetireToolParams(params: { id: string | undefined; subject: string | undefined; reason: string | undefined }): Record<string, unknown> {
+  return {
+    ...(params.id ? { id: params.id } : {}),
+    ...(params.subject ? { subject: params.subject } : {}),
+    ...(params.reason !== undefined ? { reasonLength: params.reason.length } : {}),
+  };
+}
+
+/** Sanitizes update parameters before debug logging. */
+function sanitizeUpdateToolParams(params: {
+  id: string | undefined;
+  subject: string | undefined;
+  importance: number | undefined;
+  expiry: Expiry | undefined;
+}): Record<string, unknown> {
+  return {
+    ...(params.id ? { id: params.id } : {}),
+    ...(params.subject ? { subject: params.subject } : {}),
+    ...(params.importance !== undefined ? { importance: params.importance } : {}),
+    ...(params.expiry !== undefined ? { expiry: params.expiry } : {}),
+  };
+}
+
+/** Sanitizes trace parameters before debug logging. */
+function sanitizeTraceToolParams(params: { id: string | undefined; subject: string | undefined; last: boolean | undefined }): Record<string, unknown> {
+  return {
+    ...(params.id ? { id: params.id } : {}),
+    ...(params.subject ? { subject: params.subject } : {}),
+    ...(params.last !== undefined ? { last: params.last } : {}),
+  };
 }
 
 /** Formats recall results into compact tool-readable text. */

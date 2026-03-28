@@ -3,7 +3,7 @@ import { rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";
 import { findOpenClawEntryBySubject } from "../../../src/adapters/db/openclaw-plugin-queries.js";
@@ -34,11 +34,12 @@ afterEach(async () => {
 describe("agenr OpenClaw tools", () => {
   it("stores, updates, traces, and retires entries", async () => {
     const database = await createTestDatabase();
+    const logger = createLogger();
     const services = createDatabaseBackedServices(database);
-    const storeTool = createAgenrStoreTool(createToolContext(), Promise.resolve(services));
-    const updateTool = createAgenrUpdateTool(createToolContext(), Promise.resolve(services));
-    const traceTool = createAgenrTraceTool(createToolContext(), Promise.resolve(services));
-    const retireTool = createAgenrRetireTool(createToolContext(), Promise.resolve(services));
+    const storeTool = createAgenrStoreTool(createToolContext(), Promise.resolve(services), logger);
+    const updateTool = createAgenrUpdateTool(createToolContext(), Promise.resolve(services), logger);
+    const traceTool = createAgenrTraceTool(createToolContext(), Promise.resolve(services), logger);
+    const retireTool = createAgenrRetireTool(createToolContext(), Promise.resolve(services), logger);
 
     const storeResult = await storeTool.execute("tool-1", {
       type: "decision",
@@ -79,10 +80,22 @@ describe("agenr OpenClaw tools", () => {
     });
     expect(storedEntry).not.toBeNull();
     expect(await database.getEntry(storedEntry?.id ?? "")).toBeNull();
+    expect(getMessages(logger.info)).toEqual(
+      expect.arrayContaining([
+        '[agenr] tool=agenr_store session=session-1 key=agent:main:webchat:test store 1 entry subject="feature flag policy" type=decision',
+        expect.stringContaining("[agenr] tool=agenr_update session=session-1 key=agent:main:webchat:test target=id:"),
+        expect.stringContaining("[agenr] tool=agenr_trace session=session-1 key=agent:main:webchat:test target=id:"),
+        '[agenr] tool=agenr_retire session=session-1 key=agent:main:webchat:test target=subject:"feature flag policy"',
+      ]),
+    );
+    const storeDebugMessage = getMessages(logger.debug).find((message) => message.includes("tool=agenr_store"));
+    expect(storeDebugMessage).toContain('"contentLength":77');
+    expect(storeDebugMessage).not.toContain("Gate risky rollout work behind a feature flag until verification is complete.");
   });
 
   it("runs recall through the core pipeline using injected recall ports", async () => {
     const database = await createTestDatabase();
+    const logger = createLogger();
     const entry = createEntry({
       subject: "session recall",
       content: "Prompt injection should surface relevant prior context.",
@@ -126,10 +139,11 @@ describe("agenr OpenClaw tools", () => {
         },
       },
     });
-    const recallTool = createAgenrRecallTool(createToolContext(), Promise.resolve(services));
+    const recallTool = createAgenrRecallTool(createToolContext(), Promise.resolve(services), logger);
+    const query = "relevant prior context for the current session so the operator can verify recall isolation across multiple TUI sessions";
 
     const result = await recallTool.execute("tool-5", {
-      query: "relevant prior context",
+      query,
       limit: 3,
     });
 
@@ -139,13 +153,21 @@ describe("agenr OpenClaw tools", () => {
     });
     expect(result.content[0]?.text).toContain("session recall");
     expect(recordedRecallEvents).toBe(1);
+    expect(getMessages(logger.info)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(`[agenr] tool=agenr_recall session=session-1 key=agent:main:webchat:test query=${JSON.stringify(truncateForLog(query, 80))}`),
+        "[agenr] tool=agenr_recall session=session-1 key=agent:main:webchat:test result: 1 entries",
+      ]),
+    );
+    expect(getMessages(logger.debug)).toEqual(expect.arrayContaining([expect.stringContaining(`"query":"${query}"`), expect.stringContaining('"limit":3')]));
   });
 
   it("traces the most recent entry when last is true", async () => {
     const database = await createTestDatabase();
+    const logger = createLogger();
     const services = createDatabaseBackedServices(database);
-    const storeTool = createAgenrStoreTool(createToolContext(), Promise.resolve(services));
-    const traceTool = createAgenrTraceTool(createToolContext(), Promise.resolve(services));
+    const storeTool = createAgenrStoreTool(createToolContext(), Promise.resolve(services), logger);
+    const traceTool = createAgenrTraceTool(createToolContext(), Promise.resolve(services), logger);
 
     await storeTool.execute("tool-6", {
       type: "fact",
@@ -165,6 +187,7 @@ describe("agenr OpenClaw tools", () => {
 
     expect(result.content[0]?.type).toBe("text");
     expect(result.content[0]?.text).toContain("newest memory");
+    expect(getMessages(logger.info)).toContain("[agenr] tool=agenr_trace session=session-1 key=agent:main:webchat:test target=last");
   });
 });
 
@@ -231,6 +254,27 @@ function createToolContext() {
     sessionId: "session-1",
     sessionKey: "agent:main:webchat:test",
   };
+}
+
+function createLogger() {
+  return {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  };
+}
+
+function getMessages(logFn: ReturnType<typeof vi.fn>): string[] {
+  return logFn.mock.calls.map(([message]) => message as string);
+}
+
+function truncateForLog(value: string, maxChars: number): string {
+  if (value.length <= maxChars) {
+    return value;
+  }
+
+  return `${value.slice(0, maxChars - 3).trimEnd()}...`;
 }
 
 async function createTestDatabase(): Promise<SqlDatabase> {

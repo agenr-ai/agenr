@@ -7,9 +7,23 @@ export interface SessionStartTracker {
    *
    * @param sessionId - Ephemeral OpenClaw session UUID when available.
    * @param sessionKey - Stable OpenClaw session key fallback.
-   * @returns True when session-start recall should run, false when it already ran.
+   * @returns Tracking facts for the attempted session-start event.
    */
-  consume(sessionId?: string, sessionKey?: string): boolean;
+  consume(sessionId?: string, sessionKey?: string): SessionStartConsumeResult;
+}
+
+/**
+ * Structured tracking facts returned by the session-start tracker.
+ */
+export interface SessionStartConsumeResult {
+  /**
+   * Reports whether the caller should run session-start recall.
+   */
+  isFirst: boolean;
+  /**
+   * Reports how many distinct session identities are currently tracked.
+   */
+  activeCount: number;
 }
 
 /**
@@ -21,27 +35,44 @@ export function createSessionStartTracker(): SessionStartTracker {
   const seenSessionIds = new Set<string>();
   const seenSessionKeys = new Set<string>();
 
+  const countActiveSessions = () => seenSessionIds.size + seenSessionKeys.size;
+
   return {
     consume(sessionId, sessionKey) {
       const normalizedSessionId = sessionId?.trim();
       if (normalizedSessionId) {
         if (seenSessionIds.has(normalizedSessionId)) {
-          return false;
+          return {
+            isFirst: false,
+            activeCount: countActiveSessions(),
+          };
         }
         seenSessionIds.add(normalizedSessionId);
-        return true;
+        return {
+          isFirst: true,
+          activeCount: countActiveSessions(),
+        };
       }
 
       const normalizedSessionKey = sessionKey?.trim();
       if (normalizedSessionKey) {
         if (seenSessionKeys.has(normalizedSessionKey)) {
-          return false;
+          return {
+            isFirst: false,
+            activeCount: countActiveSessions(),
+          };
         }
         seenSessionKeys.add(normalizedSessionKey);
-        return true;
+        return {
+          isFirst: true,
+          activeCount: countActiveSessions(),
+        };
       }
 
-      return true;
+      return {
+        isFirst: true,
+        activeCount: countActiveSessions(),
+      };
     },
   };
 }
