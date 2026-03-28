@@ -2,7 +2,7 @@ import { Command } from "commander";
 import { describe, expect, it, vi } from "vitest";
 
 import { createProgram } from "../../../src/cli/main.js";
-import { registerSetupCommand, runSetupCore, type SetupRuntime } from "../../../src/cli/commands/setup.js";
+import { filterSetupModelsForAuth, registerSetupCommand, runSetupCore, type SetupRuntime } from "../../../src/cli/commands/setup.js";
 import { FakePrompts } from "../../cli/fake-prompts.js";
 
 function createSetupRuntime(overrides: Partial<SetupRuntime> = {}): SetupRuntime {
@@ -15,11 +15,22 @@ function createSetupRuntime(overrides: Partial<SetupRuntime> = {}): SetupRuntime
         ? [
             { id: "gpt-5.4-mini", name: "GPT-5.4 Mini" },
             { id: "gpt-5.4", name: "GPT-5.4" },
+            { id: "gpt-5.4-nano", name: "GPT-5.4 Nano" },
           ]
-        : [
-            { id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4" },
-            { id: "claude-opus-4-6", name: "Claude Opus 4.6" },
-          ],
+        : provider === "openai-codex"
+          ? [
+              { id: "gpt-5.4-mini", name: "GPT-5.4 Mini" },
+              { id: "gpt-5.4", name: "GPT-5.4" },
+            ]
+          : [
+              { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+              { id: "claude-opus-4-6", name: "Claude Opus 4.6" },
+              { id: "claude-haiku-4-5", name: "Claude Haiku 4.5" },
+            ],
+    probeCredentials: vi.fn(() => ({
+      available: false,
+      guidance: "Credentials unavailable.",
+    })),
     testLlmConnection: vi.fn(async () => ({ ok: true })),
     testEmbeddingConnection: vi.fn(async () => ({ ok: true })),
     ...overrides,
@@ -42,8 +53,8 @@ describe("registerSetupCommand", () => {
 });
 
 describe("runSetupCore", () => {
-  it("writes an OpenAI config that reuses the primary key for embeddings", async () => {
-    const prompts = new FakePrompts(["openai", "sk-openai", "gpt-5.4-mini", false, "/tmp/custom-knowledge.db"]);
+  it("writes an OpenAI API-key config that reuses the primary key for embeddings", async () => {
+    const prompts = new FakePrompts(["openai-api-key", "sk-openai", "gpt-5.4-mini", false, "/tmp/custom-knowledge.db"]);
     const runtime = createSetupRuntime();
 
     const result = await runSetupCore({
@@ -53,13 +64,17 @@ describe("runSetupCore", () => {
 
     expect(result).toEqual({
       config: {
+        auth: "openai-api-key",
         provider: "openai",
         model: "gpt-5.4-mini",
-        apiKey: "sk-openai",
+        credentials: {
+          openaiApiKey: "sk-openai",
+        },
         dbPath: "/tmp/custom-knowledge.db",
       },
       configPath: "/tmp/.agenr/config.json",
       dbPath: "/tmp/custom-knowledge.db",
+      auth: "openai-api-key",
       provider: "openai",
       model: "gpt-5.4-mini",
       embeddingUsesPrimaryKey: true,
@@ -67,16 +82,19 @@ describe("runSetupCore", () => {
     expect(runtime.testLlmConnection).toHaveBeenCalledWith("openai", "gpt-5.4-mini", "sk-openai");
     expect(runtime.testEmbeddingConnection).toHaveBeenCalledWith("sk-openai", "text-embedding-3-small");
     expect(runtime.writeConfig).toHaveBeenCalledWith({
+      auth: "openai-api-key",
       provider: "openai",
       model: "gpt-5.4-mini",
-      apiKey: "sk-openai",
+      credentials: {
+        openaiApiKey: "sk-openai",
+      },
       dbPath: "/tmp/custom-knowledge.db",
     });
     expect(prompts.notes.at(-1)?.title).toBe("Configuration saved");
   });
 
-  it("prompts for a separate embedding key when Anthropic is selected", async () => {
-    const prompts = new FakePrompts(["anthropic", "anthropic-key", "claude-sonnet-4-20250514", "openai-embedding-key", false, "/tmp/anthropic.db"]);
+  it("prompts for a separate embedding key when Anthropic API-key auth is selected", async () => {
+    const prompts = new FakePrompts(["anthropic-api-key", "anthropic-key", "claude-sonnet-4-6", "openai-embedding-key", false, "/tmp/anthropic.db"]);
     const runtime = createSetupRuntime();
 
     const result = await runSetupCore({
@@ -86,17 +104,20 @@ describe("runSetupCore", () => {
 
     expect(result?.embeddingUsesPrimaryKey).toBe(false);
     expect(runtime.writeConfig).toHaveBeenCalledWith({
+      auth: "anthropic-api-key",
       provider: "anthropic",
-      model: "claude-sonnet-4-20250514",
-      apiKey: "anthropic-key",
-      embeddingApiKey: "openai-embedding-key",
+      model: "claude-sonnet-4-6",
+      credentials: {
+        anthropicApiKey: "anthropic-key",
+        openaiApiKey: "openai-embedding-key",
+      },
       dbPath: "/tmp/anthropic.db",
     });
     expect(runtime.testEmbeddingConnection).toHaveBeenCalledWith("openai-embedding-key", "text-embedding-3-small");
   });
 
   it("allows skipping the provider connection test after a failure", async () => {
-    const prompts = new FakePrompts(["openai", "bad-key", "skip", "gpt-5.4-mini", false, "/tmp/retry.db"]);
+    const prompts = new FakePrompts(["openai-api-key", "bad-key", "skip", "gpt-5.4-mini", false, "/tmp/retry.db"]);
     const runtime = createSetupRuntime({
       testLlmConnection: vi.fn(async () => ({ ok: false, error: "401 invalid api key" })),
     });
@@ -106,13 +127,101 @@ describe("runSetupCore", () => {
       runtime,
     });
 
-    expect(result?.config.apiKey).toBe("bad-key");
+    expect(result?.config.credentials?.openaiApiKey).toBe("bad-key");
     expect(prompts.log.warnMessages).toContain("Skipping the provider connection test. You can verify it later by running a recall or ingest command.");
     expect(runtime.writeConfig).toHaveBeenCalledWith({
+      auth: "openai-api-key",
       provider: "openai",
       model: "gpt-5.4-mini",
-      apiKey: "bad-key",
+      credentials: {
+        openaiApiKey: "bad-key",
+      },
       dbPath: "/tmp/retry.db",
     });
+  });
+
+  it("supports OpenAI subscription auth without persisting the detected subscription token", async () => {
+    const prompts = new FakePrompts(["advanced-options", "openai-subscription", "gpt-5.4-mini", "openai-embedding-key", false, "/tmp/subscription.db"]);
+    const runtime = createSetupRuntime({
+      probeCredentials: vi.fn(() => ({
+        available: true,
+        source: "file:/tmp/.codex/auth.json",
+        guidance: "Credentials available.",
+        credentials: {
+          apiKey: "subscription-token",
+          source: "file:/tmp/.codex/auth.json",
+          auth: "openai-subscription",
+        },
+      })),
+    });
+
+    const result = await runSetupCore({
+      prompts,
+      runtime,
+    });
+
+    expect(result).toEqual({
+      config: {
+        auth: "openai-subscription",
+        provider: "openai-codex",
+        model: "gpt-5.4-mini",
+        credentials: {
+          openaiApiKey: "openai-embedding-key",
+        },
+        dbPath: "/tmp/subscription.db",
+      },
+      configPath: "/tmp/.agenr/config.json",
+      dbPath: "/tmp/subscription.db",
+      auth: "openai-subscription",
+      provider: "openai-codex",
+      model: "gpt-5.4-mini",
+      embeddingUsesPrimaryKey: false,
+    });
+    expect(runtime.testLlmConnection).toHaveBeenCalledWith("openai-codex", "gpt-5.4-mini", "subscription-token");
+    expect(runtime.writeConfig).toHaveBeenCalledWith({
+      auth: "openai-subscription",
+      provider: "openai-codex",
+      model: "gpt-5.4-mini",
+      credentials: {
+        openaiApiKey: "openai-embedding-key",
+      },
+      dbPath: "/tmp/subscription.db",
+    });
+  });
+
+  it("shows guidance and continues when OAuth credentials are unavailable", async () => {
+    const prompts = new FakePrompts(["advanced-options", "anthropic-oauth", "claude-sonnet-4-6", "openai-embedding-key", false, "/tmp/oauth.db"]);
+    const runtime = createSetupRuntime({
+      probeCredentials: vi.fn(() => ({
+        available: false,
+        guidance: "Claude Code credentials not found. Install Claude Code CLI and sign in with `claude`.",
+      })),
+    });
+
+    const result = await runSetupCore({
+      prompts,
+      runtime,
+    });
+
+    expect(result?.config).toEqual({
+      auth: "anthropic-oauth",
+      provider: "anthropic",
+      model: "claude-sonnet-4-6",
+      credentials: {
+        openaiApiKey: "openai-embedding-key",
+      },
+      dbPath: "/tmp/oauth.db",
+    });
+    expect(prompts.log.warnMessages).toContain("Claude Code credentials not found. Install Claude Code CLI and sign in with `claude`.");
+    expect(runtime.testLlmConnection).not.toHaveBeenCalled();
+  });
+});
+
+describe("filterSetupModelsForAuth", () => {
+  it("excludes gpt-5.4-nano for OpenAI subscription auth", () => {
+    expect(filterSetupModelsForAuth("openai-subscription", [{ id: "gpt-5.4-mini" }, { id: "gpt-5.4" }, { id: "gpt-5.4-nano" }])).toEqual([
+      { id: "gpt-5.4-mini" },
+      { id: "gpt-5.4" },
+    ]);
   });
 });

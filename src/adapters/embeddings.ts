@@ -56,7 +56,12 @@ export function createEmbeddingClient(apiKey: string, model = EMBEDDING_MODEL): 
  * @returns API key to use for the embedding provider.
  */
 export function resolveEmbeddingApiKey(config?: AgenrConfig): string {
-  const candidates = [config?.embeddingApiKey, config?.apiKey, process.env.OPENAI_API_KEY];
+  const candidates = [
+    config?.credentials?.openaiApiKey,
+    config?.embeddingApiKey,
+    shouldReuseLegacyPrimaryKeyForEmbeddings(config) ? config?.apiKey : undefined,
+    process.env.OPENAI_API_KEY,
+  ];
 
   for (const candidate of candidates) {
     const normalized = candidate?.trim();
@@ -65,7 +70,7 @@ export function resolveEmbeddingApiKey(config?: AgenrConfig): string {
     }
   }
 
-  throw new Error("Embedding API key is required. Set config.embeddingApiKey, config.apiKey, or OPENAI_API_KEY.");
+  throw new Error("Embedding API key is required. Set config.credentials.openaiApiKey, config.embeddingApiKey, or OPENAI_API_KEY.");
 }
 
 /**
@@ -81,6 +86,13 @@ export function resolveEmbeddingModel(config?: AgenrConfig): string {
 
 export { composeEmbeddingText };
 export { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL };
+
+/** Returns whether a legacy shared primary key can still be reused for embeddings. */
+function shouldReuseLegacyPrimaryKeyForEmbeddings(config?: AgenrConfig): boolean {
+  const auth = config?.auth?.trim();
+  const provider = config?.provider?.trim();
+  return auth === "openai-api-key" || (auth === undefined && provider === "openai");
+}
 
 /** Embeds a list of texts in bounded concurrent batches. */
 async function embedTexts(texts: string[], apiKey: string, model: string): Promise<number[][]> {

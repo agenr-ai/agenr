@@ -1,6 +1,12 @@
+import { execSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { completeSimple, getEnvApiKey, getModel, type Api, type KnownProvider, type Model } from "@mariozechner/pi-ai";
 
-import type { AgenrConfig } from "../config.js";
+import { authMethodToProvider, isAgenrAuthMethod, type AgenrAuthMethod, type AgenrConfig, type AgenrStoredCredentials } from "../config.js";
 import type { LlmPort } from "../core/ports.js";
 
 const DEFAULT_REASONING = "medium";
@@ -14,7 +20,92 @@ type CreateLlmClientOptions = {
 /** Stringly typed `getModel` signature used to avoid provider narrowing friction. */
 type GetModelWithStrings = (provider: string, modelId: string) => Model<Api>;
 
+/** Candidate credential plus the source it came from. */
+interface CredentialCandidate {
+  token: string;
+  source: string;
+}
+
+/**
+ * Resolved LLM credential plus source metadata.
+ */
+export interface ResolvedLlmCredentials {
+  /** Token or API key passed to pi-ai. */
+  apiKey: string;
+  /** Human-readable source string for logs and setup summaries. */
+  source: string;
+  /** Auth method used when the credential came from one configured auth profile. */
+  auth?: AgenrAuthMethod;
+}
+
+/**
+ * Result of probing one auth method's available credential sources.
+ */
+export interface LlmCredentialProbeResult {
+  /** Whether a usable credential was found. */
+  available: boolean;
+  /** Human-readable source string when available. */
+  source?: string;
+  /** Human-readable setup guidance when unavailable. */
+  guidance: string;
+  /** Resolved credential when available. */
+  credentials?: ResolvedLlmCredentials;
+}
+
 const getModelWithStrings = getModel as unknown as GetModelWithStrings;
+
+/**
+ * Probes all configured sources for one auth method.
+ *
+ * @param params - Auth method, stored config credentials, and environment.
+ * @returns Availability, source metadata, and setup guidance.
+ */
+export function probeLlmCredentials(params: {
+  auth: AgenrAuthMethod;
+  storedCredentials?: AgenrStoredCredentials;
+  legacyConfig?: AgenrConfig;
+  env?: NodeJS.ProcessEnv;
+}): LlmCredentialProbeResult {
+  const candidate = resolveCredentialCandidate(params);
+  if (!candidate) {
+    return {
+      available: false,
+      guidance: credentialSetupGuidance(params.auth),
+    };
+  }
+
+  return {
+    available: true,
+    source: candidate.source,
+    guidance: "Credentials available.",
+    credentials: {
+      apiKey: candidate.token,
+      source: candidate.source,
+      auth: params.auth,
+    },
+  };
+}
+
+/**
+ * Resolves a configured auth method into a concrete token or API key.
+ *
+ * @param params - Auth method, stored config credentials, and environment.
+ * @returns Resolved credential plus its source metadata.
+ * @throws Error When no credential source is available.
+ */
+export function resolveAuthCredentials(params: {
+  auth: AgenrAuthMethod;
+  storedCredentials?: AgenrStoredCredentials;
+  legacyConfig?: AgenrConfig;
+  env?: NodeJS.ProcessEnv;
+}): ResolvedLlmCredentials {
+  const probe = probeLlmCredentials(params);
+  if (!probe.available || !probe.credentials) {
+    throw new Error(probe.guidance);
+  }
+
+  return probe.credentials;
+}
 
 /**
  * Accumulated token and cost usage for an LLM client instance.
@@ -133,25 +224,55 @@ export function resolveModel(config: AgenrConfig | undefined, stage: "extraction
 }
 
 /**
- * Resolves the API key for an LLM provider from config or provider-specific
- * environment variables.
+ * Resolves the credential used for one LLM provider.
  *
  * @param config - Optional agenr runtime configuration.
  * @param provider - Provider whose credential should be resolved.
- * @returns API key string for the provider.
+ * @param env - Process environment used for env-var and home-dir lookups.
+ * @returns Resolved credential plus source metadata.
  */
-export function resolveLlmApiKey(config: AgenrConfig | undefined, provider: string): string {
-  const configuredApiKey = normalizeOptionalString(config?.apiKey);
-  if (configuredApiKey) {
-    return configuredApiKey;
+export function resolveLlmCredentials(config: AgenrConfig | undefined, provider: string, env: NodeJS.ProcessEnv = process.env): ResolvedLlmCredentials {
+  const normalizedProvider = normalizeOptionalString(provider);
+  if (!normalizedProvider) {
+    throw new Error("Provider is required to resolve LLM credentials.");
   }
 
-  const envApiKey = getEnvApiKey(provider as KnownProvider) ?? getEnvApiKey(provider);
-  if (envApiKey) {
-    return envApiKey;
+  const auth = normalizeAuthMethod(config?.auth);
+  if (auth && authMethodToProvider(auth) === normalizedProvider) {
+    return resolveAuthCredentials({
+      auth,
+      storedCredentials: config?.credentials,
+      legacyConfig: config,
+      env,
+    });
   }
 
-  throw new Error(`No API key found for provider "${provider}". Set config.apiKey or the provider's env var (for example OPENAI_API_KEY).`);
+  const fallback = resolveProviderCredentialCandidate(config, normalizedProvider, env);
+  if (fallback) {
+    return {
+      apiKey: fallback.token,
+      source: fallback.source,
+    };
+  }
+
+  if (normalizedProvider === "openai-codex") {
+    throw new Error("No OpenAI subscription credential found. Run `codex auth` or configure `auth` as `openai-api-key`.");
+  }
+
+  const exampleEnv = normalizedProvider === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
+  throw new Error(`No credential found for provider "${normalizedProvider}". Set the appropriate auth method in config or provide ${exampleEnv}.`);
+}
+
+/**
+ * Resolves the token or API key string used for one LLM provider.
+ *
+ * @param config - Optional agenr runtime configuration.
+ * @param provider - Provider whose credential should be resolved.
+ * @param env - Process environment used for env-var and home-dir lookups.
+ * @returns Credential string passed to pi-ai.
+ */
+export function resolveLlmApiKey(config: AgenrConfig | undefined, provider: string, env: NodeJS.ProcessEnv = process.env): string {
+  return resolveLlmCredentials(config, provider, env).apiKey;
 }
 
 /**
@@ -180,6 +301,300 @@ function defaultModelForStage(stage: "extraction" | "dedup"): string {
 function normalizeOptionalString(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+/** Normalizes an optional auth-method string into a supported agenr auth ID. */
+function normalizeAuthMethod(value: string | undefined): AgenrAuthMethod | undefined {
+  const normalized = normalizeOptionalString(value);
+  return normalized && isAgenrAuthMethod(normalized) ? normalized : undefined;
+}
+
+/** Safely reads and parses a JSON file, returning `null` on failure. */
+function safeReadJson(filePath: string): unknown {
+  try {
+    const raw = fs.readFileSync(filePath, "utf8");
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+/** Resolves the effective home directory used by CLI credential probes. */
+function resolveHomeDir(env: NodeJS.ProcessEnv): string {
+  const home = normalizeOptionalString(env.HOME);
+  return home ? resolveUserPath(home) : os.homedir();
+}
+
+/** Resolves the effective Codex home directory for auth probing. */
+function resolveCodexHome(env: NodeJS.ProcessEnv): string {
+  const configured = normalizeOptionalString(env.CODEX_HOME) ?? "~/.codex";
+  const resolved = resolveUserPath(configured);
+  try {
+    return fs.realpathSync.native(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
+/** Resolves `~`-prefixed user paths without depending on CLI helpers. */
+function resolveUserPath(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed === "~") {
+    return os.homedir();
+  }
+
+  if (trimmed.startsWith("~/")) {
+    return path.join(os.homedir(), trimmed.slice(2));
+  }
+
+  if (trimmed.startsWith("~\\")) {
+    return path.join(os.homedir(), trimmed.slice(2));
+  }
+
+  return path.resolve(trimmed);
+}
+
+/** Parses Codex CLI auth from `auth.json` when available. */
+function parseCodexFromFile(env: NodeJS.ProcessEnv): CredentialCandidate | null {
+  const authPath = path.join(resolveCodexHome(env), "auth.json");
+  const parsed = safeReadJson(authPath);
+  if (!parsed || typeof parsed !== "object") {
+    return null;
+  }
+
+  const record = parsed as Record<string, unknown>;
+  const tokens = record.tokens as Record<string, unknown> | undefined;
+  const accessToken = tokens?.access_token;
+  if (typeof accessToken !== "string" || !accessToken.trim()) {
+    return null;
+  }
+
+  return {
+    token: accessToken.trim(),
+    source: `file:${authPath}`,
+  };
+}
+
+/** Resolves the keychain account name used by Codex CLI on macOS. */
+function resolveCodexKeychainAccount(env: NodeJS.ProcessEnv): string {
+  const hash = createHash("sha256").update(resolveCodexHome(env)).digest("hex");
+  return `cli|${hash.slice(0, 16)}`;
+}
+
+/** Parses Codex CLI auth from the macOS keychain when available. */
+function parseCodexFromKeychain(env: NodeJS.ProcessEnv): CredentialCandidate | null {
+  if (process.platform !== "darwin") {
+    return null;
+  }
+
+  try {
+    const account = resolveCodexKeychainAccount(env);
+    const raw = execSync(`security find-generic-password -s "Codex Auth" -a "${account}" -w`, {
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 5_000,
+    }).trim();
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const tokens = parsed.tokens as Record<string, unknown> | undefined;
+    const accessToken = tokens?.access_token;
+    if (typeof accessToken !== "string" || !accessToken.trim()) {
+      return null;
+    }
+
+    return {
+      token: accessToken.trim(),
+      source: "keychain:Codex Auth",
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Parses a Claude credential record from either disk or keychain JSON. */
+function parseClaudeCredentialRecord(parsed: unknown, source: string): CredentialCandidate | null {
+  if (!parsed || typeof parsed !== "object") {
+    return null;
+  }
+
+  const record = parsed as Record<string, unknown>;
+  const claudeOauth = record.claudeAiOauth as Record<string, unknown> | undefined;
+  const accessToken = claudeOauth?.accessToken;
+  if (typeof accessToken !== "string" || !accessToken.trim()) {
+    return null;
+  }
+
+  return {
+    token: accessToken.trim(),
+    source,
+  };
+}
+
+/** Parses Claude Code OAuth credentials from disk when available. */
+function parseClaudeFromFiles(env: NodeJS.ProcessEnv): CredentialCandidate | null {
+  const homeDir = resolveHomeDir(env);
+  const candidates = [path.join(homeDir, ".claude", ".credentials.json"), path.join(homeDir, ".claude", "credentials.json")];
+
+  for (const candidate of candidates) {
+    const parsed = safeReadJson(candidate);
+    const resolved = parseClaudeCredentialRecord(parsed, `file:${candidate}`);
+    if (resolved) {
+      return resolved;
+    }
+  }
+
+  return null;
+}
+
+/** Parses Claude Code OAuth credentials from the macOS keychain when available. */
+function parseClaudeFromKeychain(): CredentialCandidate | null {
+  if (process.platform !== "darwin") {
+    return null;
+  }
+
+  try {
+    const raw = execSync('security find-generic-password -s "Claude Code-credentials" -w', {
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 5_000,
+    }).trim();
+    return parseClaudeCredentialRecord(JSON.parse(raw), "keychain:Claude Code-credentials");
+  } catch {
+    return null;
+  }
+}
+
+/** Converts an optional token string into a typed credential candidate. */
+function candidateFromToken(token: string | undefined, source: string): CredentialCandidate | null {
+  const normalized = normalizeOptionalString(token);
+  if (!normalized) {
+    return null;
+  }
+
+  return {
+    token: normalized,
+    source,
+  };
+}
+
+/** Resolves the legacy shared `config.apiKey` field when it matches one provider. */
+function resolveLegacySharedCredential(config: AgenrConfig | undefined, provider: string): CredentialCandidate | null {
+  const legacyApiKey = normalizeOptionalString(config?.apiKey);
+  if (!legacyApiKey) {
+    return null;
+  }
+
+  const configuredProvider = normalizeOptionalString(config?.provider);
+  if (configuredProvider && configuredProvider !== provider) {
+    return null;
+  }
+
+  return {
+    token: legacyApiKey,
+    source: "config:apiKey",
+  };
+}
+
+/** Resolves OpenAI API-key credentials from env, config, or legacy config. */
+function resolveOpenAIApiKeyCandidate(config: AgenrConfig | undefined, env: NodeJS.ProcessEnv): CredentialCandidate | null {
+  return (
+    candidateFromToken(env.OPENAI_API_KEY, "env:OPENAI_API_KEY") ??
+    candidateFromToken(config?.credentials?.openaiApiKey, "config:credentials.openaiApiKey") ??
+    resolveLegacySharedCredential(config, "openai")
+  );
+}
+
+/** Resolves Anthropic API-key credentials from env, config, or legacy config. */
+function resolveAnthropicApiKeyCandidate(config: AgenrConfig | undefined, env: NodeJS.ProcessEnv): CredentialCandidate | null {
+  return (
+    candidateFromToken(env.ANTHROPIC_API_KEY, "env:ANTHROPIC_API_KEY") ??
+    candidateFromToken(config?.credentials?.anthropicApiKey, "config:credentials.anthropicApiKey") ??
+    resolveLegacySharedCredential(config, "anthropic")
+  );
+}
+
+/** Resolves Anthropic long-lived token credentials from env or config. */
+function resolveAnthropicTokenCandidate(storedCredentials: AgenrStoredCredentials | undefined, env: NodeJS.ProcessEnv): CredentialCandidate | null {
+  return (
+    candidateFromToken(env.ANTHROPIC_OAUTH_TOKEN, "env:ANTHROPIC_OAUTH_TOKEN") ??
+    candidateFromToken(storedCredentials?.anthropicOauthToken, "config:credentials.anthropicOauthToken")
+  );
+}
+
+/** Resolves auto-detected Anthropic OAuth credentials. */
+function resolveAnthropicOauthCandidate(env: NodeJS.ProcessEnv): CredentialCandidate | null {
+  return parseClaudeFromFiles(env) ?? parseClaudeFromKeychain();
+}
+
+/** Resolves auto-detected OpenAI subscription credentials. */
+function resolveOpenAiSubscriptionCandidate(env: NodeJS.ProcessEnv): CredentialCandidate | null {
+  return parseCodexFromFile(env) ?? parseCodexFromKeychain(env);
+}
+
+/** Builds human-readable setup guidance for one auth method. */
+function credentialSetupGuidance(auth: AgenrAuthMethod): string {
+  switch (auth) {
+    case "anthropic-oauth":
+      return "Claude Code credentials not found. Install Claude Code CLI and sign in with `claude`.";
+    case "anthropic-token":
+      return "No Anthropic long-lived token found. Set ANTHROPIC_OAUTH_TOKEN or save credentials.anthropicOauthToken.";
+    case "anthropic-api-key":
+      return "No Anthropic API key found. Set ANTHROPIC_API_KEY or save credentials.anthropicApiKey.";
+    case "openai-subscription":
+      return "Codex CLI credentials not found or expired. Run `codex auth`.";
+    case "openai-api-key":
+      return "No OpenAI API key found. Set OPENAI_API_KEY or save credentials.openaiApiKey.";
+  }
+}
+
+/** Resolves the credential candidate used by one configured auth method. */
+function resolveCredentialCandidate(params: {
+  auth: AgenrAuthMethod;
+  storedCredentials?: AgenrStoredCredentials;
+  legacyConfig?: AgenrConfig;
+  env?: NodeJS.ProcessEnv;
+}): CredentialCandidate | null {
+  const env = params.env ?? process.env;
+  switch (params.auth) {
+    case "anthropic-oauth":
+      return resolveAnthropicOauthCandidate(env);
+    case "anthropic-token":
+      return resolveAnthropicTokenCandidate(params.storedCredentials, env);
+    case "anthropic-api-key":
+      return (
+        resolveAnthropicApiKeyCandidate(params.legacyConfig, env) ??
+        candidateFromToken(params.storedCredentials?.anthropicApiKey, "config:credentials.anthropicApiKey")
+      );
+    case "openai-subscription":
+      return resolveOpenAiSubscriptionCandidate(env);
+    case "openai-api-key":
+      return (
+        resolveOpenAIApiKeyCandidate(params.legacyConfig, env) ?? candidateFromToken(params.storedCredentials?.openaiApiKey, "config:credentials.openaiApiKey")
+      );
+  }
+}
+
+/** Resolves direct provider credentials when auth-specific matching does not apply. */
+function resolveProviderCredentialCandidate(config: AgenrConfig | undefined, provider: string, env: NodeJS.ProcessEnv): CredentialCandidate | null {
+  if (provider === "openai") {
+    return resolveOpenAIApiKeyCandidate(config, env);
+  }
+
+  if (provider === "anthropic") {
+    const auth = normalizeAuthMethod(config?.auth);
+    if (auth && authMethodToProvider(auth) === "anthropic") {
+      return resolveCredentialCandidate({
+        auth,
+        storedCredentials: config?.credentials,
+        legacyConfig: config,
+        env,
+      });
+    }
+
+    return resolveAnthropicApiKeyCandidate(config, env);
+  }
+
+  const envApiKey = getEnvApiKey(provider as KnownProvider) ?? getEnvApiKey(provider);
+  return candidateFromToken(envApiKey, `env:${provider}`);
 }
 
 /** Creates a zeroed usage counter object for a new client. */

@@ -30,13 +30,17 @@ function createInitRuntime(overrides: Partial<InitWizardRuntime> = {}): InitWiza
   return {
     runSetupCore: vi.fn(async () => ({
       config: {
+        auth: "openai-api-key",
         provider: "openai",
         model: "gpt-5.4-mini",
-        apiKey: "sk-test",
+        credentials: {
+          openaiApiKey: "sk-test",
+        },
         dbPath: "/tmp/knowledge.db",
       },
       configPath: process.env.AGENR_CONFIG_PATH ?? "/tmp/config.json",
       dbPath: "/tmp/knowledge.db",
+      auth: "openai-api-key",
       provider: "openai",
       model: "gpt-5.4-mini",
       embeddingUsesPrimaryKey: true,

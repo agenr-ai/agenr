@@ -1,3 +1,7 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const piAiMocks = vi.hoisted(() => ({
@@ -14,7 +18,12 @@ vi.mock("@mariozechner/pi-ai", () => ({
 
 import type { Api, AssistantMessage, Model } from "@mariozechner/pi-ai";
 
-import { createLlmClient, resolveLlmApiKey, resolveModel, stripCodeFence } from "../../src/adapters/llm.js";
+import { createLlmClient, probeLlmCredentials, resolveLlmApiKey, resolveModel, stripCodeFence } from "../../src/adapters/llm.js";
+
+const tempDirs: string[] = [];
+const originalOpenAiApiKey = process.env.OPENAI_API_KEY;
+const originalAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
+const originalCodexHome = process.env.CODEX_HOME;
 
 function buildModel(overrides: Partial<Model<Api>> = {}): Model<Api> {
   return {
@@ -146,16 +155,43 @@ describe("resolveModel", () => {
 describe("resolveLlmApiKey", () => {
   beforeEach(() => {
     piAiMocks.getEnvApiKey.mockReset();
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
   });
 
-  it("prefers config.apiKey over provider environment lookup", () => {
-    piAiMocks.getEnvApiKey.mockReturnValue("env-key");
+  afterEach(() => {
+    if (originalOpenAiApiKey === undefined) {
+      delete process.env.OPENAI_API_KEY;
+    } else {
+      process.env.OPENAI_API_KEY = originalOpenAiApiKey;
+    }
 
-    expect(resolveLlmApiKey({ apiKey: "config-key" }, "openai")).toBe("config-key");
+    if (originalAnthropicApiKey === undefined) {
+      delete process.env.ANTHROPIC_API_KEY;
+    } else {
+      process.env.ANTHROPIC_API_KEY = originalAnthropicApiKey;
+    }
+  });
+
+  it("prefers OPENAI_API_KEY over stored OpenAI credentials", () => {
+    process.env.OPENAI_API_KEY = "env-key";
+
+    expect(
+      resolveLlmApiKey(
+        {
+          auth: "openai-api-key",
+          provider: "openai",
+          credentials: {
+            openaiApiKey: "config-key",
+          },
+        },
+        "openai",
+      ),
+    ).toBe("env-key");
   });
 
   it("falls back to the provider environment key", () => {
-    piAiMocks.getEnvApiKey.mockReturnValue("env-key");
+    process.env.OPENAI_API_KEY = "env-key";
 
     expect(resolveLlmApiKey(undefined, "openai")).toBe("env-key");
   });
@@ -163,7 +199,76 @@ describe("resolveLlmApiKey", () => {
   it("throws when no API key is available", () => {
     piAiMocks.getEnvApiKey.mockReturnValue(undefined);
 
-    expect(() => resolveLlmApiKey(undefined, "openai")).toThrow(/no api key found/i);
+    expect(() => resolveLlmApiKey(undefined, "openai")).toThrow(/no credential found/i);
+  });
+
+  it("uses stored Anthropic tokens for anthropic-token auth", () => {
+    expect(
+      resolveLlmApiKey(
+        {
+          auth: "anthropic-token",
+          provider: "anthropic",
+          credentials: {
+            anthropicOauthToken: "anthropic-token-value",
+          },
+        },
+        "anthropic",
+      ),
+    ).toBe("anthropic-token-value");
+  });
+});
+
+describe("probeLlmCredentials", () => {
+  beforeEach(() => {
+    delete process.env.CODEX_HOME;
+  });
+
+  afterEach(async () => {
+    if (originalCodexHome === undefined) {
+      delete process.env.CODEX_HOME;
+    } else {
+      process.env.CODEX_HOME = originalCodexHome;
+    }
+
+    await Promise.all(tempDirs.splice(0).map((directory) => rm(directory, { force: true, recursive: true })));
+  });
+
+  it("detects Codex CLI credentials from auth.json for openai subscriptions", async () => {
+    const codexHome = await mkdtemp(path.join(os.tmpdir(), "agenr-codex-auth-"));
+    tempDirs.push(codexHome);
+    await mkdir(codexHome, { recursive: true });
+    await writeFile(
+      path.join(codexHome, "auth.json"),
+      JSON.stringify({
+        tokens: {
+          access_token: "subscription-token",
+        },
+      }),
+    );
+    process.env.CODEX_HOME = codexHome;
+
+    const result = probeLlmCredentials({
+      auth: "openai-subscription",
+    });
+
+    expect(result.available).toBe(true);
+    expect(result.source).toContain("auth.json");
+    expect(result.credentials).toMatchObject({
+      apiKey: "subscription-token",
+      auth: "openai-subscription",
+    });
+  });
+
+  it("returns setup guidance when Anthropic token credentials are unavailable", () => {
+    const result = probeLlmCredentials({
+      auth: "anthropic-token",
+      env: {
+        HOME: path.join(os.tmpdir(), "agenr-missing-claude-home"),
+      } as NodeJS.ProcessEnv,
+    });
+
+    expect(result.available).toBe(false);
+    expect(result.guidance).toMatch(/anthropic long-lived token/i);
   });
 });
 

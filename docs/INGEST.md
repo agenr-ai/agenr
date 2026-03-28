@@ -290,10 +290,12 @@ A minimal ingest-relevant config looks like this:
 
 ```json
 {
+  "auth": "openai-api-key",
   "provider": "openai",
   "model": "gpt-5.4-mini",
-  "apiKey": "<provider api key>",
-  "embeddingApiKey": "<embedding api key or omit to reuse apiKey>",
+  "credentials": {
+    "openaiApiKey": "<OpenAI API key>"
+  },
   "embeddingModel": "text-embedding-3-small",
   "extractionContext": "Optional user or project context injected into extraction prompts.",
   "extractionModel": {
@@ -305,6 +307,8 @@ A minimal ingest-relevant config looks like this:
   "dbPath": "/absolute/path/to/knowledge.db"
 }
 ```
+
+If extraction uses Anthropic auth or OpenAI subscription auth, embeddings still require `credentials.openaiApiKey` or `OPENAI_API_KEY`.
 
 Notes:
 

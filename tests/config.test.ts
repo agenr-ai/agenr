@@ -19,9 +19,12 @@ describe("writeConfig", () => {
 
     writeConfig(
       {
+        auth: "openai-api-key",
         provider: "openai",
         model: "gpt-5.4-mini",
-        apiKey: "sk-test",
+        credentials: {
+          openaiApiKey: "sk-test",
+        },
         dbPath: path.join(directory, "knowledge.db"),
       },
       { configPath },
@@ -29,13 +32,17 @@ describe("writeConfig", () => {
 
     expect(configFileExists({ configPath })).toBe(true);
     expect(readConfig({ configPath })).toEqual({
+      auth: "openai-api-key",
       provider: "openai",
       model: "gpt-5.4-mini",
-      apiKey: "sk-test",
+      credentials: {
+        openaiApiKey: "sk-test",
+      },
       dbPath: path.join(directory, "knowledge.db"),
     });
 
     const raw = await readFile(configPath, "utf8");
+    expect(raw).toContain('\n  "auth": "openai-api-key"');
     expect(raw).toContain('\n  "provider": "openai"');
     expect(raw.endsWith("\n")).toBe(true);
   });
@@ -46,9 +53,12 @@ describe("writeConfig", () => {
 
     writeConfig(
       {
+        auth: "openai-api-key",
         provider: "openai",
         model: "gpt-5.4-mini",
-        apiKey: "sk-test",
+        credentials: {
+          openaiApiKey: "sk-test",
+        },
       },
       { configPath },
     );

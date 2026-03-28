@@ -9,6 +9,31 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
+ * Supported auth methods for agenr-managed LLM access.
+ */
+export type AgenrAuthMethod = "openai-api-key" | "openai-subscription" | "anthropic-api-key" | "anthropic-oauth" | "anthropic-token";
+
+/**
+ * Providers currently supported by agenr setup and runtime helpers.
+ */
+export type AgenrProvider = "openai" | "openai-codex" | "anthropic";
+
+/**
+ * Manually entered credentials persisted in `config.json`.
+ *
+ * OAuth and subscription credentials are auto-detected from external CLIs and
+ * should not be stored here.
+ */
+export interface AgenrStoredCredentials {
+  /** OpenAI API key used for extraction, embeddings, or both. */
+  openaiApiKey?: string;
+  /** Anthropic API key used for extraction requests. */
+  anthropicApiKey?: string;
+  /** Anthropic long-lived token used for subscription auth. */
+  anthropicOauthToken?: string;
+}
+
+/**
  * Per-pipeline model configuration.
  * Each pipeline stage can use a different provider/model combination.
  * Falls back to the top-level provider/model when not set.
@@ -21,19 +46,94 @@ export interface ModelConfig {
 }
 
 /**
+ * Static metadata for one supported auth method.
+ */
+export interface AuthMethodDefinition {
+  /** Stable config ID for the auth method. */
+  id: AgenrAuthMethod;
+  /** Underlying provider name passed to pi-ai. */
+  provider: AgenrProvider;
+  /** Human-readable label shown in setup. */
+  title: string;
+  /** Short setup guidance shown during selection. */
+  setupDescription: string;
+  /** Ordered model IDs allowed for this auth method. */
+  preferredModels: readonly string[];
+}
+
+const AUTH_METHOD_DEFINITIONS: readonly AuthMethodDefinition[] = [
+  {
+    id: "openai-api-key",
+    provider: "openai",
+    title: "OpenAI API key",
+    setupDescription: "Standard OpenAI API key. Pay per token.",
+    preferredModels: ["gpt-5.4-mini", "gpt-5.4", "gpt-5.4-nano"],
+  },
+  {
+    id: "openai-subscription",
+    provider: "openai-codex",
+    title: "OpenAI - Subscription (via Codex CLI)",
+    setupDescription: "Uses your Codex CLI login. No per-token cost. Requires `codex auth`.",
+    preferredModels: ["gpt-5.4-mini", "gpt-5.4"],
+  },
+  {
+    id: "anthropic-api-key",
+    provider: "anthropic",
+    title: "Anthropic API key",
+    setupDescription: "Standard Anthropic API key. Pay per token.",
+    preferredModels: ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"],
+  },
+  {
+    id: "anthropic-oauth",
+    provider: "anthropic",
+    title: "Anthropic - Claude subscription (OAuth)",
+    setupDescription: "Uses your Claude Code CLI login. No per-token cost.",
+    preferredModels: ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"],
+  },
+  {
+    id: "anthropic-token",
+    provider: "anthropic",
+    title: "Anthropic - Claude subscription (long-lived token)",
+    setupDescription: "Uses a Claude long-lived token instead of an API key.",
+    preferredModels: ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"],
+  },
+] as const;
+
+const AUTH_METHOD_SET = new Set<AgenrAuthMethod>(AUTH_METHOD_DEFINITIONS.map((definition) => definition.id));
+
+/**
  * Runtime configuration loaded from disk or environment overrides.
  */
 export interface AgenrConfig {
+  /** Selected auth method for the default extraction provider. */
+  auth?: AgenrAuthMethod;
+
   /** Default LLM provider (e.g., "openai", "anthropic"). */
   provider?: string;
 
   /** Default model for LLM tasks. */
   model?: string;
 
-  /** API key for LLM calls (prefer env var AGENR_API_KEY or provider-specific env vars). */
+  /**
+   * Stored manual credentials.
+   *
+   * OAuth and subscription auth continue to resolve from external credential
+   * stores and are not written to this object.
+   */
+  credentials?: AgenrStoredCredentials;
+
+  /**
+   * Legacy shared LLM credential field written by older setup flows.
+   *
+   * @deprecated Use `credentials` and `auth` instead.
+   */
   apiKey?: string;
 
-  /** API key specifically for embeddings. Falls back to apiKey if not set. */
+  /**
+   * Legacy embedding API key field written by older setup flows.
+   *
+   * @deprecated Use `credentials.openaiApiKey` instead.
+   */
   embeddingApiKey?: string;
 
   /** Embedding model. */
@@ -59,6 +159,46 @@ const DEFAULT_CONFIG_DIR = path.join(os.homedir(), ".agenr");
 const DEFAULT_DB_NAME = "knowledge.db";
 const CONFIG_DIR_MODE = 0o700;
 const CONFIG_FILE_MODE = 0o600;
+
+/**
+ * Returns whether a string is one of agenr's supported auth methods.
+ *
+ * @param value - Candidate string to inspect.
+ * @returns True when the value is a known auth-method ID.
+ */
+export function isAgenrAuthMethod(value: string): value is AgenrAuthMethod {
+  return AUTH_METHOD_SET.has(value as AgenrAuthMethod);
+}
+
+/**
+ * Looks up the provider used by one auth method.
+ *
+ * @param auth - Auth method to resolve.
+ * @returns Provider identifier used by pi-ai.
+ */
+export function authMethodToProvider(auth: AgenrAuthMethod): AgenrProvider {
+  const definition = AUTH_METHOD_DEFINITIONS.find((candidate) => candidate.id === auth);
+  if (!definition) {
+    throw new Error(`Unsupported auth method "${auth}".`);
+  }
+
+  return definition.provider;
+}
+
+/**
+ * Looks up metadata for one auth method.
+ *
+ * @param auth - Auth method to resolve.
+ * @returns Static auth metadata used by setup and runtime helpers.
+ */
+export function getAuthMethodDefinition(auth: AgenrAuthMethod): AuthMethodDefinition {
+  const definition = AUTH_METHOD_DEFINITIONS.find((candidate) => candidate.id === auth);
+  if (!definition) {
+    throw new Error(`Unsupported auth method "${auth}".`);
+  }
+
+  return definition;
+}
 
 /**
  * Overrides used when resolving the agenr config file path.

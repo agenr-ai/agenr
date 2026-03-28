@@ -35,7 +35,7 @@ agenr init        # first-run onboarding, including optional OpenClaw setup
 agenr setup       # reconfigure provider, models, keys, and DB path later
 ```
 
-`agenr setup` writes `~/.agenr/config.json` and `agenr init` can also install the OpenClaw plugin, scan existing sessions, and optionally ingest them on first run.
+`agenr setup` writes `~/.agenr/config.json`, supports OpenAI and Anthropic API keys plus Claude Code and Codex CLI subscription auth, and prompts for a separate OpenAI embedding key when the extraction auth does not provide one. `agenr init` can also install the OpenClaw plugin, scan existing sessions, and optionally ingest them on first run.
 
 ## License
 

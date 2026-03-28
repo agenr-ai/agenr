@@ -382,8 +382,12 @@ A minimal recall-relevant config looks like this:
 
 ```json
 {
-  "apiKey": "<provider api key>",
-  "embeddingApiKey": "<embedding api key or omit to reuse apiKey>",
+  "auth": "openai-api-key",
+  "provider": "openai",
+  "model": "gpt-5.4-mini",
+  "credentials": {
+    "openaiApiKey": "<OpenAI API key>"
+  },
   "embeddingModel": "text-embedding-3-small",
   "dbPath": "/absolute/path/to/knowledge.db"
 }
@@ -391,7 +395,8 @@ A minimal recall-relevant config looks like this:
 
 Notes:
 
-- `embeddingApiKey` falls back to `apiKey`, then `OPENAI_API_KEY`
+- embeddings use `credentials.openaiApiKey`, then legacy `embeddingApiKey`, then legacy `apiKey` for `openai-api-key`, then `OPENAI_API_KEY`
+- if extraction uses Anthropic auth or OpenAI subscription auth, embeddings still require an OpenAI API key
 - `embeddingModel` falls back to `text-embedding-3-small`
 - `AGENR_DB_PATH` overrides `dbPath`
 - `AGENR_CONFIG_PATH` overrides the config file location

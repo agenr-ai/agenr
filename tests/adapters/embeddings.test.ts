@@ -39,19 +39,28 @@ describe("resolveEmbeddingApiKey", () => {
     }
   });
 
-  it("prefers embeddingApiKey over apiKey and environment fallback", () => {
+  it("prefers credentials.openaiApiKey over legacy fields and environment fallback", () => {
     process.env.OPENAI_API_KEY = "env-key";
 
     expect(
       resolveEmbeddingApiKey({
-        embeddingApiKey: "embedding-key",
+        credentials: {
+          openaiApiKey: "embedding-key",
+        },
+        embeddingApiKey: "legacy-embedding-key",
         apiKey: "shared-key",
       }),
     ).toBe("embedding-key");
   });
 
-  it("falls back to apiKey when embeddingApiKey is absent", () => {
-    expect(resolveEmbeddingApiKey({ apiKey: "shared-key" })).toBe("shared-key");
+  it("falls back to a legacy OpenAI primary key when auth is openai-api-key", () => {
+    expect(resolveEmbeddingApiKey({ auth: "openai-api-key", provider: "openai", apiKey: "shared-key" })).toBe("shared-key");
+  });
+
+  it("does not reuse a non-OpenAI primary credential for embeddings", () => {
+    process.env.OPENAI_API_KEY = "env-key";
+
+    expect(resolveEmbeddingApiKey({ auth: "openai-subscription", provider: "openai-codex", apiKey: "subscription-token" })).toBe("env-key");
   });
 
   it("falls back to OPENAI_API_KEY when config keys are missing", () => {

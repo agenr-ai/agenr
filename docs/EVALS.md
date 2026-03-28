@@ -476,8 +476,12 @@ A minimal eval-relevant config looks like this:
 
 ```json
 {
-  "apiKey": "<provider api key>",
-  "embeddingApiKey": "<embedding api key or omit to reuse apiKey>",
+  "auth": "openai-api-key",
+  "provider": "openai",
+  "model": "gpt-5.4-mini",
+  "credentials": {
+    "openaiApiKey": "<OpenAI API key>"
+  },
   "embeddingModel": "text-embedding-3-small"
 }
 ```
@@ -485,7 +489,8 @@ A minimal eval-relevant config looks like this:
 Important notes:
 
 - evals need embedding access both for fixture seeding and for the recall query
-- `embeddingApiKey` falls back to `apiKey`, then `OPENAI_API_KEY`
+- embeddings use `credentials.openaiApiKey`, then legacy `embeddingApiKey`, then legacy `apiKey` for `openai-api-key`, then `OPENAI_API_KEY`
+- if extraction auth is Anthropic or OpenAI subscription auth, `credentials.openaiApiKey` still needs to hold an OpenAI API key for embeddings
 - `embeddingModel` falls back to `text-embedding-3-small`
 - `AGENR_CONFIG_PATH` overrides the config file location
 - the normal configured `dbPath` is not the execution database for eval cases because each case creates its own isolated sandbox DB

@@ -36,7 +36,10 @@ describe("createAgenrOpenClawServices", () => {
     const root = await createTempRoot();
     const dbPath = path.join(root, "knowledge.db");
     await writeJson(path.join(root, "config.json"), {
-      apiKey: "config-key",
+      auth: "openai-api-key",
+      credentials: {
+        openaiApiKey: "config-key",
+      },
       embeddingModel: "text-embedding-from-config",
     });
 
@@ -85,7 +88,9 @@ describe("createAgenrOpenClawServices", () => {
     const dbPath = path.join(root, "data", "knowledge.db");
     const configPath = path.join(root, "settings", "agenr.json");
     await writeJson(configPath, {
-      embeddingApiKey: "explicit-config-key",
+      credentials: {
+        openaiApiKey: "explicit-config-key",
+      },
       embeddingModel: "text-embedding-explicit",
     });
 
