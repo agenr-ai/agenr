@@ -192,6 +192,19 @@ describe("storeEntries", () => {
       [30, 31],
     ]);
   });
+
+  it("uses the input created_at while keeping updated_at at write time", async () => {
+    const db = new MockDatabase();
+    const embedding = new MockEmbeddingPort();
+    const createdAt = "2026-03-01T10:00:00.000Z";
+
+    await storeEntries([createInput({ created_at: createdAt })], db, embedding);
+
+    const inserted = db.insertions[0]?.entry;
+    expect(inserted?.created_at).toBe(createdAt);
+    expect(inserted?.updated_at).toMatch(/^20\d\d-/);
+    expect(inserted?.updated_at).not.toBe(createdAt);
+  });
 });
 
 class MockDatabase implements DatabasePort {
@@ -277,5 +290,6 @@ function createInput(overrides: Partial<StoreEntryInput> = {}): StoreEntryInput 
     tags: overrides.tags,
     source_file: overrides.source_file,
     source_context: overrides.source_context,
+    created_at: overrides.created_at,
   };
 }

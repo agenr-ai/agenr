@@ -201,7 +201,7 @@ async function persistEntries(db: DatabasePort, preparedEntries: PreparedEntry[]
 
 /** Builds the canonical stored entry record for persistence. */
 function buildEntry(preparedEntry: PreparedEntry, embedding: number[]): Entry {
-  const timestamp = new Date().toISOString();
+  const now = new Date().toISOString();
 
   return {
     id: randomUUID(),
@@ -219,8 +219,8 @@ function buildEntry(preparedEntry: PreparedEntry, embedding: number[]): Entry {
     quality_score: 0.5,
     recall_count: 0,
     retired: false,
-    created_at: timestamp,
-    updated_at: timestamp,
+    created_at: preparedEntry.input.created_at ?? now,
+    updated_at: now,
   };
 }
 

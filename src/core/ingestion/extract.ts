@@ -137,6 +137,12 @@ export async function extractFromTranscript(
         messageRange: chunk.message_range,
         success: true,
       });
+      const chunkTimestamp = resolveChunkTimestamp(transcript.messages, chunk.message_range, transcript.metadata.startedAt);
+      if (chunkTimestamp) {
+        for (const entry of parsed.entries) {
+          entry.created_at = chunkTimestamp;
+        }
+      }
       entries.push(...parsed.entries);
       warnings.push(...parsed.warnings.map((warning) => `Chunk ${chunk.chunk_index + 1}: ${warning}`));
       previouslyExtracted.push(...parsed.entries.map(toPreviouslyExtractedSubject));
@@ -246,6 +252,34 @@ function buildChunk(messages: TranscriptMessage[], startIndex: number, endIndex:
     text: lines.join("\n"),
     message_range: [first.index, last.index],
   };
+}
+
+/**
+ * Resolves the best available timestamp for one chunk's extracted entries.
+ *
+ * Prefers the last message timestamp within the chunk range because the
+ * extracted knowledge is known by the end of the chunk. Falls back to the
+ * transcript start time when no chunk message carries a timestamp.
+ */
+function resolveChunkTimestamp(messages: TranscriptMessage[], messageRange: [number, number], fallbackStartedAt?: string): string | undefined {
+  const [rangeStart, rangeEnd] = messageRange;
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!message) {
+      continue;
+    }
+
+    if (message.index < rangeStart) {
+      break;
+    }
+
+    if (message.index <= rangeEnd && message.timestamp) {
+      return message.timestamp;
+    }
+  }
+
+  return fallbackStartedAt;
 }
 
 /** Estimates token usage for a rendered transcript. */

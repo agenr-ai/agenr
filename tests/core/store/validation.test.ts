@@ -27,8 +27,22 @@ describe("validateEntries", () => {
         tags: ["arch"],
         source_file: undefined,
         source_context: undefined,
+        created_at: undefined,
       },
     ]);
+  });
+
+  it("passes through an optional created_at timestamp", () => {
+    const result = validateEntries([
+      {
+        type: "fact",
+        subject: "subject",
+        content: "content",
+        created_at: " 2026-03-01T10:00:00.000Z ",
+      },
+    ]);
+
+    expect(result.valid[0]?.created_at).toBe("2026-03-01T10:00:00.000Z");
   });
 
   it("rejects entries with an empty subject", () => {

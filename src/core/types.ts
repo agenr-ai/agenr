@@ -64,6 +64,7 @@ export interface StoreEntryInput {
   tags?: string[];
   source_file?: string;
   source_context?: string;
+  created_at?: string;
 }
 
 /**

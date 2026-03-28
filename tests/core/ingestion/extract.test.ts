@@ -12,11 +12,12 @@ function buildTranscript(messages: TranscriptMessage[]): ParsedTranscript {
   };
 }
 
-function buildMessage(index: number, role: "user" | "assistant", text: string): TranscriptMessage {
+function buildMessage(index: number, role: "user" | "assistant", text: string, timestamp?: string): TranscriptMessage {
   return {
     index,
     role,
     text,
+    timestamp,
   };
 }
 
@@ -29,7 +30,10 @@ function buildLlm(implementation: LlmPort["completeJson"]): LlmPort {
 
 describe("extractFromTranscript", () => {
   it("extracts a single chunk successfully", async () => {
-    const transcript = buildTranscript([buildMessage(0, "user", "We always use pnpm for this repository."), buildMessage(1, "assistant", "Understood.")]);
+    const transcript = buildTranscript([
+      buildMessage(0, "user", "We always use pnpm for this repository.", "2026-03-01T10:00:00.000Z"),
+      buildMessage(1, "assistant", "Understood.", "2026-03-01T10:01:00.000Z"),
+    ]);
     const llm = buildLlm(async () => ({
       entries: [
         {
@@ -59,6 +63,7 @@ describe("extractFromTranscript", () => {
           expiry: "permanent",
           tags: ["workflow"],
           source_context: "User stated a standing tool choice",
+          created_at: "2026-03-01T10:01:00.000Z",
         },
       ],
       chunks: 1,
@@ -73,6 +78,54 @@ describe("extractFromTranscript", () => {
       ],
       warnings: [],
     });
+  });
+
+  it("uses the last timestamp in the chunk for extracted entries", async () => {
+    const transcript = buildTranscript([
+      buildMessage(0, "user", "First message", "2026-03-01T10:00:00.000Z"),
+      buildMessage(1, "assistant", "Second message", "2026-03-01T10:05:00.000Z"),
+    ]);
+    const llm = buildLlm(async () => ({
+      entries: [
+        {
+          type: "fact",
+          subject: "working topic",
+          content: "The conversation is focused on shipping the timestamp ingest fix this week.",
+        },
+      ],
+    }));
+
+    const result = await extractFromTranscript(transcript, llm, {
+      wholeFile: "never",
+      interChunkDelayMs: 0,
+    });
+
+    expect(result.entries[0]?.created_at).toBe("2026-03-01T10:05:00.000Z");
+  });
+
+  it("falls back to transcript startedAt when chunk messages lack timestamps", async () => {
+    const transcript = {
+      ...buildTranscript([buildMessage(0, "user", "First message"), buildMessage(1, "assistant", "Second message")]),
+      metadata: {
+        startedAt: "2026-03-02T09:00:00.000Z",
+      },
+    };
+    const llm = buildLlm(async () => ({
+      entries: [
+        {
+          type: "fact",
+          subject: "working topic",
+          content: "The conversation is focused on shipping the timestamp ingest fix this week.",
+        },
+      ],
+    }));
+
+    const result = await extractFromTranscript(transcript, llm, {
+      wholeFile: "never",
+      interChunkDelayMs: 0,
+    });
+
+    expect(result.entries[0]?.created_at).toBe("2026-03-02T09:00:00.000Z");
   });
 
   it("uses whole-file mode when the transcript fits in context", async () => {
