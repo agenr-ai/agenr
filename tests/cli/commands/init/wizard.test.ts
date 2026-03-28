@@ -44,6 +44,7 @@ function createInitRuntime(overrides: Partial<InitWizardRuntime> = {}): InitWiza
       provider: "openai",
       model: "gpt-5.4-mini",
       embeddingUsesPrimaryKey: true,
+      ready: true,
     })),
     detectOpenClawInstallation: vi.fn(() => ({
       detected: false,
@@ -138,5 +139,109 @@ describe("runInitWizard", () => {
     expect(runtime.restartOpenClawGateway).toHaveBeenCalledTimes(1);
     expect(runtime.runBulkIngest).toHaveBeenCalledWith(["/tmp/.openclaw/agents/main/sessions/b.jsonl"], expect.any(Object), prompts);
     expect(prompts.outros.at(-1)).toContain("openclaw gateway restart");
+  });
+
+  it("skips bulk ingest when setup still needs external credentials", async () => {
+    const prompts = new FakePrompts([true]);
+    const runtime = createInitRuntime({
+      runSetupCore: vi.fn(async () => ({
+        config: {
+          auth: "openai-subscription",
+          provider: "openai-codex",
+          model: "gpt-5.4-mini",
+          credentials: {
+            openaiApiKey: "sk-embed",
+          },
+          dbPath: "/tmp/knowledge.db",
+        },
+        configPath: process.env.AGENR_CONFIG_PATH ?? "/tmp/config.json",
+        dbPath: "/tmp/knowledge.db",
+        auth: "openai-subscription",
+        provider: "openai-codex",
+        model: "gpt-5.4-mini",
+        embeddingUsesPrimaryKey: false,
+        ready: false,
+        readinessGuidance: "Codex CLI credentials not found or expired. Run `codex auth`.",
+      })),
+      detectOpenClawInstallation: vi.fn(() => ({
+        detected: true,
+        stateDir: "/tmp/.openclaw",
+        configPath: "/tmp/.openclaw/openclaw.json",
+        sessionsRoot: "/tmp/.openclaw/agents",
+        source: "default" as const,
+      })),
+      scanSessionFiles: vi.fn(async () => ({
+        totalFiles: 2,
+        allFiles: ["/tmp/.openclaw/agents/main/sessions/a.jsonl", "/tmp/.openclaw/agents/main/sessions/b.jsonl"],
+        recentFiles: ["/tmp/.openclaw/agents/main/sessions/b.jsonl"],
+        totalSizeBytes: 4000,
+        recentSizeBytes: 1000,
+      })),
+    });
+
+    await runInitWizard({
+      prompts,
+      runtime,
+    });
+
+    expect(runtime.runBulkIngest).not.toHaveBeenCalled();
+    expect(prompts.log.warnMessages.some((message) => message.includes("codex auth"))).toBe(true);
+    expect(prompts.notes.at(-1)?.message).toContain("Ingest: Skipped - current auth still needs credentials");
+  });
+
+  it("hides dollar-cost messaging for subscription-backed auth", async () => {
+    const prompts = new FakePrompts([true, "skip"]);
+    const runtime = createInitRuntime({
+      runSetupCore: vi.fn(async () => ({
+        config: {
+          auth: "openai-subscription",
+          provider: "openai-codex",
+          model: "gpt-5.4-mini",
+          credentials: {
+            openaiApiKey: "sk-embed",
+          },
+          dbPath: "/tmp/knowledge.db",
+        },
+        configPath: process.env.AGENR_CONFIG_PATH ?? "/tmp/config.json",
+        dbPath: "/tmp/knowledge.db",
+        auth: "openai-subscription",
+        provider: "openai-codex",
+        model: "gpt-5.4-mini",
+        embeddingUsesPrimaryKey: false,
+        ready: true,
+      })),
+      detectOpenClawInstallation: vi.fn(() => ({
+        detected: true,
+        stateDir: "/tmp/.openclaw",
+        configPath: "/tmp/.openclaw/openclaw.json",
+        sessionsRoot: "/tmp/.openclaw/agents",
+        source: "default" as const,
+      })),
+      scanSessionFiles: vi.fn(async () => ({
+        totalFiles: 2,
+        allFiles: ["/tmp/.openclaw/agents/main/sessions/a.jsonl", "/tmp/.openclaw/agents/main/sessions/b.jsonl"],
+        recentFiles: ["/tmp/.openclaw/agents/main/sessions/b.jsonl"],
+        totalSizeBytes: 4000,
+        recentSizeBytes: 1000,
+      })),
+      estimateIngestCost: vi.fn((totalBytes, modelId, provider) => ({
+        inputTokens: totalBytes,
+        outputTokens: Math.ceil(totalBytes * 0.1),
+        inputCostUsd: provider === "openai-codex" ? 123 : 0,
+        outputCostUsd: 456,
+        totalCostUsd: 579,
+        modelId,
+      })),
+    });
+
+    await runInitWizard({
+      prompts,
+      runtime,
+    });
+
+    const ingestPrompt = prompts.selectCalls.find((call) => call.message.includes("Estimated transcript volume"));
+    expect(ingestPrompt?.message).toContain("does not estimate per-token charges");
+    expect(ingestPrompt?.message).not.toContain("$");
+    expect(ingestPrompt?.options.some((option) => String(option.label).includes("$"))).toBe(false);
   });
 });

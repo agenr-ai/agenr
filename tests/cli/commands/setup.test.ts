@@ -2,7 +2,7 @@ import { Command } from "commander";
 import { describe, expect, it, vi } from "vitest";
 
 import { createProgram } from "../../../src/cli/main.js";
-import { filterSetupModelsForAuth, registerSetupCommand, runSetupCore, type SetupRuntime } from "../../../src/cli/commands/setup.js";
+import { buildStageAuthOptions, filterSetupModelsForAuth, registerSetupCommand, runSetupCore, type SetupRuntime } from "../../../src/cli/commands/setup.js";
 import { FakePrompts } from "../../cli/fake-prompts.js";
 
 function createSetupRuntime(overrides: Partial<SetupRuntime> = {}): SetupRuntime {
@@ -33,6 +33,37 @@ function createSetupRuntime(overrides: Partial<SetupRuntime> = {}): SetupRuntime
     })),
     testLlmConnection: vi.fn(async () => ({ ok: true })),
     testEmbeddingConnection: vi.fn(async () => ({ ok: true })),
+    getSetupReadiness: vi.fn((config) => {
+      const hasOpenAiKey = Boolean(config.credentials?.openaiApiKey?.trim());
+      const hasAnthropicApiKey = Boolean(config.credentials?.anthropicApiKey?.trim());
+      const hasAnthropicToken = Boolean(config.credentials?.anthropicOauthToken?.trim());
+      const needsAnthropicOverride = config.extractionModel?.provider === "anthropic" || config.dedupModel?.provider === "anthropic";
+
+      if (!config.provider || !config.model) {
+        return { ready: false, guidance: "Provider and model must both be configured." };
+      }
+
+      switch (config.auth) {
+        case "openai-api-key":
+          if (!hasOpenAiKey || needsAnthropicOverride) {
+            return { ready: false, guidance: "Additional credentials are still required before agenr can run." };
+          }
+          return { ready: true };
+        case "anthropic-api-key":
+          return hasAnthropicApiKey && hasOpenAiKey
+            ? { ready: true }
+            : { ready: false, guidance: "Additional credentials are still required before agenr can run." };
+        case "anthropic-token":
+          return hasAnthropicToken && hasOpenAiKey
+            ? { ready: true }
+            : { ready: false, guidance: "Additional credentials are still required before agenr can run." };
+        case "anthropic-oauth":
+        case "openai-subscription":
+          return { ready: false, guidance: "External credentials unavailable." };
+        default:
+          return { ready: false, guidance: "Provider and model must both be configured." };
+      }
+    }),
     ...overrides,
   };
 }
@@ -78,6 +109,7 @@ describe("runSetupCore", () => {
       provider: "openai",
       model: "gpt-5.4-mini",
       embeddingUsesPrimaryKey: true,
+      ready: true,
     });
     expect(runtime.testLlmConnection).toHaveBeenCalledWith("openai", "gpt-5.4-mini", "sk-openai");
     expect(runtime.testEmbeddingConnection).toHaveBeenCalledWith("sk-openai", "text-embedding-3-small");
@@ -153,6 +185,7 @@ describe("runSetupCore", () => {
           auth: "openai-subscription",
         },
       })),
+      getSetupReadiness: vi.fn(() => ({ ready: true })),
     });
 
     const result = await runSetupCore({
@@ -176,6 +209,7 @@ describe("runSetupCore", () => {
       provider: "openai-codex",
       model: "gpt-5.4-mini",
       embeddingUsesPrimaryKey: false,
+      ready: true,
     });
     expect(runtime.testLlmConnection).toHaveBeenCalledWith("openai-codex", "gpt-5.4-mini", "subscription-token");
     expect(runtime.writeConfig).toHaveBeenCalledWith({
@@ -212,8 +246,94 @@ describe("runSetupCore", () => {
       },
       dbPath: "/tmp/oauth.db",
     });
+    expect(result?.ready).toBe(false);
     expect(prompts.log.warnMessages).toContain("Claude Code credentials not found. Install Claude Code CLI and sign in with `claude`.");
     expect(runtime.testLlmConnection).not.toHaveBeenCalled();
+    expect(prompts.notes.at(-1)?.message).toContain("Status: Needs additional credentials before use");
+  });
+
+  it("does not repeat an unchanged dedup override in the saved summary", async () => {
+    const prompts = new FakePrompts(["openai-api-key", true, "gpt-5.4-mini", false, "/tmp/custom-knowledge.db"]);
+    const runtime = createSetupRuntime();
+
+    const result = await runSetupCore({
+      prompts,
+      runtime,
+      existingConfig: {
+        auth: "openai-api-key",
+        provider: "openai",
+        model: "gpt-5.4-mini",
+        credentials: {
+          openaiApiKey: "sk-openai",
+        },
+        dedupModel: {
+          provider: "openai",
+          model: "gpt-5.4",
+        },
+        dbPath: "/tmp/custom-knowledge.db",
+      },
+    });
+
+    expect(result?.config.dedupModel).toEqual({
+      provider: "openai",
+      model: "gpt-5.4",
+    });
+    expect(prompts.notes.at(-1)?.message).not.toContain("Dedup override");
+  });
+
+  it("marks configs with unavailable override credentials as not ready", async () => {
+    const prompts = new FakePrompts(["openai-api-key", true, "gpt-5.4-mini", false, "/tmp/custom-knowledge.db"]);
+    const runtime = createSetupRuntime();
+
+    const result = await runSetupCore({
+      prompts,
+      runtime,
+      existingConfig: {
+        auth: "openai-api-key",
+        provider: "openai",
+        model: "gpt-5.4-mini",
+        credentials: {
+          openaiApiKey: "sk-openai",
+        },
+        dedupModel: {
+          provider: "anthropic",
+          model: "claude-sonnet-4-6",
+        },
+        dbPath: "/tmp/custom-knowledge.db",
+      },
+    });
+
+    expect(result?.ready).toBe(false);
+    expect(prompts.notes.at(-1)?.message).toContain("Status: Needs additional credentials before use");
+  });
+});
+
+describe("buildStageAuthOptions", () => {
+  it("only includes alternate auth profiles when their credentials are already available", () => {
+    const runtime = createSetupRuntime({
+      probeCredentials: vi.fn((auth) => ({
+        available: auth === "openai-api-key",
+        guidance: auth === "anthropic-api-key" ? "No Anthropic API key found." : "Credentials available.",
+      })),
+    });
+
+    const authOptions = buildStageAuthOptions(runtime, "openai-api-key", {
+      auth: "openai-api-key",
+      provider: "openai",
+      model: "gpt-5.4-mini",
+      credentials: {
+        openaiApiKey: "sk-openai",
+      },
+    });
+
+    expect(authOptions).toEqual([
+      {
+        value: "openai-api-key",
+        label: "OpenAI API key",
+        hint: "current default",
+      },
+    ]);
+    expect(runtime.probeCredentials).toHaveBeenCalledWith("anthropic-api-key", expect.anything());
   });
 });
 

@@ -2,7 +2,7 @@ import { getModels } from "@mariozechner/pi-ai";
 import type { Command } from "commander";
 
 import { EMBEDDING_MODEL, createEmbeddingClient, resolveEmbeddingApiKey } from "../../adapters/embeddings.js";
-import { createLlmClient, probeLlmCredentials, resolveLlmCredentials, type LlmCredentialProbeResult } from "../../adapters/llm.js";
+import { createLlmClient, probeLlmCredentials, resolveLlmCredentials, resolveModel, type LlmCredentialProbeResult } from "../../adapters/llm.js";
 import {
   authMethodToProvider,
   getAuthMethodDefinition,
@@ -66,6 +66,8 @@ export interface SetupRuntime {
   testLlmConnection(provider: SetupProvider, modelId: string, apiKey: string): Promise<ConnectionTestResult>;
   /** Verifies that the embedding credential works. */
   testEmbeddingConnection(apiKey: string, modelId: string): Promise<ConnectionTestResult>;
+  /** Explains whether the saved config can run agenr commands immediately. */
+  getSetupReadiness(config: AgenrConfig): { ready: boolean; guidance?: string };
 }
 
 /**
@@ -98,6 +100,10 @@ export interface SetupCoreResult {
   model: string;
   /** Whether embeddings reuse the primary OpenAI key. */
   embeddingUsesPrimaryKey: boolean;
+  /** Whether the saved config can run agenr commands immediately. */
+  ready: boolean;
+  /** Human-readable blocker when the saved config is not ready yet. */
+  readinessGuidance?: string;
 }
 
 /** Internal credential result used while collecting setup inputs. */
@@ -156,6 +162,7 @@ const defaultSetupRuntime: SetupRuntime = {
       };
     }
   },
+  getSetupReadiness: (config) => getSetupReadiness(config),
 };
 
 /**
@@ -213,6 +220,12 @@ export async function runSetupCommand(): Promise<void> {
 
     if (!result) {
       prompts.cancel("Setup cancelled.");
+      return;
+    }
+
+    if (!result.ready) {
+      const pendingCredentialGuidance = result.readinessGuidance ?? "Additional credentials are still required before agenr can run.";
+      prompts.outro(`Setup saved. ${pendingCredentialGuidance}`);
       return;
     }
 
@@ -316,10 +329,20 @@ export async function runSetupCore(options: SetupCoreOptions = {}): Promise<Setu
     dedupModel: overrides.dedupModel,
     dbPath,
   });
+  const readiness = runtime.getSetupReadiness(nextConfig);
+  const ready = readiness.ready;
 
   runtime.writeConfig(nextConfig);
 
-  prompts.note(formatSavedConfigSummary(nextConfig, configPath, dbPath, embeddingUsesPrimaryKey), "Configuration saved");
+  prompts.note(
+    formatSavedConfigSummary(nextConfig, configPath, dbPath, {
+      embeddingUsesPrimaryKey,
+      previousConfig: existingConfig,
+      ready,
+      pendingCredentialGuidance: readiness.guidance,
+    }),
+    "Configuration saved",
+  );
 
   return {
     config: nextConfig,
@@ -329,6 +352,8 @@ export async function runSetupCore(options: SetupCoreOptions = {}): Promise<Setu
     provider,
     model,
     embeddingUsesPrimaryKey,
+    ready,
+    ...(readiness.guidance ? { readinessGuidance: readiness.guidance } : {}),
   };
 }
 
@@ -370,18 +395,40 @@ export function formatExistingConfig(config: AgenrConfig, configPath: string, db
  * @returns True when the config is ready to run agenr commands.
  */
 export function isSetupConfigured(config: AgenrConfig | undefined, env: NodeJS.ProcessEnv = process.env): boolean {
+  return getSetupReadiness(config, env).ready;
+}
+
+/**
+ * Explains whether the current config can run agenr commands immediately.
+ *
+ * @param config - Existing config values to inspect.
+ * @param env - Process environment used for credential fallback checks.
+ * @returns Readiness plus a human-readable blocker when unavailable.
+ */
+export function getSetupReadiness(config: AgenrConfig | undefined, env: NodeJS.ProcessEnv = process.env): { ready: boolean; guidance?: string } {
   const provider = normalizeProvider(config?.provider);
   const model = normalizeOptionalString(config?.model);
   if (!provider || !model) {
-    return false;
+    return {
+      ready: false,
+      guidance: "Provider and model must both be configured.",
+    };
   }
 
   try {
-    resolveLlmCredentials(config, provider, env);
+    const providersToValidate = new Set<string>([provider, resolveModel(config, "extraction").provider, resolveModel(config, "dedup").provider]);
+
+    for (const providerName of providersToValidate) {
+      resolveLlmCredentials(config, providerName, env);
+    }
+
     resolveEmbeddingApiKey(config);
-    return true;
-  } catch {
-    return false;
+    return { ready: true };
+  } catch (error) {
+    return {
+      ready: false,
+      guidance: formatUnknownError(error),
+    };
   }
 }
 
@@ -808,7 +855,10 @@ async function promptTaskModelOverrides(
   }
 
   if (!customize) {
-    return {};
+    return {
+      extractionModel: options.existingConfig?.extractionModel,
+      dedupModel: options.existingConfig?.dedupModel,
+    };
   }
 
   const extractionModel = await promptStageOverride(prompts, runtime, {
@@ -816,6 +866,7 @@ async function promptTaskModelOverrides(
     defaultAuth: options.defaultAuth,
     defaultModel: options.defaultModel,
     current: options.existingConfig?.extractionModel,
+    existingConfig: options.existingConfig,
   });
   if (extractionModel === null) {
     return null;
@@ -826,6 +877,7 @@ async function promptTaskModelOverrides(
     defaultAuth: options.defaultAuth,
     defaultModel: options.defaultModel,
     current: options.existingConfig?.dedupModel,
+    existingConfig: options.existingConfig,
   });
   if (dedupModel === null) {
     return null;
@@ -843,6 +895,7 @@ async function promptStageOverride(
     defaultAuth: AgenrAuthMethod;
     defaultModel: string;
     current?: ModelConfig;
+    existingConfig?: AgenrConfig;
   },
 ): Promise<ModelConfig | undefined | null> {
   const defaultRef = `${describeAuthMethod(options.defaultAuth)} / ${options.defaultModel}`;
@@ -874,14 +927,22 @@ async function promptStageOverride(
     return undefined;
   }
 
-  const auth = await prompts.select<AgenrAuthMethod>({
-    message: `Choose the ${options.label.toLowerCase()} auth profile:`,
-    options: buildStageAuthOptions(options.defaultAuth),
-    initialValue: currentAuth ?? options.defaultAuth,
-  });
+  const authOptions = buildStageAuthOptions(runtime, options.defaultAuth, options.existingConfig);
+  let auth: AgenrAuthMethod;
+  if (authOptions.length === 1) {
+    auth = authOptions[0].value;
+  } else {
+    const selectedAuth = await prompts.select<AgenrAuthMethod>({
+      message: `Choose the ${options.label.toLowerCase()} auth profile:`,
+      options: authOptions,
+      initialValue: authOptions.some((option) => option.value === currentAuth) ? currentAuth : options.defaultAuth,
+    });
 
-  if (prompts.isCancel(auth)) {
-    return null;
+    if (prompts.isCancel(selectedAuth)) {
+      return null;
+    }
+
+    auth = selectedAuth;
   }
 
   maybeLogStageCredentialRequirement(prompts, auth, options.defaultAuth);
@@ -936,8 +997,25 @@ function buildNextConfig(
   };
 }
 
-/** Formats the saved config note shown after setup completes. */
-function formatSavedConfigSummary(config: AgenrConfig, configPath: string, dbPath: string, embeddingUsesPrimaryKey: boolean): string {
+/** Formatting options for the saved-configuration summary. */
+interface SavedConfigSummaryOptions {
+  /** Whether embeddings reuse the main OpenAI key. */
+  embeddingUsesPrimaryKey: boolean;
+  /** Previously loaded config, when setup is reconfiguring an existing file. */
+  previousConfig?: AgenrConfig;
+  /** Whether the saved config can run agenr commands immediately. */
+  ready: boolean;
+  /** Human-readable blocker when the saved config still needs credentials. */
+  pendingCredentialGuidance?: string;
+}
+
+/**
+ * Formats the saved config note shown after setup completes.
+ *
+ * Unchanged override lines are omitted when setup is reconfiguring an existing
+ * config so the user does not see the same override rendered twice in one run.
+ */
+function formatSavedConfigSummary(config: AgenrConfig, configPath: string, dbPath: string, options: SavedConfigSummaryOptions): string {
   const lines = [
     formatLabel("Config", formatPathForDisplay(configPath)),
     formatLabel("Auth", config.auth ? describeAuthMethod(config.auth) : "(not set)"),
@@ -945,18 +1023,18 @@ function formatSavedConfigSummary(config: AgenrConfig, configPath: string, dbPat
     formatLabel("Model", config.model ?? "(not set)"),
     formatLabel(
       "Embeddings",
-      embeddingUsesPrimaryKey ? `OpenAI ${EMBEDDING_MODEL} using the primary API key` : `OpenAI ${EMBEDDING_MODEL} using a separate key`,
+      options.embeddingUsesPrimaryKey ? `OpenAI ${EMBEDDING_MODEL} using the primary API key` : `OpenAI ${EMBEDDING_MODEL} using a separate key`,
     ),
     formatLabel("Database", formatPathForDisplay(dbPath)),
+    formatLabel("Status", options.ready ? "Ready to use" : "Needs additional credentials before use"),
   ];
 
-  if (config.extractionModel?.provider || config.extractionModel?.model) {
-    lines.push(formatLabel("Extraction override", formatModelRef(config.extractionModel)));
+  if (!options.ready && options.pendingCredentialGuidance) {
+    lines.push(formatLabel("Next action", options.pendingCredentialGuidance));
   }
 
-  if (config.dedupModel?.provider || config.dedupModel?.model) {
-    lines.push(formatLabel("Dedup override", formatModelRef(config.dedupModel)));
-  }
+  appendChangedOverrideLine(lines, "Extraction override", config.extractionModel, options.previousConfig?.extractionModel);
+  appendChangedOverrideLine(lines, "Dedup override", config.dedupModel, options.previousConfig?.dedupModel);
 
   return lines.join("\n");
 }
@@ -1006,8 +1084,22 @@ function hintForModel(provider: SetupProvider, modelId: string, fallbackName?: s
   return fallbackName;
 }
 
-/** Builds the stage-override auth choices shown in the advanced override flow. */
-function buildStageAuthOptions(defaultAuth: AgenrAuthMethod): Array<{ value: AgenrAuthMethod; label: string; hint?: string }> {
+/**
+ * Builds the stage-override auth choices shown in the advanced override flow.
+ *
+ * Alternate auth profiles are only shown when setup can already resolve the
+ * credentials they need at runtime.
+ *
+ * @param runtime - Setup runtime hooks used to probe credential availability.
+ * @param defaultAuth - Default auth profile selected for the main model.
+ * @param existingConfig - Existing config values used for credential probing.
+ * @returns Available auth choices for extraction or dedup overrides.
+ */
+export function buildStageAuthOptions(
+  runtime: SetupRuntime,
+  defaultAuth: AgenrAuthMethod,
+  existingConfig?: AgenrConfig,
+): Array<{ value: AgenrAuthMethod; label: string; hint?: string }> {
   const seen = new Set<AgenrAuthMethod>();
   const options: Array<{ value: AgenrAuthMethod; label: string; hint?: string }> = [];
 
@@ -1026,11 +1118,11 @@ function buildStageAuthOptions(defaultAuth: AgenrAuthMethod): Array<{ value: Age
 
   push(defaultAuth, "current default");
 
-  if (defaultAuth !== "openai-api-key") {
+  if (defaultAuth !== "openai-api-key" && runtime.probeCredentials("openai-api-key", existingConfig).available) {
     push("openai-api-key", defaultAuth === "openai-subscription" ? "enables API-key-only OpenAI models" : "requires an OpenAI API key");
   }
 
-  if (authMethodToProvider(defaultAuth) !== "anthropic") {
+  if (authMethodToProvider(defaultAuth) !== "anthropic" && runtime.probeCredentials("anthropic-api-key", existingConfig).available) {
     push("anthropic-api-key", "requires an Anthropic API key");
   }
 
@@ -1196,6 +1288,35 @@ function pruneStoredCredentials(credentials: AgenrStoredCredentials): AgenrStore
   };
 
   return Object.keys(next).length > 0 ? next : undefined;
+}
+
+/** Adds one override-summary line when the value changed during reconfiguration. */
+function appendChangedOverrideLine(lines: string[], label: string, current: ModelConfig | undefined, previous: ModelConfig | undefined): void {
+  const currentHasOverride = hasModelOverride(current);
+  const previousHasOverride = hasModelOverride(previous);
+
+  if (!currentHasOverride && !previousHasOverride) {
+    return;
+  }
+
+  if (sameModelRef(current, previous)) {
+    return;
+  }
+
+  lines.push(formatLabel(label, currentHasOverride ? formatModelRef(current) : "Use default model"));
+}
+
+/** Returns whether one model config contains an explicit provider/model override. */
+function hasModelOverride(config: ModelConfig | undefined): boolean {
+  return normalizeOptionalString(config?.provider) !== undefined || normalizeOptionalString(config?.model) !== undefined;
+}
+
+/** Returns whether two model references resolve to the same provider/model pair. */
+function sameModelRef(left: ModelConfig | undefined, right: ModelConfig | undefined): boolean {
+  return (
+    normalizeOptionalString(left?.provider) === normalizeOptionalString(right?.provider) &&
+    normalizeOptionalString(left?.model) === normalizeOptionalString(right?.model)
+  );
 }
 
 /** Formats a provider/model reference for display. */

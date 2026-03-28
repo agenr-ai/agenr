@@ -71,6 +71,14 @@ export class FakePrompts implements WizardPrompts {
   public readonly cancellations: string[] = [];
   /** Spinner instances created by the flow. */
   public readonly spinners: FakeSpinner[] = [];
+  /** Select prompt options shown by the flow. */
+  public readonly selectCalls: Array<SelectPromptOptions<unknown>> = [];
+  /** Confirm prompt options shown by the flow. */
+  public readonly confirmCalls: ConfirmPromptOptions[] = [];
+  /** Password prompt options shown by the flow. */
+  public readonly passwordCalls: PasswordPromptOptions[] = [];
+  /** Text prompt options shown by the flow. */
+  public readonly textCalls: TextPromptOptions[] = [];
   /** Shared log collector used by the flow. */
   public readonly log = new FakeLog();
 
@@ -105,19 +113,23 @@ export class FakePrompts implements WizardPrompts {
     return value === CANCEL;
   }
 
-  async select<T>(_options: SelectPromptOptions<T>): Promise<T | symbol> {
+  async select<T>(options: SelectPromptOptions<T>): Promise<T | symbol> {
+    this.selectCalls.push(options as SelectPromptOptions<unknown>);
     return this.nextResponse<T | symbol>();
   }
 
-  async confirm(_options: ConfirmPromptOptions): Promise<boolean | symbol> {
+  async confirm(options: ConfirmPromptOptions): Promise<boolean | symbol> {
+    this.confirmCalls.push(options);
     return this.nextResponse<boolean | symbol>();
   }
 
-  async password(_options: PasswordPromptOptions): Promise<string | symbol> {
+  async password(options: PasswordPromptOptions): Promise<string | symbol> {
+    this.passwordCalls.push(options);
     return this.nextResponse<string | symbol>();
   }
 
-  async text(_options: TextPromptOptions): Promise<string | symbol> {
+  async text(options: TextPromptOptions): Promise<string | symbol> {
+    this.textCalls.push(options);
     return this.nextResponse<string | symbol>();
   }
 

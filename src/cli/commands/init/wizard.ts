@@ -4,9 +4,9 @@ import { createEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } 
 import { localTranscriptFiles } from "../../../adapters/files/transcript-files.js";
 import { createLlmClient, resolveLlmApiKey, resolveModel } from "../../../adapters/llm.js";
 import { openClawTranscriptParser } from "../../../adapters/openclaw/transcript/parser.js";
-import { configFileExists, readConfig, resolveConfigPath, resolveDbPath, type AgenrConfig } from "../../../config.js";
+import { configFileExists, readConfig, resolveConfigPath, resolveDbPath, type AgenrAuthMethod, type AgenrConfig } from "../../../config.js";
 import { pluralize } from "../ingest.js";
-import { formatExistingConfig, isSetupConfigured, runSetupCore, type SetupCoreResult, type SetupProvider } from "../setup.js";
+import { formatExistingConfig, getSetupReadiness, isSetupConfigured, runSetupCore, type SetupCoreResult, type SetupProvider } from "../setup.js";
 import { banner, cliPrompts, formatLabel, formatPathForDisplay, ui, type WizardPrompts } from "../../ui.js";
 import { estimateIngestCost, formatCostUsd, formatTokenCount, type CostEstimate } from "./cost-estimator.js";
 import { installOpenClawPlugin, restartOpenClawGateway, writeOpenClawPluginConfig } from "./external-commands.js";
@@ -140,6 +140,19 @@ export async function runInitWizard(options: InitWizardOptions = {}): Promise<vo
       throw new Error("Setup completed without a config.");
     }
 
+    const setupReadiness = setupResult
+      ? {
+          ready: setupResult.ready,
+          guidance: setupResult.readinessGuidance,
+        }
+      : getSetupReadiness(activeConfig);
+    const setupReady = setupReadiness.ready;
+    if (!setupReady) {
+      prompts.log.warn(
+        setupReadiness.guidance ?? "The selected auth profile is saved, but agenr still needs working credentials before recall or ingest can run.",
+      );
+    }
+
     const detection = runtime.detectOpenClawInstallation();
     const dbPath = resolveDbPath(activeConfig);
     let pluginStatus = "OpenClaw not detected";
@@ -208,16 +221,21 @@ export async function runInitWizard(options: InitWizardOptions = {}): Promise<vo
         sessionStatus = "No sessions found";
         ingestStatus = "Skipped - no sessions found";
         prompts.log.info("No existing OpenClaw session transcripts were found. You can ingest later once sessions exist.");
+      } else if (!setupReady) {
+        sessionStatus = `${sessionScan.totalFiles} ${pluralize(sessionScan.totalFiles, "session")} found (${sessionScan.recentFiles.length} from last 7 days)`;
+        ingestStatus = "Skipped - current auth still needs credentials";
+        prompts.log.warn(setupReadiness.guidance ?? "Skipping bulk ingest until agenr can resolve working LLM credentials for the selected auth profile.");
       } else {
         sessionStatus = `${sessionScan.totalFiles} ${pluralize(sessionScan.totalFiles, "session")} found (${sessionScan.recentFiles.length} from last 7 days)`;
         const { provider: extractionProvider, modelId } = resolveModel(activeConfig, "extraction");
         const providerForCost = normalizeSetupProvider(extractionProvider);
+        const showUsdEstimate = hasMeteredIngestCost(activeConfig.auth);
         const recentCost = runtime.estimateIngestCost(sessionScan.recentSizeBytes, modelId, providerForCost);
         const fullCost = runtime.estimateIngestCost(sessionScan.totalSizeBytes, modelId, providerForCost);
 
         const ingestChoice = await prompts.select<"recent" | "all" | "skip">({
-          message: buildIngestChoiceMessage(sessionScan, modelId, recentCost, fullCost),
-          options: buildIngestOptions(sessionScan, recentCost, fullCost),
+          message: buildIngestChoiceMessage(sessionScan, modelId, recentCost, fullCost, showUsdEstimate),
+          options: buildIngestOptions(sessionScan, recentCost, fullCost, showUsdEstimate),
           initialValue: sessionScan.recentFiles.length > 0 ? "recent" : "all",
         });
 
@@ -328,18 +346,38 @@ async function runBulkIngest(files: string[], config: AgenrConfig, prompts: Wiza
 }
 
 /** Builds the cost-selection prompt body for init-time ingest. */
-function buildIngestChoiceMessage(scan: SessionScanResult, modelId: string, recentCost: CostEstimate, fullCost: CostEstimate): string {
+function buildIngestChoiceMessage(
+  scan: SessionScanResult,
+  modelId: string,
+  recentCost: CostEstimate,
+  fullCost: CostEstimate,
+  showUsdEstimate: boolean,
+): string {
   const lines = [
     `Found ${scan.totalFiles} ${pluralize(scan.totalFiles, "session")} (${scan.recentFiles.length} from last 7 days).`,
     "",
-    `Estimated extraction cost with ${modelId}:`,
+    showUsdEstimate ? `Estimated extraction cost with ${modelId}:` : `Estimated transcript volume with ${modelId}:`,
   ];
 
   if (scan.recentFiles.length > 0) {
-    lines.push(`Last 7 days:  ${formatTokenCount(recentCost.inputTokens)} tokens  ${formatCostUsd(recentCost.totalCostUsd)}`);
+    lines.push(
+      showUsdEstimate
+        ? `Last 7 days:  ${formatTokenCount(recentCost.inputTokens)} tokens  ${formatCostUsd(recentCost.totalCostUsd)}`
+        : `Last 7 days:  ${formatTokenCount(recentCost.inputTokens)} tokens`,
+    );
   }
 
-  lines.push(`Full history: ${formatTokenCount(fullCost.inputTokens)} tokens  ${formatCostUsd(fullCost.totalCostUsd)}`);
+  lines.push(
+    showUsdEstimate
+      ? `Full history: ${formatTokenCount(fullCost.inputTokens)} tokens  ${formatCostUsd(fullCost.totalCostUsd)}`
+      : `Full history: ${formatTokenCount(fullCost.inputTokens)} tokens`,
+  );
+
+  if (!showUsdEstimate) {
+    lines.push("");
+    lines.push("Current auth is subscription-backed, so this wizard does not estimate per-token charges.");
+  }
+
   return lines.join("\n");
 }
 
@@ -348,19 +386,24 @@ function buildIngestOptions(
   scan: SessionScanResult,
   recentCost: CostEstimate,
   fullCost: CostEstimate,
+  showUsdEstimate: boolean,
 ): Array<{ value: "recent" | "all" | "skip"; label: string; hint?: string }> {
   const options: Array<{ value: "recent" | "all" | "skip"; label: string; hint?: string }> = [];
   if (scan.recentFiles.length > 0) {
     options.push({
       value: "recent",
-      label: `Ingest the last 7 days (${formatCostUsd(recentCost.totalCostUsd)})`,
+      label: showUsdEstimate
+        ? `Ingest the last 7 days (${formatCostUsd(recentCost.totalCostUsd)})`
+        : `Ingest the last 7 days (${formatTokenCount(recentCost.inputTokens)} tokens)`,
       hint: "recommended",
     });
   }
 
   options.push({
     value: "all",
-    label: `Ingest all sessions (${formatCostUsd(fullCost.totalCostUsd)})`,
+    label: showUsdEstimate
+      ? `Ingest all sessions (${formatCostUsd(fullCost.totalCostUsd)})`
+      : `Ingest all sessions (${formatTokenCount(fullCost.inputTokens)} tokens)`,
     hint: "may take a while",
   });
   options.push({
@@ -423,7 +466,16 @@ function buildNextSteps(detection: OpenClawDetection, pluginStatus: string, gate
 
 /** Maps resolved providers into the smaller set supported by the cost estimator. */
 function normalizeSetupProvider(provider: string): SetupProvider {
-  return provider === "anthropic" ? "anthropic" : "openai";
+  if (provider === "anthropic" || provider === "openai-codex") {
+    return provider;
+  }
+
+  return "openai";
+}
+
+/** Returns whether init should show dollar-denominated ingest estimates. */
+function hasMeteredIngestCost(auth: AgenrAuthMethod | undefined): boolean {
+  return auth !== "openai-subscription" && auth !== "anthropic-oauth" && auth !== "anthropic-token";
 }
 
 /** Maps bulk-write progress phases into spinner text. */
