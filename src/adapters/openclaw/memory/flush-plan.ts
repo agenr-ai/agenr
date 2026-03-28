@@ -16,6 +16,6 @@ export function buildAgenrMemoryFlushPlan(
   _params: Parameters<AgenrOpenClawMemoryFlushPlanResolver>[0],
   logger: PluginLogger,
 ): ReturnType<AgenrOpenClawMemoryFlushPlanResolver> {
-  logger.info("[agenr] flush-plan: pass-through (no custom flush)");
+  logger.debug?.("[agenr] flush-plan: pass-through (no custom flush)");
   return null;
 }
