@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { buildAgenrMemoryFlushPlan } from "../../../src/adapters/openclaw/memory/flush-plan.js";
 
 describe("buildAgenrMemoryFlushPlan", () => {
-  it("returns null and emits the pass-through info log", () => {
+  it("returns null and emits the pass-through debug log", () => {
     const logger = {
       debug: vi.fn(),
       info: vi.fn(),
@@ -12,7 +12,7 @@ describe("buildAgenrMemoryFlushPlan", () => {
     };
 
     expect(buildAgenrMemoryFlushPlan({}, logger)).toBeNull();
-    expect(logger.info).toHaveBeenCalledWith("[agenr] flush-plan: pass-through (no custom flush)");
-    expect(logger.debug).not.toHaveBeenCalled();
+    expect(logger.debug).toHaveBeenCalledWith("[agenr] flush-plan: pass-through (no custom flush)");
+    expect(logger.info).not.toHaveBeenCalled();
   });
 });
