@@ -1,9 +1,9 @@
 import type { AgenrConfig } from "../../config.js";
-import { resolveDbPath } from "../../config.js";
+import { readConfig } from "../../config.js";
 import type { EmbeddingPort } from "../../core/ports.js";
 import { createRecallAdapter } from "../db/recall-adapter.js";
 import { createDatabase } from "../db/client.js";
-import { createEmbeddingClient, EMBEDDING_MODEL, resolveEmbeddingModel } from "../embeddings.js";
+import { createEmbeddingClient, EMBEDDING_MODEL, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../embeddings.js";
 import type { AgenrOpenClawEmbeddingStatus, AgenrOpenClawPluginConfig, AgenrOpenClawServices } from "./types.js";
 
 /**
@@ -20,12 +20,13 @@ export async function createAgenrOpenClawServices(
 ): Promise<AgenrOpenClawServices> {
   const resolvedConfig = resolveRuntimeConfig(config, options.resolvePath);
   const agenrConfig: AgenrConfig = {
+    ...readConfig({
+      configPath: resolvedConfig.configPath,
+      dbPath: resolvedConfig.dbPath,
+    }),
     dbPath: resolvedConfig.dbPath,
-    apiKey: resolvedConfig.apiKey,
-    embeddingApiKey: resolvedConfig.embeddingApiKey,
-    embeddingModel: resolvedConfig.embeddingModel,
   };
-  const dbPath = resolveDbPath(agenrConfig);
+  const dbPath = resolvedConfig.dbPath;
   const embeddingStatus = resolveEmbeddingStatus(agenrConfig);
   const database = await createDatabase(dbPath);
   const embedding = embeddingStatus.available
@@ -63,24 +64,23 @@ type ResolvedEmbeddingStatus = AgenrOpenClawEmbeddingStatus & {
  */
 function resolveEmbeddingStatus(config: AgenrConfig): ResolvedEmbeddingStatus {
   const model = resolveEmbeddingModel(config);
-  const apiKey = config.embeddingApiKey?.trim() || config.apiKey?.trim() || process.env.OPENAI_API_KEY?.trim();
-  if (!apiKey) {
+  try {
+    return {
+      available: true,
+      provider: "openai",
+      requestedProvider: "openai",
+      model,
+      apiKey: resolveEmbeddingApiKey(config),
+    };
+  } catch (error) {
     return {
       available: false,
       provider: "unconfigured",
       requestedProvider: "openai",
       model,
-      error: "Embedding API key is required. Set embeddingApiKey, apiKey, or OPENAI_API_KEY.",
+      error: error instanceof Error ? error.message : String(error),
     };
   }
-
-  return {
-    available: true,
-    provider: "openai",
-    requestedProvider: "openai",
-    model,
-    apiKey,
-  };
 }
 
 /**
@@ -120,17 +120,17 @@ export { EMBEDDING_MODEL };
  *
  * @param config - Raw plugin config supplied by OpenClaw.
  * @param resolvePath - Optional OpenClaw path resolver.
- * @returns Config with dbPath normalized to an absolute runtime path when present.
+ * @returns Config with plugin paths normalized to absolute runtime paths.
  */
 function resolveRuntimeConfig(config: AgenrOpenClawPluginConfig, resolvePath?: (input: string) => string): AgenrOpenClawPluginConfig {
-  const dbPath = config.dbPath?.trim();
-  if (!dbPath || !resolvePath) {
+  if (!resolvePath) {
     return config;
   }
 
   return {
     ...config,
-    dbPath: resolvePath(dbPath),
+    dbPath: resolvePath(config.dbPath),
+    ...(config.configPath ? { configPath: resolvePath(config.configPath) } : {}),
   };
 }
 

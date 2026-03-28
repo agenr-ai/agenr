@@ -9,10 +9,8 @@ import type { SqlDatabase } from "../db/client.js";
  * Runtime plugin configuration accepted by the agenr OpenClaw adapter.
  */
 export interface AgenrOpenClawPluginConfig {
-  dbPath?: string;
-  apiKey?: string;
-  embeddingApiKey?: string;
-  embeddingModel?: string;
+  dbPath: string;
+  configPath?: string;
 }
 
 /**

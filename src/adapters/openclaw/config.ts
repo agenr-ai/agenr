@@ -21,7 +21,7 @@ const manifest = pluginManifest as ManifestWithConfig;
  */
 export function normalizeAgenrOpenClawPluginConfig(value: unknown): { ok: true; value: AgenrOpenClawPluginConfig } | { ok: false; errors: string[] } {
   if (value === undefined) {
-    return { ok: true, value: {} };
+    return { ok: false, errors: ["dbPath must be a non-empty string"] };
   }
 
   if (!isRecord(value)) {
@@ -29,45 +29,52 @@ export function normalizeAgenrOpenClawPluginConfig(value: unknown): { ok: true; 
   }
 
   const errors: string[] = [];
-  const normalized: AgenrOpenClawPluginConfig = {};
-
-  for (const key of ["dbPath", "apiKey", "embeddingApiKey", "embeddingModel"] as const) {
-    const rawValue = value[key];
-    if (rawValue === undefined) {
-      continue;
-    }
-
-    if (typeof rawValue !== "string" || rawValue.trim().length === 0) {
-      errors.push(`${key} must be a non-empty string when provided`);
-      continue;
-    }
-
-    normalized[key] = rawValue.trim();
+  const rawDbPath = value.dbPath;
+  const dbPath = typeof rawDbPath === "string" ? rawDbPath.trim() : undefined;
+  if (!dbPath) {
+    errors.push("dbPath must be a non-empty string");
   }
 
-  const allowedKeys = new Set(["dbPath", "apiKey", "embeddingApiKey", "embeddingModel"]);
+  const rawConfigPath = value.configPath;
+  const configPath = typeof rawConfigPath === "string" ? rawConfigPath.trim() : undefined;
+  if (rawConfigPath !== undefined && !configPath) {
+    errors.push("configPath must be a non-empty string when provided");
+  }
+
+  const allowedKeys = new Set(["dbPath", "configPath"]);
   for (const key of Object.keys(value)) {
     if (!allowedKeys.has(key)) {
       errors.push(`unknown config field: ${key}`);
     }
   }
 
-  if (errors.length > 0) {
+  if (errors.length > 0 || !dbPath) {
     return { ok: false, errors };
   }
 
-  return { ok: true, value: normalized };
+  return {
+    ok: true,
+    value: {
+      dbPath,
+      ...(configPath ? { configPath } : {}),
+    },
+  };
 }
 
 /**
  * Coerces the plugin config supplied by OpenClaw into a normalized runtime shape.
  *
  * @param value - Raw or partially typed plugin config from OpenClaw.
- * @returns Normalized config values with invalid fields dropped.
+ * @returns Normalized config values.
+ * @throws Error When validation fails.
  */
 export function coerceAgenrOpenClawPluginConfig(value: unknown): AgenrOpenClawPluginConfig {
   const normalized = normalizeAgenrOpenClawPluginConfig(value);
-  return normalized.ok ? normalized.value : {};
+  if (normalized.ok) {
+    return normalized.value;
+  }
+
+  throw new Error(`Invalid agenr OpenClaw plugin config: ${normalized.errors.join("; ")}`);
 }
 
 /**

@@ -9,40 +9,23 @@
   "uiHints": {
     "dbPath": {
       "label": "Database path",
-      "help": "SQLite or libSQL path for the agenr knowledge database."
+      "help": "SQLite or libSQL path for the agenr knowledge database. Credentials are loaded from agenr's config.json."
     },
-    "apiKey": {
-      "label": "API key",
-      "help": "Fallback OpenAI API key used when embeddingApiKey is unset.",
-      "sensitive": true
-    },
-    "embeddingApiKey": {
-      "label": "Embedding API key",
-      "help": "OpenAI API key used for embeddings.",
-      "sensitive": true
-    },
-    "embeddingModel": {
-      "label": "Embedding model",
-      "help": "Override the default agenr embedding model."
+    "configPath": {
+      "label": "Config path",
+      "help": "Optional path to agenr's config.json. Defaults to config.json next to dbPath."
     }
   },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
+    "required": ["dbPath"],
     "properties": {
       "dbPath": {
         "type": "string",
         "minLength": 1
       },
-      "apiKey": {
-        "type": "string",
-        "minLength": 1
-      },
-      "embeddingApiKey": {
-        "type": "string",
-        "minLength": 1
-      },
-      "embeddingModel": {
+      "configPath": {
         "type": "string",
         "minLength": 1
       }

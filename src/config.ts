@@ -1,11 +1,12 @@
 /**
  * Configuration loading and types.
- * Minimal — no legacy handling, no deprecated fields.
+ * Minimal - no legacy handling, no deprecated fields.
  */
 
 import fs from "node:fs";
-import path from "node:path";
 import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 /**
  * Per-pipeline model configuration.
@@ -58,6 +59,17 @@ const DEFAULT_CONFIG_DIR = path.join(os.homedir(), ".agenr");
 const DEFAULT_DB_NAME = "knowledge.db";
 
 /**
+ * Overrides used when resolving the agenr config file path.
+ */
+export interface ResolveConfigPathOptions {
+  /** Explicit config file path. */
+  configPath?: string;
+
+  /** Database path used to infer an adjacent `config.json` when available. */
+  dbPath?: string;
+}
+
+/**
  * Resolves the directory that stores agenr configuration files.
  *
  * @returns Absolute path to the configuration directory.
@@ -69,10 +81,32 @@ export function resolveConfigDir(): string {
 /**
  * Resolves the JSON config file path.
  *
+ * Resolution order:
+ * 1. `AGENR_CONFIG_PATH`
+ * 2. Explicit `configPath`
+ * 3. `config.json` next to the configured database path
+ * 4. Default config directory
+ *
+ * @param options - Optional overrides used during path resolution.
  * @returns Absolute path to the config file.
  */
-export function resolveConfigPath(): string {
-  return process.env.AGENR_CONFIG_PATH ?? path.join(resolveConfigDir(), "config.json");
+export function resolveConfigPath(options: ResolveConfigPathOptions = {}): string {
+  const envConfigPath = normalizeOptionalString(process.env.AGENR_CONFIG_PATH);
+  if (envConfigPath) {
+    return envConfigPath;
+  }
+
+  const explicitConfigPath = normalizeOptionalString(options.configPath);
+  if (explicitConfigPath) {
+    return explicitConfigPath;
+  }
+
+  const adjacentConfigPath = resolveAdjacentConfigPath(options.dbPath);
+  if (adjacentConfigPath) {
+    return adjacentConfigPath;
+  }
+
+  return path.join(resolveConfigDir(), "config.json");
 }
 
 /**
@@ -88,10 +122,11 @@ export function resolveDbPath(config?: AgenrConfig): string {
 /**
  * Reads the persisted agenr configuration file when it exists.
  *
+ * @param options - Optional config path overrides.
  * @returns Parsed configuration values, or an empty object when unavailable.
  */
-export function readConfig(): AgenrConfig {
-  const configPath = resolveConfigPath();
+export function readConfig(options: ResolveConfigPathOptions = {}): AgenrConfig {
+  const configPath = resolveConfigPath(options);
   if (!fs.existsSync(configPath)) {
     return {};
   }
@@ -101,4 +136,28 @@ export function readConfig(): AgenrConfig {
   } catch {
     return {};
   }
+}
+
+/** Resolves an adjacent `config.json` path from a database path when possible. */
+function resolveAdjacentConfigPath(dbPath?: string): string | undefined {
+  const normalizedDbPath = normalizeOptionalString(dbPath);
+  if (!normalizedDbPath || normalizedDbPath === ":memory:") {
+    return undefined;
+  }
+
+  if (normalizedDbPath.startsWith("file:")) {
+    try {
+      return path.join(path.dirname(fileURLToPath(normalizedDbPath)), "config.json");
+    } catch {
+      return undefined;
+    }
+  }
+
+  return path.join(path.dirname(normalizedDbPath), "config.json");
+}
+
+/** Normalizes optional string input into a trimmed value when present. */
+function normalizeOptionalString(value?: string): string | undefined {
+  const normalized = value?.trim();
+  return normalized && normalized.length > 0 ? normalized : undefined;
 }

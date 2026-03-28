@@ -375,7 +375,7 @@ The sandbox infrastructure already exists and should be re-purposed from the sta
 
 1. **`sandbox-agenr`** — update `cd` target from `~/Code/agenr` to wherever the new repo lives (probably still `~/Code/agenr` after renaming the old one)
 
-2. **`sandbox-openclaw` config** — update `plugins.load.paths` to point at the new repo, strip `coreProjects` (no project concept), simplify plugin config:
+2. **`sandbox-openclaw` config** - update `plugins.load.paths` to point at the new repo, strip `coreProjects` (no project concept), simplify plugin config:
 
    ```json
    {
@@ -385,8 +385,7 @@ The sandbox infrastructure already exists and should be re-purposed from the sta
          "agenr": {
            "enabled": true,
            "config": {
-             "dbPath": "/Users/jmartin/.openclaw-sandbox/agenr-data/knowledge.db",
-             "debug": true
+             "dbPath": "/Users/jmartin/.openclaw-sandbox/agenr-data/knowledge.db"
            }
          }
        },
@@ -395,12 +394,14 @@ The sandbox infrastructure already exists and should be re-purposed from the sta
    }
    ```
 
-3. **Fresh sandbox database** — delete `~/.openclaw-sandbox/agenr-data/knowledge.db` when ready. The new schema creates it clean.
+   The plugin reads credentials from agenr's own `config.json`. If that file is not next to `dbPath`, pass `"configPath": "/path/to/config.json"` as the only extra plugin setting.
 
-4. **VS Code launch configs** — set up from the start in the new repo:
-   - `agenr: sandbox ingest (debug)` — ingest against sandbox DB with sourcemaps
-   - `agenr: sandbox ingest single file (debug)` — single session file
-   - `agenr: debug vitest current file` — test runner
+3. **Fresh sandbox database** - delete `~/.openclaw-sandbox/agenr-data/knowledge.db` when ready. The new schema creates it clean.
+
+4. **VS Code launch configs** - set up from the start in the new repo:
+   - `agenr: sandbox ingest (debug)` - ingest against sandbox DB with sourcemaps
+   - `agenr: sandbox ingest single file (debug)` - single session file
+   - `agenr: debug vitest current file` - test runner
 
    All with `AGENR_DB_PATH` and `AGENR_CONFIG_PATH` env vars pointing at sandbox data.
 

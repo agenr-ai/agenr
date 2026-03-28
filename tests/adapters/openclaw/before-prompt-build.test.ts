@@ -115,7 +115,9 @@ function createServices(database: SqlDatabase): AgenrOpenClawServices {
   };
 
   return {
-    config: {},
+    config: {
+      dbPath: "test.db",
+    },
     dbPath: "test.db",
     database,
     embedding,

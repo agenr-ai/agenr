@@ -179,7 +179,9 @@ function createServices(
   };
 
   return {
-    config: {},
+    config: {
+      dbPath: "test.db",
+    },
     dbPath: "test.db",
     database,
     embedding,
