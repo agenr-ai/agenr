@@ -1,7 +1,6 @@
 import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
 
-import { recall } from "../../../core/recall/search.js";
-import { listOpenClawCoreEntries, listOpenClawRecentEntries } from "../../db/openclaw-plugin-queries.js";
+import { listOpenClawCoreEntries } from "../../db/openclaw-plugin-queries.js";
 import { formatAgenrSessionStartRecall } from "../format/recall-format.js";
 import { resolveOpenClawSessionPredecessor } from "../session/predecessor.js";
 import { readOpenClawSessionSummaryFile } from "../session/summary-reader.js";
@@ -17,21 +16,19 @@ import type { SessionStartTracker } from "../session/state.js";
 import { openClawTranscriptParser } from "../transcript/parser.js";
 
 const CORE_ENTRY_LIMIT = 4;
-const RELEVANT_ENTRY_LIMIT = 5;
-const RECENT_ENTRY_LIMIT = 3;
 const RECENT_SESSION_MESSAGE_LIMIT = 6;
 const RECENT_SESSION_MAX_CHARS = 1_800;
 
 /**
  * Runs agenr session-start recall and injects the result into the OpenClaw prompt.
  *
- * @param event - Current prompt-build payload from OpenClaw.
+ * @param _event - Current prompt-build payload from OpenClaw.
  * @param ctx - Hook context with session identity data.
  * @param params - Shared services and session-start tracking state.
  * @returns Prompt mutation payload, or `undefined` when nothing should be injected.
  */
 export async function handleAgenrBeforePromptBuild(
-  event: AgenrOpenClawBeforePromptBuildEvent,
+  _event: AgenrOpenClawBeforePromptBuildEvent,
   ctx: AgenrOpenClawHookContext,
   params: AgenrOpenClawBeforePromptBuildDeps & {
     tracker: SessionStartTracker;
@@ -53,17 +50,13 @@ export async function handleAgenrBeforePromptBuild(
 
   try {
     const services = await params.servicesPromise;
-    const sessionStartRecall = await runAgenrSessionStartRecall(event.prompt, ctx.sessionId, ctx.sessionKey, services, params.logger);
+    const sessionStartRecall = await runAgenrSessionStartRecall(services);
     const previousSessionContext = await buildPreviousSessionContext(ctx, params.tracker, params.logger);
     const memoryContext = formatAgenrSessionStartRecall(sessionStartRecall);
     const prependContext = [previousSessionContext, memoryContext].filter((value): value is string => value.trim().length > 0).join("\n\n");
 
-    params.logger.info(
-      `[agenr] session-start recall: ${sessionStartRecall.core.length} core, ${sessionStartRecall.relevant.length} relevant, ${sessionStartRecall.recent.length} recent entries for ${sessionContext}`,
-    );
+    params.logger.info(`[agenr] session-start recall: ${sessionStartRecall.core.length} core entries for ${sessionContext}`);
     debugLog(params.logger, "before_prompt_build", `session-start core entries for ${sessionContext}: ${formatEntryRefs(sessionStartRecall.core)}`);
-    debugLog(params.logger, "before_prompt_build", `session-start relevant entries for ${sessionContext}: ${formatRelevantRefs(sessionStartRecall.relevant)}`);
-    debugLog(params.logger, "before_prompt_build", `session-start recent entries for ${sessionContext}: ${formatEntryRefs(sessionStartRecall.recent)}`);
     debugLog(params.logger, "before_prompt_build", `session-start prependContext length for ${sessionContext}: ${prependContext.length} chars`);
 
     if (prependContext.length === 0) {
@@ -79,77 +72,17 @@ export async function handleAgenrBeforePromptBuild(
 }
 
 /**
- * Composes the v1 session-start recall payload from agenr core plus plugin-side continuity context.
+ * Composes the session-start recall payload from always-on agenr core entries.
  *
- * @param prompt - Current user prompt for the waking session.
- * @param sessionId - Ephemeral OpenClaw session UUID when available.
- * @param sessionKey - Stable OpenClaw session key when available.
  * @param services - Shared agenr adapters used by the plugin.
- * @param logger - Plugin logger used for session-start diagnostics.
- * @returns Structured recall sections ready for prompt formatting.
+ * @returns Structured session-start recall data ready for prompt formatting.
  */
-export async function runAgenrSessionStartRecall(
-  prompt: string,
-  sessionId: string | undefined,
-  sessionKey: string | undefined,
-  services: AgenrOpenClawServices,
-  logger: PluginLogger,
-): Promise<OpenClawSessionStartRecall> {
+export async function runAgenrSessionStartRecall(services: AgenrOpenClawServices): Promise<OpenClawSessionStartRecall> {
   const core = await listOpenClawCoreEntries(services.database, CORE_ENTRY_LIMIT);
-  const excludedIds = new Set(core.map((entry) => entry.id));
-  const relevant = await runRelevantRecall(prompt, sessionId, sessionKey, services, logger);
-
-  for (const result of relevant) {
-    excludedIds.add(result.entry.id);
-  }
-
-  const recent = await listOpenClawRecentEntries(services.database, RECENT_ENTRY_LIMIT, [...excludedIds]);
 
   return {
     core,
-    relevant,
-    recent,
   };
-}
-
-/** Runs prompt-conditioned recall only when embeddings are configured. */
-async function runRelevantRecall(
-  prompt: string,
-  sessionId: string | undefined,
-  sessionKey: string | undefined,
-  services: AgenrOpenClawServices,
-  logger: PluginLogger,
-) {
-  if (!services.embeddingStatus.available) {
-    return [];
-  }
-
-  const normalizedPrompt = prompt.trim();
-  if (normalizedPrompt.length === 0) {
-    return [];
-  }
-
-  debugLog(
-    logger,
-    "before_prompt_build",
-    `session-start relevant query for ${formatSessionContext(sessionId, sessionKey)}: ${JSON.stringify(normalizedPrompt)}`,
-  );
-
-  try {
-    return await recall(
-      {
-        text: normalizedPrompt,
-        budget: 7,
-        limit: RELEVANT_ENTRY_LIMIT,
-        threshold: 0.2,
-        sessionKey,
-      },
-      services.recall,
-    );
-  } catch (error) {
-    logger.warn(`[agenr] session-start relevant recall failed for ${formatSessionContext(sessionId, sessionKey)}: ${formatErrorMessage(error)}`);
-    return [];
-  }
 }
 
 /**
@@ -245,15 +178,6 @@ function formatEntryRefs(entries: OpenClawSessionStartRecall["core"]): string {
   }
 
   return entries.map((entry) => `${entry.subject} [${entry.id}]`).join(", ");
-}
-
-/** Formats relevant recall results with scores for debug logging. */
-function formatRelevantRefs(results: OpenClawSessionStartRecall["relevant"]): string {
-  if (results.length === 0) {
-    return "none";
-  }
-
-  return results.map((result) => `${result.score.toFixed(2)} ${result.entry.subject} [${result.entry.id}]`).join(", ");
 }
 
 /** Normalizes unknown failures into human-readable log messages. */

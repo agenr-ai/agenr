@@ -16,6 +16,8 @@ const openDatabases: SqlDatabase[] = [];
 const tempPaths: string[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
+
   while (openDatabases.length > 0) {
     await openDatabases.pop()?.close();
   }
@@ -26,9 +28,11 @@ afterEach(async () => {
 });
 
 describe("handleAgenrBeforePromptBuild", () => {
-  it("injects session-start memory once per session even without embeddings", async () => {
+  it("injects only core session-start memory once per session and skips speculative recall", async () => {
     const database = await createTestDatabase();
+    const executeSpy = vi.spyOn(database, "execute");
     const logger = createLogger();
+    const recall = createObservedRecallPorts();
     await database.insertEntry(
       createEntry({
         type: "decision",
@@ -64,7 +68,12 @@ describe("handleAgenrBeforePromptBuild", () => {
       },
       {
         logger,
-        servicesPromise: Promise.resolve(createServices(database)),
+        servicesPromise: Promise.resolve(
+          createServices(database, {
+            available: true,
+            recall,
+          }),
+        ),
         tracker,
       },
     );
@@ -79,20 +88,33 @@ describe("handleAgenrBeforePromptBuild", () => {
       },
       {
         logger,
-        servicesPromise: Promise.resolve(createServices(database)),
+        servicesPromise: Promise.resolve(
+          createServices(database, {
+            available: true,
+            recall,
+          }),
+        ),
         tracker,
       },
     );
 
     expect(result?.prependContext).toContain("Agenr Session Recall");
+    expect(result?.prependContext).toContain("Core Memory");
     expect(result?.prependContext).toContain("master branch workflow");
-    expect(result?.prependContext).toContain("latest plugin work");
+    expect(result?.prependContext).not.toContain("latest plugin work");
+    expect(result?.prependContext).not.toContain("Relevant Recall");
+    expect(result?.prependContext).not.toContain("Recent Context");
+    expect(result?.prependContext).not.toContain("## Previous session summary");
+    expect(result?.prependContext).not.toContain("## Recent session");
     expect(result?.prependContext).not.toContain("Recent Handoffs");
     expect(secondResult).toBeUndefined();
+    expectRecallPortsUnused(recall);
+    expect(listExecutedSql(executeSpy.mock.calls).some((sql) => sql.includes("expiry != 'core'"))).toBe(false);
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
         "[agenr] session-start recall for session=session-1 key=agent:main:webchat:test",
         "[agenr] session-start predecessor summary not found for session=session-1 key=agent:main:webchat:test reason=no_predecessor",
+        "[agenr] session-start recall: 1 core entries for session=session-1 key=agent:main:webchat:test",
         "[agenr] session-start recall skipped (already ran) for session=session-1 key=agent:main:webchat:test",
       ]),
     );
@@ -100,13 +122,21 @@ describe("handleAgenrBeforePromptBuild", () => {
       expect.arrayContaining([
         "[agenr] before_prompt_build: session tracker first start for session=session-1 key=agent:main:webchat:test",
         "[agenr] before_prompt_build: session tracker duplicate blocked for session=session-1 key=agent:main:webchat:test",
+        expect.stringContaining(
+          "[agenr] before_prompt_build: session-start core entries for session=session-1 key=agent:main:webchat:test: master branch workflow",
+        ),
       ]),
     );
+    expect(
+      getMessages(logger.debug).some((message) => message.includes("session-start relevant entries") || message.includes("session-start recent entries")),
+    ).toBe(false);
   });
 
-  it("injects predecessor summary and transcript tail alongside semantic memory", async () => {
+  it("injects predecessor summary and transcript tail alongside core memory only", async () => {
     const database = await createTestDatabase();
+    const executeSpy = vi.spyOn(database, "execute");
     const logger = createLogger();
+    const recall = createObservedRecallPorts();
     const coreEntry = createEntry({
       type: "decision",
       subject: "session isolation rule",
@@ -200,7 +230,7 @@ describe("handleAgenrBeforePromptBuild", () => {
         servicesPromise: Promise.resolve(
           createServices(database, {
             available: true,
-            recall: createRelevantRecallPorts(relevantEntry),
+            recall,
           }),
         ),
         tracker,
@@ -213,14 +243,88 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(result?.prependContext).toContain("U: Keep the transcript tail too");
     expect(result?.prependContext).toContain("Agenr Session Recall");
     expect(result?.prependContext).toContain("Core Memory");
-    expect(result?.prependContext).toContain("Relevant Recall");
-    expect(result?.prependContext).toContain("Recent Context");
+    expect(result?.prependContext).toContain("session isolation rule");
+    expect(result?.prependContext).not.toContain("multi-session drift check");
+    expect(result?.prependContext).not.toContain("latest plugin work");
+    expect(result?.prependContext).not.toContain("Relevant Recall");
+    expect(result?.prependContext).not.toContain("Recent Context");
     expect(result?.prependContext).not.toContain("Recent Handoffs");
+    expectRecallPortsUnused(recall);
+    expect(listExecutedSql(executeSpy.mock.calls).some((sql) => sql.includes("expiry != 'core'"))).toBe(false);
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
         "[agenr] session-start predecessor summary found for session=session-2 key=agent:main:webchat:isolated path=" +
           path.join(path.dirname(predecessorFile), "predecessor-session.summary.md"),
-        "[agenr] session-start recall: 1 core, 1 relevant, 1 recent entries for session=session-2 key=agent:main:webchat:isolated",
+        "[agenr] session-start recall: 1 core entries for session=session-2 key=agent:main:webchat:isolated",
+      ]),
+    );
+  });
+
+  it("injects only predecessor continuity when no core entries exist", async () => {
+    const database = await createTestDatabase();
+    const logger = createLogger();
+
+    const predecessorFile = await writeSessionFile("predecessor-session", [
+      {
+        type: "session",
+        id: "predecessor-session",
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T10:00:00.000Z",
+        message: {
+          role: "human",
+          content: "Summaries should survive session rollover even when brain recall is empty.",
+        },
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T10:01:00.000Z",
+        message: {
+          role: "assistant",
+          content: "We will inject the summary and the transcript tail without speculative database recall.",
+        },
+      },
+    ]);
+    await writeFile(
+      path.join(path.dirname(predecessorFile), "predecessor-session.summary.md"),
+      "The previous session decided continuity should come from the sidecar summary and transcript tail when needed.\n",
+      "utf8",
+    );
+
+    const tracker = createSessionStartTracker();
+    tracker.rememberReset("agent:main:webchat:continuity", {
+      sessionId: "predecessor-session",
+      sessionFile: predecessorFile,
+      recordedAt: "2026-03-28T10:05:00.000Z",
+    });
+    tracker.rememberSessionStart("session-3", "agent:main:webchat:continuity", "predecessor-session");
+
+    const result = await handleAgenrBeforePromptBuild(
+      {
+        prompt: "Continue from the previous session.",
+        messages: [],
+      },
+      {
+        sessionId: "session-3",
+        sessionKey: "agent:main:webchat:continuity",
+      },
+      {
+        logger,
+        servicesPromise: Promise.resolve(createServices(database)),
+        tracker,
+      },
+    );
+
+    expect(result?.prependContext).toContain("## Previous session summary");
+    expect(result?.prependContext).toContain("## Recent session");
+    expect(result?.prependContext).not.toContain("Agenr Session Recall");
+    expect(result?.prependContext).not.toContain("Core Memory");
+    expect(getMessages(logger.info)).toEqual(
+      expect.arrayContaining([
+        "[agenr] session-start predecessor summary found for session=session-3 key=agent:main:webchat:continuity path=" +
+          path.join(path.dirname(predecessorFile), "predecessor-session.summary.md"),
+        "[agenr] session-start recall: 0 core entries for session=session-3 key=agent:main:webchat:continuity",
       ]),
     );
   });
@@ -249,7 +353,7 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
         "[agenr] session-start predecessor summary not found for session=session-empty key=agent:main:webchat:empty reason=no_predecessor",
-        "[agenr] session-start recall: 0 core, 0 relevant, 0 recent entries for session=session-empty key=agent:main:webchat:empty",
+        "[agenr] session-start recall: 0 core entries for session=session-empty key=agent:main:webchat:empty",
         "[agenr] session-start recall: nothing to inject for session=session-empty key=agent:main:webchat:empty",
       ]),
     );
@@ -319,38 +423,22 @@ function createServices(
   };
 }
 
-function createRelevantRecallPorts(entry: Entry): RecallPorts {
+function createObservedRecallPorts() {
   return {
-    async embed(): Promise<number[]> {
-      return createEmbedding(0, 1);
-    },
-    async vectorSearch() {
-      return [];
-    },
-    async ftsSearch() {
-      return [
-        {
-          entry: {
-            id: entry.id,
-            subject: entry.subject,
-            content: entry.content,
-            importance: entry.importance,
-            expiry: entry.expiry,
-            created_at: entry.created_at,
-            embedding: createEmbedding(0, 1),
-          },
-          rank: 0,
-          tier: "exact",
-        },
-      ];
-    },
-    async hydrateEntries(ids) {
-      return ids.includes(entry.id) ? [entry] : [];
-    },
-    async recordRecallEvents() {
-      return;
-    },
-  };
+    embed: vi.fn(async (): Promise<number[]> => createEmbedding(0, 1)),
+    vectorSearch: vi.fn(async () => []),
+    ftsSearch: vi.fn(async () => []),
+    hydrateEntries: vi.fn(async () => []),
+    recordRecallEvents: vi.fn(async () => undefined),
+  } satisfies RecallPorts;
+}
+
+function expectRecallPortsUnused(recall: ReturnType<typeof createObservedRecallPorts>): void {
+  expect(recall.embed).not.toHaveBeenCalled();
+  expect(recall.vectorSearch).not.toHaveBeenCalled();
+  expect(recall.ftsSearch).not.toHaveBeenCalled();
+  expect(recall.hydrateEntries).not.toHaveBeenCalled();
+  expect(recall.recordRecallEvents).not.toHaveBeenCalled();
 }
 
 function createLogger() {
@@ -364,6 +452,24 @@ function createLogger() {
 
 function getMessages(logFn: ReturnType<typeof vi.fn>): string[] {
   return logFn.mock.calls.map(([message]) => message as string);
+}
+
+function listExecutedSql(executeCalls: unknown[][]): string[] {
+  return executeCalls.flatMap(([statementOrSql]) => {
+    if (typeof statementOrSql === "string") {
+      return [statementOrSql];
+    }
+
+    if (hasSqlText(statementOrSql)) {
+      return [statementOrSql.sql];
+    }
+
+    return [];
+  });
+}
+
+function hasSqlText(value: unknown): value is { sql: string } {
+  return typeof value === "object" && value !== null && "sql" in value && typeof value.sql === "string";
 }
 
 async function createTestDatabase(): Promise<SqlDatabase> {

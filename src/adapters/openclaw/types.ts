@@ -1,7 +1,6 @@
 import type { OpenClawConfig, OpenClawPluginApi, PluginLogger } from "openclaw/plugin-sdk/core";
 
 import type { AgenrConfig } from "../../config.js";
-import type { RecallOutput } from "../../core/recall/types.js";
 import type { EmbeddingPort, LlmPort, RecallPorts } from "../../core/ports.js";
 import type { Entry } from "../../core/types.js";
 import type { SqlDatabase } from "../db/client.js";
@@ -80,8 +79,6 @@ export interface OpenClawPromptMemorySection {
  */
 export interface OpenClawSessionStartRecall {
   core: Entry[];
-  relevant: RecallOutput[];
-  recent: Entry[];
 }
 
 /**

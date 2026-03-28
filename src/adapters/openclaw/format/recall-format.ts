@@ -45,19 +45,6 @@ export function buildSections(recall: OpenClawSessionStartRecall): OpenClawPromp
     sections.push({ title: "Core Memory", entries: coreEntries });
   }
 
-  const relevantEntries = recall.relevant.map((result) => ({
-    entry: result.entry,
-    score: result.score,
-  }));
-  if (relevantEntries.length > 0) {
-    sections.push({ title: "Relevant Recall", entries: relevantEntries });
-  }
-
-  const recentEntries = recall.recent.map((entry) => ({ entry }));
-  if (recentEntries.length > 0) {
-    sections.push({ title: "Recent Context", entries: recentEntries });
-  }
-
   return sections;
 }
 
