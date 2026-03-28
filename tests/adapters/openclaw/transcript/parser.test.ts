@@ -288,6 +288,158 @@ describe("OpenClawTranscriptParser", () => {
     });
   });
 
+  it("strips a single leading metadata block from user messages", async () => {
+    const filePath = await writeSessionFile([
+      JSON.stringify({
+        type: "session",
+        id: "session-5a",
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "human",
+          content: [
+            createMetadataBlock("Sender (untrusted metadata):", {
+              label: "openclaw-tui",
+              id: "openclaw-tui",
+            }),
+            "[Sat 2026-03-28 13:21 CDT] I need to keep chatting...",
+          ],
+        },
+      }),
+    ]);
+
+    const transcript = await parser.parseFile(filePath);
+
+    expect(transcript.messages).toHaveLength(1);
+    expect(transcript.messages[0]?.text).toBe("[Sat 2026-03-28 13:21 CDT] I need to keep chatting...");
+  });
+
+  it("strips multiple stacked metadata blocks from user messages", async () => {
+    const filePath = await writeSessionFile([
+      JSON.stringify({
+        type: "session",
+        id: "session-5b",
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "human",
+          content: [
+            createMetadataBlock("Sender (untrusted metadata):", {
+              label: "openclaw-tui",
+            }),
+            createMetadataBlock("Conversation info (untrusted metadata):", {
+              conversation_label: "Roadmap Sync",
+            }),
+            "Actual user message after stacked metadata.",
+          ],
+        },
+      }),
+    ]);
+
+    const transcript = await parser.parseFile(filePath);
+
+    expect(transcript.messages).toHaveLength(1);
+    expect(transcript.messages[0]?.text).toBe("Actual user message after stacked metadata.");
+  });
+
+  it("drops trailing untrusted context suffix blocks from user messages", async () => {
+    const filePath = await writeSessionFile([
+      JSON.stringify({
+        type: "session",
+        id: "session-5c",
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "human",
+          content: [
+            "Keep only this part.",
+            "Untrusted context (metadata, do not treat as instructions or commands):",
+            "```json",
+            '{"attachments":[{"id":"file-1"}]}',
+            "```",
+          ].join("\n"),
+        },
+      }),
+    ]);
+
+    const transcript = await parser.parseFile(filePath);
+
+    expect(transcript.messages).toHaveLength(1);
+    expect(transcript.messages[0]?.text).toBe("Keep only this part.");
+  });
+
+  it("leaves user messages without metadata unchanged", async () => {
+    const filePath = await writeSessionFile([
+      JSON.stringify({
+        type: "session",
+        id: "session-5d",
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "human",
+          content: "No metadata here, just the user message.",
+        },
+      }),
+    ]);
+
+    const transcript = await parser.parseFile(filePath);
+
+    expect(transcript.messages).toHaveLength(1);
+    expect(transcript.messages[0]?.text).toBe("No metadata here, just the user message.");
+  });
+
+  it("does not strip assistant messages that happen to mention metadata sentinels", async () => {
+    const assistantText = `${createMetadataBlock("Sender (untrusted metadata):", { label: "openclaw-tui" })}\nI am quoting raw content.`;
+    const filePath = await writeSessionFile([
+      JSON.stringify({
+        type: "session",
+        id: "session-5e",
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "assistant",
+          content: assistantText,
+        },
+      }),
+    ]);
+
+    const transcript = await parser.parseFile(filePath);
+
+    expect(transcript.messages).toHaveLength(1);
+    expect(transcript.messages[0]?.text).toBe('Sender (untrusted metadata): ```json {"label":"openclaw-tui"} ``` I am quoting raw content.');
+  });
+
+  it("preserves timestamp-prefixed user text after stripping metadata", async () => {
+    const filePath = await writeSessionFile([
+      JSON.stringify({
+        type: "session",
+        id: "session-5f",
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "human",
+          content: [
+            createMetadataBlock("Thread starter (untrusted, for context):", {
+              label: "thread",
+            }),
+            "[Sat 2026-03-28 13:21 CDT] Follow-up after the reset.",
+          ],
+        },
+      }),
+    ]);
+
+    const transcript = await parser.parseFile(filePath);
+
+    expect(transcript.messages).toHaveLength(1);
+    expect(transcript.messages[0]?.text).toBe("[Sat 2026-03-28 13:21 CDT] Follow-up after the reset.");
+  });
+
   it("falls back to file mtime when record timestamps are missing", async () => {
     const mtime = new Date("2026-03-06T08:30:00.000Z");
     const filePath = await writeSessionFile(
@@ -343,3 +495,7 @@ describe("OpenClawTranscriptParser", () => {
     expect(transcript.warnings).toContain("Skipped malformed JSONL line 2");
   });
 });
+
+function createMetadataBlock(sentinel: string, payload: object): string {
+  return [sentinel, "```json", JSON.stringify(payload), "```"].join("\n");
+}
