@@ -45,7 +45,8 @@ export async function handleAgenrBeforeReset(
     const services = await params.servicesPromise;
     const result = await writeOpenClawSessionSummary({
       sessionFile,
-      llm: services.summaryLlm,
+      agentId: ctx.agentId,
+      openClaw: services.openClaw,
       logger: params.logger,
     });
 

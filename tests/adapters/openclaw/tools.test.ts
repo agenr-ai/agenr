@@ -3,6 +3,7 @@ import { rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";
@@ -14,7 +15,7 @@ import {
   createAgenrTraceTool,
   createAgenrUpdateTool,
 } from "../../../src/adapters/openclaw/tools.js";
-import type { AgenrOpenClawServices } from "../../../src/adapters/openclaw/types.js";
+import type { AgenrOpenClawHost, AgenrOpenClawServices } from "../../../src/adapters/openclaw/types.js";
 import type { EmbeddingPort, RecallPorts } from "../../../src/core/ports.js";
 import type { Entry } from "../../../src/core/types.js";
 
@@ -281,8 +282,10 @@ function createServices(
       return texts.map((text, index) => createEmbedding(index, text.length || 1));
     },
   };
+  const openClaw = createOpenClawHost();
 
   return {
+    openClaw,
     config: {
       dbPath: "test.db",
     },
@@ -298,14 +301,42 @@ function createServices(
       model: "text-embedding-3-small",
       ...(options.available ? {} : { error: "Embedding API key is required." }),
     },
-    summaryStatus: {
-      available: false,
-      provider: "openai",
-      model: "gpt-5.4-mini",
-      error: "Summary LLM unavailable.",
-    },
     async close() {
       await database.close();
+    },
+  };
+}
+
+function createOpenClawHost(): AgenrOpenClawHost {
+  const workspaceDir = path.join(os.tmpdir(), "agenr-openclaw-test-workspace");
+  const agentDir = path.join(os.tmpdir(), "agenr-openclaw-test-agent");
+  const config = {
+    defaultAgent: "main",
+    agents: {
+      list: [
+        {
+          id: "main",
+          workspace: workspaceDir,
+          agentDir,
+          model: "openai/gpt-5.4-mini",
+        },
+      ],
+    },
+  } as unknown as OpenClawConfig;
+
+  return {
+    config,
+    runtime: {
+      agent: {
+        resolveAgentDir: () => agentDir,
+        resolveAgentWorkspaceDir: () => workspaceDir,
+        runEmbeddedPiAgent: async () => {
+          throw new Error("Embedded summary runner unavailable.");
+        },
+      },
+      state: {
+        resolveStateDir: () => path.join(os.tmpdir(), ".openclaw"),
+      },
     },
   };
 }

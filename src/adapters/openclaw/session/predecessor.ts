@@ -1,9 +1,8 @@
-import os from "node:os";
 import path from "node:path";
 
 import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
 
-import type { AgenrOpenClawHookContext } from "../types.js";
+import type { AgenrOpenClawHookContext, AgenrOpenClawRuntime } from "../types.js";
 import { readOpenClawSessionsStore } from "./sessions-store-reader.js";
 import type { SessionResetRecord, SessionStartTracker } from "./state.js";
 import { parseTuiSessionKey } from "./tui-lane.js";
@@ -57,50 +56,53 @@ export interface OpenClawSessionPredecessor {
  *
  * @param ctx - Active OpenClaw hook context.
  * @param tracker - In-process continuity tracker shared by the plugin.
- * @param logger - Optional plugin logger used for debug diagnostics.
+ * @param params - Logger plus OpenClaw state-dir resolution helpers.
  * @returns Predecessor facts, or `undefined` when continuity cannot be resolved.
  */
 export async function resolveOpenClawSessionPredecessor(
   ctx: AgenrOpenClawHookContext,
   tracker: SessionStartTracker,
-  logger?: PluginLogger,
+  params: {
+    logger?: PluginLogger;
+    resolveStateDir: AgenrOpenClawRuntime["state"]["resolveStateDir"];
+  },
 ): Promise<OpenClawSessionPredecessor | undefined> {
   const sessionContext = formatSessionContext(ctx.sessionId, ctx.sessionKey);
-  debugLog(logger, "predecessor", `resolving predecessor for ${sessionContext}`);
+  debugLog(params.logger, "predecessor", `resolving predecessor for ${sessionContext}`);
 
-  const trackedPredecessor = resolveTrackedPredecessor(ctx, tracker, logger);
+  const trackedPredecessor = resolveTrackedPredecessor(ctx, tracker, params.logger);
   if (trackedPredecessor) {
     return trackedPredecessor;
   }
 
   const tuiIdentity = parseTuiSessionKey(ctx.sessionKey ?? "");
   if (!tuiIdentity) {
-    debugLog(logger, "predecessor", `skipping TUI fallback for ${sessionContext}: current session key is not TUI`);
+    debugLog(params.logger, "predecessor", `skipping TUI fallback for ${sessionContext}: current session key is not TUI`);
     return undefined;
   }
 
-  const sessionsDir = resolveOpenClawSessionsDirectory(ctx, tuiIdentity.agentId);
+  const sessionsDir = resolveOpenClawSessionsDirectory(ctx, tuiIdentity.agentId, params.resolveStateDir);
   if (!sessionsDir) {
-    logger?.info?.(`[agenr] predecessor: TUI fallback no predecessor found for ${sessionContext} reason=no_sessions_dir`);
+    params.logger?.info?.(`[agenr] predecessor: TUI fallback no predecessor found for ${sessionContext} reason=no_sessions_dir`);
     return undefined;
   }
 
-  logger?.info?.(
+  params.logger?.info?.(
     `[agenr] predecessor: TUI fallback activated for ${sessionContext} sessionKey=${ctx.sessionKey?.trim() ?? "unknown"} stableLane=${tuiIdentity.stableLane}`,
   );
   debugLog(
-    logger,
+    params.logger,
     "predecessor",
     `TUI fallback stable lane for ${sessionContext}: agentId=${tuiIdentity.agentId} instanceLane=${tuiIdentity.instanceLane} stableLane=${tuiIdentity.stableLane} sessionsDir=${sessionsDir}`,
   );
 
-  const fallbackResolution = await findTuiFallbackPredecessor(ctx.sessionKey ?? "", sessionsDir, logger);
+  const fallbackResolution = await findTuiFallbackPredecessor(ctx.sessionKey ?? "", sessionsDir, params.logger);
   if (!fallbackResolution.predecessor) {
-    logger?.info?.(`[agenr] predecessor: TUI fallback no predecessor found for ${sessionContext} reason=${fallbackResolution.reason}`);
+    params.logger?.info?.(`[agenr] predecessor: TUI fallback no predecessor found for ${sessionContext} reason=${fallbackResolution.reason}`);
     return undefined;
   }
 
-  logger?.info?.(
+  params.logger?.info?.(
     `[agenr] predecessor: TUI fallback predecessor found for ${sessionContext} predecessorKey=${fallbackResolution.predecessor.sessionKey} predecessor=${fallbackResolution.predecessor.sessionFile}`,
   );
 
@@ -243,29 +245,18 @@ async function findTuiFallbackPredecessor(currentSessionKey: string, sessionsDir
   };
 }
 
-/** Resolves the OpenClaw state directory using the same environment override as OpenClaw itself. */
-function resolveOpenClawStateDir(): string {
-  const stateOverride = process.env.OPENCLAW_STATE_DIR?.trim();
-  if (stateOverride) {
-    return path.resolve(stateOverride);
-  }
-
-  const homeOverride = process.env.OPENCLAW_HOME?.trim();
-  if (homeOverride) {
-    return path.join(path.resolve(homeOverride), ".openclaw");
-  }
-
-  return path.join(os.homedir(), ".openclaw");
-}
-
 /** Resolves the agent-scoped OpenClaw sessions directory for TUI predecessor fallback. */
-function resolveOpenClawSessionsDirectory(ctx: AgenrOpenClawHookContext, fallbackAgentId: string): string | undefined {
+function resolveOpenClawSessionsDirectory(
+  ctx: AgenrOpenClawHookContext,
+  fallbackAgentId: string,
+  resolveStateDir: AgenrOpenClawRuntime["state"]["resolveStateDir"],
+): string | undefined {
   const agentId = ctx.agentId?.trim() || fallbackAgentId.trim();
   if (!agentId) {
     return undefined;
   }
 
-  return path.join(resolveOpenClawStateDir(), "agents", agentId, "sessions");
+  return path.join(resolveStateDir(process.env), "agents", agentId, "sessions");
 }
 
 /** Parses one-lane OpenClaw session keys of the form `agent:<agentId>:<lane>`. */

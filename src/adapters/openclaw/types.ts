@@ -1,10 +1,9 @@
 import type { OpenClawConfig, OpenClawPluginApi, PluginLogger } from "openclaw/plugin-sdk/core";
 
 import type { AgenrConfig } from "../../config.js";
-import type { EmbeddingPort, LlmPort, RecallPorts } from "../../core/ports.js";
+import type { EmbeddingPort, RecallPorts } from "../../core/ports.js";
 import type { Entry } from "../../core/types.js";
 import type { SqlDatabase } from "../db/client.js";
-import type { LlmClientMetadata } from "../llm.js";
 
 /**
  * Runtime plugin configuration accepted by the agenr OpenClaw adapter.
@@ -26,26 +25,26 @@ export interface AgenrOpenClawEmbeddingStatus {
 }
 
 /**
- * Static session-summary LLM availability facts derived from plugin configuration.
+ * Minimal OpenClaw runtime helpers reused by the agenr adapter.
  */
-export interface AgenrOpenClawSummaryStatus {
-  available: boolean;
-  provider: string;
-  model: string;
-  error?: string;
+export interface AgenrOpenClawRuntime {
+  agent: Pick<OpenClawPluginApi["runtime"]["agent"], "resolveAgentDir" | "resolveAgentWorkspaceDir" | "runEmbeddedPiAgent">;
+  state: Pick<OpenClawPluginApi["runtime"]["state"], "resolveStateDir">;
 }
 
 /**
- * LLM client used for file-based session continuity summaries.
+ * OpenClaw host config/runtime facts reused by the agenr adapter.
  */
-export interface AgenrOpenClawSummaryClient extends LlmPort {
-  metadata: LlmClientMetadata;
+export interface AgenrOpenClawHost {
+  config: OpenClawConfig;
+  runtime: AgenrOpenClawRuntime;
 }
 
 /**
  * Shared adapter services created once for the OpenClaw plugin process.
  */
 export interface AgenrOpenClawServices {
+  openClaw: AgenrOpenClawHost;
   config: AgenrOpenClawPluginConfig;
   agenrConfig: AgenrConfig;
   dbPath: string;
@@ -53,8 +52,6 @@ export interface AgenrOpenClawServices {
   embedding: EmbeddingPort;
   recall: RecallPorts;
   embeddingStatus: AgenrOpenClawEmbeddingStatus;
-  summaryStatus: AgenrOpenClawSummaryStatus;
-  summaryLlm?: AgenrOpenClawSummaryClient;
   close(): Promise<void>;
 }
 

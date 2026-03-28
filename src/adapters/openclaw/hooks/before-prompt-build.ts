@@ -93,7 +93,7 @@ export async function runAgenrSessionStartRecall(services: AgenrOpenClawServices
  *
  * @param ctx - Active OpenClaw hook context.
  * @param tracker - Shared in-process continuity tracker.
- * @param services - Shared agenr services that may provide the summary LLM.
+ * @param services - Shared agenr services plus OpenClaw host runtime access.
  * @param logger - Plugin logger used for continuity diagnostics.
  * @returns Prompt-ready predecessor sections, or an empty string when unavailable.
  */
@@ -104,14 +104,17 @@ async function buildPreviousSessionContext(
   logger: PluginLogger,
 ): Promise<string> {
   const sessionContext = formatSessionContext(ctx.sessionId, ctx.sessionKey);
-  const predecessor = await resolveOpenClawSessionPredecessor(ctx, tracker, logger);
+  const predecessor = await resolveOpenClawSessionPredecessor(ctx, tracker, {
+    logger,
+    resolveStateDir: services.openClaw.runtime.state.resolveStateDir,
+  });
   if (!predecessor) {
     logger.info(`[agenr] session-start predecessor summary not found for ${sessionContext} reason=no_predecessor`);
     return "";
   }
 
   const sections: string[] = [];
-  const summaryContent = await loadPredecessorSummaryContent(sessionContext, predecessor.sessionFile, services, logger);
+  const summaryContent = await loadPredecessorSummaryContent(sessionContext, predecessor.sessionFile, ctx.agentId, services, logger);
   if (summaryContent.length > 0) {
     sections.push(`## Previous session summary\n${summaryContent}`);
   }
@@ -129,13 +132,14 @@ async function buildPreviousSessionContext(
  *
  * @param sessionContext - Stable session identifiers for log output.
  * @param sessionFile - Absolute predecessor transcript path.
- * @param services - Shared agenr services that may provide the summary LLM.
+ * @param services - Shared agenr services plus OpenClaw host runtime access.
  * @param logger - Plugin logger used for summary diagnostics.
  * @returns Summary Markdown content, or an empty string when unavailable.
  */
 async function loadPredecessorSummaryContent(
   sessionContext: string,
   sessionFile: string,
+  agentId: string | undefined,
   services: AgenrOpenClawServices,
   logger: PluginLogger,
 ): Promise<string> {
@@ -156,10 +160,6 @@ async function loadPredecessorSummaryContent(
     return "";
   }
 
-  if (!services.summaryLlm) {
-    return "";
-  }
-
   logger.info(`[agenr] session-start read-time summary generation triggered for ${sessionContext} predecessor=${sessionFile} reason=no_existing_summary`);
   const startedAt = Date.now();
 
@@ -167,7 +167,8 @@ async function loadPredecessorSummaryContent(
     const result = await awaitWithTimeout(
       generateAndWriteOpenClawSessionSummary({
         sessionFile,
-        llm: services.summaryLlm,
+        agentId,
+        openClaw: services.openClaw,
         logger,
       }),
       READ_TIME_SUMMARY_TIMEOUT_MS,

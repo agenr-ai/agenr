@@ -1,0 +1,256 @@
+import { randomUUID } from "node:crypto";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { generateAndWriteOpenClawSessionSummary } from "../../../../src/adapters/openclaw/session/summary.js";
+import type { AgenrOpenClawHost } from "../../../../src/adapters/openclaw/types.js";
+
+const tempPaths: string[] = [];
+
+afterEach(async () => {
+  vi.restoreAllMocks();
+
+  while (tempPaths.length > 0) {
+    await rm(tempPaths.pop() ?? "", { force: true, recursive: true });
+  }
+});
+
+describe("generateAndWriteOpenClawSessionSummary", () => {
+  it("uses the OpenClaw-configured model and cleans temp session state", async () => {
+    const sessionFile = await writeSessionFile("summary-session", [
+      {
+        type: "session",
+        id: "summary-session",
+      },
+      {
+        type: "message",
+        message: {
+          role: "human",
+          content: "We should keep continuity summaries next to the transcript file.",
+        },
+      },
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          content: "That lets the next session recover context without writing handoff entries into the brain.",
+        },
+      },
+      {
+        type: "message",
+        message: {
+          role: "human",
+          content: "Use OpenClaw's configured model and auth instead of agenr's own summary client.",
+        },
+      },
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          content: "Agreed. The plugin should call the embedded runner and keep embeddings separate.",
+        },
+      },
+    ]);
+    let tempSessionFile: string | undefined;
+    const runEmbeddedPiAgentSpy = vi.fn(async (params: Parameters<AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"]>[0]) => {
+      tempSessionFile = params.sessionFile;
+      await expect(access(path.dirname(params.sessionFile))).resolves.toBeUndefined();
+
+      return {
+        payloads: [
+          {
+            text: "# Continuity\nOpenClaw now owns summary model resolution and auth, while embeddings still come from agenr config.",
+          },
+        ],
+        meta: {
+          durationMs: 1,
+        },
+      };
+    });
+    const openClaw = createOpenClawHost({
+      model: "openai/gpt-5.4",
+      runEmbeddedPiAgentImplementation: runEmbeddedPiAgentSpy as AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"],
+    });
+    const logger = createLogger();
+
+    const result = await generateAndWriteOpenClawSessionSummary({
+      sessionFile,
+      agentId: "main",
+      openClaw,
+      logger,
+    });
+
+    expect(result).toMatchObject({
+      status: "written",
+      model: "openai/gpt-5.4",
+    });
+    expect(runEmbeddedPiAgentSpy).toHaveBeenCalledTimes(1);
+    expect(runEmbeddedPiAgentSpy.mock.calls[0]?.[0]).toMatchObject({
+      agentId: "main",
+      config: openClaw.config,
+      model: "gpt-5.4",
+      provider: "openai",
+      sessionKey: "temp:agenr-summary",
+      timeoutMs: 15_000,
+    });
+    expect(runEmbeddedPiAgentSpy.mock.calls[0]?.[0]?.extraSystemPrompt).toContain(
+      "You write concise narrative summaries that help the next session continue smoothly.",
+    );
+    expect(runEmbeddedPiAgentSpy.mock.calls[0]?.[0]?.prompt).toContain("Transcript:");
+
+    const summaryPath = path.join(path.dirname(sessionFile), "summary-session.summary.md");
+    await expect(readFile(summaryPath, "utf8")).resolves.toBe(
+      "OpenClaw now owns summary model resolution and auth, while embeddings still come from agenr config.\n",
+    );
+    expect(tempSessionFile).toBeDefined();
+    await expect(access(path.dirname(tempSessionFile ?? ""))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(getMessages(logger.info)).toContain("[agenr] summary: using OpenClaw embedded agent provider=openai model=gpt-5.4 agent=main");
+  });
+
+  it("warns and skips when the embedded runner is unavailable", async () => {
+    const sessionFile = await writeSessionFile("summary-session", [
+      {
+        type: "session",
+        id: "summary-session",
+      },
+      {
+        type: "message",
+        message: {
+          role: "human",
+          content: "Please summarize this session.",
+        },
+      },
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          content: "I will try.",
+        },
+      },
+      {
+        type: "message",
+        message: {
+          role: "human",
+          content: "Keep the fallback path stable.",
+        },
+      },
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          content: "The recent transcript tail should still be available.",
+        },
+      },
+    ]);
+    const openClaw = createUnavailableOpenClawHost();
+    const logger = createLogger();
+
+    const result = await generateAndWriteOpenClawSessionSummary({
+      sessionFile,
+      agentId: "main",
+      openClaw,
+      logger,
+    });
+
+    expect(result).toMatchObject({
+      status: "skipped",
+      reason: "embedded_agent_unavailable",
+      model: "openai/gpt-5.4-mini",
+    });
+    expect(getMessages(logger.warn)).toContain(`[agenr] summary: OpenClaw embedded agent runner unavailable for file=${sessionFile}`);
+  });
+});
+
+async function writeSessionFile(sessionId: string, entries: object[]): Promise<string> {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agenr-openclaw-summary-"));
+  tempPaths.push(root);
+  const sessionFile = path.join(root, `${sessionId}.jsonl`);
+  await writeFile(sessionFile, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`, "utf8");
+  return sessionFile;
+}
+
+function createOpenClawHost(options: {
+  model: string;
+  runEmbeddedPiAgentImplementation: AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"];
+}): AgenrOpenClawHost {
+  const workspaceDir = path.join(os.tmpdir(), `agenr-openclaw-summary-workspace-${randomUUID()}`);
+  const agentDir = path.join(os.tmpdir(), `agenr-openclaw-summary-agent-${randomUUID()}`);
+  const config = {
+    defaultAgent: "main",
+    agents: {
+      list: [
+        {
+          id: "main",
+          workspace: workspaceDir,
+          agentDir,
+          model: options.model,
+        },
+      ],
+    },
+  } as unknown as OpenClawConfig;
+
+  return {
+    config,
+    runtime: {
+      agent: {
+        resolveAgentDir: () => agentDir,
+        resolveAgentWorkspaceDir: () => workspaceDir,
+        runEmbeddedPiAgent: options.runEmbeddedPiAgentImplementation,
+      },
+      state: {
+        resolveStateDir: () => path.join(os.tmpdir(), ".openclaw"),
+      },
+    },
+  };
+}
+
+function createUnavailableOpenClawHost(): AgenrOpenClawHost {
+  const workspaceDir = path.join(os.tmpdir(), `agenr-openclaw-summary-workspace-${randomUUID()}`);
+  const agentDir = path.join(os.tmpdir(), `agenr-openclaw-summary-agent-${randomUUID()}`);
+  const config = {
+    defaultAgent: "main",
+    agents: {
+      list: [
+        {
+          id: "main",
+          workspace: workspaceDir,
+          agentDir,
+          model: "openai/gpt-5.4-mini",
+        },
+      ],
+    },
+  } as unknown as OpenClawConfig;
+
+  return {
+    config,
+    runtime: {
+      agent: {
+        resolveAgentDir: () => agentDir,
+        resolveAgentWorkspaceDir: () => workspaceDir,
+        runEmbeddedPiAgent: undefined,
+      },
+      state: {
+        resolveStateDir: () => path.join(os.tmpdir(), ".openclaw"),
+      },
+    },
+  } as unknown as AgenrOpenClawHost;
+}
+
+function createLogger() {
+  return {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  };
+}
+
+function getMessages(logFn: ReturnType<typeof vi.fn>): string[] {
+  return logFn.mock.calls.map(([message]) => message as string);
+}

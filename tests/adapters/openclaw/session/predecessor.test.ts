@@ -2,6 +2,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { resolveStateDir as resolveOpenClawStateDir } from "openclaw/plugin-sdk/state-paths";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { resolveOpenClawSessionPredecessor } from "../../../../src/adapters/openclaw/session/predecessor.js";
@@ -10,6 +11,7 @@ import { createSessionStartTracker } from "../../../../src/adapters/openclaw/ses
 const tempPaths: string[] = [];
 const originalOpenClawStateDir = process.env.OPENCLAW_STATE_DIR;
 const originalOpenClawHome = process.env.OPENCLAW_HOME;
+const originalHome = process.env.HOME;
 
 afterEach(async () => {
   if (originalOpenClawStateDir === undefined) {
@@ -21,6 +23,11 @@ afterEach(async () => {
     delete process.env.OPENCLAW_HOME;
   } else {
     process.env.OPENCLAW_HOME = originalOpenClawHome;
+  }
+  if (originalHome === undefined) {
+    delete process.env.HOME;
+  } else {
+    process.env.HOME = originalHome;
   }
 
   vi.restoreAllMocks();
@@ -59,7 +66,10 @@ describe("resolveOpenClawSessionPredecessor", () => {
         workspaceDir,
       },
       createSessionStartTracker(),
-      logger,
+      {
+        logger,
+        resolveStateDir: resolveOpenClawStateDir,
+      },
     );
 
     expect(result).toEqual({
@@ -110,7 +120,10 @@ describe("resolveOpenClawSessionPredecessor", () => {
         workspaceDir,
       },
       createSessionStartTracker(),
-      createLogger(),
+      {
+        logger: createLogger(),
+        resolveStateDir: resolveOpenClawStateDir,
+      },
     );
 
     expect(result).toEqual({
@@ -136,7 +149,7 @@ describe("resolveOpenClawSessionPredecessor", () => {
       },
     });
 
-    vi.spyOn(os, "homedir").mockReturnValue(fakeHomeDir);
+    process.env.HOME = fakeHomeDir;
 
     const result = await resolveOpenClawSessionPredecessor(
       {
@@ -146,7 +159,10 @@ describe("resolveOpenClawSessionPredecessor", () => {
         workspaceDir: path.join(fakeHomeDir, "workspace"),
       },
       createSessionStartTracker(),
-      createLogger(),
+      {
+        logger: createLogger(),
+        resolveStateDir: resolveOpenClawStateDir,
+      },
     );
 
     expect(result).toEqual({
@@ -180,7 +196,10 @@ describe("resolveOpenClawSessionPredecessor", () => {
         workspaceDir,
       },
       createSessionStartTracker(),
-      logger,
+      {
+        logger,
+        resolveStateDir: resolveOpenClawStateDir,
+      },
     );
 
     expect(result).toEqual({
@@ -226,7 +245,10 @@ describe("resolveOpenClawSessionPredecessor", () => {
         workspaceDir,
       },
       createSessionStartTracker(),
-      createLogger(),
+      {
+        logger: createLogger(),
+        resolveStateDir: resolveOpenClawStateDir,
+      },
     );
 
     expect(result).toEqual({
@@ -263,7 +285,10 @@ describe("resolveOpenClawSessionPredecessor", () => {
         workspaceDir,
       },
       tracker,
-      logger,
+      {
+        logger,
+        resolveStateDir: resolveOpenClawStateDir,
+      },
     );
 
     expect(result).toEqual({
@@ -285,7 +310,10 @@ describe("resolveOpenClawSessionPredecessor", () => {
         workspaceDir,
       },
       createSessionStartTracker(),
-      logger,
+      {
+        logger,
+        resolveStateDir: resolveOpenClawStateDir,
+      },
     );
 
     expect(result).toBeUndefined();
@@ -317,7 +345,10 @@ describe("resolveOpenClawSessionPredecessor", () => {
         workspaceDir,
       },
       createSessionStartTracker(),
-      logger,
+      {
+        logger,
+        resolveStateDir: resolveOpenClawStateDir,
+      },
     );
 
     expect(result).toBeUndefined();

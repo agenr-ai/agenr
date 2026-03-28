@@ -3,12 +3,13 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";
 import { handleAgenrBeforeReset } from "../../../src/adapters/openclaw/hooks/before-reset.js";
 import { createSessionStartTracker } from "../../../src/adapters/openclaw/session/state.js";
-import type { AgenrOpenClawServices, AgenrOpenClawSummaryClient } from "../../../src/adapters/openclaw/types.js";
+import type { AgenrOpenClawHost, AgenrOpenClawServices } from "../../../src/adapters/openclaw/types.js";
 import type { EmbeddingPort, RecallPorts } from "../../../src/core/ports.js";
 
 const openDatabases: SqlDatabase[] = [];
@@ -63,9 +64,6 @@ describe("handleAgenrBeforeReset", () => {
       },
     ]);
 
-    const summaryLlm = createSummaryLlm(
-      "The session agreed to store continuity in sidecar summary files, keep transcript-tail fallback, and avoid brain handoff entries.",
-    );
     const tracker = createSessionStartTracker();
     await handleAgenrBeforeReset(
       {
@@ -79,7 +77,11 @@ describe("handleAgenrBeforeReset", () => {
       },
       {
         logger,
-        servicesPromise: Promise.resolve(createServices(database, summaryLlm)),
+        servicesPromise: Promise.resolve(
+          createServices(database, {
+            summaryResponse: "The session agreed to store continuity in sidecar summary files, keep transcript-tail fallback, and avoid brain handoff entries.",
+          }),
+        ),
         tracker,
       },
     );
@@ -141,7 +143,7 @@ describe("handleAgenrBeforeReset", () => {
       },
       {
         logger,
-        servicesPromise: Promise.resolve(createServices(database, createSummaryLlm("unused"))),
+        servicesPromise: Promise.resolve(createServices(database)),
         tracker: createSessionStartTracker(),
       },
     );
@@ -156,7 +158,12 @@ describe("handleAgenrBeforeReset", () => {
   });
 });
 
-function createServices(database: SqlDatabase, summaryLlm: AgenrOpenClawSummaryClient | undefined): AgenrOpenClawServices {
+function createServices(
+  database: SqlDatabase,
+  options: {
+    summaryResponse?: string;
+  } = {},
+): AgenrOpenClawServices {
   const embedding: EmbeddingPort = {
     async embed(): Promise<number[][]> {
       throw new Error("Embeddings unavailable in this test.");
@@ -179,8 +186,23 @@ function createServices(database: SqlDatabase, summaryLlm: AgenrOpenClawSummaryC
       return;
     },
   };
+  const openClaw = createOpenClawHost({
+    runEmbeddedPiAgentImplementation: async () => {
+      if (options.summaryResponse === undefined) {
+        throw new Error("Embedded summary runner unavailable.");
+      }
+
+      return {
+        payloads: [{ text: options.summaryResponse ?? "" }],
+        meta: {
+          durationMs: 1,
+        },
+      };
+    },
+  });
 
   return {
+    openClaw,
     config: {
       dbPath: "test.db",
     },
@@ -196,43 +218,40 @@ function createServices(database: SqlDatabase, summaryLlm: AgenrOpenClawSummaryC
       model: "text-embedding-3-small",
       error: "Embedding API key is required.",
     },
-    summaryStatus: {
-      available: Boolean(summaryLlm),
-      provider: "openai",
-      model: "gpt-5.4-mini",
-      ...(summaryLlm ? {} : { error: "Summary LLM unavailable." }),
-    },
-    ...(summaryLlm ? { summaryLlm } : {}),
     async close() {
       await database.close();
     },
   };
 }
 
-function createSummaryLlm(response: string): AgenrOpenClawSummaryClient {
+function createOpenClawHost(options: { runEmbeddedPiAgentImplementation: AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"] }): AgenrOpenClawHost {
+  const workspaceDir = path.join(os.tmpdir(), "agenr-openclaw-test-workspace");
+  const agentDir = path.join(os.tmpdir(), "agenr-openclaw-test-agent");
+  const config = {
+    defaultAgent: "main",
+    agents: {
+      list: [
+        {
+          id: "main",
+          workspace: workspaceDir,
+          agentDir,
+          model: "openai/gpt-5.4-mini",
+        },
+      ],
+    },
+  } as unknown as OpenClawConfig;
+
   return {
-    metadata: {
-      model: {
-        id: "gpt-5.4-mini",
-      } as AgenrOpenClawSummaryClient["metadata"]["model"],
-      contextWindowTokens: 200_000,
-      maxOutputTokens: 8_000,
-      supportsReasoning: true,
-      usage: {
-        calls: 0,
-        inputTokens: 0,
-        outputTokens: 0,
-        cacheReadTokens: 0,
-        cacheWriteTokens: 0,
-        totalTokens: 0,
-        totalCost: 0,
+    config,
+    runtime: {
+      agent: {
+        resolveAgentDir: () => agentDir,
+        resolveAgentWorkspaceDir: () => workspaceDir,
+        runEmbeddedPiAgent: options.runEmbeddedPiAgentImplementation,
       },
-    },
-    async complete(): Promise<string> {
-      return response;
-    },
-    async completeJson<T>(): Promise<T> {
-      throw new Error("completeJson is unused in this test.");
+      state: {
+        resolveStateDir: () => path.join(os.tmpdir(), ".openclaw"),
+      },
     },
   };
 }

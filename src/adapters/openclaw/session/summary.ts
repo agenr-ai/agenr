@@ -1,13 +1,17 @@
 import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
+import { DEFAULT_MODEL, DEFAULT_PROVIDER, parseModelRef, resolveAgentEffectiveModelPrimary, resolveDefaultAgentId } from "openclaw/plugin-sdk/agent-runtime";
 import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
 
 import { openClawTranscriptParser } from "../transcript/parser.js";
-import type { AgenrOpenClawSummaryClient } from "../types.js";
+import type { AgenrOpenClawHost } from "../types.js";
 import { readOpenClawSessionSummaryFile, resolveOpenClawSessionSummaryPath } from "./summary-reader.js";
 
 const MIN_SUMMARY_MESSAGES = 4;
 const MAX_TRANSCRIPT_CHARS = 14_000;
+const SUMMARY_TIMEOUT_MS = 15_000;
 const SUMMARY_SYSTEM_PROMPT = [
   "You write concise narrative summaries that help the next session continue smoothly.",
   "The transcript can be about any domain. Do not assume technical, project, or coding context unless the transcript shows it.",
@@ -72,7 +76,8 @@ export interface OpenClawSessionSummaryWriteResult {
  */
 export async function generateAndWriteOpenClawSessionSummary(params: {
   sessionFile: string;
-  llm: AgenrOpenClawSummaryClient | undefined;
+  agentId?: string;
+  openClaw: AgenrOpenClawHost;
   logger: PluginLogger;
 }): Promise<OpenClawSessionSummaryWriteResult> {
   const sessionFile = params.sessionFile.trim();
@@ -81,14 +86,6 @@ export async function generateAndWriteOpenClawSessionSummary(params: {
     return {
       status: "skipped",
       reason: "missing_session_id",
-    };
-  }
-
-  if (!params.llm) {
-    return {
-      status: "skipped",
-      reason: "llm_unavailable",
-      summaryPath,
     };
   }
 
@@ -123,7 +120,8 @@ export async function generateAndWriteOpenClawSessionSummary(params: {
     };
   }
 
-  const summaryModel = params.llm.metadata.model.id;
+  const summaryExecution = resolveSummaryExecution(params.openClaw, params.agentId);
+  const summaryModel = formatResolvedModel(summaryExecution.provider, summaryExecution.model);
   const prompt = [
     "Produce a concise continuity summary for the next session.",
     "Prefer short paragraphs. Use a short 'Open loops' section only if it adds clarity.",
@@ -137,10 +135,51 @@ export async function generateAndWriteOpenClawSessionSummary(params: {
     "summary",
     `sending summary prompt model=${summaryModel} promptChars=${prompt.length} transcriptChars=${normalizedTranscript.length}`,
   );
+  params.logger.info(
+    `[agenr] summary: using OpenClaw embedded agent provider=${summaryExecution.provider} model=${summaryExecution.model} agent=${summaryExecution.agentId}`,
+  );
+  debugLog(
+    params.logger,
+    "summary",
+    `resolved OpenClaw summary model for file=${sessionFile}: agentId=${summaryExecution.agentId} modelRef=${summaryExecution.modelRef ?? "default"} provider=${summaryExecution.provider} model=${summaryExecution.model}`,
+  );
+
+  const runEmbeddedPiAgent = params.openClaw.runtime.agent.runEmbeddedPiAgent;
+  if (typeof runEmbeddedPiAgent !== "function") {
+    params.logger.warn?.(`[agenr] summary: OpenClaw embedded agent runner unavailable for file=${sessionFile}`);
+    return {
+      status: "skipped",
+      reason: "embedded_agent_unavailable",
+      summaryPath,
+      messageCount: cleanedMessages.length,
+      transcriptChars: normalizedTranscript.length,
+      model: summaryModel,
+    };
+  }
 
   const startedAt = Date.now();
+  let tempSessionFile: string | undefined;
   try {
-    const response = (await params.llm.complete(SUMMARY_SYSTEM_PROMPT, prompt)).trim();
+    tempSessionFile = await createTempSummarySessionFile();
+    const runId = `agenr-summary-${Date.now()}`;
+    const response = extractEmbeddedAgentText(
+      await runEmbeddedPiAgent({
+        sessionId: runId,
+        sessionKey: "temp:agenr-summary",
+        agentId: summaryExecution.agentId,
+        sessionFile: tempSessionFile,
+        workspaceDir: summaryExecution.workspaceDir,
+        agentDir: summaryExecution.agentDir,
+        config: params.openClaw.config,
+        prompt,
+        provider: summaryExecution.provider,
+        model: summaryExecution.model,
+        timeoutMs: SUMMARY_TIMEOUT_MS,
+        runId,
+        disableTools: true,
+        extraSystemPrompt: SUMMARY_SYSTEM_PROMPT,
+      }),
+    ).trim();
     const durationMs = Date.now() - startedAt;
     const normalizedSummary = normalizeSummary(response);
 
@@ -199,6 +238,8 @@ export async function generateAndWriteOpenClawSessionSummary(params: {
       model: summaryModel,
       durationMs,
     };
+  } finally {
+    await cleanupTempSummarySessionFile(tempSessionFile);
   }
 }
 
@@ -211,7 +252,8 @@ export async function generateAndWriteOpenClawSessionSummary(params: {
  */
 export async function writeOpenClawSessionSummary(params: {
   sessionFile: string;
-  llm: AgenrOpenClawSummaryClient | undefined;
+  agentId?: string;
+  openClaw: AgenrOpenClawHost;
   logger: PluginLogger;
 }): Promise<OpenClawSessionSummaryWriteResult> {
   return generateAndWriteOpenClawSessionSummary(params);
@@ -221,7 +263,7 @@ export async function writeOpenClawSessionSummary(params: {
  * Renders cleaned transcript messages into a stable summary prompt body.
  *
  * @param messages - Cleaned transcript messages produced by the adapter.
- * @returns Human-readable transcript text for the summary LLM.
+ * @returns Human-readable transcript text for the OpenClaw summary runner.
  */
 export function renderTranscriptForSummary(messages: Array<{ role: "user" | "assistant"; text: string }>): string {
   return messages.map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.text.trim()}`).join("\n");
@@ -236,6 +278,64 @@ function debugLog(logger: PluginLogger, subsystem: string, message: string): voi
 function normalizeSummary(value: string): string {
   const trimmed = value.trim();
   return trimmed.replace(/^# .+\n+/u, "").trim();
+}
+
+/** Resolves OpenClaw agent/model facts for one summary generation run. */
+function resolveSummaryExecution(
+  openClaw: AgenrOpenClawHost,
+  requestedAgentId?: string,
+): {
+  agentId: string;
+  agentDir: string;
+  model: string;
+  modelRef?: string;
+  provider: string;
+  workspaceDir: string;
+} {
+  const agentId = requestedAgentId?.trim() || resolveDefaultAgentId(openClaw.config);
+  const modelRef = resolveAgentEffectiveModelPrimary(openClaw.config, agentId);
+  const parsedModelRef = modelRef ? parseModelRef(modelRef, DEFAULT_PROVIDER) : null;
+
+  return {
+    agentId,
+    agentDir: openClaw.runtime.agent.resolveAgentDir(openClaw.config, agentId),
+    workspaceDir: openClaw.runtime.agent.resolveAgentWorkspaceDir(openClaw.config, agentId),
+    modelRef,
+    provider: parsedModelRef?.provider ?? DEFAULT_PROVIDER,
+    model: parsedModelRef?.model ?? DEFAULT_MODEL,
+  };
+}
+
+/** Formats a resolved provider/model pair as a stable summary model identifier. */
+function formatResolvedModel(provider: string, model: string): string {
+  return `${provider}/${model}`;
+}
+
+/** Creates the temporary session file path required by OpenClaw's embedded agent runner. */
+async function createTempSummarySessionFile(): Promise<string> {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "agenr-summary-"));
+  return path.join(tempDir, "session.jsonl");
+}
+
+/** Removes the temporary embedded-agent session directory after the run completes. */
+async function cleanupTempSummarySessionFile(tempSessionFile?: string): Promise<void> {
+  if (!tempSessionFile) {
+    return;
+  }
+
+  try {
+    await fs.rm(path.dirname(tempSessionFile), {
+      recursive: true,
+      force: true,
+    });
+  } catch {
+    // Ignore cleanup failures for temp summary state.
+  }
+}
+
+/** Extracts the first text payload emitted by OpenClaw's embedded agent runner. */
+function extractEmbeddedAgentText(result: { payloads?: Array<{ text?: string }> }): string {
+  return result.payloads?.find((payload) => payload.text?.trim())?.text ?? "";
 }
 
 /** Formats unknown errors into stable loggable strings. */

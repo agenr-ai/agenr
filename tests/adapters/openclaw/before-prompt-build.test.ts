@@ -3,12 +3,14 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
+import { resolveStateDir as resolveOpenClawStateDir } from "openclaw/plugin-sdk/state-paths";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";
 import { handleAgenrBeforePromptBuild } from "../../../src/adapters/openclaw/hooks/before-prompt-build.js";
 import { createSessionStartTracker } from "../../../src/adapters/openclaw/session/state.js";
-import type { AgenrOpenClawServices, AgenrOpenClawSummaryClient } from "../../../src/adapters/openclaw/types.js";
+import type { AgenrOpenClawHost, AgenrOpenClawServices } from "../../../src/adapters/openclaw/types.js";
 import type { EmbeddingPort, RecallPorts } from "../../../src/core/ports.js";
 import type { Entry } from "../../../src/core/types.js";
 
@@ -473,7 +475,7 @@ describe("handleAgenrBeforePromptBuild", () => {
     );
 
     const summary = "The prior TUI session established read-time summary caching for /new continuity and kept transcript-tail fallback intact.";
-    const { client: summaryLlm, completeSpy } = createSummaryLlm({ response: summary });
+    const { runEmbeddedPiAgent: summaryRunner, runEmbeddedPiAgentSpy } = createSummaryRunner({ response: summary });
     const result = await handleAgenrBeforePromptBuild(
       {
         prompt: "Continue the TUI session after /new.",
@@ -487,7 +489,7 @@ describe("handleAgenrBeforePromptBuild", () => {
       },
       {
         logger,
-        servicesPromise: Promise.resolve(createServices(database, { summaryLlm })),
+        servicesPromise: Promise.resolve(createServices(database, { summaryRunImplementation: summaryRunner })),
         tracker: createSessionStartTracker(),
       },
     );
@@ -498,7 +500,7 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(result?.prependContext).toContain("## Recent session");
     expect(result?.prependContext).toContain("U: The default TUI session needs continuity");
     await expect(readFile(summaryPath, "utf8")).resolves.toContain(summary);
-    expect(completeSpy).toHaveBeenCalledTimes(1);
+    expect(runEmbeddedPiAgentSpy).toHaveBeenCalledTimes(1);
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
         "[agenr] predecessor: TUI fallback activated for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 sessionKey=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 stableLane=tui",
@@ -566,7 +568,7 @@ describe("handleAgenrBeforePromptBuild", () => {
       )}\n`,
       "utf8",
     );
-    const { client: summaryLlm, completeSpy } = createSummaryLlm({
+    const { runEmbeddedPiAgent: summaryRunner, runEmbeddedPiAgentSpy } = createSummaryRunner({
       response: "This should not be generated because the summary file already exists.",
     });
 
@@ -583,7 +585,7 @@ describe("handleAgenrBeforePromptBuild", () => {
       },
       {
         logger,
-        servicesPromise: Promise.resolve(createServices(database, { summaryLlm })),
+        servicesPromise: Promise.resolve(createServices(database, { summaryRunImplementation: summaryRunner })),
         tracker: createSessionStartTracker(),
       },
     );
@@ -592,7 +594,7 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(result?.prependContext).toContain("sessions.json");
     expect(result?.prependContext).toContain("## Recent session");
     expect(result?.prependContext).toContain("U: The default TUI session needs continuity");
-    expect(completeSpy).not.toHaveBeenCalled();
+    expect(runEmbeddedPiAgentSpy).not.toHaveBeenCalled();
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
         "[agenr] predecessor: TUI fallback activated for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 sessionKey=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 stableLane=tui",
@@ -657,7 +659,7 @@ describe("handleAgenrBeforePromptBuild", () => {
       recordedAt: "2026-03-28T11:04:00.000Z",
     });
     tracker.rememberSessionStart("session-5", "agent:main:webchat:failure", "predecessor-session");
-    const { client: summaryLlm, completeSpy } = createSummaryLlm({
+    const { runEmbeddedPiAgent: summaryRunner, runEmbeddedPiAgentSpy } = createSummaryRunner({
       implementation: async () => {
         throw new Error("summary backend exploded");
       },
@@ -674,7 +676,7 @@ describe("handleAgenrBeforePromptBuild", () => {
       },
       {
         logger,
-        servicesPromise: Promise.resolve(createServices(database, { summaryLlm })),
+        servicesPromise: Promise.resolve(createServices(database, { summaryRunImplementation: summaryRunner })),
         tracker,
       },
     );
@@ -683,7 +685,7 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(result?.prependContext).toContain("## Recent session");
     expect(result?.prependContext).toContain("U: The next session should continue even if the summary LLM fails.");
     await expect(readFile(summaryPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
-    expect(completeSpy).toHaveBeenCalledTimes(1);
+    expect(runEmbeddedPiAgentSpy).toHaveBeenCalledTimes(1);
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
         "[agenr] session-start read-time summary generation triggered for session=session-5 key=agent:main:webchat:failure predecessor=" +
@@ -753,13 +755,18 @@ describe("handleAgenrBeforePromptBuild", () => {
     const summaryStarted = new Promise<void>((resolve) => {
       markSummaryStarted = resolve;
     });
-    const { client: summaryLlm } = createSummaryLlm({
+    const { runEmbeddedPiAgent: summaryRunner } = createSummaryRunner({
       implementation: async () => {
         markSummaryStarted?.();
         await new Promise((resolve) => {
           setTimeout(resolve, 60_000);
         });
-        return "This summary should arrive too late for prompt build.";
+        return {
+          payloads: [{ text: "This summary should arrive too late for prompt build." }],
+          meta: {
+            durationMs: 60_000,
+          },
+        };
       },
     });
 
@@ -774,7 +781,7 @@ describe("handleAgenrBeforePromptBuild", () => {
       },
       {
         logger,
-        servicesPromise: Promise.resolve(createServices(database, { summaryLlm })),
+        servicesPromise: Promise.resolve(createServices(database, { summaryRunImplementation: summaryRunner })),
         tracker,
       },
     );
@@ -839,7 +846,7 @@ describe("handleAgenrBeforePromptBuild", () => {
       recordedAt: "2026-03-28T13:03:00.000Z",
     });
     tracker.rememberSessionStart("session-7", "agent:main:webchat:short-read-time", "predecessor-session");
-    const { client: summaryLlm, completeSpy } = createSummaryLlm({
+    const { runEmbeddedPiAgent: summaryRunner, runEmbeddedPiAgentSpy } = createSummaryRunner({
       response: "This should never be requested for short sessions.",
     });
 
@@ -854,7 +861,7 @@ describe("handleAgenrBeforePromptBuild", () => {
       },
       {
         logger,
-        servicesPromise: Promise.resolve(createServices(database, { summaryLlm })),
+        servicesPromise: Promise.resolve(createServices(database, { summaryRunImplementation: summaryRunner })),
         tracker,
       },
     );
@@ -863,7 +870,7 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(result?.prependContext).toContain("## Recent session");
     expect(result?.prependContext).toContain("U: Short session.");
     await expect(readFile(summaryPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
-    expect(completeSpy).not.toHaveBeenCalled();
+    expect(runEmbeddedPiAgentSpy).not.toHaveBeenCalled();
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
         "[agenr] session-start read-time summary generation triggered for session=session-7 key=agent:main:webchat:short-read-time predecessor=" +
@@ -913,7 +920,7 @@ function createServices(
   options: {
     available?: boolean;
     recall?: RecallPorts;
-    summaryLlm?: AgenrOpenClawSummaryClient;
+    summaryRunImplementation?: AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"];
   } = {},
 ): AgenrOpenClawServices {
   const available = options.available ?? false;
@@ -941,8 +948,16 @@ function createServices(
         return;
       },
     } satisfies RecallPorts);
+  const openClaw = createOpenClawHost({
+    runEmbeddedPiAgentImplementation:
+      options.summaryRunImplementation ??
+      (async () => {
+        throw new Error("Embedded summary runner unavailable.");
+      }),
+  });
 
   return {
+    openClaw,
     config: {
       dbPath: "test.db",
     },
@@ -958,60 +973,68 @@ function createServices(
       model: "text-embedding-3-small",
       ...(available ? {} : { error: "Embedding API key is required." }),
     },
-    summaryStatus: {
-      available: Boolean(options.summaryLlm),
-      provider: "openai",
-      model: "gpt-5.4-mini",
-      ...(options.summaryLlm ? {} : { error: "Summary LLM unavailable." }),
-    },
-    ...(options.summaryLlm ? { summaryLlm: options.summaryLlm } : {}),
     async close() {
       await database.close();
     },
   };
 }
 
-function createSummaryLlm(
+function createSummaryRunner(
   options: {
+    implementation?: AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"];
     response?: string;
-    implementation?: (systemPrompt: string, prompt: string) => Promise<string>;
   } = {},
 ): {
-  client: AgenrOpenClawSummaryClient;
-  completeSpy: ReturnType<typeof vi.fn>;
+  runEmbeddedPiAgent: AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"];
+  runEmbeddedPiAgentSpy: ReturnType<typeof vi.fn>;
 } {
-  const completeSpy = vi.fn(
+  const runEmbeddedPiAgentSpy = vi.fn(
     options.implementation ??
-      (async (): Promise<string> => {
-        return options.response ?? "";
+      (async () => {
+        return {
+          payloads: [{ text: options.response ?? "" }],
+          meta: {
+            durationMs: 1,
+          },
+        };
       }),
   );
 
   return {
-    client: {
-      metadata: {
-        model: {
-          id: "gpt-5.4-mini",
-        } as AgenrOpenClawSummaryClient["metadata"]["model"],
-        contextWindowTokens: 200_000,
-        maxOutputTokens: 8_000,
-        supportsReasoning: true,
-        usage: {
-          calls: 0,
-          inputTokens: 0,
-          outputTokens: 0,
-          cacheReadTokens: 0,
-          cacheWriteTokens: 0,
-          totalTokens: 0,
-          totalCost: 0,
+    runEmbeddedPiAgent: runEmbeddedPiAgentSpy as AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"],
+    runEmbeddedPiAgentSpy,
+  };
+}
+
+function createOpenClawHost(options: { runEmbeddedPiAgentImplementation: AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"] }): AgenrOpenClawHost {
+  const workspaceDir = path.join(os.tmpdir(), "agenr-openclaw-test-workspace");
+  const agentDir = path.join(os.tmpdir(), "agenr-openclaw-test-agent");
+  const config = {
+    defaultAgent: "main",
+    agents: {
+      list: [
+        {
+          id: "main",
+          workspace: workspaceDir,
+          agentDir,
+          model: "openai/gpt-5.4-mini",
         },
+      ],
+    },
+  } as unknown as OpenClawConfig;
+
+  return {
+    config,
+    runtime: {
+      agent: {
+        resolveAgentDir: () => agentDir,
+        resolveAgentWorkspaceDir: () => workspaceDir,
+        runEmbeddedPiAgent: options.runEmbeddedPiAgentImplementation,
       },
-      complete: completeSpy,
-      async completeJson<T>(): Promise<T> {
-        throw new Error("completeJson is unused in this test.");
+      state: {
+        resolveStateDir: (env?: NodeJS.ProcessEnv) => resolveOpenClawStateDir(env),
       },
     },
-    completeSpy,
   };
 }
 

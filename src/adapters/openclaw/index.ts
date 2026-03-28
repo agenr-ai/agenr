@@ -21,6 +21,10 @@ export default definePluginEntry({
     const memoryApi = api as AgenrOpenClawMemoryPluginApi;
     const tracker = createSessionStartTracker();
     const servicesPromise = createAgenrOpenClawServices(coerceAgenrOpenClawPluginConfig(api.pluginConfig), {
+      openClaw: {
+        config: api.config,
+        runtime: api.runtime,
+      },
       resolvePath: api.resolvePath,
     });
 
