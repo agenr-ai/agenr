@@ -4,6 +4,7 @@ import { listOpenClawCoreEntries } from "../../db/openclaw-plugin-queries.js";
 import { formatAgenrSessionStartRecall } from "../format/recall-format.js";
 import { resolveOpenClawSessionPredecessor } from "../session/predecessor.js";
 import { readOpenClawSessionSummaryFile } from "../session/summary-reader.js";
+import { generateAndWriteOpenClawSessionSummary, type OpenClawSessionSummaryWriteResult } from "../session/summary.js";
 import type {
   AgenrOpenClawBeforePromptBuildDeps,
   AgenrOpenClawBeforePromptBuildEvent,
@@ -18,6 +19,8 @@ import { openClawTranscriptParser } from "../transcript/parser.js";
 const CORE_ENTRY_LIMIT = 4;
 const RECENT_SESSION_MESSAGE_LIMIT = 6;
 const RECENT_SESSION_MAX_CHARS = 1_800;
+const READ_TIME_SUMMARY_TIMEOUT_MS = 10_000;
+const READ_TIME_SUMMARY_TIMEOUT = Symbol("read-time-summary-timeout");
 
 /**
  * Runs agenr session-start recall and injects the result into the OpenClaw prompt.
@@ -51,7 +54,7 @@ export async function handleAgenrBeforePromptBuild(
   try {
     const services = await params.servicesPromise;
     const sessionStartRecall = await runAgenrSessionStartRecall(services);
-    const previousSessionContext = await buildPreviousSessionContext(ctx, params.tracker, params.logger);
+    const previousSessionContext = await buildPreviousSessionContext(ctx, params.tracker, services, params.logger);
     const memoryContext = formatAgenrSessionStartRecall(sessionStartRecall);
     const prependContext = [previousSessionContext, memoryContext].filter((value): value is string => value.trim().length > 0).join("\n\n");
 
@@ -90,10 +93,16 @@ export async function runAgenrSessionStartRecall(services: AgenrOpenClawServices
  *
  * @param ctx - Active OpenClaw hook context.
  * @param tracker - Shared in-process continuity tracker.
+ * @param services - Shared agenr services that may provide the summary LLM.
  * @param logger - Plugin logger used for continuity diagnostics.
  * @returns Prompt-ready predecessor sections, or an empty string when unavailable.
  */
-async function buildPreviousSessionContext(ctx: AgenrOpenClawHookContext, tracker: SessionStartTracker, logger: PluginLogger): Promise<string> {
+async function buildPreviousSessionContext(
+  ctx: AgenrOpenClawHookContext,
+  tracker: SessionStartTracker,
+  services: AgenrOpenClawServices,
+  logger: PluginLogger,
+): Promise<string> {
   const sessionContext = formatSessionContext(ctx.sessionId, ctx.sessionKey);
   const predecessor = await resolveOpenClawSessionPredecessor(ctx, tracker, logger);
   if (!predecessor) {
@@ -102,19 +111,9 @@ async function buildPreviousSessionContext(ctx: AgenrOpenClawHookContext, tracke
   }
 
   const sections: string[] = [];
-  try {
-    const summary = await readOpenClawSessionSummaryFile(predecessor.sessionFile, logger);
-    if (summary) {
-      logger.info(`[agenr] session-start predecessor summary found for ${sessionContext} path=${summary.summaryPath}`);
-      sections.push(`## Previous session summary\n${summary.content}`);
-    } else {
-      logger.info(`[agenr] session-start predecessor summary not found for ${sessionContext} predecessor=${predecessor.sessionFile}`);
-    }
-  } catch (error) {
-    logger.info(
-      `[agenr] session-start predecessor summary not found for ${sessionContext} predecessor=${predecessor.sessionFile} reason=${formatErrorMessage(error)}`,
-    );
-    debugLog(logger, "before_prompt_build", `failed reading predecessor summary for ${sessionContext}: ${formatErrorMessage(error)}`);
+  const summaryContent = await loadPredecessorSummaryContent(sessionContext, predecessor.sessionFile, services, logger);
+  if (summaryContent.length > 0) {
+    sections.push(`## Previous session summary\n${summaryContent}`);
   }
 
   const recentSession = await renderRecentSessionSection(predecessor.sessionFile, logger);
@@ -123,6 +122,124 @@ async function buildPreviousSessionContext(ctx: AgenrOpenClawHookContext, tracke
   }
 
   return sections.join("\n\n");
+}
+
+/**
+ * Loads a predecessor summary file or generates it on demand when it is absent.
+ *
+ * @param sessionContext - Stable session identifiers for log output.
+ * @param sessionFile - Absolute predecessor transcript path.
+ * @param services - Shared agenr services that may provide the summary LLM.
+ * @param logger - Plugin logger used for summary diagnostics.
+ * @returns Summary Markdown content, or an empty string when unavailable.
+ */
+async function loadPredecessorSummaryContent(
+  sessionContext: string,
+  sessionFile: string,
+  services: AgenrOpenClawServices,
+  logger: PluginLogger,
+): Promise<string> {
+  try {
+    const summary = await readOpenClawSessionSummaryFile(sessionFile, logger);
+    if (summary) {
+      logger.info(
+        `[agenr] session-start read-time summary generation skipped for ${sessionContext} predecessor=${sessionFile} reason=already_exists path=${summary.summaryPath}`,
+      );
+      logger.info(`[agenr] session-start predecessor summary found for ${sessionContext} path=${summary.summaryPath}`);
+      return summary.content;
+    }
+
+    logger.info(`[agenr] session-start predecessor summary not found for ${sessionContext} predecessor=${sessionFile}`);
+  } catch (error) {
+    logger.info(`[agenr] session-start predecessor summary not found for ${sessionContext} predecessor=${sessionFile} reason=${formatErrorMessage(error)}`);
+    debugLog(logger, "before_prompt_build", `failed reading predecessor summary for ${sessionContext}: ${formatErrorMessage(error)}`);
+    return "";
+  }
+
+  if (!services.summaryLlm) {
+    return "";
+  }
+
+  logger.info(`[agenr] session-start read-time summary generation triggered for ${sessionContext} predecessor=${sessionFile} reason=no_existing_summary`);
+  const startedAt = Date.now();
+
+  try {
+    const result = await awaitWithTimeout(
+      generateAndWriteOpenClawSessionSummary({
+        sessionFile,
+        llm: services.summaryLlm,
+        logger,
+      }),
+      READ_TIME_SUMMARY_TIMEOUT_MS,
+    );
+    const elapsedMs = Date.now() - startedAt;
+
+    if (result === READ_TIME_SUMMARY_TIMEOUT) {
+      logger.info(
+        `[agenr] session-start read-time summary generation failed for ${sessionContext} predecessor=${sessionFile} reason=timeout elapsedMs=${elapsedMs}`,
+      );
+      debugLog(
+        logger,
+        "before_prompt_build",
+        `read-time summary generation timed out for ${sessionContext}: predecessor=${sessionFile} timeoutMs=${READ_TIME_SUMMARY_TIMEOUT_MS}`,
+      );
+      return "";
+    }
+
+    return handleReadTimeSummaryResult(sessionContext, sessionFile, result, elapsedMs, logger);
+  } catch (error) {
+    const elapsedMs = Date.now() - startedAt;
+    logger.info(
+      `[agenr] session-start read-time summary generation failed for ${sessionContext} predecessor=${sessionFile} reason=${formatErrorMessage(error)} elapsedMs=${elapsedMs}`,
+    );
+    debugLog(logger, "before_prompt_build", `unexpected read-time summary generation failure for ${sessionContext}: ${formatErrorMessage(error)}`);
+    return "";
+  }
+}
+
+/** Normalizes read-time summary generation outcomes into prompt content and logs. */
+function handleReadTimeSummaryResult(
+  sessionContext: string,
+  sessionFile: string,
+  result: OpenClawSessionSummaryWriteResult,
+  elapsedMs: number,
+  logger: PluginLogger,
+): string {
+  if (result.status === "written" && result.content && result.summaryPath) {
+    logger.info(
+      `[agenr] session-start read-time summary generation completed for ${sessionContext} predecessor=${sessionFile} elapsedMs=${elapsedMs} path=${result.summaryPath}`,
+    );
+    logger.info(`[agenr] session-start predecessor summary found for ${sessionContext} path=${result.summaryPath}`);
+    return result.content;
+  }
+
+  if (result.status === "skipped") {
+    logger.info(
+      `[agenr] session-start read-time summary generation skipped for ${sessionContext} predecessor=${sessionFile} reason=${result.reason ?? "unknown"} path=${result.summaryPath ?? "n/a"}`,
+    );
+    debugLog(
+      logger,
+      "before_prompt_build",
+      `read-time summary generation skipped for ${sessionContext}: predecessor=${sessionFile} transcriptChars=${result.transcriptChars ?? 0} cleanedMessages=${result.messageCount ?? 0}`,
+    );
+
+    if (result.reason === "already_exists" && result.content && result.summaryPath) {
+      logger.info(`[agenr] session-start predecessor summary found for ${sessionContext} path=${result.summaryPath}`);
+      return result.content;
+    }
+
+    return "";
+  }
+
+  logger.info(
+    `[agenr] session-start read-time summary generation failed for ${sessionContext} predecessor=${sessionFile} reason=${result.reason ?? "unknown"} elapsedMs=${elapsedMs} model=${result.model ?? "unknown"}`,
+  );
+  debugLog(
+    logger,
+    "before_prompt_build",
+    `read-time summary generation failed for ${sessionContext}: predecessor=${sessionFile} durationMs=${result.durationMs ?? 0} transcriptChars=${result.transcriptChars ?? 0}`,
+  );
+  return "";
 }
 
 /**
@@ -144,6 +261,26 @@ async function renderRecentSessionSection(sessionFile: string, logger: PluginLog
     debugLog(logger, "before_prompt_build", `failed to build recent session tail for file=${sessionFile}: ${formatErrorMessage(error)}`);
     return "";
   }
+}
+
+/** Resolves a promise while allowing prompt build to proceed after a bounded delay. */
+async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | typeof READ_TIME_SUMMARY_TIMEOUT> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      resolve(READ_TIME_SUMMARY_TIMEOUT);
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timeout);
+        reject(error);
+      },
+    );
+  });
 }
 
 /** Emits detailed diagnostics when the plugin logger supports debug level. */

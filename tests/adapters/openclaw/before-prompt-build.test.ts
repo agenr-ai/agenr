@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -30,6 +30,8 @@ afterEach(async () => {
   }
 
   vi.restoreAllMocks();
+  vi.clearAllTimers();
+  vi.useRealTimers();
 
   while (openDatabases.length > 0) {
     await openDatabases.pop()?.close();
@@ -437,6 +439,112 @@ describe("handleAgenrBeforePromptBuild", () => {
           content: "We will scan sessions.json for the most recent same-agent TUI lane when no reset record exists.",
         },
       },
+      {
+        type: "message",
+        timestamp: "2026-03-28T10:02:00.000Z",
+        message: {
+          role: "human",
+          content: "The first new session should pay the LLM cost once and cache the summary.",
+        },
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T10:03:00.000Z",
+        message: {
+          role: "assistant",
+          content: "Then every future TUI session can reuse the sidecar file without regenerating it.",
+        },
+      },
+    ]);
+    await writeFile(
+      path.join(sessionsDir, "sessions.json"),
+      `${JSON.stringify(
+        {
+          "agent:main:main": {
+            sessionId: "predecessor-session",
+            sessionFile: "predecessor-session.jsonl",
+            updatedAt: 1_711_612_345_678,
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const summary = "The prior TUI session established read-time summary caching for /new continuity and kept transcript-tail fallback intact.";
+    const { client: summaryLlm, completeSpy } = createSummaryLlm({ response: summary });
+    const result = await handleAgenrBeforePromptBuild(
+      {
+        prompt: "Continue the TUI session after /new.",
+        messages: [],
+      },
+      {
+        agentId: "main",
+        sessionId: "session-tui-new",
+        sessionKey: "agent:main:tui-123e4567-e89b-12d3-a456-426614174000",
+        workspaceDir,
+      },
+      {
+        logger,
+        servicesPromise: Promise.resolve(createServices(database, { summaryLlm })),
+        tracker: createSessionStartTracker(),
+      },
+    );
+
+    const summaryPath = path.join(path.dirname(predecessorFile), "predecessor-session.summary.md");
+    expect(result?.prependContext).toContain("## Previous session summary");
+    expect(result?.prependContext).toContain(summary);
+    expect(result?.prependContext).toContain("## Recent session");
+    expect(result?.prependContext).toContain("U: The default TUI session needs continuity");
+    await expect(readFile(summaryPath, "utf8")).resolves.toContain(summary);
+    expect(completeSpy).toHaveBeenCalledTimes(1);
+    expect(getMessages(logger.info)).toEqual(
+      expect.arrayContaining([
+        "[agenr] predecessor: TUI fallback activated for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 sessionKey=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 stableLane=tui",
+        "[agenr] predecessor: TUI fallback predecessor found for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 predecessorKey=agent:main:main predecessor=" +
+          predecessorFile,
+        "[agenr] session-start predecessor summary not found for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 predecessor=" +
+          predecessorFile,
+        "[agenr] session-start read-time summary generation triggered for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 predecessor=" +
+          predecessorFile +
+          " reason=no_existing_summary",
+        expect.stringContaining(
+          "[agenr] session-start read-time summary generation completed for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 predecessor=" +
+            predecessorFile,
+        ),
+        "[agenr] session-start predecessor summary found for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 path=" +
+          summaryPath,
+      ]),
+    );
+  });
+
+  it("reuses an existing TUI fallback summary without regenerating it", async () => {
+    const database = await createTestDatabase();
+    const logger = createLogger();
+    const { workspaceDir, sessionsDir } = await createWorkspaceWithSessions();
+
+    const predecessorFile = await writeSessionFileToDirectory(sessionsDir, "predecessor-session", [
+      {
+        type: "session",
+        id: "predecessor-session",
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T10:00:00.000Z",
+        message: {
+          role: "human",
+          content: "The default TUI session needs continuity when /new generates a fresh tui uuid.",
+        },
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T10:01:00.000Z",
+        message: {
+          role: "assistant",
+          content: "We will scan sessions.json for the most recent same-agent TUI lane when no reset record exists.",
+        },
+      },
     ]);
     await writeFile(
       path.join(path.dirname(predecessorFile), "predecessor-session.summary.md"),
@@ -458,6 +566,9 @@ describe("handleAgenrBeforePromptBuild", () => {
       )}\n`,
       "utf8",
     );
+    const { client: summaryLlm, completeSpy } = createSummaryLlm({
+      response: "This should not be generated because the summary file already exists.",
+    });
 
     const result = await handleAgenrBeforePromptBuild(
       {
@@ -472,7 +583,7 @@ describe("handleAgenrBeforePromptBuild", () => {
       },
       {
         logger,
-        servicesPromise: Promise.resolve(createServices(database)),
+        servicesPromise: Promise.resolve(createServices(database, { summaryLlm })),
         tracker: createSessionStartTracker(),
       },
     );
@@ -481,13 +592,287 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(result?.prependContext).toContain("sessions.json");
     expect(result?.prependContext).toContain("## Recent session");
     expect(result?.prependContext).toContain("U: The default TUI session needs continuity");
+    expect(completeSpy).not.toHaveBeenCalled();
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
         "[agenr] predecessor: TUI fallback activated for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 sessionKey=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 stableLane=tui",
         "[agenr] predecessor: TUI fallback predecessor found for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 predecessorKey=agent:main:main predecessor=" +
           predecessorFile,
+        "[agenr] session-start read-time summary generation skipped for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 predecessor=" +
+          predecessorFile +
+          " reason=already_exists path=" +
+          path.join(path.dirname(predecessorFile), "predecessor-session.summary.md"),
         "[agenr] session-start predecessor summary found for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 path=" +
           path.join(path.dirname(predecessorFile), "predecessor-session.summary.md"),
+      ]),
+    );
+  });
+
+  it("falls back to the transcript tail when read-time summary generation fails", async () => {
+    const database = await createTestDatabase();
+    const logger = createLogger();
+    const predecessorFile = await writeSessionFile("predecessor-session", [
+      {
+        type: "session",
+        id: "predecessor-session",
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T11:00:00.000Z",
+        message: {
+          role: "human",
+          content: "The next session should continue even if the summary LLM fails.",
+        },
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T11:01:00.000Z",
+        message: {
+          role: "assistant",
+          content: "Then prompt build must fall back to the transcript tail only.",
+        },
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T11:02:00.000Z",
+        message: {
+          role: "human",
+          content: "Keep session-start stable even if the summary call errors.",
+        },
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T11:03:00.000Z",
+        message: {
+          role: "assistant",
+          content: "Agreed. The continuity summary is optional and cached only on success.",
+        },
+      },
+    ]);
+    const summaryPath = path.join(path.dirname(predecessorFile), "predecessor-session.summary.md");
+    const tracker = createSessionStartTracker();
+    tracker.rememberReset("agent:main:webchat:failure", {
+      sessionId: "predecessor-session",
+      sessionFile: predecessorFile,
+      recordedAt: "2026-03-28T11:04:00.000Z",
+    });
+    tracker.rememberSessionStart("session-5", "agent:main:webchat:failure", "predecessor-session");
+    const { client: summaryLlm, completeSpy } = createSummaryLlm({
+      implementation: async () => {
+        throw new Error("summary backend exploded");
+      },
+    });
+
+    const result = await handleAgenrBeforePromptBuild(
+      {
+        prompt: "Continue even if the summary backend is down.",
+        messages: [],
+      },
+      {
+        sessionId: "session-5",
+        sessionKey: "agent:main:webchat:failure",
+      },
+      {
+        logger,
+        servicesPromise: Promise.resolve(createServices(database, { summaryLlm })),
+        tracker,
+      },
+    );
+
+    expect(result?.prependContext).not.toContain("## Previous session summary");
+    expect(result?.prependContext).toContain("## Recent session");
+    expect(result?.prependContext).toContain("U: The next session should continue even if the summary LLM fails.");
+    await expect(readFile(summaryPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    expect(completeSpy).toHaveBeenCalledTimes(1);
+    expect(getMessages(logger.info)).toEqual(
+      expect.arrayContaining([
+        "[agenr] session-start read-time summary generation triggered for session=session-5 key=agent:main:webchat:failure predecessor=" +
+          predecessorFile +
+          " reason=no_existing_summary",
+        expect.stringContaining(
+          "[agenr] session-start read-time summary generation failed for session=session-5 key=agent:main:webchat:failure predecessor=" +
+            predecessorFile +
+            " reason=summary backend exploded",
+        ),
+      ]),
+    );
+  });
+
+  it("falls back to the transcript tail when read-time summary generation times out", async () => {
+    vi.useFakeTimers();
+
+    const database = await createTestDatabase();
+    const logger = createLogger();
+    const predecessorFile = await writeSessionFile("predecessor-session", [
+      {
+        type: "session",
+        id: "predecessor-session",
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T12:00:00.000Z",
+        message: {
+          role: "human",
+          content: "The first TUI /new should not hang forever waiting for the summary.",
+        },
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T12:01:00.000Z",
+        message: {
+          role: "assistant",
+          content: "We will cap the wait so session start can proceed with the transcript tail.",
+        },
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T12:02:00.000Z",
+        message: {
+          role: "human",
+          content: "Anything slower than that should be treated as a fallback-only start.",
+        },
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T12:03:00.000Z",
+        message: {
+          role: "assistant",
+          content: "Right. The summary can be retried or cached later, but prompt build must return.",
+        },
+      },
+    ]);
+    const summaryPath = path.join(path.dirname(predecessorFile), "predecessor-session.summary.md");
+    const tracker = createSessionStartTracker();
+    tracker.rememberReset("agent:main:webchat:timeout", {
+      sessionId: "predecessor-session",
+      sessionFile: predecessorFile,
+      recordedAt: "2026-03-28T12:04:00.000Z",
+    });
+    tracker.rememberSessionStart("session-6", "agent:main:webchat:timeout", "predecessor-session");
+    let markSummaryStarted: (() => void) | undefined;
+    const summaryStarted = new Promise<void>((resolve) => {
+      markSummaryStarted = resolve;
+    });
+    const { client: summaryLlm } = createSummaryLlm({
+      implementation: async () => {
+        markSummaryStarted?.();
+        await new Promise((resolve) => {
+          setTimeout(resolve, 60_000);
+        });
+        return "This summary should arrive too late for prompt build.";
+      },
+    });
+
+    const resultPromise = handleAgenrBeforePromptBuild(
+      {
+        prompt: "Continue without hanging on summary generation.",
+        messages: [],
+      },
+      {
+        sessionId: "session-6",
+        sessionKey: "agent:main:webchat:timeout",
+      },
+      {
+        logger,
+        servicesPromise: Promise.resolve(createServices(database, { summaryLlm })),
+        tracker,
+      },
+    );
+    await summaryStarted;
+    await vi.advanceTimersByTimeAsync(10_000);
+    const result = await resultPromise;
+
+    expect(result?.prependContext).not.toContain("## Previous session summary");
+    expect(result?.prependContext).toContain("## Recent session");
+    expect(result?.prependContext).toContain("U: The first TUI /new should not hang forever waiting for the summary.");
+    await expect(readFile(summaryPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    expect(getMessages(logger.info)).toEqual(
+      expect.arrayContaining([
+        "[agenr] session-start read-time summary generation triggered for session=session-6 key=agent:main:webchat:timeout predecessor=" +
+          predecessorFile +
+          " reason=no_existing_summary",
+        "[agenr] session-start read-time summary generation failed for session=session-6 key=agent:main:webchat:timeout predecessor=" +
+          predecessorFile +
+          " reason=timeout elapsedMs=10000",
+      ]),
+    );
+  });
+
+  it("skips read-time summary generation for short predecessor sessions", async () => {
+    const database = await createTestDatabase();
+    const logger = createLogger();
+    const predecessorFile = await writeSessionFile("predecessor-session", [
+      {
+        type: "session",
+        id: "predecessor-session",
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T13:00:00.000Z",
+        message: {
+          role: "human",
+          content: "Short session.",
+        },
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T13:01:00.000Z",
+        message: {
+          role: "assistant",
+          content: "Too short for a cached summary.",
+        },
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T13:02:00.000Z",
+        message: {
+          role: "human",
+          content: "Use the tail only.",
+        },
+      },
+    ]);
+    const summaryPath = path.join(path.dirname(predecessorFile), "predecessor-session.summary.md");
+    const tracker = createSessionStartTracker();
+    tracker.rememberReset("agent:main:webchat:short-read-time", {
+      sessionId: "predecessor-session",
+      sessionFile: predecessorFile,
+      recordedAt: "2026-03-28T13:03:00.000Z",
+    });
+    tracker.rememberSessionStart("session-7", "agent:main:webchat:short-read-time", "predecessor-session");
+    const { client: summaryLlm, completeSpy } = createSummaryLlm({
+      response: "This should never be requested for short sessions.",
+    });
+
+    const result = await handleAgenrBeforePromptBuild(
+      {
+        prompt: "Continue from the short prior session.",
+        messages: [],
+      },
+      {
+        sessionId: "session-7",
+        sessionKey: "agent:main:webchat:short-read-time",
+      },
+      {
+        logger,
+        servicesPromise: Promise.resolve(createServices(database, { summaryLlm })),
+        tracker,
+      },
+    );
+
+    expect(result?.prependContext).not.toContain("## Previous session summary");
+    expect(result?.prependContext).toContain("## Recent session");
+    expect(result?.prependContext).toContain("U: Short session.");
+    await expect(readFile(summaryPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    expect(completeSpy).not.toHaveBeenCalled();
+    expect(getMessages(logger.info)).toEqual(
+      expect.arrayContaining([
+        "[agenr] session-start read-time summary generation triggered for session=session-7 key=agent:main:webchat:short-read-time predecessor=" +
+          predecessorFile +
+          " reason=no_existing_summary",
+        "[agenr] session-start read-time summary generation skipped for session=session-7 key=agent:main:webchat:short-read-time predecessor=" +
+          predecessorFile +
+          " reason=too_short path=" +
+          summaryPath,
       ]),
     );
   });
@@ -583,6 +968,50 @@ function createServices(
     async close() {
       await database.close();
     },
+  };
+}
+
+function createSummaryLlm(
+  options: {
+    response?: string;
+    implementation?: (systemPrompt: string, prompt: string) => Promise<string>;
+  } = {},
+): {
+  client: AgenrOpenClawSummaryClient;
+  completeSpy: ReturnType<typeof vi.fn>;
+} {
+  const completeSpy = vi.fn(
+    options.implementation ??
+      (async (): Promise<string> => {
+        return options.response ?? "";
+      }),
+  );
+
+  return {
+    client: {
+      metadata: {
+        model: {
+          id: "gpt-5.4-mini",
+        } as AgenrOpenClawSummaryClient["metadata"]["model"],
+        contextWindowTokens: 200_000,
+        maxOutputTokens: 8_000,
+        supportsReasoning: true,
+        usage: {
+          calls: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          totalTokens: 0,
+          totalCost: 0,
+        },
+      },
+      complete: completeSpy,
+      async completeJson<T>(): Promise<T> {
+        throw new Error("completeJson is unused in this test.");
+      },
+    },
+    completeSpy,
   };
 }
 

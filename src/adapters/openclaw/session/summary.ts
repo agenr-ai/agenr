@@ -4,7 +4,7 @@ import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
 
 import { openClawTranscriptParser } from "../transcript/parser.js";
 import type { AgenrOpenClawSummaryClient } from "../types.js";
-import { resolveOpenClawSessionSummaryPath } from "./summary-reader.js";
+import { readOpenClawSessionSummaryFile, resolveOpenClawSessionSummaryPath } from "./summary-reader.js";
 
 const MIN_SUMMARY_MESSAGES = 4;
 const MAX_TRANSCRIPT_CHARS = 14_000;
@@ -38,6 +38,10 @@ export interface OpenClawSessionSummaryWriteResult {
    */
   summaryPath?: string;
   /**
+   * Summary Markdown content when generation or reuse succeeded.
+   */
+  content?: string;
+  /**
    * Number of cleaned transcript messages used for summarization.
    */
   messageCount?: number;
@@ -64,9 +68,9 @@ export interface OpenClawSessionSummaryWriteResult {
  * transcript JSONL file.
  *
  * @param params - Summary dependencies plus the outgoing session transcript path.
- * @returns Summary outcome facts used by the `before_reset` hook.
+ * @returns Summary outcome facts used by both session continuity hooks.
  */
-export async function writeOpenClawSessionSummary(params: {
+export async function generateAndWriteOpenClawSessionSummary(params: {
   sessionFile: string;
   llm: AgenrOpenClawSummaryClient | undefined;
   logger: PluginLogger;
@@ -154,12 +158,29 @@ export async function writeOpenClawSessionSummary(params: {
       };
     }
 
+    const existingSummary = await readOpenClawSessionSummaryFile(sessionFile, params.logger);
+    if (existingSummary?.summaryPath === summaryPath) {
+      debugLog(params.logger, "summary", `summary file already exists at write time path=${summaryPath} chars=${existingSummary.content.length}`);
+      return {
+        status: "skipped",
+        reason: "already_exists",
+        summaryPath,
+        content: existingSummary.content,
+        messageCount: cleanedMessages.length,
+        transcriptChars: normalizedTranscript.length,
+        model: summaryModel,
+        durationMs,
+      };
+    }
+
     const summaryBytes = Buffer.byteLength(`${normalizedSummary}\n`, "utf8");
     await fs.writeFile(summaryPath, `${normalizedSummary}\n`, "utf8");
+    debugLog(params.logger, "summary", `wrote summary file path=${summaryPath} chars=${normalizedSummary.length} bytes=${summaryBytes}`);
 
     return {
       status: "written",
       summaryPath,
+      content: normalizedSummary,
       messageCount: cleanedMessages.length,
       transcriptChars: normalizedTranscript.length,
       model: summaryModel,
@@ -179,6 +200,21 @@ export async function writeOpenClawSessionSummary(params: {
       durationMs,
     };
   }
+}
+
+/**
+ * Generates a cleaned narrative session summary and writes it next to the
+ * transcript JSONL file.
+ *
+ * @param params - Summary dependencies plus the outgoing session transcript path.
+ * @returns Summary outcome facts used by the `before_reset` hook.
+ */
+export async function writeOpenClawSessionSummary(params: {
+  sessionFile: string;
+  llm: AgenrOpenClawSummaryClient | undefined;
+  logger: PluginLogger;
+}): Promise<OpenClawSessionSummaryWriteResult> {
+  return generateAndWriteOpenClawSessionSummary(params);
 }
 
 /**
