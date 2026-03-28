@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -329,6 +329,87 @@ describe("handleAgenrBeforePromptBuild", () => {
     );
   });
 
+  it("injects predecessor continuity from the TUI sessions.json fallback", async () => {
+    const database = await createTestDatabase();
+    const logger = createLogger();
+    const { workspaceDir, sessionsDir } = await createWorkspaceWithSessions();
+
+    const predecessorFile = await writeSessionFileToDirectory(sessionsDir, "predecessor-session", [
+      {
+        type: "session",
+        id: "predecessor-session",
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T10:00:00.000Z",
+        message: {
+          role: "human",
+          content: "The default TUI session needs continuity when /new generates a fresh tui uuid.",
+        },
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T10:01:00.000Z",
+        message: {
+          role: "assistant",
+          content: "We will scan sessions.json for the most recent same-agent TUI lane when no reset record exists.",
+        },
+      },
+    ]);
+    await writeFile(
+      path.join(path.dirname(predecessorFile), "predecessor-session.summary.md"),
+      "The prior TUI session should be recovered from sessions.json when /new bypasses reset hooks.\n",
+      "utf8",
+    );
+    await writeFile(
+      path.join(sessionsDir, "sessions.json"),
+      `${JSON.stringify(
+        {
+          "agent:main:main": {
+            sessionId: "predecessor-session",
+            sessionFile: "predecessor-session.jsonl",
+            updatedAt: 1_711_612_345_678,
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const result = await handleAgenrBeforePromptBuild(
+      {
+        prompt: "Continue the TUI session after /new.",
+        messages: [],
+      },
+      {
+        agentId: "main",
+        sessionId: "session-tui-new",
+        sessionKey: "agent:main:tui-123e4567-e89b-12d3-a456-426614174000",
+        workspaceDir,
+      },
+      {
+        logger,
+        servicesPromise: Promise.resolve(createServices(database)),
+        tracker: createSessionStartTracker(),
+      },
+    );
+
+    expect(result?.prependContext).toContain("## Previous session summary");
+    expect(result?.prependContext).toContain("sessions.json");
+    expect(result?.prependContext).toContain("## Recent session");
+    expect(result?.prependContext).toContain("U: The default TUI session needs continuity");
+    expect(getMessages(logger.info)).toEqual(
+      expect.arrayContaining([
+        "[agenr] predecessor: TUI fallback activated for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 sessionKey=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 stableLane=tui",
+        "[agenr] predecessor: TUI fallback predecessor found for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 predecessorKey=agent:main:main predecessor=" +
+          predecessorFile,
+        "[agenr] session-start predecessor summary found for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 path=" +
+          path.join(path.dirname(predecessorFile), "predecessor-session.summary.md"),
+      ]),
+    );
+  });
+
   it("logs when session-start recall has nothing to inject", async () => {
     const database = await createTestDatabase();
     const logger = createLogger();
@@ -484,6 +565,18 @@ async function createTestDatabase(): Promise<SqlDatabase> {
 async function writeSessionFile(sessionId: string, lines: object[]): Promise<string> {
   const directory = await mkdtemp(path.join(os.tmpdir(), "agenr-openclaw-session-"));
   tempPaths.push(directory);
+  return writeSessionFileToDirectory(directory, sessionId, lines);
+}
+
+async function createWorkspaceWithSessions(): Promise<{ workspaceDir: string; sessionsDir: string }> {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "agenr-openclaw-workspace-"));
+  tempPaths.push(workspaceDir);
+  const sessionsDir = path.join(workspaceDir, "sessions");
+  await mkdir(sessionsDir, { recursive: true });
+  return { workspaceDir, sessionsDir };
+}
+
+async function writeSessionFileToDirectory(directory: string, sessionId: string, lines: object[]): Promise<string> {
   const filePath = path.join(directory, `${sessionId}.jsonl`);
   await writeFile(filePath, `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`, "utf8");
   return filePath;

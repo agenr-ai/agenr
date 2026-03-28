@@ -95,7 +95,7 @@ export async function runAgenrSessionStartRecall(services: AgenrOpenClawServices
  */
 async function buildPreviousSessionContext(ctx: AgenrOpenClawHookContext, tracker: SessionStartTracker, logger: PluginLogger): Promise<string> {
   const sessionContext = formatSessionContext(ctx.sessionId, ctx.sessionKey);
-  const predecessor = resolveOpenClawSessionPredecessor(ctx, tracker, logger);
+  const predecessor = await resolveOpenClawSessionPredecessor(ctx, tracker, logger);
   if (!predecessor) {
     logger.info(`[agenr] session-start predecessor summary not found for ${sessionContext} reason=no_predecessor`);
     return "";
