@@ -23,12 +23,18 @@ export function buildAgenrMemoryPromptSection({
   }
 
   const lines = [
-    "## Agenr Memory",
-    "Before answering questions about prior decisions, preferences, constraints, unfinished work, or past sessions, call agenr_recall first.",
+    "## Memory Recall",
+    "Before answering anything about prior work, decisions, preferences, people, dates, unfinished work, or past sessions, call agenr_recall first. Session-start recall is automatic; use agenr_recall mid-session when you need context you do not already have.",
+    "agenr_recall also supports temporal recall: use since, until, around, and aroundRadius to focus on a time window or bias results toward a specific period, not just semantic similarity.",
   ];
 
   if (availableTools.has(MEMORY_TOOL_NAMES.store)) {
-    lines.push("Store durable facts, decisions, lessons, preferences, and todos with agenr_store when they are likely to matter later.");
+    lines.push(
+      "Store decisions, preferences, lessons, durable facts, and important open risks with agenr_store immediately after they happen. Apply the future-session test: will a fresh session need this to make a better decision?",
+    );
+    lines.push(
+      "Use memory lifetimes deliberately: core is injected at every session start and should be rare, permanent is durable recall-on-demand memory, and temporary is short-horizon. Importance is 1 to 10; 7 is normal durable memory and 9 to 10 is rare and critical.",
+    );
   }
 
   if (availableTools.has(MEMORY_TOOL_NAMES.update) || availableTools.has(MEMORY_TOOL_NAMES.retire)) {
@@ -40,9 +46,9 @@ export function buildAgenrMemoryPromptSection({
   }
 
   if (citationsMode === "off") {
-    lines.push("Do not mention agenr entry IDs in user-facing replies unless the user asks for them.");
+    lines.push("Citations are disabled: do not mention agenr entry IDs in user-facing replies unless the user asks for them.");
   } else {
-    lines.push("When it helps the user verify a claim, you may mention the relevant agenr entry ID.");
+    lines.push("Citations: mention the relevant agenr entry ID only when it helps the user verify a claim.");
   }
 
   lines.push("");

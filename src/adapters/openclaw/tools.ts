@@ -6,8 +6,14 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import { recall } from "../../core/recall/search.js";
 import { storeEntriesDetailed } from "../../core/store/pipeline.js";
 import { ENTRY_TYPES, EXPIRY_LEVELS, type Entry, type EntryType, type Expiry } from "../../core/types.js";
-import { findOpenClawEntryBySubject, getOpenClawEntryTrace } from "../db/openclaw-plugin-queries.js";
+import { findOpenClawEntryBySubject, findOpenClawMostRecentEntry, getOpenClawEntryTrace } from "../db/openclaw-plugin-queries.js";
 import type { AgenrOpenClawServices } from "./types.js";
+
+const ENTRY_TYPE_DESCRIPTION =
+  "Knowledge type to store. Use decision for rules or architecture, preference for user choices, lesson for learned guidance, fact for durable state, todo for important follow-up, reflection for synthesized summaries, and event or relationship only when that context will matter later.";
+
+const EXPIRY_DESCRIPTION =
+  "Lifetime bucket: core (always injected at session start, use sparingly), permanent (durable and recalled on demand), or temporary (short-horizon).";
 
 const STORE_TOOL_PARAMETERS = {
   type: "object",
@@ -16,35 +22,35 @@ const STORE_TOOL_PARAMETERS = {
     type: {
       type: "string",
       enum: [...ENTRY_TYPES],
-      description: "Knowledge type to store.",
+      description: ENTRY_TYPE_DESCRIPTION,
     },
     subject: {
       type: "string",
-      description: "Short subject line for the memory entry.",
+      description: "Short subject line future recall can match. Name the decision, preference, person, system, or risk directly.",
     },
     content: {
       type: "string",
-      description: "Durable memory content to store.",
+      description: "What a fresh session should remember. Store the durable takeaway, not a transient progress snapshot.",
     },
     importance: {
-      type: "number",
+      type: "integer",
       minimum: 1,
       maximum: 10,
-      description: "Importance score from 1 to 10.",
+      description: "Importance from 1 to 10. Use 7 for normal durable memory, 9 for critical constraints, and 10 only rarely.",
     },
     expiry: {
       type: "string",
       enum: [...EXPIRY_LEVELS],
-      description: "Durability bucket for the entry.",
+      description: EXPIRY_DESCRIPTION,
     },
     tags: {
       type: "array",
       items: { type: "string" },
-      description: "Optional tags that help future recall.",
+      description: "Optional tags for entities, systems, teams, or themes that should improve later recall.",
     },
     sourceContext: {
       type: "string",
-      description: "Optional provenance note for why this was stored.",
+      description: "Optional provenance note explaining why this memory was stored or what situation produced it.",
     },
   },
   required: ["type", "subject", "content"],
@@ -56,19 +62,19 @@ const RECALL_TOOL_PARAMETERS = {
   properties: {
     query: {
       type: "string",
-      description: "Free-form recall query.",
+      description: "What you need to remember. Use a focused natural-language query rather than a broad 'everything' search.",
     },
     limit: {
-      type: "number",
+      type: "integer",
       minimum: 1,
       maximum: 10,
-      description: "Maximum number of results to return.",
+      description: "Maximum results to return. Lower this when you want a tighter shortlist.",
     },
     threshold: {
       type: "number",
       minimum: 0,
       maximum: 1,
-      description: "Minimum final score required for returned results.",
+      description: "Minimum final score from 0 to 1. Raise this when you want fewer, higher-confidence matches.",
     },
     types: {
       type: "array",
@@ -76,60 +82,95 @@ const RECALL_TOOL_PARAMETERS = {
         type: "string",
         enum: [...ENTRY_TYPES],
       },
-      description: "Optional knowledge types to filter by.",
+      description: "Optional knowledge types to filter by, such as decision, preference, lesson, fact, or todo.",
     },
     tags: {
       type: "array",
       items: { type: "string" },
-      description: "Optional tags to filter by.",
+      description: "Optional tags to filter by once you already know the relevant entity, system, or theme.",
     },
     since: {
       type: "string",
-      description: "Relative lower bound such as 30d.",
+      description: "Only consider entries created on or after this time bound. Accepts ISO dates or relative dates such as 30d.",
     },
     until: {
       type: "string",
-      description: "Relative upper bound such as 7d.",
+      description: "Only consider entries created on or before this time bound. Accepts ISO dates or relative dates such as 7d.",
     },
     around: {
       type: "string",
-      description: "Temporal anchor such as yesterday or 2026-03-01.",
+      description: "Bias ranking toward a specific date or period, such as yesterday or 2026-03-01. This is a temporal anchor, not a hard filter.",
     },
     aroundRadius: {
-      type: "number",
+      type: "integer",
       minimum: 1,
-      description: "Radius in days when using around.",
+      description: "Radius in days for around. Smaller values focus recall more tightly on that period.",
     },
   },
   required: ["query"],
 } as const;
 
-const TARGET_TOOL_PARAMETERS = {
+const RETIRE_TOOL_PARAMETERS = {
   type: "object",
   additionalProperties: false,
   properties: {
     id: {
       type: "string",
-      description: "Entry id to operate on.",
+      description: "Entry id to retire. Provide exactly one of id or subject.",
     },
     subject: {
       type: "string",
-      description: "Entry subject to resolve when id is unknown.",
+      description: "Subject text to resolve when the id is unknown. The most recent exact or substring match wins. Provide exactly one of id or subject.",
     },
     reason: {
       type: "string",
-      description: "Optional reason for retiring the entry.",
+      description: "Optional retirement reason so later trace output explains why this memory was removed.",
+    },
+  },
+} as const;
+
+const UPDATE_TOOL_PARAMETERS = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    id: {
+      type: "string",
+      description: "Entry id to update. Provide exactly one of id or subject.",
+    },
+    subject: {
+      type: "string",
+      description: "Subject text to resolve when the id is unknown. The most recent exact or substring match wins. Provide exactly one of id or subject.",
     },
     importance: {
-      type: "number",
+      type: "integer",
       minimum: 1,
       maximum: 10,
-      description: "Updated importance score from 1 to 10.",
+      description: "New importance from 1 to 10. Use 7 for normal durable memory and reserve 9 to 10 for rare critical entries.",
     },
     expiry: {
       type: "string",
       enum: [...EXPIRY_LEVELS],
-      description: "Updated durability bucket.",
+      description: EXPIRY_DESCRIPTION,
+    },
+  },
+} as const;
+
+const TRACE_TOOL_PARAMETERS = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    id: {
+      type: "string",
+      description: "Entry id to trace. Provide exactly one of id, subject, or last.",
+    },
+    subject: {
+      type: "string",
+      description:
+        "Subject text to resolve when the id is unknown. The most recent exact or substring match wins. Provide exactly one of id, subject, or last.",
+    },
+    last: {
+      type: "boolean",
+      description: "Set true to trace the most recently created agenr entry. Provide exactly one of id, subject, or last.",
     },
   },
 } as const;
@@ -160,7 +201,8 @@ export function createAgenrStoreTool(ctx: OpenClawPluginToolContext, servicesPro
   return {
     name: "agenr_store",
     label: "Agenr Store",
-    description: "Store durable facts, decisions, lessons, preferences, or todos in agenr memory.",
+    description:
+      "Store a new knowledge entry in agenr long-term memory. Call immediately after decisions, preferences, lessons, and durable facts - but apply the future-session test first: will a fresh session need this to make a better decision, or are you just logging what happened?\n\nStore: architecture decisions, workflow constraints, recurring problems, user preferences, durable technical facts, operational lessons, important open risks.\n\nDo not store: version shipping events (changelogs are the record), issue/PR filing records (the tracker is the record), phase plans or release sequencing (stale within a session), progress snapshots (stale within minutes), prompt file locations or build logistics.\n\nDo not ask before storing - but do ask whether future-you actually needs it.",
     parameters: STORE_TOOL_PARAMETERS,
     async execute(_toolCallId, rawParams) {
       try {
@@ -233,7 +275,8 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
   return {
     name: "agenr_recall",
     label: "Agenr Recall",
-    description: "Search agenr memory for prior decisions, facts, preferences, lessons, and todos.",
+    description:
+      "Retrieve relevant knowledge entries from agenr long-term memory using semantic search. Use mid-session when you need context you do not already have. Session-start recall is already handled automatically.",
     parameters: RECALL_TOOL_PARAMETERS,
     async execute(_toolCallId, rawParams) {
       try {
@@ -310,8 +353,8 @@ export function createAgenrRetireTool(ctx: OpenClawPluginToolContext, servicesPr
   return {
     name: "agenr_retire",
     label: "Agenr Retire",
-    description: "Retire an outdated or superseded agenr entry by id or subject.",
-    parameters: TARGET_TOOL_PARAMETERS,
+    description: "Mark a memory entry as retired (soft delete). Retired entries are excluded from all recall.",
+    parameters: RETIRE_TOOL_PARAMETERS,
     async execute(_toolCallId, rawParams) {
       try {
         const params = asRecord(rawParams);
@@ -351,8 +394,8 @@ export function createAgenrUpdateTool(ctx: OpenClawPluginToolContext, servicesPr
   return {
     name: "agenr_update",
     label: "Agenr Update",
-    description: "Update an agenr entry's importance or expiry by id or subject.",
-    parameters: TARGET_TOOL_PARAMETERS,
+    description: "Update an existing memory entry in place. Currently supports importance and expiry.",
+    parameters: UPDATE_TOOL_PARAMETERS,
     async execute(_toolCallId, rawParams) {
       try {
         const params = asRecord(rawParams);
@@ -403,13 +446,14 @@ export function createAgenrTraceTool(ctx: OpenClawPluginToolContext, servicesPro
   return {
     name: "agenr_trace",
     label: "Agenr Trace",
-    description: "Trace the current provenance view for an agenr entry by id or subject.",
-    parameters: TARGET_TOOL_PARAMETERS,
+    description:
+      "Trace the provenance of a knowledge entry. The current v1 trace view shows the entry itself, supersession links, and recent recall history. Accepts id, subject, or last for lookup.",
+    parameters: TRACE_TOOL_PARAMETERS,
     async execute(_toolCallId, rawParams) {
       try {
         const params = asRecord(rawParams);
         const services = await servicesPromise;
-        const entry = await resolveTargetEntry(services, params);
+        const entry = await resolveTargetEntry(services, params, { allowLast: true });
         const trace = await getOpenClawEntryTrace(services.database, entry.id);
 
         if (!trace) {
@@ -437,12 +481,29 @@ export function createAgenrTraceTool(ctx: OpenClawPluginToolContext, servicesPro
 }
 
 /** Resolves exactly one tool target selector into a concrete agenr entry. */
-async function resolveTargetEntry(services: AgenrOpenClawServices, params: Record<string, unknown>): Promise<Entry> {
+async function resolveTargetEntry(
+  services: AgenrOpenClawServices,
+  params: Record<string, unknown>,
+  options: {
+    allowLast?: boolean;
+  } = {},
+): Promise<Entry> {
   const id = readStringParam(params, "id");
   const subject = readStringParam(params, "subject");
+  const last = options.allowLast ? readBooleanParam(params, "last") : undefined;
+  const selectorCount = (id ? 1 : 0) + (subject ? 1 : 0) + (last === true ? 1 : 0);
+  const selectorDescription = options.allowLast ? "id, subject, or last" : "id or subject";
 
-  if ((id ? 1 : 0) + (subject ? 1 : 0) !== 1) {
-    throw new Error("Provide exactly one target selector: id or subject.");
+  if (selectorCount !== 1) {
+    throw new Error(`Provide exactly one target selector: ${selectorDescription}.`);
+  }
+
+  if (last) {
+    const entry = await findOpenClawMostRecentEntry(services.database);
+    if (!entry) {
+      throw new Error("No agenr entries exist yet.");
+    }
+    return entry;
   }
 
   if (id) {
@@ -459,6 +520,20 @@ async function resolveTargetEntry(services: AgenrOpenClawServices, params: Recor
   }
 
   return entry;
+}
+
+/** Parses an optional boolean field from tool params. */
+function readBooleanParam(params: Record<string, unknown>, key: string): boolean | undefined {
+  const value = params[key];
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  throw new Error(`${key} must be a boolean.`);
 }
 
 /** Parses optional recall/store type filters into validated agenr entry types. */

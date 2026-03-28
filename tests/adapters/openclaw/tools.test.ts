@@ -140,6 +140,32 @@ describe("agenr OpenClaw tools", () => {
     expect(result.content[0]?.text).toContain("session recall");
     expect(recordedRecallEvents).toBe(1);
   });
+
+  it("traces the most recent entry when last is true", async () => {
+    const database = await createTestDatabase();
+    const services = createDatabaseBackedServices(database);
+    const storeTool = createAgenrStoreTool(createToolContext(), Promise.resolve(services));
+    const traceTool = createAgenrTraceTool(createToolContext(), Promise.resolve(services));
+
+    await storeTool.execute("tool-6", {
+      type: "fact",
+      subject: "older memory",
+      content: "This was stored first and should not be selected by last.",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await storeTool.execute("tool-7", {
+      type: "decision",
+      subject: "newest memory",
+      content: "This was stored most recently and should be selected by last.",
+    });
+
+    const result = await traceTool.execute("tool-8", {
+      last: true,
+    });
+
+    expect(result.content[0]?.type).toBe("text");
+    expect(result.content[0]?.text).toContain("newest memory");
+  });
 });
 
 function createDatabaseBackedServices(database: SqlDatabase): AgenrOpenClawServices {

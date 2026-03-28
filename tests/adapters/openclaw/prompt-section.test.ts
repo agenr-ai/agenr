@@ -13,8 +13,13 @@ describe("buildAgenrMemoryPromptSection", () => {
       citationsMode: "off",
     });
 
+    expect(lines.join("\n")).toContain("## Memory Recall");
     expect(lines.join("\n")).toContain("call agenr_recall first");
+    expect(lines.join("\n")).toContain("supports temporal recall");
+    expect(lines.join("\n")).toContain("future-session test");
+    expect(lines.join("\n")).toContain("Importance is 1 to 10");
     expect(lines.join("\n")).toContain("fix it with agenr_update or agenr_retire");
-    expect(lines.join("\n")).toContain("Do not mention agenr entry IDs");
+    expect(lines.join("\n")).toContain("Use agenr_trace");
+    expect(lines.join("\n")).toContain("Citations are disabled");
   });
 });
