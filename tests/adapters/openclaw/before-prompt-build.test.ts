@@ -14,8 +14,15 @@ import type { Entry } from "../../../src/core/types.js";
 
 const openDatabases: SqlDatabase[] = [];
 const tempPaths: string[] = [];
+const originalOpenClawStateDir = process.env.OPENCLAW_STATE_DIR;
 
 afterEach(async () => {
+  if (originalOpenClawStateDir === undefined) {
+    delete process.env.OPENCLAW_STATE_DIR;
+  } else {
+    process.env.OPENCLAW_STATE_DIR = originalOpenClawStateDir;
+  }
+
   vi.restoreAllMocks();
 
   while (openDatabases.length > 0) {
@@ -569,10 +576,12 @@ async function writeSessionFile(sessionId: string, lines: object[]): Promise<str
 }
 
 async function createWorkspaceWithSessions(): Promise<{ workspaceDir: string; sessionsDir: string }> {
-  const openclawHome = await mkdtemp(path.join(os.tmpdir(), "agenr-openclaw-home-"));
-  tempPaths.push(openclawHome);
-  const workspaceDir = path.join(openclawHome, "workspace");
-  const sessionsDir = path.join(openclawHome, "agents", "main", "sessions");
+  const sandboxRoot = await mkdtemp(path.join(os.tmpdir(), "agenr-openclaw-sandbox-"));
+  tempPaths.push(sandboxRoot);
+  const workspaceDir = path.join(sandboxRoot, "workspace");
+  const stateDir = path.join(sandboxRoot, ".openclaw");
+  const sessionsDir = path.join(stateDir, "agents", "main", "sessions");
+  process.env.OPENCLAW_STATE_DIR = stateDir;
   await mkdir(workspaceDir, { recursive: true });
   await mkdir(sessionsDir, { recursive: true });
   return { workspaceDir, sessionsDir };

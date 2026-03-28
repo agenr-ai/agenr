@@ -8,15 +8,24 @@ import { resolveOpenClawSessionPredecessor } from "../../../../src/adapters/open
 import { createSessionStartTracker } from "../../../../src/adapters/openclaw/session/state.js";
 
 const tempPaths: string[] = [];
+const originalOpenClawStateDir = process.env.OPENCLAW_STATE_DIR;
 
 afterEach(async () => {
+  if (originalOpenClawStateDir === undefined) {
+    delete process.env.OPENCLAW_STATE_DIR;
+  } else {
+    process.env.OPENCLAW_STATE_DIR = originalOpenClawStateDir;
+  }
+
+  vi.restoreAllMocks();
+
   while (tempPaths.length > 0) {
     await rm(tempPaths.pop() ?? "", { force: true, recursive: true });
   }
 });
 
 describe("resolveOpenClawSessionPredecessor", () => {
-  it("prefers the agent sessions directory derived from workspaceDir over workspace-local sessions", async () => {
+  it("uses OPENCLAW_STATE_DIR instead of workspace-relative sessions paths", async () => {
     const { workspaceDir, sessionsDir, workspaceSessionsDir } = await createWorkspaceWithSessions();
     await writeSessionJsonl(sessionsDir, "previous-main");
     await writeSessionsJson(sessionsDir, {
@@ -55,6 +64,41 @@ describe("resolveOpenClawSessionPredecessor", () => {
       expect.arrayContaining([`[agenr] sessions-store-reader: loaded sessions.json entries=1 path=${path.join(sessionsDir, "sessions.json")}`]),
     );
     expect(getMessages(logger.debug).some((message) => message.includes(path.join(workspaceSessionsDir, "sessions.json")))).toBe(false);
+  });
+
+  it("falls back to ~/.openclaw when OPENCLAW_STATE_DIR is unset", async () => {
+    delete process.env.OPENCLAW_STATE_DIR;
+
+    const fakeHomeDir = await mkdtemp(path.join(os.tmpdir(), "agenr-openclaw-home-"));
+    tempPaths.push(fakeHomeDir);
+    const sessionsDir = path.join(fakeHomeDir, ".openclaw", "agents", "main", "sessions");
+    await mkdir(sessionsDir, { recursive: true });
+    await writeSessionJsonl(sessionsDir, "previous-main");
+    await writeSessionsJson(sessionsDir, {
+      "agent:main:main": {
+        sessionId: "previous-main",
+        sessionFile: "previous-main.jsonl",
+        updatedAt: 2_000,
+      },
+    });
+
+    vi.spyOn(os, "homedir").mockReturnValue(fakeHomeDir);
+
+    const result = await resolveOpenClawSessionPredecessor(
+      {
+        agentId: "main",
+        sessionId: "current-session",
+        sessionKey: "agent:main:tui-133e4567-e89b-12d3-a456-426614174000",
+        workspaceDir: path.join(fakeHomeDir, "workspace"),
+      },
+      createSessionStartTracker(),
+      createLogger(),
+    );
+
+    expect(result).toEqual({
+      sessionId: "previous-main",
+      sessionFile: path.join(sessionsDir, "previous-main.jsonl"),
+    });
   });
 
   it("falls back from a TUI /new session to the previous default main session", async () => {
@@ -228,11 +272,13 @@ describe("resolveOpenClawSessionPredecessor", () => {
 });
 
 async function createWorkspaceWithSessions(agentId = "main"): Promise<{ workspaceDir: string; sessionsDir: string; workspaceSessionsDir: string }> {
-  const openclawHome = await mkdtemp(path.join(os.tmpdir(), "agenr-openclaw-home-"));
-  tempPaths.push(openclawHome);
-  const workspaceDir = path.join(openclawHome, "workspace");
-  const sessionsDir = path.join(openclawHome, "agents", agentId, "sessions");
+  const sandboxRoot = await mkdtemp(path.join(os.tmpdir(), "agenr-openclaw-sandbox-"));
+  tempPaths.push(sandboxRoot);
+  const workspaceDir = path.join(sandboxRoot, "workspace");
+  const stateDir = path.join(sandboxRoot, ".openclaw");
+  const sessionsDir = path.join(stateDir, "agents", agentId, "sessions");
   const workspaceSessionsDir = path.join(workspaceDir, "sessions");
+  process.env.OPENCLAW_STATE_DIR = stateDir;
   await mkdir(workspaceDir, { recursive: true });
   await mkdir(sessionsDir, { recursive: true });
   await mkdir(workspaceSessionsDir, { recursive: true });

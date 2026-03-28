@@ -1,3 +1,4 @@
+import os from "node:os";
 import path from "node:path";
 
 import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
@@ -242,20 +243,24 @@ async function findTuiFallbackPredecessor(currentSessionKey: string, sessionsDir
   };
 }
 
-/** Resolves the OpenClaw sessions directory, preferring the agent-scoped store derived from the OpenClaw workspace. */
-function resolveOpenClawSessionsDirectory(ctx: AgenrOpenClawHookContext, fallbackAgentId: string): string | undefined {
-  const agentId = ctx.agentId?.trim() || fallbackAgentId.trim();
-  const workspaceDir = ctx.workspaceDir?.trim();
-  if (workspaceDir) {
-    const resolvedWorkspaceDir = path.resolve(workspaceDir);
-    if (agentId && path.basename(resolvedWorkspaceDir).toLowerCase() === "workspace") {
-      return path.join(path.dirname(resolvedWorkspaceDir), "agents", agentId, "sessions");
-    }
-
-    return path.basename(resolvedWorkspaceDir).toLowerCase() === "sessions" ? resolvedWorkspaceDir : path.join(resolvedWorkspaceDir, "sessions");
+/** Resolves the OpenClaw state directory using the same environment override as OpenClaw itself. */
+function resolveOpenClawStateDir(): string {
+  const override = process.env.OPENCLAW_STATE_DIR?.trim();
+  if (override) {
+    return path.resolve(override);
   }
 
-  return undefined;
+  return path.join(os.homedir(), ".openclaw");
+}
+
+/** Resolves the agent-scoped OpenClaw sessions directory for TUI predecessor fallback. */
+function resolveOpenClawSessionsDirectory(ctx: AgenrOpenClawHookContext, fallbackAgentId: string): string | undefined {
+  const agentId = ctx.agentId?.trim() || fallbackAgentId.trim();
+  if (!agentId) {
+    return undefined;
+  }
+
+  return path.join(resolveOpenClawStateDir(), "agents", agentId, "sessions");
 }
 
 /** Parses one-lane OpenClaw session keys of the form `agent:<agentId>:<lane>`. */
