@@ -4,7 +4,8 @@ import type { EmbeddingPort } from "../../core/ports.js";
 import { createRecallAdapter } from "../db/recall-adapter.js";
 import { createDatabase } from "../db/client.js";
 import { createEmbeddingClient, EMBEDDING_MODEL, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../embeddings.js";
-import type { AgenrOpenClawEmbeddingStatus, AgenrOpenClawPluginConfig, AgenrOpenClawServices } from "./types.js";
+import { createLlmClient, resolveLlmApiKey } from "../llm.js";
+import type { AgenrOpenClawEmbeddingStatus, AgenrOpenClawPluginConfig, AgenrOpenClawServices, AgenrOpenClawSummaryStatus } from "./types.js";
 
 /**
  * Creates the shared DB and embedding adapters used by the OpenClaw plugin.
@@ -28,19 +29,37 @@ export async function createAgenrOpenClawServices(
   };
   const dbPath = resolvedConfig.dbPath;
   const embeddingStatus = resolveEmbeddingStatus(agenrConfig);
+  let summaryStatus = resolveSummaryStatus(agenrConfig);
   const database = await createDatabase(dbPath);
   const embedding = embeddingStatus.available
     ? createEmbeddingClient(requireApiKey(embeddingStatus), embeddingStatus.model)
     : createUnavailableEmbeddingPort(embeddingStatus.error ?? "Embeddings are unavailable.");
+  let summaryLlm;
+  if (summaryStatus.available) {
+    try {
+      summaryLlm = createLlmClient(summaryStatus.provider, summaryStatus.model, {
+        apiKey: requireLlmApiKey(summaryStatus),
+      });
+    } catch (error) {
+      summaryStatus = {
+        ...summaryStatus,
+        available: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
   let closed = false;
 
   return {
     config: resolvedConfig,
+    agenrConfig,
     dbPath,
     database,
     embedding,
     recall: createRecallAdapter(database, embedding),
     embeddingStatus: toPublicEmbeddingStatus(embeddingStatus),
+    summaryStatus: toPublicSummaryStatus(summaryStatus),
+    ...(summaryLlm ? { summaryLlm } : {}),
     async close() {
       if (closed) {
         return;
@@ -53,6 +72,11 @@ export async function createAgenrOpenClawServices(
 
 /** Internal embedding status shape that includes the resolved API key. */
 type ResolvedEmbeddingStatus = AgenrOpenClawEmbeddingStatus & {
+  apiKey?: string;
+};
+
+/** Internal summary status shape that includes the resolved API key. */
+type ResolvedSummaryStatus = AgenrOpenClawSummaryStatus & {
   apiKey?: string;
 };
 
@@ -100,6 +124,48 @@ function toPublicEmbeddingStatus(status: ResolvedEmbeddingStatus): AgenrOpenClaw
 }
 
 /**
+ * Resolves the configured LLM provider/model for session continuity summaries.
+ *
+ * @param config - Agenr-compatible plugin configuration.
+ * @returns Static summary-model availability facts used by the plugin runtime.
+ */
+function resolveSummaryStatus(config: AgenrConfig): ResolvedSummaryStatus {
+  const provider = normalizeOptionalString(config.provider) ?? "openai";
+  const model = normalizeOptionalString(config.model) ?? "gpt-5.4-mini";
+
+  try {
+    return {
+      available: true,
+      provider,
+      model,
+      apiKey: resolveLlmApiKey(config, provider),
+    };
+  } catch (error) {
+    return {
+      available: false,
+      provider,
+      model,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/**
+ * Hides private summary-model credentials from the public runtime status object.
+ *
+ * @param status - Internal summary status that may include secrets.
+ * @returns Public summary status safe to share with runtime consumers.
+ */
+function toPublicSummaryStatus(status: ResolvedSummaryStatus): AgenrOpenClawSummaryStatus {
+  return {
+    available: status.available,
+    provider: status.provider,
+    model: status.model,
+    ...(status.error ? { error: status.error } : {}),
+  };
+}
+
+/**
  * Creates an embedding port that always throws a stable configuration error.
  *
  * @param errorMessage - Human-readable failure message.
@@ -141,4 +207,19 @@ function requireApiKey(status: ResolvedEmbeddingStatus): string {
   }
 
   return status.apiKey;
+}
+
+/** Narrows resolved summary status to the available branch with a concrete API key. */
+function requireLlmApiKey(status: ResolvedSummaryStatus): string {
+  if (!status.apiKey) {
+    throw new Error("Summary LLM API key is unavailable.");
+  }
+
+  return status.apiKey;
+}
+
+/** Normalizes optional strings into trimmed non-empty values. */
+function normalizeOptionalString(value?: string): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : undefined;
 }

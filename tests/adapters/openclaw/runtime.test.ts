@@ -58,6 +58,11 @@ describe("createAgenrOpenClawServices", () => {
       provider: "openai",
       model: "text-embedding-from-config",
     });
+    expect(services.summaryStatus).toMatchObject({
+      available: true,
+      provider: "openai",
+      model: "gpt-5.4-mini",
+    });
 
     await expect(services.embedding.embed(["remember this"])).resolves.toEqual([[1, 2, 3]]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -101,6 +106,11 @@ describe("createAgenrOpenClawServices", () => {
     expect(services.embeddingStatus).toMatchObject({
       available: true,
       model: "text-embedding-explicit",
+    });
+    expect(services.summaryStatus).toMatchObject({
+      available: false,
+      provider: "openai",
+      model: "gpt-5.4-mini",
     });
 
     await expect(services.embedding.embed(["override path"])).resolves.toEqual([[4, 5, 6]]);

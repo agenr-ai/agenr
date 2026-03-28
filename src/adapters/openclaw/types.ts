@@ -1,9 +1,11 @@
 import type { OpenClawConfig, OpenClawPluginApi, PluginLogger } from "openclaw/plugin-sdk/core";
 
+import type { AgenrConfig } from "../../config.js";
 import type { RecallOutput } from "../../core/recall/types.js";
-import type { EmbeddingPort, RecallPorts } from "../../core/ports.js";
+import type { EmbeddingPort, LlmPort, RecallPorts } from "../../core/ports.js";
 import type { Entry } from "../../core/types.js";
 import type { SqlDatabase } from "../db/client.js";
+import type { LlmClientMetadata } from "../llm.js";
 
 /**
  * Runtime plugin configuration accepted by the agenr OpenClaw adapter.
@@ -25,15 +27,35 @@ export interface AgenrOpenClawEmbeddingStatus {
 }
 
 /**
+ * Static session-summary LLM availability facts derived from plugin configuration.
+ */
+export interface AgenrOpenClawSummaryStatus {
+  available: boolean;
+  provider: string;
+  model: string;
+  error?: string;
+}
+
+/**
+ * LLM client used for file-based session continuity summaries.
+ */
+export interface AgenrOpenClawSummaryClient extends LlmPort {
+  metadata: LlmClientMetadata;
+}
+
+/**
  * Shared adapter services created once for the OpenClaw plugin process.
  */
 export interface AgenrOpenClawServices {
   config: AgenrOpenClawPluginConfig;
+  agenrConfig: AgenrConfig;
   dbPath: string;
   database: SqlDatabase;
   embedding: EmbeddingPort;
   recall: RecallPorts;
   embeddingStatus: AgenrOpenClawEmbeddingStatus;
+  summaryStatus: AgenrOpenClawSummaryStatus;
+  summaryLlm?: AgenrOpenClawSummaryClient;
   close(): Promise<void>;
 }
 
@@ -58,7 +80,6 @@ export interface OpenClawPromptMemorySection {
  */
 export interface OpenClawSessionStartRecall {
   core: Entry[];
-  handoffs: Entry[];
   relevant: RecallOutput[];
   recent: Entry[];
 }
@@ -69,6 +90,24 @@ export interface OpenClawSessionStartRecall {
 export interface AgenrOpenClawBeforePromptBuildEvent {
   prompt: string;
   messages: unknown[];
+}
+
+/**
+ * Minimal before-reset payload used by the agenr OpenClaw adapter.
+ */
+export interface AgenrOpenClawBeforeResetEvent {
+  sessionFile?: string;
+  messages?: unknown[];
+  reason?: string;
+}
+
+/**
+ * Minimal session-start payload used to track predecessor continuity.
+ */
+export interface AgenrOpenClawSessionStartEvent {
+  sessionId: string;
+  sessionKey?: string;
+  resumedFrom?: string;
 }
 
 /**
@@ -194,6 +233,14 @@ export interface AgenrOpenClawMemoryPluginApi extends OpenClawPluginApi {
  * Shared hook dependencies passed into the session-start handler.
  */
 export interface AgenrOpenClawBeforePromptBuildDeps {
+  logger: PluginLogger;
+  servicesPromise: Promise<AgenrOpenClawServices>;
+}
+
+/**
+ * Shared hook dependencies passed into the reset handler.
+ */
+export interface AgenrOpenClawBeforeResetDeps {
   logger: PluginLogger;
   servicesPromise: Promise<AgenrOpenClawServices>;
 }

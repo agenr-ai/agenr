@@ -3,19 +3,19 @@ import type { PluginLogger } from "openclaw/plugin-sdk/core";
 import type { AgenrOpenClawMemoryFlushPlanResolver } from "../types.js";
 
 /**
- * Phase 1 does not take over transcript flush/compaction.
+ * The v1 OpenClaw adapter does not take over transcript flush or compaction.
  *
- * Returning `null` keeps the agenr memory slot active without introducing the
- * Phase 2 handoff and flush behavior yet.
+ * Returning `null` keeps the agenr memory slot active while OpenClaw's
+ * existing transcript lifecycle continues to manage compaction.
  *
  * @param _params - OpenClaw runtime metadata for flush-plan resolution.
  * @param logger - Host logger supplied by the OpenClaw plugin runtime.
- * @returns Always `null` in Phase 1.
+ * @returns Always `null` for the current plugin phases.
  */
 export function buildAgenrMemoryFlushPlan(
   _params: Parameters<AgenrOpenClawMemoryFlushPlanResolver>[0],
   logger: PluginLogger,
 ): ReturnType<AgenrOpenClawMemoryFlushPlanResolver> {
-  logger.info("[agenr] flush-plan: Phase 1 pass-through (no flush)");
+  logger.info("[agenr] flush-plan: pass-through (no custom flush)");
   return null;
 }

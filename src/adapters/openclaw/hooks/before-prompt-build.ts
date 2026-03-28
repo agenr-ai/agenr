@@ -1,8 +1,10 @@
 import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
 
 import { recall } from "../../../core/recall/search.js";
-import { listOpenClawCoreEntries, listOpenClawRecentEntries, listOpenClawRecentHandoffEntries } from "../../db/openclaw-plugin-queries.js";
+import { listOpenClawCoreEntries, listOpenClawRecentEntries } from "../../db/openclaw-plugin-queries.js";
 import { formatAgenrSessionStartRecall } from "../format/recall-format.js";
+import { resolveOpenClawSessionPredecessor } from "../session/predecessor.js";
+import { readOpenClawSessionSummaryFile } from "../session/summary-reader.js";
 import type {
   AgenrOpenClawBeforePromptBuildDeps,
   AgenrOpenClawBeforePromptBuildEvent,
@@ -12,11 +14,13 @@ import type {
   OpenClawSessionStartRecall,
 } from "../types.js";
 import type { SessionStartTracker } from "../session/state.js";
+import { openClawTranscriptParser } from "../transcript/parser.js";
 
 const CORE_ENTRY_LIMIT = 4;
-const HANDOFF_ENTRY_LIMIT = 2;
 const RELEVANT_ENTRY_LIMIT = 5;
 const RECENT_ENTRY_LIMIT = 3;
+const RECENT_SESSION_MESSAGE_LIMIT = 6;
+const RECENT_SESSION_MAX_CHARS = 1_800;
 
 /**
  * Runs agenr session-start recall and injects the result into the OpenClaw prompt.
@@ -37,28 +41,30 @@ export async function handleAgenrBeforePromptBuild(
   const trackerState = params.tracker.consume(ctx.sessionId, ctx.sessionKey);
 
   if (!trackerState.isFirst) {
-    logDebug(params.logger, `[agenr] session tracker: duplicate start blocked for ${sessionContext}`);
-    logDebug(params.logger, `[agenr] session tracker: now tracking ${trackerState.activeCount} active sessions`);
+    debugLog(params.logger, "before_prompt_build", `session tracker duplicate blocked for ${sessionContext}`);
+    debugLog(params.logger, "before_prompt_build", `session tracker active count=${trackerState.activeCount}`);
     params.logger.info(`[agenr] session-start recall skipped (already ran) for ${sessionContext}`);
     return undefined;
   }
 
-  logDebug(params.logger, `[agenr] session tracker: first start for ${sessionContext}`);
-  logDebug(params.logger, `[agenr] session tracker: now tracking ${trackerState.activeCount} active sessions`);
+  debugLog(params.logger, "before_prompt_build", `session tracker first start for ${sessionContext}`);
+  debugLog(params.logger, "before_prompt_build", `session tracker active count=${trackerState.activeCount}`);
   params.logger.info(`[agenr] session-start recall for ${sessionContext}`);
 
   try {
     const services = await params.servicesPromise;
     const sessionStartRecall = await runAgenrSessionStartRecall(event.prompt, ctx.sessionId, ctx.sessionKey, services, params.logger);
-    const prependContext = formatAgenrSessionStartRecall(sessionStartRecall);
+    const previousSessionContext = await buildPreviousSessionContext(ctx, params.tracker, params.logger);
+    const memoryContext = formatAgenrSessionStartRecall(sessionStartRecall);
+    const prependContext = [previousSessionContext, memoryContext].filter((value): value is string => value.trim().length > 0).join("\n\n");
+
     params.logger.info(
-      `[agenr] session-start recall: ${sessionStartRecall.core.length} core, ${sessionStartRecall.handoffs.length} handoffs, ${sessionStartRecall.relevant.length} relevant, ${sessionStartRecall.recent.length} recent entries for ${sessionContext}`,
+      `[agenr] session-start recall: ${sessionStartRecall.core.length} core, ${sessionStartRecall.relevant.length} relevant, ${sessionStartRecall.recent.length} recent entries for ${sessionContext}`,
     );
-    logDebug(params.logger, `[agenr] session-start core entries for ${sessionContext}: ${formatEntryRefs(sessionStartRecall.core)}`);
-    logDebug(params.logger, `[agenr] session-start handoff entries for ${sessionContext}: ${formatEntryRefs(sessionStartRecall.handoffs)}`);
-    logDebug(params.logger, `[agenr] session-start relevant entries for ${sessionContext}: ${formatRelevantRefs(sessionStartRecall.relevant)}`);
-    logDebug(params.logger, `[agenr] session-start recent entries for ${sessionContext}: ${formatEntryRefs(sessionStartRecall.recent)}`);
-    logDebug(params.logger, `[agenr] session-start prependContext length for ${sessionContext}: ${prependContext.length} chars`);
+    debugLog(params.logger, "before_prompt_build", `session-start core entries for ${sessionContext}: ${formatEntryRefs(sessionStartRecall.core)}`);
+    debugLog(params.logger, "before_prompt_build", `session-start relevant entries for ${sessionContext}: ${formatRelevantRefs(sessionStartRecall.relevant)}`);
+    debugLog(params.logger, "before_prompt_build", `session-start recent entries for ${sessionContext}: ${formatEntryRefs(sessionStartRecall.recent)}`);
+    debugLog(params.logger, "before_prompt_build", `session-start prependContext length for ${sessionContext}: ${prependContext.length} chars`);
 
     if (prependContext.length === 0) {
       params.logger.info(`[agenr] session-start recall: nothing to inject for ${sessionContext}`);
@@ -73,7 +79,7 @@ export async function handleAgenrBeforePromptBuild(
 }
 
 /**
- * Composes the Phase 1 session-start recall payload from agenr core plus plugin-side browse queries.
+ * Composes the v1 session-start recall payload from agenr core plus plugin-side continuity context.
  *
  * @param prompt - Current user prompt for the waking session.
  * @param sessionId - Ephemeral OpenClaw session UUID when available.
@@ -97,16 +103,10 @@ export async function runAgenrSessionStartRecall(
     excludedIds.add(result.entry.id);
   }
 
-  const handoffs = await listOpenClawRecentHandoffEntries(services.database, HANDOFF_ENTRY_LIMIT, [...excludedIds]);
-  for (const entry of handoffs) {
-    excludedIds.add(entry.id);
-  }
-
   const recent = await listOpenClawRecentEntries(services.database, RECENT_ENTRY_LIMIT, [...excludedIds]);
 
   return {
     core,
-    handoffs,
     relevant,
     recent,
   };
@@ -129,7 +129,11 @@ async function runRelevantRecall(
     return [];
   }
 
-  logDebug(logger, `[agenr] session-start relevant query for ${formatSessionContext(sessionId, sessionKey)}: ${JSON.stringify(normalizedPrompt)}`);
+  debugLog(
+    logger,
+    "before_prompt_build",
+    `session-start relevant query for ${formatSessionContext(sessionId, sessionKey)}: ${JSON.stringify(normalizedPrompt)}`,
+  );
 
   try {
     return await recall(
@@ -148,9 +152,70 @@ async function runRelevantRecall(
   }
 }
 
-/** Emits session-start detail logs at info level. */
-function logDebug(logger: PluginLogger, message: string): void {
-  logger.info(message);
+/**
+ * Builds predecessor continuity sections for the active session start.
+ *
+ * @param ctx - Active OpenClaw hook context.
+ * @param tracker - Shared in-process continuity tracker.
+ * @param logger - Plugin logger used for continuity diagnostics.
+ * @returns Prompt-ready predecessor sections, or an empty string when unavailable.
+ */
+async function buildPreviousSessionContext(ctx: AgenrOpenClawHookContext, tracker: SessionStartTracker, logger: PluginLogger): Promise<string> {
+  const sessionContext = formatSessionContext(ctx.sessionId, ctx.sessionKey);
+  const predecessor = resolveOpenClawSessionPredecessor(ctx, tracker, logger);
+  if (!predecessor) {
+    logger.info(`[agenr] session-start predecessor summary not found for ${sessionContext} reason=no_predecessor`);
+    return "";
+  }
+
+  const sections: string[] = [];
+  try {
+    const summary = await readOpenClawSessionSummaryFile(predecessor.sessionFile, logger);
+    if (summary) {
+      logger.info(`[agenr] session-start predecessor summary found for ${sessionContext} path=${summary.summaryPath}`);
+      sections.push(`## Previous session summary\n${summary.content}`);
+    } else {
+      logger.info(`[agenr] session-start predecessor summary not found for ${sessionContext} predecessor=${predecessor.sessionFile}`);
+    }
+  } catch (error) {
+    logger.info(
+      `[agenr] session-start predecessor summary not found for ${sessionContext} predecessor=${predecessor.sessionFile} reason=${formatErrorMessage(error)}`,
+    );
+    debugLog(logger, "before_prompt_build", `failed reading predecessor summary for ${sessionContext}: ${formatErrorMessage(error)}`);
+  }
+
+  const recentSession = await renderRecentSessionSection(predecessor.sessionFile, logger);
+  if (recentSession.length > 0) {
+    sections.push(`## Recent session\n${recentSession}`);
+  }
+
+  return sections.join("\n\n");
+}
+
+/**
+ * Renders a compact recent-session tail from the predecessor transcript file.
+ *
+ * @param sessionFile - Absolute predecessor transcript path.
+ * @param logger - Plugin logger used for transcript-tail diagnostics.
+ * @returns Prompt-ready transcript excerpt, or an empty string when unavailable.
+ */
+async function renderRecentSessionSection(sessionFile: string, logger: PluginLogger): Promise<string> {
+  try {
+    const transcript = await openClawTranscriptParser.parseFile(sessionFile);
+    const tail = transcript.messages.slice(-RECENT_SESSION_MESSAGE_LIMIT);
+    const body = capRecentSession(tail.map((message) => `${message.role === "user" ? "U" : "A"}: ${message.text}`).join("\n"), RECENT_SESSION_MAX_CHARS);
+
+    debugLog(logger, "before_prompt_build", `recent session tail for file=${sessionFile}: messages=${tail.length} chars=${body.length}`);
+    return body;
+  } catch (error) {
+    debugLog(logger, "before_prompt_build", `failed to build recent session tail for file=${sessionFile}: ${formatErrorMessage(error)}`);
+    return "";
+  }
+}
+
+/** Emits detailed diagnostics when the plugin logger supports debug level. */
+function debugLog(logger: PluginLogger, subsystem: string, message: string): void {
+  logger.debug?.(`[agenr] ${subsystem}: ${message}`);
 }
 
 /** Formats stable session identifiers for OpenClaw adapter log messages. */
@@ -198,4 +263,14 @@ function formatErrorMessage(error: unknown): string {
   }
 
   return String(error);
+}
+
+/** Caps recent-session excerpts from the end to keep the newest turns visible. */
+function capRecentSession(value: string, maxChars: number): string {
+  if (value.length <= maxChars) {
+    return value;
+  }
+
+  const marker = "[...truncated earlier recent session...]\n";
+  return `${marker}${value.slice(-(maxChars - marker.length)).trimStart()}`;
 }

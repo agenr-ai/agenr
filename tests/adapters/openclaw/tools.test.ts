@@ -286,6 +286,7 @@ function createServices(
     config: {
       dbPath: "test.db",
     },
+    agenrConfig: {},
     dbPath: "test.db",
     database,
     embedding,
@@ -296,6 +297,12 @@ function createServices(
       requestedProvider: "openai",
       model: "text-embedding-3-small",
       ...(options.available ? {} : { error: "Embedding API key is required." }),
+    },
+    summaryStatus: {
+      available: false,
+      provider: "openai",
+      model: "gpt-5.4-mini",
+      error: "Summary LLM unavailable.",
     },
     async close() {
       await database.close();

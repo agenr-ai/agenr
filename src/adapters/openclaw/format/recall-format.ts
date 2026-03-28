@@ -53,11 +53,6 @@ export function buildSections(recall: OpenClawSessionStartRecall): OpenClawPromp
     sections.push({ title: "Relevant Recall", entries: relevantEntries });
   }
 
-  const handoffEntries = recall.handoffs.map((entry) => ({ entry }));
-  if (handoffEntries.length > 0) {
-    sections.push({ title: "Recent Handoffs", entries: handoffEntries });
-  }
-
   const recentEntries = recall.recent.map((entry) => ({ entry }));
   if (recentEntries.length > 0) {
     sections.push({ title: "Recent Context", entries: recentEntries });

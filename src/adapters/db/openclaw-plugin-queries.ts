@@ -84,44 +84,6 @@ export async function listOpenClawCoreEntries(executor: SqlExecutor, limit: numb
 }
 
 /**
- * Lists recent handoff-style entries for session-start prompt injection.
- *
- * @param executor - SQL executor used for the lookup.
- * @param limit - Maximum number of entries to return.
- * @param excludeIds - Entry IDs already surfaced in other sections.
- * @returns Active handoff-like entries ordered by recency.
- */
-export async function listOpenClawRecentHandoffEntries(executor: SqlExecutor, limit: number, excludeIds: string[] = []): Promise<Entry[]> {
-  if (limit <= 0) {
-    return [];
-  }
-
-  const exclusion = buildIdExclusionClause(excludeIds);
-  const result = await executor.execute({
-    sql: `
-      SELECT
-        ${ENTRY_SELECT_COLUMNS}
-      FROM entries
-      WHERE ${buildActiveEntryClause()}
-        AND (
-          lower(subject) LIKE 'session handoff%'
-          OR EXISTS (
-            SELECT 1
-            FROM json_each(CASE WHEN json_valid(tags) THEN tags ELSE '[]' END)
-            WHERE lower(json_each.value) = 'handoff'
-          )
-        )
-        ${exclusion.sql}
-      ORDER BY created_at DESC
-      LIMIT ?
-    `,
-    args: [...exclusion.args, limit],
-  });
-
-  return result.rows.map((row) => mapEntryRow(row));
-}
-
-/**
  * Lists recent important non-core entries for session-start prompt injection.
  *
  * @param executor - SQL executor used for the lookup.

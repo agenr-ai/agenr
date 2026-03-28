@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -8,20 +8,20 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";
 import { handleAgenrBeforePromptBuild } from "../../../src/adapters/openclaw/hooks/before-prompt-build.js";
 import { createSessionStartTracker } from "../../../src/adapters/openclaw/session/state.js";
-import type { AgenrOpenClawServices } from "../../../src/adapters/openclaw/types.js";
+import type { AgenrOpenClawServices, AgenrOpenClawSummaryClient } from "../../../src/adapters/openclaw/types.js";
 import type { EmbeddingPort, RecallPorts } from "../../../src/core/ports.js";
 import type { Entry } from "../../../src/core/types.js";
 
 const openDatabases: SqlDatabase[] = [];
-const tempDatabasePaths: string[] = [];
+const tempPaths: string[] = [];
 
 afterEach(async () => {
   while (openDatabases.length > 0) {
     await openDatabases.pop()?.close();
   }
 
-  while (tempDatabasePaths.length > 0) {
-    await rm(tempDatabasePaths.pop() ?? "", { force: true });
+  while (tempPaths.length > 0) {
+    await rm(tempPaths.pop() ?? "", { force: true, recursive: true });
   }
 });
 
@@ -87,36 +87,32 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(result?.prependContext).toContain("Agenr Session Recall");
     expect(result?.prependContext).toContain("master branch workflow");
     expect(result?.prependContext).toContain("latest plugin work");
+    expect(result?.prependContext).not.toContain("Recent Handoffs");
     expect(secondResult).toBeUndefined();
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
         "[agenr] session-start recall for session=session-1 key=agent:main:webchat:test",
+        "[agenr] session-start predecessor summary not found for session=session-1 key=agent:main:webchat:test reason=no_predecessor",
         "[agenr] session-start recall skipped (already ran) for session=session-1 key=agent:main:webchat:test",
-        "[agenr] session tracker: first start for session=session-1 key=agent:main:webchat:test",
-        "[agenr] session tracker: duplicate start blocked for session=session-1 key=agent:main:webchat:test",
-        "[agenr] session tracker: now tracking 1 active sessions",
       ]),
     );
-    expect(logger.debug).not.toHaveBeenCalled();
+    expect(getMessages(logger.debug)).toEqual(
+      expect.arrayContaining([
+        "[agenr] before_prompt_build: session tracker first start for session=session-1 key=agent:main:webchat:test",
+        "[agenr] before_prompt_build: session tracker duplicate blocked for session=session-1 key=agent:main:webchat:test",
+      ]),
+    );
   });
 
-  it("logs detailed session-start recall facts for core, handoff, relevant, and recent entries", async () => {
+  it("injects predecessor summary and transcript tail alongside semantic memory", async () => {
     const database = await createTestDatabase();
     const logger = createLogger();
     const coreEntry = createEntry({
       type: "decision",
       subject: "session isolation rule",
-      content: "Keep each TUI session pinned to its own session key and handoff chain.",
+      content: "Keep each TUI session pinned to its own session key and continuity chain.",
       expiry: "core",
       importance: 10,
-    });
-    const handoffEntry = createEntry({
-      type: "reflection",
-      subject: "session handoff - openclaw recall verification",
-      content: "Carry forward the last verified handoff summary and confirm it matches the active session key.",
-      expiry: "temporary",
-      importance: 8,
-      tags: ["handoff"],
     });
     const relevantEntry = createEntry({
       type: "lesson",
@@ -135,13 +131,64 @@ describe("handleAgenrBeforePromptBuild", () => {
     });
 
     await database.insertEntry(coreEntry, createEmbedding(0, 1), "core-workflow");
-    await database.insertEntry(handoffEntry, createEmbedding(1, 1), "handoff-workflow");
-    await database.insertEntry(relevantEntry, createEmbedding(2, 1), "relevant-workflow");
-    await database.insertEntry(recentEntry, createEmbedding(3, 1), "recent-workflow");
+    await database.insertEntry(relevantEntry, createEmbedding(1, 1), "relevant-workflow");
+    await database.insertEntry(recentEntry, createEmbedding(2, 1), "recent-workflow");
+
+    const predecessorFile = await writeSessionFile("predecessor-session", [
+      {
+        type: "session",
+        id: "predecessor-session",
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T10:00:00.000Z",
+        message: {
+          role: "human",
+          content: "We need file-based continuity instead of handoff brain entries.",
+        },
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T10:01:00.000Z",
+        message: {
+          role: "assistant",
+          content: "Agreed. We will write a summary.md sidecar next to the session transcript.",
+        },
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T10:02:00.000Z",
+        message: {
+          role: "human",
+          content: "Keep the transcript tail too so tone and last exchanges survive when the LLM summary is missing.",
+        },
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T10:03:00.000Z",
+        message: {
+          role: "assistant",
+          content: "Understood. No handoff entries will be stored in the brain.",
+        },
+      },
+    ]);
+    await writeFile(
+      path.join(path.dirname(predecessorFile), "predecessor-session.summary.md"),
+      "The session settled on file-based continuity. Summary files live next to transcript JSONL, transcript tails remain as fallback, and no handoff entries go into the brain.\n",
+      "utf8",
+    );
+
+    const tracker = createSessionStartTracker();
+    tracker.rememberReset("agent:main:webchat:isolated", {
+      sessionId: "predecessor-session",
+      sessionFile: predecessorFile,
+      recordedAt: "2026-03-28T10:05:00.000Z",
+    });
+    tracker.rememberSessionStart("session-2", "agent:main:webchat:isolated", "predecessor-session");
 
     const result = await handleAgenrBeforePromptBuild(
       {
-        prompt: "Verify each TUI session stays isolated and the right handoff was injected.",
+        prompt: "Verify each TUI session stays isolated and continuity is file-based.",
         messages: [],
       },
       {
@@ -156,35 +203,26 @@ describe("handleAgenrBeforePromptBuild", () => {
             recall: createRelevantRecallPorts(relevantEntry),
           }),
         ),
-        tracker: createSessionStartTracker(),
+        tracker,
       },
     );
 
+    expect(result?.prependContext).toContain("## Previous session summary");
+    expect(result?.prependContext).toContain("file-based continuity");
+    expect(result?.prependContext).toContain("## Recent session");
+    expect(result?.prependContext).toContain("U: Keep the transcript tail too");
+    expect(result?.prependContext).toContain("Agenr Session Recall");
     expect(result?.prependContext).toContain("Core Memory");
-    expect(result?.prependContext).toContain("Recent Handoffs");
     expect(result?.prependContext).toContain("Relevant Recall");
     expect(result?.prependContext).toContain("Recent Context");
+    expect(result?.prependContext).not.toContain("Recent Handoffs");
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
-        "[agenr] session-start recall: 1 core, 1 handoffs, 1 relevant, 1 recent entries for session=session-2 key=agent:main:webchat:isolated",
-        expect.stringContaining(
-          '[agenr] session-start relevant query for session=session-2 key=agent:main:webchat:isolated: "Verify each TUI session stays isolated and the right handoff was injected."',
-        ),
-        expect.stringContaining(
-          `[agenr] session-start core entries for session=session-2 key=agent:main:webchat:isolated: ${coreEntry.subject} [${coreEntry.id}]`,
-        ),
-        expect.stringContaining(
-          `[agenr] session-start handoff entries for session=session-2 key=agent:main:webchat:isolated: ${handoffEntry.subject} [${handoffEntry.id}]`,
-        ),
-        expect.stringContaining(`[agenr] session-start relevant entries for session=session-2 key=agent:main:webchat:isolated: `),
-        expect.stringContaining(`${relevantEntry.subject} [${relevantEntry.id}]`),
-        expect.stringContaining(
-          `[agenr] session-start recent entries for session=session-2 key=agent:main:webchat:isolated: ${recentEntry.subject} [${recentEntry.id}]`,
-        ),
-        expect.stringContaining("[agenr] session-start prependContext length for session=session-2 key=agent:main:webchat:isolated: "),
+        "[agenr] session-start predecessor summary found for session=session-2 key=agent:main:webchat:isolated path=" +
+          path.join(path.dirname(predecessorFile), "predecessor-session.summary.md"),
+        "[agenr] session-start recall: 1 core, 1 relevant, 1 recent entries for session=session-2 key=agent:main:webchat:isolated",
       ]),
     );
-    expect(logger.debug).not.toHaveBeenCalled();
   });
 
   it("logs when session-start recall has nothing to inject", async () => {
@@ -210,7 +248,8 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(result).toBeUndefined();
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
-        "[agenr] session-start recall: 0 core, 0 handoffs, 0 relevant, 0 recent entries for session=session-empty key=agent:main:webchat:empty",
+        "[agenr] session-start predecessor summary not found for session=session-empty key=agent:main:webchat:empty reason=no_predecessor",
+        "[agenr] session-start recall: 0 core, 0 relevant, 0 recent entries for session=session-empty key=agent:main:webchat:empty",
         "[agenr] session-start recall: nothing to inject for session=session-empty key=agent:main:webchat:empty",
       ]),
     );
@@ -222,6 +261,7 @@ function createServices(
   options: {
     available?: boolean;
     recall?: RecallPorts;
+    summaryLlm?: AgenrOpenClawSummaryClient;
   } = {},
 ): AgenrOpenClawServices {
   const available = options.available ?? false;
@@ -254,6 +294,7 @@ function createServices(
     config: {
       dbPath: "test.db",
     },
+    agenrConfig: {},
     dbPath: "test.db",
     database,
     embedding,
@@ -265,6 +306,13 @@ function createServices(
       model: "text-embedding-3-small",
       ...(available ? {} : { error: "Embedding API key is required." }),
     },
+    summaryStatus: {
+      available: Boolean(options.summaryLlm),
+      provider: "openai",
+      model: "gpt-5.4-mini",
+      ...(options.summaryLlm ? {} : { error: "Summary LLM unavailable." }),
+    },
+    ...(options.summaryLlm ? { summaryLlm: options.summaryLlm } : {}),
     async close() {
       await database.close();
     },
@@ -320,11 +368,19 @@ function getMessages(logFn: ReturnType<typeof vi.fn>): string[] {
 
 async function createTestDatabase(): Promise<SqlDatabase> {
   const databasePath = path.join(os.tmpdir(), `agenr-openclaw-${randomUUID()}.sqlite`);
-  tempDatabasePaths.push(databasePath);
+  tempPaths.push(databasePath);
 
   const database = await createDatabase(databasePath);
   openDatabases.push(database);
   return database;
+}
+
+async function writeSessionFile(sessionId: string, lines: object[]): Promise<string> {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "agenr-openclaw-session-"));
+  tempPaths.push(directory);
+  const filePath = path.join(directory, `${sessionId}.jsonl`);
+  await writeFile(filePath, `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`, "utf8");
+  return filePath;
 }
 
 function createEntry(overrides: Partial<Entry> = {}): Entry {

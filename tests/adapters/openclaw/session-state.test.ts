@@ -23,4 +23,22 @@ describe("createSessionStartTracker", () => {
       activeCount: 2,
     });
   });
+
+  it("remembers reset files and session_start predecessor ids", () => {
+    const tracker = createSessionStartTracker();
+
+    tracker.rememberReset("agent:main:webchat:first", {
+      sessionId: "old-session",
+      sessionFile: "/tmp/old-session.jsonl",
+      recordedAt: "2026-03-28T12:00:00.000Z",
+    });
+    tracker.rememberSessionStart("new-session", "agent:main:webchat:first", "old-session");
+
+    expect(tracker.getLatestReset("agent:main:webchat:first")).toEqual({
+      sessionId: "old-session",
+      sessionFile: "/tmp/old-session.jsonl",
+      recordedAt: "2026-03-28T12:00:00.000Z",
+    });
+    expect(tracker.getResumedFrom("new-session")).toBe("old-session");
+  });
 });
