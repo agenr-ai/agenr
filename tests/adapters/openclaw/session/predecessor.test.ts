@@ -9,12 +9,18 @@ import { createSessionStartTracker } from "../../../../src/adapters/openclaw/ses
 
 const tempPaths: string[] = [];
 const originalOpenClawStateDir = process.env.OPENCLAW_STATE_DIR;
+const originalOpenClawHome = process.env.OPENCLAW_HOME;
 
 afterEach(async () => {
   if (originalOpenClawStateDir === undefined) {
     delete process.env.OPENCLAW_STATE_DIR;
   } else {
     process.env.OPENCLAW_STATE_DIR = originalOpenClawStateDir;
+  }
+  if (originalOpenClawHome === undefined) {
+    delete process.env.OPENCLAW_HOME;
+  } else {
+    process.env.OPENCLAW_HOME = originalOpenClawHome;
   }
 
   vi.restoreAllMocks();
@@ -25,7 +31,7 @@ afterEach(async () => {
 });
 
 describe("resolveOpenClawSessionPredecessor", () => {
-  it("uses OPENCLAW_STATE_DIR instead of workspace-relative sessions paths", async () => {
+  it("uses OPENCLAW_HOME instead of workspace-relative sessions paths", async () => {
     const { workspaceDir, sessionsDir, workspaceSessionsDir } = await createWorkspaceWithSessions();
     await writeSessionJsonl(sessionsDir, "previous-main");
     await writeSessionsJson(sessionsDir, {
@@ -66,8 +72,56 @@ describe("resolveOpenClawSessionPredecessor", () => {
     expect(getMessages(logger.debug).some((message) => message.includes(path.join(workspaceSessionsDir, "sessions.json")))).toBe(false);
   });
 
+  it("prefers OPENCLAW_STATE_DIR over OPENCLAW_HOME when both are set", async () => {
+    const sandboxRoot = await mkdtemp(path.join(os.tmpdir(), "agenr-openclaw-sandbox-"));
+    tempPaths.push(sandboxRoot);
+    const workspaceDir = path.join(sandboxRoot, "workspace");
+    const homeStateDir = path.join(sandboxRoot, ".openclaw");
+    const stateOverrideDir = path.join(sandboxRoot, "explicit-state");
+    const homeSessionsDir = path.join(homeStateDir, "agents", "main", "sessions");
+    const stateOverrideSessionsDir = path.join(stateOverrideDir, "agents", "main", "sessions");
+    await mkdir(workspaceDir, { recursive: true });
+    await mkdir(homeSessionsDir, { recursive: true });
+    await mkdir(stateOverrideSessionsDir, { recursive: true });
+    await writeSessionJsonl(homeSessionsDir, "wrong-home-session");
+    await writeSessionsJson(homeSessionsDir, {
+      "agent:main:main": {
+        sessionId: "wrong-home-session",
+        sessionFile: "wrong-home-session.jsonl",
+        updatedAt: 1_000,
+      },
+    });
+    await writeSessionJsonl(stateOverrideSessionsDir, "preferred-state-session");
+    await writeSessionsJson(stateOverrideSessionsDir, {
+      "agent:main:main": {
+        sessionId: "preferred-state-session",
+        sessionFile: "preferred-state-session.jsonl",
+        updatedAt: 2_000,
+      },
+    });
+    process.env.OPENCLAW_HOME = sandboxRoot;
+    process.env.OPENCLAW_STATE_DIR = stateOverrideDir;
+
+    const result = await resolveOpenClawSessionPredecessor(
+      {
+        agentId: "main",
+        sessionId: "current-session",
+        sessionKey: "agent:main:tui-123e4567-e89b-12d3-a456-426614174999",
+        workspaceDir,
+      },
+      createSessionStartTracker(),
+      createLogger(),
+    );
+
+    expect(result).toEqual({
+      sessionId: "preferred-state-session",
+      sessionFile: path.join(stateOverrideSessionsDir, "preferred-state-session.jsonl"),
+    });
+  });
+
   it("falls back to ~/.openclaw when OPENCLAW_STATE_DIR is unset", async () => {
     delete process.env.OPENCLAW_STATE_DIR;
+    delete process.env.OPENCLAW_HOME;
 
     const fakeHomeDir = await mkdtemp(path.join(os.tmpdir(), "agenr-openclaw-home-"));
     tempPaths.push(fakeHomeDir);
@@ -278,7 +332,8 @@ async function createWorkspaceWithSessions(agentId = "main"): Promise<{ workspac
   const stateDir = path.join(sandboxRoot, ".openclaw");
   const sessionsDir = path.join(stateDir, "agents", agentId, "sessions");
   const workspaceSessionsDir = path.join(workspaceDir, "sessions");
-  process.env.OPENCLAW_STATE_DIR = stateDir;
+  delete process.env.OPENCLAW_STATE_DIR;
+  process.env.OPENCLAW_HOME = sandboxRoot;
   await mkdir(workspaceDir, { recursive: true });
   await mkdir(sessionsDir, { recursive: true });
   await mkdir(workspaceSessionsDir, { recursive: true });

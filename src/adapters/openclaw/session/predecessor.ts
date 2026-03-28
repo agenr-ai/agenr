@@ -245,9 +245,14 @@ async function findTuiFallbackPredecessor(currentSessionKey: string, sessionsDir
 
 /** Resolves the OpenClaw state directory using the same environment override as OpenClaw itself. */
 function resolveOpenClawStateDir(): string {
-  const override = process.env.OPENCLAW_STATE_DIR?.trim();
-  if (override) {
-    return path.resolve(override);
+  const stateOverride = process.env.OPENCLAW_STATE_DIR?.trim();
+  if (stateOverride) {
+    return path.resolve(stateOverride);
+  }
+
+  const homeOverride = process.env.OPENCLAW_HOME?.trim();
+  if (homeOverride) {
+    return path.join(path.resolve(homeOverride), ".openclaw");
   }
 
   return path.join(os.homedir(), ".openclaw");

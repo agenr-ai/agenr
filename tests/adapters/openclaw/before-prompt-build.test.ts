@@ -15,12 +15,18 @@ import type { Entry } from "../../../src/core/types.js";
 const openDatabases: SqlDatabase[] = [];
 const tempPaths: string[] = [];
 const originalOpenClawStateDir = process.env.OPENCLAW_STATE_DIR;
+const originalOpenClawHome = process.env.OPENCLAW_HOME;
 
 afterEach(async () => {
   if (originalOpenClawStateDir === undefined) {
     delete process.env.OPENCLAW_STATE_DIR;
   } else {
     process.env.OPENCLAW_STATE_DIR = originalOpenClawStateDir;
+  }
+  if (originalOpenClawHome === undefined) {
+    delete process.env.OPENCLAW_HOME;
+  } else {
+    process.env.OPENCLAW_HOME = originalOpenClawHome;
   }
 
   vi.restoreAllMocks();
@@ -581,7 +587,8 @@ async function createWorkspaceWithSessions(): Promise<{ workspaceDir: string; se
   const workspaceDir = path.join(sandboxRoot, "workspace");
   const stateDir = path.join(sandboxRoot, ".openclaw");
   const sessionsDir = path.join(stateDir, "agents", "main", "sessions");
-  process.env.OPENCLAW_STATE_DIR = stateDir;
+  delete process.env.OPENCLAW_STATE_DIR;
+  process.env.OPENCLAW_HOME = sandboxRoot;
   await mkdir(workspaceDir, { recursive: true });
   await mkdir(sessionsDir, { recursive: true });
   return { workspaceDir, sessionsDir };
