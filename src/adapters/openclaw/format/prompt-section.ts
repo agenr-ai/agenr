@@ -25,7 +25,9 @@ export function buildAgenrMemoryPromptSection({
   const lines = [
     "## Memory Recall",
     "Before answering anything about prior work, decisions, preferences, people, dates, unfinished work, or past sessions, call agenr_recall first. Session-start recall is automatic; use agenr_recall mid-session when you need context you do not already have.",
-    "agenr_recall also supports temporal recall: use since, until, around, and aroundRadius to focus on a time window or bias results toward a specific period, not just semantic similarity.",
+    "agenr_recall supports temporal recall: when the user asks about a specific time period, always use temporal filters - semantic search alone matches meaning, not dates.",
+    'Use around plus aroundRadius to bias recall toward a period: last week -> around: "7d", aroundRadius: 3; two weeks ago -> around: "14d", aroundRadius: 4.',
+    'Use since and until for hard bounds: in the last month -> since: "30d"; before March -> until: "2026-03-01". Combine temporal filters with a focused query.',
   ];
 
   if (availableTools.has(MEMORY_TOOL_NAMES.store)) {

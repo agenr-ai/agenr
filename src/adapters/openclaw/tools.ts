@@ -91,20 +91,23 @@ const RECALL_TOOL_PARAMETERS = {
     },
     since: {
       type: "string",
-      description: "Only consider entries created on or after this time bound. Accepts ISO dates or relative dates such as 30d.",
+      description:
+        "Only consider entries created on or after this time bound. Accepts ISO dates or relative dates such as 30d. Relative dates count backward from now: 7d means 7 days ago, 30d means 30 days ago.",
     },
     until: {
       type: "string",
-      description: "Only consider entries created on or before this time bound. Accepts ISO dates or relative dates such as 7d.",
+      description:
+        "Only consider entries created on or before this time bound. Accepts ISO dates or relative dates such as 7d. Relative dates count backward from now: 7d means 7 days ago, 30d means 30 days ago.",
     },
     around: {
       type: "string",
-      description: "Bias ranking toward a specific date or period, such as yesterday or 2026-03-01. This is a temporal anchor, not a hard filter.",
+      description:
+        "Bias ranking toward a specific date or period, such as 7d for one week ago or 2026-03-15 for a specific date. This is a temporal anchor, not a hard filter.",
     },
     aroundRadius: {
       type: "integer",
       minimum: 1,
-      description: "Radius in days for around. Smaller values focus recall more tightly on that period.",
+      description: "Radius in days for around, e.g. 3 for a +/-3 day window around the anchor. Smaller values focus recall more tightly on that period.",
     },
   },
   required: ["query"],
@@ -295,7 +298,7 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
     name: "agenr_recall",
     label: "Agenr Recall",
     description:
-      "Retrieve relevant knowledge entries from agenr long-term memory using semantic search. Use mid-session when you need context you do not already have. Session-start recall is already handled automatically.",
+      "Retrieve knowledge from agenr long-term memory. Supports semantic search via query and temporal filtering via since, until, around, and aroundRadius; for time-based questions, always combine a focused query with temporal filters. Use this mid-session when you need context you do not already have. Session-start recall is already handled automatically.",
     parameters: RECALL_TOOL_PARAMETERS,
     async execute(_toolCallId, rawParams) {
       try {
