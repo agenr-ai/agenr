@@ -28,6 +28,15 @@ pnpm test
 pnpm check        # format + lint + typecheck + test
 ```
 
+## Quickstart
+
+```bash
+agenr init        # first-run onboarding, including optional OpenClaw setup
+agenr setup       # reconfigure provider, models, keys, and DB path later
+```
+
+`agenr setup` writes `~/.agenr/config.json` and `agenr init` can also install the OpenClaw plugin, scan existing sessions, and optionally ingest them on first run.
+
 ## License
 
 AGPL-3.0

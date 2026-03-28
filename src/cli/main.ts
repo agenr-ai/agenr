@@ -4,7 +4,9 @@ import { APP_VERSION } from "../version.js";
 import { banner } from "../ui.js";
 import { registerDbCommand } from "./commands/db.js";
 import { registerIngestCommand } from "./commands/ingest.js";
+import { registerInitCommand } from "./commands/init/index.js";
 import { registerRecallCommand } from "./commands/recall.js";
+import { registerSetupCommand } from "./commands/setup.js";
 
 /**
  * Creates the root CLI program and applies global agenr metadata.
@@ -23,6 +25,8 @@ export function createProgram(): Command {
   registerIngestCommand(program);
   registerDbCommand(program);
   registerRecallCommand(program);
+  registerSetupCommand(program);
+  registerInitCommand(program);
 
   // Commands will be registered here as modules are built:
   // registerStoreCommand(program);
@@ -31,7 +35,6 @@ export function createProgram(): Command {
   // registerTraceCommand(program);
   // registerSurgeonCommand(program);
   // registerMcpCommand(program);
-  // registerSetupCommand(program);
   // registerConfigCommand(program);
 
   return program;

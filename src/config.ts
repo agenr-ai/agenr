@@ -57,6 +57,8 @@ export interface AgenrConfig {
 
 const DEFAULT_CONFIG_DIR = path.join(os.homedir(), ".agenr");
 const DEFAULT_DB_NAME = "knowledge.db";
+const CONFIG_DIR_MODE = 0o700;
+const CONFIG_FILE_MODE = 0o600;
 
 /**
  * Overrides used when resolving the agenr config file path.
@@ -126,7 +128,7 @@ export function resolveDbPath(config?: AgenrConfig): string {
  * @returns Parsed configuration values, or an empty object when unavailable.
  */
 export function readConfig(options: ResolveConfigPathOptions = {}): AgenrConfig {
-  const configPath = resolveConfigPath(options);
+  const configPath = resolveFilesystemPath(resolveConfigPath(options));
   if (!fs.existsSync(configPath)) {
     return {};
   }
@@ -135,6 +137,45 @@ export function readConfig(options: ResolveConfigPathOptions = {}): AgenrConfig 
     return JSON.parse(raw) as AgenrConfig;
   } catch {
     return {};
+  }
+}
+
+/**
+ * Checks whether the persisted agenr configuration file exists on disk.
+ *
+ * @param options - Optional config path overrides.
+ * @returns True when the resolved config path exists.
+ */
+export function configFileExists(options: ResolveConfigPathOptions = {}): boolean {
+  return fs.existsSync(resolveFilesystemPath(resolveConfigPath(options)));
+}
+
+/**
+ * Persists the agenr configuration file with locked-down permissions.
+ *
+ * @param config - Configuration values to write.
+ * @param options - Optional config path overrides.
+ */
+export function writeConfig(config: AgenrConfig, options: ResolveConfigPathOptions = {}): void {
+  const configPath = resolveFilesystemPath(resolveConfigPath(options));
+  const configDir = path.dirname(configPath);
+
+  fs.mkdirSync(configDir, { recursive: true, mode: CONFIG_DIR_MODE });
+  try {
+    fs.chmodSync(configDir, CONFIG_DIR_MODE);
+  } catch {
+    // Best-effort permission hardening.
+  }
+
+  fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, {
+    encoding: "utf-8",
+    mode: CONFIG_FILE_MODE,
+  });
+
+  try {
+    fs.chmodSync(configPath, CONFIG_FILE_MODE);
+  } catch {
+    // Best-effort permission hardening.
   }
 }
 
@@ -160,4 +201,17 @@ function resolveAdjacentConfigPath(dbPath?: string): string | undefined {
 function normalizeOptionalString(value?: string): string | undefined {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : undefined;
+}
+
+/** Converts filesystem-style or file-URL config paths into usable disk paths. */
+function resolveFilesystemPath(targetPath: string): string {
+  if (!targetPath.startsWith("file:")) {
+    return targetPath;
+  }
+
+  try {
+    return fileURLToPath(targetPath);
+  } catch {
+    return targetPath;
+  }
 }
