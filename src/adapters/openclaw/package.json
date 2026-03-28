@@ -1,0 +1,10 @@
+{
+  "name": "@agenr/agenr",
+  "private": true,
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./index.js"
+    ]
+  }
+}

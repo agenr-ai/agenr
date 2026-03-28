@@ -1,0 +1,51 @@
+{
+  "id": "agenr",
+  "name": "agenr",
+  "description": "agenr memory plugin for OpenClaw",
+  "kind": "memory",
+  "contracts": {
+    "tools": ["agenr_store", "agenr_recall", "agenr_retire", "agenr_update", "agenr_trace"]
+  },
+  "uiHints": {
+    "dbPath": {
+      "label": "Database path",
+      "help": "SQLite or libSQL path for the agenr knowledge database."
+    },
+    "apiKey": {
+      "label": "API key",
+      "help": "Fallback OpenAI API key used when embeddingApiKey is unset.",
+      "sensitive": true
+    },
+    "embeddingApiKey": {
+      "label": "Embedding API key",
+      "help": "OpenAI API key used for embeddings.",
+      "sensitive": true
+    },
+    "embeddingModel": {
+      "label": "Embedding model",
+      "help": "Override the default agenr embedding model."
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "dbPath": {
+        "type": "string",
+        "minLength": 1
+      },
+      "apiKey": {
+        "type": "string",
+        "minLength": 1
+      },
+      "embeddingApiKey": {
+        "type": "string",
+        "minLength": 1
+      },
+      "embeddingModel": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}

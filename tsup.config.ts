@@ -10,4 +10,5 @@ export default defineConfig({
   format: ["esm"],
   clean: true,
   dts: true,
+  onSuccess: "node scripts/copy-openclaw-plugin-artifacts.mjs",
 });

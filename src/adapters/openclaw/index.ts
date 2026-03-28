@@ -1,21 +1,50 @@
-/**
- * OpenClaw plugin adapter - entry point.
- *
- * This adapter translates OpenClaw's plugin API into calls to agenr core.
- * It will be loaded by OpenClaw via the plugin.load.paths config.
- */
+import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 
-// Plugin registration will be implemented when the core modules are ready.
-// For now, this is a placeholder to ensure the build entry point exists.
+import { registerAgenrOpenClawTools } from "./tools.js";
+import { coerceAgenrOpenClawPluginConfig, createAgenrOpenClawPluginConfigSchema } from "./config.js";
+import { buildAgenrMemoryPromptSection } from "./format/prompt-section.js";
+import { handleAgenrBeforePromptBuild } from "./hooks/before-prompt-build.js";
+import { buildAgenrMemoryFlushPlan } from "./memory/flush-plan.js";
+import { createAgenrMemoryRuntime } from "./memory/runtime.js";
+import { createAgenrOpenClawServices } from "./runtime.js";
+import { createSessionStartTracker } from "./session/state.js";
+import type { AgenrOpenClawMemoryPluginApi } from "./types.js";
 
-/** Stable plugin identifier used by OpenClaw for registration. */
-const id = "agenr";
+export default definePluginEntry({
+  id: "agenr",
+  name: "agenr",
+  description: "agenr memory plugin for OpenClaw",
+  kind: "memory",
+  configSchema: createAgenrOpenClawPluginConfigSchema(),
+  register(api) {
+    const memoryApi = api as AgenrOpenClawMemoryPluginApi;
+    const tracker = createSessionStartTracker();
+    const servicesPromise = createAgenrOpenClawServices(coerceAgenrOpenClawPluginConfig(api.pluginConfig), {
+      resolvePath: api.resolvePath,
+    });
 
-/** Human-readable plugin name exposed by the adapter. */
-const name = "agenr";
+    api.registerMemoryPromptSection(buildAgenrMemoryPromptSection);
+    memoryApi.registerMemoryFlushPlan?.(buildAgenrMemoryFlushPlan);
+    memoryApi.registerMemoryRuntime?.(createAgenrMemoryRuntime(servicesPromise));
 
-/** Current version of the OpenClaw adapter package. */
-const version = "0.1.0";
+    registerAgenrOpenClawTools(api, servicesPromise);
 
-export { id, name, version };
+    api.on("before_prompt_build", (event, ctx) =>
+      handleAgenrBeforePromptBuild(event, ctx, {
+        logger: api.logger,
+        servicesPromise,
+        tracker,
+      }),
+    );
+
+    api.on("gateway_stop", async () => {
+      try {
+        const services = await servicesPromise;
+        await services.close();
+      } catch {
+        // Ignore startup failures during shutdown.
+      }
+    });
+  },
+});
 export { OpenClawTranscriptParser, openClawTranscriptParser } from "./transcript/parser.js";

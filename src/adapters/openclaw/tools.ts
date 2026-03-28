@@ -1,0 +1,589 @@
+import type { AnyAgentTool } from "openclaw/plugin-sdk/agent-runtime";
+import { failedTextResult, readNumberParam, readStringArrayParam, readStringParam, textResult } from "openclaw/plugin-sdk/agent-runtime";
+import type { OpenClawPluginToolContext } from "openclaw/plugin-sdk/core";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
+
+import { recall } from "../../core/recall/search.js";
+import { storeEntriesDetailed } from "../../core/store/pipeline.js";
+import { ENTRY_TYPES, EXPIRY_LEVELS, type Entry, type EntryType, type Expiry } from "../../core/types.js";
+import { findOpenClawEntryBySubject, getOpenClawEntryTrace } from "../db/openclaw-plugin-queries.js";
+import type { AgenrOpenClawServices } from "./types.js";
+
+const STORE_TOOL_PARAMETERS = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    type: {
+      type: "string",
+      enum: [...ENTRY_TYPES],
+      description: "Knowledge type to store.",
+    },
+    subject: {
+      type: "string",
+      description: "Short subject line for the memory entry.",
+    },
+    content: {
+      type: "string",
+      description: "Durable memory content to store.",
+    },
+    importance: {
+      type: "number",
+      minimum: 1,
+      maximum: 10,
+      description: "Importance score from 1 to 10.",
+    },
+    expiry: {
+      type: "string",
+      enum: [...EXPIRY_LEVELS],
+      description: "Durability bucket for the entry.",
+    },
+    tags: {
+      type: "array",
+      items: { type: "string" },
+      description: "Optional tags that help future recall.",
+    },
+    sourceContext: {
+      type: "string",
+      description: "Optional provenance note for why this was stored.",
+    },
+  },
+  required: ["type", "subject", "content"],
+} as const;
+
+const RECALL_TOOL_PARAMETERS = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    query: {
+      type: "string",
+      description: "Free-form recall query.",
+    },
+    limit: {
+      type: "number",
+      minimum: 1,
+      maximum: 10,
+      description: "Maximum number of results to return.",
+    },
+    threshold: {
+      type: "number",
+      minimum: 0,
+      maximum: 1,
+      description: "Minimum final score required for returned results.",
+    },
+    types: {
+      type: "array",
+      items: {
+        type: "string",
+        enum: [...ENTRY_TYPES],
+      },
+      description: "Optional knowledge types to filter by.",
+    },
+    tags: {
+      type: "array",
+      items: { type: "string" },
+      description: "Optional tags to filter by.",
+    },
+    since: {
+      type: "string",
+      description: "Relative lower bound such as 30d.",
+    },
+    until: {
+      type: "string",
+      description: "Relative upper bound such as 7d.",
+    },
+    around: {
+      type: "string",
+      description: "Temporal anchor such as yesterday or 2026-03-01.",
+    },
+    aroundRadius: {
+      type: "number",
+      minimum: 1,
+      description: "Radius in days when using around.",
+    },
+  },
+  required: ["query"],
+} as const;
+
+const TARGET_TOOL_PARAMETERS = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    id: {
+      type: "string",
+      description: "Entry id to operate on.",
+    },
+    subject: {
+      type: "string",
+      description: "Entry subject to resolve when id is unknown.",
+    },
+    reason: {
+      type: "string",
+      description: "Optional reason for retiring the entry.",
+    },
+    importance: {
+      type: "number",
+      minimum: 1,
+      maximum: 10,
+      description: "Updated importance score from 1 to 10.",
+    },
+    expiry: {
+      type: "string",
+      enum: [...EXPIRY_LEVELS],
+      description: "Updated durability bucket.",
+    },
+  },
+} as const;
+
+/**
+ * Registers the five Phase 1 agenr tools with the OpenClaw plugin API.
+ *
+ * @param api - OpenClaw plugin registration API.
+ * @param servicesPromise - Shared agenr adapters reused for the process lifetime.
+ * @returns Nothing.
+ */
+export function registerAgenrOpenClawTools(api: OpenClawPluginApi, servicesPromise: Promise<AgenrOpenClawServices>): void {
+  api.registerTool((ctx) => createAgenrStoreTool(ctx, servicesPromise), { names: ["agenr_store"] });
+  api.registerTool((ctx) => createAgenrRecallTool(ctx, servicesPromise), { names: ["agenr_recall"] });
+  api.registerTool((ctx) => createAgenrRetireTool(ctx, servicesPromise), { names: ["agenr_retire"] });
+  api.registerTool((ctx) => createAgenrUpdateTool(ctx, servicesPromise), { names: ["agenr_update"] });
+  api.registerTool((ctx) => createAgenrTraceTool(ctx, servicesPromise), { names: ["agenr_trace"] });
+}
+
+/**
+ * Creates the agenr store tool bound to one OpenClaw session context.
+ *
+ * @param ctx - Trusted OpenClaw tool context.
+ * @param servicesPromise - Shared agenr adapters reused for the process lifetime.
+ * @returns Agent tool definition for `agenr_store`.
+ */
+export function createAgenrStoreTool(ctx: OpenClawPluginToolContext, servicesPromise: Promise<AgenrOpenClawServices>): AnyAgentTool {
+  return {
+    name: "agenr_store",
+    label: "Agenr Store",
+    description: "Store durable facts, decisions, lessons, preferences, or todos in agenr memory.",
+    parameters: STORE_TOOL_PARAMETERS,
+    async execute(_toolCallId, rawParams) {
+      try {
+        const params = asRecord(rawParams);
+        const type = parseEntryType(readStringParam(params, "type", { required: true, label: "type" }));
+        const subject = readStringParam(params, "subject", { required: true, label: "subject" });
+        const content = readStringParam(params, "content", { required: true, label: "content" });
+        const importance = readNumberParam(params, "importance", { integer: true, strict: true });
+        const expiry = parseExpiry(readStringParam(params, "expiry"));
+        const tags = normalizeStringArray(readStringArrayParam(params, "tags"));
+        const sourceContext = readStringParam(params, "sourceContext");
+        const services = await servicesPromise;
+
+        const result = await storeEntriesDetailed(
+          [
+            {
+              type,
+              subject,
+              content,
+              ...(importance !== undefined ? { importance } : {}),
+              ...(expiry !== undefined ? { expiry } : {}),
+              ...(tags.length > 0 ? { tags } : {}),
+              source_file: buildSessionSourceFile(ctx),
+              source_context: sourceContext ?? "Stored via agenr_store from OpenClaw.",
+            },
+          ],
+          services.database,
+          services.embedding,
+        );
+        const storedEntry = await findOpenClawEntryBySubject(services.database, subject);
+
+        if (result.stored > 0) {
+          return textResult(`Stored "${subject}".`, {
+            status: "stored",
+            subject,
+            entryId: storedEntry?.id,
+            result,
+          });
+        }
+
+        if (result.skipped > 0) {
+          return textResult(`Skipped "${subject}" because an active duplicate already exists.`, {
+            status: "skipped",
+            subject,
+            entryId: storedEntry?.id,
+            result,
+          });
+        }
+
+        return failedTextResult(`Rejected "${subject}". Check the supplied type, content, and metadata.`, {
+          status: "failed",
+          subject,
+          result,
+        });
+      } catch (error) {
+        return toolFailureResult(error);
+      }
+    },
+  };
+}
+
+/**
+ * Creates the agenr recall tool bound to one OpenClaw session context.
+ *
+ * @param ctx - Trusted OpenClaw tool context.
+ * @param servicesPromise - Shared agenr adapters reused for the process lifetime.
+ * @returns Agent tool definition for `agenr_recall`.
+ */
+export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPromise: Promise<AgenrOpenClawServices>): AnyAgentTool {
+  return {
+    name: "agenr_recall",
+    label: "Agenr Recall",
+    description: "Search agenr memory for prior decisions, facts, preferences, lessons, and todos.",
+    parameters: RECALL_TOOL_PARAMETERS,
+    async execute(_toolCallId, rawParams) {
+      try {
+        const params = asRecord(rawParams);
+        const services = await servicesPromise;
+        if (!services.embeddingStatus.available) {
+          return failedTextResult(services.embeddingStatus.error ?? "Embeddings are unavailable, so agenr recall cannot run.", {
+            status: "failed",
+          });
+        }
+
+        const types = parseEntryTypes(readStringArrayParam(params, "types"));
+        const results = await recall(
+          {
+            text: readStringParam(params, "query", { required: true, label: "query" }),
+            ...(readNumberParam(params, "limit", { integer: true, strict: true }) !== undefined
+              ? { limit: readNumberParam(params, "limit", { integer: true, strict: true }) }
+              : {}),
+            ...(readNumberParam(params, "threshold", { strict: true }) !== undefined
+              ? { threshold: readNumberParam(params, "threshold", { strict: true }) }
+              : {}),
+            ...(types.length > 0 ? { types } : {}),
+            ...(normalizeStringArray(readStringArrayParam(params, "tags")).length > 0
+              ? { tags: normalizeStringArray(readStringArrayParam(params, "tags")) }
+              : {}),
+            ...(readStringParam(params, "since") ? { since: readStringParam(params, "since") } : {}),
+            ...(readStringParam(params, "until") ? { until: readStringParam(params, "until") } : {}),
+            ...(readStringParam(params, "around") ? { around: readStringParam(params, "around") } : {}),
+            ...(readNumberParam(params, "aroundRadius", { integer: true, strict: true }) !== undefined
+              ? { aroundRadius: readNumberParam(params, "aroundRadius", { integer: true, strict: true }) }
+              : {}),
+            sessionKey: ctx.sessionKey,
+          },
+          services.recall,
+        );
+
+        if (results.length === 0) {
+          return textResult("No matching agenr memories found.", {
+            status: "ok",
+            count: 0,
+            results: [],
+          });
+        }
+
+        return textResult(formatRecallResults(results), {
+          status: "ok",
+          count: results.length,
+          results: results.map((result) => ({
+            id: result.entry.id,
+            subject: result.entry.subject,
+            type: result.entry.type,
+            expiry: result.entry.expiry,
+            importance: result.entry.importance,
+            score: result.score,
+            tags: result.entry.tags,
+            content: result.entry.content,
+          })),
+        });
+      } catch (error) {
+        return toolFailureResult(error);
+      }
+    },
+  };
+}
+
+/**
+ * Creates the agenr retire tool bound to one OpenClaw session context.
+ *
+ * @param ctx - Trusted OpenClaw tool context.
+ * @param servicesPromise - Shared agenr adapters reused for the process lifetime.
+ * @returns Agent tool definition for `agenr_retire`.
+ */
+export function createAgenrRetireTool(ctx: OpenClawPluginToolContext, servicesPromise: Promise<AgenrOpenClawServices>): AnyAgentTool {
+  return {
+    name: "agenr_retire",
+    label: "Agenr Retire",
+    description: "Retire an outdated or superseded agenr entry by id or subject.",
+    parameters: TARGET_TOOL_PARAMETERS,
+    async execute(_toolCallId, rawParams) {
+      try {
+        const params = asRecord(rawParams);
+        const services = await servicesPromise;
+        const entry = await resolveTargetEntry(services, params);
+        const reason = readStringParam(params, "reason");
+        const retired = await services.database.retireEntry(entry.id, reason);
+
+        if (!retired) {
+          return failedTextResult(`Entry ${entry.id} is not active, so it could not be retired.`, {
+            status: "failed",
+            entryId: entry.id,
+          });
+        }
+
+        return textResult(`Retired "${entry.subject}".`, {
+          status: "retired",
+          entryId: entry.id,
+          subject: entry.subject,
+          sessionKey: ctx.sessionKey,
+        });
+      } catch (error) {
+        return toolFailureResult(error);
+      }
+    },
+  };
+}
+
+/**
+ * Creates the agenr update tool bound to one OpenClaw session context.
+ *
+ * @param ctx - Trusted OpenClaw tool context.
+ * @param servicesPromise - Shared agenr adapters reused for the process lifetime.
+ * @returns Agent tool definition for `agenr_update`.
+ */
+export function createAgenrUpdateTool(ctx: OpenClawPluginToolContext, servicesPromise: Promise<AgenrOpenClawServices>): AnyAgentTool {
+  return {
+    name: "agenr_update",
+    label: "Agenr Update",
+    description: "Update an agenr entry's importance or expiry by id or subject.",
+    parameters: TARGET_TOOL_PARAMETERS,
+    async execute(_toolCallId, rawParams) {
+      try {
+        const params = asRecord(rawParams);
+        const services = await servicesPromise;
+        const entry = await resolveTargetEntry(services, params);
+        const importance = readNumberParam(params, "importance", { integer: true, strict: true });
+        const expiry = parseExpiry(readStringParam(params, "expiry"));
+
+        if (importance === undefined && expiry === undefined) {
+          throw new Error("Provide at least one update field: importance or expiry.");
+        }
+
+        const updated = await services.database.updateEntry(entry.id, {
+          ...(importance !== undefined ? { importance } : {}),
+          ...(expiry !== undefined ? { expiry } : {}),
+        });
+
+        if (!updated) {
+          return failedTextResult(`Entry ${entry.id} is not active, so it could not be updated.`, {
+            status: "failed",
+            entryId: entry.id,
+          });
+        }
+
+        return textResult(`Updated "${entry.subject}".`, {
+          status: "updated",
+          entryId: entry.id,
+          subject: entry.subject,
+          sessionKey: ctx.sessionKey,
+          ...(importance !== undefined ? { importance } : {}),
+          ...(expiry !== undefined ? { expiry } : {}),
+        });
+      } catch (error) {
+        return toolFailureResult(error);
+      }
+    },
+  };
+}
+
+/**
+ * Creates the agenr trace tool bound to one OpenClaw session context.
+ *
+ * @param ctx - Trusted OpenClaw tool context.
+ * @param servicesPromise - Shared agenr adapters reused for the process lifetime.
+ * @returns Agent tool definition for `agenr_trace`.
+ */
+export function createAgenrTraceTool(ctx: OpenClawPluginToolContext, servicesPromise: Promise<AgenrOpenClawServices>): AnyAgentTool {
+  return {
+    name: "agenr_trace",
+    label: "Agenr Trace",
+    description: "Trace the current provenance view for an agenr entry by id or subject.",
+    parameters: TARGET_TOOL_PARAMETERS,
+    async execute(_toolCallId, rawParams) {
+      try {
+        const params = asRecord(rawParams);
+        const services = await servicesPromise;
+        const entry = await resolveTargetEntry(services, params);
+        const trace = await getOpenClawEntryTrace(services.database, entry.id);
+
+        if (!trace) {
+          return failedTextResult(`Entry ${entry.id} was not found for tracing.`, {
+            status: "failed",
+            entryId: entry.id,
+          });
+        }
+
+        return textResult(formatTrace(trace.entry, trace.supersededBy, trace.supersedes, trace.recallEvents), {
+          status: "ok",
+          sessionKey: ctx.sessionKey,
+          trace: {
+            entry: trace.entry,
+            supersededBy: trace.supersededBy,
+            supersedes: trace.supersedes,
+            recallEvents: trace.recallEvents,
+          },
+        });
+      } catch (error) {
+        return toolFailureResult(error);
+      }
+    },
+  };
+}
+
+/** Resolves exactly one tool target selector into a concrete agenr entry. */
+async function resolveTargetEntry(services: AgenrOpenClawServices, params: Record<string, unknown>): Promise<Entry> {
+  const id = readStringParam(params, "id");
+  const subject = readStringParam(params, "subject");
+
+  if ((id ? 1 : 0) + (subject ? 1 : 0) !== 1) {
+    throw new Error("Provide exactly one target selector: id or subject.");
+  }
+
+  if (id) {
+    const entry = (await services.database.getEntry(id)) ?? (await getOpenClawEntryTrace(services.database, id))?.entry;
+    if (!entry) {
+      throw new Error(`No agenr entry found for id ${id}.`);
+    }
+    return entry;
+  }
+
+  const entry = await findOpenClawEntryBySubject(services.database, subject ?? "");
+  if (!entry) {
+    throw new Error(`No agenr entry found for subject "${subject}".`);
+  }
+
+  return entry;
+}
+
+/** Parses optional recall/store type filters into validated agenr entry types. */
+function parseEntryTypes(values: string[] | undefined): EntryType[] {
+  return normalizeStringArray(values).map((value) => parseEntryType(value));
+}
+
+/** Parses one entry type string into the agenr domain union. */
+function parseEntryType(value: string): EntryType {
+  if (ENTRY_TYPES.includes(value as EntryType)) {
+    return value as EntryType;
+  }
+
+  throw new Error(`Unsupported entry type "${value}".`);
+}
+
+/** Parses an optional expiry string into the agenr domain union. */
+function parseExpiry(value: string | undefined): Expiry | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (EXPIRY_LEVELS.includes(value as Expiry)) {
+    return value as Expiry;
+  }
+
+  throw new Error(`Unsupported expiry "${value}".`);
+}
+
+/** Normalizes optional string arrays by trimming, deduplicating, and dropping empties. */
+function normalizeStringArray(values: string[] | undefined): string[] {
+  if (!values) {
+    return [];
+  }
+
+  return Array.from(new Set(values.map((value) => value.trim()).filter((value) => value.length > 0)));
+}
+
+/** Builds a stable source-file provenance label from the OpenClaw session context. */
+function buildSessionSourceFile(ctx: OpenClawPluginToolContext): string {
+  const target = ctx.sessionKey ?? ctx.sessionId ?? ctx.agentId ?? "unknown";
+  return `openclaw-session:${target}`;
+}
+
+/** Formats recall results into compact tool-readable text. */
+function formatRecallResults(
+  results: Array<{
+    entry: Entry;
+    score: number;
+  }>,
+): string {
+  const lines = [`Found ${results.length} matching agenr memories:`];
+
+  for (const [index, result] of results.entries()) {
+    lines.push(
+      `${index + 1}. ${result.entry.id} | ${result.entry.type} | ${result.entry.subject} | score ${result.score.toFixed(2)} | importance ${result.entry.importance}`,
+    );
+    lines.push(`   ${truncate(result.entry.content, 220)}`);
+  }
+
+  return lines.join("\n");
+}
+
+/** Formats the limited Phase 1 provenance view returned by `agenr_trace`. */
+function formatTrace(
+  entry: Entry,
+  supersededBy: Entry | undefined,
+  supersedes: Entry[],
+  recallEvents: Array<{ query?: string; sessionKey?: string; recalledAt: string }>,
+): string {
+  const lines = [
+    `Trace for ${entry.id} | ${entry.subject}`,
+    `type=${entry.type} expiry=${entry.expiry} importance=${entry.importance} retired=${entry.retired}`,
+    `content=${truncate(entry.content, 220)}`,
+  ];
+
+  if (supersededBy) {
+    lines.push(`superseded_by=${supersededBy.id} | ${supersededBy.subject}`);
+  }
+
+  if (supersedes.length > 0) {
+    lines.push(`supersedes=${supersedes.map((item) => `${item.id} (${item.subject})`).join(", ")}`);
+  }
+
+  if (recallEvents.length > 0) {
+    lines.push(
+      `recent_recalls=${recallEvents
+        .map((event) => `${event.recalledAt}${event.query ? ` query=${event.query}` : ""}${event.sessionKey ? ` session=${event.sessionKey}` : ""}`)
+        .join(" ; ")}`,
+    );
+  }
+
+  return lines.join("\n");
+}
+
+/** Truncates tool text output to avoid oversized results. */
+function truncate(value: string, maxChars: number): string {
+  if (value.length <= maxChars) {
+    return value;
+  }
+
+  return `${value.slice(0, maxChars - 3).trimEnd()}...`;
+}
+
+/** Wraps unexpected tool failures in the standard failed result payload. */
+function toolFailureResult(error: unknown) {
+  return failedTextResult(formatErrorMessage(error), {
+    status: "failed" as const,
+  });
+}
+
+/** Normalizes unknown tool failures into human-readable messages. */
+function formatErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return String(error);
+}
+
+/** Guards untrusted tool parameters and narrows them to a string-keyed object. */
+function asRecord(value: unknown): Record<string, unknown> {
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+
+  throw new Error("Tool parameters must be an object.");
+}
