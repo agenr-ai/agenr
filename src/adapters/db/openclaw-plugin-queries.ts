@@ -84,40 +84,6 @@ export async function listOpenClawCoreEntries(executor: SqlExecutor, limit: numb
 }
 
 /**
- * Lists recent important non-core entries for session-start prompt injection.
- *
- * @param executor - SQL executor used for the lookup.
- * @param limit - Maximum number of entries to return.
- * @param excludeIds - Entry IDs already surfaced in other sections.
- * @returns Active recent entries ordered by importance and recency.
- */
-export async function listOpenClawRecentEntries(executor: SqlExecutor, limit: number, excludeIds: string[] = []): Promise<Entry[]> {
-  if (limit <= 0) {
-    return [];
-  }
-
-  const exclusion = buildIdExclusionClause(excludeIds);
-  const recentSince = new Date(Date.now() - 1000 * 60 * 60 * 24 * 30).toISOString();
-  const result = await executor.execute({
-    sql: `
-      SELECT
-        ${ENTRY_SELECT_COLUMNS}
-      FROM entries
-      WHERE ${buildActiveEntryClause()}
-        AND expiry != 'core'
-        AND importance >= 7
-        AND created_at >= ?
-        ${exclusion.sql}
-      ORDER BY importance DESC, created_at DESC
-      LIMIT ?
-    `,
-    args: [recentSince, ...exclusion.args, limit],
-  });
-
-  return result.rows.map((row) => mapEntryRow(row));
-}
-
-/**
  * Finds the most recent entry that matches a subject string.
  *
  * Exact case-insensitive matches rank above substring matches.
@@ -316,28 +282,4 @@ async function listRecallEvents(executor: SqlExecutor, entryId: string): Promise
     sessionKey: readOptionalString(row, "session_key"),
     recalledAt: readRequiredString(row, "recalled_at"),
   }));
-}
-
-/**
- * Builds an optional `AND id NOT IN (...)` fragment used to avoid duplicate prompt sections.
- *
- * @param entryIds - Already surfaced entry IDs.
- * @returns SQL fragment plus the matching bound arguments.
- */
-function buildIdExclusionClause(entryIds: string[]): {
-  sql: string;
-  args: string[];
-} {
-  const normalizedIds = Array.from(new Set(entryIds.map((entryId) => entryId.trim()).filter(Boolean)));
-  if (normalizedIds.length === 0) {
-    return {
-      sql: "",
-      args: [],
-    };
-  }
-
-  return {
-    sql: `AND id NOT IN (${normalizedIds.map(() => "?").join(", ")})`,
-    args: normalizedIds,
-  };
 }
