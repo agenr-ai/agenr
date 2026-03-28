@@ -16,6 +16,47 @@ afterEach(async () => {
 });
 
 describe("resolveOpenClawSessionPredecessor", () => {
+  it("prefers the agent sessions directory derived from workspaceDir over workspace-local sessions", async () => {
+    const { workspaceDir, sessionsDir, workspaceSessionsDir } = await createWorkspaceWithSessions();
+    await writeSessionJsonl(sessionsDir, "previous-main");
+    await writeSessionsJson(sessionsDir, {
+      "agent:main:main": {
+        sessionId: "previous-main",
+        sessionFile: "previous-main.jsonl",
+        updatedAt: 2_000,
+      },
+    });
+    await writeSessionJsonl(workspaceSessionsDir, "wrong-workspace-session");
+    await writeSessionsJson(workspaceSessionsDir, {
+      "agent:main:main": {
+        sessionId: "wrong-workspace-session",
+        sessionFile: "wrong-workspace-session.jsonl",
+        updatedAt: 9_000,
+      },
+    });
+
+    const logger = createLogger();
+    const result = await resolveOpenClawSessionPredecessor(
+      {
+        agentId: "main",
+        sessionId: "current-session",
+        sessionKey: "agent:main:tui-123e4567-e89b-12d3-a456-426614174000",
+        workspaceDir,
+      },
+      createSessionStartTracker(),
+      logger,
+    );
+
+    expect(result).toEqual({
+      sessionId: "previous-main",
+      sessionFile: path.join(sessionsDir, "previous-main.jsonl"),
+    });
+    expect(getMessages(logger.debug)).toEqual(
+      expect.arrayContaining([`[agenr] sessions-store-reader: loaded sessions.json entries=1 path=${path.join(sessionsDir, "sessions.json")}`]),
+    );
+    expect(getMessages(logger.debug).some((message) => message.includes(path.join(workspaceSessionsDir, "sessions.json")))).toBe(false);
+  });
+
   it("falls back from a TUI /new session to the previous default main session", async () => {
     const { workspaceDir, sessionsDir } = await createWorkspaceWithSessions();
     await writeSessionJsonl(sessionsDir, "previous-main");
@@ -186,12 +227,16 @@ describe("resolveOpenClawSessionPredecessor", () => {
   });
 });
 
-async function createWorkspaceWithSessions(): Promise<{ workspaceDir: string; sessionsDir: string }> {
-  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "agenr-openclaw-workspace-"));
-  tempPaths.push(workspaceDir);
-  const sessionsDir = path.join(workspaceDir, "sessions");
+async function createWorkspaceWithSessions(agentId = "main"): Promise<{ workspaceDir: string; sessionsDir: string; workspaceSessionsDir: string }> {
+  const openclawHome = await mkdtemp(path.join(os.tmpdir(), "agenr-openclaw-home-"));
+  tempPaths.push(openclawHome);
+  const workspaceDir = path.join(openclawHome, "workspace");
+  const sessionsDir = path.join(openclawHome, "agents", agentId, "sessions");
+  const workspaceSessionsDir = path.join(workspaceDir, "sessions");
+  await mkdir(workspaceDir, { recursive: true });
   await mkdir(sessionsDir, { recursive: true });
-  return { workspaceDir, sessionsDir };
+  await mkdir(workspaceSessionsDir, { recursive: true });
+  return { workspaceDir, sessionsDir, workspaceSessionsDir };
 }
 
 async function writeSessionJsonl(sessionsDir: string, sessionId: string): Promise<void> {

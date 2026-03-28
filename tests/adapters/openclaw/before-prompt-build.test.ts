@@ -569,9 +569,11 @@ async function writeSessionFile(sessionId: string, lines: object[]): Promise<str
 }
 
 async function createWorkspaceWithSessions(): Promise<{ workspaceDir: string; sessionsDir: string }> {
-  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "agenr-openclaw-workspace-"));
-  tempPaths.push(workspaceDir);
-  const sessionsDir = path.join(workspaceDir, "sessions");
+  const openclawHome = await mkdtemp(path.join(os.tmpdir(), "agenr-openclaw-home-"));
+  tempPaths.push(openclawHome);
+  const workspaceDir = path.join(openclawHome, "workspace");
+  const sessionsDir = path.join(openclawHome, "agents", "main", "sessions");
+  await mkdir(workspaceDir, { recursive: true });
   await mkdir(sessionsDir, { recursive: true });
   return { workspaceDir, sessionsDir };
 }
