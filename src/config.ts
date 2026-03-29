@@ -46,6 +46,38 @@ export interface ModelConfig {
 }
 
 /**
+ * Per-pass surgeon configuration.
+ */
+export interface SurgeonPassConfig {
+  /** Protect entries recalled within this many days (default: 14). */
+  protectRecalledDays?: number;
+  /** Protect entries at or above this importance (default: 8). */
+  protectMinImportance?: number;
+  /** Skip entries evaluated by surgeon in the last N days (default: 7). */
+  skipRecentlyEvaluatedDays?: number;
+}
+
+/**
+ * Surgeon module configuration.
+ */
+export interface SurgeonConfig {
+  /** Model override for surgeon runs. */
+  model?: ModelConfig;
+  /** Maximum cost per run in USD (default: 15.00). */
+  costCap?: number;
+  /** Maximum total surgeon cost in the last 24 hours (default: 75.00). */
+  dailyCostCap?: number;
+  /** Context token limit override. */
+  contextLimit?: number;
+  /** Custom instructions appended to the surgeon system prompt. */
+  customInstructions?: string;
+  /** Per-pass configuration. */
+  passes?: {
+    retirement?: SurgeonPassConfig;
+  };
+}
+
+/**
  * Static metadata for one supported auth method.
  */
 export interface AuthMethodDefinition {
@@ -148,6 +180,9 @@ export interface AgenrConfig {
   /** Model override for LLM dedup (typically a smaller/cheaper model). */
   dedupModel?: ModelConfig;
 
+  /** Surgeon module configuration. */
+  surgeon?: SurgeonConfig;
+
   /** Database file path (overridden by AGENR_DB_PATH env var). */
   dbPath?: string;
 
@@ -159,6 +194,22 @@ const DEFAULT_CONFIG_DIR = path.join(os.homedir(), ".agenr");
 const DEFAULT_DB_NAME = "knowledge.db";
 const CONFIG_DIR_MODE = 0o700;
 const CONFIG_FILE_MODE = 0o600;
+
+const DEFAULT_SURGEON_COST_CAP = 15.0;
+const DEFAULT_SURGEON_DAILY_COST_CAP = 75.0;
+const DEFAULT_SURGEON_CONTEXT_LIMIT = 0;
+const DEFAULT_SURGEON_RETIREMENT_PROTECT_RECALLED_DAYS = 14;
+const DEFAULT_SURGEON_RETIREMENT_PROTECT_MIN_IMPORTANCE = 8;
+const DEFAULT_SURGEON_SKIP_RECENTLY_EVALUATED_DAYS = 7;
+
+export {
+  DEFAULT_SURGEON_CONTEXT_LIMIT,
+  DEFAULT_SURGEON_COST_CAP,
+  DEFAULT_SURGEON_DAILY_COST_CAP,
+  DEFAULT_SURGEON_RETIREMENT_PROTECT_MIN_IMPORTANCE,
+  DEFAULT_SURGEON_RETIREMENT_PROTECT_RECALLED_DAYS,
+  DEFAULT_SURGEON_SKIP_RECENTLY_EVALUATED_DAYS,
+};
 
 /**
  * Returns whether a string is one of agenr's supported auth methods.

@@ -3,7 +3,7 @@ import type { Client } from "@libsql/client";
 /**
  * Logical schema version stored in the metadata table.
  */
-const SCHEMA_VERSION = "1";
+const SCHEMA_VERSION = "2";
 
 /**
  * libSQL vector index name for entry embeddings.
@@ -116,11 +116,53 @@ const CREATE_RECALL_EVENTS_TABLE_SQL = `
 const CREATE_SURGEON_RUNS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS surgeon_runs (
     id TEXT PRIMARY KEY,
+    pass_type TEXT NOT NULL DEFAULT 'retirement',
+    project TEXT,
     started_at TEXT NOT NULL,
     completed_at TEXT,
+    status TEXT NOT NULL DEFAULT 'running',
+    input_tokens INTEGER DEFAULT 0,
+    output_tokens INTEGER DEFAULT 0,
+    estimated_cost_usd REAL DEFAULT 0,
+    model TEXT,
     actions_taken INTEGER DEFAULT 0,
-    summary TEXT
+    actions_skipped INTEGER DEFAULT 0,
+    entries_retired INTEGER DEFAULT 0,
+    summary TEXT,
+    summary_json TEXT,
+    error TEXT,
+    dry_run INTEGER NOT NULL DEFAULT 1,
+    config_json TEXT
   )
+`;
+
+/** SQL statement that stores the per-action audit trail for surgeon runs. */
+const CREATE_SURGEON_RUN_ACTIONS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS surgeon_run_actions (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES surgeon_runs(id),
+    action_type TEXT NOT NULL,
+    entry_id TEXT,
+    entry_ids TEXT NOT NULL DEFAULT '[]',
+    reasoning TEXT NOT NULL DEFAULT '',
+    recall_delta TEXT,
+    created_at TEXT NOT NULL
+  )
+`;
+
+const CREATE_SURGEON_RUN_ACTIONS_RUN_ID_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_surgeon_run_actions_run_id
+  ON surgeon_run_actions(run_id)
+`;
+
+const CREATE_SURGEON_RUN_ACTIONS_ENTRY_ID_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_surgeon_run_actions_entry_id
+  ON surgeon_run_actions(entry_id)
+`;
+
+const CREATE_SURGEON_RUN_ACTIONS_CREATED_AT_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_surgeon_run_actions_created_at
+  ON surgeon_run_actions(created_at)
 `;
 
 /** SQL statement that stores key-value metadata for the database. */
@@ -234,6 +276,8 @@ export async function initSchema(db: Client): Promise<void> {
     await db.execute(statement);
   }
 
+  await ensureSurgeonSchema(db);
+
   await db.execute({
     sql: `
       INSERT INTO _meta (key, value)
@@ -253,6 +297,58 @@ export async function initSchema(db: Client): Promise<void> {
   }
 
   await ensureVectorIndex(db);
+}
+
+/**
+ * Ensures surgeon tables have all required columns and indexes.
+ * Handles migration from the original minimal surgeon_runs schema.
+ *
+ * @param db - libSQL client connected to the target database.
+ * @returns Promise that resolves once surgeon schema reconciliation completes.
+ */
+async function ensureSurgeonSchema(db: Client): Promise<void> {
+  const columns = await db.execute("PRAGMA table_info('surgeon_runs')");
+  const existingColumns = new Set(
+    columns.rows
+      .map((row) => {
+        const name = (row as Record<string, unknown>).name;
+        return typeof name === "string" ? name : "";
+      })
+      .filter((name) => name.length > 0),
+  );
+
+  const migrations: Array<{ column: string; sql: string }> = [
+    {
+      column: "pass_type",
+      sql: "ALTER TABLE surgeon_runs ADD COLUMN pass_type TEXT NOT NULL DEFAULT 'retirement'",
+    },
+    { column: "project", sql: "ALTER TABLE surgeon_runs ADD COLUMN project TEXT" },
+    {
+      column: "status",
+      sql: "ALTER TABLE surgeon_runs ADD COLUMN status TEXT NOT NULL DEFAULT 'completed'",
+    },
+    { column: "input_tokens", sql: "ALTER TABLE surgeon_runs ADD COLUMN input_tokens INTEGER DEFAULT 0" },
+    { column: "output_tokens", sql: "ALTER TABLE surgeon_runs ADD COLUMN output_tokens INTEGER DEFAULT 0" },
+    { column: "estimated_cost_usd", sql: "ALTER TABLE surgeon_runs ADD COLUMN estimated_cost_usd REAL DEFAULT 0" },
+    { column: "model", sql: "ALTER TABLE surgeon_runs ADD COLUMN model TEXT" },
+    { column: "actions_skipped", sql: "ALTER TABLE surgeon_runs ADD COLUMN actions_skipped INTEGER DEFAULT 0" },
+    { column: "entries_retired", sql: "ALTER TABLE surgeon_runs ADD COLUMN entries_retired INTEGER DEFAULT 0" },
+    { column: "summary_json", sql: "ALTER TABLE surgeon_runs ADD COLUMN summary_json TEXT" },
+    { column: "error", sql: "ALTER TABLE surgeon_runs ADD COLUMN error TEXT" },
+    { column: "dry_run", sql: "ALTER TABLE surgeon_runs ADD COLUMN dry_run INTEGER NOT NULL DEFAULT 1" },
+    { column: "config_json", sql: "ALTER TABLE surgeon_runs ADD COLUMN config_json TEXT" },
+  ];
+
+  for (const migration of migrations) {
+    if (!existingColumns.has(migration.column)) {
+      await db.execute(migration.sql);
+    }
+  }
+
+  await db.execute(CREATE_SURGEON_RUN_ACTIONS_TABLE_SQL);
+  await db.execute(CREATE_SURGEON_RUN_ACTIONS_RUN_ID_INDEX_SQL);
+  await db.execute(CREATE_SURGEON_RUN_ACTIONS_ENTRY_ID_INDEX_SQL);
+  await db.execute(CREATE_SURGEON_RUN_ACTIONS_CREATED_AT_INDEX_SQL);
 }
 
 /**

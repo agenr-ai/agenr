@@ -25,7 +25,7 @@ describe("initSchema", () => {
         SELECT name
         FROM sqlite_master
         WHERE type = 'table'
-          AND name IN ('entries', 'entries_fts', 'ingest_log', 'recall_events', 'surgeon_runs', '_meta')
+          AND name IN ('entries', 'entries_fts', 'ingest_log', 'recall_events', 'surgeon_runs', 'surgeon_run_actions', '_meta')
       `,
     });
     const tableNames = new Set(
@@ -35,7 +35,7 @@ describe("initSchema", () => {
       }),
     );
 
-    expect(tableNames).toEqual(new Set(["entries", "entries_fts", "ingest_log", "recall_events", "surgeon_runs", "_meta"]));
+    expect(tableNames).toEqual(new Set(["entries", "entries_fts", "ingest_log", "recall_events", "surgeon_runs", "surgeon_run_actions", "_meta"]));
 
     const triggersResult = await client.execute({
       sql: `
@@ -53,6 +53,130 @@ describe("initSchema", () => {
     );
 
     expect(triggerNames).toEqual(new Set(["entries_ai", "entries_ad", "entries_au"]));
+    expect(await tableColumns(client, "surgeon_runs")).toEqual([
+      "id",
+      "pass_type",
+      "project",
+      "started_at",
+      "completed_at",
+      "status",
+      "input_tokens",
+      "output_tokens",
+      "estimated_cost_usd",
+      "model",
+      "actions_taken",
+      "actions_skipped",
+      "entries_retired",
+      "summary",
+      "summary_json",
+      "error",
+      "dry_run",
+      "config_json",
+    ]);
+    expect(await tableColumns(client, "surgeon_run_actions")).toEqual([
+      "id",
+      "run_id",
+      "action_type",
+      "entry_id",
+      "entry_ids",
+      "reasoning",
+      "recall_delta",
+      "created_at",
+    ]);
+    expect(await indexExists(client, "idx_surgeon_run_actions_run_id")).toBe(true);
+    expect(await indexExists(client, "idx_surgeon_run_actions_entry_id")).toBe(true);
+    expect(await indexExists(client, "idx_surgeon_run_actions_created_at")).toBe(true);
+  });
+
+  it("migrates the minimal legacy surgeon_runs table without losing data", async () => {
+    const client = createClient({ url: ":memory:" });
+    clients.push(client);
+
+    await client.execute(`
+      CREATE TABLE surgeon_runs (
+        id TEXT PRIMARY KEY,
+        started_at TEXT NOT NULL,
+        completed_at TEXT,
+        actions_taken INTEGER DEFAULT 0,
+        summary TEXT
+      )
+    `);
+    await client.execute({
+      sql: `
+        INSERT INTO surgeon_runs (id, started_at, completed_at, actions_taken, summary)
+        VALUES (?, ?, ?, ?, ?)
+      `,
+      args: ["run-1", "2026-03-28T10:00:00.000Z", "2026-03-28T10:05:00.000Z", 3, "legacy summary"],
+    });
+
+    await initSchema(client);
+
+    expect(await tableColumns(client, "surgeon_runs")).toEqual([
+      "id",
+      "started_at",
+      "completed_at",
+      "actions_taken",
+      "summary",
+      "pass_type",
+      "project",
+      "status",
+      "input_tokens",
+      "output_tokens",
+      "estimated_cost_usd",
+      "model",
+      "actions_skipped",
+      "entries_retired",
+      "summary_json",
+      "error",
+      "dry_run",
+      "config_json",
+    ]);
+    expect(await tableColumns(client, "surgeon_run_actions")).toEqual([
+      "id",
+      "run_id",
+      "action_type",
+      "entry_id",
+      "entry_ids",
+      "reasoning",
+      "recall_delta",
+      "created_at",
+    ]);
+
+    const runResult = await client.execute({
+      sql: `
+        SELECT
+          id,
+          started_at,
+          completed_at,
+          actions_taken,
+          summary,
+          pass_type,
+          status,
+          actions_skipped,
+          entries_retired,
+          dry_run
+        FROM surgeon_runs
+        WHERE id = ?
+      `,
+      args: ["run-1"],
+    });
+    expect(runResult.rows).toEqual([
+      {
+        id: "run-1",
+        started_at: "2026-03-28T10:00:00.000Z",
+        completed_at: "2026-03-28T10:05:00.000Z",
+        actions_taken: 3,
+        summary: "legacy summary",
+        pass_type: "retirement",
+        status: "completed",
+        actions_skipped: 0,
+        entries_retired: 0,
+        dry_run: 1,
+      },
+    ]);
+    expect(await indexExists(client, "idx_surgeon_run_actions_run_id")).toBe(true);
+    expect(await indexExists(client, "idx_surgeon_run_actions_entry_id")).toBe(true);
+    expect(await indexExists(client, "idx_surgeon_run_actions_created_at")).toBe(true);
   });
 
   it("rebuilds FTS on first initialization", async () => {
@@ -257,6 +381,15 @@ async function triggerNames(client: Client): Promise<Set<string>> {
       return typeof value === "string" ? value : "";
     }),
   );
+}
+
+async function tableColumns(client: Client, tableName: string): Promise<string[]> {
+  const result = await client.execute(`PRAGMA table_info('${tableName}')`);
+
+  return result.rows.flatMap((row) => {
+    const name = row.name;
+    return typeof name === "string" ? [name] : [];
+  });
 }
 
 async function indexExists(client: Client, indexName: string): Promise<boolean> {
