@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.2.0] - 2026-03-29
+
+The surgeon retirement pass — an autonomous agent that evaluates and retires stale knowledge entries.
+
+### Added
+
+- **Surgeon retirement pass.** A standalone agent loop powered by `@mariozechner/pi-agent-core` that evaluates knowledge entries and retires semantically stale ones. Runs as `agenr surgeon run` with full dry-run and apply modes, budget governance, and completion guards.
+- **7 surgeon tools.** `get_health_stats`, `query_candidates`, `inspect_entry`, `simulate_recall`, `retire_entry`, `update_entry`, and `complete_pass` — each adapted from the v0 surgeon for v1's simpler schema.
+- **Recall simulation without telemetry.** The `simulate_recall` tool wraps the v1 recall pipeline with a no-op telemetry adapter and optional target-entry exclusion, so the surgeon can test retrieval impact without polluting recall metrics.
+- **Surgeon CLI commands.** `agenr surgeon run`, `agenr surgeon status`, `agenr surgeon history`, and `agenr surgeon actions <run-id>` for running, inspecting, and auditing surgeon passes.
+- **Surgeon status shows evaluation coverage.** `agenr surgeon status` now displays recently evaluated vs new candidates, so you can see how much work remains before running.
+- **Surgeon model configuration in setup.** `agenr setup` and `agenr init` now include surgeon model overrides in the advanced task-specific model configuration flow.
+- **Budget and completion governance.** Cost-based budget tracking, context-limit detection, completion guards that reject premature pass completion, and continuation prompts that keep the surgeon working when budget remains.
+- **Run and action persistence.** Surgeon runs and individual actions (retirements, skips, updates) are logged to the database for auditability and recently-evaluated filtering on future runs.
+- **Database backup before apply.** Surgeon creates a timestamped backup of the knowledge database (including WAL/SHM sidecars) before executing mutations in apply mode.
+- **Surgeon configuration.** New `surgeon` section in `config.json` supporting model override, cost caps, daily cost limits, context limits, custom instructions, and per-pass protection thresholds.
+
+### Changed
+
+- **Schema version bumped to 2.** The `surgeon_runs` table is expanded with pass type, status, token/cost tracking, model, dry-run flag, and structured summary fields. A new `surgeon_run_actions` table logs individual surgeon actions with indexed `entry_id` for efficient recently-evaluated queries. Existing databases are migrated automatically via `ALTER TABLE ADD COLUMN`.
+- **Protection threshold raised to importance ≥ 9.** Entries with importance 8 are now eligible for surgeon evaluation since many entries default to importance 8 during ingestion.
+- **Setup prompt updated.** The advanced model override prompt now reads "Customize task-specific models?" to reflect the addition of surgeon alongside extraction and dedup overrides.
+
+### Fixed
+
+- **Tightened npm publish surface.** Root package now uses a strict `"files"` allowlist so only intended artifacts are published.
+
 ## [1.1.0] - 2026-03-28
 
 This release splits the OpenClaw plugin into its own publishable npm package and tightens session-start handoff reliability.
