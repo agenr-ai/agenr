@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.0.1] - 2026-03-28
+
+A focused patch release for OpenClaw plugin compatibility and installation reliability.
+
+### Fixed
+
+- **Flattened `agenr_update` tool schema.** Removes the OpenClaw/provider schema shape that caused `Invalid schema for function 'agenr_update'` during tool registration.
+- **Repaired OpenClaw plugin installs.** Fixes the plugin installation path/packaging issue so agenr installs cleanly as an OpenClaw plugin.
+
 ## [1.0.0] - 2026-03-28
 
 The first stable release of agenr v1 — a complete rewrite from v0 with a clean hexagonal architecture, native OpenClaw plugin, and interactive onboarding.
