@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.1.0] - 2026-03-28
+
+This release splits the OpenClaw plugin into its own publishable npm package and tightens session-start handoff reliability.
+
+### Added
+
+- **Standalone OpenClaw plugin package.** Publishes the OpenClaw integration separately as `@agenr/openclaw-plugin` while keeping the runtime plugin id as `agenr`.
+- **Workspace-based build layout.** Adds `pnpm-workspace.yaml` and package-specific build wiring for the dedicated plugin package.
+- **Plugin packaging coverage.** Expands tests to verify the standalone plugin package metadata, manifest/version alignment, and that the plugin entry graph stays free of CLI-only code.
+- **Plugin-specific docs.** Adds package-level README content and OpenClaw docs covering the new install and local development paths.
+
+### Changed
+
+- **CLI package is no longer the plugin package.** The root `agenr` package now builds the CLI plus the plugin package, but no longer exposes OpenClaw plugin metadata itself.
+- **OpenClaw install instructions updated.** Installation now uses `openclaw plugins install @agenr/openclaw-plugin`, with migration guidance for existing users and unchanged plugin id/config keys.
+- **Init flow updated for split packaging.** OpenClaw setup and installation flows now point at the standalone plugin package instead of the root package.
+
+### Fixed
+
+- **Plugin manifests now carry release versions.** Both shared and published OpenClaw manifests include explicit version metadata.
+- **Longer session-start summary timeout.** Increases the read-time predecessor summary generation timeout from 10 seconds to 20 seconds so session handoff injection is less likely to fail on slower LLM responses.
+
 ## [1.0.1] - 2026-03-28
 
 A focused patch release for OpenClaw plugin compatibility and installation reliability.
