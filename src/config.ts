@@ -51,7 +51,7 @@ export interface ModelConfig {
 export interface SurgeonPassConfig {
   /** Protect entries recalled within this many days (default: 14). */
   protectRecalledDays?: number;
-  /** Protect entries at or above this importance (default: 8). */
+  /** Protect entries at or above this importance (default: 9). */
   protectMinImportance?: number;
   /** Skip entries evaluated by surgeon in the last N days (default: 7). */
   skipRecentlyEvaluatedDays?: number;
@@ -199,7 +199,7 @@ const DEFAULT_SURGEON_COST_CAP = 15.0;
 const DEFAULT_SURGEON_DAILY_COST_CAP = 75.0;
 const DEFAULT_SURGEON_CONTEXT_LIMIT = 0;
 const DEFAULT_SURGEON_RETIREMENT_PROTECT_RECALLED_DAYS = 14;
-const DEFAULT_SURGEON_RETIREMENT_PROTECT_MIN_IMPORTANCE = 8;
+const DEFAULT_SURGEON_RETIREMENT_PROTECT_MIN_IMPORTANCE = 9;
 const DEFAULT_SURGEON_SKIP_RECENTLY_EVALUATED_DAYS = 7;
 
 export {

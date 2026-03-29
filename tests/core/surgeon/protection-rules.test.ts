@@ -6,7 +6,7 @@ describe("isProtectedFromRetirement", () => {
   const config = {
     now: new Date("2026-03-29T12:00:00.000Z"),
     protectRecalledDays: 14,
-    protectMinImportance: 8,
+    protectMinImportance: 9,
   };
 
   it("protects core entries", () => {
@@ -29,13 +29,13 @@ describe("isProtectedFromRetirement", () => {
       isProtectedFromRetirement(
         {
           expiry: "permanent",
-          importance: 8,
+          importance: 9,
         },
         config,
       ),
     ).toEqual({
       protected: true,
-      reason: "Entry importance is at or above 8.",
+      reason: "Entry importance is at or above 9.",
     });
   });
 

@@ -25,7 +25,7 @@ describe("surgeon queries", () => {
     const actionable = await listRetirementCandidates(client, {
       scope: "actionable",
       protectRecalledDays: 14,
-      protectMinImportance: 8,
+      protectMinImportance: 9,
       now: TEST_NOW,
     });
 
@@ -34,7 +34,7 @@ describe("surgeon queries", () => {
     const allScope = await listRetirementCandidates(client, {
       scope: "all",
       protectRecalledDays: 14,
-      protectMinImportance: 8,
+      protectMinImportance: 9,
       now: TEST_NOW,
     });
 
@@ -112,7 +112,7 @@ describe("surgeon queries", () => {
       limit: 1,
       offset: 0,
       protectRecalledDays: 14,
-      protectMinImportance: 8,
+      protectMinImportance: 9,
       skipRecentlyEvaluatedDays: 7,
       now: TEST_NOW,
     });
@@ -125,7 +125,7 @@ describe("surgeon queries", () => {
       limit: 1,
       offset: 1,
       protectRecalledDays: 14,
-      protectMinImportance: 8,
+      protectMinImportance: 9,
       now: TEST_NOW,
     });
 
@@ -262,7 +262,7 @@ describe("surgeon queries", () => {
 
     const health = await getSurgeonHealthStats(client, {
       protectRecalledDays: 14,
-      protectMinImportance: 8,
+      protectMinImportance: 9,
       now: TEST_NOW,
     });
 
@@ -297,7 +297,7 @@ describe("surgeon queries", () => {
     expect(
       await countRetirementCandidates(client, {
         protectRecalledDays: 14,
-        protectMinImportance: 8,
+        protectMinImportance: 9,
         now: TEST_NOW,
       }),
     ).toBe(3);
@@ -405,7 +405,7 @@ async function seedCandidateEntries(client: Client): Promise<Record<string, stri
     id: ids.important,
     subject: "Protected important entry",
     type: "fact",
-    importance: 8,
+    importance: 9,
     expiry: "temporary",
     recall_count: 0,
     quality_score: 0.9,

@@ -198,7 +198,7 @@ describe("surgeon tools", () => {
     expect(importantResult.details).toMatchObject({
       success: false,
       protected: true,
-      reason: "Entry importance is at or above 8.",
+      reason: "Entry importance is at or above 9.",
     });
     expect(recentResult.details).toMatchObject({
       success: false,
@@ -467,7 +467,7 @@ function createToolDeps(client: Client, overrides: Partial<SurgeonToolDeps> = {}
     apply: overrides.apply ?? false,
     protection: overrides.protection ?? {
       protectRecalledDays: 14,
-      protectMinImportance: 8,
+      protectMinImportance: 9,
     },
     skipRecentlyEvaluatedDays: overrides.skipRecentlyEvaluatedDays ?? 7,
     now: overrides.now ?? (() => TEST_NOW),
