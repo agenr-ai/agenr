@@ -12,7 +12,7 @@ const tsRecommended = tseslint.configs.recommended.map((config) => ({
 
 export default tseslint.config(
   {
-    ignores: ["dist/**", "coverage/**", "node_modules/**", "**/*.d.ts"],
+    ignores: ["**/dist/**", "coverage/**", "node_modules/**", "**/*.d.ts"],
   },
   {
     files: sourceFiles,

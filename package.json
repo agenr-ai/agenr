@@ -6,16 +6,15 @@
   "bin": {
     "agenr": "dist/cli.js"
   },
-  "openclaw": {
-    "extensions": [
-      "./dist/adapters/openclaw/index.js"
-    ]
-  },
   "scripts": {
-    "build": "tsup",
-    "build:debug": "tsup --sourcemap",
+    "build": "pnpm run build:root && pnpm run build:plugin",
+    "build:root": "tsup",
+    "build:plugin": "pnpm --filter @agenr/openclaw-plugin build",
+    "build:debug": "pnpm run build:root:debug && pnpm run build:plugin:debug",
+    "build:root:debug": "tsup --sourcemap",
+    "build:plugin:debug": "pnpm --filter @agenr/openclaw-plugin build:debug",
     "dev": "tsup --watch",
-    "internal:recall-eval-server": "pnpm build && node dist/internal-recall-eval-server.js",
+    "internal:recall-eval-server": "pnpm run build:root && node dist/internal-recall-eval-server.js",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",

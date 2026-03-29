@@ -18,7 +18,7 @@ agenr gives agents a persistent brain: a local SQLite database of durable knowle
 
 It exists because most agent runtimes forget everything important between sessions. Even when a tool has a built-in memory feature, it is often lossy, file-based, or tightly coupled to one surface. agenr keeps memory structured and queryable: facts, decisions, preferences, lessons, todos, events, and relationships live in one local store instead of getting flattened into prompt text.
 
-What makes agenr different is the combination of local-first storage, semantic embeddings, hybrid recall, and adapter-friendly architecture. The core is hexagonal, so multiple agent systems can share the same brain over time. Today the production adapter is the OpenClaw memory plugin, and the CLI provides offline ingest and recall against that same database.
+What makes agenr different is the combination of local-first storage, semantic embeddings, hybrid recall, and adapter-friendly architecture. The core is hexagonal, so multiple agent systems can share the same brain over time. Today the production adapter is the OpenClaw memory plugin, published separately as `@agenr/openclaw-plugin`, and the CLI provides offline ingest and recall against that same database.
 
 ## Features
 
@@ -55,20 +55,23 @@ Run `agenr init` again any time you want to re-run onboarding, reinstall the plu
 If you already have agenr configured, or you want to install the plugin separately:
 
 ```bash
-openclaw plugins install agenr
+openclaw plugins install @agenr/openclaw-plugin
 openclaw gateway restart
 ```
 
 `agenr init` normally does this for you, updates `openclaw.json`, and offers an initial ingest pass over existing sessions.
-The published npm package also ships the root `openclaw.extensions` and `openclaw.plugin.json` metadata that recent OpenClaw releases require for direct installs.
+The OpenClaw plugin id remains `agenr`, so `plugins.entries.agenr`, `plugins.slots.memory`, and existing plugin config keys do not change.
+After the plugin is installed, `openclaw plugins update agenr` continues to target that same plugin id.
 If `plugins.entries.agenr.config` is omitted, the plugin falls back to agenr's normal config resolution: `AGENR_CONFIG_PATH`, then `~/.agenr/config.json`, and the `dbPath` from that config or `~/.agenr/knowledge.db`.
 
-For local development or a custom build path, run `pnpm build` first and point OpenClaw at the built plugin directory:
+If you want to pin an exact plugin release, install a versioned package spec such as `openclaw plugins install @agenr/openclaw-plugin@1.0.1`.
+
+For local development or a custom build path, run `pnpm build` first and point OpenClaw at the plugin package root:
 
 ```json
 {
   "plugins": {
-    "load": { "paths": ["/path/to/agenr/dist/adapters/openclaw"] },
+    "load": { "paths": ["/path/to/agenr/packages/openclaw-plugin"] },
     "allow": ["agenr"],
     "slots": { "memory": "agenr" },
     "entries": {
@@ -84,6 +87,11 @@ For local development or a custom build path, run `pnpm build` first and point O
 ```
 
 If `config.json` is not next to `dbPath`, add `"configPath": "/path/to/config.json"` inside `plugins.entries.agenr.config`.
+
+Migration note:
+
+- Existing users who originally installed the plugin from the `agenr` package should reinstall once with `openclaw plugins install @agenr/openclaw-plugin` so OpenClaw records the new npm package source.
+- After that reinstall, `openclaw plugins update agenr` should continue to work because updates key off the plugin id `agenr`.
 
 ## Configuration
 
@@ -175,10 +183,10 @@ pnpm check        # format + lint + typecheck + test
 | Problem                                                           | What to check                                                                                                                                                                                                                        |
 | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `agenr init` cannot complete setup                                | Re-run `agenr setup` and verify the selected auth method is actually available. Subscription flows depend on the relevant external login being present, and non-OpenAI extraction setups still need a separate OpenAI embedding key. |
-| `openclaw plugins install agenr` fails                            | Make sure the `openclaw` CLI is installed and on `PATH`. For local development, run `pnpm build` and use `plugins.load.paths` instead.                                                                                               |
+| `openclaw plugins install @agenr/openclaw-plugin` fails           | Make sure the `openclaw` CLI is installed and on `PATH`. For local development, run `pnpm build` and use `plugins.load.paths` instead.                                                                                               |
 | `agenr recall` or `agenr_recall` fails with embedding/auth errors | Embeddings always use OpenAI. Confirm `credentials.openaiApiKey` is configured, or re-run `agenr setup` to set the embedding key explicitly.                                                                                         |
 | SQLite says the database is locked                                | Avoid running multiple writers against the same DB at once. Stop overlapping ingest/reset runs, restart the OpenClaw gateway if needed, then retry.                                                                                  |
-| OpenClaw does not pick up the plugin                              | Restart the gateway, confirm `plugins.slots.memory` is `agenr`, confirm `plugins.allow` contains `agenr`, and for dev installs confirm `plugins.load.paths` points at the built `dist/adapters/openclaw` directory.                  |
+| OpenClaw does not pick up the plugin                              | Restart the gateway, confirm `plugins.slots.memory` is `agenr`, confirm `plugins.allow` contains `agenr`, and for dev installs confirm `plugins.load.paths` points at the built `packages/openclaw-plugin` directory.                |
 
 ## License
 

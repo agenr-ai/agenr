@@ -1,6 +1,8 @@
 # OpenClaw Plugin
 
 `src/adapters/openclaw/` is the production agenr integration for OpenClaw.
+The publishable plugin package lives at `packages/openclaw-plugin` and ships as `@agenr/openclaw-plugin`.
+The OpenClaw manifest id remains `agenr`, so runtime identity and config keys stay stable even though the npm package name is different.
 
 Today it plays four roles at once:
 
@@ -15,6 +17,7 @@ This document describes the code as it exists now, not just the intended flow.
 
 - `src/adapters/openclaw/index.ts` - plugin entry, OpenClaw event registration, tool registration, memory-slot wiring, and shutdown cleanup.
 - `src/adapters/openclaw/openclaw.plugin.json` and `src/adapters/openclaw/config.ts` - manifest-defined config schema plus runtime config normalization.
+- `packages/openclaw-plugin/package.json`, `packages/openclaw-plugin/openclaw.plugin.json`, and `packages/openclaw-plugin/src/index.ts` - plugin-only package metadata and publishable entrypoint.
 - `src/adapters/openclaw/runtime.ts` - shared agenr service construction: config loading, DB setup, embedding availability resolution, and recall adapter wiring.
 - `src/adapters/openclaw/tools.ts` - `agenr_store`, `agenr_recall`, `agenr_update`, `agenr_retire`, and `agenr_trace`.
 - `src/adapters/openclaw/format/prompt-section.ts` - static system-prompt guidance about when to use agenr tools.
@@ -50,6 +53,33 @@ Some current-runtime choices matter:
 - summary generation uses OpenClaw's embedded agent runner and the active OpenClaw agent model, not agenr's own LLM config
 - embeddings still come from agenr config and are required for `agenr_recall`
 - the newer memory runtime is mostly a status and capability bridge: `sync()` is a no-op and the flush-plan hook returns `null`
+
+## Packaging
+
+OpenClaw installs should use the plugin-only package:
+
+```bash
+openclaw plugins install @agenr/openclaw-plugin
+openclaw gateway restart
+```
+
+The plugin id is still `agenr`, so:
+
+- `plugins.entries.agenr`
+- `plugins.slots.memory = "agenr"`
+- `openclaw plugins update agenr`
+
+all continue to use the same runtime identity.
+
+For local development, run `pnpm build` from the repo root and point `plugins.load.paths` at the package root:
+
+```json
+{
+  "plugins": {
+    "load": { "paths": ["/path/to/agenr/packages/openclaw-plugin"] }
+  }
+}
+```
 
 ## Plugin surface
 

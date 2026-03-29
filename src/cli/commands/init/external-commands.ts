@@ -2,6 +2,8 @@ import { execFile, execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 
+const OPENCLAW_PLUGIN_PACKAGE = "@agenr/openclaw-plugin";
+
 /** Result from an OpenClaw CLI action triggered by init. */
 export interface ExternalCommandResult {
   /** Whether the action completed successfully enough to continue. */
@@ -73,12 +75,12 @@ export function findBinaryPath(name: string): string | null {
  * @param spec - Path or package spec passed to `openclaw plugins install`.
  * @returns Install result with a user-facing status message.
  */
-export async function installOpenClawPlugin(spec = "agenr"): Promise<ExternalCommandResult> {
+export async function installOpenClawPlugin(spec = OPENCLAW_PLUGIN_PACKAGE): Promise<ExternalCommandResult> {
   const openclawBin = findBinaryPath("openclaw");
   if (!openclawBin) {
     return {
       success: false,
-      message: "OpenClaw was detected, but the `openclaw` CLI is not on PATH. Install the plugin later with `openclaw plugins install agenr`.",
+      message: `OpenClaw was detected, but the \`openclaw\` CLI is not on PATH. Install the plugin later with \`openclaw plugins install ${OPENCLAW_PLUGIN_PACKAGE}\`.`,
     };
   }
 
