@@ -12,9 +12,15 @@ const tempRoots: string[] = [];
 
 describe("createAgenrOpenClawServices", () => {
   const originalOpenAiApiKey = process.env.OPENAI_API_KEY;
+  const originalAgenrConfigDir = process.env.AGENR_CONFIG_DIR;
+  const originalAgenrConfigPath = process.env.AGENR_CONFIG_PATH;
+  const originalAgenrDbPath = process.env.AGENR_DB_PATH;
 
   beforeEach(() => {
     delete process.env.OPENAI_API_KEY;
+    delete process.env.AGENR_CONFIG_DIR;
+    delete process.env.AGENR_CONFIG_PATH;
+    delete process.env.AGENR_DB_PATH;
   });
 
   afterEach(async () => {
@@ -30,6 +36,66 @@ describe("createAgenrOpenClawServices", () => {
     } else {
       process.env.OPENAI_API_KEY = originalOpenAiApiKey;
     }
+
+    if (originalAgenrConfigDir === undefined) {
+      delete process.env.AGENR_CONFIG_DIR;
+    } else {
+      process.env.AGENR_CONFIG_DIR = originalAgenrConfigDir;
+    }
+
+    if (originalAgenrConfigPath === undefined) {
+      delete process.env.AGENR_CONFIG_PATH;
+    } else {
+      process.env.AGENR_CONFIG_PATH = originalAgenrConfigPath;
+    }
+
+    if (originalAgenrDbPath === undefined) {
+      delete process.env.AGENR_DB_PATH;
+    } else {
+      process.env.AGENR_DB_PATH = originalAgenrDbPath;
+    }
+  });
+
+  it("falls back to agenr config defaults when plugin config is empty", async () => {
+    const root = await createTempRoot();
+    const dbPath = path.join(root, "custom", "knowledge.db");
+    process.env.AGENR_CONFIG_DIR = root;
+    await writeJson(path.join(root, "config.json"), {
+      dbPath,
+      credentials: {
+        openaiApiKey: "fallback-config-key",
+      },
+      embeddingModel: "text-embedding-fallback",
+    });
+
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          data: [{ index: 0, embedding: [7, 8, 9] }],
+        }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const services = await createAgenrOpenClawServices(
+      {},
+      {
+        openClaw: createOpenClawHost(),
+      },
+    );
+
+    expect(services.dbPath).toBe(dbPath);
+    expect(services.config).toMatchObject({
+      configPath: path.join(root, "config.json"),
+      dbPath,
+    });
+    await expect(services.embedding.embed(["plugin install fallback"])).resolves.toEqual([[7, 8, 9]]);
+    expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({
+      Authorization: "Bearer fallback-config-key",
+    });
+
+    await services.close();
   });
 
   it("loads embedding credentials from agenr config next to dbPath", async () => {
@@ -67,6 +133,10 @@ describe("createAgenrOpenClawServices", () => {
       available: true,
       provider: "openai",
       model: "text-embedding-from-config",
+    });
+    expect(services.config).toMatchObject({
+      configPath: path.join(root, "config.json"),
+      dbPath,
     });
     await expect(services.embedding.embed(["remember this"])).resolves.toEqual([[1, 2, 3]]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -117,6 +187,10 @@ describe("createAgenrOpenClawServices", () => {
     expect(services.embeddingStatus).toMatchObject({
       available: true,
       model: "text-embedding-explicit",
+    });
+    expect(services.config).toMatchObject({
+      configPath,
+      dbPath,
     });
     await expect(services.embedding.embed(["override path"])).resolves.toEqual([[4, 5, 6]]);
     expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({

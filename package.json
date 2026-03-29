@@ -6,6 +6,11 @@
   "bin": {
     "agenr": "dist/cli.js"
   },
+  "openclaw": {
+    "extensions": [
+      "./dist/adapters/openclaw/index.js"
+    ]
+  },
   "scripts": {
     "build": "tsup",
     "build:debug": "tsup --sourcemap",

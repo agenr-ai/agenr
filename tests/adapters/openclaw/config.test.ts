@@ -7,6 +7,13 @@ import {
 } from "../../../src/adapters/openclaw/config.js";
 
 describe("agenr OpenClaw plugin config", () => {
+  it("accepts an empty config so OpenClaw can install the plugin before setup", () => {
+    expect(normalizeAgenrOpenClawPluginConfig(undefined)).toEqual({
+      ok: true,
+      value: {},
+    });
+  });
+
   it("accepts a dbPath-only config", () => {
     const parsed = normalizeAgenrOpenClawPluginConfig({
       dbPath: "/tmp/knowledge.db",
@@ -42,12 +49,12 @@ describe("agenr OpenClaw plugin config", () => {
     expect(parsed.ok ? [] : parsed.errors).toContain("unknown config field: embeddingApiKey");
   });
 
-  it("requires dbPath during schema validation", () => {
+  it("accepts an empty object during schema validation", () => {
     const schema = createAgenrOpenClawPluginConfigSchema();
 
     expect(schema.validate({})).toEqual({
-      ok: false,
-      errors: ["dbPath must be a non-empty string"],
+      ok: true,
+      value: {},
     });
   });
 });

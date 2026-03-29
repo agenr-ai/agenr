@@ -9,8 +9,16 @@ import type { SqlDatabase } from "../db/client.js";
  * Runtime plugin configuration accepted by the agenr OpenClaw adapter.
  */
 export interface AgenrOpenClawPluginConfig {
-  dbPath: string;
+  dbPath?: string;
   configPath?: string;
+}
+
+/**
+ * Concrete runtime paths derived from plugin config and agenr defaults.
+ */
+export interface ResolvedAgenrOpenClawPluginConfig {
+  dbPath: string;
+  configPath: string;
 }
 
 /**
@@ -45,7 +53,7 @@ export interface AgenrOpenClawHost {
  */
 export interface AgenrOpenClawServices {
   openClaw: AgenrOpenClawHost;
-  config: AgenrOpenClawPluginConfig;
+  config: ResolvedAgenrOpenClawPluginConfig;
   agenrConfig: AgenrConfig;
   dbPath: string;
   database: SqlDatabase;

@@ -63,11 +63,23 @@ The plugin manifest declares:
 
 The runtime config is deliberately small:
 
-- `dbPath` is required
-- `configPath` is optional
+- `dbPath` is an optional override
+- `configPath` is an optional override
 - unknown config keys are rejected
 
-If OpenClaw provides `resolvePath`, the adapter resolves `dbPath` and `configPath` before startup. After that, `runtime.ts` loads agenr config via `readConfig(...)` using those resolved paths and then opens the database at the plugin-configured `dbPath`.
+If OpenClaw provides `resolvePath`, the adapter resolves any supplied path overrides before startup. After that, `runtime.ts` loads agenr config via the same config/db resolution used by the CLI:
+
+- `configPath` override if supplied
+- otherwise `AGENR_CONFIG_PATH`
+- otherwise `config.json` next to an overridden `dbPath`
+- otherwise `~/.agenr/config.json`
+
+The database path then resolves in this order:
+
+- `dbPath` override if supplied
+- otherwise `AGENR_DB_PATH`
+- otherwise `dbPath` from agenr's config
+- otherwise `~/.agenr/knowledge.db`
 
 ### Registration
 

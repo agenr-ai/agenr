@@ -60,6 +60,8 @@ openclaw gateway restart
 ```
 
 `agenr init` normally does this for you, updates `openclaw.json`, and offers an initial ingest pass over existing sessions.
+The published npm package also ships the root `openclaw.extensions` and `openclaw.plugin.json` metadata that recent OpenClaw releases require for direct installs.
+If `plugins.entries.agenr.config` is omitted, the plugin falls back to agenr's normal config resolution: `AGENR_CONFIG_PATH`, then `~/.agenr/config.json`, and the `dbPath` from that config or `~/.agenr/knowledge.db`.
 
 For local development or a custom build path, run `pnpm build` first and point OpenClaw at the built plugin directory:
 
@@ -93,7 +95,7 @@ Overrides:
 - `AGENR_CONFIG_PATH` points directly at a specific `config.json`.
 - `AGENR_DB_PATH` overrides the database path.
 
-When agenr runs as an OpenClaw plugin, `configPath` is optional. If you omit it, agenr will look for `config.json` next to the configured `dbPath`.
+When agenr runs as an OpenClaw plugin, both `configPath` and `dbPath` are optional overrides. If you omit them, agenr uses its normal config resolution: `AGENR_CONFIG_PATH`, then `~/.agenr/config.json`, and the `dbPath` from that config or `~/.agenr/knowledge.db`.
 
 Key config fields:
 

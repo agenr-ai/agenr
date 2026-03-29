@@ -21,7 +21,7 @@ const manifest = pluginManifest as ManifestWithConfig;
  */
 export function normalizeAgenrOpenClawPluginConfig(value: unknown): { ok: true; value: AgenrOpenClawPluginConfig } | { ok: false; errors: string[] } {
   if (value === undefined) {
-    return { ok: false, errors: ["dbPath must be a non-empty string"] };
+    return { ok: true, value: {} };
   }
 
   if (!isRecord(value)) {
@@ -31,7 +31,7 @@ export function normalizeAgenrOpenClawPluginConfig(value: unknown): { ok: true; 
   const errors: string[] = [];
   const rawDbPath = value.dbPath;
   const dbPath = typeof rawDbPath === "string" ? rawDbPath.trim() : undefined;
-  if (!dbPath) {
+  if (rawDbPath !== undefined && !dbPath) {
     errors.push("dbPath must be a non-empty string");
   }
 
@@ -48,14 +48,14 @@ export function normalizeAgenrOpenClawPluginConfig(value: unknown): { ok: true; 
     }
   }
 
-  if (errors.length > 0 || !dbPath) {
+  if (errors.length > 0) {
     return { ok: false, errors };
   }
 
   return {
     ok: true,
     value: {
-      dbPath,
+      ...(dbPath ? { dbPath } : {}),
       ...(configPath ? { configPath } : {}),
     },
   };
