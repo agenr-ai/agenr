@@ -21,6 +21,7 @@ const COMPLETE_PASS_SCHEMA = Type.Object({
 });
 
 const MIN_BUDGET_USED_FRACTION = 0.75;
+const MIN_BUDGET_USED_FRACTION_HARD = 0.20;
 const SAFETY_VALVE_REJECTION_LIMIT = 5;
 const RETIREMENT_COMPLETION_KEY = "retirement";
 
@@ -68,11 +69,16 @@ export function createCompletePassTool(deps: SurgeonToolDeps): AgentTool<typeof 
         const progress = deps.completionGuards.retirement.snapshot();
         const knownCandidates = progress.totalCount ?? deps.completionGuards.initialHealth.retirementCandidates;
         const hasKnownWork = knownCandidates > 0 || progress.queryCalls > 0;
-        const shouldReject =
-          hasKnownWork &&
+
+        // If barely any budget is used, reject even if the actionable scope was
+        // exhausted — the surgeon should widen to scope="all" and keep working.
+        const budgetBarelyUsed = budgetUsage.budgetUsedPct < MIN_BUDGET_USED_FRACTION_HARD;
+
+        const shouldReject = budgetBarelyUsed ||
+          (hasKnownWork &&
           !progress.sawExhaustedPage &&
           ((progress.queryCalls === 0 && knownCandidates > handledCount) ||
-            (progress.queryCalls > 0 && (knownCandidates === 0 || progress.maxWindowEnd < knownCandidates)));
+            (progress.queryCalls > 0 && (knownCandidates === 0 || progress.maxWindowEnd < knownCandidates))));
 
         if (shouldReject) {
           const rejectionCount = priorRejections + 1;
@@ -91,7 +97,9 @@ export function createCompletePassTool(deps: SurgeonToolDeps): AgentTool<typeof 
             costUsedUsd: budgetUsage.costUsedUsd,
             costCapUsd: budgetUsage.costCapUsd || null,
             remainingCostUsd: budgetUsage.remainingCostUsd,
-            message: `Completion rejected: ${describeRetirementProgress(progress, knownCandidates)} and only ${formatPercent(budgetUsage.budgetUsedPct)}% of the cost budget has been used.`,
+            message: budgetBarelyUsed
+              ? `Completion rejected: only ${formatPercent(budgetUsage.budgetUsedPct)}% of the cost budget has been used ($${budgetUsage.costUsedUsd.toFixed(2)} of $${budgetUsage.costCapUsd.toFixed(2)}). If the actionable scope is exhausted, widen to scope='all' and continue paging through the broader candidate pool. Do not stop after a spot check.`
+              : `Completion rejected: ${describeRetirementProgress(progress, knownCandidates)} and only ${formatPercent(budgetUsage.budgetUsedPct)}% of the cost budget has been used.`,
           });
         }
       }

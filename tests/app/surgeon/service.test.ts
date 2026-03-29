@@ -59,7 +59,7 @@ describe("runSurgeon", () => {
     const db = await createTestDatabase(databases);
     mockSuccessfulRunAgentLoop();
 
-    const result = await runSurgeon(createRunOptions({ budget: 1 }), {
+    const result = await runSurgeon(createRunOptions({ budget: 0.10 }), {
       db,
       config: null,
       model: TEST_MODEL,
