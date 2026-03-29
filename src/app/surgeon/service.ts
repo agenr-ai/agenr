@@ -24,7 +24,12 @@ import type { SurgeonCompletionSummary, SurgeonRunStatus } from "../../core/surg
 import { createBudgetTracker } from "./budget.js";
 import { createSurgeonCompletionGuardState } from "./completion-guard.js";
 
-const MAX_CONTINUATION_ATTEMPTS = 5;
+/**
+ * Safety valve for continuation prompts. Prevents infinite loops when the
+ * model repeatedly stops without completing. This is a last resort — the
+ * primary constraints are budget and candidate exhaustion.
+ */
+const MAX_CONTINUATION_ATTEMPTS = 50;
 const USER_ABORT_ERROR = "Run aborted by user (SIGINT).";
 const USER_ABORT_SUMMARY = "Run aborted by user.";
 
@@ -529,7 +534,6 @@ function buildContinuationPrompt(input: { currentContextTokens: number; contextL
     "Continue the retirement pass.",
     "Keep paginating candidates. If the actionable scope is exhausted and meaningful budget remains, widen to scope = 'all'.",
     "Do not call complete_pass until candidates are genuinely exhausted or budget constraints force you to stop.",
-    `This is continuation attempt ${input.attempt} of ${MAX_CONTINUATION_ATTEMPTS}.`,
   ];
 
   return lines.join(" ");
