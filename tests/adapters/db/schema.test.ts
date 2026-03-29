@@ -200,6 +200,106 @@ describe("initSchema", () => {
     expect(tracker.rebuildCount()).toBe(0);
   });
 
+  it("is idempotent when initSchema runs multiple times on an initialized database", async () => {
+    const client = createClient({ url: ":memory:" });
+    clients.push(client);
+
+    await initSchema(client);
+    await initSchema(client);
+
+    expect(await tableColumns(client, "surgeon_runs")).toEqual([
+      "id",
+      "pass_type",
+      "project",
+      "started_at",
+      "completed_at",
+      "status",
+      "input_tokens",
+      "output_tokens",
+      "estimated_cost_usd",
+      "model",
+      "actions_taken",
+      "actions_skipped",
+      "entries_retired",
+      "summary",
+      "summary_json",
+      "error",
+      "dry_run",
+      "config_json",
+    ]);
+    expect(await tableColumns(client, "surgeon_run_actions")).toEqual([
+      "id",
+      "run_id",
+      "action_type",
+      "entry_id",
+      "entry_ids",
+      "reasoning",
+      "recall_delta",
+      "created_at",
+    ]);
+  });
+
+  it("treats an already-expanded surgeon_runs table as a no-op migration", async () => {
+    const client = createClient({ url: ":memory:" });
+    clients.push(client);
+
+    await client.execute(`
+      CREATE TABLE surgeon_runs (
+        id TEXT PRIMARY KEY,
+        pass_type TEXT NOT NULL DEFAULT 'retirement',
+        project TEXT,
+        started_at TEXT NOT NULL,
+        completed_at TEXT,
+        status TEXT NOT NULL DEFAULT 'running',
+        input_tokens INTEGER DEFAULT 0,
+        output_tokens INTEGER DEFAULT 0,
+        estimated_cost_usd REAL DEFAULT 0,
+        model TEXT,
+        actions_taken INTEGER DEFAULT 0,
+        actions_skipped INTEGER DEFAULT 0,
+        entries_retired INTEGER DEFAULT 0,
+        summary TEXT,
+        summary_json TEXT,
+        error TEXT,
+        dry_run INTEGER NOT NULL DEFAULT 1,
+        config_json TEXT
+      )
+    `);
+
+    await initSchema(client);
+
+    expect(await tableColumns(client, "surgeon_runs")).toEqual([
+      "id",
+      "pass_type",
+      "project",
+      "started_at",
+      "completed_at",
+      "status",
+      "input_tokens",
+      "output_tokens",
+      "estimated_cost_usd",
+      "model",
+      "actions_taken",
+      "actions_skipped",
+      "entries_retired",
+      "summary",
+      "summary_json",
+      "error",
+      "dry_run",
+      "config_json",
+    ]);
+    expect(await tableColumns(client, "surgeon_run_actions")).toEqual([
+      "id",
+      "run_id",
+      "action_type",
+      "entry_id",
+      "entry_ids",
+      "reasoning",
+      "recall_delta",
+      "created_at",
+    ]);
+  });
+
   it("rebuilds FTS when the stored schema version changes", async () => {
     const tracker = createTrackedClient();
     clients.push(tracker.client);

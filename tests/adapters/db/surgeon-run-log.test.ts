@@ -204,6 +204,65 @@ describe("surgeon run log", () => {
     expect(history.map((run) => run.id)).toEqual([newestRunId, recentRunId]);
     expect(await getDailySurgeonCost(client, now)).toBe(3.75);
   });
+
+  it("persists multiple runs correctly when they complete in reverse order", async () => {
+    const client = await createTestClient(clients);
+    const now = new Date("2026-03-29T12:00:00.000Z");
+
+    const firstRunId = await createSurgeonRun(client, {
+      passType: "retirement",
+      dryRun: false,
+      startedAt: "2026-03-29T09:00:00.000Z",
+    });
+    const secondRunId = await createSurgeonRun(client, {
+      passType: "retirement",
+      dryRun: true,
+      startedAt: "2026-03-29T10:00:00.000Z",
+    });
+
+    await completeSurgeonRun(client, secondRunId, {
+      status: "completed",
+      inputTokens: 20,
+      outputTokens: 5,
+      estimatedCostUsd: 1.25,
+      actionsTaken: 2,
+      actionsSkipped: 1,
+      entriesRetired: 1,
+      completedAt: "2026-03-29T10:05:00.000Z",
+    });
+    await completeSurgeonRun(client, firstRunId, {
+      status: "completed",
+      inputTokens: 10,
+      outputTokens: 4,
+      estimatedCostUsd: 0.75,
+      actionsTaken: 1,
+      actionsSkipped: 0,
+      entriesRetired: 1,
+      completedAt: "2026-03-29T10:06:00.000Z",
+    });
+
+    const history = await getSurgeonRunHistory(client, 10);
+    expect(history.map((run) => run.id)).toEqual([secondRunId, firstRunId]);
+    expect(history).toEqual([
+      expect.objectContaining({
+        id: secondRunId,
+        status: "completed",
+        dryRun: true,
+        actionsTaken: 2,
+        actionsSkipped: 1,
+        estimatedCostUsd: 1.25,
+      }),
+      expect.objectContaining({
+        id: firstRunId,
+        status: "completed",
+        dryRun: false,
+        actionsTaken: 1,
+        actionsSkipped: 0,
+        estimatedCostUsd: 0.75,
+      }),
+    ]);
+    expect(await getDailySurgeonCost(client, now)).toBe(2);
+  });
 });
 
 async function createTestClient(clients: Client[]): Promise<Client> {

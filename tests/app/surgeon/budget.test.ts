@@ -122,4 +122,66 @@ describe("createBudgetTracker", () => {
       remainingCostUsd: 0,
     });
   });
+
+  it("treats a zero context limit as unlimited", () => {
+    const tracker = createBudgetTracker({
+      contextLimit: 0,
+      costCapUsd: 1,
+    });
+
+    tracker.addUsage({
+      input: 25_000,
+      output: 100,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 25_100,
+      cost: {
+        input: 0.1,
+        output: 0.02,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: 0.12,
+      },
+    });
+
+    expect(tracker.isExhausted()).toBe(false);
+    expect(tracker.remaining()).toEqual({
+      currentContextTokens: 25_000,
+      contextLimit: 0,
+      remainingContextTokens: 0,
+      costCapUsd: 1,
+      remainingCostUsd: 0.88,
+    });
+  });
+
+  it("treats a zero cost cap as unlimited", () => {
+    const tracker = createBudgetTracker({
+      contextLimit: 2_000,
+      costCapUsd: 0,
+    });
+
+    tracker.addUsage({
+      input: 100,
+      output: 50,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 150,
+      cost: {
+        input: 2,
+        output: 3,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: 5,
+      },
+    });
+
+    expect(tracker.isCostCapExceeded()).toBe(false);
+    expect(tracker.remaining()).toEqual({
+      currentContextTokens: 100,
+      contextLimit: 2_000,
+      remainingContextTokens: 1_900,
+      costCapUsd: 0,
+      remainingCostUsd: 0,
+    });
+  });
 });

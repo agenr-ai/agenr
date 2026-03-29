@@ -69,4 +69,77 @@ describe("isProtectedFromRetirement", () => {
       protected: false,
     });
   });
+
+  it("does not protect importance values just below the threshold", () => {
+    expect(
+      isProtectedFromRetirement(
+        {
+          expiry: "permanent",
+          importance: 8,
+        },
+        config,
+      ),
+    ).toEqual({
+      protected: false,
+    });
+  });
+
+  it("protects entries recalled exactly at the protection boundary", () => {
+    expect(
+      isProtectedFromRetirement(
+        {
+          expiry: "temporary",
+          importance: 4,
+          lastRecalledAt: "2026-03-15T12:00:00.000Z",
+        },
+        config,
+      ),
+    ).toEqual({
+      protected: true,
+      reason: "Entry was recalled within the last 14 days.",
+    });
+  });
+
+  it("does not protect null or blank recall timestamps", () => {
+    expect(
+      isProtectedFromRetirement(
+        {
+          expiry: "temporary",
+          importance: 4,
+          lastRecalledAt: null,
+        },
+        config,
+      ),
+    ).toEqual({
+      protected: false,
+    });
+
+    expect(
+      isProtectedFromRetirement(
+        {
+          expiry: "temporary",
+          importance: 4,
+          lastRecalledAt: "   ",
+        },
+        config,
+      ),
+    ).toEqual({
+      protected: false,
+    });
+  });
+
+  it("treats malformed recall timestamps as unprotected instead of throwing", () => {
+    expect(
+      isProtectedFromRetirement(
+        {
+          expiry: "temporary",
+          importance: 4,
+          lastRecalledAt: "not-a-date",
+        },
+        config,
+      ),
+    ).toEqual({
+      protected: false,
+    });
+  });
 });

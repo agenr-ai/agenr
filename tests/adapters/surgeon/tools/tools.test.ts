@@ -112,6 +112,27 @@ describe("surgeon tools", () => {
     });
   });
 
+  it("returns clear empty-result guidance for both actionable and all candidate scopes", async () => {
+    const client = await createTestClient(clients);
+    const tool = createQueryCandidatesTool(createToolDeps(client));
+
+    const actionableResult = await tool.execute("tool-query-actionable-empty", {});
+    const allScopeResult = await tool.execute("tool-query-all-empty", {
+      scope: "all",
+    });
+
+    expect(actionableResult.details).toMatchObject({
+      count: 0,
+      scope: "actionable",
+    });
+    expect(actionableResult.details.message).toContain("scope = 'all'");
+    expect(allScopeResult.details).toMatchObject({
+      count: 0,
+      scope: "all",
+    });
+    expect(allScopeResult.details.message).toContain("candidate pool appears exhausted");
+  });
+
   it("inspects one entry with related context", async () => {
     const client = await createTestClient(clients);
     await insertEntry(client, {
@@ -151,6 +172,22 @@ describe("surgeon tools", () => {
         sameSubject: [{ id: "same-subject" }],
         sameCluster: [{ id: "same-cluster" }],
       },
+    });
+  });
+
+  it("returns found=false when inspect_entry targets a missing entry", async () => {
+    const client = await createTestClient(clients);
+    const tool = createInspectEntryTool(createToolDeps(client));
+
+    const result = await tool.execute("tool-inspect-missing", {
+      entry_id: "missing-entry",
+    });
+
+    expect(result.details).toEqual({
+      found: false,
+      entry: null,
+      tags: [],
+      related: null,
     });
   });
 
@@ -244,6 +281,23 @@ describe("surgeon tools", () => {
     });
   });
 
+  it("returns a clean not-found result when retire_entry targets a missing entry", async () => {
+    const client = await createTestClient(clients);
+    const tool = createRetireEntryTool(createToolDeps(client, { apply: true }));
+
+    const result = await tool.execute("tool-retire-missing", {
+      entry_id: "missing-entry",
+      reason: "cleanup",
+    });
+
+    expect(result.details).toMatchObject({
+      success: false,
+      dryRun: false,
+      entryId: "missing-entry",
+      reason: "Entry not found.",
+    });
+  });
+
   it("simulates recall without writing telemetry and excludes the target entry", async () => {
     const excludedEntry = createEntry({
       id: "entry-a",
@@ -316,6 +370,17 @@ describe("surgeon tools", () => {
     expect(recordRecallEvents).not.toHaveBeenCalled();
   });
 
+  it("rejects simulate_recall when recall ports are unavailable", async () => {
+    const client = await createTestClient(clients);
+    const tool = createSimulateRecallTool(createToolDeps(client));
+
+    await expect(
+      tool.execute("tool-recall-missing-ports", {
+        query: "status details",
+      }),
+    ).rejects.toThrow("Recall simulation is unavailable because no embedding-enabled recall ports are configured.");
+  });
+
   it("rejects update_entry core promotion when reasoning does not mention core", async () => {
     const client = await createTestClient(clients);
     await insertEntry(client, {
@@ -355,6 +420,51 @@ describe("surgeon tools", () => {
     expect(result.details).toMatchObject({
       success: false,
       reason: "Reasoning is required.",
+    });
+  });
+
+  it("requires at least one mutable field for update_entry", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "update-no-fields",
+      subject: "Update no fields",
+    });
+    const tool = createUpdateEntryTool(createToolDeps(client, { apply: false }));
+
+    await expect(
+      tool.execute("tool-update-no-fields", {
+        entry_id: "update-no-fields",
+        reasoning: "Reviewed but no mutation specified.",
+      }),
+    ).rejects.toThrow("update_entry requires at least one mutable field: importance or expiry.");
+  });
+
+  it("returns a dry-run change preview for update_entry", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "update-preview",
+      subject: "Update preview",
+      importance: 6,
+      expiry: "permanent",
+    });
+    const tool = createUpdateEntryTool(createToolDeps(client, { apply: false }));
+
+    const result = await tool.execute("tool-update-preview", {
+      entry_id: "update-preview",
+      importance: 4,
+      reasoning: "Lower importance reflects that this note is less central now.",
+    });
+
+    expect(result.details).toMatchObject({
+      success: true,
+      dryRun: true,
+      wouldUpdate: true,
+      changes: {
+        importance: {
+          from: 6,
+          to: 4,
+        },
+      },
     });
   });
 
@@ -448,6 +558,38 @@ describe("surgeon tools", () => {
       entries_skipped: [],
       observations: ["Sweep complete enough."],
       recommendations: ["Run again later."],
+    });
+  });
+
+  it("records one skip action per skipped entry when complete_pass succeeds", async () => {
+    const client = await createTestClient(clients);
+    const recordRunAction = vi.fn<SurgeonToolDeps["recordRunAction"]>().mockResolvedValue(undefined);
+    const tool = createCompletePassTool(
+      createToolDeps(client, {
+        recordRunAction,
+      }),
+    );
+
+    const result = await tool.execute("tool-complete-skips", {
+      actions_taken: 0,
+      entries_skipped: [{ entry_id: "entry-a", reason: "uncertain" }, { reason: "needs human review" }],
+      observations: ["Conservative sweep complete."],
+      recommendations: [],
+    });
+
+    expect(result.details).toMatchObject({
+      completed: true,
+    });
+    expect(recordRunAction).toHaveBeenCalledTimes(2);
+    expect(recordRunAction.mock.calls[0]?.[0]).toMatchObject({
+      actionType: "skip",
+      entryIds: ["entry-a"],
+      reasoning: "uncertain",
+    });
+    expect(recordRunAction.mock.calls[1]?.[0]).toMatchObject({
+      actionType: "skip",
+      entryIds: [],
+      reasoning: "needs human review",
     });
   });
 });
