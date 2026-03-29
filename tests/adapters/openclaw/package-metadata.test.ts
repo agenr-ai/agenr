@@ -10,6 +10,7 @@ type PackageJson = {
   version?: string;
   bin?: Record<string, string> | string;
   dependencies?: Record<string, string>;
+  files?: string[];
   openclaw?: {
     extensions?: string[];
   };
@@ -29,11 +30,23 @@ const adapterPluginManifestPath = path.join(repoRoot, "src", "adapters", "opencl
 const pluginPackageEntryPath = path.join(pluginPackageRoot, "src", "index.ts");
 
 describe("published OpenClaw plugin package metadata", () => {
+  it("keeps the root package publish surface focused on install-time artifacts", async () => {
+    const packageJson = await readJsonFile<PackageJson>(rootPackageJsonPath);
+
+    expect(packageJson.files).toEqual(["dist", "README.md", "LICENSE", "CHANGELOG.md"]);
+  });
+
   it("publishes the plugin from the dedicated package entry", async () => {
     const packageJson = await readJsonFile<PackageJson>(pluginPackageJsonPath);
 
     expect(packageJson.name).toBe("@agenr/openclaw-plugin");
     expect(packageJson.openclaw?.extensions).toEqual(["./dist/index.js"]);
+  });
+
+  it("keeps the plugin package publish allowlist narrow", async () => {
+    const packageJson = await readJsonFile<PackageJson>(pluginPackageJsonPath);
+
+    expect(packageJson.files).toEqual(["dist", "openclaw.plugin.json", "README.md"]);
   });
 
   it("keeps the plugin manifest aligned with the shared adapter manifest", async () => {

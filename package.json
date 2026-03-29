@@ -6,6 +6,12 @@
   "bin": {
     "agenr": "dist/cli.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
   "scripts": {
     "build": "pnpm run build:root && pnpm run build:plugin",
     "build:root": "tsup",
