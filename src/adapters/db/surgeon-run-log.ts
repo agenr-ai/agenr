@@ -1,0 +1,418 @@
+import { randomUUID } from "node:crypto";
+
+import type { Row } from "@libsql/client";
+
+import type { SurgeonRunAction } from "../../core/surgeon/domain/action-types.js";
+import type { SurgeonPassType } from "../../core/surgeon/domain/pass-types.js";
+import type { SurgeonCompletionSummary, SurgeonRunStatus } from "../../core/surgeon/types.js";
+import { readBoolean, readNumber, readOptionalString, readRequiredString } from "./row-mapping.js";
+import type { SqlExecutor } from "./queries.js";
+
+/**
+ * Persisted surgeon run metadata row.
+ */
+export interface SurgeonRun {
+  id: string;
+  passType: SurgeonPassType;
+  project: string | null;
+  startedAt: string;
+  completedAt: string | null;
+  status: SurgeonRunStatus;
+  inputTokens: number;
+  outputTokens: number;
+  estimatedCostUsd: number;
+  model: string | null;
+  actionsTaken: number;
+  actionsSkipped: number;
+  entriesRetired: number;
+  summaryJson: SurgeonCompletionSummary | null;
+  error: string | null;
+  dryRun: boolean;
+  config: Record<string, unknown> | null;
+}
+
+/**
+ * Inserts a new surgeon run row and returns the generated run ID.
+ *
+ * @param executor - SQL executor used for the insert.
+ * @param run - Initial run metadata.
+ * @returns Persisted surgeon run identifier.
+ */
+export async function createSurgeonRun(
+  executor: SqlExecutor,
+  run: {
+    passType: SurgeonPassType;
+    project?: string;
+    model?: string | null;
+    dryRun: boolean;
+    config?: Record<string, unknown> | null;
+    startedAt?: string;
+  },
+): Promise<string> {
+  const id = randomUUID();
+  const startedAt = normalizeTimestamp(run.startedAt) ?? new Date().toISOString();
+
+  await executor.execute({
+    sql: `
+      INSERT INTO surgeon_runs (
+        id,
+        pass_type,
+        project,
+        started_at,
+        status,
+        model,
+        dry_run,
+        config_json
+      )
+      VALUES (?, ?, ?, ?, 'running', ?, ?, ?)
+    `,
+    args: [
+      id,
+      run.passType,
+      normalizeOptionalString(run.project),
+      startedAt,
+      normalizeOptionalString(run.model ?? undefined),
+      run.dryRun ? 1 : 0,
+      JSON.stringify(run.config ?? null),
+    ],
+  });
+
+  return id;
+}
+
+/**
+ * Finalizes a surgeon run with the completed run summary.
+ *
+ * @param executor - SQL executor used for the update.
+ * @param runId - Existing run identifier.
+ * @param result - Final run outcome and metrics.
+ */
+export async function completeSurgeonRun(
+  executor: SqlExecutor,
+  runId: string,
+  result: {
+    status: SurgeonRunStatus;
+    inputTokens: number;
+    outputTokens: number;
+    estimatedCostUsd: number;
+    actionsTaken: number;
+    actionsSkipped: number;
+    entriesRetired: number;
+    summaryJson?: SurgeonCompletionSummary | null;
+    error?: string | null;
+    completedAt?: string;
+  },
+): Promise<void> {
+  await executor.execute({
+    sql: `
+      UPDATE surgeon_runs
+      SET completed_at = ?,
+          status = ?,
+          input_tokens = ?,
+          output_tokens = ?,
+          estimated_cost_usd = ?,
+          actions_taken = ?,
+          actions_skipped = ?,
+          entries_retired = ?,
+          summary_json = ?,
+          error = ?
+      WHERE id = ?
+    `,
+    args: [
+      normalizeTimestamp(result.completedAt) ?? new Date().toISOString(),
+      result.status,
+      normalizeInteger(result.inputTokens),
+      normalizeInteger(result.outputTokens),
+      normalizeNumber(result.estimatedCostUsd),
+      normalizeInteger(result.actionsTaken),
+      normalizeInteger(result.actionsSkipped),
+      normalizeInteger(result.entriesRetired),
+      JSON.stringify(result.summaryJson ?? null),
+      normalizeOptionalString(result.error ?? undefined),
+      runId.trim(),
+    ],
+  });
+}
+
+/**
+ * Inserts one surgeon action audit row.
+ *
+ * @param executor - SQL executor used for the insert.
+ * @param action - Action payload to persist.
+ */
+export async function logSurgeonAction(executor: SqlExecutor, action: SurgeonRunAction): Promise<void> {
+  const entryIds = normalizeEntryIds(action.entryIds);
+
+  await executor.execute({
+    sql: `
+      INSERT INTO surgeon_run_actions (
+        id,
+        run_id,
+        action_type,
+        entry_id,
+        entry_ids,
+        reasoning,
+        recall_delta,
+        created_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    args: [
+      action.id.trim().length > 0 ? action.id.trim() : randomUUID(),
+      action.runId.trim(),
+      action.actionType,
+      entryIds[0] ?? null,
+      JSON.stringify(entryIds),
+      action.reasoning,
+      JSON.stringify(action.recallDelta ?? null),
+      normalizeTimestamp(action.createdAt) ?? new Date().toISOString(),
+    ],
+  });
+}
+
+/**
+ * Loads recent surgeon runs ordered from newest to oldest.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @param limit - Maximum number of runs to return.
+ * @returns Recent surgeon runs.
+ */
+export async function getSurgeonRunHistory(executor: SqlExecutor, limit = 10): Promise<SurgeonRun[]> {
+  const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 10;
+  const result = await executor.execute({
+    sql: `
+      SELECT
+        id,
+        pass_type,
+        project,
+        started_at,
+        completed_at,
+        status,
+        input_tokens,
+        output_tokens,
+        estimated_cost_usd,
+        model,
+        actions_taken,
+        actions_skipped,
+        entries_retired,
+        summary_json,
+        error,
+        dry_run,
+        config_json
+      FROM surgeon_runs
+      ORDER BY started_at DESC
+      LIMIT ?
+    `,
+    args: [safeLimit],
+  });
+
+  return result.rows.map((row) => mapRunRow(row));
+}
+
+/**
+ * Loads the most recent surgeon run when one exists.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @returns Latest surgeon run, or null when absent.
+ */
+export async function getLastSurgeonRun(executor: SqlExecutor): Promise<SurgeonRun | null> {
+  const [run] = await getSurgeonRunHistory(executor, 1);
+  return run ?? null;
+}
+
+/**
+ * Loads the persisted action audit trail for one run.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @param runId - Run identifier to inspect.
+ * @returns Ordered action list for the run.
+ */
+export async function getSurgeonRunActions(executor: SqlExecutor, runId: string): Promise<SurgeonRunAction[]> {
+  const result = await executor.execute({
+    sql: `
+      SELECT
+        id,
+        run_id,
+        action_type,
+        entry_ids,
+        reasoning,
+        recall_delta,
+        created_at
+      FROM surgeon_run_actions
+      WHERE run_id = ?
+      ORDER BY created_at ASC
+    `,
+    args: [runId.trim()],
+  });
+
+  return result.rows.map((row) => mapActionRow(row));
+}
+
+/**
+ * Sums surgeon run cost across the trailing 24-hour window.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @param now - Reference time for the trailing window.
+ * @returns Total estimated surgeon spend in USD.
+ */
+export async function getDailySurgeonCost(executor: SqlExecutor, now = new Date()): Promise<number> {
+  const sinceIso = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+  const result = await executor.execute({
+    sql: `
+      SELECT COALESCE(SUM(estimated_cost_usd), 0) AS total_cost
+      FROM surgeon_runs
+      WHERE started_at >= ?
+    `,
+    args: [sinceIso],
+  });
+
+  const row = result.rows[0];
+  return row ? readNumber(row, "total_cost", 0) : 0;
+}
+
+/**
+ * Maps a raw surgeon run row into the typed run DTO.
+ *
+ * @param row - Raw database row.
+ * @returns Hydrated surgeon run.
+ */
+function mapRunRow(row: Row): SurgeonRun {
+  const passType = readOptionalString(row, "pass_type") ?? "retirement";
+  const status = readOptionalString(row, "status") ?? "running";
+
+  return {
+    id: readRequiredString(row, "id"),
+    passType: passType as SurgeonPassType,
+    project: readOptionalString(row, "project") ?? null,
+    startedAt: readRequiredString(row, "started_at"),
+    completedAt: readOptionalString(row, "completed_at") ?? null,
+    status: status as SurgeonRunStatus,
+    inputTokens: readNumber(row, "input_tokens", 0),
+    outputTokens: readNumber(row, "output_tokens", 0),
+    estimatedCostUsd: readNumber(row, "estimated_cost_usd", 0),
+    model: readOptionalString(row, "model") ?? null,
+    actionsTaken: readNumber(row, "actions_taken", 0),
+    actionsSkipped: readNumber(row, "actions_skipped", 0),
+    entriesRetired: readNumber(row, "entries_retired", 0),
+    summaryJson: parseJsonValue<SurgeonCompletionSummary | null>(readOptionalString(row, "summary_json"), null),
+    error: readOptionalString(row, "error") ?? null,
+    dryRun: readBoolean(row, "dry_run"),
+    config: parseJsonRecord(readOptionalString(row, "config_json")),
+  };
+}
+
+/**
+ * Maps a raw surgeon action row into the typed action DTO.
+ *
+ * @param row - Raw database row.
+ * @returns Hydrated surgeon run action.
+ */
+function mapActionRow(row: Row): SurgeonRunAction {
+  return {
+    id: readRequiredString(row, "id"),
+    runId: readRequiredString(row, "run_id"),
+    actionType: readRequiredString(row, "action_type") as SurgeonRunAction["actionType"],
+    entryIds: parseJsonValue<string[]>(readOptionalString(row, "entry_ids"), []),
+    reasoning: readRequiredString(row, "reasoning"),
+    recallDelta: parseJsonValue<SurgeonRunAction["recallDelta"]>(readOptionalString(row, "recall_delta"), null),
+    createdAt: readRequiredString(row, "created_at"),
+  };
+}
+
+/**
+ * Parses JSON text with a typed fallback.
+ *
+ * @param raw - JSON payload from storage.
+ * @param fallback - Fallback returned when parsing fails.
+ * @returns Parsed value or the fallback.
+ */
+function parseJsonValue<T>(raw: string | undefined, fallback: T): T {
+  if (!raw || raw.trim().length === 0) {
+    return fallback;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return (parsed as T) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * Parses a stored JSON object into a plain record when possible.
+ *
+ * @param raw - JSON object payload from storage.
+ * @returns Parsed record or null when absent or invalid.
+ */
+function parseJsonRecord(raw: string | undefined): Record<string, unknown> | null {
+  const parsed = parseJsonValue<unknown>(raw, null);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return null;
+  }
+
+  return parsed as Record<string, unknown>;
+}
+
+/**
+ * Trims, removes blanks, and deduplicates action entry IDs.
+ *
+ * @param entryIds - Raw action entry identifiers.
+ * @returns Stable list of non-empty unique IDs.
+ */
+function normalizeEntryIds(entryIds: string[]): string[] {
+  return Array.from(new Set(entryIds.map((entryId) => entryId.trim()).filter((entryId) => entryId.length > 0)));
+}
+
+/**
+ * Normalizes optional strings into nullable trimmed values.
+ *
+ * @param value - Raw optional string.
+ * @returns Trimmed string or null.
+ */
+function normalizeOptionalString(value: string | undefined): string | null {
+  if (value === undefined) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
+ * Normalizes optional timestamps into nullable trimmed values.
+ *
+ * @param value - Raw optional timestamp.
+ * @returns Trimmed timestamp or null.
+ */
+function normalizeTimestamp(value: string | undefined): string | null {
+  return normalizeOptionalString(value);
+}
+
+/**
+ * Normalizes numeric counters into non-negative integers.
+ *
+ * @param value - Raw numeric value.
+ * @returns Safe non-negative integer.
+ */
+function normalizeInteger(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.trunc(value));
+}
+
+/**
+ * Normalizes numeric totals into finite non-negative numbers.
+ *
+ * @param value - Raw numeric value.
+ * @returns Safe non-negative number.
+ */
+function normalizeNumber(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+
+  return Math.max(0, value);
+}
