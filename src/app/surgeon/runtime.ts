@@ -13,6 +13,7 @@ import { resolveLlmCredentials } from "../../adapters/llm.js";
 import {
   DEFAULT_SURGEON_RETIREMENT_PROTECT_MIN_IMPORTANCE,
   DEFAULT_SURGEON_RETIREMENT_PROTECT_RECALLED_DAYS,
+  DEFAULT_SURGEON_SKIP_RECENTLY_EVALUATED_DAYS,
   type AgenrConfig,
   readConfig,
   resolveDbPath,
@@ -100,6 +101,7 @@ export async function loadSurgeonStatusRuntime(input: {
       getSurgeonHealthStats(database, {
         protectRecalledDays: protection.protectRecalledDays,
         protectMinImportance: protection.protectMinImportance,
+        skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
       }),
       getLastSurgeonRun(database),
     ]);
@@ -195,12 +197,13 @@ function resolveSurgeonModel(config: AgenrConfig, input: { provider?: string; mo
  * @param config - Loaded agenr configuration.
  * @returns Hard-retirement protection thresholds.
  */
-function resolveProtectionConfig(config: AgenrConfig): { protectRecalledDays: number; protectMinImportance: number } {
+function resolveProtectionConfig(config: AgenrConfig): { protectRecalledDays: number; protectMinImportance: number; skipRecentlyEvaluatedDays: number } {
   const passConfig = config.surgeon?.passes?.retirement;
 
   return {
     protectRecalledDays: normalizeNonNegativeInteger(passConfig?.protectRecalledDays) ?? DEFAULT_SURGEON_RETIREMENT_PROTECT_RECALLED_DAYS,
     protectMinImportance: normalizeNonNegativeInteger(passConfig?.protectMinImportance) ?? DEFAULT_SURGEON_RETIREMENT_PROTECT_MIN_IMPORTANCE,
+    skipRecentlyEvaluatedDays: normalizeNonNegativeInteger(passConfig?.skipRecentlyEvaluatedDays) ?? DEFAULT_SURGEON_SKIP_RECENTLY_EVALUATED_DAYS,
   };
 }
 

@@ -135,20 +135,23 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
   let traceLogger: SurgeonTraceLogger | null = null;
 
   try {
-    const [health, retirementCandidates, lastRun] = await Promise.all([
+    const [health, retirementCandidateResult, lastRun] = await Promise.all([
       getSurgeonHealthStats(deps.db, {
         protectRecalledDays: protection.protectRecalledDays,
         protectMinImportance: protection.protectMinImportance,
+        skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
         now: nowFn(),
       }),
       countRetirementCandidates(deps.db, {
         protectRecalledDays: protection.protectRecalledDays,
         protectMinImportance: protection.protectMinImportance,
+        skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
         now: nowFn(),
       }),
       getLastSurgeonRun(deps.db),
     ]);
 
+    const retirementCandidates = retirementCandidateResult.total;
     const completionGuards = createSurgeonCompletionGuardState({
       totalEntries: health.total,
       retirementCandidates,

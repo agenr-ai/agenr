@@ -177,6 +177,7 @@ function renderStatus(input: {
   health: {
     total: number;
     retirementCandidateCount: number;
+    recentlyEvaluatedCount: number;
   };
   lastRun: {
     passType: string;
@@ -185,11 +186,16 @@ function renderStatus(input: {
     estimatedCostUsd: number;
   } | null;
 }): string {
+  const newCandidates = Math.max(0, input.health.retirementCandidateCount - input.health.recentlyEvaluatedCount);
+  const candidateLine = input.health.recentlyEvaluatedCount > 0
+    ? `Retirement candidates: ${input.health.retirementCandidateCount} total (${newCandidates} new, ${input.health.recentlyEvaluatedCount} recently evaluated)`
+    : `Retirement candidates: ${input.health.retirementCandidateCount}`;
+
   return [
     "Surgeon Status",
     "",
     `Entries: ${input.health.total}`,
-    `Retirement candidates: ${input.health.retirementCandidateCount}`,
+    candidateLine,
     `Last surgeon run: ${input.lastRun ? `${input.lastRun.passType} ${input.lastRun.status} (${input.lastRun.dryRun ? "dry-run" : "apply"})` : "none"}`,
     `Last surgeon cost: ${input.lastRun ? formatUsd(input.lastRun.estimatedCostUsd) : "n/a"}`,
     "",

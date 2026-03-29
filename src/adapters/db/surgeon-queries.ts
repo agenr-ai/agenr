@@ -55,6 +55,8 @@ export interface SurgeonHealthStats {
     average: number;
   };
   retirementCandidateCount: number;
+  /** Candidates that were recently evaluated and will be skipped on the next run. */
+  recentlyEvaluatedCount: number;
 }
 
 /**
@@ -131,6 +133,7 @@ export async function getSurgeonHealthStats(
   options: {
     protectRecalledDays: number;
     protectMinImportance: number;
+    skipRecentlyEvaluatedDays?: number;
     now?: Date;
   },
 ): Promise<SurgeonHealthStats> {
@@ -191,6 +194,7 @@ export async function getSurgeonHealthStats(
     countRetirementCandidates(executor, {
       protectRecalledDays: options.protectRecalledDays,
       protectMinImportance: options.protectMinImportance,
+      skipRecentlyEvaluatedDays: options.skipRecentlyEvaluatedDays,
       now,
     }),
   ]);
@@ -225,7 +229,8 @@ export async function getSurgeonHealthStats(
       low: qualityRow ? readNumber(qualityRow, "low_count", 0) : 0,
       average: qualityRow ? readNumber(qualityRow, "average_score", 0) : 0,
     },
-    retirementCandidateCount,
+    retirementCandidateCount: retirementCandidateCount.total,
+    recentlyEvaluatedCount: retirementCandidateCount.recentlyEvaluated,
   };
 }
 
@@ -282,27 +287,53 @@ export async function countRetirementCandidates(
   options: {
     protectRecalledDays: number;
     protectMinImportance: number;
+    skipRecentlyEvaluatedDays?: number;
     now?: Date;
   },
-): Promise<number> {
-  const filter = buildCandidateFilter({
+): Promise<{ total: number; recentlyEvaluated: number }> {
+  const now = options.now ?? new Date();
+
+  const totalFilter = buildCandidateFilter({
     scope: "actionable",
     protectRecalledDays: options.protectRecalledDays,
     protectMinImportance: options.protectMinImportance,
-    now: options.now,
+    now,
   });
 
-  const result = await executor.execute({
-    sql: `
-      SELECT COUNT(*) AS candidate_count
-      FROM entries AS e
-      WHERE ${filter.whereClauses.join("\n        AND ")}
-    `,
-    args: filter.args,
+  const withSkipFilter = buildCandidateFilter({
+    scope: "actionable",
+    protectRecalledDays: options.protectRecalledDays,
+    protectMinImportance: options.protectMinImportance,
+    skipRecentlyEvaluatedDays: options.skipRecentlyEvaluatedDays,
+    now,
   });
 
-  const row = result.rows[0];
-  return row ? readNumber(row, "candidate_count", 0) : 0;
+  const [totalResult, withSkipResult] = await Promise.all([
+    executor.execute({
+      sql: `
+        SELECT COUNT(*) AS candidate_count
+        FROM entries AS e
+        WHERE ${totalFilter.whereClauses.join("\n        AND ")}
+      `,
+      args: totalFilter.args,
+    }),
+    executor.execute({
+      sql: `
+        SELECT COUNT(*) AS candidate_count
+        FROM entries AS e
+        WHERE ${withSkipFilter.whereClauses.join("\n        AND ")}
+      `,
+      args: withSkipFilter.args,
+    }),
+  ]);
+
+  const total = totalResult.rows[0] ? readNumber(totalResult.rows[0], "candidate_count", 0) : 0;
+  const afterSkip = withSkipResult.rows[0] ? readNumber(withSkipResult.rows[0], "candidate_count", 0) : 0;
+
+  return {
+    total,
+    recentlyEvaluated: total - afterSkip,
+  };
 }
 
 /**

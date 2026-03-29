@@ -292,6 +292,7 @@ describe("surgeon queries", () => {
         average: 0.625,
       },
       retirementCandidateCount: 3,
+      recentlyEvaluatedCount: 0,
     });
 
     expect(
@@ -300,7 +301,7 @@ describe("surgeon queries", () => {
         protectMinImportance: 9,
         now: TEST_NOW,
       }),
-    ).toBe(3);
+    ).toEqual({ total: 3, recentlyEvaluated: 0 });
   });
 });
 
