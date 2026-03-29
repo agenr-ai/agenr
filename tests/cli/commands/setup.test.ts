@@ -2,7 +2,14 @@ import { Command } from "commander";
 import { describe, expect, it, vi } from "vitest";
 
 import { createProgram } from "../../../src/cli/main.js";
-import { buildStageAuthOptions, filterSetupModelsForAuth, registerSetupCommand, runSetupCore, type SetupRuntime } from "../../../src/cli/commands/setup.js";
+import {
+  buildStageAuthOptions,
+  filterSetupModelsForAuth,
+  formatExistingConfig,
+  registerSetupCommand,
+  runSetupCore,
+  type SetupRuntime,
+} from "../../../src/cli/commands/setup.js";
 import { FakePrompts } from "../../cli/fake-prompts.js";
 
 function createSetupRuntime(overrides: Partial<SetupRuntime> = {}): SetupRuntime {
@@ -281,6 +288,94 @@ describe("runSetupCore", () => {
     expect(prompts.notes.at(-1)?.message).not.toContain("Dedup override");
   });
 
+  it("writes a surgeon override from the advanced task-specific model flow", async () => {
+    const prompts = new FakePrompts([
+      "openai-api-key",
+      "sk-openai",
+      "gpt-5.4-mini",
+      true,
+      "default",
+      "default",
+      "custom",
+      "gpt-5.4",
+      "/tmp/surgeon.db",
+    ]);
+    const runtime = createSetupRuntime();
+
+    const result = await runSetupCore({
+      prompts,
+      runtime,
+    });
+
+    expect(result?.config.surgeon?.model).toEqual({
+      provider: "openai",
+      model: "gpt-5.4",
+    });
+    expect(runtime.writeConfig).toHaveBeenCalledWith({
+      auth: "openai-api-key",
+      provider: "openai",
+      model: "gpt-5.4-mini",
+      credentials: {
+        openaiApiKey: "sk-openai",
+      },
+      surgeon: {
+        model: {
+          provider: "openai",
+          model: "gpt-5.4",
+        },
+      },
+      dbPath: "/tmp/surgeon.db",
+    });
+    expect(prompts.confirmCalls.some((call) => call.message === "Customize task-specific models? (Advanced)")).toBe(true);
+    expect(prompts.notes.at(-1)?.message).toContain("Surgeon override");
+  });
+
+  it("preserves an existing surgeon override when customization is skipped", async () => {
+    const prompts = new FakePrompts(["openai-api-key", true, "gpt-5.4-mini", false, "/tmp/custom-knowledge.db"]);
+    const runtime = createSetupRuntime();
+
+    const result = await runSetupCore({
+      prompts,
+      runtime,
+      existingConfig: {
+        auth: "openai-api-key",
+        provider: "openai",
+        model: "gpt-5.4-mini",
+        credentials: {
+          openaiApiKey: "sk-openai",
+        },
+        surgeon: {
+          model: {
+            provider: "openai",
+            model: "gpt-5.4",
+          },
+        },
+        dbPath: "/tmp/custom-knowledge.db",
+      },
+    });
+
+    expect(result?.config.surgeon?.model).toEqual({
+      provider: "openai",
+      model: "gpt-5.4",
+    });
+    expect(runtime.writeConfig).toHaveBeenCalledWith({
+      auth: "openai-api-key",
+      provider: "openai",
+      model: "gpt-5.4-mini",
+      credentials: {
+        openaiApiKey: "sk-openai",
+      },
+      surgeon: {
+        model: {
+          provider: "openai",
+          model: "gpt-5.4",
+        },
+      },
+      dbPath: "/tmp/custom-knowledge.db",
+    });
+    expect(prompts.notes.at(-1)?.message).not.toContain("Surgeon override");
+  });
+
   it("marks configs with unavailable override credentials as not ready", async () => {
     const prompts = new FakePrompts(["openai-api-key", true, "gpt-5.4-mini", false, "/tmp/custom-knowledge.db"]);
     const runtime = createSetupRuntime();
@@ -305,6 +400,32 @@ describe("runSetupCore", () => {
 
     expect(result?.ready).toBe(false);
     expect(prompts.notes.at(-1)?.message).toContain("Status: Needs additional credentials before use");
+  });
+});
+
+describe("formatExistingConfig", () => {
+  it("shows the surgeon override when configured", () => {
+    const summary = formatExistingConfig(
+      {
+        auth: "openai-api-key",
+        provider: "openai",
+        model: "gpt-5.4-mini",
+        credentials: {
+          openaiApiKey: "sk-openai",
+        },
+        surgeon: {
+          model: {
+            provider: "openai",
+            model: "gpt-5.4",
+          },
+        },
+      },
+      "/tmp/.agenr/config.json",
+      "/tmp/.agenr/knowledge.db",
+    );
+
+    expect(summary).toContain("Surgeon override");
+    expect(summary).toContain("openai/gpt-5.4");
   });
 });
 

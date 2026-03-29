@@ -327,6 +327,7 @@ export async function runSetupCore(options: SetupCoreOptions = {}): Promise<Setu
     embeddingApiKey,
     extractionModel: overrides.extractionModel,
     dedupModel: overrides.dedupModel,
+    surgeonModel: overrides.surgeonModel,
     dbPath,
   });
   const readiness = runtime.getSetupReadiness(nextConfig);
@@ -382,6 +383,10 @@ export function formatExistingConfig(config: AgenrConfig, configPath: string, db
 
   if (config.dedupModel?.provider || config.dedupModel?.model) {
     lines.push(formatLabel("Dedup override", formatModelRef(config.dedupModel)));
+  }
+
+  if (config.surgeon?.model?.provider || config.surgeon?.model?.model) {
+    lines.push(formatLabel("Surgeon override", formatModelRef(config.surgeon.model)));
   }
 
   return lines.join("\n");
@@ -835,7 +840,7 @@ async function verifySeparateEmbeddingKey(
   }
 }
 
-/** Prompts for optional extraction and dedup model overrides. */
+/** Prompts for optional task-specific model overrides. */
 async function promptTaskModelOverrides(
   prompts: WizardPrompts,
   runtime: SetupRuntime,
@@ -844,9 +849,9 @@ async function promptTaskModelOverrides(
     defaultModel: string;
     existingConfig?: AgenrConfig;
   },
-): Promise<{ extractionModel?: ModelConfig; dedupModel?: ModelConfig } | null> {
+): Promise<{ extractionModel?: ModelConfig; dedupModel?: ModelConfig; surgeonModel?: ModelConfig } | null> {
   const customize = await prompts.confirm({
-    message: "Customize extraction or dedup models? (Advanced)",
+    message: "Customize task-specific models? (Advanced)",
     initialValue: false,
   });
 
@@ -858,6 +863,7 @@ async function promptTaskModelOverrides(
     return {
       extractionModel: options.existingConfig?.extractionModel,
       dedupModel: options.existingConfig?.dedupModel,
+      surgeonModel: options.existingConfig?.surgeon?.model,
     };
   }
 
@@ -883,7 +889,18 @@ async function promptTaskModelOverrides(
     return null;
   }
 
-  return { extractionModel, dedupModel };
+  const surgeonModel = await promptStageOverride(prompts, runtime, {
+    label: "Surgeon",
+    defaultAuth: options.defaultAuth,
+    defaultModel: options.defaultModel,
+    current: options.existingConfig?.surgeon?.model,
+    existingConfig: options.existingConfig,
+  });
+  if (surgeonModel === null) {
+    return null;
+  }
+
+  return { extractionModel, dedupModel, surgeonModel };
 }
 
 /** Prompts for one stage-specific provider/model override. */
@@ -974,6 +991,7 @@ function buildNextConfig(
     embeddingApiKey?: string;
     extractionModel?: ModelConfig;
     dedupModel?: ModelConfig;
+    surgeonModel?: ModelConfig;
     dbPath: string;
   },
 ): AgenrConfig {
@@ -982,6 +1000,7 @@ function buildNextConfig(
     primaryCredential: values.primaryCredential,
     embeddingApiKey: values.embeddingApiKey,
   });
+  const nextSurgeon = buildNextSurgeonConfig(existingConfig?.surgeon, values.surgeonModel);
 
   return {
     ...existingConfig,
@@ -991,6 +1010,7 @@ function buildNextConfig(
     ...(nextCredentials ? { credentials: nextCredentials } : { credentials: undefined }),
     ...(values.extractionModel ? { extractionModel: values.extractionModel } : { extractionModel: undefined }),
     ...(values.dedupModel ? { dedupModel: values.dedupModel } : { dedupModel: undefined }),
+    ...(nextSurgeon ? { surgeon: nextSurgeon } : { surgeon: undefined }),
     dbPath: values.dbPath,
     apiKey: undefined,
     embeddingApiKey: undefined,
@@ -1035,6 +1055,7 @@ function formatSavedConfigSummary(config: AgenrConfig, configPath: string, dbPat
 
   appendChangedOverrideLine(lines, "Extraction override", config.extractionModel, options.previousConfig?.extractionModel);
   appendChangedOverrideLine(lines, "Dedup override", config.dedupModel, options.previousConfig?.dedupModel);
+  appendChangedOverrideLine(lines, "Surgeon override", config.surgeon?.model, options.previousConfig?.surgeon?.model);
 
   return lines.join("\n");
 }
@@ -1093,7 +1114,7 @@ function hintForModel(provider: SetupProvider, modelId: string, fallbackName?: s
  * @param runtime - Setup runtime hooks used to probe credential availability.
  * @param defaultAuth - Default auth profile selected for the main model.
  * @param existingConfig - Existing config values used for credential probing.
- * @returns Available auth choices for extraction or dedup overrides.
+ * @returns Available auth choices for task-specific overrides.
  */
 export function buildStageAuthOptions(
   runtime: SetupRuntime,
@@ -1277,6 +1298,43 @@ function mergeStoredCredentials(
   }
 
   return pruneStoredCredentials(next);
+}
+
+/** Builds the persisted surgeon config while avoiding empty nested objects. */
+function buildNextSurgeonConfig(
+  existingSurgeon: AgenrConfig["surgeon"] | undefined,
+  surgeonModel: ModelConfig | undefined,
+): AgenrConfig["surgeon"] | undefined {
+  if (!existingSurgeon && !surgeonModel) {
+    return undefined;
+  }
+
+  const nextSurgeon = {
+    ...(existingSurgeon ?? {}),
+    ...(surgeonModel ? { model: surgeonModel } : { model: undefined }),
+  };
+
+  return hasPersistedSurgeonConfig(nextSurgeon) ? nextSurgeon : undefined;
+}
+
+/** Returns whether the surgeon config contains any persisted values. */
+function hasPersistedSurgeonConfig(config: AgenrConfig["surgeon"] | undefined): config is NonNullable<AgenrConfig["surgeon"]> {
+  if (!config) {
+    return false;
+  }
+
+  const retirementConfig = config.passes?.retirement;
+
+  return (
+    hasModelOverride(config.model) ||
+    config.costCap !== undefined ||
+    config.dailyCostCap !== undefined ||
+    config.contextLimit !== undefined ||
+    normalizeOptionalString(config.customInstructions) !== undefined ||
+    retirementConfig?.protectRecalledDays !== undefined ||
+    retirementConfig?.protectMinImportance !== undefined ||
+    retirementConfig?.skipRecentlyEvaluatedDays !== undefined
+  );
 }
 
 /** Removes empty credential fields before config persistence. */
