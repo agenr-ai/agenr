@@ -14,6 +14,7 @@ const ENTRY_TYPE_DESCRIPTION =
 
 const EXPIRY_DESCRIPTION =
   "Lifetime bucket: core (always injected at session start, use sparingly), permanent (durable and recalled on demand), or temporary (short-horizon).";
+const UPDATE_EXPIRY_DESCRIPTION = `${EXPIRY_DESCRIPTION} Accepted values: ${EXPIRY_LEVELS.join(", ")}.`;
 
 const DEFAULT_RECALL_LIMIT = 10;
 const RESULT_SUBJECT_LOG_LIMIT = 5;
@@ -135,6 +136,8 @@ const RETIRE_TOOL_PARAMETERS = {
   },
 } as const;
 
+// Keep this schema intentionally flat and unconstrained.
+// Runtime validation remains the source of truth for update semantics and allowed values.
 const UPDATE_TOOL_PARAMETERS = {
   type: "object",
   additionalProperties: false,
@@ -149,14 +152,11 @@ const UPDATE_TOOL_PARAMETERS = {
     },
     importance: {
       type: "integer",
-      minimum: 1,
-      maximum: 10,
       description: "New importance from 1 to 10. Use 7 for normal durable memory and reserve 9 to 10 for rare critical entries.",
     },
     expiry: {
       type: "string",
-      enum: [...EXPIRY_LEVELS],
-      description: EXPIRY_DESCRIPTION,
+      description: UPDATE_EXPIRY_DESCRIPTION,
     },
   },
 } as const;

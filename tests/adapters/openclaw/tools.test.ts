@@ -33,6 +33,37 @@ afterEach(async () => {
 });
 
 describe("agenr OpenClaw tools", () => {
+  it("keeps the update tool schema flat for OpenAI-compatible registration", () => {
+    const updateTool = createAgenrUpdateTool(createToolContext(), Promise.resolve({} as AgenrOpenClawServices), createLogger());
+    const schema = updateTool.parameters as {
+      type?: unknown;
+      anyOf?: unknown;
+      oneOf?: unknown;
+      allOf?: unknown;
+      enum?: unknown;
+      not?: unknown;
+      properties?: Record<string, Record<string, unknown>>;
+    };
+    const importance = schema.properties?.importance;
+    const expiry = schema.properties?.expiry;
+
+    expect(schema.type).toBe("object");
+    expect(schema.anyOf).toBeUndefined();
+    expect(schema.oneOf).toBeUndefined();
+    expect(schema.allOf).toBeUndefined();
+    expect(schema.enum).toBeUndefined();
+    expect(schema.not).toBeUndefined();
+    expect(importance).toMatchObject({
+      type: "integer",
+    });
+    expect(importance?.minimum).toBeUndefined();
+    expect(importance?.maximum).toBeUndefined();
+    expect(expiry).toMatchObject({
+      type: "string",
+    });
+    expect(expiry?.enum).toBeUndefined();
+  });
+
   it("stores, updates, traces, and retires entries", async () => {
     const database = await createTestDatabase();
     const logger = createLogger();
