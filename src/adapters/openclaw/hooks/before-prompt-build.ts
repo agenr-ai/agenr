@@ -19,7 +19,7 @@ import { openClawTranscriptParser } from "../transcript/parser.js";
 const CORE_ENTRY_LIMIT = 4;
 const RECENT_SESSION_MESSAGE_LIMIT = 6;
 const RECENT_SESSION_MAX_CHARS = 1_800;
-const READ_TIME_SUMMARY_TIMEOUT_MS = 10_000;
+const READ_TIME_SUMMARY_TIMEOUT_MS = 20_000;
 const READ_TIME_SUMMARY_TIMEOUT = Symbol("read-time-summary-timeout");
 
 /**

@@ -786,7 +786,7 @@ describe("handleAgenrBeforePromptBuild", () => {
       },
     );
     await summaryStarted;
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(20_000);
     const result = await resultPromise;
 
     expect(result?.prependContext).not.toContain("## Previous session summary");
@@ -800,7 +800,7 @@ describe("handleAgenrBeforePromptBuild", () => {
           " reason=no_existing_summary",
         "[agenr] session-start read-time summary generation failed for session=session-6 key=agent:main:webchat:timeout predecessor=" +
           predecessorFile +
-          " reason=timeout elapsedMs=10000",
+          " reason=timeout elapsedMs=20000",
       ]),
     );
   });
