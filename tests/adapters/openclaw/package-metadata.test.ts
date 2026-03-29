@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 type OpenClawPackageJson = {
+  version?: string;
   openclaw?: {
     extensions?: string[];
   };
@@ -29,6 +30,15 @@ describe("published OpenClaw package metadata", () => {
     ]);
 
     expect(publishedManifest).toEqual(adapterManifest);
+  });
+
+  it("sets the plugin manifest version to the published package version", async () => {
+    const [packageJson, pluginManifest] = await Promise.all([
+      readJsonFile<OpenClawPackageJson>(publishedPackageJsonPath),
+      readJsonFile<{ version?: unknown }>(publishedPluginManifestPath),
+    ]);
+
+    expect(pluginManifest.version).toBe(packageJson.version);
   });
 });
 
