@@ -22,7 +22,7 @@ const COMPLETE_PASS_SCHEMA = Type.Object({
 
 const MIN_BUDGET_USED_FRACTION = 0.75;
 const MIN_BUDGET_USED_FRACTION_HARD = 0.20;
-const SAFETY_VALVE_REJECTION_LIMIT = 5;
+const SAFETY_VALVE_REJECTION_LIMIT = 50;
 const RETIREMENT_COMPLETION_KEY = "retirement";
 
 /** Validated parameter payload for the completion tool. */

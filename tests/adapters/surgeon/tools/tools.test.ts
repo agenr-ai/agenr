@@ -518,13 +518,13 @@ describe("surgeon tools", () => {
     );
   });
 
-  it("accepts complete_pass after five prior rejections via the safety valve", async () => {
+  it("accepts complete_pass after enough prior rejections via the safety valve", async () => {
     const client = await createTestClient(clients);
     const completionGuards = createSurgeonCompletionGuardState({
       totalEntries: 100,
       retirementCandidates: 20,
     });
-    completionGuards.rejectionCounts.set("retirement", 5);
+    completionGuards.rejectionCounts.set("retirement", 50);
     const completionState = createCompletionState();
     const tool = createCompletePassTool(
       createToolDeps(client, {
