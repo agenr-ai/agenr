@@ -20,8 +20,8 @@ describe("discoverOpenClawTranscriptFiles", () => {
     await mkdir(nested, { recursive: true });
 
     const active = path.join(root, "123e4567-e89b-12d3-a456-426614174000.jsonl");
-    const reset = path.join(nested, "123e4567-e89b-12d3-a456-426614174001.jsonl.reset.1711111111");
-    const deleted = path.join(root, "123e4567-e89b-12d3-a456-426614174002.jsonl.deleted.1711111112");
+    const reset = path.join(nested, "123e4567-e89b-12d3-a456-426614174001.jsonl.reset.2026-03-30T09:00:00.628Z");
+    const deleted = path.join(root, "123e4567-e89b-12d3-a456-426614174002.jsonl.deleted.2026-03-30T09:00:00.125Z");
     await writeFile(active, "", "utf8");
     await writeFile(reset, "", "utf8");
     await writeFile(deleted, "", "utf8");

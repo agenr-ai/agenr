@@ -227,6 +227,158 @@ describe("prepareEpisodeIngest", () => {
     expect(result.candidates[0]?.renderedTranscript.length).toBeLessThanOrEqual(14_000);
     expect(result.candidates[0]?.renderedTranscript).toContain("[Earlier middle transcript omitted for brevity]");
   });
+
+  it("matches the sequential baseline when preflightConcurrency is 1 and larger worker counts run in parallel", async () => {
+    const candidateNewest = "/tmp/candidate-newest.jsonl";
+    const skippedShort = "/tmp/skipped-short.jsonl";
+    const skippedExisting = "/tmp/skipped-existing.jsonl";
+    const invalidFile = "/tmp/invalid.jsonl";
+    const candidateOlder = "/tmp/candidate-older.jsonl";
+    const files = [candidateNewest, skippedShort, skippedExisting, invalidFile, candidateOlder];
+    const transcripts = {
+      [candidateNewest]: buildTranscript({
+        sessionId: "candidate-newest",
+        transcriptHash: "hash-newest",
+        endedAt: "2026-03-30T09:40:00.000Z",
+      }),
+      [skippedShort]: buildTranscript({
+        sessionId: "skipped-short",
+        transcriptHash: "hash-short",
+        endedAt: "2026-03-30T09:20:00.000Z",
+        messages: buildMessages(3),
+      }),
+      [skippedExisting]: buildTranscript({
+        sessionId: "skipped-existing",
+        transcriptHash: "hash-existing",
+        endedAt: "2026-03-30T09:10:00.000Z",
+      }),
+      [invalidFile]: buildTranscript({
+        sessionId: undefined,
+        transcriptHash: "hash-invalid",
+        endedAt: undefined,
+        messages: [],
+      }),
+      [candidateOlder]: buildTranscript({
+        sessionId: "candidate-older",
+        transcriptHash: "hash-older",
+        endedAt: "2026-03-30T09:05:00.000Z",
+      }),
+    };
+
+    const sequential = await prepareEpisodeIngest(
+      "/tmp",
+      createPorts({
+        files: new MockEpisodeFiles(files),
+        transcript: new MockTranscriptPort(transcripts, {
+          delaysMs: {
+            [candidateNewest]: 30,
+            [skippedShort]: 10,
+            [skippedExisting]: 20,
+            [invalidFile]: 5,
+            [candidateOlder]: 1,
+          },
+        }),
+        episodes: new MockEpisodeDatabase({
+          bySourceId: {
+            "skipped-existing": buildEpisode({
+              id: "episode-existing",
+              sourceId: "skipped-existing",
+              transcriptHash: "hash-existing",
+            }),
+          },
+        }),
+      }),
+      {
+        now: new Date("2026-03-30T10:00:00.000Z"),
+        preflightConcurrency: 1,
+      },
+    );
+
+    const parallel = await prepareEpisodeIngest(
+      "/tmp",
+      createPorts({
+        files: new MockEpisodeFiles(files),
+        transcript: new MockTranscriptPort(transcripts, {
+          delaysMs: {
+            [candidateNewest]: 30,
+            [skippedShort]: 10,
+            [skippedExisting]: 20,
+            [invalidFile]: 5,
+            [candidateOlder]: 1,
+          },
+        }),
+        episodes: new MockEpisodeDatabase({
+          bySourceId: {
+            "skipped-existing": buildEpisode({
+              id: "episode-existing",
+              sourceId: "skipped-existing",
+              transcriptHash: "hash-existing",
+            }),
+          },
+        }),
+      }),
+      {
+        now: new Date("2026-03-30T10:00:00.000Z"),
+        preflightConcurrency: 3,
+      },
+    );
+
+    expect(parallel).toEqual(sequential);
+    expect(parallel.candidates.map((candidate) => candidate.filePath)).toEqual([candidateNewest, candidateOlder]);
+    expect(parallel.skipped.map((entry) => entry.filePath)).toEqual([skippedShort, skippedExisting]);
+    expect(parallel.invalid.map((entry) => entry.filePath)).toEqual([invalidFile]);
+  });
+
+  it("reports preflight progress for every parsed file", async () => {
+    const files = ["/tmp/first.jsonl", "/tmp/second.jsonl", "/tmp/third.jsonl"];
+    const progressCalls: Array<[completed: number, total: number]> = [];
+
+    await prepareEpisodeIngest(
+      "/tmp",
+      createPorts({
+        files: new MockEpisodeFiles(files),
+        transcript: new MockTranscriptPort(
+          {
+            [files[0]]: buildTranscript({
+              sessionId: "first",
+              transcriptHash: "first-hash",
+              endedAt: "2026-03-30T09:00:00.000Z",
+            }),
+            [files[1]]: buildTranscript({
+              sessionId: "second",
+              transcriptHash: "second-hash",
+              endedAt: "2026-03-30T09:10:00.000Z",
+            }),
+            [files[2]]: buildTranscript({
+              sessionId: "third",
+              transcriptHash: "third-hash",
+              endedAt: "2026-03-30T09:20:00.000Z",
+            }),
+          },
+          {
+            delaysMs: {
+              [files[0]]: 15,
+              [files[1]]: 5,
+              [files[2]]: 10,
+            },
+          },
+        ),
+      }),
+      {
+        now: new Date("2026-03-30T10:00:00.000Z"),
+        preflightConcurrency: 2,
+        onPreflightProgress: (completed, total) => {
+          progressCalls.push([completed, total]);
+        },
+      },
+    );
+
+    expect(progressCalls).toEqual([
+      [1, 3],
+      [2, 3],
+      [3, 3],
+    ]);
+  });
 });
 
 describe("createEpisodeIngestPlan", () => {
@@ -557,9 +709,21 @@ class MockEpisodeFiles implements EpisodeIngestFilePort {
 }
 
 class MockTranscriptPort implements TranscriptPort {
-  public constructor(private readonly transcripts: Record<string, ParsedTranscript>) {}
+  public constructor(
+    private readonly transcripts: Record<string, ParsedTranscript>,
+    private readonly options: {
+      delaysMs?: Record<string, number>;
+    } = {},
+  ) {}
 
   public async parseFile(filePath: string): Promise<ParsedTranscript> {
+    const delayMs = this.options.delaysMs?.[filePath];
+    if (delayMs) {
+      await new Promise((resolve) => {
+        setTimeout(resolve, delayMs);
+      });
+    }
+
     const transcript = this.transcripts[filePath];
     if (!transcript) {
       throw new Error(`Missing transcript fixture for ${filePath}`);

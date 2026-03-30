@@ -77,10 +77,27 @@ export function registerIngestEpisodesCommand(parent: Command): void {
           clack.log.step(`Preparing episode ingest for ${resolvedTargetPath}...`);
         }
 
-        const preflight = await prepareEpisodeIngest(resolvedTargetPath, ports, {
-          regenerate: options.regenerate,
-          now,
-        });
+        const preflightSpinner = options.verbose === true ? null : clack.spinner();
+        preflightSpinner?.start("Parsing transcripts...");
+
+        let preflight;
+        try {
+          preflight = await prepareEpisodeIngest(resolvedTargetPath, ports, {
+            regenerate: options.regenerate,
+            now,
+            preflightConcurrency: options.concurrency ?? DEFAULT_EPISODE_INGEST_CONCURRENCY,
+            onPreflightProgress: preflightSpinner
+              ? (completed, total) => {
+                  preflightSpinner.message(`Parsing transcripts... (${completed}/${total})`);
+                }
+              : undefined,
+          });
+        } catch (error) {
+          preflightSpinner?.stop("Preflight failed.");
+          throw error;
+        }
+
+        preflightSpinner?.stop(`Preflight complete: ${preflight.totals.discovered} files parsed.`);
 
         if (preflight.files.length === 0) {
           clack.log.warn(`No OpenClaw transcript files found at ${resolvedTargetPath}.`);

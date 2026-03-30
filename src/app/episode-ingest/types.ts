@@ -186,6 +186,17 @@ export interface PrepareEpisodeIngestOptions {
    * Reference time for active-session detection.
    */
   now?: Date;
+  /**
+   * Max files to parse in parallel during preflight. Defaults to `20`.
+   */
+  preflightConcurrency?: number;
+  /**
+   * Called after each file completes Stage 1 preflight parsing.
+   *
+   * @param completed - Number of files completed so far.
+   * @param total - Total number of discovered files.
+   */
+  onPreflightProgress?: (completed: number, total: number) => void;
 }
 
 /**

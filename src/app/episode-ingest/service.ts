@@ -26,7 +26,7 @@ const CHARS_PER_TOKEN_ESTIMATE = 4;
  *
  * @param targetPath - File or directory path to inspect.
  * @param ports - Discovery, transcript, metadata, and episode lookup ports.
- * @param options - Optional regenerate flag and reference time override.
+ * @param options - Optional regenerate flag, reference time, and preflight overrides.
  * @returns Aggregate Stage 1 preflight result.
  */
 export async function prepareEpisodeIngest(
@@ -43,97 +43,49 @@ export async function prepareEpisodeIngest(
     await ports.sessionRegistry.listSessions();
   }
 
-  const skipped: EpisodeIngestSkippedSession[] = [];
-  const invalid: EpisodeIngestInvalidSession[] = [];
-  const candidates: EpisodeIngestCandidate[] = [];
+  const requestedPreflightConcurrency = options.preflightConcurrency ?? 20;
+  const preflightConcurrency = Number.isFinite(requestedPreflightConcurrency) ? Math.max(1, Math.trunc(requestedPreflightConcurrency)) : 20;
+  const workerCount = Math.min(preflightConcurrency, files.length);
+  const skippedByIndex = new Array<EpisodeIngestSkippedSession | undefined>(files.length);
+  const invalidByIndex = new Array<EpisodeIngestInvalidSession | undefined>(files.length);
+  const candidatesByIndex = new Array<EpisodeIngestCandidate | undefined>(files.length);
   const referenceNow = options.now ?? new Date();
+  let nextIndex = 0;
+  let completed = 0;
 
-  for (const filePath of files) {
-    const parsedTranscript = await ports.transcript.parseFile(filePath);
-    const cleanedMessages = parsedTranscript.messages.filter((message) => message.text.trim().length > 0);
-    const parsedSessionId = parsedTranscript.metadata.sessionId?.trim() || undefined;
-    const registryMeta = parsedSessionId ? await ports.sessionRegistry?.getSessionMeta(parsedSessionId) : undefined;
-    const reconstructedMeta = registryMeta ? undefined : await ports.sessionMetaInspector?.inspectFile(filePath);
-    const resolvedMeta = resolveSessionMeta(filePath, parsedSessionId, registryMeta, reconstructedMeta);
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (true) {
+        const currentIndex = nextIndex;
+        nextIndex += 1;
 
-    if (!resolvedMeta.sessionId && cleanedMessages.length === 0) {
-      invalid.push({
-        filePath,
-        sessionId: undefined,
-        transcriptHash: parsedTranscript.metadata.transcriptHash,
-        messageCount: 0,
-        metadataSource: resolvedMeta.metadataSource,
-      });
-      continue;
-    }
+        if (currentIndex >= files.length) {
+          return;
+        }
 
-    if (cleanedMessages.length < MIN_EPISODE_MESSAGES) {
-      skipped.push({
-        filePath,
-        reason: "skipped_short",
-        sessionId: resolvedMeta.sessionId,
-        transcriptHash: parsedTranscript.metadata.transcriptHash,
-        messageCount: cleanedMessages.length,
-        startedAt: parsedTranscript.metadata.startedAt,
-        endedAt: parsedTranscript.metadata.endedAt,
-        agentId: resolvedMeta.agentId,
-        surface: resolvedMeta.surface,
-        metadataSource: resolvedMeta.metadataSource,
-      });
-      continue;
-    }
+        const filePath = files[currentIndex];
+        if (!filePath) {
+          return;
+        }
 
-    if (isActiveSession(parsedTranscript.metadata.endedAt, referenceNow)) {
-      skipped.push({
-        filePath,
-        reason: "skipped_active",
-        sessionId: resolvedMeta.sessionId,
-        transcriptHash: parsedTranscript.metadata.transcriptHash,
-        messageCount: cleanedMessages.length,
-        startedAt: parsedTranscript.metadata.startedAt,
-        endedAt: parsedTranscript.metadata.endedAt,
-        agentId: resolvedMeta.agentId,
-        surface: resolvedMeta.surface,
-        metadataSource: resolvedMeta.metadataSource,
-      });
-      continue;
-    }
+        const result = await classifyPreflightTranscript(filePath, ports, referenceNow, options.regenerate === true);
+        if (result.kind === "candidate") {
+          candidatesByIndex[currentIndex] = result.value;
+        } else if (result.kind === "skipped") {
+          skippedByIndex[currentIndex] = result.value;
+        } else {
+          invalidByIndex[currentIndex] = result.value;
+        }
 
-    const existingEpisode = await findExistingEpisode(ports, resolvedMeta.sessionId, parsedTranscript.metadata.transcriptHash);
-    if (existingEpisode && options.regenerate !== true) {
-      skipped.push({
-        filePath,
-        reason: "skipped_exists",
-        sessionId: resolvedMeta.sessionId,
-        transcriptHash: parsedTranscript.metadata.transcriptHash,
-        messageCount: cleanedMessages.length,
-        startedAt: parsedTranscript.metadata.startedAt,
-        endedAt: parsedTranscript.metadata.endedAt,
-        agentId: resolvedMeta.agentId,
-        surface: resolvedMeta.surface,
-        metadataSource: resolvedMeta.metadataSource,
-        existingEpisode,
-      });
-      continue;
-    }
+        completed += 1;
+        options.onPreflightProgress?.(completed, files.length);
+      }
+    }),
+  );
 
-    const renderedTranscript = capEpisodeTranscript(renderTranscript(cleanedMessages), MAX_EPISODE_TRANSCRIPT_CHARS);
-    candidates.push({
-      filePath,
-      sessionId: resolvedMeta.sessionId,
-      sourceRef: resolvedMeta.sourceRef,
-      transcriptHash: parsedTranscript.metadata.transcriptHash,
-      startedAt: parsedTranscript.metadata.startedAt,
-      endedAt: parsedTranscript.metadata.endedAt,
-      messageCount: cleanedMessages.length,
-      agentId: resolvedMeta.agentId,
-      surface: resolvedMeta.surface,
-      metadataSource: resolvedMeta.metadataSource,
-      renderedTranscript,
-      estimatedInputTokens: estimateInputTokens(renderedTranscript),
-      ...(existingEpisode ? { existingEpisode } : {}),
-    });
-  }
+  const skipped = skippedByIndex.flatMap((entry) => (entry ? [entry] : []));
+  const invalid = invalidByIndex.flatMap((entry) => (entry ? [entry] : []));
+  const candidates = candidatesByIndex.flatMap((entry) => (entry ? [entry] : []));
 
   candidates.sort(compareCandidatesByEndedAt);
 
@@ -150,6 +102,126 @@ export async function prepareEpisodeIngest(
       skippedShort: skipped.filter((entry) => entry.reason === "skipped_short").length,
       skippedActive: skipped.filter((entry) => entry.reason === "skipped_active").length,
       skippedExists: skipped.filter((entry) => entry.reason === "skipped_exists").length,
+    },
+  };
+}
+
+/**
+ * Stable classification result produced for one preflight transcript.
+ */
+type PreflightTranscriptClassification =
+  | { kind: "candidate"; value: EpisodeIngestCandidate }
+  | { kind: "skipped"; value: EpisodeIngestSkippedSession }
+  | { kind: "invalid"; value: EpisodeIngestInvalidSession };
+
+/**
+ * Parses one transcript file and classifies it for Stage 1 preflight.
+ *
+ * @param filePath - Absolute transcript path.
+ * @param ports - Episode-ingest service ports.
+ * @param referenceNow - Reference time for active-session detection.
+ * @param regenerate - Whether existing episodes should stay in the candidate set.
+ * @returns One candidate, skipped-session record, or invalid-session record.
+ */
+async function classifyPreflightTranscript(
+  filePath: string,
+  ports: EpisodeIngestPorts,
+  referenceNow: Date,
+  regenerate: boolean,
+): Promise<PreflightTranscriptClassification> {
+  const parsedTranscript = await ports.transcript.parseFile(filePath);
+  const cleanedMessages = parsedTranscript.messages.filter((message) => message.text.trim().length > 0);
+  const parsedSessionId = parsedTranscript.metadata.sessionId?.trim() || undefined;
+  const registryMeta = parsedSessionId ? await ports.sessionRegistry?.getSessionMeta(parsedSessionId) : undefined;
+  const reconstructedMeta = registryMeta ? undefined : await ports.sessionMetaInspector?.inspectFile(filePath);
+  const resolvedMeta = resolveSessionMeta(filePath, parsedSessionId, registryMeta, reconstructedMeta);
+
+  if (!resolvedMeta.sessionId && cleanedMessages.length === 0) {
+    return {
+      kind: "invalid",
+      value: {
+        filePath,
+        sessionId: undefined,
+        transcriptHash: parsedTranscript.metadata.transcriptHash,
+        messageCount: 0,
+        metadataSource: resolvedMeta.metadataSource,
+      },
+    };
+  }
+
+  if (cleanedMessages.length < MIN_EPISODE_MESSAGES) {
+    return {
+      kind: "skipped",
+      value: {
+        filePath,
+        reason: "skipped_short",
+        sessionId: resolvedMeta.sessionId,
+        transcriptHash: parsedTranscript.metadata.transcriptHash,
+        messageCount: cleanedMessages.length,
+        startedAt: parsedTranscript.metadata.startedAt,
+        endedAt: parsedTranscript.metadata.endedAt,
+        agentId: resolvedMeta.agentId,
+        surface: resolvedMeta.surface,
+        metadataSource: resolvedMeta.metadataSource,
+      },
+    };
+  }
+
+  if (isActiveSession(parsedTranscript.metadata.endedAt, referenceNow)) {
+    return {
+      kind: "skipped",
+      value: {
+        filePath,
+        reason: "skipped_active",
+        sessionId: resolvedMeta.sessionId,
+        transcriptHash: parsedTranscript.metadata.transcriptHash,
+        messageCount: cleanedMessages.length,
+        startedAt: parsedTranscript.metadata.startedAt,
+        endedAt: parsedTranscript.metadata.endedAt,
+        agentId: resolvedMeta.agentId,
+        surface: resolvedMeta.surface,
+        metadataSource: resolvedMeta.metadataSource,
+      },
+    };
+  }
+
+  const existingEpisode = await findExistingEpisode(ports, resolvedMeta.sessionId, parsedTranscript.metadata.transcriptHash);
+  if (existingEpisode && regenerate !== true) {
+    return {
+      kind: "skipped",
+      value: {
+        filePath,
+        reason: "skipped_exists",
+        sessionId: resolvedMeta.sessionId,
+        transcriptHash: parsedTranscript.metadata.transcriptHash,
+        messageCount: cleanedMessages.length,
+        startedAt: parsedTranscript.metadata.startedAt,
+        endedAt: parsedTranscript.metadata.endedAt,
+        agentId: resolvedMeta.agentId,
+        surface: resolvedMeta.surface,
+        metadataSource: resolvedMeta.metadataSource,
+        existingEpisode,
+      },
+    };
+  }
+
+  const renderedTranscript = capEpisodeTranscript(renderTranscript(cleanedMessages), MAX_EPISODE_TRANSCRIPT_CHARS);
+  return {
+    kind: "candidate",
+    value: {
+      filePath,
+      sessionId: resolvedMeta.sessionId,
+      sourceRef: resolvedMeta.sourceRef,
+      transcriptHash: parsedTranscript.metadata.transcriptHash,
+      startedAt: parsedTranscript.metadata.startedAt,
+      endedAt: parsedTranscript.metadata.endedAt,
+      messageCount: cleanedMessages.length,
+      agentId: resolvedMeta.agentId,
+      surface: resolvedMeta.surface,
+      metadataSource: resolvedMeta.metadataSource,
+      renderedTranscript,
+      estimatedInputTokens: estimateInputTokens(renderedTranscript),
+      ...(existingEpisode ? { existingEpisode } : {}),
     },
   };
 }

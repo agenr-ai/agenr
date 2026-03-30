@@ -1,7 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-const OPENCLAW_TRANSCRIPT_FILE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl(?:\.(?:reset|deleted)\.[^.]+)?$/i;
+// Match rotated suffixes that include ISO timestamps with milliseconds.
+const OPENCLAW_TRANSCRIPT_FILE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl(?:\.(?:reset|deleted)\..+)?$/i;
 
 /**
  * Discovers OpenClaw session transcript files for episode backfill.
