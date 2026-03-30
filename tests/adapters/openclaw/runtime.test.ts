@@ -236,7 +236,7 @@ function createOpenClawHost(): AgenrOpenClawHost {
         resolveAgentDir: () => agentDir,
         resolveAgentWorkspaceDir: () => workspaceDir,
         runEmbeddedPiAgent: async () => {
-          throw new Error("Embedded summary runner unavailable.");
+          throw new Error("Embedded continuity summary runner unavailable.");
         },
       },
       state: {

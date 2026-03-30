@@ -3,8 +3,8 @@ import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
 import { listOpenClawCoreEntries } from "../../db/openclaw-plugin-queries.js";
 import { formatAgenrSessionStartRecall } from "../format/recall-format.js";
 import { resolveOpenClawSessionPredecessor } from "../session/predecessor.js";
-import { readOpenClawSessionSummaryFile } from "../session/summary-reader.js";
-import { generateAndWriteOpenClawSessionSummary, type OpenClawSessionSummaryWriteResult } from "../session/summary.js";
+import { readOpenClawContinuitySummaryFile } from "../session/continuity-summary-reader.js";
+import { generateAndWriteOpenClawContinuitySummary, type OpenClawContinuitySummaryWriteResult } from "../session/continuity-summary.js";
 import type {
   AgenrOpenClawBeforePromptBuildDeps,
   AgenrOpenClawBeforePromptBuildEvent,
@@ -19,8 +19,8 @@ import { openClawTranscriptParser } from "../transcript/parser.js";
 const CORE_ENTRY_LIMIT = 4;
 const RECENT_SESSION_MESSAGE_LIMIT = 6;
 const RECENT_SESSION_MAX_CHARS = 1_800;
-const READ_TIME_SUMMARY_TIMEOUT_MS = 20_000;
-const READ_TIME_SUMMARY_TIMEOUT = Symbol("read-time-summary-timeout");
+const READ_TIME_CONTINUITY_SUMMARY_TIMEOUT_MS = 20_000;
+const READ_TIME_CONTINUITY_SUMMARY_TIMEOUT = Symbol("read-time-continuity-summary-timeout");
 
 /**
  * Runs agenr session-start recall and injects the result into the OpenClaw prompt.
@@ -109,14 +109,14 @@ async function buildPreviousSessionContext(
     resolveStateDir: services.openClaw.runtime.state.resolveStateDir,
   });
   if (!predecessor) {
-    logger.info(`[agenr] session-start predecessor summary not found for ${sessionContext} reason=no_predecessor`);
+    logger.info(`[agenr] session-start predecessor continuity summary not found for ${sessionContext} reason=no_predecessor`);
     return "";
   }
 
   const sections: string[] = [];
-  const summaryContent = await loadPredecessorSummaryContent(sessionContext, predecessor.sessionFile, ctx.agentId, services, logger);
-  if (summaryContent.length > 0) {
-    sections.push(`## Previous session summary\n${summaryContent}`);
+  const continuitySummaryContent = await loadPredecessorContinuitySummaryContent(sessionContext, predecessor.sessionFile, ctx.agentId, services, logger);
+  if (continuitySummaryContent.length > 0) {
+    sections.push(`## Previous session summary\n${continuitySummaryContent}`);
   }
 
   const recentSession = await renderRecentSessionSection(predecessor.sessionFile, logger);
@@ -128,15 +128,17 @@ async function buildPreviousSessionContext(
 }
 
 /**
- * Loads a predecessor summary file or generates it on demand when it is absent.
+ * Loads a predecessor continuity summary file or generates it on demand when it
+ * is absent.
  *
  * @param sessionContext - Stable session identifiers for log output.
  * @param sessionFile - Absolute predecessor transcript path.
  * @param services - Shared agenr services plus OpenClaw host runtime access.
- * @param logger - Plugin logger used for summary diagnostics.
- * @returns Summary Markdown content, or an empty string when unavailable.
+ * @param logger - Plugin logger used for continuity summary diagnostics.
+ * @returns Continuity summary Markdown content, or an empty string when
+ *   unavailable.
  */
-async function loadPredecessorSummaryContent(
+async function loadPredecessorContinuitySummaryContent(
   sessionContext: string,
   sessionFile: string,
   agentId: string | undefined,
@@ -144,88 +146,92 @@ async function loadPredecessorSummaryContent(
   logger: PluginLogger,
 ): Promise<string> {
   try {
-    const summary = await readOpenClawSessionSummaryFile(sessionFile, logger);
-    if (summary) {
+    const existingContinuitySummary = await readOpenClawContinuitySummaryFile(sessionFile, logger);
+    if (existingContinuitySummary) {
       logger.info(
-        `[agenr] session-start read-time summary generation skipped for ${sessionContext} predecessor=${sessionFile} reason=already_exists path=${summary.summaryPath}`,
+        `[agenr] session-start read-time continuity summary generation skipped for ${sessionContext} predecessor=${sessionFile} reason=already_exists path=${existingContinuitySummary.continuitySummaryPath}`,
       );
-      logger.info(`[agenr] session-start predecessor summary found for ${sessionContext} path=${summary.summaryPath}`);
-      return summary.content;
+      logger.info(`[agenr] session-start predecessor continuity summary found for ${sessionContext} path=${existingContinuitySummary.continuitySummaryPath}`);
+      return existingContinuitySummary.content;
     }
 
-    logger.info(`[agenr] session-start predecessor summary not found for ${sessionContext} predecessor=${sessionFile}`);
+    logger.info(`[agenr] session-start predecessor continuity summary not found for ${sessionContext} predecessor=${sessionFile}`);
   } catch (error) {
-    logger.info(`[agenr] session-start predecessor summary not found for ${sessionContext} predecessor=${sessionFile} reason=${formatErrorMessage(error)}`);
-    debugLog(logger, "before_prompt_build", `failed reading predecessor summary for ${sessionContext}: ${formatErrorMessage(error)}`);
+    logger.info(
+      `[agenr] session-start predecessor continuity summary not found for ${sessionContext} predecessor=${sessionFile} reason=${formatErrorMessage(error)}`,
+    );
+    debugLog(logger, "before_prompt_build", `failed reading predecessor continuity summary for ${sessionContext}: ${formatErrorMessage(error)}`);
     return "";
   }
 
-  logger.info(`[agenr] session-start read-time summary generation triggered for ${sessionContext} predecessor=${sessionFile} reason=no_existing_summary`);
+  logger.info(
+    `[agenr] session-start read-time continuity summary generation triggered for ${sessionContext} predecessor=${sessionFile} reason=no_existing_continuity_summary`,
+  );
   const startedAt = Date.now();
 
   try {
     const result = await awaitWithTimeout(
-      generateAndWriteOpenClawSessionSummary({
+      generateAndWriteOpenClawContinuitySummary({
         sessionFile,
         agentId,
         openClaw: services.openClaw,
         logger,
       }),
-      READ_TIME_SUMMARY_TIMEOUT_MS,
+      READ_TIME_CONTINUITY_SUMMARY_TIMEOUT_MS,
     );
     const elapsedMs = Date.now() - startedAt;
 
-    if (result === READ_TIME_SUMMARY_TIMEOUT) {
+    if (result === READ_TIME_CONTINUITY_SUMMARY_TIMEOUT) {
       logger.info(
-        `[agenr] session-start read-time summary generation failed for ${sessionContext} predecessor=${sessionFile} reason=timeout elapsedMs=${elapsedMs}`,
+        `[agenr] session-start read-time continuity summary generation failed for ${sessionContext} predecessor=${sessionFile} reason=timeout elapsedMs=${elapsedMs}`,
       );
       debugLog(
         logger,
         "before_prompt_build",
-        `read-time summary generation timed out for ${sessionContext}: predecessor=${sessionFile} timeoutMs=${READ_TIME_SUMMARY_TIMEOUT_MS}`,
+        `read-time continuity summary generation timed out for ${sessionContext}: predecessor=${sessionFile} timeoutMs=${READ_TIME_CONTINUITY_SUMMARY_TIMEOUT_MS}`,
       );
       return "";
     }
 
-    return handleReadTimeSummaryResult(sessionContext, sessionFile, result, elapsedMs, logger);
+    return handleReadTimeContinuitySummaryResult(sessionContext, sessionFile, result, elapsedMs, logger);
   } catch (error) {
     const elapsedMs = Date.now() - startedAt;
     logger.info(
-      `[agenr] session-start read-time summary generation failed for ${sessionContext} predecessor=${sessionFile} reason=${formatErrorMessage(error)} elapsedMs=${elapsedMs}`,
+      `[agenr] session-start read-time continuity summary generation failed for ${sessionContext} predecessor=${sessionFile} reason=${formatErrorMessage(error)} elapsedMs=${elapsedMs}`,
     );
-    debugLog(logger, "before_prompt_build", `unexpected read-time summary generation failure for ${sessionContext}: ${formatErrorMessage(error)}`);
+    debugLog(logger, "before_prompt_build", `unexpected read-time continuity summary generation failure for ${sessionContext}: ${formatErrorMessage(error)}`);
     return "";
   }
 }
 
-/** Normalizes read-time summary generation outcomes into prompt content and logs. */
-function handleReadTimeSummaryResult(
+/** Normalizes read-time continuity summary generation outcomes into prompt content and logs. */
+function handleReadTimeContinuitySummaryResult(
   sessionContext: string,
   sessionFile: string,
-  result: OpenClawSessionSummaryWriteResult,
+  result: OpenClawContinuitySummaryWriteResult,
   elapsedMs: number,
   logger: PluginLogger,
 ): string {
-  if (result.status === "written" && result.content && result.summaryPath) {
+  if (result.status === "written" && result.content && result.continuitySummaryPath) {
     logger.info(
-      `[agenr] session-start read-time summary generation completed for ${sessionContext} predecessor=${sessionFile} elapsedMs=${elapsedMs} path=${result.summaryPath}`,
+      `[agenr] session-start read-time continuity summary generation completed for ${sessionContext} predecessor=${sessionFile} elapsedMs=${elapsedMs} path=${result.continuitySummaryPath}`,
     );
-    logger.info(`[agenr] session-start predecessor summary found for ${sessionContext} path=${result.summaryPath}`);
+    logger.info(`[agenr] session-start predecessor continuity summary found for ${sessionContext} path=${result.continuitySummaryPath}`);
     return result.content;
   }
 
   if (result.status === "skipped") {
     logger.info(
-      `[agenr] session-start read-time summary generation skipped for ${sessionContext} predecessor=${sessionFile} reason=${result.reason ?? "unknown"} path=${result.summaryPath ?? "n/a"}`,
+      `[agenr] session-start read-time continuity summary generation skipped for ${sessionContext} predecessor=${sessionFile} reason=${result.reason ?? "unknown"} path=${result.continuitySummaryPath ?? "n/a"}`,
     );
     debugLog(
       logger,
       "before_prompt_build",
-      `read-time summary generation skipped for ${sessionContext}: predecessor=${sessionFile} transcriptChars=${result.transcriptChars ?? 0} cleanedMessages=${result.messageCount ?? 0}`,
+      `read-time continuity summary generation skipped for ${sessionContext}: predecessor=${sessionFile} transcriptChars=${result.transcriptChars ?? 0} cleanedMessages=${result.messageCount ?? 0}`,
     );
 
-    if (result.reason === "already_exists" && result.content && result.summaryPath) {
-      logger.info(`[agenr] session-start predecessor summary found for ${sessionContext} path=${result.summaryPath}`);
+    if (result.reason === "already_exists" && result.content && result.continuitySummaryPath) {
+      logger.info(`[agenr] session-start predecessor continuity summary found for ${sessionContext} path=${result.continuitySummaryPath}`);
       return result.content;
     }
 
@@ -233,12 +239,12 @@ function handleReadTimeSummaryResult(
   }
 
   logger.info(
-    `[agenr] session-start read-time summary generation failed for ${sessionContext} predecessor=${sessionFile} reason=${result.reason ?? "unknown"} elapsedMs=${elapsedMs} model=${result.model ?? "unknown"}`,
+    `[agenr] session-start read-time continuity summary generation failed for ${sessionContext} predecessor=${sessionFile} reason=${result.reason ?? "unknown"} elapsedMs=${elapsedMs} model=${result.model ?? "unknown"}`,
   );
   debugLog(
     logger,
     "before_prompt_build",
-    `read-time summary generation failed for ${sessionContext}: predecessor=${sessionFile} durationMs=${result.durationMs ?? 0} transcriptChars=${result.transcriptChars ?? 0}`,
+    `read-time continuity summary generation failed for ${sessionContext}: predecessor=${sessionFile} durationMs=${result.durationMs ?? 0} transcriptChars=${result.transcriptChars ?? 0}`,
   );
   return "";
 }
@@ -265,10 +271,10 @@ async function renderRecentSessionSection(sessionFile: string, logger: PluginLog
 }
 
 /** Resolves a promise while allowing prompt build to proceed after a bounded delay. */
-async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | typeof READ_TIME_SUMMARY_TIMEOUT> {
+async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | typeof READ_TIME_CONTINUITY_SUMMARY_TIMEOUT> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
-      resolve(READ_TIME_SUMMARY_TIMEOUT);
+      resolve(READ_TIME_CONTINUITY_SUMMARY_TIMEOUT);
     }, timeoutMs);
 
     promise.then(

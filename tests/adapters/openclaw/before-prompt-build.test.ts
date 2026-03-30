@@ -130,7 +130,7 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
         "[agenr] session-start recall for session=session-1 key=agent:main:webchat:test",
-        "[agenr] session-start predecessor summary not found for session=session-1 key=agent:main:webchat:test reason=no_predecessor",
+        "[agenr] session-start predecessor continuity summary not found for session=session-1 key=agent:main:webchat:test reason=no_predecessor",
         "[agenr] session-start recall: 1 core entries for session=session-1 key=agent:main:webchat:test",
         "[agenr] session-start recall skipped (already ran) for session=session-1 key=agent:main:webchat:test",
       ]),
@@ -149,7 +149,7 @@ describe("handleAgenrBeforePromptBuild", () => {
     ).toBe(false);
   });
 
-  it("injects predecessor summary and transcript tail alongside core memory only", async () => {
+  it("injects predecessor continuity summary and transcript tail alongside core memory only", async () => {
     const database = await createTestDatabase();
     const executeSpy = vi.spyOn(database, "execute");
     const logger = createLogger();
@@ -199,7 +199,7 @@ describe("handleAgenrBeforePromptBuild", () => {
         timestamp: "2026-03-28T10:01:00.000Z",
         message: {
           role: "assistant",
-          content: "Agreed. We will write a summary.md sidecar next to the session transcript.",
+          content: "Agreed. We will write a continuity-summary.md sidecar next to the session transcript.",
         },
       },
       {
@@ -207,7 +207,7 @@ describe("handleAgenrBeforePromptBuild", () => {
         timestamp: "2026-03-28T10:02:00.000Z",
         message: {
           role: "human",
-          content: "Keep the transcript tail too so tone and last exchanges survive when the LLM summary is missing.",
+          content: "Keep the transcript tail too so tone and last exchanges survive when the continuity summary is missing.",
         },
       },
       {
@@ -220,8 +220,8 @@ describe("handleAgenrBeforePromptBuild", () => {
       },
     ]);
     await writeFile(
-      path.join(path.dirname(predecessorFile), "predecessor-session.summary.md"),
-      "The session settled on file-based continuity. Summary files live next to transcript JSONL, transcript tails remain as fallback, and no handoff entries go into the brain.\n",
+      path.join(path.dirname(predecessorFile), "predecessor-session.continuity-summary.md"),
+      "The session settled on file-based continuity. Continuity summary files live next to transcript JSONL, transcript tails remain as fallback, and no handoff entries go into the brain.\n",
       "utf8",
     );
 
@@ -270,8 +270,8 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(listExecutedSql(executeSpy.mock.calls).some((sql) => sql.includes("expiry != 'core'"))).toBe(false);
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
-        "[agenr] session-start predecessor summary found for session=session-2 key=agent:main:webchat:isolated path=" +
-          path.join(path.dirname(predecessorFile), "predecessor-session.summary.md"),
+        "[agenr] session-start predecessor continuity summary found for session=session-2 key=agent:main:webchat:isolated path=" +
+          path.join(path.dirname(predecessorFile), "predecessor-session.continuity-summary.md"),
         "[agenr] session-start recall: 1 core entries for session=session-2 key=agent:main:webchat:isolated",
       ]),
     );
@@ -291,7 +291,7 @@ describe("handleAgenrBeforePromptBuild", () => {
         timestamp: "2026-03-28T10:00:00.000Z",
         message: {
           role: "human",
-          content: "Summaries should survive session rollover even when brain recall is empty.",
+          content: "Continuity summaries should survive session rollover even when brain recall is empty.",
         },
       },
       {
@@ -299,13 +299,13 @@ describe("handleAgenrBeforePromptBuild", () => {
         timestamp: "2026-03-28T10:01:00.000Z",
         message: {
           role: "assistant",
-          content: "We will inject the summary and the transcript tail without speculative database recall.",
+          content: "We will inject the continuity summary and the transcript tail without speculative database recall.",
         },
       },
     ]);
     await writeFile(
-      path.join(path.dirname(predecessorFile), "predecessor-session.summary.md"),
-      "The previous session decided continuity should come from the sidecar summary and transcript tail when needed.\n",
+      path.join(path.dirname(predecessorFile), "predecessor-session.continuity-summary.md"),
+      "The previous session decided continuity should come from the sidecar continuity summary and transcript tail when needed.\n",
       "utf8",
     );
 
@@ -339,8 +339,8 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(result?.prependContext).not.toContain("Core Memory");
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
-        "[agenr] session-start predecessor summary found for session=session-3 key=agent:main:webchat:continuity path=" +
-          path.join(path.dirname(predecessorFile), "predecessor-session.summary.md"),
+        "[agenr] session-start predecessor continuity summary found for session=session-3 key=agent:main:webchat:continuity path=" +
+          path.join(path.dirname(predecessorFile), "predecessor-session.continuity-summary.md"),
         "[agenr] session-start recall: 0 core entries for session=session-3 key=agent:main:webchat:continuity",
       ]),
     );
@@ -446,7 +446,7 @@ describe("handleAgenrBeforePromptBuild", () => {
         timestamp: "2026-03-28T10:02:00.000Z",
         message: {
           role: "human",
-          content: "The first new session should pay the LLM cost once and cache the summary.",
+          content: "The first new session should pay the LLM cost once and cache the continuity summary.",
         },
       },
       {
@@ -474,8 +474,11 @@ describe("handleAgenrBeforePromptBuild", () => {
       "utf8",
     );
 
-    const summary = "The prior TUI session established read-time summary caching for /new continuity and kept transcript-tail fallback intact.";
-    const { runEmbeddedPiAgent: summaryRunner, runEmbeddedPiAgentSpy } = createSummaryRunner({ response: summary });
+    const continuitySummary =
+      "The prior TUI session established read-time continuity summary caching for /new continuity and kept transcript-tail fallback intact.";
+    const { runEmbeddedPiAgent: continuitySummaryRunner, runEmbeddedPiAgentSpy } = createContinuitySummaryRunner({
+      response: continuitySummary,
+    });
     const result = await handleAgenrBeforePromptBuild(
       {
         prompt: "Continue the TUI session after /new.",
@@ -489,39 +492,39 @@ describe("handleAgenrBeforePromptBuild", () => {
       },
       {
         logger,
-        servicesPromise: Promise.resolve(createServices(database, { summaryRunImplementation: summaryRunner })),
+        servicesPromise: Promise.resolve(createServices(database, { continuitySummaryRunImplementation: continuitySummaryRunner })),
         tracker: createSessionStartTracker(),
       },
     );
 
-    const summaryPath = path.join(path.dirname(predecessorFile), "predecessor-session.summary.md");
+    const continuitySummaryPath = path.join(path.dirname(predecessorFile), "predecessor-session.continuity-summary.md");
     expect(result?.prependContext).toContain("## Previous session summary");
-    expect(result?.prependContext).toContain(summary);
+    expect(result?.prependContext).toContain(continuitySummary);
     expect(result?.prependContext).toContain("## Recent session");
     expect(result?.prependContext).toContain("U: The default TUI session needs continuity");
-    await expect(readFile(summaryPath, "utf8")).resolves.toContain(summary);
+    await expect(readFile(continuitySummaryPath, "utf8")).resolves.toContain(continuitySummary);
     expect(runEmbeddedPiAgentSpy).toHaveBeenCalledTimes(1);
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
         "[agenr] predecessor: TUI fallback activated for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 sessionKey=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 stableLane=tui",
         "[agenr] predecessor: TUI fallback predecessor found for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 predecessorKey=agent:main:main predecessor=" +
           predecessorFile,
-        "[agenr] session-start predecessor summary not found for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 predecessor=" +
+        "[agenr] session-start predecessor continuity summary not found for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 predecessor=" +
           predecessorFile,
-        "[agenr] session-start read-time summary generation triggered for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 predecessor=" +
+        "[agenr] session-start read-time continuity summary generation triggered for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 predecessor=" +
           predecessorFile +
-          " reason=no_existing_summary",
+          " reason=no_existing_continuity_summary",
         expect.stringContaining(
-          "[agenr] session-start read-time summary generation completed for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 predecessor=" +
+          "[agenr] session-start read-time continuity summary generation completed for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 predecessor=" +
             predecessorFile,
         ),
-        "[agenr] session-start predecessor summary found for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 path=" +
-          summaryPath,
+        "[agenr] session-start predecessor continuity summary found for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 path=" +
+          continuitySummaryPath,
       ]),
     );
   });
 
-  it("reuses an existing TUI fallback summary without regenerating it", async () => {
+  it("reuses an existing TUI fallback continuity summary without regenerating it", async () => {
     const database = await createTestDatabase();
     const logger = createLogger();
     const { workspaceDir, sessionsDir } = await createWorkspaceWithSessions();
@@ -549,7 +552,7 @@ describe("handleAgenrBeforePromptBuild", () => {
       },
     ]);
     await writeFile(
-      path.join(path.dirname(predecessorFile), "predecessor-session.summary.md"),
+      path.join(path.dirname(predecessorFile), "predecessor-session.continuity-summary.md"),
       "The prior TUI session should be recovered from sessions.json when /new bypasses reset hooks.\n",
       "utf8",
     );
@@ -568,8 +571,8 @@ describe("handleAgenrBeforePromptBuild", () => {
       )}\n`,
       "utf8",
     );
-    const { runEmbeddedPiAgent: summaryRunner, runEmbeddedPiAgentSpy } = createSummaryRunner({
-      response: "This should not be generated because the summary file already exists.",
+    const { runEmbeddedPiAgent: continuitySummaryRunner, runEmbeddedPiAgentSpy } = createContinuitySummaryRunner({
+      response: "This should not be generated because the continuity summary file already exists.",
     });
 
     const result = await handleAgenrBeforePromptBuild(
@@ -585,7 +588,7 @@ describe("handleAgenrBeforePromptBuild", () => {
       },
       {
         logger,
-        servicesPromise: Promise.resolve(createServices(database, { summaryRunImplementation: summaryRunner })),
+        servicesPromise: Promise.resolve(createServices(database, { continuitySummaryRunImplementation: continuitySummaryRunner })),
         tracker: createSessionStartTracker(),
       },
     );
@@ -600,17 +603,17 @@ describe("handleAgenrBeforePromptBuild", () => {
         "[agenr] predecessor: TUI fallback activated for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 sessionKey=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 stableLane=tui",
         "[agenr] predecessor: TUI fallback predecessor found for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 predecessorKey=agent:main:main predecessor=" +
           predecessorFile,
-        "[agenr] session-start read-time summary generation skipped for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 predecessor=" +
+        "[agenr] session-start read-time continuity summary generation skipped for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 predecessor=" +
           predecessorFile +
           " reason=already_exists path=" +
-          path.join(path.dirname(predecessorFile), "predecessor-session.summary.md"),
-        "[agenr] session-start predecessor summary found for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 path=" +
-          path.join(path.dirname(predecessorFile), "predecessor-session.summary.md"),
+          path.join(path.dirname(predecessorFile), "predecessor-session.continuity-summary.md"),
+        "[agenr] session-start predecessor continuity summary found for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 path=" +
+          path.join(path.dirname(predecessorFile), "predecessor-session.continuity-summary.md"),
       ]),
     );
   });
 
-  it("falls back to the transcript tail when read-time summary generation fails", async () => {
+  it("falls back to the transcript tail when read-time continuity summary generation fails", async () => {
     const database = await createTestDatabase();
     const logger = createLogger();
     const predecessorFile = await writeSessionFile("predecessor-session", [
@@ -623,7 +626,7 @@ describe("handleAgenrBeforePromptBuild", () => {
         timestamp: "2026-03-28T11:00:00.000Z",
         message: {
           role: "human",
-          content: "The next session should continue even if the summary LLM fails.",
+          content: "The next session should continue even if the continuity summary LLM fails.",
         },
       },
       {
@@ -639,7 +642,7 @@ describe("handleAgenrBeforePromptBuild", () => {
         timestamp: "2026-03-28T11:02:00.000Z",
         message: {
           role: "human",
-          content: "Keep session-start stable even if the summary call errors.",
+          content: "Keep session-start stable even if the continuity summary call errors.",
         },
       },
       {
@@ -651,7 +654,7 @@ describe("handleAgenrBeforePromptBuild", () => {
         },
       },
     ]);
-    const summaryPath = path.join(path.dirname(predecessorFile), "predecessor-session.summary.md");
+    const continuitySummaryPath = path.join(path.dirname(predecessorFile), "predecessor-session.continuity-summary.md");
     const tracker = createSessionStartTracker();
     tracker.rememberReset("agent:main:webchat:failure", {
       sessionId: "predecessor-session",
@@ -659,15 +662,15 @@ describe("handleAgenrBeforePromptBuild", () => {
       recordedAt: "2026-03-28T11:04:00.000Z",
     });
     tracker.rememberSessionStart("session-5", "agent:main:webchat:failure", "predecessor-session");
-    const { runEmbeddedPiAgent: summaryRunner, runEmbeddedPiAgentSpy } = createSummaryRunner({
+    const { runEmbeddedPiAgent: continuitySummaryRunner, runEmbeddedPiAgentSpy } = createContinuitySummaryRunner({
       implementation: async () => {
-        throw new Error("summary backend exploded");
+        throw new Error("continuity summary backend exploded");
       },
     });
 
     const result = await handleAgenrBeforePromptBuild(
       {
-        prompt: "Continue even if the summary backend is down.",
+        prompt: "Continue even if the continuity summary backend is down.",
         messages: [],
       },
       {
@@ -676,31 +679,31 @@ describe("handleAgenrBeforePromptBuild", () => {
       },
       {
         logger,
-        servicesPromise: Promise.resolve(createServices(database, { summaryRunImplementation: summaryRunner })),
+        servicesPromise: Promise.resolve(createServices(database, { continuitySummaryRunImplementation: continuitySummaryRunner })),
         tracker,
       },
     );
 
     expect(result?.prependContext).not.toContain("## Previous session summary");
     expect(result?.prependContext).toContain("## Recent session");
-    expect(result?.prependContext).toContain("U: The next session should continue even if the summary LLM fails.");
-    await expect(readFile(summaryPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    expect(result?.prependContext).toContain("U: The next session should continue even if the continuity summary LLM fails.");
+    await expect(readFile(continuitySummaryPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
     expect(runEmbeddedPiAgentSpy).toHaveBeenCalledTimes(1);
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
-        "[agenr] session-start read-time summary generation triggered for session=session-5 key=agent:main:webchat:failure predecessor=" +
+        "[agenr] session-start read-time continuity summary generation triggered for session=session-5 key=agent:main:webchat:failure predecessor=" +
           predecessorFile +
-          " reason=no_existing_summary",
+          " reason=no_existing_continuity_summary",
         expect.stringContaining(
-          "[agenr] session-start read-time summary generation failed for session=session-5 key=agent:main:webchat:failure predecessor=" +
+          "[agenr] session-start read-time continuity summary generation failed for session=session-5 key=agent:main:webchat:failure predecessor=" +
             predecessorFile +
-            " reason=summary backend exploded",
+            " reason=continuity summary backend exploded",
         ),
       ]),
     );
   });
 
-  it("falls back to the transcript tail when read-time summary generation times out", async () => {
+  it("falls back to the transcript tail when read-time continuity summary generation times out", async () => {
     vi.useFakeTimers();
 
     const database = await createTestDatabase();
@@ -715,7 +718,7 @@ describe("handleAgenrBeforePromptBuild", () => {
         timestamp: "2026-03-28T12:00:00.000Z",
         message: {
           role: "human",
-          content: "The first TUI /new should not hang forever waiting for the summary.",
+          content: "The first TUI /new should not hang forever waiting for the continuity summary.",
         },
       },
       {
@@ -739,11 +742,11 @@ describe("handleAgenrBeforePromptBuild", () => {
         timestamp: "2026-03-28T12:03:00.000Z",
         message: {
           role: "assistant",
-          content: "Right. The summary can be retried or cached later, but prompt build must return.",
+          content: "Right. The continuity summary can be retried or cached later, but prompt build must return.",
         },
       },
     ]);
-    const summaryPath = path.join(path.dirname(predecessorFile), "predecessor-session.summary.md");
+    const continuitySummaryPath = path.join(path.dirname(predecessorFile), "predecessor-session.continuity-summary.md");
     const tracker = createSessionStartTracker();
     tracker.rememberReset("agent:main:webchat:timeout", {
       sessionId: "predecessor-session",
@@ -751,18 +754,18 @@ describe("handleAgenrBeforePromptBuild", () => {
       recordedAt: "2026-03-28T12:04:00.000Z",
     });
     tracker.rememberSessionStart("session-6", "agent:main:webchat:timeout", "predecessor-session");
-    let markSummaryStarted: (() => void) | undefined;
-    const summaryStarted = new Promise<void>((resolve) => {
-      markSummaryStarted = resolve;
+    let markContinuitySummaryStarted: (() => void) | undefined;
+    const continuitySummaryStarted = new Promise<void>((resolve) => {
+      markContinuitySummaryStarted = resolve;
     });
-    const { runEmbeddedPiAgent: summaryRunner } = createSummaryRunner({
+    const { runEmbeddedPiAgent: continuitySummaryRunner } = createContinuitySummaryRunner({
       implementation: async () => {
-        markSummaryStarted?.();
+        markContinuitySummaryStarted?.();
         await new Promise((resolve) => {
           setTimeout(resolve, 60_000);
         });
         return {
-          payloads: [{ text: "This summary should arrive too late for prompt build." }],
+          payloads: [{ text: "This continuity summary should arrive too late for prompt build." }],
           meta: {
             durationMs: 60_000,
           },
@@ -772,7 +775,7 @@ describe("handleAgenrBeforePromptBuild", () => {
 
     const resultPromise = handleAgenrBeforePromptBuild(
       {
-        prompt: "Continue without hanging on summary generation.",
+        prompt: "Continue without hanging on continuity summary generation.",
         messages: [],
       },
       {
@@ -781,31 +784,31 @@ describe("handleAgenrBeforePromptBuild", () => {
       },
       {
         logger,
-        servicesPromise: Promise.resolve(createServices(database, { summaryRunImplementation: summaryRunner })),
+        servicesPromise: Promise.resolve(createServices(database, { continuitySummaryRunImplementation: continuitySummaryRunner })),
         tracker,
       },
     );
-    await summaryStarted;
+    await continuitySummaryStarted;
     await vi.advanceTimersByTimeAsync(20_000);
     const result = await resultPromise;
 
     expect(result?.prependContext).not.toContain("## Previous session summary");
     expect(result?.prependContext).toContain("## Recent session");
-    expect(result?.prependContext).toContain("U: The first TUI /new should not hang forever waiting for the summary.");
-    await expect(readFile(summaryPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    expect(result?.prependContext).toContain("U: The first TUI /new should not hang forever waiting for the continuity summary.");
+    await expect(readFile(continuitySummaryPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
-        "[agenr] session-start read-time summary generation triggered for session=session-6 key=agent:main:webchat:timeout predecessor=" +
+        "[agenr] session-start read-time continuity summary generation triggered for session=session-6 key=agent:main:webchat:timeout predecessor=" +
           predecessorFile +
-          " reason=no_existing_summary",
-        "[agenr] session-start read-time summary generation failed for session=session-6 key=agent:main:webchat:timeout predecessor=" +
+          " reason=no_existing_continuity_summary",
+        "[agenr] session-start read-time continuity summary generation failed for session=session-6 key=agent:main:webchat:timeout predecessor=" +
           predecessorFile +
           " reason=timeout elapsedMs=20000",
       ]),
     );
   });
 
-  it("skips read-time summary generation for short predecessor sessions", async () => {
+  it("skips read-time continuity summary generation for short predecessor sessions", async () => {
     const database = await createTestDatabase();
     const logger = createLogger();
     const predecessorFile = await writeSessionFile("predecessor-session", [
@@ -826,7 +829,7 @@ describe("handleAgenrBeforePromptBuild", () => {
         timestamp: "2026-03-28T13:01:00.000Z",
         message: {
           role: "assistant",
-          content: "Too short for a cached summary.",
+          content: "Too short for a cached continuity summary.",
         },
       },
       {
@@ -838,7 +841,7 @@ describe("handleAgenrBeforePromptBuild", () => {
         },
       },
     ]);
-    const summaryPath = path.join(path.dirname(predecessorFile), "predecessor-session.summary.md");
+    const continuitySummaryPath = path.join(path.dirname(predecessorFile), "predecessor-session.continuity-summary.md");
     const tracker = createSessionStartTracker();
     tracker.rememberReset("agent:main:webchat:short-read-time", {
       sessionId: "predecessor-session",
@@ -846,7 +849,7 @@ describe("handleAgenrBeforePromptBuild", () => {
       recordedAt: "2026-03-28T13:03:00.000Z",
     });
     tracker.rememberSessionStart("session-7", "agent:main:webchat:short-read-time", "predecessor-session");
-    const { runEmbeddedPiAgent: summaryRunner, runEmbeddedPiAgentSpy } = createSummaryRunner({
+    const { runEmbeddedPiAgent: continuitySummaryRunner, runEmbeddedPiAgentSpy } = createContinuitySummaryRunner({
       response: "This should never be requested for short sessions.",
     });
 
@@ -861,7 +864,7 @@ describe("handleAgenrBeforePromptBuild", () => {
       },
       {
         logger,
-        servicesPromise: Promise.resolve(createServices(database, { summaryRunImplementation: summaryRunner })),
+        servicesPromise: Promise.resolve(createServices(database, { continuitySummaryRunImplementation: continuitySummaryRunner })),
         tracker,
       },
     );
@@ -869,17 +872,17 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(result?.prependContext).not.toContain("## Previous session summary");
     expect(result?.prependContext).toContain("## Recent session");
     expect(result?.prependContext).toContain("U: Short session.");
-    await expect(readFile(summaryPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(continuitySummaryPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
     expect(runEmbeddedPiAgentSpy).not.toHaveBeenCalled();
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
-        "[agenr] session-start read-time summary generation triggered for session=session-7 key=agent:main:webchat:short-read-time predecessor=" +
+        "[agenr] session-start read-time continuity summary generation triggered for session=session-7 key=agent:main:webchat:short-read-time predecessor=" +
           predecessorFile +
-          " reason=no_existing_summary",
-        "[agenr] session-start read-time summary generation skipped for session=session-7 key=agent:main:webchat:short-read-time predecessor=" +
+          " reason=no_existing_continuity_summary",
+        "[agenr] session-start read-time continuity summary generation skipped for session=session-7 key=agent:main:webchat:short-read-time predecessor=" +
           predecessorFile +
           " reason=too_short path=" +
-          summaryPath,
+          continuitySummaryPath,
       ]),
     );
   });
@@ -907,7 +910,7 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(result).toBeUndefined();
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
-        "[agenr] session-start predecessor summary not found for session=session-empty key=agent:main:webchat:empty reason=no_predecessor",
+        "[agenr] session-start predecessor continuity summary not found for session=session-empty key=agent:main:webchat:empty reason=no_predecessor",
         "[agenr] session-start recall: 0 core entries for session=session-empty key=agent:main:webchat:empty",
         "[agenr] session-start recall: nothing to inject for session=session-empty key=agent:main:webchat:empty",
       ]),
@@ -920,7 +923,7 @@ function createServices(
   options: {
     available?: boolean;
     recall?: RecallPorts;
-    summaryRunImplementation?: AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"];
+    continuitySummaryRunImplementation?: AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"];
   } = {},
 ): AgenrOpenClawServices {
   const available = options.available ?? false;
@@ -950,9 +953,9 @@ function createServices(
     } satisfies RecallPorts);
   const openClaw = createOpenClawHost({
     runEmbeddedPiAgentImplementation:
-      options.summaryRunImplementation ??
+      options.continuitySummaryRunImplementation ??
       (async () => {
-        throw new Error("Embedded summary runner unavailable.");
+        throw new Error("Embedded continuity summary runner unavailable.");
       }),
   });
 
@@ -979,7 +982,7 @@ function createServices(
   };
 }
 
-function createSummaryRunner(
+function createContinuitySummaryRunner(
   options: {
     implementation?: AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"];
     response?: string;

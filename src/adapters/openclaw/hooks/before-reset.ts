@@ -1,9 +1,10 @@
 import type { AgenrOpenClawBeforeResetDeps, AgenrOpenClawBeforeResetEvent, AgenrOpenClawHookContext } from "../types.js";
 import type { SessionStartTracker } from "../session/state.js";
-import { writeOpenClawSessionSummary } from "../session/summary.js";
+import { writeOpenClawContinuitySummary } from "../session/continuity-summary.js";
 
 /**
- * Generates a file-based predecessor summary when OpenClaw resets a session.
+ * Generates a file-based predecessor continuity summary when OpenClaw resets a
+ * session.
  *
  * @param event - Reset payload containing the outgoing session transcript path.
  * @param ctx - Hook context with session identity data.
@@ -21,8 +22,10 @@ export async function handleAgenrBeforeReset(
   const rawMessageCount = Array.isArray(event.messages) ? event.messages.length : 0;
 
   if (!sessionFile) {
-    params.logger.info(`[agenr] before_reset: summary generation skipped for ${sessionContext} reason=no_session_file rawMessages=${rawMessageCount}`);
-    debugLog(params.logger, "before_reset", `skipping summary for ${sessionContext} because no session file was provided`);
+    params.logger.info(
+      `[agenr] before_reset: continuity summary generation skipped for ${sessionContext} reason=no_session_file rawMessages=${rawMessageCount}`,
+    );
+    debugLog(params.logger, "before_reset", `skipping continuity summary for ${sessionContext} because no session file was provided`);
     return;
   }
 
@@ -33,17 +36,17 @@ export async function handleAgenrBeforeReset(
   });
 
   params.logger.info(
-    `[agenr] before_reset: summary generation started for ${sessionContext} reason=${event.reason ?? "unknown"} rawMessages=${rawMessageCount}`,
+    `[agenr] before_reset: continuity summary generation started for ${sessionContext} reason=${event.reason ?? "unknown"} rawMessages=${rawMessageCount}`,
   );
   debugLog(
     params.logger,
     "before_reset",
-    `summary request details for ${sessionContext}: file=${sessionFile} workspace=${ctx.workspaceDir ?? "unknown"} reason=${event.reason ?? "unknown"}`,
+    `continuity summary request details for ${sessionContext}: file=${sessionFile} workspace=${ctx.workspaceDir ?? "unknown"} reason=${event.reason ?? "unknown"}`,
   );
 
   try {
     const services = await params.servicesPromise;
-    const result = await writeOpenClawSessionSummary({
+    const result = await writeOpenClawContinuitySummary({
       sessionFile,
       agentId: ctx.agentId,
       openClaw: services.openClaw,
@@ -51,32 +54,34 @@ export async function handleAgenrBeforeReset(
     });
 
     if (result.status === "written") {
-      params.logger.info(`[agenr] before_reset: summary file written for ${sessionContext} path=${result.summaryPath} bytes=${result.bytesWritten ?? 0}`);
+      params.logger.info(
+        `[agenr] before_reset: continuity summary file written for ${sessionContext} path=${result.continuitySummaryPath} bytes=${result.bytesWritten ?? 0}`,
+      );
       return;
     }
 
     if (result.status === "skipped") {
       params.logger.info(
-        `[agenr] before_reset: summary generation skipped for ${sessionContext} reason=${result.reason ?? "unknown"} cleanedMessages=${result.messageCount ?? 0}`,
+        `[agenr] before_reset: continuity summary generation skipped for ${sessionContext} reason=${result.reason ?? "unknown"} cleanedMessages=${result.messageCount ?? 0}`,
       );
       debugLog(
         params.logger,
         "before_reset",
-        `skip details for ${sessionContext}: summaryPath=${result.summaryPath ?? "n/a"} transcriptChars=${result.transcriptChars ?? 0}`,
+        `skip details for ${sessionContext}: continuitySummaryPath=${result.continuitySummaryPath ?? "n/a"} transcriptChars=${result.transcriptChars ?? 0}`,
       );
       return;
     }
 
     params.logger.info(
-      `[agenr] before_reset: summary generation failed for ${sessionContext} reason=${result.reason ?? "unknown"} model=${result.model ?? "unknown"}`,
+      `[agenr] before_reset: continuity summary generation failed for ${sessionContext} reason=${result.reason ?? "unknown"} model=${result.model ?? "unknown"}`,
     );
     debugLog(
       params.logger,
       "before_reset",
-      `failure details for ${sessionContext}: summaryPath=${result.summaryPath ?? "n/a"} durationMs=${result.durationMs ?? 0} transcriptChars=${result.transcriptChars ?? 0}`,
+      `failure details for ${sessionContext}: continuitySummaryPath=${result.continuitySummaryPath ?? "n/a"} durationMs=${result.durationMs ?? 0} transcriptChars=${result.transcriptChars ?? 0}`,
     );
   } catch (error) {
-    params.logger.info(`[agenr] before_reset: summary generation failed for ${sessionContext} reason=${formatErrorMessage(error)} model=unknown`);
+    params.logger.info(`[agenr] before_reset: continuity summary generation failed for ${sessionContext} reason=${formatErrorMessage(error)} model=unknown`);
     debugLog(params.logger, "before_reset", `unexpected failure for ${sessionContext}: ${formatErrorMessage(error)}`);
   }
 }

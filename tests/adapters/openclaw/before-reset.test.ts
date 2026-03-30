@@ -26,7 +26,7 @@ afterEach(async () => {
 });
 
 describe("handleAgenrBeforeReset", () => {
-  it("writes a sidecar summary file next to the outgoing session transcript", async () => {
+  it("writes a sidecar continuity summary file next to the outgoing session transcript", async () => {
     const database = await createTestDatabase();
     const logger = createLogger();
     const sessionFile = await writeSessionFile("reset-session", [
@@ -38,7 +38,7 @@ describe("handleAgenrBeforeReset", () => {
         type: "message",
         message: {
           role: "human",
-          content: "We should replace handoff brain entries with summary files.",
+          content: "We should replace handoff brain entries with continuity summary files.",
         },
       },
       {
@@ -59,7 +59,7 @@ describe("handleAgenrBeforeReset", () => {
         type: "message",
         message: {
           role: "assistant",
-          content: "Agreed. I will write a concise previous-session summary.",
+          content: "Agreed. I will write a concise previous-session continuity summary.",
         },
       },
     ]);
@@ -79,28 +79,29 @@ describe("handleAgenrBeforeReset", () => {
         logger,
         servicesPromise: Promise.resolve(
           createServices(database, {
-            summaryResponse: "The session agreed to store continuity in sidecar summary files, keep transcript-tail fallback, and avoid brain handoff entries.",
+            continuitySummaryResponse:
+              "The session agreed to store continuity in sidecar continuity summary files, keep transcript-tail fallback, and avoid brain handoff entries.",
           }),
         ),
         tracker,
       },
     );
 
-    const summaryPath = path.join(path.dirname(sessionFile), "reset-session.summary.md");
-    await expect(readFile(summaryPath, "utf8")).resolves.toContain("sidecar summary files");
+    const continuitySummaryPath = path.join(path.dirname(sessionFile), "reset-session.continuity-summary.md");
+    await expect(readFile(continuitySummaryPath, "utf8")).resolves.toContain("sidecar continuity summary files");
     expect(tracker.getLatestReset("agent:main:webchat:continuity")).toMatchObject({
       sessionId: "reset-session",
       sessionFile,
     });
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
-        "[agenr] before_reset: summary generation started for session=reset-session key=agent:main:webchat:continuity reason=reset rawMessages=4",
-        `[agenr] before_reset: summary file written for session=reset-session key=agent:main:webchat:continuity path=${summaryPath} bytes=${Buffer.byteLength("The session agreed to store continuity in sidecar summary files, keep transcript-tail fallback, and avoid brain handoff entries.\n", "utf8")}`,
+        "[agenr] before_reset: continuity summary generation started for session=reset-session key=agent:main:webchat:continuity reason=reset rawMessages=4",
+        `[agenr] before_reset: continuity summary file written for session=reset-session key=agent:main:webchat:continuity path=${continuitySummaryPath} bytes=${Buffer.byteLength("The session agreed to store continuity in sidecar continuity summary files, keep transcript-tail fallback, and avoid brain handoff entries.\n", "utf8")}`,
       ]),
     );
   });
 
-  it("skips short sessions without writing a summary file", async () => {
+  it("skips short sessions without writing a continuity summary file", async () => {
     const database = await createTestDatabase();
     const logger = createLogger();
     const sessionFile = await writeSessionFile("short-session", [
@@ -148,11 +149,11 @@ describe("handleAgenrBeforeReset", () => {
       },
     );
 
-    const summaryPath = path.join(path.dirname(sessionFile), "short-session.summary.md");
-    await expect(readFile(summaryPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    const continuitySummaryPath = path.join(path.dirname(sessionFile), "short-session.continuity-summary.md");
+    await expect(readFile(continuitySummaryPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
-        "[agenr] before_reset: summary generation skipped for session=short-session key=agent:main:webchat:short reason=too_short cleanedMessages=3",
+        "[agenr] before_reset: continuity summary generation skipped for session=short-session key=agent:main:webchat:short reason=too_short cleanedMessages=3",
       ]),
     );
   });
@@ -161,7 +162,7 @@ describe("handleAgenrBeforeReset", () => {
 function createServices(
   database: SqlDatabase,
   options: {
-    summaryResponse?: string;
+    continuitySummaryResponse?: string;
   } = {},
 ): AgenrOpenClawServices {
   const embedding: EmbeddingPort = {
@@ -188,12 +189,12 @@ function createServices(
   };
   const openClaw = createOpenClawHost({
     runEmbeddedPiAgentImplementation: async () => {
-      if (options.summaryResponse === undefined) {
-        throw new Error("Embedded summary runner unavailable.");
+      if (options.continuitySummaryResponse === undefined) {
+        throw new Error("Embedded continuity summary runner unavailable.");
       }
 
       return {
-        payloads: [{ text: options.summaryResponse ?? "" }],
+        payloads: [{ text: options.continuitySummaryResponse ?? "" }],
         meta: {
           durationMs: 1,
         },

@@ -4,19 +4,19 @@ import path from "node:path";
 import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
 
 /**
- * Structured summary-file lookup facts for one predecessor session.
+ * Structured continuity summary lookup facts for one predecessor session.
  */
-export interface OpenClawSessionSummaryFile {
+export interface OpenClawContinuitySummaryFile {
   /**
    * Session UUID derived from the transcript filename.
    */
   sessionId: string;
   /**
-   * Absolute path to the sidecar Markdown summary file.
+   * Absolute path to the sidecar Markdown continuity summary file.
    */
-  summaryPath: string;
+  continuitySummaryPath: string;
   /**
-   * Summary Markdown contents.
+   * Continuity summary Markdown contents.
    */
   content: string;
 }
@@ -34,66 +34,72 @@ export interface OpenClawSessionSummaryFile {
 export function deriveOpenClawSessionIdFromFilePath(sessionFile: string, logger?: PluginLogger): string | undefined {
   const normalizedSessionFile = sessionFile.trim();
   if (normalizedSessionFile.length === 0) {
-    debugLog(logger, "summary-reader", "cannot derive session id from empty session file path");
+    debugLog(logger, "continuity-summary-reader", "cannot derive session id from empty session file path");
     return undefined;
   }
 
   const fileName = path.basename(normalizedSessionFile);
   const sessionId = fileName.replace(/\.jsonl(?:\..*)?$/i, "").trim();
-  debugLog(logger, "summary-reader", `derived session id "${sessionId || "<empty>"}" from file=${normalizedSessionFile}`);
+  debugLog(logger, "continuity-summary-reader", `derived session id "${sessionId || "<empty>"}" from file=${normalizedSessionFile}`);
 
   return sessionId.length > 0 ? sessionId : undefined;
 }
 
 /**
- * Resolves the sidecar Markdown summary path for a session transcript file.
+ * Resolves the sidecar Markdown continuity summary path for a session
+ * transcript file.
  *
  * @param sessionFile - Absolute or relative session transcript path.
  * @param logger - Optional plugin logger used for debug diagnostics.
- * @returns Absolute summary path, or `undefined` when session ID derivation fails.
+ * @returns Absolute continuity summary path, or `undefined` when session ID
+ *   derivation fails.
  */
-export function resolveOpenClawSessionSummaryPath(sessionFile: string, logger?: PluginLogger): string | undefined {
+export function resolveOpenClawContinuitySummaryPath(sessionFile: string, logger?: PluginLogger): string | undefined {
   const normalizedSessionFile = sessionFile.trim();
   const sessionId = deriveOpenClawSessionIdFromFilePath(normalizedSessionFile, logger);
   if (!sessionId) {
     return undefined;
   }
 
-  const summaryPath = path.join(path.dirname(normalizedSessionFile), `${sessionId}.summary.md`);
-  debugLog(logger, "summary-reader", `resolved summary path for session=${sessionId}: ${summaryPath}`);
-  return summaryPath;
+  const continuitySummaryPath = path.join(path.dirname(normalizedSessionFile), `${sessionId}.continuity-summary.md`);
+  debugLog(logger, "continuity-summary-reader", `resolved continuity summary path for session=${sessionId}: ${continuitySummaryPath}`);
+  return continuitySummaryPath;
 }
 
 /**
- * Loads a sidecar session summary when one exists next to a transcript file.
+ * Loads a sidecar continuity summary when one exists next to a transcript file.
  *
  * @param sessionFile - Absolute or relative predecessor transcript path.
  * @param logger - Optional plugin logger used for debug diagnostics.
- * @returns Summary lookup facts, or `null` when the file is absent.
+ * @returns Continuity summary lookup facts, or `null` when the file is absent.
  */
-export async function readOpenClawSessionSummaryFile(sessionFile: string, logger?: PluginLogger): Promise<OpenClawSessionSummaryFile | null> {
-  const summaryPath = resolveOpenClawSessionSummaryPath(sessionFile, logger);
+export async function readOpenClawContinuitySummaryFile(sessionFile: string, logger?: PluginLogger): Promise<OpenClawContinuitySummaryFile | null> {
+  const continuitySummaryPath = resolveOpenClawContinuitySummaryPath(sessionFile, logger);
   const sessionId = deriveOpenClawSessionIdFromFilePath(sessionFile, logger);
-  if (!summaryPath || !sessionId) {
+  if (!continuitySummaryPath || !sessionId) {
     return null;
   }
 
   try {
-    const content = (await fs.readFile(summaryPath, "utf8")).trim();
-    if (content.length === 0) {
-      debugLog(logger, "summary-reader", `summary file is empty for session=${sessionId} path=${summaryPath}`);
+    const continuitySummaryContent = (await fs.readFile(continuitySummaryPath, "utf8")).trim();
+    if (continuitySummaryContent.length === 0) {
+      debugLog(logger, "continuity-summary-reader", `continuity summary file is empty for session=${sessionId} path=${continuitySummaryPath}`);
       return null;
     }
 
-    debugLog(logger, "summary-reader", `loaded summary file for session=${sessionId} path=${summaryPath} chars=${content.length}`);
+    debugLog(
+      logger,
+      "continuity-summary-reader",
+      `loaded continuity summary file for session=${sessionId} path=${continuitySummaryPath} chars=${continuitySummaryContent.length}`,
+    );
     return {
       sessionId,
-      summaryPath,
-      content,
+      continuitySummaryPath,
+      content: continuitySummaryContent,
     };
   } catch (error) {
     if (isFileNotFound(error)) {
-      debugLog(logger, "summary-reader", `summary file missing for session=${sessionId} path=${summaryPath}`);
+      debugLog(logger, "continuity-summary-reader", `continuity summary file missing for session=${sessionId} path=${continuitySummaryPath}`);
       return null;
     }
 

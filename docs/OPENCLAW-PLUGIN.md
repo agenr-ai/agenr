@@ -9,7 +9,7 @@ Today it plays four roles at once:
 - OpenClaw memory plugin entrypoint
 - OpenClaw tool adapter for five agenr tools
 - session continuity adapter around OpenClaw lifecycle hooks
-- OpenClaw transcript parser reused by ingest and summary generation
+- OpenClaw transcript parser reused by ingest and continuity summary generation
 
 This document describes the code as it exists now, not just the intended flow.
 
@@ -23,16 +23,16 @@ This document describes the code as it exists now, not just the intended flow.
 - `src/adapters/openclaw/format/prompt-section.ts` - static system-prompt guidance about when to use agenr tools.
 - `src/adapters/openclaw/format/recall-format.ts` - session-start prompt rendering for recalled core memory.
 - `src/adapters/openclaw/hooks/before-prompt-build.ts` - session-start recall plus predecessor continuity injection.
-- `src/adapters/openclaw/hooks/before-reset.ts` - outgoing-session summary generation trigger.
+- `src/adapters/openclaw/hooks/before-reset.ts` - outgoing-session continuity summary generation trigger.
 - `src/adapters/openclaw/session/state.ts` - in-process continuity tracker for first-run suppression and predecessor lookup.
 - `src/adapters/openclaw/session/predecessor.ts` - tracked predecessor resolution plus TUI `sessions.json` fallback.
-- `src/adapters/openclaw/session/summary.ts` and `src/adapters/openclaw/session/summary-reader.ts` - sidecar summary generation, reuse, and file lookup.
+- `src/adapters/openclaw/session/continuity-summary.ts` and `src/adapters/openclaw/session/continuity-summary-reader.ts` - sidecar continuity summary generation, reuse, and file lookup.
 - `src/adapters/openclaw/session/tui-lane.ts` and `src/adapters/openclaw/session/sessions-store-reader.ts` - TUI lane parsing and `sessions.json` normalization.
 - `src/adapters/openclaw/memory/runtime.ts` - newer OpenClaw memory runtime and status surface.
 - `src/adapters/openclaw/memory/flush-plan.ts` - deliberate pass-through flush-plan behavior.
-- `src/adapters/openclaw/transcript/*.ts` - OpenClaw JSONL transcript normalization used by ingest and summaries.
+- `src/adapters/openclaw/transcript/*.ts` - OpenClaw JSONL transcript normalization used by ingest and continuity summaries.
 - `src/adapters/db/openclaw-plugin-queries.ts` - OpenClaw-specific DB lookups for core-memory injection, trace, subject lookup, and status snapshots.
-- `tests/adapters/openclaw/*.test.ts` and `tests/adapters/openclaw/session/*.test.ts` - coverage for config, runtime wiring, hooks, tools, transcript parsing, summaries, flush-plan behavior, and predecessor tracking.
+- `tests/adapters/openclaw/*.test.ts` and `tests/adapters/openclaw/session/*.test.ts` - coverage for config, runtime wiring, hooks, tools, transcript parsing, continuity summaries, flush-plan behavior, and predecessor tracking.
 
 ## Important architectural nuance
 
@@ -49,8 +49,8 @@ Some current-runtime choices matter:
 
 - shared services are created once per plugin process and reused across tools and hooks
 - session-start prompt injection is narrow: it injects active `core` entries plus predecessor continuity, not a broad semantic recall pass
-- predecessor continuity is file-based, using sidecar summary files next to transcript JSONL, not handoff entries stored back into agenr
-- summary generation uses OpenClaw's embedded agent runner and the active OpenClaw agent model, not agenr's own LLM config
+- predecessor continuity is file-based, using sidecar continuity summary files next to transcript JSONL, not handoff entries stored back into agenr
+- continuity summary generation uses OpenClaw's embedded agent runner and the active OpenClaw agent model, not agenr's own LLM config
 - embeddings still come from agenr config and are required for `agenr_recall`
 - the newer memory runtime is mostly a status and capability bridge: `sync()` is a no-op and the flush-plan hook returns `null`
 
@@ -202,22 +202,22 @@ It resolves predecessors in this order:
 
 The TUI fallback only applies to session keys shaped like `agent:<agentId>:<lane>` where the lane starts with `tui`. It normalizes UUID-suffixed lanes like `tui-<uuid>` back to a stable `tui` lane, filters to the same agent and lane family, excludes the current session, and picks the candidate with the newest `updatedAt`.
 
-#### Previous-session summary loading
+#### Previous-session continuity summary loading
 
-Once a predecessor session file is found, the adapter tries to load a sidecar summary from:
+Once a predecessor session file is found, the adapter tries to load a sidecar continuity summary from:
 
 ```text
-<session-dir>/<session-id>.summary.md
+<session-dir>/<session-id>.continuity-summary.md
 ```
 
 If that file exists and is non-empty, it is injected under `## Previous session summary`.
 
-If the file is missing, `before_prompt_build` may generate it on demand by calling `generateAndWriteOpenClawSessionSummary(...)`.
+If the file is missing, `before_prompt_build` may generate it on demand by calling `generateAndWriteOpenClawContinuitySummary(...)`.
 
 Important runtime details:
 
 - read-time generation is wrapped in an outer `10_000 ms` timeout
-- a timeout or generation failure is swallowed and results in no summary section
+- a timeout or generation failure is swallowed and results in no continuity summary section
 - if generation succeeds, the sidecar file is written and reused on later starts
 
 #### Recent transcript tail
@@ -230,13 +230,13 @@ Current limits:
 - rendered as `U:` and `A:` lines
 - capped to `1_800` characters
 
-This recent-session section is a fallback continuity layer when the summary is missing or too lossy.
+This recent-session section is a fallback continuity layer when the continuity summary is missing or too lossy.
 
 #### Final prompt mutation
 
 The final `prependContext` is the concatenation of:
 
-- previous-session summary, when available
+- previous-session continuity summary, when available
 - recent transcript tail, when available
 - `Agenr Session Recall`, when any core entries exist
 
@@ -244,7 +244,7 @@ If all three are empty, the hook returns `undefined`.
 
 Any unexpected failure in the whole hook is logged and swallowed so prompt building can continue.
 
-### 2. Session reset and sidecar summary generation
+### 2. Session reset and sidecar continuity summary generation
 
 `before_reset` is responsible for capturing outgoing-session continuity before OpenClaw clears the lane.
 
@@ -252,30 +252,30 @@ The hook does three things:
 
 1. validate that `event.sessionFile` exists
 2. remember the outgoing session file in `SessionStartTracker.rememberReset(...)`
-3. try to write a sidecar summary next to that transcript
+3. try to write a sidecar continuity summary next to that transcript
 
 If `sessionFile` is missing, the hook logs a skip and returns.
 
-#### Summary generation pipeline
+#### Continuity summary generation pipeline
 
-`writeOpenClawSessionSummary()` is currently a thin wrapper around `generateAndWriteOpenClawSessionSummary(...)`.
+`writeOpenClawContinuitySummary()` is currently a thin wrapper around `generateAndWriteOpenClawContinuitySummary(...)`.
 
 That generation pipeline does the following:
 
-1. derive `<session-id>.summary.md` from the transcript filename
+1. derive `<session-id>.continuity-summary.md` from the transcript filename
 2. parse the transcript through the OpenClaw transcript parser
 3. drop empty normalized messages
 4. skip the run when there are fewer than `4` cleaned messages
-5. render a summary prompt from the cleaned transcript
+5. render a continuity summary prompt from the cleaned transcript
 6. cap transcript text to `14_000` characters while preserving both the start and end
 7. resolve the OpenClaw agent, provider, and model from host config
 8. call `runEmbeddedPiAgent(...)` with tools disabled and a `15_000 ms` timeout
 9. strip a duplicated top-level Markdown heading from the response
-10. write the normalized summary to the sidecar file
+10. write the normalized continuity summary to the sidecar file
 
 Two design choices matter here:
 
-- the summary run uses OpenClaw's configured model and auth, not agenr's own LLM client
+- the continuity summary run uses OpenClaw's configured model and auth, not agenr's own LLM client
 - the run uses a temporary session file under a temp directory and removes that directory afterward
 
 Current skip and failure modes include:
@@ -438,9 +438,9 @@ The adapter has direct tests for:
 - tool execution and logging
 - transcript parsing and filtering
 - session-start dedup and predecessor injection
-- reset-time summary writing
+- reset-time continuity summary writing
 - TUI predecessor fallback
-- summary generation through the embedded OpenClaw runner
+- continuity summary generation through the embedded OpenClaw runner
 - session-state tracking
 - pass-through flush-plan behavior
 
