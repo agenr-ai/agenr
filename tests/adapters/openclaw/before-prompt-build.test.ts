@@ -154,6 +154,9 @@ describe("handleAgenrBeforePromptBuild", () => {
     const executeSpy = vi.spyOn(database, "execute");
     const logger = createLogger();
     const recall = createObservedRecallPorts();
+    const { workspaceDir, sessionsDir } = await createWorkspaceWithSessions();
+    const currentSessionId = "session-tui-isolated";
+    const currentSessionKey = "agent:main:tui-423e4567-e89b-12d3-a456-426614174000";
     const coreEntry = createEntry({
       type: "decision",
       subject: "session isolation rule",
@@ -181,7 +184,7 @@ describe("handleAgenrBeforePromptBuild", () => {
     await database.insertEntry(relevantEntry, createEmbedding(1, 1), "relevant-workflow");
     await database.insertEntry(recentEntry, createEmbedding(2, 1), "recent-workflow");
 
-    const predecessorFile = await writeSessionFile("predecessor-session", [
+    const predecessorFile = await writeSessionFileToDirectory(sessionsDir, "predecessor-session", [
       {
         type: "session",
         id: "predecessor-session",
@@ -219,19 +222,18 @@ describe("handleAgenrBeforePromptBuild", () => {
         },
       },
     ]);
+    await writeSessionsJson(sessionsDir, {
+      "agent:main:main": {
+        sessionId: "predecessor-session",
+        sessionFile: "predecessor-session.jsonl",
+        updatedAt: 1_711_612_345_678,
+      },
+    });
     await writeFile(
       path.join(path.dirname(predecessorFile), "predecessor-session.continuity-summary.md"),
       "The session settled on file-based continuity. Continuity summary files live next to transcript JSONL, transcript tails remain as fallback, and no handoff entries go into the brain.\n",
       "utf8",
     );
-
-    const tracker = createSessionStartTracker();
-    tracker.rememberReset("agent:main:webchat:isolated", {
-      sessionId: "predecessor-session",
-      sessionFile: predecessorFile,
-      recordedAt: "2026-03-28T10:05:00.000Z",
-    });
-    tracker.rememberSessionStart("session-2", "agent:main:webchat:isolated", "predecessor-session");
 
     const result = await handleAgenrBeforePromptBuild(
       {
@@ -239,8 +241,10 @@ describe("handleAgenrBeforePromptBuild", () => {
         messages: [],
       },
       {
-        sessionId: "session-2",
-        sessionKey: "agent:main:webchat:isolated",
+        agentId: "main",
+        sessionId: currentSessionId,
+        sessionKey: currentSessionKey,
+        workspaceDir,
       },
       {
         logger,
@@ -250,7 +254,7 @@ describe("handleAgenrBeforePromptBuild", () => {
             recall,
           }),
         ),
-        tracker,
+        tracker: createSessionStartTracker(),
       },
     );
 
@@ -270,9 +274,10 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(listExecutedSql(executeSpy.mock.calls).some((sql) => sql.includes("expiry != 'core'"))).toBe(false);
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
-        "[agenr] session-start predecessor continuity summary found for session=session-2 key=agent:main:webchat:isolated path=" +
+        `[agenr] predecessor: TUI fallback predecessor found for session=${currentSessionId} key=${currentSessionKey} predecessorKey=agent:main:main predecessor=${predecessorFile}`,
+        `[agenr] session-start predecessor continuity summary found for session=${currentSessionId} key=${currentSessionKey} path=` +
           path.join(path.dirname(predecessorFile), "predecessor-session.continuity-summary.md"),
-        "[agenr] session-start recall: 1 core entries for session=session-2 key=agent:main:webchat:isolated",
+        `[agenr] session-start recall: 1 core entries for session=${currentSessionId} key=${currentSessionKey}`,
       ]),
     );
   });
@@ -280,8 +285,11 @@ describe("handleAgenrBeforePromptBuild", () => {
   it("injects only predecessor continuity when no core entries exist", async () => {
     const database = await createTestDatabase();
     const logger = createLogger();
+    const { workspaceDir, sessionsDir } = await createWorkspaceWithSessions();
+    const currentSessionId = "session-tui-continuity";
+    const currentSessionKey = "agent:main:tui-523e4567-e89b-12d3-a456-426614174000";
 
-    const predecessorFile = await writeSessionFile("predecessor-session", [
+    const predecessorFile = await writeSessionFileToDirectory(sessionsDir, "predecessor-session", [
       {
         type: "session",
         id: "predecessor-session",
@@ -303,19 +311,18 @@ describe("handleAgenrBeforePromptBuild", () => {
         },
       },
     ]);
+    await writeSessionsJson(sessionsDir, {
+      "agent:main:main": {
+        sessionId: "predecessor-session",
+        sessionFile: "predecessor-session.jsonl",
+        updatedAt: 1_711_612_345_678,
+      },
+    });
     await writeFile(
       path.join(path.dirname(predecessorFile), "predecessor-session.continuity-summary.md"),
       "The previous session decided continuity should come from the sidecar continuity summary and transcript tail when needed.\n",
       "utf8",
     );
-
-    const tracker = createSessionStartTracker();
-    tracker.rememberReset("agent:main:webchat:continuity", {
-      sessionId: "predecessor-session",
-      sessionFile: predecessorFile,
-      recordedAt: "2026-03-28T10:05:00.000Z",
-    });
-    tracker.rememberSessionStart("session-3", "agent:main:webchat:continuity", "predecessor-session");
 
     const result = await handleAgenrBeforePromptBuild(
       {
@@ -323,13 +330,15 @@ describe("handleAgenrBeforePromptBuild", () => {
         messages: [],
       },
       {
-        sessionId: "session-3",
-        sessionKey: "agent:main:webchat:continuity",
+        agentId: "main",
+        sessionId: currentSessionId,
+        sessionKey: currentSessionKey,
+        workspaceDir,
       },
       {
         logger,
         servicesPromise: Promise.resolve(createServices(database)),
-        tracker,
+        tracker: createSessionStartTracker(),
       },
     );
 
@@ -339,9 +348,10 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(result?.prependContext).not.toContain("Core Memory");
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
-        "[agenr] session-start predecessor continuity summary found for session=session-3 key=agent:main:webchat:continuity path=" +
+        `[agenr] predecessor: TUI fallback predecessor found for session=${currentSessionId} key=${currentSessionKey} predecessorKey=agent:main:main predecessor=${predecessorFile}`,
+        `[agenr] session-start predecessor continuity summary found for session=${currentSessionId} key=${currentSessionKey} path=` +
           path.join(path.dirname(predecessorFile), "predecessor-session.continuity-summary.md"),
-        "[agenr] session-start recall: 0 core entries for session=session-3 key=agent:main:webchat:continuity",
+        `[agenr] session-start recall: 0 core entries for session=${currentSessionId} key=${currentSessionKey}`,
       ]),
     );
   });
@@ -349,8 +359,11 @@ describe("handleAgenrBeforePromptBuild", () => {
   it("renders the recent-session tail without OpenClaw metadata noise", async () => {
     const database = await createTestDatabase();
     const logger = createLogger();
+    const { workspaceDir, sessionsDir } = await createWorkspaceWithSessions();
+    const currentSessionId = "session-tui-metadata-tail";
+    const currentSessionKey = "agent:main:tui-623e4567-e89b-12d3-a456-426614174000";
 
-    const predecessorFile = await writeSessionFile("predecessor-session", [
+    const _predecessorFile = await writeSessionFileToDirectory(sessionsDir, "predecessor-session", [
       {
         type: "session",
         id: "predecessor-session",
@@ -382,14 +395,13 @@ describe("handleAgenrBeforePromptBuild", () => {
         },
       },
     ]);
-
-    const tracker = createSessionStartTracker();
-    tracker.rememberReset("agent:main:webchat:metadata-tail", {
-      sessionId: "predecessor-session",
-      sessionFile: predecessorFile,
-      recordedAt: "2026-03-28T18:23:00.000Z",
+    await writeSessionsJson(sessionsDir, {
+      "agent:main:main": {
+        sessionId: "predecessor-session",
+        sessionFile: "predecessor-session.jsonl",
+        updatedAt: 1_711_612_345_678,
+      },
     });
-    tracker.rememberSessionStart("session-4", "agent:main:webchat:metadata-tail", "predecessor-session");
 
     const result = await handleAgenrBeforePromptBuild(
       {
@@ -397,13 +409,15 @@ describe("handleAgenrBeforePromptBuild", () => {
         messages: [],
       },
       {
-        sessionId: "session-4",
-        sessionKey: "agent:main:webchat:metadata-tail",
+        agentId: "main",
+        sessionId: currentSessionId,
+        sessionKey: currentSessionKey,
+        workspaceDir,
       },
       {
         logger,
         servicesPromise: Promise.resolve(createServices(database)),
-        tracker,
+        tracker: createSessionStartTracker(),
       },
     );
 
@@ -438,7 +452,7 @@ describe("handleAgenrBeforePromptBuild", () => {
         timestamp: "2026-03-28T10:01:00.000Z",
         message: {
           role: "assistant",
-          content: "We will scan sessions.json for the most recent same-agent TUI lane when no reset record exists.",
+          content: "We will scan sessions.json for the most recent same-agent TUI lane when reset hooks are unavailable.",
         },
       },
       {
@@ -547,7 +561,7 @@ describe("handleAgenrBeforePromptBuild", () => {
         timestamp: "2026-03-28T10:01:00.000Z",
         message: {
           role: "assistant",
-          content: "We will scan sessions.json for the most recent same-agent TUI lane when no reset record exists.",
+          content: "We will scan sessions.json for the most recent same-agent TUI lane when reset hooks are unavailable.",
         },
       },
     ]);
@@ -616,7 +630,10 @@ describe("handleAgenrBeforePromptBuild", () => {
   it("falls back to the transcript tail when read-time continuity summary generation fails", async () => {
     const database = await createTestDatabase();
     const logger = createLogger();
-    const predecessorFile = await writeSessionFile("predecessor-session", [
+    const { workspaceDir, sessionsDir } = await createWorkspaceWithSessions();
+    const currentSessionId = "session-tui-failure";
+    const currentSessionKey = "agent:main:tui-723e4567-e89b-12d3-a456-426614174000";
+    const predecessorFile = await writeSessionFileToDirectory(sessionsDir, "predecessor-session", [
       {
         type: "session",
         id: "predecessor-session",
@@ -654,14 +671,14 @@ describe("handleAgenrBeforePromptBuild", () => {
         },
       },
     ]);
-    const continuitySummaryPath = path.join(path.dirname(predecessorFile), "predecessor-session.continuity-summary.md");
-    const tracker = createSessionStartTracker();
-    tracker.rememberReset("agent:main:webchat:failure", {
-      sessionId: "predecessor-session",
-      sessionFile: predecessorFile,
-      recordedAt: "2026-03-28T11:04:00.000Z",
+    await writeSessionsJson(sessionsDir, {
+      "agent:main:main": {
+        sessionId: "predecessor-session",
+        sessionFile: "predecessor-session.jsonl",
+        updatedAt: 1_711_612_345_678,
+      },
     });
-    tracker.rememberSessionStart("session-5", "agent:main:webchat:failure", "predecessor-session");
+    const continuitySummaryPath = path.join(path.dirname(predecessorFile), "predecessor-session.continuity-summary.md");
     const { runEmbeddedPiAgent: continuitySummaryRunner, runEmbeddedPiAgentSpy } = createContinuitySummaryRunner({
       implementation: async () => {
         throw new Error("continuity summary backend exploded");
@@ -674,13 +691,15 @@ describe("handleAgenrBeforePromptBuild", () => {
         messages: [],
       },
       {
-        sessionId: "session-5",
-        sessionKey: "agent:main:webchat:failure",
+        agentId: "main",
+        sessionId: currentSessionId,
+        sessionKey: currentSessionKey,
+        workspaceDir,
       },
       {
         logger,
         servicesPromise: Promise.resolve(createServices(database, { continuitySummaryRunImplementation: continuitySummaryRunner })),
-        tracker,
+        tracker: createSessionStartTracker(),
       },
     );
 
@@ -691,11 +710,12 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(runEmbeddedPiAgentSpy).toHaveBeenCalledTimes(1);
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
-        "[agenr] session-start read-time continuity summary generation triggered for session=session-5 key=agent:main:webchat:failure predecessor=" +
+        `[agenr] predecessor: TUI fallback predecessor found for session=${currentSessionId} key=${currentSessionKey} predecessorKey=agent:main:main predecessor=${predecessorFile}`,
+        `[agenr] session-start read-time continuity summary generation triggered for session=${currentSessionId} key=${currentSessionKey} predecessor=` +
           predecessorFile +
           " reason=no_existing_continuity_summary",
         expect.stringContaining(
-          "[agenr] session-start read-time continuity summary generation failed for session=session-5 key=agent:main:webchat:failure predecessor=" +
+          `[agenr] session-start read-time continuity summary generation failed for session=${currentSessionId} key=${currentSessionKey} predecessor=` +
             predecessorFile +
             " reason=continuity summary backend exploded",
         ),
@@ -708,7 +728,10 @@ describe("handleAgenrBeforePromptBuild", () => {
 
     const database = await createTestDatabase();
     const logger = createLogger();
-    const predecessorFile = await writeSessionFile("predecessor-session", [
+    const { workspaceDir, sessionsDir } = await createWorkspaceWithSessions();
+    const currentSessionId = "session-tui-timeout";
+    const currentSessionKey = "agent:main:tui-823e4567-e89b-12d3-a456-426614174000";
+    const predecessorFile = await writeSessionFileToDirectory(sessionsDir, "predecessor-session", [
       {
         type: "session",
         id: "predecessor-session",
@@ -746,14 +769,14 @@ describe("handleAgenrBeforePromptBuild", () => {
         },
       },
     ]);
-    const continuitySummaryPath = path.join(path.dirname(predecessorFile), "predecessor-session.continuity-summary.md");
-    const tracker = createSessionStartTracker();
-    tracker.rememberReset("agent:main:webchat:timeout", {
-      sessionId: "predecessor-session",
-      sessionFile: predecessorFile,
-      recordedAt: "2026-03-28T12:04:00.000Z",
+    await writeSessionsJson(sessionsDir, {
+      "agent:main:main": {
+        sessionId: "predecessor-session",
+        sessionFile: "predecessor-session.jsonl",
+        updatedAt: 1_711_612_345_678,
+      },
     });
-    tracker.rememberSessionStart("session-6", "agent:main:webchat:timeout", "predecessor-session");
+    const continuitySummaryPath = path.join(path.dirname(predecessorFile), "predecessor-session.continuity-summary.md");
     let markContinuitySummaryStarted: (() => void) | undefined;
     const continuitySummaryStarted = new Promise<void>((resolve) => {
       markContinuitySummaryStarted = resolve;
@@ -779,13 +802,15 @@ describe("handleAgenrBeforePromptBuild", () => {
         messages: [],
       },
       {
-        sessionId: "session-6",
-        sessionKey: "agent:main:webchat:timeout",
+        agentId: "main",
+        sessionId: currentSessionId,
+        sessionKey: currentSessionKey,
+        workspaceDir,
       },
       {
         logger,
         servicesPromise: Promise.resolve(createServices(database, { continuitySummaryRunImplementation: continuitySummaryRunner })),
-        tracker,
+        tracker: createSessionStartTracker(),
       },
     );
     await continuitySummaryStarted;
@@ -798,10 +823,11 @@ describe("handleAgenrBeforePromptBuild", () => {
     await expect(readFile(continuitySummaryPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
-        "[agenr] session-start read-time continuity summary generation triggered for session=session-6 key=agent:main:webchat:timeout predecessor=" +
+        `[agenr] predecessor: TUI fallback predecessor found for session=${currentSessionId} key=${currentSessionKey} predecessorKey=agent:main:main predecessor=${predecessorFile}`,
+        `[agenr] session-start read-time continuity summary generation triggered for session=${currentSessionId} key=${currentSessionKey} predecessor=` +
           predecessorFile +
           " reason=no_existing_continuity_summary",
-        "[agenr] session-start read-time continuity summary generation failed for session=session-6 key=agent:main:webchat:timeout predecessor=" +
+        `[agenr] session-start read-time continuity summary generation failed for session=${currentSessionId} key=${currentSessionKey} predecessor=` +
           predecessorFile +
           " reason=timeout elapsedMs=20000",
       ]),
@@ -811,7 +837,10 @@ describe("handleAgenrBeforePromptBuild", () => {
   it("skips read-time continuity summary generation for short predecessor sessions", async () => {
     const database = await createTestDatabase();
     const logger = createLogger();
-    const predecessorFile = await writeSessionFile("predecessor-session", [
+    const { workspaceDir, sessionsDir } = await createWorkspaceWithSessions();
+    const currentSessionId = "session-tui-short-read-time";
+    const currentSessionKey = "agent:main:tui-923e4567-e89b-12d3-a456-426614174000";
+    const predecessorFile = await writeSessionFileToDirectory(sessionsDir, "predecessor-session", [
       {
         type: "session",
         id: "predecessor-session",
@@ -841,14 +870,14 @@ describe("handleAgenrBeforePromptBuild", () => {
         },
       },
     ]);
-    const continuitySummaryPath = path.join(path.dirname(predecessorFile), "predecessor-session.continuity-summary.md");
-    const tracker = createSessionStartTracker();
-    tracker.rememberReset("agent:main:webchat:short-read-time", {
-      sessionId: "predecessor-session",
-      sessionFile: predecessorFile,
-      recordedAt: "2026-03-28T13:03:00.000Z",
+    await writeSessionsJson(sessionsDir, {
+      "agent:main:main": {
+        sessionId: "predecessor-session",
+        sessionFile: "predecessor-session.jsonl",
+        updatedAt: 1_711_612_345_678,
+      },
     });
-    tracker.rememberSessionStart("session-7", "agent:main:webchat:short-read-time", "predecessor-session");
+    const continuitySummaryPath = path.join(path.dirname(predecessorFile), "predecessor-session.continuity-summary.md");
     const { runEmbeddedPiAgent: continuitySummaryRunner, runEmbeddedPiAgentSpy } = createContinuitySummaryRunner({
       response: "This should never be requested for short sessions.",
     });
@@ -859,13 +888,15 @@ describe("handleAgenrBeforePromptBuild", () => {
         messages: [],
       },
       {
-        sessionId: "session-7",
-        sessionKey: "agent:main:webchat:short-read-time",
+        agentId: "main",
+        sessionId: currentSessionId,
+        sessionKey: currentSessionKey,
+        workspaceDir,
       },
       {
         logger,
         servicesPromise: Promise.resolve(createServices(database, { continuitySummaryRunImplementation: continuitySummaryRunner })),
-        tracker,
+        tracker: createSessionStartTracker(),
       },
     );
 
@@ -876,10 +907,11 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(runEmbeddedPiAgentSpy).not.toHaveBeenCalled();
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
-        "[agenr] session-start read-time continuity summary generation triggered for session=session-7 key=agent:main:webchat:short-read-time predecessor=" +
+        `[agenr] predecessor: TUI fallback predecessor found for session=${currentSessionId} key=${currentSessionKey} predecessorKey=agent:main:main predecessor=${predecessorFile}`,
+        `[agenr] session-start read-time continuity summary generation triggered for session=${currentSessionId} key=${currentSessionKey} predecessor=` +
           predecessorFile +
           " reason=no_existing_continuity_summary",
-        "[agenr] session-start read-time continuity summary generation skipped for session=session-7 key=agent:main:webchat:short-read-time predecessor=" +
+        `[agenr] session-start read-time continuity summary generation skipped for session=${currentSessionId} key=${currentSessionKey} predecessor=` +
           predecessorFile +
           " reason=too_short path=" +
           continuitySummaryPath,
@@ -1099,12 +1131,6 @@ async function createTestDatabase(): Promise<SqlDatabase> {
   return database;
 }
 
-async function writeSessionFile(sessionId: string, lines: object[]): Promise<string> {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "agenr-openclaw-session-"));
-  tempPaths.push(directory);
-  return writeSessionFileToDirectory(directory, sessionId, lines);
-}
-
 async function createWorkspaceWithSessions(): Promise<{ workspaceDir: string; sessionsDir: string }> {
   const sandboxRoot = await mkdtemp(path.join(os.tmpdir(), "agenr-openclaw-sandbox-"));
   tempPaths.push(sandboxRoot);
@@ -1116,6 +1142,10 @@ async function createWorkspaceWithSessions(): Promise<{ workspaceDir: string; se
   await mkdir(workspaceDir, { recursive: true });
   await mkdir(sessionsDir, { recursive: true });
   return { workspaceDir, sessionsDir };
+}
+
+async function writeSessionsJson(sessionsDir: string, entries: Record<string, Record<string, unknown>>): Promise<void> {
+  await writeFile(path.join(sessionsDir, "sessions.json"), `${JSON.stringify(entries, null, 2)}\n`, "utf8");
 }
 
 async function writeSessionFileToDirectory(directory: string, sessionId: string, lines: object[]): Promise<string> {

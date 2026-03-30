@@ -4,7 +4,6 @@ import { registerAgenrOpenClawTools } from "./tools.js";
 import { coerceAgenrOpenClawPluginConfig, createAgenrOpenClawPluginConfigSchema } from "./config.js";
 import { buildAgenrMemoryPromptSection } from "./format/prompt-section.js";
 import { handleAgenrBeforePromptBuild } from "./hooks/before-prompt-build.js";
-import { handleAgenrBeforeReset } from "./hooks/before-reset.js";
 import { buildAgenrMemoryFlushPlan } from "./memory/flush-plan.js";
 import { createAgenrMemoryRuntime } from "./memory/runtime.js";
 import { createAgenrOpenClawServices } from "./runtime.js";
@@ -36,13 +35,6 @@ export default definePluginEntry({
 
     api.on("before_prompt_build", (event, ctx) =>
       handleAgenrBeforePromptBuild(event, ctx, {
-        logger: api.logger,
-        servicesPromise,
-        tracker,
-      }),
-    );
-    api.on("before_reset", (event, ctx) =>
-      handleAgenrBeforeReset(event, ctx, {
         logger: api.logger,
         servicesPromise,
         tracker,

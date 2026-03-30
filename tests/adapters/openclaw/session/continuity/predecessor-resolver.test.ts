@@ -257,23 +257,24 @@ describe("resolveOpenClawSessionPredecessor", () => {
     });
   });
 
-  it("keeps the primary tracker path for TUI resets without activating fallback", async () => {
+  it("prefers a session_start resumedFrom match from sessions.json over lane ordering", async () => {
     const { workspaceDir, sessionsDir } = await createWorkspaceWithSessions();
     await writeSessionJsonl(sessionsDir, "stale-fallback");
+    await writeSessionJsonl(sessionsDir, "tracked-predecessor");
     await writeSessionsJson(sessionsDir, {
       "agent:main:tui-1": {
         sessionId: "stale-fallback",
         sessionFile: "stale-fallback.jsonl",
         updatedAt: 5_000,
       },
+      "agent:main:tui-2": {
+        sessionId: "tracked-predecessor",
+        sessionFile: "tracked-predecessor.jsonl",
+        updatedAt: 1_000,
+      },
     });
 
     const tracker = createSessionStartTracker();
-    tracker.rememberReset("agent:main:tui-423e4567-e89b-12d3-a456-426614174000", {
-      sessionId: "tracked-predecessor",
-      sessionFile: "/tmp/tracked-predecessor.jsonl",
-      recordedAt: "2026-03-28T10:00:00.000Z",
-    });
     tracker.rememberSessionStart("current-session", "agent:main:tui-423e4567-e89b-12d3-a456-426614174000", "tracked-predecessor");
 
     const logger = createLogger();
@@ -293,9 +294,14 @@ describe("resolveOpenClawSessionPredecessor", () => {
 
     expect(result).toEqual({
       sessionId: "tracked-predecessor",
-      sessionFile: "/tmp/tracked-predecessor.jsonl",
+      sessionFile: path.join(sessionsDir, "tracked-predecessor.jsonl"),
     });
-    expect(getMessages(logger.info).some((message) => message.includes("TUI fallback activated"))).toBe(false);
+    expect(getMessages(logger.info)).toEqual(
+      expect.arrayContaining([
+        "[agenr] predecessor: TUI fallback activated for session=current-session key=agent:main:tui-423e4567-e89b-12d3-a456-426614174000 sessionKey=agent:main:tui-423e4567-e89b-12d3-a456-426614174000 stableLane=tui",
+        `[agenr] predecessor: TUI fallback predecessor found for session=current-session key=agent:main:tui-423e4567-e89b-12d3-a456-426614174000 predecessorKey=agent:main:tui-2 predecessor=${path.join(sessionsDir, "tracked-predecessor.jsonl")}`,
+      ]),
+    );
   });
 
   it("returns undefined gracefully when sessions.json is missing", async () => {

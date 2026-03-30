@@ -219,23 +219,6 @@ export async function generateAndWriteOpenClawContinuitySummary(params: {
 }
 
 /**
- * Generates a cleaned narrative continuity summary and writes it next to the
- * transcript JSONL file.
- *
- * @param params - Continuity summary dependencies plus the outgoing session
- *   transcript path.
- * @returns Continuity summary outcome facts used by the `before_reset` hook.
- */
-export async function writeOpenClawContinuitySummary(params: {
-  sessionFile: string;
-  agentId?: string;
-  openClaw: AgenrOpenClawHost;
-  logger: PluginLogger;
-}): Promise<OpenClawContinuitySummaryWriteResult> {
-  return generateAndWriteOpenClawContinuitySummary(params);
-}
-
-/**
  * Renders cleaned transcript messages into a stable continuity summary prompt
  * body.
  *

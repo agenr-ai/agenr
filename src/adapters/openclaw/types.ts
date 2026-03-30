@@ -95,15 +95,6 @@ export interface AgenrOpenClawBeforePromptBuildEvent {
 }
 
 /**
- * Minimal before-reset payload used by the agenr OpenClaw adapter.
- */
-export interface AgenrOpenClawBeforeResetEvent {
-  sessionFile?: string;
-  messages?: unknown[];
-  reason?: string;
-}
-
-/**
  * Minimal session-start payload used to track predecessor continuity.
  */
 export interface AgenrOpenClawSessionStartEvent {
@@ -235,14 +226,6 @@ export interface AgenrOpenClawMemoryPluginApi extends OpenClawPluginApi {
  * Shared hook dependencies passed into the session-start handler.
  */
 export interface AgenrOpenClawBeforePromptBuildDeps {
-  logger: PluginLogger;
-  servicesPromise: Promise<AgenrOpenClawServices>;
-}
-
-/**
- * Shared hook dependencies passed into the reset handler.
- */
-export interface AgenrOpenClawBeforeResetDeps {
   logger: PluginLogger;
   servicesPromise: Promise<AgenrOpenClawServices>;
 }
