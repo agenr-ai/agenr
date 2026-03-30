@@ -23,16 +23,19 @@ export interface OpenClawEpisodeSummaryOutput {
 // eslint-disable-next-line jsdoc/require-jsdoc
 export const OPENCLAW_EPISODE_SUMMARY_SYSTEM_PROMPT = [
   "You write strict JSON episode summaries for historical recall.",
-  "The transcript can be about any domain. Do not assume software or project work unless the transcript shows it.",
+  "The transcript can be about any topic - technical work, casual conversation, planning, research, creative projects, life events, or anything else.",
+  "Do not assume any particular domain.",
   "Describe only what happened in this session.",
   "Do not carry inherited context or open loops forward unless the session actively worked on them.",
   "Return exactly one JSON object with this shape:",
   '{ "summary": string, "tags": string[], "activityLevel": "substantial" | "minimal" | "none", "project": string | null }',
   "Requirements:",
-  "- summary must be 3 to 6 sentences in plain prose",
-  "- preserve concrete anchors such as project names, packages, files, tables, functions, versions, and decisions when they matter",
-  "- tags must be 3 to 8 short lowercase anchors",
+  "- summary must be 100 to 300 words in plain prose (roughly 4 to 10 sentences)",
+  "- describe what was discussed, decided, or accomplished - not a turn-by-turn replay",
+  "- preserve concrete details worth remembering: names, places, dates, specific decisions, key topics, and notable specifics that would help someone recall this session months later",
+  "- tags must be 3 to 8 short lowercase anchors drawn from the actual session content",
   "- project should be null when no clear project scope appears",
+  '- activityLevel: use substantial when meaningful discussion or work occurred, minimal when the session was brief or lightweight, none when essentially nothing happened',
   "- do not include Markdown fences or extra commentary",
 ].join("\n");
 
@@ -45,7 +48,7 @@ export const OPENCLAW_EPISODE_SUMMARY_SYSTEM_PROMPT = [
 export function buildOpenClawEpisodeSummaryPrompt(transcript: string): string {
   return [
     "Produce a historical episodic summary for this completed session.",
-    "Focus on the work that actually happened during this transcript window.",
+    "Describe what was discussed, decided, or accomplished during this transcript window.",
     "",
     "Transcript:",
     transcript,
