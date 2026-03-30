@@ -1,14 +1,18 @@
 import { describe, expect, it } from "vitest";
 
-import { prepareEpisodeIngest } from "../../../src/app/episode-ingest/index.js";
+import { buildEpisodeSummaryPrompt, EPISODE_SUMMARY_SYSTEM_PROMPT } from "../../../src/core/episode/summary-prompt.js";
+import { createEpisodeIngestPlan, executeEpisodeIngestPlan, prepareEpisodeIngest } from "../../../src/app/episode-ingest/index.js";
 import type {
   EpisodeIngestFilePort,
+  EpisodeIngestLlmPort,
+  EpisodeIngestModelInfo,
   EpisodeIngestPorts,
   SessionMeta,
   SessionMetaInspectorPort,
   SessionRegistryPort,
 } from "../../../src/app/episode-ingest/ports.js";
-import type { EpisodeUpsertResult } from "../../../src/core/episode/types.js";
+import type { EpisodeIngestCandidate } from "../../../src/app/episode-ingest/types.js";
+import type { EpisodeInput, EpisodeUpsertResult } from "../../../src/core/episode/types.js";
 import type { EpisodeDatabasePort, TranscriptPort } from "../../../src/core/ports.js";
 import type { Episode, ParsedTranscript } from "../../../src/core/types.js";
 
@@ -225,11 +229,320 @@ describe("prepareEpisodeIngest", () => {
   });
 });
 
+describe("createEpisodeIngestPlan", () => {
+  it("preserves candidate order, filters by recent, and estimates from the full prompt size", () => {
+    const newestCandidate = buildCandidate({
+      filePath: "/tmp/newest.jsonl",
+      endedAt: "2026-03-29T09:00:00.000Z",
+      renderedTranscript: "User: Keep Stage 2 dry-run planning pure.\nAssistant: Build the plan before execution.",
+    });
+    const undatedCandidate = buildCandidate({
+      filePath: "/tmp/undated.jsonl",
+      endedAt: undefined,
+    });
+    const olderCandidate = buildCandidate({
+      filePath: "/tmp/older.jsonl",
+      endedAt: "2026-03-01T09:00:00.000Z",
+    });
+
+    const plan = createEpisodeIngestPlan(
+      {
+        files: [],
+        candidates: [newestCandidate, undatedCandidate, olderCandidate],
+        skipped: [],
+        invalid: [],
+        totals: {
+          discovered: 3,
+          candidates: 3,
+          skipped: 0,
+          invalid: 0,
+          skippedShort: 0,
+          skippedActive: 0,
+          skippedExists: 0,
+        },
+      },
+      TEST_MODEL,
+      {
+        recent: "7d",
+        now: new Date("2026-03-30T10:00:00.000Z"),
+      },
+    );
+
+    const expectedInputTokens = estimateTokens(EPISODE_SUMMARY_SYSTEM_PROMPT) + estimateTokens(buildEpisodeSummaryPrompt(newestCandidate.renderedTranscript));
+
+    expect(plan.candidates.map((candidate) => candidate.filePath)).toEqual(["/tmp/newest.jsonl"]);
+    expect(plan.candidates[0]?.estimatedInputTokens).toBe(expectedInputTokens);
+    expect(plan.estimate).toEqual({
+      candidateCount: 1,
+      inputTokens: expectedInputTokens,
+      outputTokens: 500,
+      totalTokens: expectedInputTokens + 500,
+      estimatedCostUsd: (expectedInputTokens / 1_000_000) * TEST_MODEL.pricing.input + (500 / 1_000_000) * TEST_MODEL.pricing.output,
+    });
+    expect(plan.totals).toEqual({
+      preflightCandidates: 3,
+      selectedCandidates: 1,
+      excludedByRecent: 2,
+      excludedUndated: 1,
+    });
+    expect(plan.recentCutoff).toBe("2026-03-23T10:00:00.000Z");
+  });
+});
+
+describe("executeEpisodeIngestPlan", () => {
+  it("preserves final result order and aggregates usage across concurrent workers", async () => {
+    const database = new MockEpisodeDatabase(
+      {},
+      {
+        upsertHandler: async (input, index) => createUpsertResult(input, "inserted", `episode-${index + 1}`),
+      },
+    );
+
+    const plan = buildPlan([
+      buildCandidate({
+        filePath: "/tmp/first.jsonl",
+        sessionId: "first",
+        renderedTranscript: "User: First candidate.\nAssistant: Delayed completion.",
+      }),
+      buildCandidate({
+        filePath: "/tmp/second.jsonl",
+        sessionId: "second",
+        renderedTranscript: "User: Second candidate.\nAssistant: Immediate completion.",
+      }),
+    ]);
+
+    const result = await executeEpisodeIngestPlan(
+      plan,
+      createPorts({
+        episodes: database,
+        createSummaryLlm: createSummaryLlmFactory([
+          {
+            delayMs: 20,
+            response: buildSummaryJson("The first candidate completed after a delay but should still appear first in the final result array."),
+            usage: {
+              calls: 1,
+              inputTokens: 11,
+              outputTokens: 3,
+              totalTokens: 14,
+              totalCost: 0.01,
+            },
+          },
+          {
+            response: buildSummaryJson("The second candidate completed immediately and should still be stored in its original plan slot."),
+            usage: {
+              calls: 1,
+              inputTokens: 19,
+              outputTokens: 4,
+              totalTokens: 23,
+              totalCost: 0.02,
+            },
+          },
+        ]),
+      }),
+      {
+        concurrency: 2,
+        genVersion: "cli-episodic-summary-v1",
+      },
+    );
+
+    expect(result.sessions.map((session) => session.filePath)).toEqual(["/tmp/first.jsonl", "/tmp/second.jsonl"]);
+    expect(result.sessions.map((session) => session.action)).toEqual(["written", "written"]);
+    expect(result.usage).toEqual({
+      calls: 2,
+      inputTokens: 30,
+      outputTokens: 7,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      totalTokens: 37,
+      totalCost: 0.03,
+    });
+  });
+
+  it("maps write outcomes, continues after failures, and reports progress", async () => {
+    const database = new MockEpisodeDatabase(
+      {},
+      {
+        upsertQueue: [
+          createUpsertResult({ source: "openclaw", startedAt: "2026-03-30T09:00:00.000Z", summary: "written" }, "inserted", "episode-written"),
+          createUpsertResult({ source: "openclaw", startedAt: "2026-03-30T09:00:00.000Z", summary: "updated" }, "updated", "episode-updated"),
+          createUpsertResult({ source: "openclaw", startedAt: "2026-03-30T09:00:00.000Z", summary: "unchanged" }, "unchanged", "episode-unchanged"),
+        ],
+      },
+    );
+    const progressActions: string[] = [];
+
+    const result = await executeEpisodeIngestPlan(
+      buildPlan([
+        buildCandidate({ filePath: "/tmp/written.jsonl", sessionId: "written" }),
+        buildCandidate({ filePath: "/tmp/updated.jsonl", sessionId: "updated" }),
+        buildCandidate({ filePath: "/tmp/unchanged.jsonl", sessionId: "unchanged" }),
+        buildCandidate({ filePath: "/tmp/invalid.jsonl", sessionId: "invalid" }),
+        buildCandidate({ filePath: "/tmp/error.jsonl", sessionId: "error" }),
+      ]),
+      createPorts({
+        episodes: database,
+        createSummaryLlm: createSummaryLlmFactory([
+          { response: buildSummaryJson("Written candidate.") },
+          { response: buildSummaryJson("Updated candidate.") },
+          { response: buildSummaryJson("Unchanged candidate.") },
+          { response: "not valid json" },
+          { error: new Error("llm exploded") },
+        ]),
+      }),
+      {
+        concurrency: 1,
+        genVersion: "cli-episodic-summary-v1",
+        onProgress: (_completed, _total, session) => {
+          progressActions.push(`${session.filePath}:${session.action}`);
+        },
+      },
+    );
+
+    expect(result.sessions.map((session) => session.action)).toEqual(["written", "updated", "unchanged", "failed", "failed"]);
+    expect(result.sessions[3]).toEqual(
+      expect.objectContaining({
+        filePath: "/tmp/invalid.jsonl",
+        action: "failed",
+        error: "invalid_response",
+      }),
+    );
+    expect(result.sessions[4]).toEqual(
+      expect.objectContaining({
+        filePath: "/tmp/error.jsonl",
+        action: "failed",
+        error: "llm exploded",
+      }),
+    );
+    expect(progressActions).toEqual([
+      "/tmp/written.jsonl:written",
+      "/tmp/updated.jsonl:updated",
+      "/tmp/unchanged.jsonl:unchanged",
+      "/tmp/invalid.jsonl:failed",
+      "/tmp/error.jsonl:failed",
+    ]);
+    expect(result.totals).toEqual({
+      attempted: 5,
+      written: 1,
+      updated: 1,
+      unchanged: 1,
+      failed: 2,
+    });
+  });
+
+  it("preserves existing metadata when regenerate candidates only provide weaker values", async () => {
+    const existingEpisode = buildEpisode({
+      id: "episode-existing",
+      sourceRef: "/persisted/source.jsonl",
+      agentId: "main",
+      surface: "telegram",
+    });
+    const database = new MockEpisodeDatabase(
+      {},
+      {
+        upsertHandler: async (input) => createUpsertResult(input, "updated", "episode-existing"),
+      },
+    );
+
+    await executeEpisodeIngestPlan(
+      buildPlan([
+        buildCandidate({
+          filePath: "/tmp/regenerate.jsonl",
+          sourceRef: "/tmp/regenerate.jsonl",
+          agentId: null,
+          surface: null,
+          metadataSource: "reconstructed",
+          existingEpisode,
+        }),
+      ]),
+      createPorts({
+        episodes: database,
+        createSummaryLlm: createSummaryLlmFactory([{ response: buildSummaryJson("Regenerated summary.") }]),
+      }),
+      {
+        concurrency: 1,
+        genVersion: "cli-episodic-summary-v1",
+      },
+    );
+
+    expect(database.upsertInputs[0]).toEqual(
+      expect.objectContaining({
+        sourceRef: "/persisted/source.jsonl",
+        agentId: "main",
+        surface: "telegram",
+      }),
+    );
+  });
+
+  it("fails new candidates without startedAt and falls back to existing timestamps during regenerate", async () => {
+    const existingEpisode = buildEpisode({
+      id: "episode-fallback",
+      startedAt: "2026-03-15T09:00:00.000Z",
+      endedAt: "2026-03-15T09:30:00.000Z",
+    });
+    const database = new MockEpisodeDatabase(
+      {},
+      {
+        upsertHandler: async (input) => createUpsertResult(input, "updated", "episode-fallback"),
+      },
+    );
+
+    const result = await executeEpisodeIngestPlan(
+      buildPlan([
+        buildCandidate({
+          filePath: "/tmp/missing-started-at.jsonl",
+          sessionId: "missing-started-at",
+          startedAt: undefined,
+        }),
+        buildCandidate({
+          filePath: "/tmp/regenerate-fallback.jsonl",
+          sessionId: "regenerate-fallback",
+          startedAt: undefined,
+          endedAt: undefined,
+          existingEpisode,
+        }),
+      ]),
+      createPorts({
+        episodes: database,
+        createSummaryLlm: createSummaryLlmFactory([{ response: buildSummaryJson("Timestamp fallback candidate.") }]),
+      }),
+      {
+        concurrency: 1,
+        genVersion: "cli-episodic-summary-v1",
+      },
+    );
+
+    expect(result.sessions[0]).toEqual(
+      expect.objectContaining({
+        filePath: "/tmp/missing-started-at.jsonl",
+        action: "failed",
+        error: "missing_started_at",
+        usage: expect.objectContaining({
+          totalTokens: 0,
+        }),
+      }),
+    );
+    expect(result.sessions[1]).toEqual(
+      expect.objectContaining({
+        filePath: "/tmp/regenerate-fallback.jsonl",
+        action: "updated",
+        episodeId: "episode-fallback",
+      }),
+    );
+    expect(database.upsertInputs[0]).toEqual(
+      expect.objectContaining({
+        startedAt: "2026-03-15T09:00:00.000Z",
+        endedAt: "2026-03-15T09:30:00.000Z",
+      }),
+    );
+  });
+});
+
 function createPorts(overrides: Partial<EpisodeIngestPorts> = {}): EpisodeIngestPorts {
   return {
     files: overrides.files ?? new MockEpisodeFiles([]),
     transcript: overrides.transcript ?? new MockTranscriptPort({}),
     episodes: overrides.episodes ?? new MockEpisodeDatabase(),
+    createSummaryLlm: overrides.createSummaryLlm ?? createSummaryLlmFactory([]),
     sessionRegistry: overrides.sessionRegistry,
     sessionMetaInspector: overrides.sessionMetaInspector,
   };
@@ -257,12 +570,23 @@ class MockTranscriptPort implements TranscriptPort {
 }
 
 class MockEpisodeDatabase implements EpisodeDatabasePort {
+  public readonly upsertInputs: EpisodeInput[] = [];
+  private readonly upsertQueue: EpisodeUpsertResult[];
+  private readonly upsertHandler?: (input: EpisodeInput, index: number) => Promise<EpisodeUpsertResult> | EpisodeUpsertResult;
+
   public constructor(
     private readonly episodes: {
       bySourceId?: Record<string, Episode>;
       byTranscriptHash?: Record<string, Episode>;
     } = {},
-  ) {}
+    options: {
+      upsertQueue?: EpisodeUpsertResult[];
+      upsertHandler?: (input: EpisodeInput, index: number) => Promise<EpisodeUpsertResult> | EpisodeUpsertResult;
+    } = {},
+  ) {
+    this.upsertQueue = [...(options.upsertQueue ?? [])];
+    this.upsertHandler = options.upsertHandler;
+  }
 
   public async getEpisodeBySourceId(_source: "openclaw", sourceId: string): Promise<Episode | null> {
     return this.episodes.bySourceId?.[sourceId] ?? null;
@@ -272,12 +596,99 @@ class MockEpisodeDatabase implements EpisodeDatabasePort {
     return this.episodes.byTranscriptHash?.[transcriptHash] ?? null;
   }
 
-  public async upsertEpisode(): Promise<EpisodeUpsertResult> {
+  public async upsertEpisode(input: EpisodeInput): Promise<EpisodeUpsertResult> {
+    this.upsertInputs.push(input);
+    const index = this.upsertInputs.length - 1;
+    if (this.upsertHandler) {
+      return await this.upsertHandler(input, index);
+    }
+
+    const queued = this.upsertQueue.shift();
+    if (queued) {
+      return queued;
+    }
+
     throw new Error("Stage 1 preflight should not write episodes.");
   }
 
   public async listEpisodesByTimeWindow(): Promise<Episode[]> {
     return [];
+  }
+}
+
+type SummaryLlmBehavior = {
+  response?: string;
+  error?: Error;
+  delayMs?: number;
+  usage?: Partial<EpisodeIngestLlmPort["metadata"]["usage"]>;
+  modelRef?: string;
+};
+
+function createSummaryLlmFactory(behaviors: SummaryLlmBehavior[]): () => EpisodeIngestLlmPort {
+  const queue = [...behaviors];
+
+  return () =>
+    new MockSummaryLlm(
+      queue.shift() ?? {
+        response: buildSummaryJson("Default episode summary response."),
+      },
+    );
+}
+
+class MockSummaryLlm implements EpisodeIngestLlmPort {
+  public readonly metadata;
+
+  public constructor(private readonly behavior: SummaryLlmBehavior) {
+    this.metadata = {
+      modelRef: behavior.modelRef ?? TEST_MODEL.modelRef,
+      pricing: TEST_MODEL.pricing,
+      usage: {
+        calls: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        totalTokens: 0,
+        totalCost: 0,
+      },
+    };
+  }
+
+  public async complete(_systemPrompt: string, _userMessage: string): Promise<string> {
+    if (this.behavior.delayMs) {
+      await new Promise((resolve) => {
+        setTimeout(resolve, this.behavior.delayMs);
+      });
+    }
+
+    const usage = this.behavior.usage ?? {
+      calls: 1,
+      inputTokens: 10,
+      outputTokens: 5,
+      totalTokens: 15,
+      totalCost: 0.01,
+    };
+    this.metadata.usage = {
+      ...this.metadata.usage,
+      ...usage,
+      calls: usage.calls ?? this.metadata.usage.calls,
+      inputTokens: usage.inputTokens ?? this.metadata.usage.inputTokens,
+      outputTokens: usage.outputTokens ?? this.metadata.usage.outputTokens,
+      cacheReadTokens: usage.cacheReadTokens ?? this.metadata.usage.cacheReadTokens,
+      cacheWriteTokens: usage.cacheWriteTokens ?? this.metadata.usage.cacheWriteTokens,
+      totalTokens: usage.totalTokens ?? this.metadata.usage.totalTokens,
+      totalCost: usage.totalCost ?? this.metadata.usage.totalCost,
+    };
+
+    if (this.behavior.error) {
+      throw this.behavior.error;
+    }
+
+    return this.behavior.response ?? buildSummaryJson("Default episode summary response.");
+  }
+
+  public async completeJson<T>(systemPrompt: string, userMessage: string): Promise<T> {
+    return JSON.parse(await this.complete(systemPrompt, userMessage)) as T;
   }
 }
 
@@ -362,3 +773,92 @@ function buildEpisode(overrides: Partial<Episode> = {}): Episode {
     updatedAt: overrides.updatedAt ?? "2026-03-30T10:00:00.000Z",
   };
 }
+
+function buildCandidate(overrides: Partial<EpisodeIngestCandidate> = {}): EpisodeIngestCandidate {
+  return {
+    filePath: "filePath" in overrides ? (overrides.filePath ?? "/tmp/candidate.jsonl") : "/tmp/candidate.jsonl",
+    sessionId: "sessionId" in overrides ? overrides.sessionId : "candidate-session",
+    sourceRef: "sourceRef" in overrides ? (overrides.sourceRef ?? "/tmp/candidate.jsonl") : "/tmp/candidate.jsonl",
+    transcriptHash: "transcriptHash" in overrides ? (overrides.transcriptHash ?? "candidate-transcript-hash") : "candidate-transcript-hash",
+    startedAt: "startedAt" in overrides ? overrides.startedAt : "2026-03-30T09:00:00.000Z",
+    endedAt: "endedAt" in overrides ? overrides.endedAt : "2026-03-30T09:30:00.000Z",
+    messageCount: "messageCount" in overrides ? (overrides.messageCount ?? 4) : 4,
+    agentId: "agentId" in overrides ? (overrides.agentId ?? null) : "main",
+    surface: "surface" in overrides ? (overrides.surface ?? null) : "webchat",
+    metadataSource: "metadataSource" in overrides ? (overrides.metadataSource ?? "registry") : "registry",
+    renderedTranscript:
+      "renderedTranscript" in overrides
+        ? (overrides.renderedTranscript ?? "User: Candidate transcript.\nAssistant: Candidate reply.")
+        : "User: Candidate transcript.\nAssistant: Candidate reply.",
+    estimatedInputTokens: "estimatedInputTokens" in overrides ? (overrides.estimatedInputTokens ?? 1) : 1,
+    existingEpisode: "existingEpisode" in overrides ? overrides.existingEpisode : undefined,
+  };
+}
+
+function buildPlan(candidates: EpisodeIngestCandidate[]) {
+  return createEpisodeIngestPlan(
+    {
+      files: candidates.map((candidate) => candidate.filePath),
+      candidates,
+      skipped: [],
+      invalid: [],
+      totals: {
+        discovered: candidates.length,
+        candidates: candidates.length,
+        skipped: 0,
+        invalid: 0,
+        skippedShort: 0,
+        skippedActive: 0,
+        skippedExists: 0,
+      },
+    },
+    TEST_MODEL,
+  );
+}
+
+function buildSummaryJson(summary: string): string {
+  return JSON.stringify({
+    summary,
+    tags: ["episodes", "stage2", "agenr"],
+    activityLevel: "substantial",
+    project: "agenr",
+  });
+}
+
+function createUpsertResult(input: Partial<EpisodeInput>, action: EpisodeUpsertResult["action"], id: string): EpisodeUpsertResult {
+  return {
+    action,
+    episode: buildEpisode({
+      id,
+      source: input.source ?? "openclaw",
+      sourceId: input.sourceId,
+      sourceRef: input.sourceRef ?? "/tmp/source.jsonl",
+      transcriptHash: input.transcriptHash,
+      agentId: input.agentId,
+      surface: input.surface,
+      startedAt: input.startedAt ?? "2026-03-30T09:00:00.000Z",
+      endedAt: input.endedAt,
+      summary: input.summary ?? "Stored episode summary.",
+      tags: input.tags,
+      activityLevel: input.activityLevel,
+      project: input.project,
+      genModel: input.genModel,
+      genVersion: input.genVersion,
+      messageCount: input.messageCount,
+    }),
+  };
+}
+
+function estimateTokens(text: string): number {
+  return Math.max(1, Math.ceil(text.length / 4));
+}
+
+const TEST_MODEL: EpisodeIngestModelInfo = {
+  modelRef: "openai/gpt-5.4-mini",
+  pricing: {
+    input: 0.75,
+    output: 4.5,
+    cacheRead: 0.075,
+    cacheWrite: 0,
+  },
+};

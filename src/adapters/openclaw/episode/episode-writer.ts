@@ -5,19 +5,29 @@ import path from "node:path";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER, parseModelRef, resolveAgentEffectiveModelPrimary, resolveDefaultAgentId } from "openclaw/plugin-sdk/agent-runtime";
 import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
 
+import type { LlmPort } from "../../../core/ports.js";
+import { generateEpisodeSummary } from "../../../core/episode/summary-generator.js";
 import { formatErrorMessage, formatSessionContext } from "../logging.js";
 import { openClawTranscriptParser } from "../transcript/parser.js";
 import type { AgenrOpenClawHookContext, AgenrOpenClawHost, AgenrOpenClawServices } from "../types.js";
 import { MAX_EPISODE_TRANSCRIPT_CHARS, MIN_EPISODE_MESSAGES, capEpisodeTranscript, renderTranscript } from "../../../core/episode/transcript-render.js";
-import {
-  buildOpenClawEpisodeSummaryPrompt,
-  OPENCLAW_EPISODE_GENERATOR_VERSION,
-  OPENCLAW_EPISODE_SUMMARY_SYSTEM_PROMPT,
-  parseOpenClawEpisodeSummaryResponse,
-} from "./episode-summary-prompt.js";
+import { OPENCLAW_EPISODE_GENERATOR_VERSION } from "./episode-summary-prompt.js";
 
 const EPISODE_SUMMARY_TIMEOUT_MS = 20_000;
 const EPISODE_SUMMARY_TIMEOUT = Symbol("episode-summary-timeout");
+
+/**
+ * Error raised when the embedded OpenClaw summary generator exceeds its timeout.
+ */
+class OpenClawEpisodeSummaryTimeoutError extends Error {
+  /**
+   * Creates a timeout error with a stable name for caller-side handling.
+   */
+  public constructor() {
+    super("Episode summary generation timed out.");
+    this.name = "OpenClawEpisodeSummaryTimeoutError";
+  }
+}
 
 /**
  * Predecessor episode facts passed from the continuity resolver into the
@@ -87,24 +97,14 @@ export async function writeOpenClawPredecessorEpisode(params: {
     const episodeExecution = resolveEpisodeSummaryExecution(params.services.openClaw, params.ctx.agentId);
     const episodeModel = formatResolvedEpisodeSummaryModel(episodeExecution.provider, episodeExecution.model);
     const transcript = capEpisodeTranscript(renderTranscript(cleanedMessages), MAX_EPISODE_TRANSCRIPT_CHARS);
-    const prompt = buildOpenClawEpisodeSummaryPrompt(transcript);
-    const response = await generateEpisodeSummaryResponse({
+    const episodeSummaryLlm = createEpisodeSummaryLlm({
       logger: params.logger,
       model: episodeModel,
       openClaw: params.services.openClaw,
-      prompt,
       sessionFile: params.predecessor.sessionFile,
       summaryExecution: episodeExecution,
     });
-
-    if (response === EPISODE_SUMMARY_TIMEOUT) {
-      params.logger.info(
-        `[agenr] session-start predecessor episode write timed_out for ${sessionContext} predecessor=${params.predecessor.sessionFile} timeoutMs=${EPISODE_SUMMARY_TIMEOUT_MS}`,
-      );
-      return;
-    }
-
-    const structured = parseOpenClawEpisodeSummaryResponse(response);
+    const structured = await generateEpisodeSummary(transcript, episodeSummaryLlm);
     if (!structured) {
       params.logger.info(
         `[agenr] session-start predecessor episode write failed for ${sessionContext} predecessor=${params.predecessor.sessionFile} reason=invalid_response model=${episodeModel}`,
@@ -135,6 +135,13 @@ export async function writeOpenClawPredecessorEpisode(params: {
       `[agenr] session-start predecessor episode write ${actionMessage} for ${sessionContext} predecessor=${params.predecessor.sessionFile} episode=${writeResult.episode.id}`,
     );
   } catch (error) {
+    if (error instanceof OpenClawEpisodeSummaryTimeoutError) {
+      params.logger.info(
+        `[agenr] session-start predecessor episode write timed_out for ${sessionContext} predecessor=${params.predecessor.sessionFile} timeoutMs=${EPISODE_SUMMARY_TIMEOUT_MS}`,
+      );
+      return;
+    }
+
     params.logger.info(
       `[agenr] session-start predecessor episode write failed for ${sessionContext} predecessor=${params.predecessor.sessionFile} reason=${formatErrorMessage(error)}`,
     );
@@ -165,6 +172,45 @@ function resolveSessionSurface(ctx: AgenrOpenClawHookContext): string | undefine
 }
 
 /**
+ * Creates an LLM port backed by the embedded OpenClaw agent runtime.
+ *
+ * @param params - Execution dependencies for one episode summary call.
+ * @returns LLM port that delegates to the embedded agent.
+ */
+function createEpisodeSummaryLlm(params: {
+  logger: PluginLogger;
+  model: string;
+  openClaw: AgenrOpenClawHost;
+  sessionFile: string;
+  summaryExecution: ReturnType<typeof resolveEpisodeSummaryExecution>;
+}): LlmPort {
+  const complete = async (systemPrompt: string, userMessage: string): Promise<string> => {
+    const response = await generateEpisodeSummaryResponse({
+      logger: params.logger,
+      model: params.model,
+      openClaw: params.openClaw,
+      systemPrompt,
+      userMessage,
+      sessionFile: params.sessionFile,
+      summaryExecution: params.summaryExecution,
+    });
+    if (response === EPISODE_SUMMARY_TIMEOUT) {
+      throw new OpenClawEpisodeSummaryTimeoutError();
+    }
+
+    return response;
+  };
+
+  return {
+    complete,
+    completeJson: async <T>(systemPrompt: string, userMessage: string): Promise<T> => {
+      const response = await complete(systemPrompt, userMessage);
+      return JSON.parse(response) as T;
+    },
+  };
+}
+
+/**
  * Runs the embedded-agent episode summary generation with cleanup and timeout
  * handling.
  *
@@ -175,7 +221,8 @@ async function generateEpisodeSummaryResponse(params: {
   logger: PluginLogger;
   model: string;
   openClaw: AgenrOpenClawHost;
-  prompt: string;
+  systemPrompt: string;
+  userMessage: string;
   sessionFile: string;
   summaryExecution: ReturnType<typeof resolveEpisodeSummaryExecution>;
 }): Promise<string | typeof EPISODE_SUMMARY_TIMEOUT> {
@@ -195,13 +242,13 @@ async function generateEpisodeSummaryResponse(params: {
         workspaceDir: params.summaryExecution.workspaceDir,
         agentDir: params.summaryExecution.agentDir,
         config: params.openClaw.config,
-        prompt: params.prompt,
+        prompt: params.userMessage,
         provider: params.summaryExecution.provider,
         model: params.summaryExecution.model,
         timeoutMs: EPISODE_SUMMARY_TIMEOUT_MS,
         runId: `agenr-episode-summary-${Date.now()}`,
         disableTools: true,
-        extraSystemPrompt: OPENCLAW_EPISODE_SUMMARY_SYSTEM_PROMPT,
+        extraSystemPrompt: params.systemPrompt,
       }),
       EPISODE_SUMMARY_TIMEOUT_MS,
     );

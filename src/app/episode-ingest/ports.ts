@@ -1,4 +1,4 @@
-import type { EpisodeDatabasePort, TranscriptPort } from "../../core/ports.js";
+import type { EpisodeDatabasePort, LlmPort, TranscriptPort } from "../../core/ports.js";
 
 /**
  * Metadata provenance used during episode-ingest preflight.
@@ -37,6 +37,95 @@ export interface SessionMeta {
    * Provenance for the metadata.
    */
   metadataSource: SessionMetaSource;
+}
+
+/**
+ * Per-million-token pricing for one summary-generation model.
+ */
+export interface EpisodeIngestLlmPricing {
+  /**
+   * USD cost per one million input tokens.
+   */
+  input: number;
+  /**
+   * USD cost per one million output tokens.
+   */
+  output: number;
+  /**
+   * USD cost per one million cache-read tokens.
+   */
+  cacheRead: number;
+  /**
+   * USD cost per one million cache-write tokens.
+   */
+  cacheWrite: number;
+}
+
+/**
+ * Token and cost usage accumulated by one summary-generation client.
+ */
+export interface EpisodeIngestUsageStats {
+  /**
+   * Number of completion calls made.
+   */
+  calls: number;
+  /**
+   * Total prompt/input tokens sent.
+   */
+  inputTokens: number;
+  /**
+   * Total completion/output tokens received.
+   */
+  outputTokens: number;
+  /**
+   * Total cached input tokens read.
+   */
+  cacheReadTokens: number;
+  /**
+   * Total cached input tokens written.
+   */
+  cacheWriteTokens: number;
+  /**
+   * Total tokens consumed across all calls.
+   */
+  totalTokens: number;
+  /**
+   * Total model cost in USD.
+   */
+  totalCost: number;
+}
+
+/**
+ * Metadata exposed by a Stage 2 summary-generation client.
+ */
+export interface EpisodeIngestLlmMetadata {
+  /**
+   * Stable `provider/model` identifier for display and persistence.
+   */
+  modelRef: string;
+  /**
+   * Per-million-token pricing used for Stage 2 cost estimation.
+   */
+  pricing: EpisodeIngestLlmPricing;
+  /**
+   * Accumulated usage stats since client creation.
+   */
+  usage: EpisodeIngestUsageStats;
+}
+
+/**
+ * Model information needed by the pure Stage 2 planning pass.
+ */
+export type EpisodeIngestModelInfo = Pick<EpisodeIngestLlmMetadata, "modelRef" | "pricing">;
+
+/**
+ * LLM client contract used by Stage 2 episode generation.
+ */
+export interface EpisodeIngestLlmPort extends LlmPort {
+  /**
+   * Model metadata used for estimation and usage reporting.
+   */
+  metadata: EpisodeIngestLlmMetadata;
 }
 
 /**
@@ -101,6 +190,10 @@ export interface EpisodeIngestPorts {
    * Episode database used for idempotence checks.
    */
   episodes: EpisodeDatabasePort;
+  /**
+   * Factory for per-candidate summary-generation clients.
+   */
+  createSummaryLlm?: () => EpisodeIngestLlmPort;
   /**
    * Optional active-session registry used for authoritative metadata.
    */
