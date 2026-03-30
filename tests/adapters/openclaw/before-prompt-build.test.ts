@@ -1043,14 +1043,14 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(result?.prependContext).toContain("background episode writing");
 
     await episodeStarted;
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(20_000);
     await vi.runAllTimersAsync();
 
     expect(await database.getEpisodeBySourceId("openclaw", "predecessor-session")).toBeNull();
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
         `[agenr] session-start predecessor episode write triggered for session=${currentSessionId} key=${currentSessionKey} predecessor=${predecessorFile}`,
-        `[agenr] session-start predecessor episode write timed_out for session=${currentSessionId} key=${currentSessionKey} predecessor=${predecessorFile} timeoutMs=10000`,
+        `[agenr] session-start predecessor episode write timed_out for session=${currentSessionId} key=${currentSessionKey} predecessor=${predecessorFile} timeoutMs=20000`,
       ]),
     );
   });

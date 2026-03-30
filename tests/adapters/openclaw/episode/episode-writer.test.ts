@@ -311,13 +311,13 @@ describe("writeOpenClawPredecessorEpisode", () => {
     });
 
     await started;
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(20_000);
     await writePromise;
 
     expect(await database.getEpisodeBySourceId("openclaw", "timeout-session")).toBeNull();
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
-        `[agenr] session-start predecessor episode write timed_out for session=current-session key=agent:main:tui-current predecessor=${sessionFile} timeoutMs=10000`,
+        `[agenr] session-start predecessor episode write timed_out for session=current-session key=agent:main:tui-current predecessor=${sessionFile} timeoutMs=20000`,
       ]),
     );
   });

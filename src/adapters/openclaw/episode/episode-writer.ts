@@ -15,7 +15,7 @@ import {
   parseOpenClawEpisodeSummaryResponse,
 } from "./episode-summary-prompt.js";
 
-const EPISODE_SUMMARY_TIMEOUT_MS = 10_000;
+const EPISODE_SUMMARY_TIMEOUT_MS = 20_000;
 const EPISODE_SUMMARY_TIMEOUT = Symbol("episode-summary-timeout");
 const MIN_EPISODE_MESSAGES = 4;
 const MAX_EPISODE_TRANSCRIPT_CHARS = 14_000;

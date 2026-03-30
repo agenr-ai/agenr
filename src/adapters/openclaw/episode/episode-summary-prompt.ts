@@ -35,7 +35,7 @@ export const OPENCLAW_EPISODE_SUMMARY_SYSTEM_PROMPT = [
   "- preserve concrete details worth remembering: names, places, dates, specific decisions, key topics, and notable specifics that would help someone recall this session months later",
   "- tags must be 3 to 8 short lowercase anchors drawn from the actual session content",
   "- project should be null when no clear project scope appears",
-  '- activityLevel: use substantial when meaningful discussion or work occurred, minimal when the session was brief or lightweight, none when essentially nothing happened',
+  "- activityLevel: use substantial when meaningful discussion or work occurred, minimal when the session was brief or lightweight, none when essentially nothing happened",
   "- do not include Markdown fences or extra commentary",
 ].join("\n");
 
