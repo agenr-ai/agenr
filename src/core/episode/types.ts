@@ -37,12 +37,30 @@ export interface TemporalWindow {
 }
 
 /**
- * Minimal future-facing episode query shape.
+ * Concrete interval bounds derived from a temporal window.
+ */
+export interface TemporalWindowBounds {
+  start: Date;
+  end: Date;
+}
+
+/**
+ * Resolved temporal window plus stable metadata used by callers and tool output.
+ */
+export interface ResolvedTemporalWindow {
+  window: TemporalWindow;
+  bounds: TemporalWindowBounds;
+  timezone: string;
+  resolvedFrom: string;
+}
+
+/**
+ * Episode-query shape accepted by the temporal recall pipeline.
  */
 export interface EpisodeQuery {
   text: string;
   limit?: number;
-  timeWindow?: TemporalWindow;
+  timeWindow: TemporalWindow;
 }
 
 /**
@@ -57,6 +75,16 @@ export interface EpisodeResult {
     activity: number;
     recency: number;
   };
+}
+
+/**
+ * Ranking-time facts used to explain why one episode matched a temporal query.
+ */
+export interface EpisodeMatchExplanation {
+  overlapQuality: number;
+  midpointProximity: number;
+  activity: number;
+  recency: number;
 }
 
 /**

@@ -3,7 +3,7 @@ import { failedTextResult, readNumberParam, readStringArrayParam, readStringPara
 import type { OpenClawPluginToolContext, PluginLogger } from "openclaw/plugin-sdk/core";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 
-import { recall } from "../../core/recall/search.js";
+import { runUnifiedRecall, type UnifiedRecallMode, type UnifiedRecallResult } from "../../app/recall/index.js";
 import { storeEntriesDetailed } from "../../core/store/pipeline.js";
 import { ENTRY_TYPES, EXPIRY_LEVELS, type Entry, type EntryType, type Expiry } from "../../core/types.js";
 import { findOpenClawEntryBySubject, findOpenClawMostRecentEntry, getOpenClawEntryTrace } from "../db/openclaw-plugin-queries.js";
@@ -18,6 +18,7 @@ const UPDATE_EXPIRY_DESCRIPTION = `${EXPIRY_DESCRIPTION} Accepted values: ${EXPI
 
 const DEFAULT_RECALL_LIMIT = 10;
 const RESULT_SUBJECT_LOG_LIMIT = 5;
+const RECALL_MODES = ["auto", "entries", "episodes"] as const;
 
 const STORE_TOOL_PARAMETERS = {
   type: "object",
@@ -68,6 +69,11 @@ const RECALL_TOOL_PARAMETERS = {
       type: "string",
       description: "What you need to remember. Use a focused natural-language query rather than a broad 'everything' search.",
     },
+    mode: {
+      type: "string",
+      enum: [...RECALL_MODES],
+      description: "Recall mode: auto routes between entries and episodes, entries forces semantic recall, and episodes forces temporal session recall.",
+    },
     limit: {
       type: "integer",
       minimum: 1,
@@ -92,26 +98,6 @@ const RECALL_TOOL_PARAMETERS = {
       type: "array",
       items: { type: "string" },
       description: "Optional tags to filter by once you already know the relevant entity, system, or theme.",
-    },
-    since: {
-      type: "string",
-      description:
-        "Only consider entries created on or after this time bound. Accepts ISO dates or relative dates such as 30d. Relative dates count backward from now: 7d means 7 days ago, 30d means 30 days ago.",
-    },
-    until: {
-      type: "string",
-      description:
-        "Only consider entries created on or before this time bound. Accepts ISO dates or relative dates such as 7d. Relative dates count backward from now: 7d means 7 days ago, 30d means 30 days ago.",
-    },
-    around: {
-      type: "string",
-      description:
-        "Bias ranking toward a specific date or period, such as 7d for one week ago or 2026-03-15 for a specific date. This is a temporal anchor, not a hard filter.",
-    },
-    aroundRadius: {
-      type: "integer",
-      minimum: 1,
-      description: "Radius in days for around, e.g. 3 for a +/-3 day window around the anchor. Smaller values focus recall more tightly on that period.",
     },
   },
   required: ["query"],
@@ -301,32 +287,25 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
     name: "agenr_recall",
     label: "Agenr Recall",
     description:
-      "Retrieve knowledge from agenr long-term memory. Supports semantic search via query and temporal filtering via since, until, around, and aroundRadius; for time-based questions, always combine a focused query with temporal filters. Use this mid-session when you need context you do not already have. Session-start recall is already handled automatically.",
+      "Retrieve knowledge from agenr long-term memory. Use mode=auto for the normal path, mode=entries for exact facts and decisions, and mode=episodes for time-bounded 'what happened' questions. Time periods are parsed from the query text. Session-start recall is already handled automatically.",
     parameters: RECALL_TOOL_PARAMETERS,
     async execute(_toolCallId, rawParams) {
       try {
         const params = asRecord(rawParams);
         const query = readStringParam(params, "query", { required: true, label: "query" });
+        const mode = parseRecallMode(readStringParam(params, "mode"));
         const limit = readNumberParam(params, "limit", { integer: true, strict: true });
         const threshold = readNumberParam(params, "threshold", { strict: true });
-        const project = typeof params.project === "string" && params.project.trim().length > 0 ? params.project.trim() : undefined;
         const services = await servicesPromise;
         const types = parseEntryTypes(readStringArrayParam(params, "types"));
         const tags = normalizeStringArray(readStringArrayParam(params, "tags"));
-        const since = readStringParam(params, "since");
-        const until = readStringParam(params, "until");
-        const around = readStringParam(params, "around");
-        const aroundRadius = readNumberParam(params, "aroundRadius", { integer: true, strict: true });
         const request = {
           text: query,
+          ...(mode ? { mode } : {}),
           ...(limit !== undefined ? { limit } : {}),
           ...(threshold !== undefined ? { threshold } : {}),
           ...(types.length > 0 ? { types } : {}),
           ...(tags.length > 0 ? { tags } : {}),
-          ...(since ? { since } : {}),
-          ...(until ? { until } : {}),
-          ...(around ? { around } : {}),
-          ...(aroundRadius !== undefined ? { aroundRadius } : {}),
           sessionKey: ctx.sessionKey,
         };
 
@@ -336,61 +315,61 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
           ctx,
           formatRecallToolSummary({
             query,
+            mode,
             limit,
             types,
             tags,
-            since,
-            until,
-            around,
-            aroundRadius,
-            project,
           }),
           sanitizeRecallToolParams({
             query,
+            mode,
             limit,
             threshold,
             types,
             tags,
-            since,
-            until,
-            around,
-            aroundRadius,
-            project,
           }),
         );
+        const result = await runUnifiedRecall(request, {
+          database: services.database,
+          recall: services.recall,
+          embeddingAvailable: services.embeddingStatus.available,
+          embeddingError: services.embeddingStatus.error,
+        });
+        logger.info(`[agenr] tool=agenr_recall ${formatToolSessionContext(ctx)} result: ${formatUnifiedRecallLogSummary(result)}`);
 
-        if (!services.embeddingStatus.available) {
-          const message = services.embeddingStatus.error ?? "Embeddings are unavailable, so agenr recall cannot run.";
-          logToolFailure(logger, "agenr_recall", ctx, message);
-          return failedTextResult(message, {
-            status: "failed",
-          });
-        }
-
-        const results = await recall(request, services.recall);
-        logger.info(`[agenr] tool=agenr_recall ${formatToolSessionContext(ctx)} result: ${results.length} entries${formatRecallResultSubjects(results)}`);
-
-        if (results.length === 0) {
-          return textResult("No matching agenr memories found.", {
-            status: "ok",
-            count: 0,
-            results: [],
-          });
-        }
-
-        return textResult(formatRecallResults(results), {
+        return textResult(formatUnifiedRecallResults(result), {
           status: "ok",
-          count: results.length,
-          results: results.map((result) => ({
-            id: result.entry.id,
-            subject: result.entry.subject,
-            type: result.entry.type,
-            expiry: result.entry.expiry,
-            importance: result.entry.importance,
-            score: result.score,
-            tags: result.entry.tags,
-            content: result.entry.content,
+          count: result.count,
+          routing: {
+            requested: result.routing.requested,
+            detectedIntent: result.routing.detectedIntent,
+            queried: result.routing.queried,
+            reason: result.routing.reason,
+          },
+          ...(result.timeWindow ? { timeWindow: result.timeWindow } : {}),
+          episodes: result.episodes.map((episode) => ({
+            id: episode.episode.id,
+            source: episode.episode.source,
+            sourceId: episode.episode.sourceId,
+            startedAt: episode.episode.startedAt,
+            endedAt: episode.episode.endedAt,
+            tags: episode.episode.tags,
+            score: episode.score,
+            activityLevel: episode.episode.activityLevel,
+            summary: episode.episode.summary,
+            whyMatched: "Session overlaps the resolved time window.",
           })),
+          entries: result.entries.map((entry) => ({
+            id: entry.entry.id,
+            subject: entry.entry.subject,
+            type: entry.entry.type,
+            expiry: entry.entry.expiry,
+            importance: entry.entry.importance,
+            score: entry.score,
+            tags: entry.entry.tags,
+            content: entry.entry.content,
+          })),
+          notices: result.notices,
         });
       } catch (error) {
         logToolFailure(logger, "agenr_recall", ctx, error);
@@ -623,6 +602,19 @@ function parseEntryTypes(values: string[] | undefined): EntryType[] {
   return normalizeStringArray(values).map((value) => parseEntryType(value));
 }
 
+/** Parses the optional unified recall mode parameter. */
+function parseRecallMode(value: string | undefined): UnifiedRecallMode | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === "auto" || value === "entries" || value === "episodes") {
+    return value;
+  }
+
+  throw new Error(`Unsupported recall mode "${value}".`);
+}
+
 /** Parses one entry type string into the agenr domain union. */
 function parseEntryType(value: string): EntryType {
   if (ENTRY_TYPES.includes(value as EntryType)) {
@@ -732,35 +724,15 @@ function sanitizeStoreToolParams(params: {
 /** Formats the visible recall call summary for tool logging. */
 function formatRecallToolSummary(params: {
   query: string;
+  mode: UnifiedRecallMode | undefined;
   limit: number | undefined;
   types: EntryType[];
   tags: string[];
-  since: string | undefined;
-  until: string | undefined;
-  around: string | undefined;
-  aroundRadius: number | undefined;
-  project: string | undefined;
 }): string {
   const parts = [`query=${JSON.stringify(truncate(params.query, 80))}`];
 
-  if (params.since) {
-    parts.push(`since=${params.since}`);
-  }
-
-  if (params.until) {
-    parts.push(`until=${params.until}`);
-  }
-
-  if (params.around) {
-    parts.push(`around=${params.around}`);
-  }
-
-  if (params.aroundRadius !== undefined) {
-    parts.push(`radius=${params.aroundRadius}`);
-  }
-
-  if (params.project) {
-    parts.push(`project=${JSON.stringify(params.project)}`);
+  if (params.mode) {
+    parts.push(`mode=${params.mode}`);
   }
 
   if (params.limit !== undefined && params.limit !== DEFAULT_RECALL_LIMIT) {
@@ -781,27 +753,19 @@ function formatRecallToolSummary(params: {
 /** Sanitizes recall parameters before info logging. */
 function sanitizeRecallToolParams(params: {
   query: string;
+  mode: UnifiedRecallMode | undefined;
   limit: number | undefined;
   threshold: number | undefined;
   types: EntryType[];
   tags: string[];
-  since: string | undefined;
-  until: string | undefined;
-  around: string | undefined;
-  aroundRadius: number | undefined;
-  project: string | undefined;
 }): Record<string, unknown> {
   return {
     query: params.query,
+    ...(params.mode ? { mode: params.mode } : {}),
     ...(params.limit !== undefined ? { limit: params.limit } : {}),
     ...(params.threshold !== undefined ? { threshold: params.threshold } : {}),
     ...(params.types.length > 0 ? { types: params.types } : {}),
     ...(params.tags.length > 0 ? { tags: params.tags } : {}),
-    ...(params.since ? { since: params.since } : {}),
-    ...(params.until ? { until: params.until } : {}),
-    ...(params.around ? { around: params.around } : {}),
-    ...(params.aroundRadius !== undefined ? { aroundRadius: params.aroundRadius } : {}),
-    ...(params.project ? { project: params.project } : {}),
   };
 }
 
@@ -838,43 +802,67 @@ function sanitizeTraceToolParams(params: { id: string | undefined; subject: stri
   };
 }
 
-/** Formats recall results into compact tool-readable text. */
-function formatRecallResults(
-  results: Array<{
-    entry: Entry;
-    score: number;
-  }>,
-): string {
-  const lines = [`Found ${results.length} matching agenr memories:`];
+/** Formats unified recall results into sectioned tool-readable text. */
+function formatUnifiedRecallResults(result: UnifiedRecallResult): string {
+  const lines = [
+    "Recall Route",
+    `requested=${result.routing.requested} detected=${result.routing.detectedIntent} queried=${result.routing.queried.join(", ") || "none"}`,
+    result.routing.reason,
+    "",
+  ];
 
-  for (const [index, result] of results.entries()) {
-    lines.push(
-      `${index + 1}. ${result.entry.id} | ${result.entry.type} | ${result.entry.subject} | score ${result.score.toFixed(2)} | importance ${result.entry.importance}`,
-    );
-    lines.push(`   ${truncate(result.entry.content, 220)}`);
+  if (result.timeWindow) {
+    lines.push("Resolved Time Window");
+    lines.push(`${result.timeWindow.start} -> ${result.timeWindow.end} (${result.timeWindow.timezone}) from ${JSON.stringify(result.timeWindow.resolvedFrom)}`);
+    lines.push("");
+  }
+
+  lines.push("Episode Matches");
+  if (result.episodes.length === 0) {
+    lines.push("None.");
+  } else {
+    for (const [index, episode] of result.episodes.entries()) {
+      lines.push(
+        `${index + 1}. ${episode.episode.id} | ${episode.episode.source} | ${episode.episode.startedAt} -> ${episode.episode.endedAt ?? episode.episode.startedAt} | score ${episode.score.toFixed(2)}`,
+      );
+      lines.push(`   ${index < 3 ? episode.episode.summary.trim() : truncate(episode.episode.summary.trim(), 220)}`);
+      lines.push("   why_matched=Session overlaps the resolved time window.");
+    }
+  }
+  lines.push("");
+
+  lines.push("Entry Matches");
+  if (result.entries.length === 0) {
+    lines.push("None.");
+  } else {
+    for (const [index, entry] of result.entries.entries()) {
+      lines.push(
+        `${index + 1}. ${entry.entry.id} | ${entry.entry.type} | ${entry.entry.subject} | score ${entry.score.toFixed(2)} | importance ${entry.entry.importance}`,
+      );
+      lines.push(`   ${truncate(entry.entry.content, 220)}`);
+    }
+  }
+
+  if (result.notices.length > 0) {
+    lines.push("");
+    lines.push("Notices");
+    for (const notice of result.notices) {
+      lines.push(`- ${notice}`);
+    }
   }
 
   return lines.join("\n");
 }
 
-/** Formats a bounded subject list for recall result logging. */
-function formatRecallResultSubjects(
-  results: Array<{
-    entry: Pick<Entry, "subject">;
-  }>,
-): string {
-  const subjects = results.map((result) => result.entry.subject.trim()).filter((subject) => subject.length > 0);
-  if (subjects.length === 0) {
-    return "";
-  }
-
-  const displayed = subjects.slice(0, RESULT_SUBJECT_LOG_LIMIT).map((subject) => JSON.stringify(truncate(subject, 80)));
-  const remaining = subjects.length - RESULT_SUBJECT_LOG_LIMIT;
-  if (remaining > 0) {
-    displayed.push(`... and ${remaining} more`);
-  }
-
-  return ` [subjects: ${displayed.join(", ")}]`;
+/** Formats a concise unified recall summary for info-level logging. */
+function formatUnifiedRecallLogSummary(result: UnifiedRecallResult): string {
+  const entrySubjects = result.entries.map((entry) => entry.entry.subject.trim()).filter((subject) => subject.length > 0);
+  const displayed = entrySubjects.slice(0, RESULT_SUBJECT_LOG_LIMIT).map((subject) => JSON.stringify(truncate(subject, 80)));
+  const remaining = entrySubjects.length - RESULT_SUBJECT_LOG_LIMIT;
+  const suffix = displayed.length === 0 ? "" : ` [entry subjects: ${displayed.join(", ")}${remaining > 0 ? `, ... and ${remaining} more` : ""}]`;
+  return `${result.episodes.length} episode${result.episodes.length === 1 ? "" : "s"}, ${result.entries.length} entr${
+    result.entries.length === 1 ? "y" : "ies"
+  }${suffix}`;
 }
 
 /** Formats the limited Phase 1 provenance view returned by `agenr_trace`. */

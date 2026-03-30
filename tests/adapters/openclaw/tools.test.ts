@@ -23,6 +23,8 @@ const openDatabases: SqlDatabase[] = [];
 const tempDatabasePaths: string[] = [];
 
 afterEach(async () => {
+  vi.useRealTimers();
+
   while (openDatabases.length > 0) {
     await openDatabases.pop()?.close();
   }
@@ -125,7 +127,27 @@ describe("agenr OpenClaw tools", () => {
     expect(storeParamsMessage).not.toContain("Gate risky rollout work behind a feature flag until verification is complete.");
   });
 
-  it("runs recall through the core pipeline using injected recall ports", async () => {
+  it("exposes the new recall schema without legacy temporal params", async () => {
+    const recallTool = createAgenrRecallTool(createToolContext(), Promise.resolve({} as AgenrOpenClawServices), createLogger());
+    const schema = recallTool.parameters as {
+      properties?: Record<string, unknown>;
+    };
+
+    expect(schema.properties).toMatchObject({
+      query: expect.any(Object),
+      mode: expect.any(Object),
+      limit: expect.any(Object),
+      threshold: expect.any(Object),
+      types: expect.any(Object),
+      tags: expect.any(Object),
+    });
+    expect(schema.properties).not.toHaveProperty("since");
+    expect(schema.properties).not.toHaveProperty("until");
+    expect(schema.properties).not.toHaveProperty("around");
+    expect(schema.properties).not.toHaveProperty("aroundRadius");
+  });
+
+  it("runs unified entry recall through injected recall ports", async () => {
     const database = await createTestDatabase();
     const logger = createLogger();
     const entry = createEntry({
@@ -182,7 +204,14 @@ describe("agenr OpenClaw tools", () => {
     expect(result.details).toMatchObject({
       status: "ok",
       count: 1,
+      routing: {
+        requested: "auto",
+        detectedIntent: "factual",
+        queried: ["entries"],
+      },
     });
+    expect(result.content[0]?.text).toContain("Recall Route");
+    expect(result.content[0]?.text).toContain("Entry Matches");
     expect(result.content[0]?.text).toContain("session recall");
     expect(recordedRecallEvents).toBe(1);
     expect(getMessages(logger.info)).toEqual(
@@ -193,60 +222,173 @@ describe("agenr OpenClaw tools", () => {
         expect.stringContaining(
           '[agenr] tool=agenr_recall session=session-1 key=agent:main:webchat:test params={"query":"relevant prior context for the current session so the operator can verify recall isolation across multiple TUI sessions","limit":3}',
         ),
-        '[agenr] tool=agenr_recall session=session-1 key=agent:main:webchat:test result: 1 entries [subjects: "session recall"]',
+        '[agenr] tool=agenr_recall session=session-1 key=agent:main:webchat:test result: 0 episodes, 1 entry [entry subjects: "session recall"]',
       ]),
     );
     expect(logger.debug).not.toHaveBeenCalled();
   });
 
-  it("logs recall filters and truncates result subjects at info level", async () => {
+  it("allows mode=episodes when embeddings are unavailable", async () => {
     const database = await createTestDatabase();
     const logger = createLogger();
-    const entries = [
-      createEntry({ subject: "session handoff 2026-03-27", type: "decision", tags: ["openclaw", "debugging"] }),
-      createEntry({ subject: "agenr logger format", type: "lesson", tags: ["openclaw", "debugging"] }),
-      createEntry({ subject: "temporal recall filters", type: "decision", tags: ["openclaw", "debugging"] }),
-      createEntry({ subject: "sandbox gateway restart", type: "lesson", tags: ["openclaw", "debugging"] }),
-      createEntry({ subject: "prompt build diagnostics", type: "decision", tags: ["openclaw", "debugging"] }),
-      createEntry({ subject: "openclaw plugin logger gap", type: "lesson", tags: ["openclaw", "debugging"] }),
-    ];
+    await database.upsertEpisode({
+      source: "openclaw",
+      sourceId: "episode-session-1",
+      transcriptHash: "episode-hash-1",
+      startedAt: "2026-03-29T09:00:00.000Z",
+      endedAt: "2026-03-29T10:00:00.000Z",
+      summary: "We reviewed episodic recall and landed the OpenClaw tool contract for time-bounded recall.",
+      tags: ["agenr", "openclaw"],
+      activityLevel: "substantial",
+    });
     const services = createServices(database, {
-      available: true,
-      recall: createVectorRecallPorts(entries),
+      available: false,
+      recall: createVectorRecallPorts([]),
     });
     const recallTool = createAgenrRecallTool(createToolContext(), Promise.resolve(services), logger);
 
     const result = await recallTool.execute("tool-9", {
-      query: "what was I working on",
-      since: "14d",
-      until: "3d",
-      around: "21d",
-      aroundRadius: 4,
-      project: "sandbox",
-      limit: 6,
-      threshold: 0.25,
-      types: ["decision", "lesson"],
-      tags: ["openclaw", "debugging"],
+      query: "what happened on 2026-03-29",
+      mode: "episodes",
+      limit: 3,
     });
 
     expect(result.details).toMatchObject({
       status: "ok",
-      count: 6,
+      count: 1,
+      routing: {
+        requested: "episodes",
+        queried: ["episodes"],
+      },
+      episodes: [
+        expect.objectContaining({
+          sourceId: "episode-session-1",
+        }),
+      ],
+      entries: [],
     });
-    expect(getMessages(logger.info)).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining(
-          '[agenr] tool=agenr_recall session=session-1 key=agent:main:webchat:test query="what was I working on" since=14d until=3d around=21d radius=4 project="sandbox" limit=6 types=["decision","lesson"] tags=["openclaw","debugging"]',
-        ),
-        expect.stringContaining(
-          '[agenr] tool=agenr_recall session=session-1 key=agent:main:webchat:test params={"query":"what was I working on","limit":6,"threshold":0.25,"types":["decision","lesson"],"tags":["openclaw","debugging"],"since":"14d","until":"3d","around":"21d","aroundRadius":4,"project":"sandbox"}',
-        ),
-        expect.stringContaining(
-          '[agenr] tool=agenr_recall session=session-1 key=agent:main:webchat:test result: 6 entries [subjects: "session handoff 2026-03-27", "agenr logger format", "temporal recall filters", "sandbox gateway restart", "prompt build diagnostics", ... and 1 more]',
-        ),
+    expect(result.content[0]?.text).toContain("Episode Matches");
+    expect(result.content[0]?.text).toContain("episodic recall");
+    expect(result.content[0]?.text).not.toContain("Entry recall was skipped");
+  });
+
+  it("routes mixed temporal narrative queries to episodes and entries", async () => {
+    const database = await createTestDatabase();
+    const logger = createLogger();
+    await database.upsertEpisode({
+      source: "openclaw",
+      sourceId: "episode-session-2",
+      transcriptHash: "episode-hash-2",
+      startedAt: "2026-03-29T09:00:00.000Z",
+      endedAt: "2026-03-29T10:00:00.000Z",
+      summary: "We worked on agenr episode recall and wired the OpenClaw tool output for mixed recall results.",
+      tags: ["agenr", "episode-recall"],
+      activityLevel: "substantial",
+    });
+    const entry = createEntry({
+      subject: "agenr episode recall",
+      content: "Use a unified tool response with separate episode and entry sections.",
+      type: "decision",
+      tags: ["agenr", "episode-recall"],
+    });
+    const services = createServices(database, {
+      available: true,
+      recall: createExactRecallPorts([entry]),
+    });
+    const recallTool = createAgenrRecallTool(createToolContext(), Promise.resolve(services), logger);
+
+    const result = await recallTool.execute("tool-10", {
+      query: "what happened on agenr 2026-03-29",
+      limit: 3,
+      threshold: 0.2,
+      tags: ["agenr"],
+    });
+
+    expect(result.details).toMatchObject({
+      status: "ok",
+      count: 2,
+      routing: {
+        requested: "auto",
+        detectedIntent: "mixed",
+        queried: ["episodes", "entries"],
+      },
+      timeWindow: {
+        resolvedFrom: "2026-03-29",
+      },
+      episodes: [expect.objectContaining({ sourceId: "episode-session-2" })],
+      entries: [expect.objectContaining({ subject: "agenr episode recall" })],
+    });
+    expect(result.content[0]?.text).toContain("Resolved Time Window");
+    expect(result.content[0]?.text).toContain("Episode Matches");
+    expect(result.content[0]?.text).toContain("Entry Matches");
+    expect(result.content[0]?.text).toContain("Threshold, type filters, and tag filters were applied to entries only.");
+  });
+
+  it("keeps factual temporal queries entry-first", async () => {
+    const database = await createTestDatabase();
+    const logger = createLogger();
+    const entry = createEntry({
+      subject: "schema threshold decision",
+      content: "We chose a 0.25 threshold for early episode-recall experiments.",
+      type: "decision",
+    });
+    const services = createServices(database, {
+      available: true,
+      recall: createExactRecallPorts([entry]),
+    });
+    const recallTool = createAgenrRecallTool(createToolContext(), Promise.resolve(services), logger);
+
+    const result = await recallTool.execute("tool-11", {
+      query: "when did we set the schema threshold on 2026-03-29",
+      limit: 2,
+    });
+
+    expect(result.details).toMatchObject({
+      routing: {
+        requested: "auto",
+        detectedIntent: "mixed",
+        queried: ["entries", "episodes"],
+      },
+    });
+    expect(result.content[0]?.text).toContain("requested=auto detected=mixed queried=entries, episodes");
+  });
+
+  it("returns notices instead of semantic fallback when mode=episodes has no time window", async () => {
+    const database = await createTestDatabase();
+    const logger = createLogger();
+    const services = createServices(database, {
+      available: true,
+      recall: createExactRecallPorts([
+        createEntry({
+          subject: "recent work",
+          content: "This should not be returned when episode mode lacks a time window.",
+        }),
       ]),
-    );
-    expect(logger.debug).not.toHaveBeenCalled();
+    });
+    const recallTool = createAgenrRecallTool(createToolContext(), Promise.resolve(services), logger);
+
+    const result = await recallTool.execute("tool-12", {
+      query: "what did we do recently",
+      mode: "episodes",
+    });
+
+    expect(result.details).toMatchObject({
+      status: "ok",
+      count: 0,
+      routing: {
+        requested: "episodes",
+        queried: ["episodes"],
+      },
+      episodes: [],
+      entries: [],
+      notices: [
+        expect.stringContaining("Episodes cover consolidated prior sessions only"),
+        expect.stringContaining("Episode recall needs a supported time phrase"),
+      ],
+    });
+    expect(result.content[0]?.text).toContain("Episode Matches");
+    expect(result.content[0]?.text).toContain("None.");
+    expect(result.content[0]?.text).toContain("Notices");
   });
 
   it("traces the most recent entry when last is true", async () => {
@@ -393,6 +535,38 @@ function createVectorRecallPorts(entries: Entry[]): RecallPorts {
     },
     async ftsSearch() {
       return [];
+    },
+    async hydrateEntries(ids) {
+      return entries.filter((entry) => ids.includes(entry.id));
+    },
+    async recordRecallEvents() {
+      return;
+    },
+  };
+}
+
+function createExactRecallPorts(entries: Entry[]): RecallPorts {
+  return {
+    async embed() {
+      return createEmbedding(0, 1);
+    },
+    async vectorSearch() {
+      return [];
+    },
+    async ftsSearch() {
+      return entries.map((entry) => ({
+        entry: {
+          id: entry.id,
+          subject: entry.subject,
+          content: entry.content,
+          importance: entry.importance,
+          expiry: entry.expiry,
+          created_at: entry.created_at,
+          embedding: createEmbedding(0, 1),
+        },
+        rank: 0,
+        tier: "exact" as const,
+      }));
     },
     async hydrateEntries(ids) {
       return entries.filter((entry) => ids.includes(entry.id));

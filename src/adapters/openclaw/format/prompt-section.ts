@@ -25,9 +25,10 @@ export function buildAgenrMemoryPromptSection({
   const lines = [
     "## Memory Recall",
     "Before answering anything about prior work, decisions, preferences, people, dates, unfinished work, or past sessions, call agenr_recall first. Session-start recall is automatic; use agenr_recall mid-session when you need context you do not already have.",
-    "agenr_recall supports temporal recall: when the user asks about a specific time period, always use temporal filters - semantic search alone matches meaning, not dates.",
-    'Use around plus aroundRadius to bias recall toward a period: last week -> around: "7d", aroundRadius: 3; two weeks ago -> around: "14d", aroundRadius: 4.',
-    'Use since and until for hard bounds: in the last month -> since: "30d"; before March -> until: "2026-03-01". Combine temporal filters with a focused query.',
+    "agenr_recall supports two recall kinds behind one tool: use mode=entries for exact facts, decisions, thresholds, and versions; use mode=episodes or auto for what-happened questions tied to a time period.",
+    "For temporal narrative questions, put the time phrase in the query itself: examples include yesterday, last week, this month, 2 weeks ago, or in March.",
+    "Episode results are narrative summaries of completed prior sessions, not authoritative logs. Confirm exact details when precision matters.",
+    "The newest completed session may not be consolidated into episodes yet, so very recent work can be missing from episode recall.",
   ];
 
   if (availableTools.has(MEMORY_TOOL_NAMES.store)) {

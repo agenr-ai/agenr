@@ -15,7 +15,9 @@ describe("buildAgenrMemoryPromptSection", () => {
 
     expect(lines.join("\n")).toContain("## Memory Recall");
     expect(lines.join("\n")).toContain("call agenr_recall first");
-    expect(lines.join("\n")).toContain("supports temporal recall");
+    expect(lines.join("\n")).toContain("supports two recall kinds");
+    expect(lines.join("\n")).toContain("mode=entries");
+    expect(lines.join("\n")).toContain("mode=episodes");
     expect(lines.join("\n")).toContain("future-session test");
     expect(lines.join("\n")).toContain("Importance is 1 to 10");
     expect(lines.join("\n")).toContain("fix it with agenr_update or agenr_retire");
