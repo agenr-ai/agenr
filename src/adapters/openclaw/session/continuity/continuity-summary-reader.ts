@@ -2,24 +2,9 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
+import type { OpenClawContinuitySummaryFile } from "./types.js";
 
-/**
- * Structured continuity summary lookup facts for one predecessor session.
- */
-export interface OpenClawContinuitySummaryFile {
-  /**
-   * Session UUID derived from the transcript filename.
-   */
-  sessionId: string;
-  /**
-   * Absolute path to the sidecar Markdown continuity summary file.
-   */
-  continuitySummaryPath: string;
-  /**
-   * Continuity summary Markdown contents.
-   */
-  content: string;
-}
+export type { OpenClawContinuitySummaryFile } from "./types.js";
 
 /**
  * Derives an OpenClaw session UUID from a session transcript filename.

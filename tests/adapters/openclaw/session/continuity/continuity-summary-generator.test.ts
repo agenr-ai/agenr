@@ -6,8 +6,8 @@ import path from "node:path";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { generateAndWriteOpenClawContinuitySummary } from "../../../../src/adapters/openclaw/session/continuity-summary.js";
-import type { AgenrOpenClawHost } from "../../../../src/adapters/openclaw/types.js";
+import { generateAndWriteOpenClawContinuitySummary } from "../../../../../src/adapters/openclaw/session/continuity/continuity-summary-generator.js";
+import type { AgenrOpenClawHost } from "../../../../../src/adapters/openclaw/types.js";
 
 const tempPaths: string[] = [];
 

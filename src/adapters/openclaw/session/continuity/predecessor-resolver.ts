@@ -2,10 +2,11 @@ import path from "node:path";
 
 import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
 
-import type { AgenrOpenClawHookContext, AgenrOpenClawRuntime } from "../types.js";
-import { readOpenClawSessionsStore } from "./sessions-store-reader.js";
-import type { SessionResetRecord, SessionStartTracker } from "./state.js";
-import { parseTuiSessionKey } from "./tui-lane.js";
+import type { AgenrOpenClawHookContext, AgenrOpenClawRuntime } from "../../types.js";
+import { readOpenClawSessionsStore } from "../sessions-store-reader.js";
+import type { SessionResetRecord, SessionStartTracker } from "../state.js";
+import { parseTuiSessionKey } from "../tui-lane.js";
+import type { OpenClawSessionPredecessor } from "./types.js";
 
 /** Parsed agent-and-lane facts for single-lane OpenClaw session keys. */
 interface ParsedSingleLaneSessionKey {
@@ -31,19 +32,7 @@ type TuiFallbackResolution =
       reason: string;
     };
 
-/**
- * Resolved predecessor facts used for summary and transcript-tail injection.
- */
-export interface OpenClawSessionPredecessor {
-  /**
-   * Previous OpenClaw session UUID when known.
-   */
-  sessionId?: string;
-  /**
-   * Absolute path to the predecessor session transcript JSONL.
-   */
-  sessionFile: string;
-}
+export type { OpenClawSessionPredecessor } from "./types.js";
 
 /**
  * Resolves the predecessor session file for the active OpenClaw session.

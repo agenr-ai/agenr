@@ -5,9 +5,10 @@ import path from "node:path";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER, parseModelRef, resolveAgentEffectiveModelPrimary, resolveDefaultAgentId } from "openclaw/plugin-sdk/agent-runtime";
 import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
 
-import { openClawTranscriptParser } from "../transcript/parser.js";
-import type { AgenrOpenClawHost } from "../types.js";
+import { openClawTranscriptParser } from "../../transcript/parser.js";
+import type { AgenrOpenClawHost } from "../../types.js";
 import { readOpenClawContinuitySummaryFile, resolveOpenClawContinuitySummaryPath } from "./continuity-summary-reader.js";
+import type { OpenClawContinuitySummaryWriteResult } from "./types.js";
 
 const MIN_CONTINUITY_SUMMARY_MESSAGES = 4;
 const MAX_CONTINUITY_TRANSCRIPT_CHARS = 14_000;
@@ -25,47 +26,7 @@ const CONTINUITY_SUMMARY_SYSTEM_PROMPT = [
   "Do not replay the transcript turn by turn. Do not invent facts. If something is uncertain, say so briefly.",
 ].join("\n");
 
-/**
- * Outcome returned after attempting to write a file-based continuity summary.
- */
-export interface OpenClawContinuitySummaryWriteResult {
-  /**
-   * Final outcome classification for the continuity summary attempt.
-   */
-  status: "written" | "skipped" | "failed";
-  /**
-   * Stable skip or failure reason when no file was written.
-   */
-  reason?: string;
-  /**
-   * Absolute path to the written continuity summary file.
-   */
-  continuitySummaryPath?: string;
-  /**
-   * Continuity summary Markdown content when generation or reuse succeeded.
-   */
-  content?: string;
-  /**
-   * Number of cleaned transcript messages used for continuity summarization.
-   */
-  messageCount?: number;
-  /**
-   * Number of cleaned transcript characters sent to the LLM.
-   */
-  transcriptChars?: number;
-  /**
-   * Resolved continuity summary model identifier when an LLM call ran.
-   */
-  model?: string;
-  /**
-   * End-to-end LLM latency in milliseconds when a call ran.
-   */
-  durationMs?: number;
-  /**
-   * Bytes written to the sidecar continuity summary file.
-   */
-  bytesWritten?: number;
-}
+export type { OpenClawContinuitySummaryWriteResult } from "./types.js";
 
 /**
  * Generates a cleaned narrative continuity summary and writes it next to the

@@ -1,6 +1,6 @@
 import type { AgenrOpenClawBeforeResetDeps, AgenrOpenClawBeforeResetEvent, AgenrOpenClawHookContext } from "../types.js";
 import type { SessionStartTracker } from "../session/state.js";
-import { writeOpenClawContinuitySummary } from "../session/continuity-summary.js";
+import { writeOpenClawContinuitySummary } from "../session/continuity/continuity-summary-generator.js";
 
 /**
  * Generates a file-based predecessor continuity summary when OpenClaw resets a
