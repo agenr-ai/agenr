@@ -214,8 +214,8 @@ export function createLlmClient(provider: string, modelId: string, options: Crea
  * @param stage - Pipeline stage that needs an LLM model.
  * @returns Provider and model ID to use for the requested stage.
  */
-export function resolveModel(config: AgenrConfig | undefined, stage: "extraction" | "dedup"): { provider: string; modelId: string } {
-  const override = stage === "extraction" ? config?.extractionModel : config?.dedupModel;
+export function resolveModel(config: AgenrConfig | undefined, stage: "extraction" | "dedup" | "episode"): { provider: string; modelId: string } {
+  const override = stage === "extraction" ? config?.extractionModel : stage === "dedup" ? config?.dedupModel : config?.episodeModel;
 
   return {
     provider: normalizeOptionalString(override?.provider) ?? normalizeOptionalString(config?.provider) ?? "openai",
@@ -288,9 +288,10 @@ export function stripCodeFence(text: string): string {
 }
 
 /** Returns the default model ID for a given ingestion pipeline stage. */
-function defaultModelForStage(stage: "extraction" | "dedup"): string {
+function defaultModelForStage(stage: "extraction" | "dedup" | "episode"): string {
   switch (stage) {
     case "extraction":
+    case "episode":
       return "gpt-5.4-mini";
     case "dedup":
       return "gpt-5.4-nano";

@@ -180,6 +180,9 @@ export interface AgenrConfig {
   /** Model override for LLM dedup (typically a smaller/cheaper model). */
   dedupModel?: ModelConfig;
 
+  /** Model override for episode summary generation (CLI backfill). */
+  episodeModel?: ModelConfig;
+
   /** Surgeon module configuration. */
   surgeon?: SurgeonConfig;
 

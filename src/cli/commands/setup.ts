@@ -327,6 +327,7 @@ export async function runSetupCore(options: SetupCoreOptions = {}): Promise<Setu
     embeddingApiKey,
     extractionModel: overrides.extractionModel,
     dedupModel: overrides.dedupModel,
+    episodeModel: overrides.episodeModel,
     surgeonModel: overrides.surgeonModel,
     dbPath,
   });
@@ -385,6 +386,10 @@ export function formatExistingConfig(config: AgenrConfig, configPath: string, db
     lines.push(formatLabel("Dedup override", formatModelRef(config.dedupModel)));
   }
 
+  if (config.episodeModel?.provider || config.episodeModel?.model) {
+    lines.push(formatLabel("Episode override", formatModelRef(config.episodeModel)));
+  }
+
   if (config.surgeon?.model?.provider || config.surgeon?.model?.model) {
     lines.push(formatLabel("Surgeon override", formatModelRef(config.surgeon.model)));
   }
@@ -421,7 +426,12 @@ export function getSetupReadiness(config: AgenrConfig | undefined, env: NodeJS.P
   }
 
   try {
-    const providersToValidate = new Set<string>([provider, resolveModel(config, "extraction").provider, resolveModel(config, "dedup").provider]);
+    const providersToValidate = new Set<string>([
+      provider,
+      resolveModel(config, "extraction").provider,
+      resolveModel(config, "dedup").provider,
+      resolveModel(config, "episode").provider,
+    ]);
 
     for (const providerName of providersToValidate) {
       resolveLlmCredentials(config, providerName, env);
@@ -849,7 +859,7 @@ async function promptTaskModelOverrides(
     defaultModel: string;
     existingConfig?: AgenrConfig;
   },
-): Promise<{ extractionModel?: ModelConfig; dedupModel?: ModelConfig; surgeonModel?: ModelConfig } | null> {
+): Promise<{ extractionModel?: ModelConfig; dedupModel?: ModelConfig; episodeModel?: ModelConfig; surgeonModel?: ModelConfig } | null> {
   const customize = await prompts.confirm({
     message: "Customize task-specific models? (Advanced)",
     initialValue: false,
@@ -863,6 +873,7 @@ async function promptTaskModelOverrides(
     return {
       extractionModel: options.existingConfig?.extractionModel,
       dedupModel: options.existingConfig?.dedupModel,
+      episodeModel: options.existingConfig?.episodeModel,
       surgeonModel: options.existingConfig?.surgeon?.model,
     };
   }
@@ -889,6 +900,17 @@ async function promptTaskModelOverrides(
     return null;
   }
 
+  const episodeModel = await promptStageOverride(prompts, runtime, {
+    label: "Episode",
+    defaultAuth: options.defaultAuth,
+    defaultModel: options.defaultModel,
+    current: options.existingConfig?.episodeModel,
+    existingConfig: options.existingConfig,
+  });
+  if (episodeModel === null) {
+    return null;
+  }
+
   const surgeonModel = await promptStageOverride(prompts, runtime, {
     label: "Surgeon",
     defaultAuth: options.defaultAuth,
@@ -900,7 +922,7 @@ async function promptTaskModelOverrides(
     return null;
   }
 
-  return { extractionModel, dedupModel, surgeonModel };
+  return { extractionModel, dedupModel, episodeModel, surgeonModel };
 }
 
 /** Prompts for one stage-specific provider/model override. */
@@ -991,6 +1013,7 @@ function buildNextConfig(
     embeddingApiKey?: string;
     extractionModel?: ModelConfig;
     dedupModel?: ModelConfig;
+    episodeModel?: ModelConfig;
     surgeonModel?: ModelConfig;
     dbPath: string;
   },
@@ -1010,6 +1033,7 @@ function buildNextConfig(
     ...(nextCredentials ? { credentials: nextCredentials } : { credentials: undefined }),
     ...(values.extractionModel ? { extractionModel: values.extractionModel } : { extractionModel: undefined }),
     ...(values.dedupModel ? { dedupModel: values.dedupModel } : { dedupModel: undefined }),
+    ...(values.episodeModel ? { episodeModel: values.episodeModel } : { episodeModel: undefined }),
     ...(nextSurgeon ? { surgeon: nextSurgeon } : { surgeon: undefined }),
     dbPath: values.dbPath,
     apiKey: undefined,
@@ -1055,6 +1079,7 @@ function formatSavedConfigSummary(config: AgenrConfig, configPath: string, dbPat
 
   appendChangedOverrideLine(lines, "Extraction override", config.extractionModel, options.previousConfig?.extractionModel);
   appendChangedOverrideLine(lines, "Dedup override", config.dedupModel, options.previousConfig?.dedupModel);
+  appendChangedOverrideLine(lines, "Episode override", config.episodeModel, options.previousConfig?.episodeModel);
   appendChangedOverrideLine(lines, "Surgeon override", config.surgeon?.model, options.previousConfig?.surgeon?.model);
 
   return lines.join("\n");

@@ -6,6 +6,7 @@ import {
   buildStageAuthOptions,
   filterSetupModelsForAuth,
   formatExistingConfig,
+  getSetupReadiness,
   registerSetupCommand,
   runSetupCore,
   type SetupRuntime,
@@ -44,7 +45,8 @@ function createSetupRuntime(overrides: Partial<SetupRuntime> = {}): SetupRuntime
       const hasOpenAiKey = Boolean(config.credentials?.openaiApiKey?.trim());
       const hasAnthropicApiKey = Boolean(config.credentials?.anthropicApiKey?.trim());
       const hasAnthropicToken = Boolean(config.credentials?.anthropicOauthToken?.trim());
-      const needsAnthropicOverride = config.extractionModel?.provider === "anthropic" || config.dedupModel?.provider === "anthropic";
+      const needsAnthropicOverride =
+        config.extractionModel?.provider === "anthropic" || config.dedupModel?.provider === "anthropic" || config.episodeModel?.provider === "anthropic";
 
       if (!config.provider || !config.model) {
         return { ready: false, guidance: "Provider and model must both be configured." };
@@ -289,7 +291,18 @@ describe("runSetupCore", () => {
   });
 
   it("writes a surgeon override from the advanced task-specific model flow", async () => {
-    const prompts = new FakePrompts(["openai-api-key", "sk-openai", "gpt-5.4-mini", true, "default", "default", "custom", "gpt-5.4", "/tmp/surgeon.db"]);
+    const prompts = new FakePrompts([
+      "openai-api-key",
+      "sk-openai",
+      "gpt-5.4-mini",
+      true,
+      "default",
+      "default",
+      "default",
+      "custom",
+      "gpt-5.4",
+      "/tmp/surgeon.db",
+    ]);
     const runtime = createSetupRuntime();
 
     const result = await runSetupCore({
@@ -318,6 +331,46 @@ describe("runSetupCore", () => {
     });
     expect(prompts.confirmCalls.some((call) => call.message === "Customize task-specific models? (Advanced)")).toBe(true);
     expect(prompts.notes.at(-1)?.message).toContain("Surgeon override");
+  });
+
+  it("writes an episode override from the advanced task-specific model flow", async () => {
+    const prompts = new FakePrompts([
+      "openai-api-key",
+      "sk-openai",
+      "gpt-5.4-mini",
+      true,
+      "default",
+      "default",
+      "custom",
+      "gpt-5.4",
+      "default",
+      "/tmp/episode.db",
+    ]);
+    const runtime = createSetupRuntime();
+
+    const result = await runSetupCore({
+      prompts,
+      runtime,
+    });
+
+    expect(result?.config.episodeModel).toEqual({
+      provider: "openai",
+      model: "gpt-5.4",
+    });
+    expect(runtime.writeConfig).toHaveBeenCalledWith({
+      auth: "openai-api-key",
+      provider: "openai",
+      model: "gpt-5.4-mini",
+      credentials: {
+        openaiApiKey: "sk-openai",
+      },
+      episodeModel: {
+        provider: "openai",
+        model: "gpt-5.4",
+      },
+      dbPath: "/tmp/episode.db",
+    });
+    expect(prompts.notes.at(-1)?.message).toContain("Episode override");
   });
 
   it("preserves an existing surgeon override when customization is skipped", async () => {
@@ -416,6 +469,53 @@ describe("formatExistingConfig", () => {
 
     expect(summary).toContain("Surgeon override");
     expect(summary).toContain("openai/gpt-5.4");
+  });
+
+  it("shows the episode override when configured", () => {
+    const summary = formatExistingConfig(
+      {
+        auth: "openai-api-key",
+        provider: "openai",
+        model: "gpt-5.4-mini",
+        credentials: {
+          openaiApiKey: "sk-openai",
+        },
+        episodeModel: {
+          provider: "anthropic",
+          model: "claude-sonnet-4-6",
+        },
+      },
+      "/tmp/.agenr/config.json",
+      "/tmp/.agenr/knowledge.db",
+    );
+
+    expect(summary).toContain("Episode override");
+    expect(summary).toContain("anthropic/claude-sonnet-4-6");
+  });
+});
+
+describe("getSetupReadiness", () => {
+  it("requires credentials for the episode override provider", () => {
+    expect(
+      getSetupReadiness(
+        {
+          auth: "openai-api-key",
+          provider: "openai",
+          model: "gpt-5.4-mini",
+          credentials: {
+            openaiApiKey: "sk-openai",
+          },
+          episodeModel: {
+            provider: "anthropic",
+            model: "claude-sonnet-4-6",
+          },
+        },
+        {},
+      ),
+    ).toEqual({
+      ready: false,
+      guidance: 'No credential found for provider "anthropic". Set the appropriate auth method in config or provide ANTHROPIC_API_KEY.',
+    });
   });
 });
 

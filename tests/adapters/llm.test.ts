@@ -125,6 +125,25 @@ describe("resolveModel", () => {
     });
   });
 
+  it("returns the episode override when set", () => {
+    expect(
+      resolveModel(
+        {
+          provider: "openai",
+          model: "gpt-5.4",
+          episodeModel: {
+            provider: "anthropic",
+            model: "claude-sonnet-4-6",
+          },
+        },
+        "episode",
+      ),
+    ).toEqual({
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+    });
+  });
+
   it("falls back to the top-level config when stage overrides are absent", () => {
     expect(
       resolveModel(
@@ -132,7 +151,7 @@ describe("resolveModel", () => {
           provider: "anthropic",
           model: "claude-sonnet-4-20250514",
         },
-        "extraction",
+        "episode",
       ),
     ).toEqual({
       provider: "anthropic",
@@ -148,6 +167,10 @@ describe("resolveModel", () => {
     expect(resolveModel(undefined, "dedup")).toEqual({
       provider: "openai",
       modelId: "gpt-5.4-nano",
+    });
+    expect(resolveModel(undefined, "episode")).toEqual({
+      provider: "openai",
+      modelId: "gpt-5.4-mini",
     });
   });
 });
