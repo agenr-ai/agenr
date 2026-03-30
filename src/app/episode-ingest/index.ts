@@ -8,7 +8,6 @@ export type {
   EpisodeIngestPorts,
   EpisodeIngestUsageStats,
   SessionMeta,
-  SessionMetaInspectorPort,
   SessionMetaSource,
   SessionRegistryPort,
 } from "./ports.js";

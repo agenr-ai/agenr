@@ -8,7 +8,6 @@ import type {
   EpisodeIngestModelInfo,
   EpisodeIngestPorts,
   SessionMeta,
-  SessionMetaInspectorPort,
   SessionRegistryPort,
 } from "../../../src/app/episode-ingest/ports.js";
 import type { EpisodeIngestCandidate } from "../../../src/app/episode-ingest/types.js";
@@ -17,7 +16,7 @@ import type { EpisodeDatabasePort, TranscriptPort } from "../../../src/core/port
 import type { Episode, ParsedTranscript } from "../../../src/core/types.js";
 
 describe("prepareEpisodeIngest", () => {
-  it("builds candidates with registry metadata taking precedence over reconstructed metadata", async () => {
+  it("builds candidates with registry metadata taking precedence over parser-reconstructed metadata", async () => {
     const filePath = "/tmp/123e4567-e89b-12d3-a456-426614174000.jsonl";
     const result = await prepareEpisodeIngest(
       "/tmp",
@@ -27,6 +26,8 @@ describe("prepareEpisodeIngest", () => {
           [filePath]: buildTranscript({
             sessionId: "123e4567-e89b-12d3-a456-426614174000",
             endedAt: "2026-03-30T09:00:00.000Z",
+            reconstructedSurface: "telegram",
+            surfaceReconstructionSource: "reconstructed",
           }),
         }),
         sessionRegistry: new MockSessionRegistry({
@@ -38,12 +39,6 @@ describe("prepareEpisodeIngest", () => {
             provider: "webchat",
             chatType: "direct",
             metadataSource: "registry",
-          },
-        }),
-        sessionMetaInspector: new MockSessionMetaInspector({
-          [filePath]: {
-            surface: "telegram",
-            metadataSource: "reconstructed",
           },
         }),
       }),
@@ -68,6 +63,40 @@ describe("prepareEpisodeIngest", () => {
       }),
     );
     expect(result.candidates[0]?.estimatedInputTokens).toBeGreaterThan(0);
+  });
+
+  it("uses parser-reconstructed metadata for rotated transcripts", async () => {
+    const filePath = "/tmp/rotated.jsonl";
+    const result = await prepareEpisodeIngest(
+      "/tmp",
+      createPorts({
+        files: new MockEpisodeFiles([filePath]),
+        transcript: new MockTranscriptPort({
+          [filePath]: buildTranscript({
+            sessionId: undefined,
+            endedAt: "2026-03-30T09:00:00.000Z",
+            reconstructedSurface: "signal",
+            surfaceReconstructionSource: "reconstructed",
+          }),
+        }),
+      }),
+      {
+        now: new Date("2026-03-30T10:00:00.000Z"),
+      },
+    );
+
+    expect(result.invalid).toEqual([]);
+    expect(result.skipped).toEqual([]);
+    expect(result.candidates).toEqual([
+      expect.objectContaining({
+        filePath,
+        sessionId: undefined,
+        sourceRef: filePath,
+        agentId: null,
+        surface: "signal",
+        metadataSource: "reconstructed",
+      }),
+    ]);
   });
 
   it("skips short and active sessions before candidate generation", async () => {
@@ -696,7 +725,6 @@ function createPorts(overrides: Partial<EpisodeIngestPorts> = {}): EpisodeIngest
     episodes: overrides.episodes ?? new MockEpisodeDatabase(),
     createSummaryLlm: overrides.createSummaryLlm ?? createSummaryLlmFactory([]),
     sessionRegistry: overrides.sessionRegistry,
-    sessionMetaInspector: overrides.sessionMetaInspector,
   };
 }
 
@@ -868,20 +896,14 @@ class MockSessionRegistry implements SessionRegistryPort {
   }
 }
 
-class MockSessionMetaInspector implements SessionMetaInspectorPort {
-  public constructor(private readonly entries: Record<string, { surface: string | null; metadataSource: "reconstructed" | "none" }>) {}
-
-  public async inspectFile(filePath: string): Promise<{ surface: string | null; metadataSource: "reconstructed" | "none" }> {
-    return this.entries[filePath] ?? { surface: null, metadataSource: "none" };
-  }
-}
-
 function buildTranscript(
   overrides: {
     sessionId?: string;
     transcriptHash?: string;
     endedAt?: string;
     messages?: ParsedTranscript["messages"];
+    reconstructedSurface?: ParsedTranscript["metadata"]["reconstructedSurface"];
+    surfaceReconstructionSource?: ParsedTranscript["metadata"]["surfaceReconstructionSource"];
   } = {},
 ): ParsedTranscript {
   const messages = overrides.messages ?? buildMessages(4);
@@ -894,6 +916,8 @@ function buildTranscript(
       endedAt: overrides.endedAt ?? messages[messages.length - 1]?.timestamp,
       messageCount: messages.length,
       transcriptHash: overrides.transcriptHash ?? "service-transcript-hash",
+      reconstructedSurface: overrides.reconstructedSurface,
+      surfaceReconstructionSource: overrides.surfaceReconstructionSource,
     },
     warnings: [],
   };

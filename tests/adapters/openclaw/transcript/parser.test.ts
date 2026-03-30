@@ -68,6 +68,8 @@ describe("OpenClawTranscriptParser", () => {
       messageCount: 2,
       transcriptHash: expectedTranscriptHash(lines),
       modelsUsed: ["gpt-4.1"],
+      reconstructedSurface: null,
+      surfaceReconstructionSource: "none",
     });
     expect(transcript.messages).toEqual([
       {
@@ -297,7 +299,119 @@ describe("OpenClawTranscriptParser", () => {
       messageCount: 1,
       transcriptHash: expectedTranscriptHash(lines),
       modelsUsed: ["gpt-4.1", "gpt-4.1-mini"],
+      reconstructedSurface: null,
+      surfaceReconstructionSource: "none",
     });
+  });
+
+  it.each([
+    {
+      name: "telegram from sender metadata",
+      message: {
+        role: "human",
+        content: [createMetadataBlock("Sender (untrusted metadata):", { label: "telegram:alice" }), "Ping"],
+      },
+      expectedSurface: "telegram",
+    },
+    {
+      name: "webchat from sender metadata",
+      message: {
+        role: "human",
+        content: [createMetadataBlock("Sender (untrusted metadata):", { label: "openclaw-control-ui" }), "Ping"],
+      },
+      expectedSurface: "webchat",
+    },
+    {
+      name: "signal from sender metadata",
+      message: {
+        role: "human",
+        content: [createMetadataBlock("Sender (untrusted metadata):", { label: "signal:bob" }), "Ping"],
+      },
+      expectedSurface: "signal",
+    },
+    {
+      name: "tui from sender metadata",
+      message: {
+        role: "human",
+        content: [createMetadataBlock("Sender (untrusted metadata):", { label: "openclaw-tui" }), "Ping"],
+      },
+      expectedSurface: "tui",
+    },
+    {
+      name: "webchat from conversation info metadata",
+      message: {
+        role: "human",
+        content: [createMetadataBlock("Conversation info (untrusted metadata):", { sender_id: "gateway-client" }), "Ping"],
+      },
+      expectedSurface: "webchat",
+    },
+    {
+      name: "inbound_meta on the record",
+      record: {
+        inbound_meta: {
+          surface: "discord",
+        },
+      },
+      message: {
+        role: "human",
+        content: "Ping",
+      },
+      expectedSurface: "discord",
+    },
+    {
+      name: "heartbeat inferred from first user message",
+      message: {
+        role: "human",
+        content: "Read HEARTBEAT.md and summarize today.",
+      },
+      expectedSurface: "heartbeat",
+    },
+    {
+      name: "subagent inferred from first user message",
+      message: {
+        role: "human",
+        content: "[Subagent Context] Please continue the delegated task.",
+      },
+      expectedSurface: "subagent",
+    },
+  ])("reconstructs $name", async ({ record, message, expectedSurface }) => {
+    const filePath = await writeSessionFile([
+      JSON.stringify({
+        type: "session",
+        id: "surface-session",
+      }),
+      JSON.stringify({
+        type: "message",
+        ...(record ?? {}),
+        message,
+      }),
+    ]);
+
+    const transcript = await parser.parseFile(filePath);
+
+    expect(transcript.metadata.reconstructedSurface).toBe(expectedSurface);
+    expect(transcript.metadata.surfaceReconstructionSource).toBe("reconstructed");
+  });
+
+  it("reports no reconstructed surface when no signal is present", async () => {
+    const filePath = await writeSessionFile([
+      JSON.stringify({
+        type: "session",
+        id: "surface-none",
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "human",
+          content: "Just a plain message with no surface metadata.",
+        },
+      }),
+    ]);
+
+    const transcript = await parser.parseFile(filePath);
+
+    expect(transcript.metadata.reconstructedSurface).toBeNull();
+    expect(transcript.metadata.surfaceReconstructionSource).toBe("none");
   });
 
   it("strips a single leading metadata block from user messages", async () => {

@@ -33,9 +33,11 @@ const TOOL_RESULT_POLICY = {
   keepToolNames: new Set(DEFAULT_TOOL_RESULT_KEEP_NAMES.filter((name) => name !== "image")),
 };
 const RAW_TEXT_BLOCK_TYPES = new Set(["input_text", "output_text", "text"]);
+const SENDER_METADATA_SENTINEL = "Sender (untrusted metadata):";
+const CONVERSATION_INFO_SENTINEL = "Conversation info (untrusted metadata):";
 const USER_METADATA_PREFIX_SENTINELS = new Set([
-  "Sender (untrusted metadata):",
-  "Conversation info (untrusted metadata):",
+  SENDER_METADATA_SENTINEL,
+  CONVERSATION_INFO_SENTINEL,
   "Thread starter (untrusted, for context):",
   "Replied message (untrusted, for context):",
   "Forwarded message context (untrusted metadata):",
@@ -70,6 +72,12 @@ interface ParseState {
   modelsUsedSet: Set<string>;
   pendingToolCalls: ToolCallContext[];
   pendingToolCallsById: Map<string, ToolCallContext>;
+  /** First detected surface signal, or null if none found yet. */
+  detectedSurface: string | null;
+  /** Whether surface detection found any signal. */
+  surfaceDetected: boolean;
+  /** First user message raw text, for content-based inference fallback. */
+  firstUserRawText: string | null;
 }
 
 /** Creates the mutable state container used for one file parse. */
@@ -89,6 +97,9 @@ function createParseState(): ParseState {
     modelsUsedSet: new Set<string>(),
     pendingToolCalls: [],
     pendingToolCallsById: new Map<string, ToolCallContext>(),
+    detectedSurface: null,
+    surfaceDetected: false,
+    firstUserRawText: null,
   };
 }
 
@@ -218,6 +229,132 @@ function addModelUsed(state: ParseState, value: unknown): void {
   state.modelsUsed.push(modelId);
 }
 
+/** Stores the first reconstructed surface signal found during parsing. */
+function setDetectedSurface(state: ParseState, surface: string | null): void {
+  if (state.surfaceDetected || !surface) {
+    return;
+  }
+
+  state.detectedSurface = surface;
+  state.surfaceDetected = true;
+}
+
+/** Reads a normalized surface value from `inbound_meta` when present. */
+function readInboundSurface(record: Record<string, unknown>): string | null {
+  const inboundMeta = asRecord(record.inbound_meta);
+  const surface = getString(inboundMeta?.surface)?.trim().toLowerCase();
+  return surface || null;
+}
+
+/** Extracts a parsed metadata payload that follows one sentinel-headed JSON fence. */
+function extractMetadataPayload(rawText: string, sentinel: string): Record<string, unknown> | null {
+  const lines = rawText.split(/\r?\n/u);
+
+  for (let index = 0; index < lines.length; index += 1) {
+    if (lines[index]?.trim() !== sentinel) {
+      continue;
+    }
+
+    let fenceIndex = index + 1;
+    while (fenceIndex < lines.length && lines[fenceIndex]?.trim().length === 0) {
+      fenceIndex += 1;
+    }
+
+    if (fenceIndex >= lines.length || !/^```(?:json)?\s*$/iu.test(lines[fenceIndex]?.trim() ?? "")) {
+      continue;
+    }
+
+    fenceIndex += 1;
+    const jsonLines: string[] = [];
+    while (fenceIndex < lines.length && !/^```\s*$/u.test(lines[fenceIndex]?.trim() ?? "")) {
+      jsonLines.push(lines[fenceIndex] ?? "");
+      fenceIndex += 1;
+    }
+
+    if (fenceIndex >= lines.length) {
+      continue;
+    }
+
+    try {
+      const parsed = JSON.parse(jsonLines.join("\n").trim());
+      return asRecord(parsed);
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+/** Maps known OpenClaw sender labels into stable surface identifiers. */
+function mapKnownSurface(value: string): string | null {
+  if (!value) {
+    return null;
+  }
+
+  if (value.includes("telegram")) {
+    return "telegram";
+  }
+
+  if (value.includes("signal")) {
+    return "signal";
+  }
+
+  if (value.includes("discord")) {
+    return "discord";
+  }
+
+  if (value.includes("openclaw-tui")) {
+    return "tui";
+  }
+
+  if (value.includes("gateway-client") || value.includes("openclaw-control-ui") || value.includes("webchat")) {
+    return "webchat";
+  }
+
+  return null;
+}
+
+/** Extracts a sender-derived surface from one raw user message. */
+function extractSenderSurface(rawText: string): string | null {
+  const payload = extractMetadataPayload(rawText, SENDER_METADATA_SENTINEL);
+  if (!payload) {
+    return null;
+  }
+
+  const label = getString(payload.label)?.trim().toLowerCase() ?? getString(payload.id)?.trim().toLowerCase() ?? "";
+  return mapKnownSurface(label);
+}
+
+/** Extracts a conversation-info-derived surface from one raw user message. */
+function extractConversationInfoSurface(rawText: string): string | null {
+  const payload = extractMetadataPayload(rawText, CONVERSATION_INFO_SENTINEL);
+  if (!payload) {
+    return null;
+  }
+
+  const senderId = getString(payload.sender_id)?.trim().toLowerCase() ?? "";
+  return mapKnownSurface(senderId);
+}
+
+/** Infers a surface from the first raw user message when metadata blocks are absent. */
+function inferSurfaceFromContent(firstUserRawText: string | null): string | null {
+  const normalized = firstUserRawText?.trim().toLowerCase() ?? "";
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.includes("[subagent context]")) {
+    return "subagent";
+  }
+
+  if (normalized.includes("heartbeat.md")) {
+    return "heartbeat";
+  }
+
+  return null;
+}
+
 /** Resolves tool-call context for a tool result using IDs or FIFO fallback. */
 function resolveToolContext(state: ParseState, message: Record<string, unknown>): ToolCallContext | null {
   const toolCallId = getString(message.toolCallId) ?? getString(message.tool_call_id) ?? getString(message.call_id) ?? getString(message.id);
@@ -242,6 +379,23 @@ function handleMessageRecord(state: ParseState, record: Record<string, unknown>,
   state.stats.totalMessageRecords += 1;
 
   const role = normalizeOpenClawRole(message.role);
+
+  if (!state.surfaceDetected) {
+    setDetectedSurface(state, readInboundSurface(message));
+  }
+
+  if (!state.surfaceDetected && role === "user") {
+    const rawText = extractRawMessageText(message.content);
+    if (state.firstUserRawText === null) {
+      state.firstUserRawText = rawText;
+    }
+
+    setDetectedSurface(state, extractSenderSurface(rawText));
+    if (!state.surfaceDetected) {
+      setDetectedSurface(state, extractConversationInfoSurface(rawText));
+    }
+  }
+
   if (role === "system") {
     state.stats.systemDropped += 1;
     return;
@@ -330,7 +484,14 @@ function handleRecord(state: ParseState, record: Record<string, unknown>): void 
     state.sessionTimestamp = extractTimestamp(record) ?? state.sessionTimestamp;
     state.sessionLabel = normalizeSessionLabel(getString(record.conversation_label) ?? "") ?? state.sessionLabel;
     addModelUsed(state, record.model);
+    if (!state.surfaceDetected) {
+      setDetectedSurface(state, readInboundSurface(record));
+    }
     return;
+  }
+
+  if (!state.surfaceDetected) {
+    setDetectedSurface(state, readInboundSurface(record));
   }
 
   if (record.type === "model_change") {
@@ -378,6 +539,10 @@ export class OpenClawTranscriptParser implements TranscriptPort {
       handleRecord(state, record);
     });
 
+    if (!state.surfaceDetected && state.firstUserRawText) {
+      setDetectedSurface(state, inferSurfaceFromContent(state.firstUserRawText));
+    }
+
     const fallbackTimestamp =
       state.messages.length > 0
         ? await applyMessageTimestampFallbacks(filePath, state.messages, { sessionTimestamp: state.sessionTimestamp })
@@ -401,6 +566,8 @@ export class OpenClawTranscriptParser implements TranscriptPort {
         messageCount: state.messages.length,
         transcriptHash,
         modelsUsed: state.modelsUsed.length > 0 ? state.modelsUsed : undefined,
+        reconstructedSurface: state.detectedSurface,
+        surfaceReconstructionSource: state.surfaceDetected ? "reconstructed" : "none",
       },
     };
   }

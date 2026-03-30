@@ -25,7 +25,7 @@ const CHARS_PER_TOKEN_ESTIMATE = 4;
  * prepares render-ready candidates for later episode generation.
  *
  * @param targetPath - File or directory path to inspect.
- * @param ports - Discovery, transcript, metadata, and episode lookup ports.
+ * @param ports - Discovery, transcript, registry metadata, and episode lookup ports.
  * @param options - Optional regenerate flag, reference time, and preflight overrides.
  * @returns Aggregate Stage 1 preflight result.
  */
@@ -133,7 +133,12 @@ async function classifyPreflightTranscript(
   const cleanedMessages = parsedTranscript.messages.filter((message) => message.text.trim().length > 0);
   const parsedSessionId = parsedTranscript.metadata.sessionId?.trim() || undefined;
   const registryMeta = parsedSessionId ? await ports.sessionRegistry?.getSessionMeta(parsedSessionId) : undefined;
-  const reconstructedMeta = registryMeta ? undefined : await ports.sessionMetaInspector?.inspectFile(filePath);
+  const reconstructedMeta = registryMeta
+    ? undefined
+    : {
+        surface: parsedTranscript.metadata.reconstructedSurface ?? null,
+        metadataSource: parsedTranscript.metadata.surfaceReconstructionSource ?? "none",
+      };
   const resolvedMeta = resolveSessionMeta(filePath, parsedSessionId, registryMeta, reconstructedMeta);
 
   if (!resolvedMeta.sessionId && cleanedMessages.length === 0) {

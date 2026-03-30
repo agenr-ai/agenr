@@ -158,6 +158,10 @@ export interface SessionTranscriptMetadata {
 export interface ParsedTranscriptMetadata extends SessionTranscriptMetadata {
   sessionLabel?: string;
   modelsUsed?: string[];
+  /** Best-effort surface reconstructed from transcript content. */
+  reconstructedSurface?: string | null;
+  /** Provenance for the reconstructed surface value. */
+  surfaceReconstructionSource?: "reconstructed" | "none";
 }
 
 /**

@@ -7,7 +7,6 @@ import { InvalidArgumentError, Option, type Command } from "commander";
 import { createDatabase } from "../../adapters/db/client.js";
 import { createLlmClient, resolveLlmApiKey, resolveModel } from "../../adapters/llm.js";
 import { loadOpenClawSessionRegistry } from "../../adapters/openclaw/session/session-registry.js";
-import { reconstructOpenClawSessionMeta } from "../../adapters/openclaw/session/surface-reconstruct.js";
 import { openClawTranscriptFiles } from "../../adapters/openclaw/session/transcript-files.js";
 import { openClawTranscriptParser } from "../../adapters/openclaw/transcript/parser.js";
 import { createEpisodeIngestPlan, executeEpisodeIngestPlan, prepareEpisodeIngest } from "../../app/episode-ingest/index.js";
@@ -206,9 +205,6 @@ async function createEpisodeIngestPorts(db: SqlDatabase, provider: string, model
     episodes: db,
     createSummaryLlm: () => createEpisodeIngestSummaryLlm(provider, modelId),
     sessionRegistry,
-    sessionMetaInspector: {
-      inspectFile: reconstructOpenClawSessionMeta,
-    },
   };
 }
 
