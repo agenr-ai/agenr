@@ -24,6 +24,8 @@ const ENTRY_SELECT_COLUMNS = `
   last_recalled_at,
   superseded_by,
   cluster_id,
+  user_id,
+  project,
   retired,
   retired_at,
   retired_reason,
@@ -474,8 +476,7 @@ function buildCandidateFilter(query: SurgeonCandidateQuery): CandidateFilterStat
   if (scope === "actionable") {
     whereClauses.push(`(
       e.expiry = 'temporary'
-      OR e.type = 'todo'
-      OR (e.type = 'event' AND (e.importance <= 6 OR e.expiry = 'permanent'))
+      OR (e.type = 'milestone' AND (e.importance <= 6 OR e.expiry = 'permanent'))
       OR (e.type = 'fact' AND e.importance <= 5 AND COALESCE(e.recall_count, 0) = 0)
     )`);
   }
@@ -605,19 +606,15 @@ function candidatePriorityTier(candidate: SurgeonCandidateSummary): number {
     return 0;
   }
 
-  if (candidate.type === "todo") {
+  if (candidate.type === "milestone" && candidate.importance <= 4) {
     return 1;
   }
 
-  if (candidate.type === "event" && candidate.importance <= 4) {
+  if (looksLikeStatusArtifact(candidate.subject)) {
     return 2;
   }
 
-  if (looksLikeStatusArtifact(candidate.subject)) {
-    return 3;
-  }
-
-  return 4;
+  return 3;
 }
 
 /**

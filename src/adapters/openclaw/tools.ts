@@ -10,7 +10,7 @@ import { findOpenClawEntryBySubject, findOpenClawMostRecentEntry, getOpenClawEnt
 import type { AgenrOpenClawServices } from "./types.js";
 
 const ENTRY_TYPE_DESCRIPTION =
-  "Knowledge type to store. Use decision for rules or architecture, preference for user choices, lesson for learned guidance, fact for durable state, todo for important follow-up, reflection for synthesized summaries, and event or relationship only when that context will matter later.";
+  "Knowledge type to store. Use fact for durable information about people, places, systems, or how things work. Use decision for standing rules, constraints, or chosen approaches. Use preference for stated wants, values, or opinions. Use lesson for non-obvious insights learned from specific experience. Use milestone for notable one-time events worth remembering (a move, a launch, a life change, a hire, a trip). Use relationship for meaningful connections between people, groups, or systems.";
 
 const EXPIRY_DESCRIPTION =
   "Lifetime bucket: core (always injected at session start, use sparingly), permanent (durable and recalled on demand), or temporary (short-horizon).";
@@ -86,7 +86,7 @@ const RECALL_TOOL_PARAMETERS = {
         type: "string",
         enum: [...ENTRY_TYPES],
       },
-      description: "Optional knowledge types to filter by, such as decision, preference, lesson, fact, or todo.",
+      description: "Optional knowledge types to filter by, such as decision, preference, lesson, fact, milestone, or relationship.",
     },
     tags: {
       type: "array",

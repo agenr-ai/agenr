@@ -289,17 +289,7 @@ describe("runSetupCore", () => {
   });
 
   it("writes a surgeon override from the advanced task-specific model flow", async () => {
-    const prompts = new FakePrompts([
-      "openai-api-key",
-      "sk-openai",
-      "gpt-5.4-mini",
-      true,
-      "default",
-      "default",
-      "custom",
-      "gpt-5.4",
-      "/tmp/surgeon.db",
-    ]);
+    const prompts = new FakePrompts(["openai-api-key", "sk-openai", "gpt-5.4-mini", true, "default", "default", "custom", "gpt-5.4", "/tmp/surgeon.db"]);
     const runtime = createSetupRuntime();
 
     const result = await runSetupCore({

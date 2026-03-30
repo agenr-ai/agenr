@@ -497,9 +497,9 @@ async function seedEntries(database: SqlDatabase): Promise<SeedMetadata> {
       created_at: daysAgo(365).toISOString(),
     }),
     buildEntry({
-      subject: "cleanup task",
-      content: "Remove deprecated skip embeddings code after recall v1 lands.",
-      type: "todo",
+      subject: "deprecated skip embeddings path",
+      content: "The deprecated skip embeddings code remains in the codebase until the recall v1 cleanup pass removes it.",
+      type: "fact",
       importance: 6,
       expiry: "temporary",
       created_at: daysAgo(60).toISOString(),
@@ -507,7 +507,7 @@ async function seedEntries(database: SqlDatabase): Promise<SeedMetadata> {
     buildEntry({
       subject: "retired note",
       content: "Retired hidden memory should never be recalled.",
-      type: "event",
+      type: "milestone",
       importance: 4,
       expiry: "temporary",
       retired: true,
@@ -536,7 +536,7 @@ async function seedEntries(database: SqlDatabase): Promise<SeedMetadata> {
     buildEntry({
       subject: "temporal anchor entry",
       content: "Temporal anchor matching entry for explicit around date queries.",
-      type: "event",
+      type: "milestone",
       importance: 6,
       expiry: "permanent",
       created_at: daysAgo(1).toISOString(),
@@ -544,7 +544,7 @@ async function seedEntries(database: SqlDatabase): Promise<SeedMetadata> {
     buildEntry({
       subject: "temporal anchor entry",
       content: "Temporal anchor matching entry for explicit around date queries.",
-      type: "event",
+      type: "milestone",
       importance: 6,
       expiry: "permanent",
       created_at: daysAgo(240).toISOString(),

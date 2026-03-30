@@ -15,14 +15,12 @@ const TYPE_ALIAS_MAP: Record<string, StoreEntryInput["type"]> = {
   preferences: "preference",
   lesson: "lesson",
   lessons: "lesson",
-  event: "event",
-  events: "event",
+  event: "milestone",
+  events: "milestone",
+  milestone: "milestone",
+  milestones: "milestone",
   relationship: "relationship",
   relationships: "relationship",
-  todo: "todo",
-  todos: "todo",
-  task: "todo",
-  tasks: "todo",
 };
 
 const EXPIRY_ALIAS_MAP: Record<string, Expiry> = {

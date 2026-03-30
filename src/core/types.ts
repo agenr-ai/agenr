@@ -6,7 +6,7 @@
 // ── Entry types ──────────────────────────────────────────────────────
 
 /** Ordered list of supported durable knowledge entry categories. */
-const ENTRY_TYPES = ["fact", "decision", "preference", "lesson", "todo", "relationship", "event", "reflection"] as const;
+const ENTRY_TYPES = ["fact", "decision", "preference", "lesson", "relationship", "milestone"] as const;
 /**
  * Union of all supported knowledge entry categories.
  */
@@ -43,6 +43,8 @@ export interface Entry {
   last_recalled_at?: string;
   superseded_by?: string;
   cluster_id?: string;
+  user_id?: string;
+  project?: string;
   retired: boolean;
   retired_at?: string;
   retired_reason?: string;
@@ -64,6 +66,8 @@ export interface StoreEntryInput {
   tags?: string[];
   source_file?: string;
   source_context?: string;
+  user_id?: string;
+  project?: string;
   created_at?: string;
 }
 

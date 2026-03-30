@@ -44,9 +44,10 @@ describe("surgeon prompts", () => {
   it("retirement prompt includes type-specific heuristics", () => {
     const prompt = getSurgeonRetirementPassPrompt();
 
-    expect(prompt).toContain("todo");
+    expect(prompt).toContain("milestone");
     expect(prompt).toContain("decision");
-    expect(prompt).toContain("event");
+    expect(prompt).not.toContain("todo");
+    expect(prompt).not.toContain("event");
     expect(prompt).toContain("preference");
   });
 

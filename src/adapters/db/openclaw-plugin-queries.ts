@@ -20,6 +20,8 @@ const ENTRY_SELECT_COLUMNS = `
   last_recalled_at,
   superseded_by,
   cluster_id,
+  user_id,
+  project,
   retired,
   retired_at,
   retired_reason,

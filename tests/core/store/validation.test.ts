@@ -27,6 +27,8 @@ describe("validateEntries", () => {
         tags: ["arch"],
         source_file: undefined,
         source_context: undefined,
+        user_id: undefined,
+        project: undefined,
         created_at: undefined,
       },
     ]);
@@ -43,6 +45,21 @@ describe("validateEntries", () => {
     ]);
 
     expect(result.valid[0]?.created_at).toBe("2026-03-01T10:00:00.000Z");
+  });
+
+  it("passes through optional scoping fields", () => {
+    const result = validateEntries([
+      {
+        type: "fact",
+        subject: "subject",
+        content: "content",
+        user_id: " user-1 ",
+        project: " alpha ",
+      },
+    ]);
+
+    expect(result.valid[0]?.user_id).toBe("user-1");
+    expect(result.valid[0]?.project).toBe("alpha");
   });
 
   it("rejects entries with an empty subject", () => {

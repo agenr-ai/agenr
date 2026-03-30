@@ -213,6 +213,8 @@ function buildEntry(preparedEntry: PreparedEntry, embedding: number[]): Entry {
     tags: preparedEntry.input.tags ?? [],
     source_file: preparedEntry.input.source_file,
     source_context: preparedEntry.input.source_context,
+    user_id: preparedEntry.input.user_id,
+    project: preparedEntry.input.project,
     embedding,
     content_hash: preparedEntry.contentHash,
     norm_content_hash: preparedEntry.normContentHash,

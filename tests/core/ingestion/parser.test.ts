@@ -41,7 +41,7 @@ describe("parseExtractionResponse", () => {
     });
   });
 
-  it("coerces uppercase type aliases", () => {
+  it("coerces uppercase type aliases and maps legacy event labels to milestone", () => {
     const result = parseExtractionResponse({
       entries: [
         {
@@ -58,10 +58,34 @@ describe("parseExtractionResponse", () => {
           importance: "standard",
           expiry: "permanent",
         },
+        {
+          type: "EVENT",
+          subject: "auth token migration",
+          content: "The auth service migrated from JWT to session tokens on 2026-02-15 and removed the old middleware.",
+          importance: "low",
+          expiry: "temporary",
+        },
       ],
     });
 
-    expect(result.entries.map((entry) => entry.type)).toEqual(["fact", "decision"]);
+    expect(result.entries.map((entry) => entry.type)).toEqual(["fact", "decision", "milestone"]);
+  });
+
+  it("rejects removed task aliases", () => {
+    const result = parseExtractionResponse({
+      entries: [
+        {
+          type: "task",
+          subject: "semantic dedup follow-up",
+          content: "Implement semantic deduplication in the store pipeline so near-duplicate memories do not accumulate.",
+          importance: "standard",
+          expiry: "temporary",
+        },
+      ],
+    });
+
+    expect(result.entries).toEqual([]);
+    expect(result.warnings[0]).toMatch(/invalid type/i);
   });
 
   it("maps importance tiers to numbers", () => {

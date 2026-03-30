@@ -29,7 +29,7 @@ describe("surgeon queries", () => {
       now: TEST_NOW,
     });
 
-    expect(actionable.map((candidate) => candidate.id)).toEqual([ids.temporary, ids.todo, ids.event, ids.statusArtifact, ids.fact]);
+    expect(actionable.map((candidate) => candidate.id)).toEqual([ids.temporary, ids.milestone, ids.statusArtifact, ids.fact]);
 
     const allScope = await listRetirementCandidates(client, {
       scope: "all",
@@ -38,7 +38,7 @@ describe("surgeon queries", () => {
       now: TEST_NOW,
     });
 
-    expect(allScope.map((candidate) => candidate.id)).toEqual([ids.temporary, ids.todo, ids.event, ids.statusArtifact, ids.fact, ids.lesson]);
+    expect(allScope.map((candidate) => candidate.id)).toEqual([ids.temporary, ids.milestone, ids.statusArtifact, ids.fact, ids.lesson]);
   });
 
   it("applies candidate filters for project tags, type, age, pagination, and recent evaluations", async () => {
@@ -67,9 +67,9 @@ describe("surgeon queries", () => {
       tags: ["alpha"],
     });
     await insertEntry(client, {
-      id: "alpha-todo",
-      subject: "Alpha todo",
-      type: "todo",
+      id: "alpha-milestone",
+      subject: "Alpha launch milestone",
+      type: "milestone",
       importance: 3,
       expiry: "permanent",
       recall_count: 0,
@@ -170,7 +170,7 @@ describe("surgeon queries", () => {
     await insertEntry(client, {
       id: "same-cluster-active",
       subject: "Cluster sibling",
-      type: "event",
+      type: "milestone",
       importance: 2,
       expiry: "temporary",
       cluster_id: "cluster-1",
@@ -227,9 +227,9 @@ describe("surgeon queries", () => {
       updated_at: daysAgoIso(3),
     });
     await insertEntry(client, {
-      id: "mid-todo",
-      subject: "Mid todo",
-      type: "todo",
+      id: "mid-milestone",
+      subject: "Mid milestone",
+      type: "milestone",
       importance: 3,
       expiry: "temporary",
       quality_score: 0.5,
@@ -238,9 +238,9 @@ describe("surgeon queries", () => {
       updated_at: daysAgoIso(20),
     });
     await insertEntry(client, {
-      id: "old-event",
-      subject: "Old event",
-      type: "event",
+      id: "old-milestone",
+      subject: "Old milestone",
+      type: "milestone",
       importance: 4,
       expiry: "permanent",
       quality_score: 0.3,
@@ -270,9 +270,8 @@ describe("surgeon queries", () => {
       total: 4,
       byType: {
         decision: 1,
-        event: 1,
         fact: 1,
-        todo: 1,
+        milestone: 2,
       },
       recency: {
         last7: 1,
@@ -315,8 +314,7 @@ async function createTestClient(clients: Client[]): Promise<Client> {
 async function seedCandidateEntries(client: Client): Promise<Record<string, string>> {
   const ids = {
     temporary: "temporary-old",
-    todo: "todo-old",
-    event: "event-low",
+    milestone: "milestone-low",
     statusArtifact: "status-artifact",
     fact: "fact-never",
     lesson: "lesson-recalled",
@@ -336,26 +334,15 @@ async function seedCandidateEntries(client: Client): Promise<Record<string, stri
     updated_at: daysAgoIso(130),
   });
   await insertEntry(client, {
-    id: ids.todo,
-    subject: "Follow up with migration cleanup",
-    type: "todo",
+    id: ids.milestone,
+    subject: "follow-up migration milestone",
+    type: "milestone",
     importance: 3,
     expiry: "permanent",
     recall_count: 0,
     quality_score: 0.4,
     created_at: daysAgoIso(120),
     updated_at: daysAgoIso(100),
-  });
-  await insertEntry(client, {
-    id: ids.event,
-    subject: "Old deploy event",
-    type: "event",
-    importance: 4,
-    expiry: "permanent",
-    recall_count: 0,
-    quality_score: 0.5,
-    created_at: daysAgoIso(110),
-    updated_at: daysAgoIso(90),
   });
   await insertEntry(client, {
     id: ids.statusArtifact,

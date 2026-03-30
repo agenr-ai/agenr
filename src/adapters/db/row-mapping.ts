@@ -207,6 +207,8 @@ export function mapEntryRow(row: Row): Entry {
     last_recalled_at: readOptionalString(row, "last_recalled_at"),
     superseded_by: readOptionalString(row, "superseded_by"),
     cluster_id: readOptionalString(row, "cluster_id"),
+    user_id: readOptionalString(row, "user_id"),
+    project: readOptionalString(row, "project"),
     retired: readBoolean(row, "retired"),
     retired_at: readOptionalString(row, "retired_at"),
     retired_reason: readOptionalString(row, "retired_reason"),

@@ -27,6 +27,8 @@ describe("buildExtractionSystemPrompt", () => {
 
     expect(prompt).toContain("## Types");
     expect(prompt).toContain("## Importance");
+    expect(prompt).toContain("- milestone:");
+    expect(prompt).not.toContain("- todo:");
     expect(prompt).toContain('Return JSON only: {"entries":[...]}');
     expect(prompt).toContain('"high", "standard", or "low"');
   });

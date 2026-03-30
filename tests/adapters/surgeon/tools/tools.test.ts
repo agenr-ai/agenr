@@ -47,7 +47,7 @@ describe("surgeon tools", () => {
     await insertEntry(client, {
       id: "health-entry",
       subject: "Health entry",
-      type: "todo",
+      type: "milestone",
       expiry: "temporary",
       importance: 3,
       created_at: daysAgoIso(20),
@@ -83,7 +83,7 @@ describe("surgeon tools", () => {
     await insertEntry(client, {
       id: "candidate-1",
       subject: "Session handoff",
-      type: "todo",
+      type: "fact",
       expiry: "temporary",
       importance: 2,
       created_at: daysAgoIso(40),

@@ -105,6 +105,8 @@ export function validateEntriesWithIndexes(inputs: StoreEntryInput[]): IndexedVa
         tags: normalizeTags(input.tags),
         source_file: normalizeOptionalString(input.source_file),
         source_context: normalizeOptionalString(input.source_context),
+        user_id: normalizeOptionalString(input.user_id),
+        project: normalizeOptionalString(input.project),
         created_at: normalizeOptionalString(input.created_at),
       },
     });

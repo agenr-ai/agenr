@@ -57,24 +57,14 @@ const GOOD_EXAMPLE_LESSON = `{
   "source_context": "Surprising behavior discovered during troubleshooting"
 }`;
 
-const GOOD_EXAMPLE_EVENT = `{
-  "type": "event",
+const GOOD_EXAMPLE_MILESTONE = `{
+  "type": "milestone",
   "subject": "auth service token migration",
-  "content": "Migrated the auth service from JWT to session tokens on 2026-02-15. The old JWT validation middleware was removed entirely.",
+  "content": "The auth service migrated from JWT to session tokens on 2026-02-15, and the old JWT validation middleware was removed.",
   "importance": "low",
   "expiry": "temporary",
   "tags": ["migration", "auth"],
   "source_context": "Migration completed and deployed to production"
-}`;
-
-const GOOD_EXAMPLE_TODO = `{
-  "type": "todo",
-  "subject": "semantic deduplication implementation",
-  "content": "Implement semantic deduplication in the store pipeline so near-duplicate memories do not accumulate across ingestion runs.",
-  "importance": "standard",
-  "expiry": "temporary",
-  "tags": ["dedup", "pipeline"],
-  "source_context": "Persistent follow-up identified during planning"
 }`;
 
 const BAD_EXAMPLE_META = `BAD:
@@ -168,7 +158,7 @@ const WHOLE_FILE_CALIBRATION_BLOCK = [
   "When the full session fits in context, calibrate in four steps:",
   "1. Session triage: decide whether this session contains durable signal or is mostly implementation churn before extracting anything. A pure debugging session may yield zero entries.",
   "2. Prioritize user statements: direct user facts, preferences, stated decisions, and committed constraints outrank assistant narration, tool output, and procedural steps. The user saying 'I want X' is signal. The assistant executing X is not.",
-  "3. Check type balance: if your draft extractions are more than 50% any single type, re-examine. Are lessons actually preferences or decisions in disguise? Are decisions actually personal priorities or values? Is a fact really an event?",
+  "3. Check type balance: if your draft extractions are more than 50% any single type, re-examine. Are lessons actually preferences or decisions in disguise? Are decisions actually personal priorities or values? Is a fact really a milestone?",
   "4. Check importance balance: standard is the default. High is for entries where forgetting causes wrong decisions or costly mistakes. Low is for narrow-scope context where code, docs, or config are the primary source of truth. Target roughly 15-25% high, 55-65% standard, 15-25% low.",
 ];
 
@@ -209,9 +199,8 @@ export function buildExtractionSystemPrompt(options: { wholeFile?: boolean; extr
     "- decision: A lasting rule, requirement, convention, ownership assignment, or architecture choice that constrains future work. What to DO going forward.",
     "- preference: A stated preference, opinion, or value that should influence future behavior. What someone WANTS.",
     "- lesson: A non-obvious insight learned from a specific experience that would prevent repeating a mistake or missing a shortcut. Must reference what went wrong or what was discovered - not general advice.",
-    "- event: A significant one-time milestone, transition, or life/project moment worth remembering. What HAPPENED.",
+    "- milestone: A significant one-time milestone, transition, launch, or life/project moment worth remembering. What HAPPENED.",
     "- relationship: A connection between named entities or people.",
-    "- todo: A persistent future action that remains open beyond the immediate step.",
     "",
     "## Type Selection",
     "",
@@ -224,10 +213,9 @@ export function buildExtractionSystemPrompt(options: { wholeFile?: boolean; extr
     "1. Does it describe what something IS (a property, behavior, or state)? → fact",
     "2. Does it state what someone WANTS or PREFERS? → preference",
     "3. Does it prescribe what to DO going forward because the project, team, or system has adopted it? → decision",
-    "4. Does it record something that HAPPENED once (a migration, launch, or shift)? → event",
+    "4. Does it record something that HAPPENED once (a migration, launch, or shift)? → milestone",
     "5. Does it connect two NAMED things? → relationship",
-    "6. Does it flag an OPEN action? → todo",
-    "7. Only if none of the above: does it capture a non-obvious WHY learned from a specific failure or surprise? → lesson",
+    "6. Only if none of the above: does it capture a non-obvious WHY learned from a specific failure or surprise? → lesson",
     "",
     "Lesson is the residual category, not the default. If an entry could be a fact or a lesson, it is a fact. If it could be a preference or a decision, prefer preference unless the transcript clearly establishes an adopted standing rule.",
     "",
@@ -321,7 +309,7 @@ export function buildExtractionSystemPrompt(options: { wholeFile?: boolean; extr
     "## Expiry",
     "",
     "- permanent: Biographical facts, preferences, lessons, architecture decisions, and standing conventions.",
-    "- temporary: Current project state, active work, recent events, and time-bounded context.",
+    "- temporary: Current project state, active work, recent milestones, and time-bounded context.",
     '- Extraction never assigns "core".',
     "",
     "## Previously Extracted Context",
@@ -347,7 +335,7 @@ export function buildExtractionSystemPrompt(options: { wholeFile?: boolean; extr
     'Use {"entries":[]} when nothing qualifies.',
     "",
     "Each entry must have:",
-    '{ "type": "fact|decision|preference|lesson|event|relationship|todo", "subject": "2-6 word topic noun phrase", "content": "specific declarative statement grounded in the concrete system, project, or situation, min 20 chars", "importance": "high|standard|low", "expiry": "permanent|temporary", "tags": ["1-4", "lowercase", "tags"], "source_context": "one sentence, max 20 words" }',
+    '{ "type": "fact|decision|preference|lesson|relationship|milestone", "subject": "2-6 word topic noun phrase", "content": "specific declarative statement grounded in the concrete system, project, or situation, min 20 chars", "importance": "high|standard|low", "expiry": "permanent|temporary", "tags": ["1-4", "lowercase", "tags"], "source_context": "one sentence, max 20 words" }',
     "",
     "## Few-Shot Examples",
     "",
@@ -366,11 +354,8 @@ export function buildExtractionSystemPrompt(options: { wholeFile?: boolean; extr
     "GOOD (lesson, standard - specific surprising behavior):",
     GOOD_EXAMPLE_LESSON,
     "",
-    "GOOD (event, low - historical context, code is the source of truth now):",
-    GOOD_EXAMPLE_EVENT,
-    "",
-    "GOOD (todo, standard - acknowledged open work item):",
-    GOOD_EXAMPLE_TODO,
+    "GOOD (milestone, low - historical context, code is the source of truth now):",
+    GOOD_EXAMPLE_MILESTONE,
     "",
     BAD_EXAMPLE_META,
     "",

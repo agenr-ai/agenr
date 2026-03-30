@@ -149,7 +149,7 @@ describe("parseRecallEvalCaseRequest", () => {
       expect((error as RecallEvalRequestValidationError).issues).toEqual([
         {
           path: "memoryPool[0].type",
-          message: "Expected one of: fact, decision, preference, lesson, todo, relationship, event, reflection.",
+          message: "Expected one of: fact, decision, preference, lesson, relationship, milestone.",
         },
         {
           path: "memoryPool[0].content",
@@ -197,7 +197,7 @@ describe("parseRecallEvalCaseRequest", () => {
         },
         {
           path: "recallRequest.types[1]",
-          message: "Expected one of: fact, decision, preference, lesson, todo, relationship, event, reflection.",
+          message: "Expected one of: fact, decision, preference, lesson, relationship, milestone.",
         },
       ]);
     }

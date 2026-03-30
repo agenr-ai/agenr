@@ -3,7 +3,7 @@ import type { Client } from "@libsql/client";
 /**
  * Logical schema version stored in the metadata table.
  */
-const SCHEMA_VERSION = "2";
+const SCHEMA_VERSION = "3";
 
 /**
  * libSQL vector index name for entry embeddings.
@@ -36,6 +36,8 @@ const CREATE_ENTRIES_TABLE_SQL = `
     last_recalled_at TEXT,
     superseded_by TEXT REFERENCES entries(id),
     cluster_id TEXT,
+    user_id TEXT,
+    project TEXT,
     retired INTEGER NOT NULL DEFAULT 0,
     retired_at TEXT,
     retired_reason TEXT,
@@ -98,6 +100,24 @@ const CREATE_INGEST_LOG_TABLE_SQL = `
     file_hash TEXT NOT NULL,
     ingested_at TEXT NOT NULL,
     entry_count INTEGER DEFAULT 0
+  )
+`;
+
+/** SQL statement that creates the task-management table separated from semantic entries. */
+const CREATE_TASKS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS tasks (
+    id TEXT PRIMARY KEY,
+    subject TEXT NOT NULL,
+    content TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open',
+    priority INTEGER NOT NULL DEFAULT 5,
+    tags TEXT,
+    source_context TEXT,
+    project TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT,
+    due_at TEXT
   )
 `;
 
@@ -204,6 +224,21 @@ const CREATE_ENTRIES_CREATED_AT_INDEX_SQL = `
   ON entries(created_at)
 `;
 
+const CREATE_TASKS_STATUS_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_tasks_status
+  ON tasks(status)
+`;
+
+const CREATE_TASKS_CREATED_AT_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_tasks_created_at
+  ON tasks(created_at)
+`;
+
+const CREATE_TASKS_PROJECT_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_tasks_project
+  ON tasks(project)
+`;
+
 const CREATE_RECALL_EVENTS_ENTRY_ID_INDEX_SQL = `
   CREATE INDEX IF NOT EXISTS idx_recall_events_entry_id
   ON recall_events(entry_id)
@@ -238,6 +273,7 @@ const SCHEMA_STATEMENTS = [
   CREATE_ENTRIES_FTS_DELETE_TRIGGER_SQL,
   CREATE_ENTRIES_FTS_UPDATE_TRIGGER_SQL,
   CREATE_INGEST_LOG_TABLE_SQL,
+  CREATE_TASKS_TABLE_SQL,
   CREATE_RECALL_EVENTS_TABLE_SQL,
   CREATE_SURGEON_RUNS_TABLE_SQL,
   CREATE_META_TABLE_SQL,
@@ -247,6 +283,9 @@ const SCHEMA_STATEMENTS = [
   CREATE_ENTRIES_EXPIRY_INDEX_SQL,
   CREATE_ENTRIES_RETIRED_INDEX_SQL,
   CREATE_ENTRIES_CREATED_AT_INDEX_SQL,
+  CREATE_TASKS_STATUS_INDEX_SQL,
+  CREATE_TASKS_CREATED_AT_INDEX_SQL,
+  CREATE_TASKS_PROJECT_INDEX_SQL,
   CREATE_RECALL_EVENTS_ENTRY_ID_INDEX_SQL,
   CREATE_RECALL_EVENTS_RECALLED_AT_INDEX_SQL,
 ] as const;
@@ -277,6 +316,10 @@ export async function initSchema(db: Client): Promise<void> {
   }
 
   await ensureSurgeonSchema(db);
+
+  if (currentVersion === "2") {
+    await migrateSchemaV2ToV3(db);
+  }
 
   await db.execute({
     sql: `
@@ -349,6 +392,41 @@ async function ensureSurgeonSchema(db: Client): Promise<void> {
   await db.execute(CREATE_SURGEON_RUN_ACTIONS_RUN_ID_INDEX_SQL);
   await db.execute(CREATE_SURGEON_RUN_ACTIONS_ENTRY_ID_INDEX_SQL);
   await db.execute(CREATE_SURGEON_RUN_ACTIONS_CREATED_AT_INDEX_SQL);
+}
+
+/**
+ * Applies the ordered v2 to v3 schema migration for semantic-memory cleanup.
+ *
+ * @param db - libSQL client connected to the target database.
+ * @returns Promise that resolves once the migration steps complete.
+ */
+async function migrateSchemaV2ToV3(db: Client): Promise<void> {
+  await runImmediateTransaction(db, async () => {
+    await db.execute("DROP TRIGGER IF EXISTS entries_ai");
+    await db.execute("DROP TRIGGER IF EXISTS entries_ad");
+    await db.execute("DROP TRIGGER IF EXISTS entries_au");
+    await db.execute("UPDATE entries SET type = 'milestone' WHERE type = 'event'");
+    await db.execute(`
+      INSERT INTO tasks (id, subject, content, status, priority, tags, source_context, created_at, updated_at)
+      SELECT id, subject, content, 'open', importance, tags, source_context, created_at, updated_at
+      FROM entries
+      WHERE type = 'todo' AND retired = 0
+    `);
+    await db.execute("DELETE FROM entries WHERE type = 'todo'");
+    await db.execute("DELETE FROM entries WHERE type = 'reflection'");
+
+    if (!(await columnExists(db, "entries", "user_id"))) {
+      await db.execute("ALTER TABLE entries ADD COLUMN user_id TEXT");
+    }
+
+    if (!(await columnExists(db, "entries", "project"))) {
+      await db.execute("ALTER TABLE entries ADD COLUMN project TEXT");
+    }
+
+    await db.execute(CREATE_ENTRIES_FTS_INSERT_TRIGGER_SQL);
+    await db.execute(CREATE_ENTRIES_FTS_DELETE_TRIGGER_SQL);
+    await db.execute(CREATE_ENTRIES_FTS_UPDATE_TRIGGER_SQL);
+  });
 }
 
 /**
@@ -434,6 +512,16 @@ async function tableExists(db: Client, tableName: string): Promise<boolean> {
   });
 
   return result.rows.length > 0;
+}
+
+/** Checks whether a SQLite table already contains a named column. */
+async function columnExists(db: Client, tableName: string, columnName: string): Promise<boolean> {
+  const result = await db.execute(`PRAGMA table_info('${tableName.replaceAll("'", "''")}')`);
+
+  return result.rows.some((row) => {
+    const name = (row as Record<string, unknown>).name;
+    return name === columnName;
+  });
 }
 
 /** Checks whether a prior bulk-write phase was interrupted. */

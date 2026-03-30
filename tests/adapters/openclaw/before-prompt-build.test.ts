@@ -63,7 +63,7 @@ describe("handleAgenrBeforePromptBuild", () => {
     );
     await database.insertEntry(
       createEntry({
-        type: "event",
+        type: "milestone",
         subject: "latest plugin work",
         content: "Phase 1 of the agenr OpenClaw memory plugin is in progress.",
         expiry: "temporary",
@@ -170,7 +170,7 @@ describe("handleAgenrBeforePromptBuild", () => {
       tags: ["openclaw", "debugging"],
     });
     const recentEntry = createEntry({
-      type: "event",
+      type: "milestone",
       subject: "latest plugin work",
       content: "Structured OpenClaw logging is being wired into session-start recall.",
       expiry: "temporary",

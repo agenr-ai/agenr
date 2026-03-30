@@ -21,7 +21,7 @@ const COMPLETE_PASS_SCHEMA = Type.Object({
 });
 
 const MIN_BUDGET_USED_FRACTION = 0.75;
-const MIN_BUDGET_USED_FRACTION_HARD = 0.20;
+const MIN_BUDGET_USED_FRACTION_HARD = 0.2;
 const SAFETY_VALVE_REJECTION_LIMIT = 50;
 const RETIREMENT_COMPLETION_KEY = "retirement";
 
@@ -74,11 +74,12 @@ export function createCompletePassTool(deps: SurgeonToolDeps): AgentTool<typeof 
         // exhausted — the surgeon should widen to scope="all" and keep working.
         const budgetBarelyUsed = budgetUsage.budgetUsedPct < MIN_BUDGET_USED_FRACTION_HARD;
 
-        const shouldReject = budgetBarelyUsed ||
+        const shouldReject =
+          budgetBarelyUsed ||
           (hasKnownWork &&
-          !progress.sawExhaustedPage &&
-          ((progress.queryCalls === 0 && knownCandidates > handledCount) ||
-            (progress.queryCalls > 0 && (knownCandidates === 0 || progress.maxWindowEnd < knownCandidates))));
+            !progress.sawExhaustedPage &&
+            ((progress.queryCalls === 0 && knownCandidates > handledCount) ||
+              (progress.queryCalls > 0 && (knownCandidates === 0 || progress.maxWindowEnd < knownCandidates))));
 
         if (shouldReject) {
           const rejectionCount = priorRejections + 1;

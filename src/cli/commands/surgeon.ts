@@ -187,9 +187,10 @@ function renderStatus(input: {
   } | null;
 }): string {
   const newCandidates = Math.max(0, input.health.retirementCandidateCount - input.health.recentlyEvaluatedCount);
-  const candidateLine = input.health.recentlyEvaluatedCount > 0
-    ? `Retirement candidates: ${input.health.retirementCandidateCount} total (${newCandidates} new, ${input.health.recentlyEvaluatedCount} recently evaluated)`
-    : `Retirement candidates: ${input.health.retirementCandidateCount}`;
+  const candidateLine =
+    input.health.recentlyEvaluatedCount > 0
+      ? `Retirement candidates: ${input.health.retirementCandidateCount} total (${newCandidates} new, ${input.health.recentlyEvaluatedCount} recently evaluated)`
+      : `Retirement candidates: ${input.health.retirementCandidateCount}`;
 
   return [
     "Surgeon Status",

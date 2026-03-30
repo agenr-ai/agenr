@@ -59,7 +59,7 @@ describe("runSurgeon", () => {
     const db = await createTestDatabase(databases);
     mockSuccessfulRunAgentLoop();
 
-    const result = await runSurgeon(createRunOptions({ budget: 0.10 }), {
+    const result = await runSurgeon(createRunOptions({ budget: 0.1 }), {
       db,
       config: null,
       model: TEST_MODEL,
@@ -92,7 +92,7 @@ describe("runSurgeon", () => {
       entriesRetired: 0,
       summaryJson: {
         actions_taken: 0,
-        entries_skipped: [{ entry_id: "stale-todo", reason: "Needs another pass." }],
+        entries_skipped: [{ entry_id: "stale-milestone", reason: "Needs another pass." }],
         observations: ["Dry-run sweep complete."],
         recommendations: ["Broaden to all scope if budget remains."],
       },
@@ -103,7 +103,7 @@ describe("runSurgeon", () => {
       expect.objectContaining({
         runId: result.runId,
         actionType: "skip",
-        entryIds: ["stale-todo"],
+        entryIds: ["stale-milestone"],
         reasoning: "Needs another pass.",
       }),
     ]);
@@ -276,9 +276,9 @@ async function createTestDatabase(databases: SqlDatabase[]): Promise<SqlDatabase
     updated_at: daysAgoIso(90),
   });
   await insertEntry(db, {
-    id: "stale-todo",
-    subject: "Follow up on retired rollout checklist",
-    type: "todo",
+    id: "stale-milestone",
+    subject: "retired rollout checklist completion",
+    type: "milestone",
     importance: 3,
     expiry: "permanent",
     recall_count: 0,
@@ -432,7 +432,7 @@ function mockSuccessfulRunAgentLoop(): void {
 
       const completeArgs = {
         actions_taken: 0,
-        entries_skipped: [{ entry_id: "stale-todo", reason: "Needs another pass." }],
+        entries_skipped: [{ entry_id: "stale-milestone", reason: "Needs another pass." }],
         observations: ["Dry-run sweep complete."],
         recommendations: ["Broaden to all scope if budget remains."],
       };

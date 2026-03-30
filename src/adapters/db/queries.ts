@@ -66,6 +66,8 @@ export async function insertEntry(executor: SqlExecutor, entry: Entry, embedding
         last_recalled_at,
         superseded_by,
         cluster_id,
+        user_id,
+        project,
         retired,
         retired_at,
         retired_reason,
@@ -75,7 +77,7 @@ export async function insertEntry(executor: SqlExecutor, entry: Entry, embedding
       VALUES (
         ?, ?, ?, ?, ?, ?, ?, ?, ?,
         CASE WHEN ? IS NULL THEN NULL ELSE vector32(?) END,
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
       )
     `,
     args: [
@@ -98,6 +100,8 @@ export async function insertEntry(executor: SqlExecutor, entry: Entry, embedding
       normalizeOptionalString(entry.last_recalled_at),
       normalizeOptionalString(entry.superseded_by),
       normalizeOptionalString(entry.cluster_id),
+      normalizeOptionalString(entry.user_id),
+      normalizeOptionalString(entry.project),
       entry.retired ? 1 : 0,
       normalizeOptionalString(entry.retired_at),
       normalizeOptionalString(entry.retired_reason),
@@ -145,6 +149,8 @@ export async function getEntries(executor: SqlExecutor, ids: string[]): Promise<
           last_recalled_at,
           superseded_by,
           cluster_id,
+          user_id,
+          project,
           retired,
           retired_at,
           retired_reason,

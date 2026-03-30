@@ -25,7 +25,7 @@ describe("initSchema", () => {
         SELECT name
         FROM sqlite_master
         WHERE type = 'table'
-          AND name IN ('entries', 'entries_fts', 'ingest_log', 'recall_events', 'surgeon_runs', 'surgeon_run_actions', '_meta')
+          AND name IN ('entries', 'entries_fts', 'ingest_log', 'tasks', 'recall_events', 'surgeon_runs', 'surgeon_run_actions', '_meta')
       `,
     });
     const tableNames = new Set(
@@ -35,7 +35,48 @@ describe("initSchema", () => {
       }),
     );
 
-    expect(tableNames).toEqual(new Set(["entries", "entries_fts", "ingest_log", "recall_events", "surgeon_runs", "surgeon_run_actions", "_meta"]));
+    expect(tableNames).toEqual(new Set(["entries", "entries_fts", "ingest_log", "tasks", "recall_events", "surgeon_runs", "surgeon_run_actions", "_meta"]));
+    expect(await tableColumns(client, "entries")).toEqual([
+      "id",
+      "type",
+      "subject",
+      "content",
+      "importance",
+      "expiry",
+      "tags",
+      "source_file",
+      "source_context",
+      "embedding",
+      "content_hash",
+      "norm_content_hash",
+      "minhash_sig",
+      "quality_score",
+      "recall_count",
+      "last_recalled_at",
+      "superseded_by",
+      "cluster_id",
+      "user_id",
+      "project",
+      "retired",
+      "retired_at",
+      "retired_reason",
+      "created_at",
+      "updated_at",
+    ]);
+    expect(await tableColumns(client, "tasks")).toEqual([
+      "id",
+      "subject",
+      "content",
+      "status",
+      "priority",
+      "tags",
+      "source_context",
+      "project",
+      "created_at",
+      "updated_at",
+      "completed_at",
+      "due_at",
+    ]);
 
     const triggersResult = await client.execute({
       sql: `
@@ -86,6 +127,145 @@ describe("initSchema", () => {
     expect(await indexExists(client, "idx_surgeon_run_actions_run_id")).toBe(true);
     expect(await indexExists(client, "idx_surgeon_run_actions_entry_id")).toBe(true);
     expect(await indexExists(client, "idx_surgeon_run_actions_created_at")).toBe(true);
+    expect(await indexExists(client, "idx_tasks_status")).toBe(true);
+    expect(await indexExists(client, "idx_tasks_created_at")).toBe(true);
+    expect(await indexExists(client, "idx_tasks_project")).toBe(true);
+  });
+
+  it("migrates schema version 2 entries to version 3 semantics", async () => {
+    const client = createClient({ url: ":memory:" });
+    clients.push(client);
+
+    await client.execute(`
+      CREATE TABLE entries (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        content TEXT NOT NULL,
+        importance INTEGER NOT NULL,
+        expiry TEXT NOT NULL,
+        tags TEXT,
+        source_file TEXT,
+        source_context TEXT,
+        embedding BLOB,
+        content_hash TEXT,
+        norm_content_hash TEXT,
+        minhash_sig BLOB,
+        quality_score REAL NOT NULL DEFAULT 0.5,
+        recall_count INTEGER DEFAULT 0,
+        last_recalled_at TEXT,
+        superseded_by TEXT,
+        cluster_id TEXT,
+        retired INTEGER NOT NULL DEFAULT 0,
+        retired_at TEXT,
+        retired_reason TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+    await client.execute("CREATE TABLE _meta (key TEXT PRIMARY KEY, value TEXT)");
+    await client.execute({
+      sql: `
+        INSERT INTO _meta (key, value)
+        VALUES ('schema_version', '2')
+      `,
+    });
+    await client.execute({
+      sql: `
+        INSERT INTO entries (
+          id, type, subject, content, importance, expiry, tags, source_context, quality_score, recall_count, retired, created_at, updated_at
+        )
+        VALUES
+          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?),
+          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?),
+          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?),
+          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      args: [
+        "event-1",
+        "event",
+        "Launch event",
+        "The recall v1 launch completed on 2026-03-01.",
+        6,
+        "permanent",
+        '["launch"]',
+        "Completed rollout.",
+        0.5,
+        0,
+        0,
+        "2026-03-01T00:00:00.000Z",
+        "2026-03-01T00:00:00.000Z",
+        "todo-1",
+        "todo",
+        "Open follow-up",
+        "Clean up the temporary compatibility shim after rollout.",
+        5,
+        "temporary",
+        '["cleanup"]',
+        "Identified during rollout.",
+        0.5,
+        0,
+        0,
+        "2026-03-02T00:00:00.000Z",
+        "2026-03-02T00:00:00.000Z",
+        "todo-retired",
+        "todo",
+        "Retired follow-up",
+        "This old follow-up no longer matters.",
+        4,
+        "temporary",
+        '["cleanup"]',
+        "Resolved already.",
+        0.5,
+        0,
+        1,
+        "2026-03-03T00:00:00.000Z",
+        "2026-03-03T00:00:00.000Z",
+        "reflection-1",
+        "reflection",
+        "Legacy reflection",
+        "This summary should be deleted during migration.",
+        3,
+        "temporary",
+        "[]",
+        "Legacy data.",
+        0.5,
+        0,
+        0,
+        "2026-03-04T00:00:00.000Z",
+        "2026-03-04T00:00:00.000Z",
+      ],
+    });
+
+    await initSchema(client);
+
+    expect(await tableColumns(client, "entries")).toContain("user_id");
+    expect(await tableColumns(client, "entries")).toContain("project");
+
+    const migratedEntries = await client.execute({
+      sql: "SELECT id, type FROM entries ORDER BY id",
+    });
+    expect(migratedEntries.rows).toEqual([{ id: "event-1", type: "milestone" }]);
+
+    const migratedTasks = await client.execute({
+      sql: "SELECT id, subject, content, status, priority, tags, source_context FROM tasks ORDER BY id",
+    });
+    expect(migratedTasks.rows).toEqual([
+      {
+        id: "todo-1",
+        subject: "Open follow-up",
+        content: "Clean up the temporary compatibility shim after rollout.",
+        status: "open",
+        priority: 5,
+        tags: '["cleanup"]',
+        source_context: "Identified during rollout.",
+      },
+    ]);
+
+    const versionResult = await client.execute({
+      sql: "SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1",
+    });
+    expect(versionResult.rows).toEqual([{ value: "3" }]);
   });
 
   it("migrates the minimal legacy surgeon_runs table without losing data", async () => {

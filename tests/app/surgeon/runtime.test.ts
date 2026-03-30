@@ -167,7 +167,7 @@ describe("surgeon runtime", () => {
         `,
         args: [
           "entry-1",
-          "todo",
+          "milestone",
           "Status candidate",
           "A session handoff that should be reviewed by surgeon.",
           3,
