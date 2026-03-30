@@ -46,6 +46,7 @@ export async function resolvePredecessorContinuity(
   }
 
   return {
+    predecessor,
     continuitySummaryContent: await loadPredecessorContinuitySummaryContent(sessionContext, predecessor.sessionFile, ctx.agentId, services, logger),
     recentSessionContent: await renderRecentSessionSection(predecessor.sessionFile, logger),
   };

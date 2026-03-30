@@ -3,9 +3,9 @@
  */
 export interface OpenClawSessionPredecessor {
   /**
-   * Previous OpenClaw session UUID when known.
+   * Previous OpenClaw session UUID.
    */
-  sessionId?: string;
+  sessionId: string;
   /**
    * Absolute path to the predecessor session transcript JSONL.
    */
@@ -76,6 +76,10 @@ export interface OpenClawContinuitySummaryWriteResult {
  * Result from resolving predecessor continuity context for prompt injection.
  */
 export interface PredecessorContinuityResult {
+  /**
+   * Resolved predecessor identity when one was found.
+   */
+  predecessor?: OpenClawSessionPredecessor;
   /**
    * Continuity summary Markdown content (empty string when unavailable).
    */

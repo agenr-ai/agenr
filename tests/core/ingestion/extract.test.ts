@@ -7,7 +7,10 @@ import type { ParsedTranscript, TranscriptMessage } from "../../../src/core/type
 function buildTranscript(messages: TranscriptMessage[]): ParsedTranscript {
   return {
     messages,
-    metadata: {},
+    metadata: {
+      messageCount: messages.length,
+      transcriptHash: "transcript-hash",
+    },
     warnings: [],
   };
 }
@@ -108,6 +111,9 @@ describe("extractFromTranscript", () => {
       ...buildTranscript([buildMessage(0, "user", "First message"), buildMessage(1, "assistant", "Second message")]),
       metadata: {
         startedAt: "2026-03-02T09:00:00.000Z",
+        endedAt: "2026-03-02T09:00:00.000Z",
+        messageCount: 2,
+        transcriptHash: "transcript-hash",
       },
     };
     const llm = buildLlm(async () => ({

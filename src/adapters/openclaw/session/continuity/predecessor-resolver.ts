@@ -3,6 +3,7 @@ import path from "node:path";
 import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
 
 import type { AgenrOpenClawHookContext, AgenrOpenClawRuntime } from "../../types.js";
+import { deriveOpenClawSessionIdFromFilePath } from "../session-id.js";
 import { readOpenClawSessionsStore } from "../sessions-store-reader.js";
 import type { SessionStartTracker } from "../state.js";
 import { parseTuiSessionKey } from "../tui-lane.js";
@@ -17,7 +18,7 @@ interface ParsedSingleLaneSessionKey {
 /** Fully resolved predecessor facts returned by the TUI sessions-store scan. */
 interface ResolvedTuiPredecessor {
   sessionFile: string;
-  sessionId?: string;
+  sessionId: string;
   sessionKey: string;
 }
 
@@ -99,7 +100,7 @@ export async function resolveOpenClawSessionPredecessor(
 
   return {
     sessionFile: predecessorResolution.predecessor.sessionFile,
-    ...(predecessorResolution.predecessor.sessionId ? { sessionId: predecessorResolution.predecessor.sessionId } : {}),
+    sessionId: predecessorResolution.predecessor.sessionId,
   };
 }
 
@@ -153,28 +154,33 @@ async function findTuiPredecessor(
 
   if (resumedFrom) {
     const resumedFromMatch = sameAgentEntries.find((entry) => entry.sessionId === resumedFrom);
-    if (resumedFromMatch?.sessionFile?.trim()) {
-      debugLog(
-        logger,
-        "predecessor",
-        `TUI matched session_start resumedFrom for sessionKey=${currentSessionKey}: resumedFrom=${resumedFrom} predecessorKey=${resumedFromMatch.sessionKey}`,
-      );
-      return {
-        reason: "resolved",
-        predecessor: {
-          sessionFile: resumedFromMatch.sessionFile,
-          ...(resumedFromMatch.sessionId ? { sessionId: resumedFromMatch.sessionId } : {}),
-          sessionKey: resumedFromMatch.sessionKey,
-        },
-      };
-    }
-
     if (resumedFromMatch) {
-      debugLog(
-        logger,
-        "predecessor",
-        `TUI ignored session_start resumedFrom match for sessionKey=${currentSessionKey}: resumedFrom=${resumedFrom} reason=missing_session_file`,
-      );
+      if (!resumedFromMatch.sessionFile?.trim()) {
+        debugLog(
+          logger,
+          "predecessor",
+          `TUI ignored session_start resumedFrom match for sessionKey=${currentSessionKey}: resumedFrom=${resumedFrom} reason=missing_session_file`,
+        );
+      } else {
+        const resolvedPredecessor = toResolvedTuiPredecessor(resumedFromMatch, logger);
+        if (!resolvedPredecessor) {
+          debugLog(
+            logger,
+            "predecessor",
+            `TUI ignored session_start resumedFrom match for sessionKey=${currentSessionKey}: resumedFrom=${resumedFrom} reason=missing_session_id`,
+          );
+        } else {
+          debugLog(
+            logger,
+            "predecessor",
+            `TUI matched session_start resumedFrom for sessionKey=${currentSessionKey}: resumedFrom=${resumedFrom} predecessorKey=${resumedFromMatch.sessionKey}`,
+          );
+          return {
+            reason: "resolved",
+            predecessor: resolvedPredecessor,
+          };
+        }
+      }
     } else {
       debugLog(logger, "predecessor", `TUI found no session_start resumedFrom match for sessionKey=${currentSessionKey}: resumedFrom=${resumedFrom}`);
     }
@@ -217,6 +223,11 @@ async function findTuiPredecessor(
 
   const sortedCandidates = laneMatches
     .filter((entry) => {
+      if (!entry.sessionFile?.trim()) {
+        debugLog(logger, "predecessor", `TUI excluded candidate=${entry.sessionKey} reason=missing_session_file`);
+        return false;
+      }
+
       if (entry.updatedAt !== undefined) {
         return true;
       }
@@ -230,19 +241,63 @@ async function findTuiPredecessor(
     return { reason: "no_matching_sessions" };
   }
 
-  const predecessor = sortedCandidates[0]!;
-  if (!predecessor.sessionFile?.trim()) {
-    debugLog(logger, "predecessor", `TUI top candidate missing session file for sessionKey=${currentSessionKey}: predecessorKey=${predecessor.sessionKey}`);
-    return { reason: "missing_session_file" };
+  for (const predecessor of sortedCandidates) {
+    const resolvedPredecessor = toResolvedTuiPredecessor(predecessor, logger);
+    if (!resolvedPredecessor) {
+      debugLog(
+        logger,
+        "predecessor",
+        `TUI excluded candidate=${predecessor.sessionKey} reason=missing_session_id predecessor=${predecessor.sessionFile ?? "unknown"}`,
+      );
+      continue;
+    }
+
+    return {
+      reason: "resolved",
+      predecessor: resolvedPredecessor,
+    };
+  }
+
+  return { reason: "missing_session_id" };
+}
+
+/** Resolves the required predecessor session id from explicit or filename-derived state. */
+function resolvePredecessorSessionId(sessionId: string | undefined, sessionFile: string | undefined, logger?: PluginLogger): string | undefined {
+  const normalizedSessionId = sessionId?.trim();
+  if (normalizedSessionId) {
+    return normalizedSessionId;
+  }
+
+  if (!sessionFile?.trim()) {
+    return undefined;
+  }
+
+  return deriveOpenClawSessionIdFromFilePath(sessionFile, logger);
+}
+
+/** Normalizes a candidate sessions-store entry into a predecessor with required identity. */
+function toResolvedTuiPredecessor(
+  candidate: {
+    sessionId?: string;
+    sessionFile?: string;
+    sessionKey: string;
+  },
+  logger?: PluginLogger,
+): ResolvedTuiPredecessor | undefined {
+  const sessionFile = candidate.sessionFile?.trim();
+  if (!sessionFile) {
+    return undefined;
+  }
+
+  const sessionId = resolvePredecessorSessionId(candidate.sessionId, sessionFile, logger);
+  if (!sessionId) {
+    return undefined;
   }
 
   return {
-    reason: "resolved",
-    predecessor: {
-      sessionFile: predecessor.sessionFile,
-      ...(predecessor.sessionId ? { sessionId: predecessor.sessionId } : {}),
-      sessionKey: predecessor.sessionKey,
-    },
+    sessionFile,
+    sessionId,
+    sessionKey: candidate.sessionKey,
   };
 }
 

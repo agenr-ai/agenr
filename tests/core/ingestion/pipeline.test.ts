@@ -524,20 +524,25 @@ class MockTranscriptPort implements TranscriptPort {
 }
 
 function buildTranscript(options: { warnings?: string[] } = {}): ParsedTranscript {
+  const messages = [
+    {
+      index: 0,
+      role: "user" as const,
+      text: "We use pnpm in this repository.",
+    },
+    {
+      index: 1,
+      role: "assistant" as const,
+      text: "Understood.",
+    },
+  ];
+
   return {
-    messages: [
-      {
-        index: 0,
-        role: "user",
-        text: "We use pnpm in this repository.",
-      },
-      {
-        index: 1,
-        role: "assistant",
-        text: "Understood.",
-      },
-    ],
-    metadata: {},
+    messages,
+    metadata: {
+      messageCount: messages.length,
+      transcriptHash: "pipeline-transcript-hash",
+    },
     warnings: options.warnings ?? [],
   };
 }

@@ -22,6 +22,24 @@ export { ENTRY_TYPES, EXPIRY_LEVELS };
  */
 export type Expiry = (typeof EXPIRY_LEVELS)[number];
 
+/** Ordered list of supported episode sources. */
+const EPISODE_SOURCES = ["openclaw", "codex", "cli", "synthesis"] as const;
+
+/** Ordered list of supported episode activity levels. */
+const EPISODE_ACTIVITY_LEVELS = ["substantial", "minimal", "none"] as const;
+
+export { EPISODE_ACTIVITY_LEVELS, EPISODE_SOURCES };
+
+/**
+ * Union of all supported episode sources.
+ */
+export type EpisodeSource = (typeof EPISODE_SOURCES)[number];
+
+/**
+ * Union of all supported episode activity levels.
+ */
+export type EpisodeActivityLevel = (typeof EPISODE_ACTIVITY_LEVELS)[number];
+
 /**
  * Canonical stored knowledge record.
  */
@@ -50,6 +68,36 @@ export interface Entry {
   retired_reason?: string;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * Canonical stored episodic-memory record.
+ */
+export interface Episode {
+  id: string;
+  source: EpisodeSource;
+  sourceId?: string;
+  sourceRef?: string;
+  transcriptHash?: string;
+  summaryHash?: string;
+  agentId?: string;
+  startedAt: string;
+  endedAt?: string;
+  summary: string;
+  tags: string[];
+  activityLevel?: EpisodeActivityLevel;
+  userId?: string;
+  project?: string;
+  genModel?: string;
+  genVersion?: string;
+  messageCount?: number;
+  embedding?: number[];
+  retired: boolean;
+  retiredAt?: string;
+  retiredReason?: string;
+  supersededBy?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // ── Store types ──────────────────────────────────────────────────────
@@ -93,6 +141,25 @@ export interface TranscriptMessage {
 }
 
 /**
+ * Session-level metadata derived while parsing a transcript file.
+ */
+export interface SessionTranscriptMetadata {
+  sessionId?: string;
+  startedAt?: string;
+  endedAt?: string;
+  messageCount: number;
+  transcriptHash: string;
+}
+
+/**
+ * Parsed transcript metadata exposed to transcript consumers.
+ */
+export interface ParsedTranscriptMetadata extends SessionTranscriptMetadata {
+  sessionLabel?: string;
+  modelsUsed?: string[];
+}
+
+/**
  * Chunk of transcript text prepared for extraction or summarization.
  */
 export interface TranscriptChunk {
@@ -106,11 +173,6 @@ export interface TranscriptChunk {
  */
 export interface ParsedTranscript {
   messages: TranscriptMessage[];
-  metadata: {
-    sessionId?: string;
-    sessionLabel?: string;
-    startedAt?: string;
-    modelsUsed?: string[];
-  };
+  metadata: ParsedTranscriptMetadata;
   warnings: string[];
 }

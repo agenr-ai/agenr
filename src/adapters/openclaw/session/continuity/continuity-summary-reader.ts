@@ -2,33 +2,11 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
+import { deriveOpenClawSessionIdFromFilePath } from "../session-id.js";
 import type { OpenClawContinuitySummaryFile } from "./types.js";
 
 export type { OpenClawContinuitySummaryFile } from "./types.js";
-
-/**
- * Derives an OpenClaw session UUID from a session transcript filename.
- *
- * Supports files like `session.jsonl`, `session.jsonl.reset.TIMESTAMP`, and
- * `session.jsonl.deleted.TIMESTAMP`.
- *
- * @param sessionFile - Absolute or relative session transcript path.
- * @param logger - Optional plugin logger used for debug diagnostics.
- * @returns Session UUID stem, or `undefined` when it cannot be derived.
- */
-export function deriveOpenClawSessionIdFromFilePath(sessionFile: string, logger?: PluginLogger): string | undefined {
-  const normalizedSessionFile = sessionFile.trim();
-  if (normalizedSessionFile.length === 0) {
-    debugLog(logger, "continuity-summary-reader", "cannot derive session id from empty session file path");
-    return undefined;
-  }
-
-  const fileName = path.basename(normalizedSessionFile);
-  const sessionId = fileName.replace(/\.jsonl(?:\..*)?$/i, "").trim();
-  debugLog(logger, "continuity-summary-reader", `derived session id "${sessionId || "<empty>"}" from file=${normalizedSessionFile}`);
-
-  return sessionId.length > 0 ? sessionId : undefined;
-}
+export { deriveOpenClawSessionIdFromFilePath } from "../session-id.js";
 
 /**
  * Resolves the sidecar Markdown continuity summary path for a session

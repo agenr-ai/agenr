@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -29,7 +30,7 @@ afterEach(async () => {
 
 describe("OpenClawTranscriptParser", () => {
   it("parses a minimal valid OpenClaw session", async () => {
-    const filePath = await writeSessionFile([
+    const lines = [
       JSON.stringify({
         type: "session",
         id: "session-1",
@@ -54,7 +55,8 @@ describe("OpenClawTranscriptParser", () => {
           content: "Hi there.",
         },
       }),
-    ]);
+    ];
+    const filePath = await writeSessionFile(lines);
 
     const transcript = await parser.parseFile(filePath);
 
@@ -62,6 +64,9 @@ describe("OpenClawTranscriptParser", () => {
       sessionId: "session-1",
       sessionLabel: "sprint-review",
       startedAt: "2026-03-01T10:00:00.000Z",
+      endedAt: "2026-03-01T10:02:00.000Z",
+      messageCount: 2,
+      transcriptHash: expectedTranscriptHash(lines),
       modelsUsed: ["gpt-4.1"],
     });
     expect(transcript.messages).toEqual([
@@ -128,6 +133,7 @@ describe("OpenClawTranscriptParser", () => {
 
     const transcript = await parser.parseFile(filePath);
 
+    expect(transcript.metadata.messageCount).toBe(3);
     expect(transcript.messages).toEqual([
       {
         index: 0,
@@ -178,6 +184,7 @@ describe("OpenClawTranscriptParser", () => {
 
     const transcript = await parser.parseFile(filePath);
 
+    expect(transcript.metadata.messageCount).toBe(2);
     expect(transcript.messages).toHaveLength(2);
     expect(transcript.messages[0]?.text).toContain('[recalled from brain: "branch strategy"]');
     expect(transcript.messages[1]?.text).toBe('[tool result from agenr_recall: "branch strategy" - filtered]');
@@ -209,6 +216,7 @@ describe("OpenClawTranscriptParser", () => {
 
     const transcript = await parser.parseFile(filePath, { verbose: true });
 
+    expect(transcript.metadata.messageCount).toBe(1);
     expect(transcript.messages).toHaveLength(1);
     expect(transcript.messages[0]?.role).toBe("assistant");
     expect(transcript.messages[0]?.text).toBe("Kept text");
@@ -248,7 +256,7 @@ describe("OpenClawTranscriptParser", () => {
   });
 
   it("extracts session metadata from session and user message records", async () => {
-    const filePath = await writeSessionFile([
+    const lines = [
       JSON.stringify({
         type: "session",
         id: "session-5",
@@ -276,7 +284,8 @@ describe("OpenClawTranscriptParser", () => {
           ],
         },
       }),
-    ]);
+    ];
+    const filePath = await writeSessionFile(lines);
 
     const transcript = await parser.parseFile(filePath);
 
@@ -284,6 +293,9 @@ describe("OpenClawTranscriptParser", () => {
       sessionId: "session-5",
       sessionLabel: "roadmap-sync",
       startedAt: "2026-03-05T12:00:00.000Z",
+      endedAt: "2026-03-05T12:01:00.000Z",
+      messageCount: 1,
+      transcriptHash: expectedTranscriptHash(lines),
       modelsUsed: ["gpt-4.1", "gpt-4.1-mini"],
     });
   });
@@ -469,7 +481,48 @@ describe("OpenClawTranscriptParser", () => {
     const transcript = await parser.parseFile(filePath);
 
     expect(transcript.metadata.startedAt).toBe("2026-03-06T08:30:00.000Z");
+    expect(transcript.metadata.endedAt).toBe("2026-03-06T08:30:00.000Z");
+    expect(transcript.metadata.messageCount).toBe(2);
     expect(transcript.messages.map((message) => message.timestamp)).toEqual(["2026-03-06T08:30:00.000Z", "2026-03-06T08:30:00.000Z"]);
+  });
+
+  it("changes transcriptHash when raw transcript contents change", async () => {
+    const firstLines = [
+      JSON.stringify({
+        type: "session",
+        id: "session-8",
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "user",
+          content: "First variant",
+        },
+      }),
+    ];
+    const secondLines = [
+      JSON.stringify({
+        type: "session",
+        id: "session-8",
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "user",
+          content: "Second variant",
+        },
+      }),
+    ];
+
+    const firstFile = await writeSessionFile(firstLines);
+    const secondFile = await writeSessionFile(secondLines);
+
+    const firstTranscript = await parser.parseFile(firstFile);
+    const secondTranscript = await parser.parseFile(secondFile);
+
+    expect(firstTranscript.metadata.transcriptHash).toBe(expectedTranscriptHash(firstLines));
+    expect(secondTranscript.metadata.transcriptHash).toBe(expectedTranscriptHash(secondLines));
+    expect(firstTranscript.metadata.transcriptHash).not.toBe(secondTranscript.metadata.transcriptHash);
   });
 
   it("handles malformed JSONL lines without crashing", async () => {
@@ -498,4 +551,10 @@ describe("OpenClawTranscriptParser", () => {
 
 function createMetadataBlock(sentinel: string, payload: object): string {
   return [sentinel, "```json", JSON.stringify(payload), "```"].join("\n");
+}
+
+function expectedTranscriptHash(lines: string[]): string {
+  return createHash("sha256")
+    .update(`${lines.join("\n")}\n`)
+    .digest("hex");
 }

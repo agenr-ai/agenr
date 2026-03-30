@@ -214,6 +214,36 @@ describe("resolveOpenClawSessionPredecessor", () => {
     );
   });
 
+  it("derives the predecessor sessionId from the session file when sessions.json omits it", async () => {
+    const { workspaceDir, sessionsDir } = await createWorkspaceWithSessions();
+    await writeSessionJsonl(sessionsDir, "derived-from-file");
+    await writeSessionsJson(sessionsDir, {
+      "agent:main:main": {
+        sessionFile: "derived-from-file.jsonl",
+        updatedAt: 2_000,
+      },
+    });
+
+    const result = await resolveOpenClawSessionPredecessor(
+      {
+        agentId: "main",
+        sessionId: "current-session",
+        sessionKey: "agent:main:tui-623e4567-e89b-12d3-a456-426614174000",
+        workspaceDir,
+      },
+      createSessionStartTracker(),
+      {
+        logger: createLogger(),
+        resolveStateDir: resolveOpenClawStateDir,
+      },
+    );
+
+    expect(result).toEqual({
+      sessionId: "derived-from-file",
+      sessionFile: path.join(sessionsDir, "derived-from-file.jsonl"),
+    });
+  });
+
   it("treats current tui uuid sessions as the broad tui continuity bucket", async () => {
     const { workspaceDir, sessionsDir } = await createWorkspaceWithSessions();
     await writeSessionJsonl(sessionsDir, "tui-1-prev");

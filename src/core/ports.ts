@@ -5,7 +5,8 @@
  * Adapters implement these interfaces to connect core to infrastructure.
  */
 
-import type { Entry } from "./types.js";
+import type { Episode, EpisodeSource, Entry } from "./types.js";
+import type { EpisodeInput, EpisodeUpsertResult, TemporalWindow } from "./episode/types.js";
 import type { EntryFilters, FtsCandidate, VectorCandidate } from "./recall/types.js";
 
 // ── Database ─────────────────────────────────────────────────────────
@@ -52,6 +53,23 @@ export interface DatabasePort {
 
   /** Close the database connection. */
   close(): Promise<void>;
+}
+
+/**
+ * Storage contract for persisting and querying episodic memory records.
+ */
+export interface EpisodeDatabasePort {
+  /** Get one episode by its stable `(source, sourceId)` identity. */
+  getEpisodeBySourceId(source: EpisodeSource, sourceId: string): Promise<Episode | null>;
+
+  /** Get one episode by fallback `(source, transcriptHash)` identity. */
+  getEpisodeByTranscriptHash(source: EpisodeSource, transcriptHash: string): Promise<Episode | null>;
+
+  /** Insert or update an episode using `summaryHash` change detection. */
+  upsertEpisode(input: EpisodeInput): Promise<EpisodeUpsertResult>;
+
+  /** List non-retired episodes whose time range overlaps the requested window. */
+  listEpisodesByTimeWindow(window: TemporalWindow, limit?: number): Promise<Episode[]>;
 }
 
 // ── Embeddings ───────────────────────────────────────────────────────

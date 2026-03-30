@@ -3,7 +3,7 @@ import type { Client } from "@libsql/client";
 /**
  * Logical schema version stored in the metadata table.
  */
-const SCHEMA_VERSION = "3";
+const SCHEMA_VERSION = "4";
 
 /**
  * libSQL vector index name for entry embeddings.
@@ -100,6 +100,36 @@ const CREATE_INGEST_LOG_TABLE_SQL = `
     file_hash TEXT NOT NULL,
     ingested_at TEXT NOT NULL,
     entry_count INTEGER DEFAULT 0
+  )
+`;
+
+/** SQL statement that creates the canonical episodes table. */
+const CREATE_EPISODES_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS episodes (
+    id TEXT PRIMARY KEY,
+    source TEXT NOT NULL,
+    source_id TEXT,
+    source_ref TEXT,
+    transcript_hash TEXT,
+    summary_hash TEXT,
+    agent_id TEXT,
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    summary TEXT NOT NULL,
+    tags TEXT,
+    activity_level TEXT,
+    user_id TEXT,
+    project TEXT,
+    gen_model TEXT,
+    gen_version TEXT,
+    message_count INTEGER,
+    embedding F32_BLOB(1024),
+    retired INTEGER NOT NULL DEFAULT 0,
+    retired_at TEXT,
+    retired_reason TEXT,
+    superseded_by TEXT REFERENCES episodes(id),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
   )
 `;
 
@@ -224,6 +254,37 @@ const CREATE_ENTRIES_CREATED_AT_INDEX_SQL = `
   ON entries(created_at)
 `;
 
+const CREATE_EPISODES_STARTED_AT_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_episodes_started_at
+  ON episodes(started_at)
+`;
+
+const CREATE_EPISODES_ENDED_AT_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_episodes_ended_at
+  ON episodes(ended_at)
+`;
+
+const CREATE_EPISODES_SOURCE_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_episodes_source
+  ON episodes(source)
+`;
+
+const CREATE_EPISODES_SOURCE_ID_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_episodes_source_id
+  ON episodes(source_id)
+`;
+
+const CREATE_EPISODES_RETIRED_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_episodes_retired
+  ON episodes(retired)
+`;
+
+const CREATE_EPISODES_SOURCE_SOURCE_ID_UNIQUE_INDEX_SQL = `
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_episodes_source_source_id
+  ON episodes(source, source_id)
+  WHERE source_id IS NOT NULL
+`;
+
 const CREATE_TASKS_STATUS_INDEX_SQL = `
   CREATE INDEX IF NOT EXISTS idx_tasks_status
   ON tasks(status)
@@ -273,6 +334,7 @@ const SCHEMA_STATEMENTS = [
   CREATE_ENTRIES_FTS_DELETE_TRIGGER_SQL,
   CREATE_ENTRIES_FTS_UPDATE_TRIGGER_SQL,
   CREATE_INGEST_LOG_TABLE_SQL,
+  CREATE_EPISODES_TABLE_SQL,
   CREATE_TASKS_TABLE_SQL,
   CREATE_RECALL_EVENTS_TABLE_SQL,
   CREATE_SURGEON_RUNS_TABLE_SQL,
@@ -283,6 +345,12 @@ const SCHEMA_STATEMENTS = [
   CREATE_ENTRIES_EXPIRY_INDEX_SQL,
   CREATE_ENTRIES_RETIRED_INDEX_SQL,
   CREATE_ENTRIES_CREATED_AT_INDEX_SQL,
+  CREATE_EPISODES_STARTED_AT_INDEX_SQL,
+  CREATE_EPISODES_ENDED_AT_INDEX_SQL,
+  CREATE_EPISODES_SOURCE_INDEX_SQL,
+  CREATE_EPISODES_SOURCE_ID_INDEX_SQL,
+  CREATE_EPISODES_RETIRED_INDEX_SQL,
+  CREATE_EPISODES_SOURCE_SOURCE_ID_UNIQUE_INDEX_SQL,
   CREATE_TASKS_STATUS_INDEX_SQL,
   CREATE_TASKS_CREATED_AT_INDEX_SQL,
   CREATE_TASKS_PROJECT_INDEX_SQL,
@@ -319,6 +387,10 @@ export async function initSchema(db: Client): Promise<void> {
 
   if (currentVersion === "2") {
     await migrateSchemaV2ToV3(db);
+  }
+
+  if (currentVersion === "3") {
+    await migrateSchemaV3ToV4(db);
   }
 
   await db.execute({
@@ -427,6 +499,26 @@ async function migrateSchemaV2ToV3(db: Client): Promise<void> {
     await db.execute(CREATE_ENTRIES_FTS_DELETE_TRIGGER_SQL);
     await db.execute(CREATE_ENTRIES_FTS_UPDATE_TRIGGER_SQL);
   });
+}
+
+/**
+ * Applies the ordered v3 to v4 schema migration for episodic-memory foundations.
+ *
+ * @param db - libSQL client connected to the target database.
+ * @returns Promise that resolves once the migration steps complete.
+ */
+async function migrateSchemaV3ToV4(db: Client): Promise<void> {
+  for (const statement of [
+    CREATE_EPISODES_TABLE_SQL,
+    CREATE_EPISODES_STARTED_AT_INDEX_SQL,
+    CREATE_EPISODES_ENDED_AT_INDEX_SQL,
+    CREATE_EPISODES_SOURCE_INDEX_SQL,
+    CREATE_EPISODES_SOURCE_ID_INDEX_SQL,
+    CREATE_EPISODES_RETIRED_INDEX_SQL,
+    CREATE_EPISODES_SOURCE_SOURCE_ID_UNIQUE_INDEX_SQL,
+  ]) {
+    await db.execute(statement);
+  }
 }
 
 /**

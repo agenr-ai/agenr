@@ -219,20 +219,25 @@ class MockIngestionLlm implements IngestionLlmPort {
 }
 
 function buildTranscript(): ParsedTranscript {
+  const messages = [
+    {
+      index: 0,
+      role: "user" as const,
+      text: "Remember this.",
+    },
+    {
+      index: 1,
+      role: "assistant" as const,
+      text: "Understood.",
+    },
+  ];
+
   return {
-    messages: [
-      {
-        index: 0,
-        role: "user",
-        text: "Remember this.",
-      },
-      {
-        index: 1,
-        role: "assistant",
-        text: "Understood.",
-      },
-    ],
-    metadata: {},
+    messages,
+    metadata: {
+      messageCount: messages.length,
+      transcriptHash: "service-transcript-hash",
+    },
     warnings: [],
   };
 }

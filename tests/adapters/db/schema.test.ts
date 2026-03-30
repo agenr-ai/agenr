@@ -25,7 +25,7 @@ describe("initSchema", () => {
         SELECT name
         FROM sqlite_master
         WHERE type = 'table'
-          AND name IN ('entries', 'entries_fts', 'ingest_log', 'tasks', 'recall_events', 'surgeon_runs', 'surgeon_run_actions', '_meta')
+          AND name IN ('entries', 'entries_fts', 'ingest_log', 'episodes', 'tasks', 'recall_events', 'surgeon_runs', 'surgeon_run_actions', '_meta')
       `,
     });
     const tableNames = new Set(
@@ -35,7 +35,9 @@ describe("initSchema", () => {
       }),
     );
 
-    expect(tableNames).toEqual(new Set(["entries", "entries_fts", "ingest_log", "tasks", "recall_events", "surgeon_runs", "surgeon_run_actions", "_meta"]));
+    expect(tableNames).toEqual(
+      new Set(["entries", "entries_fts", "ingest_log", "episodes", "tasks", "recall_events", "surgeon_runs", "surgeon_run_actions", "_meta"]),
+    );
     expect(await tableColumns(client, "entries")).toEqual([
       "id",
       "type",
@@ -60,6 +62,32 @@ describe("initSchema", () => {
       "retired",
       "retired_at",
       "retired_reason",
+      "created_at",
+      "updated_at",
+    ]);
+    expect(await tableColumns(client, "episodes")).toEqual([
+      "id",
+      "source",
+      "source_id",
+      "source_ref",
+      "transcript_hash",
+      "summary_hash",
+      "agent_id",
+      "started_at",
+      "ended_at",
+      "summary",
+      "tags",
+      "activity_level",
+      "user_id",
+      "project",
+      "gen_model",
+      "gen_version",
+      "message_count",
+      "embedding",
+      "retired",
+      "retired_at",
+      "retired_reason",
+      "superseded_by",
       "created_at",
       "updated_at",
     ]);
@@ -130,9 +158,15 @@ describe("initSchema", () => {
     expect(await indexExists(client, "idx_tasks_status")).toBe(true);
     expect(await indexExists(client, "idx_tasks_created_at")).toBe(true);
     expect(await indexExists(client, "idx_tasks_project")).toBe(true);
+    expect(await indexExists(client, "idx_episodes_started_at")).toBe(true);
+    expect(await indexExists(client, "idx_episodes_ended_at")).toBe(true);
+    expect(await indexExists(client, "idx_episodes_source")).toBe(true);
+    expect(await indexExists(client, "idx_episodes_source_id")).toBe(true);
+    expect(await indexExists(client, "idx_episodes_retired")).toBe(true);
+    expect(await indexExists(client, "idx_episodes_source_source_id")).toBe(true);
   });
 
-  it("migrates schema version 2 entries to version 3 semantics", async () => {
+  it("migrates schema version 2 entries to current semantics", async () => {
     const client = createClient({ url: ":memory:" });
     clients.push(client);
 
@@ -265,7 +299,109 @@ describe("initSchema", () => {
     const versionResult = await client.execute({
       sql: "SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1",
     });
-    expect(versionResult.rows).toEqual([{ value: "3" }]);
+    expect(versionResult.rows).toEqual([{ value: "4" }]);
+    expect(await tableColumns(client, "episodes")).toContain("summary_hash");
+  });
+
+  it("migrates schema version 3 databases additively to version 4 without losing entry data", async () => {
+    const client = createClient({ url: ":memory:" });
+    clients.push(client);
+
+    await client.execute(`
+      CREATE TABLE entries (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        content TEXT NOT NULL,
+        importance INTEGER NOT NULL,
+        expiry TEXT NOT NULL,
+        tags TEXT,
+        source_file TEXT,
+        source_context TEXT,
+        embedding BLOB,
+        content_hash TEXT,
+        norm_content_hash TEXT,
+        minhash_sig BLOB,
+        quality_score REAL NOT NULL DEFAULT 0.5,
+        recall_count INTEGER DEFAULT 0,
+        last_recalled_at TEXT,
+        superseded_by TEXT,
+        cluster_id TEXT,
+        user_id TEXT,
+        project TEXT,
+        retired INTEGER NOT NULL DEFAULT 0,
+        retired_at TEXT,
+        retired_reason TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+    await client.execute("CREATE TABLE _meta (key TEXT PRIMARY KEY, value TEXT)");
+    await client.execute({
+      sql: `
+        INSERT INTO _meta (key, value)
+        VALUES ('schema_version', '3')
+      `,
+    });
+    await client.execute({
+      sql: `
+        INSERT INTO entries (
+          id, type, subject, content, importance, expiry, tags, source_file, source_context, embedding,
+          content_hash, norm_content_hash, minhash_sig, quality_score, recall_count, last_recalled_at,
+          superseded_by, cluster_id, user_id, project, retired, retired_at, retired_reason, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      args: [
+        "entry-v3",
+        "fact",
+        "legacy entry",
+        "A pre-existing v3 entry should survive the episodic schema upgrade.",
+        7,
+        "permanent",
+        '["legacy"]',
+        "/tmp/legacy.jsonl",
+        "v3 fixture",
+        null,
+        "hash-v3",
+        "norm-hash-v3",
+        null,
+        0.5,
+        1,
+        "2026-03-28T00:00:00.000Z",
+        null,
+        null,
+        "user-1",
+        "agenr",
+        0,
+        null,
+        null,
+        "2026-03-28T00:00:00.000Z",
+        "2026-03-28T00:00:00.000Z",
+      ],
+    });
+
+    await initSchema(client);
+
+    expect(await tableColumns(client, "episodes")).toContain("transcript_hash");
+    expect(await indexExists(client, "idx_episodes_source_source_id")).toBe(true);
+
+    const upgradedVersion = await client.execute({
+      sql: "SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1",
+    });
+    expect(upgradedVersion.rows).toEqual([{ value: "4" }]);
+
+    const entryResult = await client.execute({
+      sql: "SELECT id, subject, project FROM entries WHERE id = ? LIMIT 1",
+      args: ["entry-v3"],
+    });
+    expect(entryResult.rows).toEqual([
+      {
+        id: "entry-v3",
+        subject: "legacy entry",
+        project: "agenr",
+      },
+    ]);
   });
 
   it("migrates the minimal legacy surgeon_runs table without losing data", async () => {

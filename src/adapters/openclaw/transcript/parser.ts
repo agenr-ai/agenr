@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 
 import type { TranscriptPort } from "../../../core/ports.js";
@@ -371,6 +372,7 @@ export class OpenClawTranscriptParser implements TranscriptPort {
     const raw = await fs.readFile(filePath, "utf8");
     const verbose = options?.verbose === true;
     const state = createParseState();
+    const transcriptHash = createHash("sha256").update(raw).digest("hex");
 
     parseJsonlLines(raw, state.warnings, (record) => {
       handleRecord(state, record);
@@ -385,13 +387,19 @@ export class OpenClawTranscriptParser implements TranscriptPort {
       state.warnings.push(buildFilterWarning(state.stats));
     }
 
+    const startedAt = state.sessionTimestamp ?? state.messages[0]?.timestamp ?? fallbackTimestamp;
+    const endedAt = state.messages[state.messages.length - 1]?.timestamp ?? state.sessionTimestamp ?? fallbackTimestamp;
+
     return {
       messages: state.messages,
       warnings: state.warnings,
       metadata: {
         sessionId: state.sessionId,
         sessionLabel: state.sessionLabel,
-        startedAt: state.sessionTimestamp ?? state.messages[0]?.timestamp ?? fallbackTimestamp,
+        startedAt,
+        endedAt,
+        messageCount: state.messages.length,
+        transcriptHash,
         modelsUsed: state.modelsUsed.length > 0 ? state.modelsUsed : undefined,
       },
     };
