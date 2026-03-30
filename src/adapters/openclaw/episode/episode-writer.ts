@@ -119,6 +119,7 @@ export async function writeOpenClawPredecessorEpisode(params: {
       sourceRef: params.predecessor.sessionFile,
       transcriptHash: parsedTranscript.metadata.transcriptHash,
       agentId: params.ctx.agentId?.trim(),
+      surface: resolveSessionSurface(params.ctx),
       startedAt,
       endedAt,
       summary: structured.summary,
@@ -139,6 +140,28 @@ export async function writeOpenClawPredecessorEpisode(params: {
       `[agenr] session-start predecessor episode write failed for ${sessionContext} predecessor=${params.predecessor.sessionFile} reason=${formatErrorMessage(error)}`,
     );
   }
+}
+
+/**
+ * Derives the surface identifier from the current session's hook context.
+ * Surfaces stay in their own lanes, so the current session's surface is always
+ * the predecessor's surface.
+ *
+ * @param ctx - Active OpenClaw hook context.
+ * @returns Normalized surface identifier, or undefined when unavailable.
+ */
+function resolveSessionSurface(ctx: AgenrOpenClawHookContext): string | undefined {
+  const provider = ctx.messageProvider?.trim();
+  if (provider) {
+    return provider.toLowerCase();
+  }
+
+  const sessionKey = ctx.sessionKey?.trim() ?? "";
+  if (/^agent:[^:]+:tui/i.test(sessionKey)) {
+    return "tui";
+  }
+
+  return undefined;
 }
 
 /**

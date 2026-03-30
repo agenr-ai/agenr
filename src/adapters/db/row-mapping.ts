@@ -250,6 +250,7 @@ export function mapEpisodeRow(row: Row): Episode {
     transcriptHash: readOptionalString(row, "transcript_hash"),
     summaryHash: readOptionalString(row, "summary_hash"),
     agentId: readOptionalString(row, "agent_id"),
+    surface: readOptionalString(row, "surface"),
     startedAt: readRequiredString(row, "started_at"),
     endedAt: readOptionalString(row, "ended_at"),
     summary: readRequiredString(row, "summary"),

@@ -13,6 +13,7 @@ const EPISODE_SELECT_COLUMNS = `
   transcript_hash,
   summary_hash,
   agent_id,
+  surface,
   started_at,
   ended_at,
   summary,
@@ -42,6 +43,7 @@ interface NormalizedEpisodePayload {
   sourceRef?: string;
   transcriptHash?: string;
   agentId?: string;
+  surface?: string;
   startedAt: string;
   endedAt?: string;
   summary: string;
@@ -143,6 +145,7 @@ export async function upsertEpisode(executor: SqlExecutor, input: EpisodeInput):
           transcript_hash,
           summary_hash,
           agent_id,
+          surface,
           started_at,
           ended_at,
           summary,
@@ -162,7 +165,7 @@ export async function upsertEpisode(executor: SqlExecutor, input: EpisodeInput):
           updated_at
         )
         VALUES (
-          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
           CASE WHEN ? IS NULL THEN NULL ELSE vector32(?) END,
           0, NULL, NULL, NULL, ?, ?
         )
@@ -175,6 +178,7 @@ export async function upsertEpisode(executor: SqlExecutor, input: EpisodeInput):
         toNullableString(payload.transcriptHash),
         summaryHash,
         toNullableString(payload.agentId),
+        toNullableString(payload.surface),
         payload.startedAt,
         toNullableString(payload.endedAt),
         payload.summary,
@@ -215,6 +219,7 @@ export async function upsertEpisode(executor: SqlExecutor, input: EpisodeInput):
           transcript_hash = ?,
           summary_hash = ?,
           agent_id = ?,
+          surface = ?,
           started_at = ?,
           ended_at = ?,
           summary = ?,
@@ -234,6 +239,7 @@ export async function upsertEpisode(executor: SqlExecutor, input: EpisodeInput):
       toNullableString(payload.transcriptHash),
       summaryHash,
       toNullableString(payload.agentId),
+      toNullableString(payload.surface),
       payload.startedAt,
       toNullableString(payload.endedAt),
       payload.summary,
@@ -328,6 +334,7 @@ function fromStoredEpisode(episode: Episode): EpisodeInput {
     sourceRef: episode.sourceRef,
     transcriptHash: episode.transcriptHash,
     agentId: episode.agentId,
+    surface: episode.surface,
     startedAt: episode.startedAt,
     endedAt: episode.endedAt,
     summary: episode.summary,
@@ -391,6 +398,7 @@ function normalizeEpisodePayload(input: EpisodeInput): NormalizedEpisodePayload 
     ...(normalizeOptionalString(input.sourceRef) ? { sourceRef: normalizeOptionalString(input.sourceRef) ?? undefined } : {}),
     ...(transcriptHash ? { transcriptHash } : {}),
     ...(normalizeOptionalString(input.agentId) ? { agentId: normalizeOptionalString(input.agentId) ?? undefined } : {}),
+    ...(normalizeOptionalString(input.surface) ? { surface: normalizeOptionalString(input.surface) ?? undefined } : {}),
     startedAt,
     ...(endedAt ? { endedAt } : {}),
     summary,

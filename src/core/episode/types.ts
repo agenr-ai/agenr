@@ -10,6 +10,7 @@ export interface EpisodeInput {
   transcriptHash?: string;
   summaryHash?: string;
   agentId?: string;
+  surface?: string;
   startedAt: string;
   endedAt?: string;
   summary: string;

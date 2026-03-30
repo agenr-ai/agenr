@@ -101,6 +101,7 @@ describe("writeOpenClawPredecessorEpisode", () => {
     expect(stored?.startedAt).toBe("2026-03-28T10:00:00.000Z");
     expect(stored?.endedAt).toBe("2026-03-28T10:03:00.000Z");
     expect(stored?.messageCount).toBe(4);
+    expect(stored?.surface).toBe("tui");
     expect(stored?.genVersion).toBe("openclaw-episodic-summary-v1");
     expect(stored?.genModel).toBe("openai/gpt-5.4-mini");
     expect(stored?.tags).toEqual(["agenr", "episodic-memory", "openclaw"]);
@@ -113,6 +114,40 @@ describe("writeOpenClawPredecessorEpisode", () => {
         ),
       ]),
     );
+  });
+
+  it("prefers messageProvider when deriving the predecessor episode surface", async () => {
+    const database = await createTestDatabase(databases, tempPaths);
+    const sessionFile = await writeStandardSession(tempPaths, "provider-session");
+    const logger = createLogger();
+    const episodeRunner = createRunner({
+      text: JSON.stringify({
+        summary: "We used the message provider to tag the predecessor episode surface.",
+        tags: ["surface"],
+        activityLevel: "minimal",
+        project: "agenr",
+      }),
+    });
+
+    await writeOpenClawPredecessorEpisode({
+      ctx: {
+        agentId: "main",
+        messageProvider: " Telegram ",
+        sessionId: "current-session",
+        sessionKey: "agent:main:webchat-current",
+      },
+      predecessor: {
+        sessionId: "provider-session",
+        sessionFile,
+      },
+      services: createServices(database, episodeRunner),
+      logger,
+    });
+
+    const stored = await database.getEpisodeBySourceId("openclaw", "provider-session");
+
+    expect(stored).not.toBeNull();
+    expect(stored?.surface).toBe("telegram");
   });
 
   it("skips generation when the predecessor episode already exists", async () => {

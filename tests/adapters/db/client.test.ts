@@ -246,6 +246,7 @@ describe("createDatabase", () => {
         tags: ["OpenClaw", "agenr", "memory"],
         activityLevel: "substantial",
         project: "agenr",
+        surface: "tui",
       }),
     );
     const bySourceId = await database.getEpisodeBySourceId("openclaw", "session-1");
@@ -255,6 +256,7 @@ describe("createDatabase", () => {
     expect(result.episode.sourceId).toBe("session-1");
     expect(result.episode.sourceRef).toBe("/tmp/session-1.jsonl");
     expect(result.episode.summaryHash).toMatch(/^[0-9a-f]{64}$/u);
+    expect(result.episode.surface).toBe("tui");
     expect(result.episode.tags).toEqual(["agenr", "memory", "openclaw"]);
     expect(bySourceId).toEqual(result.episode);
     expect(byTranscriptHash?.id).toBe(result.episode.id);
@@ -314,6 +316,7 @@ describe("createDatabase", () => {
         tags: ["openclaw", "episodes", "storage"],
         activityLevel: "substantial",
         project: "agenr",
+        surface: "webchat",
       }),
     );
 
@@ -323,6 +326,7 @@ describe("createDatabase", () => {
     expect(updated.episode.summary).toContain("background writer");
     expect(updated.episode.activityLevel).toBe("substantial");
     expect(updated.episode.project).toBe("agenr");
+    expect(updated.episode.surface).toBe("webchat");
   });
 
   it("falls back to transcript-hash dedup when sourceId is absent", async () => {
@@ -479,6 +483,7 @@ function createEpisodeInput(
     tags: string[];
     activityLevel: "substantial" | "minimal" | "none";
     project: string | undefined;
+    surface: string | undefined;
   }> = {},
 ) {
   const sourceId = "sourceId" in overrides ? overrides.sourceId : "session-default";
@@ -494,5 +499,6 @@ function createEpisodeInput(
     tags: overrides.tags ?? ["episodes", "memory"],
     activityLevel: overrides.activityLevel ?? "substantial",
     ...(overrides.project !== undefined ? { project: overrides.project } : {}),
+    ...(overrides.surface !== undefined ? { surface: overrides.surface } : {}),
   };
 }

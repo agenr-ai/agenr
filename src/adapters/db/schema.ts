@@ -113,6 +113,7 @@ const CREATE_EPISODES_TABLE_SQL = `
     transcript_hash TEXT,
     summary_hash TEXT,
     agent_id TEXT,
+    surface TEXT,
     started_at TEXT NOT NULL,
     ended_at TEXT,
     summary TEXT NOT NULL,

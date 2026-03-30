@@ -73,6 +73,7 @@ describe("initSchema", () => {
       "transcript_hash",
       "summary_hash",
       "agent_id",
+      "surface",
       "started_at",
       "ended_at",
       "summary",
@@ -301,6 +302,7 @@ describe("initSchema", () => {
     });
     expect(versionResult.rows).toEqual([{ value: "4" }]);
     expect(await tableColumns(client, "episodes")).toContain("summary_hash");
+    expect(await tableColumns(client, "episodes")).toContain("surface");
   });
 
   it("migrates schema version 3 databases additively to version 4 without losing entry data", async () => {
@@ -384,6 +386,7 @@ describe("initSchema", () => {
     await initSchema(client);
 
     expect(await tableColumns(client, "episodes")).toContain("transcript_hash");
+    expect(await tableColumns(client, "episodes")).toContain("surface");
     expect(await indexExists(client, "idx_episodes_source_source_id")).toBe(true);
 
     const upgradedVersion = await client.execute({
