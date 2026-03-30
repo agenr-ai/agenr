@@ -15,16 +15,16 @@ interface ParsedSingleLaneSessionKey {
 }
 
 /** Fully resolved predecessor facts returned by the TUI sessions-store scan. */
-interface FoundTuiFallbackPredecessor {
+interface ResolvedTuiPredecessor {
   sessionFile: string;
   sessionId?: string;
   sessionKey: string;
 }
 
-/** Best-effort outcome from the TUI-specific predecessor fallback. */
-type TuiFallbackResolution =
+/** Best-effort outcome from TUI-specific predecessor resolution. */
+type TuiPredecessorResolution =
   | {
-      predecessor: FoundTuiFallbackPredecessor;
+      predecessor: ResolvedTuiPredecessor;
       reason: "resolved";
     }
   | {
@@ -37,10 +37,11 @@ export type { OpenClawSessionPredecessor } from "./types.js";
 /**
  * Resolves the predecessor session file for the active OpenClaw session.
  *
- * Predecessor resolution relies on the `session_start` `resumedFrom` signal
- * when it can be matched against the OpenClaw sessions store, and otherwise
- * falls back to scanning the TUI sessions store for the best same-lane
- * predecessor.
+ * Predecessor resolution scans the OpenClaw sessions store for the most recent
+ * same-agent, same-lane session for the active TUI session. When
+ * `session_start` provides a `resumedFrom` session UUID, it is matched against
+ * the sessions store before lane-based matching. This resolver is TUI-specific
+ * for now, and non-TUI surfaces are not yet supported.
  *
  * @param ctx - Active OpenClaw hook context.
  * @param tracker - In-process continuity tracker shared by the plugin.
@@ -60,7 +61,7 @@ export async function resolveOpenClawSessionPredecessor(
 
   const tuiIdentity = parseTuiSessionKey(ctx.sessionKey ?? "");
   if (!tuiIdentity) {
-    debugLog(params.logger, "predecessor", `skipping TUI fallback for ${sessionContext}: current session key is not TUI`);
+    debugLog(params.logger, "predecessor", `skipping TUI predecessor resolution for ${sessionContext}: current session key is not TUI`);
     return undefined;
   }
 
@@ -73,54 +74,67 @@ export async function resolveOpenClawSessionPredecessor(
 
   const sessionsDir = resolveOpenClawSessionsDirectory(ctx, tuiIdentity.agentId, params.resolveStateDir);
   if (!sessionsDir) {
-    params.logger?.info?.(`[agenr] predecessor: TUI fallback no predecessor found for ${sessionContext} reason=no_sessions_dir`);
+    params.logger?.info?.(`[agenr] predecessor: TUI no predecessor found for ${sessionContext} reason=no_sessions_dir`);
     return undefined;
   }
 
   params.logger?.info?.(
-    `[agenr] predecessor: TUI fallback activated for ${sessionContext} sessionKey=${ctx.sessionKey?.trim() ?? "unknown"} stableLane=${tuiIdentity.stableLane}`,
+    `[agenr] predecessor: TUI predecessor resolution for ${sessionContext} sessionKey=${ctx.sessionKey?.trim() ?? "unknown"} stableLane=${tuiIdentity.stableLane}`,
   );
   debugLog(
     params.logger,
     "predecessor",
-    `TUI fallback stable lane for ${sessionContext}: agentId=${tuiIdentity.agentId} instanceLane=${tuiIdentity.instanceLane} stableLane=${tuiIdentity.stableLane} sessionsDir=${sessionsDir}`,
+    `TUI stable lane for ${sessionContext}: agentId=${tuiIdentity.agentId} instanceLane=${tuiIdentity.instanceLane} stableLane=${tuiIdentity.stableLane} sessionsDir=${sessionsDir}`,
   );
 
-  const fallbackResolution = await findTuiFallbackPredecessor(ctx.sessionKey ?? "", sessionsDir, resumedFrom, params.logger);
-  if (!fallbackResolution.predecessor) {
-    params.logger?.info?.(`[agenr] predecessor: TUI fallback no predecessor found for ${sessionContext} reason=${fallbackResolution.reason}`);
+  const predecessorResolution = await findTuiPredecessor(ctx.sessionKey ?? "", sessionsDir, resumedFrom, params.logger);
+  if (!predecessorResolution.predecessor) {
+    params.logger?.info?.(`[agenr] predecessor: TUI no predecessor found for ${sessionContext} reason=${predecessorResolution.reason}`);
     return undefined;
   }
 
   params.logger?.info?.(
-    `[agenr] predecessor: TUI fallback predecessor found for ${sessionContext} predecessorKey=${fallbackResolution.predecessor.sessionKey} predecessor=${fallbackResolution.predecessor.sessionFile}`,
+    `[agenr] predecessor: TUI predecessor found for ${sessionContext} predecessorKey=${predecessorResolution.predecessor.sessionKey} predecessor=${predecessorResolution.predecessor.sessionFile}`,
   );
 
   return {
-    sessionFile: fallbackResolution.predecessor.sessionFile,
-    ...(fallbackResolution.predecessor.sessionId ? { sessionId: fallbackResolution.predecessor.sessionId } : {}),
+    sessionFile: predecessorResolution.predecessor.sessionFile,
+    ...(predecessorResolution.predecessor.sessionId ? { sessionId: predecessorResolution.predecessor.sessionId } : {}),
   };
 }
 
-/** Finds the best TUI continuity predecessor by scanning OpenClaw's session store. */
-async function findTuiFallbackPredecessor(
+/**
+ * Finds the best TUI predecessor by scanning OpenClaw's sessions store.
+ *
+ * The scan first tries to match `session_start` `resumedFrom` directly against
+ * the same-agent sessions store entries. When that fails, it falls back to the
+ * most recent same-agent, same-lane TUI session. This helper is TUI-specific
+ * for now, and non-TUI surfaces are not yet supported.
+ *
+ * @param currentSessionKey - Active OpenClaw session key.
+ * @param sessionsDir - Agent-scoped OpenClaw sessions directory.
+ * @param resumedFrom - Optional `session_start` predecessor session UUID.
+ * @param logger - Optional plugin logger.
+ * @returns Best-effort TUI predecessor resolution outcome.
+ */
+async function findTuiPredecessor(
   currentSessionKey: string,
   sessionsDir: string,
   resumedFrom: string | undefined,
   logger?: PluginLogger,
-): Promise<TuiFallbackResolution> {
+): Promise<TuiPredecessorResolution> {
   const currentIdentity = parseTuiSessionKey(currentSessionKey);
   if (!currentIdentity) {
     return { reason: "not_tui_session_key" };
   }
 
   const entries = await readOpenClawSessionsStore(sessionsDir, logger);
-  debugLog(logger, "predecessor", `TUI fallback sessions.json read result for sessionKey=${currentSessionKey}: entries=${entries.length}`);
+  debugLog(logger, "predecessor", `TUI sessions.json read result for sessionKey=${currentSessionKey}: entries=${entries.length}`);
 
   const sameAgentEntries = entries.filter((entry) => {
     const parsedCandidate = parseSingleLaneSessionKey(entry.sessionKey);
     if (!parsedCandidate) {
-      debugLog(logger, "predecessor", `TUI fallback excluded candidate=${entry.sessionKey} reason=unsupported_session_key_shape`);
+      debugLog(logger, "predecessor", `TUI excluded candidate=${entry.sessionKey} reason=unsupported_session_key_shape`);
       return false;
     }
 
@@ -128,14 +142,14 @@ async function findTuiFallbackPredecessor(
       debugLog(
         logger,
         "predecessor",
-        `TUI fallback excluded candidate=${entry.sessionKey} reason=agent_mismatch expected=${currentIdentity.agentId} actual=${parsedCandidate.agentId}`,
+        `TUI excluded candidate=${entry.sessionKey} reason=agent_mismatch expected=${currentIdentity.agentId} actual=${parsedCandidate.agentId}`,
       );
       return false;
     }
 
     return true;
   });
-  debugLog(logger, "predecessor", `TUI fallback candidate filtering for sessionKey=${currentSessionKey}: sameAgentCount=${sameAgentEntries.length}`);
+  debugLog(logger, "predecessor", `TUI candidate filtering for sessionKey=${currentSessionKey}: sameAgentCount=${sameAgentEntries.length}`);
 
   if (resumedFrom) {
     const resumedFromMatch = sameAgentEntries.find((entry) => entry.sessionId === resumedFrom);
@@ -143,7 +157,7 @@ async function findTuiFallbackPredecessor(
       debugLog(
         logger,
         "predecessor",
-        `TUI fallback matched session_start resumedFrom for sessionKey=${currentSessionKey}: resumedFrom=${resumedFrom} predecessorKey=${resumedFromMatch.sessionKey}`,
+        `TUI matched session_start resumedFrom for sessionKey=${currentSessionKey}: resumedFrom=${resumedFrom} predecessorKey=${resumedFromMatch.sessionKey}`,
       );
       return {
         reason: "resolved",
@@ -159,17 +173,17 @@ async function findTuiFallbackPredecessor(
       debugLog(
         logger,
         "predecessor",
-        `TUI fallback ignored session_start resumedFrom match for sessionKey=${currentSessionKey}: resumedFrom=${resumedFrom} reason=missing_session_file`,
+        `TUI ignored session_start resumedFrom match for sessionKey=${currentSessionKey}: resumedFrom=${resumedFrom} reason=missing_session_file`,
       );
     } else {
-      debugLog(logger, "predecessor", `TUI fallback found no session_start resumedFrom match for sessionKey=${currentSessionKey}: resumedFrom=${resumedFrom}`);
+      debugLog(logger, "predecessor", `TUI found no session_start resumedFrom match for sessionKey=${currentSessionKey}: resumedFrom=${resumedFrom}`);
     }
   }
 
   const laneMatches = sameAgentEntries.filter((entry) => {
     const normalizedCandidateKey = entry.sessionKey.trim();
     if (normalizedCandidateKey === currentSessionKey.trim()) {
-      debugLog(logger, "predecessor", `TUI fallback excluded candidate=${entry.sessionKey} reason=current_session`);
+      debugLog(logger, "predecessor", `TUI excluded candidate=${entry.sessionKey} reason=current_session`);
       return false;
     }
 
@@ -184,22 +198,22 @@ async function findTuiFallbackPredecessor(
 
     const candidateIdentity = parseTuiSessionKey(entry.sessionKey);
     if (!candidateIdentity) {
-      debugLog(logger, "predecessor", `TUI fallback excluded candidate=${entry.sessionKey} reason=not_tui_candidate`);
+      debugLog(logger, "predecessor", `TUI excluded candidate=${entry.sessionKey} reason=not_tui_candidate`);
       return false;
     }
 
-    if (!isSameTuiFallbackLane(currentIdentity.stableLane, candidateIdentity.stableLane)) {
+    if (!isSameTuiLane(currentIdentity.stableLane, candidateIdentity.stableLane)) {
       debugLog(
         logger,
         "predecessor",
-        `TUI fallback excluded candidate=${entry.sessionKey} reason=lane_mismatch currentStableLane=${currentIdentity.stableLane} candidateStableLane=${candidateIdentity.stableLane}`,
+        `TUI excluded candidate=${entry.sessionKey} reason=lane_mismatch currentStableLane=${currentIdentity.stableLane} candidateStableLane=${candidateIdentity.stableLane}`,
       );
       return false;
     }
 
     return true;
   });
-  debugLog(logger, "predecessor", `TUI fallback candidate filtering for sessionKey=${currentSessionKey}: laneMatchCount=${laneMatches.length}`);
+  debugLog(logger, "predecessor", `TUI candidate filtering for sessionKey=${currentSessionKey}: laneMatchCount=${laneMatches.length}`);
 
   const sortedCandidates = laneMatches
     .filter((entry) => {
@@ -207,7 +221,7 @@ async function findTuiFallbackPredecessor(
         return true;
       }
 
-      debugLog(logger, "predecessor", `TUI fallback excluded candidate=${entry.sessionKey} reason=missing_updated_at`);
+      debugLog(logger, "predecessor", `TUI excluded candidate=${entry.sessionKey} reason=missing_updated_at`);
       return false;
     })
     .sort((left, right) => (right.updatedAt ?? 0) - (left.updatedAt ?? 0));
@@ -218,11 +232,7 @@ async function findTuiFallbackPredecessor(
 
   const predecessor = sortedCandidates[0]!;
   if (!predecessor.sessionFile?.trim()) {
-    debugLog(
-      logger,
-      "predecessor",
-      `TUI fallback top candidate missing session file for sessionKey=${currentSessionKey}: predecessorKey=${predecessor.sessionKey}`,
-    );
+    debugLog(logger, "predecessor", `TUI top candidate missing session file for sessionKey=${currentSessionKey}: predecessorKey=${predecessor.sessionKey}`);
     return { reason: "missing_session_file" };
   }
 
@@ -236,13 +246,13 @@ async function findTuiFallbackPredecessor(
   };
 }
 
-/** Resolves the agent-scoped OpenClaw sessions directory for TUI predecessor fallback. */
+/** Resolves the agent-scoped OpenClaw sessions directory for TUI predecessor resolution. */
 function resolveOpenClawSessionsDirectory(
   ctx: AgenrOpenClawHookContext,
-  fallbackAgentId: string,
+  parsedAgentId: string,
   resolveStateDir: AgenrOpenClawRuntime["state"]["resolveStateDir"],
 ): string | undefined {
-  const agentId = ctx.agentId?.trim() || fallbackAgentId.trim();
+  const agentId = ctx.agentId?.trim() || parsedAgentId.trim();
   if (!agentId) {
     return undefined;
   }
@@ -270,8 +280,8 @@ function parseSingleLaneSessionKey(sessionKey: string): ParsedSingleLaneSessionK
   };
 }
 
-/** Matches TUI fallback lanes, treating `tui` as the broad continuity bucket after `/new`. */
-function isSameTuiFallbackLane(currentStableLane: string, candidateStableLane: string): boolean {
+/** Matches TUI predecessor lanes, treating `tui` as the broad continuity bucket after `/new`. */
+function isSameTuiLane(currentStableLane: string, candidateStableLane: string): boolean {
   if (currentStableLane === "tui") {
     return candidateStableLane.toLowerCase().startsWith("tui");
   }

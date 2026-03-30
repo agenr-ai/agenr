@@ -208,8 +208,8 @@ describe("resolveOpenClawSessionPredecessor", () => {
     });
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
-        "[agenr] predecessor: TUI fallback activated for session=current-session key=agent:main:tui-223e4567-e89b-12d3-a456-426614174000 sessionKey=agent:main:tui-223e4567-e89b-12d3-a456-426614174000 stableLane=tui",
-        `[agenr] predecessor: TUI fallback predecessor found for session=current-session key=agent:main:tui-223e4567-e89b-12d3-a456-426614174000 predecessorKey=agent:main:main predecessor=${path.join(sessionsDir, "previous-main.jsonl")}`,
+        "[agenr] predecessor: TUI predecessor resolution for session=current-session key=agent:main:tui-223e4567-e89b-12d3-a456-426614174000 sessionKey=agent:main:tui-223e4567-e89b-12d3-a456-426614174000 stableLane=tui",
+        `[agenr] predecessor: TUI predecessor found for session=current-session key=agent:main:tui-223e4567-e89b-12d3-a456-426614174000 predecessorKey=agent:main:main predecessor=${path.join(sessionsDir, "previous-main.jsonl")}`,
       ]),
     );
   });
@@ -298,8 +298,8 @@ describe("resolveOpenClawSessionPredecessor", () => {
     });
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
-        "[agenr] predecessor: TUI fallback activated for session=current-session key=agent:main:tui-423e4567-e89b-12d3-a456-426614174000 sessionKey=agent:main:tui-423e4567-e89b-12d3-a456-426614174000 stableLane=tui",
-        `[agenr] predecessor: TUI fallback predecessor found for session=current-session key=agent:main:tui-423e4567-e89b-12d3-a456-426614174000 predecessorKey=agent:main:tui-2 predecessor=${path.join(sessionsDir, "tracked-predecessor.jsonl")}`,
+        "[agenr] predecessor: TUI predecessor resolution for session=current-session key=agent:main:tui-423e4567-e89b-12d3-a456-426614174000 sessionKey=agent:main:tui-423e4567-e89b-12d3-a456-426614174000 stableLane=tui",
+        `[agenr] predecessor: TUI predecessor found for session=current-session key=agent:main:tui-423e4567-e89b-12d3-a456-426614174000 predecessorKey=agent:main:tui-2 predecessor=${path.join(sessionsDir, "tracked-predecessor.jsonl")}`,
       ]),
     );
   });
@@ -325,13 +325,13 @@ describe("resolveOpenClawSessionPredecessor", () => {
     expect(result).toBeUndefined();
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
-        "[agenr] predecessor: TUI fallback activated for session=current-session key=agent:main:tui-523e4567-e89b-12d3-a456-426614174000 sessionKey=agent:main:tui-523e4567-e89b-12d3-a456-426614174000 stableLane=tui",
-        "[agenr] predecessor: TUI fallback no predecessor found for session=current-session key=agent:main:tui-523e4567-e89b-12d3-a456-426614174000 reason=no_matching_sessions",
+        "[agenr] predecessor: TUI predecessor resolution for session=current-session key=agent:main:tui-523e4567-e89b-12d3-a456-426614174000 sessionKey=agent:main:tui-523e4567-e89b-12d3-a456-426614174000 stableLane=tui",
+        "[agenr] predecessor: TUI no predecessor found for session=current-session key=agent:main:tui-523e4567-e89b-12d3-a456-426614174000 reason=no_matching_sessions",
       ]),
     );
   });
 
-  it("does not activate fallback for non-tui current session keys", async () => {
+  it("does not activate TUI predecessor resolution for non-tui current session keys", async () => {
     const { workspaceDir, sessionsDir } = await createWorkspaceWithSessions();
     await writeSessionJsonl(sessionsDir, "previous-main");
     await writeSessionsJson(sessionsDir, {
@@ -358,7 +358,7 @@ describe("resolveOpenClawSessionPredecessor", () => {
     );
 
     expect(result).toBeUndefined();
-    expect(getMessages(logger.info).some((message) => message.includes("TUI fallback"))).toBe(false);
+    expect(getMessages(logger.info).some((message) => message.includes("TUI predecessor resolution"))).toBe(false);
   });
 });
 
