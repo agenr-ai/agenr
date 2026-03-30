@@ -3,8 +3,11 @@ import path from "node:path";
 
 import { createClient, type Client, type InArgs, type InStatement, type ResultSet, type Transaction } from "@libsql/client";
 
-import type { DatabasePort } from "../../core/ports.js";
+import type { DatabasePort, EpisodeDatabasePort } from "../../core/ports.js";
+import type { EpisodeInput, TemporalWindow } from "../../core/episode/types.js";
 import type { Entry } from "../../core/types.js";
+import type { Episode, EpisodeSource } from "../../core/types.js";
+import { getEpisodeBySourceId, getEpisodeByTranscriptHash, listEpisodesByTimeWindow, upsertEpisode } from "./episode-queries.js";
 import {
   findExistingHashes,
   findExistingNormHashes,
@@ -24,7 +27,7 @@ const DEFAULT_BUSY_TIMEOUT_MS = 3000;
 /**
  * Database adapter contract exposed by the libSQL implementation.
  */
-export interface TransactionalDatabasePort extends DatabasePort {
+export interface TransactionalDatabasePort extends DatabasePort, EpisodeDatabasePort {
   /**
    * Runs a callback inside a write transaction that begins with `BEGIN IMMEDIATE`.
    *
@@ -88,6 +91,26 @@ class LibsqlDatabase implements SqlDatabase {
   /** Finds which exact content hashes already exist in storage. */
   public async findExistingHashes(hashes: string[]): Promise<Set<string>> {
     return findExistingHashes(this.executor, hashes);
+  }
+
+  /** Loads one episode by stable `(source, sourceId)` identity. */
+  public async getEpisodeBySourceId(source: EpisodeSource, sourceId: string): Promise<Episode | null> {
+    return getEpisodeBySourceId(this.executor, source, sourceId);
+  }
+
+  /** Loads one episode by fallback `(source, transcriptHash)` identity. */
+  public async getEpisodeByTranscriptHash(source: EpisodeSource, transcriptHash: string): Promise<Episode | null> {
+    return getEpisodeByTranscriptHash(this.executor, source, transcriptHash);
+  }
+
+  /** Inserts or updates an episodic-memory row using normalized change detection. */
+  public async upsertEpisode(input: EpisodeInput) {
+    return upsertEpisode(this.executor, input);
+  }
+
+  /** Lists active episodes whose time range overlaps the requested window. */
+  public async listEpisodesByTimeWindow(window: TemporalWindow, limit?: number): Promise<Episode[]> {
+    return listEpisodesByTimeWindow(this.executor, window, limit);
   }
 
   /** Finds which normalized content hashes already exist in storage. */

@@ -1,12 +1,13 @@
 import type { Row } from "@libsql/client";
 
 export { cosineSimilarity } from "../../core/recall/scoring.js";
-import type { Entry } from "../../core/types.js";
+import type { Entry, Episode } from "../../core/types.js";
 
 const DEFAULT_QUALITY_SCORE = 0.5;
 const ACTIVE_ENTRY_CLAUSE = "retired = 0 AND superseded_by IS NULL";
+const ACTIVE_EPISODE_CLAUSE = "retired = 0 AND superseded_by IS NULL";
 
-export { ACTIVE_ENTRY_CLAUSE };
+export { ACTIVE_ENTRY_CLAUSE, ACTIVE_EPISODE_CLAUSE };
 
 /**
  * Builds the SQL predicate that filters out retired and superseded entries.
@@ -17,6 +18,20 @@ export { ACTIVE_ENTRY_CLAUSE };
 export function buildActiveEntryClause(alias?: string): string {
   if (!alias) {
     return ACTIVE_ENTRY_CLAUSE;
+  }
+
+  return `${alias}.retired = 0 AND ${alias}.superseded_by IS NULL`;
+}
+
+/**
+ * Builds the SQL predicate that filters out retired and superseded episodes.
+ *
+ * @param alias - Optional table alias to prefix column references.
+ * @returns Active-episode predicate for raw SQL fragments.
+ */
+export function buildActiveEpisodeClause(alias?: string): string {
+  if (!alias) {
+    return ACTIVE_EPISODE_CLAUSE;
   }
 
   return `${alias}.retired = 0 AND ${alias}.superseded_by IS NULL`;
@@ -215,4 +230,57 @@ export function mapEntryRow(row: Row): Entry {
     created_at: readRequiredString(row, "created_at"),
     updated_at: readRequiredString(row, "updated_at"),
   };
+}
+
+/**
+ * Maps a raw database row into the core episode shape.
+ *
+ * @param row - Raw libSQL result row.
+ * @returns Hydrated core episode.
+ */
+export function mapEpisodeRow(row: Row): Episode {
+  const source = readRequiredString(row, "source");
+  const activityLevel = readOptionalString(row, "activity_level");
+
+  return {
+    id: readRequiredString(row, "id"),
+    source: source as Episode["source"],
+    sourceId: readOptionalString(row, "source_id"),
+    sourceRef: readOptionalString(row, "source_ref"),
+    transcriptHash: readOptionalString(row, "transcript_hash"),
+    summaryHash: readOptionalString(row, "summary_hash"),
+    agentId: readOptionalString(row, "agent_id"),
+    startedAt: readRequiredString(row, "started_at"),
+    endedAt: readOptionalString(row, "ended_at"),
+    summary: readRequiredString(row, "summary"),
+    tags: deserializeTags(row.tags),
+    activityLevel: activityLevel as Episode["activityLevel"],
+    userId: readOptionalString(row, "user_id"),
+    project: readOptionalString(row, "project"),
+    genModel: readOptionalString(row, "gen_model"),
+    genVersion: readOptionalString(row, "gen_version"),
+    messageCount: readOptionalNumber(row, "message_count"),
+    embedding: readEmbedding(row, "embedding"),
+    retired: readBoolean(row, "retired"),
+    retiredAt: readOptionalString(row, "retired_at"),
+    retiredReason: readOptionalString(row, "retired_reason"),
+    supersededBy: readOptionalString(row, "superseded_by"),
+    createdAt: readRequiredString(row, "created_at"),
+    updatedAt: readRequiredString(row, "updated_at"),
+  };
+}
+
+/**
+ * Reads an optional numeric column from a query row.
+ *
+ * @param row - Raw libSQL result row.
+ * @param key - Column name to read.
+ * @returns Finite numeric value when present, otherwise undefined.
+ */
+function readOptionalNumber(row: Row, key: string): number | undefined {
+  if (row[key] === null || row[key] === undefined) {
+    return undefined;
+  }
+
+  return readNumber(row, key, 0);
 }

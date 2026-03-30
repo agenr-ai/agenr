@@ -919,6 +919,142 @@ describe("handleAgenrBeforePromptBuild", () => {
     );
   });
 
+  it("returns prompt context even when the background predecessor episode write times out", async () => {
+    vi.useFakeTimers();
+
+    const database = await createTestDatabase();
+    const logger = createLogger();
+    const { workspaceDir, sessionsDir } = await createWorkspaceWithSessions();
+    const currentSessionId = "session-tui-episode-timeout";
+    const currentSessionKey = "agent:main:tui-a23e4567-e89b-12d3-a456-426614174000";
+    await database.insertEntry(
+      createEntry({
+        type: "decision",
+        subject: "background episode writing",
+        content: "Episode writes must never block prompt construction.",
+        expiry: "core",
+        importance: 10,
+      }),
+      createEmbedding(0, 1),
+      "background-episode-writing",
+    );
+
+    const predecessorFile = await writeSessionFileToDirectory(sessionsDir, "predecessor-session", [
+      {
+        type: "session",
+        id: "predecessor-session",
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T13:00:00.000Z",
+        message: {
+          role: "human",
+          content: "We need background predecessor episode writes.",
+        },
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T13:01:00.000Z",
+        message: {
+          role: "assistant",
+          content: "They should never block prompt build.",
+        },
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T13:02:00.000Z",
+        message: {
+          role: "human",
+          content: "Continuity still needs to load normally.",
+        },
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T13:03:00.000Z",
+        message: {
+          role: "assistant",
+          content: "Right. The episode write can time out independently.",
+        },
+      },
+    ]);
+    await writeSessionsJson(sessionsDir, {
+      "agent:main:main": {
+        sessionId: "predecessor-session",
+        sessionFile: "predecessor-session.jsonl",
+        updatedAt: 1_711_612_345_678,
+      },
+    });
+    await writeFile(
+      path.join(path.dirname(predecessorFile), "predecessor-session.continuity-summary.md"),
+      "The previous session established that predecessor episode writes should run in the background.\n",
+      "utf8",
+    );
+
+    let markEpisodeStarted: (() => void) | undefined;
+    const episodeStarted = new Promise<void>((resolve) => {
+      markEpisodeStarted = resolve;
+    });
+    const { runEmbeddedPiAgent: episodeSummaryRunner } = createEpisodeSummaryRunner({
+      implementation: async () => {
+        markEpisodeStarted?.();
+        await new Promise((resolve) => {
+          setTimeout(resolve, 60_000);
+        });
+        return {
+          payloads: [
+            {
+              text: JSON.stringify({
+                summary: "Too late.",
+                tags: ["late"],
+                activityLevel: "minimal",
+                project: "agenr",
+              }),
+            },
+          ],
+        };
+      },
+    });
+
+    const result = await handleAgenrBeforePromptBuild(
+      {
+        prompt: "Continue from the predecessor session.",
+        messages: [],
+      },
+      {
+        agentId: "main",
+        sessionId: currentSessionId,
+        sessionKey: currentSessionKey,
+        workspaceDir,
+      },
+      {
+        logger,
+        servicesPromise: Promise.resolve(
+          createServices(database, {
+            episodeSummaryRunImplementation: episodeSummaryRunner,
+          }),
+        ),
+        tracker: createSessionStartTracker(),
+      },
+    );
+
+    expect(result?.prependContext).toContain("## Previous session summary");
+    expect(result?.prependContext).toContain("predecessor episode writes should run in the background");
+    expect(result?.prependContext).toContain("Agenr Session Recall");
+    expect(result?.prependContext).toContain("background episode writing");
+
+    await episodeStarted;
+    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.runAllTimersAsync();
+
+    expect(await database.getEpisodeBySourceId("openclaw", "predecessor-session")).toBeNull();
+    expect(getMessages(logger.info)).toEqual(
+      expect.arrayContaining([
+        `[agenr] session-start predecessor episode write triggered for session=${currentSessionId} key=${currentSessionKey} predecessor=${predecessorFile}`,
+        `[agenr] session-start predecessor episode write timed_out for session=${currentSessionId} key=${currentSessionKey} predecessor=${predecessorFile} timeoutMs=10000`,
+      ]),
+    );
+  });
+
   it("logs when session-start recall has nothing to inject", async () => {
     const database = await createTestDatabase();
     const logger = createLogger();
@@ -956,6 +1092,7 @@ function createServices(
     available?: boolean;
     recall?: RecallPorts;
     continuitySummaryRunImplementation?: AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"];
+    episodeSummaryRunImplementation?: AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"];
   } = {},
 ): AgenrOpenClawServices {
   const available = options.available ?? false;
@@ -984,10 +1121,27 @@ function createServices(
       },
     } satisfies RecallPorts);
   const openClaw = createOpenClawHost({
-    runEmbeddedPiAgentImplementation:
+    continuitySummaryRunImplementation:
       options.continuitySummaryRunImplementation ??
       (async () => {
         throw new Error("Embedded continuity summary runner unavailable.");
+      }),
+    episodeSummaryRunImplementation:
+      options.episodeSummaryRunImplementation ??
+      (async () => {
+        return {
+          payloads: [
+            {
+              text: JSON.stringify({
+                summary:
+                  "The session focused on agenr episodic-memory work and agreed to write predecessor episodes in the background so prompt build stays fast. The discussion stayed grounded in OpenClaw integration details for temporal recall. The work was substantive and project-scoped.",
+                tags: ["agenr", "openclaw", "episodic-memory"],
+                activityLevel: "substantial",
+                project: "agenr",
+              }),
+            },
+          ],
+        };
       }),
   });
 
@@ -1041,7 +1195,49 @@ function createContinuitySummaryRunner(
   };
 }
 
-function createOpenClawHost(options: { runEmbeddedPiAgentImplementation: AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"] }): AgenrOpenClawHost {
+function createEpisodeSummaryRunner(
+  options: {
+    implementation?: AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"];
+    response?: string;
+  } = {},
+): {
+  runEmbeddedPiAgent: AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"];
+  runEmbeddedPiAgentSpy: ReturnType<typeof vi.fn>;
+} {
+  const runEmbeddedPiAgentSpy = vi.fn(
+    options.implementation ??
+      (async () => {
+        return {
+          payloads: [
+            {
+              text:
+                options.response ??
+                JSON.stringify({
+                  summary:
+                    "The session focused on agenr episodic-memory work and agreed to write predecessor episodes in the background so prompt build stays fast. The discussion stayed grounded in OpenClaw integration details for temporal recall. The work was substantive and project-scoped.",
+                  tags: ["agenr", "openclaw", "episodic-memory"],
+                  activityLevel: "substantial",
+                  project: "agenr",
+                }),
+            },
+          ],
+          meta: {
+            durationMs: 1,
+          },
+        };
+      }),
+  );
+
+  return {
+    runEmbeddedPiAgent: runEmbeddedPiAgentSpy as AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"],
+    runEmbeddedPiAgentSpy,
+  };
+}
+
+function createOpenClawHost(options: {
+  continuitySummaryRunImplementation: AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"];
+  episodeSummaryRunImplementation: AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"];
+}): AgenrOpenClawHost {
   const workspaceDir = path.join(os.tmpdir(), "agenr-openclaw-test-workspace");
   const agentDir = path.join(os.tmpdir(), "agenr-openclaw-test-agent");
   const config = {
@@ -1064,7 +1260,17 @@ function createOpenClawHost(options: { runEmbeddedPiAgentImplementation: AgenrOp
       agent: {
         resolveAgentDir: () => agentDir,
         resolveAgentWorkspaceDir: () => workspaceDir,
-        runEmbeddedPiAgent: options.runEmbeddedPiAgentImplementation,
+        runEmbeddedPiAgent: async (params) => {
+          if (params.sessionKey === "temp:agenr-continuity-summary") {
+            return options.continuitySummaryRunImplementation(params);
+          }
+
+          if (params.sessionKey === "temp:agenr-episode-summary") {
+            return options.episodeSummaryRunImplementation(params);
+          }
+
+          throw new Error(`Unexpected embedded agent sessionKey: ${params.sessionKey}`);
+        },
       },
       state: {
         resolveStateDir: (env?: NodeJS.ProcessEnv) => resolveOpenClawStateDir(env),

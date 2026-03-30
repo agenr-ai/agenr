@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { rm } from "node:fs/promises";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";
 import { createRecallAdapter } from "../../../src/adapters/db/recall-adapter.js";
@@ -14,6 +14,8 @@ describe("createDatabase", () => {
   const databasePaths: string[] = [];
 
   afterEach(async () => {
+    vi.useRealTimers();
+
     while (databases.length > 0) {
       await databases.pop()?.close();
     }
@@ -233,6 +235,187 @@ describe("createDatabase", () => {
     expect(stored?.tags).toEqual(["arch", "decision", "batch-write"]);
   });
 
+  it("upserts and hydrates episodes by source id", async () => {
+    const database = await createTestDatabase();
+
+    const result = await database.upsertEpisode(
+      createEpisodeInput({
+        sourceId: "session-1",
+        transcriptHash: "transcript-1",
+        summary: "We implemented episodic memory writes for predecessor sessions.",
+        tags: ["OpenClaw", "agenr", "memory"],
+        activityLevel: "substantial",
+        project: "agenr",
+      }),
+    );
+    const bySourceId = await database.getEpisodeBySourceId("openclaw", "session-1");
+    const byTranscriptHash = await database.getEpisodeByTranscriptHash("openclaw", "transcript-1");
+
+    expect(result.action).toBe("inserted");
+    expect(result.episode.sourceId).toBe("session-1");
+    expect(result.episode.sourceRef).toBe("/tmp/session-1.jsonl");
+    expect(result.episode.summaryHash).toMatch(/^[0-9a-f]{64}$/u);
+    expect(result.episode.tags).toEqual(["agenr", "memory", "openclaw"]);
+    expect(bySourceId).toEqual(result.episode);
+    expect(byTranscriptHash?.id).toBe(result.episode.id);
+  });
+
+  it("returns unchanged for normalized episode payload matches without bumping updated_at", async () => {
+    vi.useFakeTimers();
+
+    const database = await createTestDatabase();
+    vi.setSystemTime(new Date("2026-03-30T10:00:00.000Z"));
+    const inserted = await database.upsertEpisode(
+      createEpisodeInput({
+        sourceId: "session-2",
+        transcriptHash: "transcript-2",
+        summary: "We settled the database contract for episodic writes.",
+        tags: ["db", "episodes", "OpenClaw"],
+      }),
+    );
+
+    vi.setSystemTime(new Date("2026-03-30T11:00:00.000Z"));
+    const unchanged = await database.upsertEpisode(
+      createEpisodeInput({
+        sourceId: "session-2",
+        transcriptHash: "transcript-2",
+        summary: "  We settled the database contract for episodic writes.  ",
+        tags: ["openclaw", "db", "episodes"],
+      }),
+    );
+
+    expect(inserted.action).toBe("inserted");
+    expect(unchanged.action).toBe("unchanged");
+    expect(unchanged.episode.id).toBe(inserted.episode.id);
+    expect(unchanged.episode.updatedAt).toBe(inserted.episode.updatedAt);
+  });
+
+  it("updates changed episode payloads and refreshes updated_at", async () => {
+    vi.useFakeTimers();
+
+    const database = await createTestDatabase();
+    vi.setSystemTime(new Date("2026-03-30T12:00:00.000Z"));
+    const inserted = await database.upsertEpisode(
+      createEpisodeInput({
+        sourceId: "session-3",
+        transcriptHash: "transcript-3",
+        summary: "We added a first pass at episode storage.",
+        tags: ["episodes", "storage"],
+        activityLevel: "minimal",
+      }),
+    );
+
+    vi.setSystemTime(new Date("2026-03-30T13:00:00.000Z"));
+    const updated = await database.upsertEpisode(
+      createEpisodeInput({
+        sourceId: "session-3",
+        transcriptHash: "transcript-3",
+        summary: "We added episode storage and wired the OpenClaw background writer.",
+        tags: ["openclaw", "episodes", "storage"],
+        activityLevel: "substantial",
+        project: "agenr",
+      }),
+    );
+
+    expect(updated.action).toBe("updated");
+    expect(updated.episode.id).toBe(inserted.episode.id);
+    expect(updated.episode.updatedAt).not.toBe(inserted.episode.updatedAt);
+    expect(updated.episode.summary).toContain("background writer");
+    expect(updated.episode.activityLevel).toBe("substantial");
+    expect(updated.episode.project).toBe("agenr");
+  });
+
+  it("falls back to transcript-hash dedup when sourceId is absent", async () => {
+    const database = await createTestDatabase();
+
+    const inserted = await database.upsertEpisode(
+      createEpisodeInput({
+        sourceId: undefined,
+        transcriptHash: "transcript-fallback",
+        sourceRef: "/tmp/fallback.jsonl",
+        summary: "We captured a fallback episode identity from transcript hash only.",
+      }),
+    );
+    const unchanged = await database.upsertEpisode(
+      createEpisodeInput({
+        sourceId: undefined,
+        transcriptHash: "transcript-fallback",
+        sourceRef: "/tmp/fallback.jsonl",
+        summary: "We captured a fallback episode identity from transcript hash only.",
+      }),
+    );
+
+    expect(inserted.action).toBe("inserted");
+    expect(unchanged.action).toBe("unchanged");
+    expect(unchanged.episode.id).toBe(inserted.episode.id);
+  });
+
+  it("lists active overlapping episodes by time window and respects limits", async () => {
+    const database = await createTestDatabase();
+
+    const overlappingA = await database.upsertEpisode(
+      createEpisodeInput({
+        sourceId: "episode-a",
+        transcriptHash: "episode-a-hash",
+        startedAt: "2026-03-28T09:00:00.000Z",
+        endedAt: "2026-03-28T10:00:00.000Z",
+        summary: "Episode A overlapped the requested window.",
+      }),
+    );
+    await database.upsertEpisode(
+      createEpisodeInput({
+        sourceId: "episode-b",
+        transcriptHash: "episode-b-hash",
+        startedAt: "2026-03-28T12:00:00.000Z",
+        endedAt: "2026-03-28T13:00:00.000Z",
+        summary: "Episode B also overlapped the requested window.",
+      }),
+    );
+    const retired = await database.upsertEpisode(
+      createEpisodeInput({
+        sourceId: "episode-c",
+        transcriptHash: "episode-c-hash",
+        startedAt: "2026-03-28T11:15:00.000Z",
+        endedAt: "2026-03-28T11:45:00.000Z",
+        summary: "Episode C should be filtered once retired.",
+      }),
+    );
+    await database.upsertEpisode(
+      createEpisodeInput({
+        sourceId: "episode-d",
+        transcriptHash: "episode-d-hash",
+        startedAt: "2026-03-29T09:00:00.000Z",
+        endedAt: "2026-03-29T10:00:00.000Z",
+        summary: "Episode D is outside the window.",
+      }),
+    );
+    await database.execute({
+      sql: `
+        UPDATE episodes
+        SET retired = 1,
+            retired_at = ?,
+            updated_at = ?
+        WHERE id = ?
+      `,
+      args: ["2026-03-30T00:00:00.000Z", "2026-03-30T00:00:00.000Z", retired.episode.id],
+    });
+
+    const episodes = await database.listEpisodesByTimeWindow(
+      {
+        kind: "interval",
+        start: new Date("2026-03-28T09:30:00.000Z"),
+        end: new Date("2026-03-28T12:30:00.000Z"),
+        source: "explicit",
+      },
+      1,
+    );
+
+    expect(episodes).toHaveLength(1);
+    expect(episodes[0]?.id).not.toBe(retired.episode.id);
+    expect(episodes[0]?.id).not.toBe(overlappingA.episode.id);
+    expect(episodes[0]?.sourceId).toBe("episode-b");
+  });
+
   async function createTestDatabase(): Promise<SqlDatabase> {
     // libSQL opens separate logical connections for transactions, so temp files
     // are more stable than raw :memory: databases for adapter-level tests.
@@ -282,5 +465,34 @@ function createEmbedding(index: number, value: number): number[] {
 function createEmbeddingPort() {
   return {
     embed: async (texts: string[]): Promise<number[][]> => texts.map((_, index) => createEmbedding(index, 1)),
+  };
+}
+
+function createEpisodeInput(
+  overrides: Partial<{
+    sourceId: string | undefined;
+    sourceRef: string;
+    transcriptHash: string;
+    startedAt: string;
+    endedAt: string;
+    summary: string;
+    tags: string[];
+    activityLevel: "substantial" | "minimal" | "none";
+    project: string | undefined;
+  }> = {},
+) {
+  const sourceId = "sourceId" in overrides ? overrides.sourceId : "session-default";
+
+  return {
+    source: "openclaw" as const,
+    ...(sourceId !== undefined ? { sourceId } : {}),
+    sourceRef: overrides.sourceRef ?? `/tmp/${sourceId ?? "session-default"}.jsonl`,
+    transcriptHash: overrides.transcriptHash ?? `${sourceId ?? "session-default"}-hash`,
+    startedAt: overrides.startedAt ?? "2026-03-28T10:00:00.000Z",
+    endedAt: overrides.endedAt ?? "2026-03-28T11:00:00.000Z",
+    summary: overrides.summary ?? "We wrote a durable episodic-memory summary.",
+    tags: overrides.tags ?? ["episodes", "memory"],
+    activityLevel: overrides.activityLevel ?? "substantial",
+    ...(overrides.project !== undefined ? { project: overrides.project } : {}),
   };
 }

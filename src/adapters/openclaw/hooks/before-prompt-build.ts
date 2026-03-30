@@ -1,4 +1,5 @@
 import { listOpenClawCoreEntries } from "../../db/openclaw-plugin-queries.js";
+import { writeOpenClawPredecessorEpisode } from "../episode/episode-writer.js";
 import { formatAgenrSessionStartRecall } from "../format/recall-format.js";
 import { formatErrorMessage, formatSessionContext } from "../logging.js";
 import { resolvePredecessorContinuity as resolveContinuity } from "../session/continuity/index.js";
@@ -43,6 +44,12 @@ export async function handleAgenrBeforePromptBuild(
   try {
     const services = await params.servicesPromise;
     const continuity = await resolveContinuity(ctx, params.tracker, services, params.logger);
+    void writeOpenClawPredecessorEpisode({
+      ctx,
+      predecessor: continuity.predecessor,
+      services,
+      logger: params.logger,
+    });
     const sessionStartRecall = await runAgenrSessionStartRecall(services);
     const memoryContext = formatAgenrSessionStartRecall(sessionStartRecall);
     const sections = [

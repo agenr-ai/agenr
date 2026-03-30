@@ -1,0 +1,199 @@
+import { EPISODE_ACTIVITY_LEVELS, type EpisodeActivityLevel } from "../../../core/types.js";
+
+/**
+ * Fixed generator version stored on episodic-memory rows written by the
+ * OpenClaw adapter.
+ */
+// eslint-disable-next-line jsdoc/require-jsdoc
+export const OPENCLAW_EPISODE_GENERATOR_VERSION = "openclaw-episodic-summary-v1";
+
+/**
+ * Structured episodic summary payload expected from the embedded-agent call.
+ */
+export interface OpenClawEpisodeSummaryOutput {
+  summary: string;
+  tags: string[];
+  activityLevel: EpisodeActivityLevel;
+  project?: string;
+}
+
+/**
+ * System prompt used for OpenClaw episodic summary generation.
+ */
+// eslint-disable-next-line jsdoc/require-jsdoc
+export const OPENCLAW_EPISODE_SUMMARY_SYSTEM_PROMPT = [
+  "You write strict JSON episode summaries for historical recall.",
+  "The transcript can be about any domain. Do not assume software or project work unless the transcript shows it.",
+  "Describe only what happened in this session.",
+  "Do not carry inherited context or open loops forward unless the session actively worked on them.",
+  "Return exactly one JSON object with this shape:",
+  '{ "summary": string, "tags": string[], "activityLevel": "substantial" | "minimal" | "none", "project": string | null }',
+  "Requirements:",
+  "- summary must be 3 to 6 sentences in plain prose",
+  "- preserve concrete anchors such as project names, packages, files, tables, functions, versions, and decisions when they matter",
+  "- tags must be 3 to 8 short lowercase anchors",
+  "- project should be null when no clear project scope appears",
+  "- do not include Markdown fences or extra commentary",
+].join("\n");
+
+/**
+ * Builds the user prompt for one episodic summary generation call.
+ *
+ * @param transcript - Cleaned transcript text rendered for the summarizer.
+ * @returns Prompt text sent to the embedded agent.
+ */
+export function buildOpenClawEpisodeSummaryPrompt(transcript: string): string {
+  return [
+    "Produce a historical episodic summary for this completed session.",
+    "Focus on the work that actually happened during this transcript window.",
+    "",
+    "Transcript:",
+    transcript,
+  ].join("\n");
+}
+
+/**
+ * Parses and validates a best-effort structured summary response.
+ *
+ * @param value - Raw embedded-agent text response.
+ * @returns Structured episode summary output, or null when parsing fails.
+ */
+export function parseOpenClawEpisodeSummaryResponse(value: string): OpenClawEpisodeSummaryOutput | null {
+  const parsed = parseJsonObject(value);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return null;
+  }
+  const parsedRecord = parsed as Record<string, unknown>;
+
+  const summary = normalizeSummary(parsedRecord.summary);
+  const activityLevel = normalizeActivityLevel(parsedRecord.activityLevel);
+  if (!summary || !activityLevel) {
+    return null;
+  }
+
+  return {
+    summary,
+    tags: normalizeTags(parsedRecord.tags),
+    activityLevel,
+    ...(normalizeProject(parsedRecord.project) ? { project: normalizeProject(parsedRecord.project) } : {}),
+  };
+}
+
+/**
+ * Normalizes a summary string while collapsing internal whitespace.
+ *
+ * @param value - Candidate summary value.
+ * @returns Normalized summary, or null when invalid.
+ */
+function normalizeSummary(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.replace(/\s+/gu, " ").trim();
+  return normalized ? normalized : null;
+}
+
+/**
+ * Normalizes activity-level output into the supported enum values.
+ *
+ * @param value - Candidate activity-level value.
+ * @returns Supported activity level, or null when invalid.
+ */
+function normalizeActivityLevel(value: unknown): EpisodeActivityLevel | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return EPISODE_ACTIVITY_LEVELS.includes(normalized as EpisodeActivityLevel) ? (normalized as EpisodeActivityLevel) : null;
+}
+
+/**
+ * Normalizes tag output into lowercase deduped anchors.
+ *
+ * @param value - Candidate tag payload.
+ * @returns Stable tag list capped to eight values.
+ */
+function normalizeTags(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return Array.from(
+    new Set(
+      value
+        .filter((tag): tag is string => typeof tag === "string")
+        .map((tag) => tag.trim().toLowerCase())
+        .filter((tag) => tag.length > 0),
+    ),
+  ).slice(0, 8);
+}
+
+/**
+ * Normalizes the optional project field.
+ *
+ * @param value - Candidate project value.
+ * @returns Normalized project string, or undefined when absent.
+ */
+function normalizeProject(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.replace(/\s+/gu, " ").trim();
+  return normalized ? normalized : undefined;
+}
+
+/**
+ * Attempts to parse a JSON object from plain text, fenced JSON, or extra
+ * wrapper text.
+ *
+ * @param value - Raw model output.
+ * @returns Parsed JSON value, or null when parsing fails.
+ */
+function parseJsonObject(value: string): unknown | null {
+  const candidates = collectJsonCandidates(value);
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate) as unknown;
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Collects likely JSON substrings from a model response.
+ *
+ * @param value - Raw model output.
+ * @returns Candidate JSON strings to try in order.
+ */
+function collectJsonCandidates(value: string): string[] {
+  const trimmed = value.trim();
+  const candidates = new Set<string>();
+  if (trimmed) {
+    candidates.add(trimmed);
+  }
+
+  const fencedMatches = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/giu) ?? [];
+  for (const match of fencedMatches) {
+    const normalized = match
+      .replace(/```(?:json)?/iu, "")
+      .replace(/```/gu, "")
+      .trim();
+    if (normalized) {
+      candidates.add(normalized);
+    }
+  }
+
+  const objectStart = trimmed.indexOf("{");
+  const objectEnd = trimmed.lastIndexOf("}");
+  if (objectStart >= 0 && objectEnd > objectStart) {
+    candidates.add(trimmed.slice(objectStart, objectEnd + 1));
+  }
+
+  return [...candidates];
+}
