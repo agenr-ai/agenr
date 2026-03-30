@@ -1051,7 +1051,7 @@ describe("handleAgenrBeforePromptBuild", () => {
       expect(getMessages(logger.info)).toEqual(
         expect.arrayContaining([
           `[agenr] session-start predecessor episode write triggered for session=${currentSessionId} key=${currentSessionKey} predecessor=${predecessorFile}`,
-          `[agenr] session-start predecessor episode write timed_out for session=${currentSessionId} key=${currentSessionKey} predecessor=${predecessorFile} timeoutMs=20000`,
+          `[agenr] session-start predecessor episode write timed_out for session=${currentSessionId} key=${currentSessionKey} predecessor=${predecessorFile} timeoutMs=45000`,
         ]),
       );
     });

@@ -13,7 +13,7 @@ import type { AgenrOpenClawHookContext, AgenrOpenClawHost, AgenrOpenClawServices
 import { MAX_EPISODE_TRANSCRIPT_CHARS, MIN_EPISODE_MESSAGES, capEpisodeTranscript, renderTranscript } from "../../../core/episode/transcript-render.js";
 import { OPENCLAW_EPISODE_GENERATOR_VERSION } from "./episode-summary-prompt.js";
 
-const EPISODE_SUMMARY_TIMEOUT_MS = 20_000;
+const EPISODE_SUMMARY_TIMEOUT_MS = 45_000;
 const EPISODE_SUMMARY_TIMEOUT = Symbol("episode-summary-timeout");
 
 /**
