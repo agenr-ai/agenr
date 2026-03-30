@@ -130,13 +130,15 @@ Important: when agenr is running as an OpenClaw plugin, session summaries use Op
 
 The current CLI surface is intentionally small. Today the `db` group only exposes `reset`.
 
-| Command                | What it does                                                                                                             |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `agenr init`           | Interactive first-run wizard: auth, model selection, OpenClaw detection, plugin install, and optional initial ingestion. |
-| `agenr setup`          | Configure auth, model defaults, embeddings, and the agenr database path.                                                 |
-| `agenr recall <query>` | Run the hybrid recall pipeline with optional temporal and type/tag filters.                                              |
-| `agenr ingest <path>`  | Bulk-ingest one file or directory of OpenClaw transcript files.                                                          |
-| `agenr db reset`       | Delete and recreate the knowledge database.                                                                              |
+| Command                        | What it does                                                                                                             |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `agenr init`                   | Interactive first-run wizard: auth, model selection, OpenClaw detection, plugin install, and optional initial ingestion. |
+| `agenr setup`                  | Configure auth, model defaults, embeddings, and the agenr database path.                                                 |
+| `agenr recall <query>`         | Run the hybrid recall pipeline with optional temporal and type/tag filters.                                              |
+| `agenr ingest <path>`          | Default durable-entry ingest shorthand. Equivalent to `agenr ingest entries <path>`.                                     |
+| `agenr ingest entries <path>`  | Bulk-ingest one file or directory of OpenClaw transcript files into durable knowledge entries.                           |
+| `agenr ingest episodes <path>` | Backfill episodic summaries from OpenClaw session transcripts, including rotated `.reset.*` and `.deleted.*` files.      |
+| `agenr db reset`               | Delete and recreate the knowledge database.                                                                              |
 
 The OpenClaw plugin also gives the agent five tools directly inside the runtime: `agenr_store`, `agenr_recall`, `agenr_retire`, `agenr_update`, and `agenr_trace`.
 
@@ -148,6 +150,9 @@ agenr recall "what decisions did we make about the API?"
 
 # Ingest transcripts
 agenr ingest ~/.openclaw/agents/main/sessions/
+
+# Backfill episode summaries
+agenr ingest episodes ~/.openclaw/agents/main/sessions/ --recent 30d
 
 # Reset the database
 agenr db reset

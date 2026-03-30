@@ -1,6 +1,11 @@
 # Ingest
 
-`agenr ingest <path>` is the production transcript-to-memory pipeline. It is adapter-based in core, but the current CLI is wired specifically to the OpenClaw transcript parser.
+The `ingest` CLI now exposes two paths:
+
+- `agenr ingest <path>` or `agenr ingest entries <path>` for the production transcript-to-memory entry pipeline
+- `agenr ingest episodes <path>` for episodic-summary backfill over OpenClaw session transcripts
+
+This document focuses primarily on the durable-entry ingest path. It is adapter-based in core, but the current CLI is wired specifically to the OpenClaw transcript parser.
 
 This document describes the code as it exists now, not just the intended flow.
 
@@ -58,6 +63,8 @@ The parser itself is still OpenClaw-specific, so a random non-OpenClaw file may 
 
 ## CLI options
 
+### Entry ingest
+
 ```bash
 agenr ingest <path> \
   [--verbose] \
@@ -72,6 +79,27 @@ agenr ingest <path> \
 - `--whole-file auto|force|never` controls whether extraction uses one full-session prompt or message-bounded chunks.
 - `--skip-dedup` disables the semantic dedup arbitration pass.
 - `--concurrency <n>` sets extraction worker count. Default: `10`. Allowed range: `1-16`.
+
+### Episode ingest
+
+```bash
+agenr ingest episodes <path> \
+  [--db <path>] \
+  [--recent <duration>] \
+  [--regenerate] \
+  [--dry-run] \
+  [--verbose] \
+  [--concurrency <n>] \
+  [--model <provider/model|model>]
+```
+
+- `--db <path>` overrides the configured knowledge database path for the backfill run.
+- `--recent <duration>` limits candidates to sessions ending within a relative window such as `30d` or `90d`.
+- `--regenerate` reprocesses sessions that already have stored episodes instead of skipping them.
+- `--dry-run` performs Stage 1 preflight and Stage 2 cost estimation without generating or writing episodes.
+- `--verbose` emits per-session progress while summaries are generated.
+- `--concurrency <n>` sets summary-generation worker count. Default: `10`. Allowed range: `1-20`.
+- `--model <provider/model|model>` overrides the configured episode summary model for the run.
 
 ## End-to-end flow
 

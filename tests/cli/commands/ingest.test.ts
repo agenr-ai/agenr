@@ -8,45 +8,41 @@ import { APP_VERSION } from "../../../src/version.js";
 const ANSI_PATTERN = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
 
 describe("registerIngestCommand", () => {
-  it("registers the ingest command on the program", () => {
+  it("registers the ingest command group on the program", () => {
     const program = createProgram();
+    const ingestCommand = findIngestCommand(program);
 
-    expect(program.commands.some((command) => command.name() === "ingest")).toBe(true);
+    expect(ingestCommand).toBeDefined();
+    expect(ingestCommand?.commands.map((command) => command.name())).toEqual(expect.arrayContaining(["entries", "episodes"]));
   });
 
-  it("requires the path argument", async () => {
+  it("requires the entries path argument", async () => {
     const program = new Command();
     registerIngestCommand(program);
 
-    const ingestCommand = program.commands.find((command) => command.name() === "ingest");
-    if (!ingestCommand) {
-      throw new Error("Ingest command was not registered.");
-    }
+    const entriesCommand = requireSubcommand(program, "entries");
 
-    ingestCommand.configureOutput({
+    entriesCommand.configureOutput({
       writeErr: () => {},
       outputError: () => {},
     });
-    ingestCommand.exitOverride();
+    entriesCommand.exitOverride();
 
-    await expect(ingestCommand.parseAsync([], { from: "user" })).rejects.toMatchObject({
+    await expect(entriesCommand.parseAsync([], { from: "user" })).rejects.toMatchObject({
       code: "commander.missingArgument",
     });
   });
 
-  it("parses ingest command options", () => {
+  it("parses entries command options", () => {
     const program = new Command();
     registerIngestCommand(program);
 
-    const ingestCommand = program.commands.find((command) => command.name() === "ingest");
-    if (!ingestCommand) {
-      throw new Error("Ingest command was not registered.");
-    }
+    const entriesCommand = requireSubcommand(program, "entries");
 
-    const parsed = ingestCommand.parseOptions(["/tmp/session.jsonl", "--verbose", "--dry-run", "--whole-file", "force", "--skip-dedup", "--concurrency", "6"]);
+    const parsed = entriesCommand.parseOptions(["/tmp/session.jsonl", "--verbose", "--dry-run", "--whole-file", "force", "--skip-dedup", "--concurrency", "6"]);
 
     expect(parsed.operands).toEqual(["/tmp/session.jsonl"]);
-    expect(ingestCommand.opts()).toEqual(
+    expect(entriesCommand.opts()).toEqual(
       expect.objectContaining({
         verbose: true,
         dryRun: true,
@@ -57,36 +53,97 @@ describe("registerIngestCommand", () => {
     );
   });
 
-  it("parses --skip-dedup as a boolean flag", () => {
+  it("parses entries --skip-dedup as a boolean flag", () => {
     const program = new Command();
     registerIngestCommand(program);
 
-    const ingestCommand = program.commands.find((command) => command.name() === "ingest");
-    if (!ingestCommand) {
-      throw new Error("Ingest command was not registered.");
-    }
+    const entriesCommand = requireSubcommand(program, "entries");
 
-    ingestCommand.parseOptions(["/tmp/session.jsonl", "--skip-dedup"]);
+    entriesCommand.parseOptions(["/tmp/session.jsonl", "--skip-dedup"]);
 
-    expect(ingestCommand.opts()).toEqual(
+    expect(entriesCommand.opts()).toEqual(
       expect.objectContaining({
         skipDedup: true,
       }),
     );
   });
 
-  it("defaults ingest concurrency to 10", () => {
+  it("defaults entries concurrency to 10", () => {
     const program = new Command();
     registerIngestCommand(program);
 
-    const ingestCommand = program.commands.find((command) => command.name() === "ingest");
-    if (!ingestCommand) {
-      throw new Error("Ingest command was not registered.");
-    }
+    const entriesCommand = requireSubcommand(program, "entries");
 
-    ingestCommand.parseOptions(["/tmp/session.jsonl"]);
+    entriesCommand.parseOptions(["/tmp/session.jsonl"]);
 
-    expect(ingestCommand.opts()).toEqual(
+    expect(entriesCommand.opts()).toEqual(
+      expect.objectContaining({
+        concurrency: 10,
+      }),
+    );
+  });
+
+  it("requires the episodes path argument", async () => {
+    const program = new Command();
+    registerIngestCommand(program);
+
+    const episodesCommand = requireSubcommand(program, "episodes");
+
+    episodesCommand.configureOutput({
+      writeErr: () => {},
+      outputError: () => {},
+    });
+    episodesCommand.exitOverride();
+
+    await expect(episodesCommand.parseAsync([], { from: "user" })).rejects.toMatchObject({
+      code: "commander.missingArgument",
+    });
+  });
+
+  it("parses episode ingest options", () => {
+    const program = new Command();
+    registerIngestCommand(program);
+
+    const episodesCommand = requireSubcommand(program, "episodes");
+
+    const parsed = episodesCommand.parseOptions([
+      "/tmp/sessions",
+      "--db",
+      "/tmp/knowledge.db",
+      "--recent",
+      "30d",
+      "--regenerate",
+      "--dry-run",
+      "--verbose",
+      "--concurrency",
+      "12",
+      "--model",
+      "anthropic/claude-sonnet-4-6",
+    ]);
+
+    expect(parsed.operands).toEqual(["/tmp/sessions"]);
+    expect(episodesCommand.opts()).toEqual(
+      expect.objectContaining({
+        db: "/tmp/knowledge.db",
+        recent: "30d",
+        regenerate: true,
+        dryRun: true,
+        verbose: true,
+        concurrency: 12,
+        model: "anthropic/claude-sonnet-4-6",
+      }),
+    );
+  });
+
+  it("defaults episode ingest concurrency to 10", () => {
+    const program = new Command();
+    registerIngestCommand(program);
+
+    const episodesCommand = requireSubcommand(program, "episodes");
+
+    episodesCommand.parseOptions(["/tmp/sessions"]);
+
+    expect(episodesCommand.opts()).toEqual(
       expect.objectContaining({
         concurrency: 10,
       }),
@@ -95,11 +152,7 @@ describe("registerIngestCommand", () => {
 
   it("injects the banner into ingest help output", () => {
     const program = createProgram();
-    const ingestCommand = program.commands.find((command) => command.name() === "ingest");
-
-    if (!ingestCommand) {
-      throw new Error("Ingest command was not registered.");
-    }
+    const ingestCommand = requireIngestCommand(program);
 
     const output: string[] = [];
     ingestCommand.configureOutput({
@@ -139,4 +192,27 @@ describe("pluralize", () => {
 
 function stripAnsi(text: string): string {
   return text.replace(ANSI_PATTERN, "");
+}
+
+function findIngestCommand(program: Command) {
+  return program.commands.find((command) => command.name() === "ingest");
+}
+
+function requireIngestCommand(program: Command): Command {
+  const ingestCommand = findIngestCommand(program);
+  if (!ingestCommand) {
+    throw new Error("Ingest command was not registered.");
+  }
+
+  return ingestCommand;
+}
+
+function requireSubcommand(program: Command, name: "entries" | "episodes"): Command {
+  const ingestCommand = requireIngestCommand(program);
+  const subcommand = ingestCommand.commands.find((command) => command.name() === name);
+  if (!subcommand) {
+    throw new Error(`Ingest ${name} subcommand was not registered.`);
+  }
+
+  return subcommand;
 }

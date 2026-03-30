@@ -13,6 +13,7 @@ import type { StoreEntryInput, StoreResult } from "../../core/types.js";
 import { setVerbose } from "../../logger.js";
 import { banner, formatLabel, ui } from "../../ui.js";
 import { InvalidArgumentError, Option, type Command } from "commander";
+import { registerIngestEpisodesCommand } from "./ingest-episodes.js";
 
 const MIN_INGEST_CONCURRENCY = 1;
 const MAX_INGEST_CONCURRENCY = 16;
@@ -49,8 +50,16 @@ interface TaggedEntry {
  * @param program - Root Commander program to extend.
  */
 export function registerIngestCommand(program: Command): void {
-  const ingestCommand = program
-    .command("ingest <path>")
+  const ingestCommand = program.command("ingest").description("Ingest OpenClaw transcripts and derived memory artifacts");
+
+  registerIngestEntriesCommand(ingestCommand);
+  registerIngestEpisodesCommand(ingestCommand);
+}
+
+/** Registers the default `agenr ingest [path]` durable-entry ingest subcommand. */
+function registerIngestEntriesCommand(parent: Command): void {
+  const ingestCommand = parent
+    .command("entries <path>", { isDefault: true })
     .description("Ingest OpenClaw session files into the knowledge database")
     .option("--verbose", "Show detailed progress")
     .option("--dry-run", "Parse and extract without storing")
