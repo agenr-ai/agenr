@@ -151,14 +151,15 @@ export async function writeOpenClawPredecessorEpisode(params: {
  * @returns Normalized surface identifier, or undefined when unavailable.
  */
 function resolveSessionSurface(ctx: AgenrOpenClawHookContext): string | undefined {
+  const sessionKey = ctx.sessionKey?.trim() ?? "";
+  // Session keys are more specific because TUI keys are distinguishable from webchat.
+  if (/^agent:[^:]+:tui/i.test(sessionKey)) {
+    return "tui";
+  }
+
   const provider = ctx.messageProvider?.trim();
   if (provider) {
     return provider.toLowerCase();
-  }
-
-  const sessionKey = ctx.sessionKey?.trim() ?? "";
-  if (/^agent:[^:]+:tui/i.test(sessionKey)) {
-    return "tui";
   }
 
   return undefined;

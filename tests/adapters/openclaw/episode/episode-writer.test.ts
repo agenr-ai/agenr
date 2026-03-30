@@ -116,9 +116,43 @@ describe("writeOpenClawPredecessorEpisode", () => {
     );
   });
 
-  it("prefers messageProvider when deriving the predecessor episode surface", async () => {
+  it("prefers the TUI session key over messageProvider when deriving the predecessor episode surface", async () => {
     const database = await createTestDatabase(databases, tempPaths);
     const sessionFile = await writeStandardSession(tempPaths, "provider-session");
+    const logger = createLogger();
+    const episodeRunner = createRunner({
+      text: JSON.stringify({
+        summary: "We used the TUI session key to tag the predecessor episode surface.",
+        tags: ["surface"],
+        activityLevel: "minimal",
+        project: "agenr",
+      }),
+    });
+
+    await writeOpenClawPredecessorEpisode({
+      ctx: {
+        agentId: "main",
+        messageProvider: " Webchat ",
+        sessionId: "current-session",
+        sessionKey: "agent:main:tui-current",
+      },
+      predecessor: {
+        sessionId: "provider-session",
+        sessionFile,
+      },
+      services: createServices(database, episodeRunner),
+      logger,
+    });
+
+    const stored = await database.getEpisodeBySourceId("openclaw", "provider-session");
+
+    expect(stored).not.toBeNull();
+    expect(stored?.surface).toBe("tui");
+  });
+
+  it("falls back to messageProvider when the session key is not a TUI session", async () => {
+    const database = await createTestDatabase(databases, tempPaths);
+    const sessionFile = await writeStandardSession(tempPaths, "fallback-provider-session");
     const logger = createLogger();
     const episodeRunner = createRunner({
       text: JSON.stringify({
@@ -137,14 +171,14 @@ describe("writeOpenClawPredecessorEpisode", () => {
         sessionKey: "agent:main:webchat-current",
       },
       predecessor: {
-        sessionId: "provider-session",
+        sessionId: "fallback-provider-session",
         sessionFile,
       },
       services: createServices(database, episodeRunner),
       logger,
     });
 
-    const stored = await database.getEpisodeBySourceId("openclaw", "provider-session");
+    const stored = await database.getEpisodeBySourceId("openclaw", "fallback-provider-session");
 
     expect(stored).not.toBeNull();
     expect(stored?.surface).toBe("telegram");
