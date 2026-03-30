@@ -20,6 +20,18 @@ export interface OpenClawSessionsStoreEntry {
    */
   sessionFile?: string;
   /**
+   * OpenClaw-reported session surface when present.
+   */
+  surface?: string;
+  /**
+   * OpenClaw-reported provider when present.
+   */
+  provider?: string;
+  /**
+   * OpenClaw-reported chat type when present.
+   */
+  chatType?: string;
+  /**
    * Last-activity timestamp in Unix milliseconds when present.
    */
   updatedAt?: number;
@@ -68,12 +80,19 @@ export async function readOpenClawSessionsStore(sessionsDir: string, logger?: Pl
 
       const sessionId = asTrimmedString(value["sessionId"]);
       const sessionFile = asTrimmedString(value["sessionFile"]);
+      const origin = isRecord(value["origin"]) ? value["origin"] : undefined;
+      const surface = asTrimmedString(origin?.["surface"]);
+      const provider = asTrimmedString(origin?.["provider"]);
+      const chatType = asTrimmedString(value["chatType"]);
       const updatedAt = asFiniteNumber(value["updatedAt"]);
 
       entries.push({
         sessionKey: normalizedSessionKey,
         ...(sessionId ? { sessionId } : {}),
         ...(sessionFile ? { sessionFile: resolveSessionStorePath(sessionFile, resolvedSessionsDir) } : {}),
+        ...(surface ? { surface } : {}),
+        ...(provider ? { provider } : {}),
+        ...(chatType ? { chatType } : {}),
         ...(updatedAt !== undefined ? { updatedAt } : {}),
       });
     }
