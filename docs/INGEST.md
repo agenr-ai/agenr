@@ -87,6 +87,8 @@ agenr ingest episodes <path> \
   [--db <path>] \
   [--recent <duration>] \
   [--regenerate] \
+  [--embed-only] \
+  [--no-embed] \
   [--dry-run] \
   [--verbose] \
   [--concurrency <n>] \
@@ -94,12 +96,113 @@ agenr ingest episodes <path> \
 ```
 
 - `--db <path>` overrides the configured knowledge database path for the backfill run.
-- `--recent <duration>` limits candidates to sessions ending within a relative window such as `30d` or `90d`.
+- `--recent <duration>` limits candidates to sessions ending within a relative window such as `30d`, `90d`, or an ISO timestamp.
 - `--regenerate` reprocesses sessions that already have stored episodes instead of skipping them.
+- `--embed-only` skips summary generation and backfills embeddings for existing episodes that are missing them. No transcript path is required in this mode.
+- `--no-embed` skips embedding newly generated episode summaries.
 - `--dry-run` performs Stage 1 preflight and Stage 2 cost estimation without generating or writing episodes.
 - `--verbose` emits per-session progress while summaries are generated.
 - `--concurrency <n>` sets summary-generation worker count. Default: `10`. Allowed range: `1-20`.
 - `--model <provider/model|model>` overrides the configured episode summary model for the run.
+
+## Episode ingest behavior
+
+`agenr ingest episodes <path>` is a separate pipeline from entry ingest.
+
+Instead of extracting durable facts, decisions, lessons, and other knowledge entries, it produces one episodic summary per OpenClaw session and stores that summary in the `episodes` table for later temporal recall.
+
+### How episode ingest differs from entry ingest
+
+- **Entry ingest** turns transcripts into durable knowledge entries meant to survive beyond one conversation.
+- **Episode ingest** turns each session into a narrative summary of what happened during that session.
+- **Entry ingest** is optimized for knowledge extraction, semantic dedup, and long-term memory storage in `entries`.
+- **Episode ingest** is optimized for calendar- and session-oriented recall such as "what happened yesterday" or "what were we working on last week," with output stored in `episodes`.
+- **Entry ingest** can discover any file or directory that matches the transcript discovery rules, then parse through the OpenClaw transcript adapter.
+- **Episode ingest** is specifically shaped around OpenClaw session transcripts, session metadata, and one-summary-per-session backfill.
+
+### Session discovery and metadata reconstruction
+
+Episode ingest runs in two stages:
+
+1. **Stage 1 preflight** discovers transcript files, parses them, skips ineligible sessions, and builds a candidate list.
+2. **Stage 2 execution** generates summaries for the selected candidates and writes or updates episodes.
+
+Preflight discovery uses the same OpenClaw transcript file discovery rules as the rest of ingest, including rotated files such as:
+
+- `session.jsonl`
+- `session.jsonl.reset.<timestamp>`
+- `session.jsonl.deleted.<timestamp>`
+
+For session metadata, the episode pipeline prefers authoritative data from OpenClaw's `sessions.json` registry when it can find it:
+
+- the CLI resolves a sessions directory from the target path
+- if the target is a file, the parent directory is treated as the sessions directory
+- `sessions.json` is loaded from that directory and matched by parsed session id
+- registry metadata provides the best available `surface`, `agentId`, `provider`, and `chatType` for active sessions
+
+Rotated or older transcript files do not always have usable registry metadata, so the transcript parser also reconstructs the session surface directly from transcript content. Current reconstruction sources include:
+
+- `inbound_meta.surface`
+- `Sender (untrusted metadata)` blocks
+- `Conversation info (untrusted metadata)` blocks
+- content heuristics from the first user message when metadata blocks are absent, including subagent and heartbeat sessions
+
+That reconstruction is integrated into transcript parsing, so episode ingest does not need a second pass over each file.
+
+When registry metadata is unavailable, agent ownership falls back to the OpenClaw directory layout:
+
+- `.openclaw/agents/{agentId}/sessions/{file}`
+
+### Episode-only flags
+
+These are the flags that most directly affect episode backfill behavior:
+
+| Flag | What it does | Notes |
+| --- | --- | --- |
+| `--recent <duration>` | Only keeps candidates whose `endedAt` falls within a recent window. | Accepts relative values such as `30d` or `90d`, and also ISO timestamps. Applied after preflight candidate classification. |
+| `--regenerate` | Rebuilds episodes even when a matching episode already exists. | Without this flag, existing sessions are skipped during preflight. |
+| `--dry-run` | Runs discovery, parsing, filtering, and Stage 2 estimation without generating or writing summaries. | Useful for cost checks before a large backfill. |
+| `--concurrency <n>` | Sets parallel worker count for preflight parsing and summary generation. | Default `10`. Allowed range `1-20`. |
+| `--embed-only` | Backfills embeddings for existing episodes that are missing vectors. | No transcript path is required. This mode does not call the summary LLM. |
+| `--no-embed` | Skips embedding newly generated episode summaries. | Cannot be combined with `--embed-only`. Useful when you want summaries now and vector backfill later. |
+
+A few other options still apply to episode ingest in the normal way:
+
+- `--db <path>` chooses the target database for the run
+- `--model <provider/model|model>` overrides the episode summary model
+- `--verbose` prints per-session progress lines
+
+### Practical examples
+
+Backfill recent session episodes for the last 30 days:
+
+```bash
+agenr ingest episodes ~/.openclaw/agents/<agent-id>/sessions --recent 30d
+```
+
+Preview a backfill without generating summaries or writing anything:
+
+```bash
+agenr ingest episodes ~/.openclaw/agents/<agent-id>/sessions --recent 30d --dry-run
+```
+
+Backfill embeddings only for episodes that already exist but do not yet have vectors:
+
+```bash
+agenr ingest episodes --embed-only
+```
+
+Rebuild previously written episodes from transcripts, then write fresh summaries:
+
+```bash
+agenr ingest episodes ~/.openclaw/agents/<agent-id>/sessions --regenerate
+```
+
+Rebuild episodes without embeddings now, for a later embedding pass:
+
+```bash
+agenr ingest episodes ~/.openclaw/agents/<agent-id>/sessions --recent 90d --regenerate --no-embed
+```
 
 ## End-to-end flow
 

@@ -14,18 +14,20 @@ Local-first, durable memory infrastructure for AI agents.
 
 ## What is agenr?
 
-agenr gives agents a persistent brain: a local SQLite database of durable knowledge that survives across sessions, tools, and agent restarts. Instead of relying on fragile prompt state or file-based scratch memory, agents can ingest transcripts, extract decisions and lessons, store them as typed entries, and recall them later with semantic search and memory-aware ranking.
+agenr gives agents a persistent brain: a local SQLite database of durable knowledge that survives across sessions, tools, and agent restarts. Instead of relying on fragile prompt state or file-based scratch memory, agents can ingest transcripts, extract decisions and lessons, store them as typed entries, generate episodic summaries of what happened, and recall them later with semantic search and memory-aware ranking.
 
-It exists because most agent runtimes forget everything important between sessions. Even when a tool has a built-in memory feature, it is often lossy, file-based, or tightly coupled to one surface. agenr keeps memory structured and queryable: facts, decisions, preferences, lessons, todos, events, and relationships live in one local store instead of getting flattened into prompt text.
+It exists because most agent runtimes forget everything important between sessions. Even when a tool has a built-in memory feature, it is often lossy, file-based, or tightly coupled to one surface. agenr keeps memory structured and queryable: facts, decisions, preferences, lessons, tasks, milestones, relationships, and session-level episodes live in one local store instead of getting flattened into prompt text.
 
-What makes agenr different is the combination of local-first storage, semantic embeddings, hybrid recall, and adapter-friendly architecture. The core is hexagonal, so multiple agent systems can share the same brain over time. Today the production adapter is the OpenClaw memory plugin, published separately as `@agenr/openclaw-plugin`, and the CLI provides offline ingest and recall against that same database.
+What makes agenr different is the combination of local-first storage, semantic embeddings, hybrid recall, episodic temporal memory, and adapter-friendly architecture. The core is hexagonal, so multiple agent systems can share the same brain over time. Today the production adapter is the OpenClaw memory plugin, published separately as `@agenr/openclaw-plugin`, and the CLI provides offline ingest, recall, and maintenance against that same database.
 
 ## Features
 
-- Hybrid recall: vector similarity, lexical FTS, temporal awareness, recency decay, and importance weighting.
+- Hybrid recall for durable knowledge: vector similarity, lexical FTS, temporal awareness, recency decay, and importance weighting.
+- Episodic memory: session-level summaries with temporal filtering and optional semantic episode search for questions like "what happened yesterday?"
 - LLM-powered knowledge extraction from conversation transcripts.
 - Semantic deduplication using exact hashes, normalized hashes, embeddings, and within-run clustering.
-- Session continuity with predecessor resolution, recent transcript tails, and LLM-generated session summaries.
+- Session continuity with predecessor resolution, recent transcript tails, and LLM-generated continuity summaries.
+- Surgeon retirement pass for corpus maintenance: inspect stale candidates, simulate recall impact, and retire semantically obsolete knowledge with audit history.
 - Agent tools for `store`, `recall`, `retire`, `update`, and `trace` through the OpenClaw plugin.
 - Native OpenClaw memory plugin that replaces OpenClaw's built-in memory slot.
 - Local-first storage with SQLite/libSQL. Memory stays on your machine; only model and embedding calls leave it.
@@ -46,7 +48,7 @@ It walks through:
 - model selection filtered by the auth method you chose
 - OpenAI embedding key setup
 - OpenClaw detection and optional plugin installation
-- session scanning and optional bulk ingestion of existing transcripts
+- session scanning and optional bulk ingestion of existing transcripts into durable entries and episodic summaries
 
 Run `agenr init` again any time you want to re-run onboarding, reinstall the plugin, or ingest another batch of existing sessions.
 
@@ -109,10 +111,10 @@ Key config fields:
 
 | Field                            | What it does                                                                                                                                                                      |
 | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `auth`                           | Authentication method: `openai-api-key`, `openai-subscription`, `anthropic-api-key`, `anthropic-oauth`, or `anthropic-token`.                                                     |
+| `auth`                           | Authentication method: `openai-api-key`, `openai-subscription`, `anthropic-api-key`, `anthropic-oauth`, or `anthropic-token`.                                                 |
 | `provider` / `model`             | Default LLM provider and model used for extraction tasks unless overridden.                                                                                                       |
 | `credentials`                    | Stored manual credentials. Today that can include `openaiApiKey`, `anthropicApiKey`, and `anthropicOauthToken`. The config file is written with locked-down permissions (`0600`). |
-| `credentials.openaiApiKey`       | OpenAI key used for embeddings, and also for extraction when `auth` is `openai-api-key`. Older configs may still rely on legacy `embeddingApiKey` or `apiKey` fallback fields.    |
+| `credentials.openaiApiKey`       | OpenAI key used for embeddings, and also for extraction when `auth` is `openai-api-key`. Older configs may still rely on legacy `embeddingApiKey` or `apiKey` fallback fields. |
 | `embeddingModel`                 | Embedding model. Defaults to `text-embedding-3-small`.                                                                                                                            |
 | `extractionModel` / `dedupModel` | Optional per-pipeline overrides so extraction and dedup can use different provider/model pairs.                                                                                   |
 | `extractionContext`              | Optional user context injected into extraction prompts to help the model decide what is worth remembering.                                                                        |
@@ -128,7 +130,7 @@ Important: when agenr is running as an OpenClaw plugin, session summaries use Op
 
 ## CLI Commands
 
-The current CLI surface is intentionally small. Today the `db` group only exposes `reset`.
+The CLI surface is still intentionally compact, but it now covers setup, recall, ingest, and corpus maintenance.
 
 | Command                        | What it does                                                                                                             |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
@@ -138,6 +140,10 @@ The current CLI surface is intentionally small. Today the `db` group only expose
 | `agenr ingest <path>`          | Default durable-entry ingest shorthand. Equivalent to `agenr ingest entries <path>`.                                     |
 | `agenr ingest entries <path>`  | Bulk-ingest one file or directory of OpenClaw transcript files into durable knowledge entries.                           |
 | `agenr ingest episodes <path>` | Backfill episodic summaries from OpenClaw session transcripts, including rotated `.reset.*` and `.deleted.*` files.      |
+| `agenr surgeon run`            | Execute the surgeon retirement pass. Dry-run by default; add `--apply` to mutate the corpus.                            |
+| `agenr surgeon status`         | Show corpus health plus the latest surgeon run summary.                                                                  |
+| `agenr surgeon history`        | Show recent surgeon runs.                                                                                                |
+| `agenr surgeon actions <run>`  | Show the audit trail for one surgeon run.                                                                                |
 | `agenr db reset`               | Delete and recreate the knowledge database.                                                                              |
 
 The OpenClaw plugin also gives the agent five tools directly inside the runtime: `agenr_store`, `agenr_recall`, `agenr_retire`, `agenr_update`, and `agenr_trace`.
@@ -148,11 +154,14 @@ Examples:
 # Recall knowledge
 agenr recall "what decisions did we make about the API?"
 
-# Ingest transcripts
+# Ingest transcripts into durable entries
 agenr ingest ~/.openclaw/agents/main/sessions/
 
-# Backfill episode summaries
+# Backfill episodic summaries
 agenr ingest episodes ~/.openclaw/agents/main/sessions/ --recent 30d
+
+# Run the surgeon retirement pass (dry-run by default)
+agenr surgeon run --budget 2.00
 
 # Reset the database
 agenr db reset
@@ -172,7 +181,20 @@ Recall is a hybrid pipeline. Agenr embeds the query, retrieves candidates throug
 
 ## How Ingestion Works
 
-Ingestion is transcript-to-memory: parse OpenClaw JSONL transcripts, normalize them, choose whole-file or chunked extraction, run LLM extraction, validate the structured entries, deduplicate them within the ingest run, generate embeddings, and then persist surviving entries through the store pipeline. The current CLI ingest path is OpenClaw-transcript-specific. Details: [docs/INGEST.md](./docs/INGEST.md) and [docs/STORE.md](./docs/STORE.md).
+Agenr has two ingest pipelines over the same transcript corpus:
+
+- `agenr ingest entries <path>` extracts durable typed knowledge such as facts, decisions, preferences, lessons, milestones, and relationships.
+- `agenr ingest episodes <path>` generates one narrative summary per session so the brain can answer temporal questions like "what happened last week?"
+
+Both paths parse OpenClaw transcripts first, but they optimize for different outputs: entry ingest distills durable knowledge and runs semantic dedup across the whole ingest batch, while episode ingest does a session-by-session preflight pass, uses `sessions.json` metadata when available, reconstructs missing surface metadata for rotated files, and writes episodic summaries. Details: [docs/INGEST.md](./docs/INGEST.md) and [docs/STORE.md](./docs/STORE.md).
+
+## How Episodes Work
+
+Episodes are session-level memory artifacts stored separately from durable entries. They preserve temporal narrative: what happened in a session, when it happened, which agent/session it belonged to, and optionally an embedding for semantic episode search. Recall can route narrative or time-bounded questions toward episodes automatically, or combine episode and entry results in mixed mode. For implementation details and the episode recall model, see [docs/EPISODES.md](./docs/EPISODES.md).
+
+## How the Surgeon Works
+
+The surgeon is a maintenance pass for the durable-memory corpus. It evaluates retirement candidates, inspects related context, can simulate recall impact before mutation, and records runs plus per-action audit history in the database. `agenr surgeon run` is safe by default because it starts in dry-run mode; `--apply` is the explicit mutation switch. For runtime details, governance, and audit behavior, see [docs/SURGEON.md](./docs/SURGEON.md).
 
 ## Development
 
@@ -188,10 +210,10 @@ pnpm check        # format + lint + typecheck + test
 | Problem                                                           | What to check                                                                                                                                                                                                                        |
 | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `agenr init` cannot complete setup                                | Re-run `agenr setup` and verify the selected auth method is actually available. Subscription flows depend on the relevant external login being present, and non-OpenAI extraction setups still need a separate OpenAI embedding key. |
-| `openclaw plugins install @agenr/openclaw-plugin` fails           | Make sure the `openclaw` CLI is installed and on `PATH`. For local development, run `pnpm build` and use `plugins.load.paths` instead.                                                                                               |
-| `agenr recall` or `agenr_recall` fails with embedding/auth errors | Embeddings always use OpenAI. Confirm `credentials.openaiApiKey` is configured, or re-run `agenr setup` to set the embedding key explicitly.                                                                                         |
-| SQLite says the database is locked                                | Avoid running multiple writers against the same DB at once. Stop overlapping ingest/reset runs, restart the OpenClaw gateway if needed, then retry.                                                                                  |
-| OpenClaw does not pick up the plugin                              | Restart the gateway, confirm `plugins.slots.memory` is `agenr`, confirm `plugins.allow` contains `agenr`, and for dev installs confirm `plugins.load.paths` points at the built `packages/openclaw-plugin` directory.                |
+| `openclaw plugins install @agenr/openclaw-plugin` fails           | Make sure the `openclaw` CLI is installed and on `PATH`. For local development, run `pnpm build` and use `plugins.load.paths` instead.                                                                                            |
+| `agenr recall` or `agenr_recall` fails with embedding/auth errors | Embeddings always use OpenAI. Confirm `credentials.openaiApiKey` is configured, or re-run `agenr setup` to set the embedding key explicitly.                                                                                        |
+| SQLite says the database is locked                                | Avoid running multiple writers against the same DB at once. Stop overlapping ingest/reset runs, restart the OpenClaw gateway if needed, then retry.                                                                                 |
+| OpenClaw does not pick up the plugin                              | Restart the gateway, confirm `plugins.slots.memory` is `agenr`, confirm `plugins.allow` contains `agenr`, and for dev installs confirm `plugins.load.paths` points at the built `packages/openclaw-plugin` directory.               |
 
 ## License
 

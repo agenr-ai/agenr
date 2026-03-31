@@ -6,18 +6,28 @@ It embeds the query, retrieves candidates through both vector search and SQLite 
 
 This document describes the code as it exists now, not just the intended flow.
 
+Since `1.3.0`, there is also a unified agent-facing recall layer on top of the entry pipeline documented here. The standalone CLI in `src/cli/commands/recall.ts` still exposes the entry-recall surface shown below, while `src/app/recall/unified.ts` plus the OpenClaw `agenr_recall` tool add mode routing and episodic recall.
+
 ## Code map
 
 - `src/cli/commands/recall.ts` - CLI option parsing, adapter wiring, and result formatting.
+- `src/app/recall/unified.ts` - mode routing, unified result shaping, and orchestration between entry recall and episode recall.
+- `src/app/recall/types.ts` - agent-facing mode, routing, time-window, and split-result response types.
 - `src/core/recall/search.ts` - top-level recall pipeline orchestration.
 - `src/core/recall/scoring.ts` - vector, lexical, recency, importance, and final-score math.
 - `src/core/recall/lexical.ts` - tokenization, lexical search-plan generation, and lexical overlap scoring.
 - `src/core/recall/temporal.ts` - explicit and inferred date parsing for temporal recall.
 - `src/core/recall/types.ts` - recall input, output, candidate, and filter types.
-- `src/core/ports.ts` - `RecallPorts` interface used by the pure core pipeline.
+- `src/core/episode/search.ts` - temporal, semantic, and hybrid episode retrieval modes.
+- `src/core/episode/scoring.ts` - interval overlap scoring and temporal tie-break math for episodes.
+- `src/core/episode/temporal-window.ts` - calendar-aware time-phrase parsing for episodic recall.
+- `src/core/episode/types.ts` - episode query/result and temporal window types.
+- `src/core/ports.ts` - `RecallPorts` plus episode database interfaces used by the pure core pipelines.
 - `src/adapters/db/recall-adapter.ts` - libSQL implementation of vector search, FTS search, hydration, and recall-event recording.
+- `src/adapters/db/episode-queries.ts` - SQL overlap lookup and episode vector search.
 - `src/adapters/db/queries.ts` - `recordRecallEvent()` write path that updates counters and inserts `recall_events` rows.
 - `tests/cli/commands/recall.test.ts` and `src/core/recall/search.integration.test.ts` - CLI surface, end-to-end pipeline, filter, telemetry, and concurrency coverage.
+- `tests/core/episode/temporal-window.test.ts` and `tests/adapters/openclaw/tools.test.ts` - parser coverage, routing, split-result formatting, and episode recall behavior.
 
 ## Important architectural nuance
 
@@ -65,6 +75,174 @@ agenr recall <query> \
 - `--verbose` prints per-result score breakdowns.
 
 Unlike ingest, recall currently has no `--dry-run` flag.
+
+## Unified routing and episodic recall (1.3.0)
+
+This section covers the newer unified recall layer used by `runUnifiedRecall()` and the OpenClaw `agenr_recall` tool. It sits above the entry-only CLI flow documented later and decides whether to query semantic entries, episodic memory, or both.
+
+### Mode parameter
+
+The unified layer accepts three modes:
+
+- `auto` - default routing. The query text is classified and routed to entries, episodes, or both.
+- `entries` - force semantic entry recall only. This is the right mode for exact facts, decisions, thresholds, versions, and preferences.
+- `episodes` - force episodic recall only. With a resolved time window this becomes temporal episode search; without a time window it falls back to pure semantic episode search when embeddings are available.
+
+`mode` is currently implemented in the unified app/tool layer, not in `src/cli/commands/recall.ts` yet.
+
+### Auto-routing rules
+
+`routeRecall()` uses a simple three-band router:
+
+- **temporal narrative -> episodes**
+- **factual -> entries**
+- **mixed -> both**
+
+Current detection is deliberately heuristic, not LLM-based:
+
+- factual phrases are matched with regexes like `when did`, `when was`, `what decision`, `what preference`, `what's the default`, `which version`, and `what threshold`
+- narrative phrases are matched with regexes like `what happened`, `what were we doing`, `what was going on`, `summarize`, and `catch me up`
+- a **topic anchor** is detected when the query includes entry-only filters or wording like `about`, `regarding`, `with`, or `on <token>`
+- a **supported time expression** comes from `parseTemporalWindow()`
+
+That yields these concrete routing behaviors:
+
+- factual + no supported time window -> `entries`
+- factual + supported time window -> `entries` and `episodes`
+- narrative + supported time window + no topic anchor -> `episodes`
+- narrative + supported time window + topic anchor -> `episodes` and `entries`
+- supported time window + topic anchor, even without an obvious narrative phrase -> `episodes` and `entries`
+- supported time window without a clear narrative ask or topic anchor -> `entries`
+
+Explicit overrides still win:
+
+- `mode=entries` always queries entries only
+- `mode=episodes` always queries episodes only
+
+### Temporal window parser
+
+Episode recall does not reuse the older entry-recall `around` inference. It has a separate calendar-aware parser in `src/core/episode/temporal-window.ts` that returns:
+
+- the resolved `window`
+- concrete `bounds.start` / `bounds.end`
+- the runtime `timezone`
+- `resolvedFrom`, which preserves the matched phrase for output/debugging
+
+Supported phrases today include:
+
+- `today`
+- `yesterday`
+- `this week` / `last week`
+- `this month` / `last month`
+- `N days ago`
+- `N weeks ago`
+- `N months ago`
+- `in March` (and the other month names)
+- `March 15th`, `March 15`, `on March 15`, and similar month-day forms
+- `last Friday` and the other weekdays
+- ISO dates like `2026-03-15`
+
+A few behavior details matter:
+
+- `today`, `this week`, and `this month` end at `now`, not the end of the full calendar period
+- `yesterday`, `last week`, `last month`, month names, month-day forms, weekdays, and ISO dates resolve to closed calendar intervals
+- `N days ago` resolves to that full prior local calendar day
+- `N weeks ago` and `N months ago` resolve to anchor windows with a fixed `±3` day radius around the anchor date
+- month-day queries resolve to the most recent matching calendar date, so `December 25` can land in the previous year
+- month-day parsing wins over weekday parsing when both appear in the same query
+
+### Episode recall pipeline
+
+Pure temporal episode recall does not depend on embeddings. The flow in `searchEpisodes()` is:
+
+1. parse the query into a `TemporalWindow`
+2. materialize concrete bounds with `resolveTemporalWindowBounds()`
+3. fetch overlap candidates through `listEpisodesByTimeWindow()`
+4. score each candidate in memory with `scoreEpisodeMatch()`
+5. sort with temporal-first ordering and return the top `limit`
+
+The SQL overlap filter in `listEpisodesByTimeWindow()` is inclusive:
+
+- `started_at <= query_end`
+- `COALESCE(ended_at, started_at) >= query_start`
+
+Only active episodes are considered (`retired = 0` and `superseded_by IS NULL`). Candidate lookup overfetches with `limit * 5`, bounded to `25-100`, before in-memory ranking.
+
+`scoreEpisodeMatch()` ranks by interval overlap, not by semantic similarity. Its final score is:
+
+```txt
+score = overlapQuality * 0.75 + midpointProximity * 0.20 + activity * 0.04 + recency * 0.01
+```
+
+Where:
+
+- `overlapQuality` is the primary signal: a harmonic-mean style blend of query coverage and episode precision
+- `midpointProximity` is the secondary temporal tiebreaker
+- `activity` lightly boosts more substantial sessions
+- `recency` is only a very small final tiebreaker
+
+Sort precedence for pure temporal recall is even stricter than the final score: overlap quality first, then midpoint proximity, then activity, then recency, then the stored final score.
+
+### Hybrid semantic episode search
+
+Episode search has three actual modes inside `src/core/episode/search.ts`:
+
+1. **Pure temporal** - resolved time window, no embedding. Uses SQL overlap candidates plus `scoreEpisodeMatch()`.
+2. **Pure semantic** - embedding, no time window. Uses `episodeVectorSearch()` and ranks by cosine similarity first.
+3. **Hybrid** - resolved time window plus embedding. Uses a hard temporal filter first (`listEpisodesByTimeWindow()`), then reranks the overlapping candidates by semantic similarity with temporal/activity/recency as tie-break signals.
+
+The important design point is that hybrid episode search is **not** a broad vector search with a soft time bias. It is:
+
+- hard temporal filter first
+- semantic rerank second
+
+That means mixed queries like “what happened on agenr 2026-03-29” cannot pull in semantically relevant sessions from the wrong time period.
+
+If the router wants semantic episode search but query embeddings are unavailable, unified recall adds a notice instead:
+
+- with a time window: `Semantic episode search unavailable - showing temporal results only.`
+- without a time window: `Semantic episode search unavailable - no semantic episode results could be returned.`
+
+### How results are returned
+
+Unified recall does **not** merge episodes and entries into one ranked list. `UnifiedRecallResult` returns them separately:
+
+- `routing` - requested mode, detected intent, queried backends, and routing reason
+- optional `timeWindow` - resolved start/end/timezone/resolvedFrom metadata
+- `episodes` - episode matches
+- `entries` - semantic entry matches
+- `notices` - fallback and scope notes
+- `count` - total across both sections
+
+The OpenClaw formatter preserves that separation in text output:
+
+- `Recall Route` first
+- then optional `Resolved Time Window`
+- then `Episode Matches`
+- then `Entry Matches`
+- then optional `Notices`
+
+This is why mixed recall responses show sessions and durable knowledge side by side without pretending they are the same kind of memory.
+
+One important caveat: `threshold`, `types`, and `tags` still apply to **entries only** in the current unified layer. When episodes are also queried, unified recall adds a notice saying so.
+
+### Examples
+
+Today, the implemented `mode` surface is the OpenClaw `agenr_recall` tool plus `runUnifiedRecall()`. The standalone CLI has not been wired to `mode` yet, but the intended CLI-shaped examples are:
+
+```bash
+agenr recall --mode episodes "what happened yesterday"
+agenr recall --mode auto "what happened on agenr 2026-03-29"
+agenr recall --mode entries "what decision set the schema threshold"
+```
+
+The equivalent tool-layer calls today are:
+
+```txt
+agenr_recall({ query: "what happened yesterday", mode: "episodes" })
+agenr_recall({ query: "what happened on agenr 2026-03-29", mode: "auto", tags: ["agenr"] })
+agenr_recall({ query: "what decision set the schema threshold", mode: "entries" })
+```
 
 ## End-to-end flow
 
@@ -404,13 +582,22 @@ Notes:
 ## Good files to read before changing recall
 
 - `src/cli/commands/recall.ts`
+- `src/app/recall/unified.ts`
+- `src/app/recall/types.ts`
 - `src/core/recall/search.ts`
 - `src/core/recall/scoring.ts`
 - `src/core/recall/lexical.ts`
 - `src/core/recall/temporal.ts`
 - `src/core/recall/types.ts`
+- `src/core/episode/search.ts`
+- `src/core/episode/scoring.ts`
+- `src/core/episode/temporal-window.ts`
+- `src/core/episode/types.ts`
 - `src/core/ports.ts`
 - `src/adapters/db/recall-adapter.ts`
+- `src/adapters/db/episode-queries.ts`
 - `src/adapters/db/queries.ts`
 - `tests/cli/commands/recall.test.ts`
 - `src/core/recall/search.integration.test.ts`
+- `tests/core/episode/temporal-window.test.ts`
+- `tests/adapters/openclaw/tools.test.ts`
