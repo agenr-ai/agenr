@@ -1,4 +1,4 @@
-import type { EpisodeDatabasePort, LlmPort, TranscriptPort } from "../../core/ports.js";
+import type { EmbeddingPort, EpisodeDatabasePort, LlmPort, TranscriptPort } from "../../core/ports.js";
 
 /**
  * Metadata provenance used during episode-ingest preflight.
@@ -177,6 +177,10 @@ export interface EpisodeIngestPorts {
    * Episode database used for idempotence checks.
    */
   episodes: EpisodeDatabasePort;
+  /**
+   * Optional embedding provider used for best-effort episode summary embeddings.
+   */
+  embedding?: EmbeddingPort;
   /**
    * Factory for per-candidate summary-generation clients.
    */

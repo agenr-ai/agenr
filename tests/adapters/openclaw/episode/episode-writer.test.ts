@@ -116,6 +116,41 @@ describe("writeOpenClawPredecessorEpisode", () => {
     );
   });
 
+  it("embeds a predecessor episode inline when embeddings are available and budget allows", async () => {
+    const database = await createTestDatabase(databases, tempPaths);
+    const sessionFile = await writeStandardSession(tempPaths, "embedded-session");
+    const logger = createLogger();
+    const episodeRunner = createRunner({
+      text: JSON.stringify({
+        summary: "We embedded predecessor episodes inline when time budget allowed it.",
+        tags: ["embedding"],
+        activityLevel: "minimal",
+        project: "agenr",
+      }),
+    });
+
+    await writeOpenClawPredecessorEpisode({
+      ctx: {
+        agentId: "main",
+        sessionId: "current-session",
+        sessionKey: "agent:main:tui-current",
+      },
+      predecessor: {
+        sessionId: "embedded-session",
+        sessionFile,
+      },
+      services: createServices(database, episodeRunner, {
+        embeddingAvailable: true,
+        embeddingImplementation: async () => [createEmbedding(0, 0.4)],
+      }),
+      logger,
+    });
+
+    const stored = await database.getEpisodeBySourceId("openclaw", "embedded-session");
+    expect(stored?.embedding?.[0]).toBeCloseTo(0.4);
+    expect(stored?.embedding?.[1]).toBeCloseTo(0);
+  });
+
   it("prefers the TUI session key over messageProvider when deriving the predecessor episode surface", async () => {
     const database = await createTestDatabase(databases, tempPaths);
     const sessionFile = await writeStandardSession(tempPaths, "provider-session");
@@ -390,11 +425,87 @@ describe("writeOpenClawPredecessorEpisode", () => {
       ]),
     );
   });
+
+  it("skips embedding when the remaining write budget is tight", async () => {
+    vi.useFakeTimers();
+
+    const database = await createTestDatabase(databases, tempPaths);
+    const sessionFile = await writeStandardSession(tempPaths, "budget-tight-session");
+    const logger = createLogger();
+    let markStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const episodeRunner = createRunner({
+      implementation: async () => {
+        markStarted?.();
+        await new Promise((resolve) => {
+          setTimeout(resolve, 40_500);
+        });
+        return {
+          payloads: [
+            {
+              text: JSON.stringify({
+                summary: "Budget-tight episode write.",
+                tags: ["embedding"],
+                activityLevel: "minimal",
+                project: "agenr",
+              }),
+            },
+          ],
+        };
+      },
+    });
+    const embeddingSpy = vi.fn(async () => [[0.9, 0.1]]);
+
+    const writePromise = writeOpenClawPredecessorEpisode({
+      ctx: {
+        agentId: "main",
+        sessionId: "current-session",
+        sessionKey: "agent:main:tui-current",
+      },
+      predecessor: {
+        sessionId: "budget-tight-session",
+        sessionFile,
+      },
+      services: createServices(database, episodeRunner, {
+        embeddingAvailable: true,
+        embeddingImplementation: embeddingSpy,
+      }),
+      logger,
+    });
+
+    await started;
+    await vi.advanceTimersByTimeAsync(40_500);
+    await writePromise;
+
+    const stored = await database.getEpisodeBySourceId("openclaw", "budget-tight-session");
+    expect(stored?.embedding).toEqual([]);
+    expect(embeddingSpy).not.toHaveBeenCalled();
+    expect(getMessages(logger.info)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          `[agenr] session-start predecessor episode embedding skipped for session=current-session key=agent:main:tui-current predecessor=${sessionFile} reason=budget_tight`,
+        ),
+      ]),
+    );
+  });
 });
 
-function createServices(database: SqlDatabase, runEmbeddedPiAgent: AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"]): AgenrOpenClawServices {
+function createServices(
+  database: SqlDatabase,
+  runEmbeddedPiAgent: AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"],
+  options: {
+    embeddingAvailable?: boolean;
+    embeddingImplementation?: EmbeddingPort["embed"];
+  } = {},
+): AgenrOpenClawServices {
   const embedding: EmbeddingPort = {
-    async embed(): Promise<number[][]> {
+    async embed(texts): Promise<number[][]> {
+      if (options.embeddingImplementation) {
+        return await options.embeddingImplementation(texts);
+      }
+
       throw new Error("Embeddings unavailable in this test.");
     },
   };
@@ -427,11 +538,11 @@ function createServices(database: SqlDatabase, runEmbeddedPiAgent: AgenrOpenClaw
     embedding,
     recall,
     embeddingStatus: {
-      available: false,
-      provider: "unconfigured",
+      available: options.embeddingAvailable === true,
+      provider: options.embeddingAvailable === true ? "openai" : "unconfigured",
       requestedProvider: "openai",
       model: "text-embedding-3-small",
-      error: "Embedding API key is required.",
+      ...(options.embeddingAvailable === true ? {} : { error: "Embedding API key is required." }),
     },
     async close() {
       await database.close();
@@ -553,4 +664,10 @@ async function writeSessionFile(tempPaths: string[], sessionId: string, lines: o
   const sessionFile = path.join(sessionsDir, `${sessionId}.jsonl`);
   await writeFile(sessionFile, `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`, "utf8");
   return sessionFile;
+}
+
+function createEmbedding(index: number, value: number): number[] {
+  const vector = Array.from({ length: 1024 }, () => 0);
+  vector[index] = value;
+  return vector;
 }

@@ -7,8 +7,8 @@ import type { RecallInput } from "../../core/recall/types.js";
 import type { UnifiedRecallInput, UnifiedRecallMode, UnifiedRecallResult, UnifiedRecallRouting } from "./types.js";
 
 const EPISODE_FRESHNESS_NOTICE = "Episodes cover consolidated prior sessions only; the most recent completed session may not appear yet.";
-const EPISODE_TIME_NOTICE =
-  "Episode recall needs a supported time phrase in the query, such as 'yesterday', 'last week', 'this month', '2 weeks ago', or 'in March'.";
+const EPISODE_SEMANTIC_FALLBACK_NOTICE = "Semantic episode search unavailable - showing temporal results only.";
+const EPISODE_SEMANTIC_UNAVAILABLE_NOTICE = "Semantic episode search unavailable - no semantic episode results could be returned.";
 const ENTRY_FILTER_NOTICE = "Threshold, type filters, and tag filters were applied to entries only.";
 
 /**
@@ -19,6 +19,7 @@ export interface UnifiedRecallDeps {
   recall: RecallPorts;
   embeddingAvailable: boolean;
   embeddingError?: string;
+  embedQuery?: (text: string) => Promise<number[]>;
   now?: Date;
 }
 
@@ -33,31 +34,32 @@ export async function runUnifiedRecall(input: UnifiedRecallInput, deps: UnifiedR
   const now = deps.now ?? new Date();
   const requested = normalizeMode(input.mode);
   const parsedTimeWindow = parseTemporalWindow(input.text, now);
+  const hasEntryFilters = hasEntryScopedFilters(input);
+  const topicAnchor = hasTopicAnchor(input.text, hasEntryFilters);
   const routing = routeRecall({
     requested,
     text: input.text,
     parsedTimeWindow: parsedTimeWindow !== null,
-    hasEntryFilters: Boolean((input.types?.length ?? 0) > 0 || (input.tags?.length ?? 0) > 0),
+    hasEntryFilters,
   });
   const notices: string[] = [];
-  const episodes =
-    routing.queried.includes("episodes") && parsedTimeWindow
-      ? await searchEpisodes(
-          {
-            text: input.text,
-            limit: input.limit,
-            timeWindow: parsedTimeWindow.window,
-          },
-          deps.database,
-          now,
-        )
-      : [];
+  const episodePlan = routing.queried.includes("episodes")
+    ? await buildEpisodeQueryPlan({
+        text: input.text,
+        limit: input.limit,
+        requested,
+        parsedTimeWindow,
+        topicAnchor,
+        embedQuery: deps.embedQuery,
+      })
+    : {
+        notices: [],
+      };
+  const episodes = routing.queried.includes("episodes") && episodePlan.query ? await searchEpisodes(episodePlan.query, deps.database, now) : [];
 
   if (routing.queried.includes("episodes")) {
     notices.push(EPISODE_FRESHNESS_NOTICE);
-    if (!parsedTimeWindow) {
-      notices.push(EPISODE_TIME_NOTICE);
-    }
+    notices.push(...episodePlan.notices);
   }
 
   if (routing.queried.includes("episodes") && hasEntryScopedFilters(input)) {
@@ -104,7 +106,7 @@ export function routeRecall(params: { requested: UnifiedRecallMode; text: string
   const lower = params.text.trim().toLowerCase();
   const factual = /^(when did|when was|what decision|what preference|what(?:'s| is) the default|which version|what threshold)\b/.test(lower);
   const narrative = /\b(what happened|what were we doing|what was going on|summarize|catch me up)\b/.test(lower);
-  const topicAnchor = params.hasEntryFilters || /\b(about|regarding|with)\b/.test(lower) || /\bon\s+[a-z][a-z0-9_-]{1,}\b/.test(lower);
+  const topicAnchor = hasTopicAnchor(params.text, params.hasEntryFilters);
 
   if (params.requested === "entries") {
     return {
@@ -178,6 +180,51 @@ export function routeRecall(params: { requested: UnifiedRecallMode; text: string
     reason: params.parsedTimeWindow
       ? "The query did not clearly ask for narrative recall, so entry recall was used."
       : "No supported episode time window was detected, so entry recall was used.",
+  };
+}
+
+/**
+ * Builds the episode-query payload for temporal, semantic, or hybrid search.
+ *
+ * @param params - Routing facts and optional embedding helper.
+ * @returns Episode query plus any user-facing notices.
+ */
+async function buildEpisodeQueryPlan(params: {
+  text: string;
+  limit: number | undefined;
+  requested: UnifiedRecallMode;
+  parsedTimeWindow: ReturnType<typeof parseTemporalWindow>;
+  topicAnchor: boolean;
+  embedQuery?: (text: string) => Promise<number[]>;
+}): Promise<{
+  query?: import("../../core/episode/types.js").EpisodeQuery;
+  notices: string[];
+}> {
+  const notices: string[] = [];
+  const shouldUseSemantic = params.parsedTimeWindow ? params.topicAnchor : params.requested === "episodes";
+
+  let embedding: number[] | undefined;
+  if (shouldUseSemantic) {
+    embedding = await maybeEmbedEpisodeQuery(params.text, params.embedQuery);
+    if (!embedding) {
+      notices.push(params.parsedTimeWindow ? EPISODE_SEMANTIC_FALLBACK_NOTICE : EPISODE_SEMANTIC_UNAVAILABLE_NOTICE);
+    }
+  }
+
+  if (!params.parsedTimeWindow && !embedding) {
+    return {
+      notices,
+    };
+  }
+
+  return {
+    query: {
+      text: params.text,
+      ...(params.limit !== undefined ? { limit: params.limit } : {}),
+      ...(params.parsedTimeWindow ? { timeWindow: params.parsedTimeWindow.window } : {}),
+      ...(embedding ? { embedding } : {}),
+    },
+    notices,
   };
 }
 
@@ -280,6 +327,38 @@ function normalizeMode(value: UnifiedRecallMode | undefined): UnifiedRecallMode 
  */
 function hasEntryScopedFilters(input: UnifiedRecallInput): boolean {
   return Boolean(input.threshold !== undefined || (input.types?.length ?? 0) > 0 || (input.tags?.length ?? 0) > 0);
+}
+
+/**
+ * Detects whether a query includes a topic anchor that benefits from semantic episode search.
+ *
+ * @param text - Raw user query.
+ * @param hasEntryFilters - Whether entry-scoped filters were supplied.
+ * @returns True when the query carries topical anchor text.
+ */
+function hasTopicAnchor(text: string, hasEntryFilters: boolean): boolean {
+  const lower = text.trim().toLowerCase();
+  return hasEntryFilters || /\b(about|regarding|with)\b/.test(lower) || /\bon\s+[a-z][a-z0-9_-]{1,}\b/.test(lower);
+}
+
+/**
+ * Computes a best-effort query embedding for episode semantic search.
+ *
+ * @param text - Raw user query text.
+ * @param embedQuery - Optional embedding function.
+ * @returns Query embedding, or undefined when unavailable.
+ */
+async function maybeEmbedEpisodeQuery(text: string, embedQuery: UnifiedRecallDeps["embedQuery"]): Promise<number[] | undefined> {
+  if (!embedQuery) {
+    return undefined;
+  }
+
+  try {
+    const embedding = await embedQuery(text);
+    return embedding.length > 0 ? embedding : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

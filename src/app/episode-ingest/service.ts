@@ -7,7 +7,9 @@ import { parseRelativeDate } from "../../core/recall/temporal.js";
 import type { Episode } from "../../core/types.js";
 import type { EpisodeIngestModelInfo, EpisodeIngestPorts, EpisodeIngestUsageStats, SessionMeta } from "./ports.js";
 import type {
+  BackfillEpisodeEmbeddingsOptions,
   CreateEpisodeIngestPlanOptions,
+  EpisodeEmbeddingBackfillResult,
   EpisodeIngestCandidate,
   EpisodeIngestExecutionResult,
   EpisodeIngestInvalidSession,
@@ -385,6 +387,86 @@ export async function executeEpisodeIngestPlan(
 }
 
 /**
+ * Backfills embeddings for active episodes that are currently missing them.
+ *
+ * @param ports - Episode database plus an embedding provider.
+ * @param options - Concurrency and progress-reporting settings.
+ * @returns Aggregate embedding-backfill outcome.
+ */
+export async function backfillEpisodeEmbeddings(ports: EpisodeIngestPorts, options: BackfillEpisodeEmbeddingsOptions): Promise<EpisodeEmbeddingBackfillResult> {
+  const embedding = ports.embedding;
+  if (!embedding) {
+    throw new Error("Episode embedding backfill requires an embedding provider.");
+  }
+
+  if (!Number.isFinite(options.concurrency) || Math.trunc(options.concurrency) <= 0) {
+    throw new Error(`Episode embedding backfill concurrency must be a positive integer. Received: ${options.concurrency}.`);
+  }
+
+  const pendingEpisodes = await ports.episodes.listEpisodesWithoutEmbeddings();
+  if (pendingEpisodes.length === 0) {
+    return {
+      totalMissing: 0,
+      attempted: 0,
+      embedded: 0,
+      failed: 0,
+      estimatedInputTokens: 0,
+    };
+  }
+
+  const estimatedInputTokens = pendingEpisodes.reduce((total, episode) => total + estimateInputTokens(episode.summary), 0);
+  const workerCount = Math.min(Math.trunc(options.concurrency), pendingEpisodes.length);
+  let nextIndex = 0;
+  let completed = 0;
+  let embeddedCount = 0;
+  let failedCount = 0;
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (true) {
+        const currentIndex = nextIndex;
+        nextIndex += 1;
+
+        if (currentIndex >= pendingEpisodes.length) {
+          return;
+        }
+
+        const episode = pendingEpisodes[currentIndex];
+        if (!episode) {
+          return;
+        }
+
+        let status: "embedded" | "failed" = "failed";
+
+        try {
+          const vector = await embedEpisodeSummary(episode.summary, embedding);
+          if (vector) {
+            await ports.episodes.updateEpisodeEmbedding(episode.id, vector);
+            embeddedCount += 1;
+            status = "embedded";
+          } else {
+            failedCount += 1;
+          }
+        } catch {
+          failedCount += 1;
+        }
+
+        completed += 1;
+        options.onProgress?.(completed, pendingEpisodes.length, episode, status);
+      }
+    }),
+  );
+
+  return {
+    totalMissing: pendingEpisodes.length,
+    attempted: pendingEpisodes.length,
+    embedded: embeddedCount,
+    failed: failedCount,
+    estimatedInputTokens,
+  };
+}
+
+/**
  * Builds a default empty preflight result for empty discovery runs.
  *
  * @returns Empty result shape.
@@ -552,6 +634,27 @@ function estimateEpisodeSummaryInputTokens(renderedTranscript: string): number {
 }
 
 /**
+ * Best-effort episode summary embedding helper.
+ *
+ * @param summary - Episode summary text to embed.
+ * @param embeddingPort - Optional embedding provider.
+ * @returns Embedding vector when available and successful.
+ */
+async function embedEpisodeSummary(summary: string, embeddingPort: EpisodeIngestPorts["embedding"]): Promise<number[] | undefined> {
+  if (!embeddingPort) {
+    return undefined;
+  }
+
+  try {
+    const vectors = await embeddingPort.embed([summary]);
+    const vector = vectors[0]?.map((value) => (Number.isFinite(value) ? value : 0));
+    return vector && vector.length > 0 ? vector : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Parses one candidate end timestamp into a valid Date when possible.
  *
  * @param endedAt - Candidate end timestamp.
@@ -609,6 +712,7 @@ async function executeEpisodeCandidate(
     }
 
     const existingEpisode = candidate.existingEpisode;
+    const embedding = await embedEpisodeSummary(structured.summary, ports.embedding);
     const writeResult = await runSerializedWrite(async () =>
       ports.episodes.upsertEpisode({
         source: "openclaw",
@@ -630,6 +734,7 @@ async function executeEpisodeCandidate(
         genModel: llm.metadata.modelRef,
         genVersion,
         messageCount: candidate.messageCount,
+        ...(embedding ? { embedding } : {}),
       }),
     );
 

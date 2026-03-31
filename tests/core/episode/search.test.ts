@@ -8,16 +8,7 @@ import type { Episode } from "../../../src/core/types.js";
 describe("searchEpisodes", () => {
   it("uses an oversampled candidate limit and ranks results in core", async () => {
     const seen: { limit?: number } = {};
-    const database: EpisodeDatabasePort = {
-      async getEpisodeBySourceId() {
-        return null;
-      },
-      async getEpisodeByTranscriptHash() {
-        return null;
-      },
-      async upsertEpisode() {
-        throw new Error("not implemented");
-      },
+    const database = createDatabase({
       async listEpisodesByTimeWindow(_window, limit) {
         seen.limit = limit;
         return [
@@ -36,7 +27,7 @@ describe("searchEpisodes", () => {
           }),
         ];
       },
-    };
+    });
 
     const results = await searchEpisodes(
       {
@@ -58,20 +49,11 @@ describe("searchEpisodes", () => {
   });
 
   it("returns an empty list when the temporal window cannot be materialized", async () => {
-    const database: EpisodeDatabasePort = {
-      async getEpisodeBySourceId() {
-        return null;
-      },
-      async getEpisodeByTranscriptHash() {
-        return null;
-      },
-      async upsertEpisode() {
-        throw new Error("not implemented");
-      },
+    const database = createDatabase({
       async listEpisodesByTimeWindow() {
         throw new Error("should not be called");
       },
-    };
+    });
 
     const results = await searchEpisodes(
       {
@@ -87,7 +69,128 @@ describe("searchEpisodes", () => {
 
     expect(results).toEqual([]);
   });
+
+  it("uses semantic episode search when no time window is provided", async () => {
+    const seen: { embedding?: number[]; limit?: number } = {};
+    const database = createDatabase({
+      async episodeVectorSearch(params) {
+        seen.embedding = params.embedding;
+        seen.limit = params.limit;
+        return [
+          {
+            episode: createEpisode({
+              id: "semantic-1",
+              summary: "We discussed hybrid semantic episode recall.",
+              embedding: [1, 0],
+            }),
+            vectorSim: 0.92,
+          },
+          {
+            episode: createEpisode({
+              id: "semantic-2",
+              summary: "We talked about unrelated maintenance.",
+              embedding: [0.6, 0.4],
+            }),
+            vectorSim: 0.61,
+          },
+        ];
+      },
+    });
+
+    const results = await searchEpisodes(
+      {
+        text: "hybrid semantic episode recall",
+        limit: 2,
+        embedding: [1, 0],
+      },
+      database,
+      new Date("2026-03-30T00:00:00.000Z"),
+    );
+
+    expect(seen).toEqual({
+      embedding: [1, 0],
+      limit: 2,
+    });
+    expect(results.map((result) => [result.episode.id, result.scores.semantic])).toEqual([
+      ["semantic-1", 0.92],
+      ["semantic-2", 0.61],
+    ]);
+  });
+
+  it("re-ranks temporal candidates semantically and keeps missing embeddings below embedded matches", async () => {
+    const database = createDatabase({
+      async listEpisodesByTimeWindow() {
+        return [
+          createEpisode({
+            id: "missing-embedding",
+            startedAt: "2026-03-29T08:00:00.000Z",
+            endedAt: "2026-03-29T20:00:00.000Z",
+            activityLevel: "substantial",
+          }),
+          createEpisode({
+            id: "best-semantic",
+            startedAt: "2026-03-29T00:00:00.000Z",
+            endedAt: "2026-03-30T00:00:00.000Z",
+            embedding: [1, 0],
+          }),
+          createEpisode({
+            id: "weak-semantic",
+            startedAt: "2026-03-29T09:00:00.000Z",
+            endedAt: "2026-03-29T11:00:00.000Z",
+            embedding: [0.3, 0.7],
+          }),
+        ];
+      },
+    });
+
+    const results = await searchEpisodes(
+      {
+        text: "what happened on agenr 2026-03-29",
+        limit: 3,
+        timeWindow: {
+          kind: "interval",
+          start: new Date("2026-03-29T00:00:00.000Z"),
+          end: new Date("2026-03-29T23:59:59.999Z"),
+          source: "inferred",
+        },
+        embedding: [1, 0],
+      },
+      database,
+      new Date("2026-03-30T00:00:00.000Z"),
+    );
+
+    expect(results.map((result) => result.episode.id)).toEqual(["best-semantic", "weak-semantic", "missing-embedding"]);
+    expect(results[0]?.scores.semantic).toBe(1);
+    expect(results[2]?.scores.semantic).toBe(0);
+  });
 });
+
+function createDatabase(overrides: Partial<EpisodeDatabasePort> = {}): EpisodeDatabasePort {
+  return {
+    async getEpisodeBySourceId() {
+      return null;
+    },
+    async getEpisodeByTranscriptHash() {
+      return null;
+    },
+    async upsertEpisode() {
+      throw new Error("not implemented");
+    },
+    async listEpisodesByTimeWindow() {
+      return [];
+    },
+    async episodeVectorSearch() {
+      return [];
+    },
+    async listEpisodesWithoutEmbeddings() {
+      return [];
+    },
+    async updateEpisodeEmbedding() {
+      return;
+    },
+    ...overrides,
+  };
+}
 
 function createEpisode(overrides: Partial<Episode>): Episode {
   const now = "2026-03-30T00:00:00.000Z";

@@ -7,7 +7,15 @@ import type { DatabasePort, EpisodeDatabasePort } from "../../core/ports.js";
 import type { EpisodeInput, TemporalWindow } from "../../core/episode/types.js";
 import type { Entry } from "../../core/types.js";
 import type { Episode, EpisodeSource } from "../../core/types.js";
-import { getEpisodeBySourceId, getEpisodeByTranscriptHash, listEpisodesByTimeWindow, upsertEpisode } from "./episode-queries.js";
+import {
+  episodeVectorSearch,
+  getEpisodeBySourceId,
+  getEpisodeByTranscriptHash,
+  listEpisodesByTimeWindow,
+  listEpisodesWithoutEmbeddings,
+  updateEpisodeEmbedding,
+  upsertEpisode,
+} from "./episode-queries.js";
 import {
   findExistingHashes,
   findExistingNormHashes,
@@ -111,6 +119,21 @@ class LibsqlDatabase implements SqlDatabase {
   /** Lists active episodes whose time range overlaps the requested window. */
   public async listEpisodesByTimeWindow(window: TemporalWindow, limit?: number): Promise<Episode[]> {
     return listEpisodesByTimeWindow(this.executor, window, limit);
+  }
+
+  /** Finds active episodes by vector similarity. */
+  public async episodeVectorSearch(params: { embedding: number[]; limit: number }): Promise<Array<{ episode: Episode; vectorSim: number }>> {
+    return episodeVectorSearch(this.executor, params);
+  }
+
+  /** Lists active episodes that are still missing embeddings. */
+  public async listEpisodesWithoutEmbeddings(limit?: number): Promise<Episode[]> {
+    return listEpisodesWithoutEmbeddings(this.executor, limit);
+  }
+
+  /** Updates only the embedding payload for one episode row. */
+  public async updateEpisodeEmbedding(id: string, embedding: number[]): Promise<void> {
+    await updateEpisodeEmbedding(this.executor, id, embedding);
   }
 
   /** Finds which normalized content hashes already exist in storage. */

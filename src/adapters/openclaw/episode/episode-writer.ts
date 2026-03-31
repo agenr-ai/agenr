@@ -5,7 +5,7 @@ import path from "node:path";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER, parseModelRef, resolveAgentEffectiveModelPrimary, resolveDefaultAgentId } from "openclaw/plugin-sdk/agent-runtime";
 import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
 
-import type { LlmPort } from "../../../core/ports.js";
+import type { EmbeddingPort, LlmPort } from "../../../core/ports.js";
 import { generateEpisodeSummary } from "../../../core/episode/summary-generator.js";
 import { formatErrorMessage, formatSessionContext } from "../logging.js";
 import { openClawTranscriptParser } from "../transcript/parser.js";
@@ -15,6 +15,8 @@ import { OPENCLAW_EPISODE_GENERATOR_VERSION } from "./episode-summary-prompt.js"
 
 const EPISODE_SUMMARY_TIMEOUT_MS = 45_000;
 const EPISODE_SUMMARY_TIMEOUT = Symbol("episode-summary-timeout");
+const EPISODE_EMBEDDING_TIMEOUT = Symbol("episode-embedding-timeout");
+const EPISODE_EMBEDDING_MIN_HEADROOM_MS = 5_000;
 
 /**
  * Error raised when the embedded OpenClaw summary generator exceeds its timeout.
@@ -60,6 +62,7 @@ export async function writeOpenClawPredecessorEpisode(params: {
   logger: PluginLogger;
 }): Promise<void> {
   const sessionContext = formatSessionContext(params.ctx.sessionId, params.ctx.sessionKey);
+  const writeStartedAtMs = Date.now();
   if (!params.predecessor) {
     params.logger.info(`[agenr] session-start predecessor episode write skipped for ${sessionContext} reason=no_predecessor`);
     return;
@@ -112,6 +115,15 @@ export async function writeOpenClawPredecessorEpisode(params: {
       return;
     }
 
+    const embedding = await maybeEmbedEpisodeSummary({
+      summary: structured.summary,
+      embedding: params.services.embedding,
+      embeddingAvailable: params.services.embeddingStatus.available,
+      logger: params.logger,
+      sessionContext,
+      predecessorFile: params.predecessor.sessionFile,
+      deadlineMs: writeStartedAtMs + EPISODE_SUMMARY_TIMEOUT_MS,
+    });
     const writeResult = await params.services.database.upsertEpisode({
       source: "openclaw",
       sourceId: params.predecessor.sessionId,
@@ -128,6 +140,7 @@ export async function writeOpenClawPredecessorEpisode(params: {
       genModel: episodeModel,
       genVersion: OPENCLAW_EPISODE_GENERATOR_VERSION,
       messageCount: cleanedMessages.length,
+      ...(embedding ? { embedding } : {}),
     });
 
     const actionMessage = writeResult.action === "inserted" ? "written" : writeResult.action === "updated" ? "updated" : "unchanged";
@@ -310,6 +323,65 @@ function formatResolvedEpisodeSummaryModel(provider: string, model: string): str
 }
 
 /**
+ * Best-effort inline episode embedding that respects the write timeout budget.
+ *
+ * @param params - Embedding dependencies and timeout budget facts.
+ * @returns Embedding vector, or undefined when unavailable or skipped.
+ */
+async function maybeEmbedEpisodeSummary(params: {
+  summary: string;
+  embedding: EmbeddingPort;
+  embeddingAvailable: boolean;
+  logger: PluginLogger;
+  sessionContext: string;
+  predecessorFile: string;
+  deadlineMs: number;
+}): Promise<number[] | undefined> {
+  if (!params.embeddingAvailable) {
+    params.logger.info(
+      `[agenr] session-start predecessor episode embedding skipped for ${params.sessionContext} predecessor=${params.predecessorFile} reason=embedding_unavailable`,
+    );
+    return undefined;
+  }
+
+  const remainingBudgetMs = params.deadlineMs - Date.now();
+  if (remainingBudgetMs < EPISODE_EMBEDDING_MIN_HEADROOM_MS) {
+    params.logger.info(
+      `[agenr] session-start predecessor episode embedding skipped for ${params.sessionContext} predecessor=${params.predecessorFile} reason=budget_tight remainingMs=${Math.max(
+        0,
+        remainingBudgetMs,
+      )}`,
+    );
+    return undefined;
+  }
+
+  try {
+    const result = await awaitEmbeddingWithTimeout(params.embedding.embed([params.summary]), remainingBudgetMs);
+    if (result === EPISODE_EMBEDDING_TIMEOUT) {
+      params.logger.info(
+        `[agenr] session-start predecessor episode embedding skipped for ${params.sessionContext} predecessor=${params.predecessorFile} reason=embedding_timeout budgetMs=${remainingBudgetMs}`,
+      );
+      return undefined;
+    }
+
+    const vector = result[0]?.map((value) => (Number.isFinite(value) ? value : 0));
+    if (!vector || vector.length === 0) {
+      params.logger.info(
+        `[agenr] session-start predecessor episode embedding skipped for ${params.sessionContext} predecessor=${params.predecessorFile} reason=empty_embedding`,
+      );
+      return undefined;
+    }
+
+    return vector;
+  } catch (error) {
+    params.logger.info(
+      `[agenr] session-start predecessor episode embedding skipped for ${params.sessionContext} predecessor=${params.predecessorFile} reason=${formatErrorMessage(error)}`,
+    );
+    return undefined;
+  }
+}
+
+/**
  * Resolves a promise while allowing the caller to abandon the result after a
  * timeout.
  *
@@ -321,6 +393,32 @@ async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Prom
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       resolve(EPISODE_SUMMARY_TIMEOUT);
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timeout);
+        reject(error);
+      },
+    );
+  });
+}
+
+/**
+ * Resolves an embedding request while capping it to the remaining time budget.
+ *
+ * @param promise - In-flight embedding call.
+ * @param timeoutMs - Maximum remaining time budget.
+ * @returns Embedding result or the embedding-timeout sentinel.
+ */
+async function awaitEmbeddingWithTimeout(promise: Promise<number[][]>, timeoutMs: number): Promise<number[][] | typeof EPISODE_EMBEDDING_TIMEOUT> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      resolve(EPISODE_EMBEDDING_TIMEOUT);
     }, timeoutMs);
 
     promise.then(

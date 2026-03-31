@@ -167,6 +167,18 @@ describe("initSchema", () => {
     expect(await indexExists(client, "idx_episodes_source_source_id")).toBe(true);
   });
 
+  it("is idempotent when episode vector index creation runs more than once", async () => {
+    const client = createClient({ url: ":memory:" });
+    clients.push(client);
+
+    await expect(initSchema(client)).resolves.toBeUndefined();
+    await expect(initSchema(client)).resolves.toBeUndefined();
+
+    const version = await client.execute("SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1");
+    expect(version.rows[0]?.value).toBe("4");
+    expect(await indexExists(client, "idx_episodes_started_at")).toBe(true);
+  });
+
   it("migrates schema version 2 entries to current semantics", async () => {
     const client = createClient({ url: ":memory:" });
     clients.push(client);

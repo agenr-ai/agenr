@@ -5,11 +5,12 @@ import * as clack from "@clack/prompts";
 import { InvalidArgumentError, Option, type Command } from "commander";
 
 import { createDatabase } from "../../adapters/db/client.js";
+import { EMBEDDING_MODEL, createEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../../adapters/embeddings.js";
 import { createLlmClient, resolveLlmApiKey, resolveModel } from "../../adapters/llm.js";
 import { loadOpenClawSessionRegistry } from "../../adapters/openclaw/session/session-registry.js";
 import { openClawTranscriptFiles } from "../../adapters/openclaw/session/transcript-files.js";
 import { openClawTranscriptParser } from "../../adapters/openclaw/transcript/parser.js";
-import { createEpisodeIngestPlan, executeEpisodeIngestPlan, prepareEpisodeIngest } from "../../app/episode-ingest/index.js";
+import { backfillEpisodeEmbeddings, createEpisodeIngestPlan, executeEpisodeIngestPlan, prepareEpisodeIngest } from "../../app/episode-ingest/index.js";
 import { readConfig, resolveDbPath } from "../../config.js";
 import { setVerbose } from "../../logger.js";
 import { banner, formatLabel, ui } from "../../ui.js";
@@ -22,12 +23,15 @@ const DEFAULT_EPISODE_INGEST_CONCURRENCY = 10;
 const MIN_EPISODE_INGEST_CONCURRENCY = 1;
 const MAX_EPISODE_INGEST_CONCURRENCY = 20;
 const RELEVANCE_SAMPLE_SIZE = 5;
+const EMBEDDING_SMALL_COST_PER_MILLION_TOKENS_USD = 0.02;
 
 /** CLI flags accepted by the `agenr ingest episodes` command. */
 interface IngestEpisodesCommandOptions {
   verbose?: boolean;
   dryRun?: boolean;
   regenerate?: boolean;
+  embedOnly?: boolean;
+  noEmbed?: boolean;
   recent?: string;
   concurrency?: number;
   db?: string;
@@ -41,18 +45,20 @@ interface IngestEpisodesCommandOptions {
  */
 export function registerIngestEpisodesCommand(parent: Command): void {
   parent
-    .command("episodes <path>")
+    .command("episodes [path]")
     .description("Generate and ingest episodic summaries for OpenClaw session transcripts")
     .option("--db <path>", "Database path override (default: agenr config)")
     .option("--recent <duration>", "Only process sessions ending within this period (for example 30d or 90d)")
     .option("--regenerate", "Re-generate summaries for sessions that already have episodes")
+    .option("--embed-only", "Backfill embeddings for episodes that are missing them")
+    .option("--no-embed", "Skip embedding generated episode summaries")
     .option("--dry-run", "Discover, filter, and estimate without generating or writing")
     .option("--verbose", "Show detailed per-session progress")
     .addOption(
       new Option("--concurrency <n>", "Max parallel summary generations").argParser(parseEpisodeIngestConcurrency).default(DEFAULT_EPISODE_INGEST_CONCURRENCY),
     )
     .option("--model <ref>", "Override summary generation model (provider/model or model)")
-    .action(async (targetPath: string, options: IngestEpisodesCommandOptions) => {
+    .action(async (targetPath: string | undefined, options: IngestEpisodesCommandOptions) => {
       const startedAt = Date.now();
       let db: SqlDatabase | null = null;
 
@@ -63,14 +69,32 @@ export function registerIngestEpisodesCommand(parent: Command): void {
         const now = new Date();
         const config = readConfig();
         const dbPath = resolveEpisodeDbPath(config, options.db);
-        const { provider, modelId } = resolveEpisodeModel(config, options.model);
-        const modelInfo = createEpisodeIngestSummaryModelInfo(provider, modelId);
-        const resolvedTargetPath = path.resolve(targetPath);
-        const sessionsDir = await resolveSessionsDirectory(resolvedTargetPath);
+        validateEpisodeIngestOptions(options, targetPath);
 
         db = await createDatabase(dbPath);
 
-        const ports = await createEpisodeIngestPorts(db, provider, modelId, sessionsDir);
+        if (options.embedOnly === true) {
+          await runEpisodeEmbeddingBackfill({
+            db,
+            config,
+            dbPath,
+            options,
+            startedAt,
+          });
+          return;
+        }
+
+        const normalizedTargetPath = targetPath?.trim();
+        if (!normalizedTargetPath) {
+          throw new InvalidArgumentError("Path is required unless --embed-only is set.");
+        }
+
+        const { provider, modelId } = resolveEpisodeModel(config, options.model);
+        const modelInfo = createEpisodeIngestSummaryModelInfo(provider, modelId);
+        const resolvedTargetPath = path.resolve(normalizedTargetPath);
+        const sessionsDir = await resolveSessionsDirectory(resolvedTargetPath);
+        const ports = await createEpisodeIngestPorts(db, sessionsDir);
+        const embeddingSetup = resolveEpisodeEmbeddingSetup(config, options);
 
         if (options.verbose === true) {
           clack.log.step(`Preparing episode ingest for ${resolvedTargetPath}...`);
@@ -117,6 +141,7 @@ export function registerIngestEpisodesCommand(parent: Command): void {
 
         printEpisodeIngestSummary({
           dbPath,
+          embeddingStatus: embeddingSetup.statusLabel,
           modelRef: modelInfo.modelRef,
           targetPath: resolvedTargetPath,
           preflight,
@@ -139,6 +164,7 @@ export function registerIngestEpisodesCommand(parent: Command): void {
         const llmApiKey = resolveLlmApiKey(config, provider);
         const executionPorts: EpisodeIngestPorts = {
           ...ports,
+          embedding: embeddingSetup.port,
           createSummaryLlm: () => createEpisodeIngestSummaryLlm(provider, modelId, llmApiKey),
         };
 
@@ -196,16 +222,114 @@ export function registerIngestEpisodesCommand(parent: Command): void {
 }
 
 /** Creates the adapter bundle used by the episode-ingest services. */
-async function createEpisodeIngestPorts(db: SqlDatabase, provider: string, modelId: string, sessionsDir: string): Promise<EpisodeIngestPorts> {
+async function createEpisodeIngestPorts(db: SqlDatabase, sessionsDir: string): Promise<EpisodeIngestPorts> {
   const sessionRegistry = await loadOpenClawSessionRegistry(sessionsDir);
 
   return {
     files: openClawTranscriptFiles,
     transcript: openClawTranscriptParser,
     episodes: db,
-    createSummaryLlm: () => createEpisodeIngestSummaryLlm(provider, modelId),
     sessionRegistry,
   };
+}
+
+/** Validates mutually exclusive CLI flags and required arguments. */
+function validateEpisodeIngestOptions(options: IngestEpisodesCommandOptions, targetPath: string | undefined): void {
+  if (options.embedOnly === true && options.noEmbed === true) {
+    throw new InvalidArgumentError("--embed-only cannot be combined with --no-embed.");
+  }
+
+  if (options.embedOnly !== true && !targetPath?.trim()) {
+    throw new InvalidArgumentError("Path is required unless --embed-only is set.");
+  }
+}
+
+/** Runs the embedding-only backfill flow for episodes missing vectors. */
+async function runEpisodeEmbeddingBackfill(params: {
+  db: SqlDatabase;
+  config: AgenrConfig | undefined;
+  dbPath: string;
+  options: IngestEpisodesCommandOptions;
+  startedAt: number;
+}): Promise<void> {
+  const embeddingModel = resolveEmbeddingModel(params.config);
+  const embeddingPort = createEmbeddingClient(resolveEmbeddingApiKey(params.config), embeddingModel);
+  const ports: EpisodeIngestPorts = {
+    files: openClawTranscriptFiles,
+    transcript: openClawTranscriptParser,
+    episodes: params.db,
+    embedding: embeddingPort,
+  };
+  const missingEpisodes = await params.db.listEpisodesWithoutEmbeddings();
+
+  printEpisodeEmbeddingBackfillSummary({
+    dbPath: params.dbPath,
+    model: embeddingModel,
+    missing: missingEpisodes.length,
+    concurrency: params.options.concurrency ?? DEFAULT_EPISODE_INGEST_CONCURRENCY,
+    dryRun: params.options.dryRun === true,
+  });
+
+  if (missingEpisodes.length === 0) {
+    clack.outro("Nothing to do: no active episodes are missing embeddings.");
+    return;
+  }
+
+  if (params.options.dryRun === true) {
+    clack.outro(`Dry run complete: ${missingEpisodes.length} ${pluralize(missingEpisodes.length, "episode")} need embeddings.`);
+    return;
+  }
+
+  const spinner = params.options.verbose === true ? null : clack.spinner();
+  spinner?.start(`Embedding episodes... (0/${missingEpisodes.length})`);
+
+  const result = await backfillEpisodeEmbeddings(ports, {
+    concurrency: params.options.concurrency ?? DEFAULT_EPISODE_INGEST_CONCURRENCY,
+    onProgress: (completed, total, episode, status) => {
+      if (spinner) {
+        spinner.message(`Embedding episodes... (${completed}/${total})`);
+      } else {
+        clack.log.step(`${completed}/${total} ${episode.sourceId ?? episode.id}: ${status}`);
+      }
+    },
+  });
+
+  spinner?.stop("Episode embedding backfill complete.");
+
+  const estimatedCost = estimateEpisodeEmbeddingCost(result.estimatedInputTokens, embeddingModel);
+  const summaryParts = [`Done: ${result.embedded} ${pluralize(result.embedded, "episode")} embedded.`];
+  if (result.failed > 0) {
+    summaryParts.push(`${result.failed} failed.`);
+  }
+
+  clack.outro(`${summaryParts.join(" ")} (${formatCost(estimatedCost)}, ${formatDurationMs(Date.now() - params.startedAt)})`);
+}
+
+/** Resolves the optional episode-summary embedding client for normal ingest. */
+export function resolveEpisodeEmbeddingSetup(
+  config: AgenrConfig | undefined,
+  options: IngestEpisodesCommandOptions,
+): {
+  port?: EpisodeIngestPorts["embedding"];
+  statusLabel: string;
+} {
+  if (options.noEmbed === true) {
+    return {
+      statusLabel: "skipped (--no-embed)",
+    };
+  }
+
+  try {
+    const model = resolveEmbeddingModel(config);
+    return {
+      port: createEmbeddingClient(resolveEmbeddingApiKey(config), model),
+      statusLabel: `enabled (${model})`,
+    };
+  } catch (error) {
+    return {
+      statusLabel: `skipped (${formatUnknownError(error)})`,
+    };
+  }
 }
 
 /** Creates a Stage 2 model-info payload from one provider/model pair. */
@@ -362,17 +486,19 @@ async function countRows(db: SqlDatabase, sql: string, args: Array<string | numb
 /** Prints the Stage 1 and Stage 2 summary before any LLM execution starts. */
 function printEpisodeIngestSummary(params: {
   dbPath: string;
+  embeddingStatus: string;
   modelRef: string;
   targetPath: string;
   preflight: Awaited<ReturnType<typeof prepareEpisodeIngest>>;
   plan: ReturnType<typeof createEpisodeIngestPlan>;
   options: IngestEpisodesCommandOptions;
 }): void {
-  const { dbPath, modelRef, targetPath, preflight, plan, options } = params;
+  const { dbPath, embeddingStatus, modelRef, targetPath, preflight, plan, options } = params;
   const lines = [
     formatLabel("Target", targetPath),
     formatLabel("Database", dbPath),
     formatLabel("Model", modelRef),
+    formatLabel("Embeddings", embeddingStatus),
     formatLabel("Files", `${preflight.totals.discovered} ${pluralize(preflight.totals.discovered, "file")} discovered`),
     formatLabel("Candidates", `${plan.candidates.length} selected from ${preflight.totals.candidates} preflight candidates`),
     formatLabel("Preflight", formatPreflightTail(preflight)),
@@ -389,6 +515,22 @@ function printEpisodeIngestSummary(params: {
   }
 
   if (options.dryRun === true) {
+    lines.push(formatLabel("Mode", "dry run"));
+  }
+
+  clack.log.info(lines.join("\n"));
+}
+
+/** Prints the embedding-only backfill summary before execution starts. */
+function printEpisodeEmbeddingBackfillSummary(params: { dbPath: string; model: string; missing: number; concurrency: number; dryRun: boolean }): void {
+  const lines = [
+    formatLabel("Database", params.dbPath),
+    formatLabel("Embeddings", params.model),
+    formatLabel("Episodes", `${params.missing} missing embeddings`),
+    formatLabel("Concurrency", `${params.concurrency}`),
+  ];
+
+  if (params.dryRun) {
     lines.push(formatLabel("Mode", "dry run"));
   }
 
@@ -459,6 +601,15 @@ function formatDurationMs(durationMs: number): string {
 /** Formats a USD cost value for CLI output. */
 function formatCost(cost: number): string {
   return `$${cost.toFixed(4)}`;
+}
+
+/** Estimates embedding cost for known models from coarse token counts. */
+function estimateEpisodeEmbeddingCost(inputTokens: number, model: string): number {
+  if (model !== EMBEDDING_MODEL) {
+    return 0;
+  }
+
+  return (inputTokens / 1_000_000) * EMBEDDING_SMALL_COST_PER_MILLION_TOKENS_USD;
 }
 
 /** Returns a singular or plural noun based on the provided count. */

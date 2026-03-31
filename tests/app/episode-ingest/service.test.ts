@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { buildEpisodeSummaryPrompt, EPISODE_SUMMARY_SYSTEM_PROMPT } from "../../../src/core/episode/summary-prompt.js";
-import { createEpisodeIngestPlan, executeEpisodeIngestPlan, prepareEpisodeIngest } from "../../../src/app/episode-ingest/index.js";
+import { backfillEpisodeEmbeddings, createEpisodeIngestPlan, executeEpisodeIngestPlan, prepareEpisodeIngest } from "../../../src/app/episode-ingest/index.js";
 import type {
   EpisodeIngestFilePort,
   EpisodeIngestLlmPort,
@@ -12,7 +12,7 @@ import type {
 } from "../../../src/app/episode-ingest/ports.js";
 import type { EpisodeIngestCandidate } from "../../../src/app/episode-ingest/types.js";
 import type { EpisodeInput, EpisodeUpsertResult } from "../../../src/core/episode/types.js";
-import type { EpisodeDatabasePort, TranscriptPort } from "../../../src/core/ports.js";
+import type { EmbeddingPort, EpisodeDatabasePort, TranscriptPort } from "../../../src/core/ports.js";
 import type { Episode, ParsedTranscript } from "../../../src/core/types.js";
 
 describe("prepareEpisodeIngest", () => {
@@ -539,6 +539,43 @@ describe("executeEpisodeIngestPlan", () => {
     });
   });
 
+  it("embeds generated summaries at write time when an embedding port is available", async () => {
+    const database = new MockEpisodeDatabase(
+      {},
+      {
+        upsertHandler: async (input) => createUpsertResult(input, "inserted", "episode-embedded"),
+      },
+    );
+    const embedding = new MockEmbeddingPort({
+      vectors: [[0.25, 0.75]],
+    });
+
+    await executeEpisodeIngestPlan(
+      buildPlan([
+        buildCandidate({
+          filePath: "/tmp/embedded.jsonl",
+          sessionId: "embedded",
+        }),
+      ]),
+      createPorts({
+        episodes: database,
+        embedding,
+        createSummaryLlm: createSummaryLlmFactory([{ response: buildSummaryJson("Embed this generated summary.") }]),
+      }),
+      {
+        concurrency: 1,
+        genVersion: "cli-episodic-summary-v1",
+      },
+    );
+
+    expect(embedding.seenTexts).toEqual(["Embed this generated summary."]);
+    expect(database.upsertInputs[0]).toEqual(
+      expect.objectContaining({
+        embedding: [0.25, 0.75],
+      }),
+    );
+  });
+
   it("maps write outcomes, continues after failures, and reports progress", async () => {
     const database = new MockEpisodeDatabase(
       {},
@@ -716,6 +753,105 @@ describe("executeEpisodeIngestPlan", () => {
       }),
     );
   });
+
+  it("skips summary embeddings when no embedding port is provided or embedding fails", async () => {
+    const databaseWithoutEmbedding = new MockEpisodeDatabase(
+      {},
+      {
+        upsertHandler: async (input) => createUpsertResult(input, "inserted", "episode-no-embedding"),
+      },
+    );
+    const databaseWithFailure = new MockEpisodeDatabase(
+      {},
+      {
+        upsertHandler: async (input) => createUpsertResult(input, "inserted", "episode-embedding-failed"),
+      },
+    );
+
+    await executeEpisodeIngestPlan(
+      buildPlan([buildCandidate({ filePath: "/tmp/no-embedding.jsonl", sessionId: "no-embedding" })]),
+      createPorts({
+        episodes: databaseWithoutEmbedding,
+        createSummaryLlm: createSummaryLlmFactory([{ response: buildSummaryJson("No embedding provider is configured.") }]),
+      }),
+      {
+        concurrency: 1,
+        genVersion: "cli-episodic-summary-v1",
+      },
+    );
+
+    await executeEpisodeIngestPlan(
+      buildPlan([buildCandidate({ filePath: "/tmp/embedding-failed.jsonl", sessionId: "embedding-failed" })]),
+      createPorts({
+        episodes: databaseWithFailure,
+        embedding: new MockEmbeddingPort({
+          error: new Error("embedding exploded"),
+        }),
+        createSummaryLlm: createSummaryLlmFactory([{ response: buildSummaryJson("Embedding failure should not block writes.") }]),
+      }),
+      {
+        concurrency: 1,
+        genVersion: "cli-episodic-summary-v1",
+      },
+    );
+
+    expect(databaseWithoutEmbedding.upsertInputs[0]?.embedding).toBeUndefined();
+    expect(databaseWithFailure.upsertInputs[0]?.embedding).toBeUndefined();
+  });
+});
+
+describe("backfillEpisodeEmbeddings", () => {
+  it("backfills missing episode embeddings without using the summary generator", async () => {
+    const database = new MockEpisodeDatabase({
+      withoutEmbeddings: [
+        buildEpisode({
+          id: "episode-a",
+          sourceId: "session-a",
+          summary: "Episode A needs an embedding.",
+          embedding: undefined,
+        }),
+        buildEpisode({
+          id: "episode-b",
+          sourceId: "session-b",
+          summary: "Episode B also needs an embedding.",
+          embedding: undefined,
+        }),
+      ],
+    });
+    const embedding = new MockEmbeddingPort((texts) => texts.map((text, index) => [text.length, index]));
+    const progress: Array<[number, number, string, string]> = [];
+
+    const result = await backfillEpisodeEmbeddings(
+      createPorts({
+        episodes: database,
+        embedding,
+        createSummaryLlm: undefined,
+      }),
+      {
+        concurrency: 1,
+        onProgress: (completed, total, episode, status) => {
+          progress.push([completed, total, episode.id, status]);
+        },
+      },
+    );
+
+    expect(embedding.seenTexts).toEqual(["Episode A needs an embedding.", "Episode B also needs an embedding."]);
+    expect(database.updatedEmbeddings).toEqual([
+      { id: "episode-a", embedding: [29, 0] },
+      { id: "episode-b", embedding: [34, 0] },
+    ]);
+    expect(result).toEqual({
+      totalMissing: 2,
+      attempted: 2,
+      embedded: 2,
+      failed: 0,
+      estimatedInputTokens: expect.any(Number),
+    });
+    expect(progress).toEqual([
+      [1, 2, "episode-a", "embedded"],
+      [2, 2, "episode-b", "embedded"],
+    ]);
+  });
 });
 
 function createPorts(overrides: Partial<EpisodeIngestPorts> = {}): EpisodeIngestPorts {
@@ -723,6 +859,7 @@ function createPorts(overrides: Partial<EpisodeIngestPorts> = {}): EpisodeIngest
     files: overrides.files ?? new MockEpisodeFiles([]),
     transcript: overrides.transcript ?? new MockTranscriptPort({}),
     episodes: overrides.episodes ?? new MockEpisodeDatabase(),
+    embedding: overrides.embedding,
     createSummaryLlm: overrides.createSummaryLlm ?? createSummaryLlmFactory([]),
     sessionRegistry: overrides.sessionRegistry,
   };
@@ -763,6 +900,7 @@ class MockTranscriptPort implements TranscriptPort {
 
 class MockEpisodeDatabase implements EpisodeDatabasePort {
   public readonly upsertInputs: EpisodeInput[] = [];
+  public readonly updatedEmbeddings: Array<{ id: string; embedding: number[] }> = [];
   private readonly upsertQueue: EpisodeUpsertResult[];
   private readonly upsertHandler?: (input: EpisodeInput, index: number) => Promise<EpisodeUpsertResult> | EpisodeUpsertResult;
 
@@ -770,6 +908,7 @@ class MockEpisodeDatabase implements EpisodeDatabasePort {
     private readonly episodes: {
       bySourceId?: Record<string, Episode>;
       byTranscriptHash?: Record<string, Episode>;
+      withoutEmbeddings?: Episode[];
     } = {},
     options: {
       upsertQueue?: EpisodeUpsertResult[];
@@ -805,6 +944,44 @@ class MockEpisodeDatabase implements EpisodeDatabasePort {
 
   public async listEpisodesByTimeWindow(): Promise<Episode[]> {
     return [];
+  }
+
+  public async episodeVectorSearch(): Promise<Array<{ episode: Episode; vectorSim: number }>> {
+    return [];
+  }
+
+  public async listEpisodesWithoutEmbeddings(): Promise<Episode[]> {
+    return [...(this.episodes.withoutEmbeddings ?? [])];
+  }
+
+  public async updateEpisodeEmbedding(id: string, embedding: number[]): Promise<void> {
+    this.updatedEmbeddings.push({ id, embedding });
+  }
+}
+
+class MockEmbeddingPort implements EmbeddingPort {
+  public readonly seenTexts: string[] = [];
+
+  public constructor(
+    private readonly behavior:
+      | {
+          vectors?: number[][];
+          error?: Error;
+        }
+      | ((texts: string[]) => Promise<number[][]> | number[][]) = {},
+  ) {}
+
+  public async embed(texts: string[]): Promise<number[][]> {
+    this.seenTexts.push(...texts);
+    if (typeof this.behavior === "function") {
+      return await this.behavior(texts);
+    }
+
+    if (this.behavior.error) {
+      throw this.behavior.error;
+    }
+
+    return this.behavior.vectors ?? texts.map((_text, index) => [index + 1, 0]);
   }
 }
 

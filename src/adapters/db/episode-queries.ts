@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 
 import type { EpisodeInput, EpisodeUpsertResult, TemporalWindow } from "../../core/episode/types.js";
 import type { Episode, EpisodeActivityLevel, EpisodeSource } from "../../core/types.js";
-import { buildActiveEpisodeClause, mapEpisodeRow, serializeEmbeddingForVector, serializeTags } from "./row-mapping.js";
+import { buildActiveEpisodeClause, cosineSimilarity, mapEpisodeRow, serializeEmbeddingForVector, serializeTags } from "./row-mapping.js";
 import type { SqlExecutor } from "./queries.js";
 
 const EPISODE_SELECT_COLUMNS = `
@@ -311,6 +311,104 @@ export async function listEpisodesByTimeWindow(executor: SqlExecutor, window: Te
 }
 
 /**
+ * Finds active episodes by vector similarity to a query embedding.
+ *
+ * @param executor - SQL executor used for vector search.
+ * @param params - Query embedding and maximum result count.
+ * @returns Ranked episode candidates with cosine similarity scores.
+ */
+export async function episodeVectorSearch(
+  executor: SqlExecutor,
+  params: {
+    embedding: number[];
+    limit: number;
+  },
+): Promise<Array<{ episode: Episode; vectorSim: number }>> {
+  if (params.limit <= 0 || params.embedding.length === 0) {
+    return [];
+  }
+
+  const serializedEmbedding = serializeEmbeddingForVector(params.embedding);
+  if (!serializedEmbedding) {
+    return [];
+  }
+
+  let result;
+  try {
+    result = await executor.execute({
+      sql: `
+        SELECT ${EPISODE_SELECT_COLUMNS}
+        FROM vector_top_k('idx_episodes_embedding', vector32(?), ?) AS v
+        JOIN episodes AS e ON e.rowid = v.id
+        WHERE ${buildActiveEpisodeClause("e")}
+        LIMIT ?
+      `,
+      args: [serializedEmbedding, params.limit, params.limit],
+    });
+  } catch (error) {
+    throw wrapEpisodeVectorError(error);
+  }
+
+  return result.rows
+    .map((row) => {
+      const episode = mapEpisodeRow(row);
+      return {
+        episode,
+        vectorSim: cosineSimilarity(params.embedding, episode.embedding ?? []),
+      };
+    })
+    .filter((candidate) => candidate.vectorSim > 0)
+    .sort((left, right) => right.vectorSim - left.vectorSim)
+    .slice(0, params.limit);
+}
+
+/**
+ * Lists active episodes that do not yet have an embedding vector.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @param limit - Optional maximum row count.
+ * @returns Episodes still missing embeddings, newest first.
+ */
+export async function listEpisodesWithoutEmbeddings(executor: SqlExecutor, limit?: number): Promise<Episode[]> {
+  const normalizedLimit = normalizePositiveInteger(limit);
+  const result = await executor.execute({
+    sql: `
+      SELECT ${EPISODE_SELECT_COLUMNS}
+      FROM episodes
+      WHERE ${buildActiveEpisodeClause()}
+        AND embedding IS NULL
+      ORDER BY started_at DESC, id ASC
+      ${normalizedLimit ? "LIMIT ?" : ""}
+    `,
+    args: normalizedLimit ? [normalizedLimit] : [],
+  });
+
+  return result.rows.map((row) => mapEpisodeRow(row));
+}
+
+/**
+ * Updates only the embedding column for one episode row.
+ *
+ * @param executor - SQL executor used for the update.
+ * @param id - Episode identifier.
+ * @param embedding - Embedding vector to persist.
+ * @returns Promise that resolves after the update is committed.
+ */
+export async function updateEpisodeEmbedding(executor: SqlExecutor, id: string, embedding: number[]): Promise<void> {
+  const now = new Date().toISOString();
+  const vectorJson = serializeEmbeddingForVector(embedding);
+  await executor.execute({
+    sql: `
+      UPDATE episodes
+      SET embedding = CASE WHEN ? IS NULL THEN NULL ELSE vector32(?) END,
+          updated_at = ?
+      WHERE id = ?
+    `,
+    args: [vectorJson, vectorJson, now, id],
+  });
+}
+
+/**
  * Builds the deterministic payload hash stored in `summary_hash`.
  *
  * @param payload - Normalized episode payload.
@@ -584,6 +682,12 @@ function normalizePositiveInteger(value: number | undefined): number | undefined
   }
 
   return normalized;
+}
+
+/** Wraps episode vector-search failures in a consistent adapter error. */
+function wrapEpisodeVectorError(error: unknown): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  return new Error(`Episode vector search is unavailable: ${message}`);
 }
 
 /**

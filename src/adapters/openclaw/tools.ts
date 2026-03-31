@@ -334,6 +334,12 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
           recall: services.recall,
           embeddingAvailable: services.embeddingStatus.available,
           embeddingError: services.embeddingStatus.error,
+          embedQuery: services.embeddingStatus.available
+            ? async (text: string) => {
+                const vectors = await services.embedding.embed([text]);
+                return vectors[0] ?? [];
+              }
+            : undefined,
         });
         logger.info(`[agenr] tool=agenr_recall ${formatToolSessionContext(ctx)} result: ${formatUnifiedRecallLogSummary(result)}`);
 
@@ -357,7 +363,7 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
             score: episode.score,
             activityLevel: episode.episode.activityLevel,
             summary: episode.episode.summary,
-            whyMatched: "Session overlaps the resolved time window.",
+            whyMatched: describeEpisodeMatch(episode),
           })),
           entries: result.entries.map((entry) => ({
             id: entry.entry.id,
@@ -826,7 +832,7 @@ function formatUnifiedRecallResults(result: UnifiedRecallResult): string {
         `${index + 1}. ${episode.episode.id} | ${episode.episode.source} | ${episode.episode.startedAt} -> ${episode.episode.endedAt ?? episode.episode.startedAt} | score ${episode.score.toFixed(2)}`,
       );
       lines.push(`   ${index < 3 ? episode.episode.summary.trim() : truncate(episode.episode.summary.trim(), 220)}`);
-      lines.push("   why_matched=Session overlaps the resolved time window.");
+      lines.push(`   why_matched=${describeEpisodeMatch(episode)}`);
     }
   }
   lines.push("");
@@ -863,6 +869,23 @@ function formatUnifiedRecallLogSummary(result: UnifiedRecallResult): string {
   return `${result.episodes.length} episode${result.episodes.length === 1 ? "" : "s"}, ${result.entries.length} entr${
     result.entries.length === 1 ? "y" : "ies"
   }${suffix}`;
+}
+
+/** Formats a short explanation for why an episode matched recall. */
+function describeEpisodeMatch(result: UnifiedRecallResult["episodes"][number]): string {
+  if (result.scores.semantic > 0 && result.scores.temporal > 0) {
+    return "Semantic match within the resolved time window.";
+  }
+
+  if (result.scores.semantic > 0) {
+    return "Semantic match to the episode summary.";
+  }
+
+  if (result.scores.temporal > 0) {
+    return "Session overlaps the resolved time window.";
+  }
+
+  return "Matched episodic recall ranking.";
 }
 
 /** Formats the limited Phase 1 provenance view returned by `agenr_trace`. */

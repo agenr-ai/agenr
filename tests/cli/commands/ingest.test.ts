@@ -83,21 +83,19 @@ describe("registerIngestCommand", () => {
     );
   });
 
-  it("requires the episodes path argument", async () => {
+  it("allows omitting the episodes path when --embed-only is used", () => {
     const program = new Command();
     registerIngestCommand(program);
 
     const episodesCommand = requireSubcommand(program, "episodes");
+    const parsed = episodesCommand.parseOptions(["--embed-only"]);
 
-    episodesCommand.configureOutput({
-      writeErr: () => {},
-      outputError: () => {},
-    });
-    episodesCommand.exitOverride();
-
-    await expect(episodesCommand.parseAsync([], { from: "user" })).rejects.toMatchObject({
-      code: "commander.missingArgument",
-    });
+    expect(parsed.operands).toEqual([]);
+    expect(episodesCommand.opts()).toEqual(
+      expect.objectContaining({
+        embedOnly: true,
+      }),
+    );
   });
 
   it("parses episode ingest options", () => {

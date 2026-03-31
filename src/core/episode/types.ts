@@ -55,12 +55,13 @@ export interface ResolvedTemporalWindow {
 }
 
 /**
- * Episode-query shape accepted by the temporal recall pipeline.
+ * Episode-query shape accepted by the episodic recall pipeline.
  */
 export interface EpisodeQuery {
   text: string;
   limit?: number;
-  timeWindow: TemporalWindow;
+  timeWindow?: TemporalWindow;
+  embedding?: number[];
 }
 
 /**

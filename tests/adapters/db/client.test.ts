@@ -420,6 +420,74 @@ describe("createDatabase", () => {
     expect(episodes[0]?.sourceId).toBe("episode-b");
   });
 
+  it("lists episodes missing embeddings and updates embeddings in place", async () => {
+    vi.useFakeTimers();
+
+    const database = await createTestDatabase();
+    vi.setSystemTime(new Date("2026-03-30T12:00:00.000Z"));
+    const missing = await database.upsertEpisode(
+      createEpisodeInput({
+        sourceId: "missing-embedding",
+        transcriptHash: "missing-embedding-hash",
+        summary: "This episode still needs an embedding.",
+      }),
+    );
+    const embedded = await database.upsertEpisode(
+      createEpisodeInput({
+        sourceId: "has-embedding",
+        transcriptHash: "has-embedding-hash",
+        summary: "This episode already has an embedding.",
+        embedding: createEmbedding(0, 1),
+      }),
+    );
+
+    const missingEpisodes = await database.listEpisodesWithoutEmbeddings();
+    expect(missingEpisodes.map((episode) => episode.id)).toEqual([missing.episode.id]);
+
+    vi.setSystemTime(new Date("2026-03-30T13:00:00.000Z"));
+    await database.updateEpisodeEmbedding(missing.episode.id, createEmbedding(1, 1));
+
+    const updated = await database.getEpisodeBySourceId("openclaw", "missing-embedding");
+    expect(updated?.embedding?.[1]).toBeCloseTo(1);
+    expect(updated?.updatedAt).toBe("2026-03-30T13:00:00.000Z");
+
+    const remainingMissing = await database.listEpisodesWithoutEmbeddings();
+    expect(remainingMissing).toEqual([]);
+    expect(embedded.episode.embedding?.[0]).toBeCloseTo(1);
+  });
+
+  it("returns vector-ranked episode matches when vector search is supported", async () => {
+    const database = await createTestDatabase();
+    await database.upsertEpisode(
+      createEpisodeInput({
+        sourceId: "semantic-left",
+        transcriptHash: "semantic-left-hash",
+        summary: "Left semantic episode.",
+        embedding: createEmbedding(0, 1),
+      }),
+    );
+    await database.upsertEpisode(
+      createEpisodeInput({
+        sourceId: "semantic-right",
+        transcriptHash: "semantic-right-hash",
+        summary: "Right semantic episode.",
+        embedding: createEmbedding(1, 1),
+      }),
+    );
+
+    try {
+      const results = await database.episodeVectorSearch({
+        embedding: createEmbedding(0, 1),
+        limit: 2,
+      });
+      expect(results.length).toBeGreaterThan(0);
+      expect(results[0]?.episode.sourceId).toBe("semantic-left");
+      expect(results[0]?.vectorSim).toBeGreaterThan(0);
+    } catch (error) {
+      expect(String(error)).toMatch(/episode vector search is unavailable/i);
+    }
+  });
+
   async function createTestDatabase(): Promise<SqlDatabase> {
     // libSQL opens separate logical connections for transactions, so temp files
     // are more stable than raw :memory: databases for adapter-level tests.
@@ -484,6 +552,7 @@ function createEpisodeInput(
     activityLevel: "substantial" | "minimal" | "none";
     project: string | undefined;
     surface: string | undefined;
+    embedding: number[];
   }> = {},
 ) {
   const sourceId = "sourceId" in overrides ? overrides.sourceId : "session-default";
@@ -500,5 +569,6 @@ function createEpisodeInput(
     activityLevel: overrides.activityLevel ?? "substantial",
     ...(overrides.project !== undefined ? { project: overrides.project } : {}),
     ...(overrides.surface !== undefined ? { surface: overrides.surface } : {}),
+    ...(overrides.embedding !== undefined ? { embedding: overrides.embedding } : {}),
   };
 }

@@ -353,9 +353,28 @@ describe("agenr OpenClaw tools", () => {
     expect(result.content[0]?.text).toContain("requested=auto detected=mixed queried=entries, episodes");
   });
 
-  it("returns notices instead of semantic fallback when mode=episodes has no time window", async () => {
+  it("uses semantic episode search when mode=episodes has no time window", async () => {
     const database = await createTestDatabase();
     const logger = createLogger();
+    const semanticEpisode = await database.upsertEpisode({
+      source: "openclaw",
+      sourceId: "semantic-episode",
+      transcriptHash: "semantic-episode-hash",
+      startedAt: "2026-03-29T09:00:00.000Z",
+      endedAt: "2026-03-29T10:00:00.000Z",
+      summary: "We added semantic episode search for recall without a time window.",
+      tags: ["episodes", "semantic"],
+      activityLevel: "substantial",
+    });
+    vi.spyOn(database, "episodeVectorSearch").mockResolvedValue([
+      {
+        episode: {
+          ...semanticEpisode.episode,
+          embedding: [1, 0],
+        },
+        vectorSim: 0.93,
+      },
+    ]);
     const services = createServices(database, {
       available: true,
       recall: createExactRecallPorts([
@@ -374,21 +393,23 @@ describe("agenr OpenClaw tools", () => {
 
     expect(result.details).toMatchObject({
       status: "ok",
-      count: 0,
+      count: 1,
       routing: {
         requested: "episodes",
         queried: ["episodes"],
       },
-      episodes: [],
-      entries: [],
-      notices: [
-        expect.stringContaining("Episodes cover consolidated prior sessions only"),
-        expect.stringContaining("Episode recall needs a supported time phrase"),
+      episodes: [
+        expect.objectContaining({
+          sourceId: "semantic-episode",
+          whyMatched: "Semantic match to the episode summary.",
+        }),
       ],
+      entries: [],
+      notices: [expect.stringContaining("Episodes cover consolidated prior sessions only")],
     });
     expect(result.content[0]?.text).toContain("Episode Matches");
-    expect(result.content[0]?.text).toContain("None.");
-    expect(result.content[0]?.text).toContain("Notices");
+    expect(result.content[0]?.text).toContain("We added semantic episode search for recall without a time window.");
+    expect(result.content[0]?.text).toContain("Semantic match to the episode summary.");
   });
 
   it("traces the most recent entry when last is true", async () => {

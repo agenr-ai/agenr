@@ -11,6 +11,11 @@ const SCHEMA_VERSION = "4";
 const VECTOR_INDEX_NAME = "idx_entries_embedding";
 
 /**
+ * libSQL vector index name for episode embeddings.
+ */
+const EPISODE_VECTOR_INDEX_NAME = "idx_episodes_embedding";
+
+/**
  * Metadata key used to detect interrupted bulk-write phases.
  */
 const BULK_WRITE_STATE_META_KEY = "bulk_write_state";
@@ -328,6 +333,23 @@ const CREATE_ENTRIES_EMBEDDING_INDEX_SQL = `
     AND superseded_by IS NULL
 `;
 
+/**
+ * SQL statement that recreates the libSQL vector index for episode embeddings.
+ */
+const CREATE_EPISODES_EMBEDDING_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_episodes_embedding ON episodes (
+    libsql_vector_idx(
+      embedding,
+      'metric=cosine',
+      'compress_neighbors=float8',
+      'max_neighbors=50'
+    )
+  )
+  WHERE embedding IS NOT NULL
+    AND retired = 0
+    AND superseded_by IS NULL
+`;
+
 const SCHEMA_STATEMENTS = [
   CREATE_ENTRIES_TABLE_SQL,
   CREATE_ENTRIES_FTS_TABLE_SQL,
@@ -365,6 +387,8 @@ export {
   CREATE_ENTRIES_FTS_DELETE_TRIGGER_SQL,
   CREATE_ENTRIES_FTS_INSERT_TRIGGER_SQL,
   CREATE_ENTRIES_FTS_UPDATE_TRIGGER_SQL,
+  CREATE_EPISODES_EMBEDDING_INDEX_SQL,
+  EPISODE_VECTOR_INDEX_NAME,
   SCHEMA_VERSION,
   VECTOR_INDEX_NAME,
 };
@@ -412,7 +436,7 @@ export async function initSchema(db: Client): Promise<void> {
     await rebuildFts(db);
   }
 
-  await ensureVectorIndex(db);
+  await ensureVectorIndexes(db);
 }
 
 /**
@@ -551,7 +575,7 @@ export async function prepareBulkWrites(db: Client): Promise<void> {
     await db.execute("DROP TRIGGER IF EXISTS entries_ai");
     await db.execute("DROP TRIGGER IF EXISTS entries_ad");
     await db.execute("DROP TRIGGER IF EXISTS entries_au");
-    await dropVectorIndex(db);
+    await dropVectorIndexes(db);
   });
 }
 
@@ -567,7 +591,7 @@ export async function finalizeBulkWrites(db: Client): Promise<void> {
     await db.execute(CREATE_ENTRIES_FTS_DELETE_TRIGGER_SQL);
     await db.execute(CREATE_ENTRIES_FTS_UPDATE_TRIGGER_SQL);
     await rebuildFts(db);
-    await ensureVectorIndex(db);
+    await ensureVectorIndexes(db);
     await db.execute({
       sql: "DELETE FROM _meta WHERE key = ?",
       args: [BULK_WRITE_STATE_META_KEY],
@@ -632,9 +656,10 @@ async function hasActiveBulkWriteState(db: Client): Promise<boolean> {
 }
 
 /** Recreates the vector index when the SQLite build supports it. */
-async function ensureVectorIndex(db: Client): Promise<void> {
+async function ensureVectorIndexes(db: Client): Promise<void> {
   try {
     await db.execute(CREATE_ENTRIES_EMBEDDING_INDEX_SQL);
+    await db.execute(CREATE_EPISODES_EMBEDDING_INDEX_SQL);
   } catch (error) {
     if (!isVectorUnavailableError(error)) {
       throw error;
@@ -643,9 +668,10 @@ async function ensureVectorIndex(db: Client): Promise<void> {
 }
 
 /** Drops the vector index when the SQLite build supports it. */
-async function dropVectorIndex(db: Client): Promise<void> {
+async function dropVectorIndexes(db: Client): Promise<void> {
   try {
     await db.execute(`DROP INDEX IF EXISTS ${VECTOR_INDEX_NAME}`);
+    await db.execute(`DROP INDEX IF EXISTS ${EPISODE_VECTOR_INDEX_NAME}`);
   } catch (error) {
     if (!isVectorUnavailableError(error)) {
       throw error;

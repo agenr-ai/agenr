@@ -358,3 +358,43 @@ export interface EpisodeIngestExecutionResult {
     failed: number;
   };
 }
+
+/**
+ * Runtime options for embedding-only episode backfill.
+ */
+export interface BackfillEpisodeEmbeddingsOptions {
+  /**
+   * Maximum number of concurrent embedding workers.
+   */
+  concurrency: number;
+  /**
+   * Optional callback invoked after each episode embedding attempt completes.
+   */
+  onProgress?: (completed: number, total: number, episode: Episode, status: "embedded" | "failed") => void;
+}
+
+/**
+ * Aggregate result emitted after embedding missing episodes.
+ */
+export interface EpisodeEmbeddingBackfillResult {
+  /**
+   * Total number of active episodes that were missing embeddings at start.
+   */
+  totalMissing: number;
+  /**
+   * Number of episodes that were attempted during the run.
+   */
+  attempted: number;
+  /**
+   * Number of episodes that received embeddings successfully.
+   */
+  embedded: number;
+  /**
+   * Number of episodes that failed to embed and still need backfill.
+   */
+  failed: number;
+  /**
+   * Coarse token estimate derived from summary length for cost display.
+   */
+  estimatedInputTokens: number;
+}

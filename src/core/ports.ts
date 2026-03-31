@@ -70,6 +70,15 @@ export interface EpisodeDatabasePort {
 
   /** List non-retired episodes whose time range overlaps the requested window. */
   listEpisodesByTimeWindow(window: TemporalWindow, limit?: number): Promise<Episode[]>;
+
+  /** Find episodes by vector similarity to a query embedding. */
+  episodeVectorSearch(params: { embedding: number[]; limit: number }): Promise<Array<{ episode: Episode; vectorSim: number }>>;
+
+  /** List non-retired episodes that still need embeddings. */
+  listEpisodesWithoutEmbeddings(limit?: number): Promise<Episode[]>;
+
+  /** Update only the embedding payload for an existing episode row. */
+  updateEpisodeEmbedding(id: string, embedding: number[]): Promise<void>;
 }
 
 // ── Embeddings ───────────────────────────────────────────────────────
