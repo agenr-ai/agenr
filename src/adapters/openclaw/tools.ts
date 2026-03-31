@@ -6,7 +6,6 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import { runUnifiedRecall, type UnifiedRecallMode, type UnifiedRecallResult } from "../../app/recall/index.js";
 import { storeEntriesDetailed } from "../../core/store/pipeline.js";
 import { ENTRY_TYPES, EXPIRY_LEVELS, type Entry, type EntryType, type Expiry } from "../../core/types.js";
-import { findOpenClawEntryBySubject, findOpenClawMostRecentEntry, getOpenClawEntryTrace } from "../db/openclaw-plugin-queries.js";
 import type { AgenrOpenClawServices } from "./types.js";
 
 const ENTRY_TYPE_DESCRIPTION =
@@ -238,10 +237,10 @@ export function createAgenrStoreTool(ctx: OpenClawPluginToolContext, servicesPro
               source_context: sourceContext ?? "Stored via agenr_store from OpenClaw.",
             },
           ],
-          services.database,
+          services.entries,
           services.embedding,
         );
-        const storedEntry = await findOpenClawEntryBySubject(services.database, subject);
+        const storedEntry = await services.memory.findEntryBySubject(subject);
 
         if (result.stored > 0) {
           return textResult(`Stored "${subject}".`, {
@@ -330,7 +329,7 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
           }),
         );
         const result = await runUnifiedRecall(request, {
-          database: services.database,
+          database: services.episodes,
           recall: services.recall,
           embeddingAvailable: services.embeddingStatus.available,
           embeddingError: services.embeddingStatus.error,
@@ -408,7 +407,7 @@ export function createAgenrRetireTool(ctx: OpenClawPluginToolContext, servicesPr
         logToolCall(logger, "agenr_retire", ctx, `target=${formatTargetSelector(id, subject)}`, sanitizeRetireToolParams({ id, subject, reason }));
         const services = await servicesPromise;
         const entry = await resolveTargetEntry(services, params);
-        const retired = await services.database.retireEntry(entry.id, reason);
+        const retired = await services.entries.retireEntry(entry.id, reason);
 
         if (!retired) {
           return failedTextResult(`Entry ${entry.id} is not active, so it could not be retired.`, {
@@ -468,7 +467,7 @@ export function createAgenrUpdateTool(ctx: OpenClawPluginToolContext, servicesPr
           throw new Error("Provide at least one update field: importance or expiry.");
         }
 
-        const updated = await services.database.updateEntry(entry.id, {
+        const updated = await services.entries.updateEntry(entry.id, {
           ...(importance !== undefined ? { importance } : {}),
           ...(expiry !== undefined ? { expiry } : {}),
         });
@@ -520,7 +519,7 @@ export function createAgenrTraceTool(ctx: OpenClawPluginToolContext, servicesPro
         logToolCall(logger, "agenr_trace", ctx, `target=${formatTargetSelector(id, subject, last)}`, sanitizeTraceToolParams({ id, subject, last }));
         const services = await servicesPromise;
         const entry = await resolveTargetEntry(services, params, { allowLast: true });
-        const trace = await getOpenClawEntryTrace(services.database, entry.id);
+        const trace = await services.memory.getEntryTrace(entry.id);
 
         if (!trace) {
           return failedTextResult(`Entry ${entry.id} was not found for tracing.`, {
@@ -566,7 +565,7 @@ async function resolveTargetEntry(
   }
 
   if (last) {
-    const entry = await findOpenClawMostRecentEntry(services.database);
+    const entry = await services.memory.findMostRecentEntry();
     if (!entry) {
       throw new Error("No agenr entries exist yet.");
     }
@@ -574,14 +573,14 @@ async function resolveTargetEntry(
   }
 
   if (id) {
-    const entry = (await services.database.getEntry(id)) ?? (await getOpenClawEntryTrace(services.database, id))?.entry;
+    const entry = (await services.entries.getEntry(id)) ?? (await services.memory.getEntryTrace(id))?.entry;
     if (!entry) {
       throw new Error(`No agenr entry found for id ${id}.`);
     }
     return entry;
   }
 
-  const entry = await findOpenClawEntryBySubject(services.database, subject ?? "");
+  const entry = await services.memory.findEntryBySubject(subject ?? "");
   if (!entry) {
     throw new Error(`No agenr entry found for subject "${subject}".`);
   }

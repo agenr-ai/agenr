@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 
-import type { SqlDatabase } from "../../../adapters/db/client.js";
 import type { EmbeddingPort } from "../../../core/ports.js";
 import { composeEmbeddingText } from "../../../core/store/embedding-text.js";
 import type { Entry, Expiry } from "../../../core/types.js";
 import type { RecallEvalFixtureEntry, RecallEvalProvisionedEntrySummary } from "./contracts.js";
+import type { RecallEvalFixtureStore } from "./ports.js";
 
 const DEFAULT_IMPORTANCE = 6;
 const DEFAULT_EXPIRY: Expiry = "permanent";
@@ -65,7 +65,7 @@ interface PreparedFixtureBatch {
 export async function provisionRecallEvalFixtures(params: {
   caseId: string;
   memoryPool: RecallEvalFixtureEntry[];
-  database: SqlDatabase;
+  store: RecallEvalFixtureStore;
   embedding: EmbeddingPort;
   provisionedAt: string;
 }): Promise<RecallEvalProvisioningResult> {
@@ -88,9 +88,9 @@ export async function provisionRecallEvalFixtures(params: {
     throw new Error(`Fixture embedding count mismatch: expected ${preparedBatch.insertionOrder.length}, received ${embeddings.length}.`);
   }
 
-  await params.database.withTransaction(async (database) => {
+  await params.store.withTransaction(async (store) => {
     for (const [index, fixture] of preparedBatch.insertionOrder.entries()) {
-      await database.insertEntry(fixture.entry, embeddings[index] ?? [], fixture.contentHash);
+      await store.insertEntry(fixture.entry, embeddings[index] ?? [], fixture.contentHash);
     }
   });
 

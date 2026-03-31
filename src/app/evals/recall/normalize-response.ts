@@ -1,6 +1,6 @@
 import type { RecallOutput } from "../../../core/recall/types.js";
 import type { RecallEvalCaseDiagnostics, RecallEvalCaseRequest, RecallEvalCaseResponse, RecallEvalCaseTimings, RecallEvalSandboxResult } from "./contracts.js";
-import type { RecallEvalSandboxContext } from "./sandbox.js";
+import type { RecallEvalSandboxContext } from "./ports.js";
 
 /**
  * Builds the stable success response envelope for a completed recall eval case.

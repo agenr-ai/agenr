@@ -5,9 +5,8 @@ import { fileURLToPath } from "node:url";
 import { getModel, type Api, type Model } from "@mariozechner/pi-ai";
 
 import { createDatabase } from "../../adapters/db/client.js";
+import { createSurgeonPort } from "../../adapters/db/surgeon-port.js";
 import { createRecallAdapter } from "../../adapters/db/recall-adapter.js";
-import { getLastSurgeonRun, getSurgeonRunActions, getSurgeonRunHistory, type SurgeonRun } from "../../adapters/db/surgeon-run-log.js";
-import { getSurgeonHealthStats, type SurgeonHealthStats } from "../../adapters/db/surgeon-queries.js";
 import { createEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../../adapters/embeddings.js";
 import { resolveLlmCredentials } from "../../adapters/llm.js";
 import {
@@ -18,6 +17,8 @@ import {
   readConfig,
   resolveDbPath,
 } from "../../config.js";
+import type { SurgeonRunAction } from "../../core/surgeon/domain/action-types.js";
+import type { SurgeonHealthStats, SurgeonRunRecord } from "./ports.js";
 import { runSurgeon, type SurgeonRunOptions, type SurgeonRunResult } from "./service.js";
 
 const DEFAULT_SURGEON_PROVIDER = "openai";
@@ -37,6 +38,7 @@ const getModelWithStrings = getModel as unknown as GetModelWithStrings;
 export async function runSurgeonRuntime(input: SurgeonRunOptions & { dbPath?: string; env?: NodeJS.ProcessEnv }): Promise<SurgeonRunResult> {
   const runtime = loadRuntimeConfig(input);
   const database = await createDatabase(runtime.dbPath);
+  const port = createSurgeonPort(database);
 
   try {
     const modelSelection = resolveSurgeonModel(runtime.config, input);
@@ -68,7 +70,7 @@ export async function runSurgeonRuntime(input: SurgeonRunOptions & { dbPath?: st
         signal: input.signal,
       },
       {
-        db: database,
+        port,
         dbPath: runtime.dbPath,
         config: runtime.config,
         model,
@@ -91,19 +93,20 @@ export async function runSurgeonRuntime(input: SurgeonRunOptions & { dbPath?: st
 export async function loadSurgeonStatusRuntime(input: {
   dbPath?: string;
   env?: NodeJS.ProcessEnv;
-}): Promise<{ health: SurgeonHealthStats; lastRun: SurgeonRun | null }> {
+}): Promise<{ health: SurgeonHealthStats; lastRun: SurgeonRunRecord | null }> {
   const runtime = loadRuntimeConfig(input);
   const database = await createDatabase(runtime.dbPath);
+  const port = createSurgeonPort(database);
 
   try {
     const protection = resolveProtectionConfig(runtime.config);
     const [health, lastRun] = await Promise.all([
-      getSurgeonHealthStats(database, {
+      port.getHealthStats({
         protectRecalledDays: protection.protectRecalledDays,
         protectMinImportance: protection.protectMinImportance,
         skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
       }),
-      getLastSurgeonRun(database),
+      port.getLastRun(),
     ]);
 
     return { health, lastRun };
@@ -118,12 +121,13 @@ export async function loadSurgeonStatusRuntime(input: {
  * @param input - Runtime input with optional db-path and row limit.
  * @returns Recent persisted surgeon runs ordered newest first.
  */
-export async function loadSurgeonHistoryRuntime(input: { dbPath?: string; env?: NodeJS.ProcessEnv; limit?: number }): Promise<SurgeonRun[]> {
+export async function loadSurgeonHistoryRuntime(input: { dbPath?: string; env?: NodeJS.ProcessEnv; limit?: number }): Promise<SurgeonRunRecord[]> {
   const runtime = loadRuntimeConfig(input);
   const database = await createDatabase(runtime.dbPath);
+  const port = createSurgeonPort(database);
 
   try {
-    return await getSurgeonRunHistory(database, input.limit);
+    return await port.getRunHistory(input.limit);
   } finally {
     await database.close();
   }
@@ -135,16 +139,13 @@ export async function loadSurgeonHistoryRuntime(input: { dbPath?: string; env?: 
  * @param input - Runtime input with optional db-path and required run ID.
  * @returns Recorded surgeon actions for the requested run.
  */
-export async function loadSurgeonActionsRuntime(input: {
-  runId: string;
-  dbPath?: string;
-  env?: NodeJS.ProcessEnv;
-}): Promise<Awaited<ReturnType<typeof getSurgeonRunActions>>> {
+export async function loadSurgeonActionsRuntime(input: { runId: string; dbPath?: string; env?: NodeJS.ProcessEnv }): Promise<SurgeonRunAction[]> {
   const runtime = loadRuntimeConfig(input);
   const database = await createDatabase(runtime.dbPath);
+  const port = createSurgeonPort(database);
 
   try {
-    return await getSurgeonRunActions(database, input.runId);
+    return await port.getRunActions(input.runId);
   } finally {
     await database.close();
   }

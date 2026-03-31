@@ -7,6 +7,7 @@ import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createDatabase, type SqlDatabase } from "../../../../src/adapters/db/client.js";
+import { createOpenClawRepository } from "../../../../src/adapters/db/openclaw-repository.js";
 import { writeOpenClawPredecessorEpisode } from "../../../../src/adapters/openclaw/episode/episode-writer.js";
 import type { AgenrOpenClawHost, AgenrOpenClawServices } from "../../../../src/adapters/openclaw/types.js";
 import type { EmbeddingPort, RecallPorts } from "../../../../src/core/ports.js";
@@ -576,7 +577,9 @@ function createServices(
     pluginConfig: options.pluginConfig ?? {},
     agenrConfig: {},
     dbPath: "test.db",
-    database,
+    entries: database,
+    episodes: database,
+    memory: createOpenClawRepository(database),
     embedding,
     recall,
     embeddingStatus: {

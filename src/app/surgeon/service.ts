@@ -3,12 +3,6 @@ import { randomUUID } from "node:crypto";
 import { runAgentLoop, type AfterToolCallContext, type AgentEvent, type AgentMessage, type BeforeToolCallContext } from "@mariozechner/pi-agent-core";
 import type { Api, AssistantMessage, Message, Model, Usage } from "@mariozechner/pi-ai";
 
-import type { SqlDatabase } from "../../adapters/db/client.js";
-import { completeSurgeonRun, createSurgeonRun, getDailySurgeonCost, getLastSurgeonRun, logSurgeonAction } from "../../adapters/db/surgeon-run-log.js";
-import { countRetirementCandidates, getSurgeonHealthStats } from "../../adapters/db/surgeon-queries.js";
-import { getSurgeonRetirementPassPrompt, getSurgeonSystemPrompt } from "../../adapters/surgeon/prompts.js";
-import { createTraceLogger, type SurgeonTraceLogger } from "../../adapters/surgeon/trace-logger.js";
-import { createSurgeonTools, type SurgeonToolCompletionState } from "../../adapters/surgeon/tools/index.js";
 import {
   DEFAULT_SURGEON_CONTEXT_LIMIT,
   DEFAULT_SURGEON_COST_CAP,
@@ -23,6 +17,10 @@ import type { SurgeonRunAction } from "../../core/surgeon/domain/action-types.js
 import type { SurgeonCompletionSummary, SurgeonRunStatus } from "../../core/surgeon/types.js";
 import { createBudgetTracker } from "./budget.js";
 import { createSurgeonCompletionGuardState } from "./completion-guard.js";
+import { createTraceLogger, type SurgeonTraceLogger } from "./trace-logger.js";
+import { getSurgeonRetirementPassPrompt, getSurgeonSystemPrompt } from "./prompts.js";
+import type { SurgeonPort } from "./ports.js";
+import { createSurgeonTools, type SurgeonToolCompletionState } from "./tools/index.js";
 
 /**
  * Safety valve for continuation prompts. Prevents infinite loops when the
@@ -70,7 +68,7 @@ export interface SurgeonRunResult {
  * Resolved infrastructure dependencies for the surgeon workflow.
  */
 export interface SurgeonWorkflowDeps {
-  db: SqlDatabase;
+  port: SurgeonPort;
   dbPath?: string;
   config: AgenrConfig | null;
   model: Model<Api>;
@@ -95,7 +93,7 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
   const contextLimit = resolveContextLimit(options, deps.config, deps.model);
   const protection = resolveProtectionConfig(options, deps.config);
 
-  const dailyCost = dailyCostCap > 0 ? await getDailySurgeonCost(deps.db, nowFn()) : 0;
+  const dailyCost = dailyCostCap > 0 ? await deps.port.getDailyCost(nowFn()) : 0;
   if (dailyCostCap > 0 && dailyCost >= dailyCostCap) {
     throw new Error(`Surgeon daily cost cap exceeded. Cost in the last 24 hours is ${formatUsd(dailyCost)} and the cap is ${formatUsd(dailyCostCap)}.`);
   }
@@ -106,7 +104,7 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
     await deps.backupDb(deps.dbPath);
   }
 
-  const runId = await createSurgeonRun(deps.db, {
+  const runId = await deps.port.createRun({
     passType: options.pass,
     project: options.project,
     model: typeof deps.model.id === "string" ? deps.model.id : (options.model ?? null),
@@ -141,19 +139,19 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
 
   try {
     const [health, retirementCandidateResult, lastRun] = await Promise.all([
-      getSurgeonHealthStats(deps.db, {
+      deps.port.getHealthStats({
         protectRecalledDays: protection.protectRecalledDays,
         protectMinImportance: protection.protectMinImportance,
         skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
         now: nowFn(),
       }),
-      countRetirementCandidates(deps.db, {
+      deps.port.countRetirementCandidates({
         protectRecalledDays: protection.protectRecalledDays,
         protectMinImportance: protection.protectMinImportance,
         skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
         now: nowFn(),
       }),
-      getLastSurgeonRun(deps.db),
+      deps.port.getLastRun(),
     ]);
 
     const retirementCandidates = retirementCandidateResult.total;
@@ -168,8 +166,7 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
     });
 
     const tools = createSurgeonTools({
-      db: deps.db,
-      executor: deps.db,
+      port: deps.port,
       runId,
       project: options.project,
       apply: options.apply,
@@ -180,7 +177,7 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
       skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
       now: nowFn,
       recordRunAction: async (action) => {
-        await logSurgeonAction(deps.db, action);
+        await deps.port.logRunAction(action);
         traceLogger?.logAction(action);
       },
       completionState,
@@ -311,7 +308,7 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
               createdAt: nowFn().toISOString(),
             };
 
-            await logSurgeonAction(deps.db, action);
+            await deps.port.logRunAction(action);
             traceLogger?.logAction(action);
             actionMetrics.actionsTaken += 1;
 
@@ -346,7 +343,7 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
         budgetTracker,
         error: terminalError,
         summaryOverride: USER_ABORT_SUMMARY,
-        db: deps.db,
+        port: deps.port,
         now: nowFn,
       });
     }
@@ -364,7 +361,7 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
       actionMetrics,
       budgetTracker,
       error: terminalError,
-      db: deps.db,
+      port: deps.port,
       now: nowFn,
     });
   } catch (error) {
@@ -379,7 +376,7 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
         budgetTracker,
         error: terminalError,
         summaryOverride: USER_ABORT_SUMMARY,
-        db: deps.db,
+        port: deps.port,
         now: nowFn,
       });
     }
@@ -392,7 +389,7 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
       actionMetrics,
       budgetTracker,
       error: terminalError ?? message,
-      db: deps.db,
+      port: deps.port,
       now: nowFn,
     });
   } finally {
@@ -589,13 +586,13 @@ async function finalizeRun(input: {
   budgetTracker: ReturnType<typeof createBudgetTracker>;
   error: string | null;
   summaryOverride?: string;
-  db: SqlDatabase;
+  port: SurgeonPort;
   now: () => Date;
 }): Promise<SurgeonRunResult> {
   const totals = input.budgetTracker.totals();
   const summary = input.summaryOverride ?? summarizeCompletion(input.completionState.summary);
 
-  await completeSurgeonRun(input.db, input.runId, {
+  await input.port.completeRun(input.runId, {
     status: input.status,
     inputTokens: totals.inputTokens,
     outputTokens: totals.outputTokens,

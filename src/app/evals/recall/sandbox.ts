@@ -2,31 +2,14 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { createDatabase, type SqlDatabase } from "../../../adapters/db/client.js";
+import { createDatabase } from "../../../adapters/db/client.js";
+import { createRecallEvalFixtureStore } from "../../../adapters/db/eval-fixture-store.js";
+import { createRecallAdapter } from "../../../adapters/db/recall-adapter.js";
 import type { RecallEvalSandboxRequest } from "./contracts.js";
+import type { RecallEvalSandboxContext } from "./ports.js";
 
 const SANDBOX_DB_FILENAME = "knowledge.db";
 const SANDBOX_DIR_PREFIX = "agenr-recall-eval-";
-
-/**
- * Open isolated sandbox state for a single recall eval case.
- */
-export interface RecallEvalSandboxContext {
-  /** Sandbox root directory used for the case execution. */
-  root: string;
-  /** SQLite database path used by the isolated sandbox. */
-  dbPath: string;
-  /** Whether the sandbox should remain on disk after cleanup. */
-  preserved: boolean;
-  /** Open database adapter connected to the isolated sandbox database. */
-  database: SqlDatabase;
-  /**
-   * Closes open resources and removes ephemeral sandbox state when needed.
-   *
-   * @returns Promise that resolves after cleanup finishes.
-   */
-  cleanup(): Promise<void>;
-}
 
 /**
  * Creates the isolated sandbox used for a single recall eval case.
@@ -39,7 +22,7 @@ export async function setupRecallEvalSandbox(request: RecallEvalSandboxRequest |
   const preserved = request?.preserve === true;
   const root = suppliedRoot ? path.resolve(request.root ?? "") : await mkdtemp(path.join(tmpdir(), SANDBOX_DIR_PREFIX));
 
-  let database: SqlDatabase | undefined;
+  let database: Awaited<ReturnType<typeof createDatabase>> | undefined;
   const dbPath = path.join(root, SANDBOX_DB_FILENAME);
 
   try {
@@ -55,7 +38,8 @@ export async function setupRecallEvalSandbox(request: RecallEvalSandboxRequest |
       root,
       dbPath,
       preserved,
-      database: openDatabase,
+      fixtureStore: createRecallEvalFixtureStore(openDatabase),
+      createRecallPorts: (embedding) => createRecallAdapter(openDatabase, embedding),
       cleanup: async (): Promise<void> => {
         await openDatabase.close().catch(() => undefined);
 

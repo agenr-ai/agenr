@@ -1,6 +1,7 @@
 import { createClient, type Client } from "@libsql/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { createSurgeonPort } from "../../../../src/adapters/db/surgeon-port.js";
 import { createSurgeonRun } from "../../../../src/adapters/db/surgeon-run-log.js";
 import { serializeTags } from "../../../../src/adapters/db/row-mapping.js";
 import { finalizeBulkWrites, initSchema, prepareBulkWrites } from "../../../../src/adapters/db/schema.js";
@@ -607,8 +608,7 @@ async function createTestClient(clients: Client[]): Promise<Client> {
 
 function createToolDeps(client: Client, overrides: Partial<SurgeonToolDeps> = {}): SurgeonToolDeps {
   return {
-    db: overrides.db ?? client,
-    executor: overrides.executor ?? client,
+    port: overrides.port ?? createSurgeonPort(client),
     runId: overrides.runId ?? "run-1",
     project: overrides.project,
     apply: overrides.apply ?? false,

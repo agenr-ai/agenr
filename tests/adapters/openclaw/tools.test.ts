@@ -7,7 +7,7 @@ import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";
-import { findOpenClawEntryBySubject } from "../../../src/adapters/db/openclaw-plugin-queries.js";
+import { createOpenClawRepository } from "../../../src/adapters/db/openclaw-repository.js";
 import {
   createAgenrRecallTool,
   createAgenrRetireTool,
@@ -83,7 +83,7 @@ describe("agenr OpenClaw tools", () => {
       expiry: "permanent",
       tags: ["rollout", "policy"],
     });
-    const storedEntry = await findOpenClawEntryBySubject(database, "feature flag policy");
+    const storedEntry = await createOpenClawRepository(database).findEntryBySubject("feature flag policy");
 
     const updateResult = await updateTool.execute("tool-2", {
       id: storedEntry?.id,
@@ -486,7 +486,9 @@ function createServices(
     pluginConfig: {},
     agenrConfig: {},
     dbPath: "test.db",
-    database,
+    entries: database,
+    episodes: database,
+    memory: createOpenClawRepository(database),
     embedding,
     recall: options.recall,
     embeddingStatus: {

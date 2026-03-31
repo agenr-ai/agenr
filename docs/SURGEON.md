@@ -10,13 +10,15 @@ This document describes the code as it exists now, not just the intended design.
 
 - `src/cli/commands/surgeon.ts` - CLI command group and output formatting.
 - `src/app/surgeon/runtime.ts` - runtime wiring: config, model selection, credentials, recall adapter, DB backup.
-- `src/app/surgeon/service.ts` - one full surgeon run: budget checks, prompts, agent loop, continuation, persistence.
+- `src/app/surgeon/service.ts` - one full surgeon run: budget checks, prompts, agent loop, continuation, and persistence through `SurgeonPort`.
 - `src/app/surgeon/budget.ts` - per-run token, cost, and context tracking.
 - `src/app/surgeon/completion-guard.ts` - pagination/completion state used to reject shallow passes.
-- `src/adapters/surgeon/prompts.ts` - system prompt and retirement-pass prompt.
-- `src/adapters/surgeon/tools/*.ts` - the 7 surgeon tools.
-- `src/adapters/db/surgeon-queries.ts` - health stats, candidate listing, and inspection queries.
-- `src/adapters/db/surgeon-run-log.ts` - run lifecycle and action audit persistence.
+- `src/app/surgeon/prompts.ts` - system prompt and retirement-pass prompt.
+- `src/app/surgeon/trace-logger.ts` - verbose trace logging and optional trace-file output.
+- `src/app/surgeon/tools/*.ts` - the 7 surgeon tools.
+- `src/app/surgeon/ports.ts` - the explicit `SurgeonPort` boundary used by the workflow and status surfaces.
+- `src/adapters/db/surgeon-port.ts` - DB-backed implementation of `SurgeonPort`.
+- `src/adapters/db/surgeon-queries.ts` and `src/adapters/db/surgeon-run-log.ts` - lower-level SQL modules used only behind the DB-backed surgeon port.
 - `src/core/surgeon/domain/protection-rules.ts` - hard retirement guards.
 - `src/config.ts` - surgeon config types and defaults.
 

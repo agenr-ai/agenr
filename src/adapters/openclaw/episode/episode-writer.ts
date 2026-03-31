@@ -78,7 +78,7 @@ export async function writeOpenClawPredecessorEpisode(params: {
       {
         files: createSingleTranscriptDiscoveryPort(params.predecessor.sessionFile),
         transcript: openClawTranscriptParser,
-        episodes: params.services.database,
+        episodes: params.services.episodes,
         createSummaryLlm: () =>
           createOpenClawEpisodeSummaryLlm({
             modelRef: episodeModel,

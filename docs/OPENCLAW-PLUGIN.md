@@ -18,7 +18,9 @@ This document describes the code as it exists now, not just the intended flow.
 - `src/adapters/openclaw/index.ts` - plugin entry, OpenClaw event registration, tool registration, memory-slot wiring, and shutdown cleanup.
 - `src/adapters/openclaw/openclaw.plugin.json` and `src/adapters/openclaw/config.ts` - manifest-defined config schema plus runtime config normalization.
 - `packages/openclaw-plugin/package.json`, `packages/openclaw-plugin/openclaw.plugin.json`, and `packages/openclaw-plugin/src/index.ts` - plugin-only package metadata and publishable entrypoint.
-- `src/adapters/openclaw/runtime.ts` - shared agenr service construction: config loading, DB setup, embedding availability resolution, and recall adapter wiring.
+- `src/app/openclaw/runtime.ts` - shared service composition: config loading, DB setup, embedding availability resolution, repository wiring, and recall adapter construction.
+- `src/app/openclaw/ports.ts` - OpenClaw-owned read-model contracts for prompt memory, trace, and status probing.
+- `src/adapters/openclaw/runtime.ts` - thin adapter re-export of the app-owned runtime composition entrypoint.
 - `src/adapters/openclaw/tools.ts` - `agenr_store`, `agenr_recall`, `agenr_update`, `agenr_retire`, and `agenr_trace`.
 - `src/adapters/openclaw/format/prompt-section.ts` - static system-prompt guidance about when to use agenr tools.
 - `src/adapters/openclaw/format/recall-format.ts` - session-start prompt rendering for recalled core memory.
@@ -30,7 +32,7 @@ This document describes the code as it exists now, not just the intended flow.
 - `src/adapters/openclaw/memory/runtime.ts` - newer OpenClaw memory runtime and status surface.
 - `src/adapters/openclaw/memory/flush-plan.ts` - deliberate pass-through flush-plan behavior.
 - `src/adapters/openclaw/transcript/*.ts` - OpenClaw JSONL transcript normalization used by ingest and continuity summaries.
-- `src/adapters/db/openclaw-plugin-queries.ts` - OpenClaw-specific DB lookups for core-memory injection, trace, subject lookup, and status snapshots.
+- `src/adapters/db/openclaw-repository.ts` - DB-backed OpenClaw repository for core-memory injection, trace, subject lookup, and status snapshots.
 - `tests/adapters/openclaw/*.test.ts` and `tests/adapters/openclaw/session/*.test.ts` - coverage for config, runtime wiring, hooks, tools, transcript parsing, continuity summaries, flush-plan behavior, and predecessor tracking.
 
 ## Important architectural nuance
@@ -96,7 +98,7 @@ The runtime config is deliberately small:
 - `configPath` is an optional override
 - unknown config keys are rejected
 
-If OpenClaw provides `resolvePath`, the adapter resolves any supplied path overrides before startup. After that, `runtime.ts` loads agenr config via the same config/db resolution used by the CLI:
+If OpenClaw provides `resolvePath`, the adapter resolves any supplied path overrides before startup. After that, the app-owned OpenClaw runtime loads agenr config via the same config/db resolution used by the CLI:
 
 - `configPath` override if supplied
 - otherwise `AGENR_CONFIG_PATH`
@@ -130,6 +132,7 @@ On shutdown, `gateway_stop` awaits `services.close()` and ignores startup failur
 `createAgenrOpenClawServices()` builds the shared process-lifetime dependencies:
 
 - a libSQL database adapter opened against `dbPath`
+- OpenClaw-specific repository methods for core-memory lookup, trace, subject resolution, and status probing
 - an embedding client when agenr config provides credentials
 - an always-throwing embedding port when embeddings are unavailable
 - a recall adapter built from the database plus embedding port
@@ -140,7 +143,7 @@ Embedding availability is resolved statically from config. There is no startup n
 That leads to an important split:
 
 - `agenr_recall` checks `embeddingStatus.available` and fails early when embeddings are not configured
-- session-start core-memory injection still works without embeddings because it reads `core` rows directly from the database
+- session-start core-memory injection still works without embeddings because it reads `core` rows through the OpenClaw repository
 
 ## Static prompt guidance
 
@@ -176,7 +179,7 @@ If the tracker reports a duplicate, the hook returns `undefined` and nothing is 
 
 #### Core-memory recall
 
-If this is the first run for the session, the adapter loads core entries through `listOpenClawCoreEntries(...)`.
+If this is the first run for the session, the adapter loads core entries through the OpenClaw repository's `listCoreEntries(...)`.
 
 Current session-start memory behavior is intentionally narrow:
 

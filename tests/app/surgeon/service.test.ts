@@ -16,6 +16,7 @@ vi.mock("@mariozechner/pi-agent-core", async () => {
 });
 
 import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";
+import { createSurgeonPort } from "../../../src/adapters/db/surgeon-port.js";
 import {
   completeSurgeonRun,
   createSurgeonRun,
@@ -60,7 +61,7 @@ describe("runSurgeon", () => {
     mockSuccessfulRunAgentLoop();
 
     const result = await runSurgeon(createRunOptions({ budget: 0.1 }), {
-      db,
+      port: createSurgeonPort(db),
       config: null,
       model: TEST_MODEL,
       now: () => TEST_NOW,
@@ -129,7 +130,7 @@ describe("runSurgeon", () => {
 
     await expect(
       runSurgeon(createRunOptions({ budget: 1 }), {
-        db,
+        port: createSurgeonPort(db),
         config: {
           surgeon: {
             dailyCostCap: 1,
@@ -156,7 +157,7 @@ describe("runSurgeon", () => {
         signal: controller.signal,
       }),
       {
-        db,
+        port: createSurgeonPort(db),
         config: null,
         model: TEST_MODEL,
         now: () => TEST_NOW,
@@ -187,7 +188,7 @@ describe("runSurgeon", () => {
 
     await expect(
       runSurgeon(createRunOptions(), {
-        db,
+        port: createSurgeonPort(db),
         config: null,
         model: TEST_MODEL,
         now: () => TEST_NOW,
@@ -207,7 +208,7 @@ describe("runSurgeon", () => {
         contextLimit: 4_096,
       }),
       {
-        db,
+        port: createSurgeonPort(db),
         config: null,
         model: TEST_MODEL,
         now: () => TEST_NOW,
@@ -231,7 +232,7 @@ describe("runSurgeon", () => {
     runAgentLoopMock.mockImplementation(async (prompts: AgentMessage[]) => prompts);
 
     await runSurgeon(createRunOptions({ budget: 1 }), {
-      db,
+      port: createSurgeonPort(db),
       config: {
         surgeon: {
           customInstructions: "Custom surgeon rule: always mention provenance when you skip an entry.",

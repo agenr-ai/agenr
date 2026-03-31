@@ -8,6 +8,7 @@ import { resolveStateDir as resolveOpenClawStateDir } from "openclaw/plugin-sdk/
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";
+import { createOpenClawRepository } from "../../../src/adapters/db/openclaw-repository.js";
 import { handleAgenrBeforePromptBuild } from "../../../src/adapters/openclaw/hooks/before-prompt-build.js";
 import { createSessionStartTracker } from "../../../src/adapters/openclaw/session/state.js";
 import type { AgenrOpenClawHost, AgenrOpenClawServices } from "../../../src/adapters/openclaw/types.js";
@@ -1350,7 +1351,9 @@ function createServices(
     pluginConfig: {},
     agenrConfig: {},
     dbPath: "test.db",
-    database,
+    entries: database,
+    episodes: database,
+    memory: createOpenClawRepository(database),
     embedding,
     recall,
     embeddingStatus: {

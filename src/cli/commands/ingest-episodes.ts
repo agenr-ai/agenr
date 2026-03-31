@@ -5,6 +5,7 @@ import * as clack from "@clack/prompts";
 import { InvalidArgumentError, Option, type Command } from "commander";
 
 import { createDatabase } from "../../adapters/db/client.js";
+import { createEpisodeIngestSupportPort, type EpisodeIngestSupportPort } from "../../adapters/db/episode-ingest-support.js";
 import { EMBEDDING_MODEL, createEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../../adapters/embeddings.js";
 import { createLlmClient, resolveLlmApiKey, resolveModel } from "../../adapters/llm.js";
 import { loadOpenClawSessionRegistry } from "../../adapters/openclaw/session/session-registry.js";
@@ -14,7 +15,7 @@ import { backfillEpisodeEmbeddings, createEpisodeIngestPlan, executeEpisodeInges
 import { readConfig, resolveDbPath } from "../../config.js";
 import { setVerbose } from "../../logger.js";
 import { banner, formatLabel, ui } from "../../ui.js";
-import type { SqlDatabase } from "../../adapters/db/client.js";
+import type { EpisodeDatabasePort } from "../../core/ports.js";
 import type { EpisodeIngestLlmPort, EpisodeIngestModelInfo, EpisodeIngestPorts, EpisodeIngestSessionResult } from "../../app/episode-ingest/index.js";
 import type { AgenrConfig } from "../../config.js";
 
@@ -60,7 +61,7 @@ export function registerIngestEpisodesCommand(parent: Command): void {
     .option("--model <ref>", "Override summary generation model (provider/model or model)")
     .action(async (targetPath: string | undefined, options: IngestEpisodesCommandOptions) => {
       const startedAt = Date.now();
-      let db: SqlDatabase | null = null;
+      let database: Awaited<ReturnType<typeof createDatabase>> | null = null;
 
       setVerbose(options.verbose === true);
       clack.intro(banner());
@@ -71,11 +72,12 @@ export function registerIngestEpisodesCommand(parent: Command): void {
         const dbPath = resolveEpisodeDbPath(config, options.db);
         validateEpisodeIngestOptions(options, targetPath);
 
-        db = await createDatabase(dbPath);
+        database = await createDatabase(dbPath);
+        const support = createEpisodeIngestSupportPort(database);
 
         if (options.embedOnly === true) {
           await runEpisodeEmbeddingBackfill({
-            db,
+            db: database,
             config,
             dbPath,
             options,
@@ -93,7 +95,7 @@ export function registerIngestEpisodesCommand(parent: Command): void {
         const modelInfo = createEpisodeIngestSummaryModelInfo(provider, modelId);
         const resolvedTargetPath = path.resolve(normalizedTargetPath);
         const sessionsDir = await resolveSessionsDirectory(resolvedTargetPath);
-        const ports = await createEpisodeIngestPorts(db, sessionsDir);
+        const ports = await createEpisodeIngestPorts(database, sessionsDir);
         const embeddingSetup = resolveEpisodeEmbeddingSetup(config, options);
 
         if (options.verbose === true) {
@@ -128,7 +130,7 @@ export function registerIngestEpisodesCommand(parent: Command): void {
           return;
         }
 
-        const shouldContinue = await handleRelevanceWarning(db, preflight.files, resolvedTargetPath, options.dryRun === true);
+        const shouldContinue = await handleRelevanceWarning(support, preflight.files, resolvedTargetPath, options.dryRun === true);
         if (!shouldContinue) {
           clack.outro("Cancelled.");
           return;
@@ -216,19 +218,19 @@ export function registerIngestEpisodesCommand(parent: Command): void {
         clack.log.error(formatUnknownError(error));
         clack.outro(ui.error("Episode ingest failed"));
       } finally {
-        await db?.close();
+        await database?.close();
       }
     });
 }
 
 /** Creates the adapter bundle used by the episode-ingest services. */
-async function createEpisodeIngestPorts(db: SqlDatabase, sessionsDir: string): Promise<EpisodeIngestPorts> {
+async function createEpisodeIngestPorts(database: EpisodeDatabasePort, sessionsDir: string): Promise<EpisodeIngestPorts> {
   const sessionRegistry = await loadOpenClawSessionRegistry(sessionsDir);
 
   return {
     files: openClawTranscriptFiles,
     transcript: openClawTranscriptParser,
-    episodes: db,
+    episodes: database,
     sessionRegistry,
   };
 }
@@ -246,7 +248,7 @@ function validateEpisodeIngestOptions(options: IngestEpisodesCommandOptions, tar
 
 /** Runs the embedding-only backfill flow for episodes missing vectors. */
 async function runEpisodeEmbeddingBackfill(params: {
-  db: SqlDatabase;
+  db: EpisodeDatabasePort;
   config: AgenrConfig | undefined;
   dbPath: string;
   options: IngestEpisodesCommandOptions;
@@ -409,18 +411,18 @@ function resolveEpisodeModel(config: AgenrConfig | undefined, overrideRef: strin
 }
 
 /** Checks sampled transcript paths against existing ingest provenance and optionally prompts before continuing. */
-async function handleRelevanceWarning(db: SqlDatabase, files: string[], targetPath: string, dryRun: boolean): Promise<boolean> {
+async function handleRelevanceWarning(support: EpisodeIngestSupportPort, files: string[], targetPath: string, dryRun: boolean): Promise<boolean> {
   if (files.length === 0) {
     return true;
   }
 
-  const entryCount = await countRows(db, "SELECT COUNT(*) AS count FROM entries");
+  const entryCount = await support.countEntries();
   if (entryCount === 0) {
     return true;
   }
 
   const samples = files.slice(0, RELEVANCE_SAMPLE_SIZE);
-  const hasMatch = await hasRelevantProvenanceMatch(db, samples);
+  const hasMatch = await support.hasRelevantProvenanceMatch(samples);
   if (hasMatch) {
     return true;
   }
@@ -441,46 +443,6 @@ async function handleRelevanceWarning(db: SqlDatabase, files: string[], targetPa
   });
 
   return !clack.isCancel(confirmed) && confirmed === true;
-}
-
-/** Returns whether sampled transcript paths overlap known entry-ingest provenance. */
-async function hasRelevantProvenanceMatch(db: SqlDatabase, sampleFiles: string[]): Promise<boolean> {
-  if (sampleFiles.length === 0) {
-    return false;
-  }
-
-  const exactPlaceholders = sampleFiles.map(() => "?").join(", ");
-  const ingestLogMatches = await countRows(db, `SELECT COUNT(*) AS count FROM ingest_log WHERE file_path IN (${exactPlaceholders})`, sampleFiles);
-  if (ingestLogMatches > 0) {
-    return true;
-  }
-
-  const basenames = Array.from(new Set(sampleFiles.map((filePath) => path.basename(filePath))));
-  const basenameClauses = basenames.map(() => "(source_file = ? OR source_file LIKE ?)").join(" OR ");
-  const basenameArgs = basenames.flatMap((basename) => [basename, `%/${basename}`]);
-  const entryMatches = await countRows(db, `SELECT COUNT(*) AS count FROM entries WHERE source_file IS NOT NULL AND (${basenameClauses})`, basenameArgs);
-
-  return entryMatches > 0;
-}
-
-/** Executes a count query and normalizes the first-row result into a number. */
-async function countRows(db: SqlDatabase, sql: string, args: Array<string | number> = []): Promise<number> {
-  const result = await db.execute({
-    sql,
-    args,
-  });
-  const row = result.rows[0];
-  if (!row) {
-    return 0;
-  }
-
-  const value = row["count"];
-  if (typeof value === "number") {
-    return value;
-  }
-
-  const normalized = Number(value);
-  return Number.isFinite(normalized) ? normalized : 0;
 }
 
 /** Prints the Stage 1 and Stage 2 summary before any LLM execution starts. */

@@ -1,4 +1,3 @@
-import { listOpenClawCoreEntries } from "../../db/openclaw-plugin-queries.js";
 import { writeOpenClawPredecessorEpisode } from "../episode/episode-writer.js";
 import { formatAgenrSessionStartRecall } from "../format/recall-format.js";
 import { formatErrorMessage, formatSessionContext } from "../logging.js";
@@ -89,7 +88,7 @@ export async function handleAgenrBeforePromptBuild(
  * @returns Structured session-start recall data ready for prompt formatting.
  */
 export async function runAgenrSessionStartRecall(services: AgenrOpenClawServices): Promise<OpenClawSessionStartRecall> {
-  return { core: await listOpenClawCoreEntries(services.database, CORE_ENTRY_LIMIT) };
+  return { core: await services.memory.listCoreEntries(CORE_ENTRY_LIMIT) };
 }
 
 /**

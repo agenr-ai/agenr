@@ -1,9 +1,9 @@
 import type { OpenClawConfig, OpenClawPluginApi, PluginLogger } from "openclaw/plugin-sdk/core";
 
+import type { OpenClawRepository } from "../../app/openclaw/ports.js";
 import type { AgenrConfig } from "../../config.js";
-import type { EmbeddingPort, RecallPorts } from "../../core/ports.js";
+import type { DatabasePort, EmbeddingPort, EpisodeDatabasePort, RecallPorts } from "../../core/ports.js";
 import type { Entry } from "../../core/types.js";
-import type { SqlDatabase } from "../db/client.js";
 
 /**
  * Runtime plugin configuration accepted by the agenr OpenClaw adapter.
@@ -59,7 +59,9 @@ export interface AgenrOpenClawServices {
   pluginConfig: AgenrOpenClawPluginConfig;
   agenrConfig: AgenrConfig;
   dbPath: string;
-  database: SqlDatabase;
+  entries: DatabasePort;
+  episodes: EpisodeDatabasePort;
+  memory: OpenClawRepository;
   embedding: EmbeddingPort;
   recall: RecallPorts;
   embeddingStatus: AgenrOpenClawEmbeddingStatus;

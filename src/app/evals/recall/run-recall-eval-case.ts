@@ -1,4 +1,3 @@
-import { createRecallAdapter } from "../../../adapters/db/recall-adapter.js";
 import { createEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../../../adapters/embeddings.js";
 import { readConfig } from "../../../config.js";
 import type { EmbeddingPort } from "../../../core/ports.js";
@@ -7,8 +6,9 @@ import { createRecallEvalDiagnosticsCollector } from "./collect-diagnostics.js";
 import type { RecallEvalCaseRequest, RecallEvalCaseResponse } from "./contracts.js";
 import { createInstrumentedRecallPorts } from "./instrumented-recall-ports.js";
 import { buildRecallEvalErrorResponse, buildRecallEvalSuccessResponse } from "./normalize-response.js";
+import type { RecallEvalSandboxContext } from "./ports.js";
 import { provisionRecallEvalFixtures } from "./provision-fixtures.js";
-import { setupRecallEvalSandbox, type RecallEvalSandboxContext } from "./sandbox.js";
+import { setupRecallEvalSandbox } from "./sandbox.js";
 
 /**
  * Executes one recall eval case behind a stable app-layer service seam.
@@ -56,7 +56,7 @@ export async function runRecallEvalCase(request: RecallEvalCaseRequest): Promise
         const provisionResult = await provisionRecallEvalFixtures({
           caseId: request.caseId,
           memoryPool: request.memoryPool,
-          database: sandbox.database,
+          store: sandbox.fixtureStore,
           embedding: getEmbeddingPort(),
           provisionedAt,
         });
@@ -77,7 +77,7 @@ export async function runRecallEvalCase(request: RecallEvalCaseRequest): Promise
 
     const recallStartedAt = Date.now();
     try {
-      const basePorts = createRecallAdapter(sandbox.database, getEmbeddingPort());
+      const basePorts = sandbox.createRecallPorts(getEmbeddingPort());
       const recallPorts = diagnostics.isObservationEnabled() ? createInstrumentedRecallPorts(basePorts, diagnostics) : basePorts;
       const results = await recall(request.recallRequest, recallPorts, diagnostics.isObservationEnabled() ? { trace: diagnostics.traceSink } : undefined);
       diagnostics.recordRecall(elapsedMs(recallStartedAt));

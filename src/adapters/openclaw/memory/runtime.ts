@@ -1,9 +1,5 @@
 import { EMBEDDING_DIMENSIONS } from "../../embeddings.js";
-import { VECTOR_INDEX_NAME } from "../../db/schema.js";
-import { getOpenClawMemoryStatusSnapshot } from "../../db/openclaw-plugin-queries.js";
 import type { AgenrOpenClawMemoryPluginRuntime, AgenrOpenClawMemoryProviderStatus, AgenrOpenClawServices } from "../types.js";
-
-const ZERO_VECTOR = JSON.stringify(Array.from({ length: EMBEDDING_DIMENSIONS }, () => 0));
 
 /**
  * Builds the lightweight memory runtime that newer OpenClaw status surfaces expect.
@@ -15,8 +11,8 @@ export function createAgenrMemoryRuntime(servicesPromise: Promise<AgenrOpenClawS
   return {
     async getMemorySearchManager() {
       const services = await servicesPromise;
-      const snapshot = await getOpenClawMemoryStatusSnapshot(services.database);
-      const vectorAvailable = await probeVectorAvailability(services);
+      const snapshot = await services.memory.getMemoryStatusSnapshot();
+      const vectorAvailable = await services.memory.probeVectorAvailability();
       const status: AgenrOpenClawMemoryProviderStatus = {
         backend: "builtin",
         provider: "agenr",
@@ -64,20 +60,4 @@ export function createAgenrMemoryRuntime(servicesPromise: Promise<AgenrOpenClawS
       await services.close();
     },
   };
-}
-
-/** Probes whether the libSQL vector extension and agenr index are usable. */
-async function probeVectorAvailability(services: AgenrOpenClawServices): Promise<boolean> {
-  try {
-    await services.database.execute({
-      sql: `
-        SELECT COUNT(*) AS matches
-        FROM vector_top_k('${VECTOR_INDEX_NAME}', vector32(?), ?) AS matches
-      `,
-      args: [ZERO_VECTOR, 1],
-    });
-    return true;
-  } catch {
-    return false;
-  }
 }
