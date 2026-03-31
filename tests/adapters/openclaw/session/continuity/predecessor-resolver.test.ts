@@ -213,7 +213,7 @@ describe("resolveOpenClawSessionPredecessor", () => {
       expect.arrayContaining([
         "[agenr] predecessor: predecessor resolution for session=current-session key=agent:main:tui-223e4567-e89b-12d3-a456-426614174000 strategy=sessions_json_scan sessionKey=agent:main:tui-223e4567-e89b-12d3-a456-426614174000 kind=tui stableLane=tui",
         `[agenr] predecessor: predecessor found for session=current-session key=agent:main:tui-223e4567-e89b-12d3-a456-426614174000 strategy=sessions_json_scan predecessorKey=agent:main:main predecessor=${path.join(sessionsDir, "previous-main.jsonl")}`,
-        `[agenr] predecessor: resolution summary for session=current-session key=agent:main:tui-223e4567-e89b-12d3-a456-426614174000 kind=tui stableLane=tui eligible=true sessionStartObserved=false resumedFrom=n/a resumedFromPresent=false resumedFromStatus=not_observed fallbackEligible=true fallbackAttempted=true fallbackStatus=resolved fallbackCandidateCount=1 strategy=sessions_json_scan reason=resolved predecessorSessionId=previous-main predecessorKey=agent:main:main predecessor=${path.join(sessionsDir, "previous-main.jsonl")}`,
+        `[agenr] predecessor: resolution summary for session=current-session key=agent:main:tui-223e4567-e89b-12d3-a456-426614174000 kind=tui stableLane=tui eligible=true sessionStartObserved=false resumedFrom=n/a resumedFromPresent=false resumedFromStatus=session_start_not_seen fallbackEligible=true fallbackAttempted=true fallbackStatus=resolved sameAgentCandidateCount=1 laneMatchedCandidateCount=1 rankedFallbackCandidateCount=1 strategy=sessions_json_scan reason=resolved predecessorSessionId=previous-main predecessorKey=agent:main:main predecessor=${path.join(sessionsDir, "previous-main.jsonl")}`,
       ]),
     );
   });
@@ -257,11 +257,13 @@ describe("resolveOpenClawSessionPredecessor", () => {
         sessionStartObserved: false,
         resumedFromPresent: false,
         resumedFromResolved: false,
-        resumedFromStatus: "not_observed",
+        resumedFromStatus: "session_start_not_seen",
         fallbackEligible: true,
         fallbackAttempted: true,
         fallbackStatus: "resolved",
-        fallbackCandidateCount: 1,
+        sameAgentCandidateCount: 1,
+        laneMatchedCandidateCount: 1,
+        rankedFallbackCandidateCount: 1,
         strategy: "sessions_json_scan",
         reason: "resolved",
         predecessor: {
@@ -486,6 +488,48 @@ describe("resolveOpenClawSessionPredecessor", () => {
     );
   });
 
+  it("records when resumedFrom was present but no predecessor transcript resolved", async () => {
+    const { workspaceDir } = await createWorkspaceWithSessions();
+    const tracker = createSessionStartTracker();
+    tracker.rememberSessionStart("current-session", "agent:main:telegram:direct:123", "missing-predecessor");
+
+    const result = await resolveOpenClawSessionPredecessorResolution(
+      {
+        agentId: "main",
+        sessionId: "current-session",
+        sessionKey: "agent:main:telegram:direct:123",
+        workspaceDir,
+      },
+      tracker,
+      {
+        logger: createLogger(),
+        resolveStateDir: resolveOpenClawStateDir,
+      },
+    );
+
+    expect(result).toEqual({
+      predecessor: undefined,
+      resolution: {
+        currentSessionId: "current-session",
+        currentSessionKey: "agent:main:telegram:direct:123",
+        kind: "direct",
+        stableLane: "telegram:direct:123",
+        eligible: true,
+        sessionStartObserved: true,
+        sessionStartSessionKey: "agent:main:telegram:direct:123",
+        resumedFrom: "missing-predecessor",
+        resumedFromPresent: true,
+        resumedFromResolved: false,
+        resumedFromStatus: "resumed_from_present_but_unresolved",
+        fallbackEligible: false,
+        fallbackAttempted: false,
+        fallbackStatus: "not_eligible",
+        strategy: "none",
+        reason: "resumed_from_not_found",
+      },
+    });
+  });
+
   it("records when direct continuity had no observed session_start event to supply resumedFrom", async () => {
     const { workspaceDir } = await createWorkspaceWithSessions();
 
@@ -514,7 +558,48 @@ describe("resolveOpenClawSessionPredecessor", () => {
         sessionStartObserved: false,
         resumedFromPresent: false,
         resumedFromResolved: false,
-        resumedFromStatus: "not_observed",
+        resumedFromStatus: "session_start_not_seen",
+        fallbackEligible: false,
+        fallbackAttempted: false,
+        fallbackStatus: "not_eligible",
+        strategy: "none",
+        reason: "resumed_from_missing",
+      },
+    });
+  });
+
+  it("distinguishes a captured session_start event that had no resumedFrom", async () => {
+    const { workspaceDir } = await createWorkspaceWithSessions();
+    const tracker = createSessionStartTracker();
+    tracker.rememberSessionStart("current-session", "agent:main:telegram:direct:123");
+
+    const result = await resolveOpenClawSessionPredecessorResolution(
+      {
+        agentId: "main",
+        sessionId: "current-session",
+        sessionKey: "agent:main:telegram:direct:123",
+        workspaceDir,
+      },
+      tracker,
+      {
+        logger: createLogger(),
+        resolveStateDir: resolveOpenClawStateDir,
+      },
+    );
+
+    expect(result).toEqual({
+      predecessor: undefined,
+      resolution: {
+        currentSessionId: "current-session",
+        currentSessionKey: "agent:main:telegram:direct:123",
+        kind: "direct",
+        stableLane: "telegram:direct:123",
+        eligible: true,
+        sessionStartObserved: true,
+        sessionStartSessionKey: "agent:main:telegram:direct:123",
+        resumedFromPresent: false,
+        resumedFromResolved: false,
+        resumedFromStatus: "session_start_seen_without_resumed_from",
         fallbackEligible: false,
         fallbackAttempted: false,
         fallbackStatus: "not_eligible",

@@ -215,10 +215,15 @@ The `sessions.json` fallback is intentionally narrow:
 Each lookup also emits one structured summary log line. The summary is designed to answer, in one place:
 
 - parsed continuity kind and stable lane
-- whether agenr observed a `session_start` event for the session yet
-- whether `resumedFrom` was present and whether it resolved
+- whether this agenr process had already captured a `session_start` event for the session id
+- a precise `resumedFrom` state:
+  `session_start_not_seen`, `session_start_seen_without_resumed_from`, `resumed_from_present_but_unresolved`, or `resolved`
 - whether `sessions.json` fallback was eligible and whether it ran
-- fallback candidate count when fallback ran
+- fallback candidate counts at three stable stages:
+  same-agent entries, lane-matched entries, and ranked fallback entries
+  Ranked fallback entries are the lane-matched entries that still have the
+  required `sessionFile` and `updatedAt` fields to participate in fallback
+  ordering.
 - winning strategy (`resumed_from`, `sessions_json_scan`, or `none`)
 - final no-match reason or selected predecessor file
 

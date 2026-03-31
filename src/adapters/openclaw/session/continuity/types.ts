@@ -82,7 +82,11 @@ export type OpenClawContinuityResolutionStrategy = "resumed_from" | "sessions_js
 /**
  * Stable `session_start.resumedFrom` lookup status captured for diagnostics.
  */
-export type OpenClawContinuityResumedFromStatus = "not_observed" | "missing" | "resolved" | "not_found";
+export type OpenClawContinuityResumedFromStatus =
+  | "session_start_not_seen"
+  | "session_start_seen_without_resumed_from"
+  | "resumed_from_present_but_unresolved"
+  | "resolved";
 
 /**
  * Stable `sessions.json` fallback status captured for diagnostics.
@@ -127,7 +131,12 @@ export interface OpenClawContinuityResolutionSummary {
    */
   eligible: boolean;
   /**
-   * Reports whether agenr observed an OpenClaw `session_start` event first.
+   * Reports whether this agenr process observed and stored an OpenClaw
+   * `session_start` event for the current session id before resolution ran.
+   *
+   * `false` means the tracker had no remembered event at resolution time. That
+   * can indicate a real cold start, a process restart, or event ordering where
+   * `before_prompt_build` ran before `session_start` was captured.
    */
   sessionStartObserved: boolean;
   /**
@@ -144,6 +153,15 @@ export interface OpenClawContinuityResolutionSummary {
   resumedFromPresent: boolean;
   /**
    * Structured outcome for the `resumedFrom` lookup path.
+   *
+   * Meanings:
+   * - `session_start_not_seen`: the tracker had no remembered `session_start`
+   *   event for the session id when continuity resolution ran
+   * - `session_start_seen_without_resumed_from`: agenr captured `session_start`,
+   *   but the event did not provide a non-empty `resumedFrom`
+   * - `resumed_from_present_but_unresolved`: agenr captured a non-empty
+   *   `resumedFrom`, but no predecessor transcript could be resolved from it
+   * - `resolved`: the `resumedFrom` path resolved to a predecessor transcript
    */
   resumedFromStatus: OpenClawContinuityResumedFromStatus;
   /**
@@ -163,9 +181,18 @@ export interface OpenClawContinuityResolutionSummary {
    */
   fallbackStatus: OpenClawContinuityFallbackStatus;
   /**
-   * Count of lane-matched fallback candidates considered when fallback ran.
+   * Number of `sessions.json` entries for the same agent before lane filtering.
    */
-  fallbackCandidateCount?: number;
+  sameAgentCandidateCount?: number;
+  /**
+   * Number of same-agent candidates that matched the current continuity lane.
+   */
+  laneMatchedCandidateCount?: number;
+  /**
+   * Number of lane-matched candidates that had the required fields to enter
+   * fallback ranking (`sessionFile` and `updatedAt`).
+   */
+  rankedFallbackCandidateCount?: number;
   /**
    * Final strategy that produced the predecessor, or `none`.
    */
