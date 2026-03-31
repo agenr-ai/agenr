@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import { generateEpisodeSummary } from "../../core/episode/summary-generator.js";
 import { buildEpisodeSummaryPrompt, EPISODE_SUMMARY_SYSTEM_PROMPT } from "../../core/episode/summary-prompt.js";
 import { MAX_EPISODE_TRANSCRIPT_CHARS, MIN_EPISODE_MESSAGES, capEpisodeTranscript, renderTranscript } from "../../core/episode/transcript-render.js";
@@ -460,10 +462,36 @@ function resolveSessionMeta(
   return {
     sessionId: parsedSessionId,
     sourceRef: filePath,
-    agentId: null,
+    agentId: deriveAgentIdFromPath(filePath),
     surface: reconstructedMeta?.surface ?? null,
     metadataSource: reconstructedMeta?.metadataSource ?? "none",
   };
+}
+
+/**
+ * Derives an agent identifier from the transcript file path when it follows
+ * the OpenClaw directory convention: `.openclaw/agents/{agentId}/sessions/{file}`.
+ *
+ * Returns `null` when the path does not match the expected structure.
+ *
+ * @param filePath - Absolute or relative transcript file path.
+ * @returns Agent identifier, or `null` when the path is not an OpenClaw sessions directory.
+ */
+function deriveAgentIdFromPath(filePath: string): string | null {
+  const resolved = path.resolve(filePath);
+  const parent = path.basename(path.dirname(resolved));
+  const grandparent = path.basename(path.dirname(path.dirname(resolved)));
+
+  if (parent !== "sessions") {
+    return null;
+  }
+
+  const candidate = grandparent.trim();
+  if (!candidate || candidate === "." || candidate === "/") {
+    return null;
+  }
+
+  return candidate;
 }
 
 /**

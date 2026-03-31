@@ -118,7 +118,21 @@ function resolveSurface(surface: string | undefined, sessionKey: string | undefi
     return normalizedSurface;
   }
 
-  return parseTuiSessionKey(sessionKey ?? "") ? "tui" : null;
+  const trimmedKey = sessionKey?.trim().toLowerCase() ?? "";
+
+  if (trimmedKey.includes(":subagent:")) {
+    return "subagent";
+  }
+
+  if (trimmedKey.includes(":cron:")) {
+    return "cron";
+  }
+
+  if (parseTuiSessionKey(sessionKey ?? "")) {
+    return "tui";
+  }
+
+  return null;
 }
 
 /**
