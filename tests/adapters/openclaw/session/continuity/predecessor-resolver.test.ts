@@ -5,10 +5,7 @@ import path from "node:path";
 import { resolveStateDir as resolveOpenClawStateDir } from "openclaw/plugin-sdk/state-paths";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  resolveOpenClawSessionPredecessor,
-  resolveOpenClawSessionPredecessorResolution,
-} from "../../../../../src/adapters/openclaw/session/continuity/predecessor-resolver.js";
+import { resolveOpenClawSessionPredecessor } from "../../../../../src/adapters/openclaw/session/continuity/predecessor-resolver.js";
 import { createSessionStartTracker } from "../../../../../src/adapters/openclaw/session/state.js";
 
 const tempPaths: string[] = [];
@@ -213,64 +210,8 @@ describe("resolveOpenClawSessionPredecessor", () => {
       expect.arrayContaining([
         "[agenr] predecessor: predecessor resolution for session=current-session key=agent:main:tui-223e4567-e89b-12d3-a456-426614174000 strategy=sessions_json_scan sessionKey=agent:main:tui-223e4567-e89b-12d3-a456-426614174000 kind=tui stableLane=tui",
         `[agenr] predecessor: predecessor found for session=current-session key=agent:main:tui-223e4567-e89b-12d3-a456-426614174000 strategy=sessions_json_scan predecessorKey=agent:main:main predecessor=${path.join(sessionsDir, "previous-main.jsonl")}`,
-        `[agenr] predecessor: resolution summary for session=current-session key=agent:main:tui-223e4567-e89b-12d3-a456-426614174000 kind=tui stableLane=tui eligible=true sessionStartObserved=false resumedFrom=n/a resumedFromPresent=false resumedFromStatus=not_observed fallbackEligible=true fallbackAttempted=true fallbackStatus=resolved fallbackCandidateCount=1 strategy=sessions_json_scan reason=resolved predecessorSessionId=previous-main predecessorKey=agent:main:main predecessor=${path.join(sessionsDir, "previous-main.jsonl")}`,
       ]),
     );
-  });
-
-  it("returns structured diagnostics when main or tui continuity falls back to sessions.json", async () => {
-    const { workspaceDir, sessionsDir } = await createWorkspaceWithSessions();
-    await writeSessionJsonl(sessionsDir, "previous-main");
-    await writeSessionsJson(sessionsDir, {
-      "agent:main:main": {
-        sessionId: "previous-main",
-        sessionFile: "previous-main.jsonl",
-        updatedAt: 2_000,
-      },
-    });
-
-    const result = await resolveOpenClawSessionPredecessorResolution(
-      {
-        agentId: "main",
-        sessionId: "current-session",
-        sessionKey: "agent:main:tui-423e4567-e89b-12d3-a456-426614174000",
-        workspaceDir,
-      },
-      createSessionStartTracker(),
-      {
-        logger: createLogger(),
-        resolveStateDir: resolveOpenClawStateDir,
-      },
-    );
-
-    expect(result).toEqual({
-      predecessor: {
-        sessionId: "previous-main",
-        sessionFile: path.join(sessionsDir, "previous-main.jsonl"),
-      },
-      resolution: {
-        currentSessionId: "current-session",
-        currentSessionKey: "agent:main:tui-423e4567-e89b-12d3-a456-426614174000",
-        kind: "tui",
-        stableLane: "tui",
-        eligible: true,
-        sessionStartObserved: false,
-        resumedFromPresent: false,
-        resumedFromResolved: false,
-        resumedFromStatus: "not_observed",
-        fallbackEligible: true,
-        fallbackAttempted: true,
-        fallbackStatus: "resolved",
-        fallbackCandidateCount: 1,
-        strategy: "sessions_json_scan",
-        reason: "resolved",
-        predecessor: {
-          sessionId: "previous-main",
-          sessionFile: path.join(sessionsDir, "previous-main.jsonl"),
-        },
-        predecessorSessionKey: "agent:main:main",
-      },
-    });
   });
 
   it("derives the predecessor sessionId from the session file when sessions.json omits it", async () => {
@@ -484,44 +425,6 @@ describe("resolveOpenClawSessionPredecessor", () => {
         "[agenr] predecessor: no predecessor found for session=current-session key=agent:main:telegram:direct:123 strategy=resumed_from reason=cold_start_after_resumed_from_miss",
       ]),
     );
-  });
-
-  it("records when direct continuity had no observed session_start event to supply resumedFrom", async () => {
-    const { workspaceDir } = await createWorkspaceWithSessions();
-
-    const result = await resolveOpenClawSessionPredecessorResolution(
-      {
-        agentId: "main",
-        sessionId: "current-session",
-        sessionKey: "agent:main:telegram:direct:123",
-        workspaceDir,
-      },
-      createSessionStartTracker(),
-      {
-        logger: createLogger(),
-        resolveStateDir: resolveOpenClawStateDir,
-      },
-    );
-
-    expect(result).toEqual({
-      predecessor: undefined,
-      resolution: {
-        currentSessionId: "current-session",
-        currentSessionKey: "agent:main:telegram:direct:123",
-        kind: "direct",
-        stableLane: "telegram:direct:123",
-        eligible: true,
-        sessionStartObserved: false,
-        resumedFromPresent: false,
-        resumedFromResolved: false,
-        resumedFromStatus: "not_observed",
-        fallbackEligible: false,
-        fallbackAttempted: false,
-        fallbackStatus: "not_eligible",
-        strategy: "none",
-        reason: "resumed_from_missing",
-      },
-    });
   });
 
   it("resolves same-group predecessors from resumedFrom archived files", async () => {

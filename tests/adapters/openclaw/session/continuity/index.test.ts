@@ -87,28 +87,6 @@ describe("resolvePredecessorContinuity", () => {
       sessionId: predecessorSessionId,
       sessionFile: predecessorFile,
     });
-    expect(result.resolution).toEqual({
-      currentSessionId: "current-session",
-      currentSessionKey: "agent:main:tui-923e4567-e89b-12d3-a456-426614174000",
-      kind: "tui",
-      stableLane: "tui",
-      eligible: true,
-      sessionStartObserved: false,
-      resumedFromPresent: false,
-      resumedFromResolved: false,
-      resumedFromStatus: "not_observed",
-      fallbackEligible: true,
-      fallbackAttempted: true,
-      fallbackStatus: "resolved",
-      fallbackCandidateCount: 1,
-      strategy: "sessions_json_scan",
-      reason: "resolved",
-      predecessor: {
-        sessionId: predecessorSessionId,
-        sessionFile: predecessorFile,
-      },
-      predecessorSessionKey: "agent:main:main",
-    });
     expect(result.continuitySummaryContent).toBe("File-based continuity won the design decision.");
     expect(result.recentSessionContent).toContain("U: We kept continuity file-based.");
     expect(result.recentSessionContent).toContain("A: And we still include the recent transcript tail.");
