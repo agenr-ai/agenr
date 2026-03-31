@@ -11,18 +11,39 @@ import type {
   CreateEpisodeIngestPlanOptions,
   EpisodeEmbeddingBackfillResult,
   EpisodeIngestCandidate,
+  EpisodeIngestCandidateOverrides,
   EpisodeIngestExecutionResult,
   EpisodeIngestInvalidSession,
   EpisodeIngestPlan,
   EpisodeIngestPreflightResult,
+  EpisodeTranscriptIngestResult,
   EpisodeIngestSessionResult,
   EpisodeIngestSkippedSession,
   ExecuteEpisodeIngestPlanOptions,
+  IngestEpisodeTranscriptOptions,
   PrepareEpisodeIngestOptions,
 } from "./types.js";
 
 const ACTIVE_SESSION_WINDOW_MS = 5 * 60 * 1000;
 const CHARS_PER_TOKEN_ESTIMATE = 4;
+
+/**
+ * Internal classification options shared by batch and single-transcript ingest.
+ */
+interface ClassifyPreflightTranscriptOptions {
+  /**
+   * Reference time for active-session detection.
+   */
+  referenceNow: Date;
+  /**
+   * Whether existing episodes should remain eligible for regeneration.
+   */
+  regenerate: boolean;
+  /**
+   * Whether to bypass the active-session skip rule.
+   */
+  skipActiveSessionCheck?: boolean;
+}
 
 /**
  * Discovers OpenClaw transcripts, applies Stage 1 eligibility checks, and
@@ -72,7 +93,10 @@ export async function prepareEpisodeIngest(
           return;
         }
 
-        const result = await classifyPreflightTranscript(filePath, ports, referenceNow, options.regenerate === true);
+        const result = await classifyPreflightTranscript(filePath, ports, {
+          referenceNow,
+          regenerate: options.regenerate === true,
+        });
         if (result.kind === "candidate") {
           candidatesByIndex[currentIndex] = result.value;
         } else if (result.kind === "skipped") {
@@ -123,15 +147,13 @@ type PreflightTranscriptClassification =
  *
  * @param filePath - Absolute transcript path.
  * @param ports - Episode-ingest service ports.
- * @param referenceNow - Reference time for active-session detection.
- * @param regenerate - Whether existing episodes should stay in the candidate set.
+ * @param options - Reference time plus eligibility controls for this classification.
  * @returns One candidate, skipped-session record, or invalid-session record.
  */
 async function classifyPreflightTranscript(
   filePath: string,
   ports: EpisodeIngestPorts,
-  referenceNow: Date,
-  regenerate: boolean,
+  options: ClassifyPreflightTranscriptOptions,
 ): Promise<PreflightTranscriptClassification> {
   const parsedTranscript = await ports.transcript.parseFile(filePath);
   const cleanedMessages = parsedTranscript.messages.filter((message) => message.text.trim().length > 0);
@@ -158,6 +180,26 @@ async function classifyPreflightTranscript(
     };
   }
 
+  const existingEpisode = await findExistingEpisode(ports, resolvedMeta.sessionId, parsedTranscript.metadata.transcriptHash);
+  if (existingEpisode && options.regenerate !== true) {
+    return {
+      kind: "skipped",
+      value: {
+        filePath,
+        reason: "skipped_exists",
+        sessionId: resolvedMeta.sessionId,
+        transcriptHash: parsedTranscript.metadata.transcriptHash,
+        messageCount: cleanedMessages.length,
+        startedAt: parsedTranscript.metadata.startedAt,
+        endedAt: parsedTranscript.metadata.endedAt,
+        agentId: resolvedMeta.agentId,
+        surface: resolvedMeta.surface,
+        metadataSource: resolvedMeta.metadataSource,
+        existingEpisode,
+      },
+    };
+  }
+
   if (cleanedMessages.length < MIN_EPISODE_MESSAGES) {
     return {
       kind: "skipped",
@@ -176,7 +218,7 @@ async function classifyPreflightTranscript(
     };
   }
 
-  if (isActiveSession(parsedTranscript.metadata.endedAt, referenceNow)) {
+  if (options.skipActiveSessionCheck !== true && isActiveSession(parsedTranscript.metadata.endedAt, options.referenceNow)) {
     return {
       kind: "skipped",
       value: {
@@ -190,26 +232,6 @@ async function classifyPreflightTranscript(
         agentId: resolvedMeta.agentId,
         surface: resolvedMeta.surface,
         metadataSource: resolvedMeta.metadataSource,
-      },
-    };
-  }
-
-  const existingEpisode = await findExistingEpisode(ports, resolvedMeta.sessionId, parsedTranscript.metadata.transcriptHash);
-  if (existingEpisode && regenerate !== true) {
-    return {
-      kind: "skipped",
-      value: {
-        filePath,
-        reason: "skipped_exists",
-        sessionId: resolvedMeta.sessionId,
-        transcriptHash: parsedTranscript.metadata.transcriptHash,
-        messageCount: cleanedMessages.length,
-        startedAt: parsedTranscript.metadata.startedAt,
-        endedAt: parsedTranscript.metadata.endedAt,
-        agentId: resolvedMeta.agentId,
-        surface: resolvedMeta.surface,
-        metadataSource: resolvedMeta.metadataSource,
-        existingEpisode,
       },
     };
   }
@@ -300,6 +322,53 @@ export function createEpisodeIngestPlan(
       excludedByRecent,
       excludedUndated,
     },
+  };
+}
+
+/**
+ * Ingests one transcript directly into episodic memory using the shared app workflow.
+ *
+ * @param filePath - Absolute transcript path to parse and ingest.
+ * @param ports - Transcript, database, summary-generation, and embedding ports.
+ * @param options - Generator version plus optional host-specific overrides.
+ * @returns Single-transcript ingest outcome.
+ */
+export async function ingestEpisodeTranscript(
+  filePath: string,
+  ports: EpisodeIngestPorts,
+  options: IngestEpisodeTranscriptOptions,
+): Promise<EpisodeTranscriptIngestResult> {
+  const createSummaryLlm = ports.createSummaryLlm;
+  if (!createSummaryLlm) {
+    throw new Error("Episode transcript ingest requires createSummaryLlm().");
+  }
+
+  const classification = await classifyPreflightTranscript(filePath, ports, {
+    referenceNow: options.now ?? new Date(),
+    regenerate: options.regenerate === true,
+    skipActiveSessionCheck: options.skipActiveSessionCheck === true,
+  });
+  if (classification.kind === "skipped") {
+    return {
+      kind: "skipped",
+      skipped: classification.value,
+    };
+  }
+
+  if (classification.kind === "invalid") {
+    return {
+      kind: "invalid",
+      invalid: classification.value,
+    };
+  }
+
+  const candidate = applyCandidateOverrides(classification.value, options.candidateOverrides);
+  const session = await executeEpisodeCandidate(candidate, createSummaryLlm, ports, options.genVersion, async <T>(task: () => Promise<T>) => task());
+
+  return {
+    kind: "executed",
+    candidate,
+    session,
   };
 }
 
@@ -439,7 +508,7 @@ export async function backfillEpisodeEmbeddings(ports: EpisodeIngestPorts, optio
         let status: "embedded" | "failed" = "failed";
 
         try {
-          const vector = await embedEpisodeSummary(episode.summary, embedding);
+          const vector = await embedEpisodeSummaryWithPort(episode.summary, embedding);
           if (vector) {
             await ports.episodes.updateEpisodeEmbedding(episode.id, vector);
             embeddedCount += 1;
@@ -637,21 +706,50 @@ function estimateEpisodeSummaryInputTokens(renderedTranscript: string): number {
  * Best-effort episode summary embedding helper.
  *
  * @param summary - Episode summary text to embed.
+ * @param ports - Embedding strategy and optional default embedding provider.
+ * @returns Embedding vector when available and successful.
+ */
+async function embedEpisodeSummary(summary: string, ports: Pick<EpisodeIngestPorts, "embedSummary" | "embedding">): Promise<number[] | undefined> {
+  if (ports.embedSummary) {
+    try {
+      return normalizeEmbeddingVector(await ports.embedSummary(summary));
+    } catch {
+      return undefined;
+    }
+  }
+
+  return embedEpisodeSummaryWithPort(summary, ports.embedding);
+}
+
+/**
+ * Best-effort episode summary embedding using the default embedding port.
+ *
+ * @param summary - Episode summary text to embed.
  * @param embeddingPort - Optional embedding provider.
  * @returns Embedding vector when available and successful.
  */
-async function embedEpisodeSummary(summary: string, embeddingPort: EpisodeIngestPorts["embedding"]): Promise<number[] | undefined> {
+async function embedEpisodeSummaryWithPort(summary: string, embeddingPort: EpisodeIngestPorts["embedding"]): Promise<number[] | undefined> {
   if (!embeddingPort) {
     return undefined;
   }
 
   try {
     const vectors = await embeddingPort.embed([summary]);
-    const vector = vectors[0]?.map((value) => (Number.isFinite(value) ? value : 0));
-    return vector && vector.length > 0 ? vector : undefined;
+    return normalizeEmbeddingVector(vectors[0]);
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Normalizes one embedding vector into finite numeric values.
+ *
+ * @param vector - Candidate embedding vector.
+ * @returns Stable embedding vector, or `undefined` when invalid.
+ */
+function normalizeEmbeddingVector(vector: number[] | undefined): number[] | undefined {
+  const normalized = vector?.map((value) => (Number.isFinite(value) ? value : 0));
+  return normalized && normalized.length > 0 ? normalized : undefined;
 }
 
 /**
@@ -712,7 +810,7 @@ async function executeEpisodeCandidate(
     }
 
     const existingEpisode = candidate.existingEpisode;
-    const embedding = await embedEpisodeSummary(structured.summary, ports.embedding);
+    const embedding = await embedEpisodeSummary(structured.summary, ports);
     const writeResult = await runSerializedWrite(async () =>
       ports.episodes.upsertEpisode({
         source: "openclaw",
@@ -755,6 +853,28 @@ async function executeEpisodeCandidate(
       usage: cloneUsageStats(llm.metadata.usage),
     };
   }
+}
+
+/**
+ * Applies host-specific metadata overrides to one prepared candidate.
+ *
+ * @param candidate - Transcript-derived candidate produced by classification.
+ * @param overrides - Optional override fields supplied by the caller.
+ * @returns Candidate copy with the requested overrides applied.
+ */
+function applyCandidateOverrides(candidate: EpisodeIngestCandidate, overrides: EpisodeIngestCandidateOverrides | undefined): EpisodeIngestCandidate {
+  if (!overrides) {
+    return candidate;
+  }
+
+  return {
+    ...candidate,
+    ...(overrides.sessionId !== undefined ? { sessionId: overrides.sessionId } : {}),
+    ...(overrides.sourceRef !== undefined ? { sourceRef: overrides.sourceRef } : {}),
+    ...("agentId" in overrides ? { agentId: overrides.agentId ?? null } : {}),
+    ...("surface" in overrides ? { surface: overrides.surface ?? null } : {}),
+    ...(overrides.metadataSource !== undefined ? { metadataSource: overrides.metadataSource } : {}),
+  };
 }
 
 /**

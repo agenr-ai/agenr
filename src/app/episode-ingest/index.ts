@@ -1,4 +1,4 @@
-export { backfillEpisodeEmbeddings, createEpisodeIngestPlan, executeEpisodeIngestPlan, prepareEpisodeIngest } from "./service.js";
+export { backfillEpisodeEmbeddings, createEpisodeIngestPlan, executeEpisodeIngestPlan, ingestEpisodeTranscript, prepareEpisodeIngest } from "./service.js";
 export type {
   EpisodeIngestFilePort,
   EpisodeIngestLlmMetadata,
@@ -16,6 +16,7 @@ export type {
   EpisodeIngestCandidate,
   EpisodeEmbeddingBackfillResult,
   CreateEpisodeIngestPlanOptions,
+  EpisodeIngestCandidateOverrides,
   EpisodeIngestEstimate,
   EpisodeIngestExecutionAction,
   EpisodeIngestExecutionResult,
@@ -25,6 +26,8 @@ export type {
   EpisodeIngestSessionResult,
   EpisodeIngestSkipReason,
   EpisodeIngestSkippedSession,
+  EpisodeTranscriptIngestResult,
   ExecuteEpisodeIngestPlanOptions,
+  IngestEpisodeTranscriptOptions,
   PrepareEpisodeIngestOptions,
 } from "./types.js";

@@ -1,7 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { buildEpisodeSummaryPrompt, EPISODE_SUMMARY_SYSTEM_PROMPT } from "../../../src/core/episode/summary-prompt.js";
-import { backfillEpisodeEmbeddings, createEpisodeIngestPlan, executeEpisodeIngestPlan, prepareEpisodeIngest } from "../../../src/app/episode-ingest/index.js";
+import {
+  backfillEpisodeEmbeddings,
+  createEpisodeIngestPlan,
+  executeEpisodeIngestPlan,
+  ingestEpisodeTranscript,
+  prepareEpisodeIngest,
+} from "../../../src/app/episode-ingest/index.js";
 import type {
   EpisodeIngestFilePort,
   EpisodeIngestLlmPort,
@@ -470,6 +476,114 @@ describe("createEpisodeIngestPlan", () => {
   });
 });
 
+describe("ingestEpisodeTranscript", () => {
+  it("ingests one transcript through the shared workflow with host overrides and a custom embedding strategy", async () => {
+    const filePath = "/tmp/predecessor.jsonl";
+    const database = new MockEpisodeDatabase(
+      {},
+      {
+        upsertHandler: async (input) => createUpsertResult(input, "inserted", "episode-single"),
+      },
+    );
+    const embedSummary = vi.fn(async () => [0.4, 0.6]);
+
+    const result = await ingestEpisodeTranscript(
+      filePath,
+      createPorts({
+        episodes: database,
+        transcript: new MockTranscriptPort({
+          [filePath]: buildTranscript({
+            sessionId: "parsed-session",
+            endedAt: "2026-03-30T09:58:00.000Z",
+          }),
+        }),
+        createSummaryLlm: createSummaryLlmFactory([{ response: buildSummaryJson("Shared workflow summary.") }]),
+        embedSummary,
+      }),
+      {
+        genVersion: "openclaw-episodic-summary-v1",
+        now: new Date("2026-03-30T10:00:00.000Z"),
+        skipActiveSessionCheck: true,
+        candidateOverrides: {
+          sessionId: "override-session",
+          agentId: "main",
+          surface: "tui",
+          metadataSource: "registry",
+        },
+      },
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        kind: "executed",
+        candidate: expect.objectContaining({
+          sessionId: "override-session",
+          agentId: "main",
+          surface: "tui",
+          metadataSource: "registry",
+        }),
+        session: expect.objectContaining({
+          action: "written",
+          episodeId: "episode-single",
+        }),
+      }),
+    );
+    expect(embedSummary).toHaveBeenCalledWith("Shared workflow summary.");
+    expect(database.upsertInputs[0]).toEqual(
+      expect.objectContaining({
+        sourceId: "override-session",
+        agentId: "main",
+        surface: "tui",
+        embedding: [0.4, 0.6],
+        genVersion: "openclaw-episodic-summary-v1",
+      }),
+    );
+  });
+
+  it("returns shared skip results without invoking the summary generator", async () => {
+    const filePath = "/tmp/existing-single.jsonl";
+    const existingEpisode = buildEpisode({
+      id: "episode-existing-single",
+      sourceId: "existing-single",
+      transcriptHash: "existing-single-hash",
+    });
+    const createSummaryLlm = vi.fn(() => new MockSummaryLlm({ response: buildSummaryJson("Should not run.") }));
+
+    const result = await ingestEpisodeTranscript(
+      filePath,
+      createPorts({
+        episodes: new MockEpisodeDatabase({
+          bySourceId: {
+            "existing-single": existingEpisode,
+          },
+        }),
+        transcript: new MockTranscriptPort({
+          [filePath]: buildTranscript({
+            sessionId: "existing-single",
+            transcriptHash: "existing-single-hash",
+            endedAt: "2026-03-30T09:00:00.000Z",
+          }),
+        }),
+        createSummaryLlm,
+      }),
+      {
+        genVersion: "openclaw-episodic-summary-v1",
+        now: new Date("2026-03-30T10:00:00.000Z"),
+      },
+    );
+
+    expect(result).toEqual({
+      kind: "skipped",
+      skipped: expect.objectContaining({
+        filePath,
+        reason: "skipped_exists",
+        existingEpisode,
+      }),
+    });
+    expect(createSummaryLlm).not.toHaveBeenCalled();
+  });
+});
+
 describe("executeEpisodeIngestPlan", () => {
   it("preserves final result order and aggregates usage across concurrent workers", async () => {
     const database = new MockEpisodeDatabase(
@@ -860,6 +974,7 @@ function createPorts(overrides: Partial<EpisodeIngestPorts> = {}): EpisodeIngest
     transcript: overrides.transcript ?? new MockTranscriptPort({}),
     episodes: overrides.episodes ?? new MockEpisodeDatabase(),
     embedding: overrides.embedding,
+    embedSummary: overrides.embedSummary,
     createSummaryLlm: overrides.createSummaryLlm ?? createSummaryLlmFactory([]),
     sessionRegistry: overrides.sessionRegistry,
   };

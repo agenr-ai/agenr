@@ -182,6 +182,16 @@ export interface EpisodeIngestPorts {
    */
   embedding?: EmbeddingPort;
   /**
+   * Optional host-specific summary embedding strategy.
+   *
+   * When present, the app workflow uses this instead of `embedding` for
+   * write-time summary embeddings.
+   *
+   * @param summary - Generated episode summary text.
+   * @returns Embedding vector, or `undefined` when the host wants to skip it.
+   */
+  embedSummary?: (summary: string) => Promise<number[] | undefined>;
+  /**
    * Factory for per-candidate summary-generation clients.
    */
   createSummaryLlm?: () => EpisodeIngestLlmPort;

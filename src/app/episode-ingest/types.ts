@@ -214,6 +214,78 @@ export interface CreateEpisodeIngestPlanOptions {
 }
 
 /**
+ * Host-specific candidate fields that can override transcript-derived metadata
+ * before one episode write runs.
+ */
+export interface EpisodeIngestCandidateOverrides {
+  /**
+   * Stable session identifier override.
+   */
+  sessionId?: string;
+  /**
+   * Stable source reference override.
+   */
+  sourceRef?: string;
+  /**
+   * Owning OpenClaw agent override.
+   */
+  agentId?: string | null;
+  /**
+   * Surface identifier override.
+   */
+  surface?: string | null;
+  /**
+   * Metadata provenance override.
+   */
+  metadataSource?: SessionMetaSource;
+}
+
+/**
+ * Runtime options for ingesting one transcript directly into episodic memory.
+ */
+export interface IngestEpisodeTranscriptOptions {
+  /**
+   * Generator version written onto persisted episode rows.
+   */
+  genVersion: string;
+  /**
+   * Keep dedup hits in the candidate set and regenerate them.
+   */
+  regenerate?: boolean;
+  /**
+   * Reference time for active-session detection.
+   */
+  now?: Date;
+  /**
+   * Disables the active-session skip rule for hosts that already know the
+   * transcript is stable and complete.
+   */
+  skipActiveSessionCheck?: boolean;
+  /**
+   * Optional host-specific metadata overrides applied after transcript parsing.
+   */
+  candidateOverrides?: EpisodeIngestCandidateOverrides;
+}
+
+/**
+ * Result emitted after attempting to ingest one transcript into episodic memory.
+ */
+export type EpisodeTranscriptIngestResult =
+  | {
+      kind: "executed";
+      candidate: EpisodeIngestCandidate;
+      session: EpisodeIngestSessionResult;
+    }
+  | {
+      kind: "skipped";
+      skipped: EpisodeIngestSkippedSession;
+    }
+  | {
+      kind: "invalid";
+      invalid: EpisodeIngestInvalidSession;
+    };
+
+/**
  * Estimated Stage 2 token and cost usage for the selected candidates.
  */
 export interface EpisodeIngestEstimate {

@@ -1,20 +1,15 @@
-import { promises as fs } from "node:fs";
-import os from "node:os";
-import path from "node:path";
-
-import { DEFAULT_MODEL, DEFAULT_PROVIDER, parseModelRef, resolveAgentEffectiveModelPrimary, resolveDefaultAgentId } from "openclaw/plugin-sdk/agent-runtime";
 import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
 
-import type { EmbeddingPort, LlmPort } from "../../../core/ports.js";
-import { generateEpisodeSummary } from "../../../core/episode/summary-generator.js";
+import { ingestEpisodeTranscript, type EpisodeIngestLlmPort, type EpisodeIngestUsageStats } from "../../../app/episode-ingest/index.js";
+import type { EmbeddingPort } from "../../../core/ports.js";
+import { formatOpenClawEmbeddedAgentModel, resolveOpenClawEmbeddedAgentExecution, runOpenClawEmbeddedAgentTextTask } from "../embedded-agent/task-runner.js";
 import { formatErrorMessage, formatSessionContext } from "../logging.js";
 import { openClawTranscriptParser } from "../transcript/parser.js";
 import type { AgenrOpenClawHookContext, AgenrOpenClawHost, AgenrOpenClawServices } from "../types.js";
-import { MAX_EPISODE_TRANSCRIPT_CHARS, MIN_EPISODE_MESSAGES, capEpisodeTranscript, renderTranscript } from "../../../core/episode/transcript-render.js";
 import { OPENCLAW_EPISODE_GENERATOR_VERSION } from "./episode-summary-prompt.js";
 
 const EPISODE_SUMMARY_TIMEOUT_MS = 45_000;
-const EPISODE_SUMMARY_TIMEOUT = Symbol("episode-summary-timeout");
+const EPISODE_SUMMARY_TIMEOUT_ERROR_MESSAGE = "Episode summary generation timed out.";
 const EPISODE_EMBEDDING_TIMEOUT = Symbol("episode-embedding-timeout");
 const EPISODE_EMBEDDING_MIN_HEADROOM_MS = 5_000;
 
@@ -26,7 +21,7 @@ class OpenClawEpisodeSummaryTimeoutError extends Error {
    * Creates a timeout error with a stable name for caller-side handling.
    */
   public constructor() {
-    super("Episode summary generation timed out.");
+    super(EPISODE_SUMMARY_TIMEOUT_ERROR_MESSAGE);
     this.name = "OpenClawEpisodeSummaryTimeoutError";
   }
 }
@@ -71,90 +66,67 @@ export async function writeOpenClawPredecessorEpisode(params: {
   params.logger.info(`[agenr] session-start predecessor episode write triggered for ${sessionContext} predecessor=${params.predecessor.sessionFile}`);
 
   try {
-    const existingEpisode = await params.services.database.getEpisodeBySourceId("openclaw", params.predecessor.sessionId);
-    if (existingEpisode) {
-      params.logger.info(
-        `[agenr] session-start predecessor episode write skipped for ${sessionContext} predecessor=${params.predecessor.sessionFile} reason=already_exists episode=${existingEpisode.id}`,
-      );
-      return;
-    }
-
-    const parsedTranscript = await openClawTranscriptParser.parseFile(params.predecessor.sessionFile);
-    const cleanedMessages = parsedTranscript.messages.filter((message) => message.text.trim().length > 0);
-    if (cleanedMessages.length < MIN_EPISODE_MESSAGES) {
-      params.logger.info(
-        `[agenr] session-start predecessor episode write skipped for ${sessionContext} predecessor=${params.predecessor.sessionFile} reason=too_short cleanedMessages=${cleanedMessages.length}`,
-      );
-      return;
-    }
-
-    const startedAt = parsedTranscript.metadata.startedAt?.trim();
-    const endedAt = parsedTranscript.metadata.endedAt?.trim();
-    if (!startedAt || !endedAt) {
-      params.logger.info(
-        `[agenr] session-start predecessor episode write skipped for ${sessionContext} predecessor=${params.predecessor.sessionFile} reason=missing_metadata`,
-      );
-      return;
-    }
-
-    const episodeExecution = resolveEpisodeSummaryExecution(params.services.openClaw, params.ctx.agentId, params.services.pluginConfig.episodeModel);
-    const episodeModel = formatResolvedEpisodeSummaryModel(episodeExecution.provider, episodeExecution.model);
-    const transcript = capEpisodeTranscript(renderTranscript(cleanedMessages), MAX_EPISODE_TRANSCRIPT_CHARS);
-    const episodeSummaryLlm = createEpisodeSummaryLlm({
-      logger: params.logger,
-      model: episodeModel,
+    const episodeSummaryExecution = resolveOpenClawEmbeddedAgentExecution({
       openClaw: params.services.openClaw,
-      sessionFile: params.predecessor.sessionFile,
-      summaryExecution: episodeExecution,
+      requestedAgentId: params.ctx.agentId,
+      modelOverride: params.services.pluginConfig.episodeModel,
+      invalidOverrideLabel: "episode model override",
     });
-    const structured = await generateEpisodeSummary(transcript, episodeSummaryLlm);
-    if (!structured) {
+    const episodeModel = formatOpenClawEmbeddedAgentModel(episodeSummaryExecution);
+    const ingestResult = await ingestEpisodeTranscript(
+      params.predecessor.sessionFile,
+      {
+        files: createSingleTranscriptDiscoveryPort(params.predecessor.sessionFile),
+        transcript: openClawTranscriptParser,
+        episodes: params.services.database,
+        createSummaryLlm: () =>
+          createOpenClawEpisodeSummaryLlm({
+            modelRef: episodeModel,
+            openClaw: params.services.openClaw,
+            summaryExecution: episodeSummaryExecution,
+          }),
+        embedSummary: createPredecessorEpisodeEmbeddingStrategy({
+          embedding: params.services.embedding,
+          embeddingAvailable: params.services.embeddingStatus.available,
+          logger: params.logger,
+          sessionContext,
+          predecessorFile: params.predecessor.sessionFile,
+          deadlineMs: writeStartedAtMs + EPISODE_SUMMARY_TIMEOUT_MS,
+        }),
+      },
+      {
+        genVersion: OPENCLAW_EPISODE_GENERATOR_VERSION,
+        skipActiveSessionCheck: true,
+        candidateOverrides: {
+          sessionId: params.predecessor.sessionId,
+          agentId: trimOptionalString(params.ctx.agentId) ?? null,
+          surface: resolveSessionSurface(params.ctx) ?? null,
+          metadataSource: "registry",
+        },
+      },
+    );
+
+    if (ingestResult.kind === "skipped") {
+      logSkippedEpisodeIngest(sessionContext, params.predecessor.sessionFile, ingestResult.skipped, params.logger);
+      return;
+    }
+
+    if (ingestResult.kind === "invalid") {
       params.logger.info(
-        `[agenr] session-start predecessor episode write failed for ${sessionContext} predecessor=${params.predecessor.sessionFile} reason=invalid_response model=${episodeModel}`,
+        `[agenr] session-start predecessor episode write skipped for ${sessionContext} predecessor=${params.predecessor.sessionFile} reason=invalid_transcript cleanedMessages=${ingestResult.invalid.messageCount}`,
       );
       return;
     }
 
-    const embedding = await maybeEmbedEpisodeSummary({
-      summary: structured.summary,
-      embedding: params.services.embedding,
-      embeddingAvailable: params.services.embeddingStatus.available,
-      logger: params.logger,
-      sessionContext,
-      predecessorFile: params.predecessor.sessionFile,
-      deadlineMs: writeStartedAtMs + EPISODE_SUMMARY_TIMEOUT_MS,
-    });
-    const writeResult = await params.services.database.upsertEpisode({
-      source: "openclaw",
-      sourceId: params.predecessor.sessionId,
-      sourceRef: params.predecessor.sessionFile,
-      transcriptHash: parsedTranscript.metadata.transcriptHash,
-      agentId: params.ctx.agentId?.trim(),
-      surface: resolveSessionSurface(params.ctx),
-      startedAt,
-      endedAt,
-      summary: structured.summary,
-      tags: structured.tags,
-      activityLevel: structured.activityLevel,
-      project: structured.project,
-      genModel: episodeModel,
-      genVersion: OPENCLAW_EPISODE_GENERATOR_VERSION,
-      messageCount: cleanedMessages.length,
-      ...(embedding ? { embedding } : {}),
-    });
+    if (ingestResult.session.action === "failed") {
+      logFailedEpisodeIngest(sessionContext, params.predecessor.sessionFile, ingestResult.session.error, episodeModel, params.logger);
+      return;
+    }
 
-    const actionMessage = writeResult.action === "inserted" ? "written" : writeResult.action === "updated" ? "updated" : "unchanged";
     params.logger.info(
-      `[agenr] session-start predecessor episode write ${actionMessage} for ${sessionContext} predecessor=${params.predecessor.sessionFile} episode=${writeResult.episode.id}`,
+      `[agenr] session-start predecessor episode write ${ingestResult.session.action} for ${sessionContext} predecessor=${params.predecessor.sessionFile} episode=${ingestResult.session.episodeId}`,
     );
   } catch (error) {
-    if (error instanceof OpenClawEpisodeSummaryTimeoutError) {
-      params.logger.info(
-        `[agenr] session-start predecessor episode write timed_out for ${sessionContext} predecessor=${params.predecessor.sessionFile} timeoutMs=${EPISODE_SUMMARY_TIMEOUT_MS}`,
-      );
-      return;
-    }
-
     params.logger.info(
       `[agenr] session-start predecessor episode write failed for ${sessionContext} predecessor=${params.predecessor.sessionFile} reason=${formatErrorMessage(error)}`,
     );
@@ -171,7 +143,6 @@ export async function writeOpenClawPredecessorEpisode(params: {
  */
 function resolveSessionSurface(ctx: AgenrOpenClawHookContext): string | undefined {
   const sessionKey = ctx.sessionKey?.trim() ?? "";
-  // Session keys are more specific because TUI keys are distinguishable from webchat.
   if (/^agent:[^:]+:tui/i.test(sessionKey)) {
     return "tui";
   }
@@ -185,33 +156,56 @@ function resolveSessionSurface(ctx: AgenrOpenClawHookContext): string | undefine
 }
 
 /**
- * Creates an LLM port backed by the embedded OpenClaw agent runtime.
+ * Creates a one-file discovery adapter to satisfy the shared episode-ingest port surface.
  *
- * @param params - Execution dependencies for one episode summary call.
+ * @param filePath - Transcript file path that should be discovered.
+ * @returns Discovery port that always returns the single provided file.
+ */
+function createSingleTranscriptDiscoveryPort(filePath: string): { discoverFiles: (targetPath: string) => Promise<string[]> } {
+  return {
+    async discoverFiles(_targetPath: string): Promise<string[]> {
+      return [filePath];
+    },
+  };
+}
+
+/**
+ * Creates an app-compatible LLM port backed by the shared OpenClaw embedded-agent runner.
+ *
+ * @param params - Embedded-agent execution dependencies for one episode summary call.
  * @returns LLM port that delegates to the embedded agent.
  */
-function createEpisodeSummaryLlm(params: {
-  logger: PluginLogger;
-  model: string;
+function createOpenClawEpisodeSummaryLlm(params: {
+  modelRef: string;
   openClaw: AgenrOpenClawHost;
-  sessionFile: string;
-  summaryExecution: ReturnType<typeof resolveEpisodeSummaryExecution>;
-}): LlmPort {
+  summaryExecution: ReturnType<typeof resolveOpenClawEmbeddedAgentExecution>;
+}): EpisodeIngestLlmPort {
+  const usage = createEmptyUsageStats();
   const complete = async (systemPrompt: string, userMessage: string): Promise<string> => {
-    const response = await generateEpisodeSummaryResponse({
-      logger: params.logger,
-      model: params.model,
+    usage.calls += 1;
+    const result = await runOpenClawEmbeddedAgentTextTask({
       openClaw: params.openClaw,
+      execution: params.summaryExecution,
+      prompt: userMessage,
       systemPrompt,
-      userMessage,
-      sessionFile: params.sessionFile,
-      summaryExecution: params.summaryExecution,
+      timeoutMs: EPISODE_SUMMARY_TIMEOUT_MS,
+      runIdPrefix: "agenr-episode-summary",
+      sessionKey: "temp:agenr-episode-summary",
+      tempDirPrefix: "agenr-episode-summary-",
     });
-    if (response === EPISODE_SUMMARY_TIMEOUT) {
+    if (result.status === "unavailable") {
+      throw new Error(`embedded_agent_unavailable model=${params.modelRef}`);
+    }
+
+    if (result.status === "timeout") {
       throw new OpenClawEpisodeSummaryTimeoutError();
     }
 
-    return response;
+    if (result.status === "empty_response") {
+      throw new Error(`empty_response model=${params.modelRef}`);
+    }
+
+    return result.text;
   };
 
   return {
@@ -220,122 +214,107 @@ function createEpisodeSummaryLlm(params: {
       const response = await complete(systemPrompt, userMessage);
       return JSON.parse(response) as T;
     },
+    metadata: {
+      modelRef: params.modelRef,
+      pricing: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
+      usage,
+    },
   };
 }
 
 /**
- * Runs the embedded-agent episode summary generation with cleanup and timeout
- * handling.
+ * Creates the host-specific embedding strategy injected into the shared app workflow.
  *
- * @param params - Execution dependencies for one episode summary call.
- * @returns Structured text response, or a timeout sentinel.
+ * @param params - Embedding dependencies and timeout budget facts.
+ * @returns Embedding function used by the episode-ingest app service.
  */
-async function generateEpisodeSummaryResponse(params: {
+function createPredecessorEpisodeEmbeddingStrategy(params: {
+  embedding: EmbeddingPort;
+  embeddingAvailable: boolean;
   logger: PluginLogger;
-  model: string;
-  openClaw: AgenrOpenClawHost;
-  systemPrompt: string;
-  userMessage: string;
-  sessionFile: string;
-  summaryExecution: ReturnType<typeof resolveEpisodeSummaryExecution>;
-}): Promise<string | typeof EPISODE_SUMMARY_TIMEOUT> {
-  const runEmbeddedPiAgent = params.openClaw.runtime.agent.runEmbeddedPiAgent;
-  if (typeof runEmbeddedPiAgent !== "function") {
-    throw new Error(`embedded_agent_unavailable model=${params.model}`);
-  }
+  sessionContext: string;
+  predecessorFile: string;
+  deadlineMs: number;
+}): (summary: string) => Promise<number[] | undefined> {
+  return async (summary: string): Promise<number[] | undefined> =>
+    maybeEmbedEpisodeSummary({
+      summary,
+      embedding: params.embedding,
+      embeddingAvailable: params.embeddingAvailable,
+      logger: params.logger,
+      sessionContext: params.sessionContext,
+      predecessorFile: params.predecessorFile,
+      deadlineMs: params.deadlineMs,
+    });
+}
 
-  const tempSessionFile = await createTempEpisodeSummarySessionFile();
-  try {
-    const result = await awaitWithTimeout(
-      runEmbeddedPiAgent({
-        sessionId: `agenr-episode-summary-${Date.now()}`,
-        sessionKey: "temp:agenr-episode-summary",
-        agentId: params.summaryExecution.agentId,
-        sessionFile: tempSessionFile,
-        workspaceDir: params.summaryExecution.workspaceDir,
-        agentDir: params.summaryExecution.agentDir,
-        config: params.openClaw.config,
-        prompt: params.userMessage,
-        provider: params.summaryExecution.provider,
-        model: params.summaryExecution.model,
-        timeoutMs: EPISODE_SUMMARY_TIMEOUT_MS,
-        runId: `agenr-episode-summary-${Date.now()}`,
-        disableTools: true,
-        extraSystemPrompt: params.systemPrompt,
-      }),
-      EPISODE_SUMMARY_TIMEOUT_MS,
+/**
+ * Logs one skipped predecessor-episode ingest outcome.
+ *
+ * @param sessionContext - Stable current-session identifiers for log output.
+ * @param predecessorFile - Absolute predecessor transcript path.
+ * @param skipped - Shared app-service skip result.
+ * @param logger - Plugin logger used for diagnostics.
+ * @returns Nothing.
+ */
+function logSkippedEpisodeIngest(
+  sessionContext: string,
+  predecessorFile: string,
+  skipped: {
+    reason: string;
+    messageCount: number;
+    existingEpisode?: EpisodeIngestSkipExistingEpisode;
+  },
+  logger: PluginLogger,
+): void {
+  if (skipped.reason === "skipped_exists") {
+    logger.info(
+      `[agenr] session-start predecessor episode write skipped for ${sessionContext} predecessor=${predecessorFile} reason=already_exists episode=${skipped.existingEpisode?.id}`,
     );
-
-    if (result === EPISODE_SUMMARY_TIMEOUT) {
-      return EPISODE_SUMMARY_TIMEOUT;
-    }
-
-    const text = extractEmbeddedAgentText(result).trim();
-    if (!text) {
-      throw new Error(`empty_response model=${params.model}`);
-    }
-
-    return text;
-  } finally {
-    await cleanupTempEpisodeSummarySessionFile(tempSessionFile);
+    return;
   }
+
+  if (skipped.reason === "skipped_short") {
+    logger.info(
+      `[agenr] session-start predecessor episode write skipped for ${sessionContext} predecessor=${predecessorFile} reason=too_short cleanedMessages=${skipped.messageCount}`,
+    );
+    return;
+  }
+
+  logger.info(`[agenr] session-start predecessor episode write skipped for ${sessionContext} predecessor=${predecessorFile} reason=${skipped.reason}`);
 }
 
 /**
- * Resolves the OpenClaw agent/model used for episodic summary generation.
+ * Logs one failed predecessor-episode ingest outcome.
  *
- * @param openClaw - OpenClaw host config and runtime.
- * @param requestedAgentId - Optional active agent identifier.
- * @returns Concrete execution facts for the embedded-agent call.
+ * @param sessionContext - Stable current-session identifiers for log output.
+ * @param predecessorFile - Absolute predecessor transcript path.
+ * @param error - Shared app-service failure reason.
+ * @param episodeModel - Stable episode summary model identifier.
+ * @param logger - Plugin logger used for diagnostics.
+ * @returns Nothing.
  */
-function resolveEpisodeSummaryExecution(
-  openClaw: AgenrOpenClawHost,
-  requestedAgentId?: string,
-  modelOverride?: string,
-): {
-  agentId: string;
-  agentDir: string;
-  model: string;
-  provider: string;
-  workspaceDir: string;
-} {
-  const agentId = requestedAgentId?.trim() || resolveDefaultAgentId(openClaw.config);
-  if (modelOverride) {
-    const parsedModelRef = parseModelRef(modelOverride, DEFAULT_PROVIDER);
-    if (!parsedModelRef) {
-      throw new Error(`Invalid episode model override: ${modelOverride}`);
-    }
-
-    return {
-      agentId,
-      agentDir: openClaw.runtime.agent.resolveAgentDir(openClaw.config, agentId),
-      workspaceDir: openClaw.runtime.agent.resolveAgentWorkspaceDir(openClaw.config, agentId),
-      provider: parsedModelRef.provider,
-      model: parsedModelRef.model,
-    };
+function logFailedEpisodeIngest(sessionContext: string, predecessorFile: string, error: string | undefined, episodeModel: string, logger: PluginLogger): void {
+  if (error === EPISODE_SUMMARY_TIMEOUT_ERROR_MESSAGE) {
+    logger.info(
+      `[agenr] session-start predecessor episode write timed_out for ${sessionContext} predecessor=${predecessorFile} timeoutMs=${EPISODE_SUMMARY_TIMEOUT_MS}`,
+    );
+    return;
   }
 
-  const modelRef = resolveAgentEffectiveModelPrimary(openClaw.config, agentId);
-  const parsedModelRef = modelRef ? parseModelRef(modelRef, DEFAULT_PROVIDER) : null;
+  if (error === "invalid_response") {
+    logger.info(
+      `[agenr] session-start predecessor episode write failed for ${sessionContext} predecessor=${predecessorFile} reason=invalid_response model=${episodeModel}`,
+    );
+    return;
+  }
 
-  return {
-    agentId,
-    agentDir: openClaw.runtime.agent.resolveAgentDir(openClaw.config, agentId),
-    workspaceDir: openClaw.runtime.agent.resolveAgentWorkspaceDir(openClaw.config, agentId),
-    provider: parsedModelRef?.provider ?? DEFAULT_PROVIDER,
-    model: parsedModelRef?.model ?? DEFAULT_MODEL,
-  };
-}
-
-/**
- * Formats a provider/model pair as a stable stored identifier.
- *
- * @param provider - Resolved provider name.
- * @param model - Resolved model name.
- * @returns Stable `provider/model` identifier.
- */
-function formatResolvedEpisodeSummaryModel(provider: string, model: string): string {
-  return `${provider}/${model}`;
+  logger.info(`[agenr] session-start predecessor episode write failed for ${sessionContext} predecessor=${predecessorFile} reason=${error ?? "unknown"}`);
 }
 
 /**
@@ -398,33 +377,6 @@ async function maybeEmbedEpisodeSummary(params: {
 }
 
 /**
- * Resolves a promise while allowing the caller to abandon the result after a
- * timeout.
- *
- * @param promise - In-flight embedded-agent call.
- * @param timeoutMs - Maximum wait time in milliseconds.
- * @returns Promise result or the timeout sentinel.
- */
-async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | typeof EPISODE_SUMMARY_TIMEOUT> {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      resolve(EPISODE_SUMMARY_TIMEOUT);
-    }, timeoutMs);
-
-    promise.then(
-      (value) => {
-        clearTimeout(timeout);
-        resolve(value);
-      },
-      (error: unknown) => {
-        clearTimeout(timeout);
-        reject(error);
-      },
-    );
-  });
-}
-
-/**
  * Resolves an embedding request while capping it to the remaining time budget.
  *
  * @param promise - In-flight embedding call.
@@ -451,38 +403,39 @@ async function awaitEmbeddingWithTimeout(promise: Promise<number[][]>, timeoutMs
 }
 
 /**
- * Creates the temporary session file path required by the embedded-agent API.
+ * Creates an empty usage snapshot for one embedded-agent LLM wrapper.
  *
- * @returns Absolute temporary session path.
+ * @returns Zeroed usage totals.
  */
-async function createTempEpisodeSummarySessionFile(): Promise<string> {
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "agenr-episode-summary-"));
-  return path.join(tempDir, "session.jsonl");
+function createEmptyUsageStats(): EpisodeIngestUsageStats {
+  return {
+    calls: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    totalTokens: 0,
+    totalCost: 0,
+  };
 }
 
 /**
- * Removes temporary episode-summary runner state.
+ * Normalizes an optional string into a trimmed value.
  *
- * @param tempEpisodeSummarySessionFile - Temporary session file path.
- * @returns Promise that resolves after cleanup completes.
+ * @param value - Optional string value.
+ * @returns Trimmed string, or undefined when absent.
  */
-async function cleanupTempEpisodeSummarySessionFile(tempEpisodeSummarySessionFile: string): Promise<void> {
-  try {
-    await fs.rm(path.dirname(tempEpisodeSummarySessionFile), {
-      recursive: true,
-      force: true,
-    });
-  } catch {
-    // Ignore cleanup failures for temporary episode-summary state.
-  }
+function trimOptionalString(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
 }
 
 /**
- * Extracts the first non-empty text payload returned by the embedded-agent API.
- *
- * @param result - Embedded-agent response payload.
- * @returns First non-empty text body, or an empty string when none exists.
+ * Existing-episode facts needed by skip logging.
  */
-function extractEmbeddedAgentText(result: { payloads?: Array<{ text?: string }> }): string {
-  return result.payloads?.find((payload) => payload.text?.trim())?.text ?? "";
+interface EpisodeIngestSkipExistingEpisode {
+  /**
+   * Persisted episode identifier.
+   */
+  id: string;
 }
