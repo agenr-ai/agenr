@@ -573,7 +573,7 @@ A minimal recall-relevant config looks like this:
 
 Notes:
 
-- embeddings use `credentials.openaiApiKey`, then legacy `embeddingApiKey`, then legacy `apiKey` for `openai-api-key`, then `OPENAI_API_KEY`
+- embeddings use `credentials.openaiApiKey`, then `OPENAI_API_KEY`
 - if extraction uses Anthropic auth or OpenAI subscription auth, embeddings still require an OpenAI API key
 - `embeddingModel` falls back to `text-embedding-3-small`
 - `AGENR_DB_PATH` overrides `dbPath`

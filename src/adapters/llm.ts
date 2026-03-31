@@ -63,7 +63,6 @@ const getModelWithStrings = getModel as unknown as GetModelWithStrings;
 export function probeLlmCredentials(params: {
   auth: AgenrAuthMethod;
   storedCredentials?: AgenrStoredCredentials;
-  legacyConfig?: AgenrConfig;
   env?: NodeJS.ProcessEnv;
 }): LlmCredentialProbeResult {
   const candidate = resolveCredentialCandidate(params);
@@ -96,7 +95,6 @@ export function probeLlmCredentials(params: {
 export function resolveAuthCredentials(params: {
   auth: AgenrAuthMethod;
   storedCredentials?: AgenrStoredCredentials;
-  legacyConfig?: AgenrConfig;
   env?: NodeJS.ProcessEnv;
 }): ResolvedLlmCredentials {
   const probe = probeLlmCredentials(params);
@@ -242,7 +240,6 @@ export function resolveLlmCredentials(config: AgenrConfig | undefined, provider:
     return resolveAuthCredentials({
       auth,
       storedCredentials: config?.credentials,
-      legacyConfig: config,
       env,
     });
   }
@@ -477,39 +474,16 @@ function candidateFromToken(token: string | undefined, source: string): Credenti
   };
 }
 
-/** Resolves the legacy shared `config.apiKey` field when it matches one provider. */
-function resolveLegacySharedCredential(config: AgenrConfig | undefined, provider: string): CredentialCandidate | null {
-  const legacyApiKey = normalizeOptionalString(config?.apiKey);
-  if (!legacyApiKey) {
-    return null;
-  }
-
-  const configuredProvider = normalizeOptionalString(config?.provider);
-  if (configuredProvider && configuredProvider !== provider) {
-    return null;
-  }
-
-  return {
-    token: legacyApiKey,
-    source: "config:apiKey",
-  };
+/** Resolves OpenAI API-key credentials from env or stored config. */
+function resolveOpenAIApiKeyCandidate(storedCredentials: AgenrStoredCredentials | undefined, env: NodeJS.ProcessEnv): CredentialCandidate | null {
+  return candidateFromToken(env.OPENAI_API_KEY, "env:OPENAI_API_KEY") ?? candidateFromToken(storedCredentials?.openaiApiKey, "config:credentials.openaiApiKey");
 }
 
-/** Resolves OpenAI API-key credentials from env, config, or legacy config. */
-function resolveOpenAIApiKeyCandidate(config: AgenrConfig | undefined, env: NodeJS.ProcessEnv): CredentialCandidate | null {
-  return (
-    candidateFromToken(env.OPENAI_API_KEY, "env:OPENAI_API_KEY") ??
-    candidateFromToken(config?.credentials?.openaiApiKey, "config:credentials.openaiApiKey") ??
-    resolveLegacySharedCredential(config, "openai")
-  );
-}
-
-/** Resolves Anthropic API-key credentials from env, config, or legacy config. */
-function resolveAnthropicApiKeyCandidate(config: AgenrConfig | undefined, env: NodeJS.ProcessEnv): CredentialCandidate | null {
+/** Resolves Anthropic API-key credentials from env or stored config. */
+function resolveAnthropicApiKeyCandidate(storedCredentials: AgenrStoredCredentials | undefined, env: NodeJS.ProcessEnv): CredentialCandidate | null {
   return (
     candidateFromToken(env.ANTHROPIC_API_KEY, "env:ANTHROPIC_API_KEY") ??
-    candidateFromToken(config?.credentials?.anthropicApiKey, "config:credentials.anthropicApiKey") ??
-    resolveLegacySharedCredential(config, "anthropic")
+    candidateFromToken(storedCredentials?.anthropicApiKey, "config:credentials.anthropicApiKey")
   );
 }
 
@@ -551,7 +525,6 @@ function credentialSetupGuidance(auth: AgenrAuthMethod): string {
 function resolveCredentialCandidate(params: {
   auth: AgenrAuthMethod;
   storedCredentials?: AgenrStoredCredentials;
-  legacyConfig?: AgenrConfig;
   env?: NodeJS.ProcessEnv;
 }): CredentialCandidate | null {
   const env = params.env ?? process.env;
@@ -561,23 +534,18 @@ function resolveCredentialCandidate(params: {
     case "anthropic-token":
       return resolveAnthropicTokenCandidate(params.storedCredentials, env);
     case "anthropic-api-key":
-      return (
-        resolveAnthropicApiKeyCandidate(params.legacyConfig, env) ??
-        candidateFromToken(params.storedCredentials?.anthropicApiKey, "config:credentials.anthropicApiKey")
-      );
+      return resolveAnthropicApiKeyCandidate(params.storedCredentials, env);
     case "openai-subscription":
       return resolveOpenAiSubscriptionCandidate(env);
     case "openai-api-key":
-      return (
-        resolveOpenAIApiKeyCandidate(params.legacyConfig, env) ?? candidateFromToken(params.storedCredentials?.openaiApiKey, "config:credentials.openaiApiKey")
-      );
+      return resolveOpenAIApiKeyCandidate(params.storedCredentials, env);
   }
 }
 
 /** Resolves direct provider credentials when auth-specific matching does not apply. */
 function resolveProviderCredentialCandidate(config: AgenrConfig | undefined, provider: string, env: NodeJS.ProcessEnv): CredentialCandidate | null {
   if (provider === "openai") {
-    return resolveOpenAIApiKeyCandidate(config, env);
+    return resolveOpenAIApiKeyCandidate(config?.credentials, env);
   }
 
   if (provider === "anthropic") {
@@ -586,12 +554,11 @@ function resolveProviderCredentialCandidate(config: AgenrConfig | undefined, pro
       return resolveCredentialCandidate({
         auth,
         storedCredentials: config?.credentials,
-        legacyConfig: config,
         env,
       });
     }
 
-    return resolveAnthropicApiKeyCandidate(config, env);
+    return resolveAnthropicApiKeyCandidate(config?.credentials, env);
   }
 
   const envApiKey = getEnvApiKey(provider as KnownProvider) ?? getEnvApiKey(provider);

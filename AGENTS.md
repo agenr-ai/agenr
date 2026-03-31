@@ -161,7 +161,7 @@ The extraction LLM assigns importance based on knowledge type and signal strengt
 
 ## Database
 
-Single SQLite database with additive schema migrations for older local databases. Tags are a JSON array on the entries table (no separate tags table).
+Single SQLite database. Agenr supports fresh databases and databases already on the current schema version only. Tags are a JSON array on the entries table (no separate tags table).
 
 Key tables: `entries`, `entries_fts` (FTS5), `episodes`, `ingest_log`, `recall_events`, `surgeon_runs`, `surgeon_run_actions`, `_meta`.
 

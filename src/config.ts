@@ -1,6 +1,5 @@
 /**
  * Configuration loading and types.
- * Runtime config loading plus compatibility fields that older local installs may still carry.
  */
 
 import fs from "node:fs";
@@ -154,20 +153,6 @@ export interface AgenrConfig {
    */
   credentials?: AgenrStoredCredentials;
 
-  /**
-   * Legacy shared LLM credential field written by older setup flows.
-   *
-   * @deprecated Use `credentials` and `auth` instead.
-   */
-  apiKey?: string;
-
-  /**
-   * Legacy embedding API key field written by older setup flows.
-   *
-   * @deprecated Use `credentials.openaiApiKey` instead.
-   */
-  embeddingApiKey?: string;
-
   /** Embedding model. */
   embeddingModel?: string;
 
@@ -320,18 +305,28 @@ export function resolveDbPath(config?: AgenrConfig): string {
  *
  * @param options - Optional config path overrides.
  * @returns Parsed configuration values, or an empty object when unavailable.
+ * @throws Error When the file still uses removed legacy auth fields.
  */
 export function readConfig(options: ResolveConfigPathOptions = {}): AgenrConfig {
   const configPath = resolveFilesystemPath(resolveConfigPath(options));
   if (!fs.existsSync(configPath)) {
     return {};
   }
+
+  let parsed: unknown;
   try {
     const raw = fs.readFileSync(configPath, "utf-8");
-    return JSON.parse(raw) as AgenrConfig;
+    parsed = JSON.parse(raw) as unknown;
   } catch {
     return {};
   }
+
+  if (!isRecord(parsed)) {
+    return {};
+  }
+
+  assertSupportedConfig(parsed, configPath);
+  return parsed as AgenrConfig;
 }
 
 /**
@@ -349,10 +344,12 @@ export function configFileExists(options: ResolveConfigPathOptions = {}): boolea
  *
  * @param config - Configuration values to write.
  * @param options - Optional config path overrides.
+ * @throws Error When the config still contains removed legacy auth fields.
  */
 export function writeConfig(config: AgenrConfig, options: ResolveConfigPathOptions = {}): void {
   const configPath = resolveFilesystemPath(resolveConfigPath(options));
   const configDir = path.dirname(configPath);
+  assertSupportedConfig(config as Record<string, unknown>, configPath);
 
   fs.mkdirSync(configDir, { recursive: true, mode: CONFIG_DIR_MODE });
   try {
@@ -397,6 +394,20 @@ function normalizeOptionalString(value?: string): string | undefined {
   return normalized && normalized.length > 0 ? normalized : undefined;
 }
 
+/** Throws when a loaded config still uses removed legacy auth fields. */
+function assertSupportedConfig(config: Record<string, unknown>, configPath: string): void {
+  const unsupportedFields = ["apiKey", "embeddingApiKey"].filter((field) => field in config);
+  if (unsupportedFields.length === 0) {
+    return;
+  }
+
+  throw new Error(
+    `Unsupported agenr config field(s) in ${configPath}: ${unsupportedFields.join(", ")}. ` +
+      "Move `apiKey` to `credentials.openaiApiKey` or `credentials.anthropicApiKey` depending on your configured auth, " +
+      "move `embeddingApiKey` to `credentials.openaiApiKey`, then remove the legacy fields.",
+  );
+}
+
 /** Converts filesystem-style or file-URL config paths into usable disk paths. */
 function resolveFilesystemPath(targetPath: string): string {
   if (!targetPath.startsWith("file:")) {
@@ -408,4 +419,9 @@ function resolveFilesystemPath(targetPath: string): string {
   } catch {
     return targetPath;
   }
+}
+
+/** Returns whether one parsed config value is an object-like record. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

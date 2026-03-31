@@ -129,7 +129,6 @@ const defaultSetupRuntime: SetupRuntime = {
     probeLlmCredentials({
       auth,
       storedCredentials: config?.credentials,
-      legacyConfig: config,
     }),
   testLlmConnection: async (provider, modelId, apiKey) => {
     try {
@@ -1036,8 +1035,6 @@ function buildNextConfig(
     ...(values.episodeModel ? { episodeModel: values.episodeModel } : { episodeModel: undefined }),
     ...(nextSurgeon ? { surgeon: nextSurgeon } : { surgeon: undefined }),
     dbPath: values.dbPath,
-    apiKey: undefined,
-    embeddingApiKey: undefined,
   };
 }
 
@@ -1220,9 +1217,9 @@ function resolveStageAuthChoice(provider: SetupProvider | undefined, defaultAuth
 function resolveStoredCredentialForAuth(config: AgenrConfig | undefined, auth: AgenrAuthMethod): string | undefined {
   switch (auth) {
     case "openai-api-key":
-      return normalizeOptionalString(config?.credentials?.openaiApiKey) ?? legacyStoredCredential(config, "openai");
+      return normalizeOptionalString(config?.credentials?.openaiApiKey);
     case "anthropic-api-key":
-      return normalizeOptionalString(config?.credentials?.anthropicApiKey) ?? legacyStoredCredential(config, "anthropic");
+      return normalizeOptionalString(config?.credentials?.anthropicApiKey);
     case "anthropic-token":
       return normalizeOptionalString(config?.credentials?.anthropicOauthToken);
     case "anthropic-oauth":
@@ -1233,31 +1230,14 @@ function resolveStoredCredentialForAuth(config: AgenrConfig | undefined, auth: A
 
 /** Returns the stored OpenAI key reused for embeddings when available. */
 function resolveStoredEmbeddingCredential(config: AgenrConfig | undefined): string | undefined {
-  return (
-    normalizeOptionalString(config?.credentials?.openaiApiKey) ?? normalizeOptionalString(config?.embeddingApiKey) ?? legacyStoredCredential(config, "openai")
-  );
-}
-
-/** Returns the legacy shared credential when it matches one provider. */
-function legacyStoredCredential(config: AgenrConfig | undefined, provider: SetupProvider): string | undefined {
-  const legacy = normalizeOptionalString(config?.apiKey);
-  if (!legacy) {
-    return undefined;
-  }
-
-  const configuredProvider = normalizeProvider(config?.provider);
-  if (configuredProvider && configuredProvider !== provider) {
-    return undefined;
-  }
-
-  return legacy;
+  return normalizeOptionalString(config?.credentials?.openaiApiKey);
 }
 
 /** Formats the primary-credential status shown in setup summaries. */
 function describePrimaryCredentialConfig(config: AgenrConfig): string {
   const auth = normalizeAuthMethod(config.auth);
   if (!auth) {
-    return hasSecret(config.apiKey) ? "legacy stored API key" : "not set";
+    return "not set";
   }
 
   if (auth === "openai-api-key") {
@@ -1283,10 +1263,6 @@ function describeEmbeddingConfig(config: AgenrConfig): string {
 
   const auth = normalizeAuthMethod(config.auth);
   if (auth && auth !== "openai-api-key") {
-    return "missing separate OpenAI key";
-  }
-
-  if (!auth && normalizeProvider(config.provider) === "anthropic" && hasSecret(config.apiKey)) {
     return "missing separate OpenAI key";
   }
 

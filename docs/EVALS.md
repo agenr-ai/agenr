@@ -489,7 +489,7 @@ A minimal eval-relevant config looks like this:
 Important notes:
 
 - evals need embedding access both for fixture seeding and for the recall query
-- embeddings use `credentials.openaiApiKey`, then legacy `embeddingApiKey`, then legacy `apiKey` for `openai-api-key`, then `OPENAI_API_KEY`
+- embeddings use `credentials.openaiApiKey`, then `OPENAI_API_KEY`
 - if extraction auth is Anthropic or OpenAI subscription auth, `credentials.openaiApiKey` still needs to hold an OpenAI API key for embeddings
 - `embeddingModel` falls back to `text-embedding-3-small`
 - `AGENR_CONFIG_PATH` overrides the config file location

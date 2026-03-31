@@ -334,6 +334,10 @@ const SCHEMA_STATEMENTS = [
   CREATE_EPISODES_TABLE_SQL,
   CREATE_RECALL_EVENTS_TABLE_SQL,
   CREATE_SURGEON_RUNS_TABLE_SQL,
+  CREATE_SURGEON_RUN_ACTIONS_TABLE_SQL,
+  CREATE_SURGEON_RUN_ACTIONS_RUN_ID_INDEX_SQL,
+  CREATE_SURGEON_RUN_ACTIONS_ENTRY_ID_INDEX_SQL,
+  CREATE_SURGEON_RUN_ACTIONS_CREATED_AT_INDEX_SQL,
   CREATE_META_TABLE_SQL,
   CREATE_ENTRIES_CONTENT_HASH_INDEX_SQL,
   CREATE_ENTRIES_NORM_CONTENT_HASH_INDEX_SQL,
@@ -364,33 +368,21 @@ export {
 };
 
 /**
- * Creates the agenr database schema and supporting indexes.
+ * Creates the agenr database schema and supporting indexes for fresh or
+ * already-current databases.
  *
  * @param db - libSQL client connected to the target database.
  * @returns Promise that resolves once schema initialization is complete.
+ * @throws Error When the database uses an unsupported older schema state.
  */
 export async function initSchema(db: Client): Promise<void> {
   await db.execute("PRAGMA foreign_keys = ON");
   const currentVersion = await getSchemaVersion(db);
+  await assertSupportedSchemaState(db, currentVersion);
   const hadEntriesFts = await tableExists(db, "entries_fts");
-  const hasLegacyTasksTable = await tableExists(db, "tasks");
 
   for (const statement of SCHEMA_STATEMENTS) {
     await db.execute(statement);
-  }
-
-  await ensureSurgeonSchema(db);
-
-  if (currentVersion === "2") {
-    await migrateSchemaV2ToV3(db);
-  }
-
-  if (currentVersion === "3") {
-    await migrateSchemaV3ToV4(db);
-  }
-
-  if (currentVersion === "3" || currentVersion === "4" || (hasLegacyTasksTable && currentVersion !== SCHEMA_VERSION)) {
-    await migrateSchemaV4ToV5(db);
   }
 
   await db.execute({
@@ -415,119 +407,34 @@ export async function initSchema(db: Client): Promise<void> {
 }
 
 /**
- * Ensures surgeon tables have all required columns and indexes.
- * Handles migration from the original minimal surgeon_runs schema.
+ * Rejects persisted databases that are not fresh or already on the current schema.
  *
  * @param db - libSQL client connected to the target database.
- * @returns Promise that resolves once surgeon schema reconciliation completes.
+ * @param currentVersion - Stored schema version, when present.
  */
-async function ensureSurgeonSchema(db: Client): Promise<void> {
-  const columns = await db.execute("PRAGMA table_info('surgeon_runs')");
-  const existingColumns = new Set(
-    columns.rows
-      .map((row) => {
-        const name = (row as Record<string, unknown>).name;
-        return typeof name === "string" ? name : "";
-      })
-      .filter((name) => name.length > 0),
+async function assertSupportedSchemaState(db: Client, currentVersion: string | null): Promise<void> {
+  if (currentVersion && currentVersion !== SCHEMA_VERSION) {
+    throw new Error(
+      `Unsupported agenr database schema version "${currentVersion}". ` +
+        `This build only supports schema version ${SCHEMA_VERSION}. ` +
+        "Create a fresh database with `agenr db reset` or manually migrate the data into a new database.",
+    );
+  }
+
+  if (currentVersion !== null) {
+    return;
+  }
+
+  const existingTables = await listUserTables(db);
+  if (existingTables.length === 0) {
+    return;
+  }
+
+  throw new Error(
+    "Unsupported agenr database without schema metadata. " +
+      `This build only supports a fresh database or one already initialized at schema version ${SCHEMA_VERSION}. ` +
+      "Create a fresh database with `agenr db reset` or manually migrate the data into a new database.",
   );
-
-  const migrations: Array<{ column: string; sql: string }> = [
-    {
-      column: "pass_type",
-      sql: "ALTER TABLE surgeon_runs ADD COLUMN pass_type TEXT NOT NULL DEFAULT 'retirement'",
-    },
-    { column: "project", sql: "ALTER TABLE surgeon_runs ADD COLUMN project TEXT" },
-    {
-      column: "status",
-      sql: "ALTER TABLE surgeon_runs ADD COLUMN status TEXT NOT NULL DEFAULT 'completed'",
-    },
-    { column: "input_tokens", sql: "ALTER TABLE surgeon_runs ADD COLUMN input_tokens INTEGER DEFAULT 0" },
-    { column: "output_tokens", sql: "ALTER TABLE surgeon_runs ADD COLUMN output_tokens INTEGER DEFAULT 0" },
-    { column: "estimated_cost_usd", sql: "ALTER TABLE surgeon_runs ADD COLUMN estimated_cost_usd REAL DEFAULT 0" },
-    { column: "model", sql: "ALTER TABLE surgeon_runs ADD COLUMN model TEXT" },
-    { column: "actions_skipped", sql: "ALTER TABLE surgeon_runs ADD COLUMN actions_skipped INTEGER DEFAULT 0" },
-    { column: "entries_retired", sql: "ALTER TABLE surgeon_runs ADD COLUMN entries_retired INTEGER DEFAULT 0" },
-    { column: "summary_json", sql: "ALTER TABLE surgeon_runs ADD COLUMN summary_json TEXT" },
-    { column: "error", sql: "ALTER TABLE surgeon_runs ADD COLUMN error TEXT" },
-    { column: "dry_run", sql: "ALTER TABLE surgeon_runs ADD COLUMN dry_run INTEGER NOT NULL DEFAULT 1" },
-    { column: "config_json", sql: "ALTER TABLE surgeon_runs ADD COLUMN config_json TEXT" },
-  ];
-
-  for (const migration of migrations) {
-    if (!existingColumns.has(migration.column)) {
-      await db.execute(migration.sql);
-    }
-  }
-
-  await db.execute(CREATE_SURGEON_RUN_ACTIONS_TABLE_SQL);
-  await db.execute(CREATE_SURGEON_RUN_ACTIONS_RUN_ID_INDEX_SQL);
-  await db.execute(CREATE_SURGEON_RUN_ACTIONS_ENTRY_ID_INDEX_SQL);
-  await db.execute(CREATE_SURGEON_RUN_ACTIONS_CREATED_AT_INDEX_SQL);
-}
-
-/**
- * Applies the ordered v2 to v3 schema migration for semantic-memory cleanup.
- *
- * @param db - libSQL client connected to the target database.
- * @returns Promise that resolves once the migration steps complete.
- */
-async function migrateSchemaV2ToV3(db: Client): Promise<void> {
-  await runImmediateTransaction(db, async () => {
-    await db.execute("DROP TRIGGER IF EXISTS entries_ai");
-    await db.execute("DROP TRIGGER IF EXISTS entries_ad");
-    await db.execute("DROP TRIGGER IF EXISTS entries_au");
-    await db.execute("UPDATE entries SET type = 'milestone' WHERE type = 'event'");
-    await db.execute("DELETE FROM entries WHERE type = 'todo'");
-    await db.execute("DELETE FROM entries WHERE type = 'reflection'");
-
-    if (!(await columnExists(db, "entries", "user_id"))) {
-      await db.execute("ALTER TABLE entries ADD COLUMN user_id TEXT");
-    }
-
-    if (!(await columnExists(db, "entries", "project"))) {
-      await db.execute("ALTER TABLE entries ADD COLUMN project TEXT");
-    }
-
-    await db.execute(CREATE_ENTRIES_FTS_INSERT_TRIGGER_SQL);
-    await db.execute(CREATE_ENTRIES_FTS_DELETE_TRIGGER_SQL);
-    await db.execute(CREATE_ENTRIES_FTS_UPDATE_TRIGGER_SQL);
-  });
-}
-
-/**
- * Applies the ordered v3 to v4 schema migration for episodic-memory foundations.
- *
- * @param db - libSQL client connected to the target database.
- * @returns Promise that resolves once the migration steps complete.
- */
-async function migrateSchemaV3ToV4(db: Client): Promise<void> {
-  for (const statement of [
-    CREATE_EPISODES_TABLE_SQL,
-    CREATE_EPISODES_STARTED_AT_INDEX_SQL,
-    CREATE_EPISODES_ENDED_AT_INDEX_SQL,
-    CREATE_EPISODES_SOURCE_INDEX_SQL,
-    CREATE_EPISODES_SOURCE_ID_INDEX_SQL,
-    CREATE_EPISODES_RETIRED_INDEX_SQL,
-    CREATE_EPISODES_SOURCE_SOURCE_ID_UNIQUE_INDEX_SQL,
-  ]) {
-    await db.execute(statement);
-  }
-}
-
-/**
- * Applies the ordered v4 to v5 schema migration for task-table removal.
- *
- * @param db - libSQL client connected to the target database.
- * @returns Promise that resolves once task remnants are removed.
- */
-async function migrateSchemaV4ToV5(db: Client): Promise<void> {
-  await runImmediateTransaction(db, async () => {
-    await db.execute("DROP INDEX IF EXISTS idx_tasks_status");
-    await db.execute("DROP INDEX IF EXISTS idx_tasks_created_at");
-    await db.execute("DROP INDEX IF EXISTS idx_tasks_project");
-    await db.execute("DROP TABLE IF EXISTS tasks");
-  });
 }
 
 /**
@@ -644,13 +551,21 @@ async function tableExists(db: Client, tableName: string): Promise<boolean> {
   return result.rows.length > 0;
 }
 
-/** Checks whether a SQLite table already contains a named column. */
-async function columnExists(db: Client, tableName: string, columnName: string): Promise<boolean> {
-  const result = await db.execute(`PRAGMA table_info('${tableName.replaceAll("'", "''")}')`);
+/** Lists existing user-defined tables excluding SQLite internals. */
+async function listUserTables(db: Client): Promise<string[]> {
+  const result = await db.execute({
+    sql: `
+      SELECT name
+      FROM sqlite_master
+      WHERE type = 'table'
+        AND name NOT LIKE 'sqlite_%'
+      ORDER BY name
+    `,
+  });
 
-  return result.rows.some((row) => {
-    const name = (row as Record<string, unknown>).name;
-    return name === columnName;
+  return result.rows.flatMap((row) => {
+    const name = row.name;
+    return typeof name === "string" ? [name] : [];
   });
 }
 

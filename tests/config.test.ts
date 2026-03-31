@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -67,6 +67,25 @@ describe("writeConfig", () => {
       const configStat = await stat(configPath);
       expect(configStat.mode & 0o777).toBe(0o600);
     }
+  });
+});
+
+describe("readConfig", () => {
+  it("rejects legacy auth fields with migration guidance", async () => {
+    const directory = await createTempDir();
+    const configPath = path.join(directory, ".agenr", "config.json");
+
+    await mkdir(path.dirname(configPath), { recursive: true });
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        auth: "openai-api-key",
+        apiKey: "legacy-key",
+      }),
+    );
+
+    expect(() => readConfig({ configPath })).toThrow(/unsupported agenr config field\(s\)/i);
+    expect(() => readConfig({ configPath })).toThrow(/credentials\.openaiApiKey|credentials\.anthropicApiKey/i);
   });
 });
 

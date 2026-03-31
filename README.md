@@ -114,13 +114,18 @@ Key config fields:
 | `auth`                           | Authentication method: `openai-api-key`, `openai-subscription`, `anthropic-api-key`, `anthropic-oauth`, or `anthropic-token`.                                                     |
 | `provider` / `model`             | Default LLM provider and model used for extraction tasks unless overridden.                                                                                                       |
 | `credentials`                    | Stored manual credentials. Today that can include `openaiApiKey`, `anthropicApiKey`, and `anthropicOauthToken`. The config file is written with locked-down permissions (`0600`). |
-| `credentials.openaiApiKey`       | OpenAI key used for embeddings, and also for extraction when `auth` is `openai-api-key`. Older configs may still rely on legacy `embeddingApiKey` or `apiKey` fallback fields.    |
+| `credentials.openaiApiKey`       | OpenAI key used for embeddings, and also for extraction when `auth` is `openai-api-key`. Agenr no longer reads legacy `embeddingApiKey` or `apiKey` fields.                       |
 | `embeddingModel`                 | Embedding model. Defaults to `text-embedding-3-small`.                                                                                                                            |
 | `extractionModel` / `dedupModel` | Optional per-pipeline overrides so extraction and dedup can use different provider/model pairs.                                                                                   |
 | `extractionContext`              | Optional user context injected into extraction prompts to help the model decide what is worth remembering.                                                                        |
 | `dbPath`                         | Knowledge database location. Defaults to `~/.agenr/knowledge.db` unless overridden.                                                                                               |
 
 Important: when agenr is running as an OpenClaw plugin, session summaries use OpenClaw's configured LLM and auth, not agenr's. Agenr's config is still required for embeddings and for CLI-based ingestion/recall.
+
+Compatibility policy:
+
+- Agenr only supports the current `config.json` shape. Move any legacy `apiKey` value into `credentials.openaiApiKey` or `credentials.anthropicApiKey`, move any `embeddingApiKey` value into `credentials.openaiApiKey`, then remove the legacy fields.
+- Agenr only supports fresh databases and databases already at the current schema version. Older schema versions are no longer auto-migrated at startup.
 
 ## What You Need
 
