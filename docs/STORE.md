@@ -13,7 +13,6 @@ This document describes the code as it exists now, not just the intended flow.
 - `src/core/store/hashing.ts` - exact and normalized content-hash functions.
 - `src/core/store/embedding-text.ts` - canonical text format used for embedding generation.
 - `src/core/types.ts` - `StoreEntryInput`, `StoreResult`, and the canonical stored `Entry` type.
-- `src/core/store/index.ts` - public store exports used by other core consumers.
 - `src/adapters/db/client.ts` - libSQL database adapter, including optional transaction support.
 - `src/adapters/db/queries.ts` - insert SQL plus exact-hash and normalized-hash lookup queries.
 - `src/adapters/db/schema.ts` - FTS and vector-index lifecycle used by ingest bulk writes.
@@ -31,12 +30,10 @@ That means:
 - the production write path is ingest calling into the store pipeline
 - direct callers are expected to invoke `storeEntries()` or `storeEntriesDetailed()` programmatically
 
-There is also a split between the public and internal store APIs:
+Both store entry points live in `src/core/store/pipeline.ts`:
 
-- `src/core/store/index.ts` re-exports `storeEntries()`
-- `src/core/store/pipeline.ts` also exports `storeEntriesDetailed()`
-
-`storeEntriesDetailed()` is what ingest uses so it can map each accepted, skipped, or rejected input back to a source transcript file. The simpler `storeEntries()` wrapper drops that per-input detail and returns only aggregate counts.
+- `storeEntriesDetailed()` is what ingest uses so it can map each accepted, skipped, or rejected input back to a source transcript file.
+- `storeEntries()` is the simpler wrapper that drops per-input detail and returns only aggregate counts.
 
 ## Input shape
 

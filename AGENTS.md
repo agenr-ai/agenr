@@ -140,10 +140,8 @@ Adding a new agent system = write an adapter. Zero core changes.
 - `decision` — choices, rules, requirements, constraints with rationale
 - `preference` — stated preferences
 - `lesson` — learned insights, what worked/didn't
-- `event` — notable occurrences worth remembering
 - `relationship` — connections between entities
-- `todo` — tracked action items
-- `reflection` — synthesized observations (typically system-generated)
+- `milestone` — notable one-time occurrences, transitions, launches, and other durable happenings worth remembering
 
 ## Importance scale (1-10)
 
@@ -163,13 +161,13 @@ The extraction LLM assigns importance based on knowledge type and signal strengt
 
 ## Database
 
-Single SQLite database with ~7 tables. No migrations — if the schema changes, reset and re-ingest. Tags are a JSON array on the entries table (no separate tags table).
+Single SQLite database with additive schema migrations for older local databases. Tags are a JSON array on the entries table (no separate tags table).
 
-Key tables: `entries`, `entries_fts` (FTS5), `ingest_log`, `recall_events`, `surgeon_runs`, `_meta`.
+Key tables: `entries`, `entries_fts` (FTS5), `episodes`, `ingest_log`, `recall_events`, `surgeon_runs`, `surgeon_run_actions`, `_meta`.
 
-## No projects, no platforms
+## Projects and platforms
 
-All entries live in one flat namespace. No `project` column, no `platform` column, no project-scoped recall. Tags can serve as lightweight "relates to X" signal if needed in the future.
+Entries still live in one primary namespace. The schema includes optional `project` columns on entries, episodes, and surgeon runs for scoping metadata, but agenr does not maintain separate per-platform stores or a platform-specific memory model.
 
 ## Reference codebase
 

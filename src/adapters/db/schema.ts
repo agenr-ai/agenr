@@ -5,7 +5,7 @@ import type { SqlExecutor } from "./queries.js";
 /**
  * Logical schema version stored in the metadata table.
  */
-const SCHEMA_VERSION = "4";
+const SCHEMA_VERSION = "5";
 
 /**
  * libSQL vector index name for entry embeddings.
@@ -146,24 +146,6 @@ const CREATE_EPISODES_TABLE_SQL = `
   )
 `;
 
-/** SQL statement that creates the task-management table separated from semantic entries. */
-const CREATE_TASKS_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS tasks (
-    id TEXT PRIMARY KEY,
-    subject TEXT NOT NULL,
-    content TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'open',
-    priority INTEGER NOT NULL DEFAULT 5,
-    tags TEXT,
-    source_context TEXT,
-    project TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    completed_at TEXT,
-    due_at TEXT
-  )
-`;
-
 /** SQL statement that records each recall event. */
 const CREATE_RECALL_EVENTS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS recall_events (
@@ -298,21 +280,6 @@ const CREATE_EPISODES_SOURCE_SOURCE_ID_UNIQUE_INDEX_SQL = `
   WHERE source_id IS NOT NULL
 `;
 
-const CREATE_TASKS_STATUS_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_tasks_status
-  ON tasks(status)
-`;
-
-const CREATE_TASKS_CREATED_AT_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_tasks_created_at
-  ON tasks(created_at)
-`;
-
-const CREATE_TASKS_PROJECT_INDEX_SQL = `
-  CREATE INDEX IF NOT EXISTS idx_tasks_project
-  ON tasks(project)
-`;
-
 const CREATE_RECALL_EVENTS_ENTRY_ID_INDEX_SQL = `
   CREATE INDEX IF NOT EXISTS idx_recall_events_entry_id
   ON recall_events(entry_id)
@@ -365,7 +332,6 @@ const SCHEMA_STATEMENTS = [
   CREATE_ENTRIES_FTS_UPDATE_TRIGGER_SQL,
   CREATE_INGEST_LOG_TABLE_SQL,
   CREATE_EPISODES_TABLE_SQL,
-  CREATE_TASKS_TABLE_SQL,
   CREATE_RECALL_EVENTS_TABLE_SQL,
   CREATE_SURGEON_RUNS_TABLE_SQL,
   CREATE_META_TABLE_SQL,
@@ -381,9 +347,6 @@ const SCHEMA_STATEMENTS = [
   CREATE_EPISODES_SOURCE_ID_INDEX_SQL,
   CREATE_EPISODES_RETIRED_INDEX_SQL,
   CREATE_EPISODES_SOURCE_SOURCE_ID_UNIQUE_INDEX_SQL,
-  CREATE_TASKS_STATUS_INDEX_SQL,
-  CREATE_TASKS_CREATED_AT_INDEX_SQL,
-  CREATE_TASKS_PROJECT_INDEX_SQL,
   CREATE_RECALL_EVENTS_ENTRY_ID_INDEX_SQL,
   CREATE_RECALL_EVENTS_RECALLED_AT_INDEX_SQL,
 ] as const;
@@ -410,6 +373,7 @@ export async function initSchema(db: Client): Promise<void> {
   await db.execute("PRAGMA foreign_keys = ON");
   const currentVersion = await getSchemaVersion(db);
   const hadEntriesFts = await tableExists(db, "entries_fts");
+  const hasLegacyTasksTable = await tableExists(db, "tasks");
 
   for (const statement of SCHEMA_STATEMENTS) {
     await db.execute(statement);
@@ -423,6 +387,10 @@ export async function initSchema(db: Client): Promise<void> {
 
   if (currentVersion === "3") {
     await migrateSchemaV3ToV4(db);
+  }
+
+  if (currentVersion === "3" || currentVersion === "4" || (hasLegacyTasksTable && currentVersion !== SCHEMA_VERSION)) {
+    await migrateSchemaV4ToV5(db);
   }
 
   await db.execute({
@@ -510,12 +478,6 @@ async function migrateSchemaV2ToV3(db: Client): Promise<void> {
     await db.execute("DROP TRIGGER IF EXISTS entries_ad");
     await db.execute("DROP TRIGGER IF EXISTS entries_au");
     await db.execute("UPDATE entries SET type = 'milestone' WHERE type = 'event'");
-    await db.execute(`
-      INSERT INTO tasks (id, subject, content, status, priority, tags, source_context, created_at, updated_at)
-      SELECT id, subject, content, 'open', importance, tags, source_context, created_at, updated_at
-      FROM entries
-      WHERE type = 'todo' AND retired = 0
-    `);
     await db.execute("DELETE FROM entries WHERE type = 'todo'");
     await db.execute("DELETE FROM entries WHERE type = 'reflection'");
 
@@ -551,6 +513,21 @@ async function migrateSchemaV3ToV4(db: Client): Promise<void> {
   ]) {
     await db.execute(statement);
   }
+}
+
+/**
+ * Applies the ordered v4 to v5 schema migration for task-table removal.
+ *
+ * @param db - libSQL client connected to the target database.
+ * @returns Promise that resolves once task remnants are removed.
+ */
+async function migrateSchemaV4ToV5(db: Client): Promise<void> {
+  await runImmediateTransaction(db, async () => {
+    await db.execute("DROP INDEX IF EXISTS idx_tasks_status");
+    await db.execute("DROP INDEX IF EXISTS idx_tasks_created_at");
+    await db.execute("DROP INDEX IF EXISTS idx_tasks_project");
+    await db.execute("DROP TABLE IF EXISTS tasks");
+  });
 }
 
 /**

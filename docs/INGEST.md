@@ -157,14 +157,14 @@ When registry metadata is unavailable, agent ownership falls back to the OpenCla
 
 These are the flags that most directly affect episode backfill behavior:
 
-| Flag | What it does | Notes |
-| --- | --- | --- |
-| `--recent <duration>` | Only keeps candidates whose `endedAt` falls within a recent window. | Accepts relative values such as `30d` or `90d`, and also ISO timestamps. Applied after preflight candidate classification. |
-| `--regenerate` | Rebuilds episodes even when a matching episode already exists. | Without this flag, existing sessions are skipped during preflight. |
-| `--dry-run` | Runs discovery, parsing, filtering, and Stage 2 estimation without generating or writing summaries. | Useful for cost checks before a large backfill. |
-| `--concurrency <n>` | Sets parallel worker count for preflight parsing and summary generation. | Default `10`. Allowed range `1-20`. |
-| `--embed-only` | Backfills embeddings for existing episodes that are missing vectors. | No transcript path is required. This mode does not call the summary LLM. |
-| `--no-embed` | Skips embedding newly generated episode summaries. | Cannot be combined with `--embed-only`. Useful when you want summaries now and vector backfill later. |
+| Flag                  | What it does                                                                                        | Notes                                                                                                                      |
+| --------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `--recent <duration>` | Only keeps candidates whose `endedAt` falls within a recent window.                                 | Accepts relative values such as `30d` or `90d`, and also ISO timestamps. Applied after preflight candidate classification. |
+| `--regenerate`        | Rebuilds episodes even when a matching episode already exists.                                      | Without this flag, existing sessions are skipped during preflight.                                                         |
+| `--dry-run`           | Runs discovery, parsing, filtering, and Stage 2 estimation without generating or writing summaries. | Useful for cost checks before a large backfill.                                                                            |
+| `--concurrency <n>`   | Sets parallel worker count for preflight parsing and summary generation.                            | Default `10`. Allowed range `1-20`.                                                                                        |
+| `--embed-only`        | Backfills embeddings for existing episodes that are missing vectors.                                | No transcript path is required. This mode does not call the summary LLM.                                                   |
+| `--no-embed`          | Skips embedding newly generated episode summaries.                                                  | Cannot be combined with `--embed-only`. Useful when you want summaries now and vector backfill later.                      |
 
 A few other options still apply to episode ingest in the normal way:
 
@@ -302,7 +302,9 @@ If all attempts fail for a chunk, ingest records a warning and continues with th
 
 Current validation behavior includes:
 
-- accepts type aliases like `facts`, `tasks`, and uppercase variants
+- accepts plural aliases like `facts` plus uppercase variants
+- maps legacy `event`/`events` labels to `milestone`
+- rejects removed task aliases like `task` and `tasks`
 - maps importance tiers `high|standard|low` to `8|6|4`
 - accepts numeric importance `1-10`
 - maps `perm` and `temp` expiry aliases

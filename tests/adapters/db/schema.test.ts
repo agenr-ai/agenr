@@ -32,7 +32,7 @@ describe("initSchema", () => {
         SELECT name
         FROM sqlite_master
         WHERE type = 'table'
-          AND name IN ('entries', 'entries_fts', 'ingest_log', 'episodes', 'tasks', 'recall_events', 'surgeon_runs', 'surgeon_run_actions', '_meta')
+          AND name IN ('entries', 'entries_fts', 'ingest_log', 'episodes', 'recall_events', 'surgeon_runs', 'surgeon_run_actions', '_meta')
       `,
     });
     const tableNames = new Set(
@@ -42,9 +42,7 @@ describe("initSchema", () => {
       }),
     );
 
-    expect(tableNames).toEqual(
-      new Set(["entries", "entries_fts", "ingest_log", "episodes", "tasks", "recall_events", "surgeon_runs", "surgeon_run_actions", "_meta"]),
-    );
+    expect(tableNames).toEqual(new Set(["entries", "entries_fts", "ingest_log", "episodes", "recall_events", "surgeon_runs", "surgeon_run_actions", "_meta"]));
     expect(await tableColumns(client, "entries")).toEqual([
       "id",
       "type",
@@ -99,21 +97,6 @@ describe("initSchema", () => {
       "created_at",
       "updated_at",
     ]);
-    expect(await tableColumns(client, "tasks")).toEqual([
-      "id",
-      "subject",
-      "content",
-      "status",
-      "priority",
-      "tags",
-      "source_context",
-      "project",
-      "created_at",
-      "updated_at",
-      "completed_at",
-      "due_at",
-    ]);
-
     const triggersResult = await client.execute({
       sql: `
         SELECT name
@@ -163,9 +146,6 @@ describe("initSchema", () => {
     expect(await indexExists(client, "idx_surgeon_run_actions_run_id")).toBe(true);
     expect(await indexExists(client, "idx_surgeon_run_actions_entry_id")).toBe(true);
     expect(await indexExists(client, "idx_surgeon_run_actions_created_at")).toBe(true);
-    expect(await indexExists(client, "idx_tasks_status")).toBe(true);
-    expect(await indexExists(client, "idx_tasks_created_at")).toBe(true);
-    expect(await indexExists(client, "idx_tasks_project")).toBe(true);
     expect(await indexExists(client, "idx_episodes_started_at")).toBe(true);
     expect(await indexExists(client, "idx_episodes_ended_at")).toBe(true);
     expect(await indexExists(client, "idx_episodes_source")).toBe(true);
@@ -182,7 +162,7 @@ describe("initSchema", () => {
     await expect(initSchema(client)).resolves.toBeUndefined();
 
     const version = await client.execute("SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1");
-    expect(version.rows[0]?.value).toBe("4");
+    expect(version.rows[0]?.value).toBe("5");
     expect(await indexExists(client, "idx_episodes_started_at")).toBe(true);
   });
 
@@ -300,31 +280,17 @@ describe("initSchema", () => {
       sql: "SELECT id, type FROM entries ORDER BY id",
     });
     expect(migratedEntries.rows).toEqual([{ id: "event-1", type: "milestone" }]);
-
-    const migratedTasks = await client.execute({
-      sql: "SELECT id, subject, content, status, priority, tags, source_context FROM tasks ORDER BY id",
-    });
-    expect(migratedTasks.rows).toEqual([
-      {
-        id: "todo-1",
-        subject: "Open follow-up",
-        content: "Clean up the temporary compatibility shim after rollout.",
-        status: "open",
-        priority: 5,
-        tags: '["cleanup"]',
-        source_context: "Identified during rollout.",
-      },
-    ]);
+    expect(await tableColumns(client, "tasks")).toEqual([]);
 
     const versionResult = await client.execute({
       sql: "SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1",
     });
-    expect(versionResult.rows).toEqual([{ value: "4" }]);
+    expect(versionResult.rows).toEqual([{ value: "5" }]);
     expect(await tableColumns(client, "episodes")).toContain("summary_hash");
     expect(await tableColumns(client, "episodes")).toContain("surface");
   });
 
-  it("migrates schema version 3 databases additively to version 4 without losing entry data", async () => {
+  it("migrates schema version 3 databases to the current schema without losing entry data", async () => {
     const client = createClient({ url: ":memory:" });
     clients.push(client);
 
@@ -357,6 +323,25 @@ describe("initSchema", () => {
         updated_at TEXT NOT NULL
       )
     `);
+    await client.execute(`
+      CREATE TABLE tasks (
+        id TEXT PRIMARY KEY,
+        subject TEXT NOT NULL,
+        content TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'open',
+        priority INTEGER NOT NULL DEFAULT 5,
+        tags TEXT,
+        source_context TEXT,
+        project TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        completed_at TEXT,
+        due_at TEXT
+      )
+    `);
+    await client.execute("CREATE INDEX idx_tasks_status ON tasks(status)");
+    await client.execute("CREATE INDEX idx_tasks_created_at ON tasks(created_at)");
+    await client.execute("CREATE INDEX idx_tasks_project ON tasks(project)");
     await client.execute("CREATE TABLE _meta (key TEXT PRIMARY KEY, value TEXT)");
     await client.execute({
       sql: `
@@ -411,7 +396,11 @@ describe("initSchema", () => {
     const upgradedVersion = await client.execute({
       sql: "SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1",
     });
-    expect(upgradedVersion.rows).toEqual([{ value: "4" }]);
+    expect(upgradedVersion.rows).toEqual([{ value: "5" }]);
+    expect(await tableColumns(client, "tasks")).toEqual([]);
+    expect(await indexExists(client, "idx_tasks_status")).toBe(false);
+    expect(await indexExists(client, "idx_tasks_created_at")).toBe(false);
+    expect(await indexExists(client, "idx_tasks_project")).toBe(false);
 
     const entryResult = await client.execute({
       sql: "SELECT id, subject, project FROM entries WHERE id = ? LIMIT 1",
@@ -424,6 +413,107 @@ describe("initSchema", () => {
         project: "agenr",
       },
     ]);
+  });
+
+  it("drops the legacy tasks table when schema version 4 is initialized", async () => {
+    const client = createClient({ url: ":memory:" });
+    clients.push(client);
+
+    await client.execute(`
+      CREATE TABLE entries (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        content TEXT NOT NULL,
+        importance INTEGER NOT NULL,
+        expiry TEXT NOT NULL,
+        tags TEXT,
+        source_file TEXT,
+        source_context TEXT,
+        embedding BLOB,
+        content_hash TEXT,
+        norm_content_hash TEXT,
+        minhash_sig BLOB,
+        quality_score REAL NOT NULL DEFAULT 0.5,
+        recall_count INTEGER DEFAULT 0,
+        last_recalled_at TEXT,
+        superseded_by TEXT,
+        cluster_id TEXT,
+        user_id TEXT,
+        project TEXT,
+        retired INTEGER NOT NULL DEFAULT 0,
+        retired_at TEXT,
+        retired_reason TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+    await client.execute(`
+      CREATE TABLE episodes (
+        id TEXT PRIMARY KEY,
+        source TEXT NOT NULL,
+        source_id TEXT,
+        source_ref TEXT,
+        transcript_hash TEXT,
+        summary_hash TEXT,
+        agent_id TEXT,
+        surface TEXT,
+        started_at TEXT NOT NULL,
+        ended_at TEXT,
+        summary TEXT NOT NULL,
+        tags TEXT,
+        activity_level TEXT,
+        user_id TEXT,
+        project TEXT,
+        gen_model TEXT,
+        gen_version TEXT,
+        message_count INTEGER,
+        embedding BLOB,
+        retired INTEGER NOT NULL DEFAULT 0,
+        retired_at TEXT,
+        retired_reason TEXT,
+        superseded_by TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+    await client.execute(`
+      CREATE TABLE tasks (
+        id TEXT PRIMARY KEY,
+        subject TEXT NOT NULL,
+        content TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'open',
+        priority INTEGER NOT NULL DEFAULT 5,
+        tags TEXT,
+        source_context TEXT,
+        project TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        completed_at TEXT,
+        due_at TEXT
+      )
+    `);
+    await client.execute("CREATE INDEX idx_tasks_status ON tasks(status)");
+    await client.execute("CREATE INDEX idx_tasks_created_at ON tasks(created_at)");
+    await client.execute("CREATE INDEX idx_tasks_project ON tasks(project)");
+    await client.execute("CREATE TABLE _meta (key TEXT PRIMARY KEY, value TEXT)");
+    await client.execute({
+      sql: `
+        INSERT INTO _meta (key, value)
+        VALUES ('schema_version', '4')
+      `,
+    });
+
+    await initSchema(client);
+
+    const upgradedVersion = await client.execute({
+      sql: "SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1",
+    });
+    expect(upgradedVersion.rows).toEqual([{ value: "5" }]);
+    expect(await tableColumns(client, "tasks")).toEqual([]);
+    expect(await indexExists(client, "idx_tasks_status")).toBe(false);
+    expect(await indexExists(client, "idx_tasks_created_at")).toBe(false);
+    expect(await indexExists(client, "idx_tasks_project")).toBe(false);
   });
 
   it("migrates the minimal legacy surgeon_runs table without losing data", async () => {

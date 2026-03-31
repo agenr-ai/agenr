@@ -1,6 +1,6 @@
 /**
  * Configuration loading and types.
- * Minimal - no legacy handling, no deprecated fields.
+ * Runtime config loading plus compatibility fields that older local installs may still carry.
  */
 
 import fs from "node:fs";

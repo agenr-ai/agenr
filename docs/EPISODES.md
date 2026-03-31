@@ -6,13 +6,13 @@ This lets the agent answer questions like "what happened yesterday?", "what were
 
 ## Episodes vs Entries
 
-| Dimension | Entries | Episodes |
-|-----------|---------|----------|
-| **Granularity** | Individual facts, decisions, preferences, lessons, milestones, relationships | One summary per session |
-| **Lifecycle** | Persist until retired by the surgeon or manually | Persist indefinitely, regenerable from transcripts |
-| **Recall mode** | Semantic similarity + lexical FTS + importance weighting | Temporal interval overlap + optional semantic rerank |
-| **Source** | Extracted from transcripts by the LLM extraction pipeline | Generated per-session by the LLM summary pipeline |
-| **Schema** | `entries` table with typed fields, tags, embeddings | `episodes` table with time range, surface, agent, summary, optional embedding |
+| Dimension       | Entries                                                                      | Episodes                                                                      |
+| --------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| **Granularity** | Individual facts, decisions, preferences, lessons, milestones, relationships | One summary per session                                                       |
+| **Lifecycle**   | Persist until retired by the surgeon or manually                             | Persist indefinitely, regenerable from transcripts                            |
+| **Recall mode** | Semantic similarity + lexical FTS + importance weighting                     | Temporal interval overlap + optional semantic rerank                          |
+| **Source**      | Extracted from transcripts by the LLM extraction pipeline                    | Generated per-session by the LLM summary pipeline                             |
+| **Schema**      | `entries` table with typed fields, tags, embeddings                          | `episodes` table with time range, surface, agent, summary, optional embedding |
 
 ## Episode Lifecycle
 
@@ -51,11 +51,11 @@ Each episode contains:
 
 Recall routes to episodes through the unified recall layer (`src/app/recall/unified.ts`). The `mode` parameter controls routing:
 
-| Mode | Behavior |
-|------|----------|
-| `auto` | Routes based on query analysis: temporal narrative → episodes, factual → entries, mixed → both |
-| `entries` | Only queries durable entries |
-| `episodes` | Only queries episodes |
+| Mode       | Behavior                                                                                       |
+| ---------- | ---------------------------------------------------------------------------------------------- |
+| `auto`     | Routes based on query analysis: temporal narrative → episodes, factual → entries, mixed → both |
+| `entries`  | Only queries durable entries                                                                   |
+| `episodes` | Only queries episodes                                                                          |
 
 ### Auto-Routing Rules
 
@@ -72,21 +72,21 @@ The router inspects the query text for signals:
 
 The parser (`src/core/episode/temporal-window.ts`) recognizes natural language time expressions and converts them to precise calendar intervals:
 
-| Expression | Resolved to |
-|------------|-------------|
-| `today` | Start to end of current calendar day |
-| `yesterday` | Start to end of previous calendar day |
-| `this week` | Monday through current day |
-| `last week` | Previous Monday through Sunday |
-| `this month` | 1st through current day |
-| `last month` | 1st through last day of previous month |
-| `N days ago` | That single calendar day |
-| `N weeks ago` | That full calendar week |
-| `N months ago` | That full calendar month |
-| `in March`, `in January` | Full named month (current or previous year) |
-| `March 15th`, `January 1st` | That single calendar day |
-| `last Friday` | Most recent occurrence of that weekday |
-| ISO dates (`2026-03-15`) | That single calendar day |
+| Expression                  | Resolved to                                 |
+| --------------------------- | ------------------------------------------- |
+| `today`                     | Start to end of current calendar day        |
+| `yesterday`                 | Start to end of previous calendar day       |
+| `this week`                 | Monday through current day                  |
+| `last week`                 | Previous Monday through Sunday              |
+| `this month`                | 1st through current day                     |
+| `last month`                | 1st through last day of previous month      |
+| `N days ago`                | That single calendar day                    |
+| `N weeks ago`               | That full calendar week                     |
+| `N months ago`              | That full calendar month                    |
+| `in March`, `in January`    | Full named month (current or previous year) |
+| `March 15th`, `January 1st` | That single calendar day                    |
+| `last Friday`               | Most recent occurrence of that weekday      |
+| ISO dates (`2026-03-15`)    | That single calendar day                    |
 
 All dates resolve in the system's local timezone.
 
@@ -143,17 +143,17 @@ For rotated/deleted sessions not in the registry, episode ingest reconstructs me
 
 Episode code follows agenr's hexagonal structure:
 
-| Location | Responsibility |
-|----------|----------------|
-| `src/core/episode/` | Pure episode logic: search, scoring, temporal windows, summary generation, transcript rendering, types |
-| `src/core/episode/search.ts` | Episode search pipeline (temporal, semantic, hybrid) |
-| `src/core/episode/scoring.ts` | Interval overlap scoring, activity scoring, recency decay |
-| `src/core/episode/temporal-window.ts` | Calendar-aware natural language time parser |
-| `src/core/episode/summary-generator.ts` | LLM summary generation (core port, no infra deps) |
-| `src/core/episode/summary-prompt.ts` | Episode summary system prompt and response parser |
-| `src/adapters/openclaw/episode/` | OpenClaw-specific episode writer (session-start hook, embedded agent calls) |
-| `src/adapters/db/` | Episode table schema, queries, vector search |
-| `src/app/recall/unified.ts` | Mode routing, episode + entry result merging |
-| `src/app/episode-ingest/` | Episode ingest service (CLI pipeline orchestration) |
+| Location                                | Responsibility                                                                                         |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `src/core/episode/`                     | Pure episode logic: search, scoring, temporal windows, summary generation, transcript rendering, types |
+| `src/core/episode/search.ts`            | Episode search pipeline (temporal, semantic, hybrid)                                                   |
+| `src/core/episode/scoring.ts`           | Interval overlap scoring, activity scoring, recency decay                                              |
+| `src/core/episode/temporal-window.ts`   | Calendar-aware natural language time parser                                                            |
+| `src/core/episode/summary-generator.ts` | LLM summary generation (core port, no infra deps)                                                      |
+| `src/core/episode/summary-prompt.ts`    | Episode summary system prompt and response parser                                                      |
+| `src/adapters/openclaw/episode/`        | OpenClaw-specific episode writer (session-start hook, embedded agent calls)                            |
+| `src/adapters/db/`                      | Episode table schema, queries, vector search                                                           |
+| `src/app/recall/unified.ts`             | Mode routing, episode + entry result merging                                                           |
+| `src/app/episode-ingest/`               | Episode ingest service (CLI pipeline orchestration)                                                    |
 
 The core episode code has zero infrastructure dependencies. The OpenClaw adapter handles transcript parsing, session registry lookups, and LLM calls through OpenClaw's embedded agent runner.
