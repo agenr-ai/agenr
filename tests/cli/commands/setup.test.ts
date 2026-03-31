@@ -517,6 +517,31 @@ describe("getSetupReadiness", () => {
       guidance: 'No credential found for provider "anthropic". Set the appropriate auth method in config or provide ANTHROPIC_API_KEY.',
     });
   });
+
+  it("requires credentials for the surgeon override provider", () => {
+    expect(
+      getSetupReadiness(
+        {
+          auth: "openai-api-key",
+          provider: "openai",
+          model: "gpt-5.4-mini",
+          credentials: {
+            openaiApiKey: "sk-openai",
+          },
+          surgeon: {
+            model: {
+              provider: "anthropic",
+              model: "claude-sonnet-4-6",
+            },
+          },
+        },
+        {},
+      ),
+    ).toEqual({
+      ready: false,
+      guidance: 'No credential found for provider "anthropic". Set the appropriate auth method in config or provide ANTHROPIC_API_KEY.',
+    });
+  });
 });
 
 describe("buildStageAuthOptions", () => {
