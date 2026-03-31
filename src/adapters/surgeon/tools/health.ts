@@ -1,6 +1,7 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "@sinclair/typebox";
 
+import { getLastBulkIngestAt } from "../../db/schema.js";
 import { getLastSurgeonRun } from "../../db/surgeon-run-log.js";
 import { getSurgeonHealthStats } from "../../db/surgeon-queries.js";
 import type { SurgeonToolDeps } from "./index.js";
@@ -21,19 +22,21 @@ export function createHealthStatsTool(deps: SurgeonToolDeps): AgentTool<typeof G
     description: "Inspect current corpus health and the latest surgeon run summary.",
     parameters: GET_HEALTH_STATS_SCHEMA,
     async execute() {
-      const [health, lastRun] = await Promise.all([
+      const [health, lastRun, lastBulkIngestAt] = await Promise.all([
         getSurgeonHealthStats(deps.executor, {
           protectRecalledDays: deps.protection.protectRecalledDays,
           protectMinImportance: deps.protection.protectMinImportance,
           now: deps.now(),
         }),
         getLastSurgeonRun(deps.executor),
+        getLastBulkIngestAt(deps.db),
       ]);
 
       return toolResult({
         now: deps.now().toISOString(),
         health,
         lastRun,
+        lastBulkIngestAt,
       });
     },
   };

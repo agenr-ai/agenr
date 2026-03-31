@@ -1,7 +1,14 @@
 import { createClient, type Client, type InArgs, type InStatement } from "@libsql/client";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { BULK_WRITE_STATE_META_KEY, VECTOR_INDEX_NAME, finalizeBulkWrites, initSchema, prepareBulkWrites } from "../../../src/adapters/db/schema.js";
+import {
+  BULK_WRITE_STATE_META_KEY,
+  VECTOR_INDEX_NAME,
+  finalizeBulkWrites,
+  getLastBulkIngestAt,
+  initSchema,
+  prepareBulkWrites,
+} from "../../../src/adapters/db/schema.js";
 
 const FTS_REBUILD_SQL = "INSERT INTO entries_fts(entries_fts) VALUES ('rebuild')";
 
@@ -673,6 +680,9 @@ describe("initSchema", () => {
 
     expect(await triggerNames(client)).toEqual(new Set(["entries_ai", "entries_ad", "entries_au"]));
     expect(await indexExists(client, VECTOR_INDEX_NAME)).toBe(vectorIndexExisted);
+    const lastBulkIngestAt = await getLastBulkIngestAt(client);
+    expect(lastBulkIngestAt).toEqual(expect.any(String));
+    expect(Date.parse(lastBulkIngestAt ?? "")).not.toBeNaN();
 
     const afterFinalize = await client.execute({
       sql: "SELECT rowid FROM entries_fts WHERE entries_fts MATCH 'searchability'",
@@ -702,6 +712,9 @@ describe("initSchema", () => {
       args: [BULK_WRITE_STATE_META_KEY],
     });
     expect(meta.rows).toHaveLength(0);
+    const lastBulkIngestAt = await getLastBulkIngestAt(client);
+    expect(lastBulkIngestAt).toEqual(expect.any(String));
+    expect(Date.parse(lastBulkIngestAt ?? "")).not.toBeNaN();
   });
 });
 

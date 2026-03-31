@@ -1,5 +1,7 @@
 import type { Client } from "@libsql/client";
 
+import type { SqlExecutor } from "./queries.js";
+
 /**
  * Logical schema version stored in the metadata table.
  */
@@ -19,6 +21,11 @@ const EPISODE_VECTOR_INDEX_NAME = "idx_episodes_embedding";
  * Metadata key used to detect interrupted bulk-write phases.
  */
 const BULK_WRITE_STATE_META_KEY = "bulk_write_state";
+
+/**
+ * Metadata key that records when the last bulk ingest finished.
+ */
+const LAST_BULK_INGEST_META_KEY = "last_bulk_ingest_at";
 
 /** SQL statement that creates the canonical entries table. */
 const CREATE_ENTRIES_TABLE_SQL = `
@@ -596,7 +603,36 @@ export async function finalizeBulkWrites(db: Client): Promise<void> {
       sql: "DELETE FROM _meta WHERE key = ?",
       args: [BULK_WRITE_STATE_META_KEY],
     });
+    await db.execute({
+      sql: `
+        INSERT INTO _meta (key, value)
+        VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+      `,
+      args: [LAST_BULK_INGEST_META_KEY, new Date().toISOString()],
+    });
   });
+}
+
+/**
+ * Reads the last bulk ingest timestamp from metadata, if present.
+ *
+ * @param db - libSQL client connected to the target database.
+ * @returns ISO timestamp string, or null if no bulk ingest has been recorded.
+ */
+export async function getLastBulkIngestAt(db: Client): Promise<string | null>;
+export async function getLastBulkIngestAt(db: SqlExecutor): Promise<string | null>;
+export async function getLastBulkIngestAt(db: Client | SqlExecutor): Promise<string | null> {
+  try {
+    const result = await db.execute({
+      sql: "SELECT value FROM _meta WHERE key = ? LIMIT 1",
+      args: [LAST_BULK_INGEST_META_KEY],
+    });
+    const row = result.rows[0];
+    return row?.value ? String(row.value) : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Reads the stored schema version when the metadata table exists. */

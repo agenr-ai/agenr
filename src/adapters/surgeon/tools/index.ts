@@ -27,6 +27,7 @@ export interface SurgeonToolCompletionState {
  * Shared dependency bag passed to every surgeon tool.
  */
 export interface SurgeonToolDeps {
+  db: SqlExecutor;
   executor: SqlExecutor;
   runId: string;
   project?: string;

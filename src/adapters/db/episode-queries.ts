@@ -684,7 +684,6 @@ function normalizePositiveInteger(value: number | undefined): number | undefined
   return normalized;
 }
 
-/** Wraps episode vector-search failures in a consistent adapter error. */
 /**
  * Prefixes each column in a comma-separated column list with a table alias.
  *
@@ -703,6 +702,12 @@ function prefixColumns(columns: string, alias: string): string {
     .join(", ");
 }
 
+/**
+ * Wraps episode vector-search failures in a consistent adapter error.
+ *
+ * @param error - Original vector-search failure.
+ * @returns Adapter-scoped error with a stable prefix.
+ */
 function wrapEpisodeVectorError(error: unknown): Error {
   const message = error instanceof Error ? error.message : String(error);
   return new Error(`Episode vector search is unavailable: ${message}`);

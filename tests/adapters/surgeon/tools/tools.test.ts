@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createSurgeonRun } from "../../../../src/adapters/db/surgeon-run-log.js";
 import { serializeTags } from "../../../../src/adapters/db/row-mapping.js";
-import { initSchema } from "../../../../src/adapters/db/schema.js";
+import { finalizeBulkWrites, initSchema, prepareBulkWrites } from "../../../../src/adapters/db/schema.js";
 import { createCompletePassTool } from "../../../../src/adapters/surgeon/tools/complete.js";
 import { createHealthStatsTool } from "../../../../src/adapters/surgeon/tools/health.js";
 import { createInspectEntryTool } from "../../../../src/adapters/surgeon/tools/inspect.js";
@@ -58,6 +58,8 @@ describe("surgeon tools", () => {
       dryRun: true,
       startedAt: "2026-03-29T10:00:00.000Z",
     });
+    await prepareBulkWrites(client);
+    await finalizeBulkWrites(client);
     const tool = createHealthStatsTool(createToolDeps(client));
 
     const result = await tool.execute("tool-health", {});
@@ -76,6 +78,8 @@ describe("surgeon tools", () => {
         passType: "retirement",
       },
     });
+    expect(result.details.lastBulkIngestAt).toEqual(expect.any(String));
+    expect(Date.parse(String(result.details.lastBulkIngestAt))).not.toBeNaN();
   });
 
   it("tracks pagination progress when querying retirement candidates", async () => {
@@ -603,7 +607,8 @@ async function createTestClient(clients: Client[]): Promise<Client> {
 
 function createToolDeps(client: Client, overrides: Partial<SurgeonToolDeps> = {}): SurgeonToolDeps {
   return {
-    executor: client,
+    db: overrides.db ?? client,
+    executor: overrides.executor ?? client,
     runId: overrides.runId ?? "run-1",
     project: overrides.project,
     apply: overrides.apply ?? false,

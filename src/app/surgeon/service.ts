@@ -168,6 +168,7 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
     });
 
     const tools = createSurgeonTools({
+      db: deps.db,
       executor: deps.db,
       runId,
       project: options.project,

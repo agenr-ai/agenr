@@ -27,6 +27,14 @@ describe("surgeon prompts", () => {
     expect(prompt).toContain("The cost of retiring something useful is higher");
   });
 
+  it("system prompt teaches corpus age awareness for recent rebuilds", () => {
+    const prompt = getSurgeonSystemPrompt();
+
+    expect(prompt).toContain("lastBulkIngestAt");
+    expect(prompt).toContain("recently rebuilt");
+    expect(prompt).toContain("never use `recall_count = 0` as the sole or primary retirement reason");
+  });
+
   it("system prompt does not reference review-queue tooling", () => {
     const prompt = getSurgeonSystemPrompt();
 
@@ -49,6 +57,16 @@ describe("surgeon prompts", () => {
     expect(prompt).not.toContain("todo");
     expect(prompt).not.toContain("event");
     expect(prompt).toContain("preference");
+  });
+
+  it("retirement prompt protects personal knowledge from low-signal retirement", () => {
+    const prompt = getSurgeonRetirementPassPrompt();
+
+    expect(prompt).toContain("## Personal Knowledge");
+    expect(prompt).toContain("pets");
+    expect(prompt).toContain("Do NOT retire personal knowledge entries because:");
+    expect(prompt).toContain("## What Looks Like a Pattern But Is Not");
+    expect(prompt).toContain("Hardware, infrastructure, and environment details");
   });
 
   it("retirement prompt does not reference removed supersession tooling", () => {
