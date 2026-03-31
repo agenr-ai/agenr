@@ -73,11 +73,7 @@ export async function resolveOpenClawSessionPredecessorResolution(
     ...(sessionStart?.sessionKey ? { sessionStartSessionKey: sessionStart.sessionKey } : {}),
     ...(resumedFrom ? { resumedFrom } : {}),
     resumedFromPresent: Boolean(resumedFrom),
-    resumedFromStatus: sessionStart
-      ? resumedFrom
-        ? "resumed_from_present_but_unresolved"
-        : "session_start_seen_without_resumed_from"
-      : "session_start_not_seen",
+    resumedFromStatus: sessionStart ? (resumedFrom ? "not_found" : "missing") : "not_observed",
     resumedFromResolved: false,
     fallbackEligible,
     fallbackAttempted: false,
@@ -165,9 +161,7 @@ export async function resolveOpenClawSessionPredecessorResolution(
     params.mainKey,
     params.logger,
   );
-  resolution.sameAgentCandidateCount = fallbackResolution.sameAgentCandidateCount;
-  resolution.laneMatchedCandidateCount = fallbackResolution.laneMatchedCandidateCount;
-  resolution.rankedFallbackCandidateCount = fallbackResolution.rankedFallbackCandidateCount;
+  resolution.fallbackCandidateCount = fallbackResolution.matchedCandidateCount;
   resolution.fallbackStatus = mapFallbackStatus(fallbackResolution.reason);
   if (!fallbackResolution.predecessor) {
     params.logger?.info?.(`[agenr] predecessor: no predecessor found for ${sessionContext} strategy=sessions_json_scan reason=${fallbackResolution.reason}`);
@@ -320,25 +314,19 @@ async function findSessionsStoreFallbackPredecessor(
   logger?: PluginLogger,
 ): Promise<
   | {
-      sameAgentCandidateCount: number;
-      laneMatchedCandidateCount: number;
-      rankedFallbackCandidateCount: number;
+      matchedCandidateCount: number;
       predecessor: ResolvedCandidatePredecessor;
       reason: "resolved";
     }
   | {
-      sameAgentCandidateCount: number;
-      laneMatchedCandidateCount: number;
-      rankedFallbackCandidateCount: number;
+      matchedCandidateCount: number;
       predecessor?: undefined;
       reason: SessionsStoreFallbackReason;
     }
 > {
   if (!isSessionsStoreFallbackEligible(currentIdentity.kind)) {
     return {
-      sameAgentCandidateCount: 0,
-      laneMatchedCandidateCount: 0,
-      rankedFallbackCandidateCount: 0,
+      matchedCandidateCount: 0,
       reason: "not_scan_eligible",
     };
   }
@@ -372,14 +360,26 @@ async function findSessionsStoreFallbackPredecessor(
 
   if (matchedEntries.length === 0) {
     return {
-      sameAgentCandidateCount: sameAgentEntries.length,
-      laneMatchedCandidateCount: 0,
-      rankedFallbackCandidateCount: 0,
+      matchedCandidateCount: 0,
       reason: "no_matching_sessions",
     };
   }
 
-  const rankedCandidates = matchedEntries
+  if (resumedFrom?.trim()) {
+    const resumedFromMatch = matchedEntries.find((entry) => resolveEntrySessionId(entry, logger) === resumedFrom.trim());
+    if (resumedFromMatch) {
+      const resolvedPredecessor = toResolvedCandidatePredecessor(resumedFromMatch, logger);
+      if (resolvedPredecessor) {
+        return {
+          matchedCandidateCount: matchedEntries.length,
+          reason: "resolved",
+          predecessor: resolvedPredecessor,
+        };
+      }
+    }
+  }
+
+  const sortedCandidates = matchedEntries
     .filter((entry) => {
       if (!entry.sessionFile?.trim()) {
         debugLog(logger, "predecessor", `excluded candidate=${entry.sessionKey} reason=missing_session_file`);
@@ -395,38 +395,18 @@ async function findSessionsStoreFallbackPredecessor(
     })
     .sort((left, right) => (right.updatedAt ?? 0) - (left.updatedAt ?? 0));
 
-  if (resumedFrom?.trim()) {
-    const resumedFromMatch = matchedEntries.find((entry) => resolveEntrySessionId(entry, logger) === resumedFrom.trim());
-    if (resumedFromMatch) {
-      const resolvedPredecessor = toResolvedCandidatePredecessor(resumedFromMatch, logger);
-      if (resolvedPredecessor) {
-        return {
-          sameAgentCandidateCount: sameAgentEntries.length,
-          laneMatchedCandidateCount: matchedEntries.length,
-          rankedFallbackCandidateCount: rankedCandidates.length,
-          reason: "resolved",
-          predecessor: resolvedPredecessor,
-        };
-      }
-    }
-  }
-
-  if (rankedCandidates.length === 0) {
+  if (sortedCandidates.length === 0) {
     return {
-      sameAgentCandidateCount: sameAgentEntries.length,
-      laneMatchedCandidateCount: matchedEntries.length,
-      rankedFallbackCandidateCount: 0,
+      matchedCandidateCount: matchedEntries.length,
       reason: "no_matching_sessions",
     };
   }
 
-  for (const candidate of rankedCandidates) {
+  for (const candidate of sortedCandidates) {
     const resolvedPredecessor = toResolvedCandidatePredecessor(candidate, logger);
     if (resolvedPredecessor) {
       return {
-        sameAgentCandidateCount: sameAgentEntries.length,
-        laneMatchedCandidateCount: matchedEntries.length,
-        rankedFallbackCandidateCount: rankedCandidates.length,
+        matchedCandidateCount: matchedEntries.length,
         reason: "resolved",
         predecessor: resolvedPredecessor,
       };
@@ -434,9 +414,7 @@ async function findSessionsStoreFallbackPredecessor(
   }
 
   return {
-    sameAgentCandidateCount: sameAgentEntries.length,
-    laneMatchedCandidateCount: matchedEntries.length,
-    rankedFallbackCandidateCount: rankedCandidates.length,
+    matchedCandidateCount: matchedEntries.length,
     reason: "missing_session_id",
   };
 }
@@ -713,9 +691,7 @@ function formatResolutionSummary(resolution: OpenClawContinuityResolutionSummary
     `fallbackEligible=${resolution.fallbackEligible}`,
     `fallbackAttempted=${resolution.fallbackAttempted}`,
     `fallbackStatus=${resolution.fallbackStatus}`,
-    `sameAgentCandidateCount=${resolution.sameAgentCandidateCount ?? "n/a"}`,
-    `laneMatchedCandidateCount=${resolution.laneMatchedCandidateCount ?? "n/a"}`,
-    `rankedFallbackCandidateCount=${resolution.rankedFallbackCandidateCount ?? "n/a"}`,
+    `fallbackCandidateCount=${resolution.fallbackCandidateCount ?? "n/a"}`,
     `strategy=${resolution.strategy}`,
     `reason=${resolution.reason}`,
     `predecessorSessionId=${resolution.predecessor?.sessionId ?? "n/a"}`,
