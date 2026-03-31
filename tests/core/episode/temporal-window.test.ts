@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { getSystemTimeZone, parseTemporalWindow } from "../../../src/core/episode/temporal-window.js";
 
 const NOW = new Date(2026, 2, 30, 15, 45, 0, 0);
+const WEDNESDAY_NOW = new Date(2026, 3, 1, 15, 45, 0, 0);
 
 describe("parseTemporalWindow", () => {
   it("parses yesterday as a local day interval", () => {
@@ -39,6 +40,25 @@ describe("parseTemporalWindow", () => {
     expect(formatLocalDate(resolved?.bounds.end)).toBe("2026-03-19");
   });
 
+  it("parses month-day queries into the most recent matching calendar date", () => {
+    expect(parseTemporalWindow("what happened on March 30", NOW)?.resolvedFrom).toBe("March 30");
+    expect(formatLocalDate(parseTemporalWindow("what happened on March 30", NOW)?.bounds.start)).toBe("2026-03-30");
+    expect(formatLocalDate(parseTemporalWindow("March 27 sessions", NOW)?.bounds.start)).toBe("2026-03-27");
+    expect(formatLocalDate(parseTemporalWindow("december 25", NOW)?.bounds.start)).toBe("2025-12-25");
+    expect(formatLocalDate(parseTemporalWindow("february 18", NOW)?.bounds.start)).toBe("2026-02-18");
+    expect(formatLocalDate(parseTemporalWindow("on march 1", NOW)?.bounds.start)).toBe("2026-03-01");
+    expect(parseTemporalWindow("February 30", NOW)).toBeNull();
+  });
+
+  it("parses last weekday queries into the most recent prior weekday", () => {
+    expect(parseTemporalWindow("last friday", WEDNESDAY_NOW)?.resolvedFrom).toBe("last friday");
+    expect(formatLocalDate(parseTemporalWindow("last friday", WEDNESDAY_NOW)?.bounds.start)).toBe("2026-03-27");
+    expect(formatLocalDate(parseTemporalWindow("last monday", WEDNESDAY_NOW)?.bounds.start)).toBe("2026-03-30");
+    expect(formatLocalDate(parseTemporalWindow("last wednesday", WEDNESDAY_NOW)?.bounds.start)).toBe("2026-03-25");
+    expect(formatLocalDate(parseTemporalWindow("last sunday", WEDNESDAY_NOW)?.bounds.start)).toBe("2026-03-29");
+    expect(formatLocalDate(parseTemporalWindow("last Monday's sessions", WEDNESDAY_NOW)?.bounds.start)).toBe("2026-03-30");
+  });
+
   it("parses month-name queries into the most recent month interval", () => {
     const resolved = parseTemporalWindow("what happened in March", NOW);
 
@@ -52,6 +72,13 @@ describe("parseTemporalWindow", () => {
     expect(resolved?.resolvedFrom).toBe("2026-03-15");
     expect(formatLocalDate(resolved?.bounds.start)).toBe("2026-03-15");
     expect(formatLocalDate(resolved?.bounds.end)).toBe("2026-03-15");
+  });
+
+  it("prefers month-day matches over weekday matches when both are present", () => {
+    const resolved = parseTemporalWindow("last friday on March 30", NOW);
+
+    expect(resolved?.resolvedFrom).toBe("March 30");
+    expect(formatLocalDate(resolved?.bounds.start)).toBe("2026-03-30");
   });
 
   it("returns null when the query has no supported time expression", () => {

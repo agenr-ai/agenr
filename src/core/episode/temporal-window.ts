@@ -16,6 +16,15 @@ const MONTH_INDEX = new Map<string, number>([
   ["november", 10],
   ["december", 11],
 ]);
+const WEEKDAY_INDEX = new Map<string, number>([
+  ["sunday", 0],
+  ["monday", 1],
+  ["tuesday", 2],
+  ["wednesday", 3],
+  ["thursday", 4],
+  ["friday", 5],
+  ["saturday", 6],
+]);
 
 /**
  * Parses supported temporal language from a recall query into a calendar-aware
@@ -62,6 +71,44 @@ export function parseTemporalWindow(text: string, now: Date = new Date()): Resol
       timezone,
       now: referenceNow,
     });
+  }
+
+  const monthDayMatch = normalizedText.match(
+    /\b(?:on\s+)?((january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2}))\b/i,
+  );
+  if (monthDayMatch?.[1] && monthDayMatch[2] && monthDayMatch[3]) {
+    const targetDate = resolveMostRecentMonthDay(monthDayMatch[2].toLowerCase(), Number(monthDayMatch[3]), referenceNow);
+    if (targetDate) {
+      return buildResolvedWindow({
+        window: {
+          kind: "interval",
+          start: startOfDayLocal(targetDate),
+          end: endOfDayLocal(targetDate),
+          source: "inferred",
+        },
+        resolvedFrom: monthDayMatch[1],
+        timezone,
+        now: referenceNow,
+      });
+    }
+  }
+
+  const weekdayMatch = normalizedText.match(/\b(last\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/i);
+  if (weekdayMatch?.[1] && weekdayMatch[2]) {
+    const targetDate = resolveLastWeekday(weekdayMatch[2].toLowerCase(), referenceNow);
+    if (targetDate) {
+      return buildResolvedWindow({
+        window: {
+          kind: "interval",
+          start: startOfDayLocal(targetDate),
+          end: endOfDayLocal(targetDate),
+          source: "inferred",
+        },
+        resolvedFrom: weekdayMatch[1],
+        timezone,
+        now: referenceNow,
+      });
+    }
   }
 
   if (/\bthis week\b/.test(lower)) {
@@ -373,6 +420,32 @@ function resolveMostRecentMonth(monthName: string, now: Date): Date | null {
 }
 
 /**
+ * Resolves the most recent past-or-current occurrence of a named month-day.
+ *
+ * @param monthName - Lowercase English month name.
+ * @param day - Calendar day of month.
+ * @param now - Reference clock used to pick the year.
+ * @returns Local date at noon, or null when the name or day is unsupported.
+ */
+function resolveMostRecentMonthDay(monthName: string, day: number, now: Date): Date | null {
+  const monthIndex = MONTH_INDEX.get(monthName);
+  if (monthIndex === undefined) {
+    return null;
+  }
+
+  const currentYearCandidate = buildLocalDateAtNoon(now.getFullYear(), monthIndex, day);
+  if (!currentYearCandidate) {
+    return null;
+  }
+
+  if (startOfDayLocal(currentYearCandidate).getTime() <= startOfDayLocal(now).getTime()) {
+    return currentYearCandidate;
+  }
+
+  return buildLocalDateAtNoon(now.getFullYear() - 1, monthIndex, day);
+}
+
+/**
  * Parses a YYYY-MM-DD string as a local calendar date.
  *
  * @param value - ISO calendar date string.
@@ -387,12 +460,7 @@ function parseIsoDateLocal(value: string): Date | null {
   const year = Number(match[1]);
   const month = Number(match[2]) - 1;
   const day = Number(match[3]);
-  const parsed = new Date(year, month, day, 12, 0, 0, 0);
-  if (parsed.getFullYear() !== year || parsed.getMonth() !== month || parsed.getDate() !== day) {
-    return null;
-  }
-
-  return parsed;
+  return buildLocalDateAtNoon(year, month, day);
 }
 
 /**
@@ -409,6 +477,42 @@ function subtractCalendarMonths(date: Date, months: number): Date {
   const targetLastDay = new Date(targetYear, normalizedMonth + 1, 0).getDate();
   const day = Math.min(date.getDate(), targetLastDay);
   return new Date(targetYear, normalizedMonth, day, date.getHours(), date.getMinutes(), date.getSeconds(), date.getMilliseconds());
+}
+
+/**
+ * Resolves the most recent occurrence of a weekday strictly before today.
+ *
+ * @param weekdayName - Lowercase English weekday name.
+ * @param now - Reference clock used to resolve the current day.
+ * @returns Local date for the previous matching weekday, or null when unsupported.
+ */
+function resolveLastWeekday(weekdayName: string, now: Date): Date | null {
+  const targetDay = WEEKDAY_INDEX.get(weekdayName);
+  if (targetDay === undefined) {
+    return null;
+  }
+
+  const today = startOfDayLocal(now);
+  const currentDay = today.getDay();
+  const daysBack = (currentDay - targetDay + 7) % 7 || 7;
+  return addDaysLocal(today, -daysBack);
+}
+
+/**
+ * Builds a validated local calendar date at noon.
+ *
+ * @param year - Full calendar year.
+ * @param month - Zero-based month index.
+ * @param day - One-based day of month.
+ * @returns Local date at noon, or null when the input is invalid.
+ */
+function buildLocalDateAtNoon(year: number, month: number, day: number): Date | null {
+  const parsed = new Date(year, month, day, 12, 0, 0, 0);
+  if (parsed.getFullYear() !== year || parsed.getMonth() !== month || parsed.getDate() !== day) {
+    return null;
+  }
+
+  return parsed;
 }
 
 /**
