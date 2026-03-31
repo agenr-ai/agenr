@@ -1,5 +1,40 @@
 # Changelog
 
+## [1.3.0] - 2026-03-30
+
+Episodic memory — session-level temporal recall for the brain.
+
+### Added
+
+- **Episodic memory system (Phases 0–6).** A new `episodes` table stores narrative summaries of what happened during each session, queryable by time range and semantic similarity. Gives the brain temporal awareness — "what happened yesterday", "what were we working on last week", "sessions about schema changes" all work.
+- **Episode ingest CLI.** `agenr ingest episodes <path>` scans OpenClaw session transcripts (including rotated `.reset.*` and `.deleted.*` files), generates episodic summaries, and writes episodes to the database. Supports `--recent`, `--regenerate`, `--dry-run`, `--concurrency`, `--embed-only`, and `--no-embed` flags.
+- **Session discovery via `sessions.json`.** Uses OpenClaw's session registry for authoritative metadata (surface, agentId, chatType) on active sessions. Falls back to transcript-based surface reconstruction for rotated files.
+- **Surface reconstruction from transcripts.** Detects session surface (webchat, telegram, signal, tui, subagent, heartbeat, cron) from Sender metadata blocks, Conversation info blocks, inbound_meta, and content heuristics. Integrated into the transcript parser to avoid double file reads.
+- **Agent ID derivation from directory path.** Falls back to parsing the OpenClaw directory structure (`agents/{agentId}/sessions/`) when registry metadata is unavailable.
+- **Unified recall with mode routing.** `agenr_recall` gains a `mode` parameter (`auto`, `entries`, `episodes`). Auto-routing uses three-band rules: temporal narrative → episodes, factual → entries, mixed → both. Results returned in separate sections with routing metadata.
+- **Calendar-aware temporal window parser.** Parses "today", "yesterday", "this/last week", "this/last month", "N days/weeks/months ago", "in March", "March 15th", "last Friday", and ISO dates into precise calendar intervals for episode search.
+- **Episode recall pipeline.** Pure temporal search via interval overlap scoring. No embedding dependency for basic temporal queries.
+- **Hybrid semantic episode search (Phase 6).** Episode embeddings stored at write time, vector index (`idx_episodes_embedding`) for cosine similarity search. Three modes: pure temporal, pure semantic, and hybrid (hard temporal filter + semantic rerank).
+- **Episode embedding backfill.** `agenr ingest episodes --embed-only` backfills embeddings for episodes missing them — no LLM calls, just embedding API.
+- **Episode model configuration.** New `episodeModel` config field in `agenr setup` / `agenr init` for episode summary generation model override, following the existing extraction/dedup/surgeon pattern.
+- **Episode writing at session start.** Predecessor episodes generated via `before_prompt_build` hook, best-effort with timeout. Backfill CLI is the canonical repair path.
+- **Parallel preflight parsing.** Episode ingest Stage 1 parses transcript files concurrently to handle large session directories (600+ files) without hanging.
+
+### Changed
+
+- **Continuity domain extraction.** Session handoff logic reorganized under `src/adapters/openclaw/session/continuity/` as a proper subdomain with clean public API. Continuity summaries (for session handoff) are now explicitly separate from episodic summaries (for temporal recall).
+- **Renamed session summaries to continuity summaries.** Clarifies the distinction between handoff artifacts and episodic memory artifacts throughout the codebase.
+- **Removed `before_reset` hook.** Does not fire for OpenClaw plugins — all episode and continuity logic uses `before_prompt_build` only.
+- **Semantic memory cleanup (Ref #7).** Removed `reflection` entry type, migrated `todo` to `tasks` table, renamed `event` to `milestone`, broadened type descriptions.
+- **Transcript file discovery.** Fixed regex to match rotated files with ISO timestamp dots (`.628Z`). Discovery now finds all 600+ files instead of only active `.jsonl` files.
+
+### Fixed
+
+- **Episode vector search ambiguous column.** Prefixed select columns with table alias in `episodeVectorSearch()` to resolve `id` ambiguity with `vector_top_k` join.
+- **Temporal parser ordinal dates.** "March 15th", "January 1st", "February 2nd" now parse correctly.
+- **Subagent/cron surface classification.** Session registry detects `:subagent:` and `:cron:` in session keys for correct surface tagging.
+- **Internal session skipping.** Agenr prompt pipeline sessions are filtered from episode generation.
+
 ## [1.2.0] - 2026-03-29
 
 The surgeon retirement pass — an autonomous agent that evaluates and retires stale knowledge entries.
