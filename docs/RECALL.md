@@ -26,7 +26,7 @@ Since `1.3.0`, there is also a unified agent-facing recall layer on top of the e
 - `src/adapters/db/recall-adapter.ts` - libSQL implementation of vector search, FTS search, hydration, and recall-event recording.
 - `src/adapters/db/episode-queries.ts` - SQL overlap lookup and episode vector search.
 - `src/adapters/db/queries.ts` - `recordRecallEvent()` write path that updates counters and inserts `recall_events` rows.
-- `tests/cli/commands/recall.test.ts` and `src/core/recall/search.integration.test.ts` - CLI surface, end-to-end pipeline, filter, telemetry, and concurrency coverage.
+- `tests/cli/commands/recall.test.ts`, `tests/core/recall/search.integration.test.ts`, and `tests/app/recall/unified.test.ts` - CLI surface, end-to-end pipeline, unified routing, filter, telemetry, and concurrency coverage.
 - `tests/core/episode/temporal-window.test.ts` and `tests/adapters/openclaw/tools.test.ts` - parser coverage, routing, split-result formatting, and episode recall behavior.
 
 ## Important architectural nuance
@@ -228,20 +228,18 @@ One important caveat: `threshold`, `types`, and `tags` still apply to **entries 
 
 ### Examples
 
-Today, the implemented `mode` surface is the OpenClaw `agenr_recall` tool plus `runUnifiedRecall()`. The standalone CLI has not been wired to `mode` yet, but the intended CLI-shaped examples are:
-
-```bash
-agenr recall --mode episodes "what happened yesterday"
-agenr recall --mode auto "what happened on agenr 2026-03-29"
-agenr recall --mode entries "what decision set the schema threshold"
-```
-
-The equivalent tool-layer calls today are:
+Today, the implemented `mode` surface is the OpenClaw `agenr_recall` tool plus `runUnifiedRecall()`. The standalone CLI still does not accept `--mode`, so the live examples are:
 
 ```txt
 agenr_recall({ query: "what happened yesterday", mode: "episodes" })
 agenr_recall({ query: "what happened on agenr 2026-03-29", mode: "auto", tags: ["agenr"] })
 agenr_recall({ query: "what decision set the schema threshold", mode: "entries" })
+```
+
+Programmatic callers use the same routing layer through `runUnifiedRecall()`:
+
+```ts
+await runUnifiedRecall({ text: "what happened yesterday", mode: "episodes" }, deps);
 ```
 
 ## End-to-end flow
@@ -598,6 +596,7 @@ Notes:
 - `src/adapters/db/episode-queries.ts`
 - `src/adapters/db/queries.ts`
 - `tests/cli/commands/recall.test.ts`
-- `src/core/recall/search.integration.test.ts`
+- `tests/core/recall/search.integration.test.ts`
+- `tests/app/recall/unified.test.ts`
 - `tests/core/episode/temporal-window.test.ts`
 - `tests/adapters/openclaw/tools.test.ts`

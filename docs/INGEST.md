@@ -11,8 +11,9 @@ This document describes the code as it exists now, not just the intended flow.
 
 ## Code map
 
-- `src/cli/commands/ingest.ts` - CLI orchestration, progress reporting, parallel extraction, batch dedup, and batch store.
-- `src/core/ingestion/discovery.ts` - target path resolution and transcript file discovery.
+- `src/cli/commands/ingest.ts` - CLI wiring, flag parsing, and progress reporting for entry ingest.
+- `src/app/ingestion/service.ts` - multi-file durable-entry ingest orchestration: discovery, parallel extraction, within-run dedup, and one bulk store pass.
+- `src/adapters/files/transcript-files.ts` - target path resolution, transcript file discovery, and file hashing.
 - `src/adapters/openclaw/transcript/parser.ts` - OpenClaw JSONL parsing and transcript normalization.
 - `src/core/ingestion/extract.ts` - whole-file decision, chunking, retry logic, and extraction prompting.
 - `src/core/ingestion/parser.ts` - validation and normalization of extraction-model JSON output.
@@ -23,9 +24,9 @@ This document describes the code as it exists now, not just the intended flow.
 
 ## Important architectural nuance
 
-`src/core/ingestion/pipeline.ts` exports `ingestFile()`, but the CLI does not use it for the normal multi-file ingest path.
+`src/core/ingestion/pipeline.ts` exports `ingestFile()`, but the CLI does not use it directly for the normal multi-file ingest path.
 
-Instead, the CLI does this:
+Instead, the CLI hands off to `ingestDiscoveredFiles()` in `src/app/ingestion/service.ts`, and that workflow does this:
 
 1. Discover files.
 2. Run `extractFile()` in parallel per file.
@@ -208,7 +209,7 @@ agenr ingest episodes ~/.openclaw/agents/<agent-id>/sessions --recent 90d --rege
 
 ### 1. Config and adapter setup
 
-At startup the CLI:
+At startup the entry-ingest command:
 
 - loads config via `readConfig()`
 - resolves the database path via `resolveDbPath()`
@@ -226,7 +227,7 @@ If no files are found, the command exits cleanly with a warning.
 
 ## 3. Per-file extract phase
 
-The CLI runs extraction workers in parallel but preserves input order in the final result list.
+The ingest workflow runs extraction workers in parallel but preserves input order in the final result list.
 
 For each file, `extractFile()` does the following:
 

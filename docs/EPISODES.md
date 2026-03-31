@@ -1,6 +1,6 @@
 # Episodes
 
-Episodic memory gives the brain temporal awareness. While durable entries capture facts, decisions, and preferences that persist indefinitely, episodes capture _what happened_ during each session — narrative summaries tied to concrete time ranges.
+Episodic memory gives the brain temporal awareness. While durable entries capture facts, decisions, and preferences that persist indefinitely, episodes capture _what happened_ during each session - narrative summaries tied to concrete time ranges.
 
 This lets the agent answer questions like "what happened yesterday?", "what were we working on last week?", and "sessions about schema changes" without those answers being stored as permanent knowledge entries.
 
@@ -18,19 +18,19 @@ This lets the agent answer questions like "what happened yesterday?", "what were
 
 Episodes are generated through two paths:
 
-### 1. Automatic — at session start
+### 1. Automatic - at session start
 
-When a new session starts, the `before_prompt_build` hook detects the predecessor session and fires a best-effort background episode write. This uses OpenClaw's embedded agent runner (`runEmbeddedPiAgent`) with the agent's configured model (or the `episodeModel` override when set). The episode is written to the database with metadata from the session registry when available.
+When a new session starts, the plugin records lineage on `session_start`, and the first `before_prompt_build` resolves the predecessor session and fires a best-effort background episode write. This uses the OpenClaw embedded-agent task runner with the active agent's model, or the plugin `episodeModel` override when set. The write path carries forward predecessor lineage plus current session context for hints like `sessionId`, `surface`, and `agentId`.
 
-If the predecessor already has an episode, the write is skipped. If the LLM call times out or fails, the session starts normally — episode generation is never blocking.
+If the predecessor already has an episode, the write is skipped. If the LLM call times out or fails, the session starts normally - episode generation is never blocking.
 
-### 2. Backfill — via CLI
+### 2. Backfill - via CLI
 
 ```bash
 agenr ingest episodes ~/.openclaw/agents/main/sessions/
 ```
 
-The CLI scans a directory of OpenClaw session transcripts (including rotated `.reset.*` and `.deleted.*` files), runs preflight parsing in parallel, and generates episodes for sessions that don't already have one. This is the canonical repair path — run it after a database reset, after bulk entry ingestion, or to catch sessions that didn't get episodes at start time.
+The CLI scans a directory of OpenClaw session transcripts (including rotated `.reset.*` and `.deleted.*` files), runs preflight parsing in parallel, and generates episodes for sessions that don't already have one. This is the canonical repair path - run it after a database reset, after bulk entry ingestion, or to catch sessions that didn't get episodes at start time.
 
 See [INGEST.md](./INGEST.md) for full CLI flag documentation.
 
@@ -38,14 +38,15 @@ See [INGEST.md](./INGEST.md) for full CLI flag documentation.
 
 Each episode contains:
 
-- **Summary** — a narrative paragraph describing what happened in the session
-- **Time range** — `startedAt` and `endedAt` from transcript metadata
-- **Surface** — where the session happened (webchat, telegram, signal, tui, subagent, heartbeat, cron)
-- **Agent ID** — which OpenClaw agent ran the session
-- **Activity level** — low, medium, high, or deep (derived by the LLM from conversation depth)
-- **Topics** — LLM-extracted topic tags for semantic grouping
-- **Source ID** — the OpenClaw session UUID, used for dedup
-- **Embedding** — optional 1024-dim vector for semantic episode search
+- **Summary** - a narrative paragraph describing what happened in the session
+- **Time range** - `startedAt` and `endedAt` from transcript metadata
+- **Surface** - where the session happened, for example `tui`, `telegram`, `signal`, `subagent`, or `heartbeat`
+- **Agent ID** - which OpenClaw agent ran the session
+- **Activity level** - `substantial`, `minimal`, or `none`
+- **Topics** - LLM-extracted topic tags for semantic grouping
+- **Project** - optional project scope inferred from the session
+- **Source ID** - the OpenClaw session UUID, used for dedup
+- **Embedding** - optional 1024-dim vector for semantic episode search
 
 ## Episode Recall
 
@@ -61,32 +62,33 @@ Recall routes to episodes through the unified recall layer (`src/app/recall/unif
 
 The router inspects the query text for signals:
 
-- **Factual phrases** (`"what decision"`, `"what's the default"`, `"which version"`) → entries only
-- **Narrative phrases** (`"what happened"`, `"what were we doing"`, `"catch me up"`) + time window → episodes only
-- **Narrative + topic anchor** → both episodes and entries
-- **Time window without narrative** → both
-- **Factual + time window** → both
-- **No signals** → entries only (safe default)
+- **Factual phrases** (`"what decision"`, `"what's the default"`, `"which version"`) -> entries only
+- **Factual + time window** -> both episodes and entries
+- **Narrative phrases** (`"what happened"`, `"what were we doing"`, `"catch me up"`) + time window -> episodes only
+- **Narrative + time window + topic anchor** -> both episodes and entries
+- **Time window + topic anchor** -> both episodes and entries
+- **Time window without narrative or topic anchor** -> entries only
+- **No signals** -> entries only (safe default)
 
 ### Temporal Window Parser
 
 The parser (`src/core/episode/temporal-window.ts`) recognizes natural language time expressions and converts them to precise calendar intervals:
 
-| Expression                  | Resolved to                                 |
-| --------------------------- | ------------------------------------------- |
-| `today`                     | Start to end of current calendar day        |
-| `yesterday`                 | Start to end of previous calendar day       |
-| `this week`                 | Monday through current day                  |
-| `last week`                 | Previous Monday through Sunday              |
-| `this month`                | 1st through current day                     |
-| `last month`                | 1st through last day of previous month      |
-| `N days ago`                | That single calendar day                    |
-| `N weeks ago`               | That full calendar week                     |
-| `N months ago`              | That full calendar month                    |
-| `in March`, `in January`    | Full named month (current or previous year) |
-| `March 15th`, `January 1st` | That single calendar day                    |
-| `last Friday`               | Most recent occurrence of that weekday      |
-| ISO dates (`2026-03-15`)    | That single calendar day                    |
+| Expression                  | Resolved to                                         |
+| --------------------------- | --------------------------------------------------- |
+| `today`                     | Start of current local day through `now`            |
+| `yesterday`                 | Start to end of previous local calendar day         |
+| `this week`                 | Start of the local week through `now`               |
+| `last week`                 | Previous local week                                 |
+| `this month`                | Start of the local month through `now`              |
+| `last month`                | Previous local calendar month                       |
+| `N days ago`                | That single local calendar day                      |
+| `N weeks ago`               | Anchor window centered N weeks back, radius +/- 3d  |
+| `N months ago`              | Anchor window centered N months back, radius +/- 3d |
+| `in March`, `in January`    | Full named month (current or previous year)         |
+| `March 15th`, `January 1st` | That single local calendar day                      |
+| `last Friday`               | Most recent occurrence of that weekday              |
+| ISO dates (`2026-03-15`)    | That single local calendar day                      |
 
 All dates resolve in the system's local timezone.
 
@@ -98,10 +100,10 @@ The episode search pipeline (`src/core/episode/search.ts`) supports three modes 
 
 When no embedding is available for the query (or mode forces temporal-only), episodes are scored by interval overlap with the query time window. Scoring factors:
 
-- **Overlap quality** — what fraction of the episode's time range intersects the query window
-- **Midpoint proximity** — how close the episode's midpoint is to the query window's midpoint
-- **Activity level** — higher activity episodes score higher
-- **Recency** — more recent episodes get a small boost
+- **Overlap quality** - what fraction of the episode's time range intersects the query window
+- **Midpoint proximity** - how close the episode's midpoint is to the query window's midpoint
+- **Activity level** - `substantial` outranks `minimal`, which outranks `none`
+- **Recency** - more recent episodes get a small boost
 
 ### Pure Semantic
 
@@ -135,25 +137,26 @@ OpenClaw maintains a `sessions.json` file with authoritative metadata for active
 
 For rotated/deleted sessions not in the registry, episode ingest reconstructs metadata from the transcript itself:
 
-- **Surface** — detected from Sender metadata blocks, Conversation info blocks, `inbound_meta` fields, and content heuristics
-- **Agent ID** — derived from the directory path (`agents/{agentId}/sessions/...`)
-- **Time range** — from transcript `startedAt`/`endedAt` metadata
+- **Surface** - detected from Sender metadata blocks, Conversation info blocks, `inbound_meta` fields, and content heuristics
+- **Agent ID** - derived from the directory path (`agents/{agentId}/sessions/...`)
+- **Time range** - from transcript `startedAt`/`endedAt` metadata
 
 ## Architecture
 
 Episode code follows agenr's hexagonal structure:
 
-| Location                                | Responsibility                                                                                         |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `src/core/episode/`                     | Pure episode logic: search, scoring, temporal windows, summary generation, transcript rendering, types |
-| `src/core/episode/search.ts`            | Episode search pipeline (temporal, semantic, hybrid)                                                   |
-| `src/core/episode/scoring.ts`           | Interval overlap scoring, activity scoring, recency decay                                              |
-| `src/core/episode/temporal-window.ts`   | Calendar-aware natural language time parser                                                            |
-| `src/core/episode/summary-generator.ts` | LLM summary generation (core port, no infra deps)                                                      |
-| `src/core/episode/summary-prompt.ts`    | Episode summary system prompt and response parser                                                      |
-| `src/adapters/openclaw/episode/`        | OpenClaw-specific episode writer (session-start hook, embedded agent calls)                            |
-| `src/adapters/db/`                      | Episode table schema, queries, vector search                                                           |
-| `src/app/recall/unified.ts`             | Mode routing, episode + entry result merging                                                           |
-| `src/app/episode-ingest/`               | Episode ingest service (CLI pipeline orchestration)                                                    |
+| Location                                    | Responsibility                                                                                         |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `src/core/episode/`                         | Pure episode logic: search, scoring, temporal windows, summary generation, transcript rendering, types |
+| `src/core/episode/search.ts`                | Episode search pipeline (temporal, semantic, hybrid)                                                   |
+| `src/core/episode/scoring.ts`               | Interval overlap scoring, activity scoring, recency decay                                              |
+| `src/core/episode/temporal-window.ts`       | Calendar-aware natural language time parser                                                            |
+| `src/core/episode/summary-generator.ts`     | LLM summary generation (core port, no infra deps)                                                      |
+| `src/core/episode/summary-prompt.ts`        | Episode summary system prompt and response parser                                                      |
+| `src/adapters/openclaw/episode/`            | OpenClaw-specific predecessor-episode writer using the embedded-agent task runner                      |
+| `src/adapters/openclaw/session/continuity/` | OpenClaw-specific predecessor resolution and continuity summary loading/generation                     |
+| `src/adapters/db/`                          | Episode table schema, queries, vector search                                                           |
+| `src/app/recall/unified.ts`                 | Mode routing, episode + entry result merging                                                           |
+| `src/app/episode-ingest/`                   | Episode ingest service (CLI pipeline orchestration)                                                    |
 
-The core episode code has zero infrastructure dependencies. The OpenClaw adapter handles transcript parsing, session registry lookups, and LLM calls through OpenClaw's embedded agent runner.
+The core episode code has zero infrastructure dependencies. The OpenClaw adapter handles transcript parsing, predecessor resolution, and LLM calls through OpenClaw's embedded-agent task runner, while CLI backfill consults `sessions.json` directly when it is available.

@@ -137,19 +137,19 @@ Compatibility policy:
 
 The CLI surface is still intentionally compact, but it now covers setup, recall, ingest, and corpus maintenance.
 
-| Command                        | What it does                                                                                                             |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
-| `agenr init`                   | Interactive first-run wizard: auth, model selection, OpenClaw detection, plugin install, and optional initial ingestion. |
-| `agenr setup`                  | Configure auth, model defaults, embeddings, and the agenr database path.                                                 |
-| `agenr recall <query>`         | Run the hybrid recall pipeline with optional temporal and type/tag filters.                                              |
-| `agenr ingest <path>`          | Default durable-entry ingest shorthand. Equivalent to `agenr ingest entries <path>`.                                     |
-| `agenr ingest entries <path>`  | Bulk-ingest one file or directory of OpenClaw transcript files into durable knowledge entries.                           |
-| `agenr ingest episodes <path>` | Backfill episodic summaries from OpenClaw session transcripts, including rotated `.reset.*` and `.deleted.*` files.      |
-| `agenr surgeon run`            | Execute the surgeon retirement pass. Dry-run by default; add `--apply` to mutate the corpus.                             |
-| `agenr surgeon status`         | Show corpus health plus the latest surgeon run summary.                                                                  |
-| `agenr surgeon history`        | Show recent surgeon runs.                                                                                                |
-| `agenr surgeon actions <run>`  | Show the audit trail for one surgeon run.                                                                                |
-| `agenr db reset`               | Delete and recreate the knowledge database.                                                                              |
+| Command                         | What it does                                                                                                             |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `agenr init`                    | Interactive first-run wizard: auth, model selection, OpenClaw detection, plugin install, and optional initial ingestion. |
+| `agenr setup`                   | Configure auth, model defaults, embeddings, and the agenr database path.                                                 |
+| `agenr recall <query>`          | Run the hybrid recall pipeline with optional temporal and type/tag filters.                                              |
+| `agenr ingest <path>`           | Default durable-entry ingest shorthand. Equivalent to `agenr ingest entries <path>`.                                     |
+| `agenr ingest entries <path>`   | Bulk-ingest one file or directory of OpenClaw transcript files into durable knowledge entries.                           |
+| `agenr ingest episodes [path]`  | Backfill episodic summaries from OpenClaw session transcripts, including rotated `.reset.*` and `.deleted.*` files.      |
+| `agenr surgeon run`             | Execute the surgeon retirement pass. Dry-run by default; add `--apply` to mutate the corpus.                             |
+| `agenr surgeon status`          | Show corpus health plus the latest surgeon run summary.                                                                  |
+| `agenr surgeon history`         | Show recent surgeon runs.                                                                                                |
+| `agenr surgeon actions <runId>` | Show the audit trail for one surgeon run.                                                                                |
+| `agenr db reset`                | Delete and recreate the knowledge database.                                                                              |
 
 The OpenClaw plugin also gives the agent five tools directly inside the runtime: `agenr_store`, `agenr_recall`, `agenr_retire`, `agenr_update`, and `agenr_trace`.
 
@@ -189,7 +189,7 @@ Recall is a hybrid pipeline. Agenr embeds the query, retrieves candidates throug
 Agenr has two ingest pipelines over the same transcript corpus:
 
 - `agenr ingest entries <path>` extracts durable typed knowledge such as facts, decisions, preferences, lessons, milestones, and relationships.
-- `agenr ingest episodes <path>` generates one narrative summary per session so the brain can answer temporal questions like "what happened last week?"
+- `agenr ingest episodes [path]` generates one narrative summary per session so the brain can answer temporal questions like "what happened last week?"
 
 Both paths parse OpenClaw transcripts first, but they optimize for different outputs: entry ingest distills durable knowledge and runs semantic dedup across the whole ingest batch, while episode ingest does a session-by-session preflight pass, uses `sessions.json` metadata when available, reconstructs missing surface metadata for rotated files, and writes episodic summaries. Details: [docs/INGEST.md](./docs/INGEST.md) and [docs/STORE.md](./docs/STORE.md).
 

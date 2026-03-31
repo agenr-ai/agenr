@@ -4,12 +4,12 @@
 
 ## What is agenr?
 
-Memory infrastructure for AI agents. Ingest conversation transcripts, extract durable knowledge, store with semantic dedup, recall with memory-aware ranking, and maintain corpus health via surgeon. Designed as a universal brain — any agent system (OpenClaw, Cursor, Windsurf, etc.) plugs in via adapters or the HTTP API.
+Memory infrastructure for AI agents. Ingest conversation transcripts, extract durable knowledge, store with semantic dedup, recall with memory-aware ranking, maintain episodic summaries, and keep corpus health in shape with surgeon. OpenClaw is the current production adapter, the repo also contains a narrow internal recall-eval HTTP seam, and the core stays shaped so future adapters can plug in cleanly.
 
 ## Stack
 
 - TypeScript, ESM, Node.js 24+
-- libsql/SQLite for storage (`@libsql/client`) — designed for future Turso edge migration
+- libsql/SQLite for storage (`@libsql/client`) - designed for future Turso edge migration
 - libsql vector index for vector similarity search (1024-dim, cosine)
 - OpenAI `text-embedding-3-small` (1024 dims) for embeddings
 - `commander` for CLI argument parsing
@@ -23,31 +23,42 @@ Memory infrastructure for AI agents. Ingest conversation transcripts, extract du
 
 ```
 src/
-├── core/                    # THE INSIDE — pure logic, zero I/O dependencies
-│   ├── types.ts             # Domain types: Entry, RecallQuery, StoreResult, etc.
-│   ├── ports.ts             # ALL port interfaces: DatabasePort, EmbeddingPort, LlmPort, TranscriptPort
-│   ├── store/               # Entry validation, dedup logic, store pipeline
-│   ├── recall/              # Scoring, ranking, candidate selection, session-start
-│   ├── ingestion/           # Chunking, extraction primitives, prompts
-│   └── surgeon/             # Consolidation, dedup, retirement rules
+├── core/                    # THE INSIDE - pure logic, zero I/O dependencies
+│   ├── types.ts             # Shared domain types for entries, episodes, and transcripts
+│   ├── ports.ts             # Core port interfaces: DatabasePort, RecallPorts, EmbeddingPort, LlmPort, TranscriptPort
+│   ├── store/               # Entry validation, hash dedup, embedding text, store pipeline
+│   ├── recall/              # Entry recall parsing, candidate merge, scoring, temporal helpers
+│   ├── episode/             # Episodic search, temporal windows, summary prompt/types
+│   ├── ingestion/           # Transcript extraction, chunking, prompt parsing, semantic dedup
+│   └── surgeon/domain/      # Protection rules and action types shared by surgeon workflows
 │
-├── app/                     # Application orchestration — composes ports into workflows
-│   └── ingestion/           # Multi-file ingest services, concurrency, progress, file ports
+├── app/                     # Application orchestration - composes ports into workflows
+│   ├── ingestion/           # Multi-file durable-entry ingest orchestration
+│   ├── episode-ingest/      # Episode backfill planning, preflight, execution, embedding backfill
+│   ├── recall/              # Unified entry + episode recall routing
+│   ├── surgeon/             # Surgeon runtime, tools, prompts, budgets, completion guards
+│   ├── openclaw/            # Shared runtime wiring for the OpenClaw plugin
+│   └── evals/recall/        # Internal recall-eval execution seam and diagnostics
 │
-├── adapters/                # THE OUTSIDE — infrastructure implementations
-│   ├── db/                  # SQLite: schema, queries, client (implements DatabasePort)
-│   ├── files/               # Local transcript discovery + hashing adapters
-│   ├── embeddings.ts        # Embedding API client (implements EmbeddingPort)
-│   ├── llm.ts               # LLM API client (implements LlmPort)
-│   ├── api/                 # HTTP REST API — universal adapter for any agent
-│   ├── openclaw/            # OpenClaw plugin adapter (implements TranscriptPort, plugin hooks)
-│   └── mcp/                 # MCP server adapter
+├── adapters/                # THE OUTSIDE - infrastructure implementations
+│   ├── db/                  # SQLite/libSQL schema and query adapters
+│   ├── files/               # Local transcript discovery and hashing
+│   ├── embeddings.ts        # Embedding API client
+│   ├── llm.ts               # LLM client and auth helpers
+│   ├── api/                 # Narrow internal recall-eval HTTP transport
+│   ├── openclaw/            # OpenClaw memory plugin runtime, tools, hooks, transcript/session adapters
+│   ├── surgeon/             # Surgeon trace adapter helpers
+│   └── mcp/                 # Reserved for future MCP adapter work
 │
-├── cli/                     # CLI adapter — thin, wires adapters to core
+├── cli/                     # CLI adapter - thin command registration and formatting
 │   ├── main.ts              # Entry point + command registration
-│   └── commands/            # One file per command
+│   └── commands/            # One file or namespace per CLI command
 │
-└── config.ts                # Config loading + types
+├── config.ts                # Config loading + types
+└── cli.ts                   # CLI bootstrap
+
+packages/
+└── openclaw-plugin/         # Published OpenClaw plugin package wrapper
 
 tests/                       # vitest test files, mirrors src/ structure
 docs/                        # Documentation
@@ -57,17 +68,17 @@ docs/                        # Documentation
 
 - **`core/`** is pure logic. No IO, no database, no HTTP, no file system access, and no process-global logging. It depends only on port interfaces defined in `core/ports.ts`. All domain types live in `core/types.ts`.
 - **`app/`** coordinates workflows that compose multiple ports or adapters. Concurrency, file discovery/hashing, cross-step orchestration, and progress reporting belong here when they are not pure domain logic.
-- **`adapters/`** implement port interfaces and translate external protocols (SQLite, HTTP, OpenClaw plugin API, MCP, embedding APIs) into core API calls. Adapters may import from `core/` (types + ports). Adapters must NOT import from other adapters.
+- **`adapters/`** implement port interfaces and translate external protocols (SQLite, the internal recall-eval HTTP seam, OpenClaw plugin APIs, embedding APIs) into core or app calls. Adapters may import from `core/` and targeted `app/` services, but should not reach across unrelated adapter packages.
 - **`cli/`** is a thin shell. Commands parse args, wire adapters and app services, call core/app functions, format output. No workflow orchestration or business logic lives here.
-- **`config.ts`** is shared infrastructure — both core and adapters may reference config types.
+- **`config.ts`** is shared infrastructure - runtime config loading and types used by CLI, app, and adapters.
 
 ### Recall eval adapter scope guardrails
 
-If the recall eval HTTP adapter lands, keep it narrow.
+The internal recall-eval HTTP seam under `src/adapters/api/` is intentionally narrow.
 
 1. `agenr` owns only the execution seam for recall evals.
 2. `agenr-evals` owns manifests, suite orchestration, scoring, summaries, and benchmark reporting.
-3. The first version should expose one narrow internal recall-case HTTP route only.
+3. Keep the transport to the single internal recall-case HTTP route and its validation contract.
 4. Route handlers must stay thin and delegate to an app service.
 5. `core/` may expose typed execution facts for observability, but must not gain eval-specific logging, file writing, or artifact policy.
 6. Do not add eval-only CLI commands as the main transport.
@@ -76,72 +87,76 @@ If the recall eval HTTP adapter lands, keep it narrow.
 
 ### OpenClaw plugin architecture
 
-The plugin at `adapters/openclaw/` is the most complex adapter but must stay disciplined. It is a **translator, not a brain.**
+The OpenClaw runtime lives in `src/adapters/openclaw/` and is packaged by `packages/openclaw-plugin/`. It is a **translator, not a brain.**
 
 Every piece of code in the plugin should be one of:
 
-1. **A core call** — `core.recall()`, `core.store()`, `core.handoffSession()`, etc.
-2. **OpenClaw protocol translation** — mapping OpenClaw events/hooks (`before_prompt_build`, `before_reset`, tool invocations) to core calls, and formatting core results for OpenClaw's prompt injection format
-3. **OpenClaw-specific logic** — session predecessor lookup (parsing OpenClaw session keys), transcript building from OpenClaw's message format, handoff dedup, tool registration
+1. **A core call or app workflow call** - `core/store`, `core/recall`, `app/runUnifiedRecall`, `app/episode-ingest`, etc.
+2. **OpenClaw protocol translation** - mapping `before_prompt_build`, `session_start`, memory-runtime hooks, flush-plan hooks, and tool invocations to agenr services
+3. **OpenClaw-specific logic** - session key parsing, `sessions.json` fallback, prompt-section formatting, transcript parsing, embedded-agent episode summary tasks
 
-The test for where logic belongs: **would a Cursor or Windsurf adapter need the same logic?** If yes, it belongs in `core/`. If it's specific to how OpenClaw structures sessions, messages, or hooks, it belongs in the plugin.
+The test for where logic belongs: **would a Cursor or Windsurf adapter need the same logic?** If yes, it belongs in `core/` or `app/`. If it's specific to how OpenClaw structures sessions, memory hooks, messages, or embedded agents, it belongs in the plugin.
 
 Examples:
 
-- Recall scoring and ranking → `core/` (any adapter needs this)
-- Handoff workflow (store fallback → LLM summarize → retire fallback) → `core/` (any adapter would do this)
-- Building a transcript from OpenClaw `.jsonl` messages → plugin (OpenClaw-specific format)
-- Parsing OpenClaw session keys to find predecessors → plugin (OpenClaw-specific)
-- Formatting recalled entries for system prompt injection → plugin (OpenClaw's prompt format)
-- Importance rules, dedup logic, extraction → `core/` (never in the plugin)
+- Recall scoring and ranking -> `core/` (any adapter needs this)
+- Unified routing between entries and episodes -> `app/recall/`
+- Building a transcript from OpenClaw `.jsonl` messages -> plugin (OpenClaw-specific format)
+- Parsing OpenClaw session keys and scanning `sessions.json` for predecessors -> plugin (OpenClaw-specific)
+- Formatting recalled entries for prompt injection -> plugin (OpenClaw-specific prompt format)
+- Episode temporal scoring, importance rules, dedup logic, extraction -> `core/` or `app/`, never in the plugin
 
 Plugin directory structure - grouped by concern:
 
 ```
-adapters/openclaw/
+src/adapters/openclaw/
 ├── index.ts                    # Plugin entry point, hook registration, wiring
+├── config.ts                   # Plugin-config validation and schema
+├── runtime.ts                  # Thin re-export into app/openclaw runtime wiring
 ├── types.ts                    # OpenClaw-specific type definitions
-├── tools.ts                    # Tool registration + handlers (store, retire, update, trace, recall)
-├── transcript/                 # Ingestion: JSONL parsing
-│   └── parser.ts              # TranscriptPort implementation
-├── hooks/                      # OpenClaw lifecycle event handlers
-│   ├── session-start.ts       # before_prompt_build → core.recall.sessionStart()
-│   ├── handoff.ts             # before_reset → core.handoff()
-│   └── mid-session-recall.ts  # On-demand recall during session
-├── session/                    # Session lifecycle + state (OpenClaw-specific)
-│   ├── predecessor.ts         # Parse session key, find prior handoff entry
-│   ├── state.ts               # In-memory tracking (handoff dedup, seen sessions)
-│   └── handoff-transcript.ts  # Build transcript from OpenClaw messages
-└── format/                     # Output formatting
-    └── recall-format.ts       # Format entries for OpenClaw prompt injection
+├── tools/                      # Tool registration + handlers (store, recall, retire, update, trace)
+├── hooks/
+│   └── before-prompt-build.ts  # Session-start continuity, predecessor episode write, core-entry injection
+├── session/
+│   ├── continuity/             # Predecessor resolution and continuity summary readers/generators
+│   ├── session-key-parser.ts   # OpenClaw session-key parsing
+│   ├── session-id.ts           # Session-id derivation helpers
+│   ├── sessions-store-reader.ts# `sessions.json` fallback reader
+│   └── state.ts                # In-memory first-start tracking and resumedFrom state
+├── transcript/                 # JSONL parsing, timestamp cleanup, tool-result summarization
+├── format/                     # Prompt-section and recall-result formatting
+├── episode/                    # Background predecessor-episode write path
+├── memory/                     # Memory runtime registration and flush-plan support
+└── embedded-agent/             # OpenClaw embedded-agent task runner wrappers
 ```
 
 Organizing principles:
 
-- **`hooks/`** — one file per OpenClaw lifecycle event, each translates to core calls
-- **`session/`** — OpenClaw-specific session lifecycle (predecessor, state, transcript building)
-- **`transcript/`** and **`format/`** — input parsing and output formatting
-- Root files (`index.ts`, `tools.ts`, `types.ts`) are cross-cutting
+- **`hooks/`** - one file per OpenClaw lifecycle hook, each translating host events into agenr services
+- **`session/`** - OpenClaw-specific continuity, lineage, session-key, and state logic
+- **`episode/`** and **`memory/`** - host-specific episodic and memory-slot integration
+- **`transcript/`**, **`format/`**, and **`embedded-agent/`** - support domains for parsing, rendering, and host-managed LLM execution
+- Root files (`index.ts`, `config.ts`, `runtime.ts`, `types.ts`) are cross-cutting
 
 ### Why hexagonal?
 
 The core API is the real product. Adapters translate protocols:
 
-- OpenClaw plugin → `core.recall()`, `core.store()`, `core.sessionStart()`
-- HTTP API → same core calls
-- CLI → same core calls
-- Future Cursor adapter → same core calls
+- OpenClaw plugin -> core and app workflows
+- Internal recall-eval server -> `app/evals/recall/*`
+- CLI -> the same core and app workflows
+- Future Cursor adapter -> the same core and app workflows
 
 Adding a new agent system = write an adapter. Zero core changes.
 
 ## Entry types
 
-- `fact` — durable descriptive state
-- `decision` — choices, rules, requirements, constraints with rationale
-- `preference` — stated preferences
-- `lesson` — learned insights, what worked/didn't
-- `relationship` — connections between entities
-- `milestone` — notable one-time occurrences, transitions, launches, and other durable happenings worth remembering
+- `fact` - durable descriptive state
+- `decision` - choices, rules, requirements, constraints with rationale
+- `preference` - stated preferences
+- `lesson` - learned insights, what worked/didn't
+- `relationship` - connections between entities
+- `milestone` - notable one-time occurrences, transitions, launches, and other durable happenings worth remembering
 
 ## Importance scale (1-10)
 
@@ -155,9 +170,9 @@ The extraction LLM assigns importance based on knowledge type and signal strengt
 
 ## Expiry
 
-- `core` — always injected at session start (rare, expensive)
-- `permanent` — durable, recalled on demand
-- `temporary` — short-horizon, subject to automatic expiry
+- `core` - always injected at session start (rare, expensive)
+- `permanent` - durable, recalled on demand
+- `temporary` - short-horizon, subject to automatic expiry
 
 ## Database
 
@@ -187,8 +202,8 @@ Development uses an isolated sandbox environment:
 
 Shell wrappers:
 
-- `sandbox-agenr` — runs agenr CLI against sandbox DB
-- `sandbox-openclaw` — runs OpenClaw gateway loading plugin from local build
+- `sandbox-agenr` - runs agenr CLI against sandbox DB
+- `sandbox-openclaw` - runs OpenClaw gateway loading plugin from local build
 
 VS Code launch configs are pre-configured for debugging against the sandbox with sourcemaps.
 
@@ -199,22 +214,35 @@ VS Code launch configs are pre-configured for debugging against the sandbox with
 ## CLI commands
 
 ```
-agenr ingest <path> [options]     # Ingest session files
-agenr recall <query> [options]    # Search knowledge
-agenr store [options]             # Store entry
-agenr retire <id|subject>         # Retire an entry
-agenr update <id|subject>         # Update importance/expiry
-agenr trace <id|subject>          # Trace entry provenance
-agenr surgeon [options]           # Run maintenance
-agenr mcp                         # Start MCP server
-agenr db reset                    # Reset database
-agenr db stats                    # Show statistics
-agenr db path                     # Print DB path
-agenr setup                       # Interactive setup
-agenr config                      # Show/edit config
+agenr init                         # First-run onboarding wizard
+agenr setup                        # Interactive auth/model/db configuration
+agenr ingest <path> [options]      # Durable entry ingest (default `entries`)
+agenr ingest entries <path>        # Durable entry ingest
+agenr ingest episodes [path]       # Episodic summary backfill / embedding backfill
+agenr recall <query> [options]     # Entry recall CLI
+agenr surgeon run [options]        # Run one surgeon pass
+agenr surgeon status               # Show corpus health and the latest run
+agenr surgeon history [options]    # Show recent surgeon runs
+agenr surgeon actions <runId>      # Show one run's audit trail
+agenr db reset                     # Reset the database
 ```
 
-Every command supports `--verbose` and `--dry-run` for agent debuggability.
+OpenClaw also exposes these agent tools at runtime:
+
+```
+agenr_store
+agenr_recall
+agenr_retire
+agenr_update
+agenr_trace
+```
+
+Debug flags are command-specific:
+
+- durable entry ingest exposes `--verbose` and `--dry-run`
+- episode ingest exposes `--verbose`, `--dry-run`, and episode-specific backfill flags
+- recall exposes `--verbose`
+- surgeon run exposes `--verbose`, `--trace`, `--json`, and `--apply`
 
 ## Common commands
 
@@ -230,7 +258,7 @@ pnpm check             # Full validation: format + lint + typecheck + test
 ## Testing
 
 - Run `pnpm check` before committing
-- Tests use in-memory SQLite (`:memory:`) — no external deps needed
+- Tests use in-memory SQLite (`:memory:`) - no external deps needed
 - Test files live in `tests/` and mirror `src/` structure
 - Core modules tested with test doubles (mock ports)
 - Adapters integration-tested against sandbox
@@ -238,10 +266,10 @@ pnpm check             # Full validation: format + lint + typecheck + test
 
 ## Code style
 
-- No `any` types — use proper TypeScript types
+- No `any` types - use proper TypeScript types
 - Errors should be descriptive and actionable
-- Keep functions focused — if it's doing two things, split it
-- No em-dashes — use hyphens
+- Keep functions focused - if it's doing two things, split it
+- No em-dashes - use hyphens
 - Prefer composition over inheritance
 - Use `type` imports (enforced by ESLint)
 - **Google-style JSDoc on all exported functions, interfaces, and types.** Every public API must have a `/** */` docstring explaining what it does, its parameters, and return value. Internal/private helpers are encouraged but not required.
@@ -249,11 +277,11 @@ pnpm check             # Full validation: format + lint + typecheck + test
 
 ## Repo workflow
 
-1. **Issue first** — every feature/bug gets a GitHub issue
-2. **Branch from master** — `feat/`, `fix/`, `chore/`, `hotfix/`
-3. **Commit references issue** — include "Closes #N" or "Ref #N"
-4. **PR and review** — keep master linear, prefer squash merge
-5. **Clean up** — delete branch after merge
+1. **Issue first** - every feature/bug gets a GitHub issue
+2. **Branch from master** - `feat/`, `fix/`, `chore/`, `hotfix/`
+3. **Commit references issue** - include "Closes #N" or "Ref #N"
+4. **PR and review** - keep master linear, prefer squash merge
+5. **Clean up** - delete branch after merge
 
 ## Completion checklist
 

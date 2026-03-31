@@ -169,7 +169,7 @@ Parameters:
 | `type`           | Optional exact entry type filter.             |
 | `importance_max` | Optional upper bound on importance.           |
 | `min_age_days`   | Optional minimum age in days.                 |
-| `project`        | Optional tag filter for one project tag.      |
+| `project`        | Optional exact project-scope filter.          |
 | `limit`          | Page size. Default: `20`.                     |
 | `offset`         | Page offset. Default: `0`.                    |
 
@@ -483,7 +483,7 @@ Example:
   "surgeon": {
     "model": {
       "provider": "anthropic",
-      "model": "claude-sonnet-4.5"
+      "model": "claude-sonnet-4-6"
     },
     "costCap": 10,
     "dailyCostCap": 30,

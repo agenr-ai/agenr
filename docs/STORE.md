@@ -1,8 +1,8 @@
 # Store
 
-`agenr store` is part of the planned product surface, but there is no live standalone CLI command yet.
+`agenr store` is part of the planned CLI surface, but there is no live standalone CLI command yet.
 
-Today, the real store implementation is the core pipeline in `src/core/store/pipeline.ts`, and the current production caller is the ingest flow.
+Today, the real store implementation is the core pipeline in `src/core/store/pipeline.ts`. The current production callers are the ingest flow and the OpenClaw `agenr_store` tool.
 
 This document describes the code as it exists now, not just the intended flow.
 
@@ -16,19 +16,21 @@ This document describes the code as it exists now, not just the intended flow.
 - `src/adapters/db/client.ts` - libSQL database adapter, including optional transaction support.
 - `src/adapters/db/queries.ts` - insert SQL plus exact-hash and normalized-hash lookup queries.
 - `src/adapters/db/schema.ts` - FTS and vector-index lifecycle used by ingest bulk writes.
+- `src/adapters/openclaw/tools/store.ts` - agent-facing `agenr_store` wrapper that calls the same core store pipeline.
 - `src/core/ingestion/pipeline.ts` - current production wrapper that calls `storeEntriesDetailed()` and maps per-input outcomes back to files.
 - `src/app/ingestion/service.ts` - application-layer ingest orchestration that eventually reaches the store pipeline.
 - `tests/core/store/*.test.ts` - behavior coverage for validation, hashing, and store-pipeline execution.
 
 ## Important architectural nuance
 
-There is no registered `store` CLI command today. `src/cli/main.ts` only registers `ingest` and `db`, and `registerStoreCommand(program)` is still commented out.
+There is no registered `store` CLI command today. `src/cli/main.ts` registers `init`, `setup`, `ingest`, `recall`, `surgeon`, and `db`, and `registerStoreCommand(program)` is still commented out.
 
 That means:
 
-- there is no current `agenr store ...` user-facing command surface to document
-- the production write path is ingest calling into the store pipeline
-- direct callers are expected to invoke `storeEntries()` or `storeEntriesDetailed()` programmatically
+- there is no current `agenr store ...` CLI surface to document
+- there is a live agent-facing store surface through `agenr_store`
+- the production write paths are ingest and the OpenClaw tool calling the same store pipeline
+- direct non-tool callers are expected to invoke `storeEntries()` or `storeEntriesDetailed()` programmatically
 
 Both store entry points live in `src/core/store/pipeline.ts`:
 
@@ -49,6 +51,9 @@ interface StoreEntryInput {
   tags?: string[];
   source_file?: string;
   source_context?: string;
+  user_id?: string;
+  project?: string;
+  created_at?: string;
 }
 ```
 
@@ -60,6 +65,8 @@ Notable properties:
 - `tags` default to `[]`.
 - `source_file` participates in the exact content hash.
 - `source_context` is stored for provenance but does not affect dedup.
+- `user_id` and `project` are stored when supplied, but do not affect dedup.
+- `created_at` is preserved when supplied; otherwise persistence uses the current timestamp.
 
 ## Runtime options
 
@@ -96,7 +103,7 @@ Current behavior:
 - defaults missing `importance` to `7`
 - defaults missing `expiry` to `temporary`
 - trims tags and drops empty tag strings
-- trims `source_file` and `source_context`, dropping them when empty
+- trims `source_file`, `source_context`, `user_id`, `project`, and `created_at`, dropping them when empty
 
 This validator is intentionally simpler than the extraction parser:
 
@@ -126,7 +133,7 @@ The normalized hash is source-agnostic and content-only:
 - trim
 - strip non-word punctuation
 
-Important consequence: neither hash includes `type`, `subject`, `tags`, `importance`, or `expiry`. Two entries with different metadata but the same content can still collide in store dedup.
+Important consequence: neither hash includes `type`, `subject`, `tags`, `importance`, `expiry`, `user_id`, `project`, or `created_at`. Two entries with different metadata but the same content can still collide in store dedup.
 
 ### 3. Hash-based dedup plan
 
@@ -201,6 +208,8 @@ Persistence behavior:
 - `quality_score` is initialized to `0.5`
 - `recall_count` is initialized to `0`
 - `retired` is initialized to `false`
+- `user_id` and `project` are copied through when present
+- `created_at` uses the input value when present, otherwise `now`
 - `content_hash` and `norm_content_hash` are persisted on the row
 
 The SQL adapter stores:
@@ -236,6 +245,8 @@ So the current production path is:
 1. ingest extracts entries
 2. ingest optionally does semantic dedup
 3. store does hash-based dedup and persistence
+
+The OpenClaw `agenr_store` tool is the other live path. It stores one entry at a time, fills in `source_file` from the active session when available, adds default provenance text in `source_context`, and calls `storeEntriesDetailed()` directly without the ingest bulk-write wrapper.
 
 That means ingest has two separate dedup layers:
 
