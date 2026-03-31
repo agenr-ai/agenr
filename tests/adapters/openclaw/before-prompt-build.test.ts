@@ -814,7 +814,7 @@ describe("handleAgenrBeforePromptBuild", () => {
       },
     );
     await continuitySummaryStarted;
-    await vi.advanceTimersByTimeAsync(20_000);
+    await vi.advanceTimersByTimeAsync(35_000);
     const result = await resultPromise;
 
     expect(result?.prependContext).not.toContain("## Previous session summary");
@@ -829,7 +829,7 @@ describe("handleAgenrBeforePromptBuild", () => {
           " reason=no_existing_continuity_summary",
         `[agenr] session-start read-time continuity summary generation failed for session=${currentSessionId} key=${currentSessionKey} predecessor=` +
           predecessorFile +
-          " reason=timeout elapsedMs=20000",
+          " reason=timeout elapsedMs=35000",
       ]),
     );
   });
@@ -1152,6 +1152,7 @@ function createServices(
     config: {
       dbPath: "test.db",
     },
+    pluginConfig: {},
     agenrConfig: {},
     dbPath: "test.db",
     database,

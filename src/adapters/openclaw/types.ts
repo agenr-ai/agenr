@@ -11,6 +11,8 @@ import type { SqlDatabase } from "../db/client.js";
 export interface AgenrOpenClawPluginConfig {
   dbPath?: string;
   configPath?: string;
+  continuityModel?: string;
+  episodeModel?: string;
 }
 
 /**
@@ -54,6 +56,7 @@ export interface AgenrOpenClawHost {
 export interface AgenrOpenClawServices {
   openClaw: AgenrOpenClawHost;
   config: ResolvedAgenrOpenClawPluginConfig;
+  pluginConfig: AgenrOpenClawPluginConfig;
   agenrConfig: AgenrConfig;
   dbPath: string;
   database: SqlDatabase;

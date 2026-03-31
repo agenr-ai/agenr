@@ -41,6 +41,7 @@ export async function createAgenrOpenClawServices(
   return {
     openClaw: options.openClaw,
     config: resolvedConfig,
+    pluginConfig: config,
     agenrConfig,
     dbPath,
     database,

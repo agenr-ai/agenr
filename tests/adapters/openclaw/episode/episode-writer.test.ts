@@ -151,6 +151,46 @@ describe("writeOpenClawPredecessorEpisode", () => {
     expect(stored?.embedding?.[1]).toBeCloseTo(0);
   });
 
+  it("prefers the configured episode model override over the agent primary model", async () => {
+    const database = await createTestDatabase(databases, tempPaths);
+    const sessionFile = await writeStandardSession(tempPaths, "override-model-session");
+    const logger = createLogger();
+    const episodeRunner = createRunner({
+      text: JSON.stringify({
+        summary: "The episode writer used its configured override model.",
+        tags: ["override"],
+        activityLevel: "minimal",
+        project: "agenr",
+      }),
+    });
+
+    await writeOpenClawPredecessorEpisode({
+      ctx: {
+        agentId: "main",
+        sessionId: "current-session",
+        sessionKey: "agent:main:tui-current",
+      },
+      predecessor: {
+        sessionId: "override-model-session",
+        sessionFile,
+      },
+      services: createServices(database, episodeRunner, {
+        pluginConfig: {
+          episodeModel: "openai/gpt-5.4",
+        },
+      }),
+      logger,
+    });
+
+    const stored = await database.getEpisodeBySourceId("openclaw", "override-model-session");
+    expect(stored?.genModel).toBe("openai/gpt-5.4");
+    expect(episodeRunner.mock.calls[0]?.[0]).toMatchObject({
+      provider: "openai",
+      model: "gpt-5.4",
+      timeoutMs: 45_000,
+    });
+  });
+
   it("prefers the TUI session key over messageProvider when deriving the predecessor episode surface", async () => {
     const database = await createTestDatabase(databases, tempPaths);
     const sessionFile = await writeStandardSession(tempPaths, "provider-session");
@@ -498,6 +538,7 @@ function createServices(
   options: {
     embeddingAvailable?: boolean;
     embeddingImplementation?: EmbeddingPort["embed"];
+    pluginConfig?: AgenrOpenClawServices["pluginConfig"];
   } = {},
 ): AgenrOpenClawServices {
   const embedding: EmbeddingPort = {
@@ -532,6 +573,7 @@ function createServices(
     config: {
       dbPath: "test.db",
     },
+    pluginConfig: options.pluginConfig ?? {},
     agenrConfig: {},
     dbPath: "test.db",
     database,

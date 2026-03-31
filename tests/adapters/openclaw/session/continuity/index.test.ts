@@ -124,6 +124,7 @@ function createServices(): AgenrOpenClawServices {
         },
       },
     },
+    pluginConfig: {},
   } as unknown as AgenrOpenClawServices;
 }
 

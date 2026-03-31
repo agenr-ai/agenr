@@ -15,6 +15,14 @@
     "configPath": {
       "label": "Config path",
       "help": "Optional path to agenr's config.json. Defaults to AGENR_CONFIG_PATH, then config.json next to dbPath when dbPath is set, then ~/.agenr/config.json."
+    },
+    "continuityModel": {
+      "label": "Continuity summary model",
+      "help": "Optional model override for continuity summary generation (provider/model format). Falls back to the agent's primary model when unset."
+    },
+    "episodeModel": {
+      "label": "Episode summary model",
+      "help": "Optional model override for episode summary generation (provider/model format). Falls back to the agent's primary model when unset."
     }
   },
   "configSchema": {
@@ -28,6 +36,16 @@
       "configPath": {
         "type": "string",
         "minLength": 1
+      },
+      "continuityModel": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Model override for continuity summary generation (e.g. 'openai/gpt-5.4-mini'). Falls back to the agent's primary model."
+      },
+      "episodeModel": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Model override for episode summary generation (e.g. 'openai/gpt-5.4-mini'). Falls back to the agent's primary model."
       }
     }
   }

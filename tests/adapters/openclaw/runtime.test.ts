@@ -86,6 +86,7 @@ describe("createAgenrOpenClawServices", () => {
     );
 
     expect(services.dbPath).toBe(dbPath);
+    expect(services.pluginConfig).toEqual({});
     expect(services.config).toMatchObject({
       configPath: path.join(root, "config.json"),
       dbPath,
@@ -133,6 +134,9 @@ describe("createAgenrOpenClawServices", () => {
       available: true,
       provider: "openai",
       model: "text-embedding-from-config",
+    });
+    expect(services.pluginConfig).toEqual({
+      dbPath,
     });
     expect(services.config).toMatchObject({
       configPath: path.join(root, "config.json"),
@@ -187,6 +191,10 @@ describe("createAgenrOpenClawServices", () => {
     expect(services.embeddingStatus).toMatchObject({
       available: true,
       model: "text-embedding-explicit",
+    });
+    expect(services.pluginConfig).toEqual({
+      dbPath,
+      configPath,
     });
     expect(services.config).toMatchObject({
       configPath,

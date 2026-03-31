@@ -32,11 +32,27 @@ describe("agenr OpenClaw plugin config", () => {
       coerceAgenrOpenClawPluginConfig({
         dbPath: "/tmp/knowledge.db",
         configPath: "/tmp/config.json",
+        continuityModel: "openai/gpt-5.4-mini",
+        episodeModel: "openai/gpt-5.4-mini",
       }),
     ).toEqual({
       dbPath: "/tmp/knowledge.db",
       configPath: "/tmp/config.json",
+      continuityModel: "openai/gpt-5.4-mini",
+      episodeModel: "openai/gpt-5.4-mini",
     });
+  });
+
+  it("rejects model overrides that do not use provider/model format", () => {
+    const parsed = normalizeAgenrOpenClawPluginConfig({
+      continuityModel: "gpt-5.4-mini",
+      episodeModel: "gpt-5.4-mini",
+    });
+
+    expect(parsed.ok).toBe(false);
+    expect(parsed.ok ? [] : parsed.errors).toEqual(
+      expect.arrayContaining(["continuityModel must use provider/model format when provided", "episodeModel must use provider/model format when provided"]),
+    );
   });
 
   it("rejects legacy credential fields", () => {

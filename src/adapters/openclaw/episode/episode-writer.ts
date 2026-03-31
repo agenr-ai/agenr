@@ -97,7 +97,7 @@ export async function writeOpenClawPredecessorEpisode(params: {
       return;
     }
 
-    const episodeExecution = resolveEpisodeSummaryExecution(params.services.openClaw, params.ctx.agentId);
+    const episodeExecution = resolveEpisodeSummaryExecution(params.services.openClaw, params.ctx.agentId, params.services.pluginConfig.episodeModel);
     const episodeModel = formatResolvedEpisodeSummaryModel(episodeExecution.provider, episodeExecution.model);
     const transcript = capEpisodeTranscript(renderTranscript(cleanedMessages), MAX_EPISODE_TRANSCRIPT_CHARS);
     const episodeSummaryLlm = createEpisodeSummaryLlm({
@@ -291,6 +291,7 @@ async function generateEpisodeSummaryResponse(params: {
 function resolveEpisodeSummaryExecution(
   openClaw: AgenrOpenClawHost,
   requestedAgentId?: string,
+  modelOverride?: string,
 ): {
   agentId: string;
   agentDir: string;
@@ -299,6 +300,21 @@ function resolveEpisodeSummaryExecution(
   workspaceDir: string;
 } {
   const agentId = requestedAgentId?.trim() || resolveDefaultAgentId(openClaw.config);
+  if (modelOverride) {
+    const parsedModelRef = parseModelRef(modelOverride, DEFAULT_PROVIDER);
+    if (!parsedModelRef) {
+      throw new Error(`Invalid episode model override: ${modelOverride}`);
+    }
+
+    return {
+      agentId,
+      agentDir: openClaw.runtime.agent.resolveAgentDir(openClaw.config, agentId),
+      workspaceDir: openClaw.runtime.agent.resolveAgentWorkspaceDir(openClaw.config, agentId),
+      provider: parsedModelRef.provider,
+      model: parsedModelRef.model,
+    };
+  }
+
   const modelRef = resolveAgentEffectiveModelPrimary(openClaw.config, agentId);
   const parsedModelRef = modelRef ? parseModelRef(modelRef, DEFAULT_PROVIDER) : null;
 

@@ -95,7 +95,7 @@ describe("generateAndWriteOpenClawContinuitySummary", () => {
       model: "gpt-5.4",
       provider: "openai",
       sessionKey: "temp:agenr-continuity-summary",
-      timeoutMs: 15_000,
+      timeoutMs: 30_000,
     });
     expect(runEmbeddedPiAgentSpy.mock.calls[0]?.[0]?.extraSystemPrompt).toContain(
       "You write concise narrative continuity summaries that help the next session continue smoothly.",
@@ -164,6 +164,77 @@ describe("generateAndWriteOpenClawContinuitySummary", () => {
       model: "openai/gpt-5.4-mini",
     });
     expect(getMessages(logger.warn)).toContain(`[agenr] continuity-summary: OpenClaw embedded agent runner unavailable for file=${sessionFile}`);
+  });
+
+  it("prefers the configured continuity model override over the agent primary model", async () => {
+    const sessionFile = await writeSessionFile("continuity-summary-session", [
+      {
+        type: "session",
+        id: "continuity-summary-session",
+      },
+      {
+        type: "message",
+        message: {
+          role: "human",
+          content: "Use a smaller model for continuity summaries.",
+        },
+      },
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          content: "That should keep continuity generation responsive.",
+        },
+      },
+      {
+        type: "message",
+        message: {
+          role: "human",
+          content: "Keep the override local to continuity only.",
+        },
+      },
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          content: "The agent primary model can stay unchanged.",
+        },
+      },
+    ]);
+    const runEmbeddedPiAgentSpy = vi.fn(async () => {
+      return {
+        payloads: [
+          {
+            text: "Continuity generation used the configured override.",
+          },
+        ],
+      };
+    });
+    const openClaw = createOpenClawHost({
+      model: "anthropic/claude-opus-4-6",
+      runEmbeddedPiAgentImplementation: runEmbeddedPiAgentSpy as AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"],
+    });
+    const logger = createLogger();
+
+    const result = await generateAndWriteOpenClawContinuitySummary({
+      sessionFile,
+      agentId: "main",
+      openClaw,
+      logger,
+      pluginConfig: {
+        continuityModel: "openai/gpt-5.4-mini",
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: "written",
+      model: "openai/gpt-5.4-mini",
+    });
+    expect(runEmbeddedPiAgentSpy.mock.calls[0]?.[0]).toMatchObject({
+      provider: "openai",
+      model: "gpt-5.4-mini",
+      timeoutMs: 30_000,
+    });
   });
 });
 

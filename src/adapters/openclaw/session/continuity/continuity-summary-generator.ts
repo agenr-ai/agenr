@@ -6,13 +6,13 @@ import { DEFAULT_MODEL, DEFAULT_PROVIDER, parseModelRef, resolveAgentEffectiveMo
 import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
 
 import { openClawTranscriptParser } from "../../transcript/parser.js";
-import type { AgenrOpenClawHost } from "../../types.js";
+import type { AgenrOpenClawHost, AgenrOpenClawPluginConfig } from "../../types.js";
 import { readOpenClawContinuitySummaryFile, resolveOpenClawContinuitySummaryPath } from "./continuity-summary-reader.js";
 import type { OpenClawContinuitySummaryWriteResult } from "./types.js";
 
 const MIN_CONTINUITY_SUMMARY_MESSAGES = 4;
 const MAX_CONTINUITY_TRANSCRIPT_CHARS = 14_000;
-const CONTINUITY_SUMMARY_TIMEOUT_MS = 15_000;
+const CONTINUITY_SUMMARY_TIMEOUT_MS = 30_000;
 const CONTINUITY_SUMMARY_SYSTEM_PROMPT = [
   "You write concise narrative continuity summaries that help the next session continue smoothly.",
   "The transcript can be about any domain. Do not assume technical, project, or coding context unless the transcript shows it.",
@@ -42,6 +42,7 @@ export async function generateAndWriteOpenClawContinuitySummary(params: {
   agentId?: string;
   openClaw: AgenrOpenClawHost;
   logger: PluginLogger;
+  pluginConfig?: AgenrOpenClawPluginConfig;
 }): Promise<OpenClawContinuitySummaryWriteResult> {
   const sessionFile = params.sessionFile.trim();
   const continuitySummaryPath = resolveOpenClawContinuitySummaryPath(sessionFile, params.logger);
@@ -83,7 +84,7 @@ export async function generateAndWriteOpenClawContinuitySummary(params: {
     };
   }
 
-  const continuitySummaryExecution = resolveContinuitySummaryExecution(params.openClaw, params.agentId);
+  const continuitySummaryExecution = resolveContinuitySummaryExecution(params.openClaw, params.agentId, params.pluginConfig?.continuityModel);
   const continuitySummaryModel = formatResolvedContinuitySummaryModel(continuitySummaryExecution.provider, continuitySummaryExecution.model);
   const prompt = [
     "Produce a concise continuity summary for the next session.",
@@ -245,6 +246,7 @@ function normalizeContinuitySummary(value: string): string {
 function resolveContinuitySummaryExecution(
   openClaw: AgenrOpenClawHost,
   requestedAgentId?: string,
+  modelOverride?: string,
 ): {
   agentId: string;
   agentDir: string;
@@ -254,6 +256,22 @@ function resolveContinuitySummaryExecution(
   workspaceDir: string;
 } {
   const agentId = requestedAgentId?.trim() || resolveDefaultAgentId(openClaw.config);
+  if (modelOverride) {
+    const parsedModelRef = parseModelRef(modelOverride, DEFAULT_PROVIDER);
+    if (!parsedModelRef) {
+      throw new Error(`Invalid continuity model override: ${modelOverride}`);
+    }
+
+    return {
+      agentId,
+      agentDir: openClaw.runtime.agent.resolveAgentDir(openClaw.config, agentId),
+      workspaceDir: openClaw.runtime.agent.resolveAgentWorkspaceDir(openClaw.config, agentId),
+      modelRef: modelOverride,
+      provider: parsedModelRef.provider,
+      model: parsedModelRef.model,
+    };
+  }
+
   const modelRef = resolveAgentEffectiveModelPrimary(openClaw.config, agentId);
   const parsedModelRef = modelRef ? parseModelRef(modelRef, DEFAULT_PROVIDER) : null;
 

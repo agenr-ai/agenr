@@ -9,7 +9,7 @@ import { resolveOpenClawSessionPredecessor } from "./predecessor-resolver.js";
 import { renderRecentSessionSection } from "./recent-session.js";
 import type { OpenClawContinuitySummaryWriteResult, PredecessorContinuityResult } from "./types.js";
 
-const READ_TIME_CONTINUITY_SUMMARY_TIMEOUT_MS = 20_000;
+const READ_TIME_CONTINUITY_SUMMARY_TIMEOUT_MS = 35_000;
 const READ_TIME_CONTINUITY_SUMMARY_TIMEOUT = Symbol("read-time-continuity-summary-timeout");
 
 export type { PredecessorContinuityResult } from "./types.js";
@@ -100,6 +100,7 @@ async function loadPredecessorContinuitySummaryContent(
         agentId,
         openClaw: services.openClaw,
         logger,
+        pluginConfig: services.pluginConfig,
       }),
       READ_TIME_CONTINUITY_SUMMARY_TIMEOUT_MS,
     );

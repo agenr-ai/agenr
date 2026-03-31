@@ -483,6 +483,7 @@ function createServices(
     config: {
       dbPath: "test.db",
     },
+    pluginConfig: {},
     agenrConfig: {},
     dbPath: "test.db",
     database,

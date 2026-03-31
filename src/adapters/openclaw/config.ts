@@ -41,7 +41,23 @@ export function normalizeAgenrOpenClawPluginConfig(value: unknown): { ok: true; 
     errors.push("configPath must be a non-empty string when provided");
   }
 
-  const allowedKeys = new Set(["dbPath", "configPath"]);
+  const rawContinuityModel = value.continuityModel;
+  const continuityModel = typeof rawContinuityModel === "string" ? rawContinuityModel.trim() : undefined;
+  if (rawContinuityModel !== undefined && !continuityModel) {
+    errors.push("continuityModel must be a non-empty string when provided");
+  } else if (continuityModel && !continuityModel.includes("/")) {
+    errors.push("continuityModel must use provider/model format when provided");
+  }
+
+  const rawEpisodeModel = value.episodeModel;
+  const episodeModel = typeof rawEpisodeModel === "string" ? rawEpisodeModel.trim() : undefined;
+  if (rawEpisodeModel !== undefined && !episodeModel) {
+    errors.push("episodeModel must be a non-empty string when provided");
+  } else if (episodeModel && !episodeModel.includes("/")) {
+    errors.push("episodeModel must use provider/model format when provided");
+  }
+
+  const allowedKeys = new Set(["dbPath", "configPath", "continuityModel", "episodeModel"]);
   for (const key of Object.keys(value)) {
     if (!allowedKeys.has(key)) {
       errors.push(`unknown config field: ${key}`);
@@ -57,6 +73,8 @@ export function normalizeAgenrOpenClawPluginConfig(value: unknown): { ok: true; 
     value: {
       ...(dbPath ? { dbPath } : {}),
       ...(configPath ? { configPath } : {}),
+      ...(continuityModel ? { continuityModel } : {}),
+      ...(episodeModel ? { episodeModel } : {}),
     },
   };
 }
