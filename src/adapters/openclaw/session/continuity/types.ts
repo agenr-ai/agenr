@@ -1,3 +1,5 @@
+import type { OpenClawSessionContinuityKind } from "../session-key-parser.js";
+
 /**
  * Resolved predecessor facts used for summary and transcript-tail injection.
  */
@@ -73,6 +75,130 @@ export interface OpenClawContinuitySummaryWriteResult {
 }
 
 /**
+ * Final predecessor-resolution strategy used for one session-start lookup.
+ */
+export type OpenClawContinuityResolutionStrategy = "resumed_from" | "sessions_json_scan" | "none";
+
+/**
+ * Stable `session_start.resumedFrom` lookup status captured for diagnostics.
+ */
+export type OpenClawContinuityResumedFromStatus = "not_observed" | "missing" | "resolved" | "not_found";
+
+/**
+ * Stable `sessions.json` fallback status captured for diagnostics.
+ */
+export type OpenClawContinuityFallbackStatus = "not_eligible" | "not_attempted" | "resolved" | "no_matching_sessions" | "missing_session_id";
+
+/**
+ * Stable final reason emitted when predecessor continuity resolves or fails.
+ */
+export type OpenClawContinuityResolutionReason =
+  | "resolved"
+  | "ineligible_session_kind"
+  | "missing_agent_id"
+  | "missing_sessions_dir"
+  | "resumed_from_missing"
+  | "resumed_from_not_found"
+  | "sessions_json_no_matching_sessions"
+  | "sessions_json_missing_session_id";
+
+/**
+ * Structured continuity-resolution diagnostics for one prompt-build session.
+ */
+export interface OpenClawContinuityResolutionSummary {
+  /**
+   * Active OpenClaw session UUID when available.
+   */
+  currentSessionId?: string;
+  /**
+   * Active OpenClaw session key when available.
+   */
+  currentSessionKey?: string;
+  /**
+   * Parsed continuity kind from the current session key.
+   */
+  kind: OpenClawSessionContinuityKind;
+  /**
+   * Stable continuity lane derived from the current session key.
+   */
+  stableLane: string | null;
+  /**
+   * Reports whether the current kind is continuity-eligible at all.
+   */
+  eligible: boolean;
+  /**
+   * Reports whether agenr observed an OpenClaw `session_start` event first.
+   */
+  sessionStartObserved: boolean;
+  /**
+   * Session key captured from the remembered `session_start` event when present.
+   */
+  sessionStartSessionKey?: string;
+  /**
+   * Remembered predecessor UUID from `session_start.resumedFrom` when present.
+   */
+  resumedFrom?: string;
+  /**
+   * Reports whether `session_start.resumedFrom` was populated.
+   */
+  resumedFromPresent: boolean;
+  /**
+   * Structured outcome for the `resumedFrom` lookup path.
+   */
+  resumedFromStatus: OpenClawContinuityResumedFromStatus;
+  /**
+   * Reports whether the `resumedFrom` path resolved to a transcript.
+   */
+  resumedFromResolved: boolean;
+  /**
+   * Reports whether `sessions.json` fallback is allowed for the current kind.
+   */
+  fallbackEligible: boolean;
+  /**
+   * Reports whether `sessions.json` fallback actually ran.
+   */
+  fallbackAttempted: boolean;
+  /**
+   * Structured outcome for the `sessions.json` fallback path.
+   */
+  fallbackStatus: OpenClawContinuityFallbackStatus;
+  /**
+   * Count of lane-matched fallback candidates considered when fallback ran.
+   */
+  fallbackCandidateCount?: number;
+  /**
+   * Final strategy that produced the predecessor, or `none`.
+   */
+  strategy: OpenClawContinuityResolutionStrategy;
+  /**
+   * Stable final resolution reason.
+   */
+  reason: OpenClawContinuityResolutionReason;
+  /**
+   * Selected predecessor facts when resolution succeeded.
+   */
+  predecessor?: OpenClawSessionPredecessor;
+  /**
+   * Selected predecessor session key when the `sessions.json` fallback won.
+   */
+  predecessorSessionKey?: string;
+}
+
+/**
+ * Result from predecessor lookup plus inspectable decision metadata.
+ */
+export interface OpenClawSessionPredecessorResolution {
+  /**
+   * Resolved predecessor identity when one was found.
+   */
+  predecessor?: OpenClawSessionPredecessor;
+  /**
+   * Structured diagnostics describing how predecessor lookup behaved.
+   */
+  resolution: OpenClawContinuityResolutionSummary;
+}
+
+/**
  * Result from resolving predecessor continuity context for prompt injection.
  */
 export interface PredecessorContinuityResult {
@@ -80,6 +206,10 @@ export interface PredecessorContinuityResult {
    * Resolved predecessor identity when one was found.
    */
   predecessor?: OpenClawSessionPredecessor;
+  /**
+   * Structured predecessor-resolution diagnostics for inspection and logging.
+   */
+  resolution: OpenClawContinuityResolutionSummary;
   /**
    * Continuity summary Markdown content (empty string when unavailable).
    */

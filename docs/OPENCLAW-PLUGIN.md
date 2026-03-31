@@ -195,8 +195,9 @@ The handler then tries to recover the immediately previous session for the same 
 It resolves predecessors in this order:
 
 1. parse the current OpenClaw session key into a continuity kind (`main`, `tui`, `direct`, `group`, `channel`, or an ineligible kind)
-2. if `session_start` provided `resumedFrom`, scan the agent sessions directory for `<sessionId>.jsonl`, `<sessionId>.jsonl.reset.*`, or `<sessionId>.jsonl.deleted.*`
-3. if `resumedFrom` does not resolve and the current kind is `main` or `tui`, fall back to scanning OpenClaw `sessions.json`
+2. consult the in-process session-start tracker, which is populated directly from the OpenClaw `session_start` hook event
+3. if `session_start` provided `resumedFrom`, scan the agent sessions directory for `<sessionId>.jsonl`, `<sessionId>.jsonl.reset.*`, or `<sessionId>.jsonl.deleted.*`
+4. if `resumedFrom` does not resolve and the current kind is `main` or `tui`, fall back to scanning OpenClaw `sessions.json`
 
 Current continuity behavior matches current OpenClaw session routing:
 
@@ -210,6 +211,16 @@ The `sessions.json` fallback is intentionally narrow:
 - `tui` fallback keeps the broad default `tui` bucket behavior and still allows a fresh `tui-<uuid>` session to recover from `agent:<agentId>:main`
 - `main` fallback is cheap insurance when the store still points at an older main-session transcript
 - `direct`, `group`, and `channel` sessions accept a cold start when `resumedFrom` is missing or its transcript file cannot be found
+
+Each lookup also emits one structured summary log line. The summary is designed to answer, in one place:
+
+- parsed continuity kind and stable lane
+- whether agenr observed a `session_start` event for the session yet
+- whether `resumedFrom` was present and whether it resolved
+- whether `sessions.json` fallback was eligible and whether it ran
+- fallback candidate count when fallback ran
+- winning strategy (`resumed_from`, `sessions_json_scan`, or `none`)
+- final no-match reason or selected predecessor file
 
 #### Previous-session continuity summary loading
 
@@ -225,7 +236,7 @@ If the file is missing, `before_prompt_build` may generate it on demand by calli
 
 Important runtime details:
 
-- read-time generation is wrapped in an outer `10_000 ms` timeout
+- read-time generation is wrapped in an outer `35_000 ms` timeout
 - a timeout or generation failure is swallowed and results in no continuity summary section
 - if generation succeeds, the sidecar file is written and reused on later starts
 

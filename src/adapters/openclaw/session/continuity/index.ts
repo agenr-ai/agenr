@@ -5,7 +5,7 @@ import type { AgenrOpenClawHookContext, AgenrOpenClawServices } from "../../type
 import type { SessionStartTracker } from "../state.js";
 import { generateAndWriteOpenClawContinuitySummary } from "./continuity-summary-generator.js";
 import { readOpenClawContinuitySummaryFile } from "./continuity-summary-reader.js";
-import { resolveOpenClawSessionPredecessor } from "./predecessor-resolver.js";
+import { resolveOpenClawSessionPredecessorResolution } from "./predecessor-resolver.js";
 import { renderRecentSessionSection } from "./recent-session.js";
 import type { OpenClawContinuitySummaryWriteResult, PredecessorContinuityResult } from "./types.js";
 
@@ -33,14 +33,16 @@ export async function resolvePredecessorContinuity(
   logger: PluginLogger,
 ): Promise<PredecessorContinuityResult> {
   const sessionContext = formatSessionContext(ctx.sessionId, ctx.sessionKey);
-  const predecessor = await resolveOpenClawSessionPredecessor(ctx, tracker, {
+  const predecessorResolution = await resolveOpenClawSessionPredecessorResolution(ctx, tracker, {
     logger,
     mainKey: resolveOpenClawMainKey(services),
     resolveStateDir: services.openClaw.runtime.state.resolveStateDir,
   });
+  const { predecessor, resolution } = predecessorResolution;
   if (!predecessor) {
     logger.info(`[agenr] session-start predecessor continuity summary not found for ${sessionContext} reason=no_predecessor`);
     return {
+      resolution,
       continuitySummaryContent: "",
       recentSessionContent: "",
     };
@@ -48,6 +50,7 @@ export async function resolvePredecessorContinuity(
 
   return {
     predecessor,
+    resolution,
     continuitySummaryContent: await loadPredecessorContinuitySummaryContent(sessionContext, predecessor.sessionFile, ctx.agentId, services, logger),
     recentSessionContent: await renderRecentSessionSection(predecessor.sessionFile, logger),
   };

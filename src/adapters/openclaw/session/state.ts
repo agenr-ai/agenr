@@ -25,6 +25,34 @@ export interface SessionStartTracker {
    * @returns Previous session UUID, or `undefined` when unavailable.
    */
   getResumedFrom(sessionId?: string): string | undefined;
+  /**
+   * Returns the captured `session_start` event facts for one session.
+   *
+   * This lets continuity resolution distinguish "no `session_start` observed"
+   * from "event observed but no `resumedFrom` was present".
+   *
+   * @param sessionId - New ephemeral OpenClaw session UUID lookup.
+   * @returns Captured session-start facts, or `undefined` when unseen.
+   */
+  getSessionStart(sessionId?: string): RememberedSessionStart | undefined;
+}
+
+/**
+ * Captured `session_start` facts remembered for one OpenClaw session id.
+ */
+export interface RememberedSessionStart {
+  /**
+   * New ephemeral OpenClaw session UUID.
+   */
+  sessionId: string;
+  /**
+   * Stable OpenClaw session key reported by the host event when present.
+   */
+  sessionKey?: string;
+  /**
+   * Previous session UUID reported by `session_start.resumedFrom` when present.
+   */
+  resumedFrom?: string;
 }
 
 /**
@@ -49,7 +77,7 @@ export interface SessionStartConsumeResult {
 export function createSessionStartTracker(): SessionStartTracker {
   const seenSessionIds = new Set<string>();
   const seenSessionKeys = new Set<string>();
-  const resumedFromBySessionId = new Map<string, string>();
+  const sessionStartsBySessionId = new Map<string, RememberedSessionStart>();
 
   const countActiveSessions = () => seenSessionIds.size + seenSessionKeys.size;
 
@@ -90,18 +118,31 @@ export function createSessionStartTracker(): SessionStartTracker {
         activeCount: countActiveSessions(),
       };
     },
-    rememberSessionStart(sessionId, _sessionKey, resumedFrom) {
+    rememberSessionStart(sessionId, sessionKey, resumedFrom) {
       const normalizedSessionId = sessionId?.trim();
-      const normalizedResumedFrom = resumedFrom?.trim();
-      if (!normalizedSessionId || !normalizedResumedFrom) {
+      if (!normalizedSessionId) {
         return;
       }
 
-      resumedFromBySessionId.set(normalizedSessionId, normalizedResumedFrom);
+      const previous = sessionStartsBySessionId.get(normalizedSessionId);
+      const normalizedSessionKey = sessionKey?.trim();
+      const normalizedResumedFrom = resumedFrom?.trim();
+
+      sessionStartsBySessionId.set(normalizedSessionId, {
+        sessionId: normalizedSessionId,
+        ...(previous?.sessionKey ? { sessionKey: previous.sessionKey } : {}),
+        ...(previous?.resumedFrom ? { resumedFrom: previous.resumedFrom } : {}),
+        ...(normalizedSessionKey ? { sessionKey: normalizedSessionKey } : {}),
+        ...(normalizedResumedFrom ? { resumedFrom: normalizedResumedFrom } : {}),
+      });
     },
     getResumedFrom(sessionId) {
       const normalizedSessionId = sessionId?.trim();
-      return normalizedSessionId ? resumedFromBySessionId.get(normalizedSessionId) : undefined;
+      return normalizedSessionId ? sessionStartsBySessionId.get(normalizedSessionId)?.resumedFrom : undefined;
+    },
+    getSessionStart(sessionId) {
+      const normalizedSessionId = sessionId?.trim();
+      return normalizedSessionId ? sessionStartsBySessionId.get(normalizedSessionId) : undefined;
     },
   };
 }

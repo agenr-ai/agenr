@@ -8,7 +8,13 @@ import { deriveOpenClawSessionIdFromFilePath } from "../session-id.js";
 import { parseOpenClawSessionContinuityKey, type OpenClawSessionContinuityIdentity } from "../session-key-parser.js";
 import { readOpenClawSessionsStore, type OpenClawSessionsStoreEntry } from "../sessions-store-reader.js";
 import type { SessionStartTracker } from "../state.js";
-import type { OpenClawSessionPredecessor } from "./types.js";
+import type {
+  OpenClawContinuityFallbackStatus,
+  OpenClawContinuityResolutionReason,
+  OpenClawContinuityResolutionSummary,
+  OpenClawSessionPredecessor,
+  OpenClawSessionPredecessorResolution,
+} from "./types.js";
 
 /**
  * One fully resolved predecessor candidate returned from `sessions.json` fallback.
@@ -23,6 +29,158 @@ interface ResolvedCandidatePredecessor extends OpenClawSessionPredecessor {
 type SessionsStoreFallbackReason = "resolved" | "unsupported_kind" | "no_matching_sessions" | "missing_session_id" | "not_scan_eligible";
 
 export type { OpenClawSessionPredecessor } from "./types.js";
+
+/**
+ * Resolves predecessor facts plus a stable diagnostic summary describing how
+ * continuity resolution behaved for the current session.
+ *
+ * Policy is intentionally narrow:
+ * - continuity-eligible kinds are `main`, `tui`, `direct`, `group`, and `channel`
+ * - `resumedFrom` is always tried first for eligible kinds
+ * - `sessions.json` fallback is allowed only for `main` and `tui`
+ * - `direct`, `group`, and `channel` accept a cold start when `resumedFrom` is
+ *   missing or its transcript file cannot be found
+ * - `subagent`, `acp`, and unknown shapes are never continuity-eligible
+ *
+ * @param ctx - Active OpenClaw hook context.
+ * @param tracker - In-process continuity tracker shared by the plugin.
+ * @param params - Logger plus OpenClaw state-dir resolution helpers.
+ * @returns Predecessor facts plus structured continuity-resolution metadata.
+ */
+export async function resolveOpenClawSessionPredecessorResolution(
+  ctx: AgenrOpenClawHookContext,
+  tracker: SessionStartTracker,
+  params: {
+    logger?: PluginLogger;
+    resolveStateDir: AgenrOpenClawRuntime["state"]["resolveStateDir"];
+    mainKey?: string;
+  },
+): Promise<OpenClawSessionPredecessorResolution> {
+  const sessionContext = formatSessionContext(ctx.sessionId, ctx.sessionKey);
+  const currentIdentity = parseOpenClawSessionContinuityKey(ctx.sessionKey ?? "", {
+    mainKey: params.mainKey,
+  });
+  const sessionStart = tracker.getSessionStart(ctx.sessionId);
+  const resumedFrom = sessionStart?.resumedFrom;
+  const fallbackEligible = isSessionsStoreFallbackEligible(currentIdentity.kind);
+  const resolution: OpenClawContinuityResolutionSummary = {
+    currentSessionId: ctx.sessionId?.trim() || undefined,
+    currentSessionKey: ctx.sessionKey?.trim() || undefined,
+    kind: currentIdentity.kind,
+    stableLane: currentIdentity.stableLane,
+    eligible: currentIdentity.eligible,
+    sessionStartObserved: Boolean(sessionStart),
+    ...(sessionStart?.sessionKey ? { sessionStartSessionKey: sessionStart.sessionKey } : {}),
+    ...(resumedFrom ? { resumedFrom } : {}),
+    resumedFromPresent: Boolean(resumedFrom),
+    resumedFromStatus: sessionStart ? (resumedFrom ? "not_found" : "missing") : "not_observed",
+    resumedFromResolved: false,
+    fallbackEligible,
+    fallbackAttempted: false,
+    fallbackStatus: fallbackEligible ? "not_attempted" : "not_eligible",
+    strategy: "none",
+    reason: currentIdentity.eligible ? "resumed_from_missing" : "ineligible_session_kind",
+  };
+
+  debugLog(
+    params.logger,
+    "predecessor",
+    `parsed current identity for ${sessionContext}: kind=${currentIdentity.kind} stableLane=${currentIdentity.stableLane ?? "unknown"} eligible=${currentIdentity.eligible}`,
+  );
+
+  if (!currentIdentity.eligible) {
+    debugLog(
+      params.logger,
+      "predecessor",
+      `skipping predecessor resolution for ${sessionContext}: kind=${currentIdentity.kind} eligible=${currentIdentity.eligible} agentId=${currentIdentity.agentId ?? "unknown"}`,
+    );
+    return finalizeResolution(params.logger, resolution);
+  }
+
+  if (!currentIdentity.agentId) {
+    debugLog(
+      params.logger,
+      "predecessor",
+      `skipping predecessor resolution for ${sessionContext}: kind=${currentIdentity.kind} eligible=${currentIdentity.eligible} agentId=unknown`,
+    );
+    resolution.reason = "missing_agent_id";
+    return finalizeResolution(params.logger, resolution);
+  }
+
+  const sessionsDir = resolveOpenClawSessionsDirectory(ctx, currentIdentity.agentId, params.resolveStateDir);
+  if (!sessionsDir) {
+    params.logger?.info?.(`[agenr] predecessor: no predecessor found for ${sessionContext} reason=no_sessions_dir`);
+    resolution.reason = "missing_sessions_dir";
+    return finalizeResolution(params.logger, resolution);
+  }
+
+  if (resumedFrom) {
+    debugLog(params.logger, "predecessor", `session_start resumedFrom for ${sessionContext}: ${resumedFrom}`);
+    const resumedFromPredecessor = await resolveResumedFromPredecessor(sessionsDir, resumedFrom, params.logger);
+    if (resumedFromPredecessor) {
+      params.logger?.info?.(
+        `[agenr] predecessor: predecessor found for ${sessionContext} strategy=resumed_from predecessorKey=session_start predecessor=${resumedFromPredecessor.sessionFile}`,
+      );
+      resolution.predecessor = resumedFromPredecessor;
+      resolution.strategy = "resumed_from";
+      resolution.reason = "resolved";
+      resolution.resumedFromStatus = "resolved";
+      resolution.resumedFromResolved = true;
+      return finalizeResolution(params.logger, resolution);
+    }
+
+    debugLog(
+      params.logger,
+      "predecessor",
+      `session_start resumedFrom file not found for ${sessionContext}: resumedFrom=${resumedFrom} sessionsDir=${sessionsDir}`,
+    );
+    resolution.reason = "resumed_from_not_found";
+  } else {
+    debugLog(params.logger, "predecessor", `session_start resumedFrom unavailable for ${sessionContext}`);
+    resolution.reason = "resumed_from_missing";
+  }
+
+  if (!fallbackEligible) {
+    if (resumedFrom) {
+      params.logger?.info?.(`[agenr] predecessor: no predecessor found for ${sessionContext} strategy=resumed_from reason=cold_start_after_resumed_from_miss`);
+    }
+    return finalizeResolution(params.logger, resolution);
+  }
+
+  params.logger?.info?.(
+    `[agenr] predecessor: predecessor resolution for ${sessionContext} strategy=sessions_json_scan sessionKey=${ctx.sessionKey?.trim() ?? "unknown"} kind=${currentIdentity.kind} stableLane=${currentIdentity.stableLane ?? "unknown"}`,
+  );
+  resolution.fallbackAttempted = true;
+
+  const fallbackResolution = await findSessionsStoreFallbackPredecessor(
+    currentIdentity,
+    ctx.sessionKey ?? "",
+    ctx.sessionId,
+    sessionsDir,
+    resumedFrom,
+    params.mainKey,
+    params.logger,
+  );
+  resolution.fallbackCandidateCount = fallbackResolution.matchedCandidateCount;
+  resolution.fallbackStatus = mapFallbackStatus(fallbackResolution.reason);
+  if (!fallbackResolution.predecessor) {
+    params.logger?.info?.(`[agenr] predecessor: no predecessor found for ${sessionContext} strategy=sessions_json_scan reason=${fallbackResolution.reason}`);
+    resolution.reason = mapFallbackReason(fallbackResolution.reason);
+    return finalizeResolution(params.logger, resolution);
+  }
+
+  params.logger?.info?.(
+    `[agenr] predecessor: predecessor found for ${sessionContext} strategy=sessions_json_scan predecessorKey=${fallbackResolution.predecessor.sessionKey} predecessor=${fallbackResolution.predecessor.sessionFile}`,
+  );
+  resolution.predecessor = {
+    sessionId: fallbackResolution.predecessor.sessionId,
+    sessionFile: fallbackResolution.predecessor.sessionFile,
+  };
+  resolution.predecessorSessionKey = fallbackResolution.predecessor.sessionKey;
+  resolution.strategy = "sessions_json_scan";
+  resolution.reason = "resolved";
+  return finalizeResolution(params.logger, resolution);
+}
 
 /**
  * Resolves the predecessor session file for the active OpenClaw session.
@@ -45,83 +203,7 @@ export async function resolveOpenClawSessionPredecessor(
     mainKey?: string;
   },
 ): Promise<OpenClawSessionPredecessor | undefined> {
-  const sessionContext = formatSessionContext(ctx.sessionId, ctx.sessionKey);
-  const currentIdentity = parseOpenClawSessionContinuityKey(ctx.sessionKey ?? "", {
-    mainKey: params.mainKey,
-  });
-  debugLog(
-    params.logger,
-    "predecessor",
-    `parsed current identity for ${sessionContext}: kind=${currentIdentity.kind} stableLane=${currentIdentity.stableLane ?? "unknown"} eligible=${currentIdentity.eligible}`,
-  );
-
-  if (!currentIdentity.eligible || !currentIdentity.agentId) {
-    debugLog(
-      params.logger,
-      "predecessor",
-      `skipping predecessor resolution for ${sessionContext}: kind=${currentIdentity.kind} eligible=${currentIdentity.eligible} agentId=${currentIdentity.agentId ?? "unknown"}`,
-    );
-    return undefined;
-  }
-
-  const sessionsDir = resolveOpenClawSessionsDirectory(ctx, currentIdentity.agentId, params.resolveStateDir);
-  if (!sessionsDir) {
-    params.logger?.info?.(`[agenr] predecessor: no predecessor found for ${sessionContext} reason=no_sessions_dir`);
-    return undefined;
-  }
-
-  const resumedFrom = tracker.getResumedFrom(ctx.sessionId);
-  if (resumedFrom) {
-    debugLog(params.logger, "predecessor", `session_start resumedFrom for ${sessionContext}: ${resumedFrom}`);
-    const resumedFromPredecessor = await resolveResumedFromPredecessor(sessionsDir, resumedFrom, params.logger);
-    if (resumedFromPredecessor) {
-      params.logger?.info?.(
-        `[agenr] predecessor: predecessor found for ${sessionContext} strategy=resumed_from predecessorKey=session_start predecessor=${resumedFromPredecessor.sessionFile}`,
-      );
-      return resumedFromPredecessor;
-    }
-
-    debugLog(
-      params.logger,
-      "predecessor",
-      `session_start resumedFrom file not found for ${sessionContext}: resumedFrom=${resumedFrom} sessionsDir=${sessionsDir}`,
-    );
-  } else {
-    debugLog(params.logger, "predecessor", `session_start resumedFrom unavailable for ${sessionContext}`);
-  }
-
-  if (!isSessionsStoreFallbackEligible(currentIdentity.kind)) {
-    if (resumedFrom) {
-      params.logger?.info?.(`[agenr] predecessor: no predecessor found for ${sessionContext} strategy=resumed_from reason=cold_start_after_resumed_from_miss`);
-    }
-    return undefined;
-  }
-
-  params.logger?.info?.(
-    `[agenr] predecessor: predecessor resolution for ${sessionContext} strategy=sessions_json_scan sessionKey=${ctx.sessionKey?.trim() ?? "unknown"} kind=${currentIdentity.kind} stableLane=${currentIdentity.stableLane ?? "unknown"}`,
-  );
-
-  const fallbackResolution = await findSessionsStoreFallbackPredecessor(
-    currentIdentity,
-    ctx.sessionKey ?? "",
-    ctx.sessionId,
-    sessionsDir,
-    resumedFrom,
-    params.mainKey,
-    params.logger,
-  );
-  if (!fallbackResolution.predecessor) {
-    params.logger?.info?.(`[agenr] predecessor: no predecessor found for ${sessionContext} strategy=sessions_json_scan reason=${fallbackResolution.reason}`);
-    return undefined;
-  }
-
-  params.logger?.info?.(
-    `[agenr] predecessor: predecessor found for ${sessionContext} strategy=sessions_json_scan predecessorKey=${fallbackResolution.predecessor.sessionKey} predecessor=${fallbackResolution.predecessor.sessionFile}`,
-  );
-  return {
-    sessionId: fallbackResolution.predecessor.sessionId,
-    sessionFile: fallbackResolution.predecessor.sessionFile,
-  };
+  return (await resolveOpenClawSessionPredecessorResolution(ctx, tracker, params)).predecessor;
 }
 
 /**
@@ -232,16 +314,19 @@ async function findSessionsStoreFallbackPredecessor(
   logger?: PluginLogger,
 ): Promise<
   | {
+      matchedCandidateCount: number;
       predecessor: ResolvedCandidatePredecessor;
       reason: "resolved";
     }
   | {
+      matchedCandidateCount: number;
       predecessor?: undefined;
       reason: SessionsStoreFallbackReason;
     }
 > {
   if (!isSessionsStoreFallbackEligible(currentIdentity.kind)) {
     return {
+      matchedCandidateCount: 0,
       reason: "not_scan_eligible",
     };
   }
@@ -275,6 +360,7 @@ async function findSessionsStoreFallbackPredecessor(
 
   if (matchedEntries.length === 0) {
     return {
+      matchedCandidateCount: 0,
       reason: "no_matching_sessions",
     };
   }
@@ -285,6 +371,7 @@ async function findSessionsStoreFallbackPredecessor(
       const resolvedPredecessor = toResolvedCandidatePredecessor(resumedFromMatch, logger);
       if (resolvedPredecessor) {
         return {
+          matchedCandidateCount: matchedEntries.length,
           reason: "resolved",
           predecessor: resolvedPredecessor,
         };
@@ -310,6 +397,7 @@ async function findSessionsStoreFallbackPredecessor(
 
   if (sortedCandidates.length === 0) {
     return {
+      matchedCandidateCount: matchedEntries.length,
       reason: "no_matching_sessions",
     };
   }
@@ -318,6 +406,7 @@ async function findSessionsStoreFallbackPredecessor(
     const resolvedPredecessor = toResolvedCandidatePredecessor(candidate, logger);
     if (resolvedPredecessor) {
       return {
+        matchedCandidateCount: matchedEntries.length,
         reason: "resolved",
         predecessor: resolvedPredecessor,
       };
@@ -325,6 +414,7 @@ async function findSessionsStoreFallbackPredecessor(
   }
 
   return {
+    matchedCandidateCount: matchedEntries.length,
     reason: "missing_session_id",
   };
 }
@@ -525,6 +615,89 @@ function isSameTuiLane(currentStableLane: string | null, candidateStableLane: st
  */
 function compareArchivePathsDescending(left: string, right: string): number {
   return path.basename(right).localeCompare(path.basename(left));
+}
+
+/**
+ * Maps one fallback resolver reason into the summary fallback-status enum.
+ *
+ * @param reason - Internal fallback resolver reason.
+ * @returns Stable fallback status for diagnostics.
+ */
+function mapFallbackStatus(reason: SessionsStoreFallbackReason): OpenClawContinuityFallbackStatus {
+  switch (reason) {
+    case "resolved":
+      return "resolved";
+    case "missing_session_id":
+      return "missing_session_id";
+    case "no_matching_sessions":
+      return "no_matching_sessions";
+    case "not_scan_eligible":
+    case "unsupported_kind":
+      return "not_eligible";
+  }
+}
+
+/**
+ * Maps one fallback resolver reason into the final continuity-resolution reason.
+ *
+ * @param reason - Internal fallback resolver reason.
+ * @returns Stable final reason for the public summary.
+ */
+function mapFallbackReason(reason: SessionsStoreFallbackReason): OpenClawContinuityResolutionReason {
+  switch (reason) {
+    case "resolved":
+      return "resolved";
+    case "missing_session_id":
+      return "sessions_json_missing_session_id";
+    case "no_matching_sessions":
+    case "not_scan_eligible":
+    case "unsupported_kind":
+      return "sessions_json_no_matching_sessions";
+  }
+}
+
+/**
+ * Emits one stable structured summary log before returning a resolution result.
+ *
+ * @param logger - Optional plugin logger.
+ * @param resolution - Structured predecessor-resolution result.
+ * @returns The unchanged resolution result.
+ */
+function finalizeResolution(logger: PluginLogger | undefined, resolution: OpenClawContinuityResolutionSummary): OpenClawSessionPredecessorResolution {
+  logger?.info?.(formatResolutionSummary(resolution));
+  return {
+    predecessor: resolution.predecessor,
+    resolution,
+  };
+}
+
+/**
+ * Formats one continuity-resolution summary into a stable key-value log line.
+ *
+ * @param resolution - Structured predecessor-resolution result.
+ * @returns Human-readable structured summary log.
+ */
+function formatResolutionSummary(resolution: OpenClawContinuityResolutionSummary): string {
+  const sessionContext = formatSessionContext(resolution.currentSessionId, resolution.currentSessionKey);
+  return [
+    `[agenr] predecessor: resolution summary for ${sessionContext}`,
+    `kind=${resolution.kind}`,
+    `stableLane=${resolution.stableLane ?? "unknown"}`,
+    `eligible=${resolution.eligible}`,
+    `sessionStartObserved=${resolution.sessionStartObserved}`,
+    `resumedFrom=${resolution.resumedFrom ?? "n/a"}`,
+    `resumedFromPresent=${resolution.resumedFromPresent}`,
+    `resumedFromStatus=${resolution.resumedFromStatus}`,
+    `fallbackEligible=${resolution.fallbackEligible}`,
+    `fallbackAttempted=${resolution.fallbackAttempted}`,
+    `fallbackStatus=${resolution.fallbackStatus}`,
+    `fallbackCandidateCount=${resolution.fallbackCandidateCount ?? "n/a"}`,
+    `strategy=${resolution.strategy}`,
+    `reason=${resolution.reason}`,
+    `predecessorSessionId=${resolution.predecessor?.sessionId ?? "n/a"}`,
+    `predecessorKey=${resolution.predecessorSessionKey ?? "n/a"}`,
+    `predecessor=${resolution.predecessor?.sessionFile ?? "n/a"}`,
+  ].join(" ");
 }
 
 /**
