@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.4.0] - 2026-03-30
+
+Configurable summary models, surgeon personal knowledge protection, and documentation overhaul.
+
+### Added
+
+- **Configurable continuity and episode summary models.** New `continuityModel` and `episodeModel` fields in the OpenClaw plugin config (`plugins.entries.agenr.config`) allow overriding the model used for continuity and episode summary generation independently. Falls back to the agent's primary model when unset. Use a fast model like `openai/gpt-5.4-mini` for these structured extraction tasks instead of burning Opus tokens.
+- **Personal knowledge protection in surgeon.** The surgeon retirement pass now has explicit guidance that personal facts (family, pets, hardware, contacts, identity, physical environment) are durable by nature. Only retires personal entries when contradicted or clearly duplicated — not for low recall or moderate importance.
+- **Corpus age awareness in surgeon.** The `_meta` table now tracks `last_bulk_ingest_at`, surfaced via `get_health_stats`. The surgeon heavily discounts `recall_count = 0` when the corpus was rebuilt within 30 days, preventing mass retirements of freshly ingested entries.
+- **New documentation: `docs/EPISODES.md`.** Comprehensive episodic memory docs covering lifecycle, CLI usage, recall modes, temporal window parser, search modes, embeddings, session discovery, and architecture.
+- **New documentation: `docs/SURGEON.md`.** Comprehensive surgeon docs covering tools, CLI commands, dry-run vs apply, budget governance, configuration, protection thresholds, and audit history.
+
+### Changed
+
+- **Continuity summary timeout increased.** Inner timeout bumped from 15s to 30s, read-time wrapper from 20s to 35s. Prevents timeout failures when using slower models for continuity summaries.
+- **Updated `docs/RECALL.md`.** Added unified recall mode routing (`auto`/`entries`/`episodes`), auto-routing rules, temporal window parser reference, and episode search pipeline documentation.
+- **Updated `docs/INGEST.md`.** Added episode ingest section with full flag documentation, behavior differences from entry ingest, session discovery, surface reconstruction, and practical examples.
+- **Updated `README.md`.** Added episodic memory and surgeon to features list, CLI commands table, and new "How Episodes Work" and "How the Surgeon Works" sections with doc links.
+
 ## [1.3.0] - 2026-03-30
 
 Episodic memory — session-level temporal recall for the brain.
