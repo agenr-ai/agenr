@@ -74,7 +74,7 @@ export function parseTemporalWindow(text: string, now: Date = new Date()): Resol
   }
 
   const monthDayMatch = normalizedText.match(
-    /\b(?:on\s+)?((january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2}))\b/i,
+    /\b(?:on\s+)?((january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})(?:st|nd|rd|th)?)\b/i,
   );
   if (monthDayMatch?.[1] && monthDayMatch[2] && monthDayMatch[3]) {
     const targetDate = resolveMostRecentMonthDay(monthDayMatch[2].toLowerCase(), Number(monthDayMatch[3]), referenceNow);

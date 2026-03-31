@@ -337,7 +337,7 @@ export async function episodeVectorSearch(
   try {
     result = await executor.execute({
       sql: `
-        SELECT ${EPISODE_SELECT_COLUMNS}
+        SELECT ${prefixColumns(EPISODE_SELECT_COLUMNS, "e")}
         FROM vector_top_k('idx_episodes_embedding', vector32(?), ?) AS v
         JOIN episodes AS e ON e.rowid = v.id
         WHERE ${buildActiveEpisodeClause("e")}
@@ -685,6 +685,24 @@ function normalizePositiveInteger(value: number | undefined): number | undefined
 }
 
 /** Wraps episode vector-search failures in a consistent adapter error. */
+/**
+ * Prefixes each column in a comma-separated column list with a table alias.
+ *
+ * @param columns - Multi-line comma-separated column string.
+ * @param alias - Table alias to prepend.
+ * @returns Column list with each column prefixed.
+ */
+function prefixColumns(columns: string, alias: string): string {
+  return columns
+    .split(",")
+    .map((col) => {
+      const trimmed = col.trim();
+      return trimmed ? `${alias}.${trimmed}` : "";
+    })
+    .filter(Boolean)
+    .join(", ");
+}
+
 function wrapEpisodeVectorError(error: unknown): Error {
   const message = error instanceof Error ? error.message : String(error);
   return new Error(`Episode vector search is unavailable: ${message}`);
