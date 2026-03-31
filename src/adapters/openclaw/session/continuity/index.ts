@@ -35,6 +35,7 @@ export async function resolvePredecessorContinuity(
   const sessionContext = formatSessionContext(ctx.sessionId, ctx.sessionKey);
   const predecessor = await resolveOpenClawSessionPredecessor(ctx, tracker, {
     logger,
+    mainKey: resolveOpenClawMainKey(services),
     resolveStateDir: services.openClaw.runtime.state.resolveStateDir,
   });
   if (!predecessor) {
@@ -50,6 +51,22 @@ export async function resolvePredecessorContinuity(
     continuitySummaryContent: await loadPredecessorContinuitySummaryContent(sessionContext, predecessor.sessionFile, ctx.agentId, services, logger),
     recentSessionContent: await renderRecentSessionSection(predecessor.sessionFile, logger),
   };
+}
+
+/**
+ * Resolves the configured OpenClaw main session key used for continuity.
+ *
+ * @param services - Shared agenr services plus OpenClaw host config.
+ * @returns Trimmed OpenClaw main key, or `"main"` when unset.
+ */
+function resolveOpenClawMainKey(services: AgenrOpenClawServices): string {
+  const configWithSession = services.openClaw.config as {
+    session?: {
+      mainKey?: string;
+    };
+  };
+
+  return configWithSession.session?.mainKey?.trim() || "main";
 }
 
 /**

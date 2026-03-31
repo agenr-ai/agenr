@@ -149,6 +149,73 @@ describe("handleAgenrBeforePromptBuild", () => {
     ).toBe(false);
   });
 
+  it("injects continuity for a main-session predecessor resolved from resumedFrom archive", async () => {
+    const database = await createTestDatabase();
+    const logger = createLogger();
+    const { workspaceDir, sessionsDir } = await createWorkspaceWithSessions();
+    const tracker = createSessionStartTracker();
+    tracker.rememberSessionStart("session-main-new", "agent:main:main", "predecessor-session");
+
+    const predecessorFile = await writeArchivedSessionFileToDirectory(sessionsDir, "predecessor-session", "reset.2026-03-31T10:00:00.000Z", [
+      {
+        type: "session",
+        id: "predecessor-session",
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T09:00:00.000Z",
+        message: {
+          role: "human",
+          content: "Continue from the main session after the reset.",
+        },
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T09:01:00.000Z",
+        message: {
+          role: "assistant",
+          content: "The main session summary should come from the archived predecessor transcript.",
+        },
+      },
+    ]);
+    await writeFile(
+      path.join(sessionsDir, "predecessor-session.continuity-summary.md"),
+      "Main-session continuity should survive resets through resumedFrom archive lookup.\n",
+      "utf8",
+    );
+
+    const result = await handleAgenrBeforePromptBuild(
+      {
+        prompt: "Resume the main session.",
+        messages: [],
+      },
+      {
+        agentId: "main",
+        sessionId: "session-main-new",
+        sessionKey: "agent:main:main",
+        workspaceDir,
+      },
+      {
+        logger,
+        servicesPromise: Promise.resolve(createServices(database)),
+        tracker,
+      },
+    );
+
+    expect(result?.prependContext).toContain("## Previous session summary");
+    expect(result?.prependContext).toContain("Main-session continuity should survive resets");
+    expect(result?.prependContext).toContain("## Recent session");
+    expect(result?.prependContext).toContain("U: Continue from the main session after the reset.");
+    expect(result?.prependContext).not.toContain("Agenr Session Recall");
+    expect(getMessages(logger.info)).toEqual(
+      expect.arrayContaining([
+        `[agenr] predecessor: predecessor found for session=session-main-new key=agent:main:main strategy=resumed_from predecessorKey=session_start predecessor=${predecessorFile}`,
+        `[agenr] session-start predecessor continuity summary found for session=session-main-new key=agent:main:main path=` +
+          path.join(sessionsDir, "predecessor-session.continuity-summary.md"),
+      ]),
+    );
+  });
+
   it("injects predecessor continuity summary and transcript tail alongside core memory only", async () => {
     const database = await createTestDatabase();
     const executeSpy = vi.spyOn(database, "execute");
@@ -274,10 +341,138 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(listExecutedSql(executeSpy.mock.calls).some((sql) => sql.includes("expiry != 'core'"))).toBe(false);
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
-        `[agenr] predecessor: TUI predecessor found for session=${currentSessionId} key=${currentSessionKey} predecessorKey=agent:main:main predecessor=${predecessorFile}`,
+        `[agenr] predecessor: predecessor found for session=${currentSessionId} key=${currentSessionKey} strategy=sessions_json_scan predecessorKey=agent:main:main predecessor=${predecessorFile}`,
         `[agenr] session-start predecessor continuity summary found for session=${currentSessionId} key=${currentSessionKey} path=` +
           path.join(path.dirname(predecessorFile), "predecessor-session.continuity-summary.md"),
         `[agenr] session-start recall: 1 core entries for session=${currentSessionId} key=${currentSessionKey}`,
+      ]),
+    );
+  });
+
+  it("injects continuity for the same group lane via resumedFrom", async () => {
+    const database = await createTestDatabase();
+    const logger = createLogger();
+    const { workspaceDir, sessionsDir } = await createWorkspaceWithSessions();
+    const tracker = createSessionStartTracker();
+    tracker.rememberSessionStart("session-group-new", "agent:main:telegram:group:-100123", "group-predecessor");
+
+    const predecessorFile = await writeArchivedSessionFileToDirectory(sessionsDir, "group-predecessor", "reset.2026-03-31T10:00:00.000Z", [
+      {
+        type: "session",
+        id: "group-predecessor",
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T11:00:00.000Z",
+        message: {
+          role: "human",
+          content: "Carry group continuity forward for the same Telegram group.",
+        },
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T11:01:00.000Z",
+        message: {
+          role: "assistant",
+          content: "Only the same group lane should get this predecessor summary.",
+        },
+      },
+    ]);
+    await writeFile(
+      path.join(sessionsDir, "group-predecessor.continuity-summary.md"),
+      "Same-group continuity should flow through resumedFrom without sessions.json scanning.\n",
+      "utf8",
+    );
+
+    const result = await handleAgenrBeforePromptBuild(
+      {
+        prompt: "Continue the Telegram group session.",
+        messages: [],
+      },
+      {
+        agentId: "main",
+        sessionId: "session-group-new",
+        sessionKey: "agent:main:telegram:group:-100123",
+        workspaceDir,
+      },
+      {
+        logger,
+        servicesPromise: Promise.resolve(createServices(database)),
+        tracker,
+      },
+    );
+
+    expect(result?.prependContext).toContain("## Previous session summary");
+    expect(result?.prependContext).toContain("Same-group continuity should flow");
+    expect(result?.prependContext).toContain("## Recent session");
+    expect(result?.prependContext).toContain("U: Carry group continuity forward");
+    expect(getMessages(logger.info)).toEqual(
+      expect.arrayContaining([
+        `[agenr] predecessor: predecessor found for session=session-group-new key=agent:main:telegram:group:-100123 strategy=resumed_from predecessorKey=session_start predecessor=${predecessorFile}`,
+      ]),
+    );
+  });
+
+  it("does not inject continuity from a different group topic when resumedFrom is unavailable", async () => {
+    const database = await createTestDatabase();
+    const logger = createLogger();
+    const { workspaceDir, sessionsDir } = await createWorkspaceWithSessions();
+
+    await writeSessionFileToDirectory(sessionsDir, "topic-41-predecessor", [
+      {
+        type: "session",
+        id: "topic-41-predecessor",
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T12:00:00.000Z",
+        message: {
+          role: "human",
+          content: "This continuity belongs to Telegram topic 41 only.",
+        },
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T12:01:00.000Z",
+        message: {
+          role: "assistant",
+          content: "Topic 42 must not inherit it without an exact resumedFrom predecessor.",
+        },
+      },
+    ]);
+    await writeSessionsJson(sessionsDir, {
+      "agent:main:telegram:group:-100123:topic:41": {
+        sessionId: "topic-41-predecessor",
+        sessionFile: "topic-41-predecessor.jsonl",
+        updatedAt: 1_711_612_345_678,
+      },
+    });
+    await writeFile(path.join(sessionsDir, "topic-41-predecessor.continuity-summary.md"), "Topic 41 continuity should not leak into topic 42.\n", "utf8");
+
+    const result = await handleAgenrBeforePromptBuild(
+      {
+        prompt: "Continue the Telegram topic 42 session.",
+        messages: [],
+      },
+      {
+        agentId: "main",
+        sessionId: "session-topic-42",
+        sessionKey: "agent:main:telegram:group:-100123:topic:42",
+        workspaceDir,
+      },
+      {
+        logger,
+        servicesPromise: Promise.resolve(createServices(database)),
+        tracker: createSessionStartTracker(),
+      },
+    );
+
+    expect(result).toBeUndefined();
+    expect(getMessages(logger.info)).toEqual(
+      expect.arrayContaining([
+        "[agenr] session-start predecessor continuity summary not found for session=session-topic-42 key=agent:main:telegram:group:-100123:topic:42 reason=no_predecessor",
+        "[agenr] session-start recall: 0 core entries for session=session-topic-42 key=agent:main:telegram:group:-100123:topic:42",
+        "[agenr] session-start recall: nothing to inject for session=session-topic-42 key=agent:main:telegram:group:-100123:topic:42",
       ]),
     );
   });
@@ -348,7 +543,7 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(result?.prependContext).not.toContain("Core Memory");
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
-        `[agenr] predecessor: TUI predecessor found for session=${currentSessionId} key=${currentSessionKey} predecessorKey=agent:main:main predecessor=${predecessorFile}`,
+        `[agenr] predecessor: predecessor found for session=${currentSessionId} key=${currentSessionKey} strategy=sessions_json_scan predecessorKey=agent:main:main predecessor=${predecessorFile}`,
         `[agenr] session-start predecessor continuity summary found for session=${currentSessionId} key=${currentSessionKey} path=` +
           path.join(path.dirname(predecessorFile), "predecessor-session.continuity-summary.md"),
         `[agenr] session-start recall: 0 core entries for session=${currentSessionId} key=${currentSessionKey}`,
@@ -520,8 +715,8 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(runEmbeddedPiAgentSpy).toHaveBeenCalledTimes(1);
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
-        "[agenr] predecessor: TUI predecessor resolution for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 sessionKey=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 stableLane=tui",
-        "[agenr] predecessor: TUI predecessor found for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 predecessorKey=agent:main:main predecessor=" +
+        "[agenr] predecessor: predecessor resolution for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 strategy=sessions_json_scan sessionKey=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 kind=tui stableLane=tui",
+        "[agenr] predecessor: predecessor found for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 strategy=sessions_json_scan predecessorKey=agent:main:main predecessor=" +
           predecessorFile,
         "[agenr] session-start predecessor continuity summary not found for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 predecessor=" +
           predecessorFile,
@@ -614,8 +809,8 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(runEmbeddedPiAgentSpy).not.toHaveBeenCalled();
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
-        "[agenr] predecessor: TUI predecessor resolution for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 sessionKey=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 stableLane=tui",
-        "[agenr] predecessor: TUI predecessor found for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 predecessorKey=agent:main:main predecessor=" +
+        "[agenr] predecessor: predecessor resolution for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 strategy=sessions_json_scan sessionKey=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 kind=tui stableLane=tui",
+        "[agenr] predecessor: predecessor found for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 strategy=sessions_json_scan predecessorKey=agent:main:main predecessor=" +
           predecessorFile,
         "[agenr] session-start read-time continuity summary generation skipped for session=session-tui-new key=agent:main:tui-123e4567-e89b-12d3-a456-426614174000 predecessor=" +
           predecessorFile +
@@ -710,7 +905,7 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(runEmbeddedPiAgentSpy).toHaveBeenCalledTimes(1);
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
-        `[agenr] predecessor: TUI predecessor found for session=${currentSessionId} key=${currentSessionKey} predecessorKey=agent:main:main predecessor=${predecessorFile}`,
+        `[agenr] predecessor: predecessor found for session=${currentSessionId} key=${currentSessionKey} strategy=sessions_json_scan predecessorKey=agent:main:main predecessor=${predecessorFile}`,
         `[agenr] session-start read-time continuity summary generation triggered for session=${currentSessionId} key=${currentSessionKey} predecessor=` +
           predecessorFile +
           " reason=no_existing_continuity_summary",
@@ -823,7 +1018,7 @@ describe("handleAgenrBeforePromptBuild", () => {
     await expect(readFile(continuitySummaryPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
-        `[agenr] predecessor: TUI predecessor found for session=${currentSessionId} key=${currentSessionKey} predecessorKey=agent:main:main predecessor=${predecessorFile}`,
+        `[agenr] predecessor: predecessor found for session=${currentSessionId} key=${currentSessionKey} strategy=sessions_json_scan predecessorKey=agent:main:main predecessor=${predecessorFile}`,
         `[agenr] session-start read-time continuity summary generation triggered for session=${currentSessionId} key=${currentSessionKey} predecessor=` +
           predecessorFile +
           " reason=no_existing_continuity_summary",
@@ -907,7 +1102,7 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(runEmbeddedPiAgentSpy).not.toHaveBeenCalled();
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
-        `[agenr] predecessor: TUI predecessor found for session=${currentSessionId} key=${currentSessionKey} predecessorKey=agent:main:main predecessor=${predecessorFile}`,
+        `[agenr] predecessor: predecessor found for session=${currentSessionId} key=${currentSessionKey} strategy=sessions_json_scan predecessorKey=agent:main:main predecessor=${predecessorFile}`,
         `[agenr] session-start read-time continuity summary generation triggered for session=${currentSessionId} key=${currentSessionKey} predecessor=` +
           predecessorFile +
           " reason=no_existing_continuity_summary",
@@ -1359,6 +1554,12 @@ async function writeSessionsJson(sessionsDir: string, entries: Record<string, Re
 
 async function writeSessionFileToDirectory(directory: string, sessionId: string, lines: object[]): Promise<string> {
   const filePath = path.join(directory, `${sessionId}.jsonl`);
+  await writeFile(filePath, `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`, "utf8");
+  return filePath;
+}
+
+async function writeArchivedSessionFileToDirectory(directory: string, sessionId: string, suffix: string, lines: object[]): Promise<string> {
+  const filePath = path.join(directory, `${sessionId}.jsonl.${suffix}`);
   await writeFile(filePath, `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`, "utf8");
   return filePath;
 }

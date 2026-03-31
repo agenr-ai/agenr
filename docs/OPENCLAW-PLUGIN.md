@@ -23,11 +23,10 @@ This document describes the code as it exists now, not just the intended flow.
 - `src/adapters/openclaw/format/prompt-section.ts` - static system-prompt guidance about when to use agenr tools.
 - `src/adapters/openclaw/format/recall-format.ts` - session-start prompt rendering for recalled core memory.
 - `src/adapters/openclaw/hooks/before-prompt-build.ts` - session-start recall plus predecessor continuity injection.
-- `src/adapters/openclaw/hooks/before-reset.ts` - outgoing-session continuity summary generation trigger.
 - `src/adapters/openclaw/session/state.ts` - in-process continuity tracker for first-run suppression and predecessor lookup.
-- `src/adapters/openclaw/session/predecessor.ts` - tracked predecessor resolution plus TUI `sessions.json` fallback.
-- `src/adapters/openclaw/session/continuity-summary.ts` and `src/adapters/openclaw/session/continuity-summary-reader.ts` - sidecar continuity summary generation, reuse, and file lookup.
-- `src/adapters/openclaw/session/tui-lane.ts` and `src/adapters/openclaw/session/sessions-store-reader.ts` - TUI lane parsing and `sessions.json` normalization.
+- `src/adapters/openclaw/session/continuity/predecessor-resolver.ts` - session-key parsing, `resumedFrom` archive lookup, and narrow `sessions.json` fallback for `main` and `tui`.
+- `src/adapters/openclaw/session/continuity/continuity-summary-generator.ts` and `src/adapters/openclaw/session/continuity/continuity-summary-reader.ts` - sidecar continuity summary generation, reuse, and file lookup.
+- `src/adapters/openclaw/session/session-key-parser.ts`, `src/adapters/openclaw/session/tui-lane.ts`, and `src/adapters/openclaw/session/sessions-store-reader.ts` - continuity key parsing plus `sessions.json` normalization.
 - `src/adapters/openclaw/memory/runtime.ts` - newer OpenClaw memory runtime and status surface.
 - `src/adapters/openclaw/memory/flush-plan.ts` - deliberate pass-through flush-plan behavior.
 - `src/adapters/openclaw/transcript/*.ts` - OpenClaw JSONL transcript normalization used by ingest and continuity summaries.
@@ -121,7 +120,6 @@ The database path then resolves in this order:
 - optional memory flush-plan and memory runtime hooks when the host supports them
 - five tools
 - `before_prompt_build`
-- `before_reset`
 - `session_start`
 - `gateway_stop`
 
@@ -196,11 +194,22 @@ The handler then tries to recover the immediately previous session for the same 
 
 It resolves predecessors in this order:
 
-1. use the in-process tracker record remembered during `before_reset`
-2. if `session_start` provided `resumedFrom`, verify that it matches the remembered reset record
-3. if tracker data is missing, fall back to scanning OpenClaw `sessions.json` for TUI single-lane sessions
+1. parse the current OpenClaw session key into a continuity kind (`main`, `tui`, `direct`, `group`, `channel`, or an ineligible kind)
+2. if `session_start` provided `resumedFrom`, scan the agent sessions directory for `<sessionId>.jsonl`, `<sessionId>.jsonl.reset.*`, or `<sessionId>.jsonl.deleted.*`
+3. if `resumedFrom` does not resolve and the current kind is `main` or `tui`, fall back to scanning OpenClaw `sessions.json`
 
-The TUI fallback only applies to session keys shaped like `agent:<agentId>:<lane>` where the lane starts with `tui`. It normalizes UUID-suffixed lanes like `tui-<uuid>` back to a stable `tui` lane, filters to the same agent and lane family, excludes the current session, and picks the candidate with the newest `updatedAt`.
+Current continuity behavior matches current OpenClaw session routing:
+
+- default direct-message and WebChat continuity uses the shared main session key `agent:<agentId>:<mainKey>` (default `main`)
+- DM-isolated modes such as `per-peer`, `per-channel-peer`, and `per-account-channel-peer` produce direct-message keys and rely on `resumedFrom`
+- group and channel continuity is exact-lane only, including Telegram `:topic:<id>` and Discord/Slack `:thread:<id>` suffixes
+- `subagent` and `acp` sessions are parsed but never considered continuity-eligible
+
+The `sessions.json` fallback is intentionally narrow:
+
+- `tui` fallback keeps the broad default `tui` bucket behavior and still allows a fresh `tui-<uuid>` session to recover from `agent:<agentId>:main`
+- `main` fallback is cheap insurance when the store still points at an older main-session transcript
+- `direct`, `group`, and `channel` sessions accept a cold start when `resumedFrom` is missing or its transcript file cannot be found
 
 #### Previous-session continuity summary loading
 
@@ -246,15 +255,7 @@ Any unexpected failure in the whole hook is logged and swallowed so prompt build
 
 ### 2. Session reset and sidecar continuity summary generation
 
-`before_reset` is responsible for capturing outgoing-session continuity before OpenClaw clears the lane.
-
-The hook does three things:
-
-1. validate that `event.sessionFile` exists
-2. remember the outgoing session file in `SessionStartTracker.rememberReset(...)`
-3. try to write a sidecar continuity summary next to that transcript
-
-If `sessionFile` is missing, the hook logs a skip and returns.
+The current continuity path does not depend on a `before_reset` hook. Instead, it loads or generates sidecar summaries at session start after predecessor resolution succeeds.
 
 #### Continuity summary generation pipeline
 

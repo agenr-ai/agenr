@@ -208,8 +208,8 @@ describe("resolveOpenClawSessionPredecessor", () => {
     });
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
-        "[agenr] predecessor: TUI predecessor resolution for session=current-session key=agent:main:tui-223e4567-e89b-12d3-a456-426614174000 sessionKey=agent:main:tui-223e4567-e89b-12d3-a456-426614174000 stableLane=tui",
-        `[agenr] predecessor: TUI predecessor found for session=current-session key=agent:main:tui-223e4567-e89b-12d3-a456-426614174000 predecessorKey=agent:main:main predecessor=${path.join(sessionsDir, "previous-main.jsonl")}`,
+        "[agenr] predecessor: predecessor resolution for session=current-session key=agent:main:tui-223e4567-e89b-12d3-a456-426614174000 strategy=sessions_json_scan sessionKey=agent:main:tui-223e4567-e89b-12d3-a456-426614174000 kind=tui stableLane=tui",
+        `[agenr] predecessor: predecessor found for session=current-session key=agent:main:tui-223e4567-e89b-12d3-a456-426614174000 strategy=sessions_json_scan predecessorKey=agent:main:main predecessor=${path.join(sessionsDir, "previous-main.jsonl")}`,
       ]),
     );
   });
@@ -287,32 +287,37 @@ describe("resolveOpenClawSessionPredecessor", () => {
     });
   });
 
-  it("prefers a session_start resumedFrom match from sessions.json over lane ordering", async () => {
+  it("falls back to sessions.json ordering for main sessions when resumedFrom is missing", async () => {
     const { workspaceDir, sessionsDir } = await createWorkspaceWithSessions();
-    await writeSessionJsonl(sessionsDir, "stale-fallback");
-    await writeSessionJsonl(sessionsDir, "tracked-predecessor");
+    await writeSessionJsonl(sessionsDir, "older-main");
+    await writeSessionJsonl(sessionsDir, "newer-main");
     await writeSessionsJson(sessionsDir, {
-      "agent:main:tui-1": {
-        sessionId: "stale-fallback",
-        sessionFile: "stale-fallback.jsonl",
-        updatedAt: 5_000,
-      },
-      "agent:main:tui-2": {
-        sessionId: "tracked-predecessor",
-        sessionFile: "tracked-predecessor.jsonl",
+      "agent:main:main-old": {
+        sessionId: "ignore-me",
+        sessionFile: "ignore-me.jsonl",
         updatedAt: 1_000,
+      },
+      "agent:main:main": {
+        sessionId: "newer-main",
+        sessionFile: "newer-main.jsonl",
+        updatedAt: 9_000,
+      },
+      "agent:main:tui-1": {
+        sessionId: "older-main",
+        sessionFile: "older-main.jsonl",
+        updatedAt: 8_000,
       },
     });
 
     const tracker = createSessionStartTracker();
-    tracker.rememberSessionStart("current-session", "agent:main:tui-423e4567-e89b-12d3-a456-426614174000", "tracked-predecessor");
-
+    tracker.rememberSessionStart("current-session", "agent:main:main", "missing-predecessor");
     const logger = createLogger();
+
     const result = await resolveOpenClawSessionPredecessor(
       {
         agentId: "main",
         sessionId: "current-session",
-        sessionKey: "agent:main:tui-423e4567-e89b-12d3-a456-426614174000",
+        sessionKey: "agent:main:main",
         workspaceDir,
       },
       tracker,
@@ -323,64 +328,91 @@ describe("resolveOpenClawSessionPredecessor", () => {
     );
 
     expect(result).toEqual({
-      sessionId: "tracked-predecessor",
-      sessionFile: path.join(sessionsDir, "tracked-predecessor.jsonl"),
+      sessionId: "newer-main",
+      sessionFile: path.join(sessionsDir, "newer-main.jsonl"),
     });
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
-        "[agenr] predecessor: TUI predecessor resolution for session=current-session key=agent:main:tui-423e4567-e89b-12d3-a456-426614174000 sessionKey=agent:main:tui-423e4567-e89b-12d3-a456-426614174000 stableLane=tui",
-        `[agenr] predecessor: TUI predecessor found for session=current-session key=agent:main:tui-423e4567-e89b-12d3-a456-426614174000 predecessorKey=agent:main:tui-2 predecessor=${path.join(sessionsDir, "tracked-predecessor.jsonl")}`,
+        "[agenr] predecessor: predecessor resolution for session=current-session key=agent:main:main strategy=sessions_json_scan sessionKey=agent:main:main kind=main stableLane=main",
+        `[agenr] predecessor: predecessor found for session=current-session key=agent:main:main strategy=sessions_json_scan predecessorKey=agent:main:main predecessor=${path.join(sessionsDir, "newer-main.jsonl")}`,
       ]),
     );
   });
 
-  it("returns undefined gracefully when sessions.json is missing", async () => {
-    const { workspaceDir } = await createWorkspaceWithSessions();
-    const logger = createLogger();
-
-    const result = await resolveOpenClawSessionPredecessor(
-      {
-        agentId: "main",
-        sessionId: "current-session",
-        sessionKey: "agent:main:tui-523e4567-e89b-12d3-a456-426614174000",
-        workspaceDir,
-      },
-      createSessionStartTracker(),
-      {
-        logger,
-        resolveStateDir: resolveOpenClawStateDir,
-      },
-    );
-
-    expect(result).toBeUndefined();
-    expect(getMessages(logger.info)).toEqual(
-      expect.arrayContaining([
-        "[agenr] predecessor: TUI predecessor resolution for session=current-session key=agent:main:tui-523e4567-e89b-12d3-a456-426614174000 sessionKey=agent:main:tui-523e4567-e89b-12d3-a456-426614174000 stableLane=tui",
-        "[agenr] predecessor: TUI no predecessor found for session=current-session key=agent:main:tui-523e4567-e89b-12d3-a456-426614174000 reason=no_matching_sessions",
-      ]),
-    );
-  });
-
-  it("does not activate TUI predecessor resolution for non-tui current session keys", async () => {
+  it("resolves main-session predecessors from resumedFrom reset archives", async () => {
     const { workspaceDir, sessionsDir } = await createWorkspaceWithSessions();
-    await writeSessionJsonl(sessionsDir, "previous-main");
-    await writeSessionsJson(sessionsDir, {
-      "agent:main:main": {
-        sessionId: "previous-main",
-        sessionFile: "previous-main.jsonl",
-        updatedAt: 2_000,
-      },
-    });
+    const archivedPredecessor = await writeArchivedSessionJsonl(sessionsDir, "predecessor-session", "reset.2026-03-31T10:00:00.000Z");
 
+    const tracker = createSessionStartTracker();
+    tracker.rememberSessionStart("current-session", "agent:main:main", "predecessor-session");
     const logger = createLogger();
+
     const result = await resolveOpenClawSessionPredecessor(
       {
         agentId: "main",
         sessionId: "current-session",
-        sessionKey: "agent:main:webchat:tab-a",
+        sessionKey: "agent:main:main",
         workspaceDir,
       },
-      createSessionStartTracker(),
+      tracker,
+      {
+        logger,
+        resolveStateDir: resolveOpenClawStateDir,
+      },
+    );
+
+    expect(result).toEqual({
+      sessionId: "predecessor-session",
+      sessionFile: archivedPredecessor,
+    });
+    expect(getMessages(logger.info)).toEqual(
+      expect.arrayContaining([
+        `[agenr] predecessor: predecessor found for session=current-session key=agent:main:main strategy=resumed_from predecessorKey=session_start predecessor=${archivedPredecessor}`,
+      ]),
+    );
+  });
+
+  it("resolves direct-message predecessors from resumedFrom live files", async () => {
+    const { workspaceDir, sessionsDir } = await createWorkspaceWithSessions();
+    const predecessorFile = await writeSessionJsonl(sessionsDir, "direct-predecessor");
+
+    const tracker = createSessionStartTracker();
+    tracker.rememberSessionStart("current-session", "agent:main:telegram:direct:123", "direct-predecessor");
+
+    const result = await resolveOpenClawSessionPredecessor(
+      {
+        agentId: "main",
+        sessionId: "current-session",
+        sessionKey: "agent:main:telegram:direct:123",
+        workspaceDir,
+      },
+      tracker,
+      {
+        logger: createLogger(),
+        resolveStateDir: resolveOpenClawStateDir,
+      },
+    );
+
+    expect(result).toEqual({
+      sessionId: "direct-predecessor",
+      sessionFile: predecessorFile,
+    });
+  });
+
+  it("accepts cold start for direct-message sessions when resumedFrom cannot be resolved", async () => {
+    const { workspaceDir } = await createWorkspaceWithSessions();
+    const tracker = createSessionStartTracker();
+    tracker.rememberSessionStart("current-session", "agent:main:telegram:direct:123", "missing-predecessor");
+    const logger = createLogger();
+
+    const result = await resolveOpenClawSessionPredecessor(
+      {
+        agentId: "main",
+        sessionId: "current-session",
+        sessionKey: "agent:main:telegram:direct:123",
+        workspaceDir,
+      },
+      tracker,
       {
         logger,
         resolveStateDir: resolveOpenClawStateDir,
@@ -388,7 +420,160 @@ describe("resolveOpenClawSessionPredecessor", () => {
     );
 
     expect(result).toBeUndefined();
-    expect(getMessages(logger.info).some((message) => message.includes("TUI predecessor resolution"))).toBe(false);
+    expect(getMessages(logger.info)).toEqual(
+      expect.arrayContaining([
+        "[agenr] predecessor: no predecessor found for session=current-session key=agent:main:telegram:direct:123 strategy=resumed_from reason=cold_start_after_resumed_from_miss",
+      ]),
+    );
+  });
+
+  it("resolves same-group predecessors from resumedFrom archived files", async () => {
+    const { workspaceDir, sessionsDir } = await createWorkspaceWithSessions();
+    const predecessorFile = await writeArchivedSessionJsonl(sessionsDir, "group-predecessor", "reset.2026-03-31T10:00:00.000Z");
+
+    const tracker = createSessionStartTracker();
+    tracker.rememberSessionStart("current-session", "agent:main:telegram:group:-100123", "group-predecessor");
+
+    const result = await resolveOpenClawSessionPredecessor(
+      {
+        agentId: "main",
+        sessionId: "current-session",
+        sessionKey: "agent:main:telegram:group:-100123",
+        workspaceDir,
+      },
+      tracker,
+      {
+        logger: createLogger(),
+        resolveStateDir: resolveOpenClawStateDir,
+      },
+    );
+
+    expect(result).toEqual({
+      sessionId: "group-predecessor",
+      sessionFile: predecessorFile,
+    });
+  });
+
+  it("keeps group-topic continuity isolated to the exact topic lane", async () => {
+    const { workspaceDir, sessionsDir } = await createWorkspaceWithSessions();
+    await writeArchivedSessionJsonl(sessionsDir, "topic-41-predecessor", "reset.2026-03-31T10:00:00.000Z");
+
+    const tracker = createSessionStartTracker();
+    tracker.rememberSessionStart("current-session", "agent:main:telegram:group:-100123:topic:42", "missing-topic-42");
+    const logger = createLogger();
+
+    const result = await resolveOpenClawSessionPredecessor(
+      {
+        agentId: "main",
+        sessionId: "current-session",
+        sessionKey: "agent:main:telegram:group:-100123:topic:42",
+        workspaceDir,
+      },
+      tracker,
+      {
+        logger,
+        resolveStateDir: resolveOpenClawStateDir,
+      },
+    );
+
+    expect(result).toBeUndefined();
+    expect(getMessages(logger.info)).toEqual(
+      expect.arrayContaining([
+        "[agenr] predecessor: no predecessor found for session=current-session key=agent:main:telegram:group:-100123:topic:42 strategy=resumed_from reason=cold_start_after_resumed_from_miss",
+      ]),
+    );
+  });
+
+  it("accepts cold start for group sessions when resumedFrom cannot be resolved", async () => {
+    const { workspaceDir } = await createWorkspaceWithSessions();
+    const tracker = createSessionStartTracker();
+    tracker.rememberSessionStart("current-session", "agent:main:telegram:group:-100123", "missing-group");
+    const logger = createLogger();
+
+    const result = await resolveOpenClawSessionPredecessor(
+      {
+        agentId: "main",
+        sessionId: "current-session",
+        sessionKey: "agent:main:telegram:group:-100123",
+        workspaceDir,
+      },
+      tracker,
+      {
+        logger,
+        resolveStateDir: resolveOpenClawStateDir,
+      },
+    );
+
+    expect(result).toBeUndefined();
+    expect(getMessages(logger.info)).toEqual(
+      expect.arrayContaining([
+        "[agenr] predecessor: no predecessor found for session=current-session key=agent:main:telegram:group:-100123 strategy=resumed_from reason=cold_start_after_resumed_from_miss",
+      ]),
+    );
+  });
+
+  it("accepts cold start for channel-thread sessions when resumedFrom cannot be resolved", async () => {
+    const { workspaceDir } = await createWorkspaceWithSessions();
+    const tracker = createSessionStartTracker();
+    tracker.rememberSessionStart("current-session", "agent:main:discord:channel:123:thread:456", "missing-thread");
+    const logger = createLogger();
+
+    const result = await resolveOpenClawSessionPredecessor(
+      {
+        agentId: "main",
+        sessionId: "current-session",
+        sessionKey: "agent:main:discord:channel:123:thread:456",
+        workspaceDir,
+      },
+      tracker,
+      {
+        logger,
+        resolveStateDir: resolveOpenClawStateDir,
+      },
+    );
+
+    expect(result).toBeUndefined();
+    expect(getMessages(logger.info)).toEqual(
+      expect.arrayContaining([
+        "[agenr] predecessor: no predecessor found for session=current-session key=agent:main:discord:channel:123:thread:456 strategy=resumed_from reason=cold_start_after_resumed_from_miss",
+      ]),
+    );
+  });
+
+  it("returns undefined for unknown and ineligible current key kinds", async () => {
+    const { workspaceDir } = await createWorkspaceWithSessions();
+
+    await expect(
+      resolveOpenClawSessionPredecessor(
+        {
+          agentId: "main",
+          sessionId: "current-session",
+          sessionKey: "agent:main:discord:slash:123",
+          workspaceDir,
+        },
+        createSessionStartTracker(),
+        {
+          logger: createLogger(),
+          resolveStateDir: resolveOpenClawStateDir,
+        },
+      ),
+    ).resolves.toBeUndefined();
+
+    await expect(
+      resolveOpenClawSessionPredecessor(
+        {
+          agentId: "main",
+          sessionId: "current-session",
+          sessionKey: "agent:main:subagent:123",
+          workspaceDir,
+        },
+        createSessionStartTracker(),
+        {
+          logger: createLogger(),
+          resolveStateDir: resolveOpenClawStateDir,
+        },
+      ),
+    ).resolves.toBeUndefined();
   });
 });
 
@@ -407,8 +592,16 @@ async function createWorkspaceWithSessions(agentId = "main"): Promise<{ workspac
   return { workspaceDir, sessionsDir, workspaceSessionsDir };
 }
 
-async function writeSessionJsonl(sessionsDir: string, sessionId: string): Promise<void> {
-  await writeFile(path.join(sessionsDir, `${sessionId}.jsonl`), `${JSON.stringify({ type: "session", id: sessionId })}\n`, "utf8");
+async function writeSessionJsonl(sessionsDir: string, sessionId: string): Promise<string> {
+  const filePath = path.join(sessionsDir, `${sessionId}.jsonl`);
+  await writeFile(filePath, `${JSON.stringify({ type: "session", id: sessionId })}\n`, "utf8");
+  return filePath;
+}
+
+async function writeArchivedSessionJsonl(sessionsDir: string, sessionId: string, suffix: string): Promise<string> {
+  const filePath = path.join(sessionsDir, `${sessionId}.jsonl.${suffix}`);
+  await writeFile(filePath, `${JSON.stringify({ type: "session", id: sessionId })}\n`, "utf8");
+  return filePath;
 }
 
 async function writeSessionsJson(sessionsDir: string, entries: Record<string, Record<string, unknown>>): Promise<void> {
