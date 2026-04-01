@@ -1473,6 +1473,13 @@ function createOpenClawHost(options: {
           throw new Error(`Unexpected embedded agent sessionKey: ${params.sessionKey}`);
         },
       },
+      modelAuth: {
+        resolveApiKeyForProvider: async () => ({
+          apiKey: "openclaw-test-key",
+          source: "profile:default",
+          mode: "api-key",
+        }),
+      },
       state: {
         resolveStateDir: (env?: NodeJS.ProcessEnv) => resolveOpenClawStateDir(env),
       },

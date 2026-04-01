@@ -34,12 +34,14 @@ describe("agenr OpenClaw plugin config", () => {
         configPath: "/tmp/config.json",
         continuityModel: "openai/gpt-5.4-mini",
         episodeModel: "openai/gpt-5.4-mini",
+        claimExtractionModel: "openai/gpt-5.4-nano",
       }),
     ).toEqual({
       dbPath: "/tmp/knowledge.db",
       configPath: "/tmp/config.json",
       continuityModel: "openai/gpt-5.4-mini",
       episodeModel: "openai/gpt-5.4-mini",
+      claimExtractionModel: "openai/gpt-5.4-nano",
     });
   });
 
@@ -47,11 +49,16 @@ describe("agenr OpenClaw plugin config", () => {
     const parsed = normalizeAgenrOpenClawPluginConfig({
       continuityModel: "gpt-5.4-mini",
       episodeModel: "gpt-5.4-mini",
+      claimExtractionModel: "gpt-5.4-nano",
     });
 
     expect(parsed.ok).toBe(false);
     expect(parsed.ok ? [] : parsed.errors).toEqual(
-      expect.arrayContaining(["continuityModel must use provider/model format when provided", "episodeModel must use provider/model format when provided"]),
+      expect.arrayContaining([
+        "continuityModel must use provider/model format when provided",
+        "episodeModel must use provider/model format when provided",
+        "claimExtractionModel must use provider/model format when provided",
+      ]),
     );
   });
 

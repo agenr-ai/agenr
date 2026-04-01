@@ -120,7 +120,7 @@ Key config fields:
 | `extractionContext`              | Optional user context injected into extraction prompts to help the model decide what is worth remembering.                                                                        |
 | `dbPath`                         | Knowledge database location. Defaults to `~/.agenr/knowledge.db` unless overridden.                                                                                               |
 
-Important: when agenr is running as an OpenClaw plugin, session summaries use OpenClaw's configured LLM and auth, not agenr's. Agenr's config is still required for embeddings and for CLI-based ingestion/recall.
+Important: when agenr is running as an OpenClaw plugin, session summaries and store-time claim extraction use OpenClaw's configured LLM auth, not agenr's. Agenr's config is still required for embeddings and for CLI-based ingestion/recall.
 
 Compatibility policy:
 

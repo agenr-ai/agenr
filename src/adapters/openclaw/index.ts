@@ -22,7 +22,11 @@ export default definePluginEntry({
     const servicesPromise = createAgenrOpenClawServices(coerceAgenrOpenClawPluginConfig(api.pluginConfig), {
       openClaw: {
         config: api.config,
-        runtime: api.runtime,
+        runtime: {
+          agent: api.runtime.agent,
+          state: api.runtime.state,
+          modelAuth: api.runtime.modelAuth,
+        },
       },
       resolvePath: api.resolvePath,
     });

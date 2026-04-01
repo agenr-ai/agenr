@@ -6,8 +6,21 @@ import path from "node:path";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const piAiMocks = vi.hoisted(() => ({
+  completeSimple: vi.fn(),
+  getModel: vi.fn(),
+}));
+
+vi.mock("@mariozechner/pi-ai", () => ({
+  completeSimple: piAiMocks.completeSimple,
+  getModel: piAiMocks.getModel,
+}));
+
+import type { Api, AssistantMessage, Model } from "@mariozechner/pi-ai";
+
 import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";
 import { createOpenClawRepository } from "../../../src/adapters/db/openclaw-repository.js";
+import { createOpenClawLlmClient } from "../../../src/adapters/openclaw/llm/openclaw-llm-client.js";
 import {
   createAgenrRecallTool,
   createAgenrRetireTool,
@@ -24,6 +37,9 @@ const tempDatabasePaths: string[] = [];
 
 afterEach(async () => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
+  piAiMocks.completeSimple.mockReset();
+  piAiMocks.getModel.mockReset();
 
   while (openDatabases.length > 0) {
     await openDatabases.pop()?.close();
@@ -526,6 +542,66 @@ describe("agenr OpenClaw tools", () => {
     expect(updateParamsMessage).toContain('"hasValidFrom":true');
     expect(updateParamsMessage).toContain('"hasValidTo":true');
   });
+
+  it("extracts claim keys at store time using OpenClaw auth", async () => {
+    const database = await createTestDatabase();
+    const logger = createLogger();
+    const resolveApiKeyForProvider = vi.fn(async () => ({
+      apiKey: "openclaw-claim-key",
+      source: "profile:default",
+      mode: "api-key" as const,
+    }));
+    const openClaw = createOpenClawHost({
+      resolveApiKeyForProvider,
+    });
+    piAiMocks.getModel.mockReturnValue(
+      buildModel({
+        id: "claude-haiku-4-5",
+        name: "Claude Haiku 4.5",
+        provider: "anthropic",
+        api: "anthropic-messages",
+      }),
+    );
+    piAiMocks.completeSimple.mockResolvedValue(buildAssistantMessage('```json\n{"entity":"jim","attribute":"timezone","confidence":0.95}\n```'));
+
+    const services = createServices(database, {
+      available: true,
+      recall: createExactRecallPorts([]),
+      openClaw,
+      claimExtraction: {
+        llm: await createOpenClawLlmClient(openClaw, "anthropic/claude-haiku-4-5"),
+        config: {
+          enabled: true,
+          confidenceThreshold: 0.8,
+          eligibleTypes: ["fact"],
+        },
+      },
+    });
+    const storeTool = createAgenrStoreTool(createToolContext(), Promise.resolve(services), logger);
+
+    const result = await storeTool.execute("tool-19", {
+      type: "fact",
+      subject: "Jim timezone",
+      content: "Jim's timezone is America/Chicago.",
+    });
+    const storedEntry = await createOpenClawRepository(database).findEntryBySubject("Jim timezone");
+
+    expect(result.details).toMatchObject({
+      status: "stored",
+      subject: "Jim timezone",
+    });
+    expect(storedEntry).toMatchObject({
+      claim_key: "jim/timezone",
+    });
+    expect(resolveApiKeyForProvider).toHaveBeenCalledWith({
+      provider: "anthropic",
+      cfg: openClaw.config,
+    });
+    expect(piAiMocks.getModel).toHaveBeenCalledWith("anthropic", "claude-haiku-4-5");
+    expect(piAiMocks.completeSimple.mock.calls[0]?.[2]).toMatchObject({
+      apiKey: "openclaw-claim-key",
+    });
+  });
 });
 
 function createDatabaseBackedServices(database: SqlDatabase): AgenrOpenClawServices {
@@ -556,6 +632,8 @@ function createServices(
   options: {
     available: boolean;
     recall: RecallPorts;
+    openClaw?: AgenrOpenClawHost;
+    claimExtraction?: AgenrOpenClawServices["claimExtraction"];
   },
 ): AgenrOpenClawServices {
   const embedding: EmbeddingPort = {
@@ -563,7 +641,7 @@ function createServices(
       return texts.map((text, index) => createEmbedding(index, text.length || 1));
     },
   };
-  const openClaw = createOpenClawHost();
+  const openClaw = options.openClaw ?? createOpenClawHost();
 
   return {
     openClaw,
@@ -578,6 +656,7 @@ function createServices(
     memory: createOpenClawRepository(database),
     embedding,
     recall: options.recall,
+    claimExtraction: options.claimExtraction,
     embeddingStatus: {
       available: options.available,
       provider: options.available ? "openai" : "unconfigured",
@@ -591,7 +670,12 @@ function createServices(
   };
 }
 
-function createOpenClawHost(): AgenrOpenClawHost {
+function createOpenClawHost(
+  options: {
+    model?: string;
+    resolveApiKeyForProvider?: AgenrOpenClawHost["runtime"]["modelAuth"]["resolveApiKeyForProvider"];
+  } = {},
+): AgenrOpenClawHost {
   const workspaceDir = path.join(os.tmpdir(), "agenr-openclaw-test-workspace");
   const agentDir = path.join(os.tmpdir(), "agenr-openclaw-test-agent");
   const config = {
@@ -602,7 +686,7 @@ function createOpenClawHost(): AgenrOpenClawHost {
           id: "main",
           workspace: workspaceDir,
           agentDir,
-          model: "openai/gpt-5.4-mini",
+          model: options.model ?? "openai/gpt-5.4-mini",
         },
       ],
     },
@@ -617,6 +701,15 @@ function createOpenClawHost(): AgenrOpenClawHost {
         runEmbeddedPiAgent: async () => {
           throw new Error("Embedded continuity summary runner unavailable.");
         },
+      },
+      modelAuth: {
+        resolveApiKeyForProvider:
+          options.resolveApiKeyForProvider ??
+          (async () => ({
+            apiKey: "openclaw-test-key",
+            source: "profile:default",
+            mode: "api-key",
+          })),
       },
       state: {
         resolveStateDir: () => path.join(os.tmpdir(), ".openclaw"),
@@ -765,4 +858,51 @@ function createEmbedding(index: number, value: number): number[] {
   const vector = Array.from({ length: 1024 }, () => 0);
   vector[index] = value;
   return vector;
+}
+
+function buildModel(overrides: Partial<Model<Api>> = {}): Model<Api> {
+  return {
+    id: "gpt-5.4-mini",
+    name: "GPT-5.4 Mini",
+    api: "openai-responses",
+    provider: "openai",
+    baseUrl: "https://api.openai.com/v1",
+    reasoning: true,
+    input: ["text"],
+    cost: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+    },
+    contextWindow: 400_000,
+    maxTokens: 131_072,
+    ...overrides,
+  };
+}
+
+function buildAssistantMessage(text: string): AssistantMessage {
+  return {
+    role: "assistant",
+    api: "openai-responses",
+    provider: "openai",
+    model: "gpt-5.4-mini",
+    content: [{ type: "text", text }],
+    usage: {
+      input: 1,
+      output: 1,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 2,
+      cost: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: 0,
+      },
+    },
+    stopReason: "stop",
+    timestamp: Date.now(),
+  };
 }

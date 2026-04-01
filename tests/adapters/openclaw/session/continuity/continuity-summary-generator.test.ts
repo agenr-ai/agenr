@@ -274,6 +274,13 @@ function createOpenClawHost(options: {
         resolveAgentWorkspaceDir: () => workspaceDir,
         runEmbeddedPiAgent: options.runEmbeddedPiAgentImplementation,
       },
+      modelAuth: {
+        resolveApiKeyForProvider: async () => ({
+          apiKey: "openclaw-test-key",
+          source: "profile:default",
+          mode: "api-key",
+        }),
+      },
       state: {
         resolveStateDir: () => path.join(os.tmpdir(), ".openclaw"),
       },
@@ -305,6 +312,13 @@ function createUnavailableOpenClawHost(): AgenrOpenClawHost {
         resolveAgentDir: () => agentDir,
         resolveAgentWorkspaceDir: () => workspaceDir,
         runEmbeddedPiAgent: undefined,
+      },
+      modelAuth: {
+        resolveApiKeyForProvider: async () => ({
+          apiKey: "openclaw-test-key",
+          source: "profile:default",
+          mode: "api-key",
+        }),
       },
       state: {
         resolveStateDir: () => path.join(os.tmpdir(), ".openclaw"),

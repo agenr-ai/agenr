@@ -5,7 +5,7 @@ import { createDatabase } from "../../adapters/db/client.js";
 import { createOpenClawRepository } from "../../adapters/db/openclaw-repository.js";
 import { createRecallAdapter } from "../../adapters/db/recall-adapter.js";
 import { createEmbeddingClient, EMBEDDING_MODEL, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../../adapters/embeddings.js";
-import { createLlmClient, resolveLlmApiKey, resolveModel } from "../../adapters/llm.js";
+import { createOpenClawLlmClient } from "../../adapters/openclaw/llm/openclaw-llm-client.js";
 import type {
   AgenrOpenClawEmbeddingStatus,
   AgenrOpenClawHost,
@@ -51,7 +51,10 @@ export async function createAgenrOpenClawServices(
     dbPath: resolvedConfig.dbPath,
   };
   const embeddingStatus = resolveEmbeddingStatus(agenrConfig);
-  const runtimeServices = await createRuntimeServices(resolvedConfig.dbPath, agenrConfig, embeddingStatus);
+  const runtimeServices = await createRuntimeServices(resolvedConfig.dbPath, agenrConfig, embeddingStatus, {
+    openClaw: options.openClaw,
+    pluginConfig: config,
+  });
 
   return {
     openClaw: options.openClaw,
@@ -110,14 +113,23 @@ function resolveEmbeddingStatus(config: AgenrConfig): ResolvedEmbeddingStatus {
  * @param dbPath - Resolved SQLite path.
  * @param config - Resolved agenr runtime configuration.
  * @param embeddingStatus - Resolved embedding availability facts.
+ * @param openClawContext - OpenClaw runtime and plugin config used by claim extraction.
  * @returns Shared runtime services.
  */
-async function createRuntimeServices(dbPath: string, config: AgenrConfig, embeddingStatus: ResolvedEmbeddingStatus): Promise<OpenClawRuntimeServices> {
+async function createRuntimeServices(
+  dbPath: string,
+  config: AgenrConfig,
+  embeddingStatus: ResolvedEmbeddingStatus,
+  openClawContext: {
+    openClaw: AgenrOpenClawHost;
+    pluginConfig: AgenrOpenClawPluginConfig;
+  },
+): Promise<OpenClawRuntimeServices> {
   const database = await createDatabase(dbPath);
   const embedding = embeddingStatus.available
     ? createEmbeddingClient(requireApiKey(embeddingStatus), embeddingStatus.model)
     : createUnavailableEmbeddingPort(embeddingStatus.error ?? "Embeddings are unavailable.");
-  const claimExtraction = createClaimExtractionRuntime(config);
+  const claimExtraction = await createClaimExtractionRuntime(config, openClawContext.openClaw, openClawContext.pluginConfig);
   let closed = false;
 
   return {
@@ -236,23 +248,29 @@ function requireApiKey(status: ResolvedEmbeddingStatus): string {
 }
 
 /**
- * Resolves an optional claim-extraction runtime from agenr config and LLM credentials.
+ * Resolves an optional claim-extraction runtime using OpenClaw's auth system.
  *
- * @param config - Agenr runtime configuration used for model and credential resolution.
+ * Claim extraction behavior comes from agenr config. The model override and
+ * credentials come from OpenClaw's plugin config and provider auth profiles.
+ *
+ * @param config - Agenr runtime configuration used for claim-extraction behavior.
+ * @param openClaw - OpenClaw host runtime used for model-auth resolution.
+ * @param pluginConfig - Plugin config with an optional claim-extraction model override.
  * @returns Claim-extraction runtime when available, otherwise `undefined`.
  */
-function createClaimExtractionRuntime(config: AgenrConfig): OpenClawRuntimeServices["claimExtraction"] {
+async function createClaimExtractionRuntime(
+  config: AgenrConfig,
+  openClaw: AgenrOpenClawHost,
+  pluginConfig: AgenrOpenClawPluginConfig,
+): Promise<OpenClawRuntimeServices["claimExtraction"]> {
   const claimExtractionConfig = resolveClaimExtractionConfig(config);
   if (!claimExtractionConfig.enabled) {
     return undefined;
   }
 
   try {
-    const { provider, modelId } = resolveModel(config, "claim");
     return {
-      llm: createLlmClient(provider, modelId, {
-        apiKey: resolveLlmApiKey(config, provider),
-      }),
+      llm: await createOpenClawLlmClient(openClaw, pluginConfig.claimExtractionModel),
       config: claimExtractionConfig,
     };
   } catch {

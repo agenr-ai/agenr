@@ -207,6 +207,94 @@ describe("createAgenrOpenClawServices", () => {
 
     await services.close();
   });
+
+  it("creates claim extraction from OpenClaw auth even when agenr LLM credentials are absent", async () => {
+    const root = await createTempRoot();
+    const dbPath = path.join(root, "knowledge.db");
+    await writeJson(path.join(root, "config.json"), {
+      claimExtraction: {
+        enabled: true,
+      },
+    });
+    const resolveApiKeyForProvider = vi.fn(async () => ({
+      apiKey: "openclaw-claim-key",
+      source: "profile:default",
+      mode: "api-key" as const,
+    }));
+
+    const services = await createAgenrOpenClawServices(
+      { dbPath },
+      {
+        openClaw: createOpenClawHost({
+          resolveApiKeyForProvider,
+        }),
+      },
+    );
+
+    expect(services.claimExtraction).toBeDefined();
+    expect(resolveApiKeyForProvider).toHaveBeenCalledWith({
+      provider: "openai",
+      cfg: services.openClaw.config,
+    });
+
+    await services.close();
+  });
+
+  it("skips claim extraction when disabled in agenr config", async () => {
+    const root = await createTempRoot();
+    const dbPath = path.join(root, "knowledge.db");
+    await writeJson(path.join(root, "config.json"), {
+      claimExtraction: {
+        enabled: false,
+      },
+    });
+    const resolveApiKeyForProvider = vi.fn(async () => ({
+      apiKey: "openclaw-claim-key",
+      source: "profile:default",
+      mode: "api-key" as const,
+    }));
+
+    const services = await createAgenrOpenClawServices(
+      { dbPath },
+      {
+        openClaw: createOpenClawHost({
+          resolveApiKeyForProvider,
+        }),
+      },
+    );
+
+    expect(services.claimExtraction).toBeUndefined();
+    expect(resolveApiKeyForProvider).not.toHaveBeenCalled();
+
+    await services.close();
+  });
+
+  it("disables claim extraction when OpenClaw credential resolution fails", async () => {
+    const root = await createTempRoot();
+    const dbPath = path.join(root, "knowledge.db");
+    await writeJson(path.join(root, "config.json"), {
+      claimExtraction: {
+        enabled: true,
+      },
+    });
+    const resolveApiKeyForProvider = vi.fn(async () => {
+      throw new Error("missing OpenClaw auth profile");
+    });
+
+    const services = await createAgenrOpenClawServices(
+      { dbPath },
+      {
+        openClaw: createOpenClawHost({
+          resolveApiKeyForProvider,
+        }),
+      },
+    );
+
+    expect(services.claimExtraction).toBeUndefined();
+    expect(resolveApiKeyForProvider).toHaveBeenCalledTimes(1);
+
+    await services.close();
+  });
 });
 
 async function createTempRoot(): Promise<string> {
@@ -220,7 +308,12 @@ async function writeJson(filePath: string, value: object): Promise<void> {
   await writeFile(filePath, JSON.stringify(value, null, 2));
 }
 
-function createOpenClawHost(): AgenrOpenClawHost {
+function createOpenClawHost(
+  options: {
+    model?: string;
+    resolveApiKeyForProvider?: AgenrOpenClawHost["runtime"]["modelAuth"]["resolveApiKeyForProvider"];
+  } = {},
+): AgenrOpenClawHost {
   const workspaceDir = path.join(os.tmpdir(), "agenr-openclaw-test-workspace");
   const agentDir = path.join(os.tmpdir(), "agenr-openclaw-test-agent");
   const config = {
@@ -231,7 +324,7 @@ function createOpenClawHost(): AgenrOpenClawHost {
           id: "main",
           workspace: workspaceDir,
           agentDir,
-          model: "openai/gpt-5.4-mini",
+          model: options.model ?? "openai/gpt-5.4-mini",
         },
       ],
     },
@@ -246,6 +339,15 @@ function createOpenClawHost(): AgenrOpenClawHost {
         runEmbeddedPiAgent: async () => {
           throw new Error("Embedded continuity summary runner unavailable.");
         },
+      },
+      modelAuth: {
+        resolveApiKeyForProvider:
+          options.resolveApiKeyForProvider ??
+          (async () => ({
+            apiKey: "openclaw-test-key",
+            source: "profile:default",
+            mode: "api-key",
+          })),
       },
       state: {
         resolveStateDir: () => path.join(os.tmpdir(), ".openclaw"),

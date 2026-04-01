@@ -14,6 +14,8 @@ export interface AgenrOpenClawPluginConfig {
   configPath?: string;
   continuityModel?: string;
   episodeModel?: string;
+  /** Model override for claim-key extraction at store time. Format: "provider/model". */
+  claimExtractionModel?: string;
 }
 
 /**
@@ -36,10 +38,23 @@ export interface AgenrOpenClawEmbeddingStatus {
 }
 
 /**
+ * Resolved provider auth from OpenClaw's credential system.
+ */
+export interface AgenrOpenClawResolvedProviderAuth {
+  apiKey?: string;
+  source: string;
+  mode: "api-key" | "oauth" | "token" | "aws-sdk";
+}
+
+/**
  * Minimal OpenClaw runtime helpers reused by the agenr adapter.
  */
 export interface AgenrOpenClawRuntime {
   agent: Pick<OpenClawPluginApi["runtime"]["agent"], "resolveAgentDir" | "resolveAgentWorkspaceDir" | "runEmbeddedPiAgent">;
+  /** Model credential resolution using OpenClaw's auth profiles. */
+  modelAuth: {
+    resolveApiKeyForProvider: (params: { provider: string; cfg?: OpenClawConfig }) => Promise<AgenrOpenClawResolvedProviderAuth>;
+  };
   state: Pick<OpenClawPluginApi["runtime"]["state"], "resolveStateDir">;
 }
 

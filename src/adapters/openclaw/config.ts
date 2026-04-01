@@ -57,7 +57,15 @@ export function normalizeAgenrOpenClawPluginConfig(value: unknown): { ok: true; 
     errors.push("episodeModel must use provider/model format when provided");
   }
 
-  const allowedKeys = new Set(["dbPath", "configPath", "continuityModel", "episodeModel"]);
+  const rawClaimExtractionModel = value.claimExtractionModel;
+  const claimExtractionModel = typeof rawClaimExtractionModel === "string" ? rawClaimExtractionModel.trim() : undefined;
+  if (rawClaimExtractionModel !== undefined && !claimExtractionModel) {
+    errors.push("claimExtractionModel must be a non-empty string when provided");
+  } else if (claimExtractionModel && !claimExtractionModel.includes("/")) {
+    errors.push("claimExtractionModel must use provider/model format when provided");
+  }
+
+  const allowedKeys = new Set(["dbPath", "configPath", "continuityModel", "episodeModel", "claimExtractionModel"]);
   for (const key of Object.keys(value)) {
     if (!allowedKeys.has(key)) {
       errors.push(`unknown config field: ${key}`);
@@ -75,6 +83,7 @@ export function normalizeAgenrOpenClawPluginConfig(value: unknown): { ok: true; 
       ...(configPath ? { configPath } : {}),
       ...(continuityModel ? { continuityModel } : {}),
       ...(episodeModel ? { episodeModel } : {}),
+      ...(claimExtractionModel ? { claimExtractionModel } : {}),
     },
   };
 }

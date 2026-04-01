@@ -96,6 +96,7 @@ The runtime config is deliberately small:
 
 - `dbPath` is an optional override
 - `configPath` is an optional override
+- `continuityModel`, `episodeModel`, and `claimExtractionModel` are optional `provider/model` overrides for OpenClaw-auth LLM calls
 - unknown config keys are rejected
 
 If OpenClaw provides `resolvePath`, the adapter resolves any supplied path overrides before startup. After that, the app-owned OpenClaw runtime loads agenr config via the same config/db resolution used by the CLI:

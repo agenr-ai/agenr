@@ -119,6 +119,13 @@ function createServices(): AgenrOpenClawServices {
       config: {} as never,
       runtime: {
         agent: {} as never,
+        modelAuth: {
+          resolveApiKeyForProvider: async () => ({
+            apiKey: "openclaw-test-key",
+            source: "profile:default",
+            mode: "api-key",
+          }),
+        },
         state: {
           resolveStateDir: resolveOpenClawStateDir,
         },

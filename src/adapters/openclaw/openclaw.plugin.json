@@ -23,6 +23,10 @@
     "episodeModel": {
       "label": "Episode summary model",
       "help": "Optional model override for episode summary generation (provider/model format). Falls back to the agent's primary model when unset."
+    },
+    "claimExtractionModel": {
+      "label": "Claim extraction model",
+      "help": "Model used for claim-key extraction when storing entries. Uses OpenClaw's configured auth. Format: provider/model (for example, openai/gpt-5.4-nano). Defaults to the agent's primary model."
     }
   },
   "configSchema": {
@@ -46,6 +50,11 @@
         "type": "string",
         "minLength": 1,
         "description": "Model override for episode summary generation (e.g. 'openai/gpt-5.4-mini'). Falls back to the agent's primary model."
+      },
+      "claimExtractionModel": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Model override for claim-key extraction at store time (e.g. 'openai/gpt-5.4-mini'). Uses OpenClaw auth and falls back to the agent's primary model."
       }
     }
   }

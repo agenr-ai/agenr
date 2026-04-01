@@ -620,6 +620,13 @@ function createOpenClawHost(runEmbeddedPiAgent: AgenrOpenClawHost["runtime"]["ag
         resolveAgentWorkspaceDir: () => workspaceDir,
         runEmbeddedPiAgent,
       },
+      modelAuth: {
+        resolveApiKeyForProvider: async () => ({
+          apiKey: "openclaw-test-key",
+          source: "profile:default",
+          mode: "api-key",
+        }),
+      },
       state: {
         resolveStateDir: () => path.join(os.tmpdir(), ".openclaw"),
       },
