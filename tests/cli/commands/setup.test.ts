@@ -11,6 +11,13 @@ import {
   runSetupCore,
   type SetupRuntime,
 } from "../../../src/cli/commands/setup.js";
+import {
+  appendSetupStageSummaryLines,
+  applySetupStageOverrides,
+  collectSetupStageProviders,
+  readSetupStageOverrides,
+  SETUP_MODEL_STAGES,
+} from "../../../src/cli/commands/setup/stages.js";
 import { FakePrompts } from "../../cli/fake-prompts.js";
 
 function createSetupRuntime(overrides: Partial<SetupRuntime> = {}): SetupRuntime {
@@ -46,7 +53,11 @@ function createSetupRuntime(overrides: Partial<SetupRuntime> = {}): SetupRuntime
       const hasAnthropicApiKey = Boolean(config.credentials?.anthropicApiKey?.trim());
       const hasAnthropicToken = Boolean(config.credentials?.anthropicOauthToken?.trim());
       const needsAnthropicOverride =
-        config.extractionModel?.provider === "anthropic" || config.dedupModel?.provider === "anthropic" || config.episodeModel?.provider === "anthropic";
+        config.extractionModel?.provider === "anthropic" ||
+        config.dedupModel?.provider === "anthropic" ||
+        config.episodeModel?.provider === "anthropic" ||
+        config.claimExtraction?.model?.provider === "anthropic" ||
+        config.surgeon?.model?.provider === "anthropic";
 
       if (!config.provider || !config.model) {
         return { ready: false, guidance: "Provider and model must both be configured." };
@@ -89,6 +100,134 @@ describe("registerSetupCommand", () => {
     registerSetupCommand(program);
 
     expect(program.commands.filter((command) => command.name() === "setup")).toHaveLength(1);
+  });
+});
+
+describe("setup stage helpers", () => {
+  it("keeps every CLI-context model stage registered in prompt order", () => {
+    expect(SETUP_MODEL_STAGES).toHaveLength(5);
+    expect(SETUP_MODEL_STAGES.map((stage) => stage.id)).toEqual(["extraction", "dedup", "episode", "claim", "surgeon"]);
+  });
+
+  it("returns all stage keys when no config exists", () => {
+    expect(readSetupStageOverrides(undefined)).toEqual({
+      extraction: undefined,
+      dedup: undefined,
+      episode: undefined,
+      claim: undefined,
+      surgeon: undefined,
+    });
+  });
+
+  it("reads the claim override from nested claim-extraction config", () => {
+    expect(
+      readSetupStageOverrides({
+        claimExtraction: {
+          model: {
+            provider: "anthropic",
+            model: "claude-sonnet-4-6",
+          },
+        },
+      }),
+    ).toEqual({
+      extraction: undefined,
+      dedup: undefined,
+      episode: undefined,
+      claim: {
+        provider: "anthropic",
+        model: "claude-sonnet-4-6",
+      },
+      surgeon: undefined,
+    });
+  });
+
+  it("persists a claim override into claimExtraction.model", () => {
+    const config = applySetupStageOverrides({}, readSetupStageOverrides(undefined));
+    const nextConfig = applySetupStageOverrides(config, {
+      ...readSetupStageOverrides(undefined),
+      claim: {
+        provider: "openai",
+        model: "gpt-5.4",
+      },
+    });
+
+    expect(nextConfig.claimExtraction).toEqual({
+      model: {
+        provider: "openai",
+        model: "gpt-5.4",
+      },
+    });
+  });
+
+  it("preserves sibling claim-extraction fields when setting a claim override", () => {
+    const nextConfig = applySetupStageOverrides(
+      {
+        claimExtraction: {
+          enabled: true,
+          confidenceThreshold: 0.9,
+        },
+      },
+      {
+        ...readSetupStageOverrides(undefined),
+        claim: {
+          provider: "openai",
+          model: "gpt-5.4-mini",
+        },
+      },
+    );
+
+    expect(nextConfig.claimExtraction).toEqual({
+      enabled: true,
+      confidenceThreshold: 0.9,
+      model: {
+        provider: "openai",
+        model: "gpt-5.4-mini",
+      },
+    });
+  });
+
+  it("drops an empty claim-extraction config when the claim override is cleared", () => {
+    const nextConfig = applySetupStageOverrides(
+      {
+        claimExtraction: {
+          model: {
+            provider: "openai",
+            model: "gpt-5.4",
+          },
+        },
+      },
+      readSetupStageOverrides(undefined),
+    );
+
+    expect(nextConfig.claimExtraction).toBeUndefined();
+  });
+
+  it("adds a claim extraction summary line when a claim override is configured", () => {
+    const lines: string[] = [];
+    appendSetupStageSummaryLines(lines, {
+      claimExtraction: {
+        model: {
+          provider: "openai",
+          model: "gpt-5.4",
+        },
+      },
+    });
+
+    expect(lines).toEqual(expect.arrayContaining([expect.stringContaining("Claim extraction override")]));
+    expect(lines).toEqual(expect.arrayContaining([expect.stringContaining("openai/gpt-5.4")]));
+  });
+
+  it("collects providers from the claim override", () => {
+    expect(
+      collectSetupStageProviders({
+        claimExtraction: {
+          model: {
+            provider: "anthropic",
+            model: "claude-sonnet-4-6",
+          },
+        },
+      }),
+    ).toContain("anthropic");
   });
 });
 
@@ -299,6 +438,7 @@ describe("runSetupCore", () => {
       "default",
       "default",
       "default",
+      "default",
       "custom",
       "gpt-5.4",
       "/tmp/surgeon.db",
@@ -343,6 +483,7 @@ describe("runSetupCore", () => {
       "default",
       "custom",
       "gpt-5.4",
+      "default",
       "default",
       "/tmp/episode.db",
     ]);

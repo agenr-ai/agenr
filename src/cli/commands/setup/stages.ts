@@ -6,7 +6,7 @@ import type { SetupModelDescriptor, SetupProvider, SetupRuntime } from "./types.
 /**
  * Setup model stages that can reuse or override the default model.
  */
-export type SetupModelStageId = "extraction" | "dedup" | "episode" | "surgeon";
+export type SetupModelStageId = "extraction" | "dedup" | "episode" | "claim" | "surgeon";
 
 /**
  * Per-stage override selections gathered during setup.
@@ -76,6 +76,16 @@ export const SETUP_MODEL_STAGES: readonly SetupModelStageDefinition[] = [
     }),
   },
   {
+    id: "claim",
+    label: "Claim extraction",
+    summaryLabel: "Claim extraction override",
+    readOverride: (config) => config?.claimExtraction?.model,
+    applyOverride: (config, override) => ({
+      ...config,
+      claimExtraction: buildNextClaimExtractionConfig(config.claimExtraction, override),
+    }),
+  },
+  {
     id: "surgeon",
     label: "Surgeon",
     summaryLabel: "Surgeon override",
@@ -103,6 +113,7 @@ export function readSetupStageOverrides(config: AgenrConfig | undefined): SetupS
       extraction: undefined,
       dedup: undefined,
       episode: undefined,
+      claim: undefined,
       surgeon: undefined,
     },
   );
@@ -356,6 +367,48 @@ function getPreferredModelIds(auth: AgenrAuthMethod): readonly string[] {
   }
 
   return ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"];
+}
+
+/**
+ * Builds the persisted claim-extraction config while avoiding empty nested objects.
+ *
+ * @param existing - Existing claim-extraction config values.
+ * @param model - Selected claim-extraction model override.
+ * @returns Persistable claim-extraction config, or undefined when empty.
+ */
+function buildNextClaimExtractionConfig(
+  existing: AgenrConfig["claimExtraction"] | undefined,
+  model: ModelConfig | undefined,
+): AgenrConfig["claimExtraction"] | undefined {
+  if (!existing && !model) {
+    return undefined;
+  }
+
+  const next = {
+    ...(existing ?? {}),
+    ...(model ? { model } : { model: undefined }),
+  };
+
+  return hasPersistedClaimExtractionConfig(next) ? next : undefined;
+}
+
+/**
+ * Returns whether the claim-extraction config contains any persisted values.
+ *
+ * @param config - Candidate claim-extraction config.
+ * @returns True when the config should be persisted.
+ */
+function hasPersistedClaimExtractionConfig(config: AgenrConfig["claimExtraction"] | undefined): config is NonNullable<AgenrConfig["claimExtraction"]> {
+  if (!config) {
+    return false;
+  }
+
+  return (
+    hasModelOverride(config.model) ||
+    config.enabled !== undefined ||
+    config.confidenceThreshold !== undefined ||
+    (config.eligibleTypes !== undefined && config.eligibleTypes.length > 0)
+  );
 }
 
 /**
