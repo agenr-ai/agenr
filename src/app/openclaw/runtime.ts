@@ -248,7 +248,7 @@ function createClaimExtractionRuntime(config: AgenrConfig): OpenClawRuntimeServi
   }
 
   try {
-    const { provider, modelId } = resolveModel(config, "extraction");
+    const { provider, modelId } = resolveModel(config, "claim");
     return {
       llm: createLlmClient(provider, modelId, {
         apiKey: resolveLlmApiKey(config, provider),

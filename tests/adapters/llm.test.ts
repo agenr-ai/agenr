@@ -144,6 +144,50 @@ describe("resolveModel", () => {
     });
   });
 
+  it("returns the claim extraction override when set", () => {
+    expect(
+      resolveModel(
+        {
+          provider: "openai",
+          model: "gpt-5.4",
+          extractionModel: {
+            provider: "anthropic",
+            model: "claude-sonnet-4-6",
+          },
+          claimExtraction: {
+            model: {
+              provider: "openai",
+              model: "gpt-5.4-nano",
+            },
+          },
+        },
+        "claim",
+      ),
+    ).toEqual({
+      provider: "openai",
+      modelId: "gpt-5.4-nano",
+    });
+  });
+
+  it("falls back from claim extraction to the extraction override", () => {
+    expect(
+      resolveModel(
+        {
+          provider: "openai",
+          model: "gpt-5.4",
+          extractionModel: {
+            provider: "anthropic",
+            model: "claude-sonnet-4-6",
+          },
+        },
+        "claim",
+      ),
+    ).toEqual({
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+    });
+  });
+
   it("falls back to the top-level config when stage overrides are absent", () => {
     expect(
       resolveModel(
@@ -169,6 +213,10 @@ describe("resolveModel", () => {
       modelId: "gpt-5.4-nano",
     });
     expect(resolveModel(undefined, "episode")).toEqual({
+      provider: "openai",
+      modelId: "gpt-5.4-mini",
+    });
+    expect(resolveModel(undefined, "claim")).toEqual({
       provider: "openai",
       modelId: "gpt-5.4-mini",
     });

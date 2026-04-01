@@ -82,7 +82,10 @@ export interface SurgeonConfig {
 /**
  * Persisted config overrides for optional claim-key extraction.
  */
-export type AgenrClaimExtractionConfig = Partial<ClaimExtractionConfig>;
+export interface AgenrClaimExtractionConfig extends Partial<ClaimExtractionConfig> {
+  /** Model override for claim-key extraction. */
+  model?: ModelConfig;
+}
 
 /**
  * Static metadata for one supported auth method.

@@ -1,5 +1,5 @@
 import type { DatabasePort, LlmPort } from "../ports.js";
-import type { EntryType } from "../types.js";
+import type { EntryType, StoreEntryInput } from "../types.js";
 
 const SELF_REFERENTIAL_ENTITIES = new Set(["i", "me", "the_user", "myself", "user", "we", "our_team", "the_project", "this_project"]);
 
@@ -84,6 +84,98 @@ export async function extractClaimKey(
  */
 export async function getEntityHints(db: DatabasePort): Promise<string[]> {
   return db.getDistinctClaimKeyPrefixes();
+}
+
+/**
+ * Runs claim-key extraction on entry batches in-place before the store phase.
+ *
+ * Entries that already have a claim key or use an ineligible type are skipped.
+ * Per-entry failures are swallowed so ingest can continue without claim keys.
+ *
+ * @param results - Entry batches whose members may be stamped with `claim_key`.
+ * @param ports - Claim-extraction LLM factory plus database access for entity hints.
+ * @param config - Runtime extraction controls.
+ * @param concurrency - Maximum number of parallel claim-extraction workers.
+ */
+export async function runBatchClaimExtraction(
+  results: Array<{ entries: StoreEntryInput[] }>,
+  ports: {
+    createLlm: () => LlmPort;
+    db: DatabasePort;
+  },
+  config: ClaimExtractionConfig,
+  concurrency = 10,
+): Promise<void> {
+  if (!config.enabled) {
+    return;
+  }
+
+  let entityHints: string[] = [];
+  try {
+    entityHints = await getEntityHints(ports.db);
+  } catch {
+    entityHints = [];
+  }
+
+  const eligible: StoreEntryInput[] = [];
+  for (const result of results) {
+    for (const entry of result.entries) {
+      if (entry.claim_key) {
+        continue;
+      }
+
+      if (!config.eligibleTypes.includes(entry.type)) {
+        continue;
+      }
+
+      eligible.push(entry);
+    }
+  }
+
+  if (eligible.length === 0) {
+    return;
+  }
+
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(1, concurrency), eligible.length);
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      const llm = ports.createLlm();
+
+      while (true) {
+        const currentIndex = nextIndex;
+        nextIndex += 1;
+        if (currentIndex >= eligible.length) {
+          return;
+        }
+
+        const entry = eligible[currentIndex];
+        if (!entry) {
+          return;
+        }
+
+        try {
+          const extracted = await extractClaimKey(
+            {
+              type: entry.type,
+              subject: entry.subject,
+              content: entry.content,
+            },
+            entityHints,
+            llm,
+            config,
+          );
+
+          if (extracted?.claimKey) {
+            entry.claim_key = extracted.claimKey;
+          }
+        } catch {
+          // Best-effort only - failed entries still continue through ingest.
+        }
+      }
+    }),
+  );
 }
 
 /**

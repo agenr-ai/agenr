@@ -365,6 +365,51 @@ describe("ingestFile", () => {
     expect(db.insertions[0]?.entry.source_file).toBe(filePath);
   });
 
+  it("stamps claim keys before storing when a claim-extraction LLM is provided", async () => {
+    const { filePath, fileHash } = await writeTranscriptFile("session-four-claims");
+    const db = new MockDatabase();
+    const transcript = new MockTranscriptPort(buildTranscript());
+    const llm = new MockLlmPort([
+      {
+        entries: [
+          createInput({
+            type: "fact",
+            subject: "Project X status",
+            content: "Project X is active.",
+            source_file: filePath,
+          }),
+        ],
+      },
+    ]);
+    const embedding = new MockEmbeddingPort();
+
+    await ingestFile(
+      {
+        filePath,
+        fileHash,
+      },
+      {
+        transcript,
+        llm,
+        embedding,
+        db,
+        claimExtractionLlm: () =>
+          new MockLlmPort([
+            {
+              entity: "project_x",
+              attribute: "status",
+              confidence: 0.95,
+            },
+          ]),
+      },
+      {
+        wholeFile: "never",
+      },
+    );
+
+    expect(db.insertions[0]?.entry.claim_key).toBe("project_x/status");
+  });
+
   it("still skips an unchanged file", async () => {
     const { filePath, fileHash } = await writeTranscriptFile("session-five");
     const db = new MockDatabase({

@@ -78,4 +78,6 @@ export interface IngestPathPorts {
   createExtractionLlm: () => IngestionLlmPort;
   /** Optional factory for the dedup arbitration model. */
   createDedupLlm?: () => IngestionLlmPort;
+  /** Optional factory for claim-extraction LLM clients. */
+  createClaimExtractionLlm?: () => LlmPort;
 }

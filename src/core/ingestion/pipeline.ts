@@ -1,4 +1,5 @@
 import type { DatabasePort, EmbeddingPort, LlmPort, TranscriptPort } from "../ports.js";
+import { runBatchClaimExtraction, type ClaimExtractionConfig } from "../store/claim-extraction.js";
 import { type StoreEntriesDetailedResult, type StoreEntriesOptions, type StorePipelineOptions, storeEntriesDetailed } from "../store/pipeline.js";
 import type { StoreEntryInput, StoreResult } from "../types.js";
 import { dedupBatch } from "./dedup.js";
@@ -121,8 +122,9 @@ export async function ingestFile(
     dedupLlm?: LlmPort;
     embedding: EmbeddingPort;
     db: DatabasePort;
+    claimExtractionLlm?: () => LlmPort;
   },
-  options: IngestFileOptions = {},
+  options: IngestFileOptions & { claimExtractionConfig?: ClaimExtractionConfig } = {},
 ): Promise<IngestFileResult> {
   const extracted = await extractFile(
     source,
@@ -146,6 +148,22 @@ export async function ingestFile(
     ...extracted,
     entries: dedupResult.survivors,
   };
+
+  if (ports.claimExtractionLlm) {
+    await runBatchClaimExtraction(
+      [dedupedExtracted],
+      {
+        createLlm: ports.claimExtractionLlm,
+        db: ports.db,
+      },
+      options.claimExtractionConfig ?? {
+        enabled: true,
+        confidenceThreshold: 0.8,
+        eligibleTypes: ["fact", "preference", "decision"],
+      },
+      1,
+    );
+  }
 
   const storeResults = await storeExtractedResults(
     [dedupedExtracted],

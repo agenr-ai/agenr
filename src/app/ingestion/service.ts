@@ -11,6 +11,7 @@ import {
   type StoreExtractedResultsProgressEvent,
 } from "../../core/ingestion/index.js";
 import type { LlmPort } from "../../core/ports.js";
+import { runBatchClaimExtraction, type ClaimExtractionConfig } from "../../core/store/claim-extraction.js";
 import type { StoreEntryInput } from "../../core/types.js";
 import type { IngestPathPorts, IngestionLlmPort, UsageStats } from "./ports.js";
 
@@ -23,6 +24,8 @@ export { DEFAULT_INGEST_CONCURRENCY };
 export interface IngestPathOptions extends IngestFileOptions {
   /** Maximum number of transcript files to extract in parallel. */
   concurrency?: number;
+  /** Override claim extraction config for this ingest run. */
+  claimExtractionConfig?: ClaimExtractionConfig;
   /** Optional callback invoked when a file finishes extraction. */
   onExtractionProgress?: (completed: number, total: number) => void;
   /** Optional callback invoked around ingest-specific bulk write phases. */
@@ -120,6 +123,23 @@ export async function ingestDiscoveredFiles(files: string[], ports: IngestPathPo
     resultsToStore = rebuildResultsWithSurvivors(extractedSuccesses, taggedEntries, dedupResult);
     precomputedEmbeddings = dedupResult.embeddings;
     dedupUsage = isIngestionLlmPort(dedupLlm) ? cloneUsageStats(dedupLlm.metadata.usage) : createEmptyUsageStats();
+  }
+
+  if (ports.createClaimExtractionLlm && resultsToStore.length > 0) {
+    const claimConfig: ClaimExtractionConfig = options.claimExtractionConfig ?? {
+      enabled: true,
+      confidenceThreshold: 0.8,
+      eligibleTypes: ["fact", "preference", "decision"],
+    };
+    await runBatchClaimExtraction(
+      resultsToStore,
+      {
+        createLlm: ports.createClaimExtractionLlm,
+        db: ports.db,
+      },
+      claimConfig,
+      options.concurrency ?? DEFAULT_INGEST_CONCURRENCY,
+    );
   }
 
   const storeResults =

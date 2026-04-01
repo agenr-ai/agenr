@@ -7,7 +7,7 @@ import { createEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } 
 import { localTranscriptFiles } from "../../adapters/files/transcript-files.js";
 import { createLlmClient, resolveLlmApiKey, resolveModel, type UsageStats } from "../../adapters/llm.js";
 import { openClawTranscriptParser } from "../../adapters/openclaw/transcript/parser.js";
-import { readConfig, resolveDbPath } from "../../config.js";
+import { readConfig, resolveClaimExtractionConfig, resolveDbPath } from "../../config.js";
 import { type DedupResult, type ExtractedFileResult, type IngestFileResult, type StoreExtractedResultsProgressEvent } from "../../core/ingestion/index.js";
 import type { StoreEntryInput, StoreResult } from "../../core/types.js";
 import { setVerbose } from "../../logger.js";
@@ -16,7 +16,7 @@ import { InvalidArgumentError, Option, type Command } from "commander";
 import { registerIngestEpisodesCommand } from "./ingest-episodes.js";
 
 const MIN_INGEST_CONCURRENCY = 1;
-const MAX_INGEST_CONCURRENCY = 16;
+const MAX_INGEST_CONCURRENCY = 50;
 
 /** Non-null whole-file extraction mode accepted by the ingest CLI. */
 type WholeFileMode = NonNullable<IngestPathOptions["wholeFile"]>;
@@ -81,7 +81,11 @@ function registerIngestEntriesCommand(parent: Command): void {
 
       const { provider, modelId } = resolveModel(config, "extraction");
       const { provider: dedupProvider, modelId: dedupModelId } = resolveModel(config, "dedup");
+      const claimExtractionConfig = resolveClaimExtractionConfig(config);
+      const claimModel = claimExtractionConfig.enabled ? resolveModel(config, "claim") : null;
       const llmApiKey = resolveLlmApiKey(config, provider);
+      const dedupApiKey = resolveLlmApiKey(config, dedupProvider);
+      const claimApiKey = claimModel ? resolveLlmApiKey(config, claimModel.provider) : undefined;
       const sharedEmbedding = createEmbeddingClient(resolveEmbeddingApiKey(config), resolveEmbeddingModel(config));
 
       if (options.verbose === true) {
@@ -124,10 +128,16 @@ function registerIngestEntriesCommand(parent: Command): void {
           db,
           embedding: sharedEmbedding,
           createExtractionLlm: () => createLlmClient(provider, modelId, { apiKey: llmApiKey }),
-          createDedupLlm: () => createLlmClient(dedupProvider, dedupModelId, { apiKey: resolveLlmApiKey(config, dedupProvider) }),
+          createDedupLlm: () => createLlmClient(dedupProvider, dedupModelId, { apiKey: dedupApiKey }),
+          ...(claimModel && claimApiKey
+            ? {
+                createClaimExtractionLlm: () => createLlmClient(claimModel.provider, claimModel.modelId, { apiKey: claimApiKey }),
+              }
+            : {}),
         },
         {
           concurrency: options.concurrency ?? DEFAULT_INGEST_CONCURRENCY,
+          claimExtractionConfig,
           dryRun: options.dryRun,
           verbose: options.verbose,
           wholeFile: options.wholeFile,

@@ -4,7 +4,15 @@ import { createEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } 
 import { localTranscriptFiles } from "../../../adapters/files/transcript-files.js";
 import { createLlmClient, resolveLlmApiKey, resolveModel } from "../../../adapters/llm.js";
 import { openClawTranscriptParser } from "../../../adapters/openclaw/transcript/parser.js";
-import { configFileExists, readConfig, resolveConfigPath, resolveDbPath, type AgenrAuthMethod, type AgenrConfig } from "../../../config.js";
+import {
+  configFileExists,
+  readConfig,
+  resolveClaimExtractionConfig,
+  resolveConfigPath,
+  resolveDbPath,
+  type AgenrAuthMethod,
+  type AgenrConfig,
+} from "../../../config.js";
 import { pluralize } from "../ingest.js";
 import { formatExistingConfig, getSetupReadiness, isSetupConfigured, runSetupCore, type SetupCoreResult, type SetupProvider } from "../setup.js";
 import { banner, cliPrompts, formatLabel, formatPathForDisplay, ui, type WizardPrompts } from "../../ui.js";
@@ -304,8 +312,11 @@ async function runBulkIngest(files: string[], config: AgenrConfig, prompts: Wiza
 
     const { provider, modelId } = resolveModel(config, "extraction");
     const { provider: dedupProvider, modelId: dedupModelId } = resolveModel(config, "dedup");
+    const claimExtractionConfig = resolveClaimExtractionConfig(config);
+    const claimModel = claimExtractionConfig.enabled ? resolveModel(config, "claim") : null;
     const extractionApiKey = resolveLlmApiKey(config, provider);
     const dedupApiKey = resolveLlmApiKey(config, dedupProvider);
+    const claimApiKey = claimModel ? resolveLlmApiKey(config, claimModel.provider) : undefined;
     const embeddingClient = createEmbeddingClient(resolveEmbeddingApiKey(config), resolveEmbeddingModel(config));
 
     const result = await ingestDiscoveredFiles(
@@ -317,8 +328,14 @@ async function runBulkIngest(files: string[], config: AgenrConfig, prompts: Wiza
         embedding: embeddingClient,
         createExtractionLlm: () => createLlmClient(provider, modelId, { apiKey: extractionApiKey }),
         createDedupLlm: () => createLlmClient(dedupProvider, dedupModelId, { apiKey: dedupApiKey }),
+        ...(claimModel && claimApiKey
+          ? {
+              createClaimExtractionLlm: () => createLlmClient(claimModel.provider, claimModel.modelId, { apiKey: claimApiKey }),
+            }
+          : {}),
       },
       {
+        claimExtractionConfig,
         extractionContext: config.extractionContext,
         onExtractionProgress: (completed, total) => {
           spinner.message(`Ingesting sessions... (${completed}/${total} extracted)`);
