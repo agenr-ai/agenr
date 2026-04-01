@@ -1,10 +1,11 @@
-import type { DatabasePort, EmbeddingPort, EpisodeDatabasePort, RecallPorts } from "../../core/ports.js";
+import type { DatabasePort, EmbeddingPort, EpisodeDatabasePort, LlmPort, RecallPorts } from "../../core/ports.js";
 import type { AgenrConfig } from "../../config.js";
-import { readConfig, resolveConfigPath, resolveDbPath } from "../../config.js";
+import { readConfig, resolveClaimExtractionConfig, resolveConfigPath, resolveDbPath } from "../../config.js";
 import { createDatabase } from "../../adapters/db/client.js";
 import { createOpenClawRepository } from "../../adapters/db/openclaw-repository.js";
 import { createRecallAdapter } from "../../adapters/db/recall-adapter.js";
 import { createEmbeddingClient, EMBEDDING_MODEL, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../../adapters/embeddings.js";
+import { createLlmClient, resolveLlmApiKey, resolveModel } from "../../adapters/llm.js";
 import type {
   AgenrOpenClawEmbeddingStatus,
   AgenrOpenClawHost,
@@ -23,6 +24,10 @@ interface OpenClawRuntimeServices {
   memory: OpenClawRepository;
   embedding: EmbeddingPort;
   recall: RecallPorts;
+  claimExtraction?: {
+    llm: LlmPort;
+    config: ReturnType<typeof resolveClaimExtractionConfig>;
+  };
   close(): Promise<void>;
 }
 
@@ -46,7 +51,7 @@ export async function createAgenrOpenClawServices(
     dbPath: resolvedConfig.dbPath,
   };
   const embeddingStatus = resolveEmbeddingStatus(agenrConfig);
-  const runtimeServices = await createRuntimeServices(resolvedConfig.dbPath, embeddingStatus);
+  const runtimeServices = await createRuntimeServices(resolvedConfig.dbPath, agenrConfig, embeddingStatus);
 
   return {
     openClaw: options.openClaw,
@@ -59,6 +64,7 @@ export async function createAgenrOpenClawServices(
     memory: runtimeServices.memory,
     embedding: runtimeServices.embedding,
     recall: runtimeServices.recall,
+    claimExtraction: runtimeServices.claimExtraction,
     embeddingStatus: toPublicEmbeddingStatus(embeddingStatus),
     close: runtimeServices.close,
   };
@@ -102,14 +108,16 @@ function resolveEmbeddingStatus(config: AgenrConfig): ResolvedEmbeddingStatus {
  * Builds the process-lifetime runtime services used by the OpenClaw adapter.
  *
  * @param dbPath - Resolved SQLite path.
+ * @param config - Resolved agenr runtime configuration.
  * @param embeddingStatus - Resolved embedding availability facts.
  * @returns Shared runtime services.
  */
-async function createRuntimeServices(dbPath: string, embeddingStatus: ResolvedEmbeddingStatus): Promise<OpenClawRuntimeServices> {
+async function createRuntimeServices(dbPath: string, config: AgenrConfig, embeddingStatus: ResolvedEmbeddingStatus): Promise<OpenClawRuntimeServices> {
   const database = await createDatabase(dbPath);
   const embedding = embeddingStatus.available
     ? createEmbeddingClient(requireApiKey(embeddingStatus), embeddingStatus.model)
     : createUnavailableEmbeddingPort(embeddingStatus.error ?? "Embeddings are unavailable.");
+  const claimExtraction = createClaimExtractionRuntime(config);
   let closed = false;
 
   return {
@@ -118,6 +126,7 @@ async function createRuntimeServices(dbPath: string, embeddingStatus: ResolvedEm
     memory: createOpenClawRepository(database),
     embedding,
     recall: createRecallAdapter(database, embedding),
+    claimExtraction,
     async close() {
       if (closed) {
         return;
@@ -224,4 +233,29 @@ function requireApiKey(status: ResolvedEmbeddingStatus): string {
   }
 
   return status.apiKey;
+}
+
+/**
+ * Resolves an optional claim-extraction runtime from agenr config and LLM credentials.
+ *
+ * @param config - Agenr runtime configuration used for model and credential resolution.
+ * @returns Claim-extraction runtime when available, otherwise `undefined`.
+ */
+function createClaimExtractionRuntime(config: AgenrConfig): OpenClawRuntimeServices["claimExtraction"] {
+  const claimExtractionConfig = resolveClaimExtractionConfig(config);
+  if (!claimExtractionConfig.enabled) {
+    return undefined;
+  }
+
+  try {
+    const { provider, modelId } = resolveModel(config, "extraction");
+    return {
+      llm: createLlmClient(provider, modelId, {
+        apiKey: resolveLlmApiKey(config, provider),
+      }),
+      config: claimExtractionConfig,
+    };
+  } catch {
+    return undefined;
+  }
 }

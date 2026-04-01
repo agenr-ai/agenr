@@ -262,7 +262,16 @@ export interface SurgeonPort {
    * @param fields - Mutable fields to change.
    * @returns `true` when the entry was updated.
    */
-  updateEntry(entryId: string, fields: { importance?: number; expiry?: string }): Promise<boolean>;
+  updateEntry(
+    entryId: string,
+    fields: {
+      importance?: number;
+      expiry?: string;
+      claim_key?: string;
+      valid_from?: string;
+      valid_to?: string;
+    },
+  ): Promise<boolean>;
 
   /**
    * Loads the timestamp of the last bulk ingest, when present.

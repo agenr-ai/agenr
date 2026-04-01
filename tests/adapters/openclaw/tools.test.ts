@@ -439,6 +439,93 @@ describe("agenr OpenClaw tools", () => {
     expect(result.content[0]?.text).toContain("newest memory");
     expect(getMessages(logger.info)).toContain("[agenr] tool=agenr_trace session=session-1 key=agent:main:webchat:test target=last");
   });
+
+  it("stores explicit supersession metadata through agenr_store", async () => {
+    const database = await createTestDatabase();
+    const logger = createLogger();
+    const services = createDatabaseBackedServices(database);
+    const storeTool = createAgenrStoreTool(createToolContext(), Promise.resolve(services), logger);
+    const traceTool = createAgenrTraceTool(createToolContext(), Promise.resolve(services), logger);
+
+    await storeTool.execute("tool-13", {
+      type: "fact",
+      subject: "Jim home city",
+      content: "Jim lives in Austin, Texas.",
+      claimKey: "jim/home_city",
+    });
+    const original = await createOpenClawRepository(database).findEntryBySubject("Jim home city");
+
+    const replacementResult = await storeTool.execute("tool-14", {
+      type: "fact",
+      subject: "Jim home city",
+      content: "Jim lives in Denver, Colorado.",
+      supersedes: original?.id,
+      claimKey: "jim/home_city",
+      validFrom: "2026-03-30T00:00:00.000Z",
+    });
+    const traceResult = await traceTool.execute("tool-15", {
+      id: original?.id,
+    });
+
+    expect(replacementResult.details).toMatchObject({
+      status: "stored",
+      subject: "Jim home city",
+    });
+    expect(traceResult.content[0]?.text).toContain("superseded_by=");
+    expect(traceResult.content[0]?.text).toContain("supersession_kind=update");
+    expect(traceResult.content[0]?.text).toContain("claim_key=jim/home_city");
+
+    const storeParamsMessages = getMessages(logger.info).filter((message) => message.includes("tool=agenr_store") && message.includes("params="));
+    expect(storeParamsMessages.join("\n")).toContain('"hasSupersedes":true');
+    expect(storeParamsMessages.join("\n")).toContain('"hasClaimKey":true');
+    expect(storeParamsMessages.join("\n")).toContain('"hasValidFrom":true');
+  });
+
+  it("updates claim-key and validity metadata through agenr_update", async () => {
+    const database = await createTestDatabase();
+    const logger = createLogger();
+    const services = createDatabaseBackedServices(database);
+    const storeTool = createAgenrStoreTool(createToolContext(), Promise.resolve(services), logger);
+    const updateTool = createAgenrUpdateTool(createToolContext(), Promise.resolve(services), logger);
+    const traceTool = createAgenrTraceTool(createToolContext(), Promise.resolve(services), logger);
+
+    await storeTool.execute("tool-16", {
+      type: "fact",
+      subject: "Jim timezone",
+      content: "Jim's timezone is America/Chicago.",
+    });
+    const storedEntry = await createOpenClawRepository(database).findEntryBySubject("Jim timezone");
+
+    const updateResult = await updateTool.execute("tool-17", {
+      id: storedEntry?.id,
+      claimKey: "jim/timezone",
+      validFrom: "2026-03-01T00:00:00.000Z",
+      validTo: "2026-03-31T00:00:00.000Z",
+    });
+    const traceResult = await traceTool.execute("tool-18", {
+      id: storedEntry?.id,
+    });
+    const updatedEntry = await database.getEntry(storedEntry?.id ?? "");
+
+    expect(updateResult.details).toMatchObject({
+      status: "updated",
+      claimKey: "jim/timezone",
+      validFrom: "2026-03-01T00:00:00.000Z",
+      validTo: "2026-03-31T00:00:00.000Z",
+    });
+    expect(updatedEntry).toMatchObject({
+      claim_key: "jim/timezone",
+      valid_from: "2026-03-01T00:00:00.000Z",
+      valid_to: "2026-03-31T00:00:00.000Z",
+    });
+    expect(traceResult.content[0]?.text).toContain("claim_key=jim/timezone");
+    expect(traceResult.content[0]?.text).toContain("validity=2026-03-01T00:00:00.000Z -> 2026-03-31T00:00:00.000Z");
+
+    const updateParamsMessage = getMessages(logger.info).find((message) => message.includes("tool=agenr_update") && message.includes("params="));
+    expect(updateParamsMessage).toContain('"hasClaimKey":true');
+    expect(updateParamsMessage).toContain('"hasValidFrom":true');
+    expect(updateParamsMessage).toContain('"hasValidTo":true');
+  });
 });
 
 function createDatabaseBackedServices(database: SqlDatabase): AgenrOpenClawServices {
@@ -658,7 +745,14 @@ function createEntry(overrides: Partial<Entry> = {}): Entry {
     recall_count: overrides.recall_count ?? 0,
     last_recalled_at: overrides.last_recalled_at,
     superseded_by: overrides.superseded_by,
+    valid_from: overrides.valid_from,
+    valid_to: overrides.valid_to,
+    claim_key: overrides.claim_key,
+    supersession_kind: overrides.supersession_kind,
+    supersession_reason: overrides.supersession_reason,
     cluster_id: overrides.cluster_id,
+    user_id: overrides.user_id,
+    project: overrides.project,
     retired: overrides.retired ?? false,
     retired_at: overrides.retired_at,
     retired_reason: overrides.retired_reason,

@@ -265,6 +265,10 @@ export function sanitizeStoreToolParams(params: {
   expiry: Expiry | undefined;
   tags: string[];
   sourceContext: string | undefined;
+  supersedes: string | undefined;
+  claimKey: string | undefined;
+  validFrom: string | undefined;
+  validTo: string | undefined;
 }): Record<string, unknown> {
   return {
     type: params.type,
@@ -274,6 +278,10 @@ export function sanitizeStoreToolParams(params: {
     ...(params.tags.length > 0 ? { tags: params.tags } : {}),
     contentLength: params.content.length,
     ...(params.sourceContext !== undefined ? { sourceContextLength: params.sourceContext.length } : {}),
+    ...(params.supersedes !== undefined ? { hasSupersedes: true } : {}),
+    ...(params.claimKey !== undefined ? { hasClaimKey: true } : {}),
+    ...(params.validFrom !== undefined ? { hasValidFrom: true } : {}),
+    ...(params.validTo !== undefined ? { hasValidTo: true } : {}),
   };
 }
 
@@ -360,12 +368,18 @@ export function sanitizeUpdateToolParams(params: {
   subject: string | undefined;
   importance: number | undefined;
   expiry: Expiry | undefined;
+  claimKey: string | undefined;
+  validFrom: string | undefined;
+  validTo: string | undefined;
 }): Record<string, unknown> {
   return {
     ...(params.id ? { id: params.id } : {}),
     ...(params.subject ? { subject: params.subject } : {}),
     ...(params.importance !== undefined ? { importance: params.importance } : {}),
     ...(params.expiry !== undefined ? { expiry: params.expiry } : {}),
+    ...(params.claimKey !== undefined ? { hasClaimKey: true } : {}),
+    ...(params.validFrom !== undefined ? { hasValidFrom: true } : {}),
+    ...(params.validTo !== undefined ? { hasValidTo: true } : {}),
   };
 }
 
@@ -483,6 +497,18 @@ export function formatTrace(
 
   if (supersedes.length > 0) {
     lines.push(`supersedes=${supersedes.map((item) => `${item.id} (${item.subject})`).join(", ")}`);
+  }
+
+  if (entry.claim_key) {
+    lines.push(`claim_key=${entry.claim_key}`);
+  }
+
+  if (entry.valid_from || entry.valid_to) {
+    lines.push(`validity=${entry.valid_from ?? "?"} -> ${entry.valid_to ?? "ongoing"}`);
+  }
+
+  if (entry.supersession_kind) {
+    lines.push(`supersession_kind=${entry.supersession_kind}${entry.supersession_reason ? ` reason=${truncate(entry.supersession_reason, 120)}` : ""}`);
   }
 
   if (recallEvents.length > 0) {

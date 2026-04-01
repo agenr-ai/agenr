@@ -179,6 +179,86 @@ describe("createDatabase", () => {
     expect(stored?.expiry).toBe("permanent");
   });
 
+  it("updates entry claim keys and validity metadata", async () => {
+    const database = await createTestDatabase();
+    const entry = createEntry({
+      importance: 4,
+      expiry: "temporary",
+    });
+    const sibling = createEntry({
+      subject: "model choice",
+      content: "agenr defaults to gpt-5.4-mini for extraction.",
+      claim_key: "agenr/default_model",
+    });
+
+    await database.insertEntry(entry, createEmbedding(0, 1), "update-claim-hash");
+    await database.insertEntry(sibling, createEmbedding(1, 1), "sibling-claim-hash");
+    const updated = await database.updateEntry(entry.id, {
+      claim_key: "jim/home_city",
+      valid_from: "2026-03-01T00:00:00.000Z",
+      valid_to: "2026-03-15T00:00:00.000Z",
+    });
+    const stored = await database.getEntry(entry.id);
+    const claimMatches = await database.findActiveEntriesByClaimKey("jim/home_city");
+    const claimPrefixes = await database.getDistinctClaimKeyPrefixes();
+
+    expect(updated).toBe(true);
+    expect(stored?.claim_key).toBe("jim/home_city");
+    expect(stored?.valid_from).toBe("2026-03-01T00:00:00.000Z");
+    expect(stored?.valid_to).toBe("2026-03-15T00:00:00.000Z");
+    expect(claimMatches.map((candidate) => candidate.id)).toEqual([entry.id]);
+    expect(claimPrefixes).toEqual(["agenr", "jim"]);
+  });
+
+  it("supersedes an active entry and removes it from active recall surfaces", async () => {
+    const database = await createTestDatabase();
+    const adapter = createRecallAdapter(database, createEmbeddingPort());
+    const original = createEntry({
+      subject: "Jim home city",
+      content: "Jim lives in Austin, Texas.",
+      claim_key: "jim/home_city",
+    });
+    const replacement = createEntry({
+      subject: "Jim home city",
+      content: "Jim lives in Denver, Colorado.",
+      claim_key: "jim/home_city",
+    });
+
+    await database.insertEntry(original, createEmbedding(0, 1), "supersede-old-hash");
+    await database.insertEntry(replacement, createEmbedding(1, 1), "supersede-new-hash");
+
+    const superseded = await database.supersedeEntry(original.id, replacement.id, "update");
+    const row = await database.execute({
+      sql: `
+        SELECT superseded_by, supersession_kind
+        FROM entries
+        WHERE id = ?
+      `,
+      args: [original.id],
+    });
+    const activeClaimMatches = await database.findActiveEntriesByClaimKey("jim/home_city");
+
+    expect(superseded).toBe(true);
+    expect(row.rows[0]).toMatchObject({
+      superseded_by: replacement.id,
+      supersession_kind: "update",
+    });
+    expect(await database.getEntry(original.id)).toBeNull();
+    expect(await database.getEntry(replacement.id)).not.toBeNull();
+    expect(activeClaimMatches.map((entry) => entry.id)).toEqual([replacement.id]);
+    expect((await adapter.ftsSearch({ text: "Austin", limit: 5 })).map((result) => result.entry.id)).not.toContain(original.id);
+
+    try {
+      const vectorResults = await adapter.vectorSearch({
+        embedding: createEmbedding(0, 1),
+        limit: 5,
+      });
+      expect(vectorResults.map((result) => result.entry.id)).not.toContain(original.id);
+    } catch (error) {
+      expect(String(error)).toMatch(/vector search is unavailable/i);
+    }
+  });
+
   it("records recall events by updating recall counters", async () => {
     const database = await createTestDatabase();
     const adapter = createRecallAdapter(database, createEmbeddingPort());
@@ -519,7 +599,14 @@ function createEntry(overrides: Partial<Entry> = {}): Entry {
     recall_count: overrides.recall_count ?? 0,
     last_recalled_at: overrides.last_recalled_at,
     superseded_by: overrides.superseded_by,
+    valid_from: overrides.valid_from,
+    valid_to: overrides.valid_to,
+    claim_key: overrides.claim_key,
+    supersession_kind: overrides.supersession_kind,
+    supersession_reason: overrides.supersession_reason,
     cluster_id: overrides.cluster_id,
+    user_id: overrides.user_id,
+    project: overrides.project,
     retired: overrides.retired ?? false,
     retired_at: overrides.retired_at,
     retired_reason: overrides.retired_reason,

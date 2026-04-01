@@ -37,6 +37,18 @@ const UPDATE_TOOL_PARAMETERS = {
       type: "string",
       description: UPDATE_EXPIRY_DESCRIPTION,
     },
+    claimKey: {
+      type: "string",
+      description: 'Slot key for this fact\'s family (e.g., "jim/home_city").',
+    },
+    validFrom: {
+      type: "string",
+      description: "ISO 8601 timestamp for when this fact became true.",
+    },
+    validTo: {
+      type: "string",
+      description: "ISO 8601 timestamp for when this fact stopped being true.",
+    },
   },
 } as const;
 
@@ -52,7 +64,7 @@ export function createAgenrUpdateTool(ctx: OpenClawPluginToolContext, servicesPr
   return {
     name: "agenr_update",
     label: "Agenr Update",
-    description: "Update an existing memory entry in place. Currently supports importance and expiry.",
+    description: "Update an existing memory entry in place. Currently supports importance, expiry, claim_key, valid_from, and valid_to.",
     parameters: UPDATE_TOOL_PARAMETERS,
     async execute(_toolCallId, rawParams) {
       try {
@@ -61,23 +73,29 @@ export function createAgenrUpdateTool(ctx: OpenClawPluginToolContext, servicesPr
         const subject = readStringParam(params, "subject");
         const importance = readNumberParam(params, "importance", { integer: true, strict: true });
         const expiry = parseExpiry(readStringParam(params, "expiry"));
+        const claimKey = readStringParam(params, "claimKey");
+        const validFrom = readStringParam(params, "validFrom");
+        const validTo = readStringParam(params, "validTo");
         logToolCall(
           logger,
           "agenr_update",
           ctx,
           `target=${formatTargetSelector(id, subject)}${importance !== undefined ? ` importance=${importance}` : ""}${expiry !== undefined ? ` expiry=${expiry}` : ""}`,
-          sanitizeUpdateToolParams({ id, subject, importance, expiry }),
+          sanitizeUpdateToolParams({ id, subject, importance, expiry, claimKey, validFrom, validTo }),
         );
         const services = await servicesPromise;
         const entry = await resolveTargetEntry(services, params);
 
-        if (importance === undefined && expiry === undefined) {
-          throw new Error("Provide at least one update field: importance or expiry.");
+        if (importance === undefined && expiry === undefined && claimKey === undefined && validFrom === undefined && validTo === undefined) {
+          throw new Error("Provide at least one update field: importance, expiry, claimKey, validFrom, or validTo.");
         }
 
         const updated = await services.entries.updateEntry(entry.id, {
           ...(importance !== undefined ? { importance } : {}),
           ...(expiry !== undefined ? { expiry } : {}),
+          ...(claimKey !== undefined ? { claim_key: claimKey } : {}),
+          ...(validFrom !== undefined ? { valid_from: validFrom } : {}),
+          ...(validTo !== undefined ? { valid_to: validTo } : {}),
         });
 
         if (!updated) {
@@ -94,6 +112,9 @@ export function createAgenrUpdateTool(ctx: OpenClawPluginToolContext, servicesPr
           sessionKey: ctx.sessionKey,
           ...(importance !== undefined ? { importance } : {}),
           ...(expiry !== undefined ? { expiry } : {}),
+          ...(claimKey !== undefined ? { claimKey } : {}),
+          ...(validFrom !== undefined ? { validFrom } : {}),
+          ...(validTo !== undefined ? { validTo } : {}),
         });
       } catch (error) {
         logToolFailure(logger, "agenr_update", ctx, error);

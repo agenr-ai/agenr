@@ -1,5 +1,7 @@
 import { ENTRY_TYPES, EXPIRY_LEVELS, type Expiry, type StoreEntryInput } from "../types.js";
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+
 /**
  * Result of validating a batch of store inputs.
  */
@@ -94,6 +96,30 @@ export function validateEntriesWithIndexes(inputs: StoreEntryInput[]): IndexedVa
       continue;
     }
 
+    if (input.supersedes !== undefined && !isUuid(input.supersedes)) {
+      errors.push(`Entry ${index} has an invalid supersedes id.`);
+      rejectedInputIndexes.push(index);
+      continue;
+    }
+
+    if (input.claim_key !== undefined && typeof input.claim_key !== "string") {
+      errors.push(`Entry ${index} has an invalid claim key.`);
+      rejectedInputIndexes.push(index);
+      continue;
+    }
+
+    if (input.valid_from !== undefined && !isIsoTimestamp(input.valid_from)) {
+      errors.push(`Entry ${index} has an invalid valid_from timestamp.`);
+      rejectedInputIndexes.push(index);
+      continue;
+    }
+
+    if (input.valid_to !== undefined && !isIsoTimestamp(input.valid_to)) {
+      errors.push(`Entry ${index} has an invalid valid_to timestamp.`);
+      rejectedInputIndexes.push(index);
+      continue;
+    }
+
     valid.push({
       inputIndex: index,
       input: {
@@ -108,6 +134,10 @@ export function validateEntriesWithIndexes(inputs: StoreEntryInput[]): IndexedVa
         user_id: normalizeOptionalString(input.user_id),
         project: normalizeOptionalString(input.project),
         created_at: normalizeOptionalString(input.created_at),
+        supersedes: normalizeOptionalString(input.supersedes),
+        claim_key: normalizeOptionalString(input.claim_key),
+        valid_from: normalizeOptionalString(input.valid_from),
+        valid_to: normalizeOptionalString(input.valid_to),
       },
     });
   }
@@ -152,4 +182,15 @@ function normalizeTags(tags?: string[]): string[] {
   }
 
   return tags.map((tag) => tag.trim()).filter((tag) => tag.length > 0);
+}
+
+/** Returns whether an optional id string matches the UUID format used by agenr entry ids. */
+function isUuid(value: string): boolean {
+  return UUID_PATTERN.test(value.trim());
+}
+
+/** Returns whether a timestamp string looks like a valid ISO 8601 instant. */
+function isIsoTimestamp(value: string): boolean {
+  const normalized = value.trim();
+  return normalized.length > 0 && normalized.includes("T") && !Number.isNaN(Date.parse(normalized));
 }

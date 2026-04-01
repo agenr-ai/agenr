@@ -17,14 +17,17 @@ import {
   upsertEpisode,
 } from "./episode-queries.js";
 import {
+  findActiveEntriesByClaimKey,
   findExistingHashes,
   findExistingNormHashes,
   getEntries,
+  getDistinctClaimKeyPrefixes,
   getEntry,
   getIngestLogEntry,
   insertEntry,
   insertIngestLogEntry,
   retireEntry,
+  supersedeEntry,
   type SqlExecutor,
   updateEntry,
 } from "./queries.js";
@@ -146,8 +149,26 @@ class LibsqlDatabase implements SqlDatabase {
     return retireEntry(this.executor, id, reason);
   }
 
-  /** Updates mutable entry fields such as importance and expiry. */
-  public async updateEntry(id: string, fields: { importance?: number; expiry?: string }): Promise<boolean> {
+  /** Marks one active entry as superseded by a newer entry. */
+  public async supersedeEntry(oldId: string, newId: string, kind?: string, reason?: string): Promise<boolean> {
+    return supersedeEntry(this.executor, oldId, newId, kind, reason);
+  }
+
+  /** Finds active entries by exact claim key. */
+  public async findActiveEntriesByClaimKey(claimKey: string): Promise<Entry[]> {
+    return findActiveEntriesByClaimKey(this.executor, claimKey);
+  }
+
+  /** Lists distinct entity prefixes derived from active claim keys. */
+  public async getDistinctClaimKeyPrefixes(): Promise<string[]> {
+    return getDistinctClaimKeyPrefixes(this.executor);
+  }
+
+  /** Updates mutable entry fields such as importance, expiry, and temporal metadata. */
+  public async updateEntry(
+    id: string,
+    fields: { importance?: number; expiry?: string; claim_key?: string; valid_from?: string; valid_to?: string },
+  ): Promise<boolean> {
     return updateEntry(this.executor, id, fields);
   }
 

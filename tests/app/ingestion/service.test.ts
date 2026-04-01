@@ -149,6 +149,18 @@ class MockDatabase implements DatabasePort {
     return false;
   }
 
+  public async supersedeEntry(): Promise<boolean> {
+    return false;
+  }
+
+  public async findActiveEntriesByClaimKey(): Promise<Entry[]> {
+    return [];
+  }
+
+  public async getDistinctClaimKeyPrefixes(): Promise<string[]> {
+    return [];
+  }
+
   public async updateEntry(): Promise<boolean> {
     return false;
   }

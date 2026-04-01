@@ -65,6 +65,11 @@ export async function insertEntry(executor: SqlExecutor, entry: Entry, embedding
         recall_count,
         last_recalled_at,
         superseded_by,
+        valid_from,
+        valid_to,
+        claim_key,
+        supersession_kind,
+        supersession_reason,
         cluster_id,
         user_id,
         project,
@@ -77,7 +82,7 @@ export async function insertEntry(executor: SqlExecutor, entry: Entry, embedding
       VALUES (
         ?, ?, ?, ?, ?, ?, ?, ?, ?,
         CASE WHEN ? IS NULL THEN NULL ELSE vector32(?) END,
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
       )
     `,
     args: [
@@ -99,6 +104,11 @@ export async function insertEntry(executor: SqlExecutor, entry: Entry, embedding
       normalizeInteger(entry.recall_count, 0),
       normalizeOptionalString(entry.last_recalled_at),
       normalizeOptionalString(entry.superseded_by),
+      normalizeOptionalString(entry.valid_from),
+      normalizeOptionalString(entry.valid_to),
+      normalizeOptionalString(entry.claim_key),
+      normalizeOptionalString(entry.supersession_kind),
+      normalizeOptionalString(entry.supersession_reason),
       normalizeOptionalString(entry.cluster_id),
       normalizeOptionalString(entry.user_id),
       normalizeOptionalString(entry.project),
@@ -148,6 +158,11 @@ export async function getEntries(executor: SqlExecutor, ids: string[]): Promise<
           recall_count,
           last_recalled_at,
           superseded_by,
+          valid_from,
+          valid_to,
+          claim_key,
+          supersession_kind,
+          supersession_reason,
           cluster_id,
           user_id,
           project,
@@ -279,6 +294,105 @@ export async function retireEntry(executor: SqlExecutor, id: string, reason?: st
 }
 
 /**
+ * Marks one active entry as superseded by a newer replacement entry.
+ *
+ * @param executor - SQL executor used for the update.
+ * @param oldId - Active entry that should become historical.
+ * @param newId - Replacement entry identifier.
+ * @param kind - Optional explicit supersession relationship.
+ * @param reason - Optional explanation recorded on the superseded entry.
+ * @returns True when the target entry was active and updated.
+ */
+export async function supersedeEntry(executor: SqlExecutor, oldId: string, newId: string, kind?: string, reason?: string): Promise<boolean> {
+  const normalizedOldId = oldId.trim();
+  const normalizedNewId = newId.trim();
+  if (normalizedOldId.length === 0 || normalizedNewId.length === 0 || normalizedOldId === normalizedNewId) {
+    return false;
+  }
+
+  const existing = await executor.execute({
+    sql: `
+      SELECT id
+      FROM entries
+      WHERE id = ?
+        AND ${ACTIVE_ENTRY_CLAUSE}
+      LIMIT 1
+    `,
+    args: [normalizedOldId],
+  });
+
+  if (existing.rows.length === 0) {
+    return false;
+  }
+
+  const now = new Date().toISOString();
+  const result = await executor.execute({
+    sql: `
+      UPDATE entries
+      SET superseded_by = ?,
+          supersession_kind = ?,
+          supersession_reason = ?,
+          updated_at = ?
+      WHERE id = ?
+        AND ${ACTIVE_ENTRY_CLAUSE}
+    `,
+    args: [normalizedNewId, normalizeOptionalString(kind) ?? "update", normalizeOptionalString(reason), now, normalizedOldId],
+  });
+
+  return result.rowsAffected > 0;
+}
+
+/**
+ * Loads active entries that share one claim key.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @param claimKey - Canonical claim key to match.
+ * @returns Active entries with the requested claim key.
+ */
+export async function findActiveEntriesByClaimKey(executor: SqlExecutor, claimKey: string): Promise<Entry[]> {
+  const normalizedClaimKey = claimKey.trim();
+  if (normalizedClaimKey.length === 0) {
+    return [];
+  }
+
+  const result = await executor.execute({
+    sql: `
+      SELECT *
+      FROM entries
+      WHERE claim_key = ?
+        AND ${ACTIVE_ENTRY_CLAUSE}
+    `,
+    args: [normalizedClaimKey],
+  });
+
+  return result.rows.map((row) => mapEntryRow(row));
+}
+
+/**
+ * Lists distinct entity prefixes derived from active claim keys.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @returns Sorted distinct entity prefixes such as `jim` from `jim/home_city`.
+ */
+export async function getDistinctClaimKeyPrefixes(executor: SqlExecutor): Promise<string[]> {
+  const result = await executor.execute({
+    sql: `
+      SELECT DISTINCT lower(trim(substr(claim_key, 1, instr(claim_key, '/') - 1))) AS claim_key_prefix
+      FROM entries
+      WHERE claim_key IS NOT NULL
+        AND instr(claim_key, '/') > 1
+        AND ${ACTIVE_ENTRY_CLAUSE}
+      ORDER BY claim_key_prefix ASC
+    `,
+  });
+
+  return result.rows.flatMap((row) => {
+    const prefix = row.claim_key_prefix;
+    return typeof prefix === "string" && prefix.length > 0 ? [prefix] : [];
+  });
+}
+
+/**
  * Updates mutable fields on an active entry.
  *
  * @param executor - SQL executor used for the update.
@@ -286,9 +400,19 @@ export async function retireEntry(executor: SqlExecutor, id: string, reason?: st
  * @param fields - Mutable fields supported by the port contract.
  * @returns True when an active row was updated.
  */
-export async function updateEntry(executor: SqlExecutor, id: string, fields: { importance?: number; expiry?: string }): Promise<boolean> {
+export async function updateEntry(
+  executor: SqlExecutor,
+  id: string,
+  fields: {
+    importance?: number;
+    expiry?: string;
+    claim_key?: string;
+    valid_from?: string;
+    valid_to?: string;
+  },
+): Promise<boolean> {
   const assignments: string[] = [];
-  const args: Array<number | string> = [];
+  const args: Array<number | string | null> = [];
 
   if (fields.importance !== undefined) {
     assignments.push("importance = ?");
@@ -298,6 +422,21 @@ export async function updateEntry(executor: SqlExecutor, id: string, fields: { i
   if (fields.expiry !== undefined) {
     assignments.push("expiry = ?");
     args.push(fields.expiry);
+  }
+
+  if (fields.claim_key !== undefined) {
+    assignments.push("claim_key = ?");
+    args.push(normalizeOptionalString(fields.claim_key));
+  }
+
+  if (fields.valid_from !== undefined) {
+    assignments.push("valid_from = ?");
+    args.push(normalizeOptionalString(fields.valid_from));
+  }
+
+  if (fields.valid_to !== undefined) {
+    assignments.push("valid_to = ?");
+    args.push(normalizeOptionalString(fields.valid_to));
   }
 
   if (assignments.length === 0) {

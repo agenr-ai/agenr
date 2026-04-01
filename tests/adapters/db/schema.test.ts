@@ -61,6 +61,11 @@ describe("initSchema", () => {
       "recall_count",
       "last_recalled_at",
       "superseded_by",
+      "valid_from",
+      "valid_to",
+      "claim_key",
+      "supersession_kind",
+      "supersession_reason",
       "cluster_id",
       "user_id",
       "project",
@@ -146,6 +151,9 @@ describe("initSchema", () => {
     expect(await indexExists(client, "idx_surgeon_run_actions_run_id")).toBe(true);
     expect(await indexExists(client, "idx_surgeon_run_actions_entry_id")).toBe(true);
     expect(await indexExists(client, "idx_surgeon_run_actions_created_at")).toBe(true);
+    expect(await indexExists(client, "idx_entries_claim_key")).toBe(true);
+    expect(await indexExists(client, "idx_entries_valid_from")).toBe(true);
+    expect(await indexExists(client, "idx_entries_valid_to")).toBe(true);
     expect(await indexExists(client, "idx_episodes_started_at")).toBe(true);
     expect(await indexExists(client, "idx_episodes_ended_at")).toBe(true);
     expect(await indexExists(client, "idx_episodes_source")).toBe(true);
@@ -162,8 +170,140 @@ describe("initSchema", () => {
     await expect(initSchema(client)).resolves.toBeUndefined();
 
     const version = await client.execute("SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1");
-    expect(version.rows[0]?.value).toBe("5");
+    expect(version.rows[0]?.value).toBe("6");
     expect(await indexExists(client, "idx_episodes_started_at")).toBe(true);
+  });
+
+  it("migrates a v5 database to schema version 6", async () => {
+    const client = createClient({ url: ":memory:" });
+    clients.push(client);
+
+    await client.execute("CREATE TABLE _meta (key TEXT PRIMARY KEY, value TEXT)");
+    await client.execute("INSERT INTO _meta (key, value) VALUES ('schema_version', '5')");
+    await client.execute(`
+      CREATE TABLE entries (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        content TEXT NOT NULL,
+        importance INTEGER NOT NULL,
+        expiry TEXT NOT NULL,
+        tags TEXT,
+        source_file TEXT,
+        source_context TEXT,
+        embedding F32_BLOB(1024),
+        content_hash TEXT,
+        norm_content_hash TEXT,
+        minhash_sig BLOB,
+        quality_score REAL NOT NULL DEFAULT 0.5,
+        recall_count INTEGER DEFAULT 0,
+        last_recalled_at TEXT,
+        superseded_by TEXT REFERENCES entries(id),
+        cluster_id TEXT,
+        user_id TEXT,
+        project TEXT,
+        retired INTEGER NOT NULL DEFAULT 0,
+        retired_at TEXT,
+        retired_reason TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+    await client.execute({
+      sql: `
+        INSERT INTO entries (
+          id,
+          type,
+          subject,
+          content,
+          importance,
+          expiry,
+          tags,
+          quality_score,
+          recall_count,
+          retired,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      args: [
+        "v5-entry",
+        "fact",
+        "legacy subject",
+        "Legacy content survives migration.",
+        7,
+        "permanent",
+        "[]",
+        0.5,
+        0,
+        0,
+        "2026-03-20T00:00:00.000Z",
+        "2026-03-20T00:00:00.000Z",
+      ],
+    });
+
+    await initSchema(client);
+
+    expect(await tableColumns(client, "entries")).toEqual([
+      "id",
+      "type",
+      "subject",
+      "content",
+      "importance",
+      "expiry",
+      "tags",
+      "source_file",
+      "source_context",
+      "embedding",
+      "content_hash",
+      "norm_content_hash",
+      "minhash_sig",
+      "quality_score",
+      "recall_count",
+      "last_recalled_at",
+      "superseded_by",
+      "cluster_id",
+      "user_id",
+      "project",
+      "retired",
+      "retired_at",
+      "retired_reason",
+      "created_at",
+      "updated_at",
+      "valid_from",
+      "valid_to",
+      "claim_key",
+      "supersession_kind",
+      "supersession_reason",
+    ]);
+
+    const migratedEntry = await client.execute({
+      sql: `
+        SELECT
+          subject,
+          content,
+          valid_from,
+          valid_to,
+          claim_key,
+          supersession_kind,
+          supersession_reason
+        FROM entries
+        WHERE id = 'v5-entry'
+      `,
+    });
+    expect(migratedEntry.rows[0]).toMatchObject({
+      subject: "legacy subject",
+      content: "Legacy content survives migration.",
+      valid_from: null,
+      valid_to: null,
+      claim_key: null,
+      supersession_kind: null,
+      supersession_reason: null,
+    });
+
+    const version = await client.execute("SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1");
+    expect(version.rows[0]?.value).toBe("6");
   });
 
   for (const version of ["2", "3", "4"] as const) {

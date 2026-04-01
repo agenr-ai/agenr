@@ -39,8 +39,26 @@ export interface DatabasePort {
   /** Mark an entry as retired. */
   retireEntry(id: string, reason?: string): Promise<boolean>;
 
-  /** Update entry fields (importance, expiry). */
-  updateEntry(id: string, fields: { importance?: number; expiry?: string }): Promise<boolean>;
+  /** Supersede an active entry, linking it to the new entry that replaces it. */
+  supersedeEntry(oldId: string, newId: string, kind?: string, reason?: string): Promise<boolean>;
+
+  /** Find active entries with the given claim key. */
+  findActiveEntriesByClaimKey(claimKey: string): Promise<Entry[]>;
+
+  /** Get distinct entity prefixes from existing claim keys. */
+  getDistinctClaimKeyPrefixes(): Promise<string[]>;
+
+  /** Update entry fields (importance, expiry, and temporal metadata). */
+  updateEntry(
+    id: string,
+    fields: {
+      importance?: number;
+      expiry?: string;
+      claim_key?: string;
+      valid_from?: string;
+      valid_to?: string;
+    },
+  ): Promise<boolean>;
 
   /** Check if a file has been ingested (by path + hash). */
   getIngestLogEntry(filePath: string): Promise<{ fileHash: string; ingestedAt: string } | null>;

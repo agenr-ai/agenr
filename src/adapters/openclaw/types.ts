@@ -2,7 +2,8 @@ import type { OpenClawConfig, OpenClawPluginApi, PluginLogger } from "openclaw/p
 
 import type { OpenClawRepository } from "../../app/openclaw/ports.js";
 import type { AgenrConfig } from "../../config.js";
-import type { DatabasePort, EmbeddingPort, EpisodeDatabasePort, RecallPorts } from "../../core/ports.js";
+import type { DatabasePort, EmbeddingPort, EpisodeDatabasePort, LlmPort, RecallPorts } from "../../core/ports.js";
+import type { ClaimExtractionConfig } from "../../core/store/claim-extraction.js";
 import type { Entry } from "../../core/types.js";
 
 /**
@@ -64,6 +65,10 @@ export interface AgenrOpenClawServices {
   memory: OpenClawRepository;
   embedding: EmbeddingPort;
   recall: RecallPorts;
+  claimExtraction?: {
+    llm: LlmPort;
+    config: ClaimExtractionConfig;
+  };
   embeddingStatus: AgenrOpenClawEmbeddingStatus;
   close(): Promise<void>;
 }

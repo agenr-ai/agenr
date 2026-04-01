@@ -1,8 +1,8 @@
-import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
 
 import { completeSimple, getEnvApiKey, getModel, type Api, type KnownProvider, type Model } from "@mariozechner/pi-ai";
 
@@ -10,6 +10,7 @@ import { authMethodToProvider, isAgenrAuthMethod, type AgenrAuthMethod, type Age
 import type { LlmPort } from "../core/ports.js";
 
 const DEFAULT_REASONING = "medium";
+const require = createRequire(import.meta.url);
 
 /** Optional runtime overrides for the pi-ai-backed LLM client. */
 type CreateLlmClientOptions = {
@@ -387,6 +388,7 @@ function parseCodexFromKeychain(env: NodeJS.ProcessEnv): CredentialCandidate | n
 
   try {
     const account = resolveCodexKeychainAccount(env);
+    const { execSync } = require("node:child_process") as typeof import("node:child_process");
     const raw = execSync(`security find-generic-password -s "Codex Auth" -a "${account}" -w`, {
       encoding: "utf8",
       stdio: ["pipe", "pipe", "pipe"],
@@ -450,6 +452,7 @@ function parseClaudeFromKeychain(): CredentialCandidate | null {
   }
 
   try {
+    const { execSync } = require("node:child_process") as typeof import("node:child_process");
     const raw = execSync('security find-generic-password -s "Claude Code-credentials" -w', {
       encoding: "utf8",
       stdio: ["pipe", "pipe", "pipe"],

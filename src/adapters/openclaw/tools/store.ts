@@ -56,6 +56,22 @@ const STORE_TOOL_PARAMETERS = {
       type: "string",
       description: "Optional provenance note explaining why this memory was stored or what situation produced it.",
     },
+    supersedes: {
+      type: "string",
+      description: "ID of an entry this replaces. The old entry will be marked as superseded.",
+    },
+    claimKey: {
+      type: "string",
+      description: 'Slot key for this fact\'s family (e.g., "jim/home_city"). Helps detect when facts in the same family should replace each other.',
+    },
+    validFrom: {
+      type: "string",
+      description: "ISO 8601 timestamp for when this fact became true in the world.",
+    },
+    validTo: {
+      type: "string",
+      description: "ISO 8601 timestamp for when this fact stopped being true.",
+    },
   },
   required: ["type", "subject", "content"],
 } as const;
@@ -73,7 +89,7 @@ export function createAgenrStoreTool(ctx: OpenClawPluginToolContext, servicesPro
     name: "agenr_store",
     label: "Agenr Store",
     description:
-      "Store a new knowledge entry in agenr long-term memory. Call immediately after decisions, preferences, lessons, and durable facts - but apply the future-session test first: will a fresh session need this to make a better decision, or are you just logging what happened?\n\nStore: architecture decisions, workflow constraints, recurring problems, user preferences, durable technical facts, operational lessons, important open risks.\n\nDo not store: version shipping events (changelogs are the record), issue/PR filing records (the tracker is the record), phase plans or release sequencing (stale within a session), progress snapshots (stale within minutes), prompt file locations or build logistics.\n\nDo not ask before storing - but do ask whether future-you actually needs it.",
+      "Store a new knowledge entry in agenr long-term memory. Call immediately after decisions, preferences, lessons, and durable facts - but apply the future-session test first: will a fresh session need this to make a better decision, or are you just logging what happened?\n\nStore: architecture decisions, workflow constraints, recurring problems, user preferences, durable technical facts, operational lessons, important open risks.\n\nDo not store: version shipping events (changelogs are the record), issue/PR filing records (the tracker is the record), phase plans or release sequencing (stale within a session), progress snapshots (stale within minutes), prompt file locations or build logistics.\n\nWhen replacing an existing fact, pass `supersedes` with the old entry's ID. When storing a slot-like fact (a person's city, a system's config), pass `claimKey` to enable future supersession detection.\n\nDo not ask before storing - but do ask whether future-you actually needs it.",
     parameters: STORE_TOOL_PARAMETERS,
     async execute(_toolCallId, rawParams) {
       try {
@@ -85,6 +101,10 @@ export function createAgenrStoreTool(ctx: OpenClawPluginToolContext, servicesPro
         const expiry = parseExpiry(readStringParam(params, "expiry"));
         const tags = normalizeStringArray(readStringArrayParam(params, "tags"));
         const sourceContext = readStringParam(params, "sourceContext");
+        const supersedes = readStringParam(params, "supersedes");
+        const claimKey = readStringParam(params, "claimKey");
+        const validFrom = readStringParam(params, "validFrom");
+        const validTo = readStringParam(params, "validTo");
         logToolCall(
           logger,
           "agenr_store",
@@ -98,6 +118,10 @@ export function createAgenrStoreTool(ctx: OpenClawPluginToolContext, servicesPro
             expiry,
             tags,
             sourceContext,
+            supersedes,
+            claimKey,
+            validFrom,
+            validTo,
           }),
         );
 
@@ -111,12 +135,28 @@ export function createAgenrStoreTool(ctx: OpenClawPluginToolContext, servicesPro
               ...(importance !== undefined ? { importance } : {}),
               ...(expiry !== undefined ? { expiry } : {}),
               ...(tags.length > 0 ? { tags } : {}),
+              ...(supersedes ? { supersedes } : {}),
+              ...(claimKey ? { claim_key: claimKey } : {}),
+              ...(validFrom ? { valid_from: validFrom } : {}),
+              ...(validTo ? { valid_to: validTo } : {}),
               source_file: buildSessionSourceFile(ctx),
               source_context: sourceContext ?? "Stored via agenr_store from OpenClaw.",
             },
           ],
           services.entries,
           services.embedding,
+          {
+            ...(services.claimExtraction
+              ? {
+                  claimExtraction: {
+                    llm: services.claimExtraction.llm,
+                    db: services.entries,
+                    config: services.claimExtraction.config,
+                  },
+                }
+              : {}),
+            onWarning: (warning) => logger.warn(`[agenr] tool=agenr_store session=${ctx.sessionId ?? "unknown"} warning: ${warning}`),
+          },
         );
         const storedEntry = await services.memory.findEntryBySubject(subject);
 

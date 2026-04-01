@@ -1,7 +1,9 @@
+import { randomUUID } from "node:crypto";
+
 import { describe, expect, it } from "vitest";
 
 import { composeEmbeddingText } from "../../../src/adapters/embeddings.js";
-import type { DatabasePort, EmbeddingPort } from "../../../src/core/ports.js";
+import type { DatabasePort, EmbeddingPort, LlmPort } from "../../../src/core/ports.js";
 import { computeContentHash, computeNormContentHash } from "../../../src/core/store/hashing.js";
 import { storeEntries } from "../../../src/core/store/pipeline.js";
 import type { Entry, StoreEntryInput } from "../../../src/core/types.js";
@@ -205,17 +207,161 @@ describe("storeEntries", () => {
     expect(inserted?.updated_at).toMatch(/^20\d\d-/);
     expect(inserted?.updated_at).not.toBe(createdAt);
   });
+
+  it("extracts a claim key before persistence when configured", async () => {
+    const db = new MockDatabase({
+      claimKeyPrefixes: ["jim", "agenr"],
+    });
+    const embedding = new MockEmbeddingPort();
+    const llm = new MockLlmPort({
+      entity: "Jim",
+      attribute: "home city",
+      confidence: 0.93,
+    });
+
+    await storeEntries(
+      [
+        createInput({
+          subject: "Jim's home city",
+          content: "Jim lives in Denver, Colorado.",
+        }),
+      ],
+      db,
+      embedding,
+      {
+        claimExtraction: {
+          llm,
+          db,
+          config: {
+            enabled: true,
+            confidenceThreshold: 0.8,
+            eligibleTypes: ["fact", "preference", "decision"],
+          },
+        },
+      },
+    );
+
+    expect(db.insertions[0]?.entry.claim_key).toBe("jim/home_city");
+    expect(llm.calls).toHaveLength(1);
+  });
+
+  it("preserves an agent-provided claim key and skips extraction", async () => {
+    const db = new MockDatabase({
+      claimKeyPrefixes: ["jim"],
+    });
+    const embedding = new MockEmbeddingPort();
+    const llm = new MockLlmPort({
+      entity: "Jim",
+      attribute: "timezone",
+      confidence: 0.93,
+    });
+
+    await storeEntries(
+      [
+        createInput({
+          subject: "Jim's home city",
+          content: "Jim lives in Denver, Colorado.",
+          claim_key: "jim/home_city",
+        }),
+      ],
+      db,
+      embedding,
+      {
+        claimExtraction: {
+          llm,
+          db,
+          config: {
+            enabled: true,
+            confidenceThreshold: 0.8,
+            eligibleTypes: ["fact", "preference", "decision"],
+          },
+        },
+      },
+    );
+
+    expect(db.insertions[0]?.entry.claim_key).toBe("jim/home_city");
+    expect(llm.calls).toEqual([]);
+  });
+
+  it("links explicit supersession after storing a replacement entry", async () => {
+    const db = new MockDatabase();
+    const embedding = new MockEmbeddingPort();
+    const supersededId = randomUUID();
+
+    const result = await storeEntries(
+      [
+        createInput({
+          subject: "new home city",
+          content: "Jim now lives in Denver, Colorado.",
+          supersedes: supersededId,
+        }),
+      ],
+      db,
+      embedding,
+    );
+
+    expect(result).toEqual({ stored: 1, skipped: 0, rejected: 0 });
+    expect(db.supersedeCalls).toEqual([
+      {
+        oldId: supersededId,
+        newId: db.insertions[0]?.entry.id ?? "",
+        kind: "update",
+        reason: undefined,
+      },
+    ]);
+    expect(db.transactionCount).toBe(1);
+  });
+
+  it("stores successfully and emits a warning when supersedes points to an inactive or missing entry", async () => {
+    const db = new MockDatabase({
+      supersedeResult: false,
+    });
+    const embedding = new MockEmbeddingPort();
+    const warnings: string[] = [];
+
+    const result = await storeEntries(
+      [
+        createInput({
+          subject: "replacement entry",
+          content: "This entry should still store even when supersession fails.",
+          supersedes: randomUUID(),
+        }),
+      ],
+      db,
+      embedding,
+      {
+        onWarning: (warning) => warnings.push(warning),
+      },
+    );
+
+    expect(result).toEqual({ stored: 1, skipped: 0, rejected: 0 });
+    expect(db.insertions).toHaveLength(1);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/could not supersede/i);
+  });
 });
 
 class MockDatabase implements DatabasePort {
   public readonly insertions: Array<{ entry: Entry; embedding: number[]; contentHash: string }> = [];
   public readonly existingHashes: Set<string>;
   public readonly existingNormHashes: Set<string>;
+  public readonly claimKeyPrefixes: string[];
+  public readonly supersedeCalls: Array<{ oldId: string; newId: string; kind?: string; reason?: string }> = [];
   public transactionCount = 0;
+  private readonly supersedeResult: boolean;
 
-  public constructor(options: { existingHashes?: Set<string>; existingNormHashes?: Set<string> } = {}) {
+  public constructor(
+    options: {
+      existingHashes?: Set<string>;
+      existingNormHashes?: Set<string>;
+      claimKeyPrefixes?: string[];
+      supersedeResult?: boolean;
+    } = {},
+  ) {
     this.existingHashes = options.existingHashes ?? new Set();
     this.existingNormHashes = options.existingNormHashes ?? new Set();
+    this.claimKeyPrefixes = options.claimKeyPrefixes ?? [];
+    this.supersedeResult = options.supersedeResult ?? true;
   }
 
   public async insertEntry(entry: Entry, embedding: number[], contentHash: string): Promise<string> {
@@ -251,6 +397,19 @@ class MockDatabase implements DatabasePort {
     return false;
   }
 
+  public async supersedeEntry(oldId: string, newId: string, kind?: string, reason?: string): Promise<boolean> {
+    this.supersedeCalls.push({ oldId, newId, kind, reason });
+    return this.supersedeResult;
+  }
+
+  public async findActiveEntriesByClaimKey(): Promise<Entry[]> {
+    return [];
+  }
+
+  public async getDistinctClaimKeyPrefixes(): Promise<string[]> {
+    return this.claimKeyPrefixes;
+  }
+
   public async updateEntry(): Promise<boolean> {
     return false;
   }
@@ -280,6 +439,21 @@ class MockEmbeddingPort implements EmbeddingPort {
   }
 }
 
+class MockLlmPort implements LlmPort {
+  public readonly calls: Array<{ systemPrompt: string; userMessage: string }> = [];
+
+  public constructor(private readonly response: Record<string, unknown>) {}
+
+  public async complete(): Promise<string> {
+    throw new Error("complete() is not used in these tests.");
+  }
+
+  public async completeJson<T>(systemPrompt: string, userMessage: string): Promise<T> {
+    this.calls.push({ systemPrompt, userMessage });
+    return this.response as T;
+  }
+}
+
 function createInput(overrides: Partial<StoreEntryInput> = {}): StoreEntryInput {
   return {
     type: overrides.type ?? "fact",
@@ -291,5 +465,9 @@ function createInput(overrides: Partial<StoreEntryInput> = {}): StoreEntryInput 
     source_file: overrides.source_file,
     source_context: overrides.source_context,
     created_at: overrides.created_at,
+    supersedes: overrides.supersedes,
+    claim_key: overrides.claim_key,
+    valid_from: overrides.valid_from,
+    valid_to: overrides.valid_to,
   };
 }

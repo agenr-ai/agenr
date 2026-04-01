@@ -12,15 +12,23 @@ const ENTRY_TYPES = ["fact", "decision", "preference", "lesson", "relationship",
  */
 export type EntryType = (typeof ENTRY_TYPES)[number];
 
+/** Ordered list of supported explicit supersession relationships. */
+const SUPERSESSION_KINDS = ["update", "correction", "duplicate", "merge", "refinement"] as const;
+
 /** Ordered list of supported recall durability levels. */
 const EXPIRY_LEVELS = ["core", "permanent", "temporary"] as const;
 
-export { ENTRY_TYPES, EXPIRY_LEVELS };
+export { ENTRY_TYPES, EXPIRY_LEVELS, SUPERSESSION_KINDS };
 
 /**
  * Union of all supported recall durability levels.
  */
 export type Expiry = (typeof EXPIRY_LEVELS)[number];
+
+/**
+ * Union of all supported explicit supersession relationships.
+ */
+export type SupersessionKind = (typeof SUPERSESSION_KINDS)[number];
 
 /** Ordered list of supported episode sources. */
 const EPISODE_SOURCES = ["openclaw", "codex", "cli", "synthesis"] as const;
@@ -60,6 +68,11 @@ export interface Entry {
   recall_count: number;
   last_recalled_at?: string;
   superseded_by?: string;
+  valid_from?: string;
+  valid_to?: string;
+  claim_key?: string;
+  supersession_kind?: string;
+  supersession_reason?: string;
   cluster_id?: string;
   user_id?: string;
   project?: string;
@@ -118,6 +131,10 @@ export interface StoreEntryInput {
   user_id?: string;
   project?: string;
   created_at?: string;
+  supersedes?: string;
+  claim_key?: string;
+  valid_from?: string;
+  valid_to?: string;
 }
 
 /**

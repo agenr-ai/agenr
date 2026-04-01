@@ -5,7 +5,7 @@ import type { SqlExecutor } from "./queries.js";
 /**
  * Logical schema version stored in the metadata table.
  */
-const SCHEMA_VERSION = "5";
+const SCHEMA_VERSION = "6";
 
 /**
  * libSQL vector index name for entry embeddings.
@@ -47,6 +47,11 @@ const CREATE_ENTRIES_TABLE_SQL = `
     recall_count INTEGER DEFAULT 0,
     last_recalled_at TEXT,
     superseded_by TEXT REFERENCES entries(id),
+    valid_from TEXT,
+    valid_to TEXT,
+    claim_key TEXT,
+    supersession_kind TEXT,
+    supersession_reason TEXT,
     cluster_id TEXT,
     user_id TEXT,
     project TEXT,
@@ -249,6 +254,24 @@ const CREATE_ENTRIES_CREATED_AT_INDEX_SQL = `
   ON entries(created_at)
 `;
 
+const CREATE_ENTRIES_CLAIM_KEY_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_entries_claim_key
+  ON entries(claim_key)
+  WHERE claim_key IS NOT NULL
+`;
+
+const CREATE_ENTRIES_VALID_FROM_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_entries_valid_from
+  ON entries(valid_from)
+  WHERE valid_from IS NOT NULL
+`;
+
+const CREATE_ENTRIES_VALID_TO_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_entries_valid_to
+  ON entries(valid_to)
+  WHERE valid_to IS NOT NULL
+`;
+
 const CREATE_EPISODES_STARTED_AT_INDEX_SQL = `
   CREATE INDEX IF NOT EXISTS idx_episodes_started_at
   ON episodes(started_at)
@@ -345,6 +368,9 @@ const SCHEMA_STATEMENTS = [
   CREATE_ENTRIES_EXPIRY_INDEX_SQL,
   CREATE_ENTRIES_RETIRED_INDEX_SQL,
   CREATE_ENTRIES_CREATED_AT_INDEX_SQL,
+  CREATE_ENTRIES_CLAIM_KEY_INDEX_SQL,
+  CREATE_ENTRIES_VALID_FROM_INDEX_SQL,
+  CREATE_ENTRIES_VALID_TO_INDEX_SQL,
   CREATE_EPISODES_STARTED_AT_INDEX_SQL,
   CREATE_EPISODES_ENDED_AT_INDEX_SQL,
   CREATE_EPISODES_SOURCE_INDEX_SQL,
@@ -379,6 +405,9 @@ export async function initSchema(db: Client): Promise<void> {
   await db.execute("PRAGMA foreign_keys = ON");
   const currentVersion = await getSchemaVersion(db);
   await assertSupportedSchemaState(db, currentVersion);
+  if (currentVersion === "5") {
+    await migrateV5ToV6(db);
+  }
   const hadEntriesFts = await tableExists(db, "entries_fts");
 
   for (const statement of SCHEMA_STATEMENTS) {
@@ -413,7 +442,7 @@ export async function initSchema(db: Client): Promise<void> {
  * @param currentVersion - Stored schema version, when present.
  */
 async function assertSupportedSchemaState(db: Client, currentVersion: string | null): Promise<void> {
-  if (currentVersion && currentVersion !== SCHEMA_VERSION) {
+  if (currentVersion && currentVersion !== "5" && currentVersion !== SCHEMA_VERSION) {
     throw new Error(
       `Unsupported agenr database schema version "${currentVersion}". ` +
         `This build only supports schema version ${SCHEMA_VERSION}. ` +
@@ -435,6 +464,26 @@ async function assertSupportedSchemaState(db: Client, currentVersion: string | n
       `This build only supports a fresh database or one already initialized at schema version ${SCHEMA_VERSION}. ` +
       "Create a fresh database with `agenr db reset` or manually migrate the data into a new database.",
   );
+}
+
+/**
+ * Migrates an initialized v5 entries table to the v6 temporal-validity schema.
+ *
+ * @param db - libSQL client connected to the target database.
+ * @returns Promise that resolves once the migration completes.
+ */
+async function migrateV5ToV6(db: Client): Promise<void> {
+  const columns = ["valid_from TEXT", "valid_to TEXT", "claim_key TEXT", "supersession_kind TEXT", "supersession_reason TEXT"];
+
+  for (const column of columns) {
+    try {
+      await db.execute(`ALTER TABLE entries ADD COLUMN ${column}`);
+    } catch (error) {
+      if (!(error instanceof Error && /duplicate column/i.test(error.message))) {
+        throw error;
+      }
+    }
+  }
 }
 
 /**

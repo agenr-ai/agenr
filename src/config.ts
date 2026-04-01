@@ -7,6 +7,9 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import type { ClaimExtractionConfig } from "./core/store/claim-extraction.js";
+import { ENTRY_TYPES, type EntryType } from "./core/types.js";
+
 /**
  * Supported auth methods for agenr-managed LLM access.
  */
@@ -75,6 +78,11 @@ export interface SurgeonConfig {
     retirement?: SurgeonPassConfig;
   };
 }
+
+/**
+ * Persisted config overrides for optional claim-key extraction.
+ */
+export type AgenrClaimExtractionConfig = Partial<ClaimExtractionConfig>;
 
 /**
  * Static metadata for one supported auth method.
@@ -168,6 +176,9 @@ export interface AgenrConfig {
   /** Model override for episode summary generation (CLI backfill). */
   episodeModel?: ModelConfig;
 
+  /** Best-effort claim-key extraction settings. */
+  claimExtraction?: AgenrClaimExtractionConfig;
+
   /** Surgeon module configuration. */
   surgeon?: SurgeonConfig;
 
@@ -189,8 +200,12 @@ const DEFAULT_SURGEON_CONTEXT_LIMIT = 0;
 const DEFAULT_SURGEON_RETIREMENT_PROTECT_RECALLED_DAYS = 14;
 const DEFAULT_SURGEON_RETIREMENT_PROTECT_MIN_IMPORTANCE = 9;
 const DEFAULT_SURGEON_SKIP_RECENTLY_EVALUATED_DAYS = 7;
+const DEFAULT_CLAIM_EXTRACTION_CONFIDENCE_THRESHOLD = 0.8;
+const DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES = ["fact", "preference", "decision"] as const satisfies readonly EntryType[];
 
 export {
+  DEFAULT_CLAIM_EXTRACTION_CONFIDENCE_THRESHOLD,
+  DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES,
   DEFAULT_SURGEON_CONTEXT_LIMIT,
   DEFAULT_SURGEON_COST_CAP,
   DEFAULT_SURGEON_DAILY_COST_CAP,
@@ -298,6 +313,20 @@ export function resolveConfigPath(options: ResolveConfigPathOptions = {}): strin
  */
 export function resolveDbPath(config?: AgenrConfig): string {
   return process.env.AGENR_DB_PATH ?? config?.dbPath ?? path.join(resolveConfigDir(), DEFAULT_DB_NAME);
+}
+
+/**
+ * Resolves persisted claim-extraction overrides into a fully-populated runtime config.
+ *
+ * @param config - Optional agenr runtime configuration.
+ * @returns Claim-extraction settings with defaults applied.
+ */
+export function resolveClaimExtractionConfig(config?: AgenrConfig): ClaimExtractionConfig {
+  return {
+    enabled: config?.claimExtraction?.enabled ?? true,
+    confidenceThreshold: normalizeClaimExtractionConfidence(config?.claimExtraction?.confidenceThreshold),
+    eligibleTypes: normalizeClaimExtractionEligibleTypes(config?.claimExtraction?.eligibleTypes),
+  };
 }
 
 /**
@@ -424,4 +453,23 @@ function resolveFilesystemPath(targetPath: string): string {
 /** Returns whether one parsed config value is an object-like record. */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Applies the default confidence threshold when config values are absent or invalid. */
+function normalizeClaimExtractionConfidence(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_CLAIM_EXTRACTION_CONFIDENCE_THRESHOLD;
+  }
+
+  return Math.min(1, Math.max(0, value));
+}
+
+/** Filters configured claim-extraction entry types down to the supported union. */
+function normalizeClaimExtractionEligibleTypes(value: EntryType[] | undefined): EntryType[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    return [...DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES];
+  }
+
+  const normalized = Array.from(new Set(value.filter((candidate): candidate is EntryType => ENTRY_TYPES.includes(candidate))));
+  return normalized.length > 0 ? normalized : [...DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES];
 }
