@@ -8,13 +8,25 @@ import type { Entry } from "../../core/types.js";
 
 /**
  * Runtime plugin configuration accepted by the agenr OpenClaw adapter.
+ *
+ * Model fields here control tasks that execute inside the OpenClaw process
+ * using OpenClaw's credential system (`modelAuth.resolveApiKeyForProvider`).
+ * These are intentionally separate from the model fields in `AgenrConfig`,
+ * which control CLI pipeline stages that use agenr's own credentials.
+ *
+ * Infrastructure fields (`dbPath`, `configPath`) point the plugin at the
+ * shared agenr database and config file on disk.
  */
 export interface AgenrOpenClawPluginConfig {
+  /** Path to the shared agenr SQLite database. */
   dbPath?: string;
+  /** Path to the agenr config.json file. */
   configPath?: string;
+  /** Model override for continuity summary generation (OpenClaw auth). */
   continuityModel?: string;
+  /** Model override for episode summary generation at session-start (OpenClaw auth). */
   episodeModel?: string;
-  /** Model override for claim-key extraction at store time. Format: "provider/model". */
+  /** Model override for claim-key extraction at store time (OpenClaw auth). Format: "provider/model". */
   claimExtractionModel?: string;
 }
 

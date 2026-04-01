@@ -170,6 +170,17 @@ export interface AgenrConfig {
   /** User-provided context injected into the extraction prompt. Helps the LLM understand what's relevant to this user. */
   extractionContext?: string;
 
+  /**
+   * CLI pipeline model overrides.
+   *
+   * These control models used by CLI commands (`agenr ingest`, `agenr ingest episodes`,
+   * `agenr surgeon`, and related flows) and are resolved via `resolveModel()` plus
+   * `createLlmClient()` using agenr's own credentials.
+   *
+   * OpenClaw-hosted tasks (episode summaries at session-start, continuity summaries,
+   * claim extraction at store-time) use separate model fields in the OpenClaw plugin
+   * config because they resolve credentials through OpenClaw's `modelAuth` system.
+   */
   /** Model override for extraction (the main LLM extraction pipeline). */
   extractionModel?: ModelConfig;
 
