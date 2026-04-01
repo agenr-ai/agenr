@@ -102,6 +102,40 @@ export interface SurgeonCandidateSummary {
 }
 
 /**
+ * Query options for listing supersession candidate clusters.
+ */
+export interface SurgeonSupersessionCandidateQuery {
+  scope: "claim_key" | "subject" | "all";
+  type?: string;
+  limit?: number;
+  offset?: number;
+}
+
+/**
+ * One entry returned inside a supersession candidate cluster.
+ */
+export interface SurgeonSupersessionClusterEntry {
+  id: string;
+  subject: string;
+  type: string;
+  importance: number;
+  expiry: string;
+  createdAt: string;
+  content: string;
+  claimKey: string | null;
+  tags: string[];
+}
+
+/**
+ * Group of active entries that may represent the same knowledge slot.
+ */
+export interface SurgeonSupersessionCluster {
+  groupKey: string;
+  groupedBy: "claim_key" | "subject";
+  entries: SurgeonSupersessionClusterEntry[];
+}
+
+/**
  * Minimal entry summary used in surgeon inspection responses.
  */
 export interface SurgeonEntrySummary {
@@ -280,6 +314,31 @@ export async function listRetirementCandidates(executor: SqlExecutor, query: Sur
   const offset = normalizeOffset(query.offset);
   const limit = normalizeLimit(query.limit);
   return candidates.slice(offset, offset + limit);
+}
+
+/**
+ * Lists supersession candidate clusters across claim-key and subject scopes.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @param query - Cluster grouping, filtering, and pagination options.
+ * @returns Candidate clusters ordered by grouping key.
+ */
+export async function listSupersessionCandidates(executor: SqlExecutor, query: SurgeonSupersessionCandidateQuery): Promise<SurgeonSupersessionCluster[]> {
+  const scope = normalizeSupersessionScope(query.scope);
+  const type = normalizeOptionalString(query.type);
+  const scopes = scope === "all" ? (["claim_key", "subject"] as const) : ([scope] as const);
+  const clusters = (
+    await Promise.all(
+      scopes.map(async (currentScope) => {
+        const rows = currentScope === "claim_key" ? await loadClaimKeySupersessionRows(executor, type) : await loadSubjectSupersessionRows(executor, type);
+        return currentScope === "claim_key" ? groupClaimKeySupersessionRows(rows) : groupSubjectSupersessionRows(rows);
+      }),
+    )
+  ).flat();
+
+  const offset = normalizeOffset(query.offset);
+  const limit = normalizeOptionalLimit(query.limit);
+  return limit === null ? clusters.slice(offset) : clusters.slice(offset, offset + limit);
 }
 
 /**
@@ -514,6 +573,174 @@ function buildCandidateFilter(query: SurgeonCandidateQuery): CandidateFilterStat
 }
 
 /**
+ * Loads active rows that share a non-null claim key with at least one sibling.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @param type - Optional entry-type filter.
+ * @returns Raw rows ordered by claim key and creation time.
+ */
+async function loadClaimKeySupersessionRows(executor: SqlExecutor, type: string | null): Promise<Row[]> {
+  const whereClauses = [buildActiveEntryClause("e"), "e.claim_key IS NOT NULL"];
+  const args: Array<string | number | null> = [];
+
+  if (type) {
+    whereClauses.push("e.type = ?");
+    args.push(type);
+  }
+
+  const duplicateWhereClauses = ["claim_key IS NOT NULL"];
+  const duplicateArgs: Array<string | number | null> = [];
+  if (type) {
+    duplicateWhereClauses.push("type = ?");
+    duplicateArgs.push(type);
+  }
+
+  const result = await executor.execute({
+    sql: `
+      SELECT
+        e.id,
+        e.subject,
+        e.type,
+        e.importance,
+        e.expiry,
+        e.created_at,
+        e.content,
+        e.claim_key,
+        e.tags
+      FROM entries AS e
+      WHERE ${whereClauses.join("\n        AND ")}
+        AND e.claim_key IN (
+          SELECT claim_key
+          FROM entries
+          WHERE ${duplicateWhereClauses.join("\n            AND ")}
+            AND retired = 0
+            AND superseded_by IS NULL
+          GROUP BY claim_key
+          HAVING COUNT(*) >= 2
+        )
+      ORDER BY e.claim_key ASC, e.created_at ASC, e.id ASC
+    `,
+    args: [...args, ...duplicateArgs],
+  });
+
+  return result.rows;
+}
+
+/**
+ * Loads active rows that share the same normalized subject and type.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @param type - Optional entry-type filter.
+ * @returns Raw rows ordered by normalized subject, type, and creation time.
+ */
+async function loadSubjectSupersessionRows(executor: SqlExecutor, type: string | null): Promise<Row[]> {
+  const whereClauses = [buildActiveEntryClause("e")];
+  const args: Array<string | number | null> = [];
+
+  if (type) {
+    whereClauses.push("e.type = ?");
+    args.push(type);
+  }
+
+  const duplicateWhereClauses = ["retired = 0", "superseded_by IS NULL"];
+  const duplicateArgs: Array<string | number | null> = [];
+  if (type) {
+    duplicateWhereClauses.push("type = ?");
+    duplicateArgs.push(type);
+  }
+
+  const result = await executor.execute({
+    sql: `
+      SELECT
+        e.id,
+        e.subject,
+        e.type,
+        e.importance,
+        e.expiry,
+        e.created_at,
+        e.content,
+        e.claim_key,
+        e.tags
+      FROM entries AS e
+      INNER JOIN (
+        SELECT
+          LOWER(TRIM(subject)) AS normalized_subject,
+          type
+        FROM entries
+        WHERE ${duplicateWhereClauses.join("\n          AND ")}
+        GROUP BY LOWER(TRIM(subject)), type
+        HAVING COUNT(*) >= 2
+      ) AS groups
+        ON LOWER(TRIM(e.subject)) = groups.normalized_subject
+       AND e.type = groups.type
+      WHERE ${whereClauses.join("\n        AND ")}
+      ORDER BY LOWER(TRIM(e.subject)) ASC, e.type ASC, e.created_at ASC, e.id ASC
+    `,
+    args: [...duplicateArgs, ...args],
+  });
+
+  return result.rows;
+}
+
+/**
+ * Groups raw claim-key rows into supersession candidate clusters.
+ *
+ * @param rows - Raw rows ordered by claim key and creation time.
+ * @returns Hydrated claim-key clusters.
+ */
+function groupClaimKeySupersessionRows(rows: Row[]): SurgeonSupersessionCluster[] {
+  const clusters = new Map<string, SurgeonSupersessionCluster>();
+
+  for (const row of rows) {
+    const claimKey = readOptionalString(row, "claim_key");
+    if (!claimKey) {
+      continue;
+    }
+
+    const existing = clusters.get(claimKey);
+    if (existing) {
+      existing.entries.push(mapSupersessionClusterEntry(row));
+      continue;
+    }
+
+    clusters.set(claimKey, {
+      groupKey: claimKey,
+      groupedBy: "claim_key",
+      entries: [mapSupersessionClusterEntry(row)],
+    });
+  }
+
+  return [...clusters.values()];
+}
+
+/**
+ * Groups raw subject rows into supersession candidate clusters.
+ *
+ * @param rows - Raw rows ordered by normalized subject, type, and creation time.
+ * @returns Hydrated subject clusters.
+ */
+function groupSubjectSupersessionRows(rows: Row[]): SurgeonSupersessionCluster[] {
+  const clusters = new Map<string, SurgeonSupersessionCluster>();
+
+  for (const row of rows) {
+    const groupKey = buildNormalizedSubjectClusterKey(row);
+    const existing = clusters.get(groupKey);
+    if (existing) {
+      existing.entries.push(mapSupersessionClusterEntry(row));
+      continue;
+    }
+
+    clusters.set(groupKey, {
+      groupKey,
+      groupedBy: "subject",
+      entries: [mapSupersessionClusterEntry(row)],
+    });
+  }
+
+  return [...clusters.values()];
+}
+
+/**
  * Builds the JSON tag-membership predicate for one entry alias.
  *
  * @param alias - Table alias that owns the `tags` column.
@@ -540,6 +767,20 @@ function buildTagContainsClause(alias: string): string {
  */
 function normalizeScope(scope: SurgeonCandidateQuery["scope"]): "actionable" | "all" {
   return scope === "all" ? "all" : "actionable";
+}
+
+/**
+ * Normalizes the supersession scope to a supported grouping family.
+ *
+ * @param scope - Caller-supplied scope.
+ * @returns Supported supersession scope.
+ */
+function normalizeSupersessionScope(scope: SurgeonSupersessionCandidateQuery["scope"]): "claim_key" | "subject" | "all" {
+  if (scope === "subject" || scope === "all") {
+    return scope;
+  }
+
+  return "claim_key";
 }
 
 /**
@@ -667,6 +908,20 @@ function normalizeLimit(limit: number | undefined): number {
 }
 
 /**
+ * Normalizes optional cluster limits while preserving the "all clusters" case.
+ *
+ * @param limit - Raw limit value.
+ * @returns Safe list limit, or null when no explicit limit was requested.
+ */
+function normalizeOptionalLimit(limit: number | undefined): number | null {
+  if (!Number.isFinite(limit) || (limit ?? 0) <= 0) {
+    return null;
+  }
+
+  return Math.floor(limit as number);
+}
+
+/**
  * Normalizes offsets into a non-negative integer.
  *
  * @param offset - Raw offset value.
@@ -707,6 +962,38 @@ function normalizeOptionalString(value: string | undefined): string | null {
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
+ * Maps one raw row into the supersession-cluster entry shape.
+ *
+ * @param row - Raw database row.
+ * @returns Hydrated cluster entry.
+ */
+function mapSupersessionClusterEntry(row: Row): SurgeonSupersessionClusterEntry {
+  return {
+    id: readRequiredString(row, "id"),
+    subject: readRequiredString(row, "subject"),
+    type: readRequiredString(row, "type"),
+    importance: readNumber(row, "importance", 0),
+    expiry: readRequiredString(row, "expiry"),
+    createdAt: readRequiredString(row, "created_at"),
+    content: readRequiredString(row, "content"),
+    claimKey: readOptionalString(row, "claim_key") ?? null,
+    tags: deserializeTags(row.tags),
+  };
+}
+
+/**
+ * Builds the stable cluster key used for normalized subject groupings.
+ *
+ * @param row - Raw database row.
+ * @returns Stable normalized subject key including entry type.
+ */
+function buildNormalizedSubjectClusterKey(row: Row): string {
+  const subject = readRequiredString(row, "subject").trim().toLowerCase();
+  const type = readRequiredString(row, "type").trim();
+  return `${subject}::${type}`;
 }
 
 /**

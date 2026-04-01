@@ -1,7 +1,13 @@
 import { createClient, type Client } from "@libsql/client";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { countRetirementCandidates, getSurgeonHealthStats, inspectSurgeonEntry, listRetirementCandidates } from "../../../src/adapters/db/surgeon-queries.js";
+import {
+  countRetirementCandidates,
+  getSurgeonHealthStats,
+  inspectSurgeonEntry,
+  listRetirementCandidates,
+  listSupersessionCandidates,
+} from "../../../src/adapters/db/surgeon-queries.js";
 import { createSurgeonRun, logSurgeonAction } from "../../../src/adapters/db/surgeon-run-log.js";
 import { serializeTags } from "../../../src/adapters/db/row-mapping.js";
 import { initSchema } from "../../../src/adapters/db/schema.js";
@@ -130,6 +136,74 @@ describe("surgeon queries", () => {
     });
 
     expect(paginated.map((candidate) => candidate.id)).toEqual(["alpha-fact-1"]);
+  });
+
+  it("lists claim_key supersession clusters with two or more active entries", async () => {
+    const client = await createTestClient(clients);
+
+    await insertEntry(client, {
+      id: "home-city-1",
+      subject: "Jim home city",
+      claim_key: "jim/home_city",
+      created_at: daysAgoIso(40),
+    });
+    await insertEntry(client, {
+      id: "home-city-2",
+      subject: "Jim home city updated",
+      claim_key: "jim/home_city",
+      created_at: daysAgoIso(20),
+    });
+    await insertEntry(client, {
+      id: "employer-1",
+      subject: "Jim employer",
+      claim_key: "jim/employer",
+      created_at: daysAgoIso(10),
+    });
+
+    const clusters = await listSupersessionCandidates(client, {
+      scope: "claim_key",
+    });
+
+    expect(clusters).toHaveLength(1);
+    expect(clusters[0]).toMatchObject({
+      groupKey: "jim/home_city",
+      groupedBy: "claim_key",
+    });
+    expect(clusters[0]?.entries.map((entry) => entry.id)).toEqual(["home-city-1", "home-city-2"]);
+  });
+
+  it("lists subject supersession clusters for matching subject and type pairs", async () => {
+    const client = await createTestClient(clients);
+
+    await insertEntry(client, {
+      id: "subject-1",
+      subject: "mac mini update control",
+      type: "preference",
+      created_at: daysAgoIso(30),
+    });
+    await insertEntry(client, {
+      id: "subject-2",
+      subject: "mac mini update control",
+      type: "preference",
+      created_at: daysAgoIso(15),
+    });
+    await insertEntry(client, {
+      id: "subject-3",
+      subject: "different subject",
+      type: "preference",
+      created_at: daysAgoIso(5),
+    });
+
+    const clusters = await listSupersessionCandidates(client, {
+      scope: "subject",
+    });
+
+    expect(clusters).toHaveLength(1);
+    expect(clusters[0]).toMatchObject({
+      groupKey: "mac mini update control::preference",
+      groupedBy: "subject",
+    });
+    expect(clusters[0]?.entries.map((entry) => entry.id)).toEqual(["subject-1", "subject-2"]);
   });
 
   it("inspects entries with same-subject, cluster, and supersession context", async () => {
@@ -426,6 +500,11 @@ async function insertEntry(client: Client, overrides: Partial<Entry> & Pick<Entr
         recall_count,
         last_recalled_at,
         superseded_by,
+        valid_from,
+        valid_to,
+        claim_key,
+        supersession_kind,
+        supersession_reason,
         cluster_id,
         retired,
         retired_at,
@@ -433,7 +512,7 @@ async function insertEntry(client: Client, overrides: Partial<Entry> & Pick<Entr
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     args: [
       entry.id,
@@ -453,6 +532,11 @@ async function insertEntry(client: Client, overrides: Partial<Entry> & Pick<Entr
       entry.recall_count,
       entry.last_recalled_at ?? null,
       entry.superseded_by ?? null,
+      entry.valid_from ?? null,
+      entry.valid_to ?? null,
+      entry.claim_key ?? null,
+      entry.supersession_kind ?? null,
+      entry.supersession_reason ?? null,
       entry.cluster_id ?? null,
       entry.retired ? 1 : 0,
       entry.retired_at ?? null,
@@ -481,6 +565,11 @@ function buildEntry(overrides: Partial<Entry> & Pick<Entry, "id" | "subject">): 
     recall_count: overrides.recall_count ?? 0,
     last_recalled_at: overrides.last_recalled_at,
     superseded_by: overrides.superseded_by,
+    valid_from: overrides.valid_from,
+    valid_to: overrides.valid_to,
+    claim_key: overrides.claim_key,
+    supersession_kind: overrides.supersession_kind,
+    supersession_reason: overrides.supersession_reason,
     cluster_id: overrides.cluster_id,
     retired: overrides.retired ?? false,
     retired_at: overrides.retired_at,

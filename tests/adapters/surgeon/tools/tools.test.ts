@@ -8,10 +8,19 @@ import { finalizeBulkWrites, initSchema, prepareBulkWrites } from "../../../../s
 import { createCompletePassTool } from "../../../../src/adapters/surgeon/tools/complete.js";
 import { createHealthStatsTool } from "../../../../src/adapters/surgeon/tools/health.js";
 import { createInspectEntryTool } from "../../../../src/adapters/surgeon/tools/inspect.js";
-import { createSurgeonTools, type SurgeonToolCompletionState, type SurgeonToolDeps } from "../../../../src/adapters/surgeon/tools/index.js";
+import {
+  createSupersessionTools,
+  createSurgeonTools,
+  type SurgeonToolCompletionState,
+  type SurgeonToolDeps,
+} from "../../../../src/adapters/surgeon/tools/index.js";
 import { createRetireEntryTool } from "../../../../src/adapters/surgeon/tools/mutate.js";
 import { createQueryCandidatesTool } from "../../../../src/adapters/surgeon/tools/query.js";
 import { createSimulateRecallTool } from "../../../../src/adapters/surgeon/tools/recall-sim.js";
+import { createAssignClaimKeyTool } from "../../../../src/adapters/surgeon/tools/supersession-claim.js";
+import { createLinkSupersessionTool } from "../../../../src/adapters/surgeon/tools/supersession-link.js";
+import { createQuerySupersessionCandidatesTool } from "../../../../src/adapters/surgeon/tools/supersession-query.js";
+import { createSetValidityTool } from "../../../../src/adapters/surgeon/tools/supersession-validity.js";
 import { createUpdateEntryTool } from "../../../../src/adapters/surgeon/tools/update-entry.js";
 import { createSurgeonCompletionGuardState } from "../../../../src/app/surgeon/completion-guard.js";
 import type { RecallPorts } from "../../../../src/core/ports.js";
@@ -38,6 +47,25 @@ describe("surgeon tools", () => {
       "inspect_entry",
       "simulate_recall",
       "retire_entry",
+      "update_entry",
+      "complete_pass",
+    ]);
+  });
+
+  it("creates the supersession tool factory set", async () => {
+    const client = await createTestClient(clients);
+    const deps = createToolDeps(client, {
+      passType: "supersession",
+    });
+
+    expect(createSupersessionTools(deps).map((tool) => tool.name)).toEqual([
+      "get_health_stats",
+      "query_supersession_candidates",
+      "inspect_entry",
+      "simulate_recall",
+      "link_supersession",
+      "assign_claim_key",
+      "set_validity",
       "update_entry",
       "complete_pass",
     ]);
@@ -136,6 +164,58 @@ describe("surgeon tools", () => {
       scope: "all",
     });
     expect(allScopeResult.details.message).toContain("candidate pool appears exhausted");
+  });
+
+  it("tracks supersession cluster review progress when querying claim_key candidates", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "claim-entry-1",
+      subject: "Jim home city",
+      claim_key: "jim/home_city",
+      created_at: daysAgoIso(40),
+    });
+    await insertEntry(client, {
+      id: "claim-entry-2",
+      subject: "Jim home city update",
+      claim_key: "jim/home_city",
+      created_at: daysAgoIso(20),
+    });
+
+    const completionGuards = createSurgeonCompletionGuardState({
+      totalEntries: 2,
+      supersessionClaimKeyClusters: 1,
+      supersessionSubjectClusters: 1,
+    });
+    const tool = createQuerySupersessionCandidatesTool(
+      createToolDeps(client, {
+        passType: "supersession",
+        completionGuards,
+      }),
+    );
+
+    const result = await tool.execute("tool-query-supersession", {
+      scope: "claim_key",
+      limit: 10,
+      offset: 0,
+    });
+
+    expect(result.details).toMatchObject({
+      count: 1,
+      scope: "claim_key",
+      claimKeyClusterCount: 1,
+    });
+    expect(completionGuards.supersession.snapshot()).toEqual({
+      claimKeyClustersViewed: 1,
+      claimKeyClustersTotal: 1,
+      claimKeyClustersAdjudicated: 0,
+      claimKeyScopeExhausted: true,
+      subjectClustersViewed: 0,
+      subjectClustersTotal: 0,
+      subjectClustersAdjudicated: 0,
+      subjectScopeExhausted: true,
+      adjudicatedClusters: 0,
+      widenedBeforeClaimKeyExhausted: false,
+    });
   });
 
   it("inspects one entry with related context", async () => {
@@ -441,7 +521,7 @@ describe("surgeon tools", () => {
         entry_id: "update-no-fields",
         reasoning: "Reviewed but no mutation specified.",
       }),
-    ).rejects.toThrow("update_entry requires at least one mutable field: importance or expiry.");
+    ).rejects.toThrow("update_entry requires at least one mutable field: importance, expiry, claim_key, valid_from, or valid_to.");
   });
 
   it("returns a dry-run change preview for update_entry", async () => {
@@ -470,6 +550,399 @@ describe("surgeon tools", () => {
           to: 4,
         },
       },
+    });
+  });
+
+  it("supports link_supersession happy path and logs a conflict-resolution action", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "old-entry",
+      subject: "Jim home city",
+      claim_key: "jim/home_city",
+      created_at: daysAgoIso(50),
+    });
+    await insertEntry(client, {
+      id: "new-entry",
+      subject: "Jim home city updated",
+      claim_key: "jim/home_city",
+      created_at: daysAgoIso(10),
+    });
+    const recordRunAction = vi.fn<SurgeonToolDeps["recordRunAction"]>().mockResolvedValue(undefined);
+    const completionGuards = createSurgeonCompletionGuardState({
+      totalEntries: 2,
+      supersessionClaimKeyClusters: 1,
+      supersessionSubjectClusters: 0,
+    });
+    completionGuards.supersession.recordPage({
+      scope: "claim_key",
+      claimKeyTotal: 1,
+      subjectTotal: 0,
+      clusters: [
+        {
+          groupKey: "jim/home_city",
+          groupedBy: "claim_key",
+          entries: [
+            {
+              id: "old-entry",
+              subject: "Jim home city",
+              type: "fact",
+              importance: 3,
+              expiry: "permanent",
+              createdAt: daysAgoIso(50),
+              content: "content for old-entry",
+              claimKey: "jim/home_city",
+              tags: [],
+            },
+            {
+              id: "new-entry",
+              subject: "Jim home city updated",
+              type: "fact",
+              importance: 3,
+              expiry: "permanent",
+              createdAt: daysAgoIso(10),
+              content: "content for new-entry",
+              claimKey: "jim/home_city",
+              tags: [],
+            },
+          ],
+        },
+      ],
+    });
+    const tool = createLinkSupersessionTool(
+      createToolDeps(client, {
+        passType: "supersession",
+        apply: true,
+        recordRunAction,
+        completionGuards,
+      }),
+    );
+
+    const result = await tool.execute("tool-link-supersession", {
+      old_entry_id: "old-entry",
+      new_entry_id: "new-entry",
+      kind: "update",
+      reason: "The newer entry replaces the old city.",
+    });
+
+    expect(result.details).toMatchObject({
+      success: true,
+      dryRun: false,
+      superseded: true,
+      kind: "update",
+    });
+
+    const row = await client.execute({
+      sql: "SELECT superseded_by, supersession_kind, supersession_reason FROM entries WHERE id = ?",
+      args: ["old-entry"],
+    });
+    expect(row.rows[0]).toMatchObject({
+      superseded_by: "new-entry",
+      supersession_kind: "update",
+      supersession_reason: "The newer entry replaces the old city.",
+    });
+
+    expect(recordRunAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actionType: "resolve_conflict",
+        entryIds: ["old-entry", "new-entry"],
+      }),
+    );
+    expect(completionGuards.supersession.snapshot().adjudicatedClusters).toBe(1);
+  });
+
+  it("enforces supersession hard rules and dry-run behavior", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "old-fact",
+      subject: "Fact entry",
+      type: "fact",
+      claim_key: "jim/home_city",
+    });
+    await insertEntry(client, {
+      id: "new-lesson",
+      subject: "Lesson entry",
+      type: "lesson",
+      claim_key: "jim/home_city",
+    });
+    await insertEntry(client, {
+      id: "milestone-old",
+      subject: "Milestone entry",
+      type: "milestone",
+      claim_key: "jim/move",
+    });
+    await insertEntry(client, {
+      id: "milestone-new",
+      subject: "Milestone replacement",
+      type: "milestone",
+      claim_key: "jim/move",
+    });
+    await insertEntry(client, {
+      id: "core-old",
+      subject: "Core entry",
+      expiry: "core",
+      claim_key: "jim/name",
+    });
+    await insertEntry(client, {
+      id: "core-new",
+      subject: "Core replacement",
+      claim_key: "jim/name",
+    });
+    await insertEntry(client, {
+      id: "replacement-entry",
+      subject: "Replacement entry",
+      claim_key: "jim/timezone",
+    });
+    await insertEntry(client, {
+      id: "already-superseded",
+      subject: "Already superseded",
+      claim_key: "jim/timezone",
+      superseded_by: "replacement-entry",
+    });
+
+    const dryRunTool = createLinkSupersessionTool(
+      createToolDeps(client, {
+        passType: "supersession",
+        apply: false,
+      }),
+    );
+    const applyTool = createLinkSupersessionTool(
+      createToolDeps(client, {
+        passType: "supersession",
+        apply: true,
+      }),
+    );
+
+    await expect(
+      applyTool.execute("tool-link-cross-type", {
+        old_entry_id: "old-fact",
+        new_entry_id: "new-lesson",
+        kind: "update",
+        reason: "invalid",
+      }),
+    ).resolves.toMatchObject({
+      details: {
+        success: false,
+        reason: "Supersession requires both entries to have the same type.",
+      },
+    });
+
+    await expect(
+      applyTool.execute("tool-link-milestone", {
+        old_entry_id: "milestone-old",
+        new_entry_id: "milestone-new",
+        kind: "update",
+        reason: "invalid",
+      }),
+    ).resolves.toMatchObject({
+      details: {
+        success: false,
+        reason: "Milestone entries are never superseded automatically.",
+      },
+    });
+
+    await expect(
+      applyTool.execute("tool-link-core", {
+        old_entry_id: "core-old",
+        new_entry_id: "core-new",
+        kind: "update",
+        reason: "invalid",
+      }),
+    ).resolves.toMatchObject({
+      details: {
+        success: false,
+        reason: "Core-expiry entries are never superseded automatically.",
+      },
+    });
+
+    await expect(
+      applyTool.execute("tool-link-self", {
+        old_entry_id: "old-fact",
+        new_entry_id: "old-fact",
+        kind: "update",
+        reason: "invalid",
+      }),
+    ).resolves.toMatchObject({
+      details: {
+        success: false,
+        reason: "An entry cannot supersede itself.",
+      },
+    });
+
+    await expect(
+      applyTool.execute("tool-link-existing", {
+        old_entry_id: "already-superseded",
+        new_entry_id: "replacement-entry",
+        kind: "update",
+        reason: "invalid",
+      }),
+    ).resolves.toMatchObject({
+      details: {
+        success: false,
+        reason: "The old entry is already superseded.",
+      },
+    });
+
+    const dryRunResult = await dryRunTool.execute("tool-link-dry-run", {
+      old_entry_id: "old-fact",
+      new_entry_id: "replacement-entry",
+      kind: "duplicate",
+      reason: "Same fact in different words.",
+    });
+
+    expect(dryRunResult.details).toMatchObject({
+      success: true,
+      dryRun: true,
+      wouldSupersede: true,
+      kind: "duplicate",
+    });
+  });
+
+  it("assigns claim keys and validates claim-key format", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "claim-target",
+      subject: "Claim target",
+    });
+    const applyTool = createAssignClaimKeyTool(
+      createToolDeps(client, {
+        passType: "supersession",
+        apply: true,
+      }),
+    );
+    const invalidTool = createAssignClaimKeyTool(
+      createToolDeps(client, {
+        passType: "supersession",
+        apply: false,
+      }),
+    );
+
+    expect(
+      (
+        await invalidTool.execute("tool-claim-empty", {
+          entry_id: "claim-target",
+          claim_key: "noslash",
+          reasoning: "invalid",
+        })
+      ).details,
+    ).toMatchObject({
+      success: false,
+    });
+    expect(
+      (
+        await invalidTool.execute("tool-claim-leading", {
+          entry_id: "claim-target",
+          claim_key: "/leading_slash",
+          reasoning: "invalid",
+        })
+      ).details,
+    ).toMatchObject({
+      success: false,
+    });
+    expect(
+      (
+        await invalidTool.execute("tool-claim-trailing", {
+          entry_id: "claim-target",
+          claim_key: "trailing/",
+          reasoning: "invalid",
+        })
+      ).details,
+    ).toMatchObject({
+      success: false,
+    });
+
+    const result = await applyTool.execute("tool-claim-valid", {
+      entry_id: "claim-target",
+      claim_key: "jim/home_city",
+      reasoning: "This entry clearly describes the home_city slot.",
+    });
+
+    expect(result.details).toMatchObject({
+      success: true,
+      updated: true,
+    });
+    const row = await client.execute({
+      sql: "SELECT claim_key FROM entries WHERE id = ?",
+      args: ["claim-target"],
+    });
+    expect(row.rows[0]?.claim_key).toBe("jim/home_city");
+  });
+
+  it("sets temporal validity and validates timestamp input", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "validity-target",
+      subject: "Validity target",
+    });
+    const applyTool = createSetValidityTool(
+      createToolDeps(client, {
+        passType: "supersession",
+        apply: true,
+      }),
+    );
+    const invalidTool = createSetValidityTool(
+      createToolDeps(client, {
+        passType: "supersession",
+        apply: false,
+      }),
+    );
+
+    expect(
+      (
+        await invalidTool.execute("tool-validity-empty", {
+          entry_id: "validity-target",
+          reasoning: "invalid",
+        })
+      ).details,
+    ).toMatchObject({
+      success: false,
+      reason: "At least one of valid_from or valid_to must be provided.",
+    });
+
+    expect(
+      (
+        await invalidTool.execute("tool-validity-order", {
+          entry_id: "validity-target",
+          valid_from: "2026-04-10T00:00:00.000Z",
+          valid_to: "2026-04-01T00:00:00.000Z",
+          reasoning: "invalid",
+        })
+      ).details,
+    ).toMatchObject({
+      success: false,
+      reason: "valid_from must be earlier than valid_to.",
+    });
+
+    expect(
+      (
+        await invalidTool.execute("tool-validity-iso", {
+          entry_id: "validity-target",
+          valid_from: "not-a-date",
+          reasoning: "invalid",
+        })
+      ).details,
+    ).toMatchObject({
+      success: false,
+      reason: "valid_from must be a valid ISO 8601 timestamp.",
+    });
+
+    const result = await applyTool.execute("tool-validity-valid", {
+      entry_id: "validity-target",
+      valid_from: "2026-03-01T00:00:00.000Z",
+      valid_to: "2026-03-31T00:00:00.000Z",
+      reasoning: "The source material gives a clear March validity window.",
+    });
+
+    expect(result.details).toMatchObject({
+      success: true,
+      updated: true,
+    });
+    const row = await client.execute({
+      sql: "SELECT valid_from, valid_to FROM entries WHERE id = ?",
+      args: ["validity-target"],
+    });
+    expect(row.rows[0]).toMatchObject({
+      valid_from: "2026-03-01T00:00:00.000Z",
+      valid_to: "2026-03-31T00:00:00.000Z",
     });
   });
 
@@ -597,6 +1070,216 @@ describe("surgeon tools", () => {
       reasoning: "needs human review",
     });
   });
+
+  it("rejects shallow supersession completion until enough claim_key clusters are reviewed", async () => {
+    const client = await createTestClient(clients);
+    const completionGuards = createSurgeonCompletionGuardState({
+      totalEntries: 50,
+      supersessionClaimKeyClusters: 5,
+      supersessionSubjectClusters: 0,
+    });
+    const completionState = createCompletionState();
+    const tool = createCompletePassTool(
+      createToolDeps(client, {
+        passType: "supersession",
+        completionGuards,
+        completionState,
+        budgetTracker: createBudgetTrackerStub({
+          costUsd: 0.1,
+          remainingCostUsd: 0.9,
+          costCapUsd: 1,
+          currentContextTokens: 400,
+          contextLimit: 8_000,
+        }),
+        costCap: 1,
+      }),
+    );
+
+    completionGuards.supersession.recordPage({
+      scope: "claim_key",
+      claimKeyTotal: 5,
+      subjectTotal: 0,
+      clusters: [
+        {
+          groupKey: "slot-1",
+          groupedBy: "claim_key",
+          entries: [
+            {
+              id: "slot-1-a",
+              subject: "slot 1",
+              type: "fact",
+              importance: 3,
+              expiry: "permanent",
+              createdAt: daysAgoIso(20),
+              content: "slot 1",
+              claimKey: "slot-1",
+              tags: [],
+            },
+            {
+              id: "slot-1-b",
+              subject: "slot 1 update",
+              type: "fact",
+              importance: 3,
+              expiry: "permanent",
+              createdAt: daysAgoIso(10),
+              content: "slot 1 update",
+              claimKey: "slot-1",
+              tags: [],
+            },
+          ],
+        },
+      ],
+    });
+    completionGuards.supersession.markAdjudicated(["slot-1-a"]);
+
+    const rejected = await tool.execute("tool-complete-supersession-reject", {
+      actions_taken: 1,
+      entries_skipped: [],
+      observations: ["Need to keep paging claim_key clusters."],
+      recommendations: [],
+    });
+
+    expect(rejected.details).toMatchObject({
+      completed: false,
+      rejected: true,
+      claimKeyClustersViewed: 1,
+      claimKeyClustersTotal: 5,
+    });
+    expect(completionState.isComplete).toBe(false);
+
+    completionGuards.supersession.recordPage({
+      scope: "claim_key",
+      claimKeyTotal: 5,
+      subjectTotal: 0,
+      clusters: [
+        {
+          groupKey: "slot-2",
+          groupedBy: "claim_key",
+          entries: [
+            {
+              id: "slot-2-a",
+              subject: "slot 2",
+              type: "fact",
+              importance: 3,
+              expiry: "permanent",
+              createdAt: daysAgoIso(20),
+              content: "slot 2",
+              claimKey: "slot-2",
+              tags: [],
+            },
+            {
+              id: "slot-2-b",
+              subject: "slot 2 update",
+              type: "fact",
+              importance: 3,
+              expiry: "permanent",
+              createdAt: daysAgoIso(10),
+              content: "slot 2 update",
+              claimKey: "slot-2",
+              tags: [],
+            },
+          ],
+        },
+        {
+          groupKey: "slot-3",
+          groupedBy: "claim_key",
+          entries: [
+            {
+              id: "slot-3-a",
+              subject: "slot 3",
+              type: "fact",
+              importance: 3,
+              expiry: "permanent",
+              createdAt: daysAgoIso(20),
+              content: "slot 3",
+              claimKey: "slot-3",
+              tags: [],
+            },
+            {
+              id: "slot-3-b",
+              subject: "slot 3 update",
+              type: "fact",
+              importance: 3,
+              expiry: "permanent",
+              createdAt: daysAgoIso(10),
+              content: "slot 3 update",
+              claimKey: "slot-3",
+              tags: [],
+            },
+          ],
+        },
+        {
+          groupKey: "slot-4",
+          groupedBy: "claim_key",
+          entries: [
+            {
+              id: "slot-4-a",
+              subject: "slot 4",
+              type: "fact",
+              importance: 3,
+              expiry: "permanent",
+              createdAt: daysAgoIso(20),
+              content: "slot 4",
+              claimKey: "slot-4",
+              tags: [],
+            },
+            {
+              id: "slot-4-b",
+              subject: "slot 4 update",
+              type: "fact",
+              importance: 3,
+              expiry: "permanent",
+              createdAt: daysAgoIso(10),
+              content: "slot 4 update",
+              claimKey: "slot-4",
+              tags: [],
+            },
+          ],
+        },
+        {
+          groupKey: "slot-5",
+          groupedBy: "claim_key",
+          entries: [
+            {
+              id: "slot-5-a",
+              subject: "slot 5",
+              type: "fact",
+              importance: 3,
+              expiry: "permanent",
+              createdAt: daysAgoIso(20),
+              content: "slot 5",
+              claimKey: "slot-5",
+              tags: [],
+            },
+            {
+              id: "slot-5-b",
+              subject: "slot 5 update",
+              type: "fact",
+              importance: 3,
+              expiry: "permanent",
+              createdAt: daysAgoIso(10),
+              content: "slot 5 update",
+              claimKey: "slot-5",
+              tags: [],
+            },
+          ],
+        },
+      ],
+    });
+    completionGuards.supersession.markAdjudicated(["slot-2-a", "slot-3-a", "slot-4-a", "slot-5-a"]);
+
+    const accepted = await tool.execute("tool-complete-supersession-accept", {
+      actions_taken: 5,
+      entries_skipped: [],
+      observations: ["Claim-key sweep complete."],
+      recommendations: [],
+    });
+
+    expect(accepted.details).toMatchObject({
+      completed: true,
+    });
+    expect(completionState.isComplete).toBe(true);
+  });
 });
 
 async function createTestClient(clients: Client[]): Promise<Client> {
@@ -608,6 +1291,7 @@ async function createTestClient(clients: Client[]): Promise<Client> {
 
 function createToolDeps(client: Client, overrides: Partial<SurgeonToolDeps> = {}): SurgeonToolDeps {
   return {
+    passType: overrides.passType ?? "retirement",
     port: overrides.port ?? createSurgeonPort(client),
     runId: overrides.runId ?? "run-1",
     project: overrides.project,
@@ -691,6 +1375,11 @@ async function insertEntry(client: Client, overrides: Partial<Entry> & Pick<Entr
         recall_count,
         last_recalled_at,
         superseded_by,
+        valid_from,
+        valid_to,
+        claim_key,
+        supersession_kind,
+        supersession_reason,
         cluster_id,
         retired,
         retired_at,
@@ -698,7 +1387,7 @@ async function insertEntry(client: Client, overrides: Partial<Entry> & Pick<Entr
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     args: [
       entry.id,
@@ -718,6 +1407,11 @@ async function insertEntry(client: Client, overrides: Partial<Entry> & Pick<Entr
       entry.recall_count,
       entry.last_recalled_at ?? null,
       entry.superseded_by ?? null,
+      entry.valid_from ?? null,
+      entry.valid_to ?? null,
+      entry.claim_key ?? null,
+      entry.supersession_kind ?? null,
+      entry.supersession_reason ?? null,
       entry.cluster_id ?? null,
       entry.retired ? 1 : 0,
       entry.retired_at ?? null,
@@ -746,6 +1440,11 @@ function createEntry(overrides: Partial<Entry> & Pick<Entry, "id" | "subject">):
     recall_count: overrides.recall_count ?? 0,
     last_recalled_at: overrides.last_recalled_at,
     superseded_by: overrides.superseded_by,
+    valid_from: overrides.valid_from,
+    valid_to: overrides.valid_to,
+    claim_key: overrides.claim_key,
+    supersession_kind: overrides.supersession_kind,
+    supersession_reason: overrides.supersession_reason,
     cluster_id: overrides.cluster_id,
     retired: overrides.retired ?? false,
     retired_at: overrides.retired_at,

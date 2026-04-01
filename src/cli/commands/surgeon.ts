@@ -1,9 +1,11 @@
 import { InvalidArgumentError, Option, type Command } from "commander";
 
 import { loadSurgeonActionsRuntime, loadSurgeonHistoryRuntime, loadSurgeonStatusRuntime, runSurgeonRuntime } from "../../app/surgeon/runtime.js";
+import { isImplementedSurgeonPass, isSurgeonPassType, type SurgeonPassType } from "../../core/surgeon/domain/pass-types.js";
 
 /** Parsed commander options for `agenr surgeon run`. */
 interface SurgeonRunCommandOptions {
+  pass?: Extract<SurgeonPassType, "retirement" | "supersession">;
   budget?: number;
   contextLimit?: number;
   skipEvaluatedDays?: number;
@@ -26,11 +28,12 @@ interface SurgeonHistoryCommandOptions {
  * @param program - Root Commander program to extend.
  */
 export function registerSurgeonCommand(program: Command): void {
-  const surgeonCommand = program.command("surgeon").description("Run the surgeon retirement pass and inspect surgeon history");
+  const surgeonCommand = program.command("surgeon").description("Run surgeon maintenance passes and inspect surgeon history");
 
   surgeonCommand
     .command("run")
-    .description("Execute a surgeon retirement pass")
+    .description("Execute a surgeon maintenance pass")
+    .addOption(new Option("--pass <type>", "Surgeon pass: retirement (default) or supersession").argParser(parseImplementedSurgeonPass).default("retirement"))
     .addOption(new Option("--budget <usd>", "Cost cap for this run in USD").argParser(parsePositiveNumber))
     .addOption(new Option("--context-limit <tokens>", "Context limit override in tokens").argParser(parsePositiveInteger))
     .addOption(new Option("--skip-evaluated-days <n>", "Skip entries evaluated within the last N days").argParser(parseNonNegativeInteger))
@@ -58,7 +61,7 @@ export function registerSurgeonCommand(program: Command): void {
 
       try {
         const result = await runSurgeonRuntime({
-          pass: "retirement",
+          pass: options.pass ?? "retirement",
           budget: options.budget ?? 0,
           contextLimit: options.contextLimit,
           skipEvaluatedDays: options.skipEvaluatedDays,
@@ -132,6 +135,25 @@ export function registerSurgeonCommand(program: Command): void {
         process.stderr.write(`Failed to load surgeon actions: ${formatUnknownError(error)}\n`);
       }
     });
+}
+
+/**
+ * Validates that the CLI-selected surgeon pass is implemented.
+ *
+ * @param value - Raw commander option value.
+ * @returns Supported implemented surgeon pass.
+ */
+function parseImplementedSurgeonPass(value: string): Extract<SurgeonPassType, "retirement" | "supersession"> {
+  const normalized = value.trim().toLowerCase();
+  if (!isSurgeonPassType(normalized)) {
+    throw new InvalidArgumentError(`Invalid surgeon pass: ${value}`);
+  }
+
+  if (!isImplementedSurgeonPass(normalized)) {
+    throw new InvalidArgumentError(`Surgeon pass is not implemented: ${value}`);
+  }
+
+  return normalized;
 }
 
 /**

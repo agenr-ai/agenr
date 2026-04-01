@@ -1,6 +1,6 @@
 import type { SurgeonPort } from "../../app/surgeon/ports.js";
 import { getLastBulkIngestAt } from "./schema.js";
-import { getEntry, retireEntry, updateEntry } from "./queries.js";
+import { getEntry, retireEntry, supersedeEntry, updateEntry } from "./queries.js";
 import {
   completeSurgeonRun,
   createSurgeonRun,
@@ -10,7 +10,13 @@ import {
   getSurgeonRunHistory,
   logSurgeonAction,
 } from "./surgeon-run-log.js";
-import { countRetirementCandidates, getSurgeonHealthStats, inspectSurgeonEntry, listRetirementCandidates } from "./surgeon-queries.js";
+import {
+  countRetirementCandidates,
+  getSurgeonHealthStats,
+  inspectSurgeonEntry,
+  listRetirementCandidates,
+  listSupersessionCandidates,
+} from "./surgeon-queries.js";
 import type { SqlExecutor } from "./queries.js";
 
 /**
@@ -31,9 +37,11 @@ export function createSurgeonPort(executor: SqlExecutor): SurgeonPort {
     getHealthStats: async (options) => getSurgeonHealthStats(executor, options),
     countRetirementCandidates: async (options) => countRetirementCandidates(executor, options),
     listRetirementCandidates: async (query) => listRetirementCandidates(executor, query),
+    listSupersessionCandidates: async (query) => listSupersessionCandidates(executor, query),
     inspectEntry: async (entryId) => inspectSurgeonEntry(executor, entryId),
     getEntry: async (entryId) => getEntry(executor, entryId),
     retireEntry: async (entryId, reason) => retireEntry(executor, entryId, reason),
+    supersedeEntry: async (oldEntryId, newEntryId, kind, reason) => supersedeEntry(executor, oldEntryId, newEntryId, kind, reason),
     updateEntry: async (entryId, fields) => updateEntry(executor, entryId, fields),
     getLastBulkIngestAt: async () => getLastBulkIngestAt(executor),
   };

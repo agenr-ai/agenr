@@ -14,17 +14,18 @@ import {
 } from "../../config.js";
 import type { RecallPorts } from "../../core/ports.js";
 import type { SurgeonRunAction } from "../../core/surgeon/domain/action-types.js";
+import type { SurgeonPassType } from "../../core/surgeon/domain/pass-types.js";
 import type { SurgeonCompletionSummary, SurgeonRunStatus } from "../../core/surgeon/types.js";
 import { createBudgetTracker } from "./budget.js";
 import { createSurgeonCompletionGuardState } from "./completion-guard.js";
 import { createTraceLogger, type SurgeonTraceLogger } from "./trace-logger.js";
-import { getSurgeonRetirementPassPrompt, getSurgeonSystemPrompt } from "./prompts.js";
+import { getSurgeonRetirementPassPrompt, getSurgeonSupersessionPassPrompt, getSurgeonSystemPrompt } from "./prompts.js";
 import type { SurgeonPort } from "./ports.js";
-import { createSurgeonTools, type SurgeonToolCompletionState } from "./tools/index.js";
+import { createSupersessionTools, createSurgeonTools, type SurgeonToolCompletionState } from "./tools/index.js";
 
 /**
  * Safety valve for continuation prompts. Prevents infinite loops when the
- * model repeatedly stops without completing. This is a last resort — the
+ * model repeatedly stops without completing. This is a last resort - the
  * primary constraints are budget and candidate exhaustion.
  */
 const MAX_CONTINUATION_ATTEMPTS = 50;
@@ -35,7 +36,7 @@ const USER_ABORT_SUMMARY = "Run aborted by user.";
  * CLI and runtime options accepted by one surgeon run.
  */
 export interface SurgeonRunOptions {
-  pass: "retirement";
+  pass: Extract<SurgeonPassType, "retirement" | "supersession">;
   project?: string;
   budget: number;
   contextLimit?: number;
@@ -79,7 +80,7 @@ export interface SurgeonWorkflowDeps {
 }
 
 /**
- * Runs the retirement-only surgeon agent loop and persists the run lifecycle.
+ * Runs one implemented surgeon pass and persists the run lifecycle.
  *
  * @param options - One-shot surgeon run options.
  * @param deps - Resolved database, model, config, and optional recall runtime dependencies.
@@ -98,7 +99,7 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
     throw new Error(`Surgeon daily cost cap exceeded. Cost in the last 24 hours is ${formatUsd(dailyCost)} and the cap is ${formatUsd(dailyCostCap)}.`);
   }
 
-  const systemPrompt = buildSystemPrompt(deps.config);
+  const systemPrompt = buildSystemPrompt(options.pass, deps.config);
 
   if (options.apply && deps.dbPath && deps.dbPath !== ":memory:" && deps.backupDb) {
     await deps.backupDb(deps.dbPath);
@@ -138,14 +139,14 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
   let traceLogger: SurgeonTraceLogger | null = null;
 
   try {
-    const [health, retirementCandidateResult, lastRun] = await Promise.all([
+    const [health, passStartContext, lastRun] = await Promise.all([
       deps.port.getHealthStats({
         protectRecalledDays: protection.protectRecalledDays,
         protectMinImportance: protection.protectMinImportance,
         skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
         now: nowFn(),
       }),
-      deps.port.countRetirementCandidates({
+      loadPassStartContext(options.pass, deps.port, {
         protectRecalledDays: protection.protectRecalledDays,
         protectMinImportance: protection.protectMinImportance,
         skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
@@ -154,10 +155,11 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
       deps.port.getLastRun(),
     ]);
 
-    const retirementCandidates = retirementCandidateResult.total;
     const completionGuards = createSurgeonCompletionGuardState({
       totalEntries: health.total,
-      retirementCandidates,
+      retirementCandidates: passStartContext.retirementCandidates,
+      supersessionClaimKeyClusters: passStartContext.supersessionClaimKeyClusters,
+      supersessionSubjectClusters: passStartContext.supersessionSubjectClusters,
     });
     traceLogger = createTraceLogger({
       verbose: options.verbose,
@@ -165,7 +167,8 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
       budgetTracker,
     });
 
-    const tools = createSurgeonTools({
+    const tools = createToolsForPass(options.pass, {
+      passType: options.pass,
       port: deps.port,
       runId,
       project: options.project,
@@ -179,6 +182,9 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
       recordRunAction: async (action) => {
         await deps.port.logRunAction(action);
         traceLogger?.logAction(action);
+        if (action.actionType !== "skip") {
+          actionMetrics.actionsTaken += 1;
+        }
       },
       completionState,
       budgetTracker,
@@ -188,9 +194,12 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
     });
 
     const initialPrompt = buildInitialUserPrompt({
+      pass: options.pass,
       project: options.project,
       totalEntries: health.total,
-      retirementCandidates,
+      retirementCandidates: passStartContext.retirementCandidates,
+      supersessionClaimKeyClusters: passStartContext.supersessionClaimKeyClusters,
+      supersessionSubjectClusters: passStartContext.supersessionSubjectClusters,
       lastRun,
       costCapUsd: runCostCap,
       contextLimit,
@@ -232,6 +241,7 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
             {
               role: "user",
               content: buildContinuationPrompt({
+                pass: options.pass,
                 currentContextTokens: remaining.currentContextTokens,
                 contextLimit: remaining.contextLimit,
                 remainingCostUsd: remaining.remainingCostUsd,
@@ -338,6 +348,7 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
       return finalizeRun({
         runId,
         status: "aborted",
+        passType: options.pass,
         completionState,
         actionMetrics,
         budgetTracker,
@@ -357,6 +368,7 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
     return finalizeRun({
       runId,
       status: finalStatus,
+      passType: options.pass,
       completionState,
       actionMetrics,
       budgetTracker,
@@ -371,6 +383,7 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
       return finalizeRun({
         runId,
         status: "aborted",
+        passType: options.pass,
         completionState,
         actionMetrics,
         budgetTracker,
@@ -385,6 +398,7 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
     return finalizeRun({
       runId,
       status: terminalStatus ?? "failed",
+      passType: options.pass,
       completionState,
       actionMetrics,
       budgetTracker,
@@ -475,11 +489,12 @@ function resolveProtectionConfig(
 /**
  * Joins the shared and pass-specific prompt blocks into one system prompt.
  *
+ * @param pass - Surgeon pass being executed.
  * @param config - Optional persisted agenr configuration.
  * @returns Full system prompt text for the run.
  */
-function buildSystemPrompt(config: AgenrConfig | null): string {
-  return [getSurgeonSystemPrompt().trim(), getSurgeonRetirementPassPrompt().trim(), config?.surgeon?.customInstructions?.trim() ?? ""]
+function buildSystemPrompt(pass: Extract<SurgeonPassType, "retirement" | "supersession">, config: AgenrConfig | null): string {
+  return [getSurgeonSystemPrompt().trim(), getPassPrompt(pass).trim(), config?.surgeon?.customInstructions?.trim() ?? ""]
     .filter((block) => block.length > 0)
     .join("\n\n");
 }
@@ -491,9 +506,12 @@ function buildSystemPrompt(config: AgenrConfig | null): string {
  * @returns Initial user prompt.
  */
 function buildInitialUserPrompt(input: {
+  pass: Extract<SurgeonPassType, "retirement" | "supersession">;
   project?: string;
   totalEntries: number;
   retirementCandidates: number;
+  supersessionClaimKeyClusters: number;
+  supersessionSubjectClusters: number;
   lastRun: {
     passType: string;
     status: string;
@@ -503,17 +521,31 @@ function buildInitialUserPrompt(input: {
   costCapUsd: number;
   contextLimit: number;
 }): string {
-  const lines = [
-    "Begin retirement pass.",
-    `Project scope: ${input.project?.trim() || "all projects"}.`,
-    `Entries: ${input.totalEntries}.`,
-    `Actionable cleanup pool: ${input.retirementCandidates}.`,
-    `Last surgeon run: ${formatLastRun(input.lastRun)}.`,
-    input.contextLimit > 0
-      ? `Your cost budget is ${formatUsd(input.costCapUsd)}. Your context window is ${input.contextLimit} tokens.`
-      : `Your cost budget is ${formatUsd(input.costCapUsd)}. Context limit auto-detection was unavailable.`,
-    "Work conservatively and use complete_pass when you are done.",
-  ];
+  const lines =
+    input.pass === "supersession"
+      ? [
+          "Begin supersession pass.",
+          `Project focus: ${input.project?.trim() || "all projects"}.`,
+          `Entries: ${input.totalEntries}.`,
+          `Claim-key clusters: ${input.supersessionClaimKeyClusters}.`,
+          `Subject clusters: ${input.supersessionSubjectClusters}.`,
+          `Last surgeon run: ${formatLastRun(input.lastRun)}.`,
+          input.contextLimit > 0
+            ? `Your cost budget is ${formatUsd(input.costCapUsd)}. Your context window is ${input.contextLimit} tokens.`
+            : `Your cost budget is ${formatUsd(input.costCapUsd)}. Context limit auto-detection was unavailable.`,
+          "Work conservatively, finish the claim_key sweep first, and use complete_pass when you are done.",
+        ]
+      : [
+          "Begin retirement pass.",
+          `Project scope: ${input.project?.trim() || "all projects"}.`,
+          `Entries: ${input.totalEntries}.`,
+          `Actionable cleanup pool: ${input.retirementCandidates}.`,
+          `Last surgeon run: ${formatLastRun(input.lastRun)}.`,
+          input.contextLimit > 0
+            ? `Your cost budget is ${formatUsd(input.costCapUsd)}. Your context window is ${input.contextLimit} tokens.`
+            : `Your cost budget is ${formatUsd(input.costCapUsd)}. Context limit auto-detection was unavailable.`,
+          "Work conservatively and use complete_pass when you are done.",
+        ];
 
   return lines.join(" ");
 }
@@ -524,17 +556,103 @@ function buildInitialUserPrompt(input: {
  * @param input - Remaining budget snapshot and continuation attempt count.
  * @returns Follow-up prompt that tells the model to continue the pass.
  */
-function buildContinuationPrompt(input: { currentContextTokens: number; contextLimit: number; remainingCostUsd: number; attempt: number }): string {
-  const lines = [
-    input.contextLimit > 0
-      ? `You stopped without calling complete_pass and the latest turn used ${input.currentContextTokens}/${input.contextLimit} context tokens, with about ${formatUsd(input.remainingCostUsd)} of run budget remaining.`
-      : `You stopped without calling complete_pass and still have about ${formatUsd(input.remainingCostUsd)} of run budget remaining. The latest turn context size was ${input.currentContextTokens} tokens.`,
-    "Continue the retirement pass.",
-    "Keep paginating candidates. If the actionable scope is exhausted and meaningful budget remains, widen to scope = 'all'.",
-    "Do not call complete_pass until candidates are genuinely exhausted or budget constraints force you to stop.",
-  ];
+function buildContinuationPrompt(input: {
+  pass: Extract<SurgeonPassType, "retirement" | "supersession">;
+  currentContextTokens: number;
+  contextLimit: number;
+  remainingCostUsd: number;
+  attempt: number;
+}): string {
+  const lines =
+    input.pass === "supersession"
+      ? [
+          input.contextLimit > 0
+            ? `You stopped without calling complete_pass and the latest turn used ${input.currentContextTokens}/${input.contextLimit} context tokens, with about ${formatUsd(input.remainingCostUsd)} of run budget remaining.`
+            : `You stopped without calling complete_pass and still have about ${formatUsd(input.remainingCostUsd)} of run budget remaining. The latest turn context size was ${input.currentContextTokens} tokens.`,
+          "Continue the supersession pass.",
+          "Keep paginating claim_key clusters. Widen to scope = 'subject' only after the claim_key sweep is exhausted or budget pressure forces an early stop.",
+          "Do not call complete_pass until claim_key clusters are genuinely exhausted or budget constraints force you to stop.",
+        ]
+      : [
+          input.contextLimit > 0
+            ? `You stopped without calling complete_pass and the latest turn used ${input.currentContextTokens}/${input.contextLimit} context tokens, with about ${formatUsd(input.remainingCostUsd)} of run budget remaining.`
+            : `You stopped without calling complete_pass and still have about ${formatUsd(input.remainingCostUsd)} of run budget remaining. The latest turn context size was ${input.currentContextTokens} tokens.`,
+          "Continue the retirement pass.",
+          "Keep paginating candidates. If the actionable scope is exhausted and meaningful budget remains, widen to scope = 'all'.",
+          "Do not call complete_pass until candidates are genuinely exhausted or budget constraints force you to stop.",
+        ];
 
   return lines.join(" ");
+}
+
+/**
+ * Loads pass-specific counts needed for startup prompts and completion guards.
+ *
+ * @param pass - Surgeon pass being executed.
+ * @param port - Persistence boundary used to load candidate counts.
+ * @param protection - Retirement protection configuration for health queries.
+ * @returns Pass-specific candidate counts known before the first model turn.
+ */
+async function loadPassStartContext(
+  pass: Extract<SurgeonPassType, "retirement" | "supersession">,
+  port: SurgeonPort,
+  protection: {
+    protectRecalledDays: number;
+    protectMinImportance: number;
+    skipRecentlyEvaluatedDays: number;
+    now: Date;
+  },
+): Promise<{
+  retirementCandidates: number;
+  supersessionClaimKeyClusters: number;
+  supersessionSubjectClusters: number;
+}> {
+  if (pass === "supersession") {
+    const [claimKeyClusters, subjectClusters] = await Promise.all([
+      port.listSupersessionCandidates({ scope: "claim_key" }),
+      port.listSupersessionCandidates({ scope: "subject" }),
+    ]);
+
+    return {
+      retirementCandidates: 0,
+      supersessionClaimKeyClusters: claimKeyClusters.length,
+      supersessionSubjectClusters: subjectClusters.length,
+    };
+  }
+
+  const retirementCandidateResult = await port.countRetirementCandidates({
+    protectRecalledDays: protection.protectRecalledDays,
+    protectMinImportance: protection.protectMinImportance,
+    skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
+    now: protection.now,
+  });
+
+  return {
+    retirementCandidates: retirementCandidateResult.total,
+    supersessionClaimKeyClusters: 0,
+    supersessionSubjectClusters: 0,
+  };
+}
+
+/**
+ * Selects the pass-specific prompt block.
+ *
+ * @param pass - Surgeon pass being executed.
+ * @returns Prompt text for the requested pass.
+ */
+function getPassPrompt(pass: Extract<SurgeonPassType, "retirement" | "supersession">): string {
+  return pass === "supersession" ? getSurgeonSupersessionPassPrompt() : getSurgeonRetirementPassPrompt();
+}
+
+/**
+ * Selects the tool set for the requested surgeon pass.
+ *
+ * @param pass - Surgeon pass being executed.
+ * @param deps - Shared run dependencies for surgeon tools.
+ * @returns Ordered tool set for the active pass.
+ */
+function createToolsForPass(pass: Extract<SurgeonPassType, "retirement" | "supersession">, deps: Parameters<typeof createSurgeonTools>[0]) {
+  return pass === "supersession" ? createSupersessionTools(deps) : createSurgeonTools(deps);
 }
 
 /**
@@ -578,6 +696,7 @@ function createCompletionState(): SurgeonToolCompletionState {
 async function finalizeRun(input: {
   runId: string;
   status: SurgeonRunStatus;
+  passType: Extract<SurgeonPassType, "retirement" | "supersession">;
   completionState: SurgeonToolCompletionState;
   actionMetrics: {
     actionsTaken: number;
@@ -608,7 +727,7 @@ async function finalizeRun(input: {
   return {
     runId: input.runId,
     status: input.status,
-    passType: "retirement",
+    passType: input.passType,
     actionsTaken: input.completionState.summary?.actions_taken ?? input.actionMetrics.actionsTaken,
     entriesRetired: input.actionMetrics.entriesRetired,
     inputTokens: totals.inputTokens,

@@ -2,7 +2,12 @@
 
 The surgeon is agenr's autonomous corpus-maintenance agent.
 
-It runs a bounded retirement pass over the knowledge base, evaluates semantically stale entries, and either retires them, downgrades them, or leaves them alone. The goal is corpus health, not aggressive deletion: remove obsolete memory without creating recall gaps.
+It runs bounded maintenance passes over the knowledge base. Today there are two implemented passes:
+
+- retirement - evaluate semantically stale entries and retire or downgrade them conservatively
+- supersession - find same-slot entries that should be linked through `superseded_by` lineage without deleting history
+
+The goal is corpus health, not aggressive deletion: remove obsolete memory without creating recall gaps, and preserve replacement history when knowledge changes over time.
 
 This document describes the code as it exists now, not just the intended design.
 
@@ -13,9 +18,9 @@ This document describes the code as it exists now, not just the intended design.
 - `src/app/surgeon/service.ts` - one full surgeon run: budget checks, prompts, agent loop, continuation, and persistence through `SurgeonPort`.
 - `src/app/surgeon/budget.ts` - per-run token, cost, and context tracking.
 - `src/app/surgeon/completion-guard.ts` - pagination/completion state used to reject shallow passes.
-- `src/app/surgeon/prompts.ts` - system prompt and retirement-pass prompt.
+- `src/app/surgeon/prompts.ts` - shared system prompt plus pass-specific prompts.
 - `src/app/surgeon/trace-logger.ts` - verbose trace logging and optional trace-file output.
-- `src/app/surgeon/tools/*.ts` - the 7 surgeon tools.
+- `src/app/surgeon/tools/*.ts` - shared surgeon tools plus pass-specific tool modules.
 - `src/app/surgeon/ports.ts` - the explicit `SurgeonPort` boundary used by the workflow and status surfaces.
 - `src/adapters/db/surgeon-port.ts` - DB-backed implementation of `SurgeonPort`.
 - `src/adapters/db/surgeon-queries.ts` and `src/adapters/db/surgeon-run-log.ts` - lower-level SQL modules used only behind the DB-backed surgeon port.
@@ -40,13 +45,13 @@ Mechanical rules can filter obvious cases, but they cannot reliably decide seman
 It is an autonomous agent loop that:
 
 1. inspects corpus health
-2. pages through retirement candidates
+2. pages through pass-specific candidates or clusters
 3. reads candidate content and related context
 4. simulates recall impact when needed
-5. retires or downgrades entries conservatively
+5. applies pass-specific mutations conservatively
 6. persists a full audit trail of what it did
 
-The current MVP is retirement-only. Deduplication and contradiction handling are explicitly out of scope.
+The current implemented passes are retirement and supersession. Deduplication beyond explicit supersession linking is still out of scope.
 
 ## How it works
 
@@ -67,9 +72,9 @@ At runtime, agenr does the following:
 7. Creates a `surgeon_runs` row with status `running`.
 8. Builds the system prompt from:
    - `getSurgeonSystemPrompt()`
-   - `getSurgeonRetirementPassPrompt()`
+   - the pass-specific prompt for the selected run
    - `config.surgeon.customInstructions` if present
-9. Starts the agent loop with the 7 surgeon tools.
+9. Starts the agent loop with the tool set for the selected pass.
 10. Tracks usage, context pressure, actions, and completion state while the model works.
 11. Persists the final run summary, token counts, cost, errors, and completion payload.
 
@@ -86,7 +91,7 @@ The initial user prompt tells the model:
 
 - project scope
 - total entry count
-- retirement candidate count
+- pass-specific candidate or cluster counts
 - last surgeon run summary
 - cost budget
 - context limit when known
@@ -132,17 +137,33 @@ For entries that look actionable, it can:
 
 `simulate_recall` can also exclude the target entry from results, which lets the surgeon ask: if this entry disappeared, would recall still return good answers?
 
-## The 7 surgeon tools
+## Surgeon tools
+
+Both passes share:
 
 | Tool               | What it does                                            | Important details                                                                                                                                                                   |
 | ------------------ | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `get_health_stats` | Returns corpus health stats and the latest surgeon run. | Includes total entries, counts by type, recency buckets, recall buckets, quality buckets, actionable retirement-candidate count, and recently evaluated count.                      |
-| `query_candidates` | Pages retirement candidates.                            | Default scope is `actionable`. Supports `scope`, `type`, `importance_max`, `min_age_days`, `project`, `limit`, and `offset`. Default page size is `20`, max `100`.                  |
 | `inspect_entry`    | Loads one entry in detail.                              | Returns the full entry, tags, same-subject entries, same-cluster entries, reverse-supersession count, and a sample of superseded entries.                                           |
 | `simulate_recall`  | Runs recall without telemetry.                          | Accepts `query`, optional `exclude_entry_id`, and optional `limit` (default `10`, max `20`). Throws if recall ports are unavailable, usually because embeddings are not configured. |
-| `retire_entry`     | Retires one entry.                                      | Enforces hard protections even if the model tries to bypass them. In dry-run mode it reports `wouldRetire: true` without mutating the DB.                                           |
-| `update_entry`     | Updates `importance` and/or `expiry`.                   | Used when demotion is better than retirement. In dry-run mode it reports `wouldUpdate: true`. Promoting to `core` requires reasoning that explicitly mentions `core`.               |
-| `complete_pass`    | Finalizes the pass with a structured summary.           | Can reject premature completion if the surgeon has not paged deeply enough or has barely used its budget. Also records `entries_skipped` as audit actions.                          |
+| `update_entry`     | Updates mutable entry fields.                           | Supports `importance`, `expiry`, `claim_key`, `valid_from`, and `valid_to`. Promoting to `core` requires reasoning that explicitly mentions `core`.                                 |
+| `complete_pass`    | Finalizes the pass with a structured summary.           | Uses pass-specific completion guards. Also records `entries_skipped` as audit actions.                                                                                              |
+
+Retirement adds:
+
+| Tool               | What it does                 | Important details                                                                                                                                                  |
+| ------------------ | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `query_candidates` | Pages retirement candidates. | Default scope is `actionable`. Supports `scope`, `type`, `importance_max`, `min_age_days`, `project`, `limit`, and `offset`. Default page size is `20`, max `100`. |
+| `retire_entry`     | Retires one entry.           | Enforces hard protections even if the model tries to bypass them. In dry-run mode it reports `wouldRetire: true` without mutating the DB.                          |
+
+Supersession adds:
+
+| Tool                            | What it does                                   | Important details                                                                                                                 |
+| ------------------------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `query_supersession_candidates` | Pages supersession candidate clusters.         | Supports `scope = claim_key, subject, or all`, optional `type`, `limit`, and `offset`. Claim-key clusters are highest confidence. |
+| `link_supersession`             | Links one old entry to its active replacement. | Rejects cross-type links, milestone supersession, core-expiry supersession, self-links, and already-superseded entries.           |
+| `assign_claim_key`              | Normalizes one entry's `claim_key`.            | Enforces `entity/attribute` format and respects dry-run mode.                                                                     |
+| `set_validity`                  | Sets `valid_from` and/or `valid_to`.           | Validates ISO 8601 timestamps, ordering, and active-entry status.                                                                 |
 
 ### `get_health_stats`
 
@@ -174,6 +195,21 @@ Parameters:
 | `offset`         | Page offset. Default: `0`.                    |
 
 The completion guard tracks pagination progress from this tool and uses it to reject shallow passes.
+
+### `query_supersession_candidates`
+
+This is the supersession pass work queue.
+
+Parameters:
+
+| Field    | Meaning                                                 |
+| -------- | ------------------------------------------------------- |
+| `scope`  | `claim_key`, `subject`, or `all`. Default: `claim_key`. |
+| `type`   | Optional exact entry type filter.                       |
+| `limit`  | Page size. Default: `20`.                               |
+| `offset` | Page offset. Default: `0`.                              |
+
+Clusters contain active entries ordered oldest first. Claim-key groups are the safest starting point; subject groups are broader and require more judgment.
 
 ### `inspect_entry`
 
@@ -214,7 +250,7 @@ Behavior:
 
 - `entry_id`
 - `reasoning`
-- at least one of `importance` or `expiry`
+- at least one mutable field
 
 Behavior:
 
@@ -255,7 +291,7 @@ The surgeon CLI is a command group under `agenr surgeon`.
 
 ## `agenr surgeon run`
 
-Runs one retirement pass.
+Runs one surgeon maintenance pass. Retirement is the default. Supersession is selected explicitly with `--pass supersession`.
 
 ```bash
 agenr surgeon run [options]
@@ -265,6 +301,7 @@ agenr surgeon run [options]
 
 | Flag                        | Meaning                                                         | Default                                                                               |
 | --------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `--pass <type>`             | Pass type: `retirement` or `supersession`.                      | `retirement`                                                                          |
 | `--budget <usd>`            | Per-run cost cap in USD.                                        | `config.surgeon.costCap`, else `15.00`                                                |
 | `--context-limit <tokens>`  | Override the per-turn context limit used by the budget tracker. | `config.surgeon.contextLimit`, else ~85% of model context window when known, else `0` |
 | `--skip-evaluated-days <n>` | Skip entries evaluated within the last `n` days.                | `config.surgeon.passes.retirement.skipRecentlyEvaluatedDays`, else `7`                |

@@ -89,6 +89,40 @@ export interface SurgeonCandidateSummary {
 }
 
 /**
+ * Query options for listing supersession candidate clusters.
+ */
+export interface SurgeonSupersessionCandidateQuery {
+  scope: "claim_key" | "subject" | "all";
+  type?: string;
+  limit?: number;
+  offset?: number;
+}
+
+/**
+ * One entry returned inside a supersession candidate cluster.
+ */
+export interface SurgeonSupersessionClusterEntry {
+  id: string;
+  subject: string;
+  type: string;
+  importance: number;
+  expiry: string;
+  createdAt: string;
+  content: string;
+  claimKey: string | null;
+  tags: string[];
+}
+
+/**
+ * Group of active entries that may represent the same knowledge slot.
+ */
+export interface SurgeonSupersessionCluster {
+  groupKey: string;
+  groupedBy: "claim_key" | "subject";
+  entries: SurgeonSupersessionClusterEntry[];
+}
+
+/**
  * Minimal entry summary used in surgeon inspection responses.
  */
 export interface SurgeonEntrySummary {
@@ -231,6 +265,21 @@ export interface SurgeonPort {
   listRetirementCandidates(query: SurgeonCandidateQuery): Promise<SurgeonCandidateSummary[]>;
 
   /**
+   * Lists supersession candidate clusters using the requested grouping strategy.
+   *
+   * Scope controls grouping behavior:
+   * - `claim_key` groups entries sharing the same non-null claim key
+   * - `subject` groups entries sharing the same normalized subject and type
+   * - `all` returns both group families
+   *
+   * Only groups with two or more active entries are returned.
+   *
+   * @param query - Cluster grouping, filtering, and pagination options.
+   * @returns Candidate clusters ordered oldest-first within each cluster.
+   */
+  listSupersessionCandidates(query: SurgeonSupersessionCandidateQuery): Promise<SurgeonSupersessionCluster[]>;
+
+  /**
    * Loads detailed inspection context for one entry.
    *
    * @param entryId - Canonical entry identifier.
@@ -254,6 +303,17 @@ export interface SurgeonPort {
    * @returns `true` when the entry was retired.
    */
   retireEntry(entryId: string, reason?: string): Promise<boolean>;
+
+  /**
+   * Links one active entry to the newer entry that supersedes it.
+   *
+   * @param oldEntryId - Historical entry being superseded.
+   * @param newEntryId - Active entry that replaces the old entry.
+   * @param kind - Optional explicit supersession kind.
+   * @param reason - Optional explanation recorded on the old entry.
+   * @returns `true` when the supersession link was persisted.
+   */
+  supersedeEntry(oldEntryId: string, newEntryId: string, kind?: string, reason?: string): Promise<boolean>;
 
   /**
    * Updates one active entry's mutable fields.

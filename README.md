@@ -27,7 +27,7 @@ What makes agenr different is the combination of local-first storage, semantic e
 - LLM-powered knowledge extraction from conversation transcripts.
 - Semantic deduplication using exact hashes, normalized hashes, embeddings, and within-run clustering.
 - Session continuity with predecessor resolution, recent transcript tails, and LLM-generated continuity summaries.
-- Surgeon retirement pass for corpus maintenance: inspect stale candidates, simulate recall impact, and retire semantically obsolete knowledge with audit history.
+- Surgeon maintenance passes for corpus health: run retirement cleanup for stale entries or supersession review for same-slot lineage, both with audit history.
 - Agent tools for `store`, `recall`, `retire`, `update`, and `trace` through the OpenClaw plugin.
 - Native OpenClaw memory plugin that replaces OpenClaw's built-in memory slot.
 - Local-first storage with SQLite/libSQL. Memory stays on your machine; only model and embedding calls leave it.
@@ -137,19 +137,19 @@ Compatibility policy:
 
 The CLI surface is still intentionally compact, but it now covers setup, recall, ingest, and corpus maintenance.
 
-| Command                         | What it does                                                                                                             |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `agenr init`                    | Interactive first-run wizard: auth, model selection, OpenClaw detection, plugin install, and optional initial ingestion. |
-| `agenr setup`                   | Configure auth, model defaults, embeddings, and the agenr database path.                                                 |
-| `agenr recall <query>`          | Run the hybrid recall pipeline with optional temporal and type/tag filters.                                              |
-| `agenr ingest <path>`           | Default durable-entry ingest shorthand. Equivalent to `agenr ingest entries <path>`.                                     |
-| `agenr ingest entries <path>`   | Bulk-ingest one file or directory of OpenClaw transcript files into durable knowledge entries.                           |
-| `agenr ingest episodes [path]`  | Backfill episodic summaries from OpenClaw session transcripts, including rotated `.reset.*` and `.deleted.*` files.      |
-| `agenr surgeon run`             | Execute the surgeon retirement pass. Dry-run by default; add `--apply` to mutate the corpus.                             |
-| `agenr surgeon status`          | Show corpus health plus the latest surgeon run summary.                                                                  |
-| `agenr surgeon history`         | Show recent surgeon runs.                                                                                                |
-| `agenr surgeon actions <runId>` | Show the audit trail for one surgeon run.                                                                                |
-| `agenr db reset`                | Delete and recreate the knowledge database.                                                                              |
+| Command                         | What it does                                                                                                                                                      |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agenr init`                    | Interactive first-run wizard: auth, model selection, OpenClaw detection, plugin install, and optional initial ingestion.                                          |
+| `agenr setup`                   | Configure auth, model defaults, embeddings, and the agenr database path.                                                                                          |
+| `agenr recall <query>`          | Run the hybrid recall pipeline with optional temporal and type/tag filters.                                                                                       |
+| `agenr ingest <path>`           | Default durable-entry ingest shorthand. Equivalent to `agenr ingest entries <path>`.                                                                              |
+| `agenr ingest entries <path>`   | Bulk-ingest one file or directory of OpenClaw transcript files into durable knowledge entries.                                                                    |
+| `agenr ingest episodes [path]`  | Backfill episodic summaries from OpenClaw session transcripts, including rotated `.reset.*` and `.deleted.*` files.                                               |
+| `agenr surgeon run`             | Execute a surgeon maintenance pass. Defaults to retirement; use `--pass supersession` for lineage review. Dry-run by default; add `--apply` to mutate the corpus. |
+| `agenr surgeon status`          | Show corpus health plus the latest surgeon run summary.                                                                                                           |
+| `agenr surgeon history`         | Show recent surgeon runs.                                                                                                                                         |
+| `agenr surgeon actions <runId>` | Show the audit trail for one surgeon run.                                                                                                                         |
+| `agenr db reset`                | Delete and recreate the knowledge database.                                                                                                                       |
 
 The OpenClaw plugin also gives the agent five tools directly inside the runtime: `agenr_store`, `agenr_recall`, `agenr_retire`, `agenr_update`, and `agenr_trace`.
 
@@ -167,6 +167,9 @@ agenr ingest episodes ~/.openclaw/agents/main/sessions/ --recent 30d
 
 # Run the surgeon retirement pass (dry-run by default)
 agenr surgeon run --budget 2.00
+
+# Run the surgeon supersession pass
+agenr surgeon run --pass supersession --budget 2.00
 
 # Reset the database
 agenr db reset
@@ -199,7 +202,7 @@ Episodes are session-level memory artifacts stored separately from durable entri
 
 ## How the Surgeon Works
 
-The surgeon is a maintenance pass for the durable-memory corpus. It evaluates retirement candidates, inspects related context, can simulate recall impact before mutation, and records runs plus per-action audit history in the database. `agenr surgeon run` is safe by default because it starts in dry-run mode; `--apply` is the explicit mutation switch. For runtime details, governance, and audit behavior, see [docs/SURGEON.md](./docs/SURGEON.md).
+The surgeon is a maintenance system for the durable-memory corpus. Today it supports two passes: retirement, which reviews stale entries for conservative cleanup, and supersession, which links older entries to newer replacements without deleting history. `agenr surgeon run` is safe by default because it starts in dry-run mode; `--pass supersession` switches the workflow, and `--apply` is the explicit mutation switch. For runtime details, governance, and audit behavior, see [docs/SURGEON.md](./docs/SURGEON.md).
 
 ## Development
 

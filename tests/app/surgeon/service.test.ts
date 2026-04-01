@@ -227,6 +227,136 @@ describe("runSurgeon", () => {
     expect(initialPrompt).toContain("Your context window is 4096 tokens.");
   });
 
+  it("assembles the supersession prompt and tool set from corpus state", async () => {
+    const db = await createTestDatabase(databases);
+    await insertEntry(db, {
+      id: "sup-old",
+      subject: "Mac mini update policy",
+      type: "preference",
+      claim_key: "mac_mini/manual_update_policy",
+      created_at: daysAgoIso(90),
+      updated_at: daysAgoIso(90),
+    });
+    await insertEntry(db, {
+      id: "sup-new",
+      subject: "Mac mini update policy revised",
+      type: "preference",
+      claim_key: "mac_mini/manual_update_policy",
+      created_at: daysAgoIso(10),
+      updated_at: daysAgoIso(10),
+    });
+    runAgentLoopMock.mockImplementation(async (prompts: AgentMessage[]) => prompts);
+
+    await runSurgeon(
+      createRunOptions({
+        pass: "supersession",
+        budget: 1.25,
+        contextLimit: 4_096,
+      }),
+      {
+        port: createSurgeonPort(db),
+        config: null,
+        model: TEST_MODEL,
+        now: () => TEST_NOW,
+      },
+    );
+
+    const [prompts, context] = runAgentLoopMock.mock.calls[0] as [AgentMessage[], AgentContext, AgentLoopConfig];
+    const initialPrompt = getUserMessageText(prompts[0]);
+
+    expect(context.systemPrompt).toContain("# Supersession Pass");
+    expect(context.systemPrompt).not.toContain("Retirement is the only pass in scope.");
+    expect(context.tools?.map((tool) => tool.name)).toEqual([
+      "get_health_stats",
+      "query_supersession_candidates",
+      "inspect_entry",
+      "simulate_recall",
+      "link_supersession",
+      "assign_claim_key",
+      "set_validity",
+      "update_entry",
+      "complete_pass",
+    ]);
+    expect(initialPrompt).toContain("Begin supersession pass.");
+    expect(initialPrompt).toContain("Claim-key clusters: 1.");
+    expect(initialPrompt).toContain("Subject clusters:");
+  });
+
+  it("completes an apply supersession run and persists the supersession link", async () => {
+    const db = await createDatabase(":memory:");
+    databases.push(db);
+    await insertEntry(db, {
+      id: "policy-old",
+      subject: "Mac mini update policy",
+      type: "preference",
+      claim_key: "mac_mini/manual_update_policy",
+      created_at: daysAgoIso(120),
+      updated_at: daysAgoIso(120),
+    });
+    await insertEntry(db, {
+      id: "policy-new",
+      subject: "Mac mini update policy clarified",
+      type: "preference",
+      claim_key: "mac_mini/manual_update_policy",
+      created_at: daysAgoIso(20),
+      updated_at: daysAgoIso(20),
+    });
+    await insertEntry(db, {
+      id: "other-preference",
+      subject: "Mac mini maintenance window",
+      type: "preference",
+      claim_key: "mac_mini/maintenance_window",
+      created_at: daysAgoIso(15),
+      updated_at: daysAgoIso(15),
+    });
+    mockSuccessfulSupersessionRunAgentLoop();
+
+    const result = await runSurgeon(
+      createRunOptions({
+        pass: "supersession",
+        apply: true,
+        budget: 0.1,
+      }),
+      {
+        port: createSurgeonPort(db),
+        config: null,
+        model: TEST_MODEL,
+        now: () => TEST_NOW,
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: "completed",
+      passType: "supersession",
+      actionsTaken: 1,
+    });
+
+    const rows = await db.execute({
+      sql: "SELECT id, superseded_by, supersession_kind, supersession_reason FROM entries WHERE id IN (?, ?, ?) ORDER BY id ASC",
+      args: ["other-preference", "policy-new", "policy-old"],
+    });
+    expect(rows.rows).toEqual([
+      {
+        id: "other-preference",
+        superseded_by: null,
+        supersession_kind: null,
+        supersession_reason: null,
+      },
+      {
+        id: "policy-new",
+        superseded_by: null,
+        supersession_kind: null,
+        supersession_reason: null,
+      },
+      {
+        id: "policy-old",
+        superseded_by: "policy-new",
+        supersession_kind: "duplicate",
+        supersession_reason: "These preferences say the same thing. Keep the newer wording as the survivor.",
+      },
+    ]);
+  });
+
   it("appends custom surgeon instructions to the system prompt", async () => {
     const db = await createTestDatabase(databases);
     runAgentLoopMock.mockImplementation(async (prompts: AgentMessage[]) => prompts);
@@ -338,6 +468,11 @@ async function insertEntry(db: SqlDatabase, overrides: Partial<Entry> & Pick<Ent
         recall_count,
         last_recalled_at,
         superseded_by,
+        valid_from,
+        valid_to,
+        claim_key,
+        supersession_kind,
+        supersession_reason,
         cluster_id,
         retired,
         retired_at,
@@ -345,7 +480,7 @@ async function insertEntry(db: SqlDatabase, overrides: Partial<Entry> & Pick<Ent
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     args: [
       entry.id,
@@ -365,6 +500,11 @@ async function insertEntry(db: SqlDatabase, overrides: Partial<Entry> & Pick<Ent
       entry.recall_count,
       entry.last_recalled_at ?? null,
       entry.superseded_by ?? null,
+      entry.valid_from ?? null,
+      entry.valid_to ?? null,
+      entry.claim_key ?? null,
+      entry.supersession_kind ?? null,
+      entry.supersession_reason ?? null,
       entry.cluster_id ?? null,
       entry.retired ? 1 : 0,
       entry.retired_at ?? null,
@@ -393,6 +533,11 @@ function buildEntry(overrides: Partial<Entry> & Pick<Entry, "id" | "subject">): 
     recall_count: overrides.recall_count ?? 0,
     last_recalled_at: overrides.last_recalled_at,
     superseded_by: overrides.superseded_by,
+    valid_from: overrides.valid_from,
+    valid_to: overrides.valid_to,
+    claim_key: overrides.claim_key,
+    supersession_kind: overrides.supersession_kind,
+    supersession_reason: overrides.supersession_reason,
     cluster_id: overrides.cluster_id,
     retired: overrides.retired ?? false,
     retired_at: overrides.retired_at,
@@ -453,6 +598,83 @@ function mockSuccessfulRunAgentLoop(): void {
       });
 
       return [...prompts, queryAssistantMessage, completeAssistantMessage];
+    },
+  );
+}
+
+function mockSuccessfulSupersessionRunAgentLoop(): void {
+  runAgentLoopMock.mockImplementation(
+    async (
+      prompts: AgentMessage[],
+      context: AgentContext,
+      config: AgentLoopConfig,
+      emit: (event: AgentEvent) => void,
+      signal?: AbortSignal,
+    ): Promise<AgentMessage[]> => {
+      const queryArgs = {
+        scope: "claim_key",
+        limit: 20,
+        offset: 0,
+      };
+      const queryAssistantMessage = createAssistantToolMessage({
+        id: "tool-query-supersession",
+        name: "query_supersession_candidates",
+        arguments: queryArgs,
+        reasoning: "Start with the claim_key sweep before widening the review.",
+        usage: TEST_USAGE,
+      });
+      await executeToolCall({
+        context,
+        config,
+        emit,
+        signal,
+        assistantMessage: queryAssistantMessage,
+        args: queryArgs,
+      });
+
+      const linkArgs = {
+        old_entry_id: "policy-old",
+        new_entry_id: "policy-new",
+        kind: "duplicate",
+        reason: "These preferences say the same thing. Keep the newer wording as the survivor.",
+      };
+      const linkAssistantMessage = createAssistantToolMessage({
+        id: "tool-link-supersession",
+        name: "link_supersession",
+        arguments: linkArgs,
+        reasoning: "This is a clear duplicate pair in the same claim_key slot.",
+      });
+      await executeToolCall({
+        context,
+        config,
+        emit,
+        signal,
+        assistantMessage: linkAssistantMessage,
+        args: linkArgs,
+      });
+
+      const completeArgs = {
+        actions_taken: 1,
+        entries_skipped: [],
+        observations: ["Resolved one duplicate supersession pair."],
+        recommendations: ["Run the subject sweep later if more budget is available."],
+      };
+      const completeAssistantMessage = createAssistantToolMessage({
+        id: "tool-complete-supersession",
+        name: "complete_pass",
+        arguments: completeArgs,
+        reasoning: "The claim_key sweep is complete for this focused run.",
+      });
+      await executeToolCall({
+        context,
+        config,
+        emit,
+        signal,
+        assistantMessage: completeAssistantMessage,
+        args: completeArgs,
+      });
+
+      return [...prompts, queryAssistantMessage, linkAssistantMessage, completeAssistantMessage];
     },
   );
 }

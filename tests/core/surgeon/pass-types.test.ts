@@ -4,16 +4,17 @@ import { SURGEON_PASS_TYPES, isImplementedSurgeonPass, isSurgeonPassType } from 
 
 describe("surgeon pass types", () => {
   it("recognizes valid pass types", () => {
-    expect(SURGEON_PASS_TYPES).toEqual(["retirement", "dedup", "contradictions", "auto"]);
+    expect(SURGEON_PASS_TYPES).toEqual(["retirement", "dedup", "supersession", "auto"]);
     expect(isSurgeonPassType("retirement")).toBe(true);
     expect(isSurgeonPassType("dedup")).toBe(true);
+    expect(isSurgeonPassType("supersession")).toBe(true);
     expect(isSurgeonPassType("invalid")).toBe(false);
   });
 
-  it("marks only retirement as implemented in the MVP", () => {
+  it("marks retirement and supersession as implemented in the MVP", () => {
     expect(isImplementedSurgeonPass("retirement")).toBe(true);
+    expect(isImplementedSurgeonPass("supersession")).toBe(true);
     expect(isImplementedSurgeonPass("dedup")).toBe(false);
-    expect(isImplementedSurgeonPass("contradictions")).toBe(false);
     expect(isImplementedSurgeonPass("auto")).toBe(false);
   });
 });

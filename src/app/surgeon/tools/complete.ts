@@ -4,7 +4,7 @@ import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type, type Static } from "@sinclair/typebox";
 
 import type { SurgeonCompletionSummary } from "../../../core/surgeon/types.js";
-import type { PaginatedQueryProgress } from "../completion-guard.js";
+import type { PaginatedQueryProgress, SurgeonSupersessionReviewProgress } from "../completion-guard.js";
 import type { SurgeonToolDeps } from "./index.js";
 import { toolResult } from "./shared.js";
 
@@ -24,6 +24,7 @@ const MIN_BUDGET_USED_FRACTION = 0.75;
 const MIN_BUDGET_USED_FRACTION_HARD = 0.2;
 const SAFETY_VALVE_REJECTION_LIMIT = 50;
 const RETIREMENT_COMPLETION_KEY = "retirement";
+const SUPERSESSION_COMPLETION_KEY = "supersession";
 
 /** Validated parameter payload for the completion tool. */
 type CompletePassParams = Static<typeof COMPLETE_PASS_SCHEMA>;
@@ -38,11 +39,15 @@ export function createCompletePassTool(deps: SurgeonToolDeps): AgentTool<typeof 
   return {
     name: "complete_pass",
     label: "Complete pass",
-    description: "Signal that the retirement pass is complete and provide the structured summary.",
+    description: "Signal that the current surgeon pass is complete and provide the structured summary.",
     parameters: COMPLETE_PASS_SCHEMA,
     async execute(_toolCallId, params: CompletePassParams) {
       for (const skipped of params.entries_skipped) {
         const entryId = skipped.entry_id?.trim();
+        if (deps.passType === "supersession" && entryId) {
+          deps.completionGuards?.supersession.markAdjudicated([entryId]);
+        }
+
         await deps.recordRunAction({
           id: randomUUID(),
           runId: deps.runId,
@@ -61,57 +66,141 @@ export function createCompletePassTool(deps: SurgeonToolDeps): AgentTool<typeof 
         recommendations: params.recommendations,
       };
 
-      const priorRejections = deps.completionGuards?.rejectionCounts.get(RETIREMENT_COMPLETION_KEY) ?? 0;
-      const budgetUsage = calculateBudgetUsage(deps);
-      const handledCount = Math.max(0, params.actions_taken + params.entries_skipped.length);
-
-      if (priorRejections < SAFETY_VALVE_REJECTION_LIMIT && budgetUsage && deps.completionGuards && budgetUsage.budgetUsedPct < MIN_BUDGET_USED_FRACTION) {
-        const progress = deps.completionGuards.retirement.snapshot();
-        const knownCandidates = progress.totalCount ?? deps.completionGuards.initialHealth.retirementCandidates;
-        const hasKnownWork = knownCandidates > 0 || progress.queryCalls > 0;
-
-        // If barely any budget is used, reject even if the actionable scope was
-        // exhausted - the surgeon should widen to scope="all" and keep working.
-        const budgetBarelyUsed = budgetUsage.budgetUsedPct < MIN_BUDGET_USED_FRACTION_HARD;
-
-        const shouldReject =
-          budgetBarelyUsed ||
-          (hasKnownWork &&
-            !progress.sawExhaustedPage &&
-            ((progress.queryCalls === 0 && knownCandidates > handledCount) ||
-              (progress.queryCalls > 0 && (knownCandidates === 0 || progress.maxWindowEnd < knownCandidates))));
-
-        if (shouldReject) {
-          const rejectionCount = priorRejections + 1;
-          deps.completionGuards.rejectionCounts.set(RETIREMENT_COMPLETION_KEY, rejectionCount);
-
-          return toolResult({
-            completed: false,
-            rejected: true,
-            rejectionCount,
-            summary,
-            budgetUsedPct: formatPercent(budgetUsage.budgetUsedPct),
-            pagedCandidates: progress.maxWindowEnd,
-            knownCandidates: knownCandidates || null,
-            contextUsedTokens: budgetUsage.contextUsedTokens,
-            contextLimit: budgetUsage.contextLimit || null,
-            costUsedUsd: budgetUsage.costUsedUsd,
-            costCapUsd: budgetUsage.costCapUsd || null,
-            remainingCostUsd: budgetUsage.remainingCostUsd,
-            message: budgetBarelyUsed
-              ? `Completion rejected: only ${formatPercent(budgetUsage.budgetUsedPct)}% of the cost budget has been used ($${budgetUsage.costUsedUsd.toFixed(2)} of $${budgetUsage.costCapUsd.toFixed(2)}). If the actionable scope is exhausted, widen to scope='all' and continue paging through the broader candidate pool. Do not stop after a spot check.`
-              : `Completion rejected: ${describeRetirementProgress(progress, knownCandidates)} and only ${formatPercent(budgetUsage.budgetUsedPct)}% of the cost budget has been used.`,
-          });
-        }
+      const rejection =
+        deps.passType === "supersession" ? buildSupersessionCompletionRejection(deps, summary) : buildRetirementCompletionRejection(deps, summary);
+      if (rejection) {
+        return toolResult(rejection);
       }
 
       deps.completionState.setComplete(summary);
       return toolResult({
         completed: true,
-        safetyValveUsed: priorRejections >= SAFETY_VALVE_REJECTION_LIMIT,
+        safetyValveUsed: rejectionSafetyValveUsed(deps),
         summary,
       });
     },
+  };
+}
+
+/**
+ * Evaluates whether the retirement pass is allowed to complete yet.
+ *
+ * @param deps - Shared run dependencies containing completion guards and budget state.
+ * @param summary - Structured completion summary from the tool call.
+ * @returns Rejection payload when completion should be blocked, otherwise null.
+ */
+function buildRetirementCompletionRejection(deps: SurgeonToolDeps, summary: SurgeonCompletionSummary): Record<string, unknown> | null {
+  const priorRejections = deps.completionGuards?.rejectionCounts.get(RETIREMENT_COMPLETION_KEY) ?? 0;
+  const budgetUsage = calculateBudgetUsage(deps);
+  const handledCount = Math.max(0, summary.actions_taken + summary.entries_skipped.length);
+
+  if (priorRejections >= SAFETY_VALVE_REJECTION_LIMIT || !budgetUsage || !deps.completionGuards || budgetUsage.budgetUsedPct >= MIN_BUDGET_USED_FRACTION) {
+    return null;
+  }
+
+  const progress = deps.completionGuards.retirement.snapshot();
+  const knownCandidates = progress.totalCount ?? deps.completionGuards.initialHealth.retirementCandidates;
+  const hasKnownWork = knownCandidates > 0 || progress.queryCalls > 0;
+
+  // If barely any budget is used, reject even if the actionable scope was
+  // exhausted - the surgeon should widen to scope="all" and keep working.
+  const budgetBarelyUsed = budgetUsage.budgetUsedPct < MIN_BUDGET_USED_FRACTION_HARD;
+  const shouldReject =
+    budgetBarelyUsed ||
+    (hasKnownWork &&
+      !progress.sawExhaustedPage &&
+      ((progress.queryCalls === 0 && knownCandidates > handledCount) ||
+        (progress.queryCalls > 0 && (knownCandidates === 0 || progress.maxWindowEnd < knownCandidates))));
+
+  if (!shouldReject) {
+    return null;
+  }
+
+  const rejectionCount = priorRejections + 1;
+  deps.completionGuards.rejectionCounts.set(RETIREMENT_COMPLETION_KEY, rejectionCount);
+
+  return {
+    completed: false,
+    rejected: true,
+    rejectionCount,
+    summary,
+    budgetUsedPct: formatPercent(budgetUsage.budgetUsedPct),
+    pagedCandidates: progress.maxWindowEnd,
+    knownCandidates: knownCandidates || null,
+    contextUsedTokens: budgetUsage.contextUsedTokens,
+    contextLimit: budgetUsage.contextLimit || null,
+    costUsedUsd: budgetUsage.costUsedUsd,
+    costCapUsd: budgetUsage.costCapUsd || null,
+    remainingCostUsd: budgetUsage.remainingCostUsd,
+    message: budgetBarelyUsed
+      ? `Completion rejected: only ${formatPercent(budgetUsage.budgetUsedPct)}% of the cost budget has been used ($${budgetUsage.costUsedUsd.toFixed(2)} of $${budgetUsage.costCapUsd.toFixed(2)}). If the actionable scope is exhausted, widen to scope='all' and continue paging through the broader candidate pool. Do not stop after a spot check.`
+      : `Completion rejected: ${describeRetirementProgress(progress, knownCandidates)} and only ${formatPercent(budgetUsage.budgetUsedPct)}% of the cost budget has been used.`,
+  };
+}
+
+/**
+ * Evaluates whether the supersession pass is allowed to complete yet.
+ *
+ * @param deps - Shared run dependencies containing completion guards and budget state.
+ * @param summary - Structured completion summary from the tool call.
+ * @returns Rejection payload when completion should be blocked, otherwise null.
+ */
+function buildSupersessionCompletionRejection(deps: SurgeonToolDeps, summary: SurgeonCompletionSummary): Record<string, unknown> | null {
+  const priorRejections = deps.completionGuards?.rejectionCounts.get(SUPERSESSION_COMPLETION_KEY) ?? 0;
+  if (priorRejections >= SAFETY_VALVE_REJECTION_LIMIT || !deps.completionGuards) {
+    return null;
+  }
+
+  const progress = deps.completionGuards.supersession.snapshot();
+  const budgetUsage = calculateBudgetUsage(deps);
+  const claimKeyTotal = progress.claimKeyClustersTotal || deps.completionGuards.initialHealth.supersessionClaimKeyClusters;
+  const subjectTotal = progress.subjectClustersTotal || deps.completionGuards.initialHealth.supersessionSubjectClusters;
+  const noKnownWork = claimKeyTotal === 0 && subjectTotal === 0;
+  const viewedThreshold = Math.ceil(claimKeyTotal / 2);
+  const viewedEnoughClaimKey = claimKeyTotal === 0 || progress.claimKeyClustersViewed >= viewedThreshold;
+  const adjudicatedAny = progress.adjudicatedClusters > 0 || noKnownWork;
+  const claimKeySweepComplete =
+    claimKeyTotal === 0 ||
+    (progress.claimKeyScopeExhausted && progress.claimKeyClustersViewed >= claimKeyTotal && progress.claimKeyClustersAdjudicated >= claimKeyTotal);
+  const budgetForcedStop = budgetUsage ? budgetUsage.budgetUsedPct >= MIN_BUDGET_USED_FRACTION : false;
+
+  if (claimKeySweepComplete) {
+    return null;
+  }
+
+  const shouldReject = !viewedEnoughClaimKey || !adjudicatedAny || (!budgetForcedStop && progress.widenedBeforeClaimKeyExhausted) || !budgetForcedStop;
+
+  if (!shouldReject) {
+    return null;
+  }
+
+  const rejectionCount = priorRejections + 1;
+  deps.completionGuards.rejectionCounts.set(SUPERSESSION_COMPLETION_KEY, rejectionCount);
+
+  return {
+    completed: false,
+    rejected: true,
+    rejectionCount,
+    summary,
+    budgetUsedPct: budgetUsage ? formatPercent(budgetUsage.budgetUsedPct) : null,
+    claimKeyClustersViewed: progress.claimKeyClustersViewed,
+    claimKeyClustersTotal: claimKeyTotal,
+    claimKeyClustersAdjudicated: progress.claimKeyClustersAdjudicated,
+    subjectClustersViewed: progress.subjectClustersViewed,
+    subjectClustersTotal: subjectTotal,
+    adjudicatedClusters: progress.adjudicatedClusters,
+    widenedBeforeClaimKeyExhausted: progress.widenedBeforeClaimKeyExhausted,
+    contextUsedTokens: budgetUsage?.contextUsedTokens ?? null,
+    contextLimit: budgetUsage?.contextLimit ?? null,
+    costUsedUsd: budgetUsage?.costUsedUsd ?? null,
+    costCapUsd: budgetUsage?.costCapUsd ?? null,
+    remainingCostUsd: budgetUsage?.remainingCostUsd ?? null,
+    message: describeSupersessionRejection(progress, {
+      claimKeyTotal,
+      budgetUsedPct: budgetUsage ? formatPercent(budgetUsage.budgetUsedPct) : null,
+      budgetForcedStop,
+      noKnownWork,
+    }),
   };
 }
 
@@ -159,6 +248,21 @@ function formatPercent(value: number): number {
 }
 
 /**
+ * Returns whether the completion safety valve was used for the active pass.
+ *
+ * @param deps - Shared run dependencies containing the completion guards.
+ * @returns True when the active pass reached the rejection safety valve.
+ */
+function rejectionSafetyValveUsed(deps: SurgeonToolDeps): boolean {
+  if (!deps.completionGuards) {
+    return false;
+  }
+
+  const key = deps.passType === "supersession" ? SUPERSESSION_COMPLETION_KEY : RETIREMENT_COMPLETION_KEY;
+  return (deps.completionGuards.rejectionCounts.get(key) ?? 0) >= SAFETY_VALVE_REJECTION_LIMIT;
+}
+
+/**
  * Produces a readable explanation of retirement pagination progress.
  *
  * @param progress - Recorded pagination state for the retirement query.
@@ -177,6 +281,47 @@ function describeRetirementProgress(progress: PaginatedQueryProgress, knownCandi
   }
 
   return `only ${progress.maxWindowEnd} retirement candidates have been paged so far and query_candidates has not been exhausted`;
+}
+
+/**
+ * Produces a readable explanation of supersession review progress.
+ *
+ * @param progress - Recorded supersession review state.
+ * @param input - Known cluster totals and budget context.
+ * @returns Human-readable progress summary.
+ */
+function describeSupersessionRejection(
+  progress: SurgeonSupersessionReviewProgress,
+  input: {
+    claimKeyTotal: number;
+    budgetUsedPct: number | null;
+    budgetForcedStop: boolean;
+    noKnownWork: boolean;
+  },
+): string {
+  if (input.noKnownWork) {
+    return "Completion rejected: the supersession sweep has not queried any clusters yet.";
+  }
+
+  if (progress.adjudicatedClusters === 0) {
+    return "Completion rejected: no supersession clusters have been adjudicated yet.";
+  }
+
+  if (progress.claimKeyClustersViewed < Math.ceil(input.claimKeyTotal / 2)) {
+    return `Completion rejected: only ${progress.claimKeyClustersViewed} of ${input.claimKeyTotal} claim_key clusters have been viewed so far.`;
+  }
+
+  if (progress.widenedBeforeClaimKeyExhausted && !input.budgetForcedStop) {
+    return "Completion rejected: the review widened beyond claim_key clusters before the claim_key sweep was exhausted.";
+  }
+
+  if (!input.budgetForcedStop) {
+    return input.budgetUsedPct === null
+      ? "Completion rejected: the claim_key sweep is not exhausted yet."
+      : `Completion rejected: the claim_key sweep is not exhausted yet and only ${input.budgetUsedPct}% of the cost budget has been used.`;
+  }
+
+  return "Completion rejected: the supersession pass needs either a finished claim_key sweep or a clearer budget-constrained stopping point.";
 }
 
 /**

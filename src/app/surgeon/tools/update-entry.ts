@@ -13,6 +13,9 @@ const UPDATE_ENTRY_SCHEMA = Type.Object({
       description: "New expiry: 'core', 'permanent', or 'temporary'",
     }),
   ),
+  claim_key: Type.Optional(Type.String({ minLength: 3, description: "Claim key in entity/attribute format." })),
+  valid_from: Type.Optional(Type.String({ description: "ISO 8601 timestamp for when this fact became true." })),
+  valid_to: Type.Optional(Type.String({ description: "ISO 8601 timestamp for when this fact stopped being true." })),
   reasoning: Type.String({ minLength: 1, description: "Why these changes are appropriate." }),
 });
 
@@ -23,7 +26,7 @@ type UpdateEntryParams = Static<typeof UPDATE_ENTRY_SCHEMA>;
  * Creates the entry-update tool used when demotion is better than retirement.
  *
  * @param deps - Shared run dependencies for surgeon tools.
- * @returns Agent tool that updates importance and/or expiry with reasoning.
+ * @returns Agent tool that updates mutable entry fields with reasoning.
  */
 export function createUpdateEntryTool(deps: SurgeonToolDeps): AgentTool<typeof UPDATE_ENTRY_SCHEMA> {
   return {
@@ -48,12 +51,13 @@ export function createUpdateEntryTool(deps: SurgeonToolDeps): AgentTool<typeof U
           success: false,
           dryRun: !deps.apply,
           entryId: params.entry_id,
-          reason: "Expiry must be one of: core, permanent, temporary.",
+          reason:
+            "Expiry must be one of: core, permanent, temporary. Claim keys must use entity/attribute format. Validity timestamps must be ISO 8601 and ordered correctly.",
         });
       }
 
       if (Object.keys(requestedFields).length === 0) {
-        throw new Error("update_entry requires at least one mutable field: importance or expiry.");
+        throw new Error("update_entry requires at least one mutable field: importance, expiry, claim_key, valid_from, or valid_to.");
       }
 
       if (requestedFields.expiry === "core" && !hasExplicitCoreAcknowledgement(reasoning)) {
@@ -115,8 +119,20 @@ export function createUpdateEntryTool(deps: SurgeonToolDeps): AgentTool<typeof U
  * @param params - Validated update-tool parameters.
  * @returns Mutable entry fields, or null when expiry is invalid.
  */
-function buildRequestedFields(params: UpdateEntryParams): { importance?: number; expiry?: Expiry } | null {
-  const fields: { importance?: number; expiry?: Expiry } = {};
+function buildRequestedFields(params: UpdateEntryParams): {
+  importance?: number;
+  expiry?: Expiry;
+  claim_key?: string;
+  valid_from?: string;
+  valid_to?: string;
+} | null {
+  const fields: {
+    importance?: number;
+    expiry?: Expiry;
+    claim_key?: string;
+    valid_from?: string;
+    valid_to?: string;
+  } = {};
 
   if (typeof params.importance === "number") {
     fields.importance = clampImportance(params.importance);
@@ -129,6 +145,37 @@ function buildRequestedFields(params: UpdateEntryParams): { importance?: number;
 
   if (expiry !== undefined) {
     fields.expiry = expiry;
+  }
+
+  if (params.claim_key !== undefined) {
+    const claimKey = normalizeClaimKey(params.claim_key);
+    if (!claimKey) {
+      return null;
+    }
+
+    fields.claim_key = claimKey;
+  }
+
+  if (params.valid_from !== undefined) {
+    const validFrom = normalizeOptionalTimestamp(params.valid_from);
+    if (!validFrom) {
+      return null;
+    }
+
+    fields.valid_from = validFrom;
+  }
+
+  if (params.valid_to !== undefined) {
+    const validTo = normalizeOptionalTimestamp(params.valid_to);
+    if (!validTo) {
+      return null;
+    }
+
+    fields.valid_to = validTo;
+  }
+
+  if (fields.valid_from && fields.valid_to && Date.parse(fields.valid_from) >= Date.parse(fields.valid_to)) {
+    return null;
   }
 
   return fields;
@@ -174,8 +221,17 @@ function buildChanges(
   entry: {
     importance: number;
     expiry: Expiry;
+    claim_key?: string;
+    valid_from?: string;
+    valid_to?: string;
   },
-  fields: { importance?: number; expiry?: Expiry },
+  fields: {
+    importance?: number;
+    expiry?: Expiry;
+    claim_key?: string;
+    valid_from?: string;
+    valid_to?: string;
+  },
 ): Record<string, { from: number | string; to: number | string }> {
   const changes: Record<string, { from: number | string; to: number | string }> = {};
 
@@ -193,6 +249,27 @@ function buildChanges(
     };
   }
 
+  if (typeof fields.claim_key === "string" && entry.claim_key !== fields.claim_key) {
+    changes.claim_key = {
+      from: entry.claim_key ?? "",
+      to: fields.claim_key,
+    };
+  }
+
+  if (typeof fields.valid_from === "string" && entry.valid_from !== fields.valid_from) {
+    changes.valid_from = {
+      from: entry.valid_from ?? "",
+      to: fields.valid_from,
+    };
+  }
+
+  if (typeof fields.valid_to === "string" && entry.valid_to !== fields.valid_to) {
+    changes.valid_to = {
+      from: entry.valid_to ?? "",
+      to: fields.valid_to,
+    };
+  }
+
   return changes;
 }
 
@@ -204,4 +281,38 @@ function buildChanges(
  */
 function hasExplicitCoreAcknowledgement(reasoning: string): boolean {
   return /\bcore\b/i.test(reasoning);
+}
+
+/**
+ * Normalizes and validates a claim key in `entity/attribute` format.
+ *
+ * @param value - Raw claim key input.
+ * @returns Normalized claim key, or null when invalid.
+ */
+function normalizeClaimKey(value: string): string | null {
+  const parts = value
+    .trim()
+    .split("/")
+    .map((part) => part.trim());
+
+  if (parts.length !== 2 || parts[0]?.length === 0 || parts[1]?.length === 0) {
+    return null;
+  }
+
+  return `${parts[0]}/${parts[1]}`;
+}
+
+/**
+ * Validates and normalizes one ISO 8601 timestamp string.
+ *
+ * @param value - Raw timestamp input.
+ * @returns Trimmed timestamp, or null when invalid.
+ */
+function normalizeOptionalTimestamp(value: string): string | null {
+  const normalized = value.trim();
+  if (normalized.length === 0 || !normalized.includes("T") || Number.isNaN(Date.parse(normalized))) {
+    return null;
+  }
+
+  return normalized;
 }
