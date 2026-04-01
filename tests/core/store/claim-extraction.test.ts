@@ -35,7 +35,7 @@ describe("extractClaimKey", () => {
     });
   });
 
-  it("resolves self-references to the single person-like entity hint", async () => {
+  it("resolves self-references when exactly one entity hint exists", async () => {
     const llm = new MockLlmPort({
       entity: "the user",
       attribute: "timezone",
@@ -48,7 +48,7 @@ describe("extractClaimKey", () => {
         subject: "User timezone",
         content: "The user's timezone is America/Chicago.",
       },
-      ["jim", "agenr"],
+      ["research_agent"],
       llm,
       {
         enabled: true,
@@ -57,7 +57,32 @@ describe("extractClaimKey", () => {
       },
     );
 
-    expect(result?.claimKey).toBe("jim/timezone");
+    expect(result?.claimKey).toBe("research_agent/timezone");
+  });
+
+  it("keeps self-references when multiple entity hints make resolution ambiguous", async () => {
+    const llm = new MockLlmPort({
+      entity: "we",
+      attribute: "deployment process",
+      confidence: 0.88,
+    });
+
+    const result = await extractClaimKey(
+      {
+        type: "decision",
+        subject: "Deployment process",
+        content: "We deploy with blue-green cutovers.",
+      },
+      ["platform_team", "deploy_pipeline"],
+      llm,
+      {
+        enabled: true,
+        confidenceThreshold: 0.8,
+        eligibleTypes: ["fact", "preference", "decision"],
+      },
+    );
+
+    expect(result?.claimKey).toBe("we/deployment_process");
   });
 
   it("skips ineligible entry types", async () => {

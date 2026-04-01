@@ -1,28 +1,7 @@
 import type { DatabasePort, LlmPort } from "../ports.js";
 import type { EntryType } from "../types.js";
 
-const GENERIC_SELF_ENTITIES = new Set(["i", "me", "the user", "myself"]);
-const NON_PERSON_ENTITY_HINTS = new Set([
-  "agenr",
-  "openclaw",
-  "macbook",
-  "laptop",
-  "server",
-  "workstation",
-  "system",
-  "repo",
-  "repository",
-  "project",
-  "database",
-  "db",
-  "service",
-  "plugin",
-  "app",
-  "api",
-  "config",
-  "sandbox",
-  "knowledge",
-]);
+const SELF_REFERENTIAL_ENTITIES = new Set(["i", "me", "the_user", "myself", "user", "we", "our_team", "the_project", "this_project"]);
 
 /** Raw JSON payload expected back from the claim-extraction classifier. */
 interface ClaimExtractionResponse {
@@ -121,14 +100,14 @@ function buildClaimExtractionSystemPrompt(entityHints: string[]): string {
     "A claim key identifies the specific slot this fact occupies: entity/attribute in lowercase snake_case.",
     "",
     "Rules:",
-    "- entity: the primary noun this fact is about (a person name, system name, device name, project name)",
-    "- attribute: the specific aspect being described (home_city, package_manager, hostname, default_model)",
-    "- Format: entity/attribute",
-    "- If the entry describes multiple unrelated facts, narrative, or a vague opinion with no single dominant slot, set no_claim to true",
+    "- entity: the primary noun this fact is about - the thing being described. Could be a person, project, system, tool, service, concept, dataset, organization, or any other identifiable noun.",
+    "- attribute: the specific property or aspect of that entity being stated. Should be narrow enough that two entries with the same entity/attribute are likely describing the same slot of knowledge.",
+    "- Format: entity/attribute (both lowercase snake_case)",
+    "- If the entry describes multiple unrelated facts, narrative content, or a vague opinion with no single dominant slot, set no_claim to true.",
     "- Confidence: 0.0 to 1.0, how precisely this claim key captures the entry's single dominant slot. Use 0.9+ only when the slot is unambiguous.",
     "",
-    `Known entities in the knowledge base: ${normalizedHints.length > 0 ? normalizedHints.join(", ") : "(none)"}`,
-    "Prefer one of these entities if the entry is about any of them. Do not invent a new entity name when an existing one matches.",
+    `Known entities already in the knowledge base: ${normalizedHints.length > 0 ? normalizedHints.join(", ") : "(none)"}`,
+    `If the entry is clearly about one of these existing entities, use that name. Do not invent a new entity name when an existing one matches (e.g., don't create "react_router_v7" if "react_router" already exists and the entry is about React Router).`,
     "",
     'Respond with JSON: { "entity": string, "attribute": string, "confidence": number, "no_claim"?: boolean }',
   ].join("\n");
@@ -159,29 +138,29 @@ function normalizeConfidence(value: unknown): number {
 }
 
 /**
- * Normalizes a raw entity into a stable claim-key segment.
+ * Resolves common self-referential entity names to a concrete entity from the
+ * hint set when there is exactly one unambiguous choice.
  *
  * @param value - Raw entity string returned by the model.
  * @param entityHints - Existing entity prefixes used for alias resolution.
  * @returns Safe claim-key entity segment.
  */
 function normalizeEntity(value: string, entityHints: string[]): string {
-  const normalizedValue = value.trim().toLowerCase();
+  const normalizedValue = normalizeClaimKeyPart(value);
   if (normalizedValue.length === 0) {
     return "";
   }
 
   const normalizedHints = Array.from(new Set(entityHints.map((entityHint) => normalizeClaimKeyPart(entityHint)).filter((entityHint) => entityHint.length > 0)));
-  if (GENERIC_SELF_ENTITIES.has(normalizedValue)) {
-    const personHints = normalizedHints.filter((entityHint) => looksLikePersonName(entityHint));
-    if (personHints.length === 1) {
-      return personHints[0] ?? "";
+  if (SELF_REFERENTIAL_ENTITIES.has(normalizedValue)) {
+    if (normalizedHints.length === 1) {
+      return normalizedHints[0] ?? normalizedValue;
     }
 
-    return "user";
+    return normalizedValue;
   }
 
-  return normalizeClaimKeyPart(normalizedValue);
+  return normalizedValue;
 }
 
 /**
@@ -197,23 +176,4 @@ function normalizeClaimKeyPart(value: string): string {
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/_+/g, "_")
     .replace(/^_+|_+$/g, "");
-}
-
-/**
- * Heuristically distinguishes human-style entity hints from system labels.
- *
- * @param value - Normalized entity hint candidate.
- * @returns True when the hint looks like a person name.
- */
-function looksLikePersonName(value: string): boolean {
-  const tokens = value.split(/[_-]+/).filter((token) => token.length > 0);
-  if (tokens.length === 0 || tokens.length > 3) {
-    return false;
-  }
-
-  if (!tokens.every((token) => /^[a-z]+$/u.test(token))) {
-    return false;
-  }
-
-  return tokens.some((token) => !NON_PERSON_ENTITY_HINTS.has(token));
 }

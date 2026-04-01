@@ -39,7 +39,8 @@ const UPDATE_TOOL_PARAMETERS = {
     },
     claimKey: {
       type: "string",
-      description: 'Slot key for this fact\'s family (e.g., "jim/home_city").',
+      description:
+        'Slot key identifying the specific knowledge slot (entity/attribute format, e.g., "project_name/deploy_strategy" or "postgres/max_connections"). Entries with the same claim key are candidates for supersession.',
     },
     validFrom: {
       type: "string",

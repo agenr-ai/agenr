@@ -372,7 +372,7 @@ export async function findActiveEntriesByClaimKey(executor: SqlExecutor, claimKe
  * Lists distinct entity prefixes derived from active claim keys.
  *
  * @param executor - SQL executor used for the lookup.
- * @returns Sorted distinct entity prefixes such as `jim` from `jim/home_city`.
+ * @returns Sorted distinct entity prefixes such as `react` from `react/version` or `deploy_pipeline` from `deploy_pipeline/rollback_strategy`.
  */
 export async function getDistinctClaimKeyPrefixes(executor: SqlExecutor): Promise<string[]> {
   const result = await executor.execute({

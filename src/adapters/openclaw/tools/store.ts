@@ -62,7 +62,8 @@ const STORE_TOOL_PARAMETERS = {
     },
     claimKey: {
       type: "string",
-      description: 'Slot key for this fact\'s family (e.g., "jim/home_city"). Helps detect when facts in the same family should replace each other.',
+      description:
+        'Slot key identifying the specific knowledge slot (entity/attribute format, e.g., "project_name/deploy_strategy" or "postgres/max_connections"). Entries with the same claim key are candidates for supersession.',
     },
     validFrom: {
       type: "string",
@@ -89,7 +90,7 @@ export function createAgenrStoreTool(ctx: OpenClawPluginToolContext, servicesPro
     name: "agenr_store",
     label: "Agenr Store",
     description:
-      "Store a new knowledge entry in agenr long-term memory. Call immediately after decisions, preferences, lessons, and durable facts - but apply the future-session test first: will a fresh session need this to make a better decision, or are you just logging what happened?\n\nStore: architecture decisions, workflow constraints, recurring problems, user preferences, durable technical facts, operational lessons, important open risks.\n\nDo not store: version shipping events (changelogs are the record), issue/PR filing records (the tracker is the record), phase plans or release sequencing (stale within a session), progress snapshots (stale within minutes), prompt file locations or build logistics.\n\nWhen replacing an existing fact, pass `supersedes` with the old entry's ID. When storing a slot-like fact (a person's city, a system's config), pass `claimKey` to enable future supersession detection.\n\nDo not ask before storing - but do ask whether future-you actually needs it.",
+      "Store a new knowledge entry in agenr long-term memory. Call immediately after decisions, preferences, lessons, and durable facts - but apply the future-session test first: will a fresh session need this to make a better decision, or are you just logging what happened?\n\nStore: architecture decisions, workflow constraints, recurring problems, user preferences, durable technical facts, operational lessons, important open risks.\n\nDo not store: version shipping events (changelogs are the record), issue/PR filing records (the tracker is the record), phase plans or release sequencing (stale within a session), progress snapshots (stale within minutes), prompt file locations or build logistics.\n\nWhen replacing an existing fact, pass `supersedes` with the old entry's ID. When storing a slot-like fact (for example, a library version or a rollout strategy), pass `claimKey` to enable future supersession detection.\n\nDo not ask before storing - but do ask whether future-you actually needs it.",
     parameters: STORE_TOOL_PARAMETERS,
     async execute(_toolCallId, rawParams) {
       try {
