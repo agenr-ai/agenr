@@ -18,15 +18,16 @@ const getModelWithStrings = getModel as unknown as GetModelWithStrings;
  *
  * @param openClaw - OpenClaw host config and runtime helpers.
  * @param modelRef - Optional `provider/model` override from plugin config.
+ * @param label - Caller-specific label used when reporting invalid overrides.
  * @returns LLM port backed by OpenClaw-resolved credentials.
  * @throws Error When the model override is invalid or OpenClaw cannot resolve
  *   an API-key-compatible credential for the selected provider.
  */
-export async function createOpenClawLlmClient(openClaw: AgenrOpenClawHost, modelRef?: string): Promise<LlmPort> {
+export async function createOpenClawLlmClient(openClaw: AgenrOpenClawHost, modelRef?: string, label = "model override"): Promise<LlmPort> {
   const execution = resolveOpenClawEmbeddedAgentExecution({
     openClaw,
     modelOverride: modelRef,
-    invalidOverrideLabel: "claim extraction model override",
+    invalidOverrideLabel: label,
   });
   const model = getModelWithStrings(execution.provider, execution.model);
   const auth = await openClaw.runtime.modelAuth.resolveApiKeyForProvider({

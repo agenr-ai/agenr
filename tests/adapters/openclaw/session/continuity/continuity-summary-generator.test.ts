@@ -1,11 +1,20 @@
 import { randomUUID } from "node:crypto";
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const openClawLlmClientMocks = vi.hoisted(() => ({
+  createOpenClawLlmClient: vi.fn(),
+}));
+
+vi.mock("../../../../../src/adapters/openclaw/llm/openclaw-llm-client.js", () => ({
+  createOpenClawLlmClient: openClawLlmClientMocks.createOpenClawLlmClient,
+}));
+
+import type { LlmPort } from "../../../../../src/core/ports.js";
 import { generateAndWriteOpenClawContinuitySummary } from "../../../../../src/adapters/openclaw/session/continuity/continuity-summary-generator.js";
 import type { AgenrOpenClawHost } from "../../../../../src/adapters/openclaw/types.js";
 
@@ -13,6 +22,8 @@ const tempPaths: string[] = [];
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  vi.useRealTimers();
+  openClawLlmClientMocks.createOpenClawLlmClient.mockReset();
 
   while (tempPaths.length > 0) {
     await rm(tempPaths.pop() ?? "", { force: true, recursive: true });
@@ -20,7 +31,7 @@ afterEach(async () => {
 });
 
 describe("generateAndWriteOpenClawContinuitySummary", () => {
-  it("uses the OpenClaw-configured model and cleans temp session state", async () => {
+  it("uses the lightweight OpenClaw LLM client without embedded-agent temp state", async () => {
     const sessionFile = await writeSessionFile("continuity-summary-session", [
       {
         type: "session",
@@ -51,31 +62,21 @@ describe("generateAndWriteOpenClawContinuitySummary", () => {
         type: "message",
         message: {
           role: "assistant",
-          content: "Agreed. The plugin should call the embedded runner and keep embeddings separate.",
+          content: "Agreed. The plugin should call the lightweight client and keep embeddings separate.",
         },
       },
     ]);
-    let tempContinuitySummarySessionFile: string | undefined;
-    const runEmbeddedPiAgentSpy = vi.fn(async (params: Parameters<AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"]>[0]) => {
-      tempContinuitySummarySessionFile = params.sessionFile;
-      await expect(access(path.dirname(params.sessionFile))).resolves.toBeUndefined();
-
-      return {
-        payloads: [
-          {
-            text: "# Continuity\nOpenClaw now owns continuity summary model resolution and auth, while embeddings still come from agenr config.",
-          },
-        ],
-        meta: {
-          durationMs: 1,
-        },
-      };
-    });
+    const runEmbeddedPiAgentSpy = vi.fn();
+    const logger = createLogger();
     const openClaw = createOpenClawHost({
       model: "openai/gpt-5.4",
       runEmbeddedPiAgentImplementation: runEmbeddedPiAgentSpy as AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"],
     });
-    const logger = createLogger();
+    const llmComplete = vi.fn(async () => {
+      return "# Continuity\nOpenClaw now owns continuity summary model resolution and auth, while embeddings still come from agenr config.";
+    });
+    openClawLlmClientMocks.createOpenClawLlmClient.mockResolvedValue(createLlmPort(llmComplete));
+    const tempEntriesBefore = await listTempDirEntries("agenr-continuity-summary-");
 
     const result = await generateAndWriteOpenClawContinuitySummary({
       sessionFile,
@@ -88,32 +89,24 @@ describe("generateAndWriteOpenClawContinuitySummary", () => {
       status: "written",
       model: "openai/gpt-5.4",
     });
-    expect(runEmbeddedPiAgentSpy).toHaveBeenCalledTimes(1);
-    expect(runEmbeddedPiAgentSpy.mock.calls[0]?.[0]).toMatchObject({
-      agentId: "main",
-      config: openClaw.config,
-      model: "gpt-5.4",
-      provider: "openai",
-      sessionKey: "temp:agenr-continuity-summary",
-      timeoutMs: 30_000,
-    });
-    expect(runEmbeddedPiAgentSpy.mock.calls[0]?.[0]?.extraSystemPrompt).toContain(
-      "You write concise narrative continuity summaries that help the next session continue smoothly.",
+    expect(openClawLlmClientMocks.createOpenClawLlmClient).toHaveBeenCalledWith(openClaw, "openai/gpt-5.4", "continuity model override");
+    expect(llmComplete).toHaveBeenCalledWith(
+      expect.stringContaining("You write concise narrative continuity summaries that help the next session continue smoothly."),
+      expect.stringContaining("Transcript:\nUser: We should keep continuity summaries next to the transcript file."),
     );
-    expect(runEmbeddedPiAgentSpy.mock.calls[0]?.[0]?.prompt).toContain("Transcript:");
+    expect(runEmbeddedPiAgentSpy).not.toHaveBeenCalled();
+    await expect(listTempDirEntries("agenr-continuity-summary-")).resolves.toEqual(tempEntriesBefore);
 
     const continuitySummaryPath = path.join(path.dirname(sessionFile), "continuity-summary-session.continuity-summary.md");
     await expect(readFile(continuitySummaryPath, "utf8")).resolves.toBe(
       "OpenClaw now owns continuity summary model resolution and auth, while embeddings still come from agenr config.\n",
     );
-    expect(tempContinuitySummarySessionFile).toBeDefined();
-    await expect(access(path.dirname(tempContinuitySummarySessionFile ?? ""))).rejects.toMatchObject({
-      code: "ENOENT",
-    });
-    expect(getMessages(logger.info)).toContain("[agenr] continuity-summary: using OpenClaw embedded agent provider=openai model=gpt-5.4 agent=main");
+    expect(getMessages(logger.info)).toContain("[agenr] continuity-summary: using OpenClaw LLM client model=openai/gpt-5.4");
   });
 
-  it("warns and skips when the embedded runner is unavailable", async () => {
+  it("returns a timeout failure when the lightweight LLM client does not finish in time", async () => {
+    vi.useFakeTimers();
+
     const sessionFile = await writeSessionFile("continuity-summary-session", [
       {
         type: "session",
@@ -148,22 +141,44 @@ describe("generateAndWriteOpenClawContinuitySummary", () => {
         },
       },
     ]);
-    const openClaw = createUnavailableOpenClawHost();
+    const runEmbeddedPiAgentSpy = vi.fn();
     const logger = createLogger();
+    const openClaw = createOpenClawHost({
+      model: "openai/gpt-5.4-mini",
+      runEmbeddedPiAgentImplementation: runEmbeddedPiAgentSpy as AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"],
+    });
+    let markStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    openClawLlmClientMocks.createOpenClawLlmClient.mockResolvedValue(
+      createLlmPort(
+        vi.fn(async () => {
+          markStarted?.();
+          return await new Promise<string>(() => {
+            return;
+          });
+        }),
+      ),
+    );
 
-    const result = await generateAndWriteOpenClawContinuitySummary({
+    const resultPromise = generateAndWriteOpenClawContinuitySummary({
       sessionFile,
       agentId: "main",
       openClaw,
       logger,
     });
 
+    await started;
+    await vi.advanceTimersByTimeAsync(30_000);
+    const result = await resultPromise;
+
     expect(result).toMatchObject({
-      status: "skipped",
-      reason: "embedded_agent_unavailable",
+      status: "failed",
+      reason: "timeout",
       model: "openai/gpt-5.4-mini",
     });
-    expect(getMessages(logger.warn)).toContain(`[agenr] continuity-summary: OpenClaw embedded agent runner unavailable for file=${sessionFile}`);
+    expect(runEmbeddedPiAgentSpy).not.toHaveBeenCalled();
   });
 
   it("prefers the configured continuity model override over the agent primary model", async () => {
@@ -201,20 +216,19 @@ describe("generateAndWriteOpenClawContinuitySummary", () => {
         },
       },
     ]);
-    const runEmbeddedPiAgentSpy = vi.fn(async () => {
-      return {
-        payloads: [
-          {
-            text: "Continuity generation used the configured override.",
-          },
-        ],
-      };
-    });
+    const runEmbeddedPiAgentSpy = vi.fn();
+    const logger = createLogger();
     const openClaw = createOpenClawHost({
       model: "anthropic/claude-opus-4-6",
       runEmbeddedPiAgentImplementation: runEmbeddedPiAgentSpy as AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"],
     });
-    const logger = createLogger();
+    openClawLlmClientMocks.createOpenClawLlmClient.mockResolvedValue(
+      createLlmPort(
+        vi.fn(async () => {
+          return "Continuity generation used the configured override.";
+        }),
+      ),
+    );
 
     const result = await generateAndWriteOpenClawContinuitySummary({
       sessionFile,
@@ -222,19 +236,16 @@ describe("generateAndWriteOpenClawContinuitySummary", () => {
       openClaw,
       logger,
       pluginConfig: {
-        continuityModel: "openai/gpt-5.4-mini",
+        continuityModel: "anthropic/claude-haiku-4-5",
       },
     });
 
     expect(result).toMatchObject({
       status: "written",
-      model: "openai/gpt-5.4-mini",
+      model: "anthropic/claude-haiku-4-5",
     });
-    expect(runEmbeddedPiAgentSpy.mock.calls[0]?.[0]).toMatchObject({
-      provider: "openai",
-      model: "gpt-5.4-mini",
-      timeoutMs: 30_000,
-    });
+    expect(openClawLlmClientMocks.createOpenClawLlmClient).toHaveBeenCalledWith(openClaw, "anthropic/claude-haiku-4-5", "continuity model override");
+    expect(runEmbeddedPiAgentSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -244,6 +255,19 @@ async function writeSessionFile(sessionId: string, entries: object[]): Promise<s
   const sessionFile = path.join(root, `${sessionId}.jsonl`);
   await writeFile(sessionFile, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`, "utf8");
   return sessionFile;
+}
+
+function createLlmPort(complete: LlmPort["complete"]): LlmPort {
+  return {
+    complete,
+    completeJson: async <T>(systemPrompt: string, userMessage: string): Promise<T> => {
+      return JSON.parse(await complete(systemPrompt, userMessage)) as T;
+    },
+  };
+}
+
+async function listTempDirEntries(prefix: string): Promise<string[]> {
+  return (await readdir(os.tmpdir())).filter((entry) => entry.startsWith(prefix)).sort();
 }
 
 function createOpenClawHost(options: {
@@ -286,45 +310,6 @@ function createOpenClawHost(options: {
       },
     },
   };
-}
-
-function createUnavailableOpenClawHost(): AgenrOpenClawHost {
-  const workspaceDir = path.join(os.tmpdir(), `agenr-openclaw-continuity-summary-workspace-${randomUUID()}`);
-  const agentDir = path.join(os.tmpdir(), `agenr-openclaw-continuity-summary-agent-${randomUUID()}`);
-  const config = {
-    defaultAgent: "main",
-    agents: {
-      list: [
-        {
-          id: "main",
-          workspace: workspaceDir,
-          agentDir,
-          model: "openai/gpt-5.4-mini",
-        },
-      ],
-    },
-  } as unknown as OpenClawConfig;
-
-  return {
-    config,
-    runtime: {
-      agent: {
-        resolveAgentDir: () => agentDir,
-        resolveAgentWorkspaceDir: () => workspaceDir,
-        runEmbeddedPiAgent: undefined,
-      },
-      modelAuth: {
-        resolveApiKeyForProvider: async () => ({
-          apiKey: "openclaw-test-key",
-          source: "profile:default",
-          mode: "api-key",
-        }),
-      },
-      state: {
-        resolveStateDir: () => path.join(os.tmpdir(), ".openclaw"),
-      },
-    },
-  } as unknown as AgenrOpenClawHost;
 }
 
 function createLogger() {

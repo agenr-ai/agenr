@@ -1,7 +1,8 @@
 import { promises as fs } from "node:fs";
+import { resolveAgentEffectiveModelPrimary, resolveDefaultAgentId } from "openclaw/plugin-sdk/agent-runtime";
 import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
 
-import { formatOpenClawEmbeddedAgentModel, resolveOpenClawEmbeddedAgentExecution, runOpenClawEmbeddedAgentTextTask } from "../../embedded-agent/task-runner.js";
+import { createOpenClawLlmClient } from "../../llm/openclaw-llm-client.js";
 import { openClawTranscriptParser } from "../../transcript/parser.js";
 import type { AgenrOpenClawHost, AgenrOpenClawPluginConfig } from "../../types.js";
 import { readOpenClawContinuitySummaryFile, resolveOpenClawContinuitySummaryPath } from "./continuity-summary-reader.js";
@@ -24,6 +25,19 @@ const CONTINUITY_SUMMARY_SYSTEM_PROMPT = [
 ].join("\n");
 
 export type { OpenClawContinuitySummaryWriteResult } from "./types.js";
+
+/**
+ * Error raised when continuity summary generation exceeds its timeout budget.
+ */
+class ContinuitySummaryTimeoutError extends Error {
+  /**
+   * Creates a timeout error with a stable name for caller-side handling.
+   */
+  public constructor() {
+    super("Continuity summary generation timed out.");
+    this.name = "ContinuitySummaryTimeoutError";
+  }
+}
 
 /**
  * Generates a cleaned narrative continuity summary and writes it next to the
@@ -81,13 +95,8 @@ export async function generateAndWriteOpenClawContinuitySummary(params: {
     };
   }
 
-  const continuitySummaryExecution = resolveOpenClawEmbeddedAgentExecution({
-    openClaw: params.openClaw,
-    requestedAgentId: params.agentId,
-    modelOverride: params.pluginConfig?.continuityModel,
-    invalidOverrideLabel: "continuity model override",
-  });
-  const continuitySummaryModel = formatOpenClawEmbeddedAgentModel(continuitySummaryExecution);
+  const continuityModelRef = resolveOpenClawSummaryModelRef(params.openClaw, params.agentId, params.pluginConfig?.continuityModel);
+  const continuityModel = continuityModelRef ?? "default";
   const prompt = [
     "Produce a concise continuity summary for the next session.",
     "Prefer short paragraphs. Use a short 'Open loops' section only if it adds clarity.",
@@ -99,73 +108,26 @@ export async function generateAndWriteOpenClawContinuitySummary(params: {
   debugLog(
     params.logger,
     "continuity-summary",
-    `sending continuity summary prompt model=${continuitySummaryModel} promptChars=${prompt.length} transcriptChars=${normalizedTranscript.length}`,
+    `sending continuity summary prompt model=${continuityModel} promptChars=${prompt.length} transcriptChars=${normalizedTranscript.length}`,
   );
-  params.logger.info(
-    `[agenr] continuity-summary: using OpenClaw embedded agent provider=${continuitySummaryExecution.provider} model=${continuitySummaryExecution.model} agent=${continuitySummaryExecution.agentId}`,
-  );
-  debugLog(
-    params.logger,
-    "continuity-summary",
-    `resolved OpenClaw continuity summary model for file=${sessionFile}: agentId=${continuitySummaryExecution.agentId} modelRef=${continuitySummaryExecution.modelRef ?? "default"} provider=${continuitySummaryExecution.provider} model=${continuitySummaryExecution.model}`,
-  );
+  params.logger.info(`[agenr] continuity-summary: using OpenClaw LLM client model=${continuityModel}`);
 
   const startedAt = Date.now();
   try {
-    const embeddedAgentResult = await runOpenClawEmbeddedAgentTextTask({
-      openClaw: params.openClaw,
-      execution: continuitySummaryExecution,
-      prompt,
-      systemPrompt: CONTINUITY_SUMMARY_SYSTEM_PROMPT,
-      timeoutMs: CONTINUITY_SUMMARY_TIMEOUT_MS,
-      runIdPrefix: "agenr-continuity-summary",
-      sessionKey: "temp:agenr-continuity-summary",
-      tempDirPrefix: "agenr-continuity-summary-",
-    });
+    const llm = await createOpenClawLlmClient(params.openClaw, continuityModelRef, "continuity model override");
+    const rawSummary = await Promise.race([
+      llm.complete(CONTINUITY_SUMMARY_SYSTEM_PROMPT, prompt),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new ContinuitySummaryTimeoutError()), CONTINUITY_SUMMARY_TIMEOUT_MS);
+      }),
+    ]);
     const durationMs = Date.now() - startedAt;
-
-    if (embeddedAgentResult.status === "unavailable") {
-      params.logger.warn?.(`[agenr] continuity-summary: OpenClaw embedded agent runner unavailable for file=${sessionFile}`);
-      return {
-        status: "skipped",
-        reason: "embedded_agent_unavailable",
-        continuitySummaryPath,
-        messageCount: cleanedMessages.length,
-        transcriptChars: normalizedTranscript.length,
-        model: continuitySummaryModel,
-      };
-    }
-
-    if (embeddedAgentResult.status === "timeout") {
-      return {
-        status: "failed",
-        reason: "timeout",
-        continuitySummaryPath,
-        messageCount: cleanedMessages.length,
-        transcriptChars: normalizedTranscript.length,
-        model: continuitySummaryModel,
-        durationMs,
-      };
-    }
-
-    if (embeddedAgentResult.status === "empty_response") {
-      return {
-        status: "failed",
-        reason: "empty_response",
-        continuitySummaryPath,
-        messageCount: cleanedMessages.length,
-        transcriptChars: normalizedTranscript.length,
-        model: continuitySummaryModel,
-        durationMs,
-      };
-    }
-
-    const normalizedContinuitySummary = normalizeContinuitySummary(embeddedAgentResult.text);
+    const normalizedContinuitySummary = normalizeContinuitySummary(rawSummary);
 
     debugLog(
       params.logger,
       "continuity-summary",
-      `received continuity summary response model=${continuitySummaryModel} durationMs=${durationMs} chars=${normalizedContinuitySummary.length}`,
+      `received continuity summary response model=${continuityModel} durationMs=${durationMs} chars=${normalizedContinuitySummary.length}`,
     );
 
     if (normalizedContinuitySummary.length === 0) {
@@ -175,7 +137,7 @@ export async function generateAndWriteOpenClawContinuitySummary(params: {
         continuitySummaryPath,
         messageCount: cleanedMessages.length,
         transcriptChars: normalizedTranscript.length,
-        model: continuitySummaryModel,
+        model: continuityModel,
         durationMs,
       };
     }
@@ -194,7 +156,7 @@ export async function generateAndWriteOpenClawContinuitySummary(params: {
         content: existingContinuitySummary.content,
         messageCount: cleanedMessages.length,
         transcriptChars: normalizedTranscript.length,
-        model: continuitySummaryModel,
+        model: continuityModel,
         durationMs,
       };
     }
@@ -213,12 +175,24 @@ export async function generateAndWriteOpenClawContinuitySummary(params: {
       content: normalizedContinuitySummary,
       messageCount: cleanedMessages.length,
       transcriptChars: normalizedTranscript.length,
-      model: continuitySummaryModel,
+      model: continuityModel,
       durationMs,
       bytesWritten: continuitySummaryBytes,
     };
   } catch (error) {
     const durationMs = Date.now() - startedAt;
+    if (error instanceof ContinuitySummaryTimeoutError) {
+      return {
+        status: "failed",
+        reason: "timeout",
+        continuitySummaryPath,
+        messageCount: cleanedMessages.length,
+        transcriptChars: normalizedTranscript.length,
+        model: continuityModel,
+        durationMs,
+      };
+    }
+
     debugLog(params.logger, "continuity-summary", `continuity summary generation error for file=${sessionFile}: ${formatErrorMessage(error)}`);
     return {
       status: "failed",
@@ -226,7 +200,7 @@ export async function generateAndWriteOpenClawContinuitySummary(params: {
       continuitySummaryPath,
       messageCount: cleanedMessages.length,
       transcriptChars: normalizedTranscript.length,
-      model: continuitySummaryModel,
+      model: continuityModel,
       durationMs,
     };
   }
@@ -237,8 +211,7 @@ export async function generateAndWriteOpenClawContinuitySummary(params: {
  * body.
  *
  * @param messages - Cleaned transcript messages produced by the adapter.
- * @returns Human-readable transcript text for the OpenClaw continuity summary
- *   runner.
+ * @returns Human-readable transcript text for the continuity summary prompt.
  */
 export function renderTranscriptForContinuitySummary(messages: Array<{ role: "user" | "assistant"; text: string }>): string {
   return messages.map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.text.trim()}`).join("\n");
@@ -258,6 +231,30 @@ function normalizeContinuitySummary(value: string): string {
 /** Formats unknown errors into stable loggable strings. */
 function formatErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Resolves the effective model ref for one continuity summary request.
+ *
+ * @param openClaw - OpenClaw host config and runtime helpers.
+ * @param agentId - Optional active agent id from the current hook context.
+ * @param modelOverride - Optional plugin-config override for continuity summaries.
+ * @returns Explicit model ref when one is configured, otherwise `undefined`.
+ */
+function resolveOpenClawSummaryModelRef(openClaw: AgenrOpenClawHost, agentId: string | undefined, modelOverride: string | undefined): string | undefined {
+  const requestedOverride = trimOptionalString(modelOverride);
+  if (requestedOverride) {
+    return requestedOverride;
+  }
+
+  const resolvedAgentId = trimOptionalString(agentId) ?? resolveDefaultAgentId(openClaw.config);
+  return resolveAgentEffectiveModelPrimary(openClaw.config, resolvedAgentId) ?? undefined;
+}
+
+/** Normalizes an optional string into a trimmed value. */
+function trimOptionalString(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
 }
 
 /** Caps transcript size while preserving both the beginning and the end. */

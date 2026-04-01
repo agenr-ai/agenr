@@ -1,16 +1,24 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const openClawLlmClientMocks = vi.hoisted(() => ({
+  createOpenClawLlmClient: vi.fn(),
+}));
+
+vi.mock("../../../../src/adapters/openclaw/llm/openclaw-llm-client.js", () => ({
+  createOpenClawLlmClient: openClawLlmClientMocks.createOpenClawLlmClient,
+}));
+
 import { createDatabase, type SqlDatabase } from "../../../../src/adapters/db/client.js";
 import { createOpenClawRepository } from "../../../../src/adapters/db/openclaw-repository.js";
 import { writeOpenClawPredecessorEpisode } from "../../../../src/adapters/openclaw/episode/episode-writer.js";
 import type { AgenrOpenClawHost, AgenrOpenClawServices } from "../../../../src/adapters/openclaw/types.js";
-import type { EmbeddingPort, RecallPorts } from "../../../../src/core/ports.js";
+import type { EmbeddingPort, LlmPort, RecallPorts } from "../../../../src/core/ports.js";
 
 describe("writeOpenClawPredecessorEpisode", () => {
   const databases: SqlDatabase[] = [];
@@ -19,6 +27,7 @@ describe("writeOpenClawPredecessorEpisode", () => {
   afterEach(async () => {
     vi.restoreAllMocks();
     vi.useRealTimers();
+    openClawLlmClientMocks.createOpenClawLlmClient.mockReset();
 
     while (databases.length > 0) {
       await databases.pop()?.close();
@@ -70,6 +79,7 @@ describe("writeOpenClawPredecessorEpisode", () => {
       },
     ]);
     const logger = createLogger();
+    const runEmbeddedPiAgentSpy = vi.fn();
     const episodeRunner = createRunner({
       text: JSON.stringify({
         summary:
@@ -79,6 +89,7 @@ describe("writeOpenClawPredecessorEpisode", () => {
         project: "agenr",
       }),
     });
+    const tempEntriesBefore = await listTempDirEntries("agenr-episode-summary-");
 
     await writeOpenClawPredecessorEpisode({
       ctx: {
@@ -90,7 +101,9 @@ describe("writeOpenClawPredecessorEpisode", () => {
         sessionId: "predecessor-session",
         sessionFile,
       },
-      services: createServices(database, episodeRunner),
+      services: createServices(database, episodeRunner, {
+        runEmbeddedPiAgent: runEmbeddedPiAgentSpy as AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"],
+      }),
       logger,
     });
 
@@ -107,6 +120,15 @@ describe("writeOpenClawPredecessorEpisode", () => {
     expect(stored?.genModel).toBe("openai/gpt-5.4-mini");
     expect(stored?.tags).toEqual(["agenr", "episodic-memory", "openclaw"]);
     expect(episodeRunner).toHaveBeenCalledTimes(1);
+    expect(runEmbeddedPiAgentSpy).not.toHaveBeenCalled();
+    await expect(listTempDirEntries("agenr-episode-summary-")).resolves.toEqual(tempEntriesBefore);
+    expect(openClawLlmClientMocks.createOpenClawLlmClient).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.any(Object),
+      }),
+      "openai/gpt-5.4-mini",
+      "episode model override",
+    );
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
         `[agenr] session-start predecessor episode write triggered for session=current-session key=agent:main:tui-current predecessor=${sessionFile}`,
@@ -185,11 +207,13 @@ describe("writeOpenClawPredecessorEpisode", () => {
 
     const stored = await database.getEpisodeBySourceId("openclaw", "override-model-session");
     expect(stored?.genModel).toBe("openai/gpt-5.4");
-    expect(episodeRunner.mock.calls[0]?.[0]).toMatchObject({
-      provider: "openai",
-      model: "gpt-5.4",
-      timeoutMs: 45_000,
-    });
+    expect(openClawLlmClientMocks.createOpenClawLlmClient).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.any(Object),
+      }),
+      "openai/gpt-5.4",
+      "episode model override",
+    );
   });
 
   it("prefers the TUI session key over messageProvider when deriving the predecessor episode surface", async () => {
@@ -483,18 +507,12 @@ describe("writeOpenClawPredecessorEpisode", () => {
         await new Promise((resolve) => {
           setTimeout(resolve, 40_500);
         });
-        return {
-          payloads: [
-            {
-              text: JSON.stringify({
-                summary: "Budget-tight episode write.",
-                tags: ["embedding"],
-                activityLevel: "minimal",
-                project: "agenr",
-              }),
-            },
-          ],
-        };
+        return JSON.stringify({
+          summary: "Budget-tight episode write.",
+          tags: ["embedding"],
+          activityLevel: "minimal",
+          project: "agenr",
+        });
       },
     });
     const embeddingSpy = vi.fn(async () => [[0.9, 0.1]]);
@@ -535,13 +553,22 @@ describe("writeOpenClawPredecessorEpisode", () => {
 
 function createServices(
   database: SqlDatabase,
-  runEmbeddedPiAgent: AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"],
+  llmComplete: LlmPort["complete"],
   options: {
     embeddingAvailable?: boolean;
     embeddingImplementation?: EmbeddingPort["embed"];
     pluginConfig?: AgenrOpenClawServices["pluginConfig"];
+    runEmbeddedPiAgent?: AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"];
   } = {},
 ): AgenrOpenClawServices {
+  const openClaw = createOpenClawHost(
+    options.runEmbeddedPiAgent ??
+      (vi.fn(async () => {
+        throw new Error("Embedded agent runner should not be used in episode writer tests.");
+      }) as unknown as AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"]),
+  );
+  openClawLlmClientMocks.createOpenClawLlmClient.mockResolvedValue(createLlmPort(llmComplete));
+
   const embedding: EmbeddingPort = {
     async embed(texts): Promise<number[][]> {
       if (options.embeddingImplementation) {
@@ -570,7 +597,7 @@ function createServices(
   };
 
   return {
-    openClaw: createOpenClawHost(runEmbeddedPiAgent),
+    openClaw,
     config: {
       dbPath: "test.db",
     },
@@ -634,15 +661,26 @@ function createOpenClawHost(runEmbeddedPiAgent: AgenrOpenClawHost["runtime"]["ag
   };
 }
 
-function createRunner(options: { implementation?: AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"]; text?: string }) {
+function createRunner(options: { implementation?: LlmPort["complete"]; text?: string }) {
   return vi.fn(
     options.implementation ??
       (async () => {
-        return {
-          payloads: [{ text: options.text ?? "" }],
-        };
+        return options.text ?? "";
       }),
-  ) as unknown as ReturnType<typeof vi.fn> & AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"];
+  ) as unknown as ReturnType<typeof vi.fn> & LlmPort["complete"];
+}
+
+function createLlmPort(complete: LlmPort["complete"]): LlmPort {
+  return {
+    complete,
+    completeJson: async <T>(systemPrompt: string, userMessage: string): Promise<T> => {
+      return JSON.parse(await complete(systemPrompt, userMessage)) as T;
+    },
+  };
+}
+
+async function listTempDirEntries(prefix: string): Promise<string[]> {
+  return (await readdir(os.tmpdir())).filter((entry) => entry.startsWith(prefix)).sort();
 }
 
 function createLogger() {

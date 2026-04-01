@@ -98,6 +98,10 @@ describe("createOpenClawLlmClient", () => {
       confidence: 0.9,
     });
   });
+
+  it("uses the caller label when reporting invalid model overrides", async () => {
+    await expect(createOpenClawLlmClient(createOpenClawHost(), "/model", "episode model override")).rejects.toThrow("Invalid episode model override: /model");
+  });
 });
 
 function buildModel(overrides: Partial<Model<Api>> = {}): Model<Api> {

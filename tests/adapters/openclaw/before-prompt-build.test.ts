@@ -7,12 +7,20 @@ import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import { resolveStateDir as resolveOpenClawStateDir } from "openclaw/plugin-sdk/state-paths";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const openClawLlmClientMocks = vi.hoisted(() => ({
+  createOpenClawLlmClient: vi.fn(),
+}));
+
+vi.mock("../../../src/adapters/openclaw/llm/openclaw-llm-client.js", () => ({
+  createOpenClawLlmClient: openClawLlmClientMocks.createOpenClawLlmClient,
+}));
+
 import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";
 import { createOpenClawRepository } from "../../../src/adapters/db/openclaw-repository.js";
 import { handleAgenrBeforePromptBuild } from "../../../src/adapters/openclaw/hooks/before-prompt-build.js";
 import { createSessionStartTracker } from "../../../src/adapters/openclaw/session/state.js";
 import type { AgenrOpenClawHost, AgenrOpenClawServices } from "../../../src/adapters/openclaw/types.js";
-import type { EmbeddingPort, RecallPorts } from "../../../src/core/ports.js";
+import type { EmbeddingPort, LlmPort, RecallPorts } from "../../../src/core/ports.js";
 import type { Entry } from "../../../src/core/types.js";
 
 const openDatabases: SqlDatabase[] = [];
@@ -35,6 +43,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.clearAllTimers();
   vi.useRealTimers();
+  openClawLlmClientMocks.createOpenClawLlmClient.mockReset();
 
   while (openDatabases.length > 0) {
     await openDatabases.pop()?.close();
@@ -823,6 +832,117 @@ describe("handleAgenrBeforePromptBuild", () => {
     );
   });
 
+  it("uses the lightweight OpenClaw LLM client for both read-time continuity and background episode writes", async () => {
+    const database = await createTestDatabase();
+    const logger = createLogger();
+    const { workspaceDir, sessionsDir } = await createWorkspaceWithSessions();
+
+    const predecessorFile = await writeSessionFileToDirectory(sessionsDir, "predecessor-session", [
+      {
+        type: "session",
+        id: "predecessor-session",
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T10:00:00.000Z",
+        message: {
+          role: "human",
+          content: "The first new session should pay the LLM cost once and cache the continuity summary.",
+        },
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T10:01:00.000Z",
+        message: {
+          role: "assistant",
+          content: "That same predecessor should also produce one episodic summary in the background.",
+        },
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T10:02:00.000Z",
+        message: {
+          role: "human",
+          content: "Continuity should load inline while the episode write stays best effort.",
+        },
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-28T10:03:00.000Z",
+        message: {
+          role: "assistant",
+          content: "Both summary paths are plain single-shot text completions.",
+        },
+      },
+    ]);
+    await writeSessionsJson(sessionsDir, {
+      "agent:main:main": {
+        sessionId: "predecessor-session",
+        sessionFile: "predecessor-session.jsonl",
+        updatedAt: 1_711_612_345_678,
+      },
+    });
+
+    const continuitySummary = "The predecessor session established that continuity should be cached inline while episode summaries run in the background.";
+    const { runEmbeddedPiAgent: continuitySummaryRunner, runEmbeddedPiAgentSpy } = createContinuitySummaryRunner({
+      response: continuitySummary,
+    });
+    const { runEmbeddedPiAgent: episodeSummaryRunner, runEmbeddedPiAgentSpy: episodeSummaryRunnerSpy } = createEpisodeSummaryRunner({
+      response: JSON.stringify({
+        summary: "The predecessor session wrote one background episode summary through the lightweight OpenClaw client.",
+        tags: ["agenr", "episode", "openclaw"],
+        activityLevel: "substantial",
+        project: "agenr",
+      }),
+    });
+    const services = createServices(database, {
+      continuitySummaryRunImplementation: continuitySummaryRunner,
+      episodeSummaryRunImplementation: episodeSummaryRunner,
+    });
+
+    const result = await handleAgenrBeforePromptBuild(
+      {
+        prompt: "Continue the TUI session after /new.",
+        messages: [],
+      },
+      {
+        agentId: "main",
+        sessionId: "session-tui-both-paths",
+        sessionKey: "agent:main:tui-b23e4567-e89b-12d3-a456-426614174000",
+        workspaceDir,
+      },
+      {
+        logger,
+        servicesPromise: Promise.resolve(services),
+        tracker: createSessionStartTracker(),
+      },
+    );
+
+    expect(result?.prependContext).toContain("## Previous session summary");
+    expect(result?.prependContext).toContain(continuitySummary);
+    await vi.waitFor(async () => {
+      const stored = await database.getEpisodeBySourceId("openclaw", "predecessor-session");
+      expect(stored?.summary).toContain("lightweight OpenClaw client");
+    });
+    expect(runEmbeddedPiAgentSpy).toHaveBeenCalledTimes(1);
+    expect(episodeSummaryRunnerSpy).toHaveBeenCalledTimes(1);
+    expect(openClawLlmClientMocks.createOpenClawLlmClient.mock.calls).toEqual(
+      expect.arrayContaining([
+        [services.openClaw, "openai/gpt-5.4-mini", "continuity model override"],
+        [services.openClaw, "openai/gpt-5.4-mini", "episode model override"],
+      ]),
+    );
+    expect(services.openClaw.runtime.agent.runEmbeddedPiAgent).not.toHaveBeenCalled();
+    expect(getMessages(logger.info)).toEqual(
+      expect.arrayContaining([
+        `[agenr] session-start predecessor episode write triggered for session=session-tui-both-paths key=agent:main:tui-b23e4567-e89b-12d3-a456-426614174000 predecessor=${predecessorFile}`,
+        expect.stringContaining(
+          `[agenr] session-start predecessor episode write written for session=session-tui-both-paths key=agent:main:tui-b23e4567-e89b-12d3-a456-426614174000 predecessor=${predecessorFile} episode=`,
+        ),
+      ]),
+    );
+  });
+
   it("falls back to the transcript tail when read-time continuity summary generation fails", async () => {
     const database = await createTestDatabase();
     const logger = createLogger();
@@ -983,12 +1103,7 @@ describe("handleAgenrBeforePromptBuild", () => {
         await new Promise((resolve) => {
           setTimeout(resolve, 60_000);
         });
-        return {
-          payloads: [{ text: "This continuity summary should arrive too late for prompt build." }],
-          meta: {
-            durationMs: 60_000,
-          },
-        };
+        return "This continuity summary should arrive too late for prompt build.";
       },
     });
 
@@ -1025,7 +1140,7 @@ describe("handleAgenrBeforePromptBuild", () => {
           " reason=no_existing_continuity_summary",
         `[agenr] session-start read-time continuity summary generation failed for session=${currentSessionId} key=${currentSessionKey} predecessor=` +
           predecessorFile +
-          " reason=timeout elapsedMs=35000",
+          " reason=timeout elapsedMs=30000 model=openai/gpt-5.4-mini",
       ]),
     );
   });
@@ -1196,18 +1311,12 @@ describe("handleAgenrBeforePromptBuild", () => {
         await new Promise((resolve) => {
           setTimeout(resolve, 60_000);
         });
-        return {
-          payloads: [
-            {
-              text: JSON.stringify({
-                summary: "Too late.",
-                tags: ["late"],
-                activityLevel: "minimal",
-                project: "agenr",
-              }),
-            },
-          ],
-        };
+        return JSON.stringify({
+          summary: "Too late.",
+          tags: ["late"],
+          activityLevel: "minimal",
+          project: "agenr",
+        });
       },
     });
 
@@ -1289,8 +1398,8 @@ function createServices(
   options: {
     available?: boolean;
     recall?: RecallPorts;
-    continuitySummaryRunImplementation?: AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"];
-    episodeSummaryRunImplementation?: AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"];
+    continuitySummaryRunImplementation?: LlmPort["complete"];
+    episodeSummaryRunImplementation?: LlmPort["complete"];
   } = {},
 ): AgenrOpenClawServices {
   const available = options.available ?? false;
@@ -1322,25 +1431,31 @@ function createServices(
     continuitySummaryRunImplementation:
       options.continuitySummaryRunImplementation ??
       (async () => {
-        throw new Error("Embedded continuity summary runner unavailable.");
+        throw new Error("Continuity summary client unavailable.");
       }),
     episodeSummaryRunImplementation:
       options.episodeSummaryRunImplementation ??
       (async () => {
-        return {
-          payloads: [
-            {
-              text: JSON.stringify({
-                summary:
-                  "The session focused on agenr episodic-memory work and agreed to write predecessor episodes in the background so prompt build stays fast. The discussion stayed grounded in OpenClaw integration details for temporal recall. The work was substantive and project-scoped.",
-                tags: ["agenr", "openclaw", "episodic-memory"],
-                activityLevel: "substantial",
-                project: "agenr",
-              }),
-            },
-          ],
-        };
+        return JSON.stringify({
+          summary:
+            "The session focused on agenr episodic-memory work and agreed to write predecessor episodes in the background so prompt build stays fast. The discussion stayed grounded in OpenClaw integration details for temporal recall. The work was substantive and project-scoped.",
+          tags: ["agenr", "openclaw", "episodic-memory"],
+          activityLevel: "substantial",
+          project: "agenr",
+        });
       }),
+  });
+  openClawLlmClientMocks.createOpenClawLlmClient.mockImplementation(async (host: AgenrOpenClawHost, _modelRef?: string, label?: string): Promise<LlmPort> => {
+    const testHost = host as TestOpenClawHost;
+    if (label === "continuity model override") {
+      return createLlmPort(testHost.__testLlm.continuitySummaryRunImplementation);
+    }
+
+    if (label === "episode model override") {
+      return createLlmPort(testHost.__testLlm.episodeSummaryRunImplementation);
+    }
+
+    throw new Error(`Unexpected OpenClaw LLM client label: ${label ?? "missing"}`);
   });
 
   return {
@@ -1369,76 +1484,70 @@ function createServices(
   };
 }
 
+type TestOpenClawHost = AgenrOpenClawHost & {
+  __testLlm: {
+    continuitySummaryRunImplementation: LlmPort["complete"];
+    episodeSummaryRunImplementation: LlmPort["complete"];
+  };
+};
+
 function createContinuitySummaryRunner(
   options: {
-    implementation?: AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"];
+    implementation?: LlmPort["complete"];
     response?: string;
   } = {},
 ): {
-  runEmbeddedPiAgent: AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"];
+  runEmbeddedPiAgent: LlmPort["complete"];
   runEmbeddedPiAgentSpy: ReturnType<typeof vi.fn>;
 } {
   const runEmbeddedPiAgentSpy = vi.fn(
     options.implementation ??
       (async () => {
-        return {
-          payloads: [{ text: options.response ?? "" }],
-          meta: {
-            durationMs: 1,
-          },
-        };
+        return options.response ?? "";
       }),
   );
 
   return {
-    runEmbeddedPiAgent: runEmbeddedPiAgentSpy as AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"],
+    runEmbeddedPiAgent: runEmbeddedPiAgentSpy as LlmPort["complete"],
     runEmbeddedPiAgentSpy,
   };
 }
 
 function createEpisodeSummaryRunner(
   options: {
-    implementation?: AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"];
+    implementation?: LlmPort["complete"];
     response?: string;
   } = {},
 ): {
-  runEmbeddedPiAgent: AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"];
+  runEmbeddedPiAgent: LlmPort["complete"];
   runEmbeddedPiAgentSpy: ReturnType<typeof vi.fn>;
 } {
   const runEmbeddedPiAgentSpy = vi.fn(
     options.implementation ??
       (async () => {
-        return {
-          payloads: [
-            {
-              text:
-                options.response ??
-                JSON.stringify({
-                  summary:
-                    "The session focused on agenr episodic-memory work and agreed to write predecessor episodes in the background so prompt build stays fast. The discussion stayed grounded in OpenClaw integration details for temporal recall. The work was substantive and project-scoped.",
-                  tags: ["agenr", "openclaw", "episodic-memory"],
-                  activityLevel: "substantial",
-                  project: "agenr",
-                }),
-            },
-          ],
-          meta: {
-            durationMs: 1,
-          },
-        };
+        return (
+          options.response ??
+          JSON.stringify({
+            summary:
+              "The session focused on agenr episodic-memory work and agreed to write predecessor episodes in the background so prompt build stays fast. The discussion stayed grounded in OpenClaw integration details for temporal recall. The work was substantive and project-scoped.",
+            tags: ["agenr", "openclaw", "episodic-memory"],
+            activityLevel: "substantial",
+            project: "agenr",
+          })
+        );
       }),
   );
 
   return {
-    runEmbeddedPiAgent: runEmbeddedPiAgentSpy as AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"],
+    runEmbeddedPiAgent: runEmbeddedPiAgentSpy as LlmPort["complete"],
     runEmbeddedPiAgentSpy,
   };
 }
 
 function createOpenClawHost(options: {
-  continuitySummaryRunImplementation: AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"];
-  episodeSummaryRunImplementation: AgenrOpenClawHost["runtime"]["agent"]["runEmbeddedPiAgent"];
-}): AgenrOpenClawHost {
+  continuitySummaryRunImplementation: LlmPort["complete"];
+  episodeSummaryRunImplementation: LlmPort["complete"];
+}): TestOpenClawHost {
   const workspaceDir = path.join(os.tmpdir(), "agenr-openclaw-test-workspace");
   const agentDir = path.join(os.tmpdir(), "agenr-openclaw-test-agent");
   const config = {
@@ -1461,17 +1570,9 @@ function createOpenClawHost(options: {
       agent: {
         resolveAgentDir: () => agentDir,
         resolveAgentWorkspaceDir: () => workspaceDir,
-        runEmbeddedPiAgent: async (params) => {
-          if (params.sessionKey === "temp:agenr-continuity-summary") {
-            return options.continuitySummaryRunImplementation(params);
-          }
-
-          if (params.sessionKey === "temp:agenr-episode-summary") {
-            return options.episodeSummaryRunImplementation(params);
-          }
-
-          throw new Error(`Unexpected embedded agent sessionKey: ${params.sessionKey}`);
-        },
+        runEmbeddedPiAgent: vi.fn(async () => {
+          throw new Error("Embedded agent runner should not be used in before-prompt-build tests.");
+        }),
       },
       modelAuth: {
         resolveApiKeyForProvider: async () => ({
@@ -1483,6 +1584,19 @@ function createOpenClawHost(options: {
       state: {
         resolveStateDir: (env?: NodeJS.ProcessEnv) => resolveOpenClawStateDir(env),
       },
+    },
+    __testLlm: {
+      continuitySummaryRunImplementation: options.continuitySummaryRunImplementation,
+      episodeSummaryRunImplementation: options.episodeSummaryRunImplementation,
+    },
+  };
+}
+
+function createLlmPort(complete: LlmPort["complete"]): LlmPort {
+  return {
+    complete,
+    completeJson: async <T>(systemPrompt: string, userMessage: string): Promise<T> => {
+      return JSON.parse(await complete(systemPrompt, userMessage)) as T;
     },
   };
 }

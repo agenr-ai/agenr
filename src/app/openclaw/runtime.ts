@@ -270,7 +270,7 @@ async function createClaimExtractionRuntime(
 
   try {
     return {
-      llm: await createOpenClawLlmClient(openClaw, pluginConfig.claimExtractionModel),
+      llm: await createOpenClawLlmClient(openClaw, pluginConfig.claimExtractionModel, "claim extraction model override"),
       config: claimExtractionConfig,
     };
   } catch {
