@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.5.0] - 2026-04-01
+
+Temporal validity, claim extraction, surgeon supersession pass, and OpenClaw auth improvements.
+
+### Added
+
+- **Temporal validity schema.** New `valid_from`, `valid_to`, `claim_key`, `supersession_kind`, and `supersession_reason` columns on entries. Entries can now express when a fact is true in the world, how facts replace each other, and why. All columns are nullable and backward-compatible.
+- **Claim key extraction.** Automatic `claim_key` assignment at store time via LLM classification. Identifies the `entity/attribute` slot an entry occupies (e.g., `jim/home_city`, `agenr/default_model`). Runs as a best-effort pipeline stage — entries store normally if extraction fails or is disabled. Supports entity hint seeding from existing claim keys to prevent namespace drift. Configurable confidence threshold (default 0.8), eligible types (fact, preference, decision), and model override.
+- **Claim extraction in bulk ingest.** `agenr ingest` now runs batch claim extraction with configurable concurrency. Entries that already have a `claim_key` are skipped.
+- **Claim extraction model in CLI setup.** `agenr setup` and `agenr init` now include a "Claim extraction" stage in the model customization flow, alongside extraction, dedup, episode, and surgeon.
+- **Explicit supersession in store pipeline.** `agenr_store` accepts optional `supersedes`, `claim_key`, `valid_from`, and `valid_to` fields. When `supersedes` is provided, the old entry is atomically linked to the new one in a transaction.
+- **Surgeon supersession pass.** New `agenr surgeon run --pass supersession` finds entries that should be linked via `superseded_by` and creates those links with kind and reason. Candidate generation groups by shared claim key (highest confidence) or shared subject+type (medium confidence). Four new tools: `query_supersession_candidates`, `link_supersession`, `assign_claim_key`, `set_validity`. Hard rules enforced in code: no cross-type links, no milestone supersession, no core-expiry supersession.
+- **`claimExtractionModel` in OpenClaw plugin config.** Model override for claim extraction at store time, using OpenClaw's auth system.
+- **Lightweight OpenClaw LLM client.** New `createOpenClawLlmClient` factory resolves credentials from OpenClaw's `modelAuth.resolveApiKeyForProvider` and calls pi-ai's `completeSimple()` directly — no embedded agent runner overhead.
+
+### Changed
+
+- **OpenClaw continuity and episode summaries use lightweight LLM client.** Migrated from the heavy embedded agent runner (`runEmbeddedPiAgent` with temp directories and full agent lifecycle) to the new `createOpenClawLlmClient` for direct `completeSimple()` calls. Same auth, dramatically less overhead.
+- **OpenClaw claim extraction uses OpenClaw auth.** Store-time claim extraction now resolves credentials through OpenClaw's `modelAuth` system instead of agenr's CLI credentials. Fixes silent failures when agenr API keys aren't configured in OpenClaw-hosted contexts.
+- **Surgeon is now pass-aware.** The agent loop, prompt selection, tool selection, and completion guards are all driven by the pass type. Shared infrastructure (budget, audit, trace) remains pass-agnostic.
+- **Multi-surface session continuity.** Improved continuity resolution across different chat surfaces and session types.
+- **Architecture cleanup.** Internal refactoring across multiple phases for cleaner module boundaries.
+
+### Documentation
+
+- **Model config auth boundary.** New architecture doc and updated code comments clarifying the split between CLI-context models (agenr auth) and OpenClaw-context models (OpenClaw auth).
+- **Updated README.md and SURGEON.md** with supersession pass documentation.
+
 ## [1.4.0] - 2026-03-30
 
 Configurable summary models, surgeon personal knowledge protection, and documentation overhaul.
