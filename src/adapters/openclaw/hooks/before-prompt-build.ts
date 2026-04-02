@@ -13,7 +13,6 @@ import type {
 import type { SessionStartTracker } from "../session/state.js";
 
 const CORE_ENTRY_LIMIT = 4;
-const INTERNAL_AGENR_SESSION_PREFIX = "temp:agenr-";
 
 /**
  * Runs agenr session-start recall and injects the result into the OpenClaw prompt.
@@ -34,13 +33,6 @@ export async function handleAgenrBeforePromptBuild(
     params.logger.debug?.(`[agenr] before_prompt_build: session tracker duplicate blocked for ${sessionContext}`);
     params.logger.debug?.(`[agenr] before_prompt_build: session tracker active count=${trackerState.activeCount}`);
     params.logger.info(`[agenr] session-start recall skipped (already ran) for ${sessionContext}`);
-    return undefined;
-  }
-
-  // Skip the full pipeline for internal agenr agent sessions (e.g., summary generation calls).
-  // These are not real user sessions and don't need continuity, episode, or recall injection.
-  if (isInternalAgenrSession(ctx.sessionKey)) {
-    params.logger.debug?.(`[agenr] before_prompt_build: skipping pipeline for internal session ${sessionContext}`);
     return undefined;
   }
 
@@ -99,15 +91,4 @@ export async function runAgenrSessionStartRecall(services: AgenrOpenClawServices
  */
 function formatEntryRefs(entries: OpenClawSessionStartRecall["core"]): string {
   return entries.length === 0 ? "none" : entries.map((entry) => `${entry.subject} [${entry.id}]`).join(", ");
-}
-
-/**
- * Detects internal agenr agent sessions that should not run the full
- * before_prompt_build pipeline.
- *
- * @param sessionKey - OpenClaw session key for the current session.
- * @returns `true` when the session belongs to an internal agenr worker.
- */
-function isInternalAgenrSession(sessionKey?: string): boolean {
-  return Boolean(sessionKey?.startsWith(INTERNAL_AGENR_SESSION_PREFIX));
 }
