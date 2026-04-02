@@ -5,6 +5,7 @@ import tseslint from "typescript-eslint";
 
 const tsFiles = ["**/*.{ts,mts,cts}"];
 const sourceFiles = ["**/*.{js,mjs,cjs,ts,mts,cts}"];
+const srcFiles = ["src/**/*.{js,mjs,cjs,ts,mts,cts}"];
 const tsRecommended = tseslint.configs.recommended.map((config) => ({
   ...config,
   files: tsFiles,
@@ -155,6 +156,12 @@ export default tseslint.config(
       "no-restricted-imports": [
         "error",
         {
+          paths: [
+            {
+              name: "node:fs",
+              message: "OpenClaw plugin must not import node:fs. Use node:fs/promises so filesystem work stays async inside the gateway.",
+            },
+          ],
           patterns: [
             {
               group: ["**/cli/**"],
@@ -165,6 +172,68 @@ export default tseslint.config(
               message: "OpenClaw plugin must not import from eval infrastructure.",
             },
           ],
+        },
+      ],
+    },
+  },
+  // Runtime safety net:
+  // core/ and the OpenClaw plugin must never terminate the host process.
+  {
+    files: ["src/core/**/*.{ts,mts,cts}", "src/adapters/openclaw/**/*.{ts,mts,cts}"],
+    rules: {
+      "no-restricted-properties": [
+        "error",
+        {
+          object: "process",
+          property: "exit",
+          message: "Do not call process.exit() from core or plugin code. Throw an error instead.",
+        },
+      ],
+    },
+  },
+  // Runtime safety net:
+  // core/ must receive environment-derived configuration from callers instead
+  // of reading process.env directly.
+  {
+    files: ["src/core/**/*.{ts,mts,cts}"],
+    rules: {
+      "no-restricted-properties": [
+        "error",
+        {
+          object: "process",
+          property: "env",
+          message: "core/ must not read process.env directly. Pass configuration through function parameters.",
+        },
+      ],
+    },
+  },
+  // Runtime safety net:
+  // Direct truthiness checks on environment variables are easy to misread
+  // because strings like "false" and "0" are still truthy.
+  {
+    files: srcFiles,
+    rules: {
+      "no-restricted-syntax": [
+        "warn",
+        {
+          selector: "IfStatement > MemberExpression[object.object.name='process'][object.property.name='env']",
+          message: 'Do not treat environment variables as booleans via truthiness. Compare against an explicit string such as "true" or "1" instead.',
+        },
+        {
+          selector: "ConditionalExpression > MemberExpression[object.object.name='process'][object.property.name='env']",
+          message: 'Do not treat environment variables as booleans via truthiness. Compare against an explicit string such as "true" or "1" instead.',
+        },
+        {
+          selector: "LogicalExpression[operator='&&'] > MemberExpression[object.object.name='process'][object.property.name='env']",
+          message: 'Do not treat environment variables as booleans via truthiness. Compare against an explicit string such as "true" or "1" instead.',
+        },
+        {
+          selector: "LogicalExpression[operator='||'] > MemberExpression[object.object.name='process'][object.property.name='env']",
+          message: 'Do not treat environment variables as booleans via truthiness. Compare against an explicit string such as "true" or "1" instead.',
+        },
+        {
+          selector: "UnaryExpression[operator='!'] > MemberExpression[object.object.name='process'][object.property.name='env']",
+          message: 'Do not treat environment variables as booleans via truthiness. Compare against an explicit string such as "true" or "1" instead.',
         },
       ],
     },

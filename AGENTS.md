@@ -71,6 +71,10 @@ docs/                        # Documentation
 - **`adapters/`** implement port interfaces and translate external protocols (SQLite, the internal recall-eval HTTP seam, OpenClaw plugin APIs, embedding APIs) into core or app calls. Adapters may import from `core/` and targeted `app/` services, but should not reach across unrelated adapter packages.
 - **`cli/`** is a thin shell. Commands parse args, wire adapters and app services, call core/app functions, format output. No workflow orchestration or business logic lives here.
 - **`config.ts`** is shared infrastructure - runtime config loading and types used by CLI, app, and adapters.
+- **`core/`** must not call `process.exit()` or read `process.env` directly - pass configuration through ports or function parameters.
+- **`src/adapters/openclaw/`** must keep filesystem access async - use `node:fs/promises`, never `node:fs`.
+- **`src/core/`** and **`src/adapters/openclaw/`** must not block the host with sync filesystem helpers or terminate the host process.
+- Env flags must use explicit string comparisons such as `"true"` or `"1"` - never rely on truthiness of `process.env.*`.
 
 ### Recall eval adapter scope guardrails
 

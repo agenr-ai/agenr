@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { promises as fs } from "node:fs";
+import * as fs from "node:fs/promises";
 
 import type { TranscriptPort } from "../../../core/ports.js";
 import type { ParsedTranscript, TranscriptMessage } from "../../../core/types.js";

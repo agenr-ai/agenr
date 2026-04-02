@@ -1,4 +1,4 @@
-import { promises as fs } from "node:fs";
+import * as fs from "node:fs/promises";
 import path from "node:path";
 
 import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
