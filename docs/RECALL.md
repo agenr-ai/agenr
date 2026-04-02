@@ -226,6 +226,22 @@ This is why mixed recall responses show sessions and durable knowledge side by s
 
 One important caveat: `threshold`, `types`, and `tags` still apply to **entries only** in the current unified layer. When episodes are also queried, unified recall adds a notice saying so.
 
+## Memory authority levels
+
+Adapters and prompts should teach the model that recall surfaces do not all carry the same authority.
+
+1. Durable entries are the canonical memory record. Use them for verified facts, standing decisions, preferences, lessons, and other durable knowledge. When live evidence contradicts an entry, update or retire it instead of quietly routing around it.
+2. Episode recall is narrative historical context. Use it for questions about what happened in a past session or time window, but confirm exact wording, timestamps, counts, and other precision-sensitive details when they matter.
+3. Session handoffs and continuity summaries are approximate restart context. They are useful for resuming open threads, but they can be incomplete, stale, or narrower than the full transcript history.
+4. Live verification always wins. If a file, tool call, database query, or host check can answer the question directly, that fresh evidence should override stored memory.
+
+Adapter guidance:
+
+- Keep durable entries, episodes, and handoffs visibly separated in prompt formatting and result rendering.
+- Do not blend narrative recall and durable facts into one undifferentiated block.
+- Encourage focused recall queries that match the memory tier you need instead of broad fishing expeditions.
+- Teach the model to verify precision-sensitive claims live when verification is cheap.
+
 ### Examples
 
 Today, the implemented `mode` surface is the OpenClaw `agenr_recall` tool plus `runUnifiedRecall()`. The standalone CLI still does not accept `--mode`, so the live examples are:

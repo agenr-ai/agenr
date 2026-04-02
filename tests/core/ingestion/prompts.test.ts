@@ -43,7 +43,7 @@ describe("buildExtractionSystemPrompt", () => {
   it("classifies personal priorities as preferences before decisions", () => {
     const prompt = buildExtractionSystemPrompt();
     const preferenceCheck = "2. Does it state what someone WANTS or PREFERS? → preference";
-    const decisionCheck = "3. Does it prescribe what to DO going forward because the project, team, or system has adopted it? → decision";
+    const decisionCheck = "3. Does it prescribe what to DO going forward because a person, household, team, project, or system has adopted it? → decision";
 
     expect(prompt).toContain(
       "If the statement is mainly about a named person's desired style, values, priorities, or opinions, classify it as preference even if it implies future behavior.",
@@ -60,6 +60,17 @@ describe("buildExtractionSystemPrompt", () => {
     expect(prompt).toContain("Target distribution: roughly 15-25% high, 55-65% standard, 15-25% low.");
     expect(prompt).toContain("If more than 40% of entries are high, re-rate the weakest highs.");
     expect(prompt).toContain("If you have zero low entries, re-evaluate your weakest standard entries.");
+  });
+
+  it("reinforces injected-memory exclusions and domain-neutral personal signal", () => {
+    const prompt = buildExtractionSystemPrompt();
+
+    expect(prompt).toContain("Do not assume a technical or professional domain.");
+    expect(prompt).toContain("## Casual And Personal Sessions");
+    expect(prompt).toContain("episode recall results");
+    expect(prompt).toContain("session handoff or continuity summary text");
+    expect(prompt).toContain("Progress snapshots, to-do lists, and current-state descriptions");
+    expect(prompt).toContain("Plans, intentions, and speculative future state");
   });
 });
 

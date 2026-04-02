@@ -68,6 +68,27 @@ Notable properties:
 - `user_id` and `project` are stored when supplied, but do not affect dedup.
 - `created_at` is preserved when supplied; otherwise persistence uses the current timestamp.
 
+## Durable-memory fit
+
+Callers should apply a durable-memory filter before writing. The store pipeline validates shape and deduplicates content, but it does not decide whether the input belongs in long-term memory.
+
+### What belongs in durable memory
+
+- Personal facts such as allergies, relationships, communication preferences, biographical details, and standing constraints
+- Standing decisions and constraints about how someone wants things handled
+- Verified system, environment, or world facts that will still matter later
+- Lessons grounded in a specific experience, failure, or discovery
+- Milestones and notable one-time events worth historical recall
+
+### What does not belong
+
+- Progress snapshots or current-state descriptions about what is happening right now
+- Plans, checklists, intentions, or speculative future actions
+- Conversation summaries or session meta narration
+- Re-extracted recall material, including injected entries, episode recall, or continuity text
+- Generic advice that could appear in any tutorial, guide, or self-help list
+- Transient status, errors, troubleshooting steps, or debugging journey details
+
 ## Runtime options
 
 There is no CLI option surface yet, but the pipeline supports these programmatic options:

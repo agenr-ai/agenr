@@ -158,6 +158,8 @@ Adding a new agent system = write an adapter. Zero core changes.
 - `relationship` - connections between entities
 - `milestone` - notable one-time occurrences, transitions, launches, and other durable happenings worth remembering
 
+Memory authority is tiered. Durable entries are canonical memory, episodes are narrative historical recall, continuity handoffs are approximate restart context, and live verification wins when available. See `docs/RECALL.md` for the full authority model and adapter guidance.
+
 ## Importance scale (1-10)
 
 The extraction LLM assigns importance based on knowledge type and signal strength:

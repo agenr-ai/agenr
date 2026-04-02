@@ -14,6 +14,8 @@ This lets the agent answer questions like "what happened yesterday?", "what were
 | **Source**      | Extracted from transcripts by the LLM extraction pipeline                    | Generated per-session by the LLM summary pipeline                             |
 | **Schema**      | `entries` table with typed fields, tags, embeddings                          | `episodes` table with time range, surface, agent, summary, optional embedding |
 
+Authority note: episodes are LLM-generated narrative summaries. They preserve the shape of what happened and useful specifics, but they are not verbatim transcripts or authoritative logs. Treat episode recall as historical context that may need confirmation when exact wording, timestamps, or counts matter.
+
 ## Episode Lifecycle
 
 Episodes are generated through two paths:
