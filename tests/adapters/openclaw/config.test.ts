@@ -4,6 +4,7 @@ import {
   coerceAgenrOpenClawPluginConfig,
   createAgenrOpenClawPluginConfigSchema,
   normalizeAgenrOpenClawPluginConfig,
+  resolveStoreNudgeConfig,
 } from "../../../src/adapters/openclaw/config.js";
 
 describe("agenr OpenClaw plugin config", () => {
@@ -11,6 +12,14 @@ describe("agenr OpenClaw plugin config", () => {
     expect(normalizeAgenrOpenClawPluginConfig(undefined)).toEqual({
       ok: true,
       value: {},
+    });
+  });
+
+  it("resolves default store-nudge settings when the nested config is omitted", () => {
+    expect(resolveStoreNudgeConfig(undefined)).toEqual({
+      enabled: true,
+      threshold: 8,
+      maxPerSession: 5,
     });
   });
 
@@ -35,6 +44,9 @@ describe("agenr OpenClaw plugin config", () => {
         continuityModel: "openai/gpt-5.4-mini",
         episodeModel: "openai/gpt-5.4-mini",
         claimExtractionModel: "openai/gpt-5.4-nano",
+        storeNudge: {
+          threshold: 10,
+        },
       }),
     ).toEqual({
       dbPath: "/tmp/knowledge.db",
@@ -42,6 +54,11 @@ describe("agenr OpenClaw plugin config", () => {
       continuityModel: "openai/gpt-5.4-mini",
       episodeModel: "openai/gpt-5.4-mini",
       claimExtractionModel: "openai/gpt-5.4-nano",
+      storeNudge: {
+        enabled: true,
+        threshold: 10,
+        maxPerSession: 5,
+      },
     });
   });
 
@@ -70,6 +87,27 @@ describe("agenr OpenClaw plugin config", () => {
 
     expect(parsed.ok).toBe(false);
     expect(parsed.ok ? [] : parsed.errors).toContain("unknown config field: embeddingApiKey");
+  });
+
+  it("rejects invalid nested store-nudge settings", () => {
+    const parsed = normalizeAgenrOpenClawPluginConfig({
+      storeNudge: {
+        enabled: "yes",
+        threshold: 0,
+        maxPerSession: -1,
+        extra: true,
+      },
+    });
+
+    expect(parsed.ok).toBe(false);
+    expect(parsed.ok ? [] : parsed.errors).toEqual(
+      expect.arrayContaining([
+        "storeNudge.enabled must be a boolean when provided",
+        "storeNudge.threshold must be a positive integer when provided",
+        "storeNudge.maxPerSession must be a positive integer when provided",
+        "unknown config field: storeNudge.extra",
+      ]),
+    );
   });
 
   it("accepts an empty object during schema validation", () => {

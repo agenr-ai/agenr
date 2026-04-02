@@ -1,13 +1,14 @@
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 
 import { registerAgenrOpenClawTools } from "./tools.js";
-import { coerceAgenrOpenClawPluginConfig, createAgenrOpenClawPluginConfigSchema } from "./config.js";
+import { coerceAgenrOpenClawPluginConfig, createAgenrOpenClawPluginConfigSchema, resolveStoreNudgeConfig } from "./config.js";
 import { buildAgenrMemoryPromptSection } from "./format/prompt-section.js";
+import { handleAgenrAfterToolCall } from "./hooks/after-tool-call.js";
 import { handleAgenrBeforePromptBuild } from "./hooks/before-prompt-build.js";
 import { buildAgenrMemoryFlushPlan } from "./memory/flush-plan.js";
 import { createAgenrMemoryRuntime } from "./memory/runtime.js";
 import { createAgenrOpenClawServices } from "./runtime.js";
-import { createSessionStartTracker } from "./session/state.js";
+import { createMidSessionTracker, createSessionStartTracker } from "./session/state.js";
 import type { AgenrOpenClawMemoryPluginApi } from "./types.js";
 
 export default definePluginEntry({
@@ -18,8 +19,11 @@ export default definePluginEntry({
   configSchema: createAgenrOpenClawPluginConfigSchema(),
   register(api) {
     const memoryApi = api as AgenrOpenClawMemoryPluginApi;
-    const tracker = createSessionStartTracker();
-    const servicesPromise = createAgenrOpenClawServices(coerceAgenrOpenClawPluginConfig(api.pluginConfig), {
+    const sessionStartTracker = createSessionStartTracker();
+    const midSessionTracker = createMidSessionTracker();
+    const pluginConfig = coerceAgenrOpenClawPluginConfig(api.pluginConfig);
+    const storeNudgeConfig = resolveStoreNudgeConfig(pluginConfig.storeNudge);
+    const servicesPromise = createAgenrOpenClawServices(pluginConfig, {
       openClaw: {
         config: api.config,
         runtime: {
@@ -41,11 +45,22 @@ export default definePluginEntry({
       handleAgenrBeforePromptBuild(event, ctx, {
         logger: api.logger,
         servicesPromise,
-        tracker,
+        tracker: sessionStartTracker,
+        midSessionTracker,
+        storeNudgeConfig,
       }),
     );
     api.on("session_start", (event) => {
-      tracker.rememberSessionStart(event.sessionId, event.sessionKey, event.resumedFrom);
+      sessionStartTracker.rememberSessionStart(event.sessionId, event.sessionKey, event.resumedFrom);
+    });
+    api.on("after_tool_call", (event, ctx) => {
+      handleAgenrAfterToolCall(event, ctx, {
+        logger: api.logger,
+        midSessionTracker,
+      });
+    });
+    api.on("session_end", (event) => {
+      midSessionTracker.clear(event.sessionId, event.sessionKey);
     });
 
     api.on("gateway_stop", async () => {

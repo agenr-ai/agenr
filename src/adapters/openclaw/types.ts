@@ -7,6 +7,38 @@ import type { ClaimExtractionConfig } from "../../core/store/claim-extraction.js
 import type { Entry } from "../../core/types.js";
 
 /**
+ * Resolved store-nudge settings used by mid-session prompting.
+ */
+export interface StoreNudgeConfig {
+  /** Enables or disables mid-session store nudges. */
+  enabled: boolean;
+  /** Turns without durable memory work before injecting a nudge. */
+  threshold: number;
+  /** Maximum nudges to inject during one session lifetime. */
+  maxPerSession: number;
+}
+
+/**
+ * Per-session in-memory state used for mid-session store nudging.
+ */
+export interface MidSessionState {
+  /** Count of non-first user turns observed in the active session. */
+  turnCount: number;
+  /** Turn index of the last successful agenr_store result. */
+  lastSuccessfulStoreTurn: number;
+  /** Turn index of the last memory action attempt or maintenance action. */
+  lastMemoryActionTurn: number;
+  /** Turn index of the last explicit memory maintenance action. */
+  lastExplicitMemoryActionTurn: number;
+  /** Count of nudges already injected for the active session. */
+  nudgeCount: number;
+  /** Count of successful agenr_store calls during the active session. */
+  entriesStored: number;
+  /** Deduplicated list of recently stored subjects for nudge copy. */
+  storedSubjects: string[];
+}
+
+/**
  * Runtime plugin configuration accepted by the agenr OpenClaw adapter.
  *
  * Model fields here control tasks that execute inside the OpenClaw process
@@ -28,6 +60,8 @@ export interface AgenrOpenClawPluginConfig {
   episodeModel?: string;
   /** Model override for claim-key extraction at store time (OpenClaw auth). Format: "provider/model". */
   claimExtractionModel?: string;
+  /** Mid-session nudging config for reminding the agent to store durable memory. */
+  storeNudge?: Partial<StoreNudgeConfig>;
 }
 
 /**
@@ -138,6 +172,29 @@ export interface AgenrOpenClawSessionStartEvent {
   sessionId: string;
   sessionKey?: string;
   resumedFrom?: string;
+}
+
+/**
+ * Minimal session-end payload used for lifecycle cleanup.
+ */
+export interface AgenrOpenClawSessionEndEvent {
+  sessionId: string;
+  sessionKey?: string;
+  messageCount: number;
+  durationMs?: number;
+}
+
+/**
+ * Minimal after-tool-call payload used for synchronous memory-action tracking.
+ */
+export interface AgenrOpenClawAfterToolCallEvent {
+  toolName: string;
+  params: Record<string, unknown>;
+  runId?: string;
+  toolCallId?: string;
+  result?: unknown;
+  error?: string;
+  durationMs?: number;
 }
 
 /**
