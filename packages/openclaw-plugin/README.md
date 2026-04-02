@@ -1,11 +1,11 @@
-# @agenr/openclaw-plugin
+# @agenr/agenr-plugin
 
 Plugin-only npm package for the agenr OpenClaw memory integration.
 
 Install it with:
 
 ```bash
-openclaw plugins install @agenr/openclaw-plugin
+openclaw plugins install @agenr/agenr-plugin
 openclaw gateway restart
 ```
 

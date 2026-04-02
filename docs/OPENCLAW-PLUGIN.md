@@ -1,7 +1,7 @@
 # OpenClaw Plugin
 
 `src/adapters/openclaw/` is the production agenr integration for OpenClaw.
-The publishable plugin package lives at `packages/openclaw-plugin` and ships as `@agenr/openclaw-plugin`.
+The publishable plugin package lives at `packages/openclaw-plugin` and ships as `@agenr/agenr-plugin`.
 The OpenClaw manifest id remains `agenr`, so runtime identity and config keys stay stable even though the npm package name is different.
 
 Today it plays four roles at once:
@@ -60,7 +60,7 @@ Some current-runtime choices matter:
 OpenClaw installs should use the plugin-only package:
 
 ```bash
-openclaw plugins install @agenr/openclaw-plugin
+openclaw plugins install @agenr/agenr-plugin
 openclaw gateway restart
 ```
 

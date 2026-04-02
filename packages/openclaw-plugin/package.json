@@ -1,5 +1,5 @@
 {
-  "name": "@agenr/openclaw-plugin",
+  "name": "@agenr/agenr-plugin",
   "version": "1.5.0",
   "description": "agenr memory plugin for OpenClaw",
   "type": "module",

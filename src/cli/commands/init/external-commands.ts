@@ -2,7 +2,7 @@ import { execFile, execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-const OPENCLAW_PLUGIN_PACKAGE = "@agenr/openclaw-plugin";
+const OPENCLAW_PLUGIN_PACKAGE = "@agenr/agenr-plugin";
 
 /** Result from an OpenClaw CLI action triggered by init. */
 export interface ExternalCommandResult {

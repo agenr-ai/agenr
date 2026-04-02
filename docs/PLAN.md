@@ -37,7 +37,7 @@ Starting fresh lets us:
 
 - Clean git history starting from initial commit
 - Fresh issues board — create issues only as work is needed
-- Same npm packages: `agenr` (CLI) and `@agenr/openclaw-plugin` (plugin)
+- Same npm packages: `agenr` (CLI) and `@agenr/agenr-plugin` (plugin)
 - Version: `0.1.0` — signals "this is early, intentionally"
 
 ### Tooling (carry over)

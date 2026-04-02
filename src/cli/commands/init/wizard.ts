@@ -466,7 +466,7 @@ function buildNextSteps(detection: OpenClawDetection, pluginStatus: string, gate
     steps.push("Install OpenClaw later, then rerun `agenr init` to enable the plugin.");
   } else {
     if (!pluginStatus.toLowerCase().includes("installed")) {
-      steps.push("Install the plugin later with `openclaw plugins install @agenr/openclaw-plugin`.");
+      steps.push("Install the plugin later with `openclaw plugins install @agenr/agenr-plugin`.");
     }
 
     if (gatewayStatus.toLowerCase().includes("manual restart")) {
