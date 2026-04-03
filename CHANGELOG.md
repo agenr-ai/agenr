@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.6.0] - 2026-04-02
+
+Store nudge, memory guidance improvements, plugin rename, and dead code cleanup.
+
+### Added
+
+- **Store nudge system.** Mid-session memory prompting via `[MEMORY CHECK]` injection. When the agent goes N turns without storing to agenr, a nudge is injected via `prependContext` reminding it to review recent conversation for durable knowledge. Escalating message tone across nudge ordinals. Three-level store outcome classification (stored/skipped/failed) with separate tracking for explicit memory maintenance actions (`claimKey`, `supersedes`, `agenr_update`, `agenr_retire`). Configurable via `storeNudge.enabled`, `storeNudge.threshold` (default 8), and `storeNudge.maxPerSession` (default 5).
+- **`after_tool_call` hook.** New hook handler for real-time memory action detection. Synchronous state mutation (no async before write) to avoid races with OpenClaw's fire-and-forget dispatch. Classifies `agenr_store`, `agenr_update`, and `agenr_retire` tool calls.
+- **`MidSessionTracker`.** Separate per-session runtime state tracker for nudge logic, distinct from `SessionStartTracker`. Tracks turn counts, store counts, nudge counts, stored subjects (bounded to last 5), and three-level memory action timestamps. Includes session cleanup via TTL pruning.
+- **Session identity helper.** Shared `resolveSessionIdentityKey()` used by both trackers for consistent session key resolution.
+- **ESLint safety rules.** New eslint config with safety rules for the codebase.
+
+### Changed
+
+- **Improved memory guidance.** Tightened prompt section and store tool descriptions informed by Claude Code memory research. Includes success recording ("store validated wins, not just corrections"), compact exclusion filters, session-vs-durable distinction, and Rule → Why → How to apply structure hints for lessons and preferences.
+- **Plugin package renamed.** `@agenr/openclaw-plugin` → `@agenr/agenr-plugin` across all source, docs, tests, and config. Fixes the `deriveIdHint` compatibility warning — `agenr-plugin` matches the `{manifestId}-plugin` pattern.
+- **Non-first-turn `before_prompt_build` path.** Previously returned `undefined` immediately. Now handles mid-session nudge injection with skip guards for non-user triggers (heartbeat, cron, memory).
+
+### Removed
+
+- **Dead internal session filtering.** Removed `isInternalAgenrSession` guard and `INTERNAL_AGENR_SESSION_PREFIX` constant from `before-prompt-build.ts`. The `temp:agenr-*` session prefix is no longer used in v1 — internal worker sessions use different mechanisms.
+
 ## [1.5.0] - 2026-04-01
 
 Temporal validity, claim extraction, surgeon supersession pass, and OpenClaw auth improvements.
