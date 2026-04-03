@@ -28,6 +28,7 @@ describe("parseRecallEvalCaseRequest", () => {
         threshold: 0.25,
         types: ["fact"],
         tags: [" api "],
+        rankingProfile: "historical_state",
       },
       options: {
         includeDiagnostics: true,
@@ -72,6 +73,7 @@ describe("parseRecallEvalCaseRequest", () => {
         until: undefined,
         around: undefined,
         aroundRadius: undefined,
+        rankingProfile: "historical_state",
       },
       options: {
         includeDiagnostics: true,
@@ -169,6 +171,7 @@ describe("parseRecallEvalCaseRequest", () => {
           limit: -1,
           threshold: 2,
           types: ["fact", "bogus"],
+          rankingProfile: "invalid",
         },
       }),
     ).toThrowError(RecallEvalRequestValidationError);
@@ -182,6 +185,7 @@ describe("parseRecallEvalCaseRequest", () => {
           limit: -1,
           threshold: 2,
           types: ["fact", "bogus"],
+          rankingProfile: "invalid",
         },
       });
     } catch (error) {
@@ -198,6 +202,10 @@ describe("parseRecallEvalCaseRequest", () => {
         {
           path: "recallRequest.types[1]",
           message: "Expected one of: fact, decision, preference, lesson, relationship, milestone.",
+        },
+        {
+          path: "recallRequest.rankingProfile",
+          message: "Expected one of: historical_state.",
         },
       ]);
     }

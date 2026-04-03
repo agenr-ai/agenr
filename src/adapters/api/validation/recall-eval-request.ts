@@ -26,8 +26,21 @@ const FIXTURE_ENTRY_KEYS = new Set<string>([
   "retired_reason",
   "superseded_by",
 ]);
-const RECALL_REQUEST_KEYS = new Set<string>(["text", "limit", "threshold", "budget", "types", "tags", "since", "until", "around", "aroundRadius"]);
+const RECALL_REQUEST_KEYS = new Set<string>([
+  "text",
+  "limit",
+  "threshold",
+  "budget",
+  "types",
+  "tags",
+  "since",
+  "until",
+  "around",
+  "aroundRadius",
+  "rankingProfile",
+]);
 const OPTIONS_KEYS = new Set<string>(["includeDiagnostics", "includeCandidates", "includeTimings"]);
+const RECALL_RANKING_PROFILES = ["historical_state"] as const;
 
 /**
  * Structured request validation issue emitted at the HTTP boundary.
@@ -285,6 +298,7 @@ const parseRecallRequest = (value: unknown, issues: RecallEvalValidationIssue[])
     until: parseOptionalString(value.until, "recallRequest.until", issues),
     around: parseOptionalString(value.around, "recallRequest.around", issues),
     aroundRadius: parseOptionalPositiveInteger(value.aroundRadius, "recallRequest.aroundRadius", issues),
+    rankingProfile: parseOptionalRankingProfile(value.rankingProfile, "recallRequest.rankingProfile", issues),
   };
 };
 
@@ -316,6 +330,24 @@ const parseEntryType = (value: unknown, path: string, issues: RecallEvalValidati
   }
 
   return value as RecallEvalFixtureEntry["type"];
+};
+
+/** Parses an optional internal recall ranking profile enum member. */
+const parseOptionalRankingProfile = (
+  value: unknown,
+  path: string,
+  issues: RecallEvalValidationIssue[],
+): RecallEvalQueryRequest["rankingProfile"] | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "string" || !RECALL_RANKING_PROFILES.includes(value as (typeof RECALL_RANKING_PROFILES)[number])) {
+    pushIssue(issues, path, `Expected one of: ${RECALL_RANKING_PROFILES.join(", ")}.`);
+    return undefined;
+  }
+
+  return value as RecallEvalQueryRequest["rankingProfile"];
 };
 
 /** Parses an optional expiry enum member. */

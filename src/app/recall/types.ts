@@ -10,7 +10,7 @@ export type UnifiedRecallMode = "auto" | "entries" | "episodes";
 /**
  * Stable high-level intent buckets reported by the unified recall router.
  */
-export type UnifiedRecallDetectedIntent = "temporal_narrative" | "factual" | "mixed";
+export type UnifiedRecallDetectedIntent = "temporal_narrative" | "factual" | "mixed" | "historical_state";
 
 /**
  * Tool-level unified recall request.

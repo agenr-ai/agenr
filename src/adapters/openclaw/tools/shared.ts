@@ -417,30 +417,15 @@ export function formatUnifiedRecallResults(result: UnifiedRecallResult): string 
     lines.push("");
   }
 
-  lines.push("Episode Matches");
-  if (result.episodes.length === 0) {
-    lines.push("None.");
+  const renderEntriesFirst = result.routing.detectedIntent === "historical_state";
+  if (renderEntriesFirst) {
+    appendEntryMatches(lines, result);
+    lines.push("");
+    appendEpisodeMatches(lines, result);
   } else {
-    for (const [index, episode] of result.episodes.entries()) {
-      lines.push(
-        `${index + 1}. ${episode.episode.id} | ${episode.episode.source} | ${episode.episode.startedAt} -> ${episode.episode.endedAt ?? episode.episode.startedAt} | score ${episode.score.toFixed(2)}`,
-      );
-      lines.push(`   ${index < 3 ? episode.episode.summary.trim() : truncate(episode.episode.summary.trim(), 220)}`);
-      lines.push(`   why_matched=${describeEpisodeMatch(episode)}`);
-    }
-  }
-  lines.push("");
-
-  lines.push("Entry Matches");
-  if (result.entries.length === 0) {
-    lines.push("None.");
-  } else {
-    for (const [index, entry] of result.entries.entries()) {
-      lines.push(
-        `${index + 1}. ${entry.entry.id} | ${entry.entry.type} | ${entry.entry.subject} | score ${entry.score.toFixed(2)} | importance ${entry.entry.importance}`,
-      );
-      lines.push(`   ${truncate(entry.entry.content, 220)}`);
-    }
+    appendEpisodeMatches(lines, result);
+    lines.push("");
+    appendEntryMatches(lines, result);
   }
 
   if (result.notices.length > 0) {
@@ -452,6 +437,39 @@ export function formatUnifiedRecallResults(result: UnifiedRecallResult): string 
   }
 
   return lines.join("\n");
+}
+
+/** Append the entry result section in tool-readable text format. */
+function appendEntryMatches(lines: string[], result: UnifiedRecallResult): void {
+  lines.push("Entry Matches");
+  if (result.entries.length === 0) {
+    lines.push("None.");
+    return;
+  }
+
+  for (const [index, entry] of result.entries.entries()) {
+    lines.push(
+      `${index + 1}. ${entry.entry.id} | ${entry.entry.type} | ${entry.entry.subject} | score ${entry.score.toFixed(2)} | importance ${entry.entry.importance}`,
+    );
+    lines.push(`   ${truncate(entry.entry.content, 220)}`);
+  }
+}
+
+/** Append the episode result section in tool-readable text format. */
+function appendEpisodeMatches(lines: string[], result: UnifiedRecallResult): void {
+  lines.push("Episode Matches");
+  if (result.episodes.length === 0) {
+    lines.push("None.");
+    return;
+  }
+
+  for (const [index, episode] of result.episodes.entries()) {
+    lines.push(
+      `${index + 1}. ${episode.episode.id} | ${episode.episode.source} | ${episode.episode.startedAt} -> ${episode.episode.endedAt ?? episode.episode.startedAt} | score ${episode.score.toFixed(2)}`,
+    );
+    lines.push(`   ${index < 3 ? episode.episode.summary.trim() : truncate(episode.episode.summary.trim(), 220)}`);
+    lines.push(`   why_matched=${describeEpisodeMatch(episode)}`);
+  }
 }
 
 /**

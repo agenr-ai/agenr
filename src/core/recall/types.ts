@@ -1,6 +1,11 @@
 import type { Entry, EntryType } from "../types.js";
 
 /**
+ * Internal ranking profiles that adjust recall scoring for specific query intents.
+ */
+export type RecallRankingProfile = "historical_state";
+
+/**
  * Input to the v1 recall pipeline.
  */
 export interface RecallInput {
@@ -15,6 +20,7 @@ export interface RecallInput {
   around?: string;
   aroundRadius?: number;
   sessionKey?: string;
+  rankingProfile?: RecallRankingProfile;
 }
 
 /**

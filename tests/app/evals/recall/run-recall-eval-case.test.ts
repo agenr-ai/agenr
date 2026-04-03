@@ -443,6 +443,43 @@ describe("runRecallEvalCase", () => {
     });
     await expect(access(response.sandbox?.dbPath ?? "")).resolves.toBeUndefined();
   });
+
+  it("accepts rankingProfile in the internal eval seam and runs recall successfully", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    vi.stubGlobal("fetch", createEmbeddingFetchStub());
+
+    const response = await runRecallEvalCase({
+      caseId: "case-ranking-profile",
+      memoryPool: [
+        {
+          id: "approach-old",
+          type: "decision",
+          subject: "deployment approach",
+          content: "The previous deployment approach used webpack before the migration.",
+          created_at: "2026-02-01T00:00:00.000Z",
+        },
+        {
+          id: "approach-new",
+          type: "decision",
+          subject: "deployment approach",
+          content: "The current deployment approach uses vite after the migration.",
+          created_at: "2026-03-20T00:00:00.000Z",
+        },
+      ],
+      recallRequest: {
+        text: "what was the previous deployment approach",
+        limit: 2,
+        rankingProfile: "historical_state",
+      },
+    });
+
+    expect(response).toMatchObject({
+      status: "ok",
+      caseId: "case-ranking-profile",
+    });
+    expect(response.result?.entryIds).toEqual(expect.arrayContaining([expect.any(String)]));
+    expect(response.result?.entries.length).toBeGreaterThan(0);
+  });
 });
 
 /** Creates a temp directory and tracks it for cleanup. */

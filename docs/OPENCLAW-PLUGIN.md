@@ -154,7 +154,8 @@ Current behavior:
 
 - if `agenr_recall` is unavailable, the section is omitted entirely
 - otherwise it tells the model to call `agenr_recall` before answering questions about prior work, preferences, unfinished work, dates, or past sessions
-- it includes explicit guidance for temporal recall using `since`, `until`, `around`, and `aroundRadius`
+- it teaches `mode=auto` for prior-state questions like "what was the previous approach" and "what changed from X to Y"
+- it teaches `mode=entries` for exact facts and `mode=episodes` for explicit narrative session recall
 - it conditionally adds guidance for `agenr_store`, `agenr_update`, `agenr_retire`, and `agenr_trace` only when those tools are available
 - it adds a citation rule based on `citationsMode`
 
@@ -317,28 +318,24 @@ Current runtime behavior:
 
 #### `agenr_recall`
 
-`agenr_recall` calls the core `recall()` pipeline through the injected recall ports.
+`agenr_recall` calls `runUnifiedRecall()`, which routes between entry recall and episodic recall.
 
 Supported request fields today:
 
 - `query`
+- `mode`
 - `limit`
 - `threshold`
 - `types`
 - `tags`
-- `since`
-- `until`
-- `around`
-- `aroundRadius`
 
 Important details:
 
 - `sessionKey` from the OpenClaw tool context is always attached for recall telemetry
 - if embeddings are unavailable, the tool fails before calling core recall
-- result text is a compact numbered list with ID, type, subject, score, importance, and truncated content
+- `mode=auto` now handles current-state, historical-state, and mixed entry-plus-episode routing
+- result text shows routing metadata plus separate entry and episode sections, with entries rendered first for historical-state queries
 - structured tool details also include the full returned entry metadata
-
-One current oddity is worth noting: the tool implementation still reads and logs an optional `project` field if it appears in raw params, but `project` is not part of the declared JSON schema and it is not passed through to core recall.
 
 #### `agenr_update`
 

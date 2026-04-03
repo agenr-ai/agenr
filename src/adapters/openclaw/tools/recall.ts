@@ -26,12 +26,14 @@ const RECALL_TOOL_PARAMETERS = {
   properties: {
     query: {
       type: "string",
-      description: "What you need to remember. Use a focused natural-language query rather than a broad 'everything' search.",
+      description:
+        "What you need to remember. Use a focused natural-language query rather than a broad 'everything' search. Phrase prior-state asks directly, for example 'what was the previous approach' or 'what changed from X to Y'.",
     },
     mode: {
       type: "string",
       enum: [...RECALL_MODES],
-      description: "Recall mode: auto routes between entries and episodes, entries forces semantic recall, and episodes forces temporal session recall.",
+      description:
+        "Recall mode: auto routes between exact entry recall, historical-state recall, and episodes; entries forces semantic recall; episodes forces temporal or semantic session recall.",
     },
     limit: {
       type: "integer",
@@ -75,7 +77,7 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
     name: "agenr_recall",
     label: "Agenr Recall",
     description:
-      "Retrieve knowledge from agenr long-term memory. Use mode=auto for the normal path, mode=entries for exact facts and decisions, and mode=episodes for time-bounded 'what happened' questions. Time periods are parsed from the query text. Session-start recall is already handled automatically.",
+      "Retrieve knowledge from agenr long-term memory. Use mode=auto for the normal path, including historical-state questions like what was the previous approach or what changed from X to Y; use mode=entries for exact facts and decisions; use mode=episodes for time-bounded 'what happened' questions. Time periods are parsed from the query text. Session-start recall is already handled automatically.",
     parameters: RECALL_TOOL_PARAMETERS,
     async execute(_toolCallId, rawParams) {
       try {
@@ -122,6 +124,9 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
           recall: services.recall,
           embeddingAvailable: services.embeddingStatus.available,
           embeddingError: services.embeddingStatus.error,
+          debugLog: (message: string) => {
+            logger.debug?.(message);
+          },
           embedQuery: services.embeddingStatus.available
             ? async (text: string) => {
                 const vectors = await services.embedding.embed([text]);

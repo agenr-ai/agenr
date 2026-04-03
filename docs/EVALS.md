@@ -169,6 +169,7 @@ Supported `recallRequest` fields are:
 - `until`
 - `around`
 - `aroundRadius`
+- `rankingProfile`
 
 Validation details:
 
@@ -176,6 +177,7 @@ Validation details:
 - `limit` and `budget` must be non-negative integers
 - `threshold` must be a number from `0-1`
 - `aroundRadius` must be a positive integer
+- `rankingProfile`, when present, must currently be `historical_state`
 - `types` must be valid entry types
 - `tags` must be a string array
 

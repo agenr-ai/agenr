@@ -161,6 +161,13 @@ describe("agenr OpenClaw tools", () => {
     expect(schema.properties).not.toHaveProperty("until");
     expect(schema.properties).not.toHaveProperty("around");
     expect(schema.properties).not.toHaveProperty("aroundRadius");
+    expect(String(recallTool.description)).toContain("previous approach");
+    expect(schema.properties?.query).toMatchObject({
+      description: expect.stringContaining("previous approach"),
+    });
+    expect(schema.properties?.mode).toMatchObject({
+      description: expect.stringContaining("historical-state recall"),
+    });
   });
 
   it("runs unified entry recall through injected recall ports", async () => {
@@ -426,6 +433,60 @@ describe("agenr OpenClaw tools", () => {
     expect(result.content[0]?.text).toContain("Episode Matches");
     expect(result.content[0]?.text).toContain("We added semantic episode search for recall without a time window.");
     expect(result.content[0]?.text).toContain("Semantic match to the episode summary.");
+  });
+
+  it("renders historical-state results entry-first and logs the matched pattern at debug level", async () => {
+    const database = await createTestDatabase();
+    const logger = createLogger();
+    const semanticEpisode = await database.upsertEpisode({
+      source: "openclaw",
+      sourceId: "history-episode",
+      transcriptHash: "history-episode-hash",
+      startedAt: "2026-03-20T09:00:00.000Z",
+      endedAt: "2026-03-20T10:00:00.000Z",
+      summary: "We migrated off the previous deployment path and documented the replacement.",
+      tags: ["deploy", "history"],
+      activityLevel: "substantial",
+    });
+    vi.spyOn(database, "episodeVectorSearch").mockResolvedValue([
+      {
+        episode: {
+          ...semanticEpisode.episode,
+          embedding: [1, 0],
+        },
+        vectorSim: 0.91,
+      },
+    ]);
+    const entry = createEntry({
+      subject: "deployment approach",
+      content: "Before the migration we used the previous deployment path.",
+      type: "decision",
+    });
+    const services = createServices(database, {
+      available: true,
+      recall: createExactRecallPorts([entry]),
+    });
+    const recallTool = createAgenrRecallTool(createToolContext(), Promise.resolve(services), logger);
+
+    const result = await recallTool.execute("tool-history", {
+      query: "what was the previous deployment approach",
+      limit: 3,
+    });
+
+    expect(result.details).toMatchObject({
+      status: "ok",
+      routing: {
+        requested: "auto",
+        detectedIntent: "historical_state",
+        queried: ["entries", "episodes"],
+      },
+    });
+    const text = result.content[0]?.text ?? "";
+    expect(text).toContain("requested=auto detected=historical_state queried=entries, episodes");
+    expect(text.indexOf("Entry Matches")).toBeLessThan(text.indexOf("Episode Matches"));
+    expect(getMessages(logger.debug)).toEqual(
+      expect.arrayContaining([expect.stringContaining('unified recall matched historical-state pattern="what was the previous"')]),
+    );
   });
 
   it("traces the most recent entry when last is true", async () => {

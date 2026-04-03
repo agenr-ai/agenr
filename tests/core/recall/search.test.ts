@@ -150,6 +150,86 @@ describe("recall raw evidence gating", () => {
       sessionKey: undefined,
     });
   });
+
+  it("neutralizes default age bias for historical-state ranking", async () => {
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "approach-old",
+          subject: "deployment approach",
+          content: "Deployment approach used the same bundler.",
+          created_at: "2026-01-01T00:00:00.000Z",
+        }),
+        buildEntry({
+          id: "approach-new",
+          subject: "deployment approach",
+          content: "Deployment approach used the same bundler.",
+          created_at: "2026-03-20T00:00:00.000Z",
+        }),
+      ],
+      vectorCandidates: [
+        { id: "approach-old", vectorSim: 0.65 },
+        { id: "approach-new", vectorSim: 0.65 },
+      ],
+    });
+
+    const defaultResults = await recall(
+      {
+        text: "deployment approach",
+        limit: 5,
+      },
+      fixture.ports,
+    );
+    const historicalResults = await recall(
+      {
+        text: "what was the previous deployment approach",
+        limit: 5,
+        rankingProfile: "historical_state",
+      },
+      fixture.ports,
+    );
+
+    expect(defaultResults.map((result) => result.entry.id)).toEqual(["approach-new", "approach-old"]);
+    expect(historicalResults.map((result) => result.entry.id)).toEqual(["approach-old", "approach-new"]);
+    expect(historicalResults.map((result) => result.scores.recency)).toEqual([0.5, 0.5]);
+  });
+
+  it("keeps around-date recency active for historical-state queries with a temporal anchor", async () => {
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "approach-feb",
+          subject: "deployment approach",
+          content: "We used webpack for deployments.",
+          created_at: "2026-02-01T00:00:00.000Z",
+        }),
+        buildEntry({
+          id: "approach-mar",
+          subject: "deployment approach",
+          content: "We used vite for deployments.",
+          created_at: "2026-03-20T00:00:00.000Z",
+        }),
+      ],
+      vectorCandidates: [
+        { id: "approach-feb", vectorSim: 0.62 },
+        { id: "approach-mar", vectorSim: 0.62 },
+      ],
+    });
+
+    const results = await recall(
+      {
+        text: "what was the previous deployment approach",
+        around: "2026-02-01T00:00:00.000Z",
+        aroundRadius: 3,
+        limit: 5,
+        rankingProfile: "historical_state",
+      },
+      fixture.ports,
+    );
+
+    expect(results.map((result) => result.entry.id)).toEqual(["approach-feb", "approach-mar"]);
+    expect(results[0]?.scores.recency).toBeGreaterThan(results[1]?.scores.recency ?? 0);
+  });
 });
 
 /**

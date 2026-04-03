@@ -4,9 +4,10 @@ import { computeLexicalScore } from "./lexical.js";
 import { cosineSimilarity, gaussianRecency, importanceScore, recencyScore, scoreCandidate } from "./scoring.js";
 import { inferAroundDate, parseRelativeDate } from "./temporal.js";
 import { createNoopRecallTraceSink, type RecallExecutionOptions, type RecallExecutionTraceSummary, type RecallNoResultReason } from "./trace.js";
-import type { EntryFilters, FtsCandidate, RecallCandidateEntry, RecallInput, RecallOutput, VectorCandidate } from "./types.js";
+import type { EntryFilters, FtsCandidate, RecallCandidateEntry, RecallInput, RecallOutput, RecallRankingProfile, VectorCandidate } from "./types.js";
 
 const MIN_VECTOR_ONLY_EVIDENCE = 0.3;
+const HISTORICAL_STATE_FLAT_RECENCY = 0.5;
 
 /**
  * Execute the v1 recall pipeline against the provided adapter ports.
@@ -78,7 +79,13 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
 
     const scoreStartedAt = Date.now();
     const scored = Array.from(mergedCandidates.values())
-      .map((candidate) => scoreMergedCandidate(candidate, text, queryEmbedding, aroundDate, query.aroundRadius))
+      .map((candidate) =>
+        scoreMergedCandidate(candidate, text, queryEmbedding, {
+          aroundDate,
+          aroundRadius: query.aroundRadius,
+          rankingProfile: query.rankingProfile,
+        }),
+      )
       .sort((left, right) => right.score - left.score);
     summary.timings.scoreCandidatesMs = elapsedMs(scoreStartedAt);
 
@@ -229,14 +236,15 @@ function scoreMergedCandidate(
   candidate: MergedCandidate,
   queryText: string,
   queryEmbedding: number[],
-  aroundDate: Date | null,
-  aroundRadius?: number,
+  params: {
+    aroundDate: Date | null;
+    aroundRadius?: number;
+    rankingProfile?: RecallRankingProfile;
+  },
 ): RankedCandidate {
   const vector = candidate.vectorSim ?? cosineSimilarity(candidate.entry.embedding ?? [], queryEmbedding);
   const lexical = computeLexicalScore(queryText, candidate.entry.subject, candidate.entry.content);
-  const recency = aroundDate
-    ? gaussianRecency(candidate.entry.created_at, aroundDate, normalizeAroundRadius(aroundRadius))
-    : recencyScore(candidate.entry.created_at, candidate.entry.expiry);
+  const recency = resolveRecencyScore(candidate.entry, params);
   const importance = importanceScore(candidate.entry.importance);
   const scored = scoreCandidate({
     vectorSim: vector,
@@ -250,6 +258,35 @@ function scoreMergedCandidate(
     score: scored.score,
     scores: scored.scores,
   };
+}
+
+/**
+ * Resolve the recency contribution for one ranked candidate.
+ *
+ * Historical-state queries without an explicit around-date should not reward the
+ * newer/current entry purely for being newer, so they use a flat neutral signal.
+ *
+ * @param entry - Candidate entry being ranked.
+ * @param params - Optional temporal anchor and ranking profile.
+ * @returns Normalized recency score in the 0-1 range.
+ */
+function resolveRecencyScore(
+  entry: RecallCandidateEntry,
+  params: {
+    aroundDate: Date | null;
+    aroundRadius?: number;
+    rankingProfile?: RecallRankingProfile;
+  },
+): number {
+  if (params.aroundDate) {
+    return gaussianRecency(entry.created_at, params.aroundDate, normalizeAroundRadius(params.aroundRadius));
+  }
+
+  if (params.rankingProfile === "historical_state") {
+    return HISTORICAL_STATE_FLAT_RECENCY;
+  }
+
+  return recencyScore(entry.created_at, entry.expiry);
 }
 
 /**

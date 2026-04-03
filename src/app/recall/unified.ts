@@ -10,6 +10,20 @@ const EPISODE_FRESHNESS_NOTICE = "Episodes cover consolidated prior sessions onl
 const EPISODE_SEMANTIC_FALLBACK_NOTICE = "Semantic episode search unavailable - showing temporal results only.";
 const EPISODE_SEMANTIC_UNAVAILABLE_NOTICE = "Semantic episode search unavailable - no semantic episode results could be returned.";
 const ENTRY_FILTER_NOTICE = "Threshold, type filters, and tag filters were applied to entries only.";
+const HISTORICAL_STATE_PATTERNS = [
+  "what was the previous",
+  "what was the earlier",
+  "what did we use before",
+  "what was the old",
+  "what changed",
+  "changed from",
+  "replaced by",
+  "before we switched",
+  "before we migrated",
+  "previous approach",
+  "earlier plan",
+  "old workflow",
+] as const;
 
 /**
  * Dependencies needed by the unified recall orchestration layer.
@@ -20,6 +34,7 @@ export interface UnifiedRecallDeps {
   embeddingAvailable: boolean;
   embeddingError?: string;
   embedQuery?: (text: string) => Promise<number[]>;
+  debugLog?: (message: string) => void;
   now?: Date;
 }
 
@@ -36,6 +51,10 @@ export async function runUnifiedRecall(input: UnifiedRecallInput, deps: UnifiedR
   const parsedTimeWindow = parseTemporalWindow(input.text, now);
   const hasEntryFilters = hasEntryScopedFilters(input);
   const topicAnchor = hasTopicAnchor(input.text, hasEntryFilters);
+  const historicalStatePattern = detectHistoricalStatePattern(input.text);
+  if (historicalStatePattern) {
+    deps.debugLog?.(`[agenr] unified recall matched historical-state pattern=${JSON.stringify(historicalStatePattern)} query=${JSON.stringify(input.text)}`);
+  }
   const routing = routeRecall({
     requested,
     text: input.text,
@@ -48,6 +67,7 @@ export async function runUnifiedRecall(input: UnifiedRecallInput, deps: UnifiedR
         text: input.text,
         limit: input.limit,
         requested,
+        detectedIntent: routing.detectedIntent,
         parsedTimeWindow,
         topicAnchor,
         embedQuery: deps.embedQuery,
@@ -106,12 +126,13 @@ export function routeRecall(params: { requested: UnifiedRecallMode; text: string
   const lower = params.text.trim().toLowerCase();
   const factual = /^(when did|when was|what decision|what preference|what(?:'s| is) the default|which version|what threshold)\b/.test(lower);
   const narrative = /\b(what happened|what were we doing|what was going on|summarize|catch me up)\b/.test(lower);
+  const historicalState = detectHistoricalStatePattern(params.text) !== undefined;
   const topicAnchor = hasTopicAnchor(params.text, params.hasEntryFilters);
 
   if (params.requested === "entries") {
     return {
       requested: params.requested,
-      detectedIntent: factual ? "factual" : params.parsedTimeWindow ? "mixed" : "factual",
+      detectedIntent: historicalState ? "historical_state" : factual ? "factual" : params.parsedTimeWindow ? "mixed" : "factual",
       queried: ["entries"],
       reason: "Explicit mode=entries override.",
     };
@@ -120,11 +141,22 @@ export function routeRecall(params: { requested: UnifiedRecallMode; text: string
   if (params.requested === "episodes") {
     return {
       requested: params.requested,
-      detectedIntent: params.parsedTimeWindow ? "temporal_narrative" : "mixed",
+      detectedIntent: historicalState ? "historical_state" : params.parsedTimeWindow ? "temporal_narrative" : "mixed",
       queried: ["episodes"],
       reason: params.parsedTimeWindow
         ? "Explicit mode=episodes override with a resolved time window."
         : "Explicit mode=episodes override without a resolved time window.",
+    };
+  }
+
+  if (historicalState) {
+    return {
+      requested: params.requested,
+      detectedIntent: "historical_state",
+      queried: ["entries", "episodes"],
+      reason: params.parsedTimeWindow
+        ? "The query asks about a previous state or transition and includes a supported time expression, so both entries and episodes were queried."
+        : "The query asks about a previous state or transition, so both entries and episodes were queried.",
     };
   }
 
@@ -193,6 +225,7 @@ async function buildEpisodeQueryPlan(params: {
   text: string;
   limit: number | undefined;
   requested: UnifiedRecallMode;
+  detectedIntent: UnifiedRecallRouting["detectedIntent"];
   parsedTimeWindow: ReturnType<typeof parseTemporalWindow>;
   topicAnchor: boolean;
   embedQuery?: (text: string) => Promise<number[]>;
@@ -201,7 +234,7 @@ async function buildEpisodeQueryPlan(params: {
   notices: string[];
 }> {
   const notices: string[] = [];
-  const shouldUseSemantic = params.parsedTimeWindow ? params.topicAnchor : params.requested === "episodes";
+  const shouldUseSemantic = params.detectedIntent === "historical_state" || (params.parsedTimeWindow ? params.topicAnchor : params.requested === "episodes");
 
   let embedding: number[] | undefined;
   if (shouldUseSemantic) {
@@ -270,7 +303,7 @@ async function maybeRunEntryRecall(params: {
 
   return {
     kind: "results",
-    results: await recall(buildEntryRecallInput(params.input, params.parsedTimeWindow), params.deps.recall),
+    results: await recall(buildEntryRecallInput(params.input, params.parsedTimeWindow, params.routing), params.deps.recall),
   };
 }
 
@@ -281,7 +314,11 @@ async function maybeRunEntryRecall(params: {
  * @param parsedTimeWindow - Optional resolved episode-style time window.
  * @returns Core entry recall input.
  */
-function buildEntryRecallInput(input: UnifiedRecallInput, parsedTimeWindow: ReturnType<typeof parseTemporalWindow>): RecallInput {
+function buildEntryRecallInput(
+  input: UnifiedRecallInput,
+  parsedTimeWindow: ReturnType<typeof parseTemporalWindow>,
+  routing: UnifiedRecallRouting,
+): RecallInput {
   const request: RecallInput = {
     text: input.text,
     ...(input.limit !== undefined ? { limit: input.limit } : {}),
@@ -289,6 +326,7 @@ function buildEntryRecallInput(input: UnifiedRecallInput, parsedTimeWindow: Retu
     ...(input.types && input.types.length > 0 ? { types: input.types } : {}),
     ...(input.tags && input.tags.length > 0 ? { tags: input.tags } : {}),
     ...(input.sessionKey ? { sessionKey: input.sessionKey } : {}),
+    ...(routing.detectedIntent === "historical_state" ? { rankingProfile: "historical_state" } : {}),
   };
 
   if (!parsedTimeWindow) {
@@ -307,6 +345,17 @@ function buildEntryRecallInput(input: UnifiedRecallInput, parsedTimeWindow: Retu
     around: midpoint.toISOString(),
     aroundRadius: radiusDays,
   };
+}
+
+/**
+ * Detects whether a query is explicitly asking for prior state rather than current truth.
+ *
+ * @param text - Raw recall query.
+ * @returns Matched cue text, or undefined when the query is not a historical-state ask.
+ */
+function detectHistoricalStatePattern(text: string): string | undefined {
+  const lower = text.trim().toLowerCase();
+  return HISTORICAL_STATE_PATTERNS.find((pattern) => lower.includes(pattern));
 }
 
 /**

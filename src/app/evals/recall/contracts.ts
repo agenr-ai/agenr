@@ -53,7 +53,7 @@ export interface RecallEvalFixtureEntry {
  */
 export type RecallEvalQueryRequest = Pick<
   RecallInput,
-  "text" | "limit" | "threshold" | "budget" | "types" | "tags" | "since" | "until" | "around" | "aroundRadius"
+  "text" | "limit" | "threshold" | "budget" | "types" | "tags" | "since" | "until" | "around" | "aroundRadius" | "rankingProfile"
 >;
 
 /**

@@ -32,7 +32,7 @@ export function buildAgenrMemoryPromptSection({
   const lines = [
     "## Memory Recall",
     "Before answering anything about prior work, decisions, preferences, people, dates, unfinished work, or past sessions, call agenr_recall first. Session-start recall is automatic; use agenr_recall mid-session when you need context you do not already have.",
-    "agenr_recall supports two recall kinds behind one tool: use mode=entries for exact facts, decisions, thresholds, and versions; use mode=episodes or auto for what-happened questions tied to a time period.",
+    "agenr_recall supports exact fact recall plus historical and episodic recall behind one tool: use mode=entries for exact facts, decisions, thresholds, and versions; use mode=auto for prior-state questions like what was the previous approach, what did we use before, or what changed from X to Y; use mode=episodes when you explicitly want session narrative recall.",
     "For temporal narrative questions, put the time phrase in the query itself: examples include yesterday, last week, this month, 2 weeks ago, or in March.",
     "One focused agenr_recall call with the right scope beats several broad ones.",
     "Memory authority, strongest to weakest:",

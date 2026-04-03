@@ -92,14 +92,16 @@ The unified layer accepts three modes:
 
 ### Auto-routing rules
 
-`routeRecall()` uses a simple three-band router:
+`routeRecall()` uses a simple four-band router:
 
+- **historical state -> entries and episodes**
 - **temporal narrative -> episodes**
 - **factual -> entries**
 - **mixed -> both**
 
 Current detection is deliberately heuristic, not LLM-based:
 
+- historical-state phrases are matched with conservative composite cues like `what was the previous`, `what was the earlier`, `what did we use before`, `what changed`, `changed from`, `before we switched`, and `before we migrated`
 - factual phrases are matched with regexes like `when did`, `when was`, `what decision`, `what preference`, `what's the default`, `which version`, and `what threshold`
 - narrative phrases are matched with regexes like `what happened`, `what were we doing`, `what was going on`, `summarize`, and `catch me up`
 - a **topic anchor** is detected when the query includes entry-only filters or wording like `about`, `regarding`, `with`, or `on <token>`
@@ -107,12 +109,16 @@ Current detection is deliberately heuristic, not LLM-based:
 
 That yields these concrete routing behaviors:
 
+- historical-state + no supported time window -> `entries` and `episodes`
+- historical-state + supported time window -> `entries` and `episodes`
 - factual + no supported time window -> `entries`
 - factual + supported time window -> `entries` and `episodes`
 - narrative + supported time window + no topic anchor -> `episodes`
 - narrative + supported time window + topic anchor -> `episodes` and `entries`
 - supported time window + topic anchor, even without an obvious narrative phrase -> `episodes` and `entries`
 - supported time window without a clear narrative ask or topic anchor -> `entries`
+
+Historical-state intent beats plain factual detection. If the query also contains a real time expression, the detected intent remains `historical_state` rather than collapsing to `mixed`.
 
 Explicit overrides still win:
 
@@ -249,6 +255,7 @@ Today, the implemented `mode` surface is the OpenClaw `agenr_recall` tool plus `
 ```txt
 agenr_recall({ query: "what happened yesterday", mode: "episodes" })
 agenr_recall({ query: "what happened on agenr 2026-03-29", mode: "auto", tags: ["agenr"] })
+agenr_recall({ query: "what was the previous deployment approach", mode: "auto" })
 agenr_recall({ query: "what decision set the schema threshold", mode: "entries" })
 ```
 
