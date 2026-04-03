@@ -93,6 +93,7 @@ describe("runRecallEvalCase", () => {
         execution: {
           mode: "isolated-case",
           provisioning: "exact-fixture-seed",
+          recallPath: "core",
           memoryPoolCount: 3,
           provisionedCount: 3,
           requestedDiagnostics: true,
@@ -289,6 +290,7 @@ describe("runRecallEvalCase", () => {
         execution: {
           mode: "isolated-case",
           provisioning: "exact-fixture-seed",
+          recallPath: "core",
           memoryPoolCount: 0,
           provisionedCount: 0,
           requestedDiagnostics: true,
@@ -403,6 +405,7 @@ describe("runRecallEvalCase", () => {
         execution: {
           mode: "isolated-case",
           provisioning: "exact-fixture-seed",
+          recallPath: "core",
           memoryPoolCount: 1,
           provisionedCount: 1,
           requestedDiagnostics: true,
@@ -442,6 +445,62 @@ describe("runRecallEvalCase", () => {
       cause: "OpenAI embeddings request failed (401): invalid API key. invalid API key",
     });
     await expect(access(response.sandbox?.dbPath ?? "")).resolves.toBeUndefined();
+  });
+
+  it("routes unified recall eval cases through the unified recall service", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    vi.stubGlobal("fetch", createEmbeddingFetchStub());
+
+    const response = await runRecallEvalCase({
+      caseId: "case-unified-recall-path",
+      recallPath: "unified",
+      memoryPool: [
+        {
+          id: "approach-old",
+          type: "decision",
+          subject: "deployment approach",
+          content: "Before the migration we used webpack for deployment builds.",
+          created_at: "2026-02-01T00:00:00.000Z",
+        },
+        {
+          id: "approach-new",
+          type: "decision",
+          subject: "deployment approach",
+          content: "The current deployment approach uses vite after the migration.",
+          created_at: "2026-03-20T00:00:00.000Z",
+        },
+      ],
+      recallRequest: {
+        text: "what was the previous deployment approach",
+        limit: 2,
+      },
+      options: {
+        includeDiagnostics: true,
+      },
+    });
+
+    expect(response).toMatchObject({
+      status: "ok",
+      caseId: "case-unified-recall-path",
+      diagnostics: {
+        execution: {
+          recallPath: "unified",
+        },
+        unifiedRecall: {
+          path: "unified",
+          routing: {
+            requested: "auto",
+            detectedIntent: "historical_state",
+            queried: ["entries", "episodes"],
+          },
+          episodeCount: 0,
+        },
+      },
+    });
+    expect(response.diagnostics?.unifiedRecall?.notices).toContain(
+      "Episodes cover consolidated prior sessions only; the most recent completed session may not appear yet.",
+    );
+    expect(response.result?.entryIds).toContain("approach-old");
   });
 
   it("accepts rankingProfile in the internal eval seam and runs recall successfully", async () => {

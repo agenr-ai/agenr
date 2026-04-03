@@ -7,6 +7,7 @@ describe("parseRecallEvalCaseRequest", () => {
     const result = parseRecallEvalCaseRequest({
       caseId: "  case-001  ",
       description: "  simple recall case  ",
+      recallPath: "unified",
       sandbox: {
         root: "  /tmp/evals/case-001  ",
         preserve: false,
@@ -39,6 +40,7 @@ describe("parseRecallEvalCaseRequest", () => {
     expect(result).toEqual({
       caseId: "case-001",
       description: "simple recall case",
+      recallPath: "unified",
       sandbox: {
         root: "/tmp/evals/case-001",
         preserve: false,
@@ -165,6 +167,7 @@ describe("parseRecallEvalCaseRequest", () => {
     expect(() =>
       parseRecallEvalCaseRequest({
         caseId: "case-003",
+        recallPath: "sideways",
         memoryPool: [],
         recallRequest: {
           text: "what changed?",
@@ -179,6 +182,7 @@ describe("parseRecallEvalCaseRequest", () => {
     try {
       parseRecallEvalCaseRequest({
         caseId: "case-003",
+        recallPath: "sideways",
         memoryPool: [],
         recallRequest: {
           text: "what changed?",
@@ -191,6 +195,10 @@ describe("parseRecallEvalCaseRequest", () => {
     } catch (error) {
       expect(error).toBeInstanceOf(RecallEvalRequestValidationError);
       expect((error as RecallEvalRequestValidationError).issues).toEqual([
+        {
+          path: "recallPath",
+          message: "Expected one of: core, unified.",
+        },
         {
           path: "recallRequest.limit",
           message: "Expected a non-negative integer.",

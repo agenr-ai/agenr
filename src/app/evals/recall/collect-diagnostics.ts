@@ -7,6 +7,7 @@ import type {
   RecallEvalProvisionDiagnostics,
   RecallEvalRankingDiagnostics,
   RecallEvalRetrievalDiagnostics,
+  RecallEvalUnifiedDiagnostics,
 } from "./contracts.js";
 import type { RecallEvalProvisioningResult } from "./provision-fixtures.js";
 
@@ -78,6 +79,13 @@ export interface RecallEvalDiagnosticsCollector {
    */
   recordRecallTelemetry(params: { durationMs: number; entryCount: number }): void;
   /**
+   * Records unified-recall routing metadata when the eval seam uses the
+   * unified path.
+   *
+   * @param diagnostics - Routing and notice metadata from unified recall.
+   */
+  recordUnifiedRecall(diagnostics: RecallEvalUnifiedDiagnostics): void;
+  /**
    * Builds the stable diagnostics payload when the caller requested it.
    *
    * @returns Structured diagnostics, or undefined when diagnostics were not requested.
@@ -106,6 +114,7 @@ export function createRecallEvalDiagnosticsCollector(request: RecallEvalCaseRequ
   const execution: RecallEvalCaseDiagnostics["execution"] = {
     mode: "isolated-case",
     provisioning: "exact-fixture-seed",
+    recallPath: request.recallPath ?? "core",
     memoryPoolCount: request.memoryPool.length,
     provisionedCount: 0,
     requestedDiagnostics: request.options?.includeDiagnostics === true,
@@ -145,6 +154,7 @@ export function createRecallEvalDiagnosticsCollector(request: RecallEvalCaseRequ
   let provision: RecallEvalProvisionDiagnostics | undefined;
   let ranking: RecallEvalRankingDiagnostics | undefined;
   let filtering: RecallEvalFilteringDiagnostics | undefined;
+  let unifiedRecall: RecallEvalUnifiedDiagnostics | undefined;
   let provisionObserved = false;
   let retrievalObserved = false;
   let traceObserved = false;
@@ -247,6 +257,9 @@ export function createRecallEvalDiagnosticsCollector(request: RecallEvalCaseRequ
       stageTimings.recordRecallEventsMs = params.durationMs;
       candidateCounts.telemetryAttempted = params.entryCount;
     },
+    recordUnifiedRecall(diagnostics: RecallEvalUnifiedDiagnostics): void {
+      unifiedRecall = diagnostics;
+    },
     buildDiagnostics(): RecallEvalCaseDiagnostics | undefined {
       if (!diagnosticsRequested) {
         return undefined;
@@ -258,6 +271,7 @@ export function createRecallEvalDiagnosticsCollector(request: RecallEvalCaseRequ
         retrieval: retrievalObserved ? retrieval : undefined,
         ranking: traceObserved ? ranking : undefined,
         filtering: traceObserved ? filtering : undefined,
+        unifiedRecall,
         candidateCounts,
       };
     },

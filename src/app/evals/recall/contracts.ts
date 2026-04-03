@@ -1,6 +1,12 @@
 import type { RecallInput, RecallOutput } from "../../../core/recall/types.js";
 import type { RecallNoResultReason } from "../../../core/recall/trace.js";
 import type { EntryType, Expiry } from "../../../core/types.js";
+import type { UnifiedRecallRouting, UnifiedRecallTimeWindow } from "../../recall/types.js";
+
+/**
+ * Recall execution path exposed by the eval seam.
+ */
+export type RecallEvalPath = "core" | "unified";
 
 /**
  * Optional sandbox controls for a single recall eval case.
@@ -76,6 +82,8 @@ export interface RecallEvalCaseRequest {
   caseId: string;
   /** Optional human-readable case description. */
   description?: string;
+  /** Optional recall execution path. Defaults to the legacy core path. */
+  recallPath?: RecallEvalPath;
   /** Optional sandbox configuration for the case execution. */
   sandbox?: RecallEvalSandboxRequest;
   /** Explicit memory fixtures to provision for the isolated case. */
@@ -236,6 +244,23 @@ export interface RecallEvalCandidateCounts {
 }
 
 /**
+ * Unified-recall routing diagnostics emitted when the eval seam uses the
+ * higher-level routing path.
+ */
+export interface RecallEvalUnifiedDiagnostics {
+  /** Confirms that the eval seam executed through unified recall. */
+  path: "unified";
+  /** Router metadata explaining intent detection and queried sources. */
+  routing: UnifiedRecallRouting;
+  /** Optional resolved time-window metadata from unified recall. */
+  timeWindow?: UnifiedRecallTimeWindow;
+  /** User-facing notices returned by unified recall. */
+  notices: string[];
+  /** Number of episode results returned alongside entries. */
+  episodeCount: number;
+}
+
+/**
  * Small typed diagnostics emitted by the isolated recall eval execution flow.
  */
 export interface RecallEvalCaseDiagnostics {
@@ -245,6 +270,8 @@ export interface RecallEvalCaseDiagnostics {
     mode: "isolated-case";
     /** Default fixture provisioning mode used by recall eval execution. */
     provisioning: "exact-fixture-seed";
+    /** Selected recall execution path for the case. */
+    recallPath: RecallEvalPath;
     /** Number of fixture entries supplied in the request. */
     memoryPoolCount: number;
     /** Number of fixture entries provisioned into isolated storage. */
@@ -262,6 +289,8 @@ export interface RecallEvalCaseDiagnostics {
   ranking?: RecallEvalRankingDiagnostics;
   /** Active filtering summary for the executed recall query. */
   filtering?: RecallEvalFilteringDiagnostics;
+  /** Unified-recall routing metadata when the case used the unified path. */
+  unifiedRecall?: RecallEvalUnifiedDiagnostics;
   /** Stage-by-stage candidate counts across the recall pipeline. Always present when diagnostics are included. */
   candidateCounts?: RecallEvalCandidateCounts;
 }

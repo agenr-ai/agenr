@@ -1,4 +1,4 @@
-import type { EmbeddingPort, RecallPorts } from "../../../core/ports.js";
+import type { EmbeddingPort, EpisodeDatabasePort, RecallPorts } from "../../../core/ports.js";
 import type { Entry } from "../../../core/types.js";
 
 /**
@@ -36,6 +36,8 @@ export interface RecallEvalSandboxContext {
   preserved: boolean;
   /** Narrow fixture-seeding surface over the isolated database. */
   fixtureStore: RecallEvalFixtureStore;
+  /** Episode database surface backed by the isolated sandbox database. */
+  episodeDatabase: EpisodeDatabasePort;
   /**
    * Creates real recall ports against the isolated database.
    *

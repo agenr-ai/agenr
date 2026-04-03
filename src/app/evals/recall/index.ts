@@ -10,6 +10,7 @@ export type {
   RecallEvalCaseTimings,
   RecallEvalFilteringDiagnostics,
   RecallEvalFixtureEntry,
+  RecallEvalPath,
   RecallEvalProvisionDiagnostics,
   RecallEvalProvisionedEntrySummary,
   RecallEvalQueryRequest,
@@ -18,4 +19,5 @@ export type {
   RecallEvalResultEntry,
   RecallEvalSandboxRequest,
   RecallEvalSandboxResult,
+  RecallEvalUnifiedDiagnostics,
 } from "./contracts.js";

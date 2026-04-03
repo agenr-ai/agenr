@@ -1,4 +1,5 @@
 import type { RecallOutput } from "../../../core/recall/types.js";
+import type { UnifiedRecallResult } from "../../recall/types.js";
 import type { RecallEvalCaseDiagnostics, RecallEvalCaseRequest, RecallEvalCaseResponse, RecallEvalCaseTimings, RecallEvalSandboxResult } from "./contracts.js";
 import type { RecallEvalSandboxContext } from "./ports.js";
 
@@ -10,16 +11,18 @@ import type { RecallEvalSandboxContext } from "./ports.js";
  */
 export function buildRecallEvalSuccessResponse(params: {
   request: RecallEvalCaseRequest;
-  results: RecallOutput[];
+  results: RecallOutput[] | UnifiedRecallResult;
   diagnostics?: RecallEvalCaseDiagnostics;
   timings?: RecallEvalCaseTimings;
   sandbox: RecallEvalSandboxContext;
 }): RecallEvalCaseResponse {
+  const entryResults = Array.isArray(params.results) ? params.results : params.results.entries;
+
   return {
     status: "ok",
     caseId: params.request.caseId,
     result: {
-      entries: params.results.map((result) => ({
+      entries: entryResults.map((result) => ({
         id: result.entry.id,
         subject: result.entry.subject,
         content: result.entry.content,
@@ -31,7 +34,7 @@ export function buildRecallEvalSuccessResponse(params: {
         score: result.score,
         scores: result.scores,
       })),
-      entryIds: params.results.map((result) => result.entry.id),
+      entryIds: entryResults.map((result) => result.entry.id),
     },
     diagnostics: params.diagnostics,
     timings: params.timings,

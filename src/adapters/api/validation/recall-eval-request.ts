@@ -7,7 +7,7 @@ import type {
   RecallEvalSandboxRequest,
 } from "../../../app/evals/recall/index.js";
 
-const ROOT_REQUEST_KEYS = new Set<string>(["caseId", "description", "sandbox", "memoryPool", "recallRequest", "options"]);
+const ROOT_REQUEST_KEYS = new Set<string>(["caseId", "description", "recallPath", "sandbox", "memoryPool", "recallRequest", "options"]);
 const SANDBOX_REQUEST_KEYS = new Set<string>(["root", "preserve"]);
 const FIXTURE_ENTRY_KEYS = new Set<string>([
   "id",
@@ -40,6 +40,7 @@ const RECALL_REQUEST_KEYS = new Set<string>([
   "rankingProfile",
 ]);
 const OPTIONS_KEYS = new Set<string>(["includeDiagnostics", "includeCandidates", "includeTimings"]);
+const RECALL_PATHS = ["core", "unified"] as const;
 const RECALL_RANKING_PROFILES = ["historical_state"] as const;
 
 /**
@@ -101,6 +102,7 @@ export function parseRecallEvalCaseRequest(input: unknown): RecallEvalCaseReques
   pushUnexpectedFields(input, ROOT_REQUEST_KEYS, "", issues);
   const parsedCaseId = parseRequiredString(input.caseId, "caseId", issues);
   const description = parseOptionalString(input.description, "description", issues);
+  const recallPath = parseOptionalRecallPath(input.recallPath, "recallPath", issues);
   const sandbox = parseSandbox(input.sandbox, issues);
   const memoryPool = parseMemoryPool(input.memoryPool, issues);
   const recallRequest = parseRecallRequest(input.recallRequest, issues);
@@ -113,6 +115,7 @@ export function parseRecallEvalCaseRequest(input: unknown): RecallEvalCaseReques
   return {
     caseId: parsedCaseId,
     description,
+    recallPath,
     sandbox,
     memoryPool,
     recallRequest,
@@ -330,6 +333,20 @@ const parseEntryType = (value: unknown, path: string, issues: RecallEvalValidati
   }
 
   return value as RecallEvalFixtureEntry["type"];
+};
+
+/** Parses an optional recall execution path enum member. */
+const parseOptionalRecallPath = (value: unknown, path: string, issues: RecallEvalValidationIssue[]): RecallEvalCaseRequest["recallPath"] | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "string" || !RECALL_PATHS.includes(value as (typeof RECALL_PATHS)[number])) {
+    pushIssue(issues, path, `Expected one of: ${RECALL_PATHS.join(", ")}.`);
+    return undefined;
+  }
+
+  return value as RecallEvalCaseRequest["recallPath"];
 };
 
 /** Parses an optional internal recall ranking profile enum member. */

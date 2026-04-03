@@ -2,6 +2,7 @@ import type { EpisodeDatabasePort, RecallPorts } from "../../core/ports.js";
 import { recall } from "../../core/recall/search.js";
 import { parseTemporalWindow } from "../../core/episode/temporal-window.js";
 import { searchEpisodes } from "../../core/episode/search.js";
+import type { RecallExecutionOptions } from "../../core/recall/trace.js";
 import type { RecallInput } from "../../core/recall/types.js";
 
 import type { UnifiedRecallInput, UnifiedRecallMode, UnifiedRecallResult, UnifiedRecallRouting } from "./types.js";
@@ -34,6 +35,7 @@ export interface UnifiedRecallDeps {
   embeddingAvailable: boolean;
   embeddingError?: string;
   embedQuery?: (text: string) => Promise<number[]>;
+  recallOptions?: RecallExecutionOptions;
   debugLog?: (message: string) => void;
   now?: Date;
 }
@@ -303,7 +305,7 @@ async function maybeRunEntryRecall(params: {
 
   return {
     kind: "results",
-    results: await recall(buildEntryRecallInput(params.input, params.parsedTimeWindow, params.routing), params.deps.recall),
+    results: await recall(buildEntryRecallInput(params.input, params.parsedTimeWindow, params.routing), params.deps.recall, params.deps.recallOptions),
   };
 }
 

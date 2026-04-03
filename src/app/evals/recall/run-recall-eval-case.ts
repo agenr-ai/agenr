@@ -2,6 +2,7 @@ import { createEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } 
 import { readConfig } from "../../../config.js";
 import type { EmbeddingPort } from "../../../core/ports.js";
 import { recall } from "../../../core/recall/index.js";
+import { runUnifiedRecall } from "../../recall/index.js";
 import { createRecallEvalDiagnosticsCollector } from "./collect-diagnostics.js";
 import type { RecallEvalCaseRequest, RecallEvalCaseResponse } from "./contracts.js";
 import { createInstrumentedRecallPorts } from "./instrumented-recall-ports.js";
@@ -20,17 +21,53 @@ export async function runRecallEvalCase(request: RecallEvalCaseRequest): Promise
   const startedAt = Date.now();
   const provisionedAt = new Date(startedAt).toISOString();
   const diagnostics = createRecallEvalDiagnosticsCollector(request);
+  const recallPath = request.recallPath ?? "core";
   let sandbox: RecallEvalSandboxContext | undefined;
   let sharedEmbeddingPort: EmbeddingPort | undefined;
+  let sharedEmbeddingError: string | undefined;
 
-  const getEmbeddingPort = (): EmbeddingPort => {
+  const getEmbeddingSupport = (): {
+    available: boolean;
+    error?: string;
+    port?: EmbeddingPort;
+  } => {
     if (sharedEmbeddingPort) {
-      return sharedEmbeddingPort;
+      return {
+        available: true,
+        port: sharedEmbeddingPort,
+      };
+    }
+
+    if (sharedEmbeddingError) {
+      return {
+        available: false,
+        error: sharedEmbeddingError,
+      };
     }
 
     const config = readConfig();
-    sharedEmbeddingPort = createEmbeddingClient(resolveEmbeddingApiKey(config), resolveEmbeddingModel(config));
-    return sharedEmbeddingPort;
+    try {
+      sharedEmbeddingPort = createEmbeddingClient(resolveEmbeddingApiKey(config), resolveEmbeddingModel(config));
+      return {
+        available: true,
+        port: sharedEmbeddingPort,
+      };
+    } catch (error) {
+      sharedEmbeddingError = error instanceof Error ? error.message : String(error);
+      return {
+        available: false,
+        error: sharedEmbeddingError,
+      };
+    }
+  };
+
+  const getEmbeddingPort = (): EmbeddingPort => {
+    const support = getEmbeddingSupport();
+    if (!support.port) {
+      throw new Error(support.error ?? "Embeddings are unavailable.");
+    }
+
+    return support.port;
   };
 
   try {
@@ -77,9 +114,47 @@ export async function runRecallEvalCase(request: RecallEvalCaseRequest): Promise
 
     const recallStartedAt = Date.now();
     try {
-      const basePorts = sandbox.createRecallPorts(getEmbeddingPort());
+      const embeddingSupport = getEmbeddingSupport();
+      const basePorts = sandbox.createRecallPorts(
+        embeddingSupport.port ?? createUnavailableEmbeddingPort(embeddingSupport.error ?? "Embeddings are unavailable."),
+      );
       const recallPorts = diagnostics.isObservationEnabled() ? createInstrumentedRecallPorts(basePorts, diagnostics) : basePorts;
-      const results = await recall(request.recallRequest, recallPorts, diagnostics.isObservationEnabled() ? { trace: diagnostics.traceSink } : undefined);
+      const results =
+        recallPath === "unified"
+          ? await runUnifiedRecall(
+              {
+                text: request.recallRequest.text,
+                ...(request.recallRequest.limit !== undefined ? { limit: request.recallRequest.limit } : {}),
+                ...(request.recallRequest.threshold !== undefined ? { threshold: request.recallRequest.threshold } : {}),
+                ...(request.recallRequest.types && request.recallRequest.types.length > 0 ? { types: request.recallRequest.types } : {}),
+                ...(request.recallRequest.tags && request.recallRequest.tags.length > 0 ? { tags: request.recallRequest.tags } : {}),
+              },
+              {
+                database: sandbox.episodeDatabase,
+                recall: recallPorts,
+                embeddingAvailable: embeddingSupport.available,
+                ...(embeddingSupport.error ? { embeddingError: embeddingSupport.error } : {}),
+                ...(embeddingSupport.available
+                  ? {
+                      embedQuery: async (text: string) => {
+                        const vectors = await getEmbeddingPort().embed([text]);
+                        return vectors[0] ?? [];
+                      },
+                    }
+                  : {}),
+                ...(diagnostics.isObservationEnabled() ? { recallOptions: { trace: diagnostics.traceSink } } : {}),
+              },
+            )
+          : await recall(request.recallRequest, recallPorts, diagnostics.isObservationEnabled() ? { trace: diagnostics.traceSink } : undefined);
+      if (!Array.isArray(results)) {
+        diagnostics.recordUnifiedRecall({
+          path: "unified",
+          routing: results.routing,
+          ...(results.timeWindow ? { timeWindow: results.timeWindow } : {}),
+          notices: results.notices,
+          episodeCount: results.episodes.length,
+        });
+      }
       diagnostics.recordRecall(elapsedMs(recallStartedAt));
       return buildRecallEvalSuccessResponse({
         request,
@@ -125,6 +200,15 @@ function toErrorDetails(error: unknown): { cause: string } {
 
   return {
     cause: String(error),
+  };
+}
+
+/** Creates an embedding port that fails lazily when query embeddings are requested. */
+function createUnavailableEmbeddingPort(message: string): EmbeddingPort {
+  return {
+    async embed(): Promise<number[][]> {
+      throw new Error(message);
+    },
   };
 }
 
