@@ -70,6 +70,8 @@ describe("extractClaimKey", () => {
       "If the entry states a durable rule, default, workflow, guardrail, source-of-truth rule, architecture boundary, or process constraint plus rationale",
     );
     expect(systemPrompt).toContain("Choose attribute names that still make sense if the value changes.");
+    expect(systemPrompt).toContain("Prefer short noun-like slot names over sentence-like attribute phrases.");
+    expect(systemPrompt).toContain("Avoid full action clauses like requires_x_to_y, preserves_x_across_y, or x_precedes_y");
     expect(systemPrompt).toContain("When unsure, prefer no_claim over inventing a weak key.");
   });
 
@@ -141,6 +143,38 @@ describe("extractClaimKey", () => {
     );
 
     expect(result?.claimKey).toBe("agenr/core_adapter_boundary");
+  });
+
+  it("compacts verbose sentence-like model attributes into canonical slots before returning them", async () => {
+    const llm = new MockLlmPort(() => ({
+      entity: "OpenClaw before prompt build hook",
+      attribute: "requires real agent turn or message to trigger",
+      confidence: 0.89,
+    }));
+
+    const result = await extractClaimKey(
+      {
+        type: "decision",
+        subject: "Before-prompt-build trigger contract",
+        content: "The before-prompt-build hook only triggers after a real agent turn or message.",
+      },
+      llm,
+      {
+        enabled: true,
+        confidenceThreshold: 0.8,
+        eligibleTypes: ["fact", "preference", "decision", "lesson"],
+      },
+    );
+
+    expect(result).toEqual({
+      claimKey: "openclaw_before_prompt_build_hook/trigger_condition",
+      confidence: 0.89,
+      rawEntity: "OpenClaw before prompt build hook",
+      rawAttribute: "requires real agent turn or message to trigger",
+      path: "model",
+      compactedFrom: "openclaw_before_prompt_build_hook/requires_real_agent_turn_or_message_to_trigger",
+      compactionReason: "collapsed a sentence-like trigger requirement into a stable condition slot",
+    });
   });
 
   it("resolves self-references when exactly one entity hint exists", async () => {

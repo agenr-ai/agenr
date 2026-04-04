@@ -399,9 +399,13 @@ describe("claim_key_quality surgeon pass", () => {
       args: ["changelog-supported"],
     });
     const actions = await getSurgeonRunActions(client, result.runId);
+    const run = await getLastSurgeonRun(client);
 
     expect(result.status).toBe("completed");
     expect(row.rows[0]?.claim_key).toBe("changelog/source_of_truth");
+    expect(run?.summaryJson?.observations).toContain(
+      "Compact canonicalization rewrote 1 missing-key candidate before auto-apply and 0 before unresolved proposal logging.",
+    );
     expect(actions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -412,6 +416,73 @@ describe("claim_key_quality surgeon pass", () => {
             claim_key_compacted_from: "changelog/changelog_source_of_truth",
             claim_key_compaction_reason: "removed duplicated entity prefix from attribute",
             support_evidence: expect.arrayContaining(["trusted_entity_family_reuse", "tag_grounding", "source_context_grounding", "template_support"]),
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it("auto-applies supported ordering candidates after compacting sentence-like relation tails", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "openclaw-seed-order",
+      subject: "LLM handoff order seed",
+      type: "decision",
+      claim_key: "openclaw/llm_handoff_order",
+      tags: ["openclaw", "workflow"],
+      source_context: "OpenClaw runtime docs define hook ordering",
+      content: "OpenClaw keeps heartbeat detection ahead of LLM handoff.",
+    });
+    await insertEntry(client, {
+      id: "openclaw-seed-contract",
+      subject: "Memory surface contract",
+      type: "decision",
+      claim_key: "openclaw/memory_surface_contract",
+      tags: ["openclaw", "workflow"],
+      source_context: "OpenClaw runtime docs define hook ordering",
+      content: "OpenClaw exposes a stable memory surface contract to the host.",
+    });
+    await insertEntry(client, {
+      id: "openclaw-ordering",
+      subject: "Heartbeat handoff ordering",
+      type: "decision",
+      tags: ["openclaw", "workflow"],
+      source_context: "OpenClaw runtime docs define hook ordering",
+      content: "Heartbeat detection should happen before LLM handoff in OpenClaw.",
+    });
+    const llm = new MockClaimLlm(() => ({
+      entity: "OpenClaw",
+      attribute: "heartbeat detection precedes llm handoff",
+      confidence: 0.88,
+    }));
+
+    const result = await runClaimKeyPass(client, {
+      apply: true,
+      createClaimExtractionLlm: () => llm,
+    });
+
+    const row = await client.execute({
+      sql: "SELECT claim_key FROM entries WHERE id = ?",
+      args: ["openclaw-ordering"],
+    });
+    const actions = await getSurgeonRunActions(client, result.runId);
+    const run = await getLastSurgeonRun(client);
+
+    expect(result.status).toBe("completed");
+    expect(row.rows[0]?.claim_key).toBe("openclaw/llm_handoff_order");
+    expect(run?.summaryJson?.observations).toContain(
+      "Compact canonicalization rewrote 1 missing-key candidate before auto-apply and 0 before unresolved proposal logging.",
+    );
+    expect(actions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entryIds: ["openclaw-ordering"],
+          details: expect.objectContaining({
+            supported_auto_apply: true,
+            support_class: "trusted_exact_reuse_grounded",
+            claim_key_compacted_from: "openclaw/heartbeat_detection_precedes_llm_handoff",
+            claim_key_compaction_reason: "collapsed a sentence-like ordering phrase into a stable order slot",
+            support_evidence: expect.arrayContaining(["trusted_exact_reuse", "tag_grounding", "source_context_grounding", "attribute_lexical_alignment"]),
           }),
         }),
       ]),
@@ -712,7 +783,7 @@ describe("claim_key_quality surgeon pass", () => {
     );
   });
 
-  it("keeps awkward supported candidates unresolved when compact canonicalization is not safe", async () => {
+  it("keeps awkward supported candidates unresolved when compact canonicalization is still semantically ambiguous", async () => {
     const client = await createTestClient(clients);
     await insertEntry(client, {
       id: "changelog-family-workflow",
@@ -742,7 +813,7 @@ describe("claim_key_quality surgeon pass", () => {
     });
     const llm = new MockClaimLlm(() => ({
       entity: "changelog",
-      attribute: "authoritative source of truth for release notes",
+      attribute: "authoritative source of truth and archive workflow for release notes",
       confidence: 0.89,
     }));
 
@@ -765,7 +836,7 @@ describe("claim_key_quality surgeon pass", () => {
         expect.objectContaining({
           issueKind: "missing_claim_key",
           entryIds: ["changelog-awkward"],
-          proposedClaimKeys: ["changelog/authoritative_source_of_truth_for_release_notes"],
+          proposedClaimKeys: ["changelog/authoritative_source_of_truth_and_archive_workflow_for_release_notes"],
         }),
       ]),
     );

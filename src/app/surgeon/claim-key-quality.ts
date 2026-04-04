@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 
 import { DEFAULT_CLAIM_EXTRACTION_CONCURRENCY, resolveClaimExtractionConfig, type AgenrConfig } from "../../config.js";
 import {
+  compactClaimKey,
   describeClaimKeyNormalizationFailure,
   describeClaimKeySuspicion,
   inspectClaimKey,
@@ -78,7 +79,6 @@ const GROUNDING_STOP_TOKENS = new Set([
   "with",
 ]);
 const AWKWARD_AUTO_APPLY_ATTRIBUTE_TOKENS = new Set(["to", "for", "from", "with", "about", "into", "onto", "between", "during"]);
-const TRAILING_ENTITY_COMPACTION_PREPOSITIONS = new Set(["to", "for", "from", "with", "about", "into", "onto"]);
 const POLICY_TEMPLATE_ATTRIBUTE_TOKENS = new Set(["policy", "default", "workflow", "process", "strategy", "guardrail", "rule", "boundary"]);
 const AUTHORITATIVE_TEMPLATE_ATTRIBUTE_TOKENS = new Set(["source", "truth", "guide", "runbook", "reference"]);
 const ARCHITECTURE_TEMPLATE_ATTRIBUTE_TOKENS = new Set([
@@ -96,13 +96,17 @@ const ARCHITECTURE_TEMPLATE_ATTRIBUTE_TOKENS = new Set([
 const STABLE_FAMILY_SLOT_ATTRIBUTE_HEADS = new Set([
   "access",
   "boundary",
+  "condition",
   "contract",
+  "dependency",
   "mode",
   "owner",
   "path",
   "policy",
   "preference",
+  "preservation",
   "process",
+  "requirement",
   "role",
   "rule",
   "schedule",
@@ -255,9 +259,11 @@ interface MissingBackfillDecisionStats {
   autoAppliedMetadataRepair: number;
   autoAppliedSupportedPreview: number;
   autoAppliedPreviewModel: number;
+  autoAppliedCompactedCandidate: number;
   proposedTrustedGroupReuse: number;
   proposedSupportedCandidate: number;
   proposedPreviewCandidate: number;
+  proposedCompactedCandidate: number;
   noClaimWithWarnings: number;
 }
 
@@ -457,6 +463,10 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
   if (missingDecisionObservation) {
     observations.push(missingDecisionObservation);
   }
+  const missingCompactionObservation = buildMissingCompactionObservation(missingDecisionStats);
+  if (missingCompactionObservation) {
+    observations.push(missingCompactionObservation);
+  }
   if (missingDecisionStats.noClaimWithWarnings > 0) {
     observations.push(
       `${missingDecisionStats.noClaimWithWarnings} missing-key previews ended without a safe claim after deterministic validation warnings or malformed output.`,
@@ -654,7 +664,11 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
     }
 
     const metadataBackfillClaimKey = resolveMetadataBackfillClaimKey(entry, suggestion.claimKey);
-    const compactness = evaluateClaimKeyCompactness(metadataBackfillClaimKey ?? suggestion.claimKey);
+    const originalClaimKey = suggestion.compactedFrom ?? suggestion.claimKey;
+    const compactness = evaluateClaimKeyCompactness(metadataBackfillClaimKey ?? suggestion.claimKey, {
+      priorCompactedFrom: suggestion.compactedFrom ?? null,
+      priorCompactionReason: suggestion.compactionReason ?? null,
+    });
     const targetClaimKey = compactness.claimKey;
     const targetSource = metadataBackfillClaimKey ? "metadata_backfill_rewrite" : suggestion.path;
     const targetInspection = inspectClaimKey(targetClaimKey);
@@ -682,7 +696,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
         proposedClaimKeys: [targetClaimKey],
         rationale:
           buildMissingBackfillConflictRationale({
-            originalClaimKey: suggestion.claimKey,
+            originalClaimKey,
             targetClaimKey,
             confidence: suggestion.confidence,
             metadataBackfillClaimKey,
@@ -700,6 +714,9 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
       });
       counts.proposalsEmitted += 1;
       counts.skippedAmbiguous += 1;
+      if (compactness.compactedFrom) {
+        missingDecisionStats.proposedCompactedCandidate += 1;
+      }
       return;
     }
 
@@ -714,7 +731,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
           currentClaimKeys: [],
           proposedClaimKeys: [targetClaimKey],
           rationale: buildMissingBackfillProposalRationale({
-            originalClaimKey: suggestion.claimKey,
+            originalClaimKey,
             targetClaimKey,
             confidence: suggestion.confidence,
             autoApplyThreshold,
@@ -735,6 +752,9 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
         });
         counts.proposalsEmitted += 1;
         counts.skippedAmbiguous += 1;
+        if (compactness.compactedFrom) {
+          missingDecisionStats.proposedCompactedCandidate += 1;
+        }
         if (metadataBackfillClaimKey !== null || suggestion.path === "deterministic_repair" || support.supportedProposal) {
           missingDecisionStats.proposedSupportedCandidate += 1;
         } else {
@@ -763,7 +783,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
       compactness,
       support,
       rationale: buildMissingBackfillApplyRationale({
-        originalClaimKey: suggestion.claimKey,
+        originalClaimKey,
         targetClaimKey,
         confidence: suggestion.confidence,
         source: targetSource,
@@ -784,6 +804,9 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
         missingDecisionStats.autoAppliedSupportedPreview += 1;
       } else {
         missingDecisionStats.autoAppliedPreviewModel += 1;
+      }
+      if (compactness.compactedFrom) {
+        missingDecisionStats.autoAppliedCompactedCandidate += 1;
       }
       circuitBreaker = recordAppliedRepair(circuitBreakerState, targetClaimKey);
     }
@@ -1345,9 +1368,11 @@ function createEmptyMissingBackfillDecisionStats(): MissingBackfillDecisionStats
     autoAppliedMetadataRepair: 0,
     autoAppliedSupportedPreview: 0,
     autoAppliedPreviewModel: 0,
+    autoAppliedCompactedCandidate: 0,
     proposedTrustedGroupReuse: 0,
     proposedSupportedCandidate: 0,
     proposedPreviewCandidate: 0,
+    proposedCompactedCandidate: 0,
     noClaimWithWarnings: 0,
   };
 }
@@ -1859,10 +1884,15 @@ function matchesStableFamilySlotSupport(attribute: string): boolean {
   return typeof head === "string" && STABLE_FAMILY_SLOT_ATTRIBUTE_HEADS.has(head);
 }
 
-function evaluateClaimKeyCompactness(claimKey: string): ClaimKeyCompactnessEvaluation {
-  const inspection = inspectClaimKey(claimKey);
-  const normalized = inspection.normalized;
-  if (!normalized) {
+function evaluateClaimKeyCompactness(
+  claimKey: string,
+  prior?: {
+    priorCompactedFrom: string | null;
+    priorCompactionReason: string | null;
+  },
+): ClaimKeyCompactnessEvaluation {
+  const compacted = compactClaimKey(claimKey);
+  if (!compacted) {
     return {
       claimKey,
       compactedFrom: null,
@@ -1872,55 +1902,24 @@ function evaluateClaimKeyCompactness(claimKey: string): ClaimKeyCompactnessEvalu
     };
   }
 
-  const compacted = compactClaimKeyAttribute(normalized.entity, normalized.attribute);
-  const targetClaimKey = compacted.attribute !== normalized.attribute ? `${normalized.entity}/${compacted.attribute}` : normalized.claimKey;
   const attributeTokens = compacted.attribute.split("_").filter((token) => token.length > 0);
   const compactEnoughForAutoApply =
     attributeTokens.length > 0 &&
     attributeTokens.length <= MAX_AUTO_APPLY_ATTRIBUTE_TOKENS &&
     !attributeTokens.some((token) => AWKWARD_AUTO_APPLY_ATTRIBUTE_TOKENS.has(token));
+  const compactedFrom = compacted.compactedFrom ?? prior?.priorCompactedFrom ?? null;
+  const compactionReason =
+    compacted.reason && prior?.priorCompactionReason
+      ? `${prior.priorCompactionReason} and ${compacted.reason}`
+      : (compacted.reason ?? prior?.priorCompactionReason ?? null);
 
   return {
-    claimKey: targetClaimKey,
-    compactedFrom: targetClaimKey !== normalized.claimKey ? normalized.claimKey : null,
-    compactionReason: compacted.reason,
+    claimKey: compacted.claimKey,
+    compactedFrom,
+    compactionReason,
     compactEnoughForAutoApply,
     blockerReason: compactEnoughForAutoApply ? null : "non_compact_canonical_slot",
   };
-}
-
-function compactClaimKeyAttribute(entity: string, attribute: string): { attribute: string; reason: string | null } {
-  let tokens = attribute.split("_").filter((token) => token.length > 0);
-  const entityTokens = entity.split("_").filter((token) => token.length > 0);
-  let reason: string | null = null;
-
-  if (entityTokens.length > 0 && startsWithTokens(tokens, entityTokens) && tokens.length > entityTokens.length) {
-    tokens = tokens.slice(entityTokens.length);
-    reason = "removed duplicated entity prefix from attribute";
-  }
-
-  if (
-    entityTokens.length > 0 &&
-    tokens.length > entityTokens.length + 1 &&
-    endsWithTokens(tokens, entityTokens) &&
-    TRAILING_ENTITY_COMPACTION_PREPOSITIONS.has(tokens[tokens.length - entityTokens.length - 1] ?? "")
-  ) {
-    tokens = tokens.slice(0, tokens.length - entityTokens.length - 1);
-    reason = reason ?? "removed duplicated entity suffix from attribute";
-  }
-
-  return {
-    attribute: tokens.join("_"),
-    reason,
-  };
-}
-
-function startsWithTokens(tokens: string[], prefix: string[]): boolean {
-  return prefix.every((token, index) => tokens[index] === token);
-}
-
-function endsWithTokens(tokens: string[], suffix: string[]): boolean {
-  return suffix.every((token, index) => tokens[tokens.length - suffix.length + index] === token);
 }
 
 function resolveMissingBackfillNullOutcome(suggestionRecord: EntrySuggestionRecord): MissingBackfillSkipDiagnostic["outcome"] {
@@ -2442,6 +2441,18 @@ function buildMissingDecisionObservation(stats: MissingBackfillDecisionStats): s
   }
 
   return `Missing-key decisions used ${autoAppliedParts.join(", ") || "no auto-applies"} and ${proposalParts.join(", ") || "no proposals"} after structural reuse checks.`;
+}
+
+function buildMissingCompactionObservation(stats: MissingBackfillDecisionStats): string | null {
+  if (stats.autoAppliedCompactedCandidate === 0 && stats.proposedCompactedCandidate === 0) {
+    return null;
+  }
+
+  return (
+    `Compact canonicalization rewrote ${stats.autoAppliedCompactedCandidate} missing-key candidate` +
+    `${stats.autoAppliedCompactedCandidate === 1 ? "" : "s"} before auto-apply and ${stats.proposedCompactedCandidate} ` +
+    `before unresolved proposal logging.`
+  );
 }
 
 function createProposal(input: Omit<SurgeonRunProposal, "id">): SurgeonRunProposal {

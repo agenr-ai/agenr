@@ -1,6 +1,7 @@
 import type { DatabasePort, LlmPort } from "../ports.js";
 import type { EntryType, StoreEntryInput } from "../types.js";
 import {
+  compactClaimKey,
   describeClaimKeyNormalizationFailure,
   describeExtractedClaimKeyRejection,
   normalizeClaimKey,
@@ -79,6 +80,8 @@ interface ClaimExtractionCandidate {
   confidence: number;
   rawEntity: string;
   rawAttribute: string;
+  compactedFrom: string | null;
+  compactionReason: string | null;
 }
 
 /** One successful LLM attempt plus the path that produced it. */
@@ -146,6 +149,8 @@ export interface ClaimExtractionResult {
   rawEntity: string;
   rawAttribute: string;
   path: ClaimExtractionPath;
+  compactedFrom?: string | null;
+  compactionReason?: string | null;
 }
 
 /**
@@ -208,6 +213,12 @@ export async function previewClaimKeyExtraction(
       rawEntity: candidate.rawEntity,
       rawAttribute: candidate.rawAttribute,
       path: attempt.path,
+      ...(candidate.compactedFrom
+        ? {
+            compactedFrom: candidate.compactedFrom,
+            compactionReason: candidate.compactionReason,
+          }
+        : {}),
     };
   }
 
@@ -365,11 +376,14 @@ function buildClaimExtractionSystemPrompt(hints: NormalizedClaimExtractionHints,
     "Stability rules:",
     "- Prefer stable slot names over transient wording.",
     "- Choose attribute names that still make sense if the value changes.",
+    "- Prefer short noun-like slot names over sentence-like attribute phrases.",
+    "- When a candidate sounds like a rule or explanation sentence, compress it into the reusable slot it governs.",
     "- Prefer concrete entities over pronouns, deictic phrases, or self-referential placeholders.",
     "- Reuse an existing entity or full claim-key example when it clearly matches the same slot.",
     "- Stay domain-general. The same rules apply to people, devices, services, projects, places, organizations, products, datasets, policies, and preferences.",
     "- If the entry states a durable rule, default, workflow, guardrail, source-of-truth rule, architecture boundary, or process constraint plus rationale, extract the primary durable slot rather than the supporting rationale.",
     "- Do not return no_claim just because the entry explains why the rule exists. The durable policy or system slot is usually still the target.",
+    "- Avoid full action clauses like requires_x_to_y, preserves_x_across_y, or x_precedes_y when a shorter stable slot such as trigger_condition, context_preservation, source_of_truth, or handoff_order would carry the same durable meaning.",
     "",
     "Return no_claim when:",
     "- The entry is narrative, multi-fact, or mostly a story about what happened.",
@@ -388,6 +402,8 @@ function buildClaimExtractionSystemPrompt(hints: NormalizedClaimExtractionHints,
     '- "Use the warehouse inventory sheet as the source of truth for stock counts." -> stock_counts/source_of_truth',
     '- "The repo workflow is defined by AGENTS.md, even when older notes disagree." -> repo_workflow/source_of_truth',
     '- "Agenr keeps pure logic in src/core and adapters outside it so future hosts can plug in cleanly." -> agenr/core_adapter_boundary',
+    '- "The before-prompt-build hook only triggers after a real agent turn or message." -> before_prompt_build_hook/trigger_condition',
+    '- "Durable memory preserves context across sessions." -> durable_memory/context_preservation',
     "",
     "Negative examples:",
     "- Bad: jim/america_chicago -> Good: jim/timezone",
@@ -395,6 +411,8 @@ function buildClaimExtractionSystemPrompt(hints: NormalizedClaimExtractionHints,
     "- Bad: we/deployment_process -> Good: platform_team/deploy_strategy",
     "- Bad: jim/oat_milk -> Good: jim/coffee_preference",
     "- Bad: release_notes/because_rollbacks_are_hard -> Good: release_process/source_of_truth",
+    "- Bad: openclaw/requires_real_agent_turn_or_message_to_trigger -> Good: openclaw/trigger_condition",
+    "- Bad: session_continuity/durable_memory_preserves_context_across_sessions -> Good: session_continuity/context_preservation",
     "- Bad: incident_story/we_spent_two_hours_debugging -> Good: no_claim",
     "",
     "Field rules:",
@@ -483,7 +501,13 @@ function buildClaimExtractionCandidate(
     return null;
   }
 
-  const validatedClaimKey = validateExtractedClaimKey(normalizedClaimKey.value);
+  const compactedClaimKey = compactClaimKey(normalizedClaimKey.value.claimKey);
+  if (!compactedClaimKey) {
+    onWarning?.(`Claim extraction dropped claim key for "${entry.subject}": claim key could not be compacted safely.`);
+    return null;
+  }
+
+  const validatedClaimKey = validateExtractedClaimKey(compactedClaimKey);
   if (!validatedClaimKey.ok) {
     onWarning?.(
       `Claim extraction rejected "${validatedClaimKey.value.claimKey}" for "${entry.subject}": ${describeExtractedClaimKeyRejection(validatedClaimKey.reason, validatedClaimKey.value)}.`,
@@ -496,6 +520,8 @@ function buildClaimExtractionCandidate(
     confidence,
     rawEntity,
     rawAttribute,
+    compactedFrom: compactedClaimKey.compactedFrom,
+    compactionReason: compactedClaimKey.reason,
   };
 }
 
