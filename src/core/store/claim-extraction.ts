@@ -214,13 +214,14 @@ export async function runBatchClaimExtraction(
   config: ClaimExtractionConfig,
   _concurrency = 10,
   onWarning?: (warning: string) => void,
-): Promise<void> {
+): Promise<Map<StoreEntryInput, ClaimExtractionResult>> {
   if (!config.enabled) {
-    return;
+    return new Map();
   }
 
   const hintState = await loadClaimExtractionHintState(ports.db);
   const llm = ports.createLlm();
+  const extractedEntries = new Map<StoreEntryInput, ClaimExtractionResult>();
 
   for (const result of results) {
     for (const entry of result.entries) {
@@ -251,12 +252,15 @@ export async function runBatchClaimExtraction(
         if (extracted?.claimKey) {
           entry.claim_key = extracted.claimKey;
           recordClaimKeyHint(hintState, extracted.claimKey);
+          extractedEntries.set(entry, extracted);
         }
       } catch {
         // Best-effort only - failed entries still continue through ingest.
       }
     }
   }
+
+  return extractedEntries;
 }
 
 /**

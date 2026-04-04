@@ -17,6 +17,8 @@ describe("storeEntries", () => {
 
     expect(result).toEqual({ stored: 1, skipped: 0, rejected: 0 });
     expect(db.insertions).toHaveLength(1);
+    expect(db.claimKeyLookupCalls).toEqual([]);
+    expect(db.supersedeCalls).toEqual([]);
   });
 
   it("skips entries whose content hash already exists", async () => {
@@ -325,10 +327,247 @@ describe("storeEntries", () => {
     expect(result).toEqual({ stored: 1, skipped: 0, rejected: 0 });
     expect(db.insertions[0]?.entry.claim_key).toBeUndefined();
     expect(warnings[0]).toMatch(/invalid claim key/i);
+    expect(db.claimKeyLookupCalls).toEqual([]);
+    expect(db.supersedeCalls).toEqual([]);
   });
 
-  it("links explicit supersession after storing a replacement entry", async () => {
+  it("auto-supersedes a manual claim key when exactly one active sibling exists", async () => {
+    const activeSibling = createExistingEntry({
+      claim_key: "jim/home_city",
+      subject: "Jim home city",
+      content: "Jim lived in Seattle, Washington.",
+    });
+    const db = new MockDatabase({
+      activeEntriesByClaimKey: {
+        "jim/home_city": [activeSibling],
+      },
+    });
+    const embedding = new MockEmbeddingPort();
+
+    const result = await storeEntries(
+      [
+        createInput({
+          subject: "Jim's home city",
+          content: "Jim now lives in Denver, Colorado.",
+          claim_key: "Jim / Home City",
+        }),
+      ],
+      db,
+      embedding,
+    );
+
+    expect(result).toEqual({ stored: 1, skipped: 0, rejected: 0 });
+    expect(db.claimKeyLookupCalls).toEqual(["jim/home_city"]);
+    expect(db.supersedeCalls).toEqual([
+      {
+        oldId: activeSibling.id,
+        newId: db.insertions[0]?.entry.id ?? "",
+        kind: "update",
+        reason: undefined,
+      },
+    ]);
+  });
+
+  it("auto-supersedes a high-confidence extracted claim key when exactly one active sibling exists", async () => {
+    const activeSibling = createExistingEntry({
+      claim_key: "jim/timezone",
+      subject: "Jim timezone",
+      content: "Jim's timezone was America/Denver.",
+    });
+    const db = new MockDatabase({
+      claimKeyPrefixes: ["jim"],
+      activeEntriesByClaimKey: {
+        "jim/timezone": [activeSibling],
+      },
+    });
+    const embedding = new MockEmbeddingPort();
+    const llm = new MockLlmPort({
+      entity: "Jim",
+      attribute: "timezone",
+      confidence: 0.96,
+    });
+
+    const result = await storeEntries(
+      [
+        createInput({
+          subject: "Jim's timezone",
+          content: "Jim's timezone is America/Chicago.",
+        }),
+      ],
+      db,
+      embedding,
+      {
+        claimExtraction: {
+          llm,
+          db,
+          config: {
+            enabled: true,
+            confidenceThreshold: 0.8,
+            eligibleTypes: ["fact", "preference", "decision"],
+          },
+        },
+      },
+    );
+
+    expect(result).toEqual({ stored: 1, skipped: 0, rejected: 0 });
+    expect(db.insertions[0]?.entry.claim_key).toBe("jim/timezone");
+    expect(db.claimKeyLookupCalls).toEqual(["jim/timezone"]);
+    expect(db.supersedeCalls).toEqual([
+      {
+        oldId: activeSibling.id,
+        newId: db.insertions[0]?.entry.id ?? "",
+        kind: "update",
+        reason: undefined,
+      },
+    ]);
+  });
+
+  it("stores normally without supersession when a claim key has no active sibling", async () => {
     const db = new MockDatabase();
+    const embedding = new MockEmbeddingPort();
+
+    const result = await storeEntries(
+      [
+        createInput({
+          subject: "Jim's home city",
+          content: "Jim lives in Denver, Colorado.",
+          claim_key: "jim/home_city",
+        }),
+      ],
+      db,
+      embedding,
+    );
+
+    expect(result).toEqual({ stored: 1, skipped: 0, rejected: 0 });
+    expect(db.claimKeyLookupCalls).toEqual(["jim/home_city"]);
+    expect(db.supersedeCalls).toEqual([]);
+  });
+
+  it("skips auto-supersession and warns when multiple active siblings share the claim key", async () => {
+    const db = new MockDatabase({
+      activeEntriesByClaimKey: {
+        "jim/home_city": [
+          createExistingEntry({ claim_key: "jim/home_city", subject: "Jim home city v1" }),
+          createExistingEntry({ claim_key: "jim/home_city", subject: "Jim home city v2" }),
+        ],
+      },
+    });
+    const embedding = new MockEmbeddingPort();
+    const warnings: string[] = [];
+
+    const result = await storeEntries(
+      [
+        createInput({
+          subject: "Jim's home city",
+          content: "Jim now lives in Denver, Colorado.",
+          claim_key: "jim/home_city",
+        }),
+      ],
+      db,
+      embedding,
+      {
+        onWarning: (warning) => warnings.push(warning),
+      },
+    );
+
+    expect(result).toEqual({ stored: 1, skipped: 0, rejected: 0 });
+    expect(db.supersedeCalls).toEqual([]);
+    expect(warnings).toEqual([expect.stringMatching(/2 active siblings/i)]);
+  });
+
+  it("skips auto-supersession for deterministic-repair claim keys even when one active sibling matches", async () => {
+    const activeSibling = createExistingEntry({
+      claim_key: "jim/timezone",
+      subject: "Jim timezone",
+    });
+    const db = new MockDatabase({
+      claimKeyPrefixes: ["jim"],
+      activeEntriesByClaimKey: {
+        "jim/timezone": [activeSibling],
+      },
+    });
+    const embedding = new MockEmbeddingPort();
+    const llm = new MockLlmPort({
+      entity: "Jim",
+      attribute: "timezone",
+      confidence: 0.89,
+    });
+    const warnings: string[] = [];
+
+    const result = await storeEntries(
+      [
+        createInput({
+          subject: "Jim's timezone",
+          content: "Jim's timezone is America/Chicago.",
+        }),
+      ],
+      db,
+      embedding,
+      {
+        claimExtraction: {
+          llm,
+          db,
+          config: {
+            enabled: true,
+            confidenceThreshold: 0.95,
+            eligibleTypes: ["fact", "preference", "decision"],
+          },
+        },
+        onWarning: (warning) => warnings.push(warning),
+      },
+    );
+
+    expect(result).toEqual({ stored: 1, skipped: 0, rejected: 0 });
+    expect(db.insertions[0]?.entry.claim_key).toBe("jim/timezone");
+    expect(db.supersedeCalls).toEqual([]);
+    expect(warnings).toEqual([expect.stringMatching(/deterministic_repair/i)]);
+  });
+
+  it("skips auto-supersession when the matching sibling has an incompatible type", async () => {
+    const activeSibling = createExistingEntry({
+      type: "fact",
+      claim_key: "jim/home_city",
+      subject: "Jim home city",
+    });
+    const db = new MockDatabase({
+      activeEntriesByClaimKey: {
+        "jim/home_city": [activeSibling],
+      },
+    });
+    const embedding = new MockEmbeddingPort();
+    const warnings: string[] = [];
+
+    const result = await storeEntries(
+      [
+        createInput({
+          type: "decision",
+          subject: "Jim home city policy",
+          content: "Use Jim's current home city for tax withholding.",
+          claim_key: "jim/home_city",
+        }),
+      ],
+      db,
+      embedding,
+      {
+        onWarning: (warning) => warnings.push(warning),
+      },
+    );
+
+    expect(result).toEqual({ stored: 1, skipped: 0, rejected: 0 });
+    expect(db.supersedeCalls).toEqual([]);
+    expect(warnings).toEqual([expect.stringMatching(/same type/i)]);
+  });
+
+  it("links explicit supersession after storing a replacement entry even when a claim-key sibling also exists", async () => {
+    const sameClaimKeySibling = createExistingEntry({
+      claim_key: "jim/home_city",
+      subject: "Jim home city",
+    });
+    const db = new MockDatabase({
+      activeEntriesByClaimKey: {
+        "jim/home_city": [sameClaimKeySibling],
+      },
+    });
     const embedding = new MockEmbeddingPort();
     const supersededId = randomUUID();
 
@@ -338,6 +577,7 @@ describe("storeEntries", () => {
           subject: "new home city",
           content: "Jim now lives in Denver, Colorado.",
           supersedes: supersededId,
+          claim_key: "jim/home_city",
         }),
       ],
       db,
@@ -390,6 +630,8 @@ class MockDatabase implements DatabasePort {
   public readonly existingHashes: Set<string>;
   public readonly existingNormHashes: Set<string>;
   public readonly claimKeyPrefixes: string[];
+  public readonly activeEntriesByClaimKey: Record<string, Entry[]>;
+  public readonly claimKeyLookupCalls: string[] = [];
   public readonly supersedeCalls: Array<{ oldId: string; newId: string; kind?: string; reason?: string }> = [];
   public transactionCount = 0;
   private readonly supersedeResult: boolean;
@@ -399,12 +641,14 @@ class MockDatabase implements DatabasePort {
       existingHashes?: Set<string>;
       existingNormHashes?: Set<string>;
       claimKeyPrefixes?: string[];
+      activeEntriesByClaimKey?: Record<string, Entry[]>;
       supersedeResult?: boolean;
     } = {},
   ) {
     this.existingHashes = options.existingHashes ?? new Set();
     this.existingNormHashes = options.existingNormHashes ?? new Set();
     this.claimKeyPrefixes = options.claimKeyPrefixes ?? [];
+    this.activeEntriesByClaimKey = options.activeEntriesByClaimKey ?? {};
     this.supersedeResult = options.supersedeResult ?? true;
   }
 
@@ -446,8 +690,9 @@ class MockDatabase implements DatabasePort {
     return this.supersedeResult;
   }
 
-  public async findActiveEntriesByClaimKey(): Promise<Entry[]> {
-    return [];
+  public async findActiveEntriesByClaimKey(claimKey: string): Promise<Entry[]> {
+    this.claimKeyLookupCalls.push(claimKey);
+    return this.activeEntriesByClaimKey[claimKey] ?? [];
   }
 
   public async getDistinctClaimKeyPrefixes(): Promise<string[]> {
@@ -513,5 +758,41 @@ function createInput(overrides: Partial<StoreEntryInput> = {}): StoreEntryInput 
     claim_key: overrides.claim_key,
     valid_from: overrides.valid_from,
     valid_to: overrides.valid_to,
+  };
+}
+
+function createExistingEntry(overrides: Partial<Entry> & Pick<Entry, "claim_key">): Entry {
+  const now = "2026-04-04T12:00:00.000Z";
+
+  return {
+    id: overrides.id ?? randomUUID(),
+    type: overrides.type ?? "fact",
+    subject: overrides.subject ?? "existing subject",
+    content: overrides.content ?? "existing content",
+    importance: overrides.importance ?? 7,
+    expiry: overrides.expiry ?? "temporary",
+    tags: overrides.tags ?? [],
+    source_file: overrides.source_file,
+    source_context: overrides.source_context,
+    embedding: overrides.embedding,
+    content_hash: overrides.content_hash,
+    norm_content_hash: overrides.norm_content_hash,
+    quality_score: overrides.quality_score ?? 0.5,
+    recall_count: overrides.recall_count ?? 0,
+    last_recalled_at: overrides.last_recalled_at,
+    superseded_by: overrides.superseded_by,
+    valid_from: overrides.valid_from,
+    valid_to: overrides.valid_to,
+    claim_key: overrides.claim_key,
+    supersession_kind: overrides.supersession_kind,
+    supersession_reason: overrides.supersession_reason,
+    cluster_id: overrides.cluster_id,
+    user_id: overrides.user_id,
+    project: overrides.project,
+    retired: overrides.retired ?? false,
+    retired_at: overrides.retired_at,
+    retired_reason: overrides.retired_reason,
+    created_at: overrides.created_at ?? now,
+    updated_at: overrides.updated_at ?? now,
   };
 }

@@ -1,11 +1,16 @@
 import { randomUUID } from "node:crypto";
 
 import type { DatabasePort, EmbeddingPort, LlmPort } from "../ports.js";
+import type { SupersessionRuleFailureReason } from "../supersession.js";
 import type { Entry, StoreEntryInput, StoreResult } from "../types.js";
-import { runBatchClaimExtraction, type ClaimExtractionConfig } from "./claim-extraction.js";
+import { describeSupersessionRuleFailure, validateSupersessionRules } from "../supersession.js";
+import { runBatchClaimExtraction, type ClaimExtractionConfig, type ClaimExtractionPath, type ClaimExtractionResult } from "./claim-extraction.js";
 import { composeEmbeddingText } from "./embedding-text.js";
 import { computeContentHash, computeNormContentHash } from "./hashing.js";
 import { validateEntriesWithIndexes } from "./validation.js";
+
+const AUTO_SUPERSESSION_MIN_EXTRACTED_CONFIDENCE = 0.9;
+const AUTO_SUPERSESSION_ELIGIBLE_PATHS = new Set<ClaimExtractionPath>(["model", "json_retry"]);
 
 /**
  * Runtime switches for the store pipeline.
@@ -37,6 +42,7 @@ interface PreparedEntry {
   inputIndex: number;
   contentHash: string;
   normContentHash: string;
+  claimKeySource?: "manual";
 }
 
 /** Final pipeline outcome assigned to one store input. */
@@ -63,6 +69,15 @@ export interface StoreEntriesDetailedResult extends StoreResult {
 /** Database port variant that can wrap multiple writes in one transaction. */
 interface TransactionCapableDatabasePort extends DatabasePort {
   withTransaction<T>(fn: (db: DatabasePort) => Promise<T>): Promise<T>;
+}
+
+/**
+ * Auto-supersession decisions derived before persistence begins.
+ */
+interface AutoSupersessionPlan {
+  kind: "link" | "skip";
+  oldEntryId?: string;
+  warning?: string;
 }
 
 /**
@@ -138,9 +153,9 @@ export async function storeEntriesDetailed(
   }
 
   const pendingEntries = plan.pendingEntries;
-  await maybeExtractClaimKeys(pendingEntries, options);
+  const extractedClaimKeys = await maybeExtractClaimKeys(pendingEntries, options);
   const embeddings = await resolvePendingEmbeddings(inputs, pendingEntries, embedding, options.precomputedEmbeddings);
-  await persistEntries(db, pendingEntries, embeddings, options.onWarning);
+  await persistEntries(db, pendingEntries, embeddings, extractedClaimKeys, options.claimExtraction?.config, options.onWarning);
   return {
     stored: pendingEntries.length,
     skipped: plan.skipped,
@@ -197,10 +212,14 @@ async function persistEntries(
   db: DatabasePort,
   preparedEntries: PreparedEntry[],
   embeddings: number[][],
+  extractedClaimKeys: Map<number, ClaimExtractionResult>,
+  claimExtractionConfig: ClaimExtractionConfig | undefined,
   onWarning?: (warning: string) => void,
 ): Promise<number> {
   const writeBatch = async (targetDb: DatabasePort): Promise<number> => {
     let stored = 0;
+    const autoSupersessionPlans = await planAutoSupersession(targetDb, preparedEntries, extractedClaimKeys, claimExtractionConfig);
+    const emittedWarnings = new Set<string>();
 
     for (const [index, preparedEntry] of preparedEntries.entries()) {
       const embedding = embeddings[index] ?? [];
@@ -213,13 +232,33 @@ async function persistEntries(
           onWarning?.(`Stored entry ${entryId} but could not supersede ${supersededEntryId} because the target was missing or inactive.`);
         }
       }
+
+      const autoSupersessionPlan = autoSupersessionPlans.get(preparedEntry.inputIndex);
+      if (autoSupersessionPlan?.kind === "link" && autoSupersessionPlan.oldEntryId) {
+        const superseded = await targetDb.supersedeEntry(autoSupersessionPlan.oldEntryId, entryId, "update");
+        if (!superseded) {
+          onWarning?.(
+            `Stored entry ${entryId} with claim_key "${preparedEntry.input.claim_key}" but could not auto-supersede ${autoSupersessionPlan.oldEntryId} because the target was missing or inactive.`,
+          );
+        }
+      }
+
+      if (autoSupersessionPlan?.warning && !emittedWarnings.has(autoSupersessionPlan.warning)) {
+        emittedWarnings.add(autoSupersessionPlan.warning);
+        onWarning?.(autoSupersessionPlan.warning);
+      }
+
       stored += 1;
     }
 
     return stored;
   };
 
-  if (hasTransactionSupport(db) && (preparedEntries.length > 1 || preparedEntries.some((entry) => entry.input.supersedes !== undefined))) {
+  if (hasTransactionSupport(db) && preparedEntries.some((entry) => entry.input.supersedes !== undefined || entry.input.claim_key !== undefined)) {
+    return db.withTransaction(writeBatch);
+  }
+
+  if (hasTransactionSupport(db) && preparedEntries.length > 1) {
     return db.withTransaction(writeBatch);
   }
 
@@ -257,14 +296,14 @@ function buildEntry(preparedEntry: PreparedEntry, embedding: number[]): Entry {
 }
 
 /** Attempts best-effort claim-key extraction for pending entries before embedding. */
-async function maybeExtractClaimKeys(preparedEntries: PreparedEntry[], options: StoreEntriesOptions): Promise<void> {
+async function maybeExtractClaimKeys(preparedEntries: PreparedEntry[], options: StoreEntriesOptions): Promise<Map<number, ClaimExtractionResult>> {
   const claimExtraction = options.claimExtraction;
   if (!claimExtraction || preparedEntries.length === 0) {
-    return;
+    return new Map();
   }
 
   try {
-    await runBatchClaimExtraction(
+    const extractedEntries = await runBatchClaimExtraction(
       [
         {
           entries: preparedEntries.map((preparedEntry) => preparedEntry.input),
@@ -278,15 +317,193 @@ async function maybeExtractClaimKeys(preparedEntries: PreparedEntry[], options: 
       1,
       options.onWarning,
     );
+
+    const extractedClaimKeys = new Map<number, ClaimExtractionResult>();
+    for (const preparedEntry of preparedEntries) {
+      const extracted = extractedEntries.get(preparedEntry.input);
+      if (extracted) {
+        extractedClaimKeys.set(preparedEntry.inputIndex, extracted);
+      }
+    }
+
+    return extractedClaimKeys;
   } catch (error) {
     const subject = preparedEntries[0]?.input.subject ?? "batch";
     options.onWarning?.(`Claim extraction failed for "${subject}": ${formatPipelineError(error)}`);
+    return new Map();
   }
 }
 
 /** Detects whether the database adapter exposes transactional batching support. */
 function hasTransactionSupport(db: DatabasePort): db is TransactionCapableDatabasePort {
   return typeof (db as Partial<TransactionCapableDatabasePort>).withTransaction === "function";
+}
+
+/**
+ * Plans conservative claim-key-driven supersession links before persistence begins.
+ *
+ * The plan is computed before any inserts run so it only considers pre-existing
+ * active siblings, not other entries in the current store batch.
+ */
+async function planAutoSupersession(
+  db: DatabasePort,
+  preparedEntries: PreparedEntry[],
+  extractedClaimKeys: Map<number, ClaimExtractionResult>,
+  claimExtractionConfig: ClaimExtractionConfig | undefined,
+): Promise<Map<number, AutoSupersessionPlan>> {
+  const plans = new Map<number, AutoSupersessionPlan>();
+  const preparedEntriesByClaimKey = groupPreparedEntriesByClaimKey(preparedEntries);
+  const siblingCache = new Map<string, Entry[]>();
+
+  for (const preparedEntry of preparedEntries) {
+    const claimKey = preparedEntry.input.claim_key;
+    if (!claimKey || preparedEntry.input.supersedes) {
+      continue;
+    }
+
+    const siblings = await getClaimKeySiblings(db, siblingCache, claimKey);
+    if (siblings.length === 0) {
+      continue;
+    }
+
+    const batchSiblingCount = preparedEntriesByClaimKey.get(claimKey)?.length ?? 0;
+    if (batchSiblingCount > 1) {
+      plans.set(preparedEntry.inputIndex, {
+        kind: "skip",
+        warning: `Skipped auto-supersession for claim_key "${claimKey}" because this store batch contains ${batchSiblingCount} entries for the same slot.`,
+      });
+      continue;
+    }
+
+    if (siblings.length > 1) {
+      plans.set(preparedEntry.inputIndex, {
+        kind: "skip",
+        warning: `Skipped auto-supersession for claim_key "${claimKey}" because ${siblings.length} active siblings already exist for that slot.`,
+      });
+      continue;
+    }
+
+    const sibling = siblings[0];
+    if (!sibling) {
+      continue;
+    }
+
+    if (!isAutoSupersessionEligible(preparedEntry, extractedClaimKeys, claimExtractionConfig)) {
+      plans.set(preparedEntry.inputIndex, {
+        kind: "skip",
+        warning: buildAutoSupersessionEligibilityWarning(preparedEntry, extractedClaimKeys.get(preparedEntry.inputIndex)),
+      });
+      continue;
+    }
+
+    const supersessionValidation = validateSupersessionRules(sibling, {
+      type: preparedEntry.input.type,
+      expiry: preparedEntry.input.expiry ?? "temporary",
+    });
+    if (!supersessionValidation.ok) {
+      plans.set(preparedEntry.inputIndex, {
+        kind: "skip",
+        warning: buildAutoSupersessionRuleWarning(preparedEntry, sibling, supersessionValidation.reason),
+      });
+      continue;
+    }
+
+    plans.set(preparedEntry.inputIndex, {
+      kind: "link",
+      oldEntryId: sibling.id,
+    });
+  }
+
+  return plans;
+}
+
+/** Groups prepared entries by their canonical claim key. */
+function groupPreparedEntriesByClaimKey(preparedEntries: PreparedEntry[]): Map<string, PreparedEntry[]> {
+  const grouped = new Map<string, PreparedEntry[]>();
+
+  for (const preparedEntry of preparedEntries) {
+    const claimKey = preparedEntry.input.claim_key;
+    if (!claimKey) {
+      continue;
+    }
+
+    const existing = grouped.get(claimKey) ?? [];
+    existing.push(preparedEntry);
+    grouped.set(claimKey, existing);
+  }
+
+  return grouped;
+}
+
+/** Loads active same-claim-key siblings once per canonical key. */
+async function getClaimKeySiblings(db: DatabasePort, cache: Map<string, Entry[]>, claimKey: string): Promise<Entry[]> {
+  const cached = cache.get(claimKey);
+  if (cached) {
+    return cached;
+  }
+
+  const siblings = await db.findActiveEntriesByClaimKey(claimKey);
+  cache.set(claimKey, siblings);
+  return siblings;
+}
+
+/** Returns whether one prepared entry may auto-link through claim-key supersession. */
+function isAutoSupersessionEligible(
+  preparedEntry: PreparedEntry,
+  extractedClaimKeys: Map<number, ClaimExtractionResult>,
+  claimExtractionConfig: ClaimExtractionConfig | undefined,
+): boolean {
+  if (preparedEntry.claimKeySource === "manual") {
+    return true;
+  }
+
+  const extractedClaimKey = extractedClaimKeys.get(preparedEntry.inputIndex);
+  if (!extractedClaimKey || !claimExtractionConfig) {
+    return false;
+  }
+
+  if (!AUTO_SUPERSESSION_ELIGIBLE_PATHS.has(extractedClaimKey.path)) {
+    return false;
+  }
+
+  return extractedClaimKey.confidence >= Math.max(claimExtractionConfig.confidenceThreshold, AUTO_SUPERSESSION_MIN_EXTRACTED_CONFIDENCE);
+}
+
+/** Explains why one claim-key match stayed stored without an automatic link. */
+function buildAutoSupersessionEligibilityWarning(preparedEntry: PreparedEntry, extractedClaimKey: ClaimExtractionResult | undefined): string {
+  const claimKey = preparedEntry.input.claim_key ?? "(missing)";
+  if (preparedEntry.claimKeySource === "manual") {
+    return `Stored entry "${preparedEntry.input.subject}" with claim_key "${claimKey}" but skipped auto-supersession because the claim-key provenance was not eligible for automatic linking.`;
+  }
+
+  if (extractedClaimKey) {
+    return (
+      `Stored entry "${preparedEntry.input.subject}" with claim_key "${claimKey}" but skipped auto-supersession because the extracted claim key came from ` +
+      `${extractedClaimKey.path} at confidence ${extractedClaimKey.confidence.toFixed(2)}. Only explicit/manual claim keys or model-extracted keys at ` +
+      `${AUTO_SUPERSESSION_MIN_EXTRACTED_CONFIDENCE.toFixed(2)}+ auto-link.`
+    );
+  }
+
+  return `Stored entry "${preparedEntry.input.subject}" with claim_key "${claimKey}" but skipped auto-supersession because the claim-key provenance was not explicit or a tracked high-confidence extraction.`;
+}
+
+/** Explains why a same-claim-key sibling failed the conservative type-policy checks. */
+function buildAutoSupersessionRuleWarning(
+  preparedEntry: PreparedEntry,
+  sibling: Pick<Entry, "type" | "expiry">,
+  reason: SupersessionRuleFailureReason,
+): string {
+  if (reason === "type_mismatch") {
+    return (
+      `Stored entry "${preparedEntry.input.subject}" with claim_key "${preparedEntry.input.claim_key}" but skipped auto-supersession because the matching ` +
+      `active entry is type "${sibling.type}" and the new entry is type "${preparedEntry.input.type}". ${describeSupersessionRuleFailure(reason)}`
+    );
+  }
+
+  return (
+    `Stored entry "${preparedEntry.input.subject}" with claim_key "${preparedEntry.input.claim_key}" but skipped auto-supersession: ` +
+    `${describeSupersessionRuleFailure(reason)}`
+  );
 }
 
 /** Validates inputs and filters out entries that should not reach persistence. */
@@ -311,6 +528,7 @@ async function buildStorePlan(
     inputIndex,
     contentHash: computeContentHash(input.content, input.source_file),
     normContentHash: computeNormContentHash(input.content),
+    claimKeySource: input.claim_key ? ("manual" as const) : undefined,
   }));
 
   const afterBatchContentHash = dedupePreparedEntries(preparedEntries, "contentHash", "content_hash", details);

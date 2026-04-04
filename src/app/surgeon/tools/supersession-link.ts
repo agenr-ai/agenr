@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type, type Static } from "@sinclair/typebox";
 
+import { describeSupersessionRuleFailure, validateSupersessionRules } from "../../../core/supersession.js";
 import type { Entry, SupersessionKind } from "../../../core/types.js";
 import type { SurgeonToolDeps } from "./index.js";
 import { toolResult } from "./shared.js";
@@ -102,7 +103,7 @@ export function createLinkSupersessionTool(deps: SurgeonToolDeps): AgentTool<typ
         });
       }
 
-      const ruleError = validateSupersessionRules(oldEntry, newEntry);
+      const ruleError = validateSupersessionRulesForLink(oldEntry, newEntry);
       if (ruleError) {
         return toolResult({
           success: false,
@@ -190,20 +191,9 @@ function validateSupersessionActivity(oldEntry: Entry, newEntry: Entry): string 
  * @param newEntry - Replacement entry.
  * @returns Error string when a hard rule blocks the link, otherwise null.
  */
-function validateSupersessionRules(oldEntry: Entry, newEntry: Entry): string | null {
-  if (oldEntry.type !== newEntry.type) {
-    return "Supersession requires both entries to have the same type.";
-  }
-
-  if (oldEntry.type === "milestone") {
-    return "Milestone entries are never superseded automatically.";
-  }
-
-  if (oldEntry.expiry === "core") {
-    return "Core-expiry entries are never superseded automatically.";
-  }
-
-  return null;
+function validateSupersessionRulesForLink(oldEntry: Entry, newEntry: Entry): string | null {
+  const result = validateSupersessionRules(oldEntry, newEntry);
+  return result.ok ? null : describeSupersessionRuleFailure(result.reason);
 }
 
 /**
