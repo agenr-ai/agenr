@@ -33,6 +33,7 @@ import type { SurgeonPort } from "./ports.js";
 
 const HIGH_CONFIDENCE_BACKFILL_THRESHOLD = 0.92;
 const STRUCTURED_AUTO_APPLY_BACKFILL_THRESHOLD = 0.86;
+const COMPACTED_SUPPORTED_AUTO_APPLY_BACKFILL_THRESHOLD = 0.78;
 const PROPOSAL_CONFIDENCE_THRESHOLD = 0.75;
 const SUPPORTED_PROPOSAL_CONFIDENCE_THRESHOLD = 0.65;
 const MAX_CLEANUP_ENTITY_HINTS = 12;
@@ -101,6 +102,7 @@ const STABLE_FAMILY_SLOT_ATTRIBUTE_HEADS = new Set([
   "dependency",
   "mode",
   "owner",
+  "order",
   "path",
   "policy",
   "preference",
@@ -124,6 +126,7 @@ const STABLE_FAMILY_SLOT_ATTRIBUTE_HEADS = new Set([
 ]);
 
 type MissingBackfillPromotionClass = "trusted_exact_reuse_grounded" | "trusted_family_template_grounded" | "trusted_family_stable_slot";
+type MissingBackfillPromotionLane = "high_confidence_preview" | "structured_supported" | "compacted_supported" | "deterministic_repair" | "metadata_rewrite";
 
 /**
  * Claim-key-quality selection and execution options for one surgeon run.
@@ -242,6 +245,11 @@ interface ClaimKeyCompactnessEvaluation {
   compactionReason: string | null;
   compactEnoughForAutoApply: boolean;
   blockerReason: string | null;
+}
+
+interface MissingBackfillPromotionPolicy {
+  lane: MissingBackfillPromotionLane;
+  autoApplyThreshold: number;
 }
 
 interface MissingBackfillSkipDiagnostic {
@@ -674,11 +682,13 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
     const targetInspection = inspectClaimKey(targetClaimKey);
     const targetIsTrusted = targetInspection.suspectReasons.length === 0;
     const support = evaluateMissingBackfillSupport(entry, targetClaimKey, trustedHints);
-    const autoApplyThreshold = resolveMissingBackfillAutoApplyThreshold({
+    const promotionPolicy = resolveMissingBackfillPromotionPolicy({
       metadataRepaired: metadataBackfillClaimKey !== null,
       previewPath: suggestion.path,
       support,
+      compactness,
     });
+    const autoApplyThreshold = promotionPolicy.autoApplyThreshold;
     const proposalThreshold = resolveMissingBackfillProposalThreshold({
       metadataRepaired: metadataBackfillClaimKey !== null,
       previewPath: suggestion.path,
@@ -709,6 +719,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
       });
       await persistProposal(proposal, {
         compactness,
+        promotion: promotionPolicy,
         support,
         supportedCandidate: support.supportedProposal,
       });
@@ -721,6 +732,12 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
     }
 
     if (!targetIsTrusted || !compactness.compactEnoughForAutoApply || suggestion.confidence < autoApplyThreshold) {
+      const autoApplyBlocker = resolveMissingBackfillAutoApplyBlocker({
+        trusted: targetIsTrusted,
+        compactness,
+        confidence: suggestion.confidence,
+        autoApplyThreshold,
+      });
       if (suggestion.confidence >= proposalThreshold) {
         const proposal = createProposal({
           runId: options.runId,
@@ -735,6 +752,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
             targetClaimKey,
             confidence: suggestion.confidence,
             autoApplyThreshold,
+            promotionLane: promotionPolicy.lane,
             trusted: targetIsTrusted,
             metadataBackfillClaimKey,
             compactness,
@@ -746,7 +764,9 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
           createdAt: options.now().toISOString(),
         });
         await persistProposal(proposal, {
+          autoApplyBlocker,
           compactness,
+          promotion: promotionPolicy,
           support,
           supportedCandidate: support.supportedProposal,
         });
@@ -781,11 +801,13 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
       source: targetSource,
       confidence: suggestion.confidence,
       compactness,
+      promotion: promotionPolicy,
       support,
       rationale: buildMissingBackfillApplyRationale({
         originalClaimKey,
         targetClaimKey,
         confidence: suggestion.confidence,
+        promotionLane: promotionPolicy.lane,
         source: targetSource,
         metadataBackfillClaimKey,
         compactness,
@@ -1027,6 +1049,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
       confidence: number;
       support?: MissingBackfillSupportEvaluation;
       compactness?: ClaimKeyCompactnessEvaluation;
+      promotion?: MissingBackfillPromotionPolicy;
       rationale: string;
     },
   ): Promise<{ projected: boolean; applied: boolean }> {
@@ -1061,7 +1084,9 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
         new_claim_key: claimKey,
         proposal_source: input.source,
         confidence: input.confidence,
+        auto_apply_threshold: input.promotion?.autoApplyThreshold,
         auto_applied: true,
+        promotion_lane: input.promotion?.lane,
         supported_auto_apply: input.support?.autoApplyClass !== null,
         ...(input.support?.autoApplyClass
           ? {
@@ -1086,7 +1111,9 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
   async function persistProposal(
     proposal: SurgeonRunProposal,
     audit?: {
+      autoApplyBlocker?: string | null;
       compactness?: ClaimKeyCompactnessEvaluation;
+      promotion?: MissingBackfillPromotionPolicy;
       support?: MissingBackfillSupportEvaluation;
       supportedCandidate?: boolean;
     },
@@ -1107,7 +1134,9 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
         proposed_claim_keys: proposal.proposedClaimKeys,
         confidence: proposal.confidence,
         proposal_source: proposal.source,
+        auto_apply_threshold: audit?.promotion?.autoApplyThreshold,
         auto_applied: false,
+        promotion_lane: audit?.promotion?.lane,
         eligible_for_apply: proposal.eligibleForApply,
         supported_candidate: audit?.supportedCandidate === true,
         ...(audit?.support?.supportedProposal
@@ -1127,9 +1156,9 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
               claim_key_compaction_reason: audit.compactness.compactionReason,
             }
           : {}),
-        ...(audit?.compactness?.blockerReason
+        ...(audit?.autoApplyBlocker
           ? {
-              auto_apply_blocker: audit.compactness.blockerReason,
+              auto_apply_blocker: audit.autoApplyBlocker,
             }
           : {}),
       },
@@ -2047,16 +2076,44 @@ function resolveMetadataBackfillClaimKey(entry: Entry, claimKey: string): string
   return resolveExplicitMetadataRepair(entry, inspectClaimKey(claimKey));
 }
 
-function resolveMissingBackfillAutoApplyThreshold(input: {
+function resolveMissingBackfillPromotionPolicy(input: {
   previewPath: ClaimExtractionResult["path"];
   metadataRepaired: boolean;
   support: MissingBackfillSupportEvaluation;
-}): number {
-  if (input.metadataRepaired || input.previewPath === "deterministic_repair" || input.support.autoApplyClass !== null) {
-    return STRUCTURED_AUTO_APPLY_BACKFILL_THRESHOLD;
+  compactness: ClaimKeyCompactnessEvaluation;
+}): MissingBackfillPromotionPolicy {
+  if (input.metadataRepaired) {
+    return {
+      lane: "metadata_rewrite",
+      autoApplyThreshold: STRUCTURED_AUTO_APPLY_BACKFILL_THRESHOLD,
+    };
   }
 
-  return HIGH_CONFIDENCE_BACKFILL_THRESHOLD;
+  if (input.previewPath === "deterministic_repair") {
+    return {
+      lane: "deterministic_repair",
+      autoApplyThreshold: STRUCTURED_AUTO_APPLY_BACKFILL_THRESHOLD,
+    };
+  }
+
+  if (input.support.autoApplyClass !== null && input.compactness.compactedFrom) {
+    return {
+      lane: "compacted_supported",
+      autoApplyThreshold: COMPACTED_SUPPORTED_AUTO_APPLY_BACKFILL_THRESHOLD,
+    };
+  }
+
+  if (input.support.autoApplyClass !== null) {
+    return {
+      lane: "structured_supported",
+      autoApplyThreshold: STRUCTURED_AUTO_APPLY_BACKFILL_THRESHOLD,
+    };
+  }
+
+  return {
+    lane: "high_confidence_preview",
+    autoApplyThreshold: HIGH_CONFIDENCE_BACKFILL_THRESHOLD,
+  };
 }
 
 function resolveMissingBackfillProposalThreshold(input: {
@@ -2104,6 +2161,7 @@ function buildMissingBackfillProposalRationale(input: {
   targetClaimKey: string;
   confidence: number;
   autoApplyThreshold: number;
+  promotionLane: MissingBackfillPromotionLane;
   trusted: boolean;
   metadataBackfillClaimKey: string | null;
   compactness: ClaimKeyCompactnessEvaluation;
@@ -2133,9 +2191,13 @@ function buildMissingBackfillProposalRationale(input: {
   }
 
   if (input.support.autoApplyClass !== null) {
+    const promotionLead =
+      input.promotionLane === "compacted_supported"
+        ? "Supported evidence remained strong after compact canonicalization"
+        : `Supported evidence from ${describeMissingBackfillPromotionClass(input.support.autoApplyClass)} exists`;
     return (
       `Backfill preview suggested "${input.targetClaimKey}" at confidence ${input.confidence.toFixed(2)}. ` +
-      `Supported evidence from ${describeMissingBackfillPromotionClass(input.support.autoApplyClass)} exists via ${input.support.rationaleFragments.join(", ")}, ` +
+      `${promotionLead} via ${input.support.rationaleFragments.join(", ")}, ` +
       `but the candidate stays below the auto-apply threshold of ${input.autoApplyThreshold.toFixed(2)}.`
     );
   }
@@ -2155,6 +2217,7 @@ function buildMissingBackfillApplyRationale(input: {
   originalClaimKey: string;
   targetClaimKey: string;
   confidence: number;
+  promotionLane: MissingBackfillPromotionLane;
   source: string;
   metadataBackfillClaimKey: string | null;
   compactness: ClaimKeyCompactnessEvaluation;
@@ -2171,8 +2234,9 @@ function buildMissingBackfillApplyRationale(input: {
   }
 
   if (input.support.autoApplyClass !== null && input.confidence < HIGH_CONFIDENCE_BACKFILL_THRESHOLD) {
+    const promotionPrefix = input.promotionLane === "compacted_supported" ? "Post-compaction supported claim-key backfill" : "Supported claim-key backfill";
     return (
-      `Supported claim-key backfill assigned "${input.targetClaimKey}" from ${input.source} at confidence ${input.confidence.toFixed(2)} ` +
+      `${promotionPrefix} assigned "${input.targetClaimKey}" from ${input.source} at confidence ${input.confidence.toFixed(2)} ` +
       `through ${describeMissingBackfillPromotionClass(input.support.autoApplyClass)} using ${input.support.rationaleFragments.join(", ")}.` +
       (input.compactness.compactedFrom && input.compactness.compactedFrom !== input.targetClaimKey
         ? ` The candidate was compacted from "${input.compactness.compactedFrom}" because ${input.compactness.compactionReason}.`
@@ -2197,6 +2261,27 @@ function describeMissingBackfillPromotionClass(promotionClass: MissingBackfillPr
     case "trusted_family_stable_slot":
       return "trusted family reuse plus a stable compact slot";
   }
+}
+
+function resolveMissingBackfillAutoApplyBlocker(input: {
+  trusted: boolean;
+  compactness: ClaimKeyCompactnessEvaluation;
+  confidence: number;
+  autoApplyThreshold: number;
+}): string | null {
+  if (!input.trusted) {
+    return "structurally_suspect_claim_key";
+  }
+
+  if (!input.compactness.compactEnoughForAutoApply) {
+    return input.compactness.blockerReason;
+  }
+
+  if (input.confidence < input.autoApplyThreshold) {
+    return "below_auto_apply_threshold";
+  }
+
+  return null;
 }
 
 function resolveExplicitMetadataRepair(entry: Entry, inspection: ClaimKeyInspection): string | null {

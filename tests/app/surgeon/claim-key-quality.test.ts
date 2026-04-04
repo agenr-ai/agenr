@@ -489,6 +489,69 @@ describe("claim_key_quality surgeon pass", () => {
     );
   });
 
+  it("auto-applies compacted exact-reuse candidates through the post-compaction support lane", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "openclaw-seed-order",
+      subject: "LLM handoff order seed",
+      type: "decision",
+      claim_key: "openclaw/llm_handoff_order",
+      tags: ["openclaw", "workflow"],
+      source_context: "OpenClaw runtime docs define hook ordering",
+      content: "OpenClaw keeps heartbeat detection ahead of LLM handoff.",
+    });
+    await insertEntry(client, {
+      id: "openclaw-seed-contract",
+      subject: "Memory surface contract",
+      type: "decision",
+      claim_key: "openclaw/memory_surface_contract",
+      tags: ["openclaw", "workflow"],
+      source_context: "OpenClaw runtime docs define hook ordering",
+      content: "OpenClaw exposes a stable memory surface contract to the host.",
+    });
+    await insertEntry(client, {
+      id: "openclaw-ordering-mid-confidence",
+      subject: "Heartbeat handoff ordering",
+      type: "decision",
+      tags: ["openclaw", "workflow"],
+      source_context: "OpenClaw runtime docs define hook ordering",
+      content: "Heartbeat detection should happen before LLM handoff in OpenClaw.",
+    });
+    const llm = new MockClaimLlm(() => ({
+      entity: "OpenClaw",
+      attribute: "heartbeat detection precedes llm handoff",
+      confidence: 0.8,
+    }));
+
+    const result = await runClaimKeyPass(client, {
+      apply: true,
+      createClaimExtractionLlm: () => llm,
+    });
+
+    const row = await client.execute({
+      sql: "SELECT claim_key FROM entries WHERE id = ?",
+      args: ["openclaw-ordering-mid-confidence"],
+    });
+    const actions = await getSurgeonRunActions(client, result.runId);
+
+    expect(result.status).toBe("completed");
+    expect(row.rows[0]?.claim_key).toBe("openclaw/llm_handoff_order");
+    expect(actions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entryIds: ["openclaw-ordering-mid-confidence"],
+          details: expect.objectContaining({
+            auto_apply_threshold: 0.78,
+            promotion_lane: "compacted_supported",
+            supported_auto_apply: true,
+            support_class: "trusted_exact_reuse_grounded",
+            claim_key_compacted_from: "openclaw/heartbeat_detection_precedes_llm_handoff",
+          }),
+        }),
+      ]),
+    );
+  });
+
   it("auto-applies supported stable-slot family candidates when local grounding is strong", async () => {
     const client = await createTestClient(clients);
     await insertEntry(client, {
@@ -556,6 +619,148 @@ describe("claim_key_quality surgeon pass", () => {
     );
   });
 
+  it("auto-applies compacted family stable-slot candidates after compaction preserves strong support", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "mac-mini-seed-policy",
+      subject: "Mac mini update policy",
+      type: "fact",
+      claim_key: "mac_mini/manual_update_policy",
+      tags: ["ssh", "macbook", "macmini"],
+      source_context: "User asked about controlling the mini from the MacBook",
+      content: "Mac mini updates stay manual unless Jim explicitly asks.",
+    });
+    await insertEntry(client, {
+      id: "mac-mini-seed-access",
+      subject: "Mini MacBook ssh access",
+      type: "fact",
+      claim_key: "mac_mini/ssh_access_to_macbook",
+      tags: ["ssh", "macbook", "macmini"],
+      source_context: "User asked about controlling the mini from the MacBook",
+      content: "The Mac mini can reach the MacBook over passwordless SSH.",
+    });
+    await insertEntry(client, {
+      id: "mac-mini-supported-compacted",
+      subject: "MacBook mini ssh control",
+      type: "fact",
+      tags: ["ssh", "macbook", "macmini"],
+      source_context: "User asked about controlling the mini from the MacBook",
+      content: "The MacBook can run arbitrary shell commands on the Mac mini over passwordless SSH once the key is installed.",
+    });
+    const llm = new MockClaimLlm(() => ({
+      entity: "mac mini",
+      attribute: "ssh access from macbook",
+      confidence: 0.78,
+    }));
+
+    const result = await runClaimKeyPass(client, {
+      apply: true,
+      createClaimExtractionLlm: () => llm,
+    });
+
+    const row = await client.execute({
+      sql: "SELECT claim_key FROM entries WHERE id = ?",
+      args: ["mac-mini-supported-compacted"],
+    });
+    const actions = await getSurgeonRunActions(client, result.runId);
+
+    expect(result.status).toBe("completed");
+    expect(row.rows[0]?.claim_key).toBe("mac_mini/macbook_ssh_access");
+    expect(actions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entryIds: ["mac-mini-supported-compacted"],
+          details: expect.objectContaining({
+            auto_apply_threshold: 0.78,
+            promotion_lane: "compacted_supported",
+            supported_auto_apply: true,
+            support_class: "trusted_family_stable_slot",
+            claim_key_compacted_from: "mac_mini/ssh_access_from_macbook",
+            claim_key_compaction_reason: "collapsed a trailing object phrase into a compact stable slot name",
+            support_evidence: expect.arrayContaining([
+              "trusted_entity_family_reuse",
+              "tag_grounding",
+              "source_context_grounding",
+              "attribute_lexical_alignment",
+              "stable_slot_support",
+            ]),
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it("auto-applies compacted family order candidates once the final slot re-enters stable-slot promotion", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "gateway-seed-restart",
+      subject: "Gateway restart policy",
+      type: "lesson",
+      claim_key: "openclaw_gateway/restart_policy",
+      tags: ["openclaw", "gateway", "auth"],
+      source_context: "Sub-agent spawns failed after a gateway restart until re-pairing.",
+      content: "Gateway restarts require a fresh session re-authentication after stale token errors.",
+    });
+    await insertEntry(client, {
+      id: "gateway-seed-log-level",
+      subject: "Gateway log level",
+      type: "lesson",
+      claim_key: "openclaw_gateway/log_level",
+      tags: ["openclaw", "gateway", "auth"],
+      source_context: "Sub-agent spawns failed after a gateway restart until re-pairing.",
+      content: "Gateway troubleshooting should keep log level details visible during auth failures.",
+    });
+    await insertEntry(client, {
+      id: "gateway-ordering",
+      subject: "Gateway restart auth",
+      type: "lesson",
+      tags: ["openclaw", "gateway", "auth"],
+      source_context: "Sub-agent spawns failed after a gateway restart until re-pairing.",
+      content: "Restarting the OpenClaw gateway can leave the current session paired to a stale token until a fresh session re-authenticates.",
+    });
+    const llm = new MockClaimLlm(() => ({
+      entity: "openclaw gateway",
+      attribute: "after restart requirement",
+      confidence: 0.78,
+    }));
+
+    const result = await runClaimKeyPass(client, {
+      apply: true,
+      createClaimExtractionLlm: () => llm,
+    });
+
+    const row = await client.execute({
+      sql: "SELECT claim_key FROM entries WHERE id = ?",
+      args: ["gateway-ordering"],
+    });
+    const actions = await getSurgeonRunActions(client, result.runId);
+
+    expect(result.status).toBe("completed");
+    expect(row.rows[0]?.claim_key).toBe("openclaw_gateway/restart_requirement_order");
+    expect(actions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entryIds: ["gateway-ordering"],
+          details: expect.objectContaining({
+            auto_apply_threshold: 0.78,
+            promotion_lane: "compacted_supported",
+            supported_auto_apply: true,
+            support_class: "trusted_family_stable_slot",
+            claim_key_compacted_from: "openclaw_gateway/after_restart_requirement",
+            claim_key_compaction_reason: "collapsed a sentence-like ordering phrase into a stable order slot",
+            support_evidence: expect.arrayContaining([
+              "trusted_entity_family_reuse",
+              "tag_grounding",
+              "source_context_grounding",
+              "attribute_lexical_alignment",
+              "stable_slot_support",
+            ]),
+          }),
+        }),
+      ]),
+    );
+  });
+
   it("promotes template-supported architecture candidates into proposals before they are auto-safe", async () => {
     const client = await createTestClient(clients);
     await insertEntry(client, {
@@ -597,6 +802,78 @@ describe("claim_key_quality surgeon pass", () => {
     );
     expect(run?.summaryJson?.observations).toContain(
       "Missing-key decisions used no auto-applies and 1 supported preview proposals after structural reuse checks.",
+    );
+  });
+
+  it("keeps compacted but weakly supported candidates unresolved even when compaction improves the key shape", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "snowflake-seed-policy",
+      subject: "Snowflake QA policy",
+      type: "fact",
+      claim_key: "snowflake_dispense_workflow/qa_policy",
+      tags: ["snowflake", "delivery", "qa"],
+      source_context: "Described during the Snowflake system walkthrough",
+      content: "The Snowflake dispense delivery flow is checked by a QA script before shipment.",
+    });
+    await insertEntry(client, {
+      id: "snowflake-weak-compacted",
+      subject: "Snowflake dispense workflow",
+      type: "fact",
+      tags: ["snowflake", "delivery", "qa"],
+      source_context: "Described during the Snowflake system walkthrough",
+      content: "The Snowflake dispense delivery flow is view-driven and is checked by a QA script before final export.",
+    });
+    const llm = new MockClaimLlm(() => ({
+      entity: "snowflake dispense workflow",
+      attribute: "qa validation before export",
+      confidence: 0.82,
+    }));
+
+    const result = await runClaimKeyPass(client, {
+      apply: true,
+      createClaimExtractionLlm: () => llm,
+    });
+
+    const row = await client.execute({
+      sql: "SELECT claim_key FROM entries WHERE id = ?",
+      args: ["snowflake-weak-compacted"],
+    });
+    const proposals = await getSurgeonRunProposals(client, result.runId);
+    const actions = await getSurgeonRunActions(client, result.runId);
+
+    expect(result.status).toBe("completed");
+    expect(row.rows[0]?.claim_key).toBeNull();
+    expect(proposals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          issueKind: "missing_claim_key",
+          entryIds: ["snowflake-weak-compacted"],
+          proposedClaimKeys: ["snowflake_dispense_workflow/export_order"],
+        }),
+      ]),
+    );
+    expect(actions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entryIds: ["snowflake-weak-compacted"],
+          details: expect.objectContaining({
+            auto_apply_blocker: "below_auto_apply_threshold",
+            auto_apply_threshold: 0.92,
+            promotion_lane: "high_confidence_preview",
+            supported_candidate: true,
+            claim_key_compacted_from: "snowflake_dispense_workflow/qa_validation_before_export",
+            claim_key_compaction_reason: "collapsed a sentence-like ordering phrase into a stable order slot",
+            support_evidence: expect.arrayContaining([
+              "trusted_entity_family_reuse",
+              "tag_grounding",
+              "source_context_grounding",
+              "attribute_lexical_alignment",
+              "stable_slot_support",
+            ]),
+          }),
+        }),
+      ]),
     );
   });
 
