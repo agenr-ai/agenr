@@ -393,6 +393,34 @@ export async function getDistinctClaimKeyPrefixes(executor: SqlExecutor): Promis
 }
 
 /**
+ * Lists bounded full claim-key examples ordered by frequency, importance, and recency.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @param limit - Maximum number of examples to return.
+ * @returns Ordered canonical claim keys suitable for extraction hinting.
+ */
+export async function getClaimKeyExamples(executor: SqlExecutor, limit = 8): Promise<string[]> {
+  const normalizedLimit = Number.isFinite(limit) ? Math.max(1, Math.floor(limit)) : 8;
+  const result = await executor.execute({
+    sql: `
+      SELECT claim_key
+      FROM entries
+      WHERE claim_key IS NOT NULL
+        AND ${ACTIVE_ENTRY_CLAUSE}
+      GROUP BY claim_key
+      ORDER BY COUNT(*) DESC, MAX(importance) DESC, MAX(created_at) DESC, claim_key ASC
+      LIMIT ?
+    `,
+    args: [normalizedLimit],
+  });
+
+  return result.rows.flatMap((row) => {
+    const claimKey = row.claim_key;
+    return typeof claimKey === "string" && claimKey.length > 0 ? [claimKey] : [];
+  });
+}
+
+/**
  * Updates mutable fields on an active entry.
  *
  * @param executor - SQL executor used for the update.

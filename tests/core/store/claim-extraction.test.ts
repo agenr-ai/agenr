@@ -1,16 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import type { DatabasePort, LlmPort } from "../../../src/core/ports.js";
-import { extractClaimKey, getEntityHints } from "../../../src/core/store/claim-extraction.js";
-import type { Entry } from "../../../src/core/types.js";
+import { extractClaimKey, getEntityHints, runBatchClaimExtraction } from "../../../src/core/store/claim-extraction.js";
+import type { Entry, StoreEntryInput } from "../../../src/core/types.js";
 
 describe("extractClaimKey", () => {
   it("extracts a normalized claim key for an eligible fact entry", async () => {
-    const llm = new MockLlmPort({
+    const llm = new MockLlmPort(() => ({
       entity: "Jim",
       attribute: "home city",
       confidence: 0.93,
-    });
+    }));
 
     const result = await extractClaimKey(
       {
@@ -18,12 +18,11 @@ describe("extractClaimKey", () => {
         subject: "Jim's home city",
         content: "Jim lives in Denver, Colorado.",
       },
-      [],
       llm,
       {
         enabled: true,
         confidenceThreshold: 0.8,
-        eligibleTypes: ["fact", "preference", "decision"],
+        eligibleTypes: ["fact", "preference", "decision", "lesson"],
       },
     );
 
@@ -32,15 +31,85 @@ describe("extractClaimKey", () => {
       confidence: 0.93,
       rawEntity: "Jim",
       rawAttribute: "home city",
+      path: "model",
     });
   });
 
+  it("includes positive examples, negative examples, no_claim guidance, and stability guidance in the prompt", async () => {
+    const llm = new MockLlmPort(() => ({
+      entity: "jim",
+      attribute: "timezone",
+      confidence: 0.95,
+    }));
+
+    await extractClaimKey(
+      {
+        type: "fact",
+        subject: "Jim timezone",
+        content: "Jim's timezone is America/Chicago.",
+      },
+      llm,
+      {
+        enabled: true,
+        confidenceThreshold: 0.8,
+        eligibleTypes: ["fact", "preference", "decision", "lesson"],
+      },
+      {
+        hints: {
+          claimKeyExamples: ["jim/timezone"],
+          entityHints: ["jim"],
+        },
+      },
+    );
+
+    const systemPrompt = llm.calls[0]?.systemPrompt ?? "";
+    expect(systemPrompt).toContain('"Jim\'s timezone is America/Chicago." -> jim/timezone');
+    expect(systemPrompt).toContain("- Bad: jim/america_chicago -> Good: jim/timezone");
+    expect(systemPrompt).toContain("Choose attribute names that still make sense if the value changes.");
+    expect(systemPrompt).toContain("When unsure, prefer no_claim over inventing a weak key.");
+  });
+
+  it("includes full claim-key examples and metadata hints in the prompt", async () => {
+    const llm = new MockLlmPort(() => ({
+      entity: "the project",
+      attribute: "status",
+      confidence: 0.95,
+    }));
+
+    await extractClaimKey(
+      {
+        type: "fact",
+        subject: "Project status",
+        content: "The project is active.",
+      },
+      llm,
+      {
+        enabled: true,
+        confidenceThreshold: 0.8,
+        eligibleTypes: ["fact", "preference", "decision", "lesson"],
+      },
+      {
+        hints: {
+          claimKeyExamples: ["platform_team/deploy_strategy", "agenr/default_model"],
+          entityHints: ["platform_team"],
+          project: "Agenr",
+          userId: "Jim",
+        },
+      },
+    );
+
+    const systemPrompt = llm.calls[0]?.systemPrompt ?? "";
+    expect(systemPrompt).toContain("platform_team/deploy_strategy");
+    expect(systemPrompt).toContain("agenr/default_model");
+    expect(systemPrompt).toContain("Current entry metadata hints: user_id=jim, project=agenr");
+  });
+
   it("resolves self-references when exactly one entity hint exists", async () => {
-    const llm = new MockLlmPort({
+    const llm = new MockLlmPort(() => ({
       entity: "the user",
       attribute: "timezone",
       confidence: 0.88,
-    });
+    }));
 
     const result = await extractClaimKey(
       {
@@ -48,24 +117,57 @@ describe("extractClaimKey", () => {
         subject: "User timezone",
         content: "The user's timezone is America/Chicago.",
       },
-      ["research_agent"],
       llm,
       {
         enabled: true,
         confidenceThreshold: 0.8,
-        eligibleTypes: ["fact", "preference", "decision"],
+        eligibleTypes: ["fact", "preference", "decision", "lesson"],
+      },
+      {
+        hints: {
+          entityHints: ["research_agent"],
+        },
       },
     );
 
     expect(result?.claimKey).toBe("research_agent/timezone");
   });
 
+  it("uses project metadata to resolve project self-references", async () => {
+    const llm = new MockLlmPort(() => ({
+      entity: "the project",
+      attribute: "status",
+      confidence: 0.9,
+    }));
+
+    const result = await extractClaimKey(
+      {
+        type: "fact",
+        subject: "Project status",
+        content: "The project is active.",
+      },
+      llm,
+      {
+        enabled: true,
+        confidenceThreshold: 0.8,
+        eligibleTypes: ["fact", "preference", "decision", "lesson"],
+      },
+      {
+        hints: {
+          project: "Project X",
+        },
+      },
+    );
+
+    expect(result?.claimKey).toBe("project_x/status");
+  });
+
   it("rejects unresolved self-referential entities when multiple hints make resolution ambiguous", async () => {
-    const llm = new MockLlmPort({
+    const llm = new MockLlmPort(() => ({
       entity: "we",
       attribute: "deployment process",
       confidence: 0.88,
-    });
+    }));
     const warnings: string[] = [];
 
     const result = await extractClaimKey(
@@ -74,14 +176,16 @@ describe("extractClaimKey", () => {
         subject: "Deployment process",
         content: "We deploy with blue-green cutovers.",
       },
-      ["platform_team", "deploy_pipeline"],
       llm,
       {
         enabled: true,
         confidenceThreshold: 0.8,
-        eligibleTypes: ["fact", "preference", "decision"],
+        eligibleTypes: ["fact", "preference", "decision", "lesson"],
       },
       {
+        hints: {
+          entityHints: ["platform_team", "deploy_pipeline"],
+        },
         onWarning: (warning) => warnings.push(warning),
       },
     );
@@ -90,12 +194,12 @@ describe("extractClaimKey", () => {
     expect(warnings[0]).toMatch(/self-referential/i);
   });
 
-  it("skips ineligible entry types", async () => {
-    const llm = new MockLlmPort({
+  it("skips ineligible milestone entries", async () => {
+    const llm = new MockLlmPort(() => ({
       entity: "Jim",
       attribute: "home city",
       confidence: 0.95,
-    });
+    }));
 
     await expect(
       extractClaimKey(
@@ -104,49 +208,70 @@ describe("extractClaimKey", () => {
           subject: "Jim moved",
           content: "Jim moved to Denver.",
         },
-        [],
         llm,
         {
           enabled: true,
           confidenceThreshold: 0.8,
-          eligibleTypes: ["fact", "preference", "decision"],
+          eligibleTypes: ["fact", "preference", "decision", "lesson"],
         },
       ),
     ).resolves.toBeNull();
     expect(llm.calls).toEqual([]);
   });
 
-  it("drops results below the configured confidence threshold", async () => {
-    const llm = new MockLlmPort({
-      entity: "Jim",
-      attribute: "home city",
-      confidence: 0.5,
-    });
+  it("allows lesson entries when configured and the slot is stable", async () => {
+    const llm = new MockLlmPort(() => ({
+      entity: "postgres",
+      attribute: "connection_pooling_lesson",
+      confidence: 0.9,
+    }));
+
+    const result = await extractClaimKey(
+      {
+        type: "lesson",
+        subject: "Postgres pooling lesson",
+        content: "Lesson: Postgres needs connection pooling under bursty load.",
+      },
+      llm,
+      {
+        enabled: true,
+        confidenceThreshold: 0.8,
+        eligibleTypes: ["fact", "preference", "decision", "lesson"],
+      },
+    );
+
+    expect(result?.claimKey).toBe("postgres/connection_pooling_lesson");
+  });
+
+  it("returns no claim for narrative lesson entries", async () => {
+    const llm = new MockLlmPort(() => ({
+      no_claim: true,
+      confidence: 0.3,
+    }));
 
     await expect(
       extractClaimKey(
         {
-          type: "fact",
-          subject: "Jim's home city",
-          content: "Jim lives in Denver, Colorado.",
+          type: "lesson",
+          subject: "Long incident retrospective",
+          content: "We chased several hypotheses, rotated credentials, and eventually recovered after a long debugging session.",
         },
-        [],
         llm,
         {
           enabled: true,
           confidenceThreshold: 0.8,
-          eligibleTypes: ["fact", "preference", "decision"],
+          eligibleTypes: ["fact", "preference", "decision", "lesson"],
         },
       ),
     ).resolves.toBeNull();
   });
 
   it("rejects generic extracted attributes", async () => {
-    const llm = new MockLlmPort({
+    const llm = new MockLlmPort(() => ({
       entity: "Project X",
       attribute: "details",
       confidence: 0.95,
-    });
+    }));
     const warnings: string[] = [];
 
     const result = await extractClaimKey(
@@ -155,12 +280,11 @@ describe("extractClaimKey", () => {
         subject: "Project X",
         content: "Project X uses blue-green deploys.",
       },
-      [],
       llm,
       {
         enabled: true,
         confidenceThreshold: 0.8,
-        eligibleTypes: ["fact", "preference", "decision"],
+        eligibleTypes: ["fact", "preference", "decision", "lesson"],
       },
       {
         onWarning: (warning) => warnings.push(warning),
@@ -172,11 +296,11 @@ describe("extractClaimKey", () => {
   });
 
   it("rejects value-shaped extracted attributes", async () => {
-    const llm = new MockLlmPort({
+    const llm = new MockLlmPort(() => ({
       entity: "React Router",
       attribute: "v7",
       confidence: 0.95,
-    });
+    }));
     const warnings: string[] = [];
 
     const result = await extractClaimKey(
@@ -185,12 +309,11 @@ describe("extractClaimKey", () => {
         subject: "React Router version",
         content: "The project currently uses React Router v7.",
       },
-      [],
       llm,
       {
         enabled: true,
         confidenceThreshold: 0.8,
-        eligibleTypes: ["fact", "preference", "decision"],
+        eligibleTypes: ["fact", "preference", "decision", "lesson"],
       },
       {
         onWarning: (warning) => warnings.push(warning),
@@ -200,11 +323,157 @@ describe("extractClaimKey", () => {
     expect(result).toBeNull();
     expect(warnings[0]).toMatch(/value-shaped/i);
   });
+
+  it("retries once after malformed JSON and exposes the retry path", async () => {
+    const llm = new MockLlmPort((callIndex) =>
+      callIndex === 0
+        ? new Error("Unexpected token 'J' in JSON at position 0")
+        : {
+            entity: "Jim",
+            attribute: "timezone",
+            confidence: 0.92,
+          },
+    );
+
+    const result = await extractClaimKey(
+      {
+        type: "fact",
+        subject: "Jim timezone",
+        content: "Jim's timezone is America/Chicago.",
+      },
+      llm,
+      {
+        enabled: true,
+        confidenceThreshold: 0.8,
+        eligibleTypes: ["fact", "preference", "decision", "lesson"],
+      },
+    );
+
+    expect(result?.claimKey).toBe("jim/timezone");
+    expect(result?.path).toBe("json_retry");
+    expect(llm.calls).toHaveLength(2);
+    expect(llm.calls[1]?.systemPrompt).toContain("Your previous answer was invalid JSON.");
+  });
+
+  it("uses deterministic repair for a simple safe possessive slot when the model confidence is too low", async () => {
+    const llm = new MockLlmPort(() => ({
+      entity: "Jim",
+      attribute: "timezone",
+      confidence: 0.2,
+    }));
+
+    const result = await extractClaimKey(
+      {
+        type: "fact",
+        subject: "Jim's timezone",
+        content: "Jim's timezone is America/Chicago.",
+      },
+      llm,
+      {
+        enabled: true,
+        confidenceThreshold: 0.8,
+        eligibleTypes: ["fact", "preference", "decision", "lesson"],
+      },
+    );
+
+    expect(result).toEqual({
+      claimKey: "jim/timezone",
+      confidence: 0.86,
+      rawEntity: "Jim",
+      rawAttribute: "timezone",
+      path: "deterministic_repair",
+    });
+  });
+
+  it("does not upgrade low-quality outputs into bad claim keys", async () => {
+    const llm = new MockLlmPort(() => ({
+      entity: "Jim",
+      attribute: "oat milk",
+      confidence: 0.2,
+    }));
+
+    await expect(
+      extractClaimKey(
+        {
+          type: "preference",
+          subject: "Jim's oat milk",
+          content: "Jim prefers oat milk in coffee.",
+        },
+        llm,
+        {
+          enabled: true,
+          confidenceThreshold: 0.8,
+          eligibleTypes: ["fact", "preference", "decision", "lesson"],
+        },
+      ),
+    ).resolves.toBeNull();
+  });
+});
+
+describe("runBatchClaimExtraction", () => {
+  it("uses bounded full-key hints and same-batch updates for later entries", async () => {
+    const entries: StoreEntryInput[] = [
+      {
+        type: "fact",
+        subject: "Project X status",
+        content: "Project X is active.",
+        project: "Project X",
+      },
+      {
+        type: "fact",
+        subject: "Current status",
+        content: "The project is active.",
+        project: "Project X",
+      },
+    ];
+    const llm = new MockLlmPort((callIndex, systemPrompt) => {
+      if (callIndex === 0) {
+        expect(systemPrompt).toContain("seed_01/status_01");
+        expect(systemPrompt).toContain("seed_08/status_08");
+        expect(systemPrompt).not.toContain("seed_09/status_09");
+        return {
+          entity: "project_x",
+          attribute: "status",
+          confidence: 0.95,
+        };
+      }
+
+      expect(systemPrompt).toContain("project_x/status");
+      return {
+        entity: "the project",
+        attribute: "status",
+        confidence: 0.95,
+      };
+    });
+    const db = new MockDatabasePort({
+      claimKeyPrefixes: ["seed_01", "seed_02"],
+      claimKeyExamples: Array.from({ length: 10 }, (_, index) => `seed_${String(index + 1).padStart(2, "0")}/status_${String(index + 1).padStart(2, "0")}`),
+    });
+
+    await runBatchClaimExtraction(
+      [{ entries }],
+      {
+        createLlm: () => llm,
+        db,
+      },
+      {
+        enabled: true,
+        confidenceThreshold: 0.8,
+        eligibleTypes: ["fact", "preference", "decision", "lesson"],
+      },
+      4,
+    );
+
+    expect(entries[0]?.claim_key).toBe("project_x/status");
+    expect(entries[1]?.claim_key).toBe("project_x/status");
+  });
 });
 
 describe("getEntityHints", () => {
   it("returns distinct entity prefixes from the database port", async () => {
-    const db = new MockDatabasePort(["jim", "agenr"]);
+    const db = new MockDatabasePort({
+      claimKeyPrefixes: ["jim", "agenr"],
+    });
 
     await expect(getEntityHints(db)).resolves.toEqual(["jim", "agenr"]);
   });
@@ -213,20 +482,31 @@ describe("getEntityHints", () => {
 class MockLlmPort implements LlmPort {
   public readonly calls: Array<{ systemPrompt: string; userMessage: string }> = [];
 
-  public constructor(private readonly response: Record<string, unknown>) {}
+  public constructor(private readonly responder: (callIndex: number, systemPrompt: string, userMessage: string) => unknown) {}
 
   public async complete(): Promise<string> {
     throw new Error("complete() is not used in these tests.");
   }
 
   public async completeJson<T>(systemPrompt: string, userMessage: string): Promise<T> {
+    const callIndex = this.calls.length;
     this.calls.push({ systemPrompt, userMessage });
-    return this.response as T;
+    const response = this.responder(callIndex, systemPrompt, userMessage);
+    if (response instanceof Error) {
+      throw response;
+    }
+
+    return response as T;
   }
 }
 
 class MockDatabasePort implements DatabasePort {
-  public constructor(private readonly claimKeyPrefixes: string[]) {}
+  public constructor(
+    private readonly values: {
+      claimKeyPrefixes?: string[];
+      claimKeyExamples?: string[];
+    } = {},
+  ) {}
 
   public async insertEntry(): Promise<string> {
     throw new Error("insertEntry() is not used in these tests.");
@@ -265,7 +545,11 @@ class MockDatabasePort implements DatabasePort {
   }
 
   public async getDistinctClaimKeyPrefixes(): Promise<string[]> {
-    return this.claimKeyPrefixes;
+    return this.values.claimKeyPrefixes ?? [];
+  }
+
+  public async getClaimKeyExamples(): Promise<string[]> {
+    return this.values.claimKeyExamples ?? [];
   }
 
   public async updateEntry(): Promise<boolean> {

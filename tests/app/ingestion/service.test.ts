@@ -144,6 +144,45 @@ describe("ingestPath", () => {
     expect(db.insertions[1]?.entry.claim_key).toBeUndefined();
   });
 
+  it("extracts claim keys for lesson entries under the default config", async () => {
+    const filePath = "/tmp/session-lesson-claims.jsonl";
+    const db = new MockDatabase();
+
+    await ingestPath(
+      "/tmp",
+      {
+        files: new MockFilePort([filePath], { [filePath]: "hash-lesson-claims" }),
+        transcript: new MockTranscriptPort(buildTranscript()),
+        db,
+        embedding: new MockEmbeddingPort(),
+        createExtractionLlm: () =>
+          new MockIngestionLlm({
+            entries: [
+              createInput({
+                type: "lesson",
+                subject: "Pooling lesson",
+                content: "Lesson: Postgres needs connection pooling under bursty load.",
+                source_file: filePath,
+              }),
+            ],
+          }),
+        createClaimExtractionLlm: () =>
+          new MockClaimExtractionLlm(() => ({
+            entity: "postgres",
+            attribute: "connection_pooling_lesson",
+            confidence: 0.94,
+          })),
+      },
+      {
+        skipDedup: true,
+        wholeFile: "never",
+      },
+    );
+
+    expect(db.insertions).toHaveLength(1);
+    expect(db.insertions[0]?.entry.claim_key).toBe("postgres/connection_pooling_lesson");
+  });
+
   it("stores entries without claim keys when no claim-extraction LLM is provided", async () => {
     const filePath = "/tmp/session-no-claim-llm.jsonl";
     const db = new MockDatabase();

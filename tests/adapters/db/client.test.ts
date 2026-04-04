@@ -201,6 +201,7 @@ describe("createDatabase", () => {
     const stored = await database.getEntry(entry.id);
     const claimMatches = await database.findActiveEntriesByClaimKey("jim/home_city");
     const claimPrefixes = await database.getDistinctClaimKeyPrefixes();
+    const claimKeyExamples = await database.getClaimKeyExamples?.();
 
     expect(updated).toBe(true);
     expect(stored?.claim_key).toBe("jim/home_city");
@@ -208,6 +209,7 @@ describe("createDatabase", () => {
     expect(stored?.valid_to).toBe("2026-03-15T00:00:00.000Z");
     expect(claimMatches.map((candidate) => candidate.id)).toEqual([entry.id]);
     expect(claimPrefixes).toEqual(["agenr", "jim"]);
+    expect(claimKeyExamples).toEqual(["agenr/default_model", "jim/home_city"]);
   });
 
   it("supersedes an active entry and removes it from active recall surfaces", async () => {

@@ -215,7 +215,8 @@ const DEFAULT_SURGEON_RETIREMENT_PROTECT_RECALLED_DAYS = 14;
 const DEFAULT_SURGEON_RETIREMENT_PROTECT_MIN_IMPORTANCE = 9;
 const DEFAULT_SURGEON_SKIP_RECENTLY_EVALUATED_DAYS = 7;
 const DEFAULT_CLAIM_EXTRACTION_CONFIDENCE_THRESHOLD = 0.8;
-const DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES = ["fact", "preference", "decision"] as const satisfies readonly EntryType[];
+// Keep milestone excluded for now. Milestones are often event-shaped summaries rather than durable slots.
+const DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES = ["fact", "preference", "decision", "lesson"] as const satisfies readonly EntryType[];
 
 export {
   DEFAULT_CLAIM_EXTRACTION_CONFIDENCE_THRESHOLD,

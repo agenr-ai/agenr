@@ -129,7 +129,7 @@ export async function ingestDiscoveredFiles(files: string[], ports: IngestPathPo
     const claimConfig: ClaimExtractionConfig = options.claimExtractionConfig ?? {
       enabled: true,
       confidenceThreshold: 0.8,
-      eligibleTypes: ["fact", "preference", "decision"],
+      eligibleTypes: ["fact", "preference", "decision", "lesson"],
     };
     await runBatchClaimExtraction(
       resultsToStore,

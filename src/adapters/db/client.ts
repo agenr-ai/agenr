@@ -20,6 +20,7 @@ import {
   findActiveEntriesByClaimKey,
   findExistingHashes,
   findExistingNormHashes,
+  getClaimKeyExamples,
   getEntries,
   getDistinctClaimKeyPrefixes,
   getEntry,
@@ -162,6 +163,11 @@ class LibsqlDatabase implements SqlDatabase {
   /** Lists distinct entity prefixes derived from active claim keys. */
   public async getDistinctClaimKeyPrefixes(): Promise<string[]> {
     return getDistinctClaimKeyPrefixes(this.executor);
+  }
+
+  /** Lists bounded full claim-key examples ordered for extraction hinting. */
+  public async getClaimKeyExamples(limit?: number): Promise<string[]> {
+    return getClaimKeyExamples(this.executor, limit);
   }
 
   /** Updates mutable entry fields such as importance, expiry, and temporal metadata. */

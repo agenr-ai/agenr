@@ -48,6 +48,9 @@ export interface DatabasePort {
   /** Get distinct entity prefixes from existing claim keys. */
   getDistinctClaimKeyPrefixes(): Promise<string[]>;
 
+  /** Get bounded full claim-key examples ordered for extraction hinting. */
+  getClaimKeyExamples?(limit?: number): Promise<string[]>;
+
   /** Update entry fields (importance, expiry, and temporal metadata). */
   updateEntry(
     id: string,

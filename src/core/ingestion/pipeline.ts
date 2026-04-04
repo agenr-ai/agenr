@@ -159,7 +159,7 @@ export async function ingestFile(
       options.claimExtractionConfig ?? {
         enabled: true,
         confidenceThreshold: 0.8,
-        eligibleTypes: ["fact", "preference", "decision"],
+        eligibleTypes: ["fact", "preference", "decision", "lesson"],
       },
       1,
     );

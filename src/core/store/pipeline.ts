@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type { DatabasePort, EmbeddingPort, LlmPort } from "../ports.js";
 import type { Entry, StoreEntryInput, StoreResult } from "../types.js";
-import { extractClaimKey, getEntityHints, type ClaimExtractionConfig } from "./claim-extraction.js";
+import { runBatchClaimExtraction, type ClaimExtractionConfig } from "./claim-extraction.js";
 import { composeEmbeddingText } from "./embedding-text.js";
 import { computeContentHash, computeNormContentHash } from "./hashing.js";
 import { validateEntriesWithIndexes } from "./validation.js";
@@ -263,39 +263,24 @@ async function maybeExtractClaimKeys(preparedEntries: PreparedEntry[], options: 
     return;
   }
 
-  let entityHints: string[] = [];
   try {
-    entityHints = await getEntityHints(claimExtraction.db);
+    await runBatchClaimExtraction(
+      [
+        {
+          entries: preparedEntries.map((preparedEntry) => preparedEntry.input),
+        },
+      ],
+      {
+        createLlm: () => claimExtraction.llm,
+        db: claimExtraction.db,
+      },
+      claimExtraction.config,
+      1,
+      options.onWarning,
+    );
   } catch (error) {
-    options.onWarning?.(`Claim extraction hint lookup failed: ${formatPipelineError(error)}`);
-  }
-
-  for (const preparedEntry of preparedEntries) {
-    if (preparedEntry.input.claim_key) {
-      continue;
-    }
-
-    try {
-      const extracted = await extractClaimKey(
-        {
-          type: preparedEntry.input.type,
-          subject: preparedEntry.input.subject,
-          content: preparedEntry.input.content,
-        },
-        entityHints,
-        claimExtraction.llm,
-        claimExtraction.config,
-        {
-          onWarning: options.onWarning,
-        },
-      );
-
-      if (extracted?.claimKey) {
-        preparedEntry.input.claim_key = extracted.claimKey;
-      }
-    } catch (error) {
-      options.onWarning?.(`Claim extraction failed for "${preparedEntry.input.subject}": ${formatPipelineError(error)}`);
-    }
+    const subject = preparedEntries[0]?.input.subject ?? "batch";
+    options.onWarning?.(`Claim extraction failed for "${subject}": ${formatPipelineError(error)}`);
   }
 }
 
