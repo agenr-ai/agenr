@@ -95,7 +95,8 @@ describe("claim_key_quality surgeon pass", () => {
       sql: "SELECT id, claim_key FROM entries WHERE id IN (?, ?) ORDER BY id ASC",
       args: ["backfill-hi", "backfill-lo"],
     });
-    const summary = (await getLastSurgeonRun(client))?.summaryJson?.claim_key_quality;
+    const run = await getLastSurgeonRun(client);
+    const summary = run?.summaryJson?.claim_key_quality;
 
     expect(result.status).toBe("completed");
     expect(rows.rows).toEqual([
@@ -106,6 +107,225 @@ describe("claim_key_quality surgeon pass", () => {
       identifiedBackfills: 1,
       appliedBackfills: 1,
       skippedLowConfidence: 1,
+    });
+  });
+
+  it("reuses a trusted same-subject canonical key before previewing a missing peer", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "trusted-group-seed",
+      subject: "Mac mini update policy",
+      type: "preference",
+      claim_key: "mac_mini/manual_update_policy",
+    });
+    await insertEntry(client, {
+      id: "trusted-group-missing",
+      subject: "Mac mini update policy",
+      type: "preference",
+      content: "The Mac mini should be updated manually.",
+    });
+
+    const result = await runClaimKeyPass(client, {
+      apply: true,
+      createClaimExtractionLlm: () =>
+        new MockClaimLlm(() => {
+          throw new Error("trusted group reuse should avoid claim extraction preview");
+        }),
+    });
+
+    const row = await client.execute({
+      sql: "SELECT claim_key FROM entries WHERE id = ?",
+      args: ["trusted-group-missing"],
+    });
+    const actions = await getSurgeonRunActions(client, result.runId);
+    const run = await getLastSurgeonRun(client);
+
+    expect(result.status).toBe("completed");
+    expect(row.rows[0]?.claim_key).toBe("mac_mini/manual_update_policy");
+    expect(actions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entryIds: ["trusted-group-missing"],
+          details: expect.objectContaining({
+            issue_kind: "missing_claim_key",
+            new_claim_key: "mac_mini/manual_update_policy",
+            proposal_source: "trusted_group_reuse",
+          }),
+        }),
+      ]),
+    );
+    expect(run?.summaryJson?.observations).toContain("Missing-key decisions used 1 trusted-group reuses and no proposals after structural reuse checks.");
+  });
+
+  it("auto-applies deterministic repair previews during missing-key cleanup", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "deterministic-backfill",
+      subject: "Jim's timezone",
+      type: "fact",
+      content: "Jim's timezone is America/Chicago.",
+    });
+
+    const result = await runClaimKeyPass(client, {
+      apply: true,
+      createClaimExtractionLlm: () => new MockClaimLlm(() => new Error("preview failure forces deterministic repair")),
+    });
+
+    const row = await client.execute({
+      sql: "SELECT claim_key FROM entries WHERE id = ?",
+      args: ["deterministic-backfill"],
+    });
+    const actions = await getSurgeonRunActions(client, result.runId);
+
+    expect(result.status).toBe("completed");
+    expect(row.rows[0]?.claim_key).toBe("jim/timezone");
+    expect(actions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entryIds: ["deterministic-backfill"],
+          details: expect.objectContaining({
+            issue_kind: "missing_claim_key",
+            new_claim_key: "jim/timezone",
+            proposal_source: "deterministic_repair",
+            auto_applied: true,
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it("auto-applies metadata-grounded missing-key backfills when the entity is explicitly anchored", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "metadata-backed",
+      subject: "Project status",
+      type: "fact",
+      content: "The project is active.",
+      project: "Agenr",
+    });
+    const llm = new MockClaimLlm(() => ({
+      entity: "project",
+      attribute: "status",
+      confidence: 0.88,
+    }));
+
+    const result = await runClaimKeyPass(client, {
+      apply: true,
+      createClaimExtractionLlm: () => llm,
+    });
+
+    const row = await client.execute({
+      sql: "SELECT claim_key FROM entries WHERE id = ?",
+      args: ["metadata-backed"],
+    });
+    const actions = await getSurgeonRunActions(client, result.runId);
+
+    expect(result.status).toBe("completed");
+    expect(row.rows[0]?.claim_key).toBe("agenr/status");
+    expect(actions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entryIds: ["metadata-backed"],
+          details: expect.objectContaining({
+            issue_kind: "missing_claim_key",
+            new_claim_key: "agenr/status",
+            proposal_source: "metadata_backfill_rewrite",
+            auto_applied: true,
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it("promotes metadata-grounded low-confidence missing-key candidates into structured proposals", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "metadata-proposal",
+      subject: "Project status",
+      type: "fact",
+      content: "The project is active.",
+      project: "Agenr",
+    });
+    const llm = new MockClaimLlm(() => ({
+      entity: "project",
+      attribute: "status",
+      confidence: 0.68,
+    }));
+
+    const result = await runClaimKeyPass(client, {
+      apply: true,
+      createClaimExtractionLlm: () => llm,
+    });
+
+    const row = await client.execute({
+      sql: "SELECT claim_key FROM entries WHERE id = ?",
+      args: ["metadata-proposal"],
+    });
+    const proposals = await getSurgeonRunProposals(client, result.runId);
+    const summary = (await getLastSurgeonRun(client))?.summaryJson?.claim_key_quality;
+
+    expect(result.status).toBe("completed");
+    expect(row.rows[0]?.claim_key).toBeNull();
+    expect(proposals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          issueKind: "missing_claim_key",
+          entryIds: ["metadata-proposal"],
+          proposedClaimKeys: ["agenr/status"],
+          source: "metadata_backfill_rewrite",
+        }),
+      ]),
+    );
+    expect(summary?.counts).toMatchObject({
+      proposalsEmitted: 1,
+      skippedAmbiguous: 1,
+      skippedLowConfidence: 0,
+    });
+  });
+
+  it("does not treat dirty or suspect corpus keys as trusted reuse canon", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "dirty-group-seed",
+      subject: "Project status",
+      type: "fact",
+      claim_key: "project/status",
+      content: "The project is active.",
+    });
+    await insertEntry(client, {
+      id: "dirty-group-missing",
+      subject: "Project status",
+      type: "fact",
+      content: "The project is healthy.",
+    });
+
+    const result = await runClaimKeyPass(client, {
+      apply: true,
+    });
+
+    const row = await client.execute({
+      sql: "SELECT claim_key FROM entries WHERE id = ?",
+      args: ["dirty-group-missing"],
+    });
+    const actions = await getSurgeonRunActions(client, result.runId);
+    const summary = (await getLastSurgeonRun(client))?.summaryJson?.claim_key_quality;
+
+    expect(result.status).toBe("completed");
+    expect(row.rows[0]?.claim_key).toBeNull();
+    expect(actions).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entryIds: ["dirty-group-missing"],
+          details: expect.objectContaining({
+            proposal_source: "trusted_group_reuse",
+          }),
+        }),
+      ]),
+    );
+    expect(summary?.counts).toMatchObject({
+      skippedNoClaim: 1,
+      identifiedBackfills: 0,
+      appliedBackfills: 0,
     });
   });
 

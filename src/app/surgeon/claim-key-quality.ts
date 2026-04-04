@@ -26,7 +26,9 @@ import { emitSurgeonProgress, type ClaimKeyQualityProgressStage, type SurgeonPro
 import type { SurgeonPort } from "./ports.js";
 
 const HIGH_CONFIDENCE_BACKFILL_THRESHOLD = 0.92;
+const STRUCTURED_AUTO_APPLY_BACKFILL_THRESHOLD = 0.86;
 const PROPOSAL_CONFIDENCE_THRESHOLD = 0.75;
+const SUPPORTED_PROPOSAL_CONFIDENCE_THRESHOLD = 0.65;
 const MAX_CLEANUP_ENTITY_HINTS = 12;
 const MAX_CLEANUP_CLAIM_KEY_HINTS = 8;
 const CLAIM_KEY_CONCENTRATION_THRESHOLD = 25;
@@ -111,6 +113,22 @@ interface ClaimKeyCircuitBreakerTrip {
   message: string;
 }
 
+interface TrustedGroupReuseCandidate {
+  claimKey: string;
+  supportingEntryIds: string[];
+}
+
+interface MissingBackfillDecisionStats {
+  autoAppliedTrustedGroupReuse: number;
+  autoAppliedDeterministicRepair: number;
+  autoAppliedMetadataRepair: number;
+  autoAppliedPreviewModel: number;
+  proposedTrustedGroupReuse: number;
+  proposedSupportedCandidate: number;
+  proposedPreviewCandidate: number;
+  noClaimWithWarnings: number;
+}
+
 /**
  * Runs the first-class claim-key-quality surgeon pass.
  *
@@ -145,6 +163,13 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
   const recommendations: string[] = [];
   const suggestionCache = new Map<string, EntrySuggestionRecord>();
   const trustedHints = buildTrustedCleanupHintSeed(actualEntries);
+  const trustedReusableEntryIds = new Set(
+    sourceEntries.flatMap((entry) => {
+      const claimKey = entry.claim_key?.trim();
+      return claimKey && isTrustedClaimKeyForCleanup(claimKey) ? [entry.id] : [];
+    }),
+  );
+  const missingDecisionStats = createEmptyMissingBackfillDecisionStats();
   const claimExtractionConfig = resolveClaimExtractionConfig(deps.config ?? undefined);
   const previewConcurrency = resolveClaimExtractionConcurrency(claimExtractionConfig);
   const before = summarizeClaimKeyHealth(actualEntries, claimExtractionConfig.eligibleTypes);
@@ -205,11 +230,12 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
     }
 
     if (!circuitBreaker && terminalStatus === "completed") {
+      const missingPreviewEntries = missingEntries.filter((entry) => shouldPreviewMissingEntry(entry));
       progressTracker.startStage("missing", missingEntries.length, "entries", {
-        previewTotal: shouldPreloadSuggestions() ? missingEntries.length : 0,
+        previewTotal: shouldPreloadSuggestions() ? missingPreviewEntries.length : 0,
         previewConcurrency: shouldPreloadSuggestions() ? previewConcurrency : undefined,
       });
-      await preloadSuggestionsForStage(missingEntries);
+      await preloadSuggestionsForStage(missingPreviewEntries);
       for (const entry of missingEntries) {
         if (options.signal?.aborted === true) {
           terminalStatus = "aborted";
@@ -292,6 +318,15 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
     observations.push(
       `Skipped ${counts.skippedNoClaim} no-claim cases, ${counts.skippedLowConfidence} low-confidence cases, ` +
         `${counts.skippedCollision} collision cases, and ${counts.skippedAmbiguous} ambiguous cases.`,
+    );
+  }
+  const missingDecisionObservation = buildMissingDecisionObservation(missingDecisionStats);
+  if (missingDecisionObservation) {
+    observations.push(missingDecisionObservation);
+  }
+  if (missingDecisionStats.noClaimWithWarnings > 0) {
+    observations.push(
+      `${missingDecisionStats.noClaimWithWarnings} missing-key previews ended without a safe claim after deterministic validation warnings or malformed output.`,
     );
   }
   const circuitBreakerMessage = (circuitBreaker as ClaimKeyCircuitBreakerTrip | null)?.message;
@@ -392,6 +427,9 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
       counts.appliedNormalizations += 1;
     }
     if (updateResult.projected) {
+      if (isTrustedClaimKeyForCleanup(targetClaimKey)) {
+        trustedReusableEntryIds.add(entry.id);
+      }
       circuitBreaker = recordAppliedRepair(circuitBreakerState, targetClaimKey);
     }
     if (circuitBreaker) {
@@ -406,6 +444,60 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
       return;
     }
 
+    const trustedGroupReuse = findTrustedGroupReuseCandidate(projectedEntries, trustedReusableEntryIds, entry);
+    if (trustedGroupReuse) {
+      const activeSiblings = findActiveClaimKeyOccupants(projectedEntries, trustedGroupReuse.claimKey, entry.id);
+      if (activeSiblings.some((sibling) => sibling.type !== entry.type)) {
+        const proposal = createProposal({
+          runId: options.runId,
+          groupId: `claim-key-backfill:${entry.id}`,
+          issueKind: "missing_claim_key",
+          scope: "single_entry",
+          entryIds: [entry.id, ...activeSiblings.map((sibling) => sibling.id)],
+          currentClaimKeys: [],
+          proposedClaimKeys: [trustedGroupReuse.claimKey],
+          rationale:
+            `A matched subject/type group already uses trusted canonical key "${trustedGroupReuse.claimKey}" ` +
+            `across ${trustedGroupReuse.supportingEntryIds.length} supporting entr${trustedGroupReuse.supportingEntryIds.length === 1 ? "y" : "ies"}, ` +
+            "but that same key is already occupied by a different active entry type in the matched working set.",
+          confidence: 0.99,
+          source: "trusted_group_reuse",
+          eligibleForApply: true,
+          createdAt: options.now().toISOString(),
+        });
+        await persistProposal(proposal);
+        counts.proposalsEmitted += 1;
+        counts.skippedAmbiguous += 1;
+        missingDecisionStats.proposedTrustedGroupReuse += 1;
+        return;
+      }
+
+      counts.identifiedBackfills += 1;
+      const updateResult = await maybeApplyClaimKeyUpdate(entry.id, trustedGroupReuse.claimKey, {
+        actualEntriesById,
+        entriesById,
+        issueKind: "missing_claim_key",
+        oldClaimKey: null,
+        source: "trusted_group_reuse",
+        confidence: 0.99,
+        rationale:
+          `Matched subject/type entries already use trusted canonical key "${trustedGroupReuse.claimKey}", ` +
+          `so the missing key can safely reuse that established family from ${trustedGroupReuse.supportingEntryIds.length} supporting entr${trustedGroupReuse.supportingEntryIds.length === 1 ? "y" : "ies"}.`,
+      });
+      if (updateResult.applied) {
+        counts.appliedBackfills += 1;
+      }
+      if (updateResult.projected) {
+        missingDecisionStats.autoAppliedTrustedGroupReuse += 1;
+        circuitBreaker = recordAppliedRepair(circuitBreakerState, trustedGroupReuse.claimKey);
+      }
+      if (circuitBreaker) {
+        terminalStatus = "failed";
+        terminalError = circuitBreaker.message;
+      }
+      return;
+    }
+
     const suggestionRecord = await loadSuggestion(entry);
     if (terminalStatus !== "completed") {
       return;
@@ -413,13 +505,27 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
 
     const suggestion = suggestionRecord.suggestion;
     if (!suggestion?.claimKey) {
+      if (suggestionRecord.warnings.length > 0) {
+        missingDecisionStats.noClaimWithWarnings += 1;
+      }
       counts.skippedNoClaim += 1;
       return;
     }
 
-    const suggestedInspection = inspectClaimKey(suggestion.claimKey);
-    const suggestionIsTrusted = suggestedInspection.suspectReasons.length === 0;
-    const activeSiblings = findActiveClaimKeyOccupants(projectedEntries, suggestion.claimKey, entry.id);
+    const metadataBackfillClaimKey = resolveMetadataBackfillClaimKey(entry, suggestion.claimKey);
+    const targetClaimKey = metadataBackfillClaimKey ?? suggestion.claimKey;
+    const targetSource = metadataBackfillClaimKey ? "metadata_backfill_rewrite" : suggestion.path;
+    const targetInspection = inspectClaimKey(targetClaimKey);
+    const targetIsTrusted = targetInspection.suspectReasons.length === 0;
+    const autoApplyThreshold = resolveMissingBackfillAutoApplyThreshold({
+      metadataRepaired: metadataBackfillClaimKey !== null,
+      previewPath: suggestion.path,
+    });
+    const proposalThreshold = resolveMissingBackfillProposalThreshold({
+      metadataRepaired: metadataBackfillClaimKey !== null,
+      previewPath: suggestion.path,
+    });
+    const activeSiblings = findActiveClaimKeyOccupants(projectedEntries, targetClaimKey, entry.id);
     if (activeSiblings.some((sibling) => sibling.type !== entry.type)) {
       const proposal = createProposal({
         runId: options.runId,
@@ -428,12 +534,16 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
         scope: "single_entry",
         entryIds: [entry.id, ...activeSiblings.map((sibling) => sibling.id)],
         currentClaimKeys: [],
-        proposedClaimKeys: [suggestion.claimKey],
+        proposedClaimKeys: [targetClaimKey],
         rationale:
-          `Backfill preview suggested "${suggestion.claimKey}" at confidence ${suggestion.confidence.toFixed(2)}, ` +
-          "but the same slot key is already used by a different entry type in the matched working set.",
+          buildMissingBackfillConflictRationale({
+            originalClaimKey: suggestion.claimKey,
+            targetClaimKey,
+            confidence: suggestion.confidence,
+            metadataBackfillClaimKey,
+          }) + " The same slot key is already used by a different entry type in the matched working set.",
         confidence: suggestion.confidence,
-        source: suggestion.path,
+        source: targetSource,
         eligibleForApply: true,
         createdAt: options.now().toISOString(),
       });
@@ -443,8 +553,8 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
       return;
     }
 
-    if (!suggestionIsTrusted || suggestion.confidence < HIGH_CONFIDENCE_BACKFILL_THRESHOLD) {
-      if (suggestion.confidence >= PROPOSAL_CONFIDENCE_THRESHOLD) {
+    if (!targetIsTrusted || suggestion.confidence < autoApplyThreshold) {
+      if (suggestion.confidence >= proposalThreshold) {
         const proposal = createProposal({
           runId: options.runId,
           groupId: `claim-key-backfill:${entry.id}`,
@@ -452,18 +562,28 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
           scope: "single_entry",
           entryIds: [entry.id],
           currentClaimKeys: [],
-          proposedClaimKeys: [suggestion.claimKey],
-          rationale: !suggestionIsTrusted
-            ? `Backfill preview suggested "${suggestion.claimKey}" at confidence ${suggestion.confidence.toFixed(2)}, but the proposed key is still structurally suspect.`
-            : `Backfill preview suggested "${suggestion.claimKey}" at confidence ${suggestion.confidence.toFixed(2)}, below the auto-apply threshold.`,
+          proposedClaimKeys: [targetClaimKey],
+          rationale: buildMissingBackfillProposalRationale({
+            originalClaimKey: suggestion.claimKey,
+            targetClaimKey,
+            confidence: suggestion.confidence,
+            autoApplyThreshold,
+            trusted: targetIsTrusted,
+            metadataBackfillClaimKey,
+          }),
           confidence: suggestion.confidence,
-          source: suggestion.path,
+          source: targetSource,
           eligibleForApply: true,
           createdAt: options.now().toISOString(),
         });
         await persistProposal(proposal);
         counts.proposalsEmitted += 1;
         counts.skippedAmbiguous += 1;
+        if (metadataBackfillClaimKey !== null || suggestion.path === "deterministic_repair") {
+          missingDecisionStats.proposedSupportedCandidate += 1;
+        } else {
+          missingDecisionStats.proposedPreviewCandidate += 1;
+        }
       } else {
         counts.skippedLowConfidence += 1;
       }
@@ -471,20 +591,33 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
     }
 
     counts.identifiedBackfills += 1;
-    const updateResult = await maybeApplyClaimKeyUpdate(entry.id, suggestion.claimKey, {
+    const updateResult = await maybeApplyClaimKeyUpdate(entry.id, targetClaimKey, {
       actualEntriesById,
       entriesById,
       issueKind: "missing_claim_key",
       oldClaimKey: null,
-      source: suggestion.path,
+      source: targetSource,
       confidence: suggestion.confidence,
-      rationale: `High-confidence claim-key backfill assigned "${suggestion.claimKey}" from ${suggestion.path}.`,
+      rationale: buildMissingBackfillApplyRationale({
+        originalClaimKey: suggestion.claimKey,
+        targetClaimKey,
+        confidence: suggestion.confidence,
+        source: targetSource,
+        metadataBackfillClaimKey,
+      }),
     });
     if (updateResult.applied) {
       counts.appliedBackfills += 1;
     }
     if (updateResult.projected) {
-      circuitBreaker = recordAppliedRepair(circuitBreakerState, suggestion.claimKey);
+      if (metadataBackfillClaimKey !== null) {
+        missingDecisionStats.autoAppliedMetadataRepair += 1;
+      } else if (suggestion.path === "deterministic_repair") {
+        missingDecisionStats.autoAppliedDeterministicRepair += 1;
+      } else {
+        missingDecisionStats.autoAppliedPreviewModel += 1;
+      }
+      circuitBreaker = recordAppliedRepair(circuitBreakerState, targetClaimKey);
     }
     if (circuitBreaker) {
       terminalStatus = "failed";
@@ -553,6 +686,10 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
 
   function shouldPreloadSuggestions(): boolean {
     return claimExtractionConfig.enabled && typeof deps.createClaimExtractionLlm === "function";
+  }
+
+  function shouldPreviewMissingEntry(entry: Entry): boolean {
+    return findTrustedGroupReuseCandidate(projectedEntries, trustedReusableEntryIds, entry) === null;
   }
 
   function shouldPreloadSuspectSuggestion(entry: Entry): boolean {
@@ -981,6 +1118,19 @@ function createClaimKeyQualityProgressTracker(input: {
   }
 }
 
+function createEmptyMissingBackfillDecisionStats(): MissingBackfillDecisionStats {
+  return {
+    autoAppliedTrustedGroupReuse: 0,
+    autoAppliedDeterministicRepair: 0,
+    autoAppliedMetadataRepair: 0,
+    autoAppliedPreviewModel: 0,
+    proposedTrustedGroupReuse: 0,
+    proposedSupportedCandidate: 0,
+    proposedPreviewCandidate: 0,
+    noClaimWithWarnings: 0,
+  };
+}
+
 function createEmptyRepairCounts(): ClaimKeyQualityRepairCounts {
   return {
     identifiedNormalizations: 0,
@@ -1053,6 +1203,49 @@ function normalizeStringArray(values: string[]): string[] {
 
 function isEntryActive(entry: Entry): boolean {
   return entry.retired === false && !entry.superseded_by;
+}
+
+function findTrustedGroupReuseCandidate(entries: Entry[], trustedEntryIds: Set<string>, entry: Entry): TrustedGroupReuseCandidate | null {
+  const normalizedSubject = entry.subject.trim().toLowerCase();
+  if (normalizedSubject.length === 0) {
+    return null;
+  }
+
+  const trustedPeers = entries.filter((candidate) => {
+    if (candidate.id === entry.id || candidate.type !== entry.type) {
+      return false;
+    }
+
+    if (!trustedEntryIds.has(candidate.id)) {
+      return false;
+    }
+
+    if (candidate.subject.trim().toLowerCase() !== normalizedSubject) {
+      return false;
+    }
+
+    const claimKey = candidate.claim_key?.trim();
+    return Boolean(claimKey && isTrustedClaimKeyForCleanup(claimKey));
+  });
+  const trustedClaimKeys = normalizeStringArray(
+    trustedPeers.flatMap((candidate) => {
+      const claimKey = candidate.claim_key?.trim();
+      return claimKey ? [claimKey] : [];
+    }),
+  );
+  if (trustedClaimKeys.length !== 1) {
+    return null;
+  }
+
+  const claimKey = trustedClaimKeys[0];
+  if (!claimKey) {
+    return null;
+  }
+
+  return {
+    claimKey,
+    supportingEntryIds: trustedPeers.map((candidate) => candidate.id),
+  };
 }
 
 function inspectExistingClaimKey(
@@ -1183,6 +1376,82 @@ async function buildMalformedClaimKeyProposal(
     eligibleForApply: proposedClaimKeys.length > 0,
     createdAt: deps.now().toISOString(),
   });
+}
+
+function resolveMetadataBackfillClaimKey(entry: Entry, claimKey: string): string | null {
+  return resolveExplicitMetadataRepair(entry, inspectClaimKey(claimKey));
+}
+
+function resolveMissingBackfillAutoApplyThreshold(input: { previewPath: ClaimExtractionResult["path"]; metadataRepaired: boolean }): number {
+  if (input.metadataRepaired || input.previewPath === "deterministic_repair") {
+    return STRUCTURED_AUTO_APPLY_BACKFILL_THRESHOLD;
+  }
+
+  return HIGH_CONFIDENCE_BACKFILL_THRESHOLD;
+}
+
+function resolveMissingBackfillProposalThreshold(input: { previewPath: ClaimExtractionResult["path"]; metadataRepaired: boolean }): number {
+  if (input.metadataRepaired || input.previewPath === "deterministic_repair") {
+    return SUPPORTED_PROPOSAL_CONFIDENCE_THRESHOLD;
+  }
+
+  return PROPOSAL_CONFIDENCE_THRESHOLD;
+}
+
+function buildMissingBackfillConflictRationale(input: {
+  originalClaimKey: string;
+  targetClaimKey: string;
+  confidence: number;
+  metadataBackfillClaimKey: string | null;
+}): string {
+  if (input.metadataBackfillClaimKey !== null && input.originalClaimKey !== input.targetClaimKey) {
+    return (
+      `Backfill preview suggested "${input.originalClaimKey}" at confidence ${input.confidence.toFixed(2)}, ` +
+      `and explicit metadata safely grounds that candidate to "${input.targetClaimKey}".`
+    );
+  }
+
+  return `Backfill preview suggested "${input.targetClaimKey}" at confidence ${input.confidence.toFixed(2)}.`;
+}
+
+function buildMissingBackfillProposalRationale(input: {
+  originalClaimKey: string;
+  targetClaimKey: string;
+  confidence: number;
+  autoApplyThreshold: number;
+  trusted: boolean;
+  metadataBackfillClaimKey: string | null;
+}): string {
+  if (!input.trusted) {
+    return `Backfill preview suggested "${input.targetClaimKey}" at confidence ${input.confidence.toFixed(2)}, but the proposed key is still structurally suspect.`;
+  }
+
+  if (input.metadataBackfillClaimKey !== null && input.originalClaimKey !== input.targetClaimKey) {
+    return (
+      `Backfill preview suggested "${input.originalClaimKey}" at confidence ${input.confidence.toFixed(2)}, ` +
+      `and explicit metadata resolves that candidate to likely canonical key "${input.targetClaimKey}", ` +
+      `but that supported repair stays below the auto-apply threshold of ${input.autoApplyThreshold.toFixed(2)}.`
+    );
+  }
+
+  return `Backfill preview suggested "${input.targetClaimKey}" at confidence ${input.confidence.toFixed(2)}, below the auto-apply threshold of ${input.autoApplyThreshold.toFixed(2)}.`;
+}
+
+function buildMissingBackfillApplyRationale(input: {
+  originalClaimKey: string;
+  targetClaimKey: string;
+  confidence: number;
+  source: string;
+  metadataBackfillClaimKey: string | null;
+}): string {
+  if (input.metadataBackfillClaimKey !== null && input.originalClaimKey !== input.targetClaimKey) {
+    return (
+      `Metadata-grounded claim-key backfill rewrote preview candidate "${input.originalClaimKey}" to "${input.targetClaimKey}" ` +
+      `at confidence ${input.confidence.toFixed(2)} from ${input.source}.`
+    );
+  }
+
+  return `High-confidence claim-key backfill assigned "${input.targetClaimKey}" from ${input.source} at confidence ${input.confidence.toFixed(2)}.`;
 }
 
 function resolveExplicitMetadataRepair(entry: Entry, inspection: ClaimKeyInspection): string | null {
@@ -1407,6 +1676,25 @@ function describeSuspicionList(inspection: ClaimKeyInspection): string {
   }
 
   return inspection.suspectReasons.map((reason) => describeClaimKeySuspicion(reason, inspection.normalized!)).join(", ");
+}
+
+function buildMissingDecisionObservation(stats: MissingBackfillDecisionStats): string | null {
+  const autoAppliedParts = [
+    stats.autoAppliedTrustedGroupReuse > 0 ? `${stats.autoAppliedTrustedGroupReuse} trusted-group reuses` : null,
+    stats.autoAppliedMetadataRepair > 0 ? `${stats.autoAppliedMetadataRepair} metadata-grounded backfills` : null,
+    stats.autoAppliedDeterministicRepair > 0 ? `${stats.autoAppliedDeterministicRepair} deterministic repairs` : null,
+    stats.autoAppliedPreviewModel > 0 ? `${stats.autoAppliedPreviewModel} high-confidence preview suggestions` : null,
+  ].filter((value): value is string => value !== null);
+  const proposalParts = [
+    stats.proposedTrustedGroupReuse > 0 ? `${stats.proposedTrustedGroupReuse} trusted-group reuse proposals` : null,
+    stats.proposedSupportedCandidate > 0 ? `${stats.proposedSupportedCandidate} supported preview proposals` : null,
+    stats.proposedPreviewCandidate > 0 ? `${stats.proposedPreviewCandidate} plain preview proposals` : null,
+  ].filter((value): value is string => value !== null);
+  if (autoAppliedParts.length === 0 && proposalParts.length === 0) {
+    return null;
+  }
+
+  return `Missing-key decisions used ${autoAppliedParts.join(", ") || "no auto-applies"} and ${proposalParts.join(", ") || "no proposals"} after structural reuse checks.`;
 }
 
 function createProposal(input: Omit<SurgeonRunProposal, "id">): SurgeonRunProposal {
