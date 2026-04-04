@@ -1,5 +1,26 @@
 const UNKNOWN_SEGMENT = "unknown";
 const SELF_REFERENTIAL_ENTITIES = new Set(["i", "me", "myself", "the_user", "user", "we", "our_team", "the_project", "this_project"]);
+const GENERIC_ENTITIES = new Set([
+  "app",
+  "company",
+  "config",
+  "data",
+  "device",
+  "entity",
+  "environment",
+  "item",
+  "organization",
+  "person",
+  "place",
+  "project",
+  "service",
+  "setting",
+  "system",
+  "team",
+  "thing",
+  "user",
+  "workspace",
+]);
 const GENERIC_ATTRIBUTES = new Set(["info", "details", "config", "stuff", "thing", "data"]);
 
 /**
@@ -33,6 +54,22 @@ export type ClaimKeyNormalizationResult =
  * Stable failure reasons emitted by deterministic extracted-claim validation.
  */
 export type ExtractedClaimKeyRejectionReason = "self_referential_entity" | "generic_attribute" | "value_shaped_attribute";
+
+/**
+ * Stable suspicion reasons emitted by claim-key-quality inspection.
+ */
+export type ClaimKeySuspicionReason = ExtractedClaimKeyRejectionReason | "generic_entity";
+
+/**
+ * Structured inspection result used by claim-key-quality maintenance.
+ */
+export interface ClaimKeyInspection {
+  rawClaimKey: string;
+  canonical: boolean;
+  normalized?: NormalizedClaimKey;
+  normalizationFailure?: ClaimKeyNormalizationFailureReason;
+  suspectReasons: ClaimKeySuspicionReason[];
+}
 
 /**
  * Structured result returned by deterministic extracted-claim validation.
@@ -147,6 +184,53 @@ export function validateExtractedClaimKey(claimKey: NormalizedClaimKey): Extract
 }
 
 /**
+ * Inspects one raw claim key for canonicality and suspect-but-valid patterns.
+ *
+ * @param value - Raw stored claim key.
+ * @returns Canonicality and suspicion details for the claim key.
+ */
+export function inspectClaimKey(value: string): ClaimKeyInspection {
+  const rawClaimKey = value.trim();
+  const normalized = normalizeClaimKey(rawClaimKey);
+  if (!normalized.ok) {
+    return {
+      rawClaimKey,
+      canonical: false,
+      normalizationFailure: normalized.reason,
+      suspectReasons: [],
+    };
+  }
+
+  const suspectReasons = new Set<ClaimKeySuspicionReason>();
+  const validation = validateExtractedClaimKey(normalized.value);
+  if (!validation.ok) {
+    suspectReasons.add(validation.reason);
+  }
+
+  if (GENERIC_ENTITIES.has(normalized.value.entity)) {
+    suspectReasons.add("generic_entity");
+  }
+
+  return {
+    rawClaimKey,
+    canonical: normalized.value.claimKey === rawClaimKey,
+    normalized: normalized.value,
+    suspectReasons: [...suspectReasons],
+  };
+}
+
+/**
+ * Returns whether one claim key is safe to reuse as a trusted cleanup hint.
+ *
+ * @param value - Raw stored claim key.
+ * @returns True when the key is canonical and free of low-trust patterns.
+ */
+export function isTrustedClaimKeyForCleanup(value: string): boolean {
+  const inspection = inspectClaimKey(value);
+  return Boolean(inspection.canonical && inspection.normalized && inspection.suspectReasons.length === 0);
+}
+
+/**
  * Formats a normalization failure into a human-readable warning suffix.
  *
  * @param reason - Stable normalization failure reason.
@@ -184,6 +268,24 @@ export function describeExtractedClaimKeyRejection(reason: ExtractedClaimKeyReje
       return `attribute "${claimKey.attribute}" is too generic`;
     case "value_shaped_attribute":
       return `attribute "${claimKey.attribute}" looks value-shaped`;
+  }
+}
+
+/**
+ * Formats a claim-key-quality suspicion into a human-readable warning suffix.
+ *
+ * @param reason - Stable suspect reason.
+ * @param claimKey - Canonical claim key under inspection.
+ * @returns Human-readable explanation suitable for logs and proposals.
+ */
+export function describeClaimKeySuspicion(reason: ClaimKeySuspicionReason, claimKey: NormalizedClaimKey): string {
+  switch (reason) {
+    case "generic_entity":
+      return `entity "${claimKey.entity}" is too generic`;
+    case "self_referential_entity":
+    case "generic_attribute":
+    case "value_shaped_attribute":
+      return describeExtractedClaimKeyRejection(reason, claimKey);
   }
 }
 

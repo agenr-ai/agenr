@@ -4,7 +4,7 @@ import type { Row } from "@libsql/client";
 
 import type { SurgeonRunAction } from "../../core/surgeon/domain/action-types.js";
 import type { SurgeonPassType } from "../../core/surgeon/domain/pass-types.js";
-import type { SurgeonCompletionSummary, SurgeonRunStatus } from "../../core/surgeon/types.js";
+import type { SurgeonCompletionSummary, SurgeonRunProposal, SurgeonRunStatus } from "../../core/surgeon/types.js";
 import { readBoolean, readNumber, readOptionalString, readRequiredString } from "./row-mapping.js";
 import type { SqlExecutor } from "./queries.js";
 
@@ -153,9 +153,10 @@ export async function logSurgeonAction(executor: SqlExecutor, action: SurgeonRun
         entry_ids,
         reasoning,
         recall_delta,
+        details_json,
         created_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     args: [
       action.id.trim().length > 0 ? action.id.trim() : randomUUID(),
@@ -165,7 +166,52 @@ export async function logSurgeonAction(executor: SqlExecutor, action: SurgeonRun
       JSON.stringify(entryIds),
       action.reasoning,
       JSON.stringify(action.recallDelta ?? null),
+      JSON.stringify(action.details ?? null),
       normalizeTimestamp(action.createdAt) ?? new Date().toISOString(),
+    ],
+  });
+}
+
+/**
+ * Inserts one structured unresolved proposal row.
+ *
+ * @param executor - SQL executor used for the insert.
+ * @param proposal - Structured unresolved proposal payload.
+ */
+export async function logSurgeonProposal(executor: SqlExecutor, proposal: SurgeonRunProposal): Promise<void> {
+  await executor.execute({
+    sql: `
+      INSERT INTO surgeon_run_proposals (
+        id,
+        run_id,
+        group_id,
+        issue_kind,
+        scope,
+        entry_ids,
+        current_claim_keys,
+        proposed_claim_keys,
+        rationale,
+        confidence,
+        source,
+        eligible_for_apply,
+        created_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    args: [
+      proposal.id.trim().length > 0 ? proposal.id.trim() : randomUUID(),
+      proposal.runId.trim(),
+      proposal.groupId.trim(),
+      proposal.issueKind,
+      proposal.scope,
+      JSON.stringify(normalizeEntryIds(proposal.entryIds)),
+      JSON.stringify(normalizeStringArray(proposal.currentClaimKeys)),
+      JSON.stringify(normalizeStringArray(proposal.proposedClaimKeys)),
+      proposal.rationale,
+      normalizeNumber(proposal.confidence),
+      proposal.source.trim(),
+      proposal.eligibleForApply ? 1 : 0,
+      normalizeTimestamp(proposal.createdAt) ?? new Date().toISOString(),
     ],
   });
 }
@@ -237,6 +283,7 @@ export async function getSurgeonRunActions(executor: SqlExecutor, runId: string)
         entry_ids,
         reasoning,
         recall_delta,
+        details_json,
         created_at
       FROM surgeon_run_actions
       WHERE run_id = ?
@@ -246,6 +293,40 @@ export async function getSurgeonRunActions(executor: SqlExecutor, runId: string)
   });
 
   return result.rows.map((row) => mapActionRow(row));
+}
+
+/**
+ * Loads the persisted unresolved proposal trail for one run.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @param runId - Run identifier to inspect.
+ * @returns Ordered proposal list for the run.
+ */
+export async function getSurgeonRunProposals(executor: SqlExecutor, runId: string): Promise<SurgeonRunProposal[]> {
+  const result = await executor.execute({
+    sql: `
+      SELECT
+        id,
+        run_id,
+        group_id,
+        issue_kind,
+        scope,
+        entry_ids,
+        current_claim_keys,
+        proposed_claim_keys,
+        rationale,
+        confidence,
+        source,
+        eligible_for_apply,
+        created_at
+      FROM surgeon_run_proposals
+      WHERE run_id = ?
+      ORDER BY created_at ASC
+    `,
+    args: [runId.trim()],
+  });
+
+  return result.rows.map((row) => mapProposalRow(row));
 }
 
 /**
@@ -315,6 +396,31 @@ function mapActionRow(row: Row): SurgeonRunAction {
     entryIds: parseJsonValue<string[]>(readOptionalString(row, "entry_ids"), []),
     reasoning: readRequiredString(row, "reasoning"),
     recallDelta: parseJsonValue<SurgeonRunAction["recallDelta"]>(readOptionalString(row, "recall_delta"), null),
+    details: parseJsonRecord(readOptionalString(row, "details_json")),
+    createdAt: readRequiredString(row, "created_at"),
+  };
+}
+
+/**
+ * Maps a raw surgeon proposal row into the typed proposal DTO.
+ *
+ * @param row - Raw database row.
+ * @returns Hydrated surgeon run proposal.
+ */
+function mapProposalRow(row: Row): SurgeonRunProposal {
+  return {
+    id: readRequiredString(row, "id"),
+    runId: readRequiredString(row, "run_id"),
+    groupId: readRequiredString(row, "group_id"),
+    issueKind: readRequiredString(row, "issue_kind"),
+    scope: readRequiredString(row, "scope") as SurgeonRunProposal["scope"],
+    entryIds: parseJsonValue<string[]>(readOptionalString(row, "entry_ids"), []),
+    currentClaimKeys: parseJsonValue<string[]>(readOptionalString(row, "current_claim_keys"), []),
+    proposedClaimKeys: parseJsonValue<string[]>(readOptionalString(row, "proposed_claim_keys"), []),
+    rationale: readRequiredString(row, "rationale"),
+    confidence: readNumber(row, "confidence", 0),
+    source: readRequiredString(row, "source"),
+    eligibleForApply: readBoolean(row, "eligible_for_apply"),
     createdAt: readRequiredString(row, "created_at"),
   };
 }
@@ -362,6 +468,16 @@ function parseJsonRecord(raw: string | undefined): Record<string, unknown> | nul
  */
 function normalizeEntryIds(entryIds: string[]): string[] {
   return Array.from(new Set(entryIds.map((entryId) => entryId.trim()).filter((entryId) => entryId.length > 0)));
+}
+
+/**
+ * Trims, removes blanks, and deduplicates generic string-array payloads.
+ *
+ * @param values - Raw string payload.
+ * @returns Stable list of non-empty unique strings.
+ */
+function normalizeStringArray(values: string[]): string[] {
+  return Array.from(new Set(values.map((value) => value.trim()).filter((value) => value.length > 0)));
 }
 
 /**

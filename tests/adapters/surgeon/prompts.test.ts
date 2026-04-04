@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { getSurgeonRetirementPassPrompt, getSurgeonSupersessionPassPrompt, getSurgeonSystemPrompt } from "../../../src/adapters/surgeon/prompts.js";
+import {
+  getSurgeonClaimKeyQualityPassPrompt,
+  getSurgeonRetirementPassPrompt,
+  getSurgeonSupersessionPassPrompt,
+  getSurgeonSystemPrompt,
+} from "../../../src/adapters/surgeon/prompts.js";
 
 describe("surgeon prompts", () => {
   it("system prompt contains the v1 corpus field glossary", () => {
@@ -81,6 +86,15 @@ describe("surgeon prompts", () => {
     const prompt = getSurgeonRetirementPassPrompt();
 
     expect(prompt).not.toContain("query_supersession_candidates");
+  });
+
+  it("claim-key-quality prompt keeps supersession out of scope and emphasizes structured proposals", () => {
+    const prompt = getSurgeonClaimKeyQualityPassPrompt();
+
+    expect(prompt).toContain("mass semantic rewrite engine");
+    expect(prompt).toContain("Do not create supersession links");
+    expect(prompt).toContain("structured unresolved proposals");
+    expect(prompt).toContain("trusted canonical families");
   });
 
   it("supersession prompt emphasizes coexistence and claim-key-first review", () => {

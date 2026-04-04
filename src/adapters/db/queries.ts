@@ -438,6 +438,9 @@ export async function updateEntry(
     valid_from?: string;
     valid_to?: string;
   },
+  options?: {
+    includeInactive?: boolean;
+  },
 ): Promise<boolean> {
   const assignments: string[] = [];
   const args: Array<number | string | null> = [];
@@ -480,7 +483,7 @@ export async function updateEntry(
       UPDATE entries
       SET ${assignments.join(", ")}
       WHERE id = ?
-        AND ${ACTIVE_ENTRY_CLAUSE}
+        AND ${options?.includeInactive === true ? "1 = 1" : ACTIVE_ENTRY_CLAUSE}
     `,
     args,
   });

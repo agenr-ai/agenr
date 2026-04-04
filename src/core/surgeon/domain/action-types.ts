@@ -21,5 +21,6 @@ export interface SurgeonRunAction {
   entryIds: string[];
   reasoning: string;
   recallDelta?: { before: RecallDeltaSnapshot; after: RecallDeltaSnapshot } | null;
+  details?: Record<string, unknown> | null;
   createdAt: string;
 }

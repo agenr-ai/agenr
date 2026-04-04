@@ -1,6 +1,6 @@
 import type { SurgeonRunAction } from "../../core/surgeon/domain/action-types.js";
 import type { SurgeonPassType } from "../../core/surgeon/domain/pass-types.js";
-import type { SurgeonCompletionSummary, SurgeonRunStatus } from "../../core/surgeon/types.js";
+import type { SurgeonCompletionSummary, SurgeonRunProposal, SurgeonRunStatus } from "../../core/surgeon/types.js";
 import type { Entry } from "../../core/types.js";
 
 /**
@@ -231,6 +231,14 @@ export interface SurgeonPort {
   getRunActions(runId: string): Promise<SurgeonRunAction[]>;
 
   /**
+   * Loads the unresolved proposal trail for one run.
+   *
+   * @param runId - Run identifier to inspect.
+   * @returns Ordered unresolved proposals recorded for the run.
+   */
+  getRunProposals(runId: string): Promise<SurgeonRunProposal[]>;
+
+  /**
    * Loads aggregate corpus health stats for the current protection settings.
    *
    * @param options - Retirement protection configuration and optional clock.
@@ -316,10 +324,11 @@ export interface SurgeonPort {
   supersedeEntry(oldEntryId: string, newEntryId: string, kind?: string, reason?: string): Promise<boolean>;
 
   /**
-   * Updates one active entry's mutable fields.
+   * Updates one entry's mutable fields, optionally including inactive rows.
    *
    * @param entryId - Entry identifier to update.
    * @param fields - Mutable fields to change.
+   * @param options - Optional claim-key-quality update controls.
    * @returns `true` when the entry was updated.
    */
   updateEntry(
@@ -331,6 +340,9 @@ export interface SurgeonPort {
       valid_from?: string;
       valid_to?: string;
     },
+    options?: {
+      includeInactive?: boolean;
+    },
   ): Promise<boolean>;
 
   /**
@@ -339,4 +351,26 @@ export interface SurgeonPort {
    * @returns ISO timestamp, or `null` when absent.
    */
   getLastBulkIngestAt(): Promise<string | null>;
+
+  /**
+   * Lists entries eligible for claim-key-quality maintenance.
+   *
+   * @param query - Optional claim-key-quality filters.
+   * @returns Matched entries ordered deterministically for one pass.
+   */
+  listClaimKeyQualityEntries(query: {
+    project?: string;
+    type?: string;
+    claimKeyPrefix?: string;
+    entryIds?: string[];
+    includeInactive?: boolean;
+  }): Promise<Entry[]>;
+
+  /**
+   * Persists one unresolved proposal discovered during a surgeon run.
+   *
+   * @param proposal - Structured unresolved proposal payload.
+   * @returns Promise that resolves after the proposal is stored.
+   */
+  logRunProposal(proposal: SurgeonRunProposal): Promise<void>;
 }

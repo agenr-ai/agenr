@@ -125,15 +125,18 @@ export interface ClaimExtractionResult {
 }
 
 /**
- * Extracts one normalized claim key for a durable entry when the slot is clear.
+ * Previews the best validated claim-key suggestion without applying a confidence threshold.
+ *
+ * This is used by maintenance flows that need to distinguish between
+ * high-confidence auto-apply and lower-confidence unresolved proposals.
  *
  * @param entry - Candidate entry content to classify.
  * @param llm - LLM port used for JSON classification.
  * @param config - Runtime extraction controls.
  * @param options - Optional hints plus warning sink for deterministic rejection reasons.
- * @returns Extracted claim metadata, or `null` when no safe claim key was found.
+ * @returns Best validated claim metadata, or `null` when no safe suggestion exists.
  */
-export async function extractClaimKey(
+export async function previewClaimKeyExtraction(
   entry: { type: EntryType; subject: string; content: string },
   llm: LlmPort,
   config: ClaimExtractionConfig,
@@ -165,11 +168,7 @@ export async function extractClaimKey(
   }
 
   const candidate = buildClaimExtractionCandidate(entry, attempt.response, normalizedHints, options.onWarning);
-  if (!candidate) {
-    return null;
-  }
-
-  if (candidate.confidence >= config.confidenceThreshold) {
+  if (candidate) {
     return {
       claimKey: candidate.claimKey,
       confidence: candidate.confidence,
@@ -180,6 +179,41 @@ export async function extractClaimKey(
   }
 
   return tryDeterministicClaimKeyRepair(entry, normalizedHints);
+}
+
+/**
+ * Extracts one normalized claim key for a durable entry when the slot is clear.
+ *
+ * @param entry - Candidate entry content to classify.
+ * @param llm - LLM port used for JSON classification.
+ * @param config - Runtime extraction controls.
+ * @param options - Optional hints plus warning sink for deterministic rejection reasons.
+ * @returns Extracted claim metadata, or `null` when no safe claim key was found.
+ */
+export async function extractClaimKey(
+  entry: { type: EntryType; subject: string; content: string },
+  llm: LlmPort,
+  config: ClaimExtractionConfig,
+  options: {
+    hints?: ClaimExtractionHints;
+    onWarning?: (warning: string) => void;
+  } = {},
+): Promise<ClaimExtractionResult | null> {
+  const preview = await previewClaimKeyExtraction(entry, llm, config, options);
+  if (!preview) {
+    return null;
+  }
+
+  if (preview.path === "deterministic_repair" || preview.confidence >= config.confidenceThreshold) {
+    return preview;
+  }
+
+  const deterministicRepair = tryDeterministicClaimKeyRepair(entry, normalizeClaimExtractionHints(options.hints ?? {}));
+  if (deterministicRepair) {
+    return deterministicRepair;
+  }
+
+  return null;
 }
 
 /**

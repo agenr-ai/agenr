@@ -8,13 +8,14 @@ import { createDatabase } from "../../adapters/db/client.js";
 import { createSurgeonPort } from "../../adapters/db/surgeon-port.js";
 import { createRecallAdapter } from "../../adapters/db/recall-adapter.js";
 import { createEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../../adapters/embeddings.js";
-import { resolveLlmCredentials } from "../../adapters/llm.js";
+import { createLlmClient, resolveLlmCredentials, resolveModel } from "../../adapters/llm.js";
 import {
   DEFAULT_SURGEON_RETIREMENT_PROTECT_MIN_IMPORTANCE,
   DEFAULT_SURGEON_RETIREMENT_PROTECT_RECALLED_DAYS,
   DEFAULT_SURGEON_SKIP_RECENTLY_EVALUATED_DAYS,
   type AgenrConfig,
   readConfig,
+  resolveClaimExtractionConfig,
   resolveDbPath,
 } from "../../config.js";
 import type { SurgeonRunAction } from "../../core/surgeon/domain/action-types.js";
@@ -42,8 +43,16 @@ export async function runSurgeonRuntime(input: SurgeonRunOptions & { dbPath?: st
 
   try {
     const modelSelection = resolveSurgeonModel(runtime.config, input);
+    const claimExtractionConfig = input.pass === "claim_key_quality" ? resolveClaimExtractionConfig(runtime.config) : { enabled: false };
+    const claimModelSelection = claimExtractionConfig.enabled ? resolveModel(runtime.config, "claim") : null;
     const model = getModelWithStrings(modelSelection.provider, modelSelection.modelId);
     const credentials = resolveLlmCredentials(runtime.config, modelSelection.provider, input.env ?? process.env);
+    const claimCredentials =
+      claimModelSelection && claimModelSelection.provider === modelSelection.provider
+        ? credentials
+        : claimModelSelection
+          ? resolveLlmCredentials(runtime.config, claimModelSelection.provider, input.env ?? process.env)
+          : null;
 
     let recallPorts: ReturnType<typeof createRecallAdapter> | undefined;
     try {
@@ -75,6 +84,10 @@ export async function runSurgeonRuntime(input: SurgeonRunOptions & { dbPath?: st
         config: runtime.config,
         model,
         getApiKey: async () => credentials.apiKey,
+        createClaimExtractionLlm:
+          claimModelSelection && claimCredentials
+            ? () => createLlmClient(claimModelSelection.provider, claimModelSelection.modelId, { apiKey: claimCredentials.apiKey })
+            : undefined,
         recallPorts,
         backupDb: backupDatabaseFile,
       },

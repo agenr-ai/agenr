@@ -7,8 +7,10 @@ import {
   getDailySurgeonCost,
   getLastSurgeonRun,
   getSurgeonRunActions,
+  getSurgeonRunProposals,
   getSurgeonRunHistory,
   logSurgeonAction,
+  logSurgeonProposal,
 } from "../../../src/adapters/db/surgeon-run-log.js";
 import { initSchema } from "../../../src/adapters/db/schema.js";
 
@@ -112,12 +114,16 @@ describe("surgeon run log", () => {
           topResults: [{ entryId: "entry-c", subject: "Current status", score: 0.88 }],
         },
       },
+      details: {
+        issue_kind: "retirement_candidate",
+        auto_applied: true,
+      },
       createdAt: "2026-03-29T11:01:00.000Z",
     });
 
     const stored = await client.execute({
       sql: `
-        SELECT entry_id, entry_ids
+        SELECT entry_id, entry_ids, details_json
         FROM surgeon_run_actions
         WHERE id = 'action-1'
       `,
@@ -127,6 +133,7 @@ describe("surgeon run log", () => {
       {
         entry_id: "entry-a",
         entry_ids: '["entry-a","entry-b"]',
+        details_json: '{"issue_kind":"retirement_candidate","auto_applied":true}',
       },
     ]);
 
@@ -147,7 +154,54 @@ describe("surgeon run log", () => {
             topResults: [{ entryId: "entry-c", subject: "Current status", score: 0.88 }],
           },
         },
+        details: {
+          issue_kind: "retirement_candidate",
+          auto_applied: true,
+        },
         createdAt: "2026-03-29T11:01:00.000Z",
+      },
+    ]);
+  });
+
+  it("stores structured unresolved proposals for later adjudication", async () => {
+    const client = await createTestClient(clients);
+    const runId = await createSurgeonRun(client, {
+      passType: "claim_key_quality",
+      dryRun: true,
+      startedAt: "2026-03-29T12:00:00.000Z",
+    });
+
+    await logSurgeonProposal(client, {
+      id: "proposal-1",
+      runId,
+      groupId: "claim-key-mixed:shared-subject::fact",
+      issueKind: "mixed_claim_key_group",
+      scope: "cluster",
+      entryIds: ["entry-a", "entry-b"],
+      currentClaimKeys: ["jim/home_city", "jim/city_of_residence"],
+      proposedClaimKeys: ["jim/home_city"],
+      rationale: "One trusted canonical family already exists, but unification remains ambiguous.",
+      confidence: 0.84,
+      source: "mixed_group_consensus",
+      eligibleForApply: true,
+      createdAt: "2026-03-29T12:01:00.000Z",
+    });
+
+    expect(await getSurgeonRunProposals(client, runId)).toEqual([
+      {
+        id: "proposal-1",
+        runId,
+        groupId: "claim-key-mixed:shared-subject::fact",
+        issueKind: "mixed_claim_key_group",
+        scope: "cluster",
+        entryIds: ["entry-a", "entry-b"],
+        currentClaimKeys: ["jim/home_city", "jim/city_of_residence"],
+        proposedClaimKeys: ["jim/home_city"],
+        rationale: "One trusted canonical family already exists, but unification remains ambiguous.",
+        confidence: 0.84,
+        source: "mixed_group_consensus",
+        eligibleForApply: true,
+        createdAt: "2026-03-29T12:01:00.000Z",
       },
     ]);
   });

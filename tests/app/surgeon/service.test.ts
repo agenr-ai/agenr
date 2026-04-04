@@ -24,7 +24,7 @@ import {
   getSurgeonRunActions,
   getSurgeonRunHistory,
 } from "../../../src/adapters/db/surgeon-run-log.js";
-import { runSurgeon, type SurgeonRunOptions } from "../../../src/app/surgeon/service.js";
+import { runSurgeon, runSurgeonPreset, type SurgeonRunOptions } from "../../../src/app/surgeon/service.js";
 import type { Entry } from "../../../src/core/types.js";
 
 const TEST_NOW = new Date("2026-03-29T12:00:00.000Z");
@@ -374,6 +374,95 @@ describe("runSurgeon", () => {
 
     const [, context] = runAgentLoopMock.mock.calls[0] as [AgentMessage[], AgentContext, AgentLoopConfig];
     expect(context.systemPrompt).toContain("Custom surgeon rule: always mention provenance when you skip an entry.");
+  });
+
+  it("runs claim_key_quality as a first-class surgeon pass without invoking the agent loop", async () => {
+    const db = await createTestDatabase(databases);
+    await insertEntry(db, {
+      id: "claim-noncanonical",
+      subject: "Jim home city",
+      type: "fact",
+      claim_key: " Jim / Home City ",
+      created_at: daysAgoIso(60),
+      updated_at: daysAgoIso(60),
+    });
+
+    const result = await runSurgeon(
+      createRunOptions({
+        pass: "claim_key_quality",
+        apply: true,
+      }),
+      {
+        port: createSurgeonPort(db),
+        config: null,
+        model: TEST_MODEL,
+        now: () => TEST_NOW,
+      },
+    );
+
+    expect(runAgentLoopMock).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      status: "completed",
+      passType: "claim_key_quality",
+    });
+
+    const run = await getLastSurgeonRun(db);
+    expect(run).toMatchObject({
+      id: result.runId,
+      passType: "claim_key_quality",
+      status: "completed",
+    });
+
+    const actions = await getSurgeonRunActions(db, result.runId);
+    expect(actions[0]).toMatchObject({
+      actionType: "update_entry",
+      details: expect.objectContaining({
+        issue_kind: "noncanonical_claim_key",
+        new_claim_key: "jim/home_city",
+        proposal_source: "normalize",
+      }),
+    });
+  });
+
+  it("composes structural preset runs with claim_key_quality before supersession", async () => {
+    const db = await createTestDatabase(databases);
+    await insertEntry(db, {
+      id: "slot-old",
+      subject: "Mac mini update policy",
+      type: "preference",
+      claim_key: "mac_mini/manual_update_policy",
+      created_at: daysAgoIso(50),
+      updated_at: daysAgoIso(50),
+    });
+    await insertEntry(db, {
+      id: "slot-new",
+      subject: "Mac mini update policy clarified",
+      type: "preference",
+      claim_key: "mac_mini/manual_update_policy",
+      created_at: daysAgoIso(10),
+      updated_at: daysAgoIso(10),
+    });
+    mockSuccessfulRunAgentLoop();
+
+    const result = await runSurgeonPreset(
+      {
+        preset: "structural",
+        budget: 0.1,
+        apply: false,
+        contextLimit: 4_096,
+        verbose: false,
+        json: false,
+      },
+      {
+        port: createSurgeonPort(db),
+        config: null,
+        model: TEST_MODEL,
+        now: () => TEST_NOW,
+      },
+    );
+
+    expect(result.passes.map((pass) => pass.passType)).toEqual(["claim_key_quality", "supersession"]);
+    expect(runAgentLoopMock).toHaveBeenCalledTimes(1);
   });
 });
 

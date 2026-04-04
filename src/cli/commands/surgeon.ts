@@ -5,7 +5,11 @@ import { isImplementedSurgeonPass, isSurgeonPassType, type SurgeonPassType } fro
 
 /** Parsed commander options for `agenr surgeon run`. */
 interface SurgeonRunCommandOptions {
-  pass?: Extract<SurgeonPassType, "retirement" | "supersession">;
+  pass?: Extract<SurgeonPassType, "claim_key_quality" | "retirement" | "supersession">;
+  type?: string;
+  claimKeyPrefix?: string;
+  entryId?: string[];
+  includeInactive?: boolean;
   budget?: number;
   contextLimit?: number;
   skipEvaluatedDays?: number;
@@ -33,7 +37,15 @@ export function registerSurgeonCommand(program: Command): void {
   surgeonCommand
     .command("run")
     .description("Execute a surgeon maintenance pass")
-    .addOption(new Option("--pass <type>", "Surgeon pass: retirement (default) or supersession").argParser(parseImplementedSurgeonPass).default("retirement"))
+    .addOption(
+      new Option("--pass <type>", "Surgeon pass: retirement (default), supersession, or claim_key_quality")
+        .argParser(parseImplementedSurgeonPass)
+        .default("retirement"),
+    )
+    .option("--type <entryType>", "Restrict claim-key-quality cleanup to one entry type")
+    .option("--claim-key-prefix <prefix>", "Restrict claim-key-quality cleanup to one claim-key entity prefix")
+    .option("--entry-id <id>", "Restrict claim-key-quality cleanup to one or more entry IDs", collectValues, [])
+    .option("--include-inactive", "Allow claim-key-quality cleanup to include retired or superseded rows")
     .addOption(new Option("--budget <usd>", "Cost cap for this run in USD").argParser(parsePositiveNumber))
     .addOption(new Option("--context-limit <tokens>", "Context limit override in tokens").argParser(parsePositiveInteger))
     .addOption(new Option("--skip-evaluated-days <n>", "Skip entries evaluated within the last N days").argParser(parseNonNegativeInteger))
@@ -64,6 +76,10 @@ export function registerSurgeonCommand(program: Command): void {
           pass: options.pass ?? "retirement",
           budget: options.budget ?? 0,
           contextLimit: options.contextLimit,
+          type: options.type,
+          claimKeyPrefix: options.claimKeyPrefix,
+          entryIds: options.entryId,
+          includeInactive: options.includeInactive === true,
           skipEvaluatedDays: options.skipEvaluatedDays,
           apply: options.apply === true,
           model: options.model,
@@ -143,7 +159,7 @@ export function registerSurgeonCommand(program: Command): void {
  * @param value - Raw commander option value.
  * @returns Supported implemented surgeon pass.
  */
-function parseImplementedSurgeonPass(value: string): Extract<SurgeonPassType, "retirement" | "supersession"> {
+function parseImplementedSurgeonPass(value: string): Extract<SurgeonPassType, "claim_key_quality" | "retirement" | "supersession"> {
   const normalized = value.trim().toLowerCase();
   if (!isSurgeonPassType(normalized)) {
     throw new InvalidArgumentError(`Invalid surgeon pass: ${value}`);
@@ -154,6 +170,17 @@ function parseImplementedSurgeonPass(value: string): Extract<SurgeonPassType, "r
   }
 
   return normalized;
+}
+
+/**
+ * Collects repeated commander option values into a string array.
+ *
+ * @param value - Raw option value.
+ * @param previous - Accumulated previous values.
+ * @returns Updated ordered value array.
+ */
+function collectValues(value: string, previous: string[]): string[] {
+  return [...previous, value];
 }
 
 /**

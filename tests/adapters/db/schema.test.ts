@@ -32,7 +32,7 @@ describe("initSchema", () => {
         SELECT name
         FROM sqlite_master
         WHERE type = 'table'
-          AND name IN ('entries', 'entries_fts', 'ingest_log', 'episodes', 'recall_events', 'surgeon_runs', 'surgeon_run_actions', '_meta')
+          AND name IN ('entries', 'entries_fts', 'ingest_log', 'episodes', 'recall_events', 'surgeon_runs', 'surgeon_run_actions', 'surgeon_run_proposals', '_meta')
       `,
     });
     const tableNames = new Set(
@@ -42,7 +42,9 @@ describe("initSchema", () => {
       }),
     );
 
-    expect(tableNames).toEqual(new Set(["entries", "entries_fts", "ingest_log", "episodes", "recall_events", "surgeon_runs", "surgeon_run_actions", "_meta"]));
+    expect(tableNames).toEqual(
+      new Set(["entries", "entries_fts", "ingest_log", "episodes", "recall_events", "surgeon_runs", "surgeon_run_actions", "surgeon_run_proposals", "_meta"]),
+    );
     expect(await tableColumns(client, "entries")).toEqual([
       "id",
       "type",
@@ -146,11 +148,30 @@ describe("initSchema", () => {
       "entry_ids",
       "reasoning",
       "recall_delta",
+      "details_json",
+      "created_at",
+    ]);
+    expect(await tableColumns(client, "surgeon_run_proposals")).toEqual([
+      "id",
+      "run_id",
+      "group_id",
+      "issue_kind",
+      "scope",
+      "entry_ids",
+      "current_claim_keys",
+      "proposed_claim_keys",
+      "rationale",
+      "confidence",
+      "source",
+      "eligible_for_apply",
       "created_at",
     ]);
     expect(await indexExists(client, "idx_surgeon_run_actions_run_id")).toBe(true);
     expect(await indexExists(client, "idx_surgeon_run_actions_entry_id")).toBe(true);
     expect(await indexExists(client, "idx_surgeon_run_actions_created_at")).toBe(true);
+    expect(await indexExists(client, "idx_surgeon_run_proposals_run_id")).toBe(true);
+    expect(await indexExists(client, "idx_surgeon_run_proposals_group_id")).toBe(true);
+    expect(await indexExists(client, "idx_surgeon_run_proposals_created_at")).toBe(true);
     expect(await indexExists(client, "idx_entries_claim_key")).toBe(true);
     expect(await indexExists(client, "idx_entries_valid_from")).toBe(true);
     expect(await indexExists(client, "idx_entries_valid_to")).toBe(true);
@@ -170,11 +191,11 @@ describe("initSchema", () => {
     await expect(initSchema(client)).resolves.toBeUndefined();
 
     const version = await client.execute("SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1");
-    expect(version.rows[0]?.value).toBe("6");
+    expect(version.rows[0]?.value).toBe("7");
     expect(await indexExists(client, "idx_episodes_started_at")).toBe(true);
   });
 
-  it("migrates a v5 database to schema version 6", async () => {
+  it("migrates a v5 database to the current schema version", async () => {
     const client = createClient({ url: ":memory:" });
     clients.push(client);
 
@@ -303,7 +324,7 @@ describe("initSchema", () => {
     });
 
     const version = await client.execute("SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1");
-    expect(version.rows[0]?.value).toBe("6");
+    expect(version.rows[0]?.value).toBe("7");
   });
 
   for (const version of ["2", "3", "4"] as const) {
@@ -399,6 +420,22 @@ describe("initSchema", () => {
       "entry_ids",
       "reasoning",
       "recall_delta",
+      "details_json",
+      "created_at",
+    ]);
+    expect(await tableColumns(client, "surgeon_run_proposals")).toEqual([
+      "id",
+      "run_id",
+      "group_id",
+      "issue_kind",
+      "scope",
+      "entry_ids",
+      "current_claim_keys",
+      "proposed_claim_keys",
+      "rationale",
+      "confidence",
+      "source",
+      "eligible_for_apply",
       "created_at",
     ]);
   });

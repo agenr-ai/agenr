@@ -91,6 +91,45 @@ export function getSurgeonSystemPrompt(): string {
 }
 
 /**
+ * Returns the claim-key-quality-pass-specific surgeon prompt.
+ *
+ * @returns Claim-key-quality pass prompt focused on conservative structural cleanup.
+ */
+export function getSurgeonClaimKeyQualityPassPrompt(): string {
+  return [
+    "# Claim-Key Quality Pass",
+    "",
+    "Your task is to improve claim-key coverage and consistency without turning the surgeon into a mass semantic rewrite engine.",
+    "",
+    "## Scope",
+    "",
+    "- Repair missing, malformed, or noncanonical claim keys conservatively.",
+    "- Prefer deterministic normalization and explicit metadata-backed repairs first.",
+    "- Reuse trusted canonical key families when they clearly match.",
+    "- Emit structured unresolved proposals for ambiguous cases instead of forcing semantic rewrites.",
+    "- Do not create supersession links in this pass. Supersession happens later on the cleaned slot graph.",
+    "",
+    "## Safe Auto-Mutations",
+    "",
+    "- Canonical normalization when the slot meaning clearly does not change.",
+    "- High-confidence missing-key backfill after deterministic validation.",
+    "- Self-referential or generic metadata-backed rewrites only when explicit entry metadata makes the replacement uniquely obvious.",
+    "",
+    "## Report-Only Work",
+    "",
+    "- Suspect-but-canonical keys.",
+    "- Mixed-key groups.",
+    "- Any repair that would cause a collision, broad convergence, or non-obvious semantic shift.",
+    "",
+    "## Hint Safety",
+    "",
+    "- Use only trusted canonical families as cleanup hints.",
+    "- Do not let low-trust or newly repaired keys seed later repairs in the same run.",
+    "- Prefer skipping over inventing a weak claim key.",
+  ].join("\n");
+}
+
+/**
  * Returns the retirement-pass-specific surgeon prompt.
  *
  * @returns Retirement pass prompt rewritten for the v1 schema and tool set.

@@ -12,14 +12,16 @@ import {
   DEFAULT_SURGEON_SKIP_RECENTLY_EVALUATED_DAYS,
   type AgenrConfig,
 } from "../../config.js";
-import type { RecallPorts } from "../../core/ports.js";
+import type { LlmPort, RecallPorts } from "../../core/ports.js";
 import type { SurgeonRunAction } from "../../core/surgeon/domain/action-types.js";
 import type { SurgeonPassType } from "../../core/surgeon/domain/pass-types.js";
+import { resolveSurgeonPassSequence, type ImplementedSurgeonPass, type SurgeonRunPreset } from "../../core/surgeon/domain/run-presets.js";
 import type { SurgeonCompletionSummary, SurgeonRunStatus } from "../../core/surgeon/types.js";
 import { createBudgetTracker } from "./budget.js";
+import { runClaimKeyQualityPass } from "./claim-key-quality.js";
 import { createSurgeonCompletionGuardState } from "./completion-guard.js";
 import { createTraceLogger, type SurgeonTraceLogger } from "./trace-logger.js";
-import { getSurgeonRetirementPassPrompt, getSurgeonSupersessionPassPrompt, getSurgeonSystemPrompt } from "./prompts.js";
+import { getSurgeonClaimKeyQualityPassPrompt, getSurgeonRetirementPassPrompt, getSurgeonSupersessionPassPrompt, getSurgeonSystemPrompt } from "./prompts.js";
 import type { SurgeonPort } from "./ports.js";
 import { createSupersessionTools, createSurgeonTools, type SurgeonToolCompletionState } from "./tools/index.js";
 
@@ -36,8 +38,12 @@ const USER_ABORT_SUMMARY = "Run aborted by user.";
  * CLI and runtime options accepted by one surgeon run.
  */
 export interface SurgeonRunOptions {
-  pass: Extract<SurgeonPassType, "retirement" | "supersession">;
+  pass: ImplementedSurgeonPass;
   project?: string;
+  type?: string;
+  claimKeyPrefix?: string;
+  entryIds?: string[];
+  includeInactive?: boolean;
   budget: number;
   contextLimit?: number;
   apply: boolean;
@@ -66,6 +72,28 @@ export interface SurgeonRunResult {
 }
 
 /**
+ * Options accepted by one composed surgeon preset run.
+ */
+export interface SurgeonPresetRunOptions extends Omit<SurgeonRunOptions, "pass"> {
+  preset: SurgeonRunPreset;
+}
+
+/**
+ * Aggregate summary returned after a composed surgeon preset run completes.
+ */
+export interface SurgeonPresetRunResult {
+  preset: SurgeonRunPreset;
+  passes: SurgeonRunResult[];
+  status: SurgeonRunStatus;
+  actionsTaken: number;
+  entriesRetired: number;
+  inputTokens: number;
+  outputTokens: number;
+  estimatedCostUsd: number;
+  summary: string | null;
+}
+
+/**
  * Resolved infrastructure dependencies for the surgeon workflow.
  */
 export interface SurgeonWorkflowDeps {
@@ -74,9 +102,54 @@ export interface SurgeonWorkflowDeps {
   config: AgenrConfig | null;
   model: Model<Api>;
   getApiKey?: (provider: string) => Promise<string | undefined> | string | undefined;
+  createClaimExtractionLlm?: () => LlmPort & { metadata?: { usage?: { inputTokens?: number; outputTokens?: number; totalCost?: number } } };
   recallPorts?: RecallPorts;
   now?: () => Date;
   backupDb?: (dbPath: string) => Promise<string>;
+}
+
+/**
+ * Runs one composed surgeon preset by executing its ordered pass sequence.
+ *
+ * @param options - Preset selection and shared run options.
+ * @param deps - Resolved database, model, config, and optional recall runtime dependencies.
+ * @returns Aggregate preset summary plus per-pass results.
+ */
+export async function runSurgeonPreset(options: SurgeonPresetRunOptions, deps: SurgeonWorkflowDeps): Promise<SurgeonPresetRunResult> {
+  const passes = resolveSurgeonPassSequence(options.preset);
+  const results: SurgeonRunResult[] = [];
+
+  for (const pass of passes) {
+    const result = await runSurgeon(
+      {
+        ...options,
+        pass,
+      },
+      deps,
+    );
+    results.push(result);
+
+    if (result.status !== "completed") {
+      break;
+    }
+  }
+
+  return {
+    preset: options.preset,
+    passes: results,
+    status: results.at(-1)?.status ?? "completed",
+    actionsTaken: results.reduce((sum, result) => sum + result.actionsTaken, 0),
+    entriesRetired: results.reduce((sum, result) => sum + result.entriesRetired, 0),
+    inputTokens: results.reduce((sum, result) => sum + result.inputTokens, 0),
+    outputTokens: results.reduce((sum, result) => sum + result.outputTokens, 0),
+    estimatedCostUsd: results.reduce((sum, result) => sum + result.estimatedCostUsd, 0),
+    summary:
+      results
+        .map((result) => result.summary)
+        .filter((summary): summary is string => Boolean(summary))
+        .join(" ")
+        .trim() || null,
+  };
 }
 
 /**
@@ -139,6 +212,43 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
   let traceLogger: SurgeonTraceLogger | null = null;
 
   try {
+    if (options.pass === "claim_key_quality") {
+      const deterministicResult = await runClaimKeyQualityPass(
+        {
+          runId,
+          apply: options.apply,
+          project: options.project,
+          type: options.type,
+          claimKeyPrefix: options.claimKeyPrefix,
+          entryIds: options.entryIds,
+          includeInactive: options.includeInactive,
+          signal,
+          now: nowFn,
+          costCapUsd: runCostCap,
+        },
+        {
+          port: deps.port,
+          config: deps.config,
+          createClaimExtractionLlm: deps.createClaimExtractionLlm,
+        },
+      );
+      completionState.setComplete(deterministicResult.completion);
+
+      return finalizeRun({
+        runId,
+        status: deterministicResult.status,
+        passType: options.pass,
+        completionState,
+        actionMetrics,
+        usageTotals: deterministicResult.usage,
+        error: deterministicResult.error,
+        port: deps.port,
+        now: nowFn,
+      });
+    }
+
+    const agentPass: Extract<SurgeonPassType, "retirement" | "supersession"> = options.pass;
+
     const [health, passStartContext, lastRun] = await Promise.all([
       deps.port.getHealthStats({
         protectRecalledDays: protection.protectRecalledDays,
@@ -146,7 +256,7 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
         skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
         now: nowFn(),
       }),
-      loadPassStartContext(options.pass, deps.port, {
+      loadPassStartContext(agentPass, deps.port, {
         protectRecalledDays: protection.protectRecalledDays,
         protectMinImportance: protection.protectMinImportance,
         skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
@@ -167,8 +277,8 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
       budgetTracker,
     });
 
-    const tools = createToolsForPass(options.pass, {
-      passType: options.pass,
+    const tools = createToolsForPass(agentPass, {
+      passType: agentPass,
       port: deps.port,
       runId,
       project: options.project,
@@ -194,7 +304,7 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
     });
 
     const initialPrompt = buildInitialUserPrompt({
-      pass: options.pass,
+      pass: agentPass,
       project: options.project,
       totalEntries: health.total,
       retirementCandidates: passStartContext.retirementCandidates,
@@ -241,7 +351,7 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
             {
               role: "user",
               content: buildContinuationPrompt({
-                pass: options.pass,
+                pass: agentPass,
                 currentContextTokens: remaining.currentContextTokens,
                 contextLimit: remaining.contextLimit,
                 remainingCostUsd: remaining.remainingCostUsd,
@@ -493,7 +603,7 @@ function resolveProtectionConfig(
  * @param config - Optional persisted agenr configuration.
  * @returns Full system prompt text for the run.
  */
-function buildSystemPrompt(pass: Extract<SurgeonPassType, "retirement" | "supersession">, config: AgenrConfig | null): string {
+function buildSystemPrompt(pass: ImplementedSurgeonPass, config: AgenrConfig | null): string {
   return [getSurgeonSystemPrompt().trim(), getPassPrompt(pass).trim(), config?.surgeon?.customInstructions?.trim() ?? ""]
     .filter((block) => block.length > 0)
     .join("\n\n");
@@ -640,7 +750,11 @@ async function loadPassStartContext(
  * @param pass - Surgeon pass being executed.
  * @returns Prompt text for the requested pass.
  */
-function getPassPrompt(pass: Extract<SurgeonPassType, "retirement" | "supersession">): string {
+function getPassPrompt(pass: ImplementedSurgeonPass): string {
+  if (pass === "claim_key_quality") {
+    return getSurgeonClaimKeyQualityPassPrompt();
+  }
+
   return pass === "supersession" ? getSurgeonSupersessionPassPrompt() : getSurgeonRetirementPassPrompt();
 }
 
@@ -696,19 +810,29 @@ function createCompletionState(): SurgeonToolCompletionState {
 async function finalizeRun(input: {
   runId: string;
   status: SurgeonRunStatus;
-  passType: Extract<SurgeonPassType, "retirement" | "supersession">;
+  passType: ImplementedSurgeonPass;
   completionState: SurgeonToolCompletionState;
   actionMetrics: {
     actionsTaken: number;
     entriesRetired: number;
   };
-  budgetTracker: ReturnType<typeof createBudgetTracker>;
+  budgetTracker?: ReturnType<typeof createBudgetTracker>;
+  usageTotals?: {
+    inputTokens: number;
+    outputTokens: number;
+    estimatedCostUsd: number;
+  };
   error: string | null;
   summaryOverride?: string;
   port: SurgeonPort;
   now: () => Date;
 }): Promise<SurgeonRunResult> {
-  const totals = input.budgetTracker.totals();
+  const trackerTotals = input.budgetTracker?.totals();
+  const totals = {
+    inputTokens: input.usageTotals?.inputTokens ?? trackerTotals?.inputTokens ?? 0,
+    outputTokens: input.usageTotals?.outputTokens ?? trackerTotals?.outputTokens ?? 0,
+    costUsd: input.usageTotals?.estimatedCostUsd ?? trackerTotals?.costUsd ?? 0,
+  };
   const summary = input.summaryOverride ?? summarizeCompletion(input.completionState.summary);
 
   await input.port.completeRun(input.runId, {

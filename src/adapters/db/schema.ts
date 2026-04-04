@@ -5,7 +5,7 @@ import type { SqlExecutor } from "./queries.js";
 /**
  * Logical schema version stored in the metadata table.
  */
-const SCHEMA_VERSION = "6";
+const SCHEMA_VERSION = "7";
 
 /**
  * libSQL vector index name for entry embeddings.
@@ -196,6 +196,7 @@ const CREATE_SURGEON_RUN_ACTIONS_TABLE_SQL = `
     entry_ids TEXT NOT NULL DEFAULT '[]',
     reasoning TEXT NOT NULL DEFAULT '',
     recall_delta TEXT,
+    details_json TEXT,
     created_at TEXT NOT NULL
   )
 `;
@@ -213,6 +214,40 @@ const CREATE_SURGEON_RUN_ACTIONS_ENTRY_ID_INDEX_SQL = `
 const CREATE_SURGEON_RUN_ACTIONS_CREATED_AT_INDEX_SQL = `
   CREATE INDEX IF NOT EXISTS idx_surgeon_run_actions_created_at
   ON surgeon_run_actions(created_at)
+`;
+
+/** SQL statement that stores structured unresolved proposals for surgeon runs. */
+const CREATE_SURGEON_RUN_PROPOSALS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS surgeon_run_proposals (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES surgeon_runs(id),
+    group_id TEXT NOT NULL,
+    issue_kind TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    entry_ids TEXT NOT NULL DEFAULT '[]',
+    current_claim_keys TEXT NOT NULL DEFAULT '[]',
+    proposed_claim_keys TEXT NOT NULL DEFAULT '[]',
+    rationale TEXT NOT NULL DEFAULT '',
+    confidence REAL NOT NULL DEFAULT 0,
+    source TEXT NOT NULL DEFAULT '',
+    eligible_for_apply INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+  )
+`;
+
+const CREATE_SURGEON_RUN_PROPOSALS_RUN_ID_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_surgeon_run_proposals_run_id
+  ON surgeon_run_proposals(run_id)
+`;
+
+const CREATE_SURGEON_RUN_PROPOSALS_GROUP_ID_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_surgeon_run_proposals_group_id
+  ON surgeon_run_proposals(group_id)
+`;
+
+const CREATE_SURGEON_RUN_PROPOSALS_CREATED_AT_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_surgeon_run_proposals_created_at
+  ON surgeon_run_proposals(created_at)
 `;
 
 /** SQL statement that stores key-value metadata for the database. */
@@ -361,6 +396,10 @@ const SCHEMA_STATEMENTS = [
   CREATE_SURGEON_RUN_ACTIONS_RUN_ID_INDEX_SQL,
   CREATE_SURGEON_RUN_ACTIONS_ENTRY_ID_INDEX_SQL,
   CREATE_SURGEON_RUN_ACTIONS_CREATED_AT_INDEX_SQL,
+  CREATE_SURGEON_RUN_PROPOSALS_TABLE_SQL,
+  CREATE_SURGEON_RUN_PROPOSALS_RUN_ID_INDEX_SQL,
+  CREATE_SURGEON_RUN_PROPOSALS_GROUP_ID_INDEX_SQL,
+  CREATE_SURGEON_RUN_PROPOSALS_CREATED_AT_INDEX_SQL,
   CREATE_META_TABLE_SQL,
   CREATE_ENTRIES_CONTENT_HASH_INDEX_SQL,
   CREATE_ENTRIES_NORM_CONTENT_HASH_INDEX_SQL,
@@ -403,10 +442,15 @@ export {
  */
 export async function initSchema(db: Client): Promise<void> {
   await db.execute("PRAGMA foreign_keys = ON");
-  const currentVersion = await getSchemaVersion(db);
+  let currentVersion = await getSchemaVersion(db);
   await assertSupportedSchemaState(db, currentVersion);
   if (currentVersion === "5") {
     await migrateV5ToV6(db);
+    currentVersion = "6";
+  }
+  if (currentVersion === "6") {
+    await migrateV6ToV7(db);
+    currentVersion = "7";
   }
   const hadEntriesFts = await tableExists(db, "entries_fts");
 
@@ -442,7 +486,7 @@ export async function initSchema(db: Client): Promise<void> {
  * @param currentVersion - Stored schema version, when present.
  */
 async function assertSupportedSchemaState(db: Client, currentVersion: string | null): Promise<void> {
-  if (currentVersion && currentVersion !== "5" && currentVersion !== SCHEMA_VERSION) {
+  if (currentVersion && currentVersion !== "5" && currentVersion !== "6" && currentVersion !== SCHEMA_VERSION) {
     throw new Error(
       `Unsupported agenr database schema version "${currentVersion}". ` +
         `This build only supports schema version ${SCHEMA_VERSION}. ` +
@@ -484,6 +528,29 @@ async function migrateV5ToV6(db: Client): Promise<void> {
       }
     }
   }
+}
+
+/**
+ * Migrates a v6 surgeon schema to v7 proposal and action-detail support.
+ *
+ * @param db - libSQL client connected to the target database.
+ * @returns Promise that resolves once the migration completes.
+ */
+async function migrateV6ToV7(db: Client): Promise<void> {
+  if (await tableExists(db, "surgeon_run_actions")) {
+    try {
+      await db.execute("ALTER TABLE surgeon_run_actions ADD COLUMN details_json TEXT");
+    } catch (error) {
+      if (!(error instanceof Error && /duplicate column/i.test(error.message))) {
+        throw error;
+      }
+    }
+  }
+
+  await db.execute(CREATE_SURGEON_RUN_PROPOSALS_TABLE_SQL);
+  await db.execute(CREATE_SURGEON_RUN_PROPOSALS_RUN_ID_INDEX_SQL);
+  await db.execute(CREATE_SURGEON_RUN_PROPOSALS_GROUP_ID_INDEX_SQL);
+  await db.execute(CREATE_SURGEON_RUN_PROPOSALS_CREATED_AT_INDEX_SQL);
 }
 
 /**

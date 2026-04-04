@@ -501,6 +501,68 @@ export async function inspectSurgeonEntry(executor: SqlExecutor, entryId: string
 }
 
 /**
+ * Lists entries eligible for claim-key-quality maintenance.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @param query - Optional claim-key-quality filters.
+ * @returns Matched entries ordered deterministically for one pass.
+ */
+export async function listClaimKeyQualityEntries(
+  executor: SqlExecutor,
+  query: {
+    project?: string;
+    type?: string;
+    claimKeyPrefix?: string;
+    entryIds?: string[];
+    includeInactive?: boolean;
+  },
+): Promise<Entry[]> {
+  const whereClauses = [query.includeInactive === true ? "1 = 1" : buildActiveEntryClause("e")];
+  const args: Array<string | number | null> = [];
+  const project = normalizeOptionalString(query.project);
+  if (project) {
+    whereClauses.push(`(e.project = ? OR ${buildTagContainsClause("e")})`);
+    args.push(project, project);
+  }
+
+  const type = normalizeOptionalString(query.type);
+  if (type) {
+    whereClauses.push("e.type = ?");
+    args.push(type);
+  }
+
+  const claimKeyPrefix = normalizeOptionalString(query.claimKeyPrefix);
+  if (claimKeyPrefix) {
+    whereClauses.push("e.claim_key LIKE ?");
+    args.push(`${claimKeyPrefix}/%`);
+  }
+
+  const normalizedEntryIds = normalizeStringArray(query.entryIds ?? []);
+  if (normalizedEntryIds.length > 0) {
+    const placeholders = normalizedEntryIds.map(() => "?").join(", ");
+    whereClauses.push(`e.id IN (${placeholders})`);
+    args.push(...normalizedEntryIds);
+  }
+
+  const result = await executor.execute({
+    sql: `
+      SELECT
+        ${ENTRY_SELECT_COLUMNS}
+      FROM entries AS e
+      WHERE ${whereClauses.join("\n        AND ")}
+      ORDER BY
+        CASE WHEN e.retired = 0 AND e.superseded_by IS NULL THEN 0 ELSE 1 END ASC,
+        COALESCE(e.claim_key, '') ASC,
+        e.created_at ASC,
+        e.id ASC
+    `,
+    args,
+  });
+
+  return result.rows.map((row) => mapEntryRow(row));
+}
+
+/**
  * Shared SQL filter fragments for candidate list and count queries.
  */
 interface CandidateFilterState {
@@ -962,6 +1024,16 @@ function normalizeOptionalString(value: string | undefined): string | null {
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
+ * Trims, removes blanks, and deduplicates generic string-array filters.
+ *
+ * @param values - Raw filter values.
+ * @returns Stable list of non-empty unique strings.
+ */
+function normalizeStringArray(values: string[]): string[] {
+  return Array.from(new Set(values.map((value) => value.trim()).filter((value) => value.length > 0)));
 }
 
 /**
