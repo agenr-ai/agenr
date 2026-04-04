@@ -4,6 +4,12 @@ import { randomUUID } from "node:crypto";
 
 import { DEFAULT_CLAIM_EXTRACTION_CONCURRENCY, resolveClaimExtractionConfig, type AgenrConfig } from "../../config.js";
 import {
+  detectClaimKeyEntityFamilyCandidates,
+  type ClaimKeyEntityFamilyCandidate,
+  type ClaimKeyEntityFamilyEvidence,
+  type ClaimKeyEntityFamilyPairSupport,
+} from "../../core/claim-key-entity-family.js";
+import {
   compactClaimKey,
   describeClaimKeyNormalizationFailure,
   describeClaimKeySuspicion,
@@ -275,6 +281,29 @@ interface MissingBackfillDecisionStats {
   noClaimWithWarnings: number;
 }
 
+interface EntityFamilyConvergenceDecisionStats {
+  appliedClusters: number;
+  appliedEntries: number;
+  proposedClusters: number;
+}
+
+interface EntityFamilyConvergenceAudit {
+  competingEntityPrefixes: string[];
+  canonicalEntityPrefix: string | null;
+  canonicalSelectionReasons: string[];
+  unresolvedReason: string | null;
+  evidence: ClaimKeyEntityFamilyEvidence[];
+  pairSupport: Array<{
+    entityPrefixes: [string, string];
+    supportingEntryIds: string[];
+    sharedAttributes: string[];
+    confidence: number;
+    autoSafe: boolean;
+    preferredCanonicalEntityPrefix: string | null;
+    evidence: ClaimKeyEntityFamilyEvidence[];
+  }>;
+}
+
 /**
  * Runs the first-class claim-key-quality surgeon pass.
  *
@@ -316,6 +345,8 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
     }),
   );
   const missingDecisionStats = createEmptyMissingBackfillDecisionStats();
+  const entityFamilyDecisionStats = createEmptyEntityFamilyConvergenceDecisionStats();
+  const handledEntityFamilyClaimKeys = new Set<string>();
   const skippedDiagnostics: MissingBackfillSkipDiagnostic[] = [];
   const claimExtractionConfig = resolveClaimExtractionConfig(deps.config ?? undefined);
   const previewConcurrency = resolveClaimExtractionConcurrency(claimExtractionConfig);
@@ -421,7 +452,28 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
     }
 
     if (!circuitBreaker && terminalStatus === "completed") {
-      const mixedKeyGroups = findMixedKeyGroups(projectedEntries);
+      const entityFamilyCandidates = detectClaimKeyEntityFamilyCandidates(projectedEntries);
+      progressTracker.startStage("entity_family_convergence", entityFamilyCandidates.length, "groups");
+      for (const candidate of entityFamilyCandidates) {
+        if (options.signal?.aborted === true) {
+          terminalStatus = "aborted";
+          terminalError = "Run aborted by user (SIGINT).";
+          break;
+        }
+
+        await processEntityFamilyConvergenceCandidate(candidate);
+        for (const claimKey of candidate.claimKeys) {
+          handledEntityFamilyClaimKeys.add(claimKey);
+        }
+        progressTracker.advanceStage();
+        if (terminalStatus !== "completed" || circuitBreaker) {
+          break;
+        }
+      }
+    }
+
+    if (!circuitBreaker && terminalStatus === "completed") {
+      const mixedKeyGroups = findMixedKeyGroups(projectedEntries, handledEntityFamilyClaimKeys);
       progressTracker.startStage("mixed_key_groups", mixedKeyGroups.length, "groups");
       for (const group of mixedKeyGroups) {
         if (options.signal?.aborted === true) {
@@ -458,7 +510,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
   const projectedAfter = summarizeClaimKeyHealth(projectedEntries, claimExtractionConfig.eligibleTypes);
   observations.push(
     `Claim-key quality reviewed ${before.totalEntries} entr${before.totalEntries === 1 ? "y" : "ies"} in ${executionStyle} mode.`,
-    `Identified ${counts.identifiedNormalizations} normalizations, ${counts.identifiedBackfills} backfills, and ${counts.identifiedMetadataRewrites} metadata-backed suspect-key rewrites.`,
+    `Identified ${counts.identifiedNormalizations} normalizations, ${counts.identifiedBackfills} backfills, ${counts.identifiedMetadataRewrites} metadata-backed suspect-key rewrites, and ${counts.identifiedEntityFamilyConvergences} entity-family convergence rewrites.`,
     `Emitted ${counts.proposalsEmitted} unresolved proposal${counts.proposalsEmitted === 1 ? "" : "s"}.`,
   );
   if (counts.skippedNoClaim > 0 || counts.skippedLowConfidence > 0 || counts.skippedCollision > 0 || counts.skippedAmbiguous > 0) {
@@ -479,6 +531,10 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
     observations.push(
       `${missingDecisionStats.noClaimWithWarnings} missing-key previews ended without a safe claim after deterministic validation warnings or malformed output.`,
     );
+  }
+  const entityFamilyObservation = buildEntityFamilyConvergenceObservation(entityFamilyDecisionStats);
+  if (entityFamilyObservation) {
+    observations.push(entityFamilyObservation);
   }
   const circuitBreakerMessage = (circuitBreaker as ClaimKeyCircuitBreakerTrip | null)?.message;
   if (circuitBreakerMessage) {
@@ -899,6 +955,136 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
     counts.skippedAmbiguous += 1;
   }
 
+  async function processEntityFamilyConvergenceCandidate(candidate: ClaimKeyEntityFamilyCandidate): Promise<void> {
+    const audit = buildEntityFamilyConvergenceAudit(candidate);
+    const canonicalEntityPrefix = candidate.canonicalEntityPrefix;
+    const entriesToRewrite = canonicalEntityPrefix
+      ? projectedEntries.filter((entry) => {
+          const claimKey = entry.claim_key?.trim();
+          if (!claimKey) {
+            return false;
+          }
+
+          const inspection = inspectClaimKey(claimKey);
+          if (!inspection.normalized || inspection.suspectReasons.length > 0 || !candidate.entityPrefixes.includes(inspection.normalized.entity)) {
+            return false;
+          }
+
+          return inspection.normalized.entity !== canonicalEntityPrefix;
+        })
+      : [];
+
+    if (!canonicalEntityPrefix || !candidate.autoConverge || entriesToRewrite.length === 0) {
+      const proposal = createProposal({
+        runId: options.runId,
+        groupId: `claim-key-entity-family:${candidate.entityPrefixes.join(",")}`,
+        issueKind: "entity_family_convergence",
+        scope: "cluster",
+        entryIds: candidate.entryIds,
+        currentClaimKeys: candidate.claimKeys,
+        proposedClaimKeys: canonicalEntityPrefix ? mapEntityFamilyClaimKeys(candidate.claimKeys, candidate.entityPrefixes, canonicalEntityPrefix) : [],
+        rationale: buildEntityFamilyConvergenceRationale(candidate),
+        confidence: candidate.confidence,
+        source: canonicalEntityPrefix ? "entity_family_canonical_candidate" : "entity_family_ambiguous",
+        eligibleForApply: canonicalEntityPrefix !== null,
+        createdAt: options.now().toISOString(),
+      });
+      await persistProposal(proposal, {
+        entityFamilyAudit: audit,
+      });
+      counts.proposalsEmitted += 1;
+      counts.skippedAmbiguous += 1;
+      entityFamilyDecisionStats.proposedClusters += 1;
+      return;
+    }
+
+    for (const entry of entriesToRewrite) {
+      const claimKey = entry.claim_key?.trim();
+      if (!claimKey) {
+        continue;
+      }
+
+      const inspection = inspectClaimKey(claimKey);
+      if (!inspection.normalized) {
+        continue;
+      }
+
+      const targetClaimKey = `${canonicalEntityPrefix}/${inspection.normalized.attribute}`;
+      const activeSiblings = findActiveClaimKeyOccupants(projectedEntries, targetClaimKey, entry.id);
+      if (activeSiblings.some((sibling) => sibling.type !== entry.type)) {
+        const proposal = createProposal({
+          runId: options.runId,
+          groupId: `claim-key-entity-family:${candidate.entityPrefixes.join(",")}`,
+          issueKind: "entity_family_convergence",
+          scope: "cluster",
+          entryIds: normalizeStringArray([...candidate.entryIds, ...activeSiblings.map((sibling) => sibling.id)]),
+          currentClaimKeys: candidate.claimKeys,
+          proposedClaimKeys: mapEntityFamilyClaimKeys(candidate.claimKeys, candidate.entityPrefixes, canonicalEntityPrefix),
+          rationale:
+            `${buildEntityFamilyConvergenceRationale(candidate)} ` +
+            `Auto-convergence would collide with an active entry of a different type at "${targetClaimKey}".`,
+          confidence: candidate.confidence,
+          source: "entity_family_collision",
+          eligibleForApply: true,
+          createdAt: options.now().toISOString(),
+        });
+        await persistProposal(proposal, {
+          entityFamilyAudit: audit,
+          autoApplyBlocker: "cross_type_collision",
+        });
+        counts.proposalsEmitted += 1;
+        counts.skippedAmbiguous += 1;
+        entityFamilyDecisionStats.proposedClusters += 1;
+        return;
+      }
+    }
+
+    let appliedEntries = 0;
+    for (const entry of entriesToRewrite) {
+      const claimKey = entry.claim_key?.trim();
+      if (!claimKey) {
+        continue;
+      }
+
+      const inspection = inspectClaimKey(claimKey);
+      if (!inspection.normalized) {
+        continue;
+      }
+
+      const targetClaimKey = `${canonicalEntityPrefix}/${inspection.normalized.attribute}`;
+      counts.identifiedEntityFamilyConvergences += 1;
+      const updateResult = await maybeApplyClaimKeyUpdate(entry.id, targetClaimKey, {
+        actualEntriesById,
+        entriesById,
+        issueKind: "entity_family_convergence",
+        oldClaimKey: claimKey,
+        source: "entity_family_auto_convergence",
+        confidence: candidate.confidence,
+        rationale:
+          `${buildEntityFamilyConvergenceRationale(candidate)} ` +
+          `This entry keeps attribute "${inspection.normalized.attribute}" while converging its entity prefix onto "${canonicalEntityPrefix}".`,
+        entityFamilyAudit: audit,
+      });
+      if (updateResult.applied) {
+        counts.appliedEntityFamilyConvergences += 1;
+        appliedEntries += 1;
+      }
+      if (updateResult.projected) {
+        circuitBreaker = recordAppliedRepair(circuitBreakerState, targetClaimKey);
+      }
+      if (circuitBreaker) {
+        terminalStatus = "failed";
+        terminalError = circuitBreaker.message;
+        return;
+      }
+    }
+
+    if (appliedEntries > 0) {
+      entityFamilyDecisionStats.appliedClusters += 1;
+      entityFamilyDecisionStats.appliedEntries += appliedEntries;
+    }
+  }
+
   function shouldPreloadSuggestions(): boolean {
     return claimExtractionConfig.enabled && typeof deps.createClaimExtractionLlm === "function";
   }
@@ -1051,6 +1237,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
       compactness?: ClaimKeyCompactnessEvaluation;
       promotion?: MissingBackfillPromotionPolicy;
       rationale: string;
+      entityFamilyAudit?: EntityFamilyConvergenceAudit;
     },
   ): Promise<{ projected: boolean; applied: boolean }> {
     const projected = input.entriesById.get(entryId);
@@ -1101,6 +1288,22 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
               claim_key_compaction_reason: input.compactness.compactionReason,
             }
           : {}),
+        ...(input.entityFamilyAudit
+          ? {
+              competing_entity_prefixes: [...input.entityFamilyAudit.competingEntityPrefixes],
+              canonical_entity_prefix: input.entityFamilyAudit.canonicalEntityPrefix,
+              canonical_selection_reasons: [...input.entityFamilyAudit.canonicalSelectionReasons],
+              entity_family_unresolved_reason: input.entityFamilyAudit.unresolvedReason,
+              entity_family_evidence: input.entityFamilyAudit.evidence.map((evidence) => ({ ...evidence })),
+              entity_family_pair_support: input.entityFamilyAudit.pairSupport.map((support) => ({
+                ...support,
+                entityPrefixes: [...support.entityPrefixes],
+                supportingEntryIds: [...support.supportingEntryIds],
+                sharedAttributes: [...support.sharedAttributes],
+                evidence: support.evidence.map((evidence) => ({ ...evidence })),
+              })),
+            }
+          : {}),
       },
       createdAt: options.now().toISOString(),
     });
@@ -1116,6 +1319,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
       promotion?: MissingBackfillPromotionPolicy;
       support?: MissingBackfillSupportEvaluation;
       supportedCandidate?: boolean;
+      entityFamilyAudit?: EntityFamilyConvergenceAudit;
     },
   ): Promise<void> {
     await deps.port.logRunProposal(proposal);
@@ -1161,6 +1365,22 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
               auto_apply_blocker: audit.autoApplyBlocker,
             }
           : {}),
+        ...(audit?.entityFamilyAudit
+          ? {
+              competing_entity_prefixes: [...audit.entityFamilyAudit.competingEntityPrefixes],
+              canonical_entity_prefix: audit.entityFamilyAudit.canonicalEntityPrefix,
+              canonical_selection_reasons: [...audit.entityFamilyAudit.canonicalSelectionReasons],
+              entity_family_unresolved_reason: audit.entityFamilyAudit.unresolvedReason,
+              entity_family_evidence: audit.entityFamilyAudit.evidence.map((evidence) => ({ ...evidence })),
+              entity_family_pair_support: audit.entityFamilyAudit.pairSupport.map((support) => ({
+                ...support,
+                entityPrefixes: [...support.entityPrefixes],
+                supportingEntryIds: [...support.supportingEntryIds],
+                sharedAttributes: [...support.sharedAttributes],
+                evidence: support.evidence.map((evidence) => ({ ...evidence })),
+              })),
+            }
+          : {}),
       },
       createdAt: proposal.createdAt,
     });
@@ -1183,6 +1403,7 @@ export function summarizeClaimKeyHealth(entries: Entry[], eligibleTypes: string[
     return inspection.kind === "malformed" || inspection.kind === "noncanonical";
   }).length;
   const suspectCanonicalCount = entries.filter((entry) => inspectExistingClaimKey(entry).kind === "suspect").length;
+  const entityFamilyCandidates = detectClaimKeyEntityFamilyCandidates(entries);
 
   return {
     totalEntries: entries.length,
@@ -1193,6 +1414,7 @@ export function summarizeClaimKeyHealth(entries: Entry[], eligibleTypes: string[
     eligibleMissingCount: entries.filter((entry) => inspectExistingClaimKey(entry).kind === "missing" && eligibleTypes.includes(entry.type)).length,
     malformedOrNoncanonicalCount,
     suspectCanonicalCount,
+    entityFamilyGroupCount: entityFamilyCandidates.length,
     mixedGroupCount: findMixedKeyGroups(entries).length,
     exactKeyMultiActiveClusterCount: countExactKeyMultiActiveClusters(activeEntries),
   };
@@ -1406,6 +1628,14 @@ function createEmptyMissingBackfillDecisionStats(): MissingBackfillDecisionStats
   };
 }
 
+function createEmptyEntityFamilyConvergenceDecisionStats(): EntityFamilyConvergenceDecisionStats {
+  return {
+    appliedClusters: 0,
+    appliedEntries: 0,
+    proposedClusters: 0,
+  };
+}
+
 function createEmptyRepairCounts(): ClaimKeyQualityRepairCounts {
   return {
     identifiedNormalizations: 0,
@@ -1414,6 +1644,8 @@ function createEmptyRepairCounts(): ClaimKeyQualityRepairCounts {
     appliedBackfills: 0,
     identifiedMetadataRewrites: 0,
     appliedMetadataRewrites: 0,
+    identifiedEntityFamilyConvergences: 0,
+    appliedEntityFamilyConvergences: 0,
     proposalsEmitted: 0,
     skippedNoClaim: 0,
     skippedLowConfidence: 0,
@@ -1438,6 +1670,8 @@ function cloneRepairCounts(counts: ClaimKeyQualityRepairCounts): ClaimKeyQuality
     appliedBackfills: counts.appliedBackfills,
     identifiedMetadataRewrites: counts.identifiedMetadataRewrites,
     appliedMetadataRewrites: counts.appliedMetadataRewrites,
+    identifiedEntityFamilyConvergences: counts.identifiedEntityFamilyConvergences,
+    appliedEntityFamilyConvergences: counts.appliedEntityFamilyConvergences,
     proposalsEmitted: counts.proposalsEmitted,
     skippedNoClaim: counts.skippedNoClaim,
     skippedLowConfidence: counts.skippedLowConfidence,
@@ -2422,7 +2656,10 @@ function countExactKeyMultiActiveClusters(entries: Entry[]): number {
   return [...counts.values()].filter((count) => count >= 2).length;
 }
 
-function findMixedKeyGroups(entries: Entry[]): Array<{ groupKey: string; entries: Entry[]; proposedClaimKey: string | null }> {
+function findMixedKeyGroups(
+  entries: Entry[],
+  coveredClaimKeys: ReadonlySet<string> = new Set<string>(),
+): Array<{ groupKey: string; entries: Entry[]; proposedClaimKey: string | null }> {
   const groups = new Map<string, Entry[]>();
 
   for (const entry of entries) {
@@ -2453,6 +2690,9 @@ function findMixedKeyGroups(entries: Entry[]): Array<{ groupKey: string; entries
       if (!hasMissing && distinctClaimKeyCount <= 1) {
         return [];
       }
+      if (!hasMissing && distinctClaimKeyCount > 1 && claimKeys.every((claimKey) => coveredClaimKeys.has(claimKey))) {
+        return [];
+      }
 
       const trustedClaimKeys = claimKeys.filter((claimKey) => isTrustedClaimKeyForCleanup(claimKey));
       const proposedClaimKey = trustedClaimKeys.length === 1 ? (trustedClaimKeys[0] ?? null) : null;
@@ -2481,6 +2721,86 @@ function buildMixedGroupRationale(group: { groupKey: string; entries: Entry[]; p
     `Entries sharing subject/type group "${group.groupKey}" use mixed or missing claim keys, but the group does not expose one uniquely trusted canonical target. ` +
     `Current non-null keys: ${currentClaimKeys.join(", ") || "(none)"}.`
   );
+}
+
+function buildEntityFamilyConvergenceObservation(stats: EntityFamilyConvergenceDecisionStats): string | null {
+  if (stats.appliedClusters === 0 && stats.proposedClusters === 0) {
+    return null;
+  }
+
+  return (
+    `Entity-family convergence auto-applied ${stats.appliedEntries} entry rewrite${stats.appliedEntries === 1 ? "" : "s"} ` +
+    `across ${stats.appliedClusters} family cluster${stats.appliedClusters === 1 ? "" : "s"} and staged ${stats.proposedClusters} ` +
+    `unresolved family proposal${stats.proposedClusters === 1 ? "" : "s"}.`
+  );
+}
+
+function buildEntityFamilyConvergenceAudit(candidate: ClaimKeyEntityFamilyCandidate): EntityFamilyConvergenceAudit {
+  return {
+    competingEntityPrefixes: [...candidate.entityPrefixes],
+    canonicalEntityPrefix: candidate.canonicalEntityPrefix,
+    canonicalSelectionReasons: [...candidate.canonicalSelectionReasons],
+    unresolvedReason: candidate.unresolvedReason,
+    evidence: flattenEntityFamilyEvidence(candidate.pairSupport),
+    pairSupport: candidate.pairSupport.map((support) => ({
+      entityPrefixes: [...support.entityPrefixes] as [string, string],
+      supportingEntryIds: [...support.supportingEntryIds],
+      sharedAttributes: [...support.sharedAttributes],
+      confidence: support.confidence,
+      autoSafe: support.autoSafe,
+      preferredCanonicalEntityPrefix: support.preferredCanonicalEntityPrefix,
+      evidence: support.evidence.map((evidence) => ({ ...evidence })),
+    })),
+  };
+}
+
+function flattenEntityFamilyEvidence(pairSupport: ClaimKeyEntityFamilyPairSupport[]): ClaimKeyEntityFamilyEvidence[] {
+  const evidenceByKey = new Map<string, ClaimKeyEntityFamilyEvidence>();
+
+  for (const support of pairSupport) {
+    for (const evidence of support.evidence) {
+      const evidenceKey = `${evidence.kind}:${evidence.detail}`;
+      if (!evidenceByKey.has(evidenceKey)) {
+        evidenceByKey.set(evidenceKey, { ...evidence });
+      }
+    }
+  }
+
+  return [...evidenceByKey.values()];
+}
+
+function mapEntityFamilyClaimKeys(claimKeys: string[], entityPrefixes: string[], canonicalEntityPrefix: string): string[] {
+  const entityPrefixSet = new Set(entityPrefixes);
+  return normalizeStringArray(
+    claimKeys.flatMap((claimKey) => {
+      const inspection = inspectClaimKey(claimKey);
+      if (!inspection.normalized || !entityPrefixSet.has(inspection.normalized.entity) || inspection.normalized.entity === canonicalEntityPrefix) {
+        return [];
+      }
+
+      return [`${canonicalEntityPrefix}/${inspection.normalized.attribute}`];
+    }),
+  );
+}
+
+function buildEntityFamilyConvergenceRationale(candidate: ClaimKeyEntityFamilyCandidate): string {
+  const evidenceText = flattenEntityFamilyEvidence(candidate.pairSupport)
+    .map((evidence) => evidence.detail)
+    .join(" ");
+  const canonicalText = candidate.canonicalEntityPrefix
+    ? ` Canonical entity prefix candidate: "${candidate.canonicalEntityPrefix}".`
+    : " No single canonical entity prefix is safe to choose automatically.";
+  const reasonText = candidate.unresolvedReason ? ` ${candidate.unresolvedReason}` : "";
+  const selectionText =
+    candidate.canonicalSelectionReasons.length > 0 ? ` Canonical selection signals: ${candidate.canonicalSelectionReasons.join(", ")}.` : "";
+
+  return (
+    `Claim-key entity families ${candidate.entityPrefixes.join(", ")} show repeated same-slot overlap and grounding support. ` +
+    evidenceText +
+    canonicalText +
+    selectionText +
+    reasonText
+  ).trim();
 }
 
 function buildSuspectProposalRationale(

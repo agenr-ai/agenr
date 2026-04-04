@@ -10,6 +10,7 @@ export interface ClaimKeyHealthSnapshot {
   eligibleMissingCount: number;
   malformedOrNoncanonicalCount: number;
   suspectCanonicalCount: number;
+  entityFamilyGroupCount: number;
   mixedGroupCount: number;
   exactKeyMultiActiveClusterCount: number;
 }
@@ -24,6 +25,8 @@ export interface ClaimKeyQualityRepairCounts {
   appliedBackfills: number;
   identifiedMetadataRewrites: number;
   appliedMetadataRewrites: number;
+  identifiedEntityFamilyConvergences: number;
+  appliedEntityFamilyConvergences: number;
   proposalsEmitted: number;
   skippedNoClaim: number;
   skippedLowConfidence: number;

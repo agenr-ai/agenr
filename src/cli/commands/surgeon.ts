@@ -367,7 +367,8 @@ function formatProgressEvent(event: SurgeonProgressEvent, verbose: boolean): str
   if (event.stage === "health" && event.health) {
     const base =
       `Claim-key-quality health: ${event.health.totalEntries} entries | missing ${event.health.missingCount} | ` +
-      `invalid/noncanonical ${event.health.malformedOrNoncanonicalCount} | suspect ${event.health.suspectCanonicalCount} | mixed groups ${event.health.mixedGroupCount}`;
+      `invalid/noncanonical ${event.health.malformedOrNoncanonicalCount} | suspect ${event.health.suspectCanonicalCount} | ` +
+      `entity families ${event.health.entityFamilyGroupCount} | mixed groups ${event.health.mixedGroupCount}`;
 
     if (!verbose) {
       return `${base} | exact-key multi-active ${event.health.exactKeyMultiActiveClusterCount}`;
@@ -391,7 +392,8 @@ function formatProgressEvent(event: SurgeonProgressEvent, verbose: boolean): str
     return `Claim-key-quality stage ${stageLabel}: ${event.total} ${event.unitLabel}.`;
   }
 
-  const appliedTotal = event.counts.appliedNormalizations + event.counts.appliedBackfills + event.counts.appliedMetadataRewrites;
+  const appliedTotal =
+    event.counts.appliedNormalizations + event.counts.appliedBackfills + event.counts.appliedMetadataRewrites + event.counts.appliedEntityFamilyConvergences;
   const previewTotal = event.previewTotal ?? 0;
   const previewCompleted = event.previewCompleted ?? 0;
   const stageProgress =
@@ -413,6 +415,7 @@ function formatProgressEvent(event: SurgeonProgressEvent, verbose: boolean): str
     `${base} | normalize ${event.counts.appliedNormalizations}/${event.counts.identifiedNormalizations} | ` +
     `backfill ${event.counts.appliedBackfills}/${event.counts.identifiedBackfills} | ` +
     `metadata ${event.counts.appliedMetadataRewrites}/${event.counts.identifiedMetadataRewrites} | ` +
+    `family ${event.counts.appliedEntityFamilyConvergences}/${event.counts.identifiedEntityFamilyConvergences} | ` +
     `skipped no-claim ${event.counts.skippedNoClaim} low-confidence ${event.counts.skippedLowConfidence} ` +
     `collision ${event.counts.skippedCollision} ambiguous ${event.counts.skippedAmbiguous}`
   );
@@ -434,6 +437,8 @@ function formatClaimKeyQualityStage(stage: Extract<SurgeonProgressEvent, { kind:
       return "missing";
     case "suspect_canonical":
       return "suspect-but-canonical";
+    case "entity_family_convergence":
+      return "entity-family convergence";
     case "mixed_key_groups":
       return "mixed-key groups";
     default:

@@ -17,7 +17,13 @@ export type SurgeonRunProgressPhase =
 /**
  * Deterministic claim-key-quality stages that can emit bounded progress updates.
  */
-export type ClaimKeyQualityProgressStage = "health" | "invalid_noncanonical" | "missing" | "suspect_canonical" | "mixed_key_groups";
+export type ClaimKeyQualityProgressStage =
+  | "health"
+  | "invalid_noncanonical"
+  | "missing"
+  | "suspect_canonical"
+  | "entity_family_convergence"
+  | "mixed_key_groups";
 
 /**
  * One startup or orchestration phase update emitted during a surgeon run.
