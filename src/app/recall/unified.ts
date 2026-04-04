@@ -25,6 +25,12 @@ const HISTORICAL_STATE_PATTERNS = [
   "earlier plan",
   "old workflow",
 ] as const;
+const HISTORICAL_STATE_REGEX_PATTERNS = [
+  /\bwhat\b.*\bused?\b.*\bbefore\b/u,
+  /\bwhat\b.*\bworkflow\b.*\bbefore\b/u,
+  /\bwhat\b.*\bplan\b.*\bearlier\b/u,
+  /\bwhat\b.*\bplan\b.*\bbefore\b/u,
+] as const;
 
 /**
  * Dependencies needed by the unified recall orchestration layer.
@@ -357,7 +363,13 @@ function buildEntryRecallInput(
  */
 function detectHistoricalStatePattern(text: string): string | undefined {
   const lower = text.trim().toLowerCase();
-  return HISTORICAL_STATE_PATTERNS.find((pattern) => lower.includes(pattern));
+  const explicitPattern = HISTORICAL_STATE_PATTERNS.find((pattern) => lower.includes(pattern));
+  if (explicitPattern) {
+    return explicitPattern;
+  }
+
+  const regexPattern = HISTORICAL_STATE_REGEX_PATTERNS.find((pattern) => pattern.test(lower));
+  return regexPattern?.source;
 }
 
 /**

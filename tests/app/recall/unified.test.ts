@@ -22,6 +22,25 @@ describe("runUnifiedRecall", () => {
     });
   });
 
+  it("detects broader historical workflow and plan phrasings", () => {
+    expect(
+      routeRecall({
+        requested: "auto",
+        text: "what workflow did we use before the dev recall command existed for local recall evals",
+        parsedTimeWindow: false,
+        hasEntryFilters: false,
+      }).detectedIntent,
+    ).toBe("historical_state");
+    expect(
+      routeRecall({
+        requested: "auto",
+        text: "what short-lived plan did we consider earlier that day before the final freshness ranking fix",
+        parsedTimeWindow: false,
+        hasEntryFilters: false,
+      }).detectedIntent,
+    ).toBe("historical_state");
+  });
+
   it("does not classify historical-sounding lookalikes as historical-state", () => {
     expect(
       routeRecall({
@@ -295,5 +314,7 @@ function toRecallCandidateEntry(entry: Entry): RecallCandidateEntry {
     expiry: entry.expiry,
     created_at: entry.created_at,
     embedding: entry.embedding,
+    superseded_by: entry.superseded_by,
+    retired: entry.retired,
   };
 }

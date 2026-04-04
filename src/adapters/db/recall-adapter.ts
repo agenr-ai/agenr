@@ -1,7 +1,7 @@
 import type { ResultSet, Row } from "@libsql/client";
 
 import { buildLexicalPlan, type LexicalSearchTier } from "../../core/recall/lexical.js";
-import type { EntryFilters, FtsCandidate, RecallCandidateEntry } from "../../core/recall/types.js";
+import type { EntryFilters, FtsCandidate, HistoricalPredecessorLookupParams, RecallCandidateEntry } from "../../core/recall/types.js";
 import type { EmbeddingPort, RecallPorts } from "../../core/ports.js";
 import type { Entry } from "../../core/types.js";
 import { recordRecallEvent, type SqlExecutor } from "./queries.js";
@@ -9,8 +9,10 @@ import {
   buildActiveEntryClause,
   cosineSimilarity,
   mapEntryRow,
+  readBoolean,
   readEmbedding,
   readNumber,
+  readOptionalString,
   readRequiredString,
   serializeEmbeddingForVector,
 } from "./row-mapping.js";
@@ -54,6 +56,8 @@ const RECALL_CANDIDATE_SELECT_COLUMNS = `
   e.importance,
   e.expiry,
   e.embedding,
+  e.superseded_by,
+  e.retired,
   e.created_at
 `;
 
@@ -192,6 +196,50 @@ class LibsqlRecallAdapter implements RecallPorts {
       .slice(0, params.limit);
   }
 
+  /**
+   * Finds historical predecessors scoped to a seed set of active candidate IDs.
+   *
+   * Direct supersession links are preferred. Retired same-subject entries are
+   * also returned so historical queries can recover prior guidance that was
+   * retired without an explicit successor link.
+   */
+  public async fetchPredecessors(params: HistoricalPredecessorLookupParams): Promise<RecallCandidateEntry[]> {
+    const normalizedIds = normalizeStrings(params.activeEntryIds);
+    if (normalizedIds.length === 0) {
+      return [];
+    }
+
+    const placeholders = normalizedIds.map(() => "?").join(", ");
+    const result = await this.executor.execute({
+      sql: `
+        WITH seed AS (
+          SELECT id, subject
+          FROM entries
+          WHERE id IN (${placeholders})
+        )
+        SELECT DISTINCT
+          ${RECALL_CANDIDATE_SELECT_COLUMNS}
+        FROM entries AS e
+        WHERE e.id NOT IN (SELECT id FROM seed)
+          AND (
+            e.superseded_by IN (SELECT id FROM seed)
+            OR (
+              e.retired = 1
+              AND e.subject IN (
+                SELECT DISTINCT subject
+                FROM seed
+                WHERE TRIM(subject) <> ''
+              )
+            )
+          )
+        ORDER BY e.created_at ASC, e.id ASC
+      `,
+      args: normalizedIds,
+    });
+
+    return result.rows.map((row) => mapRecallCandidateRow(row));
+  }
+
   /** Hydrates full entries for the final ranked result set. */
   public async hydrateEntries(ids: string[]): Promise<Entry[]> {
     const normalizedIds = normalizeStrings(ids);
@@ -205,8 +253,7 @@ class LibsqlRecallAdapter implements RecallPorts {
         SELECT
           ${ENTRY_SELECT_COLUMNS}
         FROM entries AS e
-        WHERE ${buildActiveEntryClause("e")}
-          AND e.id IN (${placeholders})
+        WHERE e.id IN (${placeholders})
       `,
       args: normalizedIds,
     });
@@ -340,6 +387,8 @@ function mapRecallCandidateRow(row: Row): RecallCandidateEntry {
     importance: readNumber(row, "importance", 0),
     expiry: expiry as RecallCandidateEntry["expiry"],
     embedding: readEmbedding(row, "embedding"),
+    superseded_by: readOptionalString(row, "superseded_by"),
+    retired: readBoolean(row, "retired"),
     created_at: readRequiredString(row, "created_at"),
   };
 }

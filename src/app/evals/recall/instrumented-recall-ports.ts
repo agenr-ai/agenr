@@ -76,6 +76,13 @@ export function createInstrumentedRecallPorts(
         throw error;
       }
     },
+    ...(ports.fetchPredecessors
+      ? {
+          async fetchPredecessors(params): Promise<Awaited<ReturnType<NonNullable<RecallPorts["fetchPredecessors"]>>>> {
+            return ports.fetchPredecessors!(params);
+          },
+        }
+      : {}),
     async hydrateEntries(ids: string[]): Promise<Awaited<ReturnType<RecallPorts["hydrateEntries"]>>> {
       const startedAt = Date.now();
 

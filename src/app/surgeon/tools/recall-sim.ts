@@ -81,6 +81,26 @@ function createSimulationRecallPorts(inner: RecallPorts, excludeEntryId?: string
 
       return results.filter((result) => result.entry.id !== excludeEntryId);
     },
+    async fetchPredecessors(params) {
+      if (!inner.fetchPredecessors) {
+        return [];
+      }
+
+      const activeEntryIds = excludeEntryId ? params.activeEntryIds.filter((id) => id !== excludeEntryId) : params.activeEntryIds;
+      if (activeEntryIds.length === 0) {
+        return [];
+      }
+
+      const results = await inner.fetchPredecessors({
+        ...params,
+        activeEntryIds,
+      });
+      if (!excludeEntryId) {
+        return results;
+      }
+
+      return results.filter((result) => result.id !== excludeEntryId);
+    },
     async hydrateEntries(ids) {
       const filteredIds = excludeEntryId ? ids.filter((id) => id !== excludeEntryId) : ids;
       return inner.hydrateEntries(filteredIds);

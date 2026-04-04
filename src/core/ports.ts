@@ -7,7 +7,7 @@
 
 import type { Episode, EpisodeSource, Entry } from "./types.js";
 import type { EpisodeInput, EpisodeUpsertResult, TemporalWindow } from "./episode/types.js";
-import type { EntryFilters, FtsCandidate, VectorCandidate } from "./recall/types.js";
+import type { EntryFilters, FtsCandidate, HistoricalPredecessorLookupParams, RecallCandidateEntry, VectorCandidate } from "./recall/types.js";
 
 // ── Database ─────────────────────────────────────────────────────────
 
@@ -121,6 +121,14 @@ export interface RecallPorts {
 
   /** Search FTS candidates with adapter-level filtering applied. */
   ftsSearch(params: { text: string; limit: number; filters?: EntryFilters }): Promise<FtsCandidate[]>;
+
+  /**
+   * Fetch inactive lineage-linked candidates for historical-state expansion.
+   *
+   * The adapter should keep this scoped to the provided active entry IDs and
+   * only return historical candidates that are plausibly about the same slot.
+   */
+  fetchPredecessors?(params: HistoricalPredecessorLookupParams): Promise<RecallCandidateEntry[]>;
 
   /** Hydrate fully populated entries for the final ranked result set. */
   hydrateEntries(ids: string[]): Promise<Entry[]>;

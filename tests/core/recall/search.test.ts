@@ -194,6 +194,177 @@ describe("recall raw evidence gating", () => {
     expect(historicalResults.map((result) => result.scores.recency)).toEqual([0.5, 0.5]);
   });
 
+  it("expands historical queries with explicit inactive predecessors only for the historical profile", async () => {
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "manual-http-shim",
+          subject: "local recall eval workflow",
+          content: "Run local recall evals with an ad hoc HTTP shim before each debugging session.",
+          created_at: "2026-01-12T00:00:00.000Z",
+          superseded_by: "dev-recall-command",
+        }),
+        buildEntry({
+          id: "dev-recall-command",
+          subject: "local recall eval workflow",
+          content: "Use the repo-owned dev recall command for local recall evals.",
+          created_at: "2026-03-01T00:00:00.000Z",
+        }),
+      ],
+      vectorCandidates: [{ id: "dev-recall-command", vectorSim: 0.71 }],
+      predecessorCandidateIds: ["manual-http-shim"],
+    });
+
+    const currentResults = await recall(
+      {
+        text: "what workflow did we use before the dev recall command existed for local recall evals",
+        limit: 5,
+      },
+      fixture.ports,
+    );
+    const historicalResults = await recall(
+      {
+        text: "what workflow did we use before the dev recall command existed for local recall evals",
+        limit: 5,
+        rankingProfile: "historical_state",
+      },
+      fixture.ports,
+    );
+
+    expect(currentResults.map((result) => result.entry.id)).toEqual(["dev-recall-command"]);
+    expect(historicalResults.map((result) => result.entry.id)).toEqual(["manual-http-shim", "dev-recall-command"]);
+    expect(fixture.fetchPredecessors).toHaveBeenCalledTimes(1);
+    expect(fixture.fetchPredecessors).toHaveBeenCalledWith({
+      activeEntryIds: ["dev-recall-command"],
+    });
+  });
+
+  it("boosts retired same-topic predecessors for historical queries", async () => {
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "kanban-tracking",
+          subject: "memory freshness work tracking",
+          content: "Track memory freshness eval work on the kanban board.",
+          created_at: "2026-01-05T00:00:00.000Z",
+          retired: true,
+          retired_at: "2026-02-10T00:00:00.000Z",
+          retired_reason: "superseded by GitHub issues",
+        }),
+        buildEntry({
+          id: "github-issues-tracking",
+          subject: "memory freshness work tracking",
+          content: "Track memory freshness eval work in GitHub issues.",
+          created_at: "2026-02-10T00:00:00.000Z",
+        }),
+      ],
+      vectorCandidates: [{ id: "github-issues-tracking", vectorSim: 0.72 }],
+      predecessorCandidateIds: ["kanban-tracking"],
+    });
+
+    const results = await recall(
+      {
+        text: "what did we use before GitHub issues to track memory freshness eval work",
+        limit: 5,
+        rankingProfile: "historical_state",
+      },
+      fixture.ports,
+    );
+
+    expect(results.map((result) => result.entry.id)).toEqual(["kanban-tracking", "github-issues-tracking"]);
+  });
+
+  it("adds a same-topic prior-state boost for active historical peers", async () => {
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "recency-plan",
+          subject: "ranking debug plan",
+          content: "Plan for today: switch recall ranking to pure recency while debugging freshness problems.",
+          created_at: "2026-03-18T09:00:00.000Z",
+        }),
+        buildEntry({
+          id: "freshness-fix",
+          type: "milestone",
+          subject: "ranking debug outcome",
+          content: "Implemented freshness-aware ranking without switching to pure recency; the earlier recency-only plan was dropped.",
+          created_at: "2026-03-18T15:00:00.000Z",
+        }),
+      ],
+      vectorCandidates: [
+        { id: "recency-plan", vectorSim: 0.63 },
+        { id: "freshness-fix", vectorSim: 0.68 },
+      ],
+    });
+
+    const currentResults = await recall(
+      {
+        text: "what short-lived plan did we consider earlier that day before the final freshness ranking fix",
+        limit: 5,
+      },
+      fixture.ports,
+    );
+    const historicalResults = await recall(
+      {
+        text: "what short-lived plan did we consider earlier that day before the final freshness ranking fix",
+        limit: 5,
+        rankingProfile: "historical_state",
+      },
+      fixture.ports,
+    );
+
+    expect(currentResults.map((result) => result.entry.id)).toEqual(["freshness-fix", "recency-plan"]);
+    expect(historicalResults.map((result) => result.entry.id)).toEqual(["recency-plan", "freshness-fix"]);
+  });
+
+  it("limits historical peer boosts to shared subject prefixes", async () => {
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "phase1-plan",
+          subject: "memory freshness eval rollout",
+          content: "Plan: build the first memory freshness eval corpus in agenr-evals next week, then add explicit ranking assertions later.",
+          created_at: "2026-03-10T00:00:00.000Z",
+        }),
+        buildEntry({
+          id: "phase1-shipped",
+          type: "milestone",
+          subject: "memory freshness eval rollout status",
+          content:
+            "Phase 1 is complete: the first memory freshness eval corpus now exists in agenr-evals, and ranking-aware assertions are queued as follow-up work.",
+          created_at: "2026-03-14T00:00:00.000Z",
+        }),
+        buildEntry({
+          id: "phase2-ranking-assertions",
+          subject: "memory freshness phase 2",
+          content: "Phase 2 will add explicit top-result, ordered-prefix, and pairwise-order assertions after the phase 1 corpus lands.",
+          created_at: "2026-03-15T00:00:00.000Z",
+        }),
+      ],
+      vectorCandidates: [
+        { id: "phase1-plan", vectorSim: 0.70306559207713 },
+        { id: "phase1-shipped", vectorSim: 0.7393617024327414 },
+        { id: "phase2-ranking-assertions", vectorSim: 0.6777632180111552 },
+      ],
+      ftsCandidates: [
+        { id: "phase1-plan", rank: 1, tier: "all_tokens" },
+        { id: "phase1-shipped", rank: 0.5, tier: "all_tokens" },
+        { id: "phase2-ranking-assertions", rank: 2, tier: "all_tokens" },
+      ],
+    });
+
+    const historicalResults = await recall(
+      {
+        text: "what was the earlier plan for the memory freshness eval corpus before phase 1 shipped",
+        limit: 5,
+        rankingProfile: "historical_state",
+      },
+      fixture.ports,
+    );
+
+    expect(historicalResults.map((result) => result.entry.id)).toEqual(["phase1-plan", "phase1-shipped", "phase2-ranking-assertions"]);
+  });
+
   it("keeps around-date recency active for historical-state queries with a temporal anchor", async () => {
     const fixture = createRecallPortsFixture({
       entries: [
@@ -242,12 +413,15 @@ function createRecallPortsFixture(params: {
   entries: Entry[];
   vectorCandidates: Array<{ id: string; vectorSim: number }>;
   ftsCandidates?: Array<{ id: string; rank: number; tier: FtsCandidate["tier"] }>;
+  predecessorCandidateIds?: string[];
 }): {
   ports: RecallPorts;
   recordRecallEvents: ReturnType<typeof vi.fn>;
+  fetchPredecessors: ReturnType<typeof vi.fn>;
 } {
   const entriesById = new Map(params.entries.map((entry) => [entry.id, entry]));
   const recordRecallEvents = vi.fn(async () => undefined);
+  const fetchPredecessors = vi.fn(async () => (params.predecessorCandidateIds ?? []).map((id) => toRecallCandidateEntry(requireEntry(entriesById, id))));
   const ports: RecallPorts = {
     embed: async (): Promise<number[]> => [1, 0, 0],
     vectorSearch: async (): Promise<VectorCandidate[]> =>
@@ -261,6 +435,7 @@ function createRecallPortsFixture(params: {
         rank: candidate.rank,
         tier: candidate.tier,
       })),
+    fetchPredecessors,
     hydrateEntries: async (ids: string[]): Promise<Entry[]> => ids.map((id) => requireEntry(entriesById, id)),
     recordRecallEvents,
   };
@@ -268,6 +443,7 @@ function createRecallPortsFixture(params: {
   return {
     ports,
     recordRecallEvents,
+    fetchPredecessors,
   };
 }
 
@@ -286,6 +462,8 @@ function toRecallCandidateEntry(entry: Entry): RecallCandidateEntry {
     expiry: entry.expiry,
     created_at: entry.created_at,
     embedding: entry.embedding,
+    superseded_by: entry.superseded_by,
+    retired: entry.retired,
   };
 }
 

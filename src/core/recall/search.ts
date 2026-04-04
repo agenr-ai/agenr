@@ -1,13 +1,27 @@
 import type { RecallPorts } from "../ports.js";
 
-import { computeLexicalScore } from "./lexical.js";
+import { computeLexicalScore, tokenize } from "./lexical.js";
 import { cosineSimilarity, gaussianRecency, importanceScore, recencyScore, scoreCandidate } from "./scoring.js";
 import { inferAroundDate, parseRelativeDate } from "./temporal.js";
 import { createNoopRecallTraceSink, type RecallExecutionOptions, type RecallExecutionTraceSummary, type RecallNoResultReason } from "./trace.js";
-import type { EntryFilters, FtsCandidate, RecallCandidateEntry, RecallInput, RecallOutput, RecallRankingProfile, VectorCandidate } from "./types.js";
+import type {
+  EntryFilters,
+  FtsCandidate,
+  HistoricalPredecessorLookupParams,
+  RecallCandidateEntry,
+  RecallInput,
+  RecallOutput,
+  RecallRankingProfile,
+  VectorCandidate,
+} from "./types.js";
 
 const MIN_VECTOR_ONLY_EVIDENCE = 0.3;
 const HISTORICAL_STATE_FLAT_RECENCY = 0.5;
+const HISTORICAL_PREDECESSOR_BOOST = 0.08;
+const HISTORICAL_RETIRED_PREDECESSOR_BOOST = 0.06;
+const HISTORICAL_OLDER_STATE_BOOST = 0.08;
+const HISTORICAL_TOPIC_SHARED_PREFIX_MIN = 2;
+const HISTORICAL_TOPIC_PREFIX_OF_CANDIDATE_MIN = 0.6;
 
 /**
  * Execute the v1 recall pipeline against the provided adapter ports.
@@ -74,19 +88,27 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
 
     const mergeStartedAt = Date.now();
     const mergedCandidates = mergeCandidates(vectorCandidates, ftsCandidates);
+    await expandHistoricalCandidates(mergedCandidates, queryEmbedding, ports, {
+      activeEntryIds: Array.from(mergedCandidates.keys()),
+      rankingProfile: query.rankingProfile,
+    });
     summary.candidateCounts.merged = mergedCandidates.size;
     summary.timings.mergeCandidatesMs = elapsedMs(mergeStartedAt);
 
     const scoreStartedAt = Date.now();
-    const scored = Array.from(mergedCandidates.values())
-      .map((candidate) =>
+    const scored = applyHistoricalLineageBoosts(
+      Array.from(mergedCandidates.values()).map((candidate) =>
         scoreMergedCandidate(candidate, text, queryEmbedding, {
           aroundDate,
           aroundRadius: query.aroundRadius,
           rankingProfile: query.rankingProfile,
         }),
-      )
-      .sort((left, right) => right.score - left.score);
+      ),
+      {
+        aroundDate,
+        rankingProfile: query.rankingProfile,
+      },
+    ).sort((left, right) => right.score - left.score);
     summary.timings.scoreCandidatesMs = elapsedMs(scoreStartedAt);
 
     const thresholdStartedAt = Date.now();
@@ -261,6 +283,40 @@ function scoreMergedCandidate(
 }
 
 /**
+ * Expand the historical-state candidate pool with inactive lineage-linked rows.
+ *
+ * @param mergedCandidates - Current merged active candidate map.
+ * @param queryEmbedding - Query embedding used to compute fallback vector scores.
+ * @param ports - Recall ports that may expose historical expansion.
+ * @param params - Active candidate IDs plus the active ranking profile.
+ * @returns Promise that resolves after the candidate map has been updated in place.
+ */
+async function expandHistoricalCandidates(
+  mergedCandidates: Map<string, MergedCandidate>,
+  queryEmbedding: number[],
+  ports: RecallPorts,
+  params: HistoricalPredecessorLookupParams & { rankingProfile?: RecallRankingProfile },
+): Promise<void> {
+  if (params.rankingProfile !== "historical_state" || mergedCandidates.size === 0 || !ports.fetchPredecessors) {
+    return;
+  }
+
+  const predecessors = await ports.fetchPredecessors({
+    activeEntryIds: params.activeEntryIds,
+  });
+  for (const entry of predecessors) {
+    if (mergedCandidates.has(entry.id)) {
+      continue;
+    }
+
+    mergedCandidates.set(entry.id, {
+      entry,
+      vectorSim: cosineSimilarity(entry.embedding ?? [], queryEmbedding),
+    });
+  }
+}
+
+/**
  * Resolve the recency contribution for one ranked candidate.
  *
  * Historical-state queries without an explicit around-date should not reward the
@@ -287,6 +343,128 @@ function resolveRecencyScore(
   }
 
   return recencyScore(entry.created_at, entry.expiry);
+}
+
+/**
+ * Apply historical-only lineage boosts after the base score is computed.
+ *
+ * Direct predecessors receive the strongest boost. When explicit lineage is
+ * absent, retired same-topic predecessors and older same-topic peers can still
+ * get a smaller boost against an active successor candidate.
+ *
+ * @param candidates - Base-scored candidates before final ranking.
+ * @param params - Historical ranking profile and optional around-date anchor.
+ * @returns Candidate list with historical boosts applied when relevant.
+ */
+function applyHistoricalLineageBoosts(
+  candidates: RankedCandidate[],
+  params: {
+    aroundDate: Date | null;
+    rankingProfile?: RecallRankingProfile;
+  },
+): RankedCandidate[] {
+  if (params.rankingProfile !== "historical_state") {
+    return candidates;
+  }
+
+  const entries = candidates.map((candidate) => candidate.entry);
+  return candidates.map((candidate) => {
+    const bonus = resolveHistoricalLineageBonus(candidate.entry, entries, params.aroundDate);
+    if (bonus <= 0) {
+      return candidate;
+    }
+
+    return {
+      ...candidate,
+      score: Math.min(1, candidate.score + bonus),
+    };
+  });
+}
+
+/**
+ * Resolve the lineage-relative historical bonus for one candidate.
+ *
+ * @param entry - Candidate being evaluated.
+ * @param entries - All candidate entries currently in the result set.
+ * @param aroundDate - Optional explicit around-date anchor.
+ * @returns Additive historical bonus on the 0-1 scale.
+ */
+function resolveHistoricalLineageBonus(entry: RecallCandidateEntry, entries: RecallCandidateEntry[], aroundDate: Date | null): number {
+  if (entries.some((peer) => peer.id !== entry.id && entry.superseded_by === peer.id)) {
+    return HISTORICAL_PREDECESSOR_BOOST;
+  }
+
+  if (aroundDate) {
+    return 0;
+  }
+
+  const activePeers = entries.filter((peer) => peer.id !== entry.id && isPotentialCurrentPeer(peer) && isOlderSameTopicPeer(entry, peer));
+  if (activePeers.length === 0) {
+    return 0;
+  }
+
+  return entry.retired ? HISTORICAL_RETIRED_PREDECESSOR_BOOST : HISTORICAL_OLDER_STATE_BOOST;
+}
+
+/**
+ * Check whether one candidate is an active-like current-state peer.
+ *
+ * @param entry - Candidate under evaluation.
+ * @returns True when the entry looks like a current-state peer.
+ */
+function isPotentialCurrentPeer(entry: RecallCandidateEntry): boolean {
+  return !entry.retired && entry.superseded_by === undefined;
+}
+
+/**
+ * Check whether the left candidate is an older same-topic peer of the right one.
+ *
+ * @param left - Potential prior-state candidate.
+ * @param right - Potential current-state peer.
+ * @returns True when the pair looks like a historical state transition.
+ */
+function isOlderSameTopicPeer(left: RecallCandidateEntry, right: RecallCandidateEntry): boolean {
+  return createdAtMs(left.created_at) < createdAtMs(right.created_at) && sharesHistoricalTopic(left, right);
+}
+
+/**
+ * Compare two candidate subjects for same-topic historical lineage.
+ *
+ * @param left - Left candidate.
+ * @param right - Right candidate.
+ * @returns True when the subjects share enough topical overlap.
+ */
+function sharesHistoricalTopic(left: RecallCandidateEntry, right: RecallCandidateEntry): boolean {
+  const leftTokens = tokenize(left.subject);
+  const rightTokens = tokenize(right.subject);
+  if (leftTokens.length === 0 || rightTokens.length === 0) {
+    return false;
+  }
+
+  const sharedPrefixCount = countSharedPrefixTokens(leftTokens, rightTokens);
+  return sharedPrefixCount >= HISTORICAL_TOPIC_SHARED_PREFIX_MIN && sharedPrefixCount / leftTokens.length >= HISTORICAL_TOPIC_PREFIX_OF_CANDIDATE_MIN;
+}
+
+/** Parse a candidate timestamp into milliseconds, or zero when invalid. */
+function createdAtMs(value: string): number {
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+/** Count the consecutive shared prefix tokens between two subject token lists. */
+function countSharedPrefixTokens(leftTokens: string[], rightTokens: string[]): number {
+  const length = Math.min(leftTokens.length, rightTokens.length);
+  let sharedPrefixCount = 0;
+
+  for (let index = 0; index < length; index += 1) {
+    if (leftTokens[index] !== rightTokens[index]) {
+      break;
+    }
+
+    sharedPrefixCount += 1;
+  }
+
+  return sharedPrefixCount;
 }
 
 /**

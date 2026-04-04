@@ -6,6 +6,16 @@ import type { Entry, EntryType } from "../types.js";
 export type RecallRankingProfile = "historical_state";
 
 /**
+ * Input payload for historical-state predecessor expansion.
+ *
+ * The params object can grow over time with additional lineage signals such as
+ * claim keys without changing the recall port signature.
+ */
+export interface HistoricalPredecessorLookupParams {
+  activeEntryIds: string[];
+}
+
+/**
  * Input to the v1 recall pipeline.
  */
 export interface RecallInput {
@@ -41,7 +51,10 @@ export interface RecallOutput {
 /**
  * Minimal entry fields needed during recall scoring before final hydration.
  */
-export type RecallCandidateEntry = Pick<Entry, "id" | "subject" | "content" | "importance" | "expiry" | "created_at" | "embedding">;
+export type RecallCandidateEntry = Pick<
+  Entry,
+  "id" | "subject" | "content" | "importance" | "expiry" | "created_at" | "embedding" | "superseded_by" | "retired"
+>;
 
 /**
  * A candidate returned from vector search with ranking-time entry data.
