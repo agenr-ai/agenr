@@ -46,6 +46,7 @@ const CLAIM_KEY_PROGRESS_INTERVAL_MS = 5_000;
 const CLAIM_KEY_PROGRESS_VERBOSE_INTERVAL_MS = 2_000;
 const CLAIM_KEY_PROGRESS_EVERY_ENTRIES = 250;
 const CLAIM_KEY_PROGRESS_EVERY_VERBOSE_ENTRIES = 50;
+const MAX_AUTO_APPLY_ATTRIBUTE_TOKENS = 4;
 const USER_METADATA_ENTITY_ALIASES = new Set(["i", "me", "myself", "person", "the_user", "user"]);
 const PROJECT_METADATA_ENTITY_ALIASES = new Set(["app", "application", "project", "the_project", "this_project", "workspace"]);
 const GROUNDING_STOP_TOKENS = new Set([
@@ -76,9 +77,49 @@ const GROUNDING_STOP_TOKENS = new Set([
   "we",
   "with",
 ]);
+const AWKWARD_AUTO_APPLY_ATTRIBUTE_TOKENS = new Set(["to", "for", "from", "with", "about", "into", "onto", "between", "during"]);
+const TRAILING_ENTITY_COMPACTION_PREPOSITIONS = new Set(["to", "for", "from", "with", "about", "into", "onto"]);
 const POLICY_TEMPLATE_ATTRIBUTE_TOKENS = new Set(["policy", "default", "workflow", "process", "strategy", "guardrail", "rule", "boundary"]);
 const AUTHORITATIVE_TEMPLATE_ATTRIBUTE_TOKENS = new Set(["source", "truth", "guide", "runbook", "reference"]);
-const ARCHITECTURE_TEMPLATE_ATTRIBUTE_TOKENS = new Set(["adapter", "boundary", "architecture", "backend", "storage", "model", "support"]);
+const ARCHITECTURE_TEMPLATE_ATTRIBUTE_TOKENS = new Set([
+  "adapter",
+  "boundary",
+  "architecture",
+  "backend",
+  "storage",
+  "model",
+  "support",
+  "contract",
+  "interface",
+  "surface",
+]);
+const STABLE_FAMILY_SLOT_ATTRIBUTE_HEADS = new Set([
+  "access",
+  "boundary",
+  "contract",
+  "mode",
+  "owner",
+  "path",
+  "policy",
+  "preference",
+  "process",
+  "role",
+  "rule",
+  "schedule",
+  "sequencing",
+  "setting",
+  "status",
+  "strategy",
+  "support",
+  "surface",
+  "timezone",
+  "version",
+  "window",
+  "workflow",
+  "workspace",
+]);
+
+type MissingBackfillPromotionClass = "trusted_exact_reuse_grounded" | "trusted_family_template_grounded" | "trusted_family_stable_slot";
 
 /**
  * Claim-key-quality selection and execution options for one surgeon run.
@@ -174,15 +215,29 @@ interface TrustedCleanupHintSeed {
 }
 
 interface MissingBackfillSupportEvaluation {
-  strongAutoApply: boolean;
+  autoApplyClass: MissingBackfillPromotionClass | null;
   supportedProposal: boolean;
   trustedExactReuse: boolean;
   trustedEntityFamilyReuse: boolean;
-  tagOrSourceGrounding: boolean;
+  tagGrounding: boolean;
+  sourceContextGrounding: boolean;
+  localGrounding: boolean;
+  entityLexicalAlignment: boolean;
+  attributeLexicalAlignment: boolean;
   lexicalAlignment: boolean;
   templateSupport: boolean;
+  stableSlotSupport: boolean;
   supportingEntryIds: string[];
+  supportEvidence: string[];
   rationaleFragments: string[];
+}
+
+interface ClaimKeyCompactnessEvaluation {
+  claimKey: string;
+  compactedFrom: string | null;
+  compactionReason: string | null;
+  compactEnoughForAutoApply: boolean;
+  blockerReason: string | null;
 }
 
 interface MissingBackfillSkipDiagnostic {
@@ -599,7 +654,8 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
     }
 
     const metadataBackfillClaimKey = resolveMetadataBackfillClaimKey(entry, suggestion.claimKey);
-    const targetClaimKey = metadataBackfillClaimKey ?? suggestion.claimKey;
+    const compactness = evaluateClaimKeyCompactness(metadataBackfillClaimKey ?? suggestion.claimKey);
+    const targetClaimKey = compactness.claimKey;
     const targetSource = metadataBackfillClaimKey ? "metadata_backfill_rewrite" : suggestion.path;
     const targetInspection = inspectClaimKey(targetClaimKey);
     const targetIsTrusted = targetInspection.suspectReasons.length === 0;
@@ -630,19 +686,24 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
             targetClaimKey,
             confidence: suggestion.confidence,
             metadataBackfillClaimKey,
+            compactness,
           }) + " The same slot key is already used by a different entry type in the matched working set.",
         confidence: suggestion.confidence,
         source: targetSource,
         eligibleForApply: true,
         createdAt: options.now().toISOString(),
       });
-      await persistProposal(proposal);
+      await persistProposal(proposal, {
+        compactness,
+        support,
+        supportedCandidate: support.supportedProposal,
+      });
       counts.proposalsEmitted += 1;
       counts.skippedAmbiguous += 1;
       return;
     }
 
-    if (!targetIsTrusted || suggestion.confidence < autoApplyThreshold) {
+    if (!targetIsTrusted || !compactness.compactEnoughForAutoApply || suggestion.confidence < autoApplyThreshold) {
       if (suggestion.confidence >= proposalThreshold) {
         const proposal = createProposal({
           runId: options.runId,
@@ -659,6 +720,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
             autoApplyThreshold,
             trusted: targetIsTrusted,
             metadataBackfillClaimKey,
+            compactness,
             support,
           }),
           confidence: suggestion.confidence,
@@ -666,7 +728,11 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
           eligibleForApply: true,
           createdAt: options.now().toISOString(),
         });
-        await persistProposal(proposal);
+        await persistProposal(proposal, {
+          compactness,
+          support,
+          supportedCandidate: support.supportedProposal,
+        });
         counts.proposalsEmitted += 1;
         counts.skippedAmbiguous += 1;
         if (metadataBackfillClaimKey !== null || suggestion.path === "deterministic_repair" || support.supportedProposal) {
@@ -694,12 +760,15 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
       oldClaimKey: null,
       source: targetSource,
       confidence: suggestion.confidence,
+      compactness,
+      support,
       rationale: buildMissingBackfillApplyRationale({
         originalClaimKey: suggestion.claimKey,
         targetClaimKey,
         confidence: suggestion.confidence,
         source: targetSource,
         metadataBackfillClaimKey,
+        compactness,
         support,
       }),
     });
@@ -711,7 +780,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
         missingDecisionStats.autoAppliedMetadataRepair += 1;
       } else if (suggestion.path === "deterministic_repair") {
         missingDecisionStats.autoAppliedDeterministicRepair += 1;
-      } else if (support.strongAutoApply && suggestion.confidence < HIGH_CONFIDENCE_BACKFILL_THRESHOLD) {
+      } else if (support.autoApplyClass !== null && suggestion.confidence < HIGH_CONFIDENCE_BACKFILL_THRESHOLD) {
         missingDecisionStats.autoAppliedSupportedPreview += 1;
       } else {
         missingDecisionStats.autoAppliedPreviewModel += 1;
@@ -933,6 +1002,8 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
       oldClaimKey: string | null;
       source: string;
       confidence: number;
+      support?: MissingBackfillSupportEvaluation;
+      compactness?: ClaimKeyCompactnessEvaluation;
       rationale: string;
     },
   ): Promise<{ projected: boolean; applied: boolean }> {
@@ -968,6 +1039,20 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
         proposal_source: input.source,
         confidence: input.confidence,
         auto_applied: true,
+        supported_auto_apply: input.support?.autoApplyClass !== null,
+        ...(input.support?.autoApplyClass
+          ? {
+              support_class: input.support.autoApplyClass,
+              support_evidence: [...input.support.supportEvidence],
+              supporting_entry_ids: [...input.support.supportingEntryIds],
+            }
+          : {}),
+        ...(input.compactness?.compactedFrom
+          ? {
+              claim_key_compacted_from: input.compactness.compactedFrom,
+              claim_key_compaction_reason: input.compactness.compactionReason,
+            }
+          : {}),
       },
       createdAt: options.now().toISOString(),
     });
@@ -975,7 +1060,14 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
     return { projected: true, applied: true };
   }
 
-  async function persistProposal(proposal: SurgeonRunProposal): Promise<void> {
+  async function persistProposal(
+    proposal: SurgeonRunProposal,
+    audit?: {
+      compactness?: ClaimKeyCompactnessEvaluation;
+      support?: MissingBackfillSupportEvaluation;
+      supportedCandidate?: boolean;
+    },
+  ): Promise<void> {
     await deps.port.logRunProposal(proposal);
     await deps.port.logRunAction({
       id: randomUUID(),
@@ -994,6 +1086,29 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
         proposal_source: proposal.source,
         auto_applied: false,
         eligible_for_apply: proposal.eligibleForApply,
+        supported_candidate: audit?.supportedCandidate === true,
+        ...(audit?.support?.supportedProposal
+          ? {
+              support_evidence: [...audit.support.supportEvidence],
+              supporting_entry_ids: [...audit.support.supportingEntryIds],
+            }
+          : {}),
+        ...(audit?.support?.autoApplyClass
+          ? {
+              support_class: audit.support.autoApplyClass,
+            }
+          : {}),
+        ...(audit?.compactness?.compactedFrom
+          ? {
+              claim_key_compacted_from: audit.compactness.compactedFrom,
+              claim_key_compaction_reason: audit.compactness.compactionReason,
+            }
+          : {}),
+        ...(audit?.compactness?.blockerReason
+          ? {
+              auto_apply_blocker: audit.compactness.blockerReason,
+            }
+          : {}),
       },
       createdAt: proposal.createdAt,
     });
@@ -1547,15 +1662,44 @@ function evaluateMissingBackfillSupport(entry: Entry, targetClaimKey: string, tr
   const familyReuseEntries = relevantEntries.filter(
     (trustedEntry) => trustedEntry.claimKey !== normalized.claimKey && trustedEntry.entity === normalized.entity,
   );
-  const groundedExactReuseEntries = exactReuseEntries.filter((trustedEntry) => hasGroundingOverlap(entryTagSet, entrySourceTokens, trustedEntry));
-  const groundedFamilyReuseEntries = familyReuseEntries.filter((trustedEntry) => hasGroundingOverlap(entryTagSet, entrySourceTokens, trustedEntry));
-  const tagOrSourceGrounding = groundedExactReuseEntries.length > 0 || groundedFamilyReuseEntries.length > 0;
-  const lexicalAlignment = hasCandidateLexicalAlignment(entry, normalized.entity, normalized.attribute);
+  const groundedExactReuseEntries = exactReuseEntries.filter((trustedEntry) => {
+    const grounding = inspectGroundingOverlap(entryTagSet, entrySourceTokens, trustedEntry);
+    return grounding.tagGrounding || grounding.sourceContextGrounding;
+  });
+  const groundedFamilyReuseEntries = familyReuseEntries.filter((trustedEntry) => {
+    const grounding = inspectGroundingOverlap(entryTagSet, entrySourceTokens, trustedEntry);
+    return grounding.tagGrounding || grounding.sourceContextGrounding;
+  });
+  const tagGrounding = relevantEntries.some((trustedEntry) => inspectGroundingOverlap(entryTagSet, entrySourceTokens, trustedEntry).tagGrounding);
+  const sourceContextGrounding = relevantEntries.some(
+    (trustedEntry) => inspectGroundingOverlap(entryTagSet, entrySourceTokens, trustedEntry).sourceContextGrounding,
+  );
+  const localGrounding = tagGrounding || sourceContextGrounding;
+  const lexicalAlignment = inspectCandidateLexicalAlignment(entry, normalized.entity, normalized.attribute);
   const templateSupport = matchesConservativeTemplateSupport(entry, normalized.attribute);
+  const stableSlotSupport = matchesStableFamilySlotSupport(normalized.attribute);
   const trustedExactReuse = groundedExactReuseEntries.length > 0;
   const trustedEntityFamilyReuse = groundedFamilyReuseEntries.length > 0;
-  const strongAutoApply = lexicalAlignment && (templateSupport || trustedExactReuse) && (tagOrSourceGrounding || trustedEntityFamilyReuse);
-  const supportedProposal = lexicalAlignment && (templateSupport || trustedExactReuse || trustedEntityFamilyReuse || tagOrSourceGrounding);
+  const autoApplyClass = resolveMissingBackfillPromotionClass({
+    exactReuseCount: groundedExactReuseEntries.length,
+    familyReuseCount: familyReuseEntries.length,
+    groundedFamilyReuseCount: groundedFamilyReuseEntries.length,
+    localGrounding,
+    templateSupport,
+    stableSlotSupport,
+    lexicalAlignment,
+  });
+  const supportedProposal = lexicalAlignment.any && (templateSupport || stableSlotSupport || trustedExactReuse || trustedEntityFamilyReuse || localGrounding);
+  const supportEvidence = [
+    trustedExactReuse ? "trusted_exact_reuse" : null,
+    trustedEntityFamilyReuse ? "trusted_entity_family_reuse" : null,
+    tagGrounding ? "tag_grounding" : null,
+    sourceContextGrounding ? "source_context_grounding" : null,
+    lexicalAlignment.entity ? "entity_lexical_alignment" : null,
+    lexicalAlignment.attribute ? "attribute_lexical_alignment" : null,
+    templateSupport ? "template_support" : null,
+    stableSlotSupport ? "stable_slot_support" : null,
+  ].filter((value): value is string => value !== null);
   const rationaleFragments = [
     trustedExactReuse
       ? `trusted exact reuse from ${groundedExactReuseEntries.length} matching entr${groundedExactReuseEntries.length === 1 ? "y" : "ies"}`
@@ -1563,46 +1707,105 @@ function evaluateMissingBackfillSupport(entry: Entry, targetClaimKey: string, tr
     trustedEntityFamilyReuse
       ? `trusted ${normalized.entity} family reuse from ${groundedFamilyReuseEntries.length} supporting entr${groundedFamilyReuseEntries.length === 1 ? "y" : "ies"}`
       : null,
-    tagOrSourceGrounding ? "overlapping tags/source_context with trusted corpus entries" : null,
-    lexicalAlignment ? "clear lexical alignment to the proposed slot" : null,
+    tagGrounding ? "overlapping tags with trusted corpus entries" : null,
+    sourceContextGrounding ? "overlapping source_context with trusted corpus entries" : null,
+    lexicalAlignment.attribute
+      ? "clear lexical alignment to the proposed slot"
+      : lexicalAlignment.entity
+        ? "clear lexical alignment to the proposed entity"
+        : null,
     templateSupport ? "a conservative policy/default/source-of-truth template match" : null,
+    stableSlotSupport ? "a stable compact slot head in a well-established entity family" : null,
   ].filter((value): value is string => value !== null);
 
   return {
-    strongAutoApply,
+    autoApplyClass,
     supportedProposal,
     trustedExactReuse,
     trustedEntityFamilyReuse,
-    tagOrSourceGrounding,
-    lexicalAlignment,
+    tagGrounding,
+    sourceContextGrounding,
+    localGrounding,
+    entityLexicalAlignment: lexicalAlignment.entity,
+    attributeLexicalAlignment: lexicalAlignment.attribute,
+    lexicalAlignment: lexicalAlignment.any,
     templateSupport,
+    stableSlotSupport,
     supportingEntryIds: normalizeStringArray([
       ...groundedExactReuseEntries.map((candidate) => candidate.id),
       ...groundedFamilyReuseEntries.map((candidate) => candidate.id),
     ]),
+    supportEvidence,
     rationaleFragments,
   };
 }
 
 function createEmptyMissingBackfillSupportEvaluation(): MissingBackfillSupportEvaluation {
   return {
-    strongAutoApply: false,
+    autoApplyClass: null,
     supportedProposal: false,
     trustedExactReuse: false,
     trustedEntityFamilyReuse: false,
-    tagOrSourceGrounding: false,
+    tagGrounding: false,
+    sourceContextGrounding: false,
+    localGrounding: false,
+    entityLexicalAlignment: false,
+    attributeLexicalAlignment: false,
     lexicalAlignment: false,
     templateSupport: false,
+    stableSlotSupport: false,
     supportingEntryIds: [],
+    supportEvidence: [],
     rationaleFragments: [],
   };
 }
 
-function hasGroundingOverlap(entryTagSet: Set<string>, entrySourceTokens: Set<string>, trustedEntry: TrustedCleanupHintEntry): boolean {
-  return countSetOverlap(entryTagSet, trustedEntry.tags) > 0 || countSetOverlap(entrySourceTokens, trustedEntry.sourceContextTokens) > 0;
+function resolveMissingBackfillPromotionClass(input: {
+  exactReuseCount: number;
+  familyReuseCount: number;
+  groundedFamilyReuseCount: number;
+  localGrounding: boolean;
+  templateSupport: boolean;
+  stableSlotSupport: boolean;
+  lexicalAlignment: {
+    entity: boolean;
+    attribute: boolean;
+    any: boolean;
+  };
+}): MissingBackfillPromotionClass | null {
+  if (input.exactReuseCount > 0 && (input.lexicalAlignment.attribute || input.templateSupport)) {
+    return "trusted_exact_reuse_grounded";
+  }
+
+  if (input.templateSupport && input.localGrounding && input.familyReuseCount > 0 && (input.lexicalAlignment.attribute || input.lexicalAlignment.entity)) {
+    return "trusted_family_template_grounded";
+  }
+
+  if (
+    input.stableSlotSupport &&
+    input.localGrounding &&
+    input.groundedFamilyReuseCount > 0 &&
+    input.familyReuseCount >= 2 &&
+    input.lexicalAlignment.attribute
+  ) {
+    return "trusted_family_stable_slot";
+  }
+
+  return null;
 }
 
-function hasCandidateLexicalAlignment(entry: Entry, entity: string, attribute: string): boolean {
+function inspectGroundingOverlap(
+  entryTagSet: Set<string>,
+  entrySourceTokens: Set<string>,
+  trustedEntry: TrustedCleanupHintEntry,
+): { tagGrounding: boolean; sourceContextGrounding: boolean } {
+  return {
+    tagGrounding: countSetOverlap(entryTagSet, trustedEntry.tags) > 0,
+    sourceContextGrounding: countSetOverlap(entrySourceTokens, trustedEntry.sourceContextTokens) > 0,
+  };
+}
+
+function inspectCandidateLexicalAlignment(entry: Entry, entity: string, attribute: string): { entity: boolean; attribute: boolean; any: boolean } {
   const lexicalTokens = new Set([
     ...tokenizeGroundingText(entry.subject),
     ...tokenizeGroundingText(entry.content),
@@ -1612,7 +1815,14 @@ function hasCandidateLexicalAlignment(entry: Entry, entity: string, attribute: s
   const entityTokens = entity.split("_").filter((token) => token.length > 0);
   const attributeTokens = attribute.split("_").filter((token) => token.length > 0 && !GROUNDING_STOP_TOKENS.has(token));
 
-  return countSetOverlap(lexicalTokens, entityTokens) > 0 || countSetOverlap(lexicalTokens, attributeTokens) > 0;
+  const entityAlignment = countSetOverlap(lexicalTokens, entityTokens) > 0;
+  const attributeAlignment = countSetOverlap(lexicalTokens, attributeTokens) > 0;
+
+  return {
+    entity: entityAlignment,
+    attribute: attributeAlignment,
+    any: entityAlignment || attributeAlignment,
+  };
 }
 
 function matchesConservativeTemplateSupport(entry: Entry, attribute: string): boolean {
@@ -1620,18 +1830,97 @@ function matchesConservativeTemplateSupport(entry: Entry, attribute: string): bo
   const subjectText = entry.subject.toLowerCase();
   const contentText = entry.content.toLowerCase();
   const combinedText = `${subjectText}\n${contentText}`;
-  const authoritativePattern = /\b(authoritative|source of truth|canonical guide|canonical reference|primary guide|runbook)\b/u.test(combinedText);
+  const authoritativePattern = /\b(authoritative|source of truth|source of record|canonical guide|canonical reference|primary guide|runbook)\b/u.test(
+    combinedText,
+  );
   if (authoritativePattern && intersects(attributeTokens, AUTHORITATIVE_TEMPLATE_ATTRIBUTE_TOKENS)) {
     return true;
   }
 
-  const policyPattern = /\b(should|must|should stay|must stay|always|never|default(?:s)? to|policy|guardrail|required)\b/u.test(combinedText);
+  const policyPattern =
+    /\b(should|must|should stay|must stay|always|never|default(?:s)? to|default(?:s)?|policy|guardrail|required|preference|prefers?)\b/u.test(combinedText);
   if (policyPattern && intersects(attributeTokens, POLICY_TEMPLATE_ATTRIBUTE_TOKENS)) {
     return true;
   }
 
-  const architecturePattern = /\b(uses|supports|backed by|architecture|boundary|workflow|process|pipeline|adapter|layer)\b/u.test(combinedText);
+  const architecturePattern = /\b(uses|supports|backed by|architecture|boundary|workflow|process|pipeline|adapter|layer|contract|interface|surface)\b/u.test(
+    combinedText,
+  );
   return architecturePattern && intersects(attributeTokens, ARCHITECTURE_TEMPLATE_ATTRIBUTE_TOKENS);
+}
+
+function matchesStableFamilySlotSupport(attribute: string): boolean {
+  const tokens = attribute.split("_").filter((token) => token.length > 0);
+  if (tokens.length === 0 || tokens.length > MAX_AUTO_APPLY_ATTRIBUTE_TOKENS) {
+    return false;
+  }
+
+  const head = tokens[tokens.length - 1];
+  return typeof head === "string" && STABLE_FAMILY_SLOT_ATTRIBUTE_HEADS.has(head);
+}
+
+function evaluateClaimKeyCompactness(claimKey: string): ClaimKeyCompactnessEvaluation {
+  const inspection = inspectClaimKey(claimKey);
+  const normalized = inspection.normalized;
+  if (!normalized) {
+    return {
+      claimKey,
+      compactedFrom: null,
+      compactionReason: null,
+      compactEnoughForAutoApply: false,
+      blockerReason: "invalid_claim_key",
+    };
+  }
+
+  const compacted = compactClaimKeyAttribute(normalized.entity, normalized.attribute);
+  const targetClaimKey = compacted.attribute !== normalized.attribute ? `${normalized.entity}/${compacted.attribute}` : normalized.claimKey;
+  const attributeTokens = compacted.attribute.split("_").filter((token) => token.length > 0);
+  const compactEnoughForAutoApply =
+    attributeTokens.length > 0 &&
+    attributeTokens.length <= MAX_AUTO_APPLY_ATTRIBUTE_TOKENS &&
+    !attributeTokens.some((token) => AWKWARD_AUTO_APPLY_ATTRIBUTE_TOKENS.has(token));
+
+  return {
+    claimKey: targetClaimKey,
+    compactedFrom: targetClaimKey !== normalized.claimKey ? normalized.claimKey : null,
+    compactionReason: compacted.reason,
+    compactEnoughForAutoApply,
+    blockerReason: compactEnoughForAutoApply ? null : "non_compact_canonical_slot",
+  };
+}
+
+function compactClaimKeyAttribute(entity: string, attribute: string): { attribute: string; reason: string | null } {
+  let tokens = attribute.split("_").filter((token) => token.length > 0);
+  const entityTokens = entity.split("_").filter((token) => token.length > 0);
+  let reason: string | null = null;
+
+  if (entityTokens.length > 0 && startsWithTokens(tokens, entityTokens) && tokens.length > entityTokens.length) {
+    tokens = tokens.slice(entityTokens.length);
+    reason = "removed duplicated entity prefix from attribute";
+  }
+
+  if (
+    entityTokens.length > 0 &&
+    tokens.length > entityTokens.length + 1 &&
+    endsWithTokens(tokens, entityTokens) &&
+    TRAILING_ENTITY_COMPACTION_PREPOSITIONS.has(tokens[tokens.length - entityTokens.length - 1] ?? "")
+  ) {
+    tokens = tokens.slice(0, tokens.length - entityTokens.length - 1);
+    reason = reason ?? "removed duplicated entity suffix from attribute";
+  }
+
+  return {
+    attribute: tokens.join("_"),
+    reason,
+  };
+}
+
+function startsWithTokens(tokens: string[], prefix: string[]): boolean {
+  return prefix.every((token, index) => tokens[index] === token);
+}
+
+function endsWithTokens(tokens: string[], suffix: string[]): boolean {
+  return suffix.every((token, index) => tokens[tokens.length - suffix.length + index] === token);
 }
 
 function resolveMissingBackfillNullOutcome(suggestionRecord: EntrySuggestionRecord): MissingBackfillSkipDiagnostic["outcome"] {
@@ -1764,7 +2053,7 @@ function resolveMissingBackfillAutoApplyThreshold(input: {
   metadataRepaired: boolean;
   support: MissingBackfillSupportEvaluation;
 }): number {
-  if (input.metadataRepaired || input.previewPath === "deterministic_repair" || input.support.strongAutoApply) {
+  if (input.metadataRepaired || input.previewPath === "deterministic_repair" || input.support.autoApplyClass !== null) {
     return STRUCTURED_AUTO_APPLY_BACKFILL_THRESHOLD;
   }
 
@@ -1788,11 +2077,23 @@ function buildMissingBackfillConflictRationale(input: {
   targetClaimKey: string;
   confidence: number;
   metadataBackfillClaimKey: string | null;
+  compactness: ClaimKeyCompactnessEvaluation;
 }): string {
+  const compactnessSentence =
+    input.compactness.compactedFrom && input.compactness.compactedFrom !== input.targetClaimKey
+      ? ` The candidate was compacted from "${input.compactness.compactedFrom}" to "${input.targetClaimKey}" because ${input.compactness.compactionReason}.`
+      : "";
   if (input.metadataBackfillClaimKey !== null && input.originalClaimKey !== input.targetClaimKey) {
     return (
       `Backfill preview suggested "${input.originalClaimKey}" at confidence ${input.confidence.toFixed(2)}, ` +
-      `and explicit metadata safely grounds that candidate to "${input.targetClaimKey}".`
+      `and explicit metadata safely grounds that candidate to "${input.targetClaimKey}".${compactnessSentence}`
+    );
+  }
+
+  if (input.compactness.compactedFrom && input.compactness.compactedFrom !== input.targetClaimKey) {
+    return (
+      `Backfill preview suggested "${input.compactness.compactedFrom}" at confidence ${input.confidence.toFixed(2)}, ` +
+      `and compact canonicalization safely shortened it to "${input.targetClaimKey}" because ${input.compactness.compactionReason}.`
     );
   }
 
@@ -1806,10 +2107,22 @@ function buildMissingBackfillProposalRationale(input: {
   autoApplyThreshold: number;
   trusted: boolean;
   metadataBackfillClaimKey: string | null;
+  compactness: ClaimKeyCompactnessEvaluation;
   support: MissingBackfillSupportEvaluation;
 }): string {
   if (!input.trusted) {
     return `Backfill preview suggested "${input.targetClaimKey}" at confidence ${input.confidence.toFixed(2)}, but the proposed key is still structurally suspect.`;
+  }
+
+  if (!input.compactness.compactEnoughForAutoApply) {
+    const compacted =
+      input.compactness.compactedFrom && input.compactness.compactedFrom !== input.targetClaimKey
+        ? ` after safely compacting "${input.compactness.compactedFrom}" to "${input.targetClaimKey}" because ${input.compactness.compactionReason}`
+        : "";
+    return (
+      `Backfill preview suggested "${input.targetClaimKey}" at confidence ${input.confidence.toFixed(2)}${compacted}, ` +
+      "but the resulting slot name is still too verbose or awkward to auto-apply safely."
+    );
   }
 
   if (input.metadataBackfillClaimKey !== null && input.originalClaimKey !== input.targetClaimKey) {
@@ -1817,6 +2130,14 @@ function buildMissingBackfillProposalRationale(input: {
       `Backfill preview suggested "${input.originalClaimKey}" at confidence ${input.confidence.toFixed(2)}, ` +
       `and explicit metadata resolves that candidate to likely canonical key "${input.targetClaimKey}", ` +
       `but that supported repair stays below the auto-apply threshold of ${input.autoApplyThreshold.toFixed(2)}.`
+    );
+  }
+
+  if (input.support.autoApplyClass !== null) {
+    return (
+      `Backfill preview suggested "${input.targetClaimKey}" at confidence ${input.confidence.toFixed(2)}. ` +
+      `Supported evidence from ${describeMissingBackfillPromotionClass(input.support.autoApplyClass)} exists via ${input.support.rationaleFragments.join(", ")}, ` +
+      `but the candidate stays below the auto-apply threshold of ${input.autoApplyThreshold.toFixed(2)}.`
     );
   }
 
@@ -1837,23 +2158,46 @@ function buildMissingBackfillApplyRationale(input: {
   confidence: number;
   source: string;
   metadataBackfillClaimKey: string | null;
+  compactness: ClaimKeyCompactnessEvaluation;
   support: MissingBackfillSupportEvaluation;
 }): string {
   if (input.metadataBackfillClaimKey !== null && input.originalClaimKey !== input.targetClaimKey) {
     return (
       `Metadata-grounded claim-key backfill rewrote preview candidate "${input.originalClaimKey}" to "${input.targetClaimKey}" ` +
-      `at confidence ${input.confidence.toFixed(2)} from ${input.source}.`
+      `at confidence ${input.confidence.toFixed(2)} from ${input.source}.` +
+      (input.compactness.compactedFrom && input.compactness.compactedFrom !== input.targetClaimKey
+        ? ` Compact canonicalization also shortened "${input.compactness.compactedFrom}" because ${input.compactness.compactionReason}.`
+        : "")
     );
   }
 
-  if (input.support.rationaleFragments.length > 0 && input.confidence < HIGH_CONFIDENCE_BACKFILL_THRESHOLD) {
+  if (input.support.autoApplyClass !== null && input.confidence < HIGH_CONFIDENCE_BACKFILL_THRESHOLD) {
     return (
       `Supported claim-key backfill assigned "${input.targetClaimKey}" from ${input.source} at confidence ${input.confidence.toFixed(2)} ` +
-      `using ${input.support.rationaleFragments.join(", ")}.`
+      `through ${describeMissingBackfillPromotionClass(input.support.autoApplyClass)} using ${input.support.rationaleFragments.join(", ")}.` +
+      (input.compactness.compactedFrom && input.compactness.compactedFrom !== input.targetClaimKey
+        ? ` The candidate was compacted from "${input.compactness.compactedFrom}" because ${input.compactness.compactionReason}.`
+        : "")
     );
   }
 
-  return `High-confidence claim-key backfill assigned "${input.targetClaimKey}" from ${input.source} at confidence ${input.confidence.toFixed(2)}.`;
+  return (
+    `High-confidence claim-key backfill assigned "${input.targetClaimKey}" from ${input.source} at confidence ${input.confidence.toFixed(2)}.` +
+    (input.compactness.compactedFrom && input.compactness.compactedFrom !== input.targetClaimKey
+      ? ` The candidate was compacted from "${input.compactness.compactedFrom}" because ${input.compactness.compactionReason}.`
+      : "")
+  );
+}
+
+function describeMissingBackfillPromotionClass(promotionClass: MissingBackfillPromotionClass): string {
+  switch (promotionClass) {
+    case "trusted_exact_reuse_grounded":
+      return "trusted exact-key reuse with local grounding";
+    case "trusted_family_template_grounded":
+      return "trusted family reuse plus grounded template support";
+    case "trusted_family_stable_slot":
+      return "trusted family reuse plus a stable compact slot";
+  }
 }
 
 function resolveExplicitMetadataRepair(entry: Entry, inspection: ClaimKeyInspection): string | null {

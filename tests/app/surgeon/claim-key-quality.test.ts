@@ -95,6 +95,7 @@ describe("claim_key_quality surgeon pass", () => {
       sql: "SELECT id, claim_key FROM entries WHERE id IN (?, ?) ORDER BY id ASC",
       args: ["backfill-hi", "backfill-lo"],
     });
+    const actions = await getSurgeonRunActions(client, result.runId);
     const run = await getLastSurgeonRun(client);
     const summary = run?.summaryJson?.claim_key_quality;
 
@@ -108,6 +109,16 @@ describe("claim_key_quality surgeon pass", () => {
       appliedBackfills: 1,
       skippedLowConfidence: 1,
     });
+    expect(actions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entryIds: ["backfill-hi"],
+          details: expect.objectContaining({
+            supported_auto_apply: false,
+          }),
+        }),
+      ]),
+    );
   });
 
   it("reuses a trusted same-subject canonical key before previewing a missing peer", async () => {
@@ -317,6 +328,7 @@ describe("claim_key_quality surgeon pass", () => {
       sql: "SELECT claim_key FROM entries WHERE id = ?",
       args: ["supported-mid-confidence"],
     });
+    const actions = await getSurgeonRunActions(client, result.runId);
     const run = await getLastSurgeonRun(client);
 
     expect(result.status).toBe("completed");
@@ -327,6 +339,149 @@ describe("claim_key_quality surgeon pass", () => {
     });
     expect(run?.summaryJson?.observations).toContain(
       "Missing-key decisions used 1 supported preview auto-applies and no proposals after structural reuse checks.",
+    );
+    expect(actions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entryIds: ["supported-mid-confidence"],
+          details: expect.objectContaining({
+            supported_auto_apply: true,
+            support_class: "trusted_exact_reuse_grounded",
+            support_evidence: expect.arrayContaining(["trusted_exact_reuse", "tag_grounding", "source_context_grounding", "template_support"]),
+            supporting_entry_ids: ["trusted-source-of-truth"],
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it("auto-applies grounded template-family candidates after safely compacting duplicated entity phrasing", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "changelog-seed-workflow",
+      type: "decision",
+      subject: "Changelog publish workflow",
+      claim_key: "changelog/publish_workflow",
+      tags: ["release", "docs"],
+      source_context: "CHANGELOG.md governs release note operations",
+      content: "Release notes are published from CHANGELOG.md.",
+    });
+    await insertEntry(client, {
+      id: "changelog-seed-policy",
+      type: "decision",
+      subject: "Changelog archive policy",
+      claim_key: "changelog/archive_policy",
+      tags: ["release", "docs"],
+      source_context: "CHANGELOG.md governs release note operations",
+      content: "Archive old release notes only after they are copied into CHANGELOG.md.",
+    });
+    await insertEntry(client, {
+      id: "changelog-supported",
+      subject: "Release note authority",
+      type: "decision",
+      tags: ["release", "docs"],
+      source_context: "CHANGELOG.md governs release note operations",
+      content: "CHANGELOG.md is the authoritative source of truth for release notes.",
+    });
+    const llm = new MockClaimLlm(() => ({
+      entity: "changelog",
+      attribute: "changelog source of truth",
+      confidence: 0.87,
+    }));
+
+    const result = await runClaimKeyPass(client, {
+      apply: true,
+      createClaimExtractionLlm: () => llm,
+    });
+
+    const row = await client.execute({
+      sql: "SELECT claim_key FROM entries WHERE id = ?",
+      args: ["changelog-supported"],
+    });
+    const actions = await getSurgeonRunActions(client, result.runId);
+
+    expect(result.status).toBe("completed");
+    expect(row.rows[0]?.claim_key).toBe("changelog/source_of_truth");
+    expect(actions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entryIds: ["changelog-supported"],
+          details: expect.objectContaining({
+            supported_auto_apply: true,
+            support_class: "trusted_family_template_grounded",
+            claim_key_compacted_from: "changelog/changelog_source_of_truth",
+            claim_key_compaction_reason: "removed duplicated entity prefix from attribute",
+            support_evidence: expect.arrayContaining(["trusted_entity_family_reuse", "tag_grounding", "source_context_grounding", "template_support"]),
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it("auto-applies supported stable-slot family candidates when local grounding is strong", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "jim-seed-workspace",
+      subject: "Jim workspace",
+      type: "preference",
+      claim_key: "jim/primary_workspace",
+      tags: ["workflow", "handoff"],
+      source_context: "Jim workflow guide",
+      content: "Jim's primary workspace is the agenr repo.",
+    });
+    await insertEntry(client, {
+      id: "jim-seed-review",
+      subject: "Jim review preference",
+      type: "preference",
+      claim_key: "jim/code_review_preference",
+      tags: ["workflow", "handoff"],
+      source_context: "Jim workflow guide",
+      content: "Jim prefers short review loops before handoffs.",
+    });
+    await insertEntry(client, {
+      id: "jim-supported-slot",
+      subject: "Jim handoff preference",
+      type: "preference",
+      tags: ["workflow", "handoff"],
+      source_context: "Jim workflow guide",
+      content: "Jim prefers a code task handoff note before work changes owners.",
+    });
+    const llm = new MockClaimLlm(() => ({
+      entity: "Jim",
+      attribute: "code task handoff preference",
+      confidence: 0.88,
+    }));
+
+    const result = await runClaimKeyPass(client, {
+      apply: true,
+      createClaimExtractionLlm: () => llm,
+    });
+
+    const row = await client.execute({
+      sql: "SELECT claim_key FROM entries WHERE id = ?",
+      args: ["jim-supported-slot"],
+    });
+    const actions = await getSurgeonRunActions(client, result.runId);
+
+    expect(result.status).toBe("completed");
+    expect(row.rows[0]?.claim_key).toBe("jim/code_task_handoff_preference");
+    expect(actions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entryIds: ["jim-supported-slot"],
+          details: expect.objectContaining({
+            supported_auto_apply: true,
+            support_class: "trusted_family_stable_slot",
+            support_evidence: expect.arrayContaining([
+              "trusted_entity_family_reuse",
+              "tag_grounding",
+              "source_context_grounding",
+              "attribute_lexical_alignment",
+              "stable_slot_support",
+            ]),
+          }),
+        }),
+      ]),
     );
   });
 
@@ -494,6 +649,135 @@ describe("claim_key_quality surgeon pass", () => {
         expect.objectContaining({
           entryIds: ["plain-mid-confidence"],
           proposedClaimKeys: ["clinic_visits/default_mode"],
+        }),
+      ]),
+    );
+  });
+
+  it("keeps supported cross-type collisions unresolved instead of auto-applying them", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "validator-fact-seed",
+      subject: "Validator verification policy",
+      type: "fact",
+      claim_key: "validator/verification_policy",
+      tags: ["validator", "policy"],
+      source_context: "Validator docs define the release gate",
+      content: "Validator policy requires verification before release.",
+    });
+    await insertEntry(client, {
+      id: "validator-family-seed",
+      subject: "Validator default mode",
+      type: "decision",
+      claim_key: "validator/default_mode",
+      tags: ["validator", "policy"],
+      source_context: "Validator docs define the release gate",
+      content: "Validator defaults to strict mode.",
+    });
+    await insertEntry(client, {
+      id: "validator-missing",
+      subject: "Validator verification rule",
+      type: "decision",
+      tags: ["validator", "policy"],
+      source_context: "Validator docs define the release gate",
+      content: "Validator policy requires verification before release.",
+    });
+    const llm = new MockClaimLlm(() => ({
+      entity: "validator",
+      attribute: "verification policy",
+      confidence: 0.88,
+    }));
+
+    const result = await runClaimKeyPass(client, {
+      apply: true,
+      createClaimExtractionLlm: () => llm,
+    });
+
+    const row = await client.execute({
+      sql: "SELECT claim_key FROM entries WHERE id = ?",
+      args: ["validator-missing"],
+    });
+    const proposals = await getSurgeonRunProposals(client, result.runId);
+
+    expect(result.status).toBe("completed");
+    expect(row.rows[0]?.claim_key).toBeNull();
+    expect(proposals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          issueKind: "missing_claim_key",
+          entryIds: ["validator-missing", "validator-fact-seed"],
+          proposedClaimKeys: ["validator/verification_policy"],
+        }),
+      ]),
+    );
+  });
+
+  it("keeps awkward supported candidates unresolved when compact canonicalization is not safe", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "changelog-family-workflow",
+      subject: "Changelog publish workflow",
+      type: "decision",
+      claim_key: "changelog/publish_workflow",
+      tags: ["release", "docs"],
+      source_context: "CHANGELOG.md governs release note operations",
+      content: "Release notes are published from CHANGELOG.md.",
+    });
+    await insertEntry(client, {
+      id: "changelog-family-policy",
+      subject: "Changelog archive policy",
+      type: "decision",
+      claim_key: "changelog/archive_policy",
+      tags: ["release", "docs"],
+      source_context: "CHANGELOG.md governs release note operations",
+      content: "Archive old release notes only after they are copied into CHANGELOG.md.",
+    });
+    await insertEntry(client, {
+      id: "changelog-awkward",
+      subject: "Release note authority",
+      type: "decision",
+      tags: ["release", "docs"],
+      source_context: "CHANGELOG.md governs release note operations",
+      content: "CHANGELOG.md is the authoritative source of truth for release notes.",
+    });
+    const llm = new MockClaimLlm(() => ({
+      entity: "changelog",
+      attribute: "authoritative source of truth for release notes",
+      confidence: 0.89,
+    }));
+
+    const result = await runClaimKeyPass(client, {
+      apply: true,
+      createClaimExtractionLlm: () => llm,
+    });
+
+    const row = await client.execute({
+      sql: "SELECT claim_key FROM entries WHERE id = ?",
+      args: ["changelog-awkward"],
+    });
+    const actions = await getSurgeonRunActions(client, result.runId);
+    const proposals = await getSurgeonRunProposals(client, result.runId);
+
+    expect(result.status).toBe("completed");
+    expect(row.rows[0]?.claim_key).toBeNull();
+    expect(proposals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          issueKind: "missing_claim_key",
+          entryIds: ["changelog-awkward"],
+          proposedClaimKeys: ["changelog/authoritative_source_of_truth_for_release_notes"],
+        }),
+      ]),
+    );
+    expect(actions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entryIds: ["changelog-awkward"],
+          details: expect.objectContaining({
+            supported_candidate: true,
+            support_class: "trusted_family_template_grounded",
+            auto_apply_blocker: "non_compact_canonical_slot",
+          }),
         }),
       ]),
     );
