@@ -1,7 +1,9 @@
 import { InvalidArgumentError, Option, type Command } from "commander";
 
+import { type SurgeonProgressEvent, type SurgeonProgressReporter } from "../../app/surgeon/progress.js";
 import { loadSurgeonActionsRuntime, loadSurgeonHistoryRuntime, loadSurgeonStatusRuntime, runSurgeonRuntime } from "../../app/surgeon/runtime.js";
 import { isImplementedSurgeonPass, isSurgeonPassType, type SurgeonPassType } from "../../core/surgeon/domain/pass-types.js";
+import { createLogger } from "../../logger.js";
 
 /** Parsed commander options for `agenr surgeon run`. */
 interface SurgeonRunCommandOptions {
@@ -72,6 +74,7 @@ export function registerSurgeonCommand(program: Command): void {
       process.on("SIGINT", onSigint);
 
       try {
+        const reportProgress = createCliSurgeonProgressReporter(options.verbose === true);
         const result = await runSurgeonRuntime({
           pass: options.pass ?? "retirement",
           budget: options.budget ?? 0,
@@ -89,6 +92,7 @@ export function registerSurgeonCommand(program: Command): void {
           json: options.json === true,
           signal: abortController.signal,
           env: process.env,
+          onProgress: reportProgress,
         });
 
         process.stdout.write(options.json === true ? `${JSON.stringify(result, null, 2)}\n` : renderRunResult(result, options.apply === true));
@@ -313,6 +317,140 @@ function renderActions(
   lines.push("");
 
   return lines.join("\n");
+}
+
+/**
+ * Creates the stderr reporter used for surgeon run liveness updates.
+ *
+ * @param verbose - Whether verbose progress detail is enabled.
+ * @returns Structured progress reporter for one CLI invocation.
+ */
+function createCliSurgeonProgressReporter(verbose: boolean): SurgeonProgressReporter {
+  const logger = createLogger("surgeon");
+
+  return (event: SurgeonProgressEvent): void => {
+    logger.info(formatProgressEvent(event, verbose));
+  };
+}
+
+/**
+ * Formats one structured surgeon progress event for human stderr output.
+ *
+ * @param event - Progress event emitted by runtime or pass code.
+ * @param verbose - Whether verbose detail is enabled.
+ * @returns One single-line progress message.
+ */
+function formatProgressEvent(event: SurgeonProgressEvent, verbose: boolean): string {
+  if (event.kind === "phase") {
+    switch (event.phase) {
+      case "start":
+        return `Starting surgeon run: ${event.passType} (${event.apply ? "apply" : "dry-run"}).`;
+      case "backup_start":
+        return "Creating DB backup before apply run.";
+      case "backup_complete":
+        return `DB backup complete: ${event.backupPath ?? "backup created"}.`;
+      case "load_working_set_start":
+        return "Loading claim-key-quality working set.";
+      case "load_working_set_complete":
+        return `Working set loaded: ${event.workingSetSize ?? 0} entries.`;
+      case "load_pass_context_start":
+        return `Loading ${event.passType} pass context.`;
+      case "load_pass_context_complete":
+        return `Pass context ready: ${event.workingSetSize ?? 0} entries in scope.`;
+      case "pass_start":
+        return `Starting ${event.passType} pass.`;
+      default:
+        return `Progress update: ${event.phase}.`;
+    }
+  }
+
+  if (event.stage === "health" && event.health) {
+    const base =
+      `Claim-key-quality health: ${event.health.totalEntries} entries | missing ${event.health.missingCount} | ` +
+      `invalid/noncanonical ${event.health.malformedOrNoncanonicalCount} | suspect ${event.health.suspectCanonicalCount} | mixed groups ${event.health.mixedGroupCount}`;
+
+    if (!verbose) {
+      return `${base} | exact-key multi-active ${event.health.exactKeyMultiActiveClusterCount}`;
+    }
+
+    return (
+      `${base} | eligible missing ${event.health.eligibleMissingCount} | coverage ${formatPercent(event.health.coveragePct)} | ` +
+      `exact-key multi-active ${event.health.exactKeyMultiActiveClusterCount}`
+    );
+  }
+
+  const stageLabel = formatClaimKeyQualityStage(event.stage);
+  if (event.status === "started") {
+    return `Claim-key-quality stage ${stageLabel}: ${event.total} ${event.unitLabel}.`;
+  }
+
+  const appliedTotal = event.counts.appliedNormalizations + event.counts.appliedBackfills + event.counts.appliedMetadataRewrites;
+  const base =
+    `Claim-key-quality ${stageLabel} ${event.completed}/${event.total} ${event.unitLabel} | ` +
+    `scanned ${event.processedEntries}/${event.totalEntries} entries | applied ${appliedTotal} | proposals ${event.counts.proposalsEmitted} | ` +
+    `elapsed ${formatElapsed(event.elapsedMs)}`;
+
+  if (!verbose) {
+    return base;
+  }
+
+  return (
+    `${base} | normalize ${event.counts.appliedNormalizations}/${event.counts.identifiedNormalizations} | ` +
+    `backfill ${event.counts.appliedBackfills}/${event.counts.identifiedBackfills} | ` +
+    `metadata ${event.counts.appliedMetadataRewrites}/${event.counts.identifiedMetadataRewrites} | ` +
+    `skipped no-claim ${event.counts.skippedNoClaim} low-confidence ${event.counts.skippedLowConfidence} ` +
+    `collision ${event.counts.skippedCollision} ambiguous ${event.counts.skippedAmbiguous}`
+  );
+}
+
+/**
+ * Formats one claim-key-quality stage identifier for CLI display.
+ *
+ * @param stage - Structured stage identifier.
+ * @returns Human-readable stage label.
+ */
+function formatClaimKeyQualityStage(stage: Extract<SurgeonProgressEvent, { kind: "claim_key_quality_progress" }>["stage"]): string {
+  switch (stage) {
+    case "health":
+      return "health";
+    case "invalid_noncanonical":
+      return "invalid/noncanonical";
+    case "missing":
+      return "missing";
+    case "suspect_canonical":
+      return "suspect-but-canonical";
+    case "mixed_key_groups":
+      return "mixed-key groups";
+    default:
+      return stage;
+  }
+}
+
+/**
+ * Formats one ratio as a percentage string with one decimal place.
+ *
+ * @param value - Ratio between zero and one.
+ * @returns Human-readable percentage string.
+ */
+function formatPercent(value: number): string {
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+/**
+ * Formats elapsed milliseconds into a short progress-friendly duration.
+ *
+ * @param elapsedMs - Milliseconds elapsed since run start.
+ * @returns Human-readable elapsed duration.
+ */
+function formatElapsed(elapsedMs: number): string {
+  const totalSeconds = Math.max(0, Math.round(elapsedMs / 1000));
+  if (totalSeconds < 60) {
+    return `${totalSeconds}s`;
+  }
+
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}m${String(seconds).padStart(2, "0")}s`;
 }
 
 /**

@@ -125,6 +125,39 @@ describe("surgeon runtime", () => {
     expect(deps.recallPorts).toBeUndefined();
   });
 
+  it("forwards runtime progress reporters into the surgeon service dependencies", async () => {
+    const tempRoot = await createTempDirectory("agenr-surgeon-runtime-");
+    const dbPath = path.join(tempRoot, "knowledge.db");
+    const configPath = path.join(tempRoot, "config.json");
+    const onProgress = vi.fn();
+
+    await writeJson(configPath, {
+      provider: "openai",
+      model: "gpt-5.4-mini",
+      credentials: {
+        openaiApiKey: "openai-key",
+      },
+    });
+
+    await runSurgeonRuntime({
+      pass: "claim_key_quality",
+      budget: 0,
+      apply: false,
+      verbose: false,
+      json: false,
+      dbPath,
+      onProgress,
+      env: {
+        AGENR_CONFIG_PATH: configPath,
+      },
+    });
+
+    expect(runSurgeonMock).toHaveBeenCalledTimes(1);
+    const [, deps] = runSurgeonMock.mock.calls[0] as Parameters<typeof runSurgeonMock>;
+
+    expect(deps.reportProgress).toBe(onProgress);
+  });
+
   it("loads status from the configured database", async () => {
     const tempRoot = await createTempDirectory("agenr-surgeon-status-");
     const dbPath = path.join(tempRoot, "knowledge.db");

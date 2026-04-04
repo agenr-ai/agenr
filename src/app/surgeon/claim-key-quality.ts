@@ -22,6 +22,7 @@ import type {
 } from "../../core/surgeon/types.js";
 import { previewClaimKeyExtraction, type ClaimExtractionHints, type ClaimExtractionResult } from "../../core/store/claim-extraction.js";
 import type { Entry } from "../../core/types.js";
+import { emitSurgeonProgress, type ClaimKeyQualityProgressStage, type SurgeonProgressReporter } from "./progress.js";
 import type { SurgeonPort } from "./ports.js";
 
 const HIGH_CONFIDENCE_BACKFILL_THRESHOLD = 0.92;
@@ -34,6 +35,10 @@ const ENTITY_CONCENTRATION_THRESHOLD = 40;
 const ENTITY_CONCENTRATION_RATIO = 0.85;
 const COLLISION_SPIKE_THRESHOLD = 30;
 const COLLISION_SPIKE_RATIO = 0.85;
+const CLAIM_KEY_PROGRESS_INTERVAL_MS = 5_000;
+const CLAIM_KEY_PROGRESS_VERBOSE_INTERVAL_MS = 2_000;
+const CLAIM_KEY_PROGRESS_EVERY_ENTRIES = 250;
+const CLAIM_KEY_PROGRESS_EVERY_VERBOSE_ENTRIES = 50;
 const USER_METADATA_ENTITY_ALIASES = new Set(["i", "me", "myself", "person", "the_user", "user"]);
 const PROJECT_METADATA_ENTITY_ALIASES = new Set(["app", "application", "project", "the_project", "this_project", "workspace"]);
 
@@ -51,6 +56,8 @@ export interface ClaimKeyQualityRunOptions {
   signal?: AbortSignal;
   now(): Date;
   costCapUsd: number;
+  verbose: boolean;
+  reportProgress?: SurgeonProgressReporter;
 }
 
 /**
@@ -123,274 +130,112 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
   const projectedEntries = sourceEntries.map((entry) => cloneEntry(entry));
   const entriesById = new Map(projectedEntries.map((entry) => [entry.id, entry]));
   const actualEntriesById = new Map(actualEntries.map((entry) => [entry.id, entry]));
-  const before = summarizeClaimKeyHealth(actualEntries, resolveClaimExtractionConfig(deps.config ?? undefined).eligibleTypes);
   const counts = createEmptyRepairCounts();
   const observations: string[] = [];
   const recommendations: string[] = [];
   const suggestionCache = new Map<string, EntrySuggestionRecord>();
   const trustedHints = buildTrustedCleanupHintSeed(actualEntries);
   const claimExtractionConfig = resolveClaimExtractionConfig(deps.config ?? undefined);
+  const before = summarizeClaimKeyHealth(actualEntries, claimExtractionConfig.eligibleTypes);
   const circuitBreakerState = createCircuitBreakerState();
+  const progressTracker = createClaimKeyQualityProgressTracker({
+    apply: options.apply,
+    verbose: options.verbose,
+    totalEntries: before.totalEntries,
+    counts,
+    reportProgress: options.reportProgress,
+  });
   let claimExtractionLlm: ReturnType<NonNullable<ClaimKeyQualityRunDeps["createClaimExtractionLlm"]>> | null = null;
   let circuitBreaker: ClaimKeyCircuitBreakerTrip | null = null;
   let terminalStatus: SurgeonRunStatus = "completed";
   let terminalError: string | null = null;
   let actionsTaken = 0;
 
+  emitSurgeonProgress(options.reportProgress, {
+    kind: "phase",
+    phase: "load_working_set_complete",
+    passType: "claim_key_quality",
+    apply: options.apply,
+    workingSetSize: before.totalEntries,
+  });
+  emitSurgeonProgress(options.reportProgress, {
+    kind: "phase",
+    phase: "pass_start",
+    passType: "claim_key_quality",
+    apply: options.apply,
+  });
+  progressTracker.emitHealthSnapshot(before);
+
+  const invalidOrNoncanonicalEntries = projectedEntries.filter((entry) => {
+    const inspection = inspectExistingClaimKey(entry);
+    return inspection.kind === "malformed" || inspection.kind === "noncanonical";
+  });
+  const missingEntries = projectedEntries.filter((entry) => {
+    const inspection = inspectExistingClaimKey(entry);
+    return inspection.kind === "missing" && claimExtractionConfig.eligibleTypes.includes(entry.type);
+  });
+  const suspectEntries = projectedEntries.filter((entry) => inspectExistingClaimKey(entry).kind === "suspect");
+
   try {
-    for (const entry of projectedEntries) {
+    progressTracker.startStage("invalid_noncanonical", invalidOrNoncanonicalEntries.length, "entries");
+    for (const entry of invalidOrNoncanonicalEntries) {
       if (options.signal?.aborted === true) {
         terminalStatus = "aborted";
         terminalError = "Run aborted by user (SIGINT).";
         break;
       }
 
-      const inspection = inspectExistingClaimKey(entry);
-      if (inspection.kind === "ok" || inspection.kind === "missing" || inspection.kind === "suspect") {
-        continue;
-      }
-
-      if (inspection.kind === "malformed") {
-        const proposal = await buildMalformedClaimKeyProposal(entry, inspection, {
-          getSuggestion: async () => loadSuggestion(entry),
-          now: options.now,
-          runId: options.runId,
-        });
-        await persistProposal(proposal);
-        counts.proposalsEmitted += 1;
-        counts.skippedAmbiguous += 1;
-        if (terminalStatus !== "completed") {
-          break;
-        }
-        continue;
-      }
-
-      const targetClaimKey = inspection.normalized.claimKey;
-      const collision = findClaimKeyOccupants(projectedEntries, targetClaimKey, entry.id);
-      if (collision.length > 0) {
-        counts.skippedCollision += 1;
-        recordCollision(circuitBreakerState);
-        const proposal = createProposal({
-          runId: options.runId,
-          groupId: `claim-key-normalize:${entry.id}`,
-          issueKind: "noncanonical_claim_key",
-          scope: "single_entry",
-          entryIds: [entry.id],
-          currentClaimKeys: [entry.claim_key ?? ""],
-          proposedClaimKeys: [targetClaimKey],
-          rationale:
-            `Canonical normalization would change "${entry.claim_key}" to "${targetClaimKey}", ` +
-            `but that canonical key is already occupied by ${collision.length} other matched entr${collision.length === 1 ? "y" : "ies"}.`,
-          confidence: 0.99,
-          source: "normalize",
-          eligibleForApply: true,
-          createdAt: options.now().toISOString(),
-        });
-        await persistProposal(proposal);
-        counts.proposalsEmitted += 1;
-        circuitBreaker = circuitBreaker ?? evaluateCircuitBreaker(circuitBreakerState);
-        if (circuitBreaker) {
-          terminalStatus = "failed";
-          terminalError = circuitBreaker.message;
-          break;
-        }
-        continue;
-      }
-
-      counts.identifiedNormalizations += 1;
-      const updateResult = await maybeApplyClaimKeyUpdate(entry.id, targetClaimKey, {
-        actualEntriesById,
-        entriesById,
-        issueKind: "noncanonical_claim_key",
-        oldClaimKey: entry.claim_key ?? null,
-        source: "normalize",
-        confidence: 0.99,
-        rationale: `Canonical normalization preserves the slot while rewriting "${entry.claim_key}" to "${targetClaimKey}".`,
-      });
-      if (updateResult.applied) {
-        counts.appliedNormalizations += 1;
-      }
-      if (updateResult.projected) {
-        circuitBreaker = recordAppliedRepair(circuitBreakerState, targetClaimKey);
-      }
-      if (circuitBreaker) {
-        terminalStatus = "failed";
-        terminalError = circuitBreaker.message;
+      await processInvalidOrNoncanonicalEntry(entry);
+      progressTracker.advanceStage();
+      if (terminalStatus !== "completed" || circuitBreaker) {
         break;
       }
     }
 
     if (!circuitBreaker && terminalStatus === "completed") {
-      for (const entry of projectedEntries) {
+      progressTracker.startStage("missing", missingEntries.length, "entries");
+      for (const entry of missingEntries) {
         if (options.signal?.aborted === true) {
           terminalStatus = "aborted";
           terminalError = "Run aborted by user (SIGINT).";
           break;
         }
 
-        const inspection = inspectExistingClaimKey(entry);
-        if (inspection.kind !== "missing" || !claimExtractionConfig.eligibleTypes.includes(entry.type)) {
-          continue;
-        }
-
-        const suggestionRecord = await loadSuggestion(entry);
-        if (terminalStatus !== "completed") {
-          break;
-        }
-
-        const suggestion = suggestionRecord.suggestion;
-        if (!suggestion?.claimKey) {
-          counts.skippedNoClaim += 1;
-          continue;
-        }
-
-        const suggestedInspection = inspectClaimKey(suggestion.claimKey);
-        const suggestionIsTrusted = suggestedInspection.suspectReasons.length === 0;
-
-        const activeSiblings = findActiveClaimKeyOccupants(projectedEntries, suggestion.claimKey, entry.id);
-        if (activeSiblings.some((sibling) => sibling.type !== entry.type)) {
-          const proposal = createProposal({
-            runId: options.runId,
-            groupId: `claim-key-backfill:${entry.id}`,
-            issueKind: "missing_claim_key",
-            scope: "single_entry",
-            entryIds: [entry.id, ...activeSiblings.map((sibling) => sibling.id)],
-            currentClaimKeys: [],
-            proposedClaimKeys: [suggestion.claimKey],
-            rationale:
-              `Backfill preview suggested "${suggestion.claimKey}" at confidence ${suggestion.confidence.toFixed(2)}, ` +
-              "but the same slot key is already used by a different entry type in the matched working set.",
-            confidence: suggestion.confidence,
-            source: suggestion.path,
-            eligibleForApply: true,
-            createdAt: options.now().toISOString(),
-          });
-          await persistProposal(proposal);
-          counts.proposalsEmitted += 1;
-          counts.skippedAmbiguous += 1;
-          continue;
-        }
-
-        if (!suggestionIsTrusted || suggestion.confidence < HIGH_CONFIDENCE_BACKFILL_THRESHOLD) {
-          if (suggestion.confidence >= PROPOSAL_CONFIDENCE_THRESHOLD) {
-            const proposal = createProposal({
-              runId: options.runId,
-              groupId: `claim-key-backfill:${entry.id}`,
-              issueKind: "missing_claim_key",
-              scope: "single_entry",
-              entryIds: [entry.id],
-              currentClaimKeys: [],
-              proposedClaimKeys: [suggestion.claimKey],
-              rationale: !suggestionIsTrusted
-                ? `Backfill preview suggested "${suggestion.claimKey}" at confidence ${suggestion.confidence.toFixed(2)}, but the proposed key is still structurally suspect.`
-                : `Backfill preview suggested "${suggestion.claimKey}" at confidence ${suggestion.confidence.toFixed(2)}, below the auto-apply threshold.`,
-              confidence: suggestion.confidence,
-              source: suggestion.path,
-              eligibleForApply: true,
-              createdAt: options.now().toISOString(),
-            });
-            await persistProposal(proposal);
-            counts.proposalsEmitted += 1;
-            counts.skippedAmbiguous += 1;
-          } else {
-            counts.skippedLowConfidence += 1;
-          }
-          continue;
-        }
-
-        counts.identifiedBackfills += 1;
-        const updateResult = await maybeApplyClaimKeyUpdate(entry.id, suggestion.claimKey, {
-          actualEntriesById,
-          entriesById,
-          issueKind: "missing_claim_key",
-          oldClaimKey: null,
-          source: suggestion.path,
-          confidence: suggestion.confidence,
-          rationale: `High-confidence claim-key backfill assigned "${suggestion.claimKey}" from ${suggestion.path}.`,
-        });
-        if (updateResult.applied) {
-          counts.appliedBackfills += 1;
-        }
-        if (updateResult.projected) {
-          circuitBreaker = recordAppliedRepair(circuitBreakerState, suggestion.claimKey);
-        }
-        if (circuitBreaker) {
-          terminalStatus = "failed";
-          terminalError = circuitBreaker.message;
+        await processMissingEntry(entry);
+        progressTracker.advanceStage();
+        if (terminalStatus !== "completed" || circuitBreaker) {
           break;
         }
       }
     }
 
     if (!circuitBreaker && terminalStatus === "completed") {
-      for (const entry of projectedEntries) {
+      progressTracker.startStage("suspect_canonical", suspectEntries.length, "entries");
+      for (const entry of suspectEntries) {
         if (options.signal?.aborted === true) {
           terminalStatus = "aborted";
           terminalError = "Run aborted by user (SIGINT).";
           break;
         }
 
-        const inspection = inspectExistingClaimKey(entry);
-        if (inspection.kind !== "suspect") {
-          continue;
-        }
-
-        const metadataRepair = resolveExplicitMetadataRepair(entry, inspection.inspection);
-        if (metadataRepair && findClaimKeyOccupants(projectedEntries, metadataRepair, entry.id).length === 0) {
-          counts.identifiedMetadataRewrites += 1;
-          const updateResult = await maybeApplyClaimKeyUpdate(entry.id, metadataRepair, {
-            actualEntriesById,
-            entriesById,
-            issueKind: "suspect_canonical_claim_key",
-            oldClaimKey: entry.claim_key ?? null,
-            source: "metadata_rewrite",
-            confidence: 0.98,
-            rationale: `Explicit entry metadata resolves ${describeSuspicionList(inspection.inspection)} to "${metadataRepair}".`,
-          });
-          if (updateResult.applied) {
-            counts.appliedMetadataRewrites += 1;
-          }
-          if (updateResult.projected) {
-            circuitBreaker = recordAppliedRepair(circuitBreakerState, metadataRepair);
-          }
-          if (circuitBreaker) {
-            terminalStatus = "failed";
-            terminalError = circuitBreaker.message;
-            break;
-          }
-          continue;
-        }
-
-        const suggestionRecord = claimExtractionConfig.eligibleTypes.includes(entry.type) ? await loadSuggestion(entry) : { suggestion: null, warnings: [] };
-        if (terminalStatus !== "completed") {
+        await processSuspectEntry(entry);
+        progressTracker.advanceStage();
+        if (terminalStatus !== "completed" || circuitBreaker) {
           break;
         }
-        const proposedClaimKeys = [
-          metadataRepair,
-          suggestionRecord.suggestion?.claimKey && suggestionRecord.suggestion.claimKey !== entry.claim_key ? suggestionRecord.suggestion.claimKey : null,
-        ].filter((value): value is string => value !== null);
-        const proposal = createProposal({
-          runId: options.runId,
-          groupId: `claim-key-suspect:${entry.id}`,
-          issueKind: "suspect_canonical_claim_key",
-          scope: "single_entry",
-          entryIds: [entry.id],
-          currentClaimKeys: entry.claim_key ? [entry.claim_key] : [],
-          proposedClaimKeys,
-          rationale: buildSuspectProposalRationale(entry, inspection.inspection, metadataRepair, suggestionRecord.suggestion),
-          confidence: metadataRepair ? 0.98 : (suggestionRecord.suggestion?.confidence ?? 0.5),
-          source: metadataRepair ? "metadata_rewrite" : (suggestionRecord.suggestion?.path ?? "heuristic"),
-          eligibleForApply: proposedClaimKeys.length > 0,
-          createdAt: options.now().toISOString(),
-        });
-        await persistProposal(proposal);
-        counts.proposalsEmitted += 1;
-        counts.skippedAmbiguous += 1;
       }
     }
 
     if (!circuitBreaker && terminalStatus === "completed") {
-      for (const group of findMixedKeyGroups(projectedEntries)) {
+      const mixedKeyGroups = findMixedKeyGroups(projectedEntries);
+      progressTracker.startStage("mixed_key_groups", mixedKeyGroups.length, "groups");
+      for (const group of mixedKeyGroups) {
+        if (options.signal?.aborted === true) {
+          terminalStatus = "aborted";
+          terminalError = "Run aborted by user (SIGINT).";
+          break;
+        }
+
         const proposal = createProposal({
           runId: options.runId,
           groupId: `claim-key-mixed:${group.groupKey}`,
@@ -407,6 +252,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
         });
         await persistProposal(proposal);
         counts.proposalsEmitted += 1;
+        progressTracker.advanceStage();
       }
     }
   } catch (error) {
@@ -427,8 +273,9 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
         `${counts.skippedCollision} collision cases, and ${counts.skippedAmbiguous} ambiguous cases.`,
     );
   }
-  if (circuitBreaker) {
-    recommendations.push(circuitBreaker.message);
+  const circuitBreakerMessage = (circuitBreaker as ClaimKeyCircuitBreakerTrip | null)?.message;
+  if (circuitBreakerMessage) {
+    recommendations.push(circuitBreakerMessage);
   }
   if (actualAfter.exactKeyMultiActiveClusterCount > 0) {
     recommendations.push(
@@ -460,6 +307,228 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
     entriesRetired: 0,
     usage: claimExtractionUsage(claimExtractionLlm),
   };
+
+  async function processInvalidOrNoncanonicalEntry(entry: Entry): Promise<void> {
+    const inspection = inspectExistingClaimKey(entry);
+    if (inspection.kind !== "malformed" && inspection.kind !== "noncanonical") {
+      return;
+    }
+
+    if (inspection.kind === "malformed") {
+      const proposal = await buildMalformedClaimKeyProposal(entry, inspection, {
+        getSuggestion: async () => loadSuggestion(entry),
+        now: options.now,
+        runId: options.runId,
+      });
+      await persistProposal(proposal);
+      counts.proposalsEmitted += 1;
+      counts.skippedAmbiguous += 1;
+      return;
+    }
+
+    const targetClaimKey = inspection.normalized.claimKey;
+    const collision = findClaimKeyOccupants(projectedEntries, targetClaimKey, entry.id);
+    if (collision.length > 0) {
+      counts.skippedCollision += 1;
+      recordCollision(circuitBreakerState);
+      const proposal = createProposal({
+        runId: options.runId,
+        groupId: `claim-key-normalize:${entry.id}`,
+        issueKind: "noncanonical_claim_key",
+        scope: "single_entry",
+        entryIds: [entry.id],
+        currentClaimKeys: [entry.claim_key ?? ""],
+        proposedClaimKeys: [targetClaimKey],
+        rationale:
+          `Canonical normalization would change "${entry.claim_key}" to "${targetClaimKey}", ` +
+          `but that canonical key is already occupied by ${collision.length} other matched entr${collision.length === 1 ? "y" : "ies"}.`,
+        confidence: 0.99,
+        source: "normalize",
+        eligibleForApply: true,
+        createdAt: options.now().toISOString(),
+      });
+      await persistProposal(proposal);
+      counts.proposalsEmitted += 1;
+      circuitBreaker = circuitBreaker ?? evaluateCircuitBreaker(circuitBreakerState);
+      if (circuitBreaker) {
+        terminalStatus = "failed";
+        terminalError = circuitBreaker.message;
+      }
+      return;
+    }
+
+    counts.identifiedNormalizations += 1;
+    const updateResult = await maybeApplyClaimKeyUpdate(entry.id, targetClaimKey, {
+      actualEntriesById,
+      entriesById,
+      issueKind: "noncanonical_claim_key",
+      oldClaimKey: entry.claim_key ?? null,
+      source: "normalize",
+      confidence: 0.99,
+      rationale: `Canonical normalization preserves the slot while rewriting "${entry.claim_key}" to "${targetClaimKey}".`,
+    });
+    if (updateResult.applied) {
+      counts.appliedNormalizations += 1;
+    }
+    if (updateResult.projected) {
+      circuitBreaker = recordAppliedRepair(circuitBreakerState, targetClaimKey);
+    }
+    if (circuitBreaker) {
+      terminalStatus = "failed";
+      terminalError = circuitBreaker.message;
+    }
+  }
+
+  async function processMissingEntry(entry: Entry): Promise<void> {
+    const inspection = inspectExistingClaimKey(entry);
+    if (inspection.kind !== "missing" || !claimExtractionConfig.eligibleTypes.includes(entry.type)) {
+      return;
+    }
+
+    const suggestionRecord = await loadSuggestion(entry);
+    if (terminalStatus !== "completed") {
+      return;
+    }
+
+    const suggestion = suggestionRecord.suggestion;
+    if (!suggestion?.claimKey) {
+      counts.skippedNoClaim += 1;
+      return;
+    }
+
+    const suggestedInspection = inspectClaimKey(suggestion.claimKey);
+    const suggestionIsTrusted = suggestedInspection.suspectReasons.length === 0;
+    const activeSiblings = findActiveClaimKeyOccupants(projectedEntries, suggestion.claimKey, entry.id);
+    if (activeSiblings.some((sibling) => sibling.type !== entry.type)) {
+      const proposal = createProposal({
+        runId: options.runId,
+        groupId: `claim-key-backfill:${entry.id}`,
+        issueKind: "missing_claim_key",
+        scope: "single_entry",
+        entryIds: [entry.id, ...activeSiblings.map((sibling) => sibling.id)],
+        currentClaimKeys: [],
+        proposedClaimKeys: [suggestion.claimKey],
+        rationale:
+          `Backfill preview suggested "${suggestion.claimKey}" at confidence ${suggestion.confidence.toFixed(2)}, ` +
+          "but the same slot key is already used by a different entry type in the matched working set.",
+        confidence: suggestion.confidence,
+        source: suggestion.path,
+        eligibleForApply: true,
+        createdAt: options.now().toISOString(),
+      });
+      await persistProposal(proposal);
+      counts.proposalsEmitted += 1;
+      counts.skippedAmbiguous += 1;
+      return;
+    }
+
+    if (!suggestionIsTrusted || suggestion.confidence < HIGH_CONFIDENCE_BACKFILL_THRESHOLD) {
+      if (suggestion.confidence >= PROPOSAL_CONFIDENCE_THRESHOLD) {
+        const proposal = createProposal({
+          runId: options.runId,
+          groupId: `claim-key-backfill:${entry.id}`,
+          issueKind: "missing_claim_key",
+          scope: "single_entry",
+          entryIds: [entry.id],
+          currentClaimKeys: [],
+          proposedClaimKeys: [suggestion.claimKey],
+          rationale: !suggestionIsTrusted
+            ? `Backfill preview suggested "${suggestion.claimKey}" at confidence ${suggestion.confidence.toFixed(2)}, but the proposed key is still structurally suspect.`
+            : `Backfill preview suggested "${suggestion.claimKey}" at confidence ${suggestion.confidence.toFixed(2)}, below the auto-apply threshold.`,
+          confidence: suggestion.confidence,
+          source: suggestion.path,
+          eligibleForApply: true,
+          createdAt: options.now().toISOString(),
+        });
+        await persistProposal(proposal);
+        counts.proposalsEmitted += 1;
+        counts.skippedAmbiguous += 1;
+      } else {
+        counts.skippedLowConfidence += 1;
+      }
+      return;
+    }
+
+    counts.identifiedBackfills += 1;
+    const updateResult = await maybeApplyClaimKeyUpdate(entry.id, suggestion.claimKey, {
+      actualEntriesById,
+      entriesById,
+      issueKind: "missing_claim_key",
+      oldClaimKey: null,
+      source: suggestion.path,
+      confidence: suggestion.confidence,
+      rationale: `High-confidence claim-key backfill assigned "${suggestion.claimKey}" from ${suggestion.path}.`,
+    });
+    if (updateResult.applied) {
+      counts.appliedBackfills += 1;
+    }
+    if (updateResult.projected) {
+      circuitBreaker = recordAppliedRepair(circuitBreakerState, suggestion.claimKey);
+    }
+    if (circuitBreaker) {
+      terminalStatus = "failed";
+      terminalError = circuitBreaker.message;
+    }
+  }
+
+  async function processSuspectEntry(entry: Entry): Promise<void> {
+    const inspection = inspectExistingClaimKey(entry);
+    if (inspection.kind !== "suspect") {
+      return;
+    }
+
+    const metadataRepair = resolveExplicitMetadataRepair(entry, inspection.inspection);
+    if (metadataRepair && findClaimKeyOccupants(projectedEntries, metadataRepair, entry.id).length === 0) {
+      counts.identifiedMetadataRewrites += 1;
+      const updateResult = await maybeApplyClaimKeyUpdate(entry.id, metadataRepair, {
+        actualEntriesById,
+        entriesById,
+        issueKind: "suspect_canonical_claim_key",
+        oldClaimKey: entry.claim_key ?? null,
+        source: "metadata_rewrite",
+        confidence: 0.98,
+        rationale: `Explicit entry metadata resolves ${describeSuspicionList(inspection.inspection)} to "${metadataRepair}".`,
+      });
+      if (updateResult.applied) {
+        counts.appliedMetadataRewrites += 1;
+      }
+      if (updateResult.projected) {
+        circuitBreaker = recordAppliedRepair(circuitBreakerState, metadataRepair);
+      }
+      if (circuitBreaker) {
+        terminalStatus = "failed";
+        terminalError = circuitBreaker.message;
+      }
+      return;
+    }
+
+    const suggestionRecord = claimExtractionConfig.eligibleTypes.includes(entry.type) ? await loadSuggestion(entry) : { suggestion: null, warnings: [] };
+    if (terminalStatus !== "completed") {
+      return;
+    }
+
+    const proposedClaimKeys = [
+      metadataRepair,
+      suggestionRecord.suggestion?.claimKey && suggestionRecord.suggestion.claimKey !== entry.claim_key ? suggestionRecord.suggestion.claimKey : null,
+    ].filter((value): value is string => value !== null);
+    const proposal = createProposal({
+      runId: options.runId,
+      groupId: `claim-key-suspect:${entry.id}`,
+      issueKind: "suspect_canonical_claim_key",
+      scope: "single_entry",
+      entryIds: [entry.id],
+      currentClaimKeys: entry.claim_key ? [entry.claim_key] : [],
+      proposedClaimKeys,
+      rationale: buildSuspectProposalRationale(entry, inspection.inspection, metadataRepair, suggestionRecord.suggestion),
+      confidence: metadataRepair ? 0.98 : (suggestionRecord.suggestion?.confidence ?? 0.5),
+      source: metadataRepair ? "metadata_rewrite" : (suggestionRecord.suggestion?.path ?? "heuristic"),
+      eligibleForApply: proposedClaimKeys.length > 0,
+      createdAt: options.now().toISOString(),
+    });
+    await persistProposal(proposal);
+    counts.proposalsEmitted += 1;
+    counts.skippedAmbiguous += 1;
+  }
 
   async function loadSuggestion(entry: Entry): Promise<EntrySuggestionRecord> {
     const cached = suggestionCache.get(entry.id);
@@ -636,6 +705,120 @@ function claimExtractionUsage(llm: (LlmPort & { metadata?: { usage?: { inputToke
   };
 }
 
+interface ClaimKeyQualityStageProgressState {
+  stage: ClaimKeyQualityProgressStage;
+  total: number;
+  completed: number;
+  unitLabel: "entries" | "groups";
+  lastReportedCompleted: number;
+  lastReportedAtMs: number;
+}
+
+interface ClaimKeyQualityProgressTracker {
+  emitHealthSnapshot(snapshot: ClaimKeyHealthSnapshot): void;
+  startStage(stage: ClaimKeyQualityProgressStage, total: number, unitLabel: "entries" | "groups"): void;
+  advanceStage(count?: number): void;
+}
+
+function createClaimKeyQualityProgressTracker(input: {
+  apply: boolean;
+  verbose: boolean;
+  totalEntries: number;
+  counts: ClaimKeyQualityRepairCounts;
+  reportProgress?: SurgeonProgressReporter;
+}): ClaimKeyQualityProgressTracker {
+  const startedAtMs = Date.now();
+  const progressIntervalMs = input.verbose ? CLAIM_KEY_PROGRESS_VERBOSE_INTERVAL_MS : CLAIM_KEY_PROGRESS_INTERVAL_MS;
+  const progressEvery = input.verbose ? CLAIM_KEY_PROGRESS_EVERY_VERBOSE_ENTRIES : CLAIM_KEY_PROGRESS_EVERY_ENTRIES;
+  let processedEntries = 0;
+  let activeStage: ClaimKeyQualityStageProgressState | null = null;
+
+  return {
+    emitHealthSnapshot(snapshot: ClaimKeyHealthSnapshot): void {
+      emitSurgeonProgress(input.reportProgress, {
+        kind: "claim_key_quality_progress",
+        passType: "claim_key_quality",
+        apply: input.apply,
+        stage: "health",
+        status: "snapshot",
+        completed: 0,
+        total: snapshot.totalEntries,
+        unitLabel: "entries",
+        processedEntries,
+        totalEntries: input.totalEntries,
+        counts: cloneRepairCounts(input.counts),
+        elapsedMs: elapsedMs(startedAtMs),
+        health: snapshot,
+      });
+    },
+
+    startStage(stage: ClaimKeyQualityProgressStage, total: number, unitLabel: "entries" | "groups"): void {
+      activeStage =
+        total > 0
+          ? {
+              stage,
+              total,
+              completed: 0,
+              unitLabel,
+              lastReportedCompleted: 0,
+              lastReportedAtMs: Date.now(),
+            }
+          : null;
+
+      if (!activeStage) {
+        return;
+      }
+
+      emitStageEvent("started");
+    },
+
+    advanceStage(count = 1): void {
+      if (!activeStage) {
+        return;
+      }
+
+      activeStage.completed += count;
+      if (activeStage.unitLabel === "entries") {
+        processedEntries += count;
+      }
+
+      if (activeStage.completed >= activeStage.total) {
+        emitStageEvent("completed");
+        activeStage = null;
+        return;
+      }
+
+      const nowMs = Date.now();
+      if (activeStage.completed - activeStage.lastReportedCompleted >= progressEvery || nowMs - activeStage.lastReportedAtMs >= progressIntervalMs) {
+        emitStageEvent("progress", nowMs);
+      }
+    },
+  };
+
+  function emitStageEvent(status: "started" | "progress" | "completed", nowMs = Date.now()): void {
+    if (!activeStage) {
+      return;
+    }
+
+    activeStage.lastReportedCompleted = activeStage.completed;
+    activeStage.lastReportedAtMs = nowMs;
+    emitSurgeonProgress(input.reportProgress, {
+      kind: "claim_key_quality_progress",
+      passType: "claim_key_quality",
+      apply: input.apply,
+      stage: activeStage.stage,
+      status,
+      completed: activeStage.completed,
+      total: activeStage.total,
+      unitLabel: activeStage.unitLabel,
+      processedEntries,
+      totalEntries: input.totalEntries,
+      counts: cloneRepairCounts(input.counts),
+      elapsedMs: elapsedMs(startedAtMs, nowMs),
+    });
+  }
+}
+
 function createEmptyRepairCounts(): ClaimKeyQualityRepairCounts {
   return {
     identifiedNormalizations: 0,
@@ -650,6 +833,26 @@ function createEmptyRepairCounts(): ClaimKeyQualityRepairCounts {
     skippedCollision: 0,
     skippedAmbiguous: 0,
   };
+}
+
+function cloneRepairCounts(counts: ClaimKeyQualityRepairCounts): ClaimKeyQualityRepairCounts {
+  return {
+    identifiedNormalizations: counts.identifiedNormalizations,
+    appliedNormalizations: counts.appliedNormalizations,
+    identifiedBackfills: counts.identifiedBackfills,
+    appliedBackfills: counts.appliedBackfills,
+    identifiedMetadataRewrites: counts.identifiedMetadataRewrites,
+    appliedMetadataRewrites: counts.appliedMetadataRewrites,
+    proposalsEmitted: counts.proposalsEmitted,
+    skippedNoClaim: counts.skippedNoClaim,
+    skippedLowConfidence: counts.skippedLowConfidence,
+    skippedCollision: counts.skippedCollision,
+    skippedAmbiguous: counts.skippedAmbiguous,
+  };
+}
+
+function elapsedMs(startedAtMs: number, nowMs = Date.now()): number {
+  return Math.max(0, nowMs - startedAtMs);
 }
 
 function cloneEntry(entry: Entry): Entry {

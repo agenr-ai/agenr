@@ -20,6 +20,7 @@ import {
 } from "../../config.js";
 import type { SurgeonRunAction } from "../../core/surgeon/domain/action-types.js";
 import type { SurgeonHealthStats, SurgeonRunRecord } from "./ports.js";
+import type { SurgeonProgressReporter } from "./progress.js";
 import { runSurgeon, type SurgeonRunOptions, type SurgeonRunResult } from "./service.js";
 
 const DEFAULT_SURGEON_PROVIDER = "openai";
@@ -36,7 +37,9 @@ const getModelWithStrings = getModel as unknown as GetModelWithStrings;
  * @param input - Runtime input with optional db-path and env overrides.
  * @returns Final surgeon run result.
  */
-export async function runSurgeonRuntime(input: SurgeonRunOptions & { dbPath?: string; env?: NodeJS.ProcessEnv }): Promise<SurgeonRunResult> {
+export async function runSurgeonRuntime(
+  input: SurgeonRunOptions & { dbPath?: string; env?: NodeJS.ProcessEnv; onProgress?: SurgeonProgressReporter },
+): Promise<SurgeonRunResult> {
   const runtime = loadRuntimeConfig(input);
   const database = await createDatabase(runtime.dbPath);
   const port = createSurgeonPort(database);
@@ -90,6 +93,7 @@ export async function runSurgeonRuntime(input: SurgeonRunOptions & { dbPath?: st
             : undefined,
         recallPorts,
         backupDb: backupDatabaseFile,
+        reportProgress: input.onProgress,
       },
     );
   } finally {

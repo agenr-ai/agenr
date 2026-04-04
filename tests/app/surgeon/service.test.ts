@@ -17,6 +17,7 @@ vi.mock("@mariozechner/pi-agent-core", async () => {
 
 import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";
 import { createSurgeonPort } from "../../../src/adapters/db/surgeon-port.js";
+import type { SurgeonProgressEvent } from "../../../src/app/surgeon/progress.js";
 import {
   completeSurgeonRun,
   createSurgeonRun,
@@ -198,6 +199,104 @@ describe("runSurgeon", () => {
     expect(runAgentLoopMock).not.toHaveBeenCalled();
   });
 
+  it("emits startup and backup progress before an apply run begins long work", async () => {
+    const db = await createTestDatabase(databases);
+    const port = createSurgeonPort(db);
+    const progress: SurgeonProgressEvent[] = [];
+    let releaseBackup: ((backupPath: string) => void) | undefined;
+    const backupDb = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          releaseBackup = resolve;
+        }),
+    );
+
+    const runPromise = runSurgeon(
+      createRunOptions({
+        pass: "claim_key_quality",
+        apply: true,
+      }),
+      {
+        port,
+        dbPath: "/tmp/knowledge.db",
+        backupDb,
+        config: null,
+        model: TEST_MODEL,
+        now: () => TEST_NOW,
+        reportProgress: (event) => progress.push(event),
+      },
+    );
+
+    await vi.waitFor(() =>
+      expect(progress).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: "phase", phase: "start", passType: "claim_key_quality" }),
+          expect.objectContaining({ kind: "phase", phase: "backup_start", passType: "claim_key_quality" }),
+        ]),
+      ),
+    );
+
+    expect(progress.some((event) => event.kind === "phase" && event.phase === "backup_complete")).toBe(false);
+    releaseBackup?.("/tmp/knowledge.db.surgeon-backup");
+
+    await expect(runPromise).resolves.toMatchObject({
+      status: "completed",
+    });
+    expect(backupDb).toHaveBeenCalledWith("/tmp/knowledge.db");
+    expect(progress).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: "phase", phase: "backup_complete", backupPath: "/tmp/knowledge.db.surgeon-backup" })]),
+    );
+  });
+
+  it("emits working-set loading progress before claim_key_quality finishes loading entries", async () => {
+    const db = await createTestDatabase(databases);
+    const port = createSurgeonPort(db);
+    const progress: SurgeonProgressEvent[] = [];
+    let releaseEntries: ((entries: Entry[]) => void) | undefined;
+
+    vi.spyOn(port, "listClaimKeyQualityEntries").mockImplementation(
+      async () =>
+        new Promise<Entry[]>((resolve) => {
+          releaseEntries = resolve;
+        }),
+    );
+
+    const runPromise = runSurgeon(
+      createRunOptions({
+        pass: "claim_key_quality",
+      }),
+      {
+        port,
+        config: null,
+        model: TEST_MODEL,
+        now: () => TEST_NOW,
+        reportProgress: (event) => progress.push(event),
+      },
+    );
+
+    await vi.waitFor(() =>
+      expect(progress).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: "phase", phase: "start", passType: "claim_key_quality" }),
+          expect.objectContaining({ kind: "phase", phase: "load_working_set_start", passType: "claim_key_quality" }),
+        ]),
+      ),
+    );
+
+    expect(progress.some((event) => event.kind === "phase" && event.phase === "load_working_set_complete")).toBe(false);
+    releaseEntries?.([]);
+
+    await expect(runPromise).resolves.toMatchObject({
+      status: "completed",
+    });
+    expect(progress).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "phase", phase: "load_working_set_complete", workingSetSize: 0 }),
+        expect.objectContaining({ kind: "phase", phase: "pass_start", passType: "claim_key_quality" }),
+      ]),
+    );
+  });
+
   it("assembles the system and initial prompts from corpus state and budget", async () => {
     const db = await createTestDatabase(databases);
     runAgentLoopMock.mockImplementation(async (prompts: AgentMessage[]) => prompts);
@@ -374,6 +473,31 @@ describe("runSurgeon", () => {
 
     const [, context] = runAgentLoopMock.mock.calls[0] as [AgentMessage[], AgentContext, AgentLoopConfig];
     expect(context.systemPrompt).toContain("Custom surgeon rule: always mention provenance when you skip an entry.");
+  });
+
+  it("preserves agent-loop execution while emitting context progress for retirement", async () => {
+    const db = await createTestDatabase(databases);
+    const progress: SurgeonProgressEvent[] = [];
+    mockSuccessfulRunAgentLoop();
+
+    const result = await runSurgeon(createRunOptions(), {
+      port: createSurgeonPort(db),
+      config: null,
+      model: TEST_MODEL,
+      now: () => TEST_NOW,
+      reportProgress: (event) => progress.push(event),
+    });
+
+    expect(result.status).toBe("completed");
+    expect(runAgentLoopMock).toHaveBeenCalledTimes(1);
+    expect(progress).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "phase", phase: "start", passType: "retirement" }),
+        expect.objectContaining({ kind: "phase", phase: "load_pass_context_start", passType: "retirement" }),
+        expect.objectContaining({ kind: "phase", phase: "load_pass_context_complete", passType: "retirement" }),
+        expect.objectContaining({ kind: "phase", phase: "pass_start", passType: "retirement" }),
+      ]),
+    );
   });
 
   it("runs claim_key_quality as a first-class surgeon pass without invoking the agent loop", async () => {

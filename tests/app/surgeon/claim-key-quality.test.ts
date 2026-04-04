@@ -3,6 +3,7 @@ import { getModel } from "@mariozechner/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createSurgeonPort } from "../../../src/adapters/db/surgeon-port.js";
+import type { SurgeonProgressEvent } from "../../../src/app/surgeon/progress.js";
 import { getLastSurgeonRun, getSurgeonRunActions, getSurgeonRunProposals } from "../../../src/adapters/db/surgeon-run-log.js";
 import { initSchema } from "../../../src/adapters/db/schema.js";
 import type { LlmPort } from "../../../src/core/ports.js";
@@ -265,13 +266,82 @@ describe("claim_key_quality surgeon pass", () => {
     expect(summary?.circuitBreaker).toBeNull();
     expect(summary?.counts.identifiedBackfills).toBe(12);
   });
+
+  it("emits structured progress snapshots for deterministic claim-key cleanup stages", async () => {
+    const client = await createTestClient(clients);
+    const progress: SurgeonProgressEvent[] = [];
+    await insertEntry(client, { id: "normalize-1", subject: "Home city", type: "fact", claim_key: " Jim / Home City " });
+    await insertEntry(client, { id: "backfill-1", subject: "Timezone", type: "fact", content: "Jim's timezone is America/Chicago." });
+    await insertEntry(client, { id: "suspect-1", subject: "Project status", type: "fact", claim_key: "project/status", content: "The project is active." });
+    await insertEntry(client, { id: "mixed-a", subject: "Mac mini update policy", type: "preference", claim_key: "mac_mini/manual_update_policy" });
+    await insertEntry(client, { id: "mixed-b", subject: "Mac mini update policy", type: "preference", claim_key: "mac_mini/update_window" });
+    const llm = new MockClaimLlm((callIndex) =>
+      callIndex === 0 ? { entity: "Jim", attribute: "timezone", confidence: 0.96 } : { entity: "Agenr", attribute: "status", confidence: 0.88 },
+    );
+
+    const result = await runClaimKeyPass(client, {
+      apply: true,
+      createClaimExtractionLlm: () => llm,
+      reportProgress: (event) => progress.push(event),
+    });
+
+    expect(result.status).toBe("completed");
+    expect(progress).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "phase", phase: "load_working_set_complete", workingSetSize: 5 }),
+        expect.objectContaining({ kind: "phase", phase: "pass_start", passType: "claim_key_quality" }),
+        expect.objectContaining({
+          kind: "claim_key_quality_progress",
+          stage: "health",
+          status: "snapshot",
+          health: expect.objectContaining({
+            malformedOrNoncanonicalCount: 1,
+            missingCount: 1,
+            suspectCanonicalCount: 1,
+            mixedGroupCount: 1,
+          }),
+        }),
+        expect.objectContaining({ kind: "claim_key_quality_progress", stage: "invalid_noncanonical", status: "started", total: 1 }),
+        expect.objectContaining({
+          kind: "claim_key_quality_progress",
+          stage: "invalid_noncanonical",
+          status: "completed",
+          counts: expect.objectContaining({
+            appliedNormalizations: 1,
+          }),
+        }),
+        expect.objectContaining({ kind: "claim_key_quality_progress", stage: "missing", status: "completed" }),
+        expect.objectContaining({
+          kind: "claim_key_quality_progress",
+          stage: "suspect_canonical",
+          status: "completed",
+          counts: expect.objectContaining({
+            appliedBackfills: 1,
+            proposalsEmitted: 1,
+          }),
+        }),
+        expect.objectContaining({
+          kind: "claim_key_quality_progress",
+          stage: "mixed_key_groups",
+          status: "completed",
+          total: 1,
+          unitLabel: "groups",
+          counts: expect.objectContaining({
+            proposalsEmitted: 2,
+          }),
+        }),
+      ]),
+    );
+  });
 });
 
 async function runClaimKeyPass(
   client: Client,
   overrides: {
     apply?: boolean;
+    verbose?: boolean;
     createClaimExtractionLlm?: () => LlmPort & { metadata?: { usage?: { inputTokens?: number; outputTokens?: number; totalCost?: number } } };
+    reportProgress?: (event: SurgeonProgressEvent) => void;
   } = {},
 ) {
   return runSurgeon(
@@ -280,7 +350,7 @@ async function runClaimKeyPass(
       budget: 10,
       contextLimit: 4_096,
       apply: overrides.apply === true,
-      verbose: false,
+      verbose: overrides.verbose === true,
       json: false,
     },
     {
@@ -289,6 +359,7 @@ async function runClaimKeyPass(
       model: TEST_MODEL,
       now: () => TEST_NOW,
       createClaimExtractionLlm: overrides.createClaimExtractionLlm,
+      reportProgress: overrides.reportProgress,
     },
   );
 }

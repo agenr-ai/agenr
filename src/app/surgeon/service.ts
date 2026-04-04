@@ -20,6 +20,7 @@ import type { SurgeonCompletionSummary, SurgeonRunStatus } from "../../core/surg
 import { createBudgetTracker } from "./budget.js";
 import { runClaimKeyQualityPass } from "./claim-key-quality.js";
 import { createSurgeonCompletionGuardState } from "./completion-guard.js";
+import { emitSurgeonProgress, type SurgeonProgressReporter } from "./progress.js";
 import { createTraceLogger, type SurgeonTraceLogger } from "./trace-logger.js";
 import { getSurgeonClaimKeyQualityPassPrompt, getSurgeonRetirementPassPrompt, getSurgeonSupersessionPassPrompt, getSurgeonSystemPrompt } from "./prompts.js";
 import type { SurgeonPort } from "./ports.js";
@@ -106,6 +107,7 @@ export interface SurgeonWorkflowDeps {
   recallPorts?: RecallPorts;
   now?: () => Date;
   backupDb?: (dbPath: string) => Promise<string>;
+  reportProgress?: SurgeonProgressReporter;
 }
 
 /**
@@ -167,6 +169,13 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
   const contextLimit = resolveContextLimit(options, deps.config, deps.model);
   const protection = resolveProtectionConfig(options, deps.config);
 
+  emitSurgeonProgress(deps.reportProgress, {
+    kind: "phase",
+    phase: "start",
+    passType: options.pass,
+    apply: options.apply,
+  });
+
   const dailyCost = dailyCostCap > 0 ? await deps.port.getDailyCost(nowFn()) : 0;
   if (dailyCostCap > 0 && dailyCost >= dailyCostCap) {
     throw new Error(`Surgeon daily cost cap exceeded. Cost in the last 24 hours is ${formatUsd(dailyCost)} and the cap is ${formatUsd(dailyCostCap)}.`);
@@ -175,7 +184,20 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
   const systemPrompt = buildSystemPrompt(options.pass, deps.config);
 
   if (options.apply && deps.dbPath && deps.dbPath !== ":memory:" && deps.backupDb) {
-    await deps.backupDb(deps.dbPath);
+    emitSurgeonProgress(deps.reportProgress, {
+      kind: "phase",
+      phase: "backup_start",
+      passType: options.pass,
+      apply: options.apply,
+    });
+    const backupPath = await deps.backupDb(deps.dbPath);
+    emitSurgeonProgress(deps.reportProgress, {
+      kind: "phase",
+      phase: "backup_complete",
+      passType: options.pass,
+      apply: options.apply,
+      backupPath,
+    });
   }
 
   const runId = await deps.port.createRun({
@@ -213,6 +235,12 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
 
   try {
     if (options.pass === "claim_key_quality") {
+      emitSurgeonProgress(deps.reportProgress, {
+        kind: "phase",
+        phase: "load_working_set_start",
+        passType: options.pass,
+        apply: options.apply,
+      });
       const deterministicResult = await runClaimKeyQualityPass(
         {
           runId,
@@ -225,6 +253,8 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
           signal,
           now: nowFn,
           costCapUsd: runCostCap,
+          verbose: options.verbose,
+          reportProgress: deps.reportProgress,
         },
         {
           port: deps.port,
@@ -249,6 +279,12 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
 
     const agentPass: Extract<SurgeonPassType, "retirement" | "supersession"> = options.pass;
 
+    emitSurgeonProgress(deps.reportProgress, {
+      kind: "phase",
+      phase: "load_pass_context_start",
+      passType: options.pass,
+      apply: options.apply,
+    });
     const [health, passStartContext, lastRun] = await Promise.all([
       deps.port.getHealthStats({
         protectRecalledDays: protection.protectRecalledDays,
@@ -264,6 +300,19 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
       }),
       deps.port.getLastRun(),
     ]);
+    emitSurgeonProgress(deps.reportProgress, {
+      kind: "phase",
+      phase: "load_pass_context_complete",
+      passType: options.pass,
+      apply: options.apply,
+      workingSetSize: health.total,
+    });
+    emitSurgeonProgress(deps.reportProgress, {
+      kind: "phase",
+      phase: "pass_start",
+      passType: options.pass,
+      apply: options.apply,
+    });
 
     const completionGuards = createSurgeonCompletionGuardState({
       totalEntries: health.total,
