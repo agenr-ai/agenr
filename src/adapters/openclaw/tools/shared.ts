@@ -10,7 +10,7 @@ import type { AgenrOpenClawServices } from "../types.js";
  */
 // eslint-disable-next-line jsdoc/require-jsdoc
 export const ENTRY_TYPE_DESCRIPTION =
-  "Knowledge type to store. Use fact for durable information about people, places, systems, or how things work. Use decision for standing rules, constraints, or chosen approaches. Use preference for stated wants, values, or opinions. Use lesson for non-obvious insights learned from specific experience. Use milestone for notable one-time events worth remembering (a move, a launch, a life change, a hire, a trip). Use relationship for meaningful connections between people, groups, or systems.";
+  "Knowledge type to store. Use fact for durable truth about a person, system, place, or how something works. Use decision for a standing rule, constraint, policy, or chosen approach future sessions should follow - not a progress update or completed action. Use preference for what someone likes, wants, values, or wants avoided. Use lesson for a non-obvious takeaway learned from experience that should change future behavior. Use milestone for a rare one-time event with durable future significance - not ordinary execution progress. Use relationship for a meaningful durable connection between people, groups, or systems.";
 
 /**
  * Human-readable guidance shown in expiry-related tool schemas.

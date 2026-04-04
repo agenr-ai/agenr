@@ -82,6 +82,23 @@ describe("agenr OpenClaw tools", () => {
     expect(expiry?.enum).toBeUndefined();
   });
 
+  it("describes durable-memory boundaries for agenr_store", () => {
+    const storeTool = createAgenrStoreTool(createToolContext(), Promise.resolve({} as AgenrOpenClawServices), createLogger());
+    const schema = storeTool.parameters as {
+      properties?: Record<string, { description?: string }>;
+    };
+
+    expect(String(storeTool.description)).toContain("future-session test");
+    expect(String(storeTool.description)).toContain("canonical record");
+    expect(String(storeTool.description)).toContain("version control");
+    expect(String(storeTool.description)).toContain("Do not use decision as a catch-all");
+    expect(String(storeTool.description)).toContain("I filed a ticket with support.");
+    expect(String(storeTool.description)).toContain("Jim prefers text-first updates");
+    expect(schema.properties?.type?.description).toContain("not a progress update or completed action");
+    expect(schema.properties?.type?.description).toContain("not ordinary execution progress");
+    expect(schema.properties?.content?.description).toContain("not the activity log, canonical record, or transient progress snapshot");
+  });
+
   it("stores, updates, traces, and retires entries", async () => {
     const database = await createTestDatabase();
     const logger = createLogger();

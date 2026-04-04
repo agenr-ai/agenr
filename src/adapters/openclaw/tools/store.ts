@@ -30,11 +30,11 @@ const STORE_TOOL_PARAMETERS = {
     },
     subject: {
       type: "string",
-      description: "Short subject line future recall can match. Name the decision, preference, person, system, or risk directly.",
+      description: "Short subject line future recall can match. Name the durable takeaway, person, system, rule, relationship, or milestone directly.",
     },
     content: {
       type: "string",
-      description: "What a fresh session should remember. Store the durable takeaway, not a transient progress snapshot.",
+      description: "What a fresh session should remember. Store the durable takeaway, not the activity log, canonical record, or transient progress snapshot.",
     },
     importance: {
       type: "integer",
@@ -90,7 +90,7 @@ export function createAgenrStoreTool(ctx: OpenClawPluginToolContext, servicesPro
     name: "agenr_store",
     label: "Agenr Store",
     description:
-      "Store a new knowledge entry in agenr long-term memory. Call immediately after decisions, preferences, lessons, and durable facts - but apply the future-session test first: will a fresh session need this to make a better decision, or are you just logging what happened?\n\nStore: architecture decisions, workflow constraints, recurring problems, user preferences, durable technical facts, operational lessons, important open risks.\n\nDo not store: version shipping events (changelogs are the record), issue/PR filing records (the tracker is the record), phase plans or release sequencing (stale within a session), progress snapshots (stale within minutes), prompt file locations or build logistics.\n\nWhen replacing an existing fact, pass `supersedes` with the old entry's ID. When storing a slot-like fact (for example, a library version or a rollout strategy), pass `claimKey` to enable future supersession detection.\n\nDo not ask before storing - but do ask whether future-you actually needs it.",
+      "Store a new durable memory entry in agenr. Apply the future-session test first: will a fresh future session make a better decision because this was stored, or are you just logging that something happened?\n\nIf another system is already the canonical record - such as version control, a task or ticket tracker, a calendar, a signed document, a chat or email thread, or a database/CRM - usually do not store that record here. Store only the durable takeaway: the standing implication, rule, lesson, preference, risk, or relationship.\n\nType guide: fact = durable truth about a person, system, place, or how something works. decision = a standing rule, constraint, policy, or chosen approach future sessions should follow. preference = what someone likes, wants, values, or wants avoided. lesson = a non-obvious takeaway learned from experience that should change future behavior. milestone = a rare one-time event with durable future significance, not ordinary execution progress. relationship = a meaningful durable connection between people, groups, or systems.\n\nUsually do not store: 'I merged PR #123.', 'I filed a ticket with support.', 'We had a meeting at 3 PM.', 'I sent the contract for signature.', 'We spent two hours debugging the outage.' Do store the takeaway instead: 'Always use the structured export path because raw sync corrupts timestamps.' 'Jim prefers text-first updates and dislikes surprise calls.' 'Service restarts fail unless config Y is enabled.' 'The office Wi-Fi name is Acorn-5G.'\n\nDo not use decision as a catch-all for important activity updates. Do not store plans, checklists, speculative future state, progress snapshots, session narration, or rephrased recalled material.\n\nWhen replacing an existing fact, pass `supersedes` with the old entry's ID. When storing a slot-like fact (for example, a library version or a rollout strategy), pass `claimKey` to enable future supersession detection.\n\nDo not ask before storing - but do ask whether future-you actually needs it.",
     parameters: STORE_TOOL_PARAMETERS,
     async execute(_toolCallId, rawParams) {
       try {

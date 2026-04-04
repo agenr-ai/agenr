@@ -24,6 +24,12 @@ describe("buildAgenrMemoryPromptSection", () => {
     expect(lines.join("\n")).toContain("Memory authority");
     expect(lines.join("\n")).toContain("One focused agenr_recall call with the right scope beats several broad ones.");
     expect(lines.join("\n")).toContain("future-session test");
+    expect(lines.join("\n")).toContain("canonical record");
+    expect(lines.join("\n")).toContain("version control");
+    expect(lines.join("\n")).toContain("Type guide:");
+    expect(lines.join("\n")).toContain("Do not use decision as a catch-all");
+    expect(lines.join("\n")).toContain("I merged PR #123.");
+    expect(lines.join("\n")).toContain("Jim prefers text-first updates");
     expect(lines.join("\n")).toContain("Do not store progress snapshots");
     expect(lines.join("\n")).toContain("Do not store plans, checklists, or speculative future state");
     expect(lines.join("\n")).toContain("Importance is 1 to 10");

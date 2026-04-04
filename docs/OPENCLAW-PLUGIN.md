@@ -156,6 +156,10 @@ Current behavior:
 - otherwise it tells the model to call `agenr_recall` before answering questions about prior work, preferences, unfinished work, dates, or past sessions
 - it teaches `mode=auto` for prior-state questions like "what was the previous approach" and "what changed from X to Y"
 - it teaches `mode=entries` for exact facts and `mode=episodes` for explicit narrative session recall
+- when `agenr_store` is available, it applies a stronger future-session test and explicitly asks whether the agent is storing durable memory or merely logging activity
+- it teaches a generic record-vs-memory distinction, warning against copying canonical records from version control, ticket systems, calendars, documents, chat/email threads, or external systems of record into agenr
+- it sharpens the `fact` / `decision` / `preference` / `lesson` / `milestone` boundaries and warns against using `decision` as a catch-all for important updates or `milestone` as a bucket for routine completions
+- it includes concise cross-domain negative and positive examples near the store decision
 - it conditionally adds guidance for `agenr_store`, `agenr_update`, `agenr_retire`, and `agenr_trace` only when those tools are available
 - it adds a citation rule based on `citationsMode`
 

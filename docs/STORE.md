@@ -78,16 +78,20 @@ Callers should apply a durable-memory filter before writing. The store pipeline 
 - Standing decisions and constraints about how someone wants things handled
 - Verified system, environment, or world facts that will still matter later
 - Lessons grounded in a specific experience, failure, or discovery
-- Milestones and notable one-time events worth historical recall
+- Rare milestones and notable one-time events with durable future significance
 
 ### What does not belong
 
+- Canonical records that already live in another source of truth such as version control, ticket systems, calendars, signed documents, chat/email threads, or CRMs/databases
+- Records of activity whose main value is that they happened, rather than a durable takeaway future sessions should use
 - Progress snapshots or current-state descriptions about what is happening right now
 - Plans, checklists, intentions, or speculative future actions
 - Conversation summaries or session meta narration
 - Re-extracted recall material, including injected entries, episode recall, or continuity text
 - Generic advice that could appear in any tutorial, guide, or self-help list
 - Transient status, errors, troubleshooting steps, or debugging journey details
+
+Store the durable takeaway, not the record itself. If a future session only needs the standing implication, lesson, preference, rule, risk, or relationship, store that distilled memory instead of duplicating the external record. Routine completions usually are not milestones, and important-in-the-moment execution updates usually are not decisions.
 
 ## Runtime options
 

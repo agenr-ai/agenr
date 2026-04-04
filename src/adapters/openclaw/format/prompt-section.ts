@@ -45,7 +45,20 @@ export function buildAgenrMemoryPromptSection({
 
   if (availableTools.has(MEMORY_TOOL_NAMES.store)) {
     lines.push(
-      "Store decisions, preferences, lessons, durable facts, and important open risks with agenr_store immediately after they happen. Apply the future-session test: will a fresh session need this to make a better decision?",
+      "Use agenr_store for durable memory, not for logging. Apply the future-session test: will a fresh future session make a better decision because this was stored, or are you just recording that something happened?",
+    );
+    lines.push(
+      "If another system already holds the canonical record - such as version control, a task or ticket tracker, a calendar, a signed document, a chat or email thread, or a database/CRM - usually do not store that record. Store only the durable takeaway: the standing rule, implication, lesson, preference, risk, or relationship.",
+    );
+    lines.push(
+      "Type guide: fact = durable truth about a person, system, place, or how something works; decision = standing rule, constraint, policy, or chosen approach future sessions should follow; preference = what someone likes, wants, values, or wants avoided; lesson = non-obvious takeaway from experience that should change future behavior; milestone = rare one-time event with durable future significance, not ordinary task completion.",
+    );
+    lines.push("Do not use decision as a catch-all for important activity updates.");
+    lines.push(
+      "Usually do not store: 'I merged PR #123.', 'I filed a support ticket.', 'We had a meeting at 3 PM.', 'I sent the contract for signature.', or 'We spent two hours debugging the outage.'",
+    );
+    lines.push(
+      "Do store the durable takeaway instead: 'Always use the structured export path because raw sync corrupts timestamps.' (decision or lesson), 'Jim prefers text-first updates and dislikes surprise calls.' (preference), 'Service restarts fail unless config Y is enabled.' (lesson), 'The office Wi-Fi name is Acorn-5G.' (fact).",
     );
     lines.push("Do not store progress snapshots or current-state narration about what is happening right now as durable memory.");
     lines.push("Do not store plans, checklists, or speculative future state as facts or decisions.");
