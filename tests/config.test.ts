@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { configFileExists, readConfig, writeConfig } from "../src/config.js";
+import { configFileExists, readConfig, resolveClaimExtractionConfig, writeConfig } from "../src/config.js";
 
 const tempDirs: string[] = [];
 
@@ -86,6 +86,38 @@ describe("readConfig", () => {
 
     expect(() => readConfig({ configPath })).toThrow(/unsupported agenr config field\(s\)/i);
     expect(() => readConfig({ configPath })).toThrow(/credentials\.openaiApiKey|credentials\.anthropicApiKey/i);
+  });
+});
+
+describe("resolveClaimExtractionConfig", () => {
+  it("defaults claim extraction concurrency to 10", () => {
+    expect(resolveClaimExtractionConfig()).toMatchObject({
+      concurrency: 10,
+    });
+  });
+
+  it("normalizes invalid claim extraction concurrency back to 10", () => {
+    expect(
+      resolveClaimExtractionConfig({
+        claimExtraction: {
+          concurrency: 0,
+        },
+      }),
+    ).toMatchObject({
+      concurrency: 10,
+    });
+  });
+
+  it("keeps explicit positive claim extraction concurrency", () => {
+    expect(
+      resolveClaimExtractionConfig({
+        claimExtraction: {
+          concurrency: 24,
+        },
+      }),
+    ).toMatchObject({
+      concurrency: 24,
+    });
   });
 });
 

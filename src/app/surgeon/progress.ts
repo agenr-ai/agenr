@@ -39,10 +39,14 @@ export interface ClaimKeyQualityProgressEvent {
   passType: "claim_key_quality";
   apply: boolean;
   stage: ClaimKeyQualityProgressStage;
-  status: "snapshot" | "started" | "progress" | "completed";
+  status: "snapshot" | "started" | "preview_progress" | "progress" | "completed";
   completed: number;
   total: number;
   unitLabel: "entries" | "groups";
+  previewQueued?: number;
+  previewCompleted?: number;
+  previewTotal?: number;
+  previewConcurrency?: number;
   processedEntries: number;
   totalEntries: number;
   counts: ClaimKeyQualityRepairCounts;

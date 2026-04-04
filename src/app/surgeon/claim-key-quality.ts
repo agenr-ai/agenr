@@ -2,7 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { resolveClaimExtractionConfig, type AgenrConfig } from "../../config.js";
+import { DEFAULT_CLAIM_EXTRACTION_CONCURRENCY, resolveClaimExtractionConfig, type AgenrConfig } from "../../config.js";
 import {
   describeClaimKeyNormalizationFailure,
   describeClaimKeySuspicion,
@@ -89,6 +89,16 @@ interface EntrySuggestionRecord {
   warnings: string[];
 }
 
+type ClaimExtractionPreviewLlm = LlmPort & {
+  metadata?: {
+    usage?: {
+      inputTokens?: number;
+      outputTokens?: number;
+      totalCost?: number;
+    };
+  };
+};
+
 interface ClaimKeyCircuitBreakerState {
   totalAutoMutations: number;
   blockedCollisions: number;
@@ -136,6 +146,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
   const suggestionCache = new Map<string, EntrySuggestionRecord>();
   const trustedHints = buildTrustedCleanupHintSeed(actualEntries);
   const claimExtractionConfig = resolveClaimExtractionConfig(deps.config ?? undefined);
+  const previewConcurrency = resolveClaimExtractionConcurrency(claimExtractionConfig);
   const before = summarizeClaimKeyHealth(actualEntries, claimExtractionConfig.eligibleTypes);
   const circuitBreakerState = createCircuitBreakerState();
   const progressTracker = createClaimKeyQualityProgressTracker({
@@ -145,7 +156,8 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
     counts,
     reportProgress: options.reportProgress,
   });
-  let claimExtractionLlm: ReturnType<NonNullable<ClaimKeyQualityRunDeps["createClaimExtractionLlm"]>> | null = null;
+  const claimExtractionLlms: ClaimExtractionPreviewLlm[] = [];
+  let fallbackClaimExtractionLlm: ClaimExtractionPreviewLlm | null | undefined;
   let circuitBreaker: ClaimKeyCircuitBreakerTrip | null = null;
   let terminalStatus: SurgeonRunStatus = "completed";
   let terminalError: string | null = null;
@@ -193,7 +205,11 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
     }
 
     if (!circuitBreaker && terminalStatus === "completed") {
-      progressTracker.startStage("missing", missingEntries.length, "entries");
+      progressTracker.startStage("missing", missingEntries.length, "entries", {
+        previewTotal: shouldPreloadSuggestions() ? missingEntries.length : 0,
+        previewConcurrency: shouldPreloadSuggestions() ? previewConcurrency : undefined,
+      });
+      await preloadSuggestionsForStage(missingEntries);
       for (const entry of missingEntries) {
         if (options.signal?.aborted === true) {
           terminalStatus = "aborted";
@@ -210,7 +226,12 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
     }
 
     if (!circuitBreaker && terminalStatus === "completed") {
-      progressTracker.startStage("suspect_canonical", suspectEntries.length, "entries");
+      const suspectPreviewEntries = suspectEntries.filter((entry) => shouldPreloadSuspectSuggestion(entry));
+      progressTracker.startStage("suspect_canonical", suspectEntries.length, "entries", {
+        previewTotal: shouldPreloadSuggestions() ? suspectPreviewEntries.length : 0,
+        previewConcurrency: shouldPreloadSuggestions() && suspectPreviewEntries.length > 0 ? previewConcurrency : undefined,
+      });
+      await preloadSuggestionsForStage(suspectPreviewEntries);
       for (const entry of suspectEntries) {
         if (options.signal?.aborted === true) {
           terminalStatus = "aborted";
@@ -305,7 +326,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
     error: terminalError,
     completion,
     entriesRetired: 0,
-    usage: claimExtractionUsage(claimExtractionLlm),
+    usage: claimExtractionUsage(claimExtractionLlms),
   };
 
   async function processInvalidOrNoncanonicalEntry(entry: Entry): Promise<void> {
@@ -530,23 +551,81 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
     counts.skippedAmbiguous += 1;
   }
 
-  async function loadSuggestion(entry: Entry): Promise<EntrySuggestionRecord> {
+  function shouldPreloadSuggestions(): boolean {
+    return claimExtractionConfig.enabled && typeof deps.createClaimExtractionLlm === "function";
+  }
+
+  function shouldPreloadSuspectSuggestion(entry: Entry): boolean {
+    if (!claimExtractionConfig.eligibleTypes.includes(entry.type)) {
+      return false;
+    }
+
+    const inspection = inspectExistingClaimKey(entry);
+    if (inspection.kind !== "suspect") {
+      return false;
+    }
+
+    const metadataRepair = resolveExplicitMetadataRepair(entry, inspection.inspection);
+    return metadataRepair === null || findClaimKeyOccupants(projectedEntries, metadataRepair, entry.id).length > 0;
+  }
+
+  async function preloadSuggestionsForStage(entries: Entry[]): Promise<void> {
+    if (entries.length === 0 || !shouldPreloadSuggestions()) {
+      return;
+    }
+
+    const workerCount = Math.min(previewConcurrency, entries.length);
+    let nextIndex = 0;
+
+    await Promise.all(
+      Array.from({ length: workerCount }, async () => {
+        const llm = createTrackedClaimExtractionLlm();
+
+        while (true) {
+          if (terminalStatus !== "completed") {
+            return;
+          }
+
+          if (options.signal?.aborted === true) {
+            terminalStatus = "aborted";
+            terminalError = "Run aborted by user (SIGINT).";
+            return;
+          }
+
+          const currentIndex = nextIndex;
+          nextIndex += 1;
+
+          if (currentIndex >= entries.length) {
+            return;
+          }
+
+          const entry = entries[currentIndex];
+          if (!entry) {
+            return;
+          }
+
+          await loadSuggestion(entry, llm);
+          progressTracker.advancePreview();
+        }
+      }),
+    );
+  }
+
+  async function loadSuggestion(entry: Entry, llmOverride?: ClaimExtractionPreviewLlm | null): Promise<EntrySuggestionRecord> {
     const cached = suggestionCache.get(entry.id);
     if (cached) {
       return cached;
     }
 
     if (!claimExtractionConfig.enabled || !claimExtractionConfig.eligibleTypes.includes(entry.type)) {
-      const empty = { suggestion: null, warnings: [] };
+      const empty = createEmptySuggestionRecord();
       suggestionCache.set(entry.id, empty);
       return empty;
     }
 
-    if (!claimExtractionLlm) {
-      claimExtractionLlm = deps.createClaimExtractionLlm ? deps.createClaimExtractionLlm() : null;
-    }
-    if (!claimExtractionLlm) {
-      const empty = { suggestion: null, warnings: [] };
+    const llm = llmOverride ?? getFallbackClaimExtractionLlm();
+    if (!llm) {
+      const empty = createEmptySuggestionRecord();
       suggestionCache.set(entry.id, empty);
       return empty;
     }
@@ -560,7 +639,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
           subject: entry.subject,
           content: entry.content,
         },
-        claimExtractionLlm,
+        llm,
         claimExtractionConfig,
         {
           hints: buildCleanupHintsForEntry(trustedHints, entry),
@@ -575,13 +654,31 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
     const record = { suggestion, warnings };
     suggestionCache.set(entry.id, record);
 
-    const usage = claimExtractionUsage(claimExtractionLlm);
-    if (options.costCapUsd > 0 && usage.estimatedCostUsd >= options.costCapUsd) {
+    const usage = claimExtractionUsage(claimExtractionLlms);
+    if (terminalStatus === "completed" && options.costCapUsd > 0 && usage.estimatedCostUsd >= options.costCapUsd) {
       terminalStatus = "cost_capped";
       terminalError = `Cost cap exceeded while previewing claim-key repairs at ${usage.estimatedCostUsd.toFixed(4)} USD.`;
     }
 
     return record;
+  }
+
+  function getFallbackClaimExtractionLlm(): ClaimExtractionPreviewLlm | null {
+    if (fallbackClaimExtractionLlm !== undefined) {
+      return fallbackClaimExtractionLlm;
+    }
+
+    fallbackClaimExtractionLlm = createTrackedClaimExtractionLlm();
+    return fallbackClaimExtractionLlm;
+  }
+
+  function createTrackedClaimExtractionLlm(): ClaimExtractionPreviewLlm | null {
+    const llm = deps.createClaimExtractionLlm ? deps.createClaimExtractionLlm() : null;
+    if (llm && !claimExtractionLlms.includes(llm)) {
+      claimExtractionLlms.push(llm);
+    }
+
+    return llm;
   }
 
   async function maybeApplyClaimKeyUpdate(
@@ -692,17 +789,25 @@ export function summarizeClaimKeyHealth(entries: Entry[], eligibleTypes: string[
   };
 }
 
-function claimExtractionUsage(llm: (LlmPort & { metadata?: { usage?: { inputTokens?: number; outputTokens?: number; totalCost?: number } } }) | null): {
+function claimExtractionUsage(llms: ClaimExtractionPreviewLlm[]): {
   inputTokens: number;
   outputTokens: number;
   estimatedCostUsd: number;
 } {
-  const usage = llm?.metadata?.usage;
-  return {
-    inputTokens: usage?.inputTokens ?? 0,
-    outputTokens: usage?.outputTokens ?? 0,
-    estimatedCostUsd: usage?.totalCost ?? 0,
-  };
+  return llms.reduce(
+    (total, llm) => {
+      const usage = llm.metadata?.usage;
+      total.inputTokens += usage?.inputTokens ?? 0;
+      total.outputTokens += usage?.outputTokens ?? 0;
+      total.estimatedCostUsd += usage?.totalCost ?? 0;
+      return total;
+    },
+    {
+      inputTokens: 0,
+      outputTokens: 0,
+      estimatedCostUsd: 0,
+    },
+  );
 }
 
 interface ClaimKeyQualityStageProgressState {
@@ -710,13 +815,27 @@ interface ClaimKeyQualityStageProgressState {
   total: number;
   completed: number;
   unitLabel: "entries" | "groups";
+  previewQueued: number;
+  previewCompleted: number;
+  previewTotal: number;
+  previewConcurrency: number | null;
   lastReportedCompleted: number;
+  lastReportedPreviewCompleted: number;
   lastReportedAtMs: number;
 }
 
 interface ClaimKeyQualityProgressTracker {
   emitHealthSnapshot(snapshot: ClaimKeyHealthSnapshot): void;
-  startStage(stage: ClaimKeyQualityProgressStage, total: number, unitLabel: "entries" | "groups"): void;
+  startStage(
+    stage: ClaimKeyQualityProgressStage,
+    total: number,
+    unitLabel: "entries" | "groups",
+    options?: {
+      previewTotal?: number;
+      previewConcurrency?: number;
+    },
+  ): void;
+  advancePreview(count?: number): void;
   advanceStage(count?: number): void;
 }
 
@@ -752,7 +871,16 @@ function createClaimKeyQualityProgressTracker(input: {
       });
     },
 
-    startStage(stage: ClaimKeyQualityProgressStage, total: number, unitLabel: "entries" | "groups"): void {
+    startStage(
+      stage: ClaimKeyQualityProgressStage,
+      total: number,
+      unitLabel: "entries" | "groups",
+      options?: {
+        previewTotal?: number;
+        previewConcurrency?: number;
+      },
+    ): void {
+      const previewTotal = Math.max(0, options?.previewTotal ?? 0);
       activeStage =
         total > 0
           ? {
@@ -760,7 +888,12 @@ function createClaimKeyQualityProgressTracker(input: {
               total,
               completed: 0,
               unitLabel,
+              previewQueued: previewTotal,
+              previewCompleted: 0,
+              previewTotal,
+              previewConcurrency: previewTotal > 0 ? (options?.previewConcurrency ?? null) : null,
               lastReportedCompleted: 0,
+              lastReportedPreviewCompleted: 0,
               lastReportedAtMs: Date.now(),
             }
           : null;
@@ -770,6 +903,26 @@ function createClaimKeyQualityProgressTracker(input: {
       }
 
       emitStageEvent("started");
+    },
+
+    advancePreview(count = 1): void {
+      if (!activeStage || activeStage.previewTotal === 0) {
+        return;
+      }
+
+      activeStage.previewCompleted += count;
+      if (activeStage.previewCompleted > activeStage.previewTotal) {
+        activeStage.previewCompleted = activeStage.previewTotal;
+      }
+
+      const nowMs = Date.now();
+      if (
+        activeStage.previewCompleted >= activeStage.previewTotal ||
+        activeStage.previewCompleted - activeStage.lastReportedPreviewCompleted >= progressEvery ||
+        nowMs - activeStage.lastReportedAtMs >= progressIntervalMs
+      ) {
+        emitStageEvent("preview_progress", nowMs);
+      }
     },
 
     advanceStage(count = 1): void {
@@ -795,12 +948,13 @@ function createClaimKeyQualityProgressTracker(input: {
     },
   };
 
-  function emitStageEvent(status: "started" | "progress" | "completed", nowMs = Date.now()): void {
+  function emitStageEvent(status: "started" | "preview_progress" | "progress" | "completed", nowMs = Date.now()): void {
     if (!activeStage) {
       return;
     }
 
     activeStage.lastReportedCompleted = activeStage.completed;
+    activeStage.lastReportedPreviewCompleted = activeStage.previewCompleted;
     activeStage.lastReportedAtMs = nowMs;
     emitSurgeonProgress(input.reportProgress, {
       kind: "claim_key_quality_progress",
@@ -811,6 +965,14 @@ function createClaimKeyQualityProgressTracker(input: {
       completed: activeStage.completed,
       total: activeStage.total,
       unitLabel: activeStage.unitLabel,
+      ...(activeStage.previewTotal > 0
+        ? {
+            previewQueued: activeStage.previewQueued,
+            previewCompleted: activeStage.previewCompleted,
+            previewTotal: activeStage.previewTotal,
+            ...(activeStage.previewConcurrency !== null ? { previewConcurrency: activeStage.previewConcurrency } : {}),
+          }
+        : {}),
       processedEntries,
       totalEntries: input.totalEntries,
       counts: cloneRepairCounts(input.counts),
@@ -832,6 +994,13 @@ function createEmptyRepairCounts(): ClaimKeyQualityRepairCounts {
     skippedLowConfidence: 0,
     skippedCollision: 0,
     skippedAmbiguous: 0,
+  };
+}
+
+function createEmptySuggestionRecord(): EntrySuggestionRecord {
+  return {
+    suggestion: null,
+    warnings: [],
   };
 }
 
@@ -866,6 +1035,16 @@ function cloneEntry(entry: Entry): Entry {
 function normalizeOptionalString(value: string | undefined): string | null {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
+}
+
+function resolveClaimExtractionConcurrency(config: { concurrency?: number }): number {
+  const concurrency = config.concurrency;
+  const normalized = typeof concurrency === "number" ? Math.trunc(concurrency) : Number.NaN;
+  if (!Number.isFinite(normalized) || normalized <= 0) {
+    return DEFAULT_CLAIM_EXTRACTION_CONCURRENCY;
+  }
+
+  return normalized;
 }
 
 function normalizeStringArray(values: string[]): string[] {

@@ -214,11 +214,13 @@ const DEFAULT_SURGEON_CONTEXT_LIMIT = 0;
 const DEFAULT_SURGEON_RETIREMENT_PROTECT_RECALLED_DAYS = 14;
 const DEFAULT_SURGEON_RETIREMENT_PROTECT_MIN_IMPORTANCE = 9;
 const DEFAULT_SURGEON_SKIP_RECENTLY_EVALUATED_DAYS = 7;
+const DEFAULT_CLAIM_EXTRACTION_CONCURRENCY = 10;
 const DEFAULT_CLAIM_EXTRACTION_CONFIDENCE_THRESHOLD = 0.8;
 // Keep milestone excluded for now. Milestones are often event-shaped summaries rather than durable slots.
 const DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES = ["fact", "preference", "decision", "lesson"] as const satisfies readonly EntryType[];
 
 export {
+  DEFAULT_CLAIM_EXTRACTION_CONCURRENCY,
   DEFAULT_CLAIM_EXTRACTION_CONFIDENCE_THRESHOLD,
   DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES,
   DEFAULT_SURGEON_CONTEXT_LIMIT,
@@ -341,6 +343,7 @@ export function resolveClaimExtractionConfig(config?: AgenrConfig): ClaimExtract
     enabled: config?.claimExtraction?.enabled ?? true,
     confidenceThreshold: normalizeClaimExtractionConfidence(config?.claimExtraction?.confidenceThreshold),
     eligibleTypes: normalizeClaimExtractionEligibleTypes(config?.claimExtraction?.eligibleTypes),
+    concurrency: normalizeClaimExtractionConcurrency(config?.claimExtraction?.concurrency),
   };
 }
 
@@ -487,4 +490,14 @@ function normalizeClaimExtractionEligibleTypes(value: EntryType[] | undefined): 
 
   const normalized = Array.from(new Set(value.filter((candidate): candidate is EntryType => ENTRY_TYPES.includes(candidate))));
   return normalized.length > 0 ? normalized : [...DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES];
+}
+
+/** Applies the default claim-extraction concurrency when config values are absent or invalid. */
+function normalizeClaimExtractionConcurrency(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_CLAIM_EXTRACTION_CONCURRENCY;
+  }
+
+  const normalized = Math.trunc(value);
+  return normalized > 0 ? normalized : DEFAULT_CLAIM_EXTRACTION_CONCURRENCY;
 }

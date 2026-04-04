@@ -165,6 +165,7 @@ describe("setup stage helpers", () => {
         claimExtraction: {
           enabled: true,
           confidenceThreshold: 0.9,
+          concurrency: 12,
         },
       },
       {
@@ -179,6 +180,7 @@ describe("setup stage helpers", () => {
     expect(nextConfig.claimExtraction).toEqual({
       enabled: true,
       confidenceThreshold: 0.9,
+      concurrency: 12,
       model: {
         provider: "openai",
         model: "gpt-5.4-mini",

@@ -92,6 +92,8 @@ export interface ClaimExtractionConfig {
   enabled: boolean;
   confidenceThreshold: number;
   eligibleTypes: EntryType[];
+  /** Maximum preview workers used by cleanup flows that parallelize claim extraction. Defaults to `10`. */
+  concurrency?: number;
 }
 
 /**
@@ -236,7 +238,7 @@ export async function getEntityHints(db: DatabasePort): Promise<string[]> {
  * @param results - Entry batches whose members may be stamped with `claim_key`.
  * @param ports - Claim-extraction LLM factory plus database access for hint loading.
  * @param config - Runtime extraction controls.
- * @param _concurrency - Reserved for interface compatibility. Batch extraction is ordered so same-batch hints are deterministic.
+ * @param _concurrency - Reserved for interface compatibility. Batch extraction stays ordered so same-batch hints remain deterministic.
  * @param onWarning - Optional warning sink for deterministic rejection reasons.
  */
 export async function runBatchClaimExtraction(

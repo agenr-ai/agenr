@@ -1,11 +1,12 @@
 import { createClient, type Client } from "@libsql/client";
 import { getModel } from "@mariozechner/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createSurgeonPort } from "../../../src/adapters/db/surgeon-port.js";
 import type { SurgeonProgressEvent } from "../../../src/app/surgeon/progress.js";
 import { getLastSurgeonRun, getSurgeonRunActions, getSurgeonRunProposals } from "../../../src/adapters/db/surgeon-run-log.js";
 import { initSchema } from "../../../src/adapters/db/schema.js";
+import type { AgenrConfig } from "../../../src/config.js";
 import type { LlmPort } from "../../../src/core/ports.js";
 import type { Entry } from "../../../src/core/types.js";
 import { runSurgeon } from "../../../src/app/surgeon/service.js";
@@ -106,6 +107,94 @@ describe("claim_key_quality surgeon pass", () => {
       appliedBackfills: 1,
       skippedLowConfidence: 1,
     });
+  });
+
+  it("preloads missing-key previews with bounded concurrency and keeps collision decisions deterministic when previews resolve out of order", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, { id: "a-shared-fact", subject: "Shared slot fact", type: "fact", content: "The shared slot is active." });
+    await insertEntry(client, { id: "b-shared-decision", subject: "Shared slot decision", type: "decision", content: "Decision: the shared slot is active." });
+    await insertEntry(client, { id: "unique-fact", subject: "Unique timezone", type: "fact", content: "Jim's timezone is America/Chicago." });
+
+    const pending = new Map<string, { resolve: (value: unknown) => void }>();
+    const startedSubjects: string[] = [];
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const responder = (_callIndex: number, _systemPrompt: string, userMessage: string) => {
+      const subject = /Subject: (.+)/u.exec(userMessage)?.[1] ?? userMessage;
+      startedSubjects.push(subject);
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+
+      return new Promise((resolve) => {
+        pending.set(subject, {
+          resolve: (value) => {
+            inFlight -= 1;
+            resolve(value);
+          },
+        });
+      });
+    };
+
+    const runPromise = runClaimKeyPass(client, {
+      apply: true,
+      config: {
+        claimExtraction: {
+          concurrency: 2,
+        },
+      },
+      createClaimExtractionLlm: () => new MockClaimLlm(responder),
+    });
+
+    await vi.waitFor(() => {
+      expect(startedSubjects).toHaveLength(2);
+      expect(startedSubjects).toEqual(expect.arrayContaining(["Shared slot fact", "Shared slot decision"]));
+    });
+    expect(maxInFlight).toBe(2);
+
+    pending.get("Shared slot decision")?.resolve({
+      entity: "shared",
+      attribute: "status",
+      confidence: 0.97,
+    });
+
+    await vi.waitFor(() => {
+      expect(startedSubjects).toContain("Unique timezone");
+    });
+
+    pending.get("Unique timezone")?.resolve({
+      entity: "Jim",
+      attribute: "timezone",
+      confidence: 0.97,
+    });
+    pending.get("Shared slot fact")?.resolve({
+      entity: "shared",
+      attribute: "status",
+      confidence: 0.97,
+    });
+
+    const result = await runPromise;
+    const rows = await client.execute({
+      sql: "SELECT id, claim_key FROM entries WHERE id IN (?, ?, ?) ORDER BY id ASC",
+      args: ["a-shared-fact", "b-shared-decision", "unique-fact"],
+    });
+    const proposals = await getSurgeonRunProposals(client, result.runId);
+
+    expect(result.status).toBe("completed");
+    expect(maxInFlight).toBe(2);
+    expect(rows.rows).toEqual([
+      { id: "a-shared-fact", claim_key: "shared/status" },
+      { id: "b-shared-decision", claim_key: null },
+      { id: "unique-fact", claim_key: "jim/timezone" },
+    ]);
+    expect(proposals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          issueKind: "missing_claim_key",
+          entryIds: ["b-shared-decision", "a-shared-fact"],
+          proposedClaimKeys: ["shared/status"],
+        }),
+      ]),
+    );
   });
 
   it("emits a structured unresolved proposal instead of normalizing into an occupied canonical key", async () => {
@@ -310,7 +399,30 @@ describe("claim_key_quality surgeon pass", () => {
             appliedNormalizations: 1,
           }),
         }),
+        expect.objectContaining({
+          kind: "claim_key_quality_progress",
+          stage: "missing",
+          status: "started",
+          previewQueued: 1,
+          previewTotal: 1,
+          previewConcurrency: 10,
+        }),
+        expect.objectContaining({
+          kind: "claim_key_quality_progress",
+          stage: "missing",
+          status: "preview_progress",
+          previewCompleted: 1,
+          previewTotal: 1,
+          completed: 0,
+        }),
         expect.objectContaining({ kind: "claim_key_quality_progress", stage: "missing", status: "completed" }),
+        expect.objectContaining({
+          kind: "claim_key_quality_progress",
+          stage: "suspect_canonical",
+          status: "started",
+          previewQueued: 1,
+          previewTotal: 1,
+        }),
         expect.objectContaining({
           kind: "claim_key_quality_progress",
           stage: "suspect_canonical",
@@ -340,6 +452,7 @@ async function runClaimKeyPass(
   overrides: {
     apply?: boolean;
     verbose?: boolean;
+    config?: AgenrConfig | null;
     createClaimExtractionLlm?: () => LlmPort & { metadata?: { usage?: { inputTokens?: number; outputTokens?: number; totalCost?: number } } };
     reportProgress?: (event: SurgeonProgressEvent) => void;
   } = {},
@@ -355,7 +468,7 @@ async function runClaimKeyPass(
     },
     {
       port: createSurgeonPort(client),
-      config: null,
+      config: overrides.config ?? null,
       model: TEST_MODEL,
       now: () => TEST_NOW,
       createClaimExtractionLlm: overrides.createClaimExtractionLlm,

@@ -407,6 +407,7 @@ function hasPersistedClaimExtractionConfig(config: AgenrConfig["claimExtraction"
     hasModelOverride(config.model) ||
     config.enabled !== undefined ||
     config.confidenceThreshold !== undefined ||
+    config.concurrency !== undefined ||
     (config.eligibleTypes !== undefined && config.eligibleTypes.length > 0)
   );
 }

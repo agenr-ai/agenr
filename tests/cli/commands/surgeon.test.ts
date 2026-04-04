@@ -59,11 +59,15 @@ describe("registerSurgeonCommand", () => {
         passType: "claim_key_quality",
         apply: true,
         stage: "missing",
-        status: "progress",
-        completed: 120,
+        status: "preview_progress",
+        completed: 0,
         total: 200,
         unitLabel: "entries",
-        processedEntries: 300,
+        previewQueued: 200,
+        previewCompleted: 120,
+        previewTotal: 200,
+        previewConcurrency: 10,
+        processedEntries: 180,
         totalEntries: 1200,
         counts: {
           identifiedNormalizations: 4,
@@ -100,7 +104,7 @@ describe("registerSurgeonCommand", () => {
     expect(stderr.join("")).toContain("[agenr:surgeon] Creating DB backup before apply run.");
     expect(stderr.join("")).toContain("[agenr:surgeon] DB backup complete: /tmp/knowledge.db.surgeon-backup.");
     expect(stderr.join("")).toContain(
-      "[agenr:surgeon] Claim-key-quality missing 120/200 entries | scanned 300/1200 entries | applied 15 | proposals 8 | elapsed 12s",
+      "[agenr:surgeon] Claim-key-quality missing preview 120/200 entries | decided 0/200 | scanned 180/1200 entries | applied 15 | proposals 8 | elapsed 12s",
     );
     expect(stderr.join("")).not.toContain("skipped no-claim");
     expect(stdout.join("")).toContain("Surgeon run run-1");
@@ -119,6 +123,10 @@ describe("registerSurgeonCommand", () => {
         completed: 50,
         total: 120,
         unitLabel: "entries",
+        previewQueued: 120,
+        previewCompleted: 120,
+        previewTotal: 120,
+        previewConcurrency: 10,
         processedEntries: 90,
         totalEntries: 600,
         counts: {
@@ -152,6 +160,7 @@ describe("registerSurgeonCommand", () => {
 
     await program.parseAsync(["surgeon", "run", "--pass", "claim_key_quality", "--verbose"], { from: "user" });
 
+    expect(stderr.join("")).toContain("decided 50/120 entries | preview 120/120");
     expect(stderr.join("")).toContain("normalize 3/4");
     expect(stderr.join("")).toContain("backfill 7/10");
     expect(stderr.join("")).toContain("metadata 1/2");

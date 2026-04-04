@@ -381,12 +381,27 @@ function formatProgressEvent(event: SurgeonProgressEvent, verbose: boolean): str
 
   const stageLabel = formatClaimKeyQualityStage(event.stage);
   if (event.status === "started") {
+    const previewQueued = event.previewQueued ?? 0;
+    const previewTotal = event.previewTotal ?? 0;
+    if (previewTotal > 0) {
+      const concurrency = event.previewConcurrency ? ` | preview concurrency ${event.previewConcurrency}` : "";
+      return `Claim-key-quality stage ${stageLabel}: ${event.total} ${event.unitLabel} | preview queued ${previewQueued}/${previewTotal}${concurrency}.`;
+    }
+
     return `Claim-key-quality stage ${stageLabel}: ${event.total} ${event.unitLabel}.`;
   }
 
   const appliedTotal = event.counts.appliedNormalizations + event.counts.appliedBackfills + event.counts.appliedMetadataRewrites;
+  const previewTotal = event.previewTotal ?? 0;
+  const previewCompleted = event.previewCompleted ?? 0;
+  const stageProgress =
+    event.status === "preview_progress" && previewTotal > 0
+      ? `Claim-key-quality ${stageLabel} preview ${previewCompleted}/${previewTotal} ${event.unitLabel} | decided ${event.completed}/${event.total}`
+      : previewTotal > 0
+        ? `Claim-key-quality ${stageLabel} decided ${event.completed}/${event.total} ${event.unitLabel} | preview ${previewCompleted}/${previewTotal}`
+        : `Claim-key-quality ${stageLabel} ${event.completed}/${event.total} ${event.unitLabel}`;
   const base =
-    `Claim-key-quality ${stageLabel} ${event.completed}/${event.total} ${event.unitLabel} | ` +
+    `${stageProgress} | ` +
     `scanned ${event.processedEntries}/${event.totalEntries} entries | applied ${appliedTotal} | proposals ${event.counts.proposalsEmitted} | ` +
     `elapsed ${formatElapsed(event.elapsedMs)}`;
 
