@@ -577,7 +577,7 @@ describe("agenr OpenClaw tools", () => {
 
     const updateResult = await updateTool.execute("tool-17", {
       id: storedEntry?.id,
-      claimKey: "jim/timezone",
+      claimKey: " Jim / Timezone ",
       validFrom: "2026-03-01T00:00:00.000Z",
       validTo: "2026-03-31T00:00:00.000Z",
     });

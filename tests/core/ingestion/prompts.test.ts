@@ -31,6 +31,9 @@ describe("buildExtractionSystemPrompt", () => {
     expect(prompt).not.toContain("- todo:");
     expect(prompt).toContain('Return JSON only: {"entries":[...]}');
     expect(prompt).toContain('"high", "standard", or "low"');
+    expect(prompt).toContain("## Claim-Key Preservation");
+    expect(prompt).toContain("Treat explicit tool-call claim keys as authoritative");
+    expect(prompt).toContain('"claim_key": "entity/attribute"');
   });
 
   it("includes whole-file calibration when requested", () => {

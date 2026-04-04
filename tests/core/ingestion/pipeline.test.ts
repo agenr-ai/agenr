@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { OpenClawTranscriptParser } from "../../../src/adapters/openclaw/transcript/parser.js";
 import { extractFile, ingestFile, storeExtractedResults, type ExtractedFileResult } from "../../../src/core/ingestion/pipeline.js";
 import type { DatabasePort, EmbeddingPort, LlmPort, TranscriptPort } from "../../../src/core/ports.js";
 import type { Entry, ParsedTranscript, StoreEntryInput } from "../../../src/core/types.js";
@@ -410,6 +411,201 @@ describe("ingestFile", () => {
     expect(db.insertions[0]?.entry.claim_key).toBe("project_x/status");
   });
 
+  it("preserves explicit claim keys through OpenClaw transcript re-ingest", async () => {
+    const transcriptLines = [
+      JSON.stringify({
+        type: "session",
+        id: "session-reingest-claim-key",
+        timestamp: "2026-04-01T10:00:00.000Z",
+      }),
+      JSON.stringify({
+        type: "message",
+        timestamp: "2026-04-01T10:01:00.000Z",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "tool_call",
+              name: "agenr_store",
+              arguments: {
+                type: "fact",
+                subject: "Jim home city",
+                content: "Jim lives in Denver, Colorado.",
+                claimKey: " Jim / Home City ",
+              },
+              id: "call-store-claim-key",
+            },
+          ],
+        },
+      }),
+    ];
+    const { filePath, fileHash } = await writeTranscriptFile(`${transcriptLines.join("\n")}\n`);
+    const db = new MockDatabase();
+    const llm = new TranscriptAwareLlmPort((userMessage) => ({
+      entries: [
+        {
+          type: "fact",
+          subject: "Jim home city",
+          content: "Jim lives in Denver, Colorado.",
+          importance: "standard",
+          expiry: "permanent",
+          claim_key: readClaimKeyFromPrompt(userMessage),
+        },
+      ],
+    }));
+
+    await ingestFile(
+      {
+        filePath,
+        fileHash,
+      },
+      {
+        transcript: new OpenClawTranscriptParser(),
+        llm,
+        embedding: new MockEmbeddingPort(),
+        db,
+      },
+      {
+        wholeFile: "never",
+      },
+    );
+
+    expect(llm.calls[0]?.userMessage).toContain('claim_key="Jim / Home City"');
+    expect(db.insertions[0]?.entry.claim_key).toBe("jim/home_city");
+  });
+
+  it("lets preserved explicit claim keys win over regenerated inference during re-ingest", async () => {
+    const transcriptLines = [
+      JSON.stringify({
+        type: "session",
+        id: "session-reingest-precedence",
+        timestamp: "2026-04-01T11:00:00.000Z",
+      }),
+      JSON.stringify({
+        type: "message",
+        timestamp: "2026-04-01T11:01:00.000Z",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "tool_call",
+              name: "agenr_store",
+              arguments: {
+                type: "fact",
+                subject: "Jim profile slot",
+                content: "Jim's timezone is America/Chicago.",
+                claimKey: "Jim / Home City",
+              },
+              id: "call-store-precedence",
+            },
+          ],
+        },
+      }),
+    ];
+    const { filePath, fileHash } = await writeTranscriptFile(`${transcriptLines.join("\n")}\n`);
+    const db = new MockDatabase();
+    const llm = new TranscriptAwareLlmPort((userMessage) => ({
+      entries: [
+        {
+          type: "fact",
+          subject: "Jim profile slot",
+          content: "Jim's timezone is America/Chicago.",
+          importance: "standard",
+          expiry: "permanent",
+          claim_key: readClaimKeyFromPrompt(userMessage) ?? "jim/timezone",
+        },
+      ],
+    }));
+
+    await ingestFile(
+      {
+        filePath,
+        fileHash,
+      },
+      {
+        transcript: new OpenClawTranscriptParser(),
+        llm,
+        embedding: new MockEmbeddingPort(),
+        db,
+      },
+      {
+        wholeFile: "never",
+      },
+    );
+
+    expect(llm.calls[0]?.userMessage).toContain('claim_key="Jim / Home City"');
+    expect(llm.calls[0]?.systemPrompt).toContain("Treat explicit tool-call claim keys as authoritative");
+    expect(db.insertions[0]?.entry.claim_key).toBe("jim/home_city");
+  });
+
+  it("drops malformed preserved claim keys during re-ingest without rejecting the entry", async () => {
+    const transcriptLines = [
+      JSON.stringify({
+        type: "session",
+        id: "session-reingest-bad-claim-key",
+        timestamp: "2026-04-01T12:00:00.000Z",
+      }),
+      JSON.stringify({
+        type: "message",
+        timestamp: "2026-04-01T12:01:00.000Z",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "tool_call",
+              name: "agenr_store",
+              arguments: {
+                type: "fact",
+                subject: "Broken claim key entry",
+                content: "This entry originally stored a malformed claim key.",
+                claimKey: "///",
+              },
+              id: "call-store-bad-claim-key",
+            },
+          ],
+        },
+      }),
+    ];
+    const { filePath, fileHash } = await writeTranscriptFile(`${transcriptLines.join("\n")}\n`);
+    const db = new MockDatabase();
+    const llm = new TranscriptAwareLlmPort((userMessage) => ({
+      entries: [
+        {
+          type: "fact",
+          subject: "Broken claim key entry",
+          content: "This entry originally stored a malformed claim key.",
+          importance: "standard",
+          expiry: "temporary",
+          claim_key: readClaimKeyFromPrompt(userMessage),
+        },
+      ],
+    }));
+
+    const result = await ingestFile(
+      {
+        filePath,
+        fileHash,
+      },
+      {
+        transcript: new OpenClawTranscriptParser(),
+        llm,
+        embedding: new MockEmbeddingPort(),
+        db,
+      },
+      {
+        wholeFile: "never",
+      },
+    );
+
+    expect(result.storeResult).toEqual({
+      stored: 1,
+      skipped: 0,
+      rejected: 0,
+    });
+    expect(db.insertions[0]?.entry.claim_key).toBeUndefined();
+    expect(result.warnings.join("\n")).toMatch(/dropped claim_key/i);
+  });
+
   it("still skips an unchanged file", async () => {
     const { filePath, fileHash } = await writeTranscriptFile("session-five");
     const db = new MockDatabase({
@@ -544,6 +740,7 @@ class MockEmbeddingPort implements EmbeddingPort {
 }
 
 class MockLlmPort implements LlmPort {
+  public readonly calls: Array<{ systemPrompt: string; userMessage: string }> = [];
   public completeJsonCalls = 0;
 
   public constructor(private readonly responses: unknown[]) {}
@@ -552,7 +749,8 @@ class MockLlmPort implements LlmPort {
     return "";
   }
 
-  public async completeJson<T>(): Promise<T> {
+  public async completeJson<T>(systemPrompt: string, userMessage: string): Promise<T> {
+    this.calls.push({ systemPrompt, userMessage });
     const response = this.responses[this.completeJsonCalls] ?? this.responses.at(-1) ?? { entries: [] };
     this.completeJsonCalls += 1;
 
@@ -561,6 +759,21 @@ class MockLlmPort implements LlmPort {
     }
 
     return response as T;
+  }
+}
+
+class TranscriptAwareLlmPort implements LlmPort {
+  public readonly calls: Array<{ systemPrompt: string; userMessage: string }> = [];
+
+  public constructor(private readonly responder: (userMessage: string, systemPrompt: string) => unknown) {}
+
+  public async complete(): Promise<string> {
+    return "";
+  }
+
+  public async completeJson<T>(systemPrompt: string, userMessage: string): Promise<T> {
+    this.calls.push({ systemPrompt, userMessage });
+    return this.responder(userMessage, systemPrompt) as T;
   }
 }
 
@@ -651,4 +864,9 @@ async function writeTranscriptFile(content: string): Promise<{ filePath: string;
     filePath,
     fileHash: createHash("sha256").update(content).digest("hex"),
   };
+}
+
+function readClaimKeyFromPrompt(userMessage: string): string | undefined {
+  const match = /claim_key="([^"]+)"/u.exec(userMessage);
+  return match?.[1];
 }

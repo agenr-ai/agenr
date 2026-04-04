@@ -1,4 +1,5 @@
 import type { Expiry, StoreEntryInput } from "../types.js";
+import { describeClaimKeyNormalizationFailure, normalizeClaimKey } from "../claim-key.js";
 
 const IMPORTANCE_TIER_MAP: Record<string, number> = {
   high: 8,
@@ -148,6 +149,7 @@ function parseEntry(value: unknown, index: number, warnings: string[]): StoreEnt
 
   const expiry = coerceExpiry(record.expiry, index, warnings);
   const sourceContext = coerceOptionalString(record.source_context);
+  const claimKey = coerceClaimKey(record.claim_key ?? record.claimKey, index, warnings);
 
   return {
     type,
@@ -156,6 +158,7 @@ function parseEntry(value: unknown, index: number, warnings: string[]): StoreEnt
     importance: coerceImportance(record.importance),
     expiry,
     tags: coerceTags(record.tags),
+    claim_key: claimKey,
     source_context: sourceContext,
   };
 }
@@ -244,6 +247,21 @@ function coerceOptionalString(value: unknown): string | undefined {
 
   const normalized = normalizeWhitespace(String(value));
   return normalized.length > 0 ? normalized : undefined;
+}
+
+/** Coerces one optional extracted claim key into canonical form. */
+function coerceClaimKey(value: unknown, index: number, warnings: string[]): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = normalizeClaimKey(value);
+  if (normalized.ok) {
+    return normalized.value.claimKey;
+  }
+
+  warnings.push(`Entry ${index + 1}: dropped claim_key ${JSON.stringify(value)} because ${describeClaimKeyNormalizationFailure(normalized.reason)}.`);
+  return undefined;
 }
 
 /** Normalizes extracted string fields into trimmed single-line text. */

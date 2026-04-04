@@ -1,6 +1,7 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type, type Static } from "@sinclair/typebox";
 
+import { normalizeClaimKey } from "../../../core/claim-key.js";
 import { EXPIRY_LEVELS, type Expiry } from "../../../core/types.js";
 import type { SurgeonToolDeps } from "./index.js";
 import { toolResult } from "./shared.js";
@@ -149,11 +150,11 @@ function buildRequestedFields(params: UpdateEntryParams): {
 
   if (params.claim_key !== undefined) {
     const claimKey = normalizeClaimKey(params.claim_key);
-    if (!claimKey) {
+    if (!claimKey.ok) {
       return null;
     }
 
-    fields.claim_key = claimKey;
+    fields.claim_key = claimKey.value.claimKey;
   }
 
   if (params.valid_from !== undefined) {
@@ -281,25 +282,6 @@ function buildChanges(
  */
 function hasExplicitCoreAcknowledgement(reasoning: string): boolean {
   return /\bcore\b/i.test(reasoning);
-}
-
-/**
- * Normalizes and validates a claim key in `entity/attribute` format.
- *
- * @param value - Raw claim key input.
- * @returns Normalized claim key, or null when invalid.
- */
-function normalizeClaimKey(value: string): string | null {
-  const parts = value
-    .trim()
-    .split("/")
-    .map((part) => part.trim());
-
-  if (parts.length !== 2 || parts[0]?.length === 0 || parts[1]?.length === 0) {
-    return null;
-  }
-
-  return `${parts[0]}/${parts[1]}`;
 }
 
 /**

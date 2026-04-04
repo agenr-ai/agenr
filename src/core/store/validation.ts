@@ -1,4 +1,5 @@
 import { ENTRY_TYPES, EXPIRY_LEVELS, type Expiry, type StoreEntryInput } from "../types.js";
+import { describeClaimKeyNormalizationFailure, normalizeClaimKey } from "../claim-key.js";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
@@ -9,6 +10,7 @@ export interface ValidationResult {
   valid: StoreEntryInput[];
   rejected: number;
   errors: string[];
+  warnings: string[];
 }
 
 /**
@@ -27,6 +29,7 @@ export interface IndexedValidationResult {
   rejected: number;
   rejectedInputIndexes: number[];
   errors: string[];
+  warnings: string[];
 }
 
 /**
@@ -42,6 +45,7 @@ export function validateEntries(inputs: StoreEntryInput[]): ValidationResult {
     valid: validation.valid.map(({ input }) => input),
     rejected: validation.rejected,
     errors: validation.errors,
+    warnings: validation.warnings,
   };
 }
 
@@ -54,6 +58,7 @@ export function validateEntries(inputs: StoreEntryInput[]): ValidationResult {
 export function validateEntriesWithIndexes(inputs: StoreEntryInput[]): IndexedValidationResult {
   const valid: IndexedValidEntry[] = [];
   const errors: string[] = [];
+  const warnings: string[] = [];
   const rejectedInputIndexes: number[] = [];
 
   for (const [index, input] of inputs.entries()) {
@@ -102,12 +107,6 @@ export function validateEntriesWithIndexes(inputs: StoreEntryInput[]): IndexedVa
       continue;
     }
 
-    if (input.claim_key !== undefined && typeof input.claim_key !== "string") {
-      errors.push(`Entry ${index} has an invalid claim key.`);
-      rejectedInputIndexes.push(index);
-      continue;
-    }
-
     if (input.valid_from !== undefined && !isIsoTimestamp(input.valid_from)) {
       errors.push(`Entry ${index} has an invalid valid_from timestamp.`);
       rejectedInputIndexes.push(index);
@@ -118,6 +117,22 @@ export function validateEntriesWithIndexes(inputs: StoreEntryInput[]): IndexedVa
       errors.push(`Entry ${index} has an invalid valid_to timestamp.`);
       rejectedInputIndexes.push(index);
       continue;
+    }
+
+    let normalizedClaimKey: string | undefined;
+    if (input.claim_key !== undefined) {
+      if (typeof input.claim_key !== "string") {
+        warnings.push(`Entry ${index} provided a non-string claim key and it was dropped.`);
+      } else {
+        const claimKey = normalizeClaimKey(input.claim_key);
+        if (claimKey.ok) {
+          normalizedClaimKey = claimKey.value.claimKey;
+        } else {
+          warnings.push(
+            `Entry ${index} provided invalid claim key ${JSON.stringify(input.claim_key)} and it was dropped: ${describeClaimKeyNormalizationFailure(claimKey.reason)}.`,
+          );
+        }
+      }
     }
 
     valid.push({
@@ -135,7 +150,7 @@ export function validateEntriesWithIndexes(inputs: StoreEntryInput[]): IndexedVa
         project: normalizeOptionalString(input.project),
         created_at: normalizeOptionalString(input.created_at),
         supersedes: normalizeOptionalString(input.supersedes),
-        claim_key: normalizeOptionalString(input.claim_key),
+        claim_key: normalizedClaimKey,
         valid_from: normalizeOptionalString(input.valid_from),
         valid_to: normalizeOptionalString(input.valid_to),
       },
@@ -147,6 +162,7 @@ export function validateEntriesWithIndexes(inputs: StoreEntryInput[]): IndexedVa
     rejected: errors.length,
     rejectedInputIndexes,
     errors,
+    warnings,
   };
 }
 

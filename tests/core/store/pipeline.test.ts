@@ -283,6 +283,50 @@ describe("storeEntries", () => {
     expect(llm.calls).toEqual([]);
   });
 
+  it("normalizes valid manual claim keys before persistence", async () => {
+    const db = new MockDatabase();
+    const embedding = new MockEmbeddingPort();
+
+    await storeEntries(
+      [
+        createInput({
+          subject: "Jim's home city",
+          content: "Jim lives in Denver, Colorado.",
+          claim_key: " Jim / Home City ",
+        }),
+      ],
+      db,
+      embedding,
+    );
+
+    expect(db.insertions[0]?.entry.claim_key).toBe("jim/home_city");
+  });
+
+  it("drops malformed manual claim keys while the store still succeeds", async () => {
+    const db = new MockDatabase();
+    const embedding = new MockEmbeddingPort();
+    const warnings: string[] = [];
+
+    const result = await storeEntries(
+      [
+        createInput({
+          subject: "Jim timezone",
+          content: "Jim's timezone is America/Chicago.",
+          claim_key: "timezone",
+        }),
+      ],
+      db,
+      embedding,
+      {
+        onWarning: (warning) => warnings.push(warning),
+      },
+    );
+
+    expect(result).toEqual({ stored: 1, skipped: 0, rejected: 0 });
+    expect(db.insertions[0]?.entry.claim_key).toBeUndefined();
+    expect(warnings[0]).toMatch(/invalid claim key/i);
+  });
+
   it("links explicit supersession after storing a replacement entry", async () => {
     const db = new MockDatabase();
     const embedding = new MockEmbeddingPort();

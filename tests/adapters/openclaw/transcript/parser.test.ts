@@ -193,6 +193,48 @@ describe("OpenClawTranscriptParser", () => {
     expect(transcript.messages[1]?.text).not.toContain("Existing memory entries");
   });
 
+  it("summarizes flat agenr_store tool calls and preserves explicit claim keys", async () => {
+    const filePath = await writeSessionFile([
+      JSON.stringify({
+        type: "session",
+        id: "session-store-flat",
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "output_text", content: "Saving that." },
+            {
+              type: "tool_call",
+              name: "agenr_store",
+              arguments: {
+                type: "fact",
+                subject: "Jim home city",
+                content: "Jim lives in Denver, Colorado.",
+                claimKey: " Jim / Home City ",
+              },
+              id: "call-store-1",
+            },
+          ],
+        },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "tool_result",
+          tool_call_id: "call-store-1",
+          content: "Stored",
+        },
+      }),
+    ]);
+
+    const transcript = await parser.parseFile(filePath);
+
+    expect(transcript.messages[0]?.text).toBe('Saving that. [attempted brain store: fact: "Jim home city" claim_key="Jim / Home City"]');
+    expect(transcript.messages[1]?.text).toBe("Stored");
+  });
+
   it("filters pure base64 content", async () => {
     const base64Blob = "A/".repeat(300);
     const filePath = await writeSessionFile([

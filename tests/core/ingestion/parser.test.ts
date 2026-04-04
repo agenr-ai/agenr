@@ -13,6 +13,7 @@ describe("parseExtractionResponse", () => {
           importance: "standard",
           expiry: "permanent",
           tags: ["Database", "Memory"],
+          claim_key: " Agenr / Default Model ",
           source_context: "Architecture discussion",
         },
       ],
@@ -27,6 +28,7 @@ describe("parseExtractionResponse", () => {
           importance: 6,
           expiry: "permanent",
           tags: ["database", "memory"],
+          claim_key: "agenr/default_model",
           source_context: "Architecture discussion",
         },
       ],
@@ -271,5 +273,23 @@ describe("parseExtractionResponse", () => {
 
     expect(result.entries).toHaveLength(1);
     expect(result.warnings[0]).toMatch(/invalid type/i);
+  });
+
+  it("drops malformed claim keys while keeping the entry", () => {
+    const result = parseExtractionResponse({
+      entries: [
+        {
+          type: "fact",
+          subject: "malformed claim key",
+          content: "This durable fact survives even if the extracted claim key is malformed.",
+          importance: "standard",
+          expiry: "temporary",
+          claim_key: "///",
+        },
+      ],
+    });
+
+    expect(result.entries[0]?.claim_key).toBeUndefined();
+    expect(result.warnings[0]).toMatch(/dropped claim_key/i);
   });
 });

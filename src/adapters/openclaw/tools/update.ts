@@ -2,6 +2,7 @@ import type { AnyAgentTool } from "openclaw/plugin-sdk/agent-runtime";
 import { failedTextResult, readNumberParam, readStringParam, textResult } from "openclaw/plugin-sdk/agent-runtime";
 import type { OpenClawPluginToolContext, PluginLogger } from "openclaw/plugin-sdk/core";
 
+import { normalizeClaimKey } from "../../../core/claim-key.js";
 import type { AgenrOpenClawServices } from "../types.js";
 import {
   UPDATE_EXPIRY_DESCRIPTION,
@@ -74,27 +75,38 @@ export function createAgenrUpdateTool(ctx: OpenClawPluginToolContext, servicesPr
         const subject = readStringParam(params, "subject");
         const importance = readNumberParam(params, "importance", { integer: true, strict: true });
         const expiry = parseExpiry(readStringParam(params, "expiry"));
-        const claimKey = readStringParam(params, "claimKey");
+        const claimKeyInput = readStringParam(params, "claimKey");
         const validFrom = readStringParam(params, "validFrom");
         const validTo = readStringParam(params, "validTo");
+        const normalizedClaimKey =
+          claimKeyInput === undefined
+            ? undefined
+            : (() => {
+                const claimKey = normalizeClaimKey(claimKeyInput);
+                if (!claimKey.ok) {
+                  throw new Error("claimKey must use canonical entity/attribute format.");
+                }
+
+                return claimKey.value.claimKey;
+              })();
         logToolCall(
           logger,
           "agenr_update",
           ctx,
           `target=${formatTargetSelector(id, subject)}${importance !== undefined ? ` importance=${importance}` : ""}${expiry !== undefined ? ` expiry=${expiry}` : ""}`,
-          sanitizeUpdateToolParams({ id, subject, importance, expiry, claimKey, validFrom, validTo }),
+          sanitizeUpdateToolParams({ id, subject, importance, expiry, claimKey: normalizedClaimKey, validFrom, validTo }),
         );
         const services = await servicesPromise;
         const entry = await resolveTargetEntry(services, params);
 
-        if (importance === undefined && expiry === undefined && claimKey === undefined && validFrom === undefined && validTo === undefined) {
+        if (importance === undefined && expiry === undefined && normalizedClaimKey === undefined && validFrom === undefined && validTo === undefined) {
           throw new Error("Provide at least one update field: importance, expiry, claimKey, validFrom, or validTo.");
         }
 
         const updated = await services.entries.updateEntry(entry.id, {
           ...(importance !== undefined ? { importance } : {}),
           ...(expiry !== undefined ? { expiry } : {}),
-          ...(claimKey !== undefined ? { claim_key: claimKey } : {}),
+          ...(normalizedClaimKey !== undefined ? { claim_key: normalizedClaimKey } : {}),
           ...(validFrom !== undefined ? { valid_from: validFrom } : {}),
           ...(validTo !== undefined ? { valid_to: validTo } : {}),
         });
@@ -113,7 +125,7 @@ export function createAgenrUpdateTool(ctx: OpenClawPluginToolContext, servicesPr
           sessionKey: ctx.sessionKey,
           ...(importance !== undefined ? { importance } : {}),
           ...(expiry !== undefined ? { expiry } : {}),
-          ...(claimKey !== undefined ? { claimKey } : {}),
+          ...(normalizedClaimKey !== undefined ? { claimKey: normalizedClaimKey } : {}),
           ...(validFrom !== undefined ? { validFrom } : {}),
           ...(validTo !== undefined ? { validTo } : {}),
         });

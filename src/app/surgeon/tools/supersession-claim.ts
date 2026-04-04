@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type, type Static } from "@sinclair/typebox";
 
+import { normalizeClaimKey } from "../../../core/claim-key.js";
 import type { SurgeonToolDeps } from "./index.js";
 import { toolResult } from "./shared.js";
 
@@ -40,7 +41,7 @@ export function createAssignClaimKeyTool(deps: SurgeonToolDeps): AgentTool<typeo
         });
       }
 
-      if (!normalizedClaimKey) {
+      if (!normalizedClaimKey.ok) {
         return toolResult({
           success: false,
           dryRun: !deps.apply,
@@ -60,12 +61,12 @@ export function createAssignClaimKeyTool(deps: SurgeonToolDeps): AgentTool<typeo
       }
 
       const changes =
-        entry.claim_key === normalizedClaimKey
+        entry.claim_key === normalizedClaimKey.value.claimKey
           ? {}
           : {
               claim_key: {
                 from: entry.claim_key ?? null,
-                to: normalizedClaimKey,
+                to: normalizedClaimKey.value.claimKey,
               },
             };
 
@@ -91,7 +92,7 @@ export function createAssignClaimKeyTool(deps: SurgeonToolDeps): AgentTool<typeo
       }
 
       const updated = await deps.port.updateEntry(entry.id, {
-        claim_key: normalizedClaimKey,
+        claim_key: normalizedClaimKey.value.claimKey,
       });
 
       if (updated) {
@@ -115,23 +116,4 @@ export function createAssignClaimKeyTool(deps: SurgeonToolDeps): AgentTool<typeo
       });
     },
   };
-}
-
-/**
- * Normalizes and validates a claim key in `entity/attribute` format.
- *
- * @param value - Raw claim key input.
- * @returns Normalized claim key, or null when invalid.
- */
-function normalizeClaimKey(value: string): string | null {
-  const parts = value
-    .trim()
-    .split("/")
-    .map((part) => part.trim());
-
-  if (parts.length !== 2 || parts[0]?.length === 0 || parts[1]?.length === 0) {
-    return null;
-  }
-
-  return `${parts[0]}/${parts[1]}`;
 }

@@ -108,6 +108,10 @@ export async function storeEntriesDetailed(
   }
 
   const plan = await buildStorePlan(inputs, db);
+  for (const warning of plan.warnings) {
+    options.onWarning?.(warning);
+  }
+
   if (plan.pendingEntries.length === 0) {
     return {
       stored: 0,
@@ -281,6 +285,9 @@ async function maybeExtractClaimKeys(preparedEntries: PreparedEntry[], options: 
         entityHints,
         claimExtraction.llm,
         claimExtraction.config,
+        {
+          onWarning: options.onWarning,
+        },
       );
 
       if (extracted?.claimKey) {
@@ -306,6 +313,7 @@ async function buildStorePlan(
   skipped: number;
   rejected: number;
   details: StoreEntryDetail[];
+  warnings: string[];
 }> {
   const validation = validateEntriesWithIndexes(inputs);
   const details: StoreEntryDetail[] = validation.rejectedInputIndexes.map((inputIndex) => ({
@@ -333,6 +341,7 @@ async function buildStorePlan(
     skipped: details.filter((detail) => detail.outcome === "skipped").length,
     rejected: validation.rejected,
     details,
+    warnings: validation.warnings,
   };
 }
 

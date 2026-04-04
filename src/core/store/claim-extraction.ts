@@ -1,5 +1,12 @@
 import type { DatabasePort, LlmPort } from "../ports.js";
 import type { EntryType, StoreEntryInput } from "../types.js";
+import {
+  describeClaimKeyNormalizationFailure,
+  describeExtractedClaimKeyRejection,
+  normalizeClaimKey,
+  normalizeClaimKeySegment,
+  validateExtractedClaimKey,
+} from "../claim-key.js";
 
 const SELF_REFERENTIAL_ENTITIES = new Set(["i", "me", "the_user", "myself", "user", "we", "our_team", "the_project", "this_project"]);
 
@@ -37,6 +44,7 @@ export interface ClaimExtractionResult {
  * @param entityHints - Existing entity prefixes used to keep the namespace stable.
  * @param llm - LLM port used for JSON classification.
  * @param config - Runtime extraction controls.
+ * @param options - Optional warning sink for deterministic rejection reasons.
  * @returns Extracted claim metadata, or `null` when no safe claim key was found.
  */
 export async function extractClaimKey(
@@ -44,6 +52,9 @@ export async function extractClaimKey(
   entityHints: string[],
   llm: LlmPort,
   config: ClaimExtractionConfig,
+  options: {
+    onWarning?: (warning: string) => void;
+  } = {},
 ): Promise<ClaimExtractionResult | null> {
   if (!config.enabled || !config.eligibleTypes.includes(entry.type)) {
     return null;
@@ -63,13 +74,23 @@ export async function extractClaimKey(
   const rawEntity = typeof response.entity === "string" ? response.entity.trim() : "";
   const rawAttribute = typeof response.attribute === "string" ? response.attribute.trim() : "";
   const entity = normalizeEntity(rawEntity, entityHints);
-  const attribute = normalizeClaimKeyPart(rawAttribute);
-  if (!entity || !attribute) {
+  const attribute = normalizeClaimKeySegment(rawAttribute);
+  const normalizedClaimKey = normalizeClaimKey(`${entity}/${attribute}`);
+  if (!normalizedClaimKey.ok) {
+    options.onWarning?.(`Claim extraction dropped claim key for "${entry.subject}": ${describeClaimKeyNormalizationFailure(normalizedClaimKey.reason)}.`);
+    return null;
+  }
+
+  const validatedClaimKey = validateExtractedClaimKey(normalizedClaimKey.value);
+  if (!validatedClaimKey.ok) {
+    options.onWarning?.(
+      `Claim extraction rejected "${validatedClaimKey.value.claimKey}" for "${entry.subject}": ${describeExtractedClaimKeyRejection(validatedClaimKey.reason, validatedClaimKey.value)}.`,
+    );
     return null;
   }
 
   return {
-    claimKey: `${entity}/${attribute}`,
+    claimKey: validatedClaimKey.value.claimKey,
     confidence,
     rawEntity,
     rawAttribute,
@@ -96,6 +117,7 @@ export async function getEntityHints(db: DatabasePort): Promise<string[]> {
  * @param ports - Claim-extraction LLM factory plus database access for entity hints.
  * @param config - Runtime extraction controls.
  * @param concurrency - Maximum number of parallel claim-extraction workers.
+ * @param onWarning - Optional warning sink for deterministic rejection reasons.
  */
 export async function runBatchClaimExtraction(
   results: Array<{ entries: StoreEntryInput[] }>,
@@ -105,6 +127,7 @@ export async function runBatchClaimExtraction(
   },
   config: ClaimExtractionConfig,
   concurrency = 10,
+  onWarning?: (warning: string) => void,
 ): Promise<void> {
   if (!config.enabled) {
     return;
@@ -165,6 +188,7 @@ export async function runBatchClaimExtraction(
             entityHints,
             llm,
             config,
+            { onWarning },
           );
 
           if (extracted?.claimKey) {
@@ -185,7 +209,9 @@ export async function runBatchClaimExtraction(
  * @returns Stable extraction instructions.
  */
 function buildClaimExtractionSystemPrompt(entityHints: string[]): string {
-  const normalizedHints = Array.from(new Set(entityHints.map((entityHint) => normalizeClaimKeyPart(entityHint)).filter((entityHint) => entityHint.length > 0)));
+  const normalizedHints = Array.from(
+    new Set(entityHints.map((entityHint) => normalizeClaimKeySegment(entityHint)).filter((entityHint) => entityHint.length > 0)),
+  );
 
   return [
     "You are a knowledge entry classifier. Extract the claim key for a knowledge entry.",
@@ -238,12 +264,14 @@ function normalizeConfidence(value: unknown): number {
  * @returns Safe claim-key entity segment.
  */
 function normalizeEntity(value: string, entityHints: string[]): string {
-  const normalizedValue = normalizeClaimKeyPart(value);
+  const normalizedValue = normalizeClaimKeySegment(value);
   if (normalizedValue.length === 0) {
     return "";
   }
 
-  const normalizedHints = Array.from(new Set(entityHints.map((entityHint) => normalizeClaimKeyPart(entityHint)).filter((entityHint) => entityHint.length > 0)));
+  const normalizedHints = Array.from(
+    new Set(entityHints.map((entityHint) => normalizeClaimKeySegment(entityHint)).filter((entityHint) => entityHint.length > 0)),
+  );
   if (SELF_REFERENTIAL_ENTITIES.has(normalizedValue)) {
     if (normalizedHints.length === 1) {
       return normalizedHints[0] ?? normalizedValue;
@@ -253,19 +281,4 @@ function normalizeEntity(value: string, entityHints: string[]): string {
   }
 
   return normalizedValue;
-}
-
-/**
- * Normalizes one claim-key segment into lowercase snake_case.
- *
- * @param value - Raw claim-key segment.
- * @returns Stable normalized segment.
- */
-function normalizeClaimKeyPart(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/_+/g, "_")
-    .replace(/^_+|_+$/g, "");
 }

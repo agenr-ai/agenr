@@ -60,12 +60,13 @@ describe("extractClaimKey", () => {
     expect(result?.claimKey).toBe("research_agent/timezone");
   });
 
-  it("keeps self-references when multiple entity hints make resolution ambiguous", async () => {
+  it("rejects unresolved self-referential entities when multiple hints make resolution ambiguous", async () => {
     const llm = new MockLlmPort({
       entity: "we",
       attribute: "deployment process",
       confidence: 0.88,
     });
+    const warnings: string[] = [];
 
     const result = await extractClaimKey(
       {
@@ -80,9 +81,13 @@ describe("extractClaimKey", () => {
         confidenceThreshold: 0.8,
         eligibleTypes: ["fact", "preference", "decision"],
       },
+      {
+        onWarning: (warning) => warnings.push(warning),
+      },
     );
 
-    expect(result?.claimKey).toBe("we/deployment_process");
+    expect(result).toBeNull();
+    expect(warnings[0]).toMatch(/self-referential/i);
   });
 
   it("skips ineligible entry types", async () => {
@@ -134,6 +139,66 @@ describe("extractClaimKey", () => {
         },
       ),
     ).resolves.toBeNull();
+  });
+
+  it("rejects generic extracted attributes", async () => {
+    const llm = new MockLlmPort({
+      entity: "Project X",
+      attribute: "details",
+      confidence: 0.95,
+    });
+    const warnings: string[] = [];
+
+    const result = await extractClaimKey(
+      {
+        type: "fact",
+        subject: "Project X",
+        content: "Project X uses blue-green deploys.",
+      },
+      [],
+      llm,
+      {
+        enabled: true,
+        confidenceThreshold: 0.8,
+        eligibleTypes: ["fact", "preference", "decision"],
+      },
+      {
+        onWarning: (warning) => warnings.push(warning),
+      },
+    );
+
+    expect(result).toBeNull();
+    expect(warnings[0]).toMatch(/too generic/i);
+  });
+
+  it("rejects value-shaped extracted attributes", async () => {
+    const llm = new MockLlmPort({
+      entity: "React Router",
+      attribute: "v7",
+      confidence: 0.95,
+    });
+    const warnings: string[] = [];
+
+    const result = await extractClaimKey(
+      {
+        type: "fact",
+        subject: "React Router version",
+        content: "The project currently uses React Router v7.",
+      },
+      [],
+      llm,
+      {
+        enabled: true,
+        confidenceThreshold: 0.8,
+        eligibleTypes: ["fact", "preference", "decision"],
+      },
+      {
+        onWarning: (warning) => warnings.push(warning),
+      },
+    );
+
+    expect(result).toBeNull();
+    expect(warnings[0]).toMatch(/value-shaped/i);
   });
 });
 

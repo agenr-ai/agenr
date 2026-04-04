@@ -77,6 +77,41 @@ function firstStringArgValue(args: Record<string, unknown>, max: number): string
   return undefined;
 }
 
+/** Normalizes agenr_store arguments into one or more entry-shaped records. */
+function extractAgenrStoreEntries(args: Record<string, unknown>): Record<string, unknown>[] {
+  const nestedEntries = Array.isArray(args.entries)
+    ? args.entries.flatMap((entry) => {
+        const record = asRecord(entry);
+        return record ? [record] : [];
+      })
+    : [];
+  if (nestedEntries.length > 0) {
+    return nestedEntries;
+  }
+
+  if (
+    getString(args.type) ||
+    getString(args.subject) ||
+    getString(args.content) ||
+    getString(args.claimKey) ||
+    getString(args.claim_key) ||
+    getString(args.supersedes)
+  ) {
+    return [args];
+  }
+
+  return [];
+}
+
+/** Formats one agenr_store entry summary for transcript-safe tool-call rendering. */
+function summarizeAgenrStoreEntry(entry: Record<string, unknown>): string {
+  const type = getString(entry.type) ?? "unknown";
+  const subject = getString(entry.subject) ?? "(no subject)";
+  const claimKey = getString(entry.claimKey) ?? getString(entry.claim_key);
+  const claimKeySuffix = claimKey ? ` claim_key=${JSON.stringify(truncateInline(claimKey.trim(), 120))}` : "";
+  return `${type}: "${truncateInline(subject, 60)}"${claimKeySuffix}`;
+}
+
 /** Builds a stable human-readable identifier for a tool invocation. */
 function toolIdentifier(toolName: string, args: Record<string, unknown>): string {
   const normalizedToolName = toolName.trim().toLowerCase();
@@ -105,7 +140,7 @@ function toolIdentifier(toolName: string, args: Record<string, unknown>): string
   }
 
   if (normalizedToolName === "agenr_store") {
-    const entries = Array.isArray(args.entries) ? args.entries : [];
+    const entries = extractAgenrStoreEntries(args);
     return `${entries.length} entr${entries.length === 1 ? "y" : "ies"}`;
   }
 
@@ -237,24 +272,12 @@ export function summarizeToolCall(call: ToolCallContext, options?: ToolSummaryOp
   }
 
   if (normalizedToolName === "agenr_store") {
-    const entries = Array.isArray(args.entries) ? args.entries : [];
+    const entries = extractAgenrStoreEntries(args);
     if (entries.length === 0) {
       return "[attempted brain store: (empty)]";
     }
 
-    const summaries = entries
-      .slice(0, 3)
-      .map((entry) => {
-        const record = asRecord(entry);
-        if (!record) {
-          return null;
-        }
-
-        const type = getString(record.type) ?? "unknown";
-        const subject = getString(record.subject) ?? "(no subject)";
-        return `${type}: "${truncateInline(subject, 60)}"`;
-      })
-      .filter((summary): summary is string => summary !== null);
+    const summaries = entries.slice(0, 3).map(summarizeAgenrStoreEntry);
     const countSuffix = entries.length > 3 ? ` (+${entries.length - 3} more)` : "";
 
     return `[attempted brain store: ${summaries.join(", ")}${countSuffix}]`;
