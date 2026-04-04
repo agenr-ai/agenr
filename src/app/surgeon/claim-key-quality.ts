@@ -20,7 +20,12 @@ import type {
   SurgeonRunProposal,
   SurgeonRunStatus,
 } from "../../core/surgeon/types.js";
-import { previewClaimKeyExtraction, type ClaimExtractionHints, type ClaimExtractionResult } from "../../core/store/claim-extraction.js";
+import {
+  previewClaimKeyExtraction,
+  type ClaimExtractionHints,
+  type ClaimExtractionPreviewOutcome,
+  type ClaimExtractionResult,
+} from "../../core/store/claim-extraction.js";
 import type { Entry } from "../../core/types.js";
 import { emitSurgeonProgress, type ClaimKeyQualityProgressStage, type SurgeonProgressReporter } from "./progress.js";
 import type { SurgeonPort } from "./ports.js";
@@ -43,6 +48,37 @@ const CLAIM_KEY_PROGRESS_EVERY_ENTRIES = 250;
 const CLAIM_KEY_PROGRESS_EVERY_VERBOSE_ENTRIES = 50;
 const USER_METADATA_ENTITY_ALIASES = new Set(["i", "me", "myself", "person", "the_user", "user"]);
 const PROJECT_METADATA_ENTITY_ALIASES = new Set(["app", "application", "project", "the_project", "this_project", "workspace"]);
+const GROUNDING_STOP_TOKENS = new Set([
+  "a",
+  "an",
+  "and",
+  "are",
+  "as",
+  "at",
+  "be",
+  "by",
+  "for",
+  "from",
+  "how",
+  "in",
+  "into",
+  "is",
+  "it",
+  "of",
+  "on",
+  "or",
+  "our",
+  "that",
+  "the",
+  "their",
+  "this",
+  "to",
+  "we",
+  "with",
+]);
+const POLICY_TEMPLATE_ATTRIBUTE_TOKENS = new Set(["policy", "default", "workflow", "process", "strategy", "guardrail", "rule", "boundary"]);
+const AUTHORITATIVE_TEMPLATE_ATTRIBUTE_TOKENS = new Set(["source", "truth", "guide", "runbook", "reference"]);
+const ARCHITECTURE_TEMPLATE_ATTRIBUTE_TOKENS = new Set(["adapter", "boundary", "architecture", "backend", "storage", "model", "support"]);
 
 /**
  * Claim-key-quality selection and execution options for one surgeon run.
@@ -89,6 +125,7 @@ export interface ClaimKeyQualityRunResult {
 interface EntrySuggestionRecord {
   suggestion: ClaimExtractionResult | null;
   warnings: string[];
+  previewOutcome: ClaimExtractionPreviewOutcome | null;
 }
 
 type ClaimExtractionPreviewLlm = LlmPort & {
@@ -118,10 +155,50 @@ interface TrustedGroupReuseCandidate {
   supportingEntryIds: string[];
 }
 
+interface TrustedCleanupHintEntry {
+  id: string;
+  claimKey: string;
+  entity: string;
+  attribute: string;
+  type: string;
+  tags: string[];
+  sourceContextTokens: string[];
+  subjectTokens: string[];
+  createdAt: string;
+}
+
+interface TrustedCleanupHintSeed {
+  globalEntityHints: string[];
+  globalClaimKeyExamples: string[];
+  entries: TrustedCleanupHintEntry[];
+}
+
+interface MissingBackfillSupportEvaluation {
+  strongAutoApply: boolean;
+  supportedProposal: boolean;
+  trustedExactReuse: boolean;
+  trustedEntityFamilyReuse: boolean;
+  tagOrSourceGrounding: boolean;
+  lexicalAlignment: boolean;
+  templateSupport: boolean;
+  supportingEntryIds: string[];
+  rationaleFragments: string[];
+}
+
+interface MissingBackfillSkipDiagnostic {
+  entryId: string;
+  outcome: "no_claim" | "malformed_output" | "rejected_candidate" | "low_confidence_candidate";
+  confidence: number | null;
+  path: ClaimExtractionResult["path"] | ClaimExtractionPreviewOutcome["path"] | null;
+  warning: string | null;
+  suggestedClaimKey: string | null;
+}
+
 interface MissingBackfillDecisionStats {
   autoAppliedTrustedGroupReuse: number;
   autoAppliedDeterministicRepair: number;
   autoAppliedMetadataRepair: number;
+  autoAppliedSupportedPreview: number;
   autoAppliedPreviewModel: number;
   proposedTrustedGroupReuse: number;
   proposedSupportedCandidate: number;
@@ -170,6 +247,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
     }),
   );
   const missingDecisionStats = createEmptyMissingBackfillDecisionStats();
+  const skippedDiagnostics: MissingBackfillSkipDiagnostic[] = [];
   const claimExtractionConfig = resolveClaimExtractionConfig(deps.config ?? undefined);
   const previewConcurrency = resolveClaimExtractionConcurrency(claimExtractionConfig);
   const before = summarizeClaimKeyHealth(actualEntries, claimExtractionConfig.eligibleTypes);
@@ -350,7 +428,10 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
   };
   const completion: SurgeonCompletionSummary = {
     actions_taken: actionsTaken,
-    entries_skipped: [],
+    entries_skipped: skippedDiagnostics.map((diagnostic) => ({
+      entry_id: diagnostic.entryId,
+      reason: formatMissingBackfillSkipDiagnostic(diagnostic),
+    })),
     observations,
     recommendations,
     claim_key_quality: passSummary,
@@ -509,6 +590,11 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
         missingDecisionStats.noClaimWithWarnings += 1;
       }
       counts.skippedNoClaim += 1;
+      skippedDiagnostics.push(
+        buildMissingBackfillSkipDiagnostic(entry, suggestionRecord, {
+          outcomeOverride: resolveMissingBackfillNullOutcome(suggestionRecord),
+        }),
+      );
       return;
     }
 
@@ -517,13 +603,16 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
     const targetSource = metadataBackfillClaimKey ? "metadata_backfill_rewrite" : suggestion.path;
     const targetInspection = inspectClaimKey(targetClaimKey);
     const targetIsTrusted = targetInspection.suspectReasons.length === 0;
+    const support = evaluateMissingBackfillSupport(entry, targetClaimKey, trustedHints);
     const autoApplyThreshold = resolveMissingBackfillAutoApplyThreshold({
       metadataRepaired: metadataBackfillClaimKey !== null,
       previewPath: suggestion.path,
+      support,
     });
     const proposalThreshold = resolveMissingBackfillProposalThreshold({
       metadataRepaired: metadataBackfillClaimKey !== null,
       previewPath: suggestion.path,
+      support,
     });
     const activeSiblings = findActiveClaimKeyOccupants(projectedEntries, targetClaimKey, entry.id);
     if (activeSiblings.some((sibling) => sibling.type !== entry.type)) {
@@ -570,6 +659,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
             autoApplyThreshold,
             trusted: targetIsTrusted,
             metadataBackfillClaimKey,
+            support,
           }),
           confidence: suggestion.confidence,
           source: targetSource,
@@ -579,13 +669,19 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
         await persistProposal(proposal);
         counts.proposalsEmitted += 1;
         counts.skippedAmbiguous += 1;
-        if (metadataBackfillClaimKey !== null || suggestion.path === "deterministic_repair") {
+        if (metadataBackfillClaimKey !== null || suggestion.path === "deterministic_repair" || support.supportedProposal) {
           missingDecisionStats.proposedSupportedCandidate += 1;
         } else {
           missingDecisionStats.proposedPreviewCandidate += 1;
         }
       } else {
         counts.skippedLowConfidence += 1;
+        skippedDiagnostics.push(
+          buildMissingBackfillSkipDiagnostic(entry, suggestionRecord, {
+            outcomeOverride: "low_confidence_candidate",
+            suggestedClaimKey: targetClaimKey,
+          }),
+        );
       }
       return;
     }
@@ -604,6 +700,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
         confidence: suggestion.confidence,
         source: targetSource,
         metadataBackfillClaimKey,
+        support,
       }),
     });
     if (updateResult.applied) {
@@ -614,6 +711,8 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
         missingDecisionStats.autoAppliedMetadataRepair += 1;
       } else if (suggestion.path === "deterministic_repair") {
         missingDecisionStats.autoAppliedDeterministicRepair += 1;
+      } else if (support.strongAutoApply && suggestion.confidence < HIGH_CONFIDENCE_BACKFILL_THRESHOLD) {
+        missingDecisionStats.autoAppliedSupportedPreview += 1;
       } else {
         missingDecisionStats.autoAppliedPreviewModel += 1;
       }
@@ -656,7 +755,9 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
       return;
     }
 
-    const suggestionRecord = claimExtractionConfig.eligibleTypes.includes(entry.type) ? await loadSuggestion(entry) : { suggestion: null, warnings: [] };
+    const suggestionRecord = claimExtractionConfig.eligibleTypes.includes(entry.type)
+      ? await loadSuggestion(entry)
+      : { suggestion: null, warnings: [], previewOutcome: null };
     if (terminalStatus !== "completed") {
       return;
     }
@@ -768,6 +869,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
     }
 
     const warnings: string[] = [];
+    let previewOutcome: ClaimExtractionPreviewOutcome | null = null;
     let suggestion: ClaimExtractionResult | null;
     try {
       suggestion = await previewClaimKeyExtraction(
@@ -781,6 +883,9 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
         {
           hints: buildCleanupHintsForEntry(trustedHints, entry),
           onWarning: (warning) => warnings.push(warning),
+          onPreviewOutcome: (outcome) => {
+            previewOutcome = outcome;
+          },
         },
       );
     } catch (error) {
@@ -788,7 +893,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
       suggestion = null;
     }
 
-    const record = { suggestion, warnings };
+    const record = { suggestion, warnings, previewOutcome };
     suggestionCache.set(entry.id, record);
 
     const usage = claimExtractionUsage(claimExtractionLlms);
@@ -1123,6 +1228,7 @@ function createEmptyMissingBackfillDecisionStats(): MissingBackfillDecisionStats
     autoAppliedTrustedGroupReuse: 0,
     autoAppliedDeterministicRepair: 0,
     autoAppliedMetadataRepair: 0,
+    autoAppliedSupportedPreview: 0,
     autoAppliedPreviewModel: 0,
     proposedTrustedGroupReuse: 0,
     proposedSupportedCandidate: 0,
@@ -1151,6 +1257,7 @@ function createEmptySuggestionRecord(): EntrySuggestionRecord {
   return {
     suggestion: null,
     warnings: [],
+    previewOutcome: null,
   };
 }
 
@@ -1281,12 +1388,18 @@ function inspectExistingClaimKey(
   return { kind: "ok", inspection };
 }
 
-function buildTrustedCleanupHintSeed(entries: Entry[]): Pick<ClaimExtractionHints, "entityHints" | "claimKeyExamples"> {
+function buildTrustedCleanupHintSeed(entries: Entry[]): TrustedCleanupHintSeed {
   const claimKeyStats = new Map<string, { count: number; maxImportance: number; latestCreatedAt: string }>();
+  const trustedEntries: TrustedCleanupHintEntry[] = [];
 
   for (const entry of entries) {
     const claimKey = entry.claim_key?.trim();
     if (!claimKey || !isTrustedClaimKeyForCleanup(claimKey)) {
+      continue;
+    }
+
+    const inspection = inspectClaimKey(claimKey);
+    if (!inspection.normalized) {
       continue;
     }
 
@@ -1302,6 +1415,17 @@ function buildTrustedCleanupHintSeed(entries: Entry[]): Pick<ClaimExtractionHint
       count: 1,
       maxImportance: entry.importance,
       latestCreatedAt: entry.created_at,
+    });
+    trustedEntries.push({
+      id: entry.id,
+      claimKey: inspection.normalized.claimKey,
+      entity: inspection.normalized.entity,
+      attribute: inspection.normalized.attribute,
+      type: entry.type,
+      tags: normalizeGroundingTags(entry.tags),
+      sourceContextTokens: tokenizeGroundingText(entry.source_context),
+      subjectTokens: tokenizeGroundingText(entry.subject),
+      createdAt: entry.created_at,
     });
   }
 
@@ -1332,18 +1456,271 @@ function buildTrustedCleanupHintSeed(entries: Entry[]): Pick<ClaimExtractionHint
   );
 
   return {
-    entityHints,
-    claimKeyExamples,
+    globalEntityHints: entityHints,
+    globalClaimKeyExamples: claimKeyExamples,
+    entries: trustedEntries.sort((left, right) => {
+      const createdAtDelta = right.createdAt.localeCompare(left.createdAt);
+      if (createdAtDelta !== 0) {
+        return createdAtDelta;
+      }
+
+      const claimKeyDelta = left.claimKey.localeCompare(right.claimKey);
+      if (claimKeyDelta !== 0) {
+        return claimKeyDelta;
+      }
+
+      return left.id.localeCompare(right.id);
+    }),
   };
 }
 
-function buildCleanupHintsForEntry(baseHints: Pick<ClaimExtractionHints, "entityHints" | "claimKeyExamples">, entry: Entry): ClaimExtractionHints {
+function buildCleanupHintsForEntry(baseHints: TrustedCleanupHintSeed, entry: Entry): ClaimExtractionHints {
+  // Tags and source_context only prioritize which already-trusted families are shown.
+  // Local metadata narrows hinting, but it never becomes trusted canon by itself.
+  const rankedEntries = baseHints.entries
+    .map((trustedEntry) => ({
+      trustedEntry,
+      score: scoreTrustedHintRelevance(entry, trustedEntry),
+    }))
+    .filter((candidate) => candidate.score > 0)
+    .sort((left, right) => {
+      const scoreDelta = right.score - left.score;
+      if (scoreDelta !== 0) {
+        return scoreDelta;
+      }
+
+      const createdAtDelta = right.trustedEntry.createdAt.localeCompare(left.trustedEntry.createdAt);
+      if (createdAtDelta !== 0) {
+        return createdAtDelta;
+      }
+
+      return left.trustedEntry.claimKey.localeCompare(right.trustedEntry.claimKey);
+    });
+  const relevantClaimKeyExamples = rankedEntries.map((candidate) => candidate.trustedEntry.claimKey);
+  const claimKeyExamples = normalizeStringArray([...relevantClaimKeyExamples, ...baseHints.globalClaimKeyExamples]).slice(0, MAX_CLEANUP_CLAIM_KEY_HINTS);
+  const entityHints = normalizeStringArray([
+    ...rankedEntries.map((candidate) => candidate.trustedEntry.entity),
+    ...claimKeyExamples.map((claimKey) => claimKey.split("/", 1)[0] ?? ""),
+    ...baseHints.globalEntityHints,
+  ]).slice(0, MAX_CLEANUP_ENTITY_HINTS);
+
   return {
-    entityHints: [...(baseHints.entityHints ?? [])],
-    claimKeyExamples: [...(baseHints.claimKeyExamples ?? [])],
+    entityHints,
+    claimKeyExamples,
     project: entry.project,
     userId: entry.user_id,
+    tags: normalizeGroundingTags(entry.tags),
+    sourceContext: entry.source_context,
   };
+}
+
+function scoreTrustedHintRelevance(entry: Entry, trustedEntry: TrustedCleanupHintEntry): number {
+  const entryTagSet = new Set(normalizeGroundingTags(entry.tags));
+  const entrySourceTokens = new Set(tokenizeGroundingText(entry.source_context));
+  const entrySubjectTokens = new Set(tokenizeGroundingText(entry.subject));
+  const tagOverlap = countSetOverlap(entryTagSet, trustedEntry.tags);
+  const sourceOverlap = countSetOverlap(entrySourceTokens, trustedEntry.sourceContextTokens);
+  const subjectOverlap = countSetOverlap(entrySubjectTokens, trustedEntry.subjectTokens);
+
+  return tagOverlap * 6 + sourceOverlap * 5 + subjectOverlap * 2 + (entry.type === trustedEntry.type ? 1 : 0);
+}
+
+function evaluateMissingBackfillSupport(entry: Entry, targetClaimKey: string, trustedHints: TrustedCleanupHintSeed): MissingBackfillSupportEvaluation {
+  const inspection = inspectClaimKey(targetClaimKey);
+  const normalized = inspection.normalized;
+  if (!normalized) {
+    return createEmptyMissingBackfillSupportEvaluation();
+  }
+
+  // Supported candidates still start from a trusted normalized key. Local overlap and
+  // template cues can strengthen that candidate, but they cannot rescue a dirty key.
+  const entryTagSet = new Set(normalizeGroundingTags(entry.tags));
+  const entrySourceTokens = new Set(tokenizeGroundingText(entry.source_context));
+  const relevantEntries = trustedHints.entries.filter((trustedEntry) => {
+    if (trustedEntry.id === entry.id) {
+      return false;
+    }
+
+    return trustedEntry.claimKey === normalized.claimKey || trustedEntry.entity === normalized.entity;
+  });
+  const exactReuseEntries = relevantEntries.filter((trustedEntry) => trustedEntry.claimKey === normalized.claimKey);
+  const familyReuseEntries = relevantEntries.filter(
+    (trustedEntry) => trustedEntry.claimKey !== normalized.claimKey && trustedEntry.entity === normalized.entity,
+  );
+  const groundedExactReuseEntries = exactReuseEntries.filter((trustedEntry) => hasGroundingOverlap(entryTagSet, entrySourceTokens, trustedEntry));
+  const groundedFamilyReuseEntries = familyReuseEntries.filter((trustedEntry) => hasGroundingOverlap(entryTagSet, entrySourceTokens, trustedEntry));
+  const tagOrSourceGrounding = groundedExactReuseEntries.length > 0 || groundedFamilyReuseEntries.length > 0;
+  const lexicalAlignment = hasCandidateLexicalAlignment(entry, normalized.entity, normalized.attribute);
+  const templateSupport = matchesConservativeTemplateSupport(entry, normalized.attribute);
+  const trustedExactReuse = groundedExactReuseEntries.length > 0;
+  const trustedEntityFamilyReuse = groundedFamilyReuseEntries.length > 0;
+  const strongAutoApply = lexicalAlignment && (templateSupport || trustedExactReuse) && (tagOrSourceGrounding || trustedEntityFamilyReuse);
+  const supportedProposal = lexicalAlignment && (templateSupport || trustedExactReuse || trustedEntityFamilyReuse || tagOrSourceGrounding);
+  const rationaleFragments = [
+    trustedExactReuse
+      ? `trusted exact reuse from ${groundedExactReuseEntries.length} matching entr${groundedExactReuseEntries.length === 1 ? "y" : "ies"}`
+      : null,
+    trustedEntityFamilyReuse
+      ? `trusted ${normalized.entity} family reuse from ${groundedFamilyReuseEntries.length} supporting entr${groundedFamilyReuseEntries.length === 1 ? "y" : "ies"}`
+      : null,
+    tagOrSourceGrounding ? "overlapping tags/source_context with trusted corpus entries" : null,
+    lexicalAlignment ? "clear lexical alignment to the proposed slot" : null,
+    templateSupport ? "a conservative policy/default/source-of-truth template match" : null,
+  ].filter((value): value is string => value !== null);
+
+  return {
+    strongAutoApply,
+    supportedProposal,
+    trustedExactReuse,
+    trustedEntityFamilyReuse,
+    tagOrSourceGrounding,
+    lexicalAlignment,
+    templateSupport,
+    supportingEntryIds: normalizeStringArray([
+      ...groundedExactReuseEntries.map((candidate) => candidate.id),
+      ...groundedFamilyReuseEntries.map((candidate) => candidate.id),
+    ]),
+    rationaleFragments,
+  };
+}
+
+function createEmptyMissingBackfillSupportEvaluation(): MissingBackfillSupportEvaluation {
+  return {
+    strongAutoApply: false,
+    supportedProposal: false,
+    trustedExactReuse: false,
+    trustedEntityFamilyReuse: false,
+    tagOrSourceGrounding: false,
+    lexicalAlignment: false,
+    templateSupport: false,
+    supportingEntryIds: [],
+    rationaleFragments: [],
+  };
+}
+
+function hasGroundingOverlap(entryTagSet: Set<string>, entrySourceTokens: Set<string>, trustedEntry: TrustedCleanupHintEntry): boolean {
+  return countSetOverlap(entryTagSet, trustedEntry.tags) > 0 || countSetOverlap(entrySourceTokens, trustedEntry.sourceContextTokens) > 0;
+}
+
+function hasCandidateLexicalAlignment(entry: Entry, entity: string, attribute: string): boolean {
+  const lexicalTokens = new Set([
+    ...tokenizeGroundingText(entry.subject),
+    ...tokenizeGroundingText(entry.content),
+    ...tokenizeGroundingText(entry.source_context),
+    ...normalizeGroundingTags(entry.tags),
+  ]);
+  const entityTokens = entity.split("_").filter((token) => token.length > 0);
+  const attributeTokens = attribute.split("_").filter((token) => token.length > 0 && !GROUNDING_STOP_TOKENS.has(token));
+
+  return countSetOverlap(lexicalTokens, entityTokens) > 0 || countSetOverlap(lexicalTokens, attributeTokens) > 0;
+}
+
+function matchesConservativeTemplateSupport(entry: Entry, attribute: string): boolean {
+  const attributeTokens = new Set(attribute.split("_").filter((token) => token.length > 0));
+  const subjectText = entry.subject.toLowerCase();
+  const contentText = entry.content.toLowerCase();
+  const combinedText = `${subjectText}\n${contentText}`;
+  const authoritativePattern = /\b(authoritative|source of truth|canonical guide|canonical reference|primary guide|runbook)\b/u.test(combinedText);
+  if (authoritativePattern && intersects(attributeTokens, AUTHORITATIVE_TEMPLATE_ATTRIBUTE_TOKENS)) {
+    return true;
+  }
+
+  const policyPattern = /\b(should|must|should stay|must stay|always|never|default(?:s)? to|policy|guardrail|required)\b/u.test(combinedText);
+  if (policyPattern && intersects(attributeTokens, POLICY_TEMPLATE_ATTRIBUTE_TOKENS)) {
+    return true;
+  }
+
+  const architecturePattern = /\b(uses|supports|backed by|architecture|boundary|workflow|process|pipeline|adapter|layer)\b/u.test(combinedText);
+  return architecturePattern && intersects(attributeTokens, ARCHITECTURE_TEMPLATE_ATTRIBUTE_TOKENS);
+}
+
+function resolveMissingBackfillNullOutcome(suggestionRecord: EntrySuggestionRecord): MissingBackfillSkipDiagnostic["outcome"] {
+  if (suggestionRecord.previewOutcome?.outcome === "no_claim") {
+    return "no_claim";
+  }
+
+  if (suggestionRecord.previewOutcome?.outcome === "rejected_candidate") {
+    return "rejected_candidate";
+  }
+
+  if (suggestionRecord.warnings.some((warning) => /json|unexpected token|unterminated|position \d+/iu.test(warning))) {
+    return "malformed_output";
+  }
+
+  return "rejected_candidate";
+}
+
+function buildMissingBackfillSkipDiagnostic(
+  entry: Entry,
+  suggestionRecord: EntrySuggestionRecord,
+  options: {
+    outcomeOverride: MissingBackfillSkipDiagnostic["outcome"];
+    suggestedClaimKey?: string;
+  },
+): MissingBackfillSkipDiagnostic {
+  const previewPath = suggestionRecord.suggestion?.path ?? suggestionRecord.previewOutcome?.path ?? null;
+  const previewConfidence =
+    suggestionRecord.suggestion?.confidence ??
+    (typeof suggestionRecord.previewOutcome?.confidence === "number" ? suggestionRecord.previewOutcome.confidence : null);
+
+  return {
+    entryId: entry.id,
+    outcome: options.outcomeOverride,
+    confidence: previewConfidence,
+    path: previewPath,
+    warning: suggestionRecord.warnings[0] ?? null,
+    suggestedClaimKey: options.suggestedClaimKey ?? suggestionRecord.suggestion?.claimKey ?? null,
+  };
+}
+
+function formatMissingBackfillSkipDiagnostic(diagnostic: MissingBackfillSkipDiagnostic): string {
+  const parts = [
+    `missing_claim_key:${diagnostic.outcome}`,
+    diagnostic.path ? `path=${diagnostic.path}` : null,
+    typeof diagnostic.confidence === "number" ? `confidence=${diagnostic.confidence.toFixed(2)}` : null,
+    diagnostic.suggestedClaimKey ? `suggested=${diagnostic.suggestedClaimKey}` : null,
+    diagnostic.warning ? `warning=${diagnostic.warning}` : null,
+  ].filter((value): value is string => value !== null);
+
+  return parts.join(" ");
+}
+
+function normalizeGroundingTags(tags: string[]): string[] {
+  return normalizeStringArray(tags.map((tag) => normalizeClaimKeySegment(tag)).filter((tag) => tag.length > 0));
+}
+
+function tokenizeGroundingText(value: string | undefined): string[] {
+  if (!value) {
+    return [];
+  }
+
+  return normalizeStringArray(
+    value
+      .split(/[^a-zA-Z0-9]+/u)
+      .map((token) => normalizeClaimKeySegment(token))
+      .filter((token) => token.length > 2 && !GROUNDING_STOP_TOKENS.has(token)),
+  );
+}
+
+function countSetOverlap(left: Set<string>, right: Iterable<string>): number {
+  let count = 0;
+  for (const value of right) {
+    if (left.has(value)) {
+      count += 1;
+    }
+  }
+
+  return count;
+}
+
+function intersects(left: Set<string>, right: Set<string>): boolean {
+  for (const value of left) {
+    if (right.has(value)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 async function buildMalformedClaimKeyProposal(
@@ -1382,16 +1759,24 @@ function resolveMetadataBackfillClaimKey(entry: Entry, claimKey: string): string
   return resolveExplicitMetadataRepair(entry, inspectClaimKey(claimKey));
 }
 
-function resolveMissingBackfillAutoApplyThreshold(input: { previewPath: ClaimExtractionResult["path"]; metadataRepaired: boolean }): number {
-  if (input.metadataRepaired || input.previewPath === "deterministic_repair") {
+function resolveMissingBackfillAutoApplyThreshold(input: {
+  previewPath: ClaimExtractionResult["path"];
+  metadataRepaired: boolean;
+  support: MissingBackfillSupportEvaluation;
+}): number {
+  if (input.metadataRepaired || input.previewPath === "deterministic_repair" || input.support.strongAutoApply) {
     return STRUCTURED_AUTO_APPLY_BACKFILL_THRESHOLD;
   }
 
   return HIGH_CONFIDENCE_BACKFILL_THRESHOLD;
 }
 
-function resolveMissingBackfillProposalThreshold(input: { previewPath: ClaimExtractionResult["path"]; metadataRepaired: boolean }): number {
-  if (input.metadataRepaired || input.previewPath === "deterministic_repair") {
+function resolveMissingBackfillProposalThreshold(input: {
+  previewPath: ClaimExtractionResult["path"];
+  metadataRepaired: boolean;
+  support: MissingBackfillSupportEvaluation;
+}): number {
+  if (input.metadataRepaired || input.previewPath === "deterministic_repair" || input.support.supportedProposal) {
     return SUPPORTED_PROPOSAL_CONFIDENCE_THRESHOLD;
   }
 
@@ -1421,6 +1806,7 @@ function buildMissingBackfillProposalRationale(input: {
   autoApplyThreshold: number;
   trusted: boolean;
   metadataBackfillClaimKey: string | null;
+  support: MissingBackfillSupportEvaluation;
 }): string {
   if (!input.trusted) {
     return `Backfill preview suggested "${input.targetClaimKey}" at confidence ${input.confidence.toFixed(2)}, but the proposed key is still structurally suspect.`;
@@ -1434,6 +1820,14 @@ function buildMissingBackfillProposalRationale(input: {
     );
   }
 
+  if (input.support.rationaleFragments.length > 0) {
+    return (
+      `Backfill preview suggested "${input.targetClaimKey}" at confidence ${input.confidence.toFixed(2)}. ` +
+      `Structural support exists from ${input.support.rationaleFragments.join(", ")}, ` +
+      `but the candidate stays below the auto-apply threshold of ${input.autoApplyThreshold.toFixed(2)}.`
+    );
+  }
+
   return `Backfill preview suggested "${input.targetClaimKey}" at confidence ${input.confidence.toFixed(2)}, below the auto-apply threshold of ${input.autoApplyThreshold.toFixed(2)}.`;
 }
 
@@ -1443,11 +1837,19 @@ function buildMissingBackfillApplyRationale(input: {
   confidence: number;
   source: string;
   metadataBackfillClaimKey: string | null;
+  support: MissingBackfillSupportEvaluation;
 }): string {
   if (input.metadataBackfillClaimKey !== null && input.originalClaimKey !== input.targetClaimKey) {
     return (
       `Metadata-grounded claim-key backfill rewrote preview candidate "${input.originalClaimKey}" to "${input.targetClaimKey}" ` +
       `at confidence ${input.confidence.toFixed(2)} from ${input.source}.`
+    );
+  }
+
+  if (input.support.rationaleFragments.length > 0 && input.confidence < HIGH_CONFIDENCE_BACKFILL_THRESHOLD) {
+    return (
+      `Supported claim-key backfill assigned "${input.targetClaimKey}" from ${input.source} at confidence ${input.confidence.toFixed(2)} ` +
+      `using ${input.support.rationaleFragments.join(", ")}.`
     );
   }
 
@@ -1683,6 +2085,7 @@ function buildMissingDecisionObservation(stats: MissingBackfillDecisionStats): s
     stats.autoAppliedTrustedGroupReuse > 0 ? `${stats.autoAppliedTrustedGroupReuse} trusted-group reuses` : null,
     stats.autoAppliedMetadataRepair > 0 ? `${stats.autoAppliedMetadataRepair} metadata-grounded backfills` : null,
     stats.autoAppliedDeterministicRepair > 0 ? `${stats.autoAppliedDeterministicRepair} deterministic repairs` : null,
+    stats.autoAppliedSupportedPreview > 0 ? `${stats.autoAppliedSupportedPreview} supported preview auto-applies` : null,
     stats.autoAppliedPreviewModel > 0 ? `${stats.autoAppliedPreviewModel} high-confidence preview suggestions` : null,
   ].filter((value): value is string => value !== null);
   const proposalParts = [

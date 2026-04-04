@@ -64,7 +64,11 @@ describe("extractClaimKey", () => {
 
     const systemPrompt = llm.calls[0]?.systemPrompt ?? "";
     expect(systemPrompt).toContain('"Jim\'s timezone is America/Chicago." -> jim/timezone');
+    expect(systemPrompt).toContain('"Mac mini updates should stay manual so debugging stays predictable." -> mac_mini/manual_update_policy');
     expect(systemPrompt).toContain("- Bad: jim/america_chicago -> Good: jim/timezone");
+    expect(systemPrompt).toContain(
+      "If the entry states a durable rule, default, workflow, guardrail, source-of-truth rule, architecture boundary, or process constraint plus rationale",
+    );
     expect(systemPrompt).toContain("Choose attribute names that still make sense if the value changes.");
     expect(systemPrompt).toContain("When unsure, prefer no_claim over inventing a weak key.");
   });
@@ -94,6 +98,8 @@ describe("extractClaimKey", () => {
           entityHints: ["platform_team"],
           project: "Agenr",
           userId: "Jim",
+          tags: ["architecture", "workflow"],
+          sourceContext: "AGENTS.md defines the repo workflow",
         },
       },
     );
@@ -102,6 +108,39 @@ describe("extractClaimKey", () => {
     expect(systemPrompt).toContain("platform_team/deploy_strategy");
     expect(systemPrompt).toContain("agenr/default_model");
     expect(systemPrompt).toContain("Current entry metadata hints: user_id=jim, project=agenr");
+    expect(systemPrompt).toContain("Current entry grounding clues: tags=architecture, workflow, source_context=AGENTS.md defines the repo workflow");
+    expect(systemPrompt).toContain("Tags and source_context are local grounding clues, not proof.");
+  });
+
+  it("accepts rationale-heavy architecture decisions when the primary durable slot is clear", async () => {
+    const llm = new MockLlmPort(() => ({
+      entity: "Agenr",
+      attribute: "core adapter boundary",
+      confidence: 0.9,
+    }));
+
+    const result = await extractClaimKey(
+      {
+        type: "decision",
+        subject: "Core-adapter boundary",
+        content:
+          "Keep pure logic in src/core and adapters outside it so future hosts can plug in cleanly and tests stay isolated from infrastructure concerns.",
+      },
+      llm,
+      {
+        enabled: true,
+        confidenceThreshold: 0.8,
+        eligibleTypes: ["fact", "preference", "decision", "lesson"],
+      },
+      {
+        hints: {
+          tags: ["architecture", "workflow"],
+          sourceContext: "Architecture guidance from the repo operating docs",
+        },
+      },
+    );
+
+    expect(result?.claimKey).toBe("agenr/core_adapter_boundary");
   });
 
   it("resolves self-references when exactly one entity hint exists", async () => {

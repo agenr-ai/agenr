@@ -283,6 +283,97 @@ describe("claim_key_quality surgeon pass", () => {
     });
   });
 
+  it("auto-applies supported mid-confidence source-of-truth candidates when trusted local grounding aligns", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "trusted-source-of-truth",
+      subject: "Repo workflow source of truth",
+      type: "decision",
+      claim_key: "repo_workflow/source_of_truth",
+      tags: ["workflow", "docs"],
+      source_context: "AGENTS.md defines the repo workflow",
+      content: "AGENTS.md is the source of truth for repo workflow.",
+    });
+    await insertEntry(client, {
+      id: "supported-mid-confidence",
+      subject: "Workflow authority rule",
+      type: "decision",
+      tags: ["workflow", "docs"],
+      source_context: "AGENTS.md defines the repo workflow",
+      content: "Follow AGENTS.md as the authoritative guide for repo workflow, even when older scratch notes disagree about the current process.",
+    });
+    const llm = new MockClaimLlm(() => ({
+      entity: "repo workflow",
+      attribute: "source of truth",
+      confidence: 0.87,
+    }));
+
+    const result = await runClaimKeyPass(client, {
+      apply: true,
+      createClaimExtractionLlm: () => llm,
+    });
+
+    const row = await client.execute({
+      sql: "SELECT claim_key FROM entries WHERE id = ?",
+      args: ["supported-mid-confidence"],
+    });
+    const run = await getLastSurgeonRun(client);
+
+    expect(result.status).toBe("completed");
+    expect(row.rows[0]?.claim_key).toBe("repo_workflow/source_of_truth");
+    expect(run?.summaryJson?.claim_key_quality?.counts).toMatchObject({
+      identifiedBackfills: 1,
+      appliedBackfills: 1,
+    });
+    expect(run?.summaryJson?.observations).toContain(
+      "Missing-key decisions used 1 supported preview auto-applies and no proposals after structural reuse checks.",
+    );
+  });
+
+  it("promotes template-supported architecture candidates into proposals before they are auto-safe", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "architecture-proposal",
+      subject: "Core-adapter boundary",
+      type: "decision",
+      tags: ["architecture", "workflow"],
+      source_context: "Repo operating docs describe the layering boundary",
+      content: "Keep pure logic in src/core and adapters outside it so future hosts can plug in cleanly and tests stay isolated from infrastructure concerns.",
+    });
+    const llm = new MockClaimLlm(() => ({
+      entity: "Agenr",
+      attribute: "core adapter boundary",
+      confidence: 0.68,
+    }));
+
+    const result = await runClaimKeyPass(client, {
+      apply: true,
+      createClaimExtractionLlm: () => llm,
+    });
+
+    const row = await client.execute({
+      sql: "SELECT claim_key FROM entries WHERE id = ?",
+      args: ["architecture-proposal"],
+    });
+    const proposals = await getSurgeonRunProposals(client, result.runId);
+    const run = await getLastSurgeonRun(client);
+
+    expect(result.status).toBe("completed");
+    expect(row.rows[0]?.claim_key).toBeNull();
+    expect(proposals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          issueKind: "missing_claim_key",
+          entryIds: ["architecture-proposal"],
+          proposedClaimKeys: ["agenr/core_adapter_boundary"],
+        }),
+      ]),
+    );
+    expect(run?.summaryJson?.observations).toContain(
+      "Missing-key decisions used no auto-applies and 1 supported preview proposals after structural reuse checks.",
+    );
+  });
+
   it("does not treat dirty or suspect corpus keys as trusted reuse canon", async () => {
     const client = await createTestClient(clients);
     await insertEntry(client, {
@@ -291,12 +382,16 @@ describe("claim_key_quality surgeon pass", () => {
       type: "fact",
       claim_key: "project/status",
       content: "The project is active.",
+      tags: ["workflow", "docs"],
+      source_context: "AGENTS.md defines the repo workflow",
     });
     await insertEntry(client, {
       id: "dirty-group-missing",
       subject: "Project status",
       type: "fact",
       content: "The project is healthy.",
+      tags: ["workflow", "docs"],
+      source_context: "AGENTS.md defines the repo workflow",
     });
 
     const result = await runClaimKeyPass(client, {
@@ -327,6 +422,81 @@ describe("claim_key_quality surgeon pass", () => {
       identifiedBackfills: 0,
       appliedBackfills: 0,
     });
+  });
+
+  it("does not trust dirty claim keys just because tags or source_context overlap", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "dirty-tagged-seed",
+      subject: "Repo workflow details",
+      type: "decision",
+      claim_key: "repo_workflow/details",
+      tags: ["workflow", "docs"],
+      source_context: "AGENTS.md defines the repo workflow",
+    });
+    await insertEntry(client, {
+      id: "clean-seed",
+      subject: "Timezone seed",
+      type: "fact",
+      claim_key: "jim/timezone",
+    });
+    await insertEntry(client, {
+      id: "dirty-tagged-missing",
+      subject: "Repo workflow",
+      type: "decision",
+      tags: ["workflow", "docs"],
+      source_context: "AGENTS.md defines the repo workflow",
+      content: "AGENTS.md is the authoritative guide for repo workflow.",
+    });
+    const llm = new MockClaimLlm((_callIndex, systemPrompt) => {
+      expect(systemPrompt).not.toContain("repo_workflow/details");
+      return {
+        no_claim: true,
+        confidence: 0.2,
+      };
+    });
+
+    await runClaimKeyPass(client, {
+      apply: true,
+      createClaimExtractionLlm: () => llm,
+    });
+  });
+
+  it("does not auto-apply unsupported mid-confidence previews recklessly", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "plain-mid-confidence",
+      subject: "Clinic visit planning note",
+      type: "decision",
+      content: "We talked through several ways clinic visits might be scheduled in the future.",
+    });
+    const llm = new MockClaimLlm(() => ({
+      entity: "clinic_visits",
+      attribute: "default_mode",
+      confidence: 0.88,
+    }));
+
+    const result = await runClaimKeyPass(client, {
+      apply: true,
+      createClaimExtractionLlm: () => llm,
+    });
+
+    const row = await client.execute({
+      sql: "SELECT claim_key FROM entries WHERE id = ?",
+      args: ["plain-mid-confidence"],
+    });
+    const proposals = await getSurgeonRunProposals(client, result.runId);
+
+    expect(result.status).toBe("completed");
+    expect(row.rows[0]?.claim_key).toBeNull();
+    expect(proposals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entryIds: ["plain-mid-confidence"],
+          proposedClaimKeys: ["clinic_visits/default_mode"],
+        }),
+      ]),
+    );
   });
 
   it("preloads missing-key previews with bounded concurrency and keeps collision decisions deterministic when previews resolve out of order", async () => {
@@ -548,6 +718,95 @@ describe("claim_key_quality surgeon pass", () => {
     expect(summary?.circuitBreaker).toMatchObject({
       kind: "claim_key_concentration",
     });
+  });
+
+  it("persists per-entry missing-key skip diagnostics for tuning follow-up", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "skip-no-claim",
+      subject: "Retrospective story",
+      type: "lesson",
+      content: "We chased several hypotheses and eventually recovered after a long debugging session.",
+    });
+    await insertEntry(client, {
+      id: "skip-malformed",
+      subject: "Workflow planning",
+      type: "decision",
+      content: "We discussed several workflow options without deciding on a stable policy.",
+    });
+    await insertEntry(client, {
+      id: "skip-rejected",
+      subject: "Project details",
+      type: "fact",
+      content: "Project X uses blue-green deploys.",
+    });
+    await insertEntry(client, {
+      id: "skip-low-confidence",
+      subject: "Employer note",
+      type: "fact",
+      content: "Jim works at OpenAI.",
+    });
+    const attemptsBySubject = new Map<string, number>();
+    const llm = new MockClaimLlm((_callIndex, _systemPrompt, userMessage) => {
+      const subject = /Subject: (.+)/u.exec(userMessage)?.[1] ?? userMessage;
+      const attempts = (attemptsBySubject.get(subject) ?? 0) + 1;
+      attemptsBySubject.set(subject, attempts);
+
+      if (subject === "Retrospective story") {
+        return { no_claim: true, confidence: 0.24 };
+      }
+
+      if (subject === "Workflow planning") {
+        return new Error("Unexpected token 'w' in JSON at position 1");
+      }
+
+      if (subject === "Project details") {
+        return { entity: "Project X", attribute: "details", confidence: 0.88 };
+      }
+
+      return { entity: "Jim", attribute: "employer", confidence: 0.62 };
+    });
+
+    const result = await runClaimKeyPass(client, {
+      apply: true,
+      createClaimExtractionLlm: () => llm,
+    });
+
+    const summary = (await getLastSurgeonRun(client))?.summaryJson;
+
+    expect(result.status).toBe("completed");
+    expect(summary?.entries_skipped).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entry_id: "skip-no-claim",
+          reason: expect.stringContaining("missing_claim_key:no_claim"),
+        }),
+        expect.objectContaining({
+          entry_id: "skip-malformed",
+          reason: expect.stringContaining("missing_claim_key:malformed_output"),
+        }),
+        expect.objectContaining({
+          entry_id: "skip-rejected",
+          reason: expect.stringContaining("missing_claim_key:rejected_candidate"),
+        }),
+        expect.objectContaining({
+          entry_id: "skip-low-confidence",
+          reason: expect.stringContaining("missing_claim_key:low_confidence_candidate"),
+        }),
+      ]),
+    );
+    expect(summary?.entries_skipped).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entry_id: "skip-rejected",
+          reason: expect.stringContaining("warning="),
+        }),
+        expect.objectContaining({
+          entry_id: "skip-low-confidence",
+          reason: expect.stringContaining("confidence=0.62"),
+        }),
+      ]),
+    );
   });
 
   it("allows a larger distributed cleanup batch without tiny-run throttling", async () => {

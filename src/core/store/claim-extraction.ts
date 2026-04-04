@@ -63,6 +63,8 @@ interface NormalizedClaimExtractionHints {
   claimKeyExamples: string[];
   userEntity?: string;
   projectEntity?: string;
+  tags: string[];
+  sourceContext?: string;
 }
 
 /** Ordered mutable hint state shared across a claim-extraction batch. */
@@ -108,6 +110,26 @@ export interface ClaimExtractionHints {
   userId?: string;
   /** Optional stable project identifier for resolving phrases like "the project". */
   project?: string;
+  /** Optional entry-local tags that help ground the slot domain without acting as trusted canon. */
+  tags?: string[];
+  /** Optional entry-local provenance summary that can clarify the durable slot being described. */
+  sourceContext?: string;
+}
+
+/**
+ * Structured preview metadata emitted before claim-extraction thresholding.
+ */
+export interface ClaimExtractionPreviewOutcome {
+  /** Final preview outcome for the model response before deterministic fallback. */
+  outcome: "candidate" | "no_claim" | "rejected_candidate";
+  /** Model confidence normalized into the closed [0, 1] interval. */
+  confidence: number;
+  /** Raw entity text returned by the model, when present. */
+  rawEntity: string;
+  /** Raw attribute text returned by the model, when present. */
+  rawAttribute: string;
+  /** Preview path that produced the raw response. */
+  path: ClaimExtractionPath;
 }
 
 /**
@@ -145,6 +167,7 @@ export async function previewClaimKeyExtraction(
   options: {
     hints?: ClaimExtractionHints;
     onWarning?: (warning: string) => void;
+    onPreviewOutcome?: (outcome: ClaimExtractionPreviewOutcome) => void;
   } = {},
 ): Promise<ClaimExtractionResult | null> {
   if (!config.enabled || !config.eligibleTypes.includes(entry.type)) {
@@ -166,11 +189,19 @@ export async function previewClaimKeyExtraction(
   }
 
   if (attempt.response.no_claim === true) {
+    options.onPreviewOutcome?.(buildPreviewOutcome("no_claim", attempt));
     return null;
   }
 
   const candidate = buildClaimExtractionCandidate(entry, attempt.response, normalizedHints, options.onWarning);
   if (candidate) {
+    options.onPreviewOutcome?.({
+      outcome: "candidate",
+      confidence: candidate.confidence,
+      rawEntity: candidate.rawEntity,
+      rawAttribute: candidate.rawAttribute,
+      path: attempt.path,
+    });
     return {
       claimKey: candidate.claimKey,
       confidence: candidate.confidence,
@@ -180,6 +211,7 @@ export async function previewClaimKeyExtraction(
     };
   }
 
+  options.onPreviewOutcome?.(buildPreviewOutcome("rejected_candidate", attempt));
   return tryDeterministicClaimKeyRepair(entry, normalizedHints);
 }
 
@@ -310,6 +342,10 @@ function buildClaimExtractionSystemPrompt(hints: NormalizedClaimExtractionHints,
   const metadataHints = [hints.userEntity ? `user_id=${hints.userEntity}` : null, hints.projectEntity ? `project=${hints.projectEntity}` : null].filter(
     (value): value is string => value !== null,
   );
+  const groundingHints = [
+    hints.tags.length > 0 ? `tags=${hints.tags.join(", ")}` : null,
+    hints.sourceContext ? `source_context=${hints.sourceContext}` : null,
+  ].filter((value): value is string => value !== null);
 
   const retryInstructions =
     promptMode === "json_retry"
@@ -332,6 +368,8 @@ function buildClaimExtractionSystemPrompt(hints: NormalizedClaimExtractionHints,
     "- Prefer concrete entities over pronouns, deictic phrases, or self-referential placeholders.",
     "- Reuse an existing entity or full claim-key example when it clearly matches the same slot.",
     "- Stay domain-general. The same rules apply to people, devices, services, projects, places, organizations, products, datasets, policies, and preferences.",
+    "- If the entry states a durable rule, default, workflow, guardrail, source-of-truth rule, architecture boundary, or process constraint plus rationale, extract the primary durable slot rather than the supporting rationale.",
+    "- Do not return no_claim just because the entry explains why the rule exists. The durable policy or system slot is usually still the target.",
     "",
     "Return no_claim when:",
     "- The entry is narrative, multi-fact, or mostly a story about what happened.",
@@ -346,23 +384,31 @@ function buildClaimExtractionSystemPrompt(hints: NormalizedClaimExtractionHints,
     '- "Pixel 8 is set to dark mode." -> pixel_8/theme_mode',
     '- "Postgres max_connections is 200." -> postgres/max_connections',
     '- "Agenr defaults to gpt-5.4-mini." -> agenr/default_model',
+    '- "Mac mini updates should stay manual so debugging stays predictable." -> mac_mini/manual_update_policy',
+    '- "Use the warehouse inventory sheet as the source of truth for stock counts." -> stock_counts/source_of_truth',
+    '- "The repo workflow is defined by AGENTS.md, even when older notes disagree." -> repo_workflow/source_of_truth',
+    '- "Agenr keeps pure logic in src/core and adapters outside it so future hosts can plug in cleanly." -> agenr/core_adapter_boundary',
     "",
     "Negative examples:",
     "- Bad: jim/america_chicago -> Good: jim/timezone",
     "- Bad: project_x/details -> Good: project_x/deploy_strategy",
     "- Bad: we/deployment_process -> Good: platform_team/deploy_strategy",
     "- Bad: jim/oat_milk -> Good: jim/coffee_preference",
+    "- Bad: release_notes/because_rollbacks_are_hard -> Good: release_process/source_of_truth",
+    "- Bad: incident_story/we_spent_two_hours_debugging -> Good: no_claim",
     "",
     "Field rules:",
-    "- entity: the main concrete thing being described.",
-    "- attribute: the narrow stable slot on that entity.",
+    "- entity: the main concrete thing being described. It can be a person, device, service, product, organization, workflow area, or other durable system/process anchor.",
+    "- attribute: the narrow stable slot on that entity. For policy/process entries, name the governing slot such as source_of_truth, default_mode, update_policy, architecture_boundary, deploy_strategy, or escalation_workflow.",
     "- Confidence: 0.0 to 1.0. Use 0.9+ only when the slot is unambiguous and durable.",
     "",
     `Known entity hints: ${hints.entityHints.length > 0 ? hints.entityHints.join(", ") : "(none)"}`,
     `Known claim-key examples: ${hints.claimKeyExamples.length > 0 ? hints.claimKeyExamples.join(", ") : "(none)"}`,
     `Current entry metadata hints: ${metadataHints.length > 0 ? metadataHints.join(", ") : "(none)"}`,
+    `Current entry grounding clues: ${groundingHints.length > 0 ? groundingHints.join(", ") : "(none)"}`,
     'If project metadata is present, it may resolve phrases like "the project" when that mapping is obvious.',
     'If user metadata is present, it may resolve phrases like "the user", "I", or "me" when that mapping is obvious.',
+    "Tags and source_context are local grounding clues, not proof. Use them to pick the right durable slot only when the entry content already supports that slot.",
     ...retryInstructions,
     "",
     'Respond with JSON: { "entity": string, "attribute": string, "confidence": number, "no_claim"?: boolean }',
@@ -552,12 +598,17 @@ function createHintState(input: { entityHints?: string[]; claimKeyExamples?: str
  * @param entry - Current entry whose metadata may help entity resolution.
  * @returns Hint bundle passed into one extraction request.
  */
-function buildEntryHints(state: ClaimExtractionHintState, entry: Pick<StoreEntryInput, "project" | "user_id">): ClaimExtractionHints {
+function buildEntryHints(
+  state: ClaimExtractionHintState,
+  entry: Pick<StoreEntryInput, "project" | "user_id" | "tags" | "source_context">,
+): ClaimExtractionHints {
   return {
     entityHints: [...state.entityHints],
     claimKeyExamples: [...state.claimKeyExamples],
     userId: entry.user_id,
     project: entry.project,
+    tags: entry.tags,
+    sourceContext: entry.source_context,
   };
 }
 
@@ -599,6 +650,25 @@ function normalizeClaimExtractionHints(hints: ClaimExtractionHints): NormalizedC
     claimKeyExamples,
     userEntity: normalizeMetadataEntity(hints.userId),
     projectEntity: normalizeMetadataEntity(hints.project),
+    tags: normalizeHintTags(hints.tags ?? []),
+    sourceContext: normalizeSourceContextHint(hints.sourceContext),
+  };
+}
+
+/**
+ * Builds structured preview metadata from one raw claim-extraction attempt.
+ *
+ * @param outcome - Final preview outcome classification.
+ * @param attempt - Successful raw model response plus preview path.
+ * @returns Structured preview metadata for diagnostics.
+ */
+function buildPreviewOutcome(outcome: ClaimExtractionPreviewOutcome["outcome"], attempt: ClaimExtractionAttempt): ClaimExtractionPreviewOutcome {
+  return {
+    outcome,
+    confidence: normalizeConfidence(attempt.response.confidence),
+    rawEntity: typeof attempt.response.entity === "string" ? attempt.response.entity.trim() : "",
+    rawAttribute: typeof attempt.response.attribute === "string" ? attempt.response.attribute.trim() : "",
+    path: attempt.path,
   };
 }
 
@@ -707,6 +777,34 @@ function normalizeMetadataEntity(value: string | undefined): string | undefined 
   }
 
   return normalized;
+}
+
+/**
+ * Normalizes local grounding tags used for prompt shaping.
+ *
+ * @param tags - Raw entry tags.
+ * @returns Canonical bounded tag hints.
+ */
+function normalizeHintTags(tags: string[]): string[] {
+  return limitUnique(
+    tags.map((tag) => normalizeClaimKeySegment(tag)).filter((tag) => tag.length > 0),
+    8,
+  );
+}
+
+/**
+ * Normalizes one source-context hint into a compact prompt-safe clue.
+ *
+ * @param value - Raw source-context string.
+ * @returns Trimmed provenance hint, or `undefined` when absent.
+ */
+function normalizeSourceContextHint(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  return trimmed.length <= 160 ? trimmed : `${trimmed.slice(0, 157).trimEnd()}...`;
 }
 
 /**
