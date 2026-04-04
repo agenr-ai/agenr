@@ -317,6 +317,50 @@ describe("recall raw evidence gating", () => {
     expect(historicalResults.map((result) => result.entry.id)).toEqual(["recency-plan", "freshness-fix"]);
   });
 
+  it("prefers older same-claim-key siblings for historical queries even when subjects drift", async () => {
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "webpack-pipeline",
+          subject: "webpack migration note",
+          content: "Webpack handled the build setup before the current bundler.",
+          claim_key: "deployments/build_toolchain",
+          embedding: createCosineEmbedding(0.68),
+          created_at: "2026-03-12T09:00:00.000Z",
+        }),
+        buildEntry({
+          id: "vite-pipeline",
+          subject: "vite packaging decision",
+          content: "Vite handles the build setup for the current bundler.",
+          claim_key: "deployments/build_toolchain",
+          embedding: createCosineEmbedding(0.72),
+          created_at: "2026-03-14T09:00:00.000Z",
+        }),
+      ],
+      vectorCandidates: [{ id: "vite-pipeline", vectorSim: 0.72 }],
+      predecessorCandidateIds: ["webpack-pipeline"],
+    });
+
+    const currentResults = await recall(
+      {
+        text: "previous build setup",
+        limit: 5,
+      },
+      fixture.ports,
+    );
+    const historicalResults = await recall(
+      {
+        text: "previous build setup",
+        limit: 5,
+        rankingProfile: "historical_state",
+      },
+      fixture.ports,
+    );
+
+    expect(currentResults.map((result) => result.entry.id)).toEqual(["vite-pipeline"]);
+    expect(historicalResults.map((result) => result.entry.id)).toEqual(["webpack-pipeline", "vite-pipeline"]);
+  });
+
   it("limits historical peer boosts to shared subject prefixes", async () => {
     const fixture = createRecallPortsFixture({
       entries: [
@@ -463,6 +507,7 @@ function toRecallCandidateEntry(entry: Entry): RecallCandidateEntry {
     created_at: entry.created_at,
     embedding: entry.embedding,
     superseded_by: entry.superseded_by,
+    claim_key: entry.claim_key,
     retired: entry.retired,
   };
 }
@@ -510,6 +555,7 @@ function buildEntry(overrides: Partial<Entry> & Pick<Entry, "id" | "subject" | "
     recall_count: overrides.recall_count ?? 0,
     last_recalled_at: overrides.last_recalled_at,
     superseded_by: overrides.superseded_by,
+    claim_key: overrides.claim_key,
     cluster_id: overrides.cluster_id,
     retired: overrides.retired ?? false,
     retired_at: overrides.retired_at,
@@ -517,4 +563,14 @@ function buildEntry(overrides: Partial<Entry> & Pick<Entry, "id" | "subject" | "
     created_at: createdAt,
     updated_at: updatedAt,
   };
+}
+
+/**
+ * Builds a normalized 3D embedding with a known cosine similarity to `[1, 0, 0]`.
+ *
+ * @param similarity - Desired cosine similarity to the fixture query embedding.
+ * @returns Unit-length embedding vector.
+ */
+function createCosineEmbedding(similarity: number): number[] {
+  return [similarity, Math.sqrt(1 - similarity ** 2), 0];
 }

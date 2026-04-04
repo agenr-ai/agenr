@@ -53,7 +53,7 @@ export interface RecallOutput {
  */
 export type RecallCandidateEntry = Pick<
   Entry,
-  "id" | "subject" | "content" | "importance" | "expiry" | "created_at" | "embedding" | "superseded_by" | "retired"
+  "id" | "subject" | "content" | "importance" | "expiry" | "created_at" | "embedding" | "superseded_by" | "claim_key" | "retired"
 >;
 
 /**

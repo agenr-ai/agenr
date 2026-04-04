@@ -349,8 +349,8 @@ function resolveRecencyScore(
  * Apply historical-only lineage boosts after the base score is computed.
  *
  * Direct predecessors receive the strongest boost. When explicit lineage is
- * absent, retired same-topic predecessors and older same-topic peers can still
- * get a smaller boost against an active successor candidate.
+ * absent, older claim-key siblings and same-topic peers can still get a
+ * smaller boost against an active successor candidate.
  *
  * @param candidates - Base-scored candidates before final ranking.
  * @param params - Historical ranking profile and optional around-date anchor.
@@ -398,7 +398,7 @@ function resolveHistoricalLineageBonus(entry: RecallCandidateEntry, entries: Rec
     return 0;
   }
 
-  const activePeers = entries.filter((peer) => peer.id !== entry.id && isPotentialCurrentPeer(peer) && isOlderSameTopicPeer(entry, peer));
+  const activePeers = entries.filter((peer) => peer.id !== entry.id && isPotentialCurrentPeer(peer) && isOlderHistoricalPeer(entry, peer));
   if (activePeers.length === 0) {
     return 0;
   }
@@ -417,18 +417,33 @@ function isPotentialCurrentPeer(entry: RecallCandidateEntry): boolean {
 }
 
 /**
- * Check whether the left candidate is an older same-topic peer of the right one.
+ * Check whether the left candidate is an older historical peer of the right one.
  *
  * @param left - Potential prior-state candidate.
  * @param right - Potential current-state peer.
- * @returns True when the pair looks like a historical state transition.
+ * @returns True when the pair looks like a structural historical transition.
  */
-function isOlderSameTopicPeer(left: RecallCandidateEntry, right: RecallCandidateEntry): boolean {
-  return createdAtMs(left.created_at) < createdAtMs(right.created_at) && sharesHistoricalTopic(left, right);
+function isOlderHistoricalPeer(left: RecallCandidateEntry, right: RecallCandidateEntry): boolean {
+  return createdAtMs(left.created_at) < createdAtMs(right.created_at) && sharesHistoricalLineage(left, right);
 }
 
 /**
- * Compare two candidate subjects for same-topic historical lineage.
+ * Compare two candidates for shared structural historical lineage.
+ *
+ * @param left - Left candidate.
+ * @param right - Right candidate.
+ * @returns True when the pair shares a claim-key slot or strong subject overlap.
+ */
+function sharesHistoricalLineage(left: RecallCandidateEntry, right: RecallCandidateEntry): boolean {
+  if (left.claim_key && right.claim_key && left.claim_key === right.claim_key) {
+    return true;
+  }
+
+  return sharesHistoricalTopic(left, right);
+}
+
+/**
+ * Compare two candidate subjects for fallback same-topic historical lineage.
  *
  * @param left - Left candidate.
  * @param right - Right candidate.

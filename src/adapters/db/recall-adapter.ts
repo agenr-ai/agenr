@@ -57,11 +57,14 @@ const RECALL_CANDIDATE_SELECT_COLUMNS = `
   e.expiry,
   e.embedding,
   e.superseded_by,
+  e.claim_key,
   e.retired,
   e.created_at
 `;
 
 const FTS_TIERS = ["exact", "all_tokens", "any_tokens"] as const;
+const PREDECESSOR_EXPANSION_LIMIT_PER_SEED = 8;
+const PREDECESSOR_EXPANSION_MAX_RESULTS = 40;
 
 /**
  * Creates a libSQL-backed recall adapter by composing SQL execution and embeddings.
@@ -199,9 +202,9 @@ class LibsqlRecallAdapter implements RecallPorts {
   /**
    * Finds historical predecessors scoped to a seed set of active candidate IDs.
    *
-   * Direct supersession links are preferred. Retired same-subject entries are
-   * also returned so historical queries can recover prior guidance that was
-   * retired without an explicit successor link.
+   * Direct supersession links are preferred. Same-claim-key siblings are used as
+   * the structural lineage path, with retired same-subject entries preserved as
+   * a weaker fallback when explicit slot identity is unavailable.
    */
   public async fetchPredecessors(params: HistoricalPredecessorLookupParams): Promise<RecallCandidateEntry[]> {
     const normalizedIds = normalizeStrings(params.activeEntryIds);
@@ -210,31 +213,58 @@ class LibsqlRecallAdapter implements RecallPorts {
     }
 
     const placeholders = normalizedIds.map(() => "?").join(", ");
+    const expansionLimit = normalizePredecessorExpansionLimit(normalizedIds.length);
     const result = await this.executor.execute({
       sql: `
         WITH seed AS (
-          SELECT id, subject
+          SELECT id, subject, claim_key
           FROM entries
           WHERE id IN (${placeholders})
-        )
-        SELECT DISTINCT
-          ${RECALL_CANDIDATE_SELECT_COLUMNS}
-        FROM entries AS e
-        WHERE e.id NOT IN (SELECT id FROM seed)
-          AND (
-            e.superseded_by IN (SELECT id FROM seed)
-            OR (
-              e.retired = 1
-              AND e.subject IN (
-                SELECT DISTINCT subject
-                FROM seed
-                WHERE TRIM(subject) <> ''
+        ),
+        seed_subjects AS (
+          SELECT DISTINCT subject
+          FROM seed
+          WHERE TRIM(subject) <> ''
+        ),
+        seed_claim_keys AS (
+          SELECT DISTINCT claim_key
+          FROM seed
+          WHERE claim_key IS NOT NULL
+        ),
+        lineage AS (
+          SELECT
+            ${RECALL_CANDIDATE_SELECT_COLUMNS},
+            CASE
+              WHEN e.superseded_by IN (SELECT id FROM seed) THEN 0
+              WHEN e.claim_key IS NOT NULL
+                AND e.claim_key IN (SELECT claim_key FROM seed_claim_keys)
+                AND (e.retired = 1 OR e.superseded_by IS NOT NULL) THEN 1
+              WHEN e.claim_key IS NOT NULL
+                AND e.claim_key IN (SELECT claim_key FROM seed_claim_keys) THEN 2
+              WHEN e.retired = 1
+                AND e.subject IN (SELECT subject FROM seed_subjects) THEN 3
+              ELSE 4
+            END AS lineage_priority
+          FROM entries AS e
+          WHERE e.id NOT IN (SELECT id FROM seed)
+            AND (
+              e.superseded_by IN (SELECT id FROM seed)
+              OR (
+                e.claim_key IS NOT NULL
+                AND e.claim_key IN (SELECT claim_key FROM seed_claim_keys)
+              )
+              OR (
+                e.retired = 1
+                AND e.subject IN (SELECT subject FROM seed_subjects)
               )
             )
-          )
-        ORDER BY e.created_at ASC, e.id ASC
+        )
+        SELECT *
+        FROM lineage
+        ORDER BY lineage_priority ASC, created_at ASC, id ASC
+        LIMIT ?
       `,
-      args: normalizedIds,
+      args: [...normalizedIds, expansionLimit],
     });
 
     return result.rows.map((row) => mapRecallCandidateRow(row));
@@ -388,9 +418,15 @@ function mapRecallCandidateRow(row: Row): RecallCandidateEntry {
     expiry: expiry as RecallCandidateEntry["expiry"],
     embedding: readEmbedding(row, "embedding"),
     superseded_by: readOptionalString(row, "superseded_by"),
+    claim_key: readOptionalString(row, "claim_key"),
     retired: readBoolean(row, "retired"),
     created_at: readRequiredString(row, "created_at"),
   };
+}
+
+/** Resolves a bounded predecessor expansion size from the active seed count. */
+function normalizePredecessorExpansionLimit(seedCount: number): number {
+  return Math.min(PREDECESSOR_EXPANSION_MAX_RESULTS, seedCount * PREDECESSOR_EXPANSION_LIMIT_PER_SEED);
 }
 
 /** Wraps vector-search failures in a consistent adapter error. */
