@@ -1,5 +1,50 @@
 # Changelog
 
+## [1.7.0] - 2026-04-04
+
+Claim-key quality foundations, recall integration, auto-supersession, surgeon quality passes, and OpenClaw plugin publishing polish.
+
+### Added
+
+- **Claim-key Phase 2a foundation.** Shared normalization/validation pipeline for claim keys, stronger post-extraction validation, and explicit claim-key preservation work for re-ingest flows.
+- **Claim-key Phase 2b extraction quality.** Improved extraction quality with better prompting/hints and related quality tuning for missing-key backfill.
+- **Claim-key Phase 2c recall integration.** Recall lineage expansion now uses claim keys as a structural signal.
+- **Claim-key Phase 2d store-time auto-supersession.** New entries can auto-link to prior siblings on the same claim key under safety gates.
+- **Claim-key Phase 2e surgeon quality pass.** New surgeon claim-key quality pass with missing-key backfill, supported promotion lanes, compaction, grounded-family promotion, stable-slot promotion refinement, and entity-family convergence scaffolding.
+- **Shadow-mode sibling-slot-resonance instrumentation.** Deterministic diagnostic instrumentation for threshold-only supported cohorts, persisted in surgeon run details and summaries without changing live auto-apply behavior.
+
+### Changed
+
+- **Claim-key quality promotion policy.** Rebalanced supported promotion, compact canonicalization, grounded backfill behavior, and grounded-family/stable-slot promotion rules to surface stronger candidates while preserving unresolved boundaries.
+- **Surgeon progress/liveness reporting.** Improved preview concurrency and progress reporting during claim-key-quality runs.
+- **Planning and review docs.** Added and updated internal plan/review docs covering claim-key quality sequencing, grounded-family promotion analysis, threshold-only cohort audit, and shadow-mode follow-up.
+
+### Validation
+
+Changes since last push to `origin/master`:
+
+- feat: add historical-state recall routing
+- Add unified recall path to recall eval seam
+- feat: make historical recall lineage-aware
+- fix: phase 2a claim key foundation
+- feat: improve claim-key extraction quality
+- fix: tighten agenr_store durable memory guidance
+- feat: use claim keys in recall lineage expansion
+- feat: add store-time claim-key auto-supersession
+- feat: add surgeon claim-key quality pass
+- Improve surgeon liveness progress reporting
+- Improve claim-key-quality preview concurrency
+- fix: tune claim-key-quality missing-key backfill
+- fix: improve grounded claim-key backfill quality
+- fix: promote supported claim-key proposals
+- fix: compact canonical claim-key candidates
+- fix: rebalance post-compaction claim-key promotion
+- feat: add claim-key entity family convergence
+- fix: promote grounded family missing-key candidates
+- docs: add threshold-only supported cohort audit
+- feat: add shadow sibling-slot resonance instrumentation
+- Align surgeon presets with claim-key quality plan
+
 ## [1.6.0] - 2026-04-02
 
 Store nudge, memory guidance improvements, plugin rename, and dead code cleanup.
