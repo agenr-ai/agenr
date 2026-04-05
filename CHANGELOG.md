@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.7.4] - 2026-04-04
+
+OpenClaw plugin complete-chunk fix release.
+
+### Fixed
+
+- **Plugin package chunk completeness.** The OpenClaw plugin package now ships the full set of root-build chunk files alongside `dist/index.js`, eliminating broken runtime imports caused by missing chunk files in the published tarball.
+
+## [1.7.3] - 2026-04-04
+
+OpenClaw plugin packaging consistency fix release.
+
+### Fixed
+
+- **Plugin package artifact consistency.** Rebuilt the OpenClaw plugin package directly from the current root adapter build so the published `dist/index.js` and shipped chunk files stay in sync. This fixes the broken 1.7.2 tarball that referenced chunk files not actually included in the published package.
+
 ## [1.7.2] - 2026-04-04
 
 OpenClaw plugin package runtime fix release.
