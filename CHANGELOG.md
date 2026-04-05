@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.7.2] - 2026-04-04
+
+OpenClaw plugin package runtime fix release.
+
+### Fixed
+
+- **Plugin dist chunk layout.** The OpenClaw plugin package now rewrites and ships the required local chunk imports alongside `dist/index.js` so the installed plugin can resolve its runtime dependencies correctly inside OpenClaw. This fixes the broken `../../chunk-*.js` import paths introduced in 1.7.1.
+
 ## [1.7.1] - 2026-04-04
 
 OpenClaw plugin packaging fix release.
