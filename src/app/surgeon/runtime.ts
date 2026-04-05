@@ -19,9 +19,17 @@ import {
   resolveDbPath,
 } from "../../config.js";
 import type { SurgeonRunAction } from "../../core/surgeon/domain/action-types.js";
+import { resolveSurgeonPassSequence, type ImplementedSurgeonPass, type SurgeonRunPreset } from "../../core/surgeon/domain/run-presets.js";
 import type { SurgeonHealthStats, SurgeonRunRecord } from "./ports.js";
 import type { SurgeonProgressReporter } from "./progress.js";
-import { runSurgeon, type SurgeonRunOptions, type SurgeonRunResult } from "./service.js";
+import {
+  runSurgeon,
+  runSurgeonPreset,
+  type SurgeonPresetRunOptions,
+  type SurgeonPresetRunResult,
+  type SurgeonRunOptions,
+  type SurgeonRunResult,
+} from "./service.js";
 
 const DEFAULT_SURGEON_PROVIDER = "openai";
 const DEFAULT_SURGEON_MODEL = "gpt-5.4-mini";
@@ -32,21 +40,36 @@ type GetModelWithStrings = (provider: string, modelId: string) => Model<Api>;
 const getModelWithStrings = getModel as unknown as GetModelWithStrings;
 
 /**
- * Resolves configuration and adapter instances, then runs one surgeon pass.
+ * Runtime input accepted by the surgeon CLI and other top-level entry points.
+ */
+export interface SurgeonRuntimeOptions extends Omit<SurgeonRunOptions, "pass"> {
+  pass?: ImplementedSurgeonPass;
+  preset?: SurgeonRunPreset;
+  dbPath?: string;
+  env?: NodeJS.ProcessEnv;
+  onProgress?: SurgeonProgressReporter;
+}
+
+/**
+ * Runtime result for either a single pass or a composed preset.
+ */
+export type SurgeonRuntimeResult = SurgeonRunResult | SurgeonPresetRunResult;
+
+/**
+ * Resolves configuration and adapter instances, then runs one surgeon pass or preset.
  *
  * @param input - Runtime input with optional db-path and env overrides.
- * @returns Final surgeon run result.
+ * @returns Final surgeon run or preset result.
  */
-export async function runSurgeonRuntime(
-  input: SurgeonRunOptions & { dbPath?: string; env?: NodeJS.ProcessEnv; onProgress?: SurgeonProgressReporter },
-): Promise<SurgeonRunResult> {
+export async function runSurgeonRuntime(input: SurgeonRuntimeOptions): Promise<SurgeonRuntimeResult> {
   const runtime = loadRuntimeConfig(input);
   const database = await createDatabase(runtime.dbPath);
   const port = createSurgeonPort(database);
 
   try {
+    const selection = resolveRuntimeSelection(input);
     const modelSelection = resolveSurgeonModel(runtime.config, input);
-    const claimExtractionConfig = input.pass === "claim_key_quality" ? resolveClaimExtractionConfig(runtime.config) : { enabled: false };
+    const claimExtractionConfig = selection.includesClaimKeyQuality ? resolveClaimExtractionConfig(runtime.config) : { enabled: false };
     const claimModelSelection = claimExtractionConfig.enabled ? resolveModel(runtime.config, "claim") : null;
     const model = getModelWithStrings(modelSelection.provider, modelSelection.modelId);
     const credentials = resolveLlmCredentials(runtime.config, modelSelection.provider, input.env ?? process.env);
@@ -66,36 +89,53 @@ export async function runSurgeonRuntime(
       recallPorts = undefined;
     }
 
-    return await runSurgeon(
-      {
-        model: modelSelection.modelId,
-        provider: modelSelection.provider,
-        pass: input.pass,
-        project: input.project,
-        budget: input.budget,
-        contextLimit: input.contextLimit,
-        apply: input.apply,
-        skipEvaluatedDays: input.skipEvaluatedDays,
-        verbose: input.verbose,
-        tracePath: input.tracePath,
-        json: input.json,
-        signal: input.signal,
-      },
-      {
-        port,
-        dbPath: runtime.dbPath,
-        config: runtime.config,
-        model,
-        getApiKey: async () => credentials.apiKey,
-        createClaimExtractionLlm:
-          claimModelSelection && claimCredentials
-            ? () => createLlmClient(claimModelSelection.provider, claimModelSelection.modelId, { apiKey: claimCredentials.apiKey })
-            : undefined,
-        recallPorts,
-        backupDb: backupDatabaseFile,
-        reportProgress: input.onProgress,
-      },
-    );
+    const workflowDeps = {
+      port,
+      dbPath: runtime.dbPath,
+      config: runtime.config,
+      model,
+      getApiKey: async () => credentials.apiKey,
+      createClaimExtractionLlm:
+        claimModelSelection && claimCredentials
+          ? () => createLlmClient(claimModelSelection.provider, claimModelSelection.modelId, { apiKey: claimCredentials.apiKey })
+          : undefined,
+      recallPorts,
+      backupDb: backupDatabaseFile,
+      reportProgress: input.onProgress,
+    };
+    const sharedOptions = {
+      model: modelSelection.modelId,
+      provider: modelSelection.provider,
+      project: input.project,
+      type: input.type,
+      claimKeyPrefix: input.claimKeyPrefix,
+      entryIds: input.entryIds,
+      includeInactive: input.includeInactive,
+      budget: input.budget,
+      contextLimit: input.contextLimit,
+      apply: input.apply,
+      skipEvaluatedDays: input.skipEvaluatedDays,
+      verbose: input.verbose,
+      tracePath: input.tracePath,
+      json: input.json,
+      signal: input.signal,
+    };
+
+    if (selection.kind === "preset") {
+      const presetOptions: SurgeonPresetRunOptions = {
+        ...sharedOptions,
+        preset: selection.preset,
+      };
+
+      return await runSurgeonPreset(presetOptions, workflowDeps);
+    }
+
+    const runOptions: SurgeonRunOptions = {
+      ...sharedOptions,
+      pass: selection.pass,
+    };
+
+    return await runSurgeon(runOptions, workflowDeps);
   } finally {
     await database.close();
   }
@@ -206,6 +246,39 @@ function resolveSurgeonModel(config: AgenrConfig, input: { provider?: string; mo
       DEFAULT_SURGEON_PROVIDER,
     modelId:
       normalizeOptionalString(input.model) ?? normalizeOptionalString(surgeonModel?.model) ?? normalizeOptionalString(config.model) ?? DEFAULT_SURGEON_MODEL,
+  };
+}
+
+/**
+ * Resolves whether the runtime should execute one pass or a composed preset.
+ *
+ * @param input - Raw runtime selection fields.
+ * @returns Discriminated run selection plus claim-key-quality availability.
+ */
+function resolveRuntimeSelection(input: {
+  pass?: ImplementedSurgeonPass;
+  preset?: SurgeonRunPreset;
+}):
+  | { kind: "pass"; pass: ImplementedSurgeonPass; includesClaimKeyQuality: boolean }
+  | { kind: "preset"; preset: SurgeonRunPreset; includesClaimKeyQuality: boolean } {
+  if (input.preset && input.pass) {
+    throw new Error("Specify either a surgeon pass or a preset, not both.");
+  }
+
+  if (input.preset) {
+    const sequence = resolveSurgeonPassSequence(input.preset);
+    return {
+      kind: "preset",
+      preset: input.preset,
+      includesClaimKeyQuality: sequence.includes("claim_key_quality"),
+    };
+  }
+
+  const pass = input.pass ?? "retirement";
+  return {
+    kind: "pass",
+    pass,
+    includesClaimKeyQuality: pass === "claim_key_quality",
   };
 }
 

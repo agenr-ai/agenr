@@ -7,12 +7,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDatabase } from "../../../src/adapters/db/client.js";
 import { createSurgeonRun } from "../../../src/adapters/db/surgeon-run-log.js";
 
-const { runSurgeonMock } = vi.hoisted(() => ({
+const { runSurgeonMock, runSurgeonPresetMock } = vi.hoisted(() => ({
   runSurgeonMock: vi.fn(),
+  runSurgeonPresetMock: vi.fn(),
 }));
 
 vi.mock("../../../src/app/surgeon/service.js", () => ({
   runSurgeon: runSurgeonMock,
+  runSurgeonPreset: runSurgeonPresetMock,
 }));
 
 import { loadSurgeonStatusRuntime, runSurgeonRuntime } from "../../../src/app/surgeon/runtime.js";
@@ -21,6 +23,7 @@ const tempPaths: string[] = [];
 
 afterEach(async () => {
   runSurgeonMock.mockReset();
+  runSurgeonPresetMock.mockReset();
 
   while (tempPaths.length > 0) {
     await rm(tempPaths.pop() ?? "", { recursive: true, force: true });
@@ -32,6 +35,17 @@ beforeEach(() => {
     runId: "run-1",
     status: "completed",
     passType: "retirement",
+    actionsTaken: 0,
+    entriesRetired: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    estimatedCostUsd: 0,
+    summary: null,
+  });
+  runSurgeonPresetMock.mockResolvedValue({
+    preset: "structural",
+    passes: [],
+    status: "completed",
     actionsTaken: 0,
     entriesRetired: 0,
     inputTokens: 0,
@@ -156,6 +170,43 @@ describe("surgeon runtime", () => {
     const [, deps] = runSurgeonMock.mock.calls[0] as Parameters<typeof runSurgeonMock>;
 
     expect(deps.reportProgress).toBe(onProgress);
+  });
+
+  it("routes presets through the composed service entry point and forwards project targeting", async () => {
+    const tempRoot = await createTempDirectory("agenr-surgeon-runtime-");
+    const dbPath = path.join(tempRoot, "knowledge.db");
+    const configPath = path.join(tempRoot, "config.json");
+
+    await writeJson(configPath, {
+      provider: "openai",
+      model: "gpt-5.4-mini",
+      credentials: {
+        openaiApiKey: "openai-key",
+      },
+    });
+
+    await runSurgeonRuntime({
+      preset: "structural",
+      project: "Agenr",
+      budget: 0,
+      apply: false,
+      verbose: false,
+      json: false,
+      dbPath,
+      env: {
+        AGENR_CONFIG_PATH: configPath,
+      },
+    });
+
+    expect(runSurgeonPresetMock).toHaveBeenCalledTimes(1);
+    expect(runSurgeonMock).not.toHaveBeenCalled();
+    const [options, deps] = runSurgeonPresetMock.mock.calls[0] as Parameters<typeof runSurgeonPresetMock>;
+
+    expect(options).toMatchObject({
+      preset: "structural",
+      project: "Agenr",
+    });
+    expect(deps.createClaimExtractionLlm).toBeDefined();
   });
 
   it("loads status from the configured database", async () => {

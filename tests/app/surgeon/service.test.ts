@@ -588,6 +588,32 @@ describe("runSurgeon", () => {
     expect(result.passes.map((pass) => pass.passType)).toEqual(["claim_key_quality", "supersession"]);
     expect(runAgentLoopMock).toHaveBeenCalledTimes(1);
   });
+
+  it("rejects claim-key targeted selectors on multi-pass presets", async () => {
+    const db = await createTestDatabase(databases);
+
+    await expect(
+      runSurgeonPreset(
+        {
+          preset: "structural",
+          claimKeyPrefix: "jim",
+          budget: 0.1,
+          apply: false,
+          contextLimit: 4_096,
+          verbose: false,
+          json: false,
+        },
+        {
+          port: createSurgeonPort(db),
+          config: null,
+          model: TEST_MODEL,
+          now: () => TEST_NOW,
+        },
+      ),
+    ).rejects.toThrow("Claim-key-quality targeted selectors are only supported with the claim-key-only preset.");
+
+    expect(runAgentLoopMock).not.toHaveBeenCalled();
+  });
 });
 
 function createRunOptions(overrides: Partial<SurgeonRunOptions> = {}): SurgeonRunOptions {

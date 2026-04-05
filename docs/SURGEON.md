@@ -2,8 +2,9 @@
 
 The surgeon is agenr's autonomous corpus-maintenance agent.
 
-It runs bounded maintenance passes over the knowledge base. Today there are two implemented passes:
+It runs bounded maintenance passes over the knowledge base. Today there are three implemented passes:
 
+- claim_key_quality - repair missing, malformed, noncanonical, or structurally suspect claim keys conservatively and emit structured unresolved proposals for ambiguous cases
 - retirement - evaluate semantically stale entries and retire or downgrade them conservatively
 - supersession - find same-slot entries that should be linked through `superseded_by` lineage without deleting history
 
@@ -42,7 +43,7 @@ Some entries are short-lived by nature:
 
 Mechanical rules can filter obvious cases, but they cannot reliably decide semantic staleness. The surgeon exists for that last step.
 
-It is an autonomous agent loop that:
+It runs bounded maintenance workflows that:
 
 1. inspects corpus health
 2. pages through pass-specific candidates or clusters
@@ -51,11 +52,11 @@ It is an autonomous agent loop that:
 5. applies pass-specific mutations conservatively
 6. persists a full audit trail of what it did
 
-The current implemented passes are retirement and supersession. Deduplication beyond explicit supersession linking is still out of scope.
+The current implemented passes are claim-key quality, retirement, and supersession. Deduplication beyond explicit supersession linking is still out of scope.
 
 ## How it works
 
-The surgeon uses `@mariozechner/pi-agent-core`'s `runAgentLoop()` as a bounded job, not as an interactive chat agent.
+`claim_key_quality` is a deterministic structural-cleanup pass. `retirement` and `supersession` use `@mariozechner/pi-agent-core`'s `runAgentLoop()` as bounded jobs, not as interactive chat agents.
 
 At runtime, agenr does the following:
 
@@ -70,13 +71,11 @@ At runtime, agenr does the following:
 5. Checks the trailing 24-hour surgeon spend against the daily cap.
 6. In apply mode, creates a timestamped backup of the SQLite database before any mutation tools can run.
 7. Creates a `surgeon_runs` row with status `running`.
-8. Builds the system prompt from:
-   - `getSurgeonSystemPrompt()`
-   - the pass-specific prompt for the selected run
-   - `config.surgeon.customInstructions` if present
-9. Starts the agent loop with the tool set for the selected pass.
-10. Tracks usage, context pressure, actions, and completion state while the model works.
-11. Persists the final run summary, token counts, cost, errors, and completion payload.
+8. Either:
+   - runs the deterministic claim-key-quality workflow directly, or
+   - builds the system prompt from `getSurgeonSystemPrompt()`, the selected pass prompt, and `config.surgeon.customInstructions`, then starts the agent loop with the tool set for the selected pass
+9. Tracks usage, context pressure, actions, and completion state while the pass works.
+10. Persists the final run summary, token counts, cost, errors, and completion payload.
 
 ### Agent-loop shape
 
@@ -291,7 +290,7 @@ The surgeon CLI is a command group under `agenr surgeon`.
 
 ## `agenr surgeon run`
 
-Runs one surgeon maintenance pass. Retirement is the default. Supersession is selected explicitly with `--pass supersession`.
+Runs one surgeon maintenance pass or a composed preset. Retirement is the default single pass when neither `--pass` nor `--preset` is provided.
 
 ```bash
 agenr surgeon run [options]
@@ -299,18 +298,30 @@ agenr surgeon run [options]
 
 ### Flags
 
-| Flag                        | Meaning                                                         | Default                                                                               |
-| --------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `--pass <type>`             | Pass type: `retirement` or `supersession`.                      | `retirement`                                                                          |
-| `--budget <usd>`            | Per-run cost cap in USD.                                        | `config.surgeon.costCap`, else `15.00`                                                |
-| `--context-limit <tokens>`  | Override the per-turn context limit used by the budget tracker. | `config.surgeon.contextLimit`, else ~85% of model context window when known, else `0` |
-| `--skip-evaluated-days <n>` | Skip entries evaluated within the last `n` days.                | `config.surgeon.passes.retirement.skipRecentlyEvaluatedDays`, else `7`                |
-| `--apply`                   | Apply mutations instead of running in dry-run mode.             | off                                                                                   |
-| `--model <id>`              | Override the surgeon model ID.                                  | config/top-level/default resolution                                                   |
-| `--provider <name>`         | Override the surgeon model provider.                            | config/top-level/default resolution                                                   |
-| `--verbose`                 | Emit verbose trace logging.                                     | off                                                                                   |
-| `--trace <path>`            | Write structured trace events to a file.                        | none                                                                                  |
-| `--json`                    | Emit machine-readable JSON instead of human-readable text.      | off                                                                                   |
+| Flag                          | Meaning                                                                                                   | Default                                                                               |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `--pass <type>`               | Single pass: `retirement`, `supersession`, or `claim_key_quality`.                                        | `retirement` when no preset is selected                                               |
+| `--preset <name>`             | Composed preset: `claim-key-only`, `structural`, or `full`.                                               | none                                                                                  |
+| `--project <name>`            | Restrict the run to one project.                                                                          | none                                                                                  |
+| `--type <entryType>`          | Restrict claim-key-quality cleanup to one entry type. Only valid with `claim_key_quality`.                | none                                                                                  |
+| `--claim-key-prefix <prefix>` | Restrict claim-key-quality cleanup to one entity prefix. Only valid with `claim_key_quality`.             | none                                                                                  |
+| `--entry-id <id>`             | Restrict claim-key-quality cleanup to one or more entry IDs. Only valid with `claim_key_quality`.         | none                                                                                  |
+| `--include-inactive`          | Include retired or superseded rows during claim-key-quality cleanup. Only valid with `claim_key_quality`. | off                                                                                   |
+| `--budget <usd>`              | Per-run cost cap in USD.                                                                                  | `config.surgeon.costCap`, else `15.00`                                                |
+| `--context-limit <tokens>`    | Override the per-turn context limit used by the budget tracker.                                           | `config.surgeon.contextLimit`, else ~85% of model context window when known, else `0` |
+| `--skip-evaluated-days <n>`   | Skip entries evaluated within the last `n` days.                                                          | `config.surgeon.passes.retirement.skipRecentlyEvaluatedDays`, else `7`                |
+| `--apply`                     | Apply mutations instead of running in dry-run mode.                                                       | off                                                                                   |
+| `--model <id>`                | Override the surgeon model ID.                                                                            | config/top-level/default resolution                                                   |
+| `--provider <name>`           | Override the surgeon model provider.                                                                      | config/top-level/default resolution                                                   |
+| `--verbose`                   | Emit verbose trace logging.                                                                               | off                                                                                   |
+| `--trace <path>`              | Write structured trace events to a file.                                                                  | none                                                                                  |
+| `--json`                      | Emit machine-readable JSON instead of human-readable text.                                                | off                                                                                   |
+
+### Presets
+
+- `claim-key-only` runs only `claim_key_quality`
+- `structural` runs `claim_key_quality -> supersession`
+- `full` runs `claim_key_quality -> supersession -> retirement`
 
 ### Default mode
 

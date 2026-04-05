@@ -118,6 +118,7 @@ export interface SurgeonWorkflowDeps {
  * @returns Aggregate preset summary plus per-pass results.
  */
 export async function runSurgeonPreset(options: SurgeonPresetRunOptions, deps: SurgeonWorkflowDeps): Promise<SurgeonPresetRunResult> {
+  validatePresetRunOptions(options);
   const passes = resolveSurgeonPassSequence(options.preset);
   const results: SurgeonRunResult[] = [];
 
@@ -152,6 +153,25 @@ export async function runSurgeonPreset(options: SurgeonPresetRunOptions, deps: S
         .join(" ")
         .trim() || null,
   };
+}
+
+/**
+ * Rejects claim-key-quality-only selectors on multi-pass presets.
+ *
+ * @param options - Preset run options to validate.
+ */
+function validatePresetRunOptions(options: SurgeonPresetRunOptions): void {
+  if (options.preset === "claim-key-only") {
+    return;
+  }
+
+  if (!hasClaimKeyQualityTargeting(options)) {
+    return;
+  }
+
+  throw new Error(
+    "Claim-key-quality targeted selectors are only supported with the claim-key-only preset. Use --preset claim-key-only or run claim_key_quality directly.",
+  );
 }
 
 /**
@@ -848,6 +868,28 @@ function createCompletionState(): SurgeonToolCompletionState {
       this.summary = summary;
     },
   };
+}
+
+/**
+ * Checks whether a run request includes claim-key-quality-only targeting selectors.
+ *
+ * @param input - Shared pass or preset options.
+ * @returns True when claim-key-quality targeting is requested.
+ */
+function hasClaimKeyQualityTargeting(input: { type?: string; claimKeyPrefix?: string; entryIds?: string[]; includeInactive?: boolean }): boolean {
+  if (typeof input.type === "string" && input.type.trim().length > 0) {
+    return true;
+  }
+
+  if (typeof input.claimKeyPrefix === "string" && input.claimKeyPrefix.trim().length > 0) {
+    return true;
+  }
+
+  if ((input.entryIds ?? []).some((entryId) => entryId.trim().length > 0)) {
+    return true;
+  }
+
+  return input.includeInactive === true;
 }
 
 /**

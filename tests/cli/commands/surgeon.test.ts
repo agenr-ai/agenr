@@ -203,6 +203,33 @@ describe("registerSurgeonCommand", () => {
       summary: null,
     });
   });
+
+  it("forwards preset and project selection to runtime and renders aggregate preset output", async () => {
+    const { program, stdout } = createProgramWithCapturedOutput();
+    runSurgeonRuntimeMock.mockResolvedValue({
+      preset: "structural",
+      passes: [{ passType: "claim_key_quality" }, { passType: "supersession" }],
+      status: "completed",
+      actionsTaken: 3,
+      entriesRetired: 0,
+      inputTokens: 150,
+      outputTokens: 20,
+      estimatedCostUsd: 0.03,
+      summary: "Structural cleanup complete.",
+    });
+
+    await program.parseAsync(["surgeon", "run", "--preset", "structural", "--project", "Agenr"], { from: "user" });
+
+    expect(runSurgeonRuntimeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        preset: "structural",
+        project: "Agenr",
+      }),
+    );
+    expect(stdout.join("")).toContain("Surgeon preset structural");
+    expect(stdout.join("")).toContain("Passes: claim_key_quality -> supersession");
+    expect(stdout.join("")).toContain("Summary: Structural cleanup complete.");
+  });
 });
 
 function createProgramWithCapturedOutput(): { program: Command; stdout: string[]; stderr: string[] } {

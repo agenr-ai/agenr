@@ -1,4 +1,4 @@
-const SURGEON_PASS_TYPES = ["claim_key_quality", "retirement", "dedup", "supersession", "auto"] as const;
+const SURGEON_PASS_TYPES = ["claim_key_quality", "retirement", "supersession"] as const;
 
 /**
  * Supported surgeon pass identifiers.
