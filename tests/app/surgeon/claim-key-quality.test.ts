@@ -355,6 +355,159 @@ describe("claim_key_quality surgeon pass", () => {
     );
   });
 
+  it("auto-applies grounded-family aligned candidates through the supported lane instead of the plain high-confidence lane", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "jim-seed-planning-rhythm",
+      subject: "Jim planning rhythm",
+      type: "preference",
+      claim_key: "jim/weekly_planning_rhythm",
+      tags: ["workflow", "handoff"],
+      source_context: "Jim workflow guide",
+      content: "Jim plans weekly work in a short rhythm with explicit task checkpoints.",
+    });
+    await insertEntry(client, {
+      id: "jim-seed-meeting-style",
+      subject: "Jim meeting style",
+      type: "preference",
+      claim_key: "jim/meeting_style",
+      tags: ["workflow", "handoff"],
+      source_context: "Jim workflow guide",
+      content: "Jim keeps meeting style concise and focused on the next handoff.",
+    });
+    await insertEntry(client, {
+      id: "jim-grounded-family-apply",
+      subject: "Jim review handoff note",
+      type: "preference",
+      tags: ["workflow", "handoff"],
+      source_context: "Jim workflow guide",
+      content: "Jim's review handoff note lists open review risks before work changes owners.",
+    });
+    const llm = new MockClaimLlm(() => ({
+      entity: "Jim",
+      attribute: "review handoff note",
+      confidence: 0.88,
+    }));
+
+    const result = await runClaimKeyPass(client, {
+      apply: true,
+      createClaimExtractionLlm: () => llm,
+    });
+
+    const row = await client.execute({
+      sql: "SELECT claim_key FROM entries WHERE id = ?",
+      args: ["jim-grounded-family-apply"],
+    });
+    const actions = await getSurgeonRunActions(client, result.runId);
+    const run = await getLastSurgeonRun(client);
+
+    expect(result.status).toBe("completed");
+    expect(row.rows[0]?.claim_key).toBe("jim/review_handoff_note");
+    expect(run?.summaryJson?.observations).toContain("Grounded-family promotion auto-applied 1 candidate and staged 0 proposals.");
+    expect(actions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entryIds: ["jim-grounded-family-apply"],
+          details: expect.objectContaining({
+            auto_apply_threshold: 0.86,
+            promotion_lane: "structured_supported",
+            supported_auto_apply: true,
+            support_class: "trusted_family_grounded_alignment",
+            support_family_reuse_count: 2,
+            support_grounded_family_reuse_count: 2,
+            support_strong_entity_attribute_lexical_alignment: true,
+            support_evidence: expect.arrayContaining([
+              "trusted_entity_family_reuse",
+              "tag_grounding",
+              "source_context_grounding",
+              "entity_lexical_alignment",
+              "attribute_lexical_alignment",
+              "strong_entity_attribute_lexical_alignment",
+            ]),
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it("records grounded-family support-class proposals when the supported lane fires but confidence stays below auto-apply", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "repo-seed-checklist",
+      subject: "Repo release checklist",
+      type: "decision",
+      claim_key: "repo_workflow/release_checklist",
+      tags: ["workflow", "docs"],
+      source_context: "AGENTS.md defines the repo workflow",
+      content: "Repo releases use a release checklist before handoff.",
+    });
+    await insertEntry(client, {
+      id: "repo-seed-review-loop",
+      subject: "Repo review loop",
+      type: "decision",
+      claim_key: "repo_workflow/review_loop",
+      tags: ["workflow", "docs"],
+      source_context: "AGENTS.md defines the repo workflow",
+      content: "Repo workflow keeps review loops short before handoff.",
+    });
+    await insertEntry(client, {
+      id: "repo-grounded-family-proposal",
+      subject: "Repo handoff review note",
+      type: "decision",
+      tags: ["workflow", "docs"],
+      source_context: "AGENTS.md defines the repo workflow",
+      content: "The repo handoff review note should list unresolved review risks before ownership changes.",
+    });
+    const llm = new MockClaimLlm(() => ({
+      entity: "repo workflow",
+      attribute: "handoff review note",
+      confidence: 0.84,
+    }));
+
+    const result = await runClaimKeyPass(client, {
+      apply: true,
+      createClaimExtractionLlm: () => llm,
+    });
+
+    const row = await client.execute({
+      sql: "SELECT claim_key FROM entries WHERE id = ?",
+      args: ["repo-grounded-family-proposal"],
+    });
+    const proposals = await getSurgeonRunProposals(client, result.runId);
+    const actions = await getSurgeonRunActions(client, result.runId);
+    const run = await getLastSurgeonRun(client);
+
+    expect(result.status).toBe("completed");
+    expect(row.rows[0]?.claim_key).toBeNull();
+    expect(proposals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          issueKind: "missing_claim_key",
+          entryIds: ["repo-grounded-family-proposal"],
+          proposedClaimKeys: ["repo_workflow/handoff_review_note"],
+        }),
+      ]),
+    );
+    expect(run?.summaryJson?.observations).toContain("Grounded-family promotion auto-applied 0 candidates and staged 1 proposal.");
+    expect(actions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entryIds: ["repo-grounded-family-proposal"],
+          details: expect.objectContaining({
+            auto_apply_blocker: "below_auto_apply_threshold",
+            auto_apply_threshold: 0.86,
+            promotion_lane: "structured_supported",
+            supported_candidate: true,
+            support_class: "trusted_family_grounded_alignment",
+            support_family_reuse_count: 2,
+            support_grounded_family_reuse_count: 2,
+            support_strong_entity_attribute_lexical_alignment: true,
+          }),
+        }),
+      ]),
+    );
+  });
+
   it("auto-applies grounded template-family candidates after safely compacting duplicated entity phrasing", async () => {
     const client = await createTestClient(clients);
     await insertEntry(client, {
@@ -619,6 +772,74 @@ describe("claim_key_quality surgeon pass", () => {
     );
   });
 
+  it("auto-applies stable-slot family candidates with one grounded sibling when dual lexical grounding is strong", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "jim-seed-primary-workspace",
+      subject: "Jim workspace",
+      type: "preference",
+      claim_key: "jim/primary_workspace",
+      tags: ["workflow", "handoff"],
+      source_context: "Jim workflow guide",
+      content: "Jim's primary workspace is the agenr repo.",
+    });
+    await insertEntry(client, {
+      id: "jim-single-sibling-slot",
+      subject: "Jim code task handoff preference",
+      type: "preference",
+      tags: ["workflow", "handoff"],
+      source_context: "Jim workflow guide",
+      content: "Jim prefers a code task handoff note before work changes owners.",
+    });
+    const llm = new MockClaimLlm(() => ({
+      entity: "Jim",
+      attribute: "code task handoff preference",
+      confidence: 0.88,
+    }));
+
+    const result = await runClaimKeyPass(client, {
+      apply: true,
+      createClaimExtractionLlm: () => llm,
+    });
+
+    const row = await client.execute({
+      sql: "SELECT claim_key FROM entries WHERE id = ?",
+      args: ["jim-single-sibling-slot"],
+    });
+    const actions = await getSurgeonRunActions(client, result.runId);
+    const run = await getLastSurgeonRun(client);
+
+    expect(result.status).toBe("completed");
+    expect(row.rows[0]?.claim_key).toBe("jim/code_task_handoff_preference");
+    expect(run?.summaryJson?.observations).toContain(
+      "Relaxed stable-slot promotion auto-applied 1 candidate and staged 0 proposals after accepting one grounded family sibling.",
+    );
+    expect(actions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entryIds: ["jim-single-sibling-slot"],
+          details: expect.objectContaining({
+            supported_auto_apply: true,
+            support_class: "trusted_family_stable_slot",
+            support_family_reuse_count: 1,
+            support_grounded_family_reuse_count: 1,
+            support_relaxed_stable_slot_family_gate: true,
+            support_strong_entity_attribute_lexical_alignment: true,
+            support_evidence: expect.arrayContaining([
+              "trusted_entity_family_reuse",
+              "tag_grounding",
+              "source_context_grounding",
+              "attribute_lexical_alignment",
+              "strong_entity_attribute_lexical_alignment",
+              "stable_slot_support",
+              "single_grounded_family_sibling",
+            ]),
+          }),
+        }),
+      ]),
+    );
+  });
+
   it("auto-applies compacted family stable-slot candidates after compaction preserves strong support", async () => {
     const client = await createTestClient(clients);
     await insertEntry(client, {
@@ -871,6 +1092,93 @@ describe("claim_key_quality surgeon pass", () => {
               "attribute_lexical_alignment",
               "stable_slot_support",
             ]),
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it("keeps one-sibling family stable-slot candidates unresolved when local alignment is not strong enough", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "validator-seed-release-policy",
+      subject: "Validator release policy",
+      type: "decision",
+      claim_key: "validator/release_policy",
+      tags: ["validator", "release"],
+      source_context: "Validator docs define the release gate",
+      content: "Validator release policy requires verification before shipment.",
+    });
+    await insertEntry(client, {
+      id: "validator-weak-single-sibling",
+      subject: "Validator release export",
+      type: "decision",
+      tags: ["validator", "release"],
+      source_context: "Validator docs define the release gate",
+      content: "Validator release steps end with one export pass before shipment.",
+    });
+    const llm = new MockClaimLlm(() => ({
+      entity: "validator",
+      attribute: "export order",
+      confidence: 0.88,
+    }));
+
+    const result = await runClaimKeyPass(client, {
+      apply: true,
+      createClaimExtractionLlm: () => llm,
+    });
+
+    const row = await client.execute({
+      sql: "SELECT claim_key FROM entries WHERE id = ?",
+      args: ["validator-weak-single-sibling"],
+    });
+    const proposals = await getSurgeonRunProposals(client, result.runId);
+    const actions = await getSurgeonRunActions(client, result.runId);
+    const run = await getLastSurgeonRun(client);
+
+    expect(result.status).toBe("completed");
+    expect(row.rows[0]?.claim_key).toBeNull();
+    expect(proposals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          issueKind: "missing_claim_key",
+          entryIds: ["validator-weak-single-sibling"],
+          proposedClaimKeys: ["validator/export_order"],
+        }),
+      ]),
+    );
+    expect(run?.summaryJson?.observations).not.toContain(
+      "Relaxed stable-slot promotion auto-applied 1 candidate and staged 0 proposals after accepting one grounded family sibling.",
+    );
+    expect(actions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entryIds: ["validator-weak-single-sibling"],
+          details: expect.objectContaining({
+            auto_apply_blocker: "below_auto_apply_threshold",
+            auto_apply_threshold: 0.92,
+            promotion_lane: "high_confidence_preview",
+            supported_candidate: true,
+            support_family_reuse_count: 1,
+            support_grounded_family_reuse_count: 1,
+            support_evidence: expect.arrayContaining([
+              "trusted_entity_family_reuse",
+              "tag_grounding",
+              "source_context_grounding",
+              "entity_lexical_alignment",
+              "attribute_lexical_alignment",
+              "stable_slot_support",
+            ]),
+          }),
+        }),
+      ]),
+    );
+    expect(actions).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entryIds: ["validator-weak-single-sibling"],
+          details: expect.objectContaining({
+            support_class: "trusted_family_stable_slot",
           }),
         }),
       ]),
