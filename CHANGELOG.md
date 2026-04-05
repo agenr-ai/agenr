@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.7.1] - 2026-04-04
+
+OpenClaw plugin packaging fix release.
+
+### Fixed
+
+- **Plugin package build layout.** The OpenClaw plugin package now imports the built root OpenClaw adapter entry instead of rebundling the entire agenr source graph into the plugin artifact. This is intended to keep the published plugin package thin and avoid install-time OpenClaw security scan blocks caused by bundled provider/runtime code patterns.
+
 ## [1.7.0] - 2026-04-04
 
 Claim-key quality foundations, recall integration, auto-supersession, surgeon quality passes, and OpenClaw plugin publishing polish.

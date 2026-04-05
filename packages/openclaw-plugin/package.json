@@ -1,6 +1,6 @@
 {
   "name": "@agenr/agenr-plugin",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "description": "agenr memory plugin for OpenClaw",
   "type": "module",
   "exports": {
@@ -17,8 +17,8 @@
     ]
   },
   "scripts": {
-    "build": "tsup --config tsup.config.ts",
-    "build:debug": "tsup --config tsup.config.ts --sourcemap"
+    "build": "node build.mjs",
+    "build:debug": "node build.mjs"
   },
   "dependencies": {
     "@libsql/client": "^0.17.2",

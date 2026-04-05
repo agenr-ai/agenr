@@ -1,1 +1,1 @@
-export { default, OpenClawTranscriptParser, openClawTranscriptParser } from "../../../src/adapters/openclaw/index.js";
+export { default, OpenClawTranscriptParser, openClawTranscriptParser } from "../../../dist/adapters/openclaw/index.js";
