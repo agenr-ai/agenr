@@ -35,6 +35,47 @@ export interface ClaimKeyQualityRepairCounts {
 }
 
 /**
+ * Threshold-only cohort bucket used by shadow sibling-slot-resonance reporting.
+ */
+export type ClaimKeyQualityShadowBucket =
+  | "high_density_grounded_family"
+  | "large_grounding_diluted_grounded_family"
+  | "thin_grounded_family_tail"
+  | "relaxed_one_sibling_stable_slot"
+  | "other_grounded_family_alignment";
+
+/**
+ * Summary counts for one threshold-only shadow-evaluation bucket.
+ */
+export interface ClaimKeyQualityShadowBucketSummary {
+  bucket: ClaimKeyQualityShadowBucket;
+  candidateCount: number;
+  resonanceApplicableCount: number;
+  resonanceFiredCount: number;
+  shadowQualifiedCount: number;
+}
+
+/**
+ * Shadow-only sibling-slot-resonance summary captured for threshold-only supported cases.
+ */
+export interface ClaimKeyQualitySiblingSlotResonanceShadowSummary {
+  rule: {
+    supportClass: "trusted_family_grounded_alignment";
+    minFamilyReuseCount: number;
+    minGroundedRatio: number;
+    minConfidence: number;
+    requiresSiblingSlotResonance: true;
+  };
+  thresholdOnlyCandidateCount: number;
+  resonanceApplicableCount: number;
+  resonanceFiredCount: number;
+  shadowQualifiedCount: number;
+  resonanceFiredClaimKeys: string[];
+  shadowQualifiedClaimKeys: string[];
+  buckets: ClaimKeyQualityShadowBucketSummary[];
+}
+
+/**
  * Structured claim-key-quality pass summary persisted on the surgeon run.
  */
 export interface ClaimKeyQualityPassSummary {
@@ -50,6 +91,7 @@ export interface ClaimKeyQualityPassSummary {
   after: ClaimKeyHealthSnapshot;
   projectedAfter?: ClaimKeyHealthSnapshot;
   counts: ClaimKeyQualityRepairCounts;
+  shadowSiblingSlotResonance?: ClaimKeyQualitySiblingSlotResonanceShadowSummary | null;
   circuitBreaker?: {
     kind: string;
     message: string;

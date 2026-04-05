@@ -18,11 +18,18 @@ import {
   normalizeClaimKeySegment,
   type ClaimKeyInspection,
 } from "../../core/claim-key.js";
+import {
+  createEmptySiblingSlotResonanceEvaluation,
+  evaluateSiblingSlotResonance,
+  type SiblingSlotResonanceEvaluation,
+} from "../../core/claim-key-slot-resonance.js";
 import type { LlmPort } from "../../core/ports.js";
 import type {
   ClaimKeyHealthSnapshot,
   ClaimKeyQualityPassSummary,
   ClaimKeyQualityRepairCounts,
+  ClaimKeyQualityShadowBucket,
+  ClaimKeyQualityShadowBucketSummary,
   SurgeonCompletionSummary,
   SurgeonRunProposal,
   SurgeonRunStatus,
@@ -55,6 +62,9 @@ const CLAIM_KEY_PROGRESS_VERBOSE_INTERVAL_MS = 2_000;
 const CLAIM_KEY_PROGRESS_EVERY_ENTRIES = 250;
 const CLAIM_KEY_PROGRESS_EVERY_VERBOSE_ENTRIES = 50;
 const MAX_AUTO_APPLY_ATTRIBUTE_TOKENS = 4;
+const SHADOW_RESONANCE_MIN_FAMILY_REUSE_COUNT = 20;
+const SHADOW_RESONANCE_MIN_GROUNDED_RATIO = 0.7;
+const SHADOW_RESONANCE_MIN_CONFIDENCE = 0.74;
 const USER_METADATA_ENTITY_ALIASES = new Set(["i", "me", "myself", "person", "the_user", "user"]);
 const PROJECT_METADATA_ENTITY_ALIASES = new Set(["app", "application", "project", "the_project", "this_project", "workspace"]);
 const GROUNDING_STOP_TOKENS = new Set([
@@ -137,6 +147,13 @@ type MissingBackfillPromotionClass =
   | "trusted_family_stable_slot"
   | "trusted_family_grounded_alignment";
 type MissingBackfillPromotionLane = "high_confidence_preview" | "structured_supported" | "compacted_supported" | "deterministic_repair" | "metadata_rewrite";
+const SHADOW_BUCKET_ORDER: ClaimKeyQualityShadowBucket[] = [
+  "high_density_grounded_family",
+  "large_grounding_diluted_grounded_family",
+  "thin_grounded_family_tail",
+  "relaxed_one_sibling_stable_slot",
+  "other_grounded_family_alignment",
+];
 
 interface MissingBackfillLexicalAlignment {
   entity: boolean;
@@ -258,6 +275,7 @@ interface MissingBackfillSupportEvaluation {
   groundedFamilyReuseCount: number;
   relaxedStableSlotFamilyGate: boolean;
   supportingEntryIds: string[];
+  siblingSlotResonance: SiblingSlotResonanceEvaluation;
   supportEvidence: string[];
   rationaleFragments: string[];
 }
@@ -300,6 +318,28 @@ interface MissingBackfillDecisionStats {
   proposedPreviewCandidate: number;
   proposedCompactedCandidate: number;
   noClaimWithWarnings: number;
+}
+
+interface SiblingSlotResonanceShadowBucketStats {
+  candidateCount: number;
+  resonanceApplicableCount: number;
+  resonanceFiredCount: number;
+  shadowQualifiedCount: number;
+}
+
+interface SiblingSlotResonanceShadowStats {
+  thresholdOnlyCandidateCount: number;
+  resonanceApplicableCount: number;
+  resonanceFiredCount: number;
+  shadowQualifiedCount: number;
+  resonanceFiredClaimKeys: string[];
+  shadowQualifiedClaimKeys: string[];
+  buckets: Map<ClaimKeyQualityShadowBucket, SiblingSlotResonanceShadowBucketStats>;
+}
+
+interface MissingBackfillShadowAudit {
+  thresholdOnlyBucket: ClaimKeyQualityShadowBucket;
+  shadowWouldQualify: boolean;
 }
 
 interface EntityFamilyConvergenceDecisionStats {
@@ -366,6 +406,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
     }),
   );
   const missingDecisionStats = createEmptyMissingBackfillDecisionStats();
+  const siblingSlotResonanceShadowStats = createEmptySiblingSlotResonanceShadowStats();
   const entityFamilyDecisionStats = createEmptyEntityFamilyConvergenceDecisionStats();
   const handledEntityFamilyClaimKeys = new Set<string>();
   const skippedDiagnostics: MissingBackfillSkipDiagnostic[] = [];
@@ -548,6 +589,14 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
   if (groundedFamilyObservation) {
     observations.push(groundedFamilyObservation);
   }
+  const siblingSlotResonanceObservation = buildSiblingSlotResonanceObservation(siblingSlotResonanceShadowStats);
+  if (siblingSlotResonanceObservation) {
+    observations.push(siblingSlotResonanceObservation);
+  }
+  const siblingSlotResonanceShadowRuleObservation = buildSiblingSlotResonanceShadowRuleObservation(siblingSlotResonanceShadowStats);
+  if (siblingSlotResonanceShadowRuleObservation) {
+    observations.push(siblingSlotResonanceShadowRuleObservation);
+  }
   const missingCompactionObservation = buildMissingCompactionObservation(missingDecisionStats);
   if (missingCompactionObservation) {
     observations.push(missingCompactionObservation);
@@ -578,6 +627,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
     after: options.apply ? actualAfter : before,
     projectedAfter: options.apply ? undefined : projectedAfter,
     counts,
+    shadowSiblingSlotResonance: buildSiblingSlotResonanceShadowSummary(siblingSlotResonanceShadowStats),
     circuitBreaker,
   };
   const completion: SurgeonCompletionSummary = {
@@ -820,6 +870,11 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
         confidence: suggestion.confidence,
         autoApplyThreshold,
       });
+      const shadowAudit = buildMissingBackfillShadowAudit({
+        support,
+        confidence: suggestion.confidence,
+        autoApplyBlocker,
+      });
       if (suggestion.confidence >= proposalThreshold) {
         const proposal = createProposal({
           runId: options.runId,
@@ -851,10 +906,14 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
           promotion: promotionPolicy,
           support,
           supportedCandidate: support.supportedProposal,
+          shadow: shadowAudit ?? undefined,
         });
         counts.proposalsEmitted += 1;
         counts.skippedAmbiguous += 1;
         recordGroundedFamilyPromotionDecision(missingDecisionStats, support, "proposal");
+        if (shadowAudit) {
+          recordSiblingSlotResonanceShadowCandidate(siblingSlotResonanceShadowStats, targetClaimKey, support, shadowAudit);
+        }
         if (compactness.compactedFrom) {
           missingDecisionStats.proposedCompactedCandidate += 1;
         }
@@ -1264,6 +1323,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
       support?: MissingBackfillSupportEvaluation;
       compactness?: ClaimKeyCompactnessEvaluation;
       promotion?: MissingBackfillPromotionPolicy;
+      shadow?: MissingBackfillShadowAudit;
       rationale: string;
       entityFamilyAudit?: EntityFamilyConvergenceAudit;
     },
@@ -1304,6 +1364,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
         promotion_lane: input.promotion?.lane,
         supported_auto_apply: input.support?.autoApplyClass !== null,
         ...buildMissingBackfillSupportAuditDetails(input.support),
+        ...buildMissingBackfillShadowAuditDetails(input.shadow),
         ...(input.compactness?.compactedFrom
           ? {
               claim_key_compacted_from: input.compactness.compactedFrom,
@@ -1341,6 +1402,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
       promotion?: MissingBackfillPromotionPolicy;
       support?: MissingBackfillSupportEvaluation;
       supportedCandidate?: boolean;
+      shadow?: MissingBackfillShadowAudit;
       entityFamilyAudit?: EntityFamilyConvergenceAudit;
     },
   ): Promise<void> {
@@ -1366,6 +1428,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
         eligible_for_apply: proposal.eligibleForApply,
         supported_candidate: audit?.supportedCandidate === true,
         ...buildMissingBackfillSupportAuditDetails(audit?.support),
+        ...buildMissingBackfillShadowAuditDetails(audit?.shadow),
         ...(audit?.compactness?.compactedFrom
           ? {
               claim_key_compacted_from: audit.compactness.compactedFrom,
@@ -1641,6 +1704,28 @@ function createEmptyMissingBackfillDecisionStats(): MissingBackfillDecisionStats
     proposedPreviewCandidate: 0,
     proposedCompactedCandidate: 0,
     noClaimWithWarnings: 0,
+  };
+}
+
+function createEmptySiblingSlotResonanceShadowStats(): SiblingSlotResonanceShadowStats {
+  return {
+    thresholdOnlyCandidateCount: 0,
+    resonanceApplicableCount: 0,
+    resonanceFiredCount: 0,
+    shadowQualifiedCount: 0,
+    resonanceFiredClaimKeys: [],
+    shadowQualifiedClaimKeys: [],
+    buckets: new Map(
+      SHADOW_BUCKET_ORDER.map((bucket) => [
+        bucket,
+        {
+          candidateCount: 0,
+          resonanceApplicableCount: 0,
+          resonanceFiredCount: 0,
+          shadowQualifiedCount: 0,
+        },
+      ]),
+    ),
   };
 }
 
@@ -1993,6 +2078,14 @@ function evaluateMissingBackfillSupport(entry: Entry, targetClaimKey: string, tr
     stableSlotSupport,
     lexicalAlignment,
   });
+  const siblingSlotResonance = evaluateSiblingSlotResonance({
+    candidateClaimKey: normalized.claimKey,
+    localLexicalTokens: buildEntryLocalLexicalTokens(entry),
+    groundedSiblings: groundedFamilyReuseEntries.map((trustedEntry) => ({
+      entryId: trustedEntry.id,
+      claimKey: trustedEntry.claimKey,
+    })),
+  });
   const autoApplyClass = promotionSupport.autoApplyClass;
   const supportedProposal = lexicalAlignment.any && (templateSupport || stableSlotSupport || trustedExactReuse || trustedEntityFamilyReuse || localGrounding);
   const supportEvidence = [
@@ -2050,6 +2143,7 @@ function evaluateMissingBackfillSupport(entry: Entry, targetClaimKey: string, tr
       ...groundedExactReuseEntries.map((candidate) => candidate.id),
       ...groundedFamilyReuseEntries.map((candidate) => candidate.id),
     ]),
+    siblingSlotResonance,
     supportEvidence,
     rationaleFragments,
   };
@@ -2074,6 +2168,7 @@ function createEmptyMissingBackfillSupportEvaluation(): MissingBackfillSupportEv
     groundedFamilyReuseCount: 0,
     relaxedStableSlotFamilyGate: false,
     supportingEntryIds: [],
+    siblingSlotResonance: createEmptySiblingSlotResonanceEvaluation(0),
     supportEvidence: [],
     rationaleFragments: [],
   };
@@ -2299,6 +2394,15 @@ function formatMissingBackfillSkipDiagnostic(diagnostic: MissingBackfillSkipDiag
 
 function normalizeGroundingTags(tags: string[]): string[] {
   return normalizeStringArray(tags.map((tag) => normalizeClaimKeySegment(tag)).filter((tag) => tag.length > 0));
+}
+
+function buildEntryLocalLexicalTokens(entry: Entry): string[] {
+  return normalizeStringArray([
+    ...tokenizeGroundingText(entry.subject),
+    ...tokenizeGroundingText(entry.content),
+    ...tokenizeGroundingText(entry.source_context),
+    ...normalizeGroundingTags(entry.tags),
+  ]);
 }
 
 function tokenizeGroundingText(value: string | undefined): string[] {
@@ -2928,6 +3032,42 @@ function buildGroundedFamilyPromotionObservation(stats: MissingBackfillDecisionS
   return observations.join(" ");
 }
 
+function buildSiblingSlotResonanceObservation(stats: SiblingSlotResonanceShadowStats): string | null {
+  if (stats.thresholdOnlyCandidateCount === 0) {
+    return null;
+  }
+
+  const bucketSummary = SHADOW_BUCKET_ORDER.map((bucket) => {
+    const bucketStats = stats.buckets.get(bucket);
+    const label = describeShadowBucket(bucket);
+    return `${label} ${bucketStats?.resonanceFiredCount ?? 0}/${bucketStats?.candidateCount ?? 0}`;
+  }).join(", ");
+
+  return (
+    `Shadow sibling-slot resonance fired for ${stats.resonanceFiredCount}/${stats.thresholdOnlyCandidateCount} threshold-only candidates ` +
+    `(${bucketSummary}).`
+  );
+}
+
+function buildSiblingSlotResonanceShadowRuleObservation(stats: SiblingSlotResonanceShadowStats): string | null {
+  if (stats.thresholdOnlyCandidateCount === 0) {
+    return null;
+  }
+
+  if (stats.shadowQualifiedCount === 0) {
+    return (
+      "Shadow sibling-slot-resonance rule would have qualified 0 candidates " +
+      `under grounded-family counts >= ${SHADOW_RESONANCE_MIN_FAMILY_REUSE_COUNT}, grounded ratio >= ${SHADOW_RESONANCE_MIN_GROUNDED_RATIO.toFixed(2)}, ` +
+      `confidence >= ${SHADOW_RESONANCE_MIN_CONFIDENCE.toFixed(2)}, and sibling-slot resonance.`
+    );
+  }
+
+  return (
+    `Shadow sibling-slot-resonance rule would have qualified ${stats.shadowQualifiedCount} candidate` +
+    `${stats.shadowQualifiedCount === 1 ? "" : "s"}: ${stats.shadowQualifiedClaimKeys.join(", ")}.`
+  );
+}
+
 function buildMissingCompactionObservation(stats: MissingBackfillDecisionStats): string | null {
   if (stats.autoAppliedCompactedCandidate === 0 && stats.proposedCompactedCandidate === 0) {
     return null;
@@ -2964,6 +3104,17 @@ function buildMissingBackfillSupportAuditDetails(support?: MissingBackfillSuppor
     supporting_entry_ids: [...support.supportingEntryIds],
     support_family_reuse_count: support.familyReuseCount,
     support_grounded_family_reuse_count: support.groundedFamilyReuseCount,
+    support_sibling_slot_resonance_applicable: support.siblingSlotResonance.applicable,
+    support_sibling_slot_resonance_fired: support.siblingSlotResonance.fired,
+    support_sibling_slot_resonance_resonant_sibling_count: support.siblingSlotResonance.resonantSiblingCount,
+    support_sibling_slot_resonance_dominant_shape: support.siblingSlotResonance.dominantShape,
+    support_sibling_slot_resonance_dominant_shape_count: support.siblingSlotResonance.dominantShapeCount,
+    support_sibling_slot_resonance_grounded_share: support.siblingSlotResonance.dominantShapeGroundedShare,
+    support_sibling_slot_resonance_local_shape_coverage: support.siblingSlotResonance.localShapeTokenCoverage,
+    support_sibling_slot_resonance_family_generic_tokens: [...support.siblingSlotResonance.familyGenericTokens],
+    support_sibling_slot_resonance_discriminative_candidate_tokens: [...support.siblingSlotResonance.discriminativeCandidateTokens],
+    support_sibling_slot_resonance_sibling_entry_ids: [...support.siblingSlotResonance.dominantSiblingEntryIds],
+    support_sibling_slot_resonance_sibling_claim_keys: [...support.siblingSlotResonance.dominantSiblingClaimKeys],
     ...(support.strongEntityAttributeLexicalAlignment
       ? {
           support_strong_entity_attribute_lexical_alignment: true,
@@ -2979,6 +3130,17 @@ function buildMissingBackfillSupportAuditDetails(support?: MissingBackfillSuppor
           support_relaxed_stable_slot_family_gate: true,
         }
       : {}),
+  };
+}
+
+function buildMissingBackfillShadowAuditDetails(shadow?: MissingBackfillShadowAudit): Record<string, unknown> {
+  if (!shadow) {
+    return {};
+  }
+
+  return {
+    shadow_threshold_only_bucket: shadow.thresholdOnlyBucket,
+    shadow_would_qualify: shadow.shadowWouldQualify,
   };
 }
 
@@ -3001,5 +3163,137 @@ function recordGroundedFamilyPromotionDecision(
     } else {
       stats.proposedRelaxedStableSlotPromotion += 1;
     }
+  }
+}
+
+function buildSiblingSlotResonanceShadowSummary(stats: SiblingSlotResonanceShadowStats): ClaimKeyQualityPassSummary["shadowSiblingSlotResonance"] {
+  if (stats.thresholdOnlyCandidateCount === 0) {
+    return null;
+  }
+
+  const buckets: ClaimKeyQualityShadowBucketSummary[] = SHADOW_BUCKET_ORDER.map((bucket) => {
+    const bucketStats = stats.buckets.get(bucket);
+    return {
+      bucket,
+      candidateCount: bucketStats?.candidateCount ?? 0,
+      resonanceApplicableCount: bucketStats?.resonanceApplicableCount ?? 0,
+      resonanceFiredCount: bucketStats?.resonanceFiredCount ?? 0,
+      shadowQualifiedCount: bucketStats?.shadowQualifiedCount ?? 0,
+    };
+  });
+
+  return {
+    rule: {
+      supportClass: "trusted_family_grounded_alignment",
+      minFamilyReuseCount: SHADOW_RESONANCE_MIN_FAMILY_REUSE_COUNT,
+      minGroundedRatio: SHADOW_RESONANCE_MIN_GROUNDED_RATIO,
+      minConfidence: SHADOW_RESONANCE_MIN_CONFIDENCE,
+      requiresSiblingSlotResonance: true,
+    },
+    thresholdOnlyCandidateCount: stats.thresholdOnlyCandidateCount,
+    resonanceApplicableCount: stats.resonanceApplicableCount,
+    resonanceFiredCount: stats.resonanceFiredCount,
+    shadowQualifiedCount: stats.shadowQualifiedCount,
+    resonanceFiredClaimKeys: [...stats.resonanceFiredClaimKeys],
+    shadowQualifiedClaimKeys: [...stats.shadowQualifiedClaimKeys],
+    buckets,
+  };
+}
+
+function resolveThresholdOnlyShadowBucket(support: MissingBackfillSupportEvaluation): ClaimKeyQualityShadowBucket | null {
+  if (support.relaxedStableSlotFamilyGate) {
+    return "relaxed_one_sibling_stable_slot";
+  }
+
+  if (support.autoApplyClass !== "trusted_family_grounded_alignment") {
+    return null;
+  }
+
+  const groundedRatio = support.familyReuseCount > 0 ? support.groundedFamilyReuseCount / support.familyReuseCount : 0;
+  if (support.familyReuseCount >= SHADOW_RESONANCE_MIN_FAMILY_REUSE_COUNT) {
+    return groundedRatio >= SHADOW_RESONANCE_MIN_GROUNDED_RATIO ? "high_density_grounded_family" : "large_grounding_diluted_grounded_family";
+  }
+
+  if (support.familyReuseCount <= 5) {
+    return "thin_grounded_family_tail";
+  }
+
+  return "other_grounded_family_alignment";
+}
+
+function buildMissingBackfillShadowAudit(input: {
+  support: MissingBackfillSupportEvaluation;
+  confidence: number;
+  autoApplyBlocker: string | null;
+}): MissingBackfillShadowAudit | null {
+  if (input.autoApplyBlocker !== "below_auto_apply_threshold") {
+    return null;
+  }
+
+  const bucket = resolveThresholdOnlyShadowBucket(input.support);
+  if (!bucket) {
+    return null;
+  }
+
+  const groundedRatio = input.support.familyReuseCount > 0 ? input.support.groundedFamilyReuseCount / input.support.familyReuseCount : 0;
+  return {
+    thresholdOnlyBucket: bucket,
+    shadowWouldQualify:
+      input.support.autoApplyClass === "trusted_family_grounded_alignment" &&
+      input.support.familyReuseCount >= SHADOW_RESONANCE_MIN_FAMILY_REUSE_COUNT &&
+      groundedRatio >= SHADOW_RESONANCE_MIN_GROUNDED_RATIO &&
+      input.confidence >= SHADOW_RESONANCE_MIN_CONFIDENCE &&
+      input.support.siblingSlotResonance.fired,
+  };
+}
+
+function recordSiblingSlotResonanceShadowCandidate(
+  stats: SiblingSlotResonanceShadowStats,
+  claimKey: string,
+  support: MissingBackfillSupportEvaluation,
+  shadow: MissingBackfillShadowAudit,
+): void {
+  stats.thresholdOnlyCandidateCount += 1;
+  if (support.siblingSlotResonance.applicable) {
+    stats.resonanceApplicableCount += 1;
+  }
+  if (support.siblingSlotResonance.fired) {
+    stats.resonanceFiredCount += 1;
+    stats.resonanceFiredClaimKeys = normalizeStringArray([...stats.resonanceFiredClaimKeys, claimKey]);
+  }
+  if (shadow.shadowWouldQualify) {
+    stats.shadowQualifiedCount += 1;
+    stats.shadowQualifiedClaimKeys = normalizeStringArray([...stats.shadowQualifiedClaimKeys, claimKey]);
+  }
+
+  const bucketStats = stats.buckets.get(shadow.thresholdOnlyBucket);
+  if (!bucketStats) {
+    return;
+  }
+
+  bucketStats.candidateCount += 1;
+  if (support.siblingSlotResonance.applicable) {
+    bucketStats.resonanceApplicableCount += 1;
+  }
+  if (support.siblingSlotResonance.fired) {
+    bucketStats.resonanceFiredCount += 1;
+  }
+  if (shadow.shadowWouldQualify) {
+    bucketStats.shadowQualifiedCount += 1;
+  }
+}
+
+function describeShadowBucket(bucket: ClaimKeyQualityShadowBucket): string {
+  switch (bucket) {
+    case "high_density_grounded_family":
+      return "high-density grounded-family";
+    case "large_grounding_diluted_grounded_family":
+      return "large grounding-diluted grounded-family";
+    case "thin_grounded_family_tail":
+      return "thin grounded-family tail";
+    case "relaxed_one_sibling_stable_slot":
+      return "relaxed one-sibling stable-slot";
+    case "other_grounded_family_alignment":
+      return "other grounded-family alignment";
   }
 }

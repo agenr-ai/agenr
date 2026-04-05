@@ -508,6 +508,142 @@ describe("claim_key_quality surgeon pass", () => {
     );
   });
 
+  it("summarizes shadow sibling-slot resonance for threshold-only grounded-family and relaxed stable-slot buckets", async () => {
+    const client = await createTestClient(clients);
+    for (let index = 0; index < 18; index += 1) {
+      await insertEntry(client, {
+        id: `openclaw-generic-${index}`,
+        subject: `OpenClaw generic family note ${index}`,
+        type: "decision",
+        claim_key: `openclaw/family_echo_topic_${index}`,
+        tags: ["openclaw", "session"],
+        source_context: "OpenClaw session handbook",
+        content: `OpenClaw generic family note ${index} keeps session metadata available to the host.`,
+      });
+    }
+    await insertEntry(client, {
+      id: "openclaw-resonant-window",
+      subject: "OpenClaw session start context window",
+      type: "decision",
+      claim_key: "openclaw/session_start_context_window",
+      tags: ["openclaw", "session"],
+      source_context: "OpenClaw session handbook",
+      content: "OpenClaw keeps a session start context window for prompt assembly.",
+    });
+    await insertEntry(client, {
+      id: "openclaw-resonant-toggle",
+      subject: "OpenClaw session start context toggle",
+      type: "decision",
+      claim_key: "openclaw/session_start_context_toggle",
+      tags: ["openclaw", "session"],
+      source_context: "OpenClaw session handbook",
+      content: "OpenClaw exposes a session start context toggle before prompt assembly.",
+    });
+    await insertEntry(client, {
+      id: "shadow-high-density-target",
+      subject: "OpenClaw session start context flag",
+      type: "decision",
+      tags: ["openclaw", "session"],
+      source_context: "OpenClaw session handbook",
+      content: "OpenClaw uses a session start context flag before prompt assembly.",
+    });
+    await insertEntry(client, {
+      id: "docs-seed-layering",
+      subject: "Documentation layering strategy",
+      type: "preference",
+      claim_key: "documentation/layering_strategy",
+      tags: ["docs", "style"],
+      source_context: "Documentation handbook",
+      content: "Documentation keeps a clear layering strategy for longer guides.",
+    });
+    await insertEntry(client, {
+      id: "shadow-stable-slot-target",
+      subject: "Documentation docs style preference",
+      type: "preference",
+      tags: ["docs", "style"],
+      source_context: "Documentation handbook",
+      content: "Documentation keeps a docs style preference with explicit headings.",
+    });
+    const llm = new MockClaimLlm((callIndex) =>
+      callIndex === 0
+        ? {
+            entity: "OpenClaw",
+            attribute: "session start context flag",
+            confidence: 0.74,
+          }
+        : {
+            entity: "documentation",
+            attribute: "docs style preference",
+            confidence: 0.78,
+          },
+    );
+
+    const result = await runClaimKeyPass(client, {
+      apply: true,
+      createClaimExtractionLlm: () => llm,
+    });
+
+    const actions = await getSurgeonRunActions(client, result.runId);
+    const summary = (await getLastSurgeonRun(client))?.summaryJson?.claim_key_quality;
+    const observations = (await getLastSurgeonRun(client))?.summaryJson?.observations ?? [];
+
+    expect(result.status).toBe("completed");
+    expect(summary?.shadowSiblingSlotResonance).toMatchObject({
+      thresholdOnlyCandidateCount: 2,
+      resonanceApplicableCount: 2,
+      resonanceFiredCount: 1,
+      shadowQualifiedCount: 1,
+      resonanceFiredClaimKeys: ["openclaw/session_start_context_flag"],
+      shadowQualifiedClaimKeys: ["openclaw/session_start_context_flag"],
+      buckets: expect.arrayContaining([
+        expect.objectContaining({
+          bucket: "high_density_grounded_family",
+          candidateCount: 1,
+          resonanceApplicableCount: 1,
+          resonanceFiredCount: 1,
+          shadowQualifiedCount: 1,
+        }),
+        expect.objectContaining({
+          bucket: "relaxed_one_sibling_stable_slot",
+          candidateCount: 1,
+          resonanceApplicableCount: 1,
+          resonanceFiredCount: 0,
+          shadowQualifiedCount: 0,
+        }),
+      ]),
+    });
+    expect(observations).toContain(
+      "Shadow sibling-slot resonance fired for 1/2 threshold-only candidates (high-density grounded-family 1/1, large grounding-diluted grounded-family 0/0, thin grounded-family tail 0/0, relaxed one-sibling stable-slot 0/1, other grounded-family alignment 0/0).",
+    );
+    expect(observations).toContain("Shadow sibling-slot-resonance rule would have qualified 1 candidate: openclaw/session_start_context_flag.");
+    expect(actions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entryIds: ["shadow-high-density-target"],
+          details: expect.objectContaining({
+            support_class: "trusted_family_grounded_alignment",
+            support_family_reuse_count: 20,
+            support_grounded_family_reuse_count: 20,
+            support_sibling_slot_resonance_fired: true,
+            support_sibling_slot_resonance_dominant_shape: "session_start_context",
+            support_sibling_slot_resonance_dominant_shape_count: 2,
+            shadow_threshold_only_bucket: "high_density_grounded_family",
+            shadow_would_qualify: true,
+          }),
+        }),
+        expect.objectContaining({
+          entryIds: ["shadow-stable-slot-target"],
+          details: expect.objectContaining({
+            support_class: "trusted_family_stable_slot",
+            support_sibling_slot_resonance_fired: false,
+            shadow_threshold_only_bucket: "relaxed_one_sibling_stable_slot",
+            shadow_would_qualify: false,
+          }),
+        }),
+      ]),
+    );
+  });
+
   it("auto-applies grounded template-family candidates after safely compacting duplicated entity phrasing", async () => {
     const client = await createTestClient(clients);
     await insertEntry(client, {
