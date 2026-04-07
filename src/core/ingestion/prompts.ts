@@ -281,6 +281,7 @@ export function buildExtractionSystemPrompt(options: { wholeFile?: boolean; extr
     "## Claim-Key Preservation",
     "",
     "- If the transcript shows a raw `agenr_store` tool call with an explicit `claim_key` or `claimKey`, copy that value into an optional `claim_key` field on the extracted entry.",
+    "- Copy the exact raw tool-call value. Do not normalize, compact, paraphrase, or rewrite it in the extraction output.",
     "- Treat explicit tool-call claim keys as authoritative for that entry. Preserve them instead of re-inferring a different slot from paraphrased content.",
     "- Only include `claim_key` when the transcript explicitly provides one. Do not invent new claim keys in this prompt.",
     "",

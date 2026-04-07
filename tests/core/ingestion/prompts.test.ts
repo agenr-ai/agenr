@@ -33,6 +33,7 @@ describe("buildExtractionSystemPrompt", () => {
     expect(prompt).toContain('"high", "standard", or "low"');
     expect(prompt).toContain("## Claim-Key Preservation");
     expect(prompt).toContain("Treat explicit tool-call claim keys as authoritative");
+    expect(prompt).toContain("Do not normalize, compact, paraphrase, or rewrite it");
     expect(prompt).toContain('"claim_key": "entity/attribute"');
   });
 

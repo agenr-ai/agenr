@@ -56,6 +56,12 @@ export interface ExtractionResponse {
   warnings: string[];
 }
 
+/** Parsed explicit claim-key payload preserved from extraction output. */
+interface ParsedClaimKey {
+  claimKey: string;
+  rawClaimKey?: string;
+}
+
 /**
  * Parses and validates a raw extraction response into store-ready entries.
  *
@@ -158,7 +164,8 @@ function parseEntry(value: unknown, index: number, warnings: string[]): StoreEnt
     importance: coerceImportance(record.importance),
     expiry,
     tags: coerceTags(record.tags),
-    claim_key: claimKey,
+    claim_key: claimKey?.claimKey,
+    claim_key_raw: claimKey?.rawClaimKey,
     source_context: sourceContext,
   };
 }
@@ -249,15 +256,23 @@ function coerceOptionalString(value: unknown): string | undefined {
   return normalized.length > 0 ? normalized : undefined;
 }
 
-/** Coerces one optional extracted claim key into canonical form. */
-function coerceClaimKey(value: unknown, index: number, warnings: string[]): string | undefined {
+/** Coerces one optional extracted claim key into canonical form while preserving raw text. */
+function coerceClaimKey(value: unknown, index: number, warnings: string[]): ParsedClaimKey | undefined {
   if (typeof value !== "string") {
     return undefined;
   }
 
-  const normalized = normalizeClaimKey(value);
+  const rawClaimKey = coerceOptionalString(value);
+  if (!rawClaimKey) {
+    return undefined;
+  }
+
+  const normalized = normalizeClaimKey(rawClaimKey);
   if (normalized.ok) {
-    return normalized.value.claimKey;
+    return {
+      claimKey: normalized.value.claimKey,
+      rawClaimKey: rawClaimKey !== normalized.value.claimKey ? rawClaimKey : undefined,
+    };
   }
 
   warnings.push(`Entry ${index + 1}: dropped claim_key ${JSON.stringify(value)} because ${describeClaimKeyNormalizationFailure(normalized.reason)}.`);

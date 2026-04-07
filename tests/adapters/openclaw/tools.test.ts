@@ -562,11 +562,24 @@ describe("agenr OpenClaw tools", () => {
     const traceResult = await traceTool.execute("tool-15", {
       id: original?.id,
     });
+    const replacementEntryId = (replacementResult.details as { entryId?: string }).entryId ?? "";
+    const replacementEntry = await database.getEntry(replacementEntryId);
 
     expect(replacementResult.details).toMatchObject({
       status: "stored",
       subject: "Jim home city",
     });
+    expect(replacementEntry).toMatchObject({
+      claim_key: "jim/home_city",
+      claim_key_status: "trusted",
+      claim_key_source: "manual",
+      claim_key_confidence: 1,
+      claim_key_rationale: "manual claim key supplied by caller",
+      claim_support_source_kind: "tool_call",
+      claim_support_mode: "explicit",
+    });
+    expect(replacementEntry?.claim_support_locator).toContain("#agenr_store");
+    expect(replacementEntry?.claim_support_observed_at).toMatch(/^20\d\d-/);
     expect(traceResult.content[0]?.text).toContain("superseded_by=");
     expect(traceResult.content[0]?.text).toContain("supersession_kind=update");
     expect(traceResult.content[0]?.text).toContain("claim_key=jim/home_city");
@@ -611,9 +624,18 @@ describe("agenr OpenClaw tools", () => {
     });
     expect(updatedEntry).toMatchObject({
       claim_key: "jim/timezone",
+      claim_key_raw: "Jim / Timezone",
+      claim_key_status: "trusted",
+      claim_key_source: "manual",
+      claim_key_confidence: 1,
+      claim_key_rationale: "manual claim key supplied by caller",
+      claim_support_source_kind: "tool_call",
+      claim_support_mode: "explicit",
       valid_from: "2026-03-01T00:00:00.000Z",
       valid_to: "2026-03-31T00:00:00.000Z",
     });
+    expect(updatedEntry?.claim_support_locator).toContain("#agenr_update");
+    expect(updatedEntry?.claim_support_observed_at).toMatch(/^20\d\d-/);
     expect(traceResult.content[0]?.text).toContain("claim_key=jim/timezone");
     expect(traceResult.content[0]?.text).toContain("validity=2026-03-01T00:00:00.000Z -> 2026-03-31T00:00:00.000Z");
 

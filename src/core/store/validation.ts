@@ -1,4 +1,4 @@
-import { ENTRY_TYPES, EXPIRY_LEVELS, type Expiry, type StoreEntryInput } from "../types.js";
+import { CLAIM_SUPPORT_MODES, ENTRY_TYPES, EXPIRY_LEVELS, type Expiry, type StoreEntryInput } from "../types.js";
 import { describeClaimKeyNormalizationFailure, normalizeClaimKey } from "../claim-key.js";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
@@ -135,6 +135,18 @@ export function validateEntriesWithIndexes(inputs: StoreEntryInput[]): IndexedVa
       }
     }
 
+    const claimKeyRaw = normalizedClaimKey ? normalizeOptionalString(input.claim_key_raw) : undefined;
+    const claimSupportSourceKind = normalizedClaimKey ? normalizeOptionalString(input.claim_support_source_kind) : undefined;
+    const claimSupportLocator = normalizedClaimKey ? normalizeOptionalString(input.claim_support_locator) : undefined;
+    const claimSupportObservedAt =
+      normalizedClaimKey && input.claim_support_observed_at !== undefined
+        ? normalizeClaimSupportObservedAt(input.claim_support_observed_at, index, warnings)
+        : undefined;
+    const claimSupportMode =
+      normalizedClaimKey && input.claim_support_mode !== undefined
+        ? normalizeClaimSupportMode(input.claim_support_mode, index, warnings)
+        : undefined;
+
     valid.push({
       inputIndex: index,
       input: {
@@ -151,6 +163,11 @@ export function validateEntriesWithIndexes(inputs: StoreEntryInput[]): IndexedVa
         created_at: normalizeOptionalString(input.created_at),
         supersedes: normalizeOptionalString(input.supersedes),
         claim_key: normalizedClaimKey,
+        claim_key_raw: claimKeyRaw,
+        claim_support_source_kind: claimSupportSourceKind,
+        claim_support_locator: claimSupportLocator,
+        claim_support_observed_at: claimSupportObservedAt,
+        claim_support_mode: claimSupportMode,
         valid_from: normalizeOptionalString(input.valid_from),
         valid_to: normalizeOptionalString(input.valid_to),
       },
@@ -184,6 +201,31 @@ function normalizeString(value: string): string {
 function normalizeOptionalString(value?: string): string | undefined {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : undefined;
+}
+
+/** Validates one optional claim-support observation timestamp. */
+function normalizeClaimSupportObservedAt(value: string, index: number, warnings: string[]): string | undefined {
+  const normalized = normalizeOptionalString(value);
+  if (!normalized) {
+    return undefined;
+  }
+
+  if (!isIsoTimestamp(normalized)) {
+    warnings.push(`Entry ${index} provided invalid claim_support_observed_at ${JSON.stringify(value)} and it was dropped.`);
+    return undefined;
+  }
+
+  return normalized;
+}
+
+/** Validates one optional claim-support provenance mode. */
+function normalizeClaimSupportMode(value: StoreEntryInput["claim_support_mode"], index: number, warnings: string[]): StoreEntryInput["claim_support_mode"] {
+  if (value && CLAIM_SUPPORT_MODES.includes(value)) {
+    return value;
+  }
+
+  warnings.push(`Entry ${index} provided invalid claim_support_mode ${JSON.stringify(value)} and it was dropped.`);
+  return undefined;
 }
 
 /** Checks whether a value is an array of string tags. */

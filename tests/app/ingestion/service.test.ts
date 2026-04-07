@@ -183,6 +183,60 @@ describe("ingestPath", () => {
     expect(db.insertions[0]?.entry.claim_key).toBe("postgres/connection_pooling_lesson");
   });
 
+  it("preserves explicit claim-key metadata when dedup keeps a sibling entry", async () => {
+    const filePath = "/tmp/session-preserved-claim-key.jsonl";
+    const db = new MockDatabase();
+
+    await ingestPath(
+      "/tmp",
+      {
+        files: new MockFilePort([filePath], { [filePath]: "hash-preserved-claim-key" }),
+        transcript: new MockTranscriptPort(
+          buildTranscript({
+            timestamps: ["2026-04-01T10:00:00.000Z", "2026-04-01T10:01:00.000Z"],
+          }),
+        ),
+        db,
+        embedding: new MockEmbeddingPort(),
+        createExtractionLlm: () =>
+          new MockIngestionLlm({
+            entries: [
+              createInput({
+                subject: "Jim home city",
+                content: "Jim lives in Denver, Colorado.",
+                claim_key: " Jim / Home City ",
+                claim_key_raw: "Jim / Home City",
+                source_file: filePath,
+              }),
+              createInput({
+                subject: "Jim home city",
+                content: "Jim lives in Denver, Colorado.",
+                source_file: filePath,
+              }),
+            ],
+          }),
+        createDedupLlm: () => new MockDedupLlm('{"keep":[1],"drop":[0]}'),
+      },
+      {
+        wholeFile: "never",
+      },
+    );
+
+    expect(db.insertions).toHaveLength(1);
+    expect(db.insertions[0]?.entry).toMatchObject({
+      claim_key: "jim/home_city",
+      claim_key_raw: "Jim / Home City",
+      claim_key_status: "trusted",
+      claim_key_source: "manual",
+      claim_key_confidence: 1,
+      claim_key_rationale: "manual claim key supplied by caller",
+      claim_support_source_kind: "tool_call",
+      claim_support_locator: `${filePath}#entry:1`,
+      claim_support_observed_at: "2026-04-01T10:01:00.000Z",
+      claim_support_mode: "explicit",
+    });
+  });
+
   it("stores entries without claim keys when no claim-extraction LLM is provided", async () => {
     const filePath = "/tmp/session-no-claim-llm.jsonl";
     const db = new MockDatabase();
@@ -512,6 +566,33 @@ class MockIngestionLlm implements IngestionLlmPort {
   }
 }
 
+class MockDedupLlm implements IngestionLlmPort {
+  public readonly metadata: { contextWindowTokens: number; maxOutputTokens: number; usage: UsageStats } = {
+    contextWindowTokens: 16_000,
+    maxOutputTokens: 4_000,
+    usage: {
+      calls: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      totalTokens: 0,
+      totalCost: 0,
+    },
+  };
+
+  public constructor(private readonly response: string) {}
+
+  public async complete(): Promise<string> {
+    this.metadata.usage.calls += 1;
+    return this.response;
+  }
+
+  public async completeJson<T>(): Promise<T> {
+    throw new Error("completeJson should not be used in this test.");
+  }
+}
+
 class MockClaimExtractionLlm implements LlmPort {
   public constructor(private readonly responder: (systemPrompt: string, userMessage: string) => unknown) {}
 
@@ -529,17 +610,19 @@ class MockClaimExtractionLlm implements LlmPort {
   }
 }
 
-function buildTranscript(): ParsedTranscript {
+function buildTranscript(options: { timestamps?: [string, string] | string[] } = {}): ParsedTranscript {
   const messages = [
     {
       index: 0,
       role: "user" as const,
       text: "Remember this.",
+      timestamp: options.timestamps?.[0],
     },
     {
       index: 1,
       role: "assistant" as const,
       text: "Understood.",
+      timestamp: options.timestamps?.[1],
     },
   ];
 
@@ -563,5 +646,12 @@ function createInput(overrides: Partial<StoreEntryInput> = {}): StoreEntryInput 
     tags: overrides.tags,
     source_file: overrides.source_file,
     source_context: overrides.source_context,
+    claim_key: overrides.claim_key,
+    claim_key_raw: overrides.claim_key_raw,
+    claim_support_source_kind: overrides.claim_support_source_kind,
+    claim_support_locator: overrides.claim_support_locator,
+    claim_support_observed_at: overrides.claim_support_observed_at,
+    claim_support_mode: overrides.claim_support_mode,
+    created_at: overrides.created_at,
   };
 }

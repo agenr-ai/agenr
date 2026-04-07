@@ -194,6 +194,27 @@ export function buildSessionSourceFile(ctx: OpenClawPluginToolContext): string {
 }
 
 /**
+ * Builds conservative explicit tool-call support metadata for claim-key preservation.
+ *
+ * @param ctx - Tool invocation context.
+ * @param toolName - Tool that carried the explicit claim key.
+ * @param observedAt - Observation timestamp to persist alongside the support metadata.
+ * @returns Support metadata suitable for explicit manual claim-key paths.
+ */
+export function buildToolCallClaimSupport(
+  ctx: OpenClawPluginToolContext,
+  toolName: string,
+  observedAt: string,
+): Pick<Entry, "claim_support_source_kind" | "claim_support_locator" | "claim_support_observed_at" | "claim_support_mode"> {
+  return {
+    claim_support_source_kind: "tool_call",
+    claim_support_locator: `${buildSessionSourceFile(ctx)}#${toolName}`,
+    claim_support_observed_at: observedAt,
+    claim_support_mode: "explicit",
+  };
+}
+
+/**
  * Logs one tool call summary plus sanitized parameters at info level.
  *
  * @param logger - Host logger used for OpenClaw tools.

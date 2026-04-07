@@ -29,6 +29,7 @@ describe("parseExtractionResponse", () => {
           expiry: "permanent",
           tags: ["database", "memory"],
           claim_key: "agenr/default_model",
+          claim_key_raw: "Agenr / Default Model",
           source_context: "Architecture discussion",
         },
       ],

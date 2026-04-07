@@ -1,4 +1,5 @@
 import {
+  restoreExplicitClaimKeysAfterDedup,
   dedupBatch,
   extractFile,
   getDefaultDedupSimilarityThreshold,
@@ -120,7 +121,14 @@ export async function ingestDiscoveredFiles(files: string[], ports: IngestPathPo
         verbose: options.verbose,
       },
     );
-    resultsToStore = rebuildResultsWithSurvivors(extractedSuccesses, taggedEntries, dedupResult);
+    const preservedDedupResult: DedupResult = {
+      ...dedupResult,
+      survivors: restoreExplicitClaimKeysAfterDedup(
+        taggedEntries.map((taggedEntry) => taggedEntry.entry),
+        dedupResult,
+      ),
+    };
+    resultsToStore = rebuildResultsWithSurvivors(extractedSuccesses, taggedEntries, preservedDedupResult);
     precomputedEmbeddings = dedupResult.embeddings;
     dedupUsage = isIngestionLlmPort(dedupLlm) ? cloneUsageStats(dedupLlm.metadata.usage) : createEmptyUsageStats();
   }

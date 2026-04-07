@@ -229,6 +229,15 @@ describe("createDatabase", () => {
     await database.insertEntry(sibling, createEmbedding(1, 1), "sibling-claim-hash");
     const updated = await database.updateEntry(entry.id, {
       claim_key: "jim/home_city",
+      claim_key_raw: " Jim / Home City ",
+      claim_key_status: "trusted",
+      claim_key_source: "manual",
+      claim_key_confidence: 1,
+      claim_key_rationale: "manual claim key supplied by caller",
+      claim_support_source_kind: "tool_call",
+      claim_support_locator: "openclaw-session:agent:main:webchat:test#agenr_update",
+      claim_support_observed_at: "2026-03-15T12:00:00.000Z",
+      claim_support_mode: "explicit",
       valid_from: "2026-03-01T00:00:00.000Z",
       valid_to: "2026-03-15T00:00:00.000Z",
     });
@@ -239,6 +248,15 @@ describe("createDatabase", () => {
 
     expect(updated).toBe(true);
     expect(stored?.claim_key).toBe("jim/home_city");
+    expect(stored?.claim_key_raw).toBe("Jim / Home City");
+    expect(stored?.claim_key_status).toBe("trusted");
+    expect(stored?.claim_key_source).toBe("manual");
+    expect(stored?.claim_key_confidence).toBe(1);
+    expect(stored?.claim_key_rationale).toBe("manual claim key supplied by caller");
+    expect(stored?.claim_support_source_kind).toBe("tool_call");
+    expect(stored?.claim_support_locator).toBe("openclaw-session:agent:main:webchat:test#agenr_update");
+    expect(stored?.claim_support_observed_at).toBe("2026-03-15T12:00:00.000Z");
+    expect(stored?.claim_support_mode).toBe("explicit");
     expect(stored?.valid_from).toBe("2026-03-01T00:00:00.000Z");
     expect(stored?.valid_to).toBe("2026-03-15T00:00:00.000Z");
     expect(claimMatches.map((candidate) => candidate.id)).toEqual([entry.id]);

@@ -9,6 +9,7 @@ import {
   ENTRY_TYPE_DESCRIPTION,
   EXPIRY_DESCRIPTION,
   asRecord,
+  buildToolCallClaimSupport,
   buildSessionSourceFile,
   logToolCall,
   logToolFailure,
@@ -103,9 +104,10 @@ export function createAgenrStoreTool(ctx: OpenClawPluginToolContext, servicesPro
         const tags = normalizeStringArray(readStringArrayParam(params, "tags"));
         const sourceContext = readStringParam(params, "sourceContext");
         const supersedes = readStringParam(params, "supersedes");
-        const claimKey = readStringParam(params, "claimKey");
+        const claimKey = readStringParam(params, "claimKey", { trim: false });
         const validFrom = readStringParam(params, "validFrom");
         const validTo = readStringParam(params, "validTo");
+        const claimSupportObservedAt = new Date().toISOString();
         logToolCall(
           logger,
           "agenr_store",
@@ -137,7 +139,13 @@ export function createAgenrStoreTool(ctx: OpenClawPluginToolContext, servicesPro
               ...(expiry !== undefined ? { expiry } : {}),
               ...(tags.length > 0 ? { tags } : {}),
               ...(supersedes ? { supersedes } : {}),
-              ...(claimKey ? { claim_key: claimKey } : {}),
+              ...(claimKey
+                ? {
+                    claim_key: claimKey,
+                    claim_key_raw: claimKey,
+                    ...buildToolCallClaimSupport(ctx, "agenr_store", claimSupportObservedAt),
+                  }
+                : {}),
               ...(validFrom ? { valid_from: validFrom } : {}),
               ...(validTo ? { valid_to: validTo } : {}),
               source_file: buildSessionSourceFile(ctx),

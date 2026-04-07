@@ -133,13 +133,22 @@ export interface Entry extends ClaimKeyLifecycleMetadata {
 /**
  * Mutable entry fields supported by direct update paths.
  *
- * Claim-key lifecycle fields stay out of this patch type until schema and
- * persistence plumbing land in the follow-up task.
+ * Direct update callers may set claim-key lifecycle fields when they are
+ * preserving an explicit high-intent manual key outside the main store path.
  */
 export interface EntryUpdateInput {
   importance?: Entry["importance"];
   expiry?: Entry["expiry"];
   claim_key?: Entry["claim_key"];
+  claim_key_raw?: Entry["claim_key_raw"];
+  claim_key_status?: Entry["claim_key_status"];
+  claim_key_source?: Entry["claim_key_source"];
+  claim_key_confidence?: Entry["claim_key_confidence"];
+  claim_key_rationale?: Entry["claim_key_rationale"];
+  claim_support_source_kind?: Entry["claim_support_source_kind"];
+  claim_support_locator?: Entry["claim_support_locator"];
+  claim_support_observed_at?: Entry["claim_support_observed_at"];
+  claim_support_mode?: Entry["claim_support_mode"];
   valid_from?: Entry["valid_from"];
   valid_to?: Entry["valid_to"];
 }
@@ -180,8 +189,9 @@ export interface Episode {
 /**
  * User-supplied fields for storing a new entry.
  *
- * Claim-key lifecycle metadata stays derived inside the store pipeline for now,
- * so callers continue to provide only the canonical `claim_key` when needed.
+ * The store pipeline still derives claim-key status, source, confidence, and
+ * rationale. Callers may additionally preserve raw/support metadata when an
+ * explicit claim key came from a trusted transcript or tool-call path.
  */
 export interface StoreEntryInput {
   type: EntryType;
@@ -197,6 +207,11 @@ export interface StoreEntryInput {
   created_at?: string;
   supersedes?: string;
   claim_key?: string;
+  claim_key_raw?: string;
+  claim_support_source_kind?: string;
+  claim_support_locator?: string;
+  claim_support_observed_at?: string;
+  claim_support_mode?: ClaimSupportMode;
   valid_from?: string;
   valid_to?: string;
 }

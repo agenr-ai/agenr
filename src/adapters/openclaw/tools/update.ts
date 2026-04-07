@@ -7,6 +7,7 @@ import type { AgenrOpenClawServices } from "../types.js";
 import {
   UPDATE_EXPIRY_DESCRIPTION,
   asRecord,
+  buildToolCallClaimSupport,
   formatTargetSelector,
   logToolCall,
   logToolFailure,
@@ -75,9 +76,10 @@ export function createAgenrUpdateTool(ctx: OpenClawPluginToolContext, servicesPr
         const subject = readStringParam(params, "subject");
         const importance = readNumberParam(params, "importance", { integer: true, strict: true });
         const expiry = parseExpiry(readStringParam(params, "expiry"));
-        const claimKeyInput = readStringParam(params, "claimKey");
+        const claimKeyInput = readStringParam(params, "claimKey", { trim: false });
         const validFrom = readStringParam(params, "validFrom");
         const validTo = readStringParam(params, "validTo");
+        const claimSupportObservedAt = new Date().toISOString();
         const normalizedClaimKey =
           claimKeyInput === undefined
             ? undefined
@@ -106,7 +108,17 @@ export function createAgenrUpdateTool(ctx: OpenClawPluginToolContext, servicesPr
         const updated = await services.entries.updateEntry(entry.id, {
           ...(importance !== undefined ? { importance } : {}),
           ...(expiry !== undefined ? { expiry } : {}),
-          ...(normalizedClaimKey !== undefined ? { claim_key: normalizedClaimKey } : {}),
+          ...(normalizedClaimKey !== undefined
+            ? {
+                claim_key: normalizedClaimKey,
+                claim_key_raw: claimKeyInput,
+                claim_key_status: "trusted",
+                claim_key_source: "manual",
+                claim_key_confidence: 1,
+                claim_key_rationale: "manual claim key supplied by caller",
+                ...buildToolCallClaimSupport(ctx, "agenr_update", claimSupportObservedAt),
+              }
+            : {}),
           ...(validFrom !== undefined ? { valid_from: validFrom } : {}),
           ...(validTo !== undefined ? { valid_to: validTo } : {}),
         });

@@ -444,6 +444,51 @@ export async function updateEntry(
     args.push(normalizeOptionalString(fields.claim_key));
   }
 
+  if (fields.claim_key_raw !== undefined) {
+    assignments.push("claim_key_raw = ?");
+    args.push(normalizeOptionalString(fields.claim_key_raw));
+  }
+
+  if (fields.claim_key_status !== undefined) {
+    assignments.push("claim_key_status = ?");
+    args.push(normalizeOptionalString(fields.claim_key_status));
+  }
+
+  if (fields.claim_key_source !== undefined) {
+    assignments.push("claim_key_source = ?");
+    args.push(normalizeOptionalString(fields.claim_key_source));
+  }
+
+  if (fields.claim_key_confidence !== undefined) {
+    assignments.push("claim_key_confidence = ?");
+    args.push(normalizeOptionalNumber(fields.claim_key_confidence));
+  }
+
+  if (fields.claim_key_rationale !== undefined) {
+    assignments.push("claim_key_rationale = ?");
+    args.push(normalizeOptionalString(fields.claim_key_rationale));
+  }
+
+  if (fields.claim_support_source_kind !== undefined) {
+    assignments.push("claim_support_source_kind = ?");
+    args.push(normalizeOptionalString(fields.claim_support_source_kind));
+  }
+
+  if (fields.claim_support_locator !== undefined) {
+    assignments.push("claim_support_locator = ?");
+    args.push(normalizeOptionalString(fields.claim_support_locator));
+  }
+
+  if (fields.claim_support_observed_at !== undefined) {
+    assignments.push("claim_support_observed_at = ?");
+    args.push(normalizeTimestamp(fields.claim_support_observed_at));
+  }
+
+  if (fields.claim_support_mode !== undefined) {
+    assignments.push("claim_support_mode = ?");
+    args.push(normalizeOptionalString(fields.claim_support_mode));
+  }
+
   if (fields.valid_from !== undefined) {
     assignments.push("valid_from = ?");
     args.push(normalizeOptionalString(fields.valid_from));

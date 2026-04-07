@@ -53,6 +53,10 @@ interface AcceptedClaimKey {
   source: NonNullable<Entry["claim_key_source"]>;
   confidence: number;
   rationale: string;
+  supportSourceKind?: string;
+  supportLocator?: string;
+  supportObservedAt?: string;
+  supportMode?: NonNullable<Entry["claim_support_mode"]>;
 }
 
 /** Final pipeline outcome assigned to one store input. */
@@ -306,6 +310,10 @@ function buildEntry(preparedEntry: PreparedEntry, embedding: number[]): Entry {
     claim_key_source: acceptedClaimKey?.source,
     claim_key_confidence: acceptedClaimKey?.confidence,
     claim_key_rationale: acceptedClaimKey?.rationale,
+    claim_support_source_kind: acceptedClaimKey?.supportSourceKind,
+    claim_support_locator: acceptedClaimKey?.supportLocator,
+    claim_support_observed_at: acceptedClaimKey?.supportObservedAt,
+    claim_support_mode: acceptedClaimKey?.supportMode,
     retired: false,
     created_at: preparedEntry.input.created_at ?? now,
     updated_at: now,
@@ -567,7 +575,7 @@ async function buildStorePlan(
     inputIndex,
     contentHash: computeContentHash(input.content, input.source_file),
     normContentHash: computeNormContentHash(input.content),
-    claimKey: buildManualAcceptedClaimKey(inputs[inputIndex]?.claim_key, input.claim_key),
+    claimKey: buildManualAcceptedClaimKey(inputs[inputIndex], input),
   }));
 
   const afterBatchContentHash = dedupePreparedEntries(preparedEntries, "contentHash", "content_hash", details);
@@ -652,18 +660,23 @@ function sortStoreDetails(details: StoreEntryDetail[]): StoreEntryDetail[] {
 }
 
 /** Builds accepted manual claim-key metadata from raw caller input plus the normalized canonical key. */
-function buildManualAcceptedClaimKey(rawClaimKey: string | undefined, canonicalClaimKey: string | undefined): AcceptedClaimKey | undefined {
+function buildManualAcceptedClaimKey(rawInput: StoreEntryInput | undefined, normalizedInput: StoreEntryInput): AcceptedClaimKey | undefined {
+  const canonicalClaimKey = normalizedInput.claim_key;
   if (!canonicalClaimKey) {
     return undefined;
   }
 
   return {
     claimKey: canonicalClaimKey,
-    rawClaimKey: buildClaimKeyRaw(normalizeOptionalString(rawClaimKey), canonicalClaimKey),
+    rawClaimKey: buildClaimKeyRaw(normalizedInput.claim_key_raw ?? normalizeOptionalString(rawInput?.claim_key), canonicalClaimKey),
     status: "trusted",
     source: "manual",
     confidence: 1,
     rationale: "manual claim key supplied by caller",
+    supportSourceKind: normalizeOptionalString(normalizedInput.claim_support_source_kind),
+    supportLocator: normalizeOptionalString(normalizedInput.claim_support_locator),
+    supportObservedAt: normalizeOptionalString(normalizedInput.claim_support_observed_at),
+    supportMode: normalizedInput.claim_support_mode,
   };
 }
 

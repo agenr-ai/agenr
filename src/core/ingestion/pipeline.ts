@@ -2,6 +2,7 @@ import type { DatabasePort, EmbeddingPort, LlmPort, TranscriptPort } from "../po
 import { runBatchClaimExtraction, type ClaimExtractionConfig } from "../store/claim-extraction.js";
 import { type StoreEntriesDetailedResult, type StoreEntriesOptions, type StorePipelineOptions, storeEntriesDetailed } from "../store/pipeline.js";
 import type { StoreEntryInput, StoreResult } from "../types.js";
+import { annotateExplicitClaimKeyEntry, restoreExplicitClaimKeysAfterDedup } from "./claim-key-preservation.js";
 import { dedupBatch } from "./dedup.js";
 import { extractFromTranscript } from "./extract.js";
 
@@ -144,9 +145,10 @@ export async function ingestFile(
     skip: options.skipDedup,
     verbose: options.verbose,
   });
+  const dedupedEntries = restoreExplicitClaimKeysAfterDedup(extracted.entries, dedupResult);
   const dedupedExtracted: ExtractedFileResult = {
     ...extracted,
-    entries: dedupResult.survivors,
+    entries: dedupedEntries,
   };
 
   if (ports.claimExtractionLlm) {
@@ -242,10 +244,20 @@ export async function extractFile(
     failedChunks = extraction.failedChunks;
     chunkDetails = extraction.chunkDetails;
     warnings.push(...extraction.warnings);
-    const extractedEntries = extraction.entries.map((entry) => ({
-      ...entry,
-      source_file: entry.source_file ?? filePath,
-    }));
+    const extractedEntries = extraction.entries.map((entry, entryIndex) =>
+      annotateExplicitClaimKeyEntry(
+        {
+          ...entry,
+          source_file: entry.source_file ?? filePath,
+        },
+        {
+          sourceKind: "tool_call",
+          locator: `${filePath}#entry:${entryIndex + 1}`,
+          observedAt: entry.created_at,
+          mode: "explicit",
+        },
+      ),
+    );
 
     return {
       file: filePath,
