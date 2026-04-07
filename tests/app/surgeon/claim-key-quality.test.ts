@@ -332,7 +332,7 @@ describe("claim_key_quality surgeon pass", () => {
     expect(proposals[0]?.rationale).toContain('claim_key_status "trusted"');
     expect(proposals[0]?.rationale).toContain('claim_key_source "surgeon_metadata_rewrite"');
     expect(proposals[0]?.rationale).toContain('claim_key_raw "project/status"');
-    expect((await getSurgeonRunActions(client, result.runId))).toEqual(
+    expect(await getSurgeonRunActions(client, result.runId)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           entryIds: ["metadata-proposal"],

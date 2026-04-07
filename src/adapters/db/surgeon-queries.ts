@@ -21,6 +21,16 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export interface SurgeonHealthStats {
   total: number;
   byType: Record<string, number>;
+  claimKeyLifecycle: {
+    trusted: number;
+    tentative: number;
+    unresolved: number;
+    /** Legacy rows with a canonical claim key but no lifecycle status yet. */
+    legacy: number;
+    noKey: number;
+  };
+  /** Count of durable unresolved surgeon proposals awaiting review. */
+  proposalBacklogCount: number;
   recency: {
     last7: number;
     last30: number;
@@ -160,24 +170,43 @@ export async function getSurgeonHealthStats(
   const last30Cutoff = new Date(now.getTime() - 30 * DAY_MS).toISOString();
   const last90Cutoff = new Date(now.getTime() - 90 * DAY_MS).toISOString();
 
-  const [totalResult, byTypeResult, recencyResult, recallResult, qualityResult, retirementCandidateCount] = await Promise.all([
-    executor.execute({
-      sql: `
+  const [totalResult, byTypeResult, lifecycleResult, proposalBacklogResult, recencyResult, recallResult, qualityResult, retirementCandidateCount] =
+    await Promise.all([
+      executor.execute({
+        sql: `
         SELECT COUNT(*) AS total
         FROM entries AS e
         WHERE ${buildActiveEntryClause("e")}
       `,
-    }),
-    executor.execute({
-      sql: `
+      }),
+      executor.execute({
+        sql: `
         SELECT e.type, COUNT(*) AS entry_count
         FROM entries AS e
         WHERE ${buildActiveEntryClause("e")}
         GROUP BY e.type
       `,
-    }),
-    executor.execute({
-      sql: `
+      }),
+      executor.execute({
+        sql: `
+        SELECT
+          COALESCE(SUM(CASE WHEN e.claim_key_status = 'trusted' THEN 1 ELSE 0 END), 0) AS trusted_count,
+          COALESCE(SUM(CASE WHEN e.claim_key_status = 'tentative' THEN 1 ELSE 0 END), 0) AS tentative_count,
+          COALESCE(SUM(CASE WHEN e.claim_key_status = 'unresolved' THEN 1 ELSE 0 END), 0) AS unresolved_count,
+          COALESCE(SUM(CASE WHEN e.claim_key_status IS NULL AND e.claim_key IS NOT NULL AND TRIM(e.claim_key) <> '' THEN 1 ELSE 0 END), 0) AS legacy_count,
+          COALESCE(SUM(CASE WHEN e.claim_key_status IS NULL AND (e.claim_key IS NULL OR TRIM(e.claim_key) = '') THEN 1 ELSE 0 END), 0) AS no_key_count
+        FROM entries AS e
+        WHERE ${buildActiveEntryClause("e")}
+      `,
+      }),
+      executor.execute({
+        sql: `
+        SELECT COUNT(*) AS proposal_backlog_count
+        FROM surgeon_run_proposals
+      `,
+      }),
+      executor.execute({
+        sql: `
         SELECT
           COALESCE(SUM(CASE WHEN e.created_at >= ? THEN 1 ELSE 0 END), 0) AS last7,
           COALESCE(SUM(CASE WHEN e.created_at < ? AND e.created_at >= ? THEN 1 ELSE 0 END), 0) AS last30,
@@ -186,10 +215,10 @@ export async function getSurgeonHealthStats(
         FROM entries AS e
         WHERE ${buildActiveEntryClause("e")}
       `,
-      args: [last7Cutoff, last7Cutoff, last30Cutoff, last30Cutoff, last90Cutoff, last90Cutoff],
-    }),
-    executor.execute({
-      sql: `
+        args: [last7Cutoff, last7Cutoff, last30Cutoff, last30Cutoff, last90Cutoff, last90Cutoff],
+      }),
+      executor.execute({
+        sql: `
         SELECT
           COALESCE(SUM(CASE WHEN COALESCE(e.recall_count, 0) = 0 THEN 1 ELSE 0 END), 0) AS never_count,
           COALESCE(SUM(CASE WHEN COALESCE(e.recall_count, 0) BETWEEN 1 AND 5 THEN 1 ELSE 0 END), 0) AS one_to_five_count,
@@ -197,9 +226,9 @@ export async function getSurgeonHealthStats(
         FROM entries AS e
         WHERE ${buildActiveEntryClause("e")}
       `,
-    }),
-    executor.execute({
-      sql: `
+      }),
+      executor.execute({
+        sql: `
         SELECT
           COALESCE(SUM(CASE WHEN COALESCE(e.quality_score, 0.5) >= 0.7 THEN 1 ELSE 0 END), 0) AS high_count,
           COALESCE(SUM(CASE WHEN COALESCE(e.quality_score, 0.5) >= 0.4 AND COALESCE(e.quality_score, 0.5) < 0.7 THEN 1 ELSE 0 END), 0) AS medium_count,
@@ -208,16 +237,18 @@ export async function getSurgeonHealthStats(
         FROM entries AS e
         WHERE ${buildActiveEntryClause("e")}
       `,
-    }),
-    countRetirementCandidates(executor, {
-      protectRecalledDays: options.protectRecalledDays,
-      protectMinImportance: options.protectMinImportance,
-      skipRecentlyEvaluatedDays: options.skipRecentlyEvaluatedDays,
-      now,
-    }),
-  ]);
+      }),
+      countRetirementCandidates(executor, {
+        protectRecalledDays: options.protectRecalledDays,
+        protectMinImportance: options.protectMinImportance,
+        skipRecentlyEvaluatedDays: options.skipRecentlyEvaluatedDays,
+        now,
+      }),
+    ]);
 
   const totalRow = totalResult.rows[0];
+  const lifecycleRow = lifecycleResult.rows[0];
+  const proposalBacklogRow = proposalBacklogResult.rows[0];
   const recencyRow = recencyResult.rows[0];
   const recallRow = recallResult.rows[0];
   const qualityRow = qualityResult.rows[0];
@@ -230,6 +261,14 @@ export async function getSurgeonHealthStats(
   return {
     total: totalRow ? readNumber(totalRow, "total", 0) : 0,
     byType,
+    claimKeyLifecycle: {
+      trusted: lifecycleRow ? readNumber(lifecycleRow, "trusted_count", 0) : 0,
+      tentative: lifecycleRow ? readNumber(lifecycleRow, "tentative_count", 0) : 0,
+      unresolved: lifecycleRow ? readNumber(lifecycleRow, "unresolved_count", 0) : 0,
+      legacy: lifecycleRow ? readNumber(lifecycleRow, "legacy_count", 0) : 0,
+      noKey: lifecycleRow ? readNumber(lifecycleRow, "no_key_count", 0) : 0,
+    },
+    proposalBacklogCount: proposalBacklogRow ? readNumber(proposalBacklogRow, "proposal_backlog_count", 0) : 0,
     recency: {
       last7: recencyRow ? readNumber(recencyRow, "last7", 0) : 0,
       last30: recencyRow ? readNumber(recencyRow, "last30", 0) : 0,

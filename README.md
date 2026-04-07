@@ -146,7 +146,7 @@ The CLI surface is still intentionally compact, but it now covers setup, recall,
 | `agenr ingest entries <path>`   | Bulk-ingest one file or directory of OpenClaw transcript files into durable knowledge entries.                                                                    |
 | `agenr ingest episodes [path]`  | Backfill episodic summaries from OpenClaw session transcripts, including rotated `.reset.*` and `.deleted.*` files.                                               |
 | `agenr surgeon run`             | Execute a surgeon maintenance pass. Defaults to retirement; use `--pass supersession` for lineage review. Dry-run by default; add `--apply` to mutate the corpus. |
-| `agenr surgeon status`          | Show corpus health plus the latest surgeon run summary.                                                                                                           |
+| `agenr surgeon status`          | Show corpus health, claim-key lifecycle counts, proposal backlog, and the latest surgeon run summary.                                                             |
 | `agenr surgeon history`         | Show recent surgeon runs.                                                                                                                                         |
 | `agenr surgeon actions <runId>` | Show the audit trail for one surgeon run.                                                                                                                         |
 | `agenr db reset`                | Delete and recreate the knowledge database.                                                                                                                       |

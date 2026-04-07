@@ -230,6 +230,46 @@ describe("registerSurgeonCommand", () => {
     expect(stdout.join("")).toContain("Passes: claim_key_quality -> supersession");
     expect(stdout.join("")).toContain("Summary: Structural cleanup complete.");
   });
+
+  it("renders lifecycle health counts in surgeon status output", async () => {
+    const { program, stdout } = createProgramWithCapturedOutput();
+    loadSurgeonStatusRuntimeMock.mockResolvedValue({
+      health: {
+        total: 17,
+        claimKeyLifecycle: {
+          trusted: 8,
+          tentative: 2,
+          unresolved: 1,
+          legacy: 3,
+          noKey: 3,
+        },
+        proposalBacklogCount: 4,
+        retirementCandidateCount: 6,
+        recentlyEvaluatedCount: 2,
+      },
+      lastRun: {
+        passType: "claim_key_quality",
+        status: "completed",
+        dryRun: true,
+        estimatedCostUsd: 0.04,
+      },
+    });
+
+    await program.parseAsync(["surgeon", "status"], { from: "user" });
+
+    expect(loadSurgeonStatusRuntimeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        env: process.env,
+      }),
+    );
+    expect(stdout.join("")).toContain("Surgeon Status");
+    expect(stdout.join("")).toContain("Entries: 17");
+    expect(stdout.join("")).toContain("Claim keys: trusted 8 | tentative 2 | unresolved 1 | legacy 3 | no key 3");
+    expect(stdout.join("")).toContain("Proposal backlog: 4");
+    expect(stdout.join("")).toContain("Retirement candidates: 6 total (4 new, 2 recently evaluated)");
+    expect(stdout.join("")).toContain("Last surgeon run: claim_key_quality completed (dry-run)");
+    expect(stdout.join("")).toContain("Last surgeon cost: $0.0400");
+  });
 });
 
 function createProgramWithCapturedOutput(): { program: Command; stdout: string[]; stderr: string[] } {

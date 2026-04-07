@@ -143,9 +143,7 @@ export function validateEntriesWithIndexes(inputs: StoreEntryInput[]): IndexedVa
         ? normalizeClaimSupportObservedAt(input.claim_support_observed_at, index, warnings)
         : undefined;
     const claimSupportMode =
-      normalizedClaimKey && input.claim_support_mode !== undefined
-        ? normalizeClaimSupportMode(input.claim_support_mode, index, warnings)
-        : undefined;
+      normalizedClaimKey && input.claim_support_mode !== undefined ? normalizeClaimSupportMode(input.claim_support_mode, index, warnings) : undefined;
 
     valid.push({
       inputIndex: index,

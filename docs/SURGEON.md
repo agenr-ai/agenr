@@ -136,17 +136,64 @@ For entries that look actionable, it can:
 
 `simulate_recall` can also exclude the target entry from results, which lets the surgeon ask: if this entry disappeared, would recall still return good answers?
 
+## Claim-key lifecycle policy
+
+Claim keys are slot identifiers, not truth labels.
+
+What a claim key means:
+
+- a stable `entity/attribute` slot that multiple entries may update over time
+- a recall and supersession hint for same-slot lineage
+- an anchor for surgeon cleanup and proposal review
+
+What a claim key does not mean:
+
+- that the entry is currently true
+- that the entry is the newest survivor for that slot
+- that the evidence is strong enough for automatic reuse on its own
+- that two entries with different claim keys cannot still be semantically related
+
+Lifecycle states are intentionally narrow:
+
+- `trusted` - manual keys and strong extracted keys that are safe to reuse as canonical same-slot identity
+- `tentative` - structurally useful but not trusted enough for automatic same-slot actions
+- `unresolved` - ambiguity that should stay inspectable instead of being silently upgraded into a canonical key
+- `legacy` - operator-only status output bucket for rows that already have a canonical `claim_key` but predate lifecycle metadata
+
+No-key rows are also tracked explicitly in status output so operators can distinguish "needs a first key" from "has a legacy key that still needs lifecycle backfill."
+
+### Auto-supersession policy
+
+Store-time auto-supersession is intentionally conservative. It is allowed only when all of the following are true:
+
+- the accepted claim key is `trusted`
+- the claim-key source is `manual`, or a high-confidence `model` / `json_retry` extraction
+- exactly one active same-key sibling already exists
+- the normal supersession type-policy checks still pass
+
+Tentative or unresolved claim keys never trigger auto-supersession.
+
+### Surgeon proposals
+
+Claim-key-quality does not force ambiguous rewrites. Instead it records durable proposals in `surgeon_run_proposals`.
+
+Interpret proposal backlog rows as:
+
+- review items, not applied mutations
+- evidence that the current corpus still contains claim-key ambiguity worth adjudicating
+- rationale that may describe the lifecycle state and source that would be written if the proposal were approved later
+
 ## Surgeon tools
 
 Both passes share:
 
-| Tool               | What it does                                            | Important details                                                                                                                                                                   |
-| ------------------ | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `get_health_stats` | Returns corpus health stats and the latest surgeon run. | Includes total entries, counts by type, recency buckets, recall buckets, quality buckets, actionable retirement-candidate count, and recently evaluated count.                      |
-| `inspect_entry`    | Loads one entry in detail.                              | Returns the full entry, tags, same-subject entries, same-cluster entries, reverse-supersession count, and a sample of superseded entries.                                           |
-| `simulate_recall`  | Runs recall without telemetry.                          | Accepts `query`, optional `exclude_entry_id`, and optional `limit` (default `10`, max `20`). Throws if recall ports are unavailable, usually because embeddings are not configured. |
-| `update_entry`     | Updates mutable entry fields.                           | Supports `importance`, `expiry`, `claim_key`, `valid_from`, and `valid_to`. Promoting to `core` requires reasoning that explicitly mentions `core`.                                 |
-| `complete_pass`    | Finalizes the pass with a structured summary.           | Uses pass-specific completion guards. Also records `entries_skipped` as audit actions.                                                                                              |
+| Tool               | What it does                                            | Important details                                                                                                                                                                                                          |
+| ------------------ | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `get_health_stats` | Returns corpus health stats and the latest surgeon run. | Includes total entries, counts by type, claim-key lifecycle buckets, durable proposal backlog size, recency buckets, recall buckets, quality buckets, actionable retirement-candidate count, and recently evaluated count. |
+| `inspect_entry`    | Loads one entry in detail.                              | Returns the full entry, tags, same-subject entries, same-cluster entries, reverse-supersession count, and a sample of superseded entries.                                                                                  |
+| `simulate_recall`  | Runs recall without telemetry.                          | Accepts `query`, optional `exclude_entry_id`, and optional `limit` (default `10`, max `20`). Throws if recall ports are unavailable, usually because embeddings are not configured.                                        |
+| `update_entry`     | Updates mutable entry fields.                           | Supports `importance`, `expiry`, `claim_key`, `valid_from`, and `valid_to`. Promoting to `core` requires reasoning that explicitly mentions `core`.                                                                        |
+| `complete_pass`    | Finalizes the pass with a structured summary.           | Uses pass-specific completion guards. Also records `entries_skipped` as audit actions.                                                                                                                                     |
 
 Retirement adds:
 
@@ -170,6 +217,8 @@ This tool is the orientation step. It gives the model a snapshot of:
 
 - corpus size
 - type distribution
+- claim-key lifecycle distribution: trusted, tentative, unresolved, legacy, and no-key
+- durable proposal backlog size
 - age distribution
 - recall distribution
 - quality distribution
@@ -387,6 +436,8 @@ agenr surgeon status
 Current output includes:
 
 - total active entries
+- claim-key lifecycle counts: trusted, tentative, unresolved, legacy, and no-key
+- durable proposal backlog size
 - total retirement candidates
 - new vs recently evaluated candidate counts when recent-evaluation filtering is active
 - the latest surgeon run summary

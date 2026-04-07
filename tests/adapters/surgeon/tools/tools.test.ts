@@ -102,6 +102,14 @@ describe("surgeon tools", () => {
       now: TEST_NOW.toISOString(),
       health: {
         total: 1,
+        claimKeyLifecycle: {
+          trusted: 0,
+          tentative: 0,
+          unresolved: 0,
+          legacy: 0,
+          noKey: 1,
+        },
+        proposalBacklogCount: 0,
       },
       lastRun: {
         passType: "retirement",

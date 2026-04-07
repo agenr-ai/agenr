@@ -32,6 +32,16 @@ export interface SurgeonRunRecord {
 export interface SurgeonHealthStats {
   total: number;
   byType: Record<string, number>;
+  claimKeyLifecycle: {
+    trusted: number;
+    tentative: number;
+    unresolved: number;
+    /** Legacy rows with a canonical claim key but no lifecycle status yet. */
+    legacy: number;
+    noKey: number;
+  };
+  /** Count of durable unresolved surgeon proposals awaiting review. */
+  proposalBacklogCount: number;
   recency: {
     last7: number;
     last30: number;

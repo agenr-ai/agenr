@@ -278,29 +278,30 @@ Status gate:
 - this task is done when operators can understand the new lifecycle semantics and inspect claim-key health at a glance
 
 Checklist:
-- [ ] Decide where lifecycle policy docs live:
-  - [ ] `docs/SURGEON.md`
-  - [ ] dedicated internal claim-key doc
-  - [ ] `README.md` if any user-facing behavior changes
-- [ ] Document what claim keys mean
-- [ ] Document what claim keys do not mean
-- [ ] Document trusted vs tentative vs unresolved behavior
-- [ ] Document when auto-supersession is allowed
-- [ ] Document how surgeon proposals should be interpreted
-- [ ] Add health metrics reporting for at least:
-  - [ ] trusted key count
-  - [ ] tentative key count
-  - [ ] unresolved/no-key count
-  - [ ] proposal backlog size
-  - [ ] auto-supersession decisions by source/status if cheap to expose
-- [ ] Update CLI tests if surgeon status/history output changes
-- [ ] Run:
-  - [ ] `pnpm test tests/cli/commands/surgeon.test.ts`
-  - [ ] `pnpm lint`
+- [x] Decide where lifecycle policy docs live:
+  - [x] `docs/SURGEON.md`
+  - [x] `README.md` because `agenr surgeon status` now exposes claim-key lifecycle and backlog counts
+  - [x] Dedicated internal claim-key doc deferred in this phase because `docs/SURGEON.md` now carries the operator-facing lifecycle policy
+- [x] Document what claim keys mean
+- [x] Document what claim keys do not mean
+- [x] Document trusted vs tentative vs unresolved behavior
+- [x] Document when auto-supersession is allowed
+- [x] Document how surgeon proposals should be interpreted
+- [x] Add health metrics reporting for at least:
+  - [x] trusted key count
+  - [x] tentative key count
+  - [x] unresolved/no-key count
+  - [x] proposal backlog size
+  - [x] Necessary scope addition discovered during implementation: expose a `legacy` bucket for rows that still have `claim_key` but no lifecycle status after migration
+  - [x] Auto-supersession decisions by source/status remain deferred because store-time auto-link decisions are not durably logged today
+- [x] Update CLI tests if surgeon status/history output changes
+- [x] Run:
+  - [x] `pnpm test tests/cli/commands/surgeon.test.ts`
+  - [x] `pnpm lint`
 
 Exit criteria:
-- [ ] docs explain the lifecycle cleanly
-- [ ] operator surfaces expose enough state to debug bad claim-key behavior
+- [x] docs explain the lifecycle cleanly
+- [x] operator surfaces expose enough state to debug bad claim-key behavior
 
 ---
 
@@ -329,17 +330,17 @@ Checkpoint 5 — convergence-safe
 - [x] surgeon uses the same durable lifecycle model
 
 Checkpoint 6 — shippable
-- [ ] Task 7 complete
-- [ ] docs and observability are in place
-- [ ] full test suite passes
+- [x] Task 7 complete
+- [x] docs and observability are in place
+- [x] full test suite passes
 
 ---
 
 ## Full verification checklist before merge
 
-- [ ] `pnpm typecheck`
-- [ ] `pnpm lint`
-- [ ] `pnpm test`
+- [x] `pnpm typecheck`
+- [x] `pnpm lint`
+- [x] `pnpm test`
 - [ ] Manual sanity check: store manual key and inspect DB/result shape
 - [ ] Manual sanity check: store extracted key and confirm trusted/tentative semantics
 - [ ] Manual sanity check: trigger supersession candidate and confirm trusted-only gating

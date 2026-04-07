@@ -9,7 +9,7 @@ import {
   listRetirementCandidates,
   listSupersessionCandidates,
 } from "../../../src/adapters/db/surgeon-queries.js";
-import { createSurgeonRun, logSurgeonAction } from "../../../src/adapters/db/surgeon-run-log.js";
+import { createSurgeonRun, logSurgeonAction, logSurgeonProposal } from "../../../src/adapters/db/surgeon-run-log.js";
 import { serializeTags } from "../../../src/adapters/db/row-mapping.js";
 import { initSchema } from "../../../src/adapters/db/schema.js";
 import type { Entry } from "../../../src/core/types.js";
@@ -328,6 +328,26 @@ describe("surgeon queries", () => {
 
   it("collects surgeon health stats and counts actionable retirement candidates consistently", async () => {
     const client = await createTestClient(clients);
+    const proposalRunId = await createSurgeonRun(client, {
+      passType: "claim_key_quality",
+      dryRun: true,
+      startedAt: daysAgoIso(1),
+    });
+    await logSurgeonProposal(client, {
+      id: "proposal-1",
+      runId: proposalRunId,
+      groupId: "claim-key-family:shared-slot",
+      issueKind: "family_conflict",
+      scope: "cluster",
+      entryIds: ["old-milestone", "legacy-slot"],
+      currentClaimKeys: ["shared/slot"],
+      proposedClaimKeys: ["shared/slot"],
+      rationale: "Need manual review before rewriting the family.",
+      confidence: 0.62,
+      source: "surgeon_family_reuse",
+      eligibleForApply: false,
+      createdAt: daysAgoIso(1),
+    });
 
     await insertEntry(client, {
       id: "recent-fact",
@@ -337,6 +357,9 @@ describe("surgeon queries", () => {
       expiry: "permanent",
       quality_score: 0.8,
       recall_count: 0,
+      claim_key: "recent/fact",
+      claim_key_status: "trusted",
+      claim_key_source: "manual",
       created_at: daysAgoIso(3),
       updated_at: daysAgoIso(3),
     });
@@ -348,6 +371,9 @@ describe("surgeon queries", () => {
       expiry: "temporary",
       quality_score: 0.5,
       recall_count: 2,
+      claim_key: "mid/milestone",
+      claim_key_status: "tentative",
+      claim_key_source: "deterministic_repair",
       created_at: daysAgoIso(20),
       updated_at: daysAgoIso(20),
     });
@@ -359,8 +385,21 @@ describe("surgeon queries", () => {
       expiry: "permanent",
       quality_score: 0.3,
       recall_count: 6,
+      claim_key_status: "unresolved",
       created_at: daysAgoIso(60),
       updated_at: daysAgoIso(60),
+    });
+    await insertEntry(client, {
+      id: "legacy-slot",
+      subject: "Legacy claim key",
+      type: "fact",
+      importance: 4,
+      expiry: "permanent",
+      quality_score: 0.6,
+      recall_count: 1,
+      claim_key: "legacy/slot",
+      created_at: daysAgoIso(45),
+      updated_at: daysAgoIso(45),
     });
     await insertEntry(client, {
       id: "very-old-important",
@@ -381,28 +420,36 @@ describe("surgeon queries", () => {
     });
 
     expect(health).toEqual({
-      total: 4,
+      total: 5,
       byType: {
         decision: 1,
-        fact: 1,
+        fact: 2,
         milestone: 2,
       },
+      claimKeyLifecycle: {
+        trusted: 1,
+        tentative: 1,
+        unresolved: 1,
+        legacy: 1,
+        noKey: 1,
+      },
+      proposalBacklogCount: 1,
       recency: {
         last7: 1,
         last30: 1,
-        d30To90: 1,
+        d30To90: 2,
         d90Plus: 1,
       },
       recall: {
         never: 2,
-        oneToFive: 1,
+        oneToFive: 2,
         fivePlus: 1,
       },
       quality: {
         high: 2,
-        medium: 1,
+        medium: 2,
         low: 1,
-        average: 0.625,
+        average: 0.62,
       },
       retirementCandidateCount: 3,
       recentlyEvaluatedCount: 0,

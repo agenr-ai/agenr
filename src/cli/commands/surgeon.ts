@@ -348,6 +348,14 @@ function renderPresetRunResult(
 function renderStatus(input: {
   health: {
     total: number;
+    claimKeyLifecycle: {
+      trusted: number;
+      tentative: number;
+      unresolved: number;
+      legacy: number;
+      noKey: number;
+    };
+    proposalBacklogCount: number;
     retirementCandidateCount: number;
     recentlyEvaluatedCount: number;
   };
@@ -363,11 +371,16 @@ function renderStatus(input: {
     input.health.recentlyEvaluatedCount > 0
       ? `Retirement candidates: ${input.health.retirementCandidateCount} total (${newCandidates} new, ${input.health.recentlyEvaluatedCount} recently evaluated)`
       : `Retirement candidates: ${input.health.retirementCandidateCount}`;
+  const claimKeyLine =
+    `Claim keys: trusted ${input.health.claimKeyLifecycle.trusted} | tentative ${input.health.claimKeyLifecycle.tentative} | ` +
+    `unresolved ${input.health.claimKeyLifecycle.unresolved} | legacy ${input.health.claimKeyLifecycle.legacy} | no key ${input.health.claimKeyLifecycle.noKey}`;
 
   return [
     "Surgeon Status",
     "",
     `Entries: ${input.health.total}`,
+    claimKeyLine,
+    `Proposal backlog: ${input.health.proposalBacklogCount}`,
     candidateLine,
     `Last surgeon run: ${input.lastRun ? `${input.lastRun.passType} ${input.lastRun.status} (${input.lastRun.dryRun ? "dry-run" : "apply"})` : "none"}`,
     `Last surgeon cost: ${input.lastRun ? formatUsd(input.lastRun.estimatedCostUsd) : "n/a"}`,

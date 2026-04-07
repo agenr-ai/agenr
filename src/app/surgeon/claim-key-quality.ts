@@ -800,13 +800,13 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
         actualEntriesById,
         entriesById,
         issueKind: "missing_claim_key",
-      oldClaimKey: null,
-      source: "trusted_group_reuse",
-      confidence: 0.99,
-      rationale:
-        `Matched subject/type entries already use trusted canonical key "${trustedGroupReuse.claimKey}", ` +
-        `so the missing key can safely reuse that established family from ${trustedGroupReuse.supportingEntryIds.length} supporting entr${trustedGroupReuse.supportingEntryIds.length === 1 ? "y" : "ies"}.`,
-    });
+        oldClaimKey: null,
+        source: "trusted_group_reuse",
+        confidence: 0.99,
+        rationale:
+          `Matched subject/type entries already use trusted canonical key "${trustedGroupReuse.claimKey}", ` +
+          `so the missing key can safely reuse that established family from ${trustedGroupReuse.supportingEntryIds.length} supporting entr${trustedGroupReuse.supportingEntryIds.length === 1 ? "y" : "ies"}.`,
+      });
       if (updateResult.applied) {
         counts.appliedBackfills += 1;
       }

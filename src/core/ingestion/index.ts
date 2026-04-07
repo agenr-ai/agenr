@@ -12,9 +12,5 @@ export {
   type StoreExtractedResultsProgressEvent,
   type StoreExtractedResultsOptions,
 } from "./pipeline.js";
-export {
-  annotateExplicitClaimKeyEntry,
-  restoreExplicitClaimKeysAfterDedup,
-  type ExplicitClaimKeySupportContext,
-} from "./claim-key-preservation.js";
+export { annotateExplicitClaimKeyEntry, restoreExplicitClaimKeysAfterDedup, type ExplicitClaimKeySupportContext } from "./claim-key-preservation.js";
 export { buildExtractionSystemPrompt, buildChunkPrompt } from "./prompts.js";
