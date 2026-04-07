@@ -63,8 +63,19 @@ describe("createDatabase", () => {
 
     const stored = await database.getEntry(entry.id);
 
-    expect(stored?.id).toBe(entry.id);
-    expect(stored?.claim_key).toBe("jim/home_city");
+    expect(stored).toMatchObject({
+      id: entry.id,
+      claim_key: "jim/home_city",
+      claim_key_raw: "Jim / Home City",
+      claim_key_status: "trusted",
+      claim_key_source: "manual",
+      claim_key_confidence: 1,
+      claim_key_rationale: "manual claim key supplied by caller",
+      claim_support_source_kind: "tool_call",
+      claim_support_locator: "transcript.jsonl#message:3",
+      claim_support_observed_at: "2026-04-07T12:00:00.000Z",
+      claim_support_mode: "explicit",
+    });
   });
 
   it("finds existing hashes in batches and ignores missing hashes", async () => {

@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { InArgs, InStatement, ResultSet } from "@libsql/client";
 
 import type { Entry, EntryUpdateInput } from "../../core/types.js";
-import { ACTIVE_ENTRY_CLAUSE, mapEntryRow, readRequiredString, serializeEmbeddingForVector, serializeTags } from "./row-mapping.js";
+import { ACTIVE_ENTRY_CLAUSE, ENTRY_SELECT_COLUMNS, mapEntryRow, readRequiredString, serializeEmbeddingForVector, serializeTags } from "./row-mapping.js";
 
 const LOOKUP_CHUNK_SIZE = 100;
 const DEFAULT_QUALITY_SCORE = 0.5;
@@ -68,6 +68,15 @@ export async function insertEntry(executor: SqlExecutor, entry: Entry, embedding
         valid_from,
         valid_to,
         claim_key,
+        claim_key_raw,
+        claim_key_status,
+        claim_key_source,
+        claim_key_confidence,
+        claim_key_rationale,
+        claim_support_source_kind,
+        claim_support_locator,
+        claim_support_observed_at,
+        claim_support_mode,
         supersession_kind,
         supersession_reason,
         cluster_id,
@@ -82,7 +91,7 @@ export async function insertEntry(executor: SqlExecutor, entry: Entry, embedding
       VALUES (
         ?, ?, ?, ?, ?, ?, ?, ?, ?,
         CASE WHEN ? IS NULL THEN NULL ELSE vector32(?) END,
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
       )
     `,
     args: [
@@ -107,6 +116,15 @@ export async function insertEntry(executor: SqlExecutor, entry: Entry, embedding
       normalizeOptionalString(entry.valid_from),
       normalizeOptionalString(entry.valid_to),
       normalizeOptionalString(entry.claim_key),
+      normalizeOptionalString(entry.claim_key_raw),
+      normalizeOptionalString(entry.claim_key_status),
+      normalizeOptionalString(entry.claim_key_source),
+      normalizeOptionalNumber(entry.claim_key_confidence),
+      normalizeOptionalString(entry.claim_key_rationale),
+      normalizeOptionalString(entry.claim_support_source_kind),
+      normalizeOptionalString(entry.claim_support_locator),
+      normalizeOptionalString(entry.claim_support_observed_at),
+      normalizeOptionalString(entry.claim_support_mode),
       normalizeOptionalString(entry.supersession_kind),
       normalizeOptionalString(entry.supersession_reason),
       normalizeOptionalString(entry.cluster_id),
@@ -142,35 +160,7 @@ export async function getEntries(executor: SqlExecutor, ids: string[]): Promise<
     const result = await executor.execute({
       sql: `
         SELECT
-          id,
-          type,
-          subject,
-          content,
-          importance,
-          expiry,
-          tags,
-          source_file,
-          source_context,
-          embedding,
-          content_hash,
-          norm_content_hash,
-          quality_score,
-          recall_count,
-          last_recalled_at,
-          superseded_by,
-          valid_from,
-          valid_to,
-          claim_key,
-          supersession_kind,
-          supersession_reason,
-          cluster_id,
-          user_id,
-          project,
-          retired,
-          retired_at,
-          retired_reason,
-          created_at,
-          updated_at
+          ${ENTRY_SELECT_COLUMNS}
         FROM entries
         WHERE id IN (${placeholders})
           AND ${ACTIVE_ENTRY_CLAUSE}
@@ -611,6 +601,11 @@ function normalizeOptionalString(value: string | undefined): string | null {
 /** Normalizes optional timestamps into nullable trimmed values. */
 function normalizeTimestamp(value: string | undefined): string | null {
   return normalizeOptionalString(value);
+}
+
+/** Normalizes optional finite numbers into nullable values. */
+function normalizeOptionalNumber(value: number | undefined): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 /** Falls back when a numeric value is missing or non-finite. */

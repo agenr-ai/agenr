@@ -1,38 +1,6 @@
 import type { Entry } from "../../core/types.js";
-import { buildActiveEntryClause, mapEntryRow, readNumber, readOptionalString, readRequiredString } from "./row-mapping.js";
+import { buildActiveEntryClause, ENTRY_SELECT_COLUMNS, mapEntryRow, readNumber, readOptionalString, readRequiredString } from "./row-mapping.js";
 import type { SqlExecutor } from "./queries.js";
-
-const ENTRY_SELECT_COLUMNS = `
-  id,
-  type,
-  subject,
-  content,
-  importance,
-  expiry,
-  tags,
-  source_file,
-  source_context,
-  embedding,
-  content_hash,
-  norm_content_hash,
-  quality_score,
-  recall_count,
-  last_recalled_at,
-  superseded_by,
-  valid_from,
-  valid_to,
-  claim_key,
-  supersession_kind,
-  supersession_reason,
-  cluster_id,
-  user_id,
-  project,
-  retired,
-  retired_at,
-  retired_reason,
-  created_at,
-  updated_at
-`;
 
 /**
  * Recent recall event metadata returned by the OpenClaw trace tool.

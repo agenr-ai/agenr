@@ -8,6 +8,7 @@ import { recordRecallEvent, type SqlExecutor } from "./queries.js";
 import {
   buildActiveEntryClause,
   cosineSimilarity,
+  ENTRY_SELECT_COLUMNS,
   mapEntryRow,
   readBoolean,
   readEmbedding,
@@ -16,38 +17,6 @@ import {
   readRequiredString,
   serializeEmbeddingForVector,
 } from "./row-mapping.js";
-
-const ENTRY_SELECT_COLUMNS = `
-  e.id,
-  e.type,
-  e.subject,
-  e.content,
-  e.importance,
-  e.expiry,
-  e.tags,
-  e.source_file,
-  e.source_context,
-  e.embedding,
-  e.content_hash,
-  e.norm_content_hash,
-  e.quality_score,
-  e.recall_count,
-  e.last_recalled_at,
-  e.superseded_by,
-  e.valid_from,
-  e.valid_to,
-  e.claim_key,
-  e.supersession_kind,
-  e.supersession_reason,
-  e.cluster_id,
-  e.user_id,
-  e.project,
-  e.retired,
-  e.retired_at,
-  e.retired_reason,
-  e.created_at,
-  e.updated_at
-`;
 
 const RECALL_CANDIDATE_SELECT_COLUMNS = `
   e.id,

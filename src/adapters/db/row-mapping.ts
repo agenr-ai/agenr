@@ -6,8 +6,48 @@ import type { Entry, Episode } from "../../core/types.js";
 const DEFAULT_QUALITY_SCORE = 0.5;
 const ACTIVE_ENTRY_CLAUSE = "retired = 0 AND superseded_by IS NULL";
 const ACTIVE_EPISODE_CLAUSE = "retired = 0 AND superseded_by IS NULL";
+const ENTRY_SELECT_COLUMNS = `
+  id,
+  type,
+  subject,
+  content,
+  importance,
+  expiry,
+  tags,
+  source_file,
+  source_context,
+  embedding,
+  content_hash,
+  norm_content_hash,
+  quality_score,
+  recall_count,
+  last_recalled_at,
+  superseded_by,
+  valid_from,
+  valid_to,
+  claim_key,
+  claim_key_raw,
+  claim_key_status,
+  claim_key_source,
+  claim_key_confidence,
+  claim_key_rationale,
+  claim_support_source_kind,
+  claim_support_locator,
+  claim_support_observed_at,
+  claim_support_mode,
+  supersession_kind,
+  supersession_reason,
+  cluster_id,
+  user_id,
+  project,
+  retired,
+  retired_at,
+  retired_reason,
+  created_at,
+  updated_at
+`;
 
-export { ACTIVE_ENTRY_CLAUSE, ACTIVE_EPISODE_CLAUSE };
+export { ACTIVE_ENTRY_CLAUSE, ACTIVE_EPISODE_CLAUSE, ENTRY_SELECT_COLUMNS };
 
 /**
  * Builds the SQL predicate that filters out retired and superseded entries.
@@ -153,6 +193,32 @@ export function readNumber(row: Row, key: string, fallback = 0): number {
 }
 
 /**
+ * Reads an optional numeric column from a query row.
+ *
+ * @param row - Raw libSQL result row.
+ * @param key - Column name to read.
+ * @returns Finite numeric value when present, otherwise undefined.
+ */
+export function readOptionalNumber(row: Row, key: string): number | undefined {
+  const value = row[key];
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : undefined;
+  }
+
+  if (typeof value === "bigint") {
+    const converted = Number(value);
+    return Number.isFinite(converted) ? converted : undefined;
+  }
+
+  if (typeof value === "string" && value.trim().length > 0) {
+    const converted = Number(value);
+    return Number.isFinite(converted) ? converted : undefined;
+  }
+
+  return undefined;
+}
+
+/**
  * Reads a boolean-like column from a query row.
  *
  * @param row - Raw libSQL result row.
@@ -224,6 +290,15 @@ export function mapEntryRow(row: Row): Entry {
     valid_from: readOptionalString(row, "valid_from"),
     valid_to: readOptionalString(row, "valid_to"),
     claim_key: readOptionalString(row, "claim_key"),
+    claim_key_raw: readOptionalString(row, "claim_key_raw"),
+    claim_key_status: readOptionalString(row, "claim_key_status") as Entry["claim_key_status"],
+    claim_key_source: readOptionalString(row, "claim_key_source") as Entry["claim_key_source"],
+    claim_key_confidence: readOptionalNumber(row, "claim_key_confidence"),
+    claim_key_rationale: readOptionalString(row, "claim_key_rationale"),
+    claim_support_source_kind: readOptionalString(row, "claim_support_source_kind"),
+    claim_support_locator: readOptionalString(row, "claim_support_locator"),
+    claim_support_observed_at: readOptionalString(row, "claim_support_observed_at"),
+    claim_support_mode: readOptionalString(row, "claim_support_mode") as Entry["claim_support_mode"],
     supersession_kind: readOptionalString(row, "supersession_kind"),
     supersession_reason: readOptionalString(row, "supersession_reason"),
     cluster_id: readOptionalString(row, "cluster_id"),
@@ -274,19 +349,4 @@ export function mapEpisodeRow(row: Row): Episode {
     createdAt: readRequiredString(row, "created_at"),
     updatedAt: readRequiredString(row, "updated_at"),
   };
-}
-
-/**
- * Reads an optional numeric column from a query row.
- *
- * @param row - Raw libSQL result row.
- * @param key - Column name to read.
- * @returns Finite numeric value when present, otherwise undefined.
- */
-function readOptionalNumber(row: Row, key: string): number | undefined {
-  if (row[key] === null || row[key] === undefined) {
-    return undefined;
-  }
-
-  return readNumber(row, key, 0);
 }

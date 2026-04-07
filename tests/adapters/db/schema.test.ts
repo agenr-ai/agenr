@@ -66,6 +66,15 @@ describe("initSchema", () => {
       "valid_from",
       "valid_to",
       "claim_key",
+      "claim_key_raw",
+      "claim_key_status",
+      "claim_key_source",
+      "claim_key_confidence",
+      "claim_key_rationale",
+      "claim_support_source_kind",
+      "claim_support_locator",
+      "claim_support_observed_at",
+      "claim_support_mode",
       "supersession_kind",
       "supersession_reason",
       "cluster_id",
@@ -191,7 +200,7 @@ describe("initSchema", () => {
     await expect(initSchema(client)).resolves.toBeUndefined();
 
     const version = await client.execute("SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1");
-    expect(version.rows[0]?.value).toBe("7");
+    expect(version.rows[0]?.value).toBe("8");
     expect(await indexExists(client, "idx_episodes_started_at")).toBe(true);
   });
 
@@ -297,6 +306,15 @@ describe("initSchema", () => {
       "claim_key",
       "supersession_kind",
       "supersession_reason",
+      "claim_key_raw",
+      "claim_key_status",
+      "claim_key_source",
+      "claim_key_confidence",
+      "claim_key_rationale",
+      "claim_support_source_kind",
+      "claim_support_locator",
+      "claim_support_observed_at",
+      "claim_support_mode",
     ]);
 
     const migratedEntry = await client.execute({
@@ -308,7 +326,16 @@ describe("initSchema", () => {
           valid_to,
           claim_key,
           supersession_kind,
-          supersession_reason
+          supersession_reason,
+          claim_key_raw,
+          claim_key_status,
+          claim_key_source,
+          claim_key_confidence,
+          claim_key_rationale,
+          claim_support_source_kind,
+          claim_support_locator,
+          claim_support_observed_at,
+          claim_support_mode
         FROM entries
         WHERE id = 'v5-entry'
       `,
@@ -321,10 +348,173 @@ describe("initSchema", () => {
       claim_key: null,
       supersession_kind: null,
       supersession_reason: null,
+      claim_key_raw: null,
+      claim_key_status: null,
+      claim_key_source: null,
+      claim_key_confidence: null,
+      claim_key_rationale: null,
+      claim_support_source_kind: null,
+      claim_support_locator: null,
+      claim_support_observed_at: null,
+      claim_support_mode: null,
     });
 
     const version = await client.execute("SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1");
-    expect(version.rows[0]?.value).toBe("7");
+    expect(version.rows[0]?.value).toBe("8");
+  });
+
+  it("migrates a v7 database to the current schema version", async () => {
+    const client = createClient({ url: ":memory:" });
+    clients.push(client);
+
+    await client.execute("CREATE TABLE _meta (key TEXT PRIMARY KEY, value TEXT)");
+    await client.execute("INSERT INTO _meta (key, value) VALUES ('schema_version', '7')");
+    await client.execute(`
+      CREATE TABLE entries (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        content TEXT NOT NULL,
+        importance INTEGER NOT NULL,
+        expiry TEXT NOT NULL,
+        tags TEXT,
+        source_file TEXT,
+        source_context TEXT,
+        embedding F32_BLOB(1024),
+        content_hash TEXT,
+        norm_content_hash TEXT,
+        minhash_sig BLOB,
+        quality_score REAL NOT NULL DEFAULT 0.5,
+        recall_count INTEGER DEFAULT 0,
+        last_recalled_at TEXT,
+        superseded_by TEXT REFERENCES entries(id),
+        valid_from TEXT,
+        valid_to TEXT,
+        claim_key TEXT,
+        supersession_kind TEXT,
+        supersession_reason TEXT,
+        cluster_id TEXT,
+        user_id TEXT,
+        project TEXT,
+        retired INTEGER NOT NULL DEFAULT 0,
+        retired_at TEXT,
+        retired_reason TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+    await client.execute({
+      sql: `
+        INSERT INTO entries (
+          id,
+          type,
+          subject,
+          content,
+          importance,
+          expiry,
+          tags,
+          claim_key,
+          quality_score,
+          recall_count,
+          retired,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      args: [
+        "v7-entry",
+        "decision",
+        "migration baseline",
+        "Existing lifecycle metadata should default to null on migration.",
+        6,
+        "permanent",
+        "[]",
+        "agenr/default_model",
+        0.5,
+        0,
+        0,
+        "2026-04-01T00:00:00.000Z",
+        "2026-04-01T00:00:00.000Z",
+      ],
+    });
+
+    await initSchema(client);
+
+    expect(await tableColumns(client, "entries")).toEqual([
+      "id",
+      "type",
+      "subject",
+      "content",
+      "importance",
+      "expiry",
+      "tags",
+      "source_file",
+      "source_context",
+      "embedding",
+      "content_hash",
+      "norm_content_hash",
+      "minhash_sig",
+      "quality_score",
+      "recall_count",
+      "last_recalled_at",
+      "superseded_by",
+      "valid_from",
+      "valid_to",
+      "claim_key",
+      "supersession_kind",
+      "supersession_reason",
+      "cluster_id",
+      "user_id",
+      "project",
+      "retired",
+      "retired_at",
+      "retired_reason",
+      "created_at",
+      "updated_at",
+      "claim_key_raw",
+      "claim_key_status",
+      "claim_key_source",
+      "claim_key_confidence",
+      "claim_key_rationale",
+      "claim_support_source_kind",
+      "claim_support_locator",
+      "claim_support_observed_at",
+      "claim_support_mode",
+    ]);
+
+    const migratedEntry = await client.execute({
+      sql: `
+        SELECT
+          claim_key,
+          claim_key_raw,
+          claim_key_status,
+          claim_key_source,
+          claim_key_confidence,
+          claim_key_rationale,
+          claim_support_source_kind,
+          claim_support_locator,
+          claim_support_observed_at,
+          claim_support_mode
+        FROM entries
+        WHERE id = 'v7-entry'
+      `,
+    });
+    expect(migratedEntry.rows[0]).toMatchObject({
+      claim_key: "agenr/default_model",
+      claim_key_raw: null,
+      claim_key_status: null,
+      claim_key_source: null,
+      claim_key_confidence: null,
+      claim_key_rationale: null,
+      claim_support_source_kind: null,
+      claim_support_locator: null,
+      claim_support_observed_at: null,
+      claim_support_mode: null,
+    });
+
+    const version = await client.execute("SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1");
+    expect(version.rows[0]?.value).toBe("8");
   });
 
   for (const version of ["2", "3", "4"] as const) {

@@ -5,13 +5,7 @@
   "description": "agenr memory plugin for OpenClaw",
   "kind": "memory",
   "contracts": {
-    "tools": [
-      "agenr_store",
-      "agenr_recall",
-      "agenr_retire",
-      "agenr_update",
-      "agenr_trace"
-    ]
+    "tools": ["agenr_store", "agenr_recall", "agenr_retire", "agenr_update", "agenr_trace"]
   },
   "uiHints": {
     "dbPath": {
