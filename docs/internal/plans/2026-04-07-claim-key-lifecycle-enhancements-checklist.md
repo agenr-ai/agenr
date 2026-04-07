@@ -249,24 +249,26 @@ Status gate:
 - this task is done when surgeon repairs write lifecycle metadata and unresolved ambiguity remains durable and inspectable
 
 Checklist:
-- [ ] Add failing tests for lifecycle metadata on surgeon-applied repairs
-- [ ] Add failing tests for raw/proposed key preservation in surgeon repairs
-- [ ] Add failing tests for stronger proposal rationale payloads
-- [ ] Update `src/app/surgeon/claim-key-quality.ts` to persist status/source/confidence/rationale on repair
-- [ ] Ensure compaction/family reuse/metadata rewrite each map to explicit `claim_key_source`
-- [ ] Preserve prior/proposed raw key data when known
-- [ ] Update `src/core/surgeon/types.ts` if proposal/action payloads need richer fields
-- [ ] Update `src/adapters/db/surgeon-run-log.ts` if proposal storage needs richer write/read behavior
-- [ ] Keep `surgeon_run_proposals` as the durable backlog in this phase
-- [ ] Run:
-  - [ ] `pnpm test tests/app/surgeon/claim-key-quality.test.ts`
-  - [ ] `pnpm test tests/adapters/db/surgeon-run-log.test.ts`
-  - [ ] `pnpm test tests/adapters/db/surgeon-queries.test.ts`
+- [x] Add failing tests for lifecycle metadata on surgeon-applied repairs
+- [x] Add failing tests for raw/proposed key preservation in surgeon repairs
+- [x] Add failing tests for stronger proposal rationale payloads
+- [x] Update `src/app/surgeon/claim-key-quality.ts` to persist status/source/confidence/rationale on repair
+- [x] Ensure compaction/family reuse/metadata rewrite each map to explicit `claim_key_source`
+- [x] Preserve prior/proposed raw key data when known
+- [x] Necessary scope decisions discovered during implementation:
+  - [x] Reuse the existing `SurgeonRunProposal` shape in `src/core/surgeon/types.ts`; strengthened lifecycle intent landed in proposal rationale and `flag_review` audit details without widening the durable backlog type
+  - [x] Reuse the existing `src/adapters/db/surgeon-run-log.ts` proposal write/read path; no proposal-table or run-log shape expansion was needed in this phase
+- [x] Keep `surgeon_run_proposals` as the durable backlog in this phase
+- [x] Run:
+  - [x] `pnpm typecheck`
+  - [x] `pnpm test tests/app/surgeon/claim-key-quality.test.ts`
+  - [x] `pnpm test tests/adapters/db/surgeon-run-log.test.ts`
+  - [x] `pnpm test tests/adapters/db/surgeon-queries.test.ts`
 
 Exit criteria:
-- [ ] Surgeon no longer mutates only `claim_key`; it writes lifecycle state too
-- [ ] Auto-applied repair provenance is inspectable later
-- [ ] Ambiguous cases remain as durable proposals instead of vanishing into logs
+- [x] Surgeon no longer mutates only `claim_key`; it writes lifecycle state too
+- [x] Auto-applied repair provenance is inspectable later
+- [x] Ambiguous cases remain as durable proposals instead of vanishing into logs
 
 ---
 
@@ -305,26 +307,26 @@ Exit criteria:
 ## Recommended implementation checkpoints
 
 Checkpoint 1 — schema-ready
-- [ ] Tasks 1-2 complete
-- [ ] DB round-trip verified
-- [ ] ready to start real behavior changes
+- [x] Tasks 1-2 complete
+- [x] DB round-trip verified
+- [x] ready to start real behavior changes
 
 Checkpoint 2 — write-path-ready
-- [ ] Task 3 complete
-- [ ] store assigns lifecycle metadata deterministically
-- [ ] safe to wire preservation paths
+- [x] Task 3 complete
+- [x] store assigns lifecycle metadata deterministically
+- [x] safe to wire preservation paths
 
 Checkpoint 3 — ingest-safe
-- [ ] Task 4 complete
-- [ ] explicit keys no longer get degraded during ingest/tool flows
+- [x] Task 4 complete
+- [x] explicit keys no longer get degraded during ingest/tool flows
 
 Checkpoint 4 — retrieval-safe
-- [ ] Task 5 complete
-- [ ] trust-aware recall behavior verified
+- [x] Task 5 complete
+- [x] trust-aware recall behavior verified
 
 Checkpoint 5 — convergence-safe
-- [ ] Task 6 complete
-- [ ] surgeon uses the same durable lifecycle model
+- [x] Task 6 complete
+- [x] surgeon uses the same durable lifecycle model
 
 Checkpoint 6 — shippable
 - [ ] Task 7 complete

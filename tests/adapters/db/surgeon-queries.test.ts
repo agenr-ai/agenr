@@ -5,6 +5,7 @@ import {
   countRetirementCandidates,
   getSurgeonHealthStats,
   inspectSurgeonEntry,
+  listClaimKeyQualityEntries,
   listRetirementCandidates,
   listSupersessionCandidates,
 } from "../../../src/adapters/db/surgeon-queries.js";
@@ -286,6 +287,45 @@ describe("surgeon queries", () => {
     expect(inspection?.related.supersedesSample.map((entry) => entry.id)).toEqual(["superseded-2", "superseded-1"]);
   });
 
+  it("hydrates claim-key lifecycle fields for claim-key-quality working sets", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "lifecycle-entry",
+      subject: "Home city",
+      claim_key: "jim/home_city",
+      claim_key_raw: "Jim / Home City",
+      claim_key_status: "trusted",
+      claim_key_source: "manual",
+      claim_key_confidence: 1,
+      claim_key_rationale: "manual claim key supplied by caller",
+      claim_support_source_kind: "tool_call",
+      claim_support_locator: "sessions/demo.jsonl#5",
+      claim_support_observed_at: "2026-03-29T09:00:00.000Z",
+      claim_support_mode: "explicit",
+    });
+
+    const entries = await listClaimKeyQualityEntries(client, {
+      entryIds: ["lifecycle-entry"],
+      includeInactive: true,
+    });
+
+    expect(entries).toEqual([
+      expect.objectContaining({
+        id: "lifecycle-entry",
+        claim_key: "jim/home_city",
+        claim_key_raw: "Jim / Home City",
+        claim_key_status: "trusted",
+        claim_key_source: "manual",
+        claim_key_confidence: 1,
+        claim_key_rationale: "manual claim key supplied by caller",
+        claim_support_source_kind: "tool_call",
+        claim_support_locator: "sessions/demo.jsonl#5",
+        claim_support_observed_at: "2026-03-29T09:00:00.000Z",
+        claim_support_mode: "explicit",
+      }),
+    ]);
+  });
+
   it("collects surgeon health stats and counts actionable retirement candidates consistently", async () => {
     const client = await createTestClient(clients);
 
@@ -503,6 +543,15 @@ async function insertEntry(client: Client, overrides: Partial<Entry> & Pick<Entr
         valid_from,
         valid_to,
         claim_key,
+        claim_key_raw,
+        claim_key_status,
+        claim_key_source,
+        claim_key_confidence,
+        claim_key_rationale,
+        claim_support_source_kind,
+        claim_support_locator,
+        claim_support_observed_at,
+        claim_support_mode,
         supersession_kind,
         supersession_reason,
         cluster_id,
@@ -512,7 +561,7 @@ async function insertEntry(client: Client, overrides: Partial<Entry> & Pick<Entr
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     args: [
       entry.id,
@@ -535,6 +584,15 @@ async function insertEntry(client: Client, overrides: Partial<Entry> & Pick<Entr
       entry.valid_from ?? null,
       entry.valid_to ?? null,
       entry.claim_key ?? null,
+      entry.claim_key_raw ?? null,
+      entry.claim_key_status ?? null,
+      entry.claim_key_source ?? null,
+      entry.claim_key_confidence ?? null,
+      entry.claim_key_rationale ?? null,
+      entry.claim_support_source_kind ?? null,
+      entry.claim_support_locator ?? null,
+      entry.claim_support_observed_at ?? null,
+      entry.claim_support_mode ?? null,
       entry.supersession_kind ?? null,
       entry.supersession_reason ?? null,
       entry.cluster_id ?? null,
@@ -568,6 +626,15 @@ function buildEntry(overrides: Partial<Entry> & Pick<Entry, "id" | "subject">): 
     valid_from: overrides.valid_from,
     valid_to: overrides.valid_to,
     claim_key: overrides.claim_key,
+    claim_key_raw: overrides.claim_key_raw,
+    claim_key_status: overrides.claim_key_status,
+    claim_key_source: overrides.claim_key_source,
+    claim_key_confidence: overrides.claim_key_confidence,
+    claim_key_rationale: overrides.claim_key_rationale,
+    claim_support_source_kind: overrides.claim_support_source_kind,
+    claim_support_locator: overrides.claim_support_locator,
+    claim_support_observed_at: overrides.claim_support_observed_at,
+    claim_support_mode: overrides.claim_support_mode,
     supersession_kind: overrides.supersession_kind,
     supersession_reason: overrides.supersession_reason,
     cluster_id: overrides.cluster_id,

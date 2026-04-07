@@ -57,12 +57,29 @@ describe("claim_key_quality surgeon pass", () => {
     });
 
     const row = await client.execute({
-      sql: "SELECT claim_key FROM entries WHERE id = ?",
+      sql: `
+        SELECT
+          claim_key,
+          claim_key_raw,
+          claim_key_status,
+          claim_key_source,
+          claim_key_confidence,
+          claim_key_rationale
+        FROM entries
+        WHERE id = ?
+      `,
       args: ["normalize-1"],
     });
 
     expect(result.status).toBe("completed");
-    expect(row.rows[0]?.claim_key).toBe("jim/home_city");
+    expect(row.rows[0]).toMatchObject({
+      claim_key: "jim/home_city",
+      claim_key_raw: "Jim / Home City",
+      claim_key_status: "trusted",
+      claim_key_source: "surgeon_compaction",
+      claim_key_confidence: 0.99,
+      claim_key_rationale: 'Canonical normalization preserves the slot while rewriting " Jim / Home City " to "jim/home_city".',
+    });
     expect(await getSurgeonRunActions(client, result.runId)).toEqual([
       expect.objectContaining({
         actionType: "update_entry",
@@ -71,6 +88,9 @@ describe("claim_key_quality surgeon pass", () => {
           issue_kind: "noncanonical_claim_key",
           old_claim_key: " Jim / Home City ",
           new_claim_key: "jim/home_city",
+          claim_key_raw: "Jim / Home City",
+          claim_key_status: "trusted",
+          claim_key_source: "surgeon_compaction",
           proposal_source: "normalize",
           auto_applied: true,
         }),
@@ -145,14 +165,18 @@ describe("claim_key_quality surgeon pass", () => {
     });
 
     const row = await client.execute({
-      sql: "SELECT claim_key FROM entries WHERE id = ?",
+      sql: "SELECT claim_key, claim_key_status, claim_key_source FROM entries WHERE id = ?",
       args: ["trusted-group-missing"],
     });
     const actions = await getSurgeonRunActions(client, result.runId);
     const run = await getLastSurgeonRun(client);
 
     expect(result.status).toBe("completed");
-    expect(row.rows[0]?.claim_key).toBe("mac_mini/manual_update_policy");
+    expect(row.rows[0]).toMatchObject({
+      claim_key: "mac_mini/manual_update_policy",
+      claim_key_status: "trusted",
+      claim_key_source: "surgeon_family_reuse",
+    });
     expect(actions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -160,6 +184,8 @@ describe("claim_key_quality surgeon pass", () => {
           details: expect.objectContaining({
             issue_kind: "missing_claim_key",
             new_claim_key: "mac_mini/manual_update_policy",
+            claim_key_status: "trusted",
+            claim_key_source: "surgeon_family_reuse",
             proposal_source: "trusted_group_reuse",
           }),
         }),
@@ -183,13 +209,18 @@ describe("claim_key_quality surgeon pass", () => {
     });
 
     const row = await client.execute({
-      sql: "SELECT claim_key FROM entries WHERE id = ?",
+      sql: "SELECT claim_key, claim_key_status, claim_key_source, claim_key_rationale FROM entries WHERE id = ?",
       args: ["deterministic-backfill"],
     });
     const actions = await getSurgeonRunActions(client, result.runId);
 
     expect(result.status).toBe("completed");
-    expect(row.rows[0]?.claim_key).toBe("jim/timezone");
+    expect(row.rows[0]).toMatchObject({
+      claim_key: "jim/timezone",
+      claim_key_status: "tentative",
+      claim_key_source: "deterministic_repair",
+    });
+    expect(String(row.rows[0]?.claim_key_rationale)).toMatch(/deterministic/i);
     expect(actions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -197,6 +228,8 @@ describe("claim_key_quality surgeon pass", () => {
           details: expect.objectContaining({
             issue_kind: "missing_claim_key",
             new_claim_key: "jim/timezone",
+            claim_key_status: "tentative",
+            claim_key_source: "deterministic_repair",
             proposal_source: "deterministic_repair",
             auto_applied: true,
           }),
@@ -226,13 +259,18 @@ describe("claim_key_quality surgeon pass", () => {
     });
 
     const row = await client.execute({
-      sql: "SELECT claim_key FROM entries WHERE id = ?",
+      sql: "SELECT claim_key, claim_key_raw, claim_key_status, claim_key_source FROM entries WHERE id = ?",
       args: ["metadata-backed"],
     });
     const actions = await getSurgeonRunActions(client, result.runId);
 
     expect(result.status).toBe("completed");
-    expect(row.rows[0]?.claim_key).toBe("agenr/status");
+    expect(row.rows[0]).toMatchObject({
+      claim_key: "agenr/status",
+      claim_key_raw: "project/status",
+      claim_key_status: "trusted",
+      claim_key_source: "surgeon_metadata_rewrite",
+    });
     expect(actions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -240,6 +278,9 @@ describe("claim_key_quality surgeon pass", () => {
           details: expect.objectContaining({
             issue_kind: "missing_claim_key",
             new_claim_key: "agenr/status",
+            claim_key_raw: "project/status",
+            claim_key_status: "trusted",
+            claim_key_source: "surgeon_metadata_rewrite",
             proposal_source: "metadata_backfill_rewrite",
             auto_applied: true,
           }),
@@ -284,6 +325,23 @@ describe("claim_key_quality surgeon pass", () => {
           entryIds: ["metadata-proposal"],
           proposedClaimKeys: ["agenr/status"],
           source: "metadata_backfill_rewrite",
+        }),
+      ]),
+    );
+    expect(proposals[0]?.rationale).toContain("The entry stays unchanged until review.");
+    expect(proposals[0]?.rationale).toContain('claim_key_status "trusted"');
+    expect(proposals[0]?.rationale).toContain('claim_key_source "surgeon_metadata_rewrite"');
+    expect(proposals[0]?.rationale).toContain('claim_key_raw "project/status"');
+    expect((await getSurgeonRunActions(client, result.runId))).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entryIds: ["metadata-proposal"],
+          details: expect.objectContaining({
+            proposal_deferred_until_review: true,
+            proposal_claim_key_status: "trusted",
+            proposal_claim_key_source: "surgeon_metadata_rewrite",
+            proposal_claim_key_raw: "project/status",
+          }),
         }),
       ]),
     );

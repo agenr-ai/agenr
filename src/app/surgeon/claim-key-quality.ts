@@ -365,6 +365,19 @@ interface EntityFamilyConvergenceAudit {
   }>;
 }
 
+interface AppliedClaimKeyLifecycleMetadata {
+  rawClaimKey?: string;
+  status: NonNullable<Entry["claim_key_status"]>;
+  source: NonNullable<Entry["claim_key_source"]>;
+}
+
+interface ProposalClaimKeyLifecycleMetadata {
+  deferredUntilReview: true;
+  proposedStatus: Entry["claim_key_status"];
+  proposedSource?: Entry["claim_key_source"];
+  proposedRawClaimKey?: string;
+}
+
 /**
  * Runs the first-class claim-key-quality surgeon pass.
  *
@@ -544,6 +557,10 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
           break;
         }
 
+        const proposalLifecycle = buildProposalClaimKeyLifecycle({
+          proposedClaimKeys: group.proposedClaimKey ? [group.proposedClaimKey] : [],
+          source: group.proposedClaimKey ? "mixed_group_consensus" : "mixed_group",
+        });
         const proposal = createProposal({
           runId: options.runId,
           groupId: `claim-key-mixed:${group.groupKey}`,
@@ -552,13 +569,15 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
           entryIds: group.entries.map((entry) => entry.id),
           currentClaimKeys: normalizeStringArray(group.entries.flatMap((entry) => (entry.claim_key ? [entry.claim_key] : []))),
           proposedClaimKeys: group.proposedClaimKey ? [group.proposedClaimKey] : [],
-          rationale: buildMixedGroupRationale(group),
+          rationale: buildProposalLifecycleRationale(buildMixedGroupRationale(group), proposalLifecycle),
           confidence: group.proposedClaimKey ? 0.8 : 0.55,
           source: group.proposedClaimKey ? "mixed_group_consensus" : "mixed_group",
           eligibleForApply: group.proposedClaimKey !== null,
           createdAt: options.now().toISOString(),
         });
-        await persistProposal(proposal);
+        await persistProposal(proposal, {
+          proposalLifecycle,
+        });
         counts.proposalsEmitted += 1;
         progressTracker.advanceStage();
       }
@@ -656,12 +675,14 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
     }
 
     if (inspection.kind === "malformed") {
-      const proposal = await buildMalformedClaimKeyProposal(entry, inspection, {
+      const { proposal, proposalLifecycle } = await buildMalformedClaimKeyProposal(entry, inspection, {
         getSuggestion: async () => loadSuggestion(entry),
         now: options.now,
         runId: options.runId,
       });
-      await persistProposal(proposal);
+      await persistProposal(proposal, {
+        proposalLifecycle,
+      });
       counts.proposalsEmitted += 1;
       counts.skippedAmbiguous += 1;
       return;
@@ -672,6 +693,11 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
     if (collision.length > 0) {
       counts.skippedCollision += 1;
       recordCollision(circuitBreakerState);
+      const proposalLifecycle = buildProposalClaimKeyLifecycle({
+        proposedClaimKeys: [targetClaimKey],
+        source: "normalize",
+        rawClaimKey: entry.claim_key ?? null,
+      });
       const proposal = createProposal({
         runId: options.runId,
         groupId: `claim-key-normalize:${entry.id}`,
@@ -680,15 +706,19 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
         entryIds: [entry.id],
         currentClaimKeys: [entry.claim_key ?? ""],
         proposedClaimKeys: [targetClaimKey],
-        rationale:
+        rationale: buildProposalLifecycleRationale(
           `Canonical normalization would change "${entry.claim_key}" to "${targetClaimKey}", ` +
-          `but that canonical key is already occupied by ${collision.length} other matched entr${collision.length === 1 ? "y" : "ies"}.`,
+            `but that canonical key is already occupied by ${collision.length} other matched entr${collision.length === 1 ? "y" : "ies"}.`,
+          proposalLifecycle,
+        ),
         confidence: 0.99,
         source: "normalize",
         eligibleForApply: true,
         createdAt: options.now().toISOString(),
       });
-      await persistProposal(proposal);
+      await persistProposal(proposal, {
+        proposalLifecycle,
+      });
       counts.proposalsEmitted += 1;
       circuitBreaker = circuitBreaker ?? evaluateCircuitBreaker(circuitBreakerState);
       if (circuitBreaker) {
@@ -733,6 +763,10 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
     if (trustedGroupReuse) {
       const activeSiblings = findActiveClaimKeyOccupants(projectedEntries, trustedGroupReuse.claimKey, entry.id);
       if (activeSiblings.some((sibling) => sibling.type !== entry.type)) {
+        const proposalLifecycle = buildProposalClaimKeyLifecycle({
+          proposedClaimKeys: [trustedGroupReuse.claimKey],
+          source: "trusted_group_reuse",
+        });
         const proposal = createProposal({
           runId: options.runId,
           groupId: `claim-key-backfill:${entry.id}`,
@@ -741,16 +775,20 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
           entryIds: [entry.id, ...activeSiblings.map((sibling) => sibling.id)],
           currentClaimKeys: [],
           proposedClaimKeys: [trustedGroupReuse.claimKey],
-          rationale:
+          rationale: buildProposalLifecycleRationale(
             `A matched subject/type group already uses trusted canonical key "${trustedGroupReuse.claimKey}" ` +
-            `across ${trustedGroupReuse.supportingEntryIds.length} supporting entr${trustedGroupReuse.supportingEntryIds.length === 1 ? "y" : "ies"}, ` +
-            "but that same key is already occupied by a different active entry type in the matched working set.",
+              `across ${trustedGroupReuse.supportingEntryIds.length} supporting entr${trustedGroupReuse.supportingEntryIds.length === 1 ? "y" : "ies"}, ` +
+              "but that same key is already occupied by a different active entry type in the matched working set.",
+            proposalLifecycle,
+          ),
           confidence: 0.99,
           source: "trusted_group_reuse",
           eligibleForApply: true,
           createdAt: options.now().toISOString(),
         });
-        await persistProposal(proposal);
+        await persistProposal(proposal, {
+          proposalLifecycle,
+        });
         counts.proposalsEmitted += 1;
         counts.skippedAmbiguous += 1;
         missingDecisionStats.proposedTrustedGroupReuse += 1;
@@ -762,13 +800,13 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
         actualEntriesById,
         entriesById,
         issueKind: "missing_claim_key",
-        oldClaimKey: null,
-        source: "trusted_group_reuse",
-        confidence: 0.99,
-        rationale:
-          `Matched subject/type entries already use trusted canonical key "${trustedGroupReuse.claimKey}", ` +
-          `so the missing key can safely reuse that established family from ${trustedGroupReuse.supportingEntryIds.length} supporting entr${trustedGroupReuse.supportingEntryIds.length === 1 ? "y" : "ies"}.`,
-      });
+      oldClaimKey: null,
+      source: "trusted_group_reuse",
+      confidence: 0.99,
+      rationale:
+        `Matched subject/type entries already use trusted canonical key "${trustedGroupReuse.claimKey}", ` +
+        `so the missing key can safely reuse that established family from ${trustedGroupReuse.supportingEntryIds.length} supporting entr${trustedGroupReuse.supportingEntryIds.length === 1 ? "y" : "ies"}.`,
+    });
       if (updateResult.applied) {
         counts.appliedBackfills += 1;
       }
@@ -827,6 +865,13 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
     });
     const activeSiblings = findActiveClaimKeyOccupants(projectedEntries, targetClaimKey, entry.id);
     if (activeSiblings.some((sibling) => sibling.type !== entry.type)) {
+      const proposalLifecycle = buildProposalClaimKeyLifecycle({
+        proposedClaimKeys: [targetClaimKey],
+        source: targetSource,
+        rawClaimKey: originalClaimKey,
+        compactness,
+        support,
+      });
       const proposal = createProposal({
         runId: options.runId,
         groupId: `claim-key-backfill:${entry.id}`,
@@ -835,7 +880,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
         entryIds: [entry.id, ...activeSiblings.map((sibling) => sibling.id)],
         currentClaimKeys: [],
         proposedClaimKeys: [targetClaimKey],
-        rationale:
+        rationale: buildProposalLifecycleRationale(
           buildMissingBackfillConflictRationale({
             originalClaimKey,
             targetClaimKey,
@@ -843,6 +888,8 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
             metadataBackfillClaimKey,
             compactness,
           }) + " The same slot key is already used by a different entry type in the matched working set.",
+          proposalLifecycle,
+        ),
         confidence: suggestion.confidence,
         source: targetSource,
         eligibleForApply: true,
@@ -851,6 +898,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
       await persistProposal(proposal, {
         compactness,
         promotion: promotionPolicy,
+        proposalLifecycle,
         support,
         supportedCandidate: support.supportedProposal,
       });
@@ -876,6 +924,13 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
         autoApplyBlocker,
       });
       if (suggestion.confidence >= proposalThreshold) {
+        const proposalLifecycle = buildProposalClaimKeyLifecycle({
+          proposedClaimKeys: [targetClaimKey],
+          source: targetSource,
+          rawClaimKey: originalClaimKey,
+          compactness,
+          support,
+        });
         const proposal = createProposal({
           runId: options.runId,
           groupId: `claim-key-backfill:${entry.id}`,
@@ -884,17 +939,20 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
           entryIds: [entry.id],
           currentClaimKeys: [],
           proposedClaimKeys: [targetClaimKey],
-          rationale: buildMissingBackfillProposalRationale({
-            originalClaimKey,
-            targetClaimKey,
-            confidence: suggestion.confidence,
-            autoApplyThreshold,
-            promotionLane: promotionPolicy.lane,
-            trusted: targetIsTrusted,
-            metadataBackfillClaimKey,
-            compactness,
-            support,
-          }),
+          rationale: buildProposalLifecycleRationale(
+            buildMissingBackfillProposalRationale({
+              originalClaimKey,
+              targetClaimKey,
+              confidence: suggestion.confidence,
+              autoApplyThreshold,
+              promotionLane: promotionPolicy.lane,
+              trusted: targetIsTrusted,
+              metadataBackfillClaimKey,
+              compactness,
+              support,
+            }),
+            proposalLifecycle,
+          ),
           confidence: suggestion.confidence,
           source: targetSource,
           eligibleForApply: true,
@@ -904,6 +962,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
           autoApplyBlocker,
           compactness,
           promotion: promotionPolicy,
+          proposalLifecycle,
           support,
           supportedCandidate: support.supportedProposal,
           shadow: shadowAudit ?? undefined,
@@ -945,6 +1004,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
       compactness,
       promotion: promotionPolicy,
       support,
+      rawClaimKey: originalClaimKey,
       rationale: buildMissingBackfillApplyRationale({
         originalClaimKey,
         targetClaimKey,
@@ -1023,6 +1083,11 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
       metadataRepair,
       suggestionRecord.suggestion?.claimKey && suggestionRecord.suggestion.claimKey !== entry.claim_key ? suggestionRecord.suggestion.claimKey : null,
     ].filter((value): value is string => value !== null);
+    const proposalLifecycle = buildProposalClaimKeyLifecycle({
+      proposedClaimKeys,
+      source: metadataRepair ? "metadata_rewrite" : (suggestionRecord.suggestion?.path ?? "heuristic"),
+      rawClaimKey: entry.claim_key_raw ?? entry.claim_key ?? null,
+    });
     const proposal = createProposal({
       runId: options.runId,
       groupId: `claim-key-suspect:${entry.id}`,
@@ -1031,13 +1096,18 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
       entryIds: [entry.id],
       currentClaimKeys: entry.claim_key ? [entry.claim_key] : [],
       proposedClaimKeys,
-      rationale: buildSuspectProposalRationale(entry, inspection.inspection, metadataRepair, suggestionRecord.suggestion),
+      rationale: buildProposalLifecycleRationale(
+        buildSuspectProposalRationale(entry, inspection.inspection, metadataRepair, suggestionRecord.suggestion),
+        proposalLifecycle,
+      ),
       confidence: metadataRepair ? 0.98 : (suggestionRecord.suggestion?.confidence ?? 0.5),
       source: metadataRepair ? "metadata_rewrite" : (suggestionRecord.suggestion?.path ?? "heuristic"),
       eligibleForApply: proposedClaimKeys.length > 0,
       createdAt: options.now().toISOString(),
     });
-    await persistProposal(proposal);
+    await persistProposal(proposal, {
+      proposalLifecycle,
+    });
     counts.proposalsEmitted += 1;
     counts.skippedAmbiguous += 1;
   }
@@ -1062,6 +1132,11 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
       : [];
 
     if (!canonicalEntityPrefix || !candidate.autoConverge || entriesToRewrite.length === 0) {
+      const proposedClaimKeys = canonicalEntityPrefix ? mapEntityFamilyClaimKeys(candidate.claimKeys, candidate.entityPrefixes, canonicalEntityPrefix) : [];
+      const proposalLifecycle = buildProposalClaimKeyLifecycle({
+        proposedClaimKeys,
+        source: canonicalEntityPrefix ? "entity_family_canonical_candidate" : "entity_family_ambiguous",
+      });
       const proposal = createProposal({
         runId: options.runId,
         groupId: `claim-key-entity-family:${candidate.entityPrefixes.join(",")}`,
@@ -1069,8 +1144,8 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
         scope: "cluster",
         entryIds: candidate.entryIds,
         currentClaimKeys: candidate.claimKeys,
-        proposedClaimKeys: canonicalEntityPrefix ? mapEntityFamilyClaimKeys(candidate.claimKeys, candidate.entityPrefixes, canonicalEntityPrefix) : [],
-        rationale: buildEntityFamilyConvergenceRationale(candidate),
+        proposedClaimKeys,
+        rationale: buildProposalLifecycleRationale(buildEntityFamilyConvergenceRationale(candidate), proposalLifecycle),
         confidence: candidate.confidence,
         source: canonicalEntityPrefix ? "entity_family_canonical_candidate" : "entity_family_ambiguous",
         eligibleForApply: canonicalEntityPrefix !== null,
@@ -1078,6 +1153,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
       });
       await persistProposal(proposal, {
         entityFamilyAudit: audit,
+        proposalLifecycle,
       });
       counts.proposalsEmitted += 1;
       counts.skippedAmbiguous += 1;
@@ -1099,6 +1175,11 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
       const targetClaimKey = `${canonicalEntityPrefix}/${inspection.normalized.attribute}`;
       const activeSiblings = findActiveClaimKeyOccupants(projectedEntries, targetClaimKey, entry.id);
       if (activeSiblings.some((sibling) => sibling.type !== entry.type)) {
+        const proposedClaimKeys = mapEntityFamilyClaimKeys(candidate.claimKeys, candidate.entityPrefixes, canonicalEntityPrefix);
+        const proposalLifecycle = buildProposalClaimKeyLifecycle({
+          proposedClaimKeys,
+          source: "entity_family_collision",
+        });
         const proposal = createProposal({
           runId: options.runId,
           groupId: `claim-key-entity-family:${candidate.entityPrefixes.join(",")}`,
@@ -1106,10 +1187,12 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
           scope: "cluster",
           entryIds: normalizeStringArray([...candidate.entryIds, ...activeSiblings.map((sibling) => sibling.id)]),
           currentClaimKeys: candidate.claimKeys,
-          proposedClaimKeys: mapEntityFamilyClaimKeys(candidate.claimKeys, candidate.entityPrefixes, canonicalEntityPrefix),
-          rationale:
+          proposedClaimKeys,
+          rationale: buildProposalLifecycleRationale(
             `${buildEntityFamilyConvergenceRationale(candidate)} ` +
-            `Auto-convergence would collide with an active entry of a different type at "${targetClaimKey}".`,
+              `Auto-convergence would collide with an active entry of a different type at "${targetClaimKey}".`,
+            proposalLifecycle,
+          ),
           confidence: candidate.confidence,
           source: "entity_family_collision",
           eligibleForApply: true,
@@ -1118,6 +1201,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
         await persistProposal(proposal, {
           entityFamilyAudit: audit,
           autoApplyBlocker: "cross_type_collision",
+          proposalLifecycle,
         });
         counts.proposalsEmitted += 1;
         counts.skippedAmbiguous += 1;
@@ -1325,6 +1409,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
       promotion?: MissingBackfillPromotionPolicy;
       shadow?: MissingBackfillShadowAudit;
       rationale: string;
+      rawClaimKey?: string | null;
       entityFamilyAudit?: EntityFamilyConvergenceAudit;
     },
   ): Promise<{ projected: boolean; applied: boolean }> {
@@ -1334,18 +1419,50 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
       return { projected: false, applied: false };
     }
 
+    const previousProjected = snapshotClaimKeyLifecycle(projected);
+    const lifecycle = buildAppliedClaimKeyLifecycle({
+      targetClaimKey: claimKey,
+      priorClaimKey: input.oldClaimKey,
+      priorClaimKeyRaw: projected.claim_key_raw ?? actual.claim_key_raw,
+      rawClaimKey: input.rawClaimKey,
+      source: input.source,
+      support: input.support,
+      compactness: input.compactness,
+    });
+
     projected.claim_key = claimKey;
+    projected.claim_key_raw = lifecycle.rawClaimKey;
+    projected.claim_key_status = lifecycle.status;
+    projected.claim_key_source = lifecycle.source;
+    projected.claim_key_confidence = input.confidence;
+    projected.claim_key_rationale = input.rationale;
     if (!options.apply) {
       return { projected: true, applied: false };
     }
 
-    const updated = await deps.port.updateEntry(entryId, { claim_key: claimKey }, { includeInactive: selection.includeInactive });
+    const updated = await deps.port.updateEntry(
+      entryId,
+      {
+        claim_key: claimKey,
+        claim_key_raw: lifecycle.rawClaimKey,
+        claim_key_status: lifecycle.status,
+        claim_key_source: lifecycle.source,
+        claim_key_confidence: input.confidence,
+        claim_key_rationale: input.rationale,
+      },
+      { includeInactive: selection.includeInactive },
+    );
     if (!updated) {
-      projected.claim_key = input.oldClaimKey ?? undefined;
+      restoreClaimKeyLifecycle(projected, previousProjected);
       return { projected: false, applied: false };
     }
 
     actual.claim_key = claimKey;
+    actual.claim_key_raw = lifecycle.rawClaimKey;
+    actual.claim_key_status = lifecycle.status;
+    actual.claim_key_source = lifecycle.source;
+    actual.claim_key_confidence = input.confidence;
+    actual.claim_key_rationale = input.rationale;
     await deps.port.logRunAction({
       id: randomUUID(),
       runId: options.runId,
@@ -1357,6 +1474,11 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
         issue_kind: input.issueKind,
         old_claim_key: input.oldClaimKey,
         new_claim_key: claimKey,
+        claim_key_raw: lifecycle.rawClaimKey,
+        claim_key_status: lifecycle.status,
+        claim_key_source: lifecycle.source,
+        claim_key_confidence: input.confidence,
+        claim_key_rationale: input.rationale,
         proposal_source: input.source,
         confidence: input.confidence,
         auto_apply_threshold: input.promotion?.autoApplyThreshold,
@@ -1392,6 +1514,15 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
     });
     actionsTaken += 1;
     return { projected: true, applied: true };
+
+    function restoreClaimKeyLifecycle(entry: Entry, snapshot: ReturnType<typeof snapshotClaimKeyLifecycle>): void {
+      entry.claim_key = snapshot.claimKey;
+      entry.claim_key_raw = snapshot.claimKeyRaw;
+      entry.claim_key_status = snapshot.claimKeyStatus;
+      entry.claim_key_source = snapshot.claimKeySource;
+      entry.claim_key_confidence = snapshot.claimKeyConfidence;
+      entry.claim_key_rationale = snapshot.claimKeyRationale;
+    }
   }
 
   async function persistProposal(
@@ -1404,6 +1535,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
       supportedCandidate?: boolean;
       shadow?: MissingBackfillShadowAudit;
       entityFamilyAudit?: EntityFamilyConvergenceAudit;
+      proposalLifecycle?: ProposalClaimKeyLifecycleMetadata;
     },
   ): Promise<void> {
     await deps.port.logRunProposal(proposal);
@@ -1427,6 +1559,10 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
         promotion_lane: audit?.promotion?.lane,
         eligible_for_apply: proposal.eligibleForApply,
         supported_candidate: audit?.supportedCandidate === true,
+        proposal_deferred_until_review: audit?.proposalLifecycle?.deferredUntilReview === true,
+        proposal_claim_key_status: audit?.proposalLifecycle?.proposedStatus,
+        proposal_claim_key_source: audit?.proposalLifecycle?.proposedSource,
+        proposal_claim_key_raw: audit?.proposalLifecycle?.proposedRawClaimKey,
         ...buildMissingBackfillSupportAuditDetails(audit?.support),
         ...buildMissingBackfillShadowAuditDetails(audit?.shadow),
         ...(audit?.compactness?.compactedFrom
@@ -2447,11 +2583,15 @@ async function buildMalformedClaimKeyProposal(
     now(): Date;
     runId: string;
   },
-): Promise<SurgeonRunProposal> {
+): Promise<{ proposal: SurgeonRunProposal; proposalLifecycle: ProposalClaimKeyLifecycleMetadata }> {
   const suggestionRecord = await deps.getSuggestion();
   const proposedClaimKeys = suggestionRecord.suggestion?.claimKey ? [suggestionRecord.suggestion.claimKey] : [];
-
-  return createProposal({
+  const proposalLifecycle = buildProposalClaimKeyLifecycle({
+    proposedClaimKeys,
+    source: suggestionRecord.suggestion?.path ?? "normalize",
+    rawClaimKey: entry.claim_key ?? null,
+  });
+  const proposal = createProposal({
     runId: deps.runId,
     groupId: `claim-key-malformed:${entry.id}`,
     issueKind: "malformed_claim_key",
@@ -2459,16 +2599,20 @@ async function buildMalformedClaimKeyProposal(
     entryIds: [entry.id],
     currentClaimKeys: entry.claim_key ? [entry.claim_key] : [],
     proposedClaimKeys,
-    rationale:
+    rationale: buildProposalLifecycleRationale(
       `Stored claim key "${entry.claim_key}" is malformed because ${describeClaimKeyNormalizationFailure(inspection.inspection.normalizationFailure ?? "missing_separator")}.` +
-      (suggestionRecord.suggestion?.claimKey
-        ? ` Claim extraction preview suggested "${suggestionRecord.suggestion.claimKey}" at confidence ${suggestionRecord.suggestion.confidence.toFixed(2)}.`
-        : ""),
+        (suggestionRecord.suggestion?.claimKey
+          ? ` Claim extraction preview suggested "${suggestionRecord.suggestion.claimKey}" at confidence ${suggestionRecord.suggestion.confidence.toFixed(2)}.`
+          : ""),
+      proposalLifecycle,
+    ),
     confidence: suggestionRecord.suggestion?.confidence ?? 0.5,
     source: suggestionRecord.suggestion?.path ?? "normalize",
     eligibleForApply: proposedClaimKeys.length > 0,
     createdAt: deps.now().toISOString(),
   });
+
+  return { proposal, proposalLifecycle };
 }
 
 function resolveMetadataBackfillClaimKey(entry: Entry, claimKey: string): string | null {
@@ -3078,6 +3222,175 @@ function buildMissingCompactionObservation(stats: MissingBackfillDecisionStats):
     `${stats.autoAppliedCompactedCandidate === 1 ? "" : "s"} before auto-apply and ${stats.proposedCompactedCandidate} ` +
     `before unresolved proposal logging.`
   );
+}
+
+function snapshotClaimKeyLifecycle(entry: Entry): {
+  claimKey: Entry["claim_key"];
+  claimKeyRaw: Entry["claim_key_raw"];
+  claimKeyStatus: Entry["claim_key_status"];
+  claimKeySource: Entry["claim_key_source"];
+  claimKeyConfidence: Entry["claim_key_confidence"];
+  claimKeyRationale: Entry["claim_key_rationale"];
+} {
+  return {
+    claimKey: entry.claim_key,
+    claimKeyRaw: entry.claim_key_raw,
+    claimKeyStatus: entry.claim_key_status,
+    claimKeySource: entry.claim_key_source,
+    claimKeyConfidence: entry.claim_key_confidence,
+    claimKeyRationale: entry.claim_key_rationale,
+  };
+}
+
+function buildAppliedClaimKeyLifecycle(input: {
+  targetClaimKey: string;
+  priorClaimKey: string | null;
+  priorClaimKeyRaw?: string;
+  rawClaimKey?: string | null;
+  source: string;
+  support?: MissingBackfillSupportEvaluation;
+  compactness?: ClaimKeyCompactnessEvaluation;
+}): AppliedClaimKeyLifecycleMetadata {
+  const source = resolveLifecycleClaimKeySource({
+    proposedClaimKeys: [input.targetClaimKey],
+    source: input.source,
+    compactness: input.compactness,
+  });
+
+  return {
+    rawClaimKey: resolveLifecycleRawClaimKey({
+      targetClaimKey: input.targetClaimKey,
+      priorClaimKeyRaw: input.priorClaimKeyRaw,
+      rawClaimKey: input.rawClaimKey,
+      priorClaimKey: input.priorClaimKey,
+    }),
+    status: resolveLifecycleClaimKeyStatus({
+      proposedClaimKeys: [input.targetClaimKey],
+      source: input.source,
+      support: input.support,
+      compactness: input.compactness,
+    }),
+    source: source ?? "surgeon_compaction",
+  };
+}
+
+function buildProposalClaimKeyLifecycle(input: {
+  proposedClaimKeys: string[];
+  source: string;
+  rawClaimKey?: string | null;
+  support?: MissingBackfillSupportEvaluation;
+  compactness?: ClaimKeyCompactnessEvaluation;
+}): ProposalClaimKeyLifecycleMetadata {
+  const proposedClaimKeys = normalizeStringArray(input.proposedClaimKeys);
+  const targetClaimKey = proposedClaimKeys[0];
+  if (!targetClaimKey) {
+    return {
+      deferredUntilReview: true,
+      proposedStatus: "unresolved",
+    };
+  }
+
+  return {
+    deferredUntilReview: true,
+    proposedStatus: resolveLifecycleClaimKeyStatus({
+      proposedClaimKeys,
+      source: input.source,
+      support: input.support,
+      compactness: input.compactness,
+    }),
+    proposedSource: resolveLifecycleClaimKeySource({
+      proposedClaimKeys,
+      source: input.source,
+      compactness: input.compactness,
+    }),
+    proposedRawClaimKey: resolveLifecycleRawClaimKey({
+      targetClaimKey,
+      rawClaimKey: input.rawClaimKey,
+    }),
+  };
+}
+
+function buildProposalLifecycleRationale(baseRationale: string, lifecycle: ProposalClaimKeyLifecycleMetadata): string {
+  const normalizedBase = baseRationale.trim();
+  if (lifecycle.proposedStatus === "unresolved" || !lifecycle.proposedSource) {
+    return `${normalizedBase} The entry stays unchanged until review because no safe lifecycle write is ready yet.`;
+  }
+
+  const rawText = lifecycle.proposedRawClaimKey ? ` and claim_key_raw "${lifecycle.proposedRawClaimKey}"` : "";
+  return (
+    `${normalizedBase} The entry stays unchanged until review. ` +
+    `If approved, the replacement would persist claim_key_status "${lifecycle.proposedStatus}" ` +
+    `with claim_key_source "${lifecycle.proposedSource}"${rawText}.`
+  );
+}
+
+function resolveLifecycleClaimKeySource(input: {
+  proposedClaimKeys: string[];
+  source: string;
+  compactness?: ClaimKeyCompactnessEvaluation;
+}): Entry["claim_key_source"] {
+  if (normalizeStringArray(input.proposedClaimKeys).length === 0) {
+    return undefined;
+  }
+
+  if (input.source === "metadata_backfill_rewrite" || input.source === "metadata_rewrite") {
+    return "surgeon_metadata_rewrite";
+  }
+
+  if (
+    input.source === "trusted_group_reuse" ||
+    input.source === "mixed_group_consensus" ||
+    input.source === "entity_family_auto_convergence" ||
+    input.source === "entity_family_canonical_candidate" ||
+    input.source === "entity_family_collision"
+  ) {
+    return "surgeon_family_reuse";
+  }
+
+  if (input.source === "normalize" || input.compactness?.compactedFrom) {
+    return "surgeon_compaction";
+  }
+
+  if (input.source === "model" || input.source === "json_retry" || input.source === "deterministic_repair") {
+    return input.source;
+  }
+
+  return undefined;
+}
+
+function resolveLifecycleClaimKeyStatus(input: {
+  proposedClaimKeys: string[];
+  source: string;
+  support?: MissingBackfillSupportEvaluation;
+  compactness?: ClaimKeyCompactnessEvaluation;
+}): NonNullable<Entry["claim_key_status"]> {
+  if (normalizeStringArray(input.proposedClaimKeys).length === 0) {
+    return "unresolved";
+  }
+
+  const lifecycleSource = resolveLifecycleClaimKeySource(input);
+  if (lifecycleSource === "deterministic_repair" && input.support?.autoApplyClass === null) {
+    return "tentative";
+  }
+
+  return "trusted";
+}
+
+function resolveLifecycleRawClaimKey(input: {
+  targetClaimKey: string;
+  priorClaimKeyRaw?: string;
+  rawClaimKey?: string | null;
+  priorClaimKey?: string | null;
+}): string | undefined {
+  const candidates = [input.priorClaimKeyRaw, input.rawClaimKey ?? undefined, input.priorClaimKey ?? undefined];
+  for (const candidate of candidates) {
+    const normalized = normalizeOptionalString(candidate ?? undefined);
+    if (normalized && normalized !== input.targetClaimKey) {
+      return normalized;
+    }
+  }
+
+  return undefined;
 }
 
 function createProposal(input: Omit<SurgeonRunProposal, "id">): SurgeonRunProposal {

@@ -180,7 +180,9 @@ describe("surgeon run log", () => {
       entryIds: ["entry-a", "entry-b"],
       currentClaimKeys: ["jim/home_city", "jim/city_of_residence"],
       proposedClaimKeys: ["jim/home_city"],
-      rationale: "One trusted canonical family already exists, but unification remains ambiguous.",
+      rationale:
+        "One trusted canonical family already exists, but unification remains ambiguous. " +
+        'The entry stays unchanged until review. If approved, the replacement would persist claim_key_status "trusted" with claim_key_source "surgeon_family_reuse".',
       confidence: 0.84,
       source: "mixed_group_consensus",
       eligibleForApply: true,
@@ -197,7 +199,9 @@ describe("surgeon run log", () => {
         entryIds: ["entry-a", "entry-b"],
         currentClaimKeys: ["jim/home_city", "jim/city_of_residence"],
         proposedClaimKeys: ["jim/home_city"],
-        rationale: "One trusted canonical family already exists, but unification remains ambiguous.",
+        rationale:
+          "One trusted canonical family already exists, but unification remains ambiguous. " +
+          'The entry stays unchanged until review. If approved, the replacement would persist claim_key_status "trusted" with claim_key_source "surgeon_family_reuse".',
         confidence: 0.84,
         source: "mixed_group_consensus",
         eligibleForApply: true,
