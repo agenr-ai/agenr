@@ -5,7 +5,7 @@
  * Adapters implement these interfaces to connect core to infrastructure.
  */
 
-import type { Episode, EpisodeSource, Entry } from "./types.js";
+import type { EntryUpdateInput, Episode, EpisodeSource, Entry } from "./types.js";
 import type { EpisodeInput, EpisodeUpsertResult, TemporalWindow } from "./episode/types.js";
 import type { EntryFilters, FtsCandidate, HistoricalPredecessorLookupParams, RecallCandidateEntry, VectorCandidate } from "./recall/types.js";
 
@@ -52,16 +52,7 @@ export interface DatabasePort {
   getClaimKeyExamples?(limit?: number): Promise<string[]>;
 
   /** Update entry fields (importance, expiry, and temporal metadata). */
-  updateEntry(
-    id: string,
-    fields: {
-      importance?: number;
-      expiry?: string;
-      claim_key?: string;
-      valid_from?: string;
-      valid_to?: string;
-    },
-  ): Promise<boolean>;
+  updateEntry(id: string, fields: EntryUpdateInput): Promise<boolean>;
 
   /** Check if a file has been ingested (by path + hash). */
   getIngestLogEntry(filePath: string): Promise<{ fileHash: string; ingestedAt: string } | null>;

@@ -5,8 +5,7 @@ import { createClient, type Client, type InArgs, type InStatement, type ResultSe
 
 import type { DatabasePort, EpisodeDatabasePort } from "../../core/ports.js";
 import type { EpisodeInput, TemporalWindow } from "../../core/episode/types.js";
-import type { Entry } from "../../core/types.js";
-import type { Episode, EpisodeSource } from "../../core/types.js";
+import type { Entry, EntryUpdateInput, Episode, EpisodeSource } from "../../core/types.js";
 import {
   episodeVectorSearch,
   getEpisodeBySourceId,
@@ -171,10 +170,7 @@ class LibsqlDatabase implements SqlDatabase {
   }
 
   /** Updates mutable entry fields such as importance, expiry, and temporal metadata. */
-  public async updateEntry(
-    id: string,
-    fields: { importance?: number; expiry?: string; claim_key?: string; valid_from?: string; valid_to?: string },
-  ): Promise<boolean> {
+  public async updateEntry(id: string, fields: EntryUpdateInput): Promise<boolean> {
     return updateEntry(this.executor, id, fields);
   }
 

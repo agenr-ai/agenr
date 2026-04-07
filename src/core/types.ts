@@ -18,7 +18,24 @@ const SUPERSESSION_KINDS = ["update", "correction", "duplicate", "merge", "refin
 /** Ordered list of supported recall durability levels. */
 const EXPIRY_LEVELS = ["core", "permanent", "temporary"] as const;
 
-export { ENTRY_TYPES, EXPIRY_LEVELS, SUPERSESSION_KINDS };
+/** Ordered list of supported claim-key lifecycle statuses. */
+const CLAIM_KEY_STATUSES = ["trusted", "tentative", "unresolved"] as const;
+
+/** Ordered list of supported claim-key provenance sources. */
+const CLAIM_KEY_SOURCES = [
+  "manual",
+  "model",
+  "json_retry",
+  "deterministic_repair",
+  "surgeon_metadata_rewrite",
+  "surgeon_family_reuse",
+  "surgeon_compaction",
+] as const;
+
+/** Ordered list of supported claim-support provenance modes. */
+const CLAIM_SUPPORT_MODES = ["explicit", "normalized", "inferred"] as const;
+
+export { CLAIM_KEY_SOURCES, CLAIM_KEY_STATUSES, CLAIM_SUPPORT_MODES, ENTRY_TYPES, EXPIRY_LEVELS, SUPERSESSION_KINDS };
 
 /**
  * Union of all supported recall durability levels.
@@ -29,6 +46,21 @@ export type Expiry = (typeof EXPIRY_LEVELS)[number];
  * Union of all supported explicit supersession relationships.
  */
 export type SupersessionKind = (typeof SUPERSESSION_KINDS)[number];
+
+/**
+ * Union of all supported claim-key lifecycle statuses.
+ */
+export type ClaimKeyStatus = (typeof CLAIM_KEY_STATUSES)[number];
+
+/**
+ * Union of all supported claim-key provenance sources.
+ */
+export type ClaimKeySource = (typeof CLAIM_KEY_SOURCES)[number];
+
+/**
+ * Union of all supported claim-support provenance modes.
+ */
+export type ClaimSupportMode = (typeof CLAIM_SUPPORT_MODES)[number];
 
 /** Ordered list of supported episode sources. */
 const EPISODE_SOURCES = ["openclaw", "codex", "cli", "synthesis"] as const;
@@ -49,9 +81,24 @@ export type EpisodeSource = (typeof EPISODE_SOURCES)[number];
 export type EpisodeActivityLevel = (typeof EPISODE_ACTIVITY_LEVELS)[number];
 
 /**
+ * Explicit lifecycle and provenance metadata attached to a stored claim key.
+ */
+export interface ClaimKeyLifecycleMetadata {
+  claim_key_raw?: string;
+  claim_key_status?: ClaimKeyStatus;
+  claim_key_source?: ClaimKeySource;
+  claim_key_confidence?: number;
+  claim_key_rationale?: string;
+  claim_support_source_kind?: string;
+  claim_support_locator?: string;
+  claim_support_observed_at?: string;
+  claim_support_mode?: ClaimSupportMode;
+}
+
+/**
  * Canonical stored knowledge record.
  */
-export interface Entry {
+export interface Entry extends ClaimKeyLifecycleMetadata {
   id: string;
   type: EntryType;
   subject: string;
@@ -81,6 +128,20 @@ export interface Entry {
   retired_reason?: string;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * Mutable entry fields supported by direct update paths.
+ *
+ * Claim-key lifecycle fields stay out of this patch type until schema and
+ * persistence plumbing land in the follow-up task.
+ */
+export interface EntryUpdateInput {
+  importance?: Entry["importance"];
+  expiry?: Entry["expiry"];
+  claim_key?: Entry["claim_key"];
+  valid_from?: Entry["valid_from"];
+  valid_to?: Entry["valid_to"];
 }
 
 /**
@@ -118,6 +179,9 @@ export interface Episode {
 
 /**
  * User-supplied fields for storing a new entry.
+ *
+ * Claim-key lifecycle metadata stays derived inside the store pipeline for now,
+ * so callers continue to provide only the canonical `claim_key` when needed.
  */
 export interface StoreEntryInput {
   type: EntryType;

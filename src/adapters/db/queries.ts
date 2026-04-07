@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type { InArgs, InStatement, ResultSet } from "@libsql/client";
 
-import type { Entry } from "../../core/types.js";
+import type { Entry, EntryUpdateInput } from "../../core/types.js";
 import { ACTIVE_ENTRY_CLAUSE, mapEntryRow, readRequiredString, serializeEmbeddingForVector, serializeTags } from "./row-mapping.js";
 
 const LOOKUP_CHUNK_SIZE = 100;
@@ -431,13 +431,7 @@ export async function getClaimKeyExamples(executor: SqlExecutor, limit = 8): Pro
 export async function updateEntry(
   executor: SqlExecutor,
   id: string,
-  fields: {
-    importance?: number;
-    expiry?: string;
-    claim_key?: string;
-    valid_from?: string;
-    valid_to?: string;
-  },
+  fields: EntryUpdateInput,
   options?: {
     includeInactive?: boolean;
   },

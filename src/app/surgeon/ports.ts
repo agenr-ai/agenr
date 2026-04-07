@@ -1,7 +1,7 @@
 import type { SurgeonRunAction } from "../../core/surgeon/domain/action-types.js";
 import type { SurgeonPassType } from "../../core/surgeon/domain/pass-types.js";
 import type { SurgeonCompletionSummary, SurgeonRunProposal, SurgeonRunStatus } from "../../core/surgeon/types.js";
-import type { Entry } from "../../core/types.js";
+import type { Entry, EntryUpdateInput } from "../../core/types.js";
 
 /**
  * Persisted surgeon run metadata returned by history and status queries.
@@ -333,13 +333,7 @@ export interface SurgeonPort {
    */
   updateEntry(
     entryId: string,
-    fields: {
-      importance?: number;
-      expiry?: string;
-      claim_key?: string;
-      valid_from?: string;
-      valid_to?: string;
-    },
+    fields: EntryUpdateInput,
     options?: {
       includeInactive?: boolean;
     },

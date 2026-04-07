@@ -44,6 +44,29 @@ describe("createDatabase", () => {
     expect(stored?.embedding?.[0]).toBeCloseTo(1);
   });
 
+  it("accepts optional claim-key lifecycle metadata on insert payloads", async () => {
+    const database = await createTestDatabase();
+    const entry = createEntry({
+      claim_key: "jim/home_city",
+      claim_key_raw: "Jim / Home City",
+      claim_key_status: "trusted",
+      claim_key_source: "manual",
+      claim_key_confidence: 1,
+      claim_key_rationale: "manual claim key supplied by caller",
+      claim_support_source_kind: "tool_call",
+      claim_support_locator: "transcript.jsonl#message:3",
+      claim_support_observed_at: "2026-04-07T12:00:00.000Z",
+      claim_support_mode: "explicit",
+    });
+
+    await expect(database.insertEntry(entry, createEmbedding(0, 1), "claim-lifecycle-hash")).resolves.toBe(entry.id);
+
+    const stored = await database.getEntry(entry.id);
+
+    expect(stored?.id).toBe(entry.id);
+    expect(stored?.claim_key).toBe("jim/home_city");
+  });
+
   it("finds existing hashes in batches and ignores missing hashes", async () => {
     const database = await createTestDatabase();
     const entry = createEntry();
@@ -604,6 +627,15 @@ function createEntry(overrides: Partial<Entry> = {}): Entry {
     valid_from: overrides.valid_from,
     valid_to: overrides.valid_to,
     claim_key: overrides.claim_key,
+    claim_key_raw: overrides.claim_key_raw,
+    claim_key_status: overrides.claim_key_status,
+    claim_key_source: overrides.claim_key_source,
+    claim_key_confidence: overrides.claim_key_confidence,
+    claim_key_rationale: overrides.claim_key_rationale,
+    claim_support_source_kind: overrides.claim_support_source_kind,
+    claim_support_locator: overrides.claim_support_locator,
+    claim_support_observed_at: overrides.claim_support_observed_at,
+    claim_support_mode: overrides.claim_support_mode,
     supersession_kind: overrides.supersession_kind,
     supersession_reason: overrides.supersession_reason,
     cluster_id: overrides.cluster_id,
