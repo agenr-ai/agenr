@@ -4,13 +4,13 @@ import type { DatabasePort, EmbeddingPort, LlmPort } from "../ports.js";
 import type { SupersessionRuleFailureReason } from "../supersession.js";
 import type { Entry, StoreEntryInput, StoreResult } from "../types.js";
 import { describeSupersessionRuleFailure, validateSupersessionRules } from "../supersession.js";
-import { runBatchClaimExtraction, type ClaimExtractionConfig, type ClaimExtractionPath, type ClaimExtractionResult } from "./claim-extraction.js";
+import { runBatchClaimExtraction, type ClaimExtractionConfig, type ClaimExtractionResult } from "./claim-extraction.js";
 import { composeEmbeddingText } from "./embedding-text.js";
 import { computeContentHash, computeNormContentHash } from "./hashing.js";
 import { validateEntriesWithIndexes } from "./validation.js";
 
 const AUTO_SUPERSESSION_MIN_EXTRACTED_CONFIDENCE = 0.9;
-const AUTO_SUPERSESSION_ELIGIBLE_PATHS = new Set<ClaimExtractionPath>(["model", "json_retry"]);
+const AUTO_SUPERSESSION_ELIGIBLE_SOURCES = new Set<NonNullable<Entry["claim_key_source"]>>(["model", "json_retry"]);
 
 /**
  * Runtime switches for the store pipeline.
@@ -42,7 +42,17 @@ interface PreparedEntry {
   inputIndex: number;
   contentHash: string;
   normContentHash: string;
-  claimKeySource?: "manual";
+  claimKey?: AcceptedClaimKey;
+}
+
+/** Structured claim-key metadata accepted by the store pipeline. */
+interface AcceptedClaimKey {
+  claimKey: string;
+  rawClaimKey?: string;
+  status: NonNullable<Entry["claim_key_status"]>;
+  source: NonNullable<Entry["claim_key_source"]>;
+  confidence: number;
+  rationale: string;
 }
 
 /** Final pipeline outcome assigned to one store input. */
@@ -154,6 +164,7 @@ export async function storeEntriesDetailed(
 
   const pendingEntries = plan.pendingEntries;
   const extractedClaimKeys = await maybeExtractClaimKeys(pendingEntries, options);
+  applyExtractedClaimKeyMetadata(pendingEntries, extractedClaimKeys);
   const embeddings = await resolvePendingEmbeddings(inputs, pendingEntries, embedding, options.precomputedEmbeddings);
   await persistEntries(db, pendingEntries, embeddings, extractedClaimKeys, options.claimExtraction?.config, options.onWarning);
   return {
@@ -268,6 +279,7 @@ async function persistEntries(
 /** Builds the canonical stored entry record for persistence. */
 function buildEntry(preparedEntry: PreparedEntry, embedding: number[]): Entry {
   const now = new Date().toISOString();
+  const acceptedClaimKey = preparedEntry.claimKey;
 
   return {
     id: randomUUID(),
@@ -288,7 +300,12 @@ function buildEntry(preparedEntry: PreparedEntry, embedding: number[]): Entry {
     recall_count: 0,
     valid_from: preparedEntry.input.valid_from,
     valid_to: preparedEntry.input.valid_to,
-    claim_key: preparedEntry.input.claim_key,
+    claim_key: acceptedClaimKey?.claimKey ?? preparedEntry.input.claim_key,
+    claim_key_raw: acceptedClaimKey?.rawClaimKey,
+    claim_key_status: acceptedClaimKey?.status,
+    claim_key_source: acceptedClaimKey?.source,
+    claim_key_confidence: acceptedClaimKey?.confidence,
+    claim_key_rationale: acceptedClaimKey?.rationale,
     retired: false,
     created_at: preparedEntry.input.created_at ?? now,
     updated_at: now,
@@ -339,6 +356,24 @@ function hasTransactionSupport(db: DatabasePort): db is TransactionCapableDataba
   return typeof (db as Partial<TransactionCapableDatabasePort>).withTransaction === "function";
 }
 
+/** Applies extracted claim-key lifecycle metadata to prepared entries after batch extraction. */
+function applyExtractedClaimKeyMetadata(preparedEntries: PreparedEntry[], extractedClaimKeys: Map<number, ClaimExtractionResult>): void {
+  for (const preparedEntry of preparedEntries) {
+    if (preparedEntry.claimKey) {
+      continue;
+    }
+
+    const extractedClaimKey = extractedClaimKeys.get(preparedEntry.inputIndex);
+    const acceptedClaimKey = buildExtractedAcceptedClaimKey(extractedClaimKey);
+    if (!acceptedClaimKey) {
+      continue;
+    }
+
+    preparedEntry.claimKey = acceptedClaimKey;
+    preparedEntry.input.claim_key = acceptedClaimKey.claimKey;
+  }
+}
+
 /**
  * Plans conservative claim-key-driven supersession links before persistence begins.
  *
@@ -356,7 +391,7 @@ async function planAutoSupersession(
   const siblingCache = new Map<string, Entry[]>();
 
   for (const preparedEntry of preparedEntries) {
-    const claimKey = preparedEntry.input.claim_key;
+    const claimKey = preparedEntry.claimKey?.claimKey ?? preparedEntry.input.claim_key;
     if (!claimKey || preparedEntry.input.supersedes) {
       continue;
     }
@@ -388,10 +423,10 @@ async function planAutoSupersession(
       continue;
     }
 
-    if (!isAutoSupersessionEligible(preparedEntry, extractedClaimKeys, claimExtractionConfig)) {
+    if (!isAutoSupersessionEligible(preparedEntry.claimKey, claimExtractionConfig)) {
       plans.set(preparedEntry.inputIndex, {
         kind: "skip",
-        warning: buildAutoSupersessionEligibilityWarning(preparedEntry, extractedClaimKeys.get(preparedEntry.inputIndex)),
+        warning: buildAutoSupersessionEligibilityWarning(preparedEntry),
       });
       continue;
     }
@@ -422,7 +457,7 @@ function groupPreparedEntriesByClaimKey(preparedEntries: PreparedEntry[]): Map<s
   const grouped = new Map<string, PreparedEntry[]>();
 
   for (const preparedEntry of preparedEntries) {
-    const claimKey = preparedEntry.input.claim_key;
+    const claimKey = preparedEntry.claimKey?.claimKey ?? preparedEntry.input.claim_key;
     if (!claimKey) {
       continue;
     }
@@ -448,43 +483,47 @@ async function getClaimKeySiblings(db: DatabasePort, cache: Map<string, Entry[]>
 }
 
 /** Returns whether one prepared entry may auto-link through claim-key supersession. */
-function isAutoSupersessionEligible(
-  preparedEntry: PreparedEntry,
-  extractedClaimKeys: Map<number, ClaimExtractionResult>,
-  claimExtractionConfig: ClaimExtractionConfig | undefined,
-): boolean {
-  if (preparedEntry.claimKeySource === "manual") {
+function isAutoSupersessionEligible(claimKey: AcceptedClaimKey | undefined, claimExtractionConfig: ClaimExtractionConfig | undefined): boolean {
+  if (!claimKey || claimKey.status !== "trusted") {
+    return false;
+  }
+
+  if (claimKey.source === "manual") {
     return true;
   }
 
-  const extractedClaimKey = extractedClaimKeys.get(preparedEntry.inputIndex);
-  if (!extractedClaimKey || !claimExtractionConfig) {
+  if (!AUTO_SUPERSESSION_ELIGIBLE_SOURCES.has(claimKey.source) || !claimExtractionConfig) {
     return false;
   }
 
-  if (!AUTO_SUPERSESSION_ELIGIBLE_PATHS.has(extractedClaimKey.path)) {
-    return false;
-  }
-
-  return extractedClaimKey.confidence >= Math.max(claimExtractionConfig.confidenceThreshold, AUTO_SUPERSESSION_MIN_EXTRACTED_CONFIDENCE);
+  return claimKey.confidence >= Math.max(claimExtractionConfig.confidenceThreshold, AUTO_SUPERSESSION_MIN_EXTRACTED_CONFIDENCE);
 }
 
 /** Explains why one claim-key match stayed stored without an automatic link. */
-function buildAutoSupersessionEligibilityWarning(preparedEntry: PreparedEntry, extractedClaimKey: ClaimExtractionResult | undefined): string {
-  const claimKey = preparedEntry.input.claim_key ?? "(missing)";
-  if (preparedEntry.claimKeySource === "manual") {
+function buildAutoSupersessionEligibilityWarning(preparedEntry: PreparedEntry): string {
+  const acceptedClaimKey = preparedEntry.claimKey;
+  const claimKey = acceptedClaimKey?.claimKey ?? preparedEntry.input.claim_key ?? "(missing)";
+  if (!acceptedClaimKey) {
+    return `Stored entry "${preparedEntry.input.subject}" with claim_key "${claimKey}" but skipped auto-supersession because the claim-key provenance was not explicit or a tracked high-confidence extraction.`;
+  }
+
+  if (acceptedClaimKey.source === "manual") {
     return `Stored entry "${preparedEntry.input.subject}" with claim_key "${claimKey}" but skipped auto-supersession because the claim-key provenance was not eligible for automatic linking.`;
   }
 
-  if (extractedClaimKey) {
+  if (acceptedClaimKey.status !== "trusted") {
     return (
-      `Stored entry "${preparedEntry.input.subject}" with claim_key "${claimKey}" but skipped auto-supersession because the extracted claim key came from ` +
-      `${extractedClaimKey.path} at confidence ${extractedClaimKey.confidence.toFixed(2)}. Only explicit/manual claim keys or model-extracted keys at ` +
+      `Stored entry "${preparedEntry.input.subject}" with claim_key "${claimKey}" but skipped auto-supersession because the accepted claim key is ` +
+      `${acceptedClaimKey.status} from ${acceptedClaimKey.source} at confidence ${acceptedClaimKey.confidence.toFixed(2)}. Only explicit/manual claim keys or model-extracted keys at ` +
       `${AUTO_SUPERSESSION_MIN_EXTRACTED_CONFIDENCE.toFixed(2)}+ auto-link.`
     );
   }
 
-  return `Stored entry "${preparedEntry.input.subject}" with claim_key "${claimKey}" but skipped auto-supersession because the claim-key provenance was not explicit or a tracked high-confidence extraction.`;
+  return (
+    `Stored entry "${preparedEntry.input.subject}" with claim_key "${claimKey}" but skipped auto-supersession because the extracted claim key came from ` +
+    `${acceptedClaimKey.source} at confidence ${acceptedClaimKey.confidence.toFixed(2)}. Only explicit/manual claim keys or model-extracted keys at ` +
+    `${AUTO_SUPERSESSION_MIN_EXTRACTED_CONFIDENCE.toFixed(2)}+ auto-link.`
+  );
 }
 
 /** Explains why a same-claim-key sibling failed the conservative type-policy checks. */
@@ -528,7 +567,7 @@ async function buildStorePlan(
     inputIndex,
     contentHash: computeContentHash(input.content, input.source_file),
     normContentHash: computeNormContentHash(input.content),
-    claimKeySource: input.claim_key ? ("manual" as const) : undefined,
+    claimKey: buildManualAcceptedClaimKey(inputs[inputIndex]?.claim_key, input.claim_key),
   }));
 
   const afterBatchContentHash = dedupePreparedEntries(preparedEntries, "contentHash", "content_hash", details);
@@ -610,4 +649,69 @@ function formatPipelineError(error: unknown): string {
 /** Sorts per-input store details back into original input order. */
 function sortStoreDetails(details: StoreEntryDetail[]): StoreEntryDetail[] {
   return [...details].sort((left, right) => left.inputIndex - right.inputIndex);
+}
+
+/** Builds accepted manual claim-key metadata from raw caller input plus the normalized canonical key. */
+function buildManualAcceptedClaimKey(rawClaimKey: string | undefined, canonicalClaimKey: string | undefined): AcceptedClaimKey | undefined {
+  if (!canonicalClaimKey) {
+    return undefined;
+  }
+
+  return {
+    claimKey: canonicalClaimKey,
+    rawClaimKey: buildClaimKeyRaw(normalizeOptionalString(rawClaimKey), canonicalClaimKey),
+    status: "trusted",
+    source: "manual",
+    confidence: 1,
+    rationale: "manual claim key supplied by caller",
+  };
+}
+
+/** Builds accepted extracted claim-key metadata from one successful extraction result. */
+function buildExtractedAcceptedClaimKey(extractedClaimKey: ClaimExtractionResult | undefined): AcceptedClaimKey | undefined {
+  if (!extractedClaimKey?.claimKey) {
+    return undefined;
+  }
+
+  const source = extractedClaimKey.path;
+  const status = source === "deterministic_repair" ? "tentative" : "trusted";
+  const rawClaimKey = buildClaimKeyRaw(formatExtractedRawClaimKey(extractedClaimKey), extractedClaimKey.claimKey);
+  const rationalePrefix =
+    source === "deterministic_repair" ? "claim key inferred by deterministic possessive-slot repair" : `claim key extracted from ${source} output`;
+  const rationale = extractedClaimKey.compactionReason ? `${rationalePrefix}; ${extractedClaimKey.compactionReason}` : rationalePrefix;
+
+  return {
+    claimKey: extractedClaimKey.claimKey,
+    rawClaimKey,
+    status,
+    source,
+    confidence: extractedClaimKey.confidence,
+    rationale,
+  };
+}
+
+/** Formats the raw extracted entity and attribute pair into one comparable claim-key string. */
+function formatExtractedRawClaimKey(extractedClaimKey: ClaimExtractionResult): string | undefined {
+  const rawEntity = normalizeOptionalString(extractedClaimKey.rawEntity);
+  const rawAttribute = normalizeOptionalString(extractedClaimKey.rawAttribute);
+  if (!rawEntity || !rawAttribute) {
+    return extractedClaimKey.compactedFrom ?? undefined;
+  }
+
+  return `${rawEntity}/${rawAttribute}`;
+}
+
+/** Returns the raw claim key only when it differs from the canonical stored key. */
+function buildClaimKeyRaw(rawClaimKey: string | undefined, canonicalClaimKey: string): string | undefined {
+  if (!rawClaimKey || rawClaimKey === canonicalClaimKey) {
+    return undefined;
+  }
+
+  return rawClaimKey;
+}
+
+/** Trims an optional string and drops the empty result. */
+function normalizeOptionalString(value?: string): string | undefined {
+  const normalized = value?.trim();
+  return normalized && normalized.length > 0 ? normalized : undefined;
 }

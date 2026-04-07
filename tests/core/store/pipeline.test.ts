@@ -243,8 +243,63 @@ describe("storeEntries", () => {
       },
     );
 
-    expect(db.insertions[0]?.entry.claim_key).toBe("jim/home_city");
+    expect(db.insertions[0]?.entry).toMatchObject({
+      claim_key: "jim/home_city",
+      claim_key_raw: "Jim/home city",
+      claim_key_status: "trusted",
+      claim_key_source: "model",
+      claim_key_confidence: 0.93,
+      claim_key_rationale: "claim key extracted from model output",
+    });
     expect(llm.calls).toHaveLength(1);
+  });
+
+  it("assigns trusted lifecycle metadata when extraction succeeds after a json retry", async () => {
+    const db = new MockDatabase({
+      claimKeyPrefixes: ["jim"],
+    });
+    const embedding = new MockEmbeddingPort();
+    const llm = new MockLlmPort((callIndex) =>
+      callIndex === 0
+        ? new Error("Unexpected token 'J' in JSON at position 0")
+        : {
+            entity: "Jim",
+            attribute: "timezone",
+            confidence: 0.92,
+          },
+    );
+
+    await storeEntries(
+      [
+        createInput({
+          subject: "Jim's timezone",
+          content: "Jim's timezone is America/Chicago.",
+        }),
+      ],
+      db,
+      embedding,
+      {
+        claimExtraction: {
+          llm,
+          db,
+          config: {
+            enabled: true,
+            confidenceThreshold: 0.8,
+            eligibleTypes: ["fact", "preference", "decision"],
+          },
+        },
+      },
+    );
+
+    expect(db.insertions[0]?.entry).toMatchObject({
+      claim_key: "jim/timezone",
+      claim_key_raw: "Jim/timezone",
+      claim_key_status: "trusted",
+      claim_key_source: "json_retry",
+      claim_key_confidence: 0.92,
+      claim_key_rationale: "claim key extracted from json_retry output",
+    });
+    expect(llm.calls).toHaveLength(2);
   });
 
   it("preserves an agent-provided claim key and skips extraction", async () => {
@@ -301,7 +356,14 @@ describe("storeEntries", () => {
       embedding,
     );
 
-    expect(db.insertions[0]?.entry.claim_key).toBe("jim/home_city");
+    expect(db.insertions[0]?.entry).toMatchObject({
+      claim_key: "jim/home_city",
+      claim_key_raw: "Jim / Home City",
+      claim_key_status: "trusted",
+      claim_key_source: "manual",
+      claim_key_confidence: 1,
+      claim_key_rationale: "manual claim key supplied by caller",
+    });
   });
 
   it("drops malformed manual claim keys while the store still succeeds", async () => {
@@ -325,7 +387,14 @@ describe("storeEntries", () => {
     );
 
     expect(result).toEqual({ stored: 1, skipped: 0, rejected: 0 });
-    expect(db.insertions[0]?.entry.claim_key).toBeUndefined();
+    expect(db.insertions[0]?.entry).toMatchObject({
+      claim_key: undefined,
+      claim_key_raw: undefined,
+      claim_key_status: undefined,
+      claim_key_source: undefined,
+      claim_key_confidence: undefined,
+      claim_key_rationale: undefined,
+    });
     expect(warnings[0]).toMatch(/invalid claim key/i);
     expect(db.claimKeyLookupCalls).toEqual([]);
     expect(db.supersedeCalls).toEqual([]);
@@ -518,9 +587,59 @@ describe("storeEntries", () => {
     );
 
     expect(result).toEqual({ stored: 1, skipped: 0, rejected: 0 });
-    expect(db.insertions[0]?.entry.claim_key).toBe("jim/timezone");
+    expect(db.insertions[0]?.entry).toMatchObject({
+      claim_key: "jim/timezone",
+      claim_key_raw: "Jim/timezone",
+      claim_key_status: "tentative",
+      claim_key_source: "deterministic_repair",
+      claim_key_confidence: 0.86,
+    });
+    expect(db.insertions[0]?.entry.claim_key_rationale).toMatch(/deterministic/i);
     expect(db.supersedeCalls).toEqual([]);
     expect(warnings).toEqual([expect.stringMatching(/deterministic_repair/i)]);
+  });
+
+  it("persists compaction rationale when a verbose extracted claim key is rewritten", async () => {
+    const db = new MockDatabase({
+      claimKeyPrefixes: ["openclaw_before_prompt_build_hook"],
+    });
+    const embedding = new MockEmbeddingPort();
+    const llm = new MockLlmPort({
+      entity: "OpenClaw before prompt build hook",
+      attribute: "requires real agent turn or message to trigger",
+      confidence: 0.92,
+    });
+
+    await storeEntries(
+      [
+        createInput({
+          type: "decision",
+          subject: "Before-prompt-build trigger contract",
+          content: "The before-prompt-build hook only triggers after a real agent turn or message.",
+        }),
+      ],
+      db,
+      embedding,
+      {
+        claimExtraction: {
+          llm,
+          db,
+          config: {
+            enabled: true,
+            confidenceThreshold: 0.8,
+            eligibleTypes: ["fact", "preference", "decision"],
+          },
+        },
+      },
+    );
+
+    expect(db.insertions[0]?.entry).toMatchObject({
+      claim_key: "openclaw_before_prompt_build_hook/trigger_condition",
+      claim_key_raw: "OpenClaw before prompt build hook/requires real agent turn or message to trigger",
+      claim_key_status: "trusted",
+      claim_key_source: "model",
+    });
+    expect(db.insertions[0]?.entry.claim_key_rationale).toContain("collapsed a sentence-like trigger requirement into a stable condition slot");
   });
 
   it("skips auto-supersession when the matching sibling has an incompatible type", async () => {
@@ -731,15 +850,21 @@ class MockEmbeddingPort implements EmbeddingPort {
 class MockLlmPort implements LlmPort {
   public readonly calls: Array<{ systemPrompt: string; userMessage: string }> = [];
 
-  public constructor(private readonly response: Record<string, unknown>) {}
+  public constructor(private readonly response: Record<string, unknown> | ((callIndex: number, systemPrompt: string, userMessage: string) => unknown)) {}
 
   public async complete(): Promise<string> {
     throw new Error("complete() is not used in these tests.");
   }
 
   public async completeJson<T>(systemPrompt: string, userMessage: string): Promise<T> {
+    const callIndex = this.calls.length;
     this.calls.push({ systemPrompt, userMessage });
-    return this.response as T;
+    const response = typeof this.response === "function" ? this.response(callIndex, systemPrompt, userMessage) : this.response;
+    if (response instanceof Error) {
+      throw response;
+    }
+
+    return response as T;
   }
 }
 
