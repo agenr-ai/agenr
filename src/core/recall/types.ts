@@ -45,6 +45,9 @@ export interface RecallOutput {
     lexical: number;
     recency: number;
     importance: number;
+    historicalLineage: number;
+    claimKeyTrustPenalty: number;
+    claimKeyRedundancyPenalty: number;
   };
 }
 
@@ -53,7 +56,7 @@ export interface RecallOutput {
  */
 export type RecallCandidateEntry = Pick<
   Entry,
-  "id" | "subject" | "content" | "importance" | "expiry" | "created_at" | "embedding" | "superseded_by" | "claim_key" | "retired"
+  "id" | "subject" | "content" | "importance" | "expiry" | "created_at" | "embedding" | "superseded_by" | "claim_key" | "claim_key_status" | "retired"
 >;
 
 /**

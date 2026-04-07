@@ -292,6 +292,7 @@ function createEntry(overrides: Partial<Entry> & Pick<Entry, "id" | "subject" | 
     valid_from: overrides.valid_from,
     valid_to: overrides.valid_to,
     claim_key: overrides.claim_key,
+    claim_key_status: overrides.claim_key_status,
     supersession_kind: overrides.supersession_kind,
     supersession_reason: overrides.supersession_reason,
     cluster_id: overrides.cluster_id,
@@ -315,6 +316,8 @@ function toRecallCandidateEntry(entry: Entry): RecallCandidateEntry {
     created_at: entry.created_at,
     embedding: entry.embedding,
     superseded_by: entry.superseded_by,
+    claim_key: entry.claim_key,
+    claim_key_status: entry.claim_key_status,
     retired: entry.retired,
   };
 }

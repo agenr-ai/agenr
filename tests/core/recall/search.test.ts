@@ -361,6 +361,153 @@ describe("recall raw evidence gating", () => {
     expect(historicalResults.map((result) => result.entry.id)).toEqual(["webpack-pipeline", "vite-pipeline"]);
   });
 
+  it("prefers trusted same-claim-key predecessors over tentative siblings for historical queries", async () => {
+    const traceSummaries: RecallExecutionTraceSummary[] = [];
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "current-toolchain",
+          subject: "current build toolchain",
+          content: "Vite is the current build toolchain.",
+          claim_key: "deployments/build_toolchain",
+          claim_key_status: "trusted",
+          embedding: createCosineEmbedding(0.72),
+          created_at: "2026-03-14T09:00:00.000Z",
+        }),
+        buildEntry({
+          id: "older-toolchain-tentative",
+          subject: "build setup fallback note",
+          content: "Maybe esbuild handled packaging before the current toolchain settled.",
+          claim_key: "deployments/build_toolchain",
+          claim_key_status: "tentative",
+          embedding: createCosineEmbedding(0.72),
+          created_at: "2026-03-10T09:00:00.000Z",
+        }),
+        buildEntry({
+          id: "older-toolchain-trusted",
+          subject: "legacy bundler decision",
+          content: "Webpack handled packaging before Vite.",
+          claim_key: "deployments/build_toolchain",
+          claim_key_status: "trusted",
+          embedding: createCosineEmbedding(0.72),
+          created_at: "2026-03-08T09:00:00.000Z",
+        }),
+      ],
+      vectorCandidates: [{ id: "current-toolchain", vectorSim: 0.72 }],
+      predecessorCandidateIds: ["older-toolchain-tentative", "older-toolchain-trusted"],
+    });
+
+    const results = await recall(
+      {
+        text: "previous build toolchain",
+        limit: 5,
+        rankingProfile: "historical_state",
+      },
+      fixture.ports,
+      {
+        trace: {
+          reportSummary(summary): void {
+            traceSummaries.push(summary);
+          },
+        },
+      },
+    );
+
+    expect(results.map((result) => result.entry.id)).toEqual(["older-toolchain-trusted", "current-toolchain", "older-toolchain-tentative"]);
+    expect(results[0]?.scores.historicalLineage).toBeGreaterThan(results[2]?.scores.historicalLineage ?? 0);
+    expect(traceSummaries).toEqual([
+      expect.objectContaining({
+        claimKey: expect.objectContaining({
+          historicalBoosted: 1,
+          tentativeLineageSuppressed: 1,
+        }),
+      }),
+    ]);
+  });
+
+  it("down-ranks redundant active trusted siblings from the same current slot", async () => {
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "vite-primary",
+          subject: "current build toolchain",
+          content: "Use Vite for the current build toolchain.",
+          claim_key: "deployments/build_toolchain",
+          claim_key_status: "trusted",
+          created_at: "2026-03-20T09:00:00.000Z",
+        }),
+        buildEntry({
+          id: "vite-shadow",
+          subject: "packaging toolchain note",
+          content: "Vite also appears in a second active build toolchain note.",
+          claim_key: "deployments/build_toolchain",
+          claim_key_status: "trusted",
+          created_at: "2026-03-19T09:00:00.000Z",
+        }),
+        buildEntry({
+          id: "release-rollout",
+          subject: "release rollout checklist",
+          content: "Run the release rollout checklist before packaging.",
+          created_at: "2026-03-18T09:00:00.000Z",
+        }),
+      ],
+      vectorCandidates: [
+        { id: "vite-primary", vectorSim: 0.74 },
+        { id: "vite-shadow", vectorSim: 0.72 },
+        { id: "release-rollout", vectorSim: 0.7 },
+      ],
+    });
+
+    const results = await recall(
+      {
+        text: "current build toolchain",
+        limit: 5,
+      },
+      fixture.ports,
+    );
+
+    expect(results.map((result) => result.entry.id)).toEqual(["vite-primary", "release-rollout", "vite-shadow"]);
+    expect(results[2]?.scores.claimKeyRedundancyPenalty).toBeGreaterThan(0);
+  });
+
+  it("keeps tentative same-slot siblings from outranking a trusted current answer", async () => {
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "vite-trusted",
+          subject: "current build toolchain",
+          content: "Vite is the approved current build toolchain.",
+          claim_key: "deployments/build_toolchain",
+          claim_key_status: "trusted",
+          created_at: "2026-03-18T09:00:00.000Z",
+        }),
+        buildEntry({
+          id: "vite-tentative",
+          subject: "current build toolchain experiment",
+          content: "Maybe esbuild or Vite is the current build toolchain.",
+          claim_key: "deployments/build_toolchain",
+          claim_key_status: "tentative",
+          created_at: "2026-03-20T09:00:00.000Z",
+        }),
+      ],
+      vectorCandidates: [
+        { id: "vite-trusted", vectorSim: 0.68 },
+        { id: "vite-tentative", vectorSim: 0.77 },
+      ],
+    });
+
+    const results = await recall(
+      {
+        text: "current build toolchain",
+        limit: 5,
+      },
+      fixture.ports,
+    );
+
+    expect(results.map((result) => result.entry.id)).toEqual(["vite-trusted", "vite-tentative"]);
+    expect(results[1]?.scores.claimKeyTrustPenalty).toBeGreaterThan(0);
+  });
+
   it("limits historical peer boosts to shared subject prefixes", async () => {
     const fixture = createRecallPortsFixture({
       entries: [
@@ -508,6 +655,7 @@ function toRecallCandidateEntry(entry: Entry): RecallCandidateEntry {
     embedding: entry.embedding,
     superseded_by: entry.superseded_by,
     claim_key: entry.claim_key,
+    claim_key_status: entry.claim_key_status,
     retired: entry.retired,
   };
 }
@@ -556,6 +704,7 @@ function buildEntry(overrides: Partial<Entry> & Pick<Entry, "id" | "subject" | "
     last_recalled_at: overrides.last_recalled_at,
     superseded_by: overrides.superseded_by,
     claim_key: overrides.claim_key,
+    claim_key_status: overrides.claim_key_status,
     cluster_id: overrides.cluster_id,
     retired: overrides.retired ?? false,
     retired_at: overrides.retired_at,

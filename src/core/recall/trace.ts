@@ -75,6 +75,20 @@ export interface RecallCoreTimingTrace {
 }
 
 /**
+ * Claim-key shaping facts observed during one recall execution.
+ */
+export interface RecallClaimKeyTrace {
+  /** Historical candidates that received a claim-key lineage bonus. */
+  historicalBoosted: number;
+  /** Historical same-slot candidates whose tentative lineage was suppressed. */
+  tentativeLineageSuppressed: number;
+  /** Current-state candidates down-ranked because a trusted same-slot peer exists. */
+  trustPenalized: number;
+  /** Current-state trusted same-slot duplicates down-ranked for diversity. */
+  redundancyPenalized: number;
+}
+
+/**
  * Small typed execution summary emitted by the recall core.
  */
 export interface RecallExecutionTraceSummary {
@@ -84,6 +98,8 @@ export interface RecallExecutionTraceSummary {
   ranking: RecallRankingTrace;
   /** Candidate counts observed inside the ranking flow. */
   candidateCounts: RecallCoreCandidateCountsTrace;
+  /** Claim-key lineage and diversity shaping facts observed during ranking. */
+  claimKey: RecallClaimKeyTrace;
   /** Core-only timings observed inside the ranking flow. */
   timings: RecallCoreTimingTrace;
 }

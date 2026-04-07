@@ -22,6 +22,9 @@ const HISTORICAL_RETIRED_PREDECESSOR_BOOST = 0.06;
 const HISTORICAL_OLDER_STATE_BOOST = 0.08;
 const HISTORICAL_TOPIC_SHARED_PREFIX_MIN = 2;
 const HISTORICAL_TOPIC_PREFIX_OF_CANDIDATE_MIN = 0.6;
+const CLAIM_KEY_TENTATIVE_CURRENT_PENALTY = 0.08;
+const CLAIM_KEY_REDUNDANT_TRUSTED_SLOT_PENALTY = 0.05;
+const CLAIM_KEY_REDUNDANT_TRUSTED_SLOT_MAX_PENALTY = 0.15;
 
 /**
  * Execute the v1 recall pipeline against the provided adapter ports.
@@ -96,18 +99,22 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
     summary.timings.mergeCandidatesMs = elapsedMs(mergeStartedAt);
 
     const scoreStartedAt = Date.now();
-    const scored = applyHistoricalLineageBoosts(
-      Array.from(mergedCandidates.values()).map((candidate) =>
-        scoreMergedCandidate(candidate, text, queryEmbedding, {
+    const scored = applyClaimKeyResultShaping(
+      applyHistoricalLineageBoosts(
+        Array.from(mergedCandidates.values()).map((candidate) =>
+          scoreMergedCandidate(candidate, text, queryEmbedding, {
+            aroundDate,
+            aroundRadius: query.aroundRadius,
+            rankingProfile: query.rankingProfile,
+          }),
+        ),
+        {
           aroundDate,
-          aroundRadius: query.aroundRadius,
           rankingProfile: query.rankingProfile,
-        }),
+        },
+        summary.claimKey,
       ),
-      {
-        aroundDate,
-        rankingProfile: query.rankingProfile,
-      },
+      summary.claimKey,
     ).sort((left, right) => right.score - left.score);
     summary.timings.scoreCandidatesMs = elapsedMs(scoreStartedAt);
 
@@ -215,6 +222,12 @@ function buildRecallTraceSummary(params: {
       finalRanked: 0,
       returned: 0,
     },
+    claimKey: {
+      historicalBoosted: 0,
+      tentativeLineageSuppressed: 0,
+      trustPenalized: 0,
+      redundancyPenalized: 0,
+    },
     timings: {
       mergeCandidatesMs: 0,
       scoreCandidatesMs: 0,
@@ -278,7 +291,12 @@ function scoreMergedCandidate(
   return {
     entry: candidate.entry,
     score: scored.score,
-    scores: scored.scores,
+    scores: {
+      ...scored.scores,
+      historicalLineage: 0,
+      claimKeyTrustPenalty: 0,
+      claimKeyRedundancyPenalty: 0,
+    },
   };
 }
 
@@ -362,6 +380,7 @@ function applyHistoricalLineageBoosts(
     aroundDate: Date | null;
     rankingProfile?: RecallRankingProfile;
   },
+  claimKeyTrace: RecallExecutionTraceSummary["claimKey"],
 ): RankedCandidate[] {
   if (params.rankingProfile !== "historical_state") {
     return candidates;
@@ -369,14 +388,24 @@ function applyHistoricalLineageBoosts(
 
   const entries = candidates.map((candidate) => candidate.entry);
   return candidates.map((candidate) => {
-    const bonus = resolveHistoricalLineageBonus(candidate.entry, entries, params.aroundDate);
+    const decision = resolveHistoricalLineageBonus(candidate.entry, entries, params.aroundDate);
+    if (decision.tentativeLineageSuppressed) {
+      claimKeyTrace.tentativeLineageSuppressed += 1;
+    }
+
+    const bonus = decision.bonus;
     if (bonus <= 0) {
       return candidate;
     }
 
+    claimKeyTrace.historicalBoosted += 1;
     return {
       ...candidate,
-      score: Math.min(1, candidate.score + bonus),
+      score: clampRecallScore(candidate.score + bonus),
+      scores: {
+        ...candidate.scores,
+        historicalLineage: candidate.scores.historicalLineage + bonus,
+      },
     };
   });
 }
@@ -387,23 +416,56 @@ function applyHistoricalLineageBoosts(
  * @param entry - Candidate being evaluated.
  * @param entries - All candidate entries currently in the result set.
  * @param aroundDate - Optional explicit around-date anchor.
- * @returns Additive historical bonus on the 0-1 scale.
+ * @returns Additive historical bonus and any trust-aware suppression facts.
  */
-function resolveHistoricalLineageBonus(entry: RecallCandidateEntry, entries: RecallCandidateEntry[], aroundDate: Date | null): number {
+function resolveHistoricalLineageBonus(
+  entry: RecallCandidateEntry,
+  entries: RecallCandidateEntry[],
+  aroundDate: Date | null,
+): {
+  bonus: number;
+  tentativeLineageSuppressed: boolean;
+} {
   if (entries.some((peer) => peer.id !== entry.id && entry.superseded_by === peer.id)) {
-    return HISTORICAL_PREDECESSOR_BOOST;
+    return {
+      bonus: HISTORICAL_PREDECESSOR_BOOST,
+      tentativeLineageSuppressed: false,
+    };
   }
 
   if (aroundDate) {
-    return 0;
+    return {
+      bonus: 0,
+      tentativeLineageSuppressed: false,
+    };
   }
 
-  const activePeers = entries.filter((peer) => peer.id !== entry.id && isPotentialCurrentPeer(peer) && isOlderHistoricalPeer(entry, peer));
-  if (activePeers.length === 0) {
-    return 0;
+  let tentativeLineageSuppressed = false;
+  for (const peer of entries) {
+    if (peer.id === entry.id || !isPotentialCurrentPeer(peer) || createdAtMs(entry.created_at) >= createdAtMs(peer.created_at)) {
+      continue;
+    }
+
+    const relation = resolveHistoricalPeerRelation(entry, peer, entries);
+    if (relation === "tentative_claim_key_suppressed") {
+      tentativeLineageSuppressed = true;
+      continue;
+    }
+
+    if (relation === null) {
+      continue;
+    }
+
+    return {
+      bonus: entry.retired ? HISTORICAL_RETIRED_PREDECESSOR_BOOST : HISTORICAL_OLDER_STATE_BOOST,
+      tentativeLineageSuppressed,
+    };
   }
 
-  return entry.retired ? HISTORICAL_RETIRED_PREDECESSOR_BOOST : HISTORICAL_OLDER_STATE_BOOST;
+  return {
+    bonus: 0,
+    tentativeLineageSuppressed,
+  };
 }
 
 /**
@@ -417,29 +479,56 @@ function isPotentialCurrentPeer(entry: RecallCandidateEntry): boolean {
 }
 
 /**
- * Check whether the left candidate is an older historical peer of the right one.
+ * Resolve the historical relationship between an older candidate and a current peer.
  *
  * @param left - Potential prior-state candidate.
  * @param right - Potential current-state peer.
- * @returns True when the pair looks like a structural historical transition.
+ * @param entries - All candidate entries currently in the result set.
+ * @returns Historical peer relation, or null when the pair is unrelated.
  */
-function isOlderHistoricalPeer(left: RecallCandidateEntry, right: RecallCandidateEntry): boolean {
-  return createdAtMs(left.created_at) < createdAtMs(right.created_at) && sharesHistoricalLineage(left, right);
+function resolveHistoricalPeerRelation(
+  left: RecallCandidateEntry,
+  right: RecallCandidateEntry,
+  entries: RecallCandidateEntry[],
+): "claim_key" | "topic" | "tentative_claim_key_suppressed" | null {
+  if (left.claim_key && right.claim_key && left.claim_key === right.claim_key) {
+    return canUseClaimKeyLineage(left, entries) ? "claim_key" : "tentative_claim_key_suppressed";
+  }
+
+  return sharesHistoricalTopic(left, right) ? "topic" : null;
 }
 
 /**
- * Compare two candidates for shared structural historical lineage.
+ * Decide whether a candidate can use claim-key lineage as trusted historical evidence.
  *
- * @param left - Left candidate.
- * @param right - Right candidate.
- * @returns True when the pair shares a claim-key slot or strong subject overlap.
+ * Tentative or unresolved claim keys stop contributing same-slot historical
+ * boosts once a trusted competing sibling for that slot is present.
+ *
+ * @param entry - Candidate requesting claim-key lineage treatment.
+ * @param entries - All candidate entries currently in the result set.
+ * @returns True when the entry may use claim-key lineage for boosting.
  */
-function sharesHistoricalLineage(left: RecallCandidateEntry, right: RecallCandidateEntry): boolean {
-  if (left.claim_key && right.claim_key && left.claim_key === right.claim_key) {
+function canUseClaimKeyLineage(entry: RecallCandidateEntry, entries: RecallCandidateEntry[]): boolean {
+  if (!entry.claim_key) {
+    return false;
+  }
+
+  if (!hasTrustedClaimKeyEvidence(entries, entry.claim_key)) {
     return true;
   }
 
-  return sharesHistoricalTopic(left, right);
+  return entry.claim_key_status === "trusted";
+}
+
+/**
+ * Check whether a trusted claim-key sibling exists for one slot in the candidate set.
+ *
+ * @param entries - All candidate entries currently in the result set.
+ * @param claimKey - Claim-key slot identity under inspection.
+ * @returns True when at least one sibling for the slot is explicitly trusted.
+ */
+function hasTrustedClaimKeyEvidence(entries: RecallCandidateEntry[], claimKey: string): boolean {
+  return entries.some((entry) => entry.claim_key === claimKey && entry.claim_key_status === "trusted");
 }
 
 /**
@@ -480,6 +569,137 @@ function countSharedPrefixTokens(leftTokens: string[], rightTokens: string[]): n
   }
 
   return sharedPrefixCount;
+}
+
+/**
+ * Apply light claim-key-aware penalties that reduce current-state redundancy.
+ *
+ * Trusted current-slot duplicates are down-ranked after the strongest sibling
+ * so they do not crowd out unrelated answers. Tentative siblings for a slot
+ * with a trusted current peer are also down-ranked so they cannot dominate the
+ * current answer solely through recency or semantic similarity.
+ *
+ * @param candidates - Ranked candidates after historical lineage boosts.
+ * @param claimKeyTrace - Mutable claim-key trace counters for one recall execution.
+ * @returns Candidates with score penalties applied when needed.
+ */
+function applyClaimKeyResultShaping(candidates: RankedCandidate[], claimKeyTrace: RecallExecutionTraceSummary["claimKey"]): RankedCandidate[] {
+  if (candidates.length === 0) {
+    return candidates;
+  }
+
+  const trustedActiveClaimKeys = new Set(
+    candidates
+      .map((candidate) => candidate.entry)
+      .filter((entry) => isPotentialCurrentPeer(entry) && entry.claim_key && entry.claim_key_status === "trusted")
+      .map((entry) => entry.claim_key!),
+  );
+  const trustedSlotRankById = rankTrustedSlotSiblings(candidates);
+
+  return candidates.map((candidate) => {
+    const trustPenalty = shouldPenalizeTentativeCurrentSibling(candidate.entry, trustedActiveClaimKeys) ? CLAIM_KEY_TENTATIVE_CURRENT_PENALTY : 0;
+    const redundancyPenalty = resolveTrustedSlotRedundancyPenalty(candidate.entry.id, trustedSlotRankById);
+    if (trustPenalty <= 0 && redundancyPenalty <= 0) {
+      return candidate;
+    }
+
+    if (trustPenalty > 0) {
+      claimKeyTrace.trustPenalized += 1;
+    }
+
+    if (redundancyPenalty > 0) {
+      claimKeyTrace.redundancyPenalized += 1;
+    }
+
+    return {
+      ...candidate,
+      score: clampRecallScore(candidate.score - trustPenalty - redundancyPenalty),
+      scores: {
+        ...candidate.scores,
+        claimKeyTrustPenalty: trustPenalty,
+        claimKeyRedundancyPenalty: redundancyPenalty,
+      },
+    };
+  });
+}
+
+/**
+ * Rank active trusted siblings within each claim-key slot by current score.
+ *
+ * @param candidates - Ranked candidates before final sorting.
+ * @returns Candidate-to-rank mapping where zero is the best trusted sibling.
+ */
+function rankTrustedSlotSiblings(candidates: RankedCandidate[]): Map<string, number> {
+  const candidatesById = new Map(candidates.map((candidate) => [candidate.entry.id, candidate]));
+  const trustedByClaimKey = new Map<string, RankedCandidate[]>();
+
+  for (const candidate of candidates) {
+    const claimKey = candidate.entry.claim_key;
+    if (!claimKey || candidate.entry.claim_key_status !== "trusted" || !isPotentialCurrentPeer(candidate.entry)) {
+      continue;
+    }
+
+    const siblings = trustedByClaimKey.get(claimKey) ?? [];
+    siblings.push(candidate);
+    trustedByClaimKey.set(claimKey, siblings);
+  }
+
+  const ranks = new Map<string, number>();
+  for (const siblings of trustedByClaimKey.values()) {
+    siblings
+      .slice()
+      .sort(compareCandidatesForTrustedSlotRank)
+      .forEach((candidate, index) => {
+        if (candidatesById.has(candidate.entry.id)) {
+          ranks.set(candidate.entry.id, index);
+        }
+      });
+  }
+
+  return ranks;
+}
+
+/**
+ * Compare active trusted same-slot siblings for redundancy shaping order.
+ *
+ * @param left - Left candidate.
+ * @param right - Right candidate.
+ * @returns Negative when the left candidate should remain ahead.
+ */
+function compareCandidatesForTrustedSlotRank(left: RankedCandidate, right: RankedCandidate): number {
+  return right.score - left.score || createdAtMs(right.entry.created_at) - createdAtMs(left.entry.created_at) || left.entry.id.localeCompare(right.entry.id);
+}
+
+/**
+ * Decide whether an active current-state candidate should defer to a trusted peer.
+ *
+ * @param entry - Candidate under evaluation.
+ * @param trustedActiveClaimKeys - Claim-key slots that already have a trusted active sibling.
+ * @returns True when a trust penalty should be applied.
+ */
+function shouldPenalizeTentativeCurrentSibling(entry: RecallCandidateEntry, trustedActiveClaimKeys: Set<string>): boolean {
+  return isPotentialCurrentPeer(entry) && entry.claim_key !== undefined && entry.claim_key_status !== "trusted" && trustedActiveClaimKeys.has(entry.claim_key);
+}
+
+/**
+ * Resolve the redundancy penalty for one trusted active slot sibling.
+ *
+ * @param entryId - Candidate identifier.
+ * @param trustedSlotRankById - Rank of each trusted active sibling within its slot.
+ * @returns Penalty to subtract from the score.
+ */
+function resolveTrustedSlotRedundancyPenalty(entryId: string, trustedSlotRankById: Map<string, number>): number {
+  const rank = trustedSlotRankById.get(entryId) ?? 0;
+  if (rank <= 0) {
+    return 0;
+  }
+
+  return Math.min(CLAIM_KEY_REDUNDANT_TRUSTED_SLOT_MAX_PENALTY, rank * CLAIM_KEY_REDUNDANT_TRUSTED_SLOT_PENALTY);
+}
+
+/** Clamp a ranked recall score into the supported 0-1 range. */
+function clampRecallScore(value: number): number {
+  return Math.max(0, Math.min(1, value));
 }
 
 /**

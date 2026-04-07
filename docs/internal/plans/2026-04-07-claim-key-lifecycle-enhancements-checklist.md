@@ -219,23 +219,27 @@ Status gate:
 - this task is done when recall uses claim-key lifecycle status to make historical same-slot behavior safer and less redundant
 
 Checklist:
-- [ ] Add failing tests for trusted vs tentative lineage preference
-- [ ] Add failing tests for current-state de-dup/redundancy shaping among trusted same-slot siblings
-- [ ] Add failing tests for tentative same-key siblings not dominating current answers
-- [ ] Ensure recall candidates or hydrated entries expose needed lifecycle fields
-- [ ] Update `src/adapters/db/recall-adapter.ts` query/select logic if needed
-- [ ] Update `src/core/recall/search.ts` lineage boost logic to check trusted status
-- [ ] Add light result shaping to avoid flooding top results with the same trusted slot
-- [ ] Preserve trace/debug explainability for claim-key-driven decisions
-- [ ] Run:
-  - [ ] `pnpm test tests/core/recall/search.test.ts`
-  - [ ] `pnpm test tests/adapters/db/recall-adapter.test.ts`
-  - [ ] `pnpm test tests/app/recall/unified.test.ts`
+- [x] Add failing tests for trusted vs tentative lineage preference
+- [x] Add failing tests for current-state de-dup/redundancy shaping among trusted same-slot siblings
+- [x] Add failing tests for tentative same-key siblings not dominating current answers
+- [x] Ensure recall candidates or hydrated entries expose needed lifecycle fields
+- [x] Update `src/adapters/db/recall-adapter.ts` query/select logic if needed
+- [x] Update `src/core/recall/search.ts` lineage boost logic to check trusted status
+- [x] Add light result shaping to avoid flooding top results with the same trusted slot
+- [x] Preserve trace/debug explainability for claim-key-driven decisions
+- [x] Necessary scope additions discovered during implementation:
+  - [x] Extend `RecallCandidateEntry` so ranking-time candidates carry `claim_key_status`
+  - [x] Extend recall score breakdowns and trace summaries so claim-key boosts and penalties remain inspectable
+- [x] Run:
+  - [x] `pnpm typecheck`
+  - [x] `pnpm test tests/core/recall/search.test.ts`
+  - [x] `pnpm test tests/adapters/db/recall-adapter.test.ts`
+  - [x] `pnpm test tests/app/recall/unified.test.ts`
 
 Exit criteria:
-- [ ] Historical recall prefers trusted same-slot lineage
-- [ ] Tentative keys do not create aggressive collapse or misleading boosts
-- [ ] Result diversity improves for repeated same-slot active entries
+- [x] Historical recall prefers trusted same-slot lineage
+- [x] Tentative keys do not create aggressive collapse or misleading boosts
+- [x] Result diversity improves for repeated same-slot active entries
 
 ---
 

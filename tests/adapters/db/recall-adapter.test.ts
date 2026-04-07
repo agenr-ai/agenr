@@ -23,7 +23,7 @@ describe("createRecallAdapter historical expansion", () => {
     }
   });
 
-  it("returns claim_key on recall candidates when present and leaves it undefined otherwise", async () => {
+  it("returns claim-key lifecycle fields on recall candidates when present and leaves them undefined otherwise", async () => {
     const database = await createTestDatabase();
     const adapter = createRecallAdapter(database, createEmbeddingPort());
     const withClaimKey = createEntry({
@@ -31,6 +31,7 @@ describe("createRecallAdapter historical expansion", () => {
       subject: "deployment packaging",
       content: "Use Vite for deployment packaging.",
       claim_key: "deployments/packaging",
+      claim_key_status: "trusted",
     });
     const withoutClaimKey = createEntry({
       id: "webpack-fallback",
@@ -55,9 +56,13 @@ describe("createRecallAdapter historical expansion", () => {
     });
 
     expect(vectorCandidates.find((candidate) => candidate.entry.id === withClaimKey.id)?.entry.claim_key).toBe("deployments/packaging");
+    expect(vectorCandidates.find((candidate) => candidate.entry.id === withClaimKey.id)?.entry.claim_key_status).toBe("trusted");
     expect(vectorCandidates.find((candidate) => candidate.entry.id === withoutClaimKey.id)?.entry.claim_key).toBeUndefined();
+    expect(vectorCandidates.find((candidate) => candidate.entry.id === withoutClaimKey.id)?.entry.claim_key_status).toBeUndefined();
     expect(lexicalWithClaim[0]?.entry.claim_key).toBe("deployments/packaging");
+    expect(lexicalWithClaim[0]?.entry.claim_key_status).toBe("trusted");
     expect(lexicalWithoutClaim[0]?.entry.claim_key).toBeUndefined();
+    expect(lexicalWithoutClaim[0]?.entry.claim_key_status).toBeUndefined();
   });
 
   it("fetches direct predecessors, same-claim-key lineage siblings, and retired same-subject fallbacks", async () => {
@@ -136,6 +141,46 @@ describe("createRecallAdapter historical expansion", () => {
     expect(predecessors[1]?.claim_key).toBe("recall_eval/local_workflow");
     expect(predecessors[2]?.claim_key).toBe("recall_eval/local_workflow");
     expect(predecessors[3]?.claim_key).toBeUndefined();
+  });
+
+  it("prefers trusted same-claim-key siblings ahead of tentative ones during predecessor expansion", async () => {
+    const database = await createTestDatabase();
+    const adapter = createRecallAdapter(database, createEmbeddingPort());
+    const current = createEntry({
+      id: "current-entry",
+      subject: "deployment packaging",
+      content: "Use Vite for deployment packaging.",
+      claim_key: "deployments/packaging",
+      claim_key_status: "trusted",
+      created_at: "2026-03-10T00:00:00.000Z",
+    });
+    const tentativeOlder = createEntry({
+      id: "tentative-older",
+      subject: "deployment packaging fallback",
+      content: "Maybe webpack was still the deployment packager.",
+      claim_key: "deployments/packaging",
+      claim_key_status: "tentative",
+      created_at: "2026-01-10T00:00:00.000Z",
+    });
+    const trustedOlder = createEntry({
+      id: "trusted-older",
+      subject: "deployment packaging legacy",
+      content: "Webpack handled deployment packaging before Vite.",
+      claim_key: "deployments/packaging",
+      claim_key_status: "trusted",
+      created_at: "2026-02-10T00:00:00.000Z",
+    });
+
+    await database.insertEntry(current, createEmbedding(0, 1), "packaging-current");
+    await database.insertEntry(tentativeOlder, createEmbedding(0, 0.9), "packaging-tentative");
+    await database.insertEntry(trustedOlder, createEmbedding(0, 0.85), "packaging-trusted");
+
+    const predecessors = await adapter.fetchPredecessors!({
+      activeEntryIds: [current.id],
+    });
+
+    expect(predecessors.map((entry) => entry.id)).toEqual(["trusted-older", "tentative-older"]);
+    expect(predecessors.map((entry) => entry.claim_key_status)).toEqual(["trusted", "tentative"]);
   });
 
   it("keeps claim-key predecessor expansion bounded", async () => {
@@ -240,6 +285,7 @@ function createEntry(overrides: Partial<Entry> = {}): Entry {
     valid_from: overrides.valid_from,
     valid_to: overrides.valid_to,
     claim_key: overrides.claim_key,
+    claim_key_status: overrides.claim_key_status,
     supersession_kind: overrides.supersession_kind,
     supersession_reason: overrides.supersession_reason,
     cluster_id: overrides.cluster_id,

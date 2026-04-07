@@ -27,6 +27,7 @@ const RECALL_CANDIDATE_SELECT_COLUMNS = `
   e.embedding,
   e.superseded_by,
   e.claim_key,
+  e.claim_key_status,
   e.retired,
   e.created_at
 `;
@@ -207,12 +208,19 @@ class LibsqlRecallAdapter implements RecallPorts {
               WHEN e.superseded_by IN (SELECT id FROM seed) THEN 0
               WHEN e.claim_key IS NOT NULL
                 AND e.claim_key IN (SELECT claim_key FROM seed_claim_keys)
+                AND e.claim_key_status = 'trusted'
                 AND (e.retired = 1 OR e.superseded_by IS NOT NULL) THEN 1
               WHEN e.claim_key IS NOT NULL
-                AND e.claim_key IN (SELECT claim_key FROM seed_claim_keys) THEN 2
+                AND e.claim_key IN (SELECT claim_key FROM seed_claim_keys)
+                AND e.claim_key_status = 'trusted' THEN 2
+              WHEN e.claim_key IS NOT NULL
+                AND e.claim_key IN (SELECT claim_key FROM seed_claim_keys)
+                AND (e.retired = 1 OR e.superseded_by IS NOT NULL) THEN 3
+              WHEN e.claim_key IS NOT NULL
+                AND e.claim_key IN (SELECT claim_key FROM seed_claim_keys) THEN 4
               WHEN e.retired = 1
-                AND e.subject IN (SELECT subject FROM seed_subjects) THEN 3
-              ELSE 4
+                AND e.subject IN (SELECT subject FROM seed_subjects) THEN 5
+              ELSE 6
             END AS lineage_priority
           FROM entries AS e
           WHERE e.id NOT IN (SELECT id FROM seed)
@@ -388,6 +396,7 @@ function mapRecallCandidateRow(row: Row): RecallCandidateEntry {
     embedding: readEmbedding(row, "embedding"),
     superseded_by: readOptionalString(row, "superseded_by"),
     claim_key: readOptionalString(row, "claim_key"),
+    claim_key_status: readOptionalString(row, "claim_key_status") as RecallCandidateEntry["claim_key_status"],
     retired: readBoolean(row, "retired"),
     created_at: readRequiredString(row, "created_at"),
   };
