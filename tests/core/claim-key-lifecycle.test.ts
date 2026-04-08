@@ -2,10 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import {
   applyClaimKeyLifecycle,
+  buildClaimKeyLifecycleAuditDetails,
+  buildClaimKeyLifecycleUpdateFields,
   buildExtractedClaimKeyLifecycle,
   buildManualClaimKeyLifecycle,
   buildManualClaimKeyUpdateFields,
   buildSurgeonAppliedClaimKeyLifecycle,
+  buildSurgeonAppliedClaimKeyLifecycleBundle,
+  buildSurgeonProposalClaimKeyAuditDetails,
   buildSurgeonProposalClaimKeyLifecycle,
   parseClaimKeySource,
   parseClaimKeyStatus,
@@ -106,6 +110,74 @@ describe("claim-key lifecycle helpers", () => {
       proposedStatus: "trusted",
       proposedSource: "surgeon_family_reuse",
       proposedRawClaimKey: "Jim/timezone",
+    });
+  });
+
+  it("builds full surgeon-applied lifecycle bundles for persistence", () => {
+    expect(
+      buildSurgeonAppliedClaimKeyLifecycleBundle({
+        targetClaimKey: "jim/home_city",
+        priorClaimKey: " Jim / Home City ",
+        rawClaimKey: " Jim / Home City ",
+        source: "normalize",
+        confidence: 0.99,
+        rationale: 'Canonical normalization preserves the slot while rewriting " Jim / Home City " to "jim/home_city".',
+      }),
+    ).toEqual({
+      claim_key: "jim/home_city",
+      claim_key_raw: "Jim / Home City",
+      claim_key_status: "trusted",
+      claim_key_source: "surgeon_compaction",
+      claim_key_confidence: 0.99,
+      claim_key_rationale: 'Canonical normalization preserves the slot while rewriting " Jim / Home City " to "jim/home_city".',
+    });
+  });
+
+  it("maps shared lifecycle bundles into update and audit field shapes", () => {
+    const lifecycle = buildSurgeonAppliedClaimKeyLifecycleBundle({
+      targetClaimKey: "jim/home_city",
+      priorClaimKey: " Jim / Home City ",
+      rawClaimKey: " Jim / Home City ",
+      source: "normalize",
+      confidence: 0.99,
+      rationale: 'Canonical normalization preserves the slot while rewriting " Jim / Home City " to "jim/home_city".',
+    });
+
+    expect(buildClaimKeyLifecycleUpdateFields(lifecycle)).toEqual({
+      claim_key: "jim/home_city",
+      claim_key_raw: "Jim / Home City",
+      claim_key_status: "trusted",
+      claim_key_source: "surgeon_compaction",
+      claim_key_confidence: 0.99,
+      claim_key_rationale: 'Canonical normalization preserves the slot while rewriting " Jim / Home City " to "jim/home_city".',
+      claim_support_source_kind: undefined,
+      claim_support_locator: undefined,
+      claim_support_observed_at: undefined,
+      claim_support_mode: undefined,
+    });
+    expect(buildClaimKeyLifecycleAuditDetails(lifecycle)).toEqual({
+      claim_key_raw: "Jim / Home City",
+      claim_key_status: "trusted",
+      claim_key_source: "surgeon_compaction",
+      claim_key_confidence: 0.99,
+      claim_key_rationale: 'Canonical normalization preserves the slot while rewriting " Jim / Home City " to "jim/home_city".',
+    });
+  });
+
+  it("maps deferred surgeon proposal lifecycle metadata into audit details", () => {
+    expect(
+      buildSurgeonProposalClaimKeyAuditDetails(
+        buildSurgeonProposalClaimKeyLifecycle({
+          proposedClaimKeys: ["agenr/status"],
+          source: "metadata_backfill_rewrite",
+          rawClaimKey: "project/status",
+        }),
+      ),
+    ).toEqual({
+      proposal_deferred_until_review: true,
+      proposal_claim_key_status: "trusted",
+      proposal_claim_key_source: "surgeon_metadata_rewrite",
+      proposal_claim_key_raw: "project/status",
     });
   });
 

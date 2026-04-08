@@ -91,6 +91,8 @@ describe("claim_key_quality surgeon pass", () => {
           claim_key_raw: "Jim / Home City",
           claim_key_status: "trusted",
           claim_key_source: "surgeon_compaction",
+          claim_key_confidence: 0.99,
+          claim_key_rationale: 'Canonical normalization preserves the slot while rewriting " Jim / Home City " to "jim/home_city".',
           proposal_source: "normalize",
           auto_applied: true,
         }),

@@ -10,7 +10,11 @@ import {
   type ClaimKeyEntityFamilyPairSupport,
 } from "../../core/claim-key-entity-family.js";
 import {
-  buildSurgeonAppliedClaimKeyLifecycle as buildAppliedClaimKeyLifecycle,
+  applyClaimKeyLifecycle,
+  buildClaimKeyLifecycleAuditDetails,
+  buildClaimKeyLifecycleUpdateFields,
+  buildSurgeonAppliedClaimKeyLifecycleBundle as buildAppliedClaimKeyLifecycleBundle,
+  buildSurgeonProposalClaimKeyAuditDetails,
   buildSurgeonProposalClaimKeyLifecycle as buildProposalClaimKeyLifecycle,
   buildSurgeonProposalLifecycleRationale as buildProposalLifecycleRationale,
   type ProposalClaimKeyLifecycleMetadata,
@@ -1413,49 +1417,32 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
     }
 
     const previousProjected = snapshotClaimKeyLifecycle(projected);
-    const lifecycle = buildAppliedClaimKeyLifecycle({
+    const lifecycle = buildAppliedClaimKeyLifecycleBundle({
       targetClaimKey: claimKey,
       priorClaimKey: input.oldClaimKey,
       priorClaimKeyRaw: projected.claim_key_raw ?? actual.claim_key_raw,
       rawClaimKey: input.rawClaimKey,
       source: input.source,
+      confidence: input.confidence,
+      rationale: input.rationale,
       support: input.support,
       compactness: input.compactness,
     });
 
-    projected.claim_key = claimKey;
-    projected.claim_key_raw = lifecycle.rawClaimKey;
-    projected.claim_key_status = lifecycle.status;
-    projected.claim_key_source = lifecycle.source;
-    projected.claim_key_confidence = input.confidence;
-    projected.claim_key_rationale = input.rationale;
+    applyClaimKeyLifecycle(projected, lifecycle);
     if (!options.apply) {
       return { projected: true, applied: false };
     }
 
-    const updated = await deps.port.updateEntry(
-      entryId,
-      {
-        claim_key: claimKey,
-        claim_key_raw: lifecycle.rawClaimKey,
-        claim_key_status: lifecycle.status,
-        claim_key_source: lifecycle.source,
-        claim_key_confidence: input.confidence,
-        claim_key_rationale: input.rationale,
-      },
-      { includeInactive: selection.includeInactive },
-    );
+    const updated = await deps.port.updateEntry(entryId, buildClaimKeyLifecycleUpdateFields(lifecycle), {
+      includeInactive: selection.includeInactive,
+    });
     if (!updated) {
       restoreClaimKeyLifecycle(projected, previousProjected);
       return { projected: false, applied: false };
     }
 
-    actual.claim_key = claimKey;
-    actual.claim_key_raw = lifecycle.rawClaimKey;
-    actual.claim_key_status = lifecycle.status;
-    actual.claim_key_source = lifecycle.source;
-    actual.claim_key_confidence = input.confidence;
-    actual.claim_key_rationale = input.rationale;
+    applyClaimKeyLifecycle(actual, lifecycle);
     await deps.port.logRunAction({
       id: randomUUID(),
       runId: options.runId,
@@ -1467,11 +1454,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
         issue_kind: input.issueKind,
         old_claim_key: input.oldClaimKey,
         new_claim_key: claimKey,
-        claim_key_raw: lifecycle.rawClaimKey,
-        claim_key_status: lifecycle.status,
-        claim_key_source: lifecycle.source,
-        claim_key_confidence: input.confidence,
-        claim_key_rationale: input.rationale,
+        ...buildClaimKeyLifecycleAuditDetails(lifecycle),
         proposal_source: input.source,
         confidence: input.confidence,
         auto_apply_threshold: input.promotion?.autoApplyThreshold,
@@ -1552,10 +1535,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
         promotion_lane: audit?.promotion?.lane,
         eligible_for_apply: proposal.eligibleForApply,
         supported_candidate: audit?.supportedCandidate === true,
-        proposal_deferred_until_review: audit?.proposalLifecycle?.deferredUntilReview === true,
-        proposal_claim_key_status: audit?.proposalLifecycle?.proposedStatus,
-        proposal_claim_key_source: audit?.proposalLifecycle?.proposedSource,
-        proposal_claim_key_raw: audit?.proposalLifecycle?.proposedRawClaimKey,
+        ...buildSurgeonProposalClaimKeyAuditDetails(audit?.proposalLifecycle),
         ...buildMissingBackfillSupportAuditDetails(audit?.support),
         ...buildMissingBackfillShadowAuditDetails(audit?.shadow),
         ...(audit?.compactness?.compactedFrom

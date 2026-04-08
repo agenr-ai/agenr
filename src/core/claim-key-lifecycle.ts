@@ -104,6 +104,27 @@ export interface ProposalClaimKeyLifecycleMetadata {
 }
 
 /**
+ * Structured lifecycle details recorded on surgeon run actions for applied writes.
+ */
+export interface ClaimKeyLifecycleAuditDetails {
+  claim_key_raw?: string;
+  claim_key_status: ClaimKeyStatus;
+  claim_key_source: ClaimKeySource;
+  claim_key_confidence: number;
+  claim_key_rationale: string;
+}
+
+/**
+ * Structured lifecycle details recorded on surgeon run actions for deferred proposals.
+ */
+export interface ProposalClaimKeyLifecycleAuditDetails {
+  proposal_deferred_until_review: true;
+  proposal_claim_key_status: ClaimKeyStatus;
+  proposal_claim_key_source?: ClaimKeySource;
+  proposal_claim_key_raw?: string;
+}
+
+/**
  * Parses one optional claim-key lifecycle status.
  *
  * @param value - Raw boundary value.
@@ -234,6 +255,32 @@ export function buildManualClaimKeyUpdateFields(params: {
       supportMode: params.supportMode,
     }),
   );
+}
+
+/**
+ * Converts one canonical lifecycle bundle into the direct-update field shape.
+ *
+ * @param lifecycle - Canonical lifecycle payload.
+ * @returns Direct-update lifecycle field bundle.
+ */
+export function buildClaimKeyLifecycleUpdateFields(lifecycle: ResolvedClaimKeyLifecycle): EntryLifecycleUpdateFields {
+  return lifecycleToUpdateFields(lifecycle);
+}
+
+/**
+ * Converts one canonical lifecycle bundle into structured audit details.
+ *
+ * @param lifecycle - Canonical lifecycle payload.
+ * @returns Structured lifecycle fields for run-action logging.
+ */
+export function buildClaimKeyLifecycleAuditDetails(lifecycle: ResolvedClaimKeyLifecycle): ClaimKeyLifecycleAuditDetails {
+  return {
+    claim_key_raw: lifecycle.claim_key_raw,
+    claim_key_status: lifecycle.claim_key_status,
+    claim_key_source: lifecycle.claim_key_source,
+    claim_key_confidence: lifecycle.claim_key_confidence,
+    claim_key_rationale: lifecycle.claim_key_rationale,
+  };
 }
 
 /**
@@ -477,6 +524,34 @@ export function buildSurgeonAppliedClaimKeyLifecycle(input: {
 }
 
 /**
+ * Builds the full canonical lifecycle bundle surgeon should persist for one applied rewrite.
+ *
+ * @param input - Target claim key, provenance, and persisted confidence/rationale fields.
+ * @returns Canonical lifecycle payload ready for persistence and audit logging.
+ */
+export function buildSurgeonAppliedClaimKeyLifecycleBundle(input: {
+  targetClaimKey: string;
+  priorClaimKey: string | null;
+  priorClaimKeyRaw?: string;
+  rawClaimKey?: string | null;
+  source: string;
+  confidence: number;
+  rationale: string;
+  support?: SurgeonClaimKeySupportSignal;
+  compactness?: ClaimKeyCompactnessSignal;
+}): ResolvedClaimKeyLifecycle {
+  const lifecycle = buildSurgeonAppliedClaimKeyLifecycle(input);
+  return {
+    claim_key: input.targetClaimKey,
+    claim_key_raw: lifecycle.rawClaimKey,
+    claim_key_status: lifecycle.status,
+    claim_key_source: lifecycle.source,
+    claim_key_confidence: input.confidence,
+    claim_key_rationale: input.rationale,
+  };
+}
+
+/**
  * Builds deferred lifecycle metadata for an unresolved surgeon proposal.
  *
  * @param input - Proposed claim keys, provenance, and any raw-key preservation signal.
@@ -511,6 +586,27 @@ export function buildSurgeonProposalClaimKeyLifecycle(input: {
       targetClaimKey,
       rawClaimKey: input.rawClaimKey,
     }),
+  };
+}
+
+/**
+ * Converts deferred surgeon lifecycle metadata into structured proposal audit details.
+ *
+ * @param lifecycle - Deferred lifecycle payload recorded with the proposal.
+ * @returns Structured lifecycle fields for run-action logging.
+ */
+export function buildSurgeonProposalClaimKeyAuditDetails(
+  lifecycle: ProposalClaimKeyLifecycleMetadata | undefined,
+): ProposalClaimKeyLifecycleAuditDetails | Record<string, never> {
+  if (!lifecycle) {
+    return {};
+  }
+
+  return {
+    proposal_deferred_until_review: lifecycle.deferredUntilReview,
+    proposal_claim_key_status: lifecycle.proposedStatus,
+    proposal_claim_key_source: lifecycle.proposedSource,
+    proposal_claim_key_raw: lifecycle.proposedRawClaimKey,
   };
 }
 
