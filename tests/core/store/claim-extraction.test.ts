@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DatabasePort, LlmPort } from "../../../src/core/ports.js";
-import { extractClaimKey, getEntityHints, runBatchClaimExtraction } from "../../../src/core/store/claim-extraction.js";
+import { extractClaimKey, extractClaimKeyDecision, getEntityHints, runBatchClaimExtraction } from "../../../src/core/store/claim-extraction.js";
 import type { Entry, StoreEntryInput } from "../../../src/core/types.js";
 
 describe("extractClaimKey", () => {
@@ -481,6 +481,73 @@ describe("extractClaimKey", () => {
       ),
     ).resolves.toBeNull();
   });
+
+  it("accepts a supported near-miss candidate when trusted exact-key reuse and lexical grounding are strong", async () => {
+    const llm = new MockLlmPort(() => ({
+      entity: "Repo workflow",
+      attribute: "source of truth",
+      confidence: 0.74,
+    }));
+
+    const result = await extractClaimKey(
+      {
+        type: "decision",
+        subject: "Repo workflow docs",
+        content: "AGENTS.md is the source of truth for the repo workflow, even when older notes disagree.",
+      },
+      llm,
+      {
+        enabled: true,
+        confidenceThreshold: 0.8,
+        eligibleTypes: ["fact", "preference", "decision", "lesson"],
+      },
+      {
+        supportClaimKeys: ["repo_workflow/source_of_truth"],
+      },
+    );
+
+    expect(result).toMatchObject({
+      claimKey: "repo_workflow/source_of_truth",
+      confidence: 0.74,
+      path: "model",
+    });
+    expect(result?.acceptanceRationale).toContain("trusted exact-key reuse");
+  });
+
+  it("surfaces a structured review candidate when support exists but confidence stays below the ingest acceptance floor", async () => {
+    const llm = new MockLlmPort(() => ({
+      entity: "SQLite",
+      attribute: "window function support",
+      confidence: 0.68,
+    }));
+
+    const decision = await extractClaimKeyDecision(
+      {
+        type: "fact",
+        subject: "SQLite window functions support",
+        content: "SQLite in this environment supports window functions.",
+        tags: ["sqlite", "database"],
+        source_context: "SQLite query capability note",
+      },
+      llm,
+      {
+        enabled: true,
+        confidenceThreshold: 0.8,
+        eligibleTypes: ["fact", "preference", "decision", "lesson"],
+      },
+      {
+        supportClaimKeys: ["sqlite/window_function_support"],
+      },
+    );
+
+    expect(decision.result).toBeNull();
+    expect(decision.diagnostic).toMatchObject({
+      outcome: "low_confidence_candidate",
+      reviewable: true,
+      suggestedClaimKey: "sqlite/window_function_support",
+      path: "model",
+    });
+  });
 });
 
 describe("runBatchClaimExtraction", () => {
@@ -539,6 +606,68 @@ describe("runBatchClaimExtraction", () => {
 
     expect(entries[0]?.claim_key).toBe("project_x/status");
     expect(entries[1]?.claim_key).toBe("project_x/status");
+  });
+
+  it("retries unresolved earlier entries after later trusted siblings expand same-batch support", async () => {
+    const entries: StoreEntryInput[] = [
+      {
+        type: "decision",
+        subject: "Repo workflow docs",
+        content: "AGENTS.md is the source of truth for the repo workflow, even when older notes disagree.",
+      },
+      {
+        type: "decision",
+        subject: "Canonical repo workflow",
+        content: "The repo workflow uses AGENTS.md as its source of truth.",
+      },
+    ];
+    const diagnostics: string[] = [];
+    const llm = new MockLlmPort((callIndex) => {
+      if (callIndex === 0) {
+        return {
+          entity: "Repo workflow",
+          attribute: "source of truth",
+          confidence: 0.68,
+        };
+      }
+
+      if (callIndex === 1) {
+        return {
+          entity: "Repo workflow",
+          attribute: "source of truth",
+          confidence: 0.94,
+        };
+      }
+
+      return {
+        entity: "Repo workflow",
+        attribute: "source of truth",
+        confidence: 0.74,
+      };
+    });
+
+    await runBatchClaimExtraction(
+      [{ entries }],
+      {
+        createLlm: () => llm,
+        db: new MockDatabasePort(),
+      },
+      {
+        enabled: true,
+        confidenceThreshold: 0.8,
+        eligibleTypes: ["fact", "preference", "decision", "lesson"],
+      },
+      4,
+      undefined,
+      (entry, diagnostic) => {
+        diagnostics.push(`${entry.subject}|${diagnostic.outcome}|${diagnostic.suggestedClaimKey ?? ""}`);
+      },
+    );
+
+    expect(entries[0]?.claim_key).toBe("repo_workflow/source_of_truth");
+    expect(entries[1]?.claim_key).toBe("repo_workflow/source_of_truth");
+    expect(llm.calls).toHaveLength(3);
+    expect(diagnostics).toContain("Repo workflow docs|accepted|repo_workflow/source_of_truth");
   });
 });
 

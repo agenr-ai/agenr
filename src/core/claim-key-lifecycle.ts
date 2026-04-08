@@ -58,6 +58,7 @@ export interface ExtractedClaimKeyLifecycleInput {
   path: "model" | "json_retry" | "deterministic_repair";
   compactedFrom?: string | null;
   compactionReason?: string | null;
+  acceptanceRationale?: string | null;
 }
 
 /**
@@ -396,7 +397,9 @@ export function buildExtractedClaimKeyLifecycle(extracted: ExtractedClaimKeyLife
     claim_key_status: source === "deterministic_repair" ? "tentative" : "trusted",
     claim_key_source: source,
     claim_key_confidence: extracted.confidence,
-    claim_key_rationale: extracted.compactionReason ? `${rationalePrefix}; ${extracted.compactionReason}` : rationalePrefix,
+    claim_key_rationale: [rationalePrefix, extracted.compactionReason, extracted.acceptanceRationale]
+      .filter((value): value is string => Boolean(value))
+      .join("; "),
   };
 }
 

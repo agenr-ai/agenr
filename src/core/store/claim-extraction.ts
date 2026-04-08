@@ -2,6 +2,12 @@ import type { DatabasePort, LlmPort } from "../ports.js";
 import type { EntryType, StoreEntryInput } from "../types.js";
 import { applyClaimKeyLifecycle, buildExtractedClaimKeyLifecycle } from "../claim-key-lifecycle.js";
 import {
+  buildClaimKeySupportSeedFromExamples,
+  evaluateClaimKeyCompactness,
+  evaluateClaimKeySupport,
+  type ClaimKeySupportEvaluation,
+} from "../claim-key-support.js";
+import {
   compactClaimKey,
   describeClaimKeyNormalizationFailure,
   describeExtractedClaimKeyRejection,
@@ -46,7 +52,13 @@ const DETERMINISTIC_ATTRIBUTE_HEADS = new Set([
 ]);
 const MAX_ENTITY_HINTS = 12;
 const MAX_CLAIM_KEY_EXAMPLES = 8;
+const MAX_SUPPORT_CLAIM_KEY_EXAMPLES = 128;
 const DEFAULT_REPAIR_CONFIDENCE = 0.86;
+const HIGH_CONFIDENCE_BACKFILL_THRESHOLD = 0.92;
+const SUPPORTED_INGEST_AUTO_APPLY_THRESHOLD = 0.72;
+const COMPACTED_SUPPORTED_INGEST_AUTO_APPLY_THRESHOLD = 0.74;
+const PROPOSAL_CONFIDENCE_THRESHOLD = 0.75;
+const SUPPORTED_PROPOSAL_CONFIDENCE_THRESHOLD = 0.65;
 
 /** Raw JSON payload expected back from the claim-extraction classifier. */
 interface ClaimExtractionResponse {
@@ -73,6 +85,7 @@ interface NormalizedClaimExtractionHints {
 interface ClaimExtractionHintState {
   entityHints: string[];
   claimKeyExamples: string[];
+  supportClaimKeys: string[];
 }
 
 /** Successful model attempt before confidence thresholding is applied. */
@@ -152,6 +165,40 @@ export interface ClaimExtractionResult {
   path: ClaimExtractionPath;
   compactedFrom?: string | null;
   compactionReason?: string | null;
+  acceptanceRationale?: string | null;
+}
+
+/**
+ * Structured routing outcome recorded for each ingest-time claim-extraction attempt.
+ */
+export type ClaimExtractionDiagnosticOutcome =
+  | "accepted"
+  | "no_claim"
+  | "low_confidence_candidate"
+  | "rejected_candidate"
+  | "extraction_failure"
+  | "ineligible_type";
+
+/**
+ * Diagnostic payload for accepted, reviewable, and unresolved claim-extraction decisions.
+ */
+export interface ClaimExtractionDiagnostic {
+  outcome: ClaimExtractionDiagnosticOutcome;
+  confidence: number | null;
+  path: ClaimExtractionPath | null;
+  warning: string | null;
+  suggestedClaimKey: string | null;
+  reviewable: boolean;
+  supportEvidence: string[];
+  rationale: string | null;
+}
+
+/**
+ * Full ingest-time claim-extraction decision used by store and ingest flows.
+ */
+export interface ClaimExtractionDecision {
+  result: ClaimExtractionResult | null;
+  diagnostic: ClaimExtractionDiagnostic;
 }
 
 /** Applies extracted lifecycle metadata directly onto a store input for callers that precompute claim extraction before store. */
@@ -243,7 +290,7 @@ export async function previewClaimKeyExtraction(
  * @param entry - Candidate entry content to classify.
  * @param llm - LLM port used for JSON classification.
  * @param config - Runtime extraction controls.
- * @param options - Optional hints plus warning sink for deterministic rejection reasons.
+ * @param options - Optional hints, support examples, plus warning sink for deterministic rejection reasons.
  * @returns Extracted claim metadata, or `null` when no safe claim key was found.
  */
 export async function extractClaimKey(
@@ -253,23 +300,217 @@ export async function extractClaimKey(
   options: {
     hints?: ClaimExtractionHints;
     onWarning?: (warning: string) => void;
+    supportClaimKeys?: string[];
   } = {},
 ): Promise<ClaimExtractionResult | null> {
-  const preview = await previewClaimKeyExtraction(entry, llm, config, options);
-  if (!preview) {
-    return null;
+  const decision = await extractClaimKeyDecision(entry, llm, config, options);
+  return decision.result;
+}
+
+/**
+ * Evaluates one ingest-time claim-extraction attempt, including supported near-miss routing.
+ *
+ * @param entry - Candidate entry content to classify.
+ * @param llm - LLM port used for JSON classification.
+ * @param config - Runtime extraction controls.
+ * @param options - Optional hints, support claim-key examples, and warning sink.
+ * @returns Accepted claim key plus structured diagnostics for unresolved outcomes.
+ */
+export async function extractClaimKeyDecision(
+  entry: { type: EntryType; subject: string; content: string; tags?: string[]; source_context?: string },
+  llm: LlmPort,
+  config: ClaimExtractionConfig,
+  options: {
+    hints?: ClaimExtractionHints;
+    onWarning?: (warning: string) => void;
+    supportClaimKeys?: string[];
+  } = {},
+): Promise<ClaimExtractionDecision> {
+  if (!config.enabled || !config.eligibleTypes.includes(entry.type)) {
+    return {
+      result: null,
+      diagnostic: {
+        outcome: "ineligible_type",
+        confidence: null,
+        path: null,
+        warning: null,
+        suggestedClaimKey: null,
+        reviewable: false,
+        supportEvidence: [],
+        rationale: "entry type is not eligible for claim-key extraction",
+      },
+    };
   }
 
-  if (preview.path === "deterministic_repair" || preview.confidence >= config.confidenceThreshold) {
-    return preview;
+  const normalizedHints = normalizeClaimExtractionHints(options.hints ?? {});
+  let attempt: ClaimExtractionAttempt;
+
+  try {
+    attempt = await attemptClaimExtraction(entry, normalizedHints, llm);
+  } catch (error) {
+    const repaired = tryDeterministicClaimKeyRepair(entry, normalizedHints);
+    if (repaired) {
+      return {
+        result: repaired,
+        diagnostic: buildAcceptedDiagnostic(repaired, "deterministic possessive-slot repair recovered the missing claim key"),
+      };
+    }
+
+    const warning = formatClaimExtractionError(error);
+    options.onWarning?.(`Claim extraction failed for "${entry.subject}": ${warning}`);
+    return {
+      result: null,
+      diagnostic: {
+        outcome: "extraction_failure",
+        confidence: null,
+        path: null,
+        warning,
+        suggestedClaimKey: null,
+        reviewable: false,
+        supportEvidence: [],
+        rationale: "claim extraction failed before a safe candidate could be produced",
+      },
+    };
   }
 
-  const deterministicRepair = tryDeterministicClaimKeyRepair(entry, normalizeClaimExtractionHints(options.hints ?? {}));
-  if (deterministicRepair) {
-    return deterministicRepair;
+  if (attempt.response.no_claim === true) {
+    return {
+      result: null,
+      diagnostic: {
+        outcome: "no_claim",
+        confidence: normalizeConfidence(attempt.response.confidence),
+        path: attempt.path,
+        warning: null,
+        suggestedClaimKey: null,
+        reviewable: false,
+        supportEvidence: [],
+        rationale: "model explicitly returned no_claim",
+      },
+    };
   }
 
-  return null;
+  const warnings: string[] = [];
+  const candidate = buildClaimExtractionCandidate(entry, attempt.response, normalizedHints, (warning) => {
+    warnings.push(warning);
+    options.onWarning?.(warning);
+  });
+  if (!candidate) {
+    const repaired = tryDeterministicClaimKeyRepair(entry, normalizedHints);
+    if (repaired) {
+      return {
+        result: repaired,
+        diagnostic: buildAcceptedDiagnostic(repaired, "deterministic possessive-slot repair recovered the missing claim key"),
+      };
+    }
+
+    return {
+      result: null,
+      diagnostic: {
+        outcome: "rejected_candidate",
+        confidence: normalizeConfidence(attempt.response.confidence),
+        path: attempt.path,
+        warning: warnings[0] ?? null,
+        suggestedClaimKey: null,
+        reviewable: false,
+        supportEvidence: [],
+        rationale: "model proposed a structurally unsafe or non-canonical claim key",
+      },
+    };
+  }
+
+  const result = toClaimExtractionResult(candidate, attempt.path);
+  if (result.confidence >= config.confidenceThreshold) {
+    return {
+      result,
+      diagnostic: buildAcceptedDiagnostic(result, result.confidence >= config.confidenceThreshold ? "candidate met the ingest confidence threshold" : null),
+    };
+  }
+
+  const support = evaluateClaimKeySupport(
+    {
+      subject: entry.subject,
+      content: entry.content,
+      type: entry.type,
+      tags: entry.tags,
+      source_context: entry.source_context,
+    },
+    result.claimKey ?? "",
+    buildClaimKeySupportSeedFromExamples(options.supportClaimKeys ?? []),
+  );
+  const compactness = evaluateClaimKeyCompactness(result.claimKey ?? "", {
+    priorCompactedFrom: result.compactedFrom ?? null,
+    priorCompactionReason: result.compactionReason ?? null,
+  });
+  const autoApplyThreshold =
+    support.autoApplyClass !== null && compactness.compactedFrom
+      ? COMPACTED_SUPPORTED_INGEST_AUTO_APPLY_THRESHOLD
+      : support.autoApplyClass !== null
+        ? SUPPORTED_INGEST_AUTO_APPLY_THRESHOLD
+        : HIGH_CONFIDENCE_BACKFILL_THRESHOLD;
+  const proposalThreshold = support.supportedProposal ? SUPPORTED_PROPOSAL_CONFIDENCE_THRESHOLD : PROPOSAL_CONFIDENCE_THRESHOLD;
+
+  if (compactness.claimKey !== result.claimKey) {
+    result.claimKey = compactness.claimKey;
+    result.compactedFrom = compactness.compactedFrom;
+    result.compactionReason = compactness.compactionReason;
+  }
+
+  if (result.confidence >= autoApplyThreshold && compactness.compactEnoughForAutoApply) {
+    result.acceptanceRationale =
+      support.autoApplyClass !== null
+        ? `accepted below the default threshold via ${describeSupportPromotionClass(support)}`
+        : "accepted as a high-confidence preview";
+    return {
+      result,
+      diagnostic: buildAcceptedDiagnostic(
+        result,
+        support.autoApplyClass !== null
+          ? `supported near-miss candidate cleared the conservative auto-apply threshold via ${describeSupportPromotionClass(support)}`
+          : `candidate cleared the conservative high-confidence threshold of ${autoApplyThreshold.toFixed(2)}`,
+      ),
+    };
+  }
+
+  const repaired = tryDeterministicClaimKeyRepair(entry, normalizedHints);
+  if (repaired && (!result.claimKey || repaired.claimKey === result.claimKey)) {
+    return {
+      result: repaired,
+      diagnostic: buildAcceptedDiagnostic(repaired, "deterministic possessive-slot repair recovered the missing claim key"),
+    };
+  }
+
+  if (result.confidence >= proposalThreshold) {
+    return {
+      result: null,
+      diagnostic: {
+        outcome: "low_confidence_candidate",
+        confidence: result.confidence,
+        path: result.path,
+        warning: warnings[0] ?? null,
+        suggestedClaimKey: result.claimKey,
+        reviewable: true,
+        supportEvidence: support.supportEvidence,
+        rationale:
+          support.rationaleFragments.length > 0
+            ? `candidate stayed below the auto-apply threshold but has structured support from ${support.rationaleFragments.join(", ")}`
+            : `candidate stayed below the auto-apply threshold of ${autoApplyThreshold.toFixed(2)}`,
+      },
+    };
+  }
+
+  return {
+    result: null,
+    diagnostic: {
+      outcome: "low_confidence_candidate",
+      confidence: result.confidence,
+      path: result.path,
+      warning: warnings[0] ?? null,
+      suggestedClaimKey: result.claimKey,
+      reviewable: false,
+      supportEvidence: support.supportEvidence,
+      rationale: "candidate stayed below both the conservative auto-apply and review thresholds",
+    },
+  };
 }
 
 /**
@@ -294,6 +535,7 @@ export async function getEntityHints(db: DatabasePort): Promise<string[]> {
  * @param config - Runtime extraction controls.
  * @param _concurrency - Reserved for interface compatibility. Batch extraction stays ordered so same-batch hints remain deterministic.
  * @param onWarning - Optional warning sink for deterministic rejection reasons.
+ * @param onDiagnostic - Optional sink for structured per-entry routing diagnostics.
  */
 export async function runBatchClaimExtraction(
   results: Array<{ entries: StoreEntryInput[] }>,
@@ -304,6 +546,7 @@ export async function runBatchClaimExtraction(
   config: ClaimExtractionConfig,
   _concurrency = 10,
   onWarning?: (warning: string) => void,
+  onDiagnostic?: (entry: StoreEntryInput, diagnostic: ClaimExtractionDiagnostic) => void,
 ): Promise<Map<StoreEntryInput, ClaimExtractionResult>> {
   if (!config.enabled) {
     return new Map();
@@ -312,6 +555,8 @@ export async function runBatchClaimExtraction(
   const hintState = await loadClaimExtractionHintState(ports.db);
   const llm = ports.createLlm();
   const extractedEntries = new Map<StoreEntryInput, ClaimExtractionResult>();
+  const diagnostics = new Map<StoreEntryInput, ClaimExtractionDiagnostic>();
+  const retryEntries: StoreEntryInput[] = [];
 
   for (const result of results) {
     for (const entry of result.entries) {
@@ -321,36 +566,115 @@ export async function runBatchClaimExtraction(
       }
 
       if (!config.eligibleTypes.includes(entry.type)) {
+        diagnostics.set(entry, {
+          outcome: "ineligible_type",
+          confidence: null,
+          path: null,
+          warning: null,
+          suggestedClaimKey: null,
+          reviewable: false,
+          supportEvidence: [],
+          rationale: "entry type is not eligible for claim-key extraction",
+        });
         continue;
       }
 
-      try {
-        const extracted = await extractClaimKey(
-          {
-            type: entry.type,
-            subject: entry.subject,
-            content: entry.content,
-          },
-          llm,
-          config,
-          {
-            hints: buildEntryHints(hintState, entry),
-            onWarning,
-          },
-        );
+      const decision = await extractBatchClaimKeyDecision(entry, llm, config, hintState, onWarning);
+      diagnostics.set(entry, decision.diagnostic);
 
-        if (extracted?.claimKey) {
-          applyClaimExtractionResultToEntry(entry, extracted);
-          recordClaimKeyHint(hintState, extracted.claimKey);
-          extractedEntries.set(entry, extracted);
-        }
-      } catch {
-        // Best-effort only - failed entries still continue through ingest.
+      if (decision.result?.claimKey) {
+        applyClaimExtractionResultToEntry(entry, decision.result);
+        recordClaimKeyHint(hintState, decision.result.claimKey);
+        extractedEntries.set(entry, decision.result);
+        continue;
+      }
+
+      retryEntries.push(entry);
+    }
+  }
+
+  if (retryEntries.length > 0 && extractedEntries.size > 0) {
+    for (const entry of retryEntries) {
+      if (entry.claim_key) {
+        continue;
+      }
+
+      const decision = await extractBatchClaimKeyDecision(entry, llm, config, hintState, onWarning);
+      diagnostics.set(entry, decision.diagnostic);
+
+      if (!decision.result?.claimKey) {
+        continue;
+      }
+
+      applyClaimExtractionResultToEntry(entry, decision.result);
+      recordClaimKeyHint(hintState, decision.result.claimKey);
+      extractedEntries.set(entry, decision.result);
+    }
+  }
+
+  for (const result of results) {
+    for (const entry of result.entries) {
+      const diagnostic = diagnostics.get(entry);
+      if (diagnostic) {
+        onDiagnostic?.(entry, diagnostic);
       }
     }
   }
 
   return extractedEntries;
+}
+
+/**
+ * Runs the shared claim-extraction decision logic for one batch entry using the
+ * current mutable hint state. Unexpected failures are converted into structured
+ * extraction-failure diagnostics so ingest can continue.
+ *
+ * @param entry - Store input currently being evaluated.
+ * @param llm - Claim-extraction model port.
+ * @param config - Runtime extraction controls.
+ * @param hintState - Mutable same-batch claim-key hint state.
+ * @param onWarning - Optional warning sink.
+ * @returns Structured claim-extraction decision for the entry.
+ */
+async function extractBatchClaimKeyDecision(
+  entry: StoreEntryInput,
+  llm: LlmPort,
+  config: ClaimExtractionConfig,
+  hintState: ClaimExtractionHintState,
+  onWarning?: (warning: string) => void,
+): Promise<ClaimExtractionDecision> {
+  try {
+    return await extractClaimKeyDecision(
+      {
+        type: entry.type,
+        subject: entry.subject,
+        content: entry.content,
+        tags: entry.tags,
+        source_context: entry.source_context,
+      },
+      llm,
+      config,
+      {
+        hints: buildEntryHints(hintState, entry),
+        onWarning,
+        supportClaimKeys: [...hintState.supportClaimKeys],
+      },
+    );
+  } catch {
+    return {
+      result: null,
+      diagnostic: {
+        outcome: "extraction_failure",
+        confidence: null,
+        path: null,
+        warning: "claim extraction failed unexpectedly",
+        suggestedClaimKey: null,
+        reviewable: false,
+        supportEvidence: [],
+        rationale: "claim extraction failed unexpectedly",
+      },
+    };
+  }
 }
 
 /**
@@ -415,6 +739,9 @@ function buildClaimExtractionSystemPrompt(hints: NormalizedClaimExtractionHints,
     '- "Agenr keeps pure logic in src/core and adapters outside it so future hosts can plug in cleanly." -> agenr/core_adapter_boundary',
     '- "The before-prompt-build hook only triggers after a real agent turn or message." -> before_prompt_build_hook/trigger_condition',
     '- "Durable memory preserves context across sessions." -> durable_memory/context_preservation',
+    '- "SQLite in this environment supports window functions." -> sqlite/window_function_support',
+    '- "Meeting-recorder transcripts need manual cleanup before durable ingest." -> meeting_recorder/transcript_cleanup_workflow',
+    '- "Reflection synthesis can hallucinate when it summarizes from partial notes." -> reflection_synthesis/hallucination_risk',
     "",
     "Negative examples:",
     "- Bad: jim/america_chicago -> Good: jim/timezone",
@@ -537,6 +864,80 @@ function buildClaimExtractionCandidate(
 }
 
 /**
+ * Converts one normalized candidate plus path into the public extraction-result shape.
+ *
+ * @param candidate - Validated candidate returned by the model path.
+ * @param path - Preview path that produced the candidate.
+ * @returns Public extraction-result payload.
+ */
+function toClaimExtractionResult(candidate: ClaimExtractionCandidate, path: ClaimExtractionPath): ClaimExtractionResult {
+  return {
+    claimKey: candidate.claimKey,
+    confidence: candidate.confidence,
+    rawEntity: candidate.rawEntity,
+    rawAttribute: candidate.rawAttribute,
+    path,
+    ...(candidate.compactedFrom
+      ? {
+          compactedFrom: candidate.compactedFrom,
+          compactionReason: candidate.compactionReason,
+        }
+      : {}),
+  };
+}
+
+/**
+ * Builds the accepted diagnostic payload paired with a successful extraction result.
+ *
+ * @param result - Accepted extraction result.
+ * @param rationale - Optional acceptance rationale.
+ * @returns Accepted diagnostic payload.
+ */
+function buildAcceptedDiagnostic(result: ClaimExtractionResult, rationale: string | null): ClaimExtractionDiagnostic {
+  return {
+    outcome: "accepted",
+    confidence: result.confidence,
+    path: result.path,
+    warning: null,
+    suggestedClaimKey: result.claimKey,
+    reviewable: false,
+    supportEvidence: [],
+    rationale,
+  };
+}
+
+/**
+ * Converts one thrown extraction error into a stable diagnostic string.
+ *
+ * @param error - Unknown thrown value.
+ * @returns Diagnostic-safe error summary.
+ */
+function formatClaimExtractionError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Formats the auto-promotion support class used to accept a near-miss candidate.
+ *
+ * @param support - Support evaluation for the candidate.
+ * @returns Human-readable support class summary.
+ */
+function describeSupportPromotionClass(support: ClaimKeySupportEvaluation): string {
+  switch (support.autoApplyClass) {
+    case "trusted_exact_reuse_grounded":
+      return "trusted exact-key reuse with local grounding";
+    case "trusted_family_template_grounded":
+      return "trusted family reuse plus grounded template support";
+    case "trusted_family_stable_slot":
+      return "trusted family reuse plus a stable compact slot";
+    case "trusted_family_grounded_alignment":
+      return "trusted family reuse plus grounded dual lexical alignment";
+    default:
+      return "structural support";
+  }
+}
+
+/**
  * Tries one deterministic possessive-slot repair for simple safe cases.
  *
  * @param entry - Candidate entry content to inspect.
@@ -581,11 +982,16 @@ function tryDeterministicClaimKeyRepair(entry: { subject: string; content: strin
  * @returns Ordered hint state for batch-local mutation.
  */
 async function loadClaimExtractionHintState(db: DatabasePort): Promise<ClaimExtractionHintState> {
-  const [entityHintResult, claimKeyExampleResult] = await Promise.allSettled([getEntityHints(db), getClaimKeyExamples(db)]);
+  const [entityHintResult, promptClaimKeyExampleResult, supportClaimKeyExampleResult] = await Promise.allSettled([
+    getEntityHints(db),
+    getClaimKeyExamples(db, MAX_CLAIM_KEY_EXAMPLES),
+    getClaimKeyExamples(db, MAX_SUPPORT_CLAIM_KEY_EXAMPLES),
+  ]);
 
   return createHintState({
     entityHints: entityHintResult.status === "fulfilled" ? entityHintResult.value : [],
-    claimKeyExamples: claimKeyExampleResult.status === "fulfilled" ? claimKeyExampleResult.value : [],
+    claimKeyExamples: promptClaimKeyExampleResult.status === "fulfilled" ? promptClaimKeyExampleResult.value : [],
+    supportClaimKeys: supportClaimKeyExampleResult.status === "fulfilled" ? supportClaimKeyExampleResult.value : [],
   });
 }
 
@@ -595,12 +1001,12 @@ async function loadClaimExtractionHintState(db: DatabasePort): Promise<ClaimExtr
  * @param db - Database port used to read persisted hint examples.
  * @returns Bounded full claim-key examples, or an empty list when unsupported.
  */
-async function getClaimKeyExamples(db: DatabasePort): Promise<string[]> {
+async function getClaimKeyExamples(db: DatabasePort, limit: number): Promise<string[]> {
   if (typeof db.getClaimKeyExamples !== "function") {
     return [];
   }
 
-  return db.getClaimKeyExamples(MAX_CLAIM_KEY_EXAMPLES);
+  return db.getClaimKeyExamples(limit);
 }
 
 /**
@@ -609,12 +1015,13 @@ async function getClaimKeyExamples(db: DatabasePort): Promise<string[]> {
  * @param input - Raw hint inputs gathered from the database.
  * @returns Mutable ordered hint state with stable caps applied.
  */
-function createHintState(input: { entityHints?: string[]; claimKeyExamples?: string[] }): ClaimExtractionHintState {
+function createHintState(input: { entityHints?: string[]; claimKeyExamples?: string[]; supportClaimKeys?: string[] }): ClaimExtractionHintState {
   const claimKeyExamples = normalizeClaimKeyExamples(input.claimKeyExamples ?? []);
+  const supportClaimKeys = normalizeSupportClaimKeys(input.supportClaimKeys ?? []);
   const entityHints = limitUnique(
     [
       ...normalizeEntityHints(input.entityHints ?? []),
-      ...claimKeyExamples.flatMap((claimKey) => {
+      ...supportClaimKeys.flatMap((claimKey) => {
         const normalizedClaimKey = normalizeClaimKey(claimKey);
         return normalizedClaimKey.ok ? [normalizedClaimKey.value.entity] : [];
       }),
@@ -625,6 +1032,7 @@ function createHintState(input: { entityHints?: string[]; claimKeyExamples?: str
   return {
     entityHints,
     claimKeyExamples,
+    supportClaimKeys,
   };
 }
 
@@ -662,6 +1070,7 @@ function recordClaimKeyHint(state: ClaimExtractionHintState, claimKey: string): 
   }
 
   state.claimKeyExamples = prependUnique(state.claimKeyExamples, normalizedClaimKey.value.claimKey, MAX_CLAIM_KEY_EXAMPLES);
+  state.supportClaimKeys = prependUnique(state.supportClaimKeys, normalizedClaimKey.value.claimKey, MAX_SUPPORT_CLAIM_KEY_EXAMPLES);
   state.entityHints = prependUnique(state.entityHints, normalizedClaimKey.value.entity, MAX_ENTITY_HINTS);
 }
 
@@ -794,6 +1203,22 @@ function normalizeClaimKeyExamples(claimKeyExamples: string[]): string[] {
       return normalizedClaimKey.ok ? [normalizedClaimKey.value.claimKey] : [];
     }),
     MAX_CLAIM_KEY_EXAMPLES,
+  );
+}
+
+/**
+ * Normalizes the larger support-example pool used for near-miss routing.
+ *
+ * @param claimKeys - Raw canonical or near-canonical claim-key examples.
+ * @returns Canonical support examples capped for evaluation stability.
+ */
+function normalizeSupportClaimKeys(claimKeys: string[]): string[] {
+  return limitUnique(
+    claimKeys.flatMap((claimKey) => {
+      const normalizedClaimKey = normalizeClaimKey(claimKey);
+      return normalizedClaimKey.ok ? [normalizedClaimKey.value.claimKey] : [];
+    }),
+    MAX_SUPPORT_CLAIM_KEY_EXAMPLES,
   );
 }
 

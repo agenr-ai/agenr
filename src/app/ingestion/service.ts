@@ -3,16 +3,23 @@ import {
   dedupBatch,
   extractFile,
   getDefaultDedupSimilarityThreshold,
+  summarizeIngestClaimKeyHealth,
   storeExtractedResults,
   type DedupResult,
   type ExtractedFileResult,
   type IngestFileOptions,
   type IngestFileResult,
+  type IngestClaimKeyHealthSummary,
   type IngestSource,
   type StoreExtractedResultsProgressEvent,
 } from "../../core/ingestion/index.js";
 import type { LlmPort } from "../../core/ports.js";
-import { applyClaimExtractionResultToEntry, runBatchClaimExtraction, type ClaimExtractionConfig } from "../../core/store/claim-extraction.js";
+import {
+  applyClaimExtractionResultToEntry,
+  runBatchClaimExtraction,
+  type ClaimExtractionConfig,
+  type ClaimExtractionDiagnostic,
+} from "../../core/store/claim-extraction.js";
 import type { StoreEntryInput } from "../../core/types.js";
 import type { IngestPathPorts, IngestionLlmPort, UsageStats } from "./ports.js";
 
@@ -61,6 +68,8 @@ export interface IngestPathResult {
   dedupUsage: UsageStats;
   /** Final stored per-file ingest results keyed by source path. */
   storeResults: Map<string, IngestFileResult>;
+  /** Compact claim-key health summary for the final store candidates. */
+  claimKeyHealth: IngestClaimKeyHealthSummary | null;
 }
 
 /** Extracted entry annotated with its source file and flattened order. */
@@ -99,6 +108,7 @@ export async function ingestDiscoveredFiles(files: string[], ports: IngestPathPo
       dedupResult: buildEmptyDedupResult(),
       dedupUsage: createEmptyUsageStats(),
       storeResults: new Map(),
+      claimKeyHealth: null,
     };
   }
 
@@ -111,6 +121,7 @@ export async function ingestDiscoveredFiles(files: string[], ports: IngestPathPo
   let dedupUsage = createEmptyUsageStats();
   let resultsToStore = extractedSuccesses;
   let precomputedEmbeddings: number[][] | undefined;
+  const claimKeyDiagnostics = new Map<number, ClaimExtractionDiagnostic>();
 
   if (taggedEntries.length > 0) {
     const dedupLlm = options.skipDedup === true ? createNoopLlmPort() : (ports.createDedupLlm?.() ?? ports.createExtractionLlm());
@@ -150,12 +161,33 @@ export async function ingestDiscoveredFiles(files: string[], ports: IngestPathPo
       claimConfig,
       options.concurrency ?? DEFAULT_INGEST_CONCURRENCY,
       options.onWarning,
+      (entry, diagnostic) => {
+        const flattenedIndex = findFlattenedEntryIndex(resultsToStore, entry);
+        if (flattenedIndex >= 0) {
+          claimKeyDiagnostics.set(flattenedIndex, diagnostic);
+        }
+      },
     );
 
     for (const [entry, extractedClaimKey] of extractedClaimKeys) {
       applyClaimExtractionResultToEntry(entry, extractedClaimKey);
     }
   }
+
+  const claimKeyHealth =
+    resultsToStore.length > 0
+      ? summarizeIngestClaimKeyHealth(
+          flattenEntries(resultsToStore),
+          claimKeyDiagnostics,
+          (
+            options.claimExtractionConfig ?? {
+              enabled: true,
+              confidenceThreshold: 0.8,
+              eligibleTypes: ["fact", "preference", "decision", "lesson"],
+            }
+          ).eligibleTypes,
+        )
+      : null;
 
   const storeResults =
     resultsToStore.length === 0
@@ -181,6 +213,7 @@ export async function ingestDiscoveredFiles(files: string[], ports: IngestPathPo
     dedupResult,
     dedupUsage,
     storeResults,
+    claimKeyHealth,
   };
 }
 
@@ -268,6 +301,27 @@ function buildEmptyDedupResult(): DedupResult {
     warnings: [],
     similarityThreshold: getDefaultDedupSimilarityThreshold(),
   };
+}
+
+/** Flattens extracted file entries into the final store-candidate order. */
+function flattenEntries(results: ExtractedFileResult[]): StoreEntryInput[] {
+  return results.flatMap((result) => result.entries);
+}
+
+/** Resolves one flattened store-candidate index for a concrete entry object. */
+function findFlattenedEntryIndex(results: ExtractedFileResult[], target: StoreEntryInput): number {
+  let index = 0;
+  for (const result of results) {
+    for (const entry of result.entries) {
+      if (entry === target) {
+        return index;
+      }
+
+      index += 1;
+    }
+  }
+
+  return -1;
 }
 
 /** Flattens extracted entries while tracking their source file and original order. */

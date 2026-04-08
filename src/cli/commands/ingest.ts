@@ -8,7 +8,13 @@ import { localTranscriptFiles } from "../../adapters/files/transcript-files.js";
 import { createLlmClient, resolveLlmApiKey, resolveModel, type UsageStats } from "../../adapters/llm.js";
 import { openClawTranscriptParser } from "../../adapters/openclaw/transcript/parser.js";
 import { readConfig, resolveClaimExtractionConfig, resolveDbPath } from "../../config.js";
-import { type DedupResult, type ExtractedFileResult, type IngestFileResult, type StoreExtractedResultsProgressEvent } from "../../core/ingestion/index.js";
+import {
+  type DedupResult,
+  type ExtractedFileResult,
+  type IngestClaimKeyHealthSummary,
+  type IngestFileResult,
+  type StoreExtractedResultsProgressEvent,
+} from "../../core/ingestion/index.js";
 import type { StoreEntryInput, StoreResult } from "../../core/types.js";
 import { setVerbose } from "../../logger.js";
 import { banner, formatLabel, ui } from "../../ui.js";
@@ -159,9 +165,14 @@ function registerIngestEntriesCommand(parent: Command): void {
       const dedupResult = ingestResult.dedupResult;
       const dedupUsage = ingestResult.dedupUsage;
       const storeResults = ingestResult.storeResults;
+      const claimKeyHealth = ingestResult.claimKeyHealth;
 
       if (extractedSuccesses.length > 0) {
         printDedupSummary(dedupResult, taggedEntries, options, dedupUsage.totalCost);
+      }
+
+      if (claimKeyHealth) {
+        clack.log.info(formatClaimKeyHealthSummary(claimKeyHealth));
       }
 
       const totals = {
@@ -253,6 +264,54 @@ function registerIngestEntriesCommand(parent: Command): void {
       await db?.close();
     }
   });
+}
+
+/** Formats the compact post-ingest claim-key health summary. */
+function formatClaimKeyHealthSummary(summary: IngestClaimKeyHealthSummary): string {
+  const coverageByType = summary.byType
+    .filter((bucket) => bucket.eligible)
+    .map((bucket) => `${bucket.type} ${bucket.keyed}/${bucket.total}`)
+    .join(" | ");
+  const lines = [
+    formatLabel(
+      "Claim keys",
+      `${summary.keyedEligibleRows}/${summary.eligibleRows} eligible keyed (${formatPercent(summary.coveragePct)}), ${summary.missingEligibleRows} eligible missing`,
+    ),
+    formatLabel("By type", coverageByType || "none"),
+    formatLabel(
+      "Lifecycle",
+      `trusted ${summary.lifecycle.trusted} | tentative ${summary.lifecycle.tentative} | unresolved ${summary.lifecycle.unresolved} | legacy ${summary.lifecycle.legacy}`,
+    ),
+    formatLabel(
+      "Missing outcomes",
+      `low-confidence ${summary.diagnostics.lowConfidenceCandidate} | no-claim ${summary.diagnostics.noClaim} | rejected ${summary.diagnostics.rejectedCandidate} | extraction-failure ${summary.diagnostics.extractionFailure}`,
+    ),
+    formatLabel("Reviewable", `${summary.diagnostics.reviewable}`),
+    formatLabel("Keyed without support", `${summary.keyedMissingSupportCount}`),
+  ];
+
+  if (summary.suspiciousSingletonNamespaceHints.length > 0) {
+    lines.push(formatLabel("Singleton hints", summary.suspiciousSingletonNamespaceHints.join(", ")));
+  }
+
+  if (summary.reviewCandidates.length > 0) {
+    lines.push(
+      formatLabel(
+        "Review candidates",
+        summary.reviewCandidates
+          .slice(0, 5)
+          .map((row) => `${row.subject}${row.suggestedClaimKey ? ` -> ${row.suggestedClaimKey}` : ""}`)
+          .join(" | "),
+      ),
+    );
+  }
+
+  return lines.join("\n");
+}
+
+/** Formats one ratio as a percentage with one decimal place. */
+function formatPercent(value: number): string {
+  return `${(value * 100).toFixed(1)}%`;
 }
 
 /** Prints verbose per-file ingest diagnostics and warnings. */

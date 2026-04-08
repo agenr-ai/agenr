@@ -423,6 +423,79 @@ describe("ingestPath", () => {
 
     expect(timeline).toEqual(["claim", "prepare", "insert", "finalize"]);
   });
+
+  it("returns a compact claim-key health summary with reviewable near-miss candidates", async () => {
+    const filePath = "/tmp/session-health-summary.jsonl";
+    const db = new MockDatabase();
+    let claimCall = 0;
+
+    const result = await ingestPath(
+      "/tmp",
+      {
+        files: new MockFilePort([filePath], { [filePath]: "hash-health-summary" }),
+        transcript: new MockTranscriptPort(buildTranscript()),
+        db,
+        embedding: new MockEmbeddingPort(),
+        createExtractionLlm: () =>
+          new MockIngestionLlm({
+            entries: [
+              createInput({
+                type: "decision",
+                subject: "Repo workflow docs",
+                content: "The repo workflow is defined by AGENTS.md, even when older notes disagree.",
+                source_file: filePath,
+                tags: ["workflow"],
+                source_context: "AGENTS.md is the repo workflow source of truth",
+              }),
+              createInput({
+                type: "decision",
+                subject: "Repo workflow note",
+                content: "AGENTS.md remains the workflow source of truth for the repo.",
+                source_file: filePath,
+                tags: ["workflow"],
+                source_context: "Workflow docs note",
+              }),
+            ],
+          }),
+        createClaimExtractionLlm: () =>
+          new MockClaimExtractionLlm(() => {
+            claimCall += 1;
+            return claimCall === 1
+              ? {
+                  entity: "Repo workflow",
+                  attribute: "source of truth",
+                  confidence: 0.95,
+                }
+              : {
+                  entity: "Repo workflow",
+                  attribute: "source of truth",
+                  confidence: 0.68,
+                };
+          }),
+      },
+      {
+        skipDedup: true,
+        wholeFile: "never",
+      },
+    );
+
+    expect(result.claimKeyHealth).toMatchObject({
+      eligibleRows: 2,
+      keyedEligibleRows: 1,
+      missingEligibleRows: 1,
+      diagnostics: {
+        lowConfidenceCandidate: 1,
+        reviewable: 1,
+      },
+    });
+    expect(result.claimKeyHealth?.reviewCandidates).toEqual([
+      expect.objectContaining({
+        subject: "Repo workflow note",
+        suggestedClaimKey: "repo_workflow/source_of_truth",
+        reviewable: true,
+      }),
+    ]);
+  });
 });
 
 class MockFilePort implements IngestFilePort {

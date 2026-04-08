@@ -11,7 +11,7 @@ import {
   type ResolvedClaimKeyLifecycle,
 } from "../claim-key-lifecycle.js";
 import { describeSupersessionRuleFailure, validateSupersessionRules } from "../supersession.js";
-import { runBatchClaimExtraction, type ClaimExtractionConfig, type ClaimExtractionResult } from "./claim-extraction.js";
+import { runBatchClaimExtraction, type ClaimExtractionConfig, type ClaimExtractionDiagnostic, type ClaimExtractionResult } from "./claim-extraction.js";
 import { composeEmbeddingText } from "./embedding-text.js";
 import { computeContentHash, computeNormContentHash } from "./hashing.js";
 import { validateEntriesWithIndexes } from "./validation.js";
@@ -41,6 +41,8 @@ export interface StoreEntriesOptions extends StorePipelineOptions {
   };
   /** Optional callback for non-fatal warnings encountered during the store pipeline. */
   onWarning?: (warning: string) => void;
+  /** Optional callback for structured claim-extraction diagnostics. */
+  onClaimExtractionDiagnostic?: (inputIndex: number, diagnostic: ClaimExtractionDiagnostic) => void;
 }
 
 /** Validated entry enriched with hashes needed by the store pipeline. */
@@ -334,6 +336,12 @@ async function maybeExtractClaimKeys(preparedEntries: PreparedEntry[], options: 
       claimExtraction.config,
       1,
       options.onWarning,
+      (entry, diagnostic) => {
+        const preparedEntry = preparedEntries.find((candidate) => candidate.input === entry);
+        if (preparedEntry) {
+          options.onClaimExtractionDiagnostic?.(preparedEntry.inputIndex, diagnostic);
+        }
+      },
     );
 
     const extractedClaimKeys = new Map<number, ClaimExtractionResult>();

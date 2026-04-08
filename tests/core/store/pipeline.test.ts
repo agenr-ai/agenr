@@ -719,6 +719,50 @@ describe("storeEntries", () => {
     expect(db.insertions[0]?.entry.claim_key_rationale).toContain("collapsed a sentence-like trigger requirement into a stable condition slot");
   });
 
+  it("accepts a supported below-threshold candidate when trusted claim-key examples strongly match the same slot", async () => {
+    const db = new MockDatabase({
+      claimKeyPrefixes: ["repo_workflow"],
+      claimKeyExamples: ["repo_workflow/source_of_truth"],
+    });
+    const embedding = new MockEmbeddingPort();
+    const llm = new MockLlmPort({
+      entity: "Repo workflow",
+      attribute: "source of truth",
+      confidence: 0.74,
+    });
+
+    await storeEntries(
+      [
+        createInput({
+          type: "decision",
+          subject: "Repo workflow docs",
+          content: "AGENTS.md is the source of truth for the repo workflow, even when older notes disagree.",
+        }),
+      ],
+      db,
+      embedding,
+      {
+        claimExtraction: {
+          llm,
+          db,
+          config: {
+            enabled: true,
+            confidenceThreshold: 0.8,
+            eligibleTypes: ["fact", "preference", "decision", "lesson"],
+          },
+        },
+      },
+    );
+
+    expect(db.insertions[0]?.entry).toMatchObject({
+      claim_key: "repo_workflow/source_of_truth",
+      claim_key_status: "trusted",
+      claim_key_source: "model",
+      claim_key_confidence: 0.74,
+    });
+    expect(db.insertions[0]?.entry.claim_key_rationale).toContain("trusted exact-key reuse");
+  });
+
   it("skips auto-supersession when the matching sibling has an incompatible type", async () => {
     const activeSibling = createExistingEntry({
       type: "fact",
@@ -826,6 +870,7 @@ class MockDatabase implements DatabasePort {
   public readonly existingHashes: Set<string>;
   public readonly existingNormHashes: Set<string>;
   public readonly claimKeyPrefixes: string[];
+  public readonly claimKeyExamples: string[];
   public readonly activeEntriesByClaimKey: Record<string, Entry[]>;
   public readonly claimKeyLookupCalls: string[] = [];
   public readonly supersedeCalls: Array<{ oldId: string; newId: string; kind?: string; reason?: string }> = [];
@@ -837,6 +882,7 @@ class MockDatabase implements DatabasePort {
       existingHashes?: Set<string>;
       existingNormHashes?: Set<string>;
       claimKeyPrefixes?: string[];
+      claimKeyExamples?: string[];
       activeEntriesByClaimKey?: Record<string, Entry[]>;
       supersedeResult?: boolean;
     } = {},
@@ -844,6 +890,7 @@ class MockDatabase implements DatabasePort {
     this.existingHashes = options.existingHashes ?? new Set();
     this.existingNormHashes = options.existingNormHashes ?? new Set();
     this.claimKeyPrefixes = options.claimKeyPrefixes ?? [];
+    this.claimKeyExamples = options.claimKeyExamples ?? [];
     this.activeEntriesByClaimKey = options.activeEntriesByClaimKey ?? {};
     this.supersedeResult = options.supersedeResult ?? true;
   }
@@ -893,6 +940,10 @@ class MockDatabase implements DatabasePort {
 
   public async getDistinctClaimKeyPrefixes(): Promise<string[]> {
     return this.claimKeyPrefixes;
+  }
+
+  public async getClaimKeyExamples(limit?: number): Promise<string[]> {
+    return this.claimKeyExamples.slice(0, limit ?? this.claimKeyExamples.length);
   }
 
   public async updateEntry(): Promise<boolean> {
