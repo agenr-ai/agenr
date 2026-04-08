@@ -1,6 +1,7 @@
 import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -178,5 +179,16 @@ async function createScenarioRoot(prefix: string): Promise<string> {
 describe("default scenario root", () => {
   it("points at the repo-local claim-key scenario directory", () => {
     expect(getDefaultClaimKeyScenarioRoot()).toBe(path.resolve("tests/scenarios/claim-keys"));
+  });
+
+  it("resolves the repo-local scenario directory from the bundled cli output path", () => {
+    const bundledCliUrl = pathToFileURL(path.resolve("dist/cli.js")).href;
+
+    expect(
+      getDefaultClaimKeyScenarioRoot({
+        cwd: "/",
+        moduleUrl: bundledCliUrl,
+      }),
+    ).toBe(path.resolve("tests/scenarios/claim-keys"));
   });
 });

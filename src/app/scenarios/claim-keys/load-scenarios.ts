@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,17 +23,33 @@ import type {
   ClaimKeySurgeonScenarioInput,
 } from "./types.js";
 
-const DEFAULT_SCENARIO_ROOT = fileURLToPath(new URL("../../../../tests/scenarios/claim-keys", import.meta.url));
+const SCENARIO_ROOT_SEGMENTS = ["tests", "scenarios", "claim-keys"] as const;
 const SUPPORTED_KINDS: ClaimKeyScenarioKind[] = ["ingest", "store", "surgeon"];
 const SUPPORTED_ENTRY_TYPES: EntryType[] = ["fact", "decision", "preference", "lesson", "relationship", "milestone"];
 
 /**
  * Returns the default repo-local claim-key scenario root.
  *
+ * @param options - Optional cwd and module URL overrides used by tests.
  * @returns Absolute path to the default scenario directory.
  */
-export function getDefaultClaimKeyScenarioRoot(): string {
-  return DEFAULT_SCENARIO_ROOT;
+export function getDefaultClaimKeyScenarioRoot(
+  options: {
+    cwd?: string;
+    moduleUrl?: string;
+  } = {},
+): string {
+  const moduleDirectory = path.dirname(fileURLToPath(options.moduleUrl ?? import.meta.url));
+  const startDirectories = Array.from(new Set([path.resolve(options.cwd ?? process.cwd()), moduleDirectory]));
+
+  for (const startDirectory of startDirectories) {
+    const discovered = findScenarioRootFrom(startDirectory);
+    if (discovered) {
+      return discovered;
+    }
+  }
+
+  throw new Error(`Unable to locate ${SCENARIO_ROOT_SEGMENTS.join("/")} from cwd "${options.cwd ?? process.cwd()}" or module "${moduleDirectory}".`);
 }
 
 /**
@@ -41,7 +58,7 @@ export function getDefaultClaimKeyScenarioRoot(): string {
  * @param rootDir - Root directory containing `ingest`, `store`, and `surgeon` subdirectories.
  * @returns Sorted loaded scenarios ready for listing or execution.
  */
-export async function loadClaimKeyScenarios(rootDir = DEFAULT_SCENARIO_ROOT): Promise<ClaimKeyScenario[]> {
+export async function loadClaimKeyScenarios(rootDir = getDefaultClaimKeyScenarioRoot()): Promise<ClaimKeyScenario[]> {
   const discoveredFiles = await discoverScenarioFiles(rootDir);
   const loaded = await Promise.all(discoveredFiles.map((filePath) => loadClaimKeyScenarioFile(filePath, rootDir)));
   return loaded.sort((left, right) => left.id.localeCompare(right.id));
@@ -54,7 +71,7 @@ export async function loadClaimKeyScenarios(rootDir = DEFAULT_SCENARIO_ROOT): Pr
  * @param rootDir - Scenario root used for relative fixture resolution checks.
  * @returns Validated scenario object.
  */
-export async function loadClaimKeyScenarioFile(filePath: string, rootDir = DEFAULT_SCENARIO_ROOT): Promise<ClaimKeyScenario> {
+export async function loadClaimKeyScenarioFile(filePath: string, rootDir = getDefaultClaimKeyScenarioRoot()): Promise<ClaimKeyScenario> {
   const raw = JSON.parse(await readFile(filePath, "utf8")) as unknown;
   return validateClaimKeyScenario(raw, filePath, rootDir);
 }
@@ -67,7 +84,7 @@ export async function loadClaimKeyScenarioFile(filePath: string, rootDir = DEFAU
  * @param rootDir - Scenario root used for relative fixture resolution checks.
  * @returns Canonical validated scenario object.
  */
-export function validateClaimKeyScenario(input: unknown, filePath: string, rootDir = DEFAULT_SCENARIO_ROOT): ClaimKeyScenario {
+export function validateClaimKeyScenario(input: unknown, filePath: string, rootDir = getDefaultClaimKeyScenarioRoot()): ClaimKeyScenario {
   const record = asRecord(input, "Scenario root payload", filePath);
   const id = readRequiredString(record.id, "id", filePath);
   const kind = readScenarioKind(record.kind, filePath);
@@ -822,7 +839,7 @@ function readProposalAssert(value: unknown, label: string): ClaimKeyScenarioProp
  * @param rootDir - Scenario root used for path normalization.
  * @returns Root-relative fixture path.
  */
-function readRelativeFixturePath(value: unknown, label: string, filePath: string, rootDir = DEFAULT_SCENARIO_ROOT): string {
+function readRelativeFixturePath(value: unknown, label: string, filePath: string, rootDir = getDefaultClaimKeyScenarioRoot()): string {
   const normalized = readRequiredString(value, label, filePath);
   return normalizeFixturePath(normalized, rootDir, filePath, label);
 }
@@ -836,7 +853,7 @@ function readRelativeFixturePath(value: unknown, label: string, filePath: string
  * @param rootDir - Scenario root used for path normalization.
  * @returns Root-relative fixture path, when present.
  */
-function readOptionalRelativeFixturePath(value: unknown, label: string, filePath: string, rootDir = DEFAULT_SCENARIO_ROOT): string | undefined {
+function readOptionalRelativeFixturePath(value: unknown, label: string, filePath: string, rootDir = getDefaultClaimKeyScenarioRoot()): string | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -865,6 +882,30 @@ function normalizeFixturePath(relativePath: string, rootDir: string, filePath: s
   }
 
   return relative.split(path.sep).join("/");
+}
+
+/**
+ * Walks upward from one start directory and returns the first repo-local scenario root that exists.
+ *
+ * @param startDirectory - Directory to begin searching from.
+ * @returns Absolute scenario root path when found.
+ */
+function findScenarioRootFrom(startDirectory: string): string | undefined {
+  let currentDirectory = path.resolve(startDirectory);
+
+  while (true) {
+    const candidate = path.join(currentDirectory, ...SCENARIO_ROOT_SEGMENTS);
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+
+    const parentDirectory = path.dirname(currentDirectory);
+    if (parentDirectory === currentDirectory) {
+      return undefined;
+    }
+
+    currentDirectory = parentDirectory;
+  }
 }
 
 /**
