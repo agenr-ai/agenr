@@ -3,6 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { requireClaimKeySource, requireClaimKeyStatus, requireClaimSupportMode } from "../../../core/claim-key-lifecycle.js";
 import type { EntryType, StoreEntryInput } from "../../../core/types.js";
 import type {
   ClaimKeyIngestScenarioInput,
@@ -640,6 +641,14 @@ function readStoreEntryInput(value: unknown, label: string): StoreEntryInput {
     ...(record.supersedes !== undefined ? { supersedes: readRequiredString(record.supersedes, `${label}.supersedes`, label) } : {}),
     ...(record.claim_key !== undefined ? { claim_key: readRequiredString(record.claim_key, `${label}.claim_key`, label) } : {}),
     ...(record.claim_key_raw !== undefined ? { claim_key_raw: readRequiredString(record.claim_key_raw, `${label}.claim_key_raw`, label) } : {}),
+    ...(record.claim_key_status !== undefined ? { claim_key_status: requireClaimKeyStatus(record.claim_key_status, `${label}.claim_key_status`) } : {}),
+    ...(record.claim_key_source !== undefined ? { claim_key_source: requireClaimKeySource(record.claim_key_source, `${label}.claim_key_source`) } : {}),
+    ...(record.claim_key_confidence !== undefined
+      ? { claim_key_confidence: readRequiredNumber(record.claim_key_confidence, `${label}.claim_key_confidence`, label) }
+      : {}),
+    ...(record.claim_key_rationale !== undefined
+      ? { claim_key_rationale: readRequiredString(record.claim_key_rationale, `${label}.claim_key_rationale`, label) }
+      : {}),
     ...(record.claim_support_source_kind !== undefined
       ? { claim_support_source_kind: readRequiredString(record.claim_support_source_kind, `${label}.claim_support_source_kind`, label) }
       : {}),
@@ -650,7 +659,7 @@ function readStoreEntryInput(value: unknown, label: string): StoreEntryInput {
       ? { claim_support_observed_at: readRequiredString(record.claim_support_observed_at, `${label}.claim_support_observed_at`, label) }
       : {}),
     ...(record.claim_support_mode !== undefined
-      ? { claim_support_mode: readRequiredString(record.claim_support_mode, `${label}.claim_support_mode`, label) as StoreEntryInput["claim_support_mode"] }
+      ? { claim_support_mode: requireClaimSupportMode(record.claim_support_mode, `${label}.claim_support_mode`) }
       : {}),
     ...(record.valid_from !== undefined ? { valid_from: readRequiredString(record.valid_from, `${label}.valid_from`, label) } : {}),
     ...(record.valid_to !== undefined ? { valid_to: readRequiredString(record.valid_to, `${label}.valid_to`, label) } : {}),
@@ -683,12 +692,8 @@ function readSeedEntry(value: unknown, label: string): ClaimKeyScenarioSeedEntry
     ...(record.source_context !== undefined ? { source_context: readRequiredString(record.source_context, `${label}.source_context`, label) } : {}),
     ...(record.claim_key !== undefined ? { claim_key: readRequiredString(record.claim_key, `${label}.claim_key`, label) } : {}),
     ...(record.claim_key_raw !== undefined ? { claim_key_raw: readRequiredString(record.claim_key_raw, `${label}.claim_key_raw`, label) } : {}),
-    ...(record.claim_key_status !== undefined
-      ? { claim_key_status: readRequiredString(record.claim_key_status, `${label}.claim_key_status`, label) as never }
-      : {}),
-    ...(record.claim_key_source !== undefined
-      ? { claim_key_source: readRequiredString(record.claim_key_source, `${label}.claim_key_source`, label) as never }
-      : {}),
+    ...(record.claim_key_status !== undefined ? { claim_key_status: requireClaimKeyStatus(record.claim_key_status, `${label}.claim_key_status`) } : {}),
+    ...(record.claim_key_source !== undefined ? { claim_key_source: requireClaimKeySource(record.claim_key_source, `${label}.claim_key_source`) } : {}),
     ...(record.claim_key_confidence !== undefined
       ? { claim_key_confidence: readRequiredNumber(record.claim_key_confidence, `${label}.claim_key_confidence`, label) }
       : {}),
@@ -705,7 +710,7 @@ function readSeedEntry(value: unknown, label: string): ClaimKeyScenarioSeedEntry
       ? { claim_support_observed_at: readRequiredString(record.claim_support_observed_at, `${label}.claim_support_observed_at`, label) }
       : {}),
     ...(record.claim_support_mode !== undefined
-      ? { claim_support_mode: readRequiredString(record.claim_support_mode, `${label}.claim_support_mode`, label) as never }
+      ? { claim_support_mode: requireClaimSupportMode(record.claim_support_mode, `${label}.claim_support_mode`) }
       : {}),
     ...(record.superseded_by !== undefined ? { superseded_by: readRequiredString(record.superseded_by, `${label}.superseded_by`, label) } : {}),
     ...(record.valid_from !== undefined ? { valid_from: readRequiredString(record.valid_from, `${label}.valid_from`, label) } : {}),
@@ -756,10 +761,10 @@ function readRowAssert(value: unknown, label: string): ClaimKeyScenarioRowAssert
     ...(record.claim_key !== undefined ? { claim_key: readNullableString(record.claim_key, `${label}.assert.claim_key`, label) } : {}),
     ...(record.claim_key_raw !== undefined ? { claim_key_raw: readNullableString(record.claim_key_raw, `${label}.assert.claim_key_raw`, label) } : {}),
     ...(record.claim_key_status !== undefined
-      ? { claim_key_status: readNullableString(record.claim_key_status, `${label}.assert.claim_key_status`, label) }
+      ? { claim_key_status: readNullableClaimKeyStatus(record.claim_key_status, `${label}.assert.claim_key_status`, label) }
       : {}),
     ...(record.claim_key_source !== undefined
-      ? { claim_key_source: readNullableString(record.claim_key_source, `${label}.assert.claim_key_source`, label) }
+      ? { claim_key_source: readNullableClaimKeySource(record.claim_key_source, `${label}.assert.claim_key_source`, label) }
       : {}),
     ...(record.claim_key_confidence !== undefined
       ? { claim_key_confidence: readNullableNumber(record.claim_key_confidence, `${label}.assert.claim_key_confidence`, label) }
@@ -777,7 +782,7 @@ function readRowAssert(value: unknown, label: string): ClaimKeyScenarioRowAssert
       ? { claim_support_observed_at: readNullableString(record.claim_support_observed_at, `${label}.assert.claim_support_observed_at`, label) }
       : {}),
     ...(record.claim_support_mode !== undefined
-      ? { claim_support_mode: readNullableString(record.claim_support_mode, `${label}.assert.claim_support_mode`, label) }
+      ? { claim_support_mode: readNullableClaimSupportMode(record.claim_support_mode, `${label}.assert.claim_support_mode`, label) }
       : {}),
     ...(record.superseded_by !== undefined ? { superseded_by: readNullableString(record.superseded_by, `${label}.assert.superseded_by`, label) } : {}),
     ...(record.retired !== undefined ? { retired: readRequiredBoolean(record.retired, `${label}.assert.retired`, label) } : {}),
@@ -1066,6 +1071,54 @@ function readNullableString(value: unknown, label: string, filePath: string): st
   }
 
   return readRequiredString(value, label, filePath);
+}
+
+/**
+ * Reads one nullable claim-key lifecycle status used by scenario assertions.
+ *
+ * @param value - Raw field value.
+ * @param label - Human-readable label used in validation messages.
+ * @param filePath - Source scenario path for error messages.
+ * @returns Parsed claim-key status or null.
+ */
+function readNullableClaimKeyStatus(value: unknown, label: string, filePath: string): string | null {
+  if (value === null) {
+    return null;
+  }
+
+  return requireClaimKeyStatus(value, `${filePath}: ${label}`);
+}
+
+/**
+ * Reads one nullable claim-key lifecycle source used by scenario assertions.
+ *
+ * @param value - Raw field value.
+ * @param label - Human-readable label used in validation messages.
+ * @param filePath - Source scenario path for error messages.
+ * @returns Parsed claim-key source or null.
+ */
+function readNullableClaimKeySource(value: unknown, label: string, filePath: string): string | null {
+  if (value === null) {
+    return null;
+  }
+
+  return requireClaimKeySource(value, `${filePath}: ${label}`);
+}
+
+/**
+ * Reads one nullable claim-support mode used by scenario assertions.
+ *
+ * @param value - Raw field value.
+ * @param label - Human-readable label used in validation messages.
+ * @param filePath - Source scenario path for error messages.
+ * @returns Parsed claim-support mode or null.
+ */
+function readNullableClaimSupportMode(value: unknown, label: string, filePath: string): string | null {
+  if (value === null) {
+    return null;
+  }
+
+  return requireClaimSupportMode(value, `${filePath}: ${label}`);
 }
 
 /**

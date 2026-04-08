@@ -183,6 +183,36 @@ describe("validateEntries", () => {
     expect(result.warnings[0]).toMatch(/invalid claim key/i);
   });
 
+  it("drops invalid lifecycle boundary values while keeping the normalized claim key", () => {
+    const result = validateEntries([
+      {
+        type: "fact",
+        subject: "subject",
+        content: "content",
+        claim_key: " Jim / Timezone ",
+        claim_key_status: "legacy" as StoreEntryInput["claim_key_status"],
+        claim_key_source: "handwritten" as StoreEntryInput["claim_key_source"],
+        claim_support_mode: "copied" as StoreEntryInput["claim_support_mode"],
+        claim_key_confidence: Number.NaN,
+      },
+    ]);
+
+    expect(result.rejected).toBe(0);
+    expect(result.valid[0]).toMatchObject({
+      claim_key: "jim/timezone",
+      claim_key_status: undefined,
+      claim_key_source: undefined,
+      claim_support_mode: undefined,
+      claim_key_confidence: undefined,
+    });
+    expect(result.warnings).toEqual([
+      expect.stringMatching(/claim_key_status/i),
+      expect.stringMatching(/claim_key_source/i),
+      expect.stringMatching(/claim_key_confidence/i),
+      expect.stringMatching(/claim_support_mode/i),
+    ]);
+  });
+
   it("returns correct counts for mixed valid and invalid entries", () => {
     const result = validateEntries([
       {

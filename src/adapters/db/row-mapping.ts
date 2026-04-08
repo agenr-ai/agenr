@@ -1,6 +1,7 @@
 import type { Row } from "@libsql/client";
 
 export { cosineSimilarity } from "../../core/recall/scoring.js";
+import { parseClaimKeySource, parseClaimKeyStatus, parseClaimSupportMode } from "../../core/claim-key-lifecycle.js";
 import type { Entry, Episode } from "../../core/types.js";
 
 const DEFAULT_QUALITY_SCORE = 0.5;
@@ -291,14 +292,14 @@ export function mapEntryRow(row: Row): Entry {
     valid_to: readOptionalString(row, "valid_to"),
     claim_key: readOptionalString(row, "claim_key"),
     claim_key_raw: readOptionalString(row, "claim_key_raw"),
-    claim_key_status: readOptionalString(row, "claim_key_status") as Entry["claim_key_status"],
-    claim_key_source: readOptionalString(row, "claim_key_source") as Entry["claim_key_source"],
+    claim_key_status: readOptionalLifecycleEnum(row, "claim_key_status", parseClaimKeyStatus),
+    claim_key_source: readOptionalLifecycleEnum(row, "claim_key_source", parseClaimKeySource),
     claim_key_confidence: readOptionalNumber(row, "claim_key_confidence"),
     claim_key_rationale: readOptionalString(row, "claim_key_rationale"),
     claim_support_source_kind: readOptionalString(row, "claim_support_source_kind"),
     claim_support_locator: readOptionalString(row, "claim_support_locator"),
     claim_support_observed_at: readOptionalString(row, "claim_support_observed_at"),
-    claim_support_mode: readOptionalString(row, "claim_support_mode") as Entry["claim_support_mode"],
+    claim_support_mode: readOptionalLifecycleEnum(row, "claim_support_mode", parseClaimSupportMode),
     supersession_kind: readOptionalString(row, "supersession_kind"),
     supersession_reason: readOptionalString(row, "supersession_reason"),
     cluster_id: readOptionalString(row, "cluster_id"),
@@ -310,6 +311,28 @@ export function mapEntryRow(row: Row): Entry {
     created_at: readRequiredString(row, "created_at"),
     updated_at: readRequiredString(row, "updated_at"),
   };
+}
+
+/**
+ * Reads one optional lifecycle enum from a query row and rejects invalid stored values.
+ *
+ * @param row - Raw libSQL result row.
+ * @param key - Column name to read.
+ * @param parse - Enum parser used to validate the stored string.
+ * @returns Parsed enum value when present.
+ */
+function readOptionalLifecycleEnum<T extends string>(row: Row, key: string, parse: (value: unknown) => T | undefined): T | undefined {
+  const value = readOptionalString(row, key);
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const parsed = parse(value);
+  if (!parsed) {
+    throw new Error(`Invalid lifecycle value ${JSON.stringify(value)} for database column "${key}".`);
+  }
+
+  return parsed;
 }
 
 /**

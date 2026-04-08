@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import { composeEmbeddingText } from "../../../src/adapters/embeddings.js";
+import { annotateExplicitClaimKeyEntry } from "../../../src/core/ingestion/claim-key-preservation.js";
 import type { DatabasePort, EmbeddingPort, LlmPort } from "../../../src/core/ports.js";
 import { computeContentHash, computeNormContentHash } from "../../../src/core/store/hashing.js";
 import { storeEntries } from "../../../src/core/store/pipeline.js";
@@ -338,6 +339,51 @@ describe("storeEntries", () => {
 
     expect(db.insertions[0]?.entry.claim_key).toBe("jim/home_city");
     expect(llm.calls).toEqual([]);
+  });
+
+  it("keeps explicit-key lifecycle fields aligned between direct store and ingest preservation paths", async () => {
+    const directDb = new MockDatabase();
+    const ingestDb = new MockDatabase();
+    const embedding = new MockEmbeddingPort();
+    const baseInput = createInput({
+      subject: "Jim timezone",
+      content: "Jim uses America/Chicago.",
+      claim_key: " Jim / Timezone ",
+    });
+
+    await storeEntries([baseInput], directDb, embedding);
+    await storeEntries(
+      [
+        annotateExplicitClaimKeyEntry(
+          { ...baseInput },
+          {
+            sourceKind: "tool_call",
+            locator: "/tmp/session.jsonl#entry:1",
+            observedAt: "2026-04-01T10:00:00.000Z",
+            mode: "explicit",
+          },
+        ),
+      ],
+      ingestDb,
+      embedding,
+    );
+
+    expect(directDb.insertions[0]?.entry).toMatchObject({
+      claim_key: "jim/timezone",
+      claim_key_raw: "Jim / Timezone",
+      claim_key_status: "trusted",
+      claim_key_source: "manual",
+      claim_key_confidence: 1,
+      claim_key_rationale: "manual claim key supplied by caller",
+    });
+    expect(ingestDb.insertions[0]?.entry).toMatchObject({
+      claim_key: "jim/timezone",
+      claim_key_raw: "Jim / Timezone",
+      claim_key_status: "trusted",
+      claim_key_source: "manual",
+      claim_key_confidence: 1,
+      claim_key_rationale: "manual claim key supplied by caller",
+    });
   });
 
   it("normalizes valid manual claim keys before persistence", async () => {

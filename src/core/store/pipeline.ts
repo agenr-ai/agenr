@@ -3,6 +3,13 @@ import { randomUUID } from "node:crypto";
 import type { DatabasePort, EmbeddingPort, LlmPort } from "../ports.js";
 import type { SupersessionRuleFailureReason } from "../supersession.js";
 import type { Entry, StoreEntryInput, StoreResult } from "../types.js";
+import {
+  applyClaimKeyLifecycle,
+  buildExtractedClaimKeyLifecycle,
+  buildManualClaimKeyLifecycle,
+  buildPrecomputedClaimKeyLifecycle,
+  type ResolvedClaimKeyLifecycle,
+} from "../claim-key-lifecycle.js";
 import { describeSupersessionRuleFailure, validateSupersessionRules } from "../supersession.js";
 import { runBatchClaimExtraction, type ClaimExtractionConfig, type ClaimExtractionResult } from "./claim-extraction.js";
 import { composeEmbeddingText } from "./embedding-text.js";
@@ -42,21 +49,7 @@ interface PreparedEntry {
   inputIndex: number;
   contentHash: string;
   normContentHash: string;
-  claimKey?: AcceptedClaimKey;
-}
-
-/** Structured claim-key metadata accepted by the store pipeline. */
-interface AcceptedClaimKey {
-  claimKey: string;
-  rawClaimKey?: string;
-  status: NonNullable<Entry["claim_key_status"]>;
-  source: NonNullable<Entry["claim_key_source"]>;
-  confidence: number;
-  rationale: string;
-  supportSourceKind?: string;
-  supportLocator?: string;
-  supportObservedAt?: string;
-  supportMode?: NonNullable<Entry["claim_support_mode"]>;
+  claimKey?: ResolvedClaimKeyLifecycle;
 }
 
 /** Final pipeline outcome assigned to one store input. */
@@ -304,16 +297,16 @@ function buildEntry(preparedEntry: PreparedEntry, embedding: number[]): Entry {
     recall_count: 0,
     valid_from: preparedEntry.input.valid_from,
     valid_to: preparedEntry.input.valid_to,
-    claim_key: acceptedClaimKey?.claimKey ?? preparedEntry.input.claim_key,
-    claim_key_raw: acceptedClaimKey?.rawClaimKey,
-    claim_key_status: acceptedClaimKey?.status,
-    claim_key_source: acceptedClaimKey?.source,
-    claim_key_confidence: acceptedClaimKey?.confidence,
-    claim_key_rationale: acceptedClaimKey?.rationale,
-    claim_support_source_kind: acceptedClaimKey?.supportSourceKind,
-    claim_support_locator: acceptedClaimKey?.supportLocator,
-    claim_support_observed_at: acceptedClaimKey?.supportObservedAt,
-    claim_support_mode: acceptedClaimKey?.supportMode,
+    claim_key: acceptedClaimKey?.claim_key ?? preparedEntry.input.claim_key,
+    claim_key_raw: acceptedClaimKey?.claim_key_raw,
+    claim_key_status: acceptedClaimKey?.claim_key_status,
+    claim_key_source: acceptedClaimKey?.claim_key_source,
+    claim_key_confidence: acceptedClaimKey?.claim_key_confidence,
+    claim_key_rationale: acceptedClaimKey?.claim_key_rationale,
+    claim_support_source_kind: acceptedClaimKey?.claim_support_source_kind,
+    claim_support_locator: acceptedClaimKey?.claim_support_locator,
+    claim_support_observed_at: acceptedClaimKey?.claim_support_observed_at,
+    claim_support_mode: acceptedClaimKey?.claim_support_mode,
     retired: false,
     created_at: preparedEntry.input.created_at ?? now,
     updated_at: now,
@@ -372,18 +365,14 @@ function applyExtractedClaimKeyMetadata(preparedEntries: PreparedEntry[], extrac
     }
 
     const extractedClaimKey = extractedClaimKeys.get(preparedEntry.inputIndex);
-    const acceptedClaimKey = buildExtractedAcceptedClaimKey(extractedClaimKey) ?? buildPrecomputedAcceptedClaimKey(preparedEntry.input);
+    const acceptedClaimKey =
+      (extractedClaimKey ? buildExtractedClaimKeyLifecycle(extractedClaimKey) : undefined) ?? buildPrecomputedClaimKeyLifecycle(preparedEntry.input);
     if (!acceptedClaimKey) {
       continue;
     }
 
     preparedEntry.claimKey = acceptedClaimKey;
-    preparedEntry.input.claim_key = acceptedClaimKey.claimKey;
-    preparedEntry.input.claim_key_raw = acceptedClaimKey.rawClaimKey;
-    preparedEntry.input.claim_key_status = acceptedClaimKey.status;
-    preparedEntry.input.claim_key_source = acceptedClaimKey.source;
-    preparedEntry.input.claim_key_confidence = acceptedClaimKey.confidence;
-    preparedEntry.input.claim_key_rationale = acceptedClaimKey.rationale;
+    applyClaimKeyLifecycle(preparedEntry.input, acceptedClaimKey);
   }
 }
 
@@ -404,7 +393,7 @@ async function planAutoSupersession(
   const siblingCache = new Map<string, Entry[]>();
 
   for (const preparedEntry of preparedEntries) {
-    const claimKey = preparedEntry.claimKey?.claimKey ?? preparedEntry.input.claim_key;
+    const claimKey = preparedEntry.claimKey?.claim_key ?? preparedEntry.input.claim_key;
     if (!claimKey || preparedEntry.input.supersedes) {
       continue;
     }
@@ -470,7 +459,7 @@ function groupPreparedEntriesByClaimKey(preparedEntries: PreparedEntry[]): Map<s
   const grouped = new Map<string, PreparedEntry[]>();
 
   for (const preparedEntry of preparedEntries) {
-    const claimKey = preparedEntry.claimKey?.claimKey ?? preparedEntry.input.claim_key;
+    const claimKey = preparedEntry.claimKey?.claim_key ?? preparedEntry.input.claim_key;
     if (!claimKey) {
       continue;
     }
@@ -496,45 +485,45 @@ async function getClaimKeySiblings(db: DatabasePort, cache: Map<string, Entry[]>
 }
 
 /** Returns whether one prepared entry may auto-link through claim-key supersession. */
-function isAutoSupersessionEligible(claimKey: AcceptedClaimKey | undefined, claimExtractionConfig: ClaimExtractionConfig | undefined): boolean {
-  if (!claimKey || claimKey.status !== "trusted") {
+function isAutoSupersessionEligible(claimKey: ResolvedClaimKeyLifecycle | undefined, claimExtractionConfig: ClaimExtractionConfig | undefined): boolean {
+  if (!claimKey || claimKey.claim_key_status !== "trusted") {
     return false;
   }
 
-  if (claimKey.source === "manual") {
+  if (claimKey.claim_key_source === "manual") {
     return true;
   }
 
-  if (!AUTO_SUPERSESSION_ELIGIBLE_SOURCES.has(claimKey.source) || !claimExtractionConfig) {
+  if (!AUTO_SUPERSESSION_ELIGIBLE_SOURCES.has(claimKey.claim_key_source) || !claimExtractionConfig) {
     return false;
   }
 
-  return claimKey.confidence >= Math.max(claimExtractionConfig.confidenceThreshold, AUTO_SUPERSESSION_MIN_EXTRACTED_CONFIDENCE);
+  return claimKey.claim_key_confidence >= Math.max(claimExtractionConfig.confidenceThreshold, AUTO_SUPERSESSION_MIN_EXTRACTED_CONFIDENCE);
 }
 
 /** Explains why one claim-key match stayed stored without an automatic link. */
 function buildAutoSupersessionEligibilityWarning(preparedEntry: PreparedEntry): string {
   const acceptedClaimKey = preparedEntry.claimKey;
-  const claimKey = acceptedClaimKey?.claimKey ?? preparedEntry.input.claim_key ?? "(missing)";
+  const claimKey = acceptedClaimKey?.claim_key ?? preparedEntry.input.claim_key ?? "(missing)";
   if (!acceptedClaimKey) {
     return `Stored entry "${preparedEntry.input.subject}" with claim_key "${claimKey}" but skipped auto-supersession because the claim-key provenance was not explicit or a tracked high-confidence extraction.`;
   }
 
-  if (acceptedClaimKey.source === "manual") {
+  if (acceptedClaimKey.claim_key_source === "manual") {
     return `Stored entry "${preparedEntry.input.subject}" with claim_key "${claimKey}" but skipped auto-supersession because the claim-key provenance was not eligible for automatic linking.`;
   }
 
-  if (acceptedClaimKey.status !== "trusted") {
+  if (acceptedClaimKey.claim_key_status !== "trusted") {
     return (
       `Stored entry "${preparedEntry.input.subject}" with claim_key "${claimKey}" but skipped auto-supersession because the accepted claim key is ` +
-      `${acceptedClaimKey.status} from ${acceptedClaimKey.source} at confidence ${acceptedClaimKey.confidence.toFixed(2)}. Only explicit/manual claim keys or model-extracted keys at ` +
+      `${acceptedClaimKey.claim_key_status} from ${acceptedClaimKey.claim_key_source} at confidence ${acceptedClaimKey.claim_key_confidence.toFixed(2)}. Only explicit/manual claim keys or model-extracted keys at ` +
       `${AUTO_SUPERSESSION_MIN_EXTRACTED_CONFIDENCE.toFixed(2)}+ auto-link.`
     );
   }
 
   return (
     `Stored entry "${preparedEntry.input.subject}" with claim_key "${claimKey}" but skipped auto-supersession because the extracted claim key came from ` +
-    `${acceptedClaimKey.source} at confidence ${acceptedClaimKey.confidence.toFixed(2)}. Only explicit/manual claim keys or model-extracted keys at ` +
+    `${acceptedClaimKey.claim_key_source} at confidence ${acceptedClaimKey.claim_key_confidence.toFixed(2)}. Only explicit/manual claim keys or model-extracted keys at ` +
     `${AUTO_SUPERSESSION_MIN_EXTRACTED_CONFIDENCE.toFixed(2)}+ auto-link.`
   );
 }
@@ -665,97 +654,25 @@ function sortStoreDetails(details: StoreEntryDetail[]): StoreEntryDetail[] {
 }
 
 /** Builds accepted manual claim-key metadata from raw caller input plus the normalized canonical key. */
-function buildManualAcceptedClaimKey(rawInput: StoreEntryInput | undefined, normalizedInput: StoreEntryInput): AcceptedClaimKey | undefined {
+function buildManualAcceptedClaimKey(rawInput: StoreEntryInput | undefined, normalizedInput: StoreEntryInput): ResolvedClaimKeyLifecycle | undefined {
   const canonicalClaimKey = normalizedInput.claim_key;
   if (!canonicalClaimKey) {
     return undefined;
   }
 
-  const precomputedAcceptedClaimKey = buildPrecomputedAcceptedClaimKey(normalizedInput);
+  const precomputedAcceptedClaimKey = buildPrecomputedClaimKeyLifecycle(normalizedInput);
   if (precomputedAcceptedClaimKey) {
     return precomputedAcceptedClaimKey;
   }
 
-  return {
+  return buildManualClaimKeyLifecycle({
     claimKey: canonicalClaimKey,
-    rawClaimKey: buildClaimKeyRaw(normalizedInput.claim_key_raw ?? normalizeOptionalString(rawInput?.claim_key), canonicalClaimKey),
-    status: "trusted",
-    source: "manual",
-    confidence: 1,
-    rationale: "manual claim key supplied by caller",
-    supportSourceKind: normalizeOptionalString(normalizedInput.claim_support_source_kind),
-    supportLocator: normalizeOptionalString(normalizedInput.claim_support_locator),
-    supportObservedAt: normalizeOptionalString(normalizedInput.claim_support_observed_at),
+    rawClaimKey: normalizedInput.claim_key_raw ?? normalizeOptionalString(rawInput?.claim_key),
+    supportSourceKind: normalizedInput.claim_support_source_kind,
+    supportLocator: normalizedInput.claim_support_locator,
+    supportObservedAt: normalizedInput.claim_support_observed_at,
     supportMode: normalizedInput.claim_support_mode,
-  };
-}
-
-/** Reuses lifecycle metadata precomputed upstream instead of reclassifying the key as manual. */
-function buildPrecomputedAcceptedClaimKey(normalizedInput: StoreEntryInput): AcceptedClaimKey | undefined {
-  const claimKey = normalizedInput.claim_key;
-  const status = normalizedInput.claim_key_status;
-  const source = normalizedInput.claim_key_source;
-  const confidence = normalizedInput.claim_key_confidence;
-  const rationale = normalizeOptionalString(normalizedInput.claim_key_rationale);
-  if (!claimKey || !status || !source || confidence === undefined || rationale === undefined) {
-    return undefined;
-  }
-
-  return {
-    claimKey,
-    rawClaimKey: buildClaimKeyRaw(normalizedInput.claim_key_raw, claimKey),
-    status,
-    source,
-    confidence,
-    rationale,
-    supportSourceKind: normalizeOptionalString(normalizedInput.claim_support_source_kind),
-    supportLocator: normalizeOptionalString(normalizedInput.claim_support_locator),
-    supportObservedAt: normalizeOptionalString(normalizedInput.claim_support_observed_at),
-    supportMode: normalizedInput.claim_support_mode,
-  };
-}
-
-/** Builds accepted extracted claim-key metadata from one successful extraction result. */
-function buildExtractedAcceptedClaimKey(extractedClaimKey: ClaimExtractionResult | undefined): AcceptedClaimKey | undefined {
-  if (!extractedClaimKey?.claimKey) {
-    return undefined;
-  }
-
-  const source = extractedClaimKey.path;
-  const status = source === "deterministic_repair" ? "tentative" : "trusted";
-  const rawClaimKey = buildClaimKeyRaw(formatExtractedRawClaimKey(extractedClaimKey), extractedClaimKey.claimKey);
-  const rationalePrefix =
-    source === "deterministic_repair" ? "claim key inferred by deterministic possessive-slot repair" : `claim key extracted from ${source} output`;
-  const rationale = extractedClaimKey.compactionReason ? `${rationalePrefix}; ${extractedClaimKey.compactionReason}` : rationalePrefix;
-
-  return {
-    claimKey: extractedClaimKey.claimKey,
-    rawClaimKey,
-    status,
-    source,
-    confidence: extractedClaimKey.confidence,
-    rationale,
-  };
-}
-
-/** Formats the raw extracted entity and attribute pair into one comparable claim-key string. */
-function formatExtractedRawClaimKey(extractedClaimKey: ClaimExtractionResult): string | undefined {
-  const rawEntity = normalizeOptionalString(extractedClaimKey.rawEntity);
-  const rawAttribute = normalizeOptionalString(extractedClaimKey.rawAttribute);
-  if (!rawEntity || !rawAttribute) {
-    return extractedClaimKey.compactedFrom ?? undefined;
-  }
-
-  return `${rawEntity}/${rawAttribute}`;
-}
-
-/** Returns the raw claim key only when it differs from the canonical stored key. */
-function buildClaimKeyRaw(rawClaimKey: string | undefined, canonicalClaimKey: string): string | undefined {
-  if (!rawClaimKey || rawClaimKey === canonicalClaimKey) {
-    return undefined;
-  }
-
-  return rawClaimKey;
+  });
 }
 
 /** Trims an optional string and drops the empty result. */

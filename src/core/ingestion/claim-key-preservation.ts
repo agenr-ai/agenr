@@ -1,4 +1,5 @@
 import type { ClaimSupportMode, StoreEntryInput } from "../types.js";
+import { buildExplicitClaimKeyPreservationMetadata, mergeExplicitClaimKeyMetadata } from "../claim-key-lifecycle.js";
 
 import type { DedupResult } from "./dedup.js";
 
@@ -28,19 +29,9 @@ export function annotateExplicitClaimKeyEntry(entry: StoreEntryInput, context: E
     return entry;
   }
 
-  const claimKeyRaw = normalizeOptionalString(entry.claim_key_raw ?? entry.claim_key);
-  const claimSupportSourceKind = normalizeOptionalString(entry.claim_support_source_kind ?? context.sourceKind);
-  const claimSupportLocator = normalizeOptionalString(entry.claim_support_locator ?? context.locator);
-  const claimSupportObservedAt = normalizeOptionalString(entry.claim_support_observed_at ?? context.observedAt ?? entry.created_at);
-  const claimSupportMode = entry.claim_support_mode ?? context.mode;
-
   return {
     ...entry,
-    ...(claimKeyRaw !== undefined ? { claim_key_raw: claimKeyRaw } : {}),
-    ...(claimSupportSourceKind !== undefined ? { claim_support_source_kind: claimSupportSourceKind } : {}),
-    ...(claimSupportLocator !== undefined ? { claim_support_locator: claimSupportLocator } : {}),
-    ...(claimSupportObservedAt !== undefined ? { claim_support_observed_at: claimSupportObservedAt } : {}),
-    ...(claimSupportMode !== undefined ? { claim_support_mode: claimSupportMode } : {}),
+    ...buildExplicitClaimKeyPreservationMetadata(entry, context),
   };
 }
 
@@ -91,27 +82,6 @@ function resolveClusterClaimKeyCandidate(entries: StoreEntryInput[]): StoreEntry
   return explicitEntries[0];
 }
 
-/** Merges explicit claim-key metadata into a dedup survivor without overriding conflicting keys. */
-function mergeExplicitClaimKeyMetadata(entry: StoreEntryInput, candidate: StoreEntryInput): StoreEntryInput {
-  if (!candidate.claim_key) {
-    return entry;
-  }
-
-  if (entry.claim_key && entry.claim_key !== candidate.claim_key) {
-    return entry;
-  }
-
-  return {
-    ...entry,
-    claim_key: entry.claim_key ?? candidate.claim_key,
-    claim_key_raw: entry.claim_key_raw ?? candidate.claim_key_raw,
-    claim_support_source_kind: entry.claim_support_source_kind ?? candidate.claim_support_source_kind,
-    claim_support_locator: entry.claim_support_locator ?? candidate.claim_support_locator,
-    claim_support_observed_at: entry.claim_support_observed_at ?? candidate.claim_support_observed_at,
-    claim_support_mode: entry.claim_support_mode ?? candidate.claim_support_mode,
-  };
-}
-
 /** Returns whether an entry carries a non-empty explicit claim key. */
 function hasExplicitClaimKey(entry: StoreEntryInput): entry is StoreEntryInput & { claim_key: string } {
   return typeof entry.claim_key === "string" && entry.claim_key.trim().length > 0;
@@ -120,10 +90,4 @@ function hasExplicitClaimKey(entry: StoreEntryInput): entry is StoreEntryInput &
 /** Narrows undefined values away from mapped entry arrays. */
 function isDefined<T>(value: T | undefined): value is T {
   return value !== undefined;
-}
-
-/** Trims optional strings and drops empty values. */
-function normalizeOptionalString(value: string | undefined): string | undefined {
-  const normalized = value?.trim();
-  return normalized && normalized.length > 0 ? normalized : undefined;
 }

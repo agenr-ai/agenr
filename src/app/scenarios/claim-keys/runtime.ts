@@ -12,20 +12,19 @@ import { openClawTranscriptParser } from "../../../adapters/openclaw/transcript/
 import { resolveClaimExtractionConfig } from "../../../config.js";
 import { ingestPath } from "../../ingestion/index.js";
 import { storeEntriesDetailed } from "../../../core/store/pipeline.js";
-import { computeContentHash, computeNormContentHash } from "../../../core/store/hashing.js";
 import type { Entry, StoreResult } from "../../../core/types.js";
 import { runSurgeon } from "../../surgeon/service.js";
 import { buildClaimKeyScenarioAssertions, summarizeClaimKeyScenarioDiffs } from "./assertions.js";
 import { createDeterministicEmbeddingPort, createFixtureIngestionLlm, createFixtureLlm } from "./deterministic-fixtures.js";
 import { getDefaultClaimKeyScenarioRoot, loadClaimKeyScenarios } from "./load-scenarios.js";
 import { createClaimKeyScenarioSandbox } from "./sandbox.js";
+import { seedClaimKeyScenarioEntries } from "./seed.js";
 import type {
   ClaimKeyScenario,
   ClaimKeyScenarioActualState,
   ClaimKeyScenarioProposalSnapshot,
   ClaimKeyScenarioRunOptions,
   ClaimKeyScenarioRunResult,
-  ClaimKeyScenarioSeedEntry,
   ClaimKeyScenarioSummary,
   ClaimKeyScenarioSurgeonSummarySnapshot,
 } from "./types.js";
@@ -289,95 +288,8 @@ async function seedScenarioSetup(
     }
   }
 
-  for (const seedEntry of seedEntries) {
-    const entry = buildSeedEntry(seedEntry);
-    await database.execute({
-      sql: `
-        INSERT INTO entries (
-          id,
-          type,
-          subject,
-          content,
-          importance,
-          expiry,
-          tags,
-          source_file,
-          source_context,
-          embedding,
-          content_hash,
-          norm_content_hash,
-          minhash_sig,
-          quality_score,
-          recall_count,
-          last_recalled_at,
-          superseded_by,
-          valid_from,
-          valid_to,
-          claim_key,
-          claim_key_raw,
-          claim_key_status,
-          claim_key_source,
-          claim_key_confidence,
-          claim_key_rationale,
-          claim_support_source_kind,
-          claim_support_locator,
-          claim_support_observed_at,
-          claim_support_mode,
-          supersession_kind,
-          supersession_reason,
-          cluster_id,
-          user_id,
-          project,
-          retired,
-          retired_at,
-          retired_reason,
-          created_at,
-          updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-      args: [
-        entry.id,
-        entry.type,
-        entry.subject,
-        entry.content,
-        entry.importance,
-        entry.expiry,
-        JSON.stringify(entry.tags),
-        entry.source_file ?? null,
-        entry.source_context ?? null,
-        null,
-        entry.content_hash ?? null,
-        entry.norm_content_hash ?? null,
-        null,
-        entry.quality_score,
-        entry.recall_count,
-        entry.last_recalled_at ?? null,
-        entry.superseded_by ?? null,
-        entry.valid_from ?? null,
-        entry.valid_to ?? null,
-        entry.claim_key ?? null,
-        entry.claim_key_raw ?? null,
-        entry.claim_key_status ?? null,
-        entry.claim_key_source ?? null,
-        entry.claim_key_confidence ?? null,
-        entry.claim_key_rationale ?? null,
-        entry.claim_support_source_kind ?? null,
-        entry.claim_support_locator ?? null,
-        entry.claim_support_observed_at ?? null,
-        entry.claim_support_mode ?? null,
-        entry.supersession_kind ?? null,
-        entry.supersession_reason ?? null,
-        entry.cluster_id ?? null,
-        entry.user_id ?? null,
-        entry.project ?? null,
-        entry.retired ? 1 : 0,
-        entry.retired_at ?? null,
-        entry.retired_reason ?? null,
-        entry.created_at,
-        entry.updated_at,
-      ],
-    });
+  if (seedEntries.length > 0) {
+    await seedClaimKeyScenarioEntries(database, seedEntries);
   }
 }
 
@@ -687,58 +599,6 @@ async function loadFixtureResponses(rootDir: string, relativePath: string | unde
   }
 
   return parsed;
-}
-
-/**
- * Builds a canonical seed entry with defaults applied.
- *
- * @param seedEntry - Raw scenario seed entry.
- * @returns Canonical entry row ready for direct SQL insertion.
- */
-function buildSeedEntry(seedEntry: ClaimKeyScenarioSeedEntry): Entry {
-  const createdAt = seedEntry.created_at ?? "2026-04-01T10:00:00.000Z";
-  const updatedAt = seedEntry.updated_at ?? createdAt;
-
-  return {
-    id: seedEntry.id ?? randomUUID(),
-    type: seedEntry.type,
-    subject: seedEntry.subject,
-    content: seedEntry.content,
-    importance: seedEntry.importance ?? 7,
-    expiry: seedEntry.expiry ?? "permanent",
-    tags: seedEntry.tags ?? [],
-    source_file: seedEntry.source_file,
-    source_context: seedEntry.source_context,
-    embedding: undefined,
-    content_hash: computeContentHash(seedEntry.content, seedEntry.source_file),
-    norm_content_hash: computeNormContentHash(seedEntry.content),
-    quality_score: 0.5,
-    recall_count: 0,
-    last_recalled_at: undefined,
-    superseded_by: seedEntry.superseded_by,
-    valid_from: seedEntry.valid_from,
-    valid_to: seedEntry.valid_to,
-    claim_key: seedEntry.claim_key,
-    claim_key_raw: seedEntry.claim_key_raw,
-    claim_key_status: seedEntry.claim_key_status,
-    claim_key_source: seedEntry.claim_key_source,
-    claim_key_confidence: seedEntry.claim_key_confidence,
-    claim_key_rationale: seedEntry.claim_key_rationale,
-    claim_support_source_kind: seedEntry.claim_support_source_kind,
-    claim_support_locator: seedEntry.claim_support_locator,
-    claim_support_observed_at: seedEntry.claim_support_observed_at,
-    claim_support_mode: seedEntry.claim_support_mode,
-    supersession_kind: undefined,
-    supersession_reason: undefined,
-    cluster_id: undefined,
-    user_id: seedEntry.user_id,
-    project: seedEntry.project,
-    retired: seedEntry.retired ?? false,
-    retired_at: seedEntry.retired_at,
-    retired_reason: seedEntry.retired_reason,
-    created_at: createdAt,
-    updated_at: updatedAt,
-  };
 }
 
 /**

@@ -10,6 +10,12 @@ import {
   type ClaimKeyEntityFamilyPairSupport,
 } from "../../core/claim-key-entity-family.js";
 import {
+  buildSurgeonAppliedClaimKeyLifecycle as buildAppliedClaimKeyLifecycle,
+  buildSurgeonProposalClaimKeyLifecycle as buildProposalClaimKeyLifecycle,
+  buildSurgeonProposalLifecycleRationale as buildProposalLifecycleRationale,
+  type ProposalClaimKeyLifecycleMetadata,
+} from "../../core/claim-key-lifecycle.js";
+import {
   compactClaimKey,
   describeClaimKeyNormalizationFailure,
   describeClaimKeySuspicion,
@@ -363,19 +369,6 @@ interface EntityFamilyConvergenceAudit {
     preferredCanonicalEntityPrefix: string | null;
     evidence: ClaimKeyEntityFamilyEvidence[];
   }>;
-}
-
-interface AppliedClaimKeyLifecycleMetadata {
-  rawClaimKey?: string;
-  status: NonNullable<Entry["claim_key_status"]>;
-  source: NonNullable<Entry["claim_key_source"]>;
-}
-
-interface ProposalClaimKeyLifecycleMetadata {
-  deferredUntilReview: true;
-  proposedStatus: Entry["claim_key_status"];
-  proposedSource?: Entry["claim_key_source"];
-  proposedRawClaimKey?: string;
 }
 
 /**
@@ -3240,157 +3233,6 @@ function snapshotClaimKeyLifecycle(entry: Entry): {
     claimKeyConfidence: entry.claim_key_confidence,
     claimKeyRationale: entry.claim_key_rationale,
   };
-}
-
-function buildAppliedClaimKeyLifecycle(input: {
-  targetClaimKey: string;
-  priorClaimKey: string | null;
-  priorClaimKeyRaw?: string;
-  rawClaimKey?: string | null;
-  source: string;
-  support?: MissingBackfillSupportEvaluation;
-  compactness?: ClaimKeyCompactnessEvaluation;
-}): AppliedClaimKeyLifecycleMetadata {
-  const source = resolveLifecycleClaimKeySource({
-    proposedClaimKeys: [input.targetClaimKey],
-    source: input.source,
-    compactness: input.compactness,
-  });
-
-  return {
-    rawClaimKey: resolveLifecycleRawClaimKey({
-      targetClaimKey: input.targetClaimKey,
-      priorClaimKeyRaw: input.priorClaimKeyRaw,
-      rawClaimKey: input.rawClaimKey,
-      priorClaimKey: input.priorClaimKey,
-    }),
-    status: resolveLifecycleClaimKeyStatus({
-      proposedClaimKeys: [input.targetClaimKey],
-      source: input.source,
-      support: input.support,
-      compactness: input.compactness,
-    }),
-    source: source ?? "surgeon_compaction",
-  };
-}
-
-function buildProposalClaimKeyLifecycle(input: {
-  proposedClaimKeys: string[];
-  source: string;
-  rawClaimKey?: string | null;
-  support?: MissingBackfillSupportEvaluation;
-  compactness?: ClaimKeyCompactnessEvaluation;
-}): ProposalClaimKeyLifecycleMetadata {
-  const proposedClaimKeys = normalizeStringArray(input.proposedClaimKeys);
-  const targetClaimKey = proposedClaimKeys[0];
-  if (!targetClaimKey) {
-    return {
-      deferredUntilReview: true,
-      proposedStatus: "unresolved",
-    };
-  }
-
-  return {
-    deferredUntilReview: true,
-    proposedStatus: resolveLifecycleClaimKeyStatus({
-      proposedClaimKeys,
-      source: input.source,
-      support: input.support,
-      compactness: input.compactness,
-    }),
-    proposedSource: resolveLifecycleClaimKeySource({
-      proposedClaimKeys,
-      source: input.source,
-      compactness: input.compactness,
-    }),
-    proposedRawClaimKey: resolveLifecycleRawClaimKey({
-      targetClaimKey,
-      rawClaimKey: input.rawClaimKey,
-    }),
-  };
-}
-
-function buildProposalLifecycleRationale(baseRationale: string, lifecycle: ProposalClaimKeyLifecycleMetadata): string {
-  const normalizedBase = baseRationale.trim();
-  if (lifecycle.proposedStatus === "unresolved" || !lifecycle.proposedSource) {
-    return `${normalizedBase} The entry stays unchanged until review because no safe lifecycle write is ready yet.`;
-  }
-
-  const rawText = lifecycle.proposedRawClaimKey ? ` and claim_key_raw "${lifecycle.proposedRawClaimKey}"` : "";
-  return (
-    `${normalizedBase} The entry stays unchanged until review. ` +
-    `If approved, the replacement would persist claim_key_status "${lifecycle.proposedStatus}" ` +
-    `with claim_key_source "${lifecycle.proposedSource}"${rawText}.`
-  );
-}
-
-function resolveLifecycleClaimKeySource(input: {
-  proposedClaimKeys: string[];
-  source: string;
-  compactness?: ClaimKeyCompactnessEvaluation;
-}): Entry["claim_key_source"] {
-  if (normalizeStringArray(input.proposedClaimKeys).length === 0) {
-    return undefined;
-  }
-
-  if (input.source === "metadata_backfill_rewrite" || input.source === "metadata_rewrite") {
-    return "surgeon_metadata_rewrite";
-  }
-
-  if (
-    input.source === "trusted_group_reuse" ||
-    input.source === "mixed_group_consensus" ||
-    input.source === "entity_family_auto_convergence" ||
-    input.source === "entity_family_canonical_candidate" ||
-    input.source === "entity_family_collision"
-  ) {
-    return "surgeon_family_reuse";
-  }
-
-  if (input.source === "normalize" || input.compactness?.compactedFrom) {
-    return "surgeon_compaction";
-  }
-
-  if (input.source === "model" || input.source === "json_retry" || input.source === "deterministic_repair") {
-    return input.source;
-  }
-
-  return undefined;
-}
-
-function resolveLifecycleClaimKeyStatus(input: {
-  proposedClaimKeys: string[];
-  source: string;
-  support?: MissingBackfillSupportEvaluation;
-  compactness?: ClaimKeyCompactnessEvaluation;
-}): NonNullable<Entry["claim_key_status"]> {
-  if (normalizeStringArray(input.proposedClaimKeys).length === 0) {
-    return "unresolved";
-  }
-
-  const lifecycleSource = resolveLifecycleClaimKeySource(input);
-  if (lifecycleSource === "deterministic_repair" && input.support?.autoApplyClass === null) {
-    return "tentative";
-  }
-
-  return "trusted";
-}
-
-function resolveLifecycleRawClaimKey(input: {
-  targetClaimKey: string;
-  priorClaimKeyRaw?: string;
-  rawClaimKey?: string | null;
-  priorClaimKey?: string | null;
-}): string | undefined {
-  const candidates = [input.priorClaimKeyRaw, input.rawClaimKey ?? undefined, input.priorClaimKey ?? undefined];
-  for (const candidate of candidates) {
-    const normalized = normalizeOptionalString(candidate ?? undefined);
-    if (normalized && normalized !== input.targetClaimKey) {
-      return normalized;
-    }
-  }
-
-  return undefined;
 }
 
 function createProposal(input: Omit<SurgeonRunProposal, "id">): SurgeonRunProposal {

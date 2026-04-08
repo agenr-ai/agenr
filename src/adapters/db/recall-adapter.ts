@@ -1,5 +1,6 @@
 import type { ResultSet, Row } from "@libsql/client";
 
+import { parseClaimKeyStatus } from "../../core/claim-key-lifecycle.js";
 import { buildLexicalPlan, type LexicalSearchTier } from "../../core/recall/lexical.js";
 import type { EntryFilters, FtsCandidate, HistoricalPredecessorLookupParams, RecallCandidateEntry } from "../../core/recall/types.js";
 import type { EmbeddingPort, RecallPorts } from "../../core/ports.js";
@@ -396,10 +397,25 @@ function mapRecallCandidateRow(row: Row): RecallCandidateEntry {
     embedding: readEmbedding(row, "embedding"),
     superseded_by: readOptionalString(row, "superseded_by"),
     claim_key: readOptionalString(row, "claim_key"),
-    claim_key_status: readOptionalString(row, "claim_key_status") as RecallCandidateEntry["claim_key_status"],
+    claim_key_status: readOptionalClaimKeyStatus(row),
     retired: readBoolean(row, "retired"),
     created_at: readRequiredString(row, "created_at"),
   };
+}
+
+/** Reads one optional claim-key status from a recall candidate row. */
+function readOptionalClaimKeyStatus(row: Row): RecallCandidateEntry["claim_key_status"] {
+  const value = readOptionalString(row, "claim_key_status");
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const parsed = parseClaimKeyStatus(value);
+  if (!parsed) {
+    throw new Error(`Invalid lifecycle value ${JSON.stringify(value)} for database column "claim_key_status".`);
+  }
+
+  return parsed;
 }
 
 /** Resolves a bounded predecessor expansion size from the active seed count. */

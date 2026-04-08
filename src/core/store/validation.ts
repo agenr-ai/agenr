@@ -1,4 +1,5 @@
-import { CLAIM_SUPPORT_MODES, ENTRY_TYPES, EXPIRY_LEVELS, type Expiry, type StoreEntryInput } from "../types.js";
+import { parseClaimKeySource, parseClaimKeyStatus, parseClaimSupportMode } from "../claim-key-lifecycle.js";
+import { ENTRY_TYPES, EXPIRY_LEVELS, type Expiry, type StoreEntryInput } from "../types.js";
 import { describeClaimKeyNormalizationFailure, normalizeClaimKey } from "../claim-key.js";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
@@ -136,9 +137,9 @@ export function validateEntriesWithIndexes(inputs: StoreEntryInput[]): IndexedVa
     }
 
     const claimKeyRaw = normalizedClaimKey ? normalizeOptionalString(input.claim_key_raw) : undefined;
-    const claimKeyStatus = normalizedClaimKey ? input.claim_key_status : undefined;
-    const claimKeySource = normalizedClaimKey ? input.claim_key_source : undefined;
-    const claimKeyConfidence = normalizedClaimKey ? input.claim_key_confidence : undefined;
+    const claimKeyStatus = normalizedClaimKey ? normalizeClaimKeyStatus(input.claim_key_status, index, warnings) : undefined;
+    const claimKeySource = normalizedClaimKey ? normalizeClaimKeySource(input.claim_key_source, index, warnings) : undefined;
+    const claimKeyConfidence = normalizedClaimKey ? normalizeClaimKeyConfidence(input.claim_key_confidence, index, warnings) : undefined;
     const claimKeyRationale = normalizedClaimKey ? normalizeOptionalString(input.claim_key_rationale) : undefined;
     const claimSupportSourceKind = normalizedClaimKey ? normalizeOptionalString(input.claim_support_source_kind) : undefined;
     const claimSupportLocator = normalizedClaimKey ? normalizeOptionalString(input.claim_support_locator) : undefined;
@@ -224,10 +225,57 @@ function normalizeClaimSupportObservedAt(value: string, index: number, warnings:
   return normalized;
 }
 
+/** Validates one optional claim-key lifecycle status. */
+function normalizeClaimKeyStatus(value: StoreEntryInput["claim_key_status"], index: number, warnings: string[]): StoreEntryInput["claim_key_status"] {
+  const parsed = parseClaimKeyStatus(value);
+  if (parsed) {
+    return parsed;
+  }
+
+  if (value !== undefined) {
+    warnings.push(`Entry ${index} provided invalid claim_key_status ${JSON.stringify(value)} and it was dropped.`);
+  }
+
+  return undefined;
+}
+
+/** Validates one optional claim-key lifecycle source. */
+function normalizeClaimKeySource(value: StoreEntryInput["claim_key_source"], index: number, warnings: string[]): StoreEntryInput["claim_key_source"] {
+  const parsed = parseClaimKeySource(value);
+  if (parsed) {
+    return parsed;
+  }
+
+  if (value !== undefined) {
+    warnings.push(`Entry ${index} provided invalid claim_key_source ${JSON.stringify(value)} and it was dropped.`);
+  }
+
+  return undefined;
+}
+
+/** Validates one optional claim-key lifecycle confidence. */
+function normalizeClaimKeyConfidence(
+  value: StoreEntryInput["claim_key_confidence"],
+  index: number,
+  warnings: string[],
+): StoreEntryInput["claim_key_confidence"] {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  warnings.push(`Entry ${index} provided invalid claim_key_confidence ${JSON.stringify(value)} and it was dropped.`);
+  return undefined;
+}
+
 /** Validates one optional claim-support provenance mode. */
 function normalizeClaimSupportMode(value: StoreEntryInput["claim_support_mode"], index: number, warnings: string[]): StoreEntryInput["claim_support_mode"] {
-  if (value && CLAIM_SUPPORT_MODES.includes(value)) {
-    return value;
+  const parsed = parseClaimSupportMode(value);
+  if (parsed) {
+    return parsed;
   }
 
   warnings.push(`Entry ${index} provided invalid claim_support_mode ${JSON.stringify(value)} and it was dropped.`);
