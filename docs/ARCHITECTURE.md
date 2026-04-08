@@ -1,47 +1,134 @@
 # agenr Architecture
 
-This document describes the architecture that is actually implemented in the current codebase under `src/` and `packages/openclaw-plugin/`. When code and older docs disagree, the code wins.
+This document describes the architecture implemented in the current repository as of April 2026. When code and docs disagree, the code wins.
 
-## 1. What agenr is
+## 1. System overview
 
-agenr is a local-first memory system for agents. In the current implementation it manages two related but distinct memory planes:
+agenr is a local-first memory system for agent runtimes. The codebase currently operates across five closely related capabilities:
 
-1. **Durable knowledge entries** in `entries`
-   - facts, decisions, preferences, lessons, relationships, milestones
-2. **Session-level episodic memory** in `episodes`
-   - summarized prior sessions, mostly from OpenClaw transcripts
+1. durable knowledge storage in `entries`
+2. episodic session summaries in `episodes`
+3. query-time recall over both memory planes
+4. live OpenClaw integration for prompt injection, continuity, and tools
+5. maintenance workflows through surgeon
 
-On top of those stores, agenr provides:
-
-- a hybrid entry recall pipeline
-- an episodic recall pipeline
-- a unified router that decides which one to use
-- transcript ingestion pipelines for both entries and episodes
-- an OpenClaw plugin that injects memory and continuity into live sessions
-- a maintenance subsystem called **surgeon** for claim-key cleanup, supersession, and retirement
-
-The system is centered on a local libSQL / SQLite database, with LLMs and embeddings used as services, not as the system of record.
+The database is the system of record. LLMs and embeddings are used to extract, summarize, rank, and repair memory, but durable state lives in SQLite or libSQL.
 
 ## 2. Repository shape
 
-The code is organized around these top-level areas:
+The current repository is organized like this:
 
-- `src/core`
-  - domain types, ports, validation, ranking, transcript extraction, store pipeline, episode search, surgeon domain types
-- `src/app`
-  - orchestration and use-case services for ingestion, episode ingest, unified recall, OpenClaw runtime composition, surgeon execution, evals
-- `src/adapters`
-  - libSQL database adapter, LLM and embedding clients, transcript/file adapters, OpenClaw plugin adapter, internal eval HTTP adapter
-- `src/cli`
-  - Commander CLI surface
-- `packages/openclaw-plugin`
-  - packaging wrapper that re-exports the main OpenClaw plugin entry
-- `tests`
-  - tests roughly mirroring core, app, adapters, cli, and scenarios
+```text
+src/
+├── core/
+│   ├── types.ts
+│   ├── ports.ts
+│   ├── claim-key*.ts
+│   ├── supersession.ts
+│   ├── store/
+│   ├── ingestion/
+│   ├── recall/
+│   ├── episode/
+│   └── surgeon/
+├── app/
+│   ├── ingestion/
+│   ├── episode-ingest/
+│   ├── recall/
+│   ├── openclaw/
+│   ├── surgeon/
+│   ├── evals/recall/
+│   └── scenarios/claim-keys/
+├── adapters/
+│   ├── db/
+│   ├── files/
+│   ├── api/
+│   ├── openclaw/
+│   ├── surgeon/
+│   ├── embeddings.ts
+│   └── llm.ts
+├── cli/
+│   ├── main.ts
+│   └── commands/
+├── config.ts
+├── cli.ts
+├── internal-recall-eval-server.ts
+├── logger.ts
+├── ui.ts
+└── version.ts
 
-The current CLI is wired in `src/cli/main.ts` and registers:
+packages/
+└── openclaw-plugin/
 
-- `agenr ingest` (`entries` and `episodes`)
+tests/
+└── mirrors the main feature areas above
+```
+
+Important points about the current tree:
+
+- `src/core/` contains the main domain logic, ranking logic, claim-key lifecycle helpers, and pure interfaces in `src/core/ports.ts`.
+- `src/app/` owns workflow orchestration such as multi-file ingest, unified recall routing, episode ingest staging, OpenClaw runtime composition, surgeon runs, recall eval execution, and the claim-key scenario harness.
+- `src/adapters/` implements storage, external model clients, transcript parsing, the OpenClaw plugin, and the internal recall-eval HTTP seam.
+- `src/adapters/openclaw/runtime.ts` and `src/adapters/surgeon/*` are mostly adapter-facing re-export surfaces over app-layer implementations.
+- `packages/openclaw-plugin/` is a thin packaging wrapper that re-exports the built OpenClaw plugin entry from `dist/`.
+
+## 3. Layering and actual boundaries
+
+The intended dependency shape is:
+
+`core -> app -> adapters -> cli/plugin`
+
+That is mostly true in the current codebase.
+
+### 3.1 Core
+
+`src/core/` owns:
+
+- canonical domain types in `src/core/types.ts`
+- formal ports in `src/core/ports.ts`
+- claim-key normalization and lifecycle derivation
+- store-time validation, hashing, embedding text construction, and persistence preparation
+- transcript extraction and ingest parsing logic
+- entry recall ranking and temporal helpers
+- episode search, transcript rendering, and summary prompt generation
+- surgeon domain types and presets
+
+Core is infrastructure-agnostic, but not fully deterministic. It depends on ports for LLM and embedding work where the product requires them.
+
+### 3.2 App
+
+`src/app/` coordinates multi-step workflows:
+
+- ingesting many transcripts
+- staging episode ingest into preflight, plan, and execute phases
+- routing unified recall between entries and episodes
+- composing shared OpenClaw runtime services
+- running surgeon passes and presets
+- serving recall-eval execution
+- running claim-key scenarios inside sandboxes
+
+### 3.3 Adapters
+
+`src/adapters/` translates concrete systems into the core and app boundaries:
+
+- `db/` is the primary persistence adapter and query engine
+- `files/` discovers local transcript files
+- `embeddings.ts` and `llm.ts` resolve external model providers
+- `openclaw/` translates host hooks, session state, transcripts, and tools
+- `api/` exposes the narrow internal recall-eval route
+
+In practice, the database adapter is the operational center of the system. A large amount of real architecture is encoded in the schema, row mapping, and query helpers.
+
+### 3.4 CLI and runtime surfaces
+
+The current user-facing entry points are:
+
+- CLI commands registered in `src/cli/main.ts`
+- the OpenClaw memory plugin in `src/adapters/openclaw/index.ts`
+- the internal recall-eval dev server entry point in `src/internal-recall-eval-server.ts`
+
+The CLI currently registers:
+
+- `agenr ingest`
 - `agenr db`
 - `agenr recall`
 - `agenr scenarios`
@@ -49,105 +136,275 @@ The current CLI is wired in `src/cli/main.ts` and registers:
 - `agenr init`
 - `agenr surgeon`
 
-Notably, there is **no broad external HTTP memory API** in the current tree. The only HTTP adapter present is the internal recall-eval server in `src/adapters/api/internal-recall-eval-server.ts`.
+There is still no broad public HTTP memory API. The only HTTP surface is the internal recall-eval route.
 
-## 3. Layering, intended vs actual
+## 4. Main domain objects
 
-### Intended layering
+### 4.1 Entries
 
-The intended dependency shape is mostly:
+Durable knowledge rows are modeled by `Entry` in `src/core/types.ts`.
 
-`core -> app -> adapters -> cli/plugin`
+Important characteristics:
 
-In practice:
+- supported entry types: `fact`, `decision`, `preference`, `lesson`, `relationship`, `milestone`
+- supported expiry levels: `core`, `permanent`, `temporary`
+- lifecycle fields include retirement and supersession metadata
+- temporal validity is modeled with `valid_from` and `valid_to`
+- claim-key lifecycle metadata is first-class
 
-- `core` defines the main domain contracts in `src/core/ports.ts` and the canonical types in `src/core/types.ts`
-- `app` coordinates multi-step workflows like ingestion, unified recall, episode ingest, and surgeon runs
-- `adapters` connect those workflows to libSQL, OpenClaw, filesystem, embeddings, and LLM providers
-- `cli` and the OpenClaw plugin are the user-facing entry points
+Claim-key lifecycle is a major current architectural feature. It is implemented across:
 
-### Where reality differs
+- `src/core/claim-key.ts`
+- `src/core/claim-key-lifecycle.ts`
+- `src/core/claim-key-entity-family.ts`
+- `src/core/claim-key-slot-resonance.ts`
+- `src/core/supersession.ts`
 
-The code mostly follows that layering, but there are important exceptions:
+The current claim-key lifecycle model includes:
 
-1. **"Core" is infrastructure-agnostic, not deterministic**
-   - Core code imports no database or SDK clients, but it still depends on ports for embeddings and LLM calls. The ingestion and store pipelines are pure in dependency shape, not purely algorithmic.
+- canonical `claim_key`
+- preserved `claim_key_raw`
+- status: `trusted`, `tentative`, `unresolved`
+- source: `manual`, `model`, `json_retry`, `deterministic_repair`, and surgeon-originated sources
+- support provenance fields for where the claim came from
 
-2. **The OpenClaw adapter is heavier than a thin adapter**
-   - `src/adapters/openclaw` does not just translate I/O. It contains substantial orchestration for session-start recall, predecessor continuity, read-time continuity summary generation, transcript normalization, mid-session nudges, and best-effort predecessor episode ingestion.
+### 4.2 Episodes
 
-3. **Application composition is split across app and adapters**
-   - `src/app/openclaw/runtime.ts` composes shared services, but those services are concrete adapters like `createDatabase`, `createRecallAdapter`, and `createOpenClawRepository`.
+Episodic summaries are modeled by `Episode` in `src/core/types.ts`.
 
-4. **Database adapters expose multiple feature-specific ports**
-   - The same libSQL adapter implements `DatabasePort`, `EpisodeDatabasePort`, recall support, OpenClaw read models, and surgeon persistence. The DB layer is both storage and the main query engine.
+Important characteristics:
 
-5. **Surgeon is not one thing**
-   - The current surgeon subsystem has three passes with different execution styles:
-     - `claim_key_quality`, deterministic
-     - `supersession`, agentic
-     - `retirement`, agentic
-   - So "surgeon" is a family of maintenance workflows, not just a retirement bot.
+- supported sources: `openclaw`, `codex`, `cli`, `synthesis`
+- episode identity is anchored by `(source, sourceId)` when available, with transcript-hash fallback
+- episodes store summary text, tags, activity level, timing, optional embeddings, and lifecycle state
+- episodic retrieval is separate from durable entry recall
 
-## 4. Core subsystems
+### 4.3 Surgeon runs
 
-### 4.1 Durable entry subsystem
+Surgeon run metadata lives in:
 
-Main files:
+- `surgeon_runs`
+- `surgeon_run_actions`
+- `surgeon_run_proposals`
 
-- `src/core/types.ts`
-- `src/core/store/*`
+This subsystem tracks:
+
+- pass or preset execution
+- token and cost accounting
+- dry-run vs apply mode
+- action audit trails
+- unresolved structural proposals
+
+## 5. Storage architecture
+
+The storage adapter lives in `src/adapters/db/`.
+
+### 5.1 Database model
+
+The current schema version is `8`.
+
+Key tables:
+
+- `entries`
+- `entries_fts`
+- `episodes`
+- `ingest_log`
+- `recall_events`
+- `surgeon_runs`
+- `surgeon_run_actions`
+- `surgeon_run_proposals`
+- `_meta`
+
+### 5.2 Search and indexing
+
+Current storage and query behavior:
+
+- entries use FTS5 via `entries_fts`
+- only active entries participate in FTS
+- entries and episodes both store embeddings as `F32_BLOB(1024)`
+- vector indexes exist for entries and episodes when libSQL vector support is available
+- the code tolerates missing vector support and degrades gracefully
+
+### 5.3 Operational mechanics
+
+`src/adapters/db/schema.ts` does more than schema creation. It also owns:
+
+- migrations up to schema v8
+- FTS trigger management
+- vector index creation and probing
+- interrupted bulk-write recovery
+- metadata tracking in `_meta`
+
+Bulk entry ingest has a real fast path:
+
+- `prepareForBulkWrites()` drops or disables expensive indexes and triggers
+- `finalizeBulkWrites()` rebuilds FTS and vector indexes and records completion metadata
+- startup repairs interrupted bulk-write state when needed
+
+That recovery behavior is part of the implemented architecture, not a side concern.
+
+## 6. Main flows
+
+## 6.1 Durable entry ingest
+
+The durable ingest path spans:
+
+- `src/app/ingestion/service.ts`
 - `src/core/ingestion/*`
-- `src/core/recall/*`
-- `src/adapters/db/queries.ts`
+- `src/core/store/pipeline.ts`
+- `src/adapters/files/transcript-files.ts`
+- `src/adapters/openclaw/transcript/parser.ts`
+
+High-level flow:
+
+1. discover transcript files
+2. skip unchanged files using `ingest_log`
+3. parse transcripts through a `TranscriptPort`
+4. extract candidate memories from transcript chunks
+5. deduplicate candidates within the ingest batch
+6. preserve explicit claim keys or derive lifecycle metadata
+7. validate, hash, embed, and persist entries
+8. optionally auto-link supersession for eligible claim-key cases
+9. record ingest log rows
+
+Important implementation details:
+
+- chunking is message-boundary aware
+- store-time dedup uses both exact and normalized hashes
+- batch ingest can run claim extraction before persistence
+- one-off store paths can also derive claim keys inside the store pipeline
+- transactions are used when the adapter supports them
+
+The store pipeline is not a thin insert helper. It is one of the core product workflows.
+
+## 6.2 Entry recall
+
+The entry recall engine is implemented across:
+
+- `src/core/recall/search.ts`
+- `src/core/recall/scoring.ts`
+- `src/core/recall/lexical.ts`
+- `src/core/recall/temporal.ts`
 - `src/adapters/db/recall-adapter.ts`
 
-Responsibilities:
+Current behavior:
 
-- define the durable memory schema
-- validate and store new entries
-- deduplicate and supersede entries
-- compute hybrid recall results
-- track recall telemetry
+- hybrid semantic plus lexical retrieval
+- lexical tiers for exact phrase, all-token, and any-token matches
+- relevance combined with recency and importance
+- optional temporal biasing through `since`, `until`, `around`, and `aroundRadius`
+- best-effort recall telemetry writes to `recall_events`
 
-### 4.2 Episodic memory subsystem
+One repo-specific feature matters here: historical-state expansion. The adapter can bring inactive lineage-linked predecessors back into the result set when the query is about previous state.
 
-Main files:
+## 6.3 Unified recall
 
-- `src/core/episode/*`
-- `src/app/episode-ingest/*`
-- `src/adapters/db/episode-queries.ts`
-- `src/adapters/openclaw/episode/episode-writer.ts`
+The agent-facing router is `runUnifiedRecall()` in `src/app/recall/unified.ts`.
 
-Responsibilities:
+It can query:
 
-- summarize completed sessions into episodes
-- store episode summaries with metadata and embeddings
-- search episodes temporally, semantically, or both
-- support background episode creation from OpenClaw continuity hooks
+- entries only
+- episodes only
+- both
 
-### 4.3 OpenClaw integration subsystem
+Routing currently uses actual heuristics in code, including:
 
-Main files:
+- factual vs narrative phrasing
+- resolved temporal windows
+- topic anchors
+- historical-state patterns such as "what changed" or "what was the previous approach"
+
+The router also emits notices about behavior, including episode freshness and entry-only filter handling.
+
+## 6.4 Episode ingest
+
+Episode ingest is explicitly staged in:
+
+- `src/app/episode-ingest/service/preflight.ts`
+- `src/app/episode-ingest/service/plan.ts`
+- `src/app/episode-ingest/service/execute.ts`
+
+Stage 1 preflight:
+
+- discovers transcript files
+- parses and cleans them
+- resolves session metadata from the OpenClaw session registry when available
+- skips already-ingested sessions unless regenerating
+- skips short transcripts with fewer than `MIN_EPISODE_MESSAGES`
+- skips transcripts that still appear active
+- renders and caps transcript content for summarization
+
+Stage 2 planning:
+
+- filters candidates
+- estimates tokens and cost
+- prepares the execution set
+
+Stage 3 execution:
+
+- generates structured summaries with an LLM
+- optionally embeds the summary
+- serializes DB writes while allowing concurrent model work
+- upserts based on source identity and summary change detection
+
+Episode ingest is therefore a planned batch workflow, not just a transcript-to-summary helper.
+
+## 6.5 Episode recall
+
+Episode search lives in:
+
+- `src/core/episode/search.ts`
+- `src/core/episode/scoring.ts`
+- `src/core/episode/temporal-window.ts`
+
+Current behavior:
+
+- temporal-only retrieval
+- semantic-only retrieval
+- hybrid temporal plus semantic retrieval
+
+Compared with entry recall, episode recall is more time-oriented. It parses richer date and calendar expressions and scores temporal overlap or proximity ahead of weak recency tie-breakers.
+
+Episodes do not currently use FTS. Retrieval is time-window and vector based.
+
+## 6.6 OpenClaw runtime
+
+The OpenClaw integration spans:
 
 - `src/adapters/openclaw/index.ts`
 - `src/adapters/openclaw/hooks/*`
 - `src/adapters/openclaw/session/*`
-- `src/adapters/openclaw/tools/*`
+- `src/adapters/openclaw/transcript/*`
+- `src/adapters/openclaw/format/*`
+- `src/adapters/openclaw/memory/*`
+- `src/adapters/openclaw/episode/*`
 - `src/app/openclaw/runtime.ts`
-- `src/adapters/db/openclaw-repository.ts`
 
-Responsibilities:
+The plugin is not just tool exposure. It implements live session behavior.
 
-- expose agenr as an OpenClaw memory plugin
-- register memory tools
-- inject session-start memory and continuity context
-- track session state and memory activity
-- normalize OpenClaw transcripts for both entry extraction and episode generation
+Current registration includes:
 
-### 4.4 Surgeon subsystem
+- prompt-section injection
+- memory runtime status
+- memory flush-plan registration
+- hooks for `before_prompt_build`, `session_start`, `after_tool_call`, `session_end`, and `gateway_stop`
+- tools `agenr_store`, `agenr_recall`, `agenr_retire`, `agenr_update`, and `agenr_trace`
 
-Main files:
+Implemented behaviors include:
+
+- session-start injection of up to four active `core` entries
+- predecessor resolution through `resumedFrom` and `sessions.json` fallbacks
+- continuity summary read or on-demand generation
+- recent-session transcript rendering
+- best-effort background predecessor episode writing
+- mid-session memory-action tracking and store nudges
+- transcript normalization shared by both entry and episode ingest
+
+The transcript parser in `src/adapters/openclaw/transcript/parser.ts` is a major seam. It removes host noise, summarizes or drops noisy tool results, strips metadata blocks, reconstructs surface hints, and produces the cleaned message stream used downstream.
+
+### 6.7 Surgeon
+
+The surgeon subsystem spans:
 
 - `src/app/surgeon/*`
 - `src/core/surgeon/*`
@@ -155,425 +412,62 @@ Main files:
 - `src/adapters/db/surgeon-run-log.ts`
 - `src/adapters/db/surgeon-queries.ts`
 
-Responsibilities:
-
-- inspect corpus health
-- repair claim-key quality
-- create supersession lineage between active entries
-- retire stale or low-value entries
-- persist run history, action audit trails, and unresolved proposals
-
-### 4.5 CLI and eval surfaces
-
-Main files:
-
-- `src/cli/main.ts`
-- `src/cli/commands/*`
-- `src/app/evals/recall/*`
-- `src/adapters/api/internal-recall-eval-server.ts`
-
-Responsibilities:
-
-- operator workflows for ingest, recall, DB management, setup, and surgeon
-- recall evaluation harness via a narrow internal-only HTTP route
-
-## 5. Data model and storage
-
-## 5.1 Entries
-
-The canonical durable record is `Entry` in `src/core/types.ts`.
-
-Important fields include:
-
-- identity and content
-  - `id`, `type`, `subject`, `content`
-- ranking and lifecycle
-  - `importance`, `expiry`, `quality_score`, `recall_count`, `last_recalled_at`
-- dedup and storage metadata
-  - `content_hash`, `norm_content_hash`, `embedding`
-- temporal validity
-  - `valid_from`, `valid_to`
-- claim-key structure
-  - `claim_key`
-  - `claim_key_raw`
-  - `claim_key_status` (`trusted`, `tentative`, `unresolved`)
-  - `claim_key_source`
-  - confidence, rationale, and claim-support provenance fields
-- lineage and retirement
-  - `superseded_by`, `supersession_kind`, `supersession_reason`
-  - `retired`, `retired_at`, `retired_reason`
-- scoping
-  - `cluster_id`, `user_id`, `project`, `tags`
-
-The database schema in `src/adapters/db/schema.ts` stores entries in `entries` and keeps an FTS shadow table `entries_fts` for active entries only.
-
-## 5.2 Episodes
-
-The canonical episodic record is `Episode` in `src/core/types.ts`.
-
-Important fields include:
-
-- identity and source
-  - `id`, `source`, `sourceId`, `sourceRef`
-- transcript lineage
-  - `transcriptHash`, `summaryHash`
-- session metadata
-  - `agentId`, `surface`, `startedAt`, `endedAt`, `messageCount`
-- generated content
-  - `summary`, `tags`, `activityLevel`, `project`
-- generation metadata
-  - `genModel`, `genVersion`
-- retrieval and lifecycle
-  - `embedding`, `retired`, `supersededBy`
-
-Episodes live in `episodes`. The schema maintains a partial unique index on `(source, source_id)` when `source_id` is present.
-
-## 5.3 Auxiliary tables
-
-The current schema version is **8**.
-
-Important auxiliary tables:
-
-- `ingest_log`
-  - file-path and file-hash based skip logic for entry ingest
-- `recall_events`
-  - entry recall telemetry, query text, session key, timestamp
-- `surgeon_runs`
-  - run-level surgeon metadata, tokens, cost, dry-run/apply state, summary JSON, errors
-- `surgeon_run_actions`
-  - per-action audit trail
-- `surgeon_run_proposals`
-  - unresolved structural proposals, mainly for claim-key-quality work
-- `_meta`
-  - schema version, bulk-write state, last bulk ingest timestamp
-
-## 5.4 Storage mechanics
-
-The libSQL adapter in `src/adapters/db/client.ts` is the operational center.
-
-Key details:
-
-- entries and episodes store embeddings as `F32_BLOB(1024)`
-- vector indexes exist for both entries and episodes when the libSQL vector extension is available
-- the code **tolerates missing vector support** and degrades gracefully
-- the DB is opened with foreign keys enabled, a busy timeout, and WAL mode for file-backed DBs
-- the adapter exposes `withTransaction()` for workflows that need atomic multi-row mutations
-
-Bulk entry ingest has an explicit fast path:
-
-- `prepareBulkWrites()` drops entry FTS triggers and vector indexes and records `_meta.bulk_write_state = active`
-- `finalizeBulkWrites()` recreates FTS triggers, rebuilds FTS, recreates vector indexes, clears the bulk-write flag, and records `last_bulk_ingest_at`
-- schema init will repair an interrupted bulk-write phase on startup
-
-That operational recovery logic is important. It is part of the implemented architecture, not just a migration concern.
-
-## 6. Main flows
-
-## 6.1 Durable entry ingestion
-
-The durable ingest flow is spread across `src/app/ingestion/service.ts`, `src/core/ingestion/*`, and `src/core/store/pipeline.ts`.
-
-High-level flow:
-
-1. discover transcript files
-2. skip unchanged files using `ingest_log`
-3. parse transcripts through a `TranscriptPort`
-4. extract candidate durable memories from transcript chunks with an LLM
-5. deduplicate candidates within the ingest batch using embeddings, plus optional LLM arbitration
-6. optionally extract or preserve claim keys
-7. validate, hash, embed, and store surviving entries
-8. record ingest log rows
-
-Important details:
-
-- file extraction runs in parallel in the app layer
-- extraction chunks are built on message boundaries with context-window awareness
-- extraction output is normalized and filtered before storage
-- explicit claim keys are preserved across dedup
-- CLI ingest can run batch claim extraction before store
-- one-off store calls, such as `agenr_store`, can also invoke claim extraction inside the store pipeline
-- store-time logic can auto-link supersession in some claim-key-driven cases
-- multi-entry writes prefer transactions and bulk-write mode
-
-This means the ingest pipeline is not a single pass. It is a staged extraction, cleanup, and persistence system.
-
-## 6.2 Durable entry recall
-
-The entry recall engine is in `src/core/recall/search.ts`, with the query-time adapter in `src/adapters/db/recall-adapter.ts`.
-
-It is a **hybrid** system:
-
-- semantic vector search over active entries
-- lexical FTS search over active entries
-- rank fusion and score composition in core
-
-Lexical search is tiered in `src/core/recall/lexical.ts`:
-
-- exact phrase
-- all tokens
-- any tokens
-
-Ranking combines:
-
-- relevance
-- recency
-- importance
-
-It also supports temporal biasing via:
-
-- `since`
-- `until`
-- `around`
-- `aroundRadius`
-
-For historical-state queries, the adapter can expand results with inactive lineage-linked predecessors by following:
-
-- direct `superseded_by` links
-- same `claim_key`
-- retired same-subject fallback rows
-
-That historical predecessor expansion is one of the more important repo-specific behaviors. Recall is not only "search active facts". It can deliberately surface prior state.
-
-Recall telemetry is written to `recall_events` through the adapter. Those writes are best-effort and are not allowed to break recall responses.
-
-## 6.3 Unified recall
-
-The agent-facing recall entry point is `src/app/recall/unified.ts`.
-
-`runUnifiedRecall()` routes a query into:
-
-- entry recall
-- episode recall
-- or both
-
-Supported modes:
-
-- `auto`
-- `entries`
-- `episodes`
-
-Routing uses real heuristics from the code, including:
-
-- factual phrasing
-- narrative phrasing
-- detected time windows
-- topic anchors
-- historical-state patterns like "what changed" or "what was the previous approach"
-
-Important behavior:
-
-- entry filters like `types` and `tags` only apply to entries
-- episode recall may add notices when semantic search is unavailable
-- the response tells the caller which route was used and why
-
-So the unified recall layer is the policy router sitting above two different retrieval systems.
-
-## 6.4 Episode ingest
-
-Episode ingest is more explicitly staged than entry ingest.
-
-Files:
-
-- `src/app/episode-ingest/service/preflight.ts`
-- `src/app/episode-ingest/service/plan.ts`
-- `src/app/episode-ingest/service/execute.ts`
-
-### Stage 1: preflight
-
-`prepareEpisodeIngest()`:
-
-- discovers transcript files
-- parses and cleans them
-- resolves session metadata from the OpenClaw session registry when available
-- falls back to path-based or transcript-reconstructed metadata when not
-- skips:
-  - transcripts that already have episodes, unless regenerating
-  - transcripts with fewer than `MIN_EPISODE_MESSAGES` (currently 4)
-  - recently ended sessions treated as active
-  - invalid or empty transcripts
-- renders a capped transcript for summarization, currently limited to `14_000` chars
-
-### Stage 2: planning
-
-`createEpisodeIngestPlan()`:
-
-- optionally filters candidates by a `recent` cutoff
-- estimates input and output tokens
-- estimates total LLM cost from model pricing metadata
-
-### Stage 3: execution
-
-`executeEpisodeIngestPlan()` and `ingestEpisodeTranscript()`:
-
-- generate structured episode summaries with an LLM
-- optionally embed the summary
-- serialize DB writes while allowing concurrent summary generation
-- upsert episodes based on source identity and summary change detection
-
-Episode storage is therefore a planned batch workflow, not just "summarize every transcript".
-
-## 6.5 Episode recall
-
-Episode search lives in `src/core/episode/search.ts`.
-
-It supports:
-
-- temporal-only retrieval
-- semantic-only retrieval
-- hybrid temporal plus semantic retrieval
-
-Compared with entry recall, the temporal parsing is richer. `src/core/episode/temporal-window.ts` handles a broader set of date and calendar expressions. Episode scoring emphasizes temporal overlap or proximity first, then activity level and weak recency tie-breakers.
-
-Architecturally, episodes are not FTS-backed. They are searched by time window and vector similarity over summaries.
-
-## 6.6 Surgeon
-
-The surgeon subsystem is the maintenance plane for the corpus.
-
-### Passes
-
-Current implemented passes are:
+Implemented passes:
 
 - `claim_key_quality`
 - `supersession`
 - `retirement`
 
-Current presets in `src/core/surgeon/domain/run-presets.ts` are:
+Implemented presets:
 
 - `claim-key-only`
-- `structural` = claim-key-quality, then supersession
-- `full` = claim-key-quality, then supersession, then retirement
+- `structural`
+- `full`
 
-### Execution model
-
-This is a mixed architecture:
+The execution model is mixed:
 
 - `claim_key_quality` is deterministic app logic
-- `supersession` and `retirement` run through `pi-agent-core` agent loops with tool sets
+- `supersession` and `retirement` run through `pi-agent-core` loops with tool sets
 
-The surgeon runtime in `src/app/surgeon/runtime.ts` resolves:
-
-- DB access
-- recall access when embeddings are configured
-- main surgeon model credentials
-- optional separate claim extraction model
-- protection thresholds and budgets
-- optional pre-apply DB backups
-
-The agentic passes use tool sets built in `src/app/surgeon/tools/*`, including tools for:
-
-- querying retirement candidates
-- querying supersession candidate clusters
-- inspecting entries
-- retiring entries
-- linking supersession
-- assigning claim keys
-- setting validity
-- simulating recall
-- explicitly completing the pass
-
-### Persistence and safety
-
-Surgeon persists:
-
-- run lifecycle in `surgeon_runs`
-- action audit in `surgeon_run_actions`
-- unresolved proposals in `surgeon_run_proposals`
-
-The runtime enforces:
+Runtime safeguards currently include:
 
 - dry-run by default
-- cost caps and daily cost caps
-- protection for highly important or recently recalled entries
-- completion guards so the model cannot claim completion too early
-- explicit backup before apply mode when possible
+- per-run and daily cost caps
+- entry protection thresholds
+- optional recall simulation when embeddings are configured
+- completion guards
+- pre-apply database backups when possible
 
-Architecturally, surgeon is one of the densest parts of the system because it mixes deterministic health logic, agentic loops, persistence, and operational safety.
+This is closer to a maintenance platform than a single cleanup script.
 
-## 7. OpenClaw integration and continuity
+## 6.8 Claim-key scenario harness
 
-The OpenClaw plugin is where agenr stops being a library and starts behaving like live memory infrastructure.
+The repo now includes a dedicated scenario runtime under `src/app/scenarios/claim-keys/` with CLI support in `agenr scenarios`.
 
-## 7.1 Plugin registration
+This harness:
 
-`src/adapters/openclaw/index.ts` registers:
+- loads fixture-backed scenarios from `tests/scenarios/claim-keys/`
+- creates isolated sandboxes
+- runs ingest, store, or surgeon paths
+- captures resulting rows, proposals, and summaries
+- emits per-scenario artifacts for debugging regressions
 
-- the memory prompt section
-- a memory flush plan, currently effectively no-op for transcript compaction
-- the memory runtime status surface
-- five tools:
-  - `agenr_store`
-  - `agenr_recall`
-  - `agenr_retire`
-  - `agenr_update`
-  - `agenr_trace`
-- hooks:
-  - `before_prompt_build`
-  - `after_tool_call`
-  - `session_start`
-  - `session_end`
-  - `gateway_stop`
+That makes scenarios part of the architecture, not just incidental test data.
 
-Shared services are created once per plugin process by `createAgenrOpenClawServices()` in `src/app/openclaw/runtime.ts`.
+## 6.9 Internal recall-eval seam
 
-## 7.2 What the plugin actually does
+The eval seam is intentionally narrow:
 
-The important point is that agenr's OpenClaw integration is **not just tool exposure**.
+- route implementation: `src/adapters/api/routes/internal-recall-eval.ts`
+- local HTTP server: `src/adapters/api/internal-recall-eval-server.ts`
+- executable entry point: `src/internal-recall-eval-server.ts`
+- app execution: `src/app/evals/recall/*`
 
-### Session-start recall
+This exists to serve `agenr-evals`. It is not a general memory-management API.
 
-`handleAgenrBeforePromptBuild()`:
+## 7. Extension seams
 
-- runs once per tracked session using `SessionStartTracker`
-- loads up to 4 active `core` entries
-- formats them into an "Agenr Session Recall" block
-- prepends them to the prompt
-
-### Predecessor continuity
-
-In the same hook, agenr tries to recover continuity from the previous session:
-
-- resolve predecessor via `session_start.resumedFrom` when possible
-- otherwise fall back to scanning `sessions.json` for eligible `main` and `tui` lanes
-- parse session keys conservatively, with explicit lane handling
-- read an existing sidecar continuity summary if present
-- otherwise generate one on demand, with a timeout, using the OpenClaw-authenticated LLM client
-- render a short recent-session tail from the predecessor transcript
-
-This is a real continuity system, not just memory recall.
-
-### Background predecessor episode writing
-
-After predecessor resolution, agenr kicks off a best-effort background write that tries to turn the predecessor transcript into an episode. This uses the shared episode-ingest workflow with OpenClaw-hosted auth and additional timeout budgeting.
-
-### Mid-session nudge tracking
-
-The plugin also tracks memory activity during a live session:
-
-- `after_tool_call` updates state after `agenr_store`, `agenr_update`, and `agenr_retire`
-- repeated turns without recent memory activity can trigger a store nudge in `before_prompt_build`
-- non-user triggers such as heartbeat, cron, and memory are excluded
-
-That means the plugin has both long-term memory behavior and conversational steering behavior.
-
-## 7.3 OpenClaw transcript normalization
-
-The transcript parser in `src/adapters/openclaw/transcript/parser.ts` is shared infrastructure for multiple subsystems.
-
-It does more than JSONL parsing. It also:
-
-- strips metadata blocks from user content
-- drops or summarizes noisy tool results
-- explicitly drops raw `agenr_recall` and `image` tool results from normalized transcripts
-- removes base64-like blobs and other transcript noise
-- reconstructs surface metadata when possible
-- produces cleaned message streams used by both durable extraction and episode generation
-
-This parser is a major architectural seam because both ingest pipelines depend on it.
-
-## 8. Runtime seams and extension points
-
-The most important formal seams are the core ports in `src/core/ports.ts`:
+The main formal seams are the ports in `src/core/ports.ts`:
 
 - `DatabasePort`
 - `EpisodeDatabasePort`
@@ -582,137 +476,56 @@ The most important formal seams are the core ports in `src/core/ports.ts`:
 - `LlmPort`
 - `TranscriptPort`
 
-These make several substitutions possible without rewriting core logic:
-
-- swap transcript sources
-- swap embedding providers
-- swap LLM providers
-- swap storage implementations, at least in principle
-
-There are also feature-scoped adapter seams:
+Feature-scoped seams also matter:
 
 - `OpenClawRepository` in `src/app/openclaw/ports.ts`
-  - read model for session-start recall, trace, and memory status
-- `SurgeonPort` in `src/app/surgeon/ports.ts`
-  - maintenance-specific persistence and query boundary
-- episode ingest support ports and session registry ports
+- surgeon runtime and persistence ports in `src/app/surgeon/ports.ts`
+- episode-ingest support ports in `src/app/episode-ingest/ports.ts`
 
-Configuration is another important extension seam:
+Configuration is another important seam:
 
-- `src/config.ts` allows per-pipeline model selection
-  - extraction
-  - dedup
-  - episode summaries
-  - claim extraction
-  - surgeon
-- OpenClaw-hosted tasks use separate plugin-side model resolution and OpenClaw auth rather than agenr's standalone CLI credentials
+- `src/config.ts` supports stage-specific model resolution
+- OpenClaw-hosted claim extraction uses host auth and plugin config overrides
+- CLI and plugin flows resolve credentials differently even when they share core logic
 
-Finally, there is a narrow internal HTTP seam for recall evals:
+## 8. Complexity hotspots
 
-- `POST /internal/evals/recall/run`
-- implemented by `src/adapters/api/routes/internal-recall-eval.ts`
+The parts of the architecture with the most real complexity are:
 
-That route is useful for eval infrastructure, but it is not a general product API surface today.
+### 8.1 Claim-key lifecycle
 
-## 9. Complexity hotspots
+This cuts across ingest, direct updates, recall, supersession, and surgeon. If you want to understand why memory rows are trusted, tentative, linked, or superseded, start here.
 
-The densest parts of the current architecture are these.
+### 8.2 Database schema and queries
 
-### 9.1 OpenClaw continuity
+`src/adapters/db/schema.ts`, `row-mapping.ts`, `queries.ts`, `recall-adapter.ts`, and the feature-specific query files encode a lot of the actual system behavior.
 
-The OpenClaw `before_prompt_build` path combines:
+### 8.3 OpenClaw continuity
 
-- session tracking
-- predecessor detection
-- session-key parsing
-- sessions-store fallback logic
-- continuity summary read or generation
-- recent-session rendering
-- background predecessor episode ingestion
-- session-start core recall
-- optional store nudges
+The `before_prompt_build` path combines session tracking, predecessor lookup, summary generation, prompt injection, transcript rendering, store nudges, and background episode work.
 
-This is the most integration-heavy path in the repo.
+### 8.4 Dual recall engines plus router
 
-### 9.2 Durable ingest pipeline
+There are separate entry and episode recall systems, with a unified router on top and historical-state expansion beneath the entry side.
 
-Entry ingest combines:
+### 8.5 Surgeon
 
-- transcript parsing
-- chunked LLM extraction
-- semantic dedup
-- explicit claim-key preservation
-- optional batch claim extraction
-- validation
-- exact and normalized hash dedup
-- optional auto-supersession
-- transactional persistence
-- bulk-write recovery
+Surgeon mixes deterministic structural maintenance, agentic tool loops, persistence, budgets, and safety controls.
 
-Most of agenr's structural complexity around "how memories become trusted rows" lives here.
+## 9. Suggested reading order
 
-### 9.3 Dual recall systems plus router
-
-There are really three retrieval layers:
-
-- entry recall
-- episode recall
-- unified routing
-
-Historical-state expansion adds another dimension because inactive lineage-linked entries can re-enter the result set.
-
-### 9.4 Surgeon
-
-Surgeon mixes:
-
-- deterministic structural cleanup
-- agentic tool-based passes
-- budget and completion control
-- audit persistence
-- operational safeguards
-
-It is closer to a maintenance platform than a single feature.
-
-### 9.5 Schema and operational resilience
-
-`src/adapters/db/schema.ts` is also a hotspot because it contains:
-
-- schema creation
-- migrations from v5 to v8
-- vector-index tolerance
-- FTS rebuilds
-- interrupted bulk-write recovery
-- feature-specific side tables for surgeon and recall telemetry
-
-A lot of agenr's real architecture is encoded in that file.
-
-## 10. Bottom line
-
-The implemented system is best understood as a **local memory database with four major behaviors**:
-
-1. extract durable knowledge from transcripts
-2. summarize prior sessions into episodic memory
-3. retrieve both kinds of memory through separate recall engines and a router
-4. continuously maintain structural quality through surgeon
-
-The nominal layer story, core, app, adapters, cli/plugin, is mostly true. But the real architecture is shaped just as much by a few cross-cutting centers of gravity:
-
-- libSQL schema and query design
-- OpenClaw session continuity behavior
-- claim-key lifecycle and supersession
-- agentic maintenance in surgeon
-
-If you need to understand agenr quickly, start with these files:
+If you need to build context quickly, start with:
 
 - `src/core/types.ts`
 - `src/core/ports.ts`
 - `src/adapters/db/schema.ts`
 - `src/core/store/pipeline.ts`
+- `src/core/claim-key-lifecycle.ts`
 - `src/app/recall/unified.ts`
-- `src/app/episode-ingest/service/*`
-- `src/adapters/openclaw/index.ts`
+- `src/app/episode-ingest/service.ts`
+- `src/app/openclaw/runtime.ts`
 - `src/adapters/openclaw/hooks/before-prompt-build.ts`
 - `src/app/surgeon/service.ts`
-- `src/app/surgeon/runtime.ts`
+- `src/app/scenarios/claim-keys/runtime.ts`
 
-Those files reflect the current architecture more faithfully than any older high-level description.
+Those files reflect the implemented architecture more accurately than older planning docs.
