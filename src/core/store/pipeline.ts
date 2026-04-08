@@ -6,6 +6,7 @@ import type { Entry, StoreEntryInput, StoreResult } from "../types.js";
 import {
   applyClaimKeyLifecycle,
   buildExtractedClaimKeyLifecycle,
+  buildInferredIngestClaimKeySupportContext,
   buildManualClaimKeyLifecycle,
   buildPrecomputedClaimKeyLifecycle,
   type ResolvedClaimKeyLifecycle,
@@ -374,7 +375,8 @@ function applyExtractedClaimKeyMetadata(preparedEntries: PreparedEntry[], extrac
 
     const extractedClaimKey = extractedClaimKeys.get(preparedEntry.inputIndex);
     const acceptedClaimKey =
-      (extractedClaimKey ? buildExtractedClaimKeyLifecycle(extractedClaimKey) : undefined) ?? buildPrecomputedClaimKeyLifecycle(preparedEntry.input);
+      buildPrecomputedClaimKeyLifecycle(preparedEntry.input) ??
+      (extractedClaimKey ? buildExtractedClaimKeyLifecycle(extractedClaimKey, buildInferredIngestClaimKeySupportContext(preparedEntry.input)) : undefined);
     if (!acceptedClaimKey) {
       continue;
     }

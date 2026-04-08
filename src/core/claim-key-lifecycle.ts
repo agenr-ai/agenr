@@ -72,6 +72,14 @@ export interface ClaimKeySupportContext {
 }
 
 /**
+ * Best-effort transcript provenance that can support one inferred ingest claim key.
+ */
+export type InferredIngestClaimKeySupportInput = Pick<
+  StoreEntryInput,
+  "source_file" | "source_context" | "created_at" | "claim_support_source_kind" | "claim_support_locator" | "claim_support_observed_at" | "claim_support_mode"
+>;
+
+/**
  * Narrow support signal needed by surgeon lifecycle derivation.
  */
 export interface SurgeonClaimKeySupportSignal {
@@ -382,7 +390,10 @@ export function validateDirectClaimKeyLifecycleUpdate(fields: EntryUpdateInput):
  * @param extracted - Successful extracted claim-key result.
  * @returns Accepted lifecycle payload when a canonical key exists.
  */
-export function buildExtractedClaimKeyLifecycle(extracted: ExtractedClaimKeyLifecycleInput): ResolvedClaimKeyLifecycle | undefined {
+export function buildExtractedClaimKeyLifecycle(
+  extracted: ExtractedClaimKeyLifecycleInput,
+  supportContext: ClaimKeySupportContext = {},
+): ResolvedClaimKeyLifecycle | undefined {
   if (!extracted.claimKey) {
     return undefined;
   }
@@ -400,6 +411,10 @@ export function buildExtractedClaimKeyLifecycle(extracted: ExtractedClaimKeyLife
     claim_key_rationale: [rationalePrefix, extracted.compactionReason, extracted.acceptanceRationale]
       .filter((value): value is string => Boolean(value))
       .join("; "),
+    claim_support_source_kind: normalizeOptionalString(supportContext.sourceKind),
+    claim_support_locator: normalizeOptionalString(supportContext.locator),
+    claim_support_observed_at: normalizeOptionalString(supportContext.observedAt),
+    claim_support_mode: supportContext.mode,
   };
 }
 
@@ -420,6 +435,32 @@ export function applyClaimKeyLifecycle(entry: StoreEntryInput, lifecycle: Resolv
   entry.claim_support_locator = lifecycle.claim_support_locator;
   entry.claim_support_observed_at = lifecycle.claim_support_observed_at;
   entry.claim_support_mode = lifecycle.claim_support_mode;
+}
+
+/**
+ * Builds conservative inferred support metadata for one ingest-produced claim key.
+ *
+ * This helper only fills support metadata when transcript-file provenance is
+ * already available on the entry. It intentionally does not invent explicit or
+ * manual semantics for generic store-time extraction paths.
+ *
+ * @param entry - Store input that may already carry transcript ingest metadata.
+ * @returns Best-effort inferred support metadata for the accepted claim key.
+ */
+export function buildInferredIngestClaimKeySupportContext(entry: InferredIngestClaimKeySupportInput): ClaimKeySupportContext {
+  const sourceFile = normalizeOptionalString(entry.source_file);
+  const sourceContext = normalizeOptionalString(entry.source_context);
+  const observedAt = normalizeOptionalString(entry.claim_support_observed_at ?? entry.created_at);
+  if (!sourceFile) {
+    return {};
+  }
+
+  return {
+    sourceKind: normalizeOptionalString(entry.claim_support_source_kind) ?? "transcript_ingest",
+    locator: normalizeOptionalString(entry.claim_support_locator) ?? buildInferredIngestSupportLocator(sourceFile, observedAt, sourceContext),
+    observedAt,
+    mode: entry.claim_support_mode ?? "inferred",
+  };
 }
 
 /**
@@ -817,6 +858,30 @@ function lifecycleToUpdateFields(lifecycle: ResolvedClaimKeyLifecycle): EntryLif
     claim_support_observed_at: lifecycle.claim_support_observed_at,
     claim_support_mode: lifecycle.claim_support_mode,
   };
+}
+
+/**
+ * Builds one compact locator for inferred transcript-ingest support.
+ *
+ * @param sourceFile - Transcript file path that produced the entry.
+ * @param observedAt - Best-effort observation time for the extracted claim.
+ * @param sourceContext - Optional one-line ingest context summary.
+ * @returns Opaque locator string that points back to the ingest surface.
+ */
+function buildInferredIngestSupportLocator(sourceFile: string, observedAt?: string, sourceContext?: string): string {
+  if (observedAt && sourceContext) {
+    return `${sourceFile}#observed_at:${observedAt}#context:${encodeURIComponent(sourceContext)}`;
+  }
+
+  if (observedAt) {
+    return `${sourceFile}#observed_at:${observedAt}`;
+  }
+
+  if (sourceContext) {
+    return `${sourceFile}#context:${encodeURIComponent(sourceContext)}`;
+  }
+
+  return sourceFile;
 }
 
 /**

@@ -102,7 +102,11 @@ describe("ingestPath", () => {
       "/tmp",
       {
         files: new MockFilePort([filePath], { [filePath]: "hash-claims" }),
-        transcript: new MockTranscriptPort(buildTranscript()),
+        transcript: new MockTranscriptPort(
+          buildTranscript({
+            timestamps: ["2026-04-01T09:00:00.000Z", "2026-04-01T09:01:00.000Z"],
+          }),
+        ),
         db,
         embedding: new MockEmbeddingPort(),
         createExtractionLlm: () =>
@@ -146,6 +150,10 @@ describe("ingestPath", () => {
       claim_key_source: "model",
       claim_key_confidence: 0.95,
       claim_key_rationale: "claim key extracted from model output",
+      claim_support_source_kind: "transcript_ingest",
+      claim_support_locator: `${filePath}#observed_at:2026-04-01T09:01:00.000Z`,
+      claim_support_observed_at: "2026-04-01T09:01:00.000Z",
+      claim_support_mode: "inferred",
     });
     expect(db.insertions[1]?.entry.claim_key).toBeUndefined();
   });
@@ -433,7 +441,11 @@ describe("ingestPath", () => {
       "/tmp",
       {
         files: new MockFilePort([filePath], { [filePath]: "hash-health-summary" }),
-        transcript: new MockTranscriptPort(buildTranscript()),
+        transcript: new MockTranscriptPort(
+          buildTranscript({
+            timestamps: ["2026-04-01T10:00:00.000Z", "2026-04-01T10:01:00.000Z"],
+          }),
+        ),
         db,
         embedding: new MockEmbeddingPort(),
         createExtractionLlm: () =>
@@ -483,6 +495,19 @@ describe("ingestPath", () => {
       eligibleRows: 2,
       keyedEligibleRows: 1,
       missingEligibleRows: 1,
+      keyedRows: 1,
+      keyedWithSupportCount: 1,
+      keyedMissingSupportCount: 0,
+      supportFillRate: 1,
+      supportBySource: [
+        {
+          source: "model",
+          keyed: 1,
+          withSupport: 1,
+          missingSupport: 0,
+          fillRate: 1,
+        },
+      ],
       diagnostics: {
         lowConfidenceCandidate: 1,
         reviewable: 1,

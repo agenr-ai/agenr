@@ -5,6 +5,7 @@ import {
   buildClaimKeyLifecycleAuditDetails,
   buildClaimKeyLifecycleUpdateFields,
   buildExtractedClaimKeyLifecycle,
+  buildInferredIngestClaimKeySupportContext,
   buildManualClaimKeyLifecycle,
   buildManualClaimKeyUpdateFields,
   buildSurgeonAppliedClaimKeyLifecycle,
@@ -68,13 +69,21 @@ describe("claim-key lifecycle helpers", () => {
 
   it("builds deterministic-repair lifecycle metadata consistently across callers", () => {
     expect(
-      buildExtractedClaimKeyLifecycle({
-        claimKey: "jim/timezone",
-        confidence: 0.86,
-        rawEntity: "Jim",
-        rawAttribute: "timezone",
-        path: "deterministic_repair",
-      }),
+      buildExtractedClaimKeyLifecycle(
+        {
+          claimKey: "jim/timezone",
+          confidence: 0.86,
+          rawEntity: "Jim",
+          rawAttribute: "timezone",
+          path: "deterministic_repair",
+        },
+        {
+          sourceKind: "transcript_ingest",
+          locator: "session.jsonl#observed_at:2026-04-01T10:00:00.000Z",
+          observedAt: "2026-04-01T10:00:00.000Z",
+          mode: "inferred",
+        },
+      ),
     ).toEqual({
       claim_key: "jim/timezone",
       claim_key_raw: "Jim/timezone",
@@ -82,7 +91,33 @@ describe("claim-key lifecycle helpers", () => {
       claim_key_source: "deterministic_repair",
       claim_key_confidence: 0.86,
       claim_key_rationale: "claim key inferred by deterministic possessive-slot repair",
+      claim_support_source_kind: "transcript_ingest",
+      claim_support_locator: "session.jsonl#observed_at:2026-04-01T10:00:00.000Z",
+      claim_support_observed_at: "2026-04-01T10:00:00.000Z",
+      claim_support_mode: "inferred",
     });
+  });
+
+  it("derives inferred ingest support context from transcript provenance without inventing explicit semantics", () => {
+    expect(
+      buildInferredIngestClaimKeySupportContext({
+        source_file: "/tmp/session.jsonl",
+        source_context: "AGENTS.md is the repo workflow source of truth",
+        created_at: "2026-04-01T10:00:00.000Z",
+      }),
+    ).toEqual({
+      sourceKind: "transcript_ingest",
+      locator: "/tmp/session.jsonl#observed_at:2026-04-01T10:00:00.000Z#context:AGENTS.md%20is%20the%20repo%20workflow%20source%20of%20truth",
+      observedAt: "2026-04-01T10:00:00.000Z",
+      mode: "inferred",
+    });
+
+    expect(
+      buildInferredIngestClaimKeySupportContext({
+        source_context: "No transcript file provenance",
+        created_at: "2026-04-01T10:00:00.000Z",
+      }),
+    ).toEqual({});
   });
 
   it("lets surgeon reuse the shared lifecycle source and status rules", () => {

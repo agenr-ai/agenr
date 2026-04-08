@@ -272,6 +272,7 @@ function formatClaimKeyHealthSummary(summary: IngestClaimKeyHealthSummary): stri
     .filter((bucket) => bucket.eligible)
     .map((bucket) => `${bucket.type} ${bucket.keyed}/${bucket.total}`)
     .join(" | ");
+  const supportBySource = summary.supportBySource.map((bucket) => `${bucket.source} ${bucket.withSupport}/${bucket.keyed}`).join(" | ");
   const lines = [
     formatLabel(
       "Claim keys",
@@ -287,8 +288,15 @@ function formatClaimKeyHealthSummary(summary: IngestClaimKeyHealthSummary): stri
       `low-confidence ${summary.diagnostics.lowConfidenceCandidate} | no-claim ${summary.diagnostics.noClaim} | rejected ${summary.diagnostics.rejectedCandidate} | extraction-failure ${summary.diagnostics.extractionFailure}`,
     ),
     formatLabel("Reviewable", `${summary.diagnostics.reviewable}`),
-    formatLabel("Keyed without support", `${summary.keyedMissingSupportCount}`),
+    formatLabel(
+      "Support",
+      `${summary.keyedWithSupportCount}/${summary.keyedRows} filled (${formatPercent(summary.supportFillRate)}), ${summary.keyedMissingSupportCount} missing`,
+    ),
   ];
+
+  if (supportBySource.length > 0) {
+    lines.push(formatLabel("Support by source", supportBySource));
+  }
 
   if (summary.suspiciousSingletonNamespaceHints.length > 0) {
     lines.push(formatLabel("Singleton hints", summary.suspiciousSingletonNamespaceHints.join(", ")));

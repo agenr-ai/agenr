@@ -1,5 +1,5 @@
 import type { ClaimExtractionDiagnostic, ClaimExtractionDiagnosticOutcome } from "../store/claim-extraction.js";
-import type { EntryType, StoreEntryInput } from "../types.js";
+import type { ClaimKeySource, EntryType, StoreEntryInput } from "../types.js";
 
 /**
  * Per-type keyed coverage emitted in the compact ingest claim-key health view.
@@ -10,6 +10,17 @@ export interface IngestClaimKeyHealthTypeCoverage {
   eligible: boolean;
   keyed: number;
   missing: number;
+}
+
+/**
+ * Support fill-rate breakdown for one persisted claim-key source bucket.
+ */
+export interface IngestClaimKeyHealthSupportCoverage {
+  source: ClaimKeySource | "unknown";
+  keyed: number;
+  withSupport: number;
+  missingSupport: number;
+  fillRate: number;
 }
 
 /**
@@ -45,7 +56,11 @@ export interface IngestClaimKeyHealthSummary {
     unresolved: number;
     legacy: number;
   };
+  keyedRows: number;
+  keyedWithSupportCount: number;
   keyedMissingSupportCount: number;
+  supportFillRate: number;
+  supportBySource: IngestClaimKeyHealthSupportCoverage[];
   diagnostics: {
     noClaim: number;
     lowConfidenceCandidate: number;
@@ -81,12 +96,17 @@ export function summarizeIngestClaimKeyHealth(
     unresolved: 0,
     legacy: 0,
   };
+  let keyedRows = 0;
+  let keyedWithSupportCount = 0;
   let keyedMissingSupportCount = 0;
+  const supportBySource = new Map<ClaimKeySource | "unknown", { keyed: number; withSupport: number }>();
 
   for (const entry of entries) {
     if (!hasClaimKey(entry)) {
       continue;
     }
+
+    keyedRows += 1;
 
     switch (entry.claim_key_status) {
       case "trusted":
@@ -103,9 +123,18 @@ export function summarizeIngestClaimKeyHealth(
         break;
     }
 
-    if (!entry.claim_support_source_kind && !entry.claim_support_locator && !entry.claim_support_observed_at && !entry.claim_support_mode) {
+    const source = entry.claim_key_source ?? "unknown";
+    const existingSourceBucket = supportBySource.get(source) ?? { keyed: 0, withSupport: 0 };
+    existingSourceBucket.keyed += 1;
+
+    if (hasCompleteSupportMetadata(entry)) {
+      keyedWithSupportCount += 1;
+      existingSourceBucket.withSupport += 1;
+    } else {
       keyedMissingSupportCount += 1;
     }
+
+    supportBySource.set(source, existingSourceBucket);
   }
 
   const byType = (["fact", "decision", "preference", "lesson", "relationship", "milestone"] as const).map((type) => {
@@ -171,7 +200,19 @@ export function summarizeIngestClaimKeyHealth(
     coveragePct: eligibleRows.length > 0 ? keyedEligibleRows / eligibleRows.length : 0,
     byType,
     lifecycle,
+    keyedRows,
+    keyedWithSupportCount,
     keyedMissingSupportCount,
+    supportFillRate: keyedRows > 0 ? keyedWithSupportCount / keyedRows : 0,
+    supportBySource: [...supportBySource.entries()]
+      .map(([source, counts]) => ({
+        source,
+        keyed: counts.keyed,
+        withSupport: counts.withSupport,
+        missingSupport: counts.keyed - counts.withSupport,
+        fillRate: counts.keyed > 0 ? counts.withSupport / counts.keyed : 0,
+      }))
+      .sort((left, right) => right.keyed - left.keyed || left.source.localeCompare(right.source)),
     diagnostics: {
       noClaim: countDiagnostics(diagnosticsByIndex, "no_claim"),
       lowConfidenceCandidate: countDiagnostics(diagnosticsByIndex, "low_confidence_candidate"),
@@ -189,6 +230,19 @@ export function summarizeIngestClaimKeyHealth(
 /** Returns whether one store candidate already carries a non-empty claim key. */
 function hasClaimKey(entry: StoreEntryInput): boolean {
   return typeof entry.claim_key === "string" && entry.claim_key.trim().length > 0;
+}
+
+/** Returns whether one keyed row carries the full persisted support bundle. */
+function hasCompleteSupportMetadata(entry: StoreEntryInput): boolean {
+  return (
+    typeof entry.claim_support_source_kind === "string" &&
+    entry.claim_support_source_kind.trim().length > 0 &&
+    typeof entry.claim_support_locator === "string" &&
+    entry.claim_support_locator.trim().length > 0 &&
+    typeof entry.claim_support_observed_at === "string" &&
+    entry.claim_support_observed_at.trim().length > 0 &&
+    entry.claim_support_mode !== undefined
+  );
 }
 
 /** Counts diagnostics matching one concrete outcome code. */

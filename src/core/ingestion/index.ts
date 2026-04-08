@@ -17,6 +17,7 @@ export { buildExtractionSystemPrompt, buildChunkPrompt } from "./prompts.js";
 export {
   summarizeIngestClaimKeyHealth,
   type IngestClaimKeyHealthRow,
+  type IngestClaimKeyHealthSupportCoverage,
   type IngestClaimKeyHealthSummary,
   type IngestClaimKeyHealthTypeCoverage,
 } from "./claim-key-health.js";

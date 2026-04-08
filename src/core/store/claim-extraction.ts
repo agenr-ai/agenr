@@ -1,6 +1,6 @@
 import type { DatabasePort, LlmPort } from "../ports.js";
 import type { EntryType, StoreEntryInput } from "../types.js";
-import { applyClaimKeyLifecycle, buildExtractedClaimKeyLifecycle } from "../claim-key-lifecycle.js";
+import { applyClaimKeyLifecycle, buildExtractedClaimKeyLifecycle, buildInferredIngestClaimKeySupportContext } from "../claim-key-lifecycle.js";
 import {
   buildClaimKeySupportSeedFromExamples,
   evaluateClaimKeyCompactness,
@@ -203,7 +203,7 @@ export interface ClaimExtractionDecision {
 
 /** Applies extracted lifecycle metadata directly onto a store input for callers that precompute claim extraction before store. */
 export function applyClaimExtractionResultToEntry(entry: StoreEntryInput, extracted: ClaimExtractionResult): void {
-  const lifecycle = buildExtractedClaimKeyLifecycle(extracted);
+  const lifecycle = buildExtractedClaimKeyLifecycle(extracted, buildInferredIngestClaimKeySupportContext(entry));
   if (!lifecycle) {
     return;
   }

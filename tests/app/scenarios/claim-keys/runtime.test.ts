@@ -164,6 +164,9 @@ describe("claim-key scenario runtime", () => {
       rows: Array<{
         claim_key: string | null;
         claim_key_status: string | null;
+        claim_support_locator: string | null;
+        claim_support_mode: string | null;
+        claim_support_source_kind: string | null;
         subject: string;
       }>;
     };
@@ -188,9 +191,12 @@ describe("claim-key scenario runtime", () => {
       expect.objectContaining({
         claim_key: "jim/timezone",
         claim_key_status: "trusted",
+        claim_support_mode: "inferred",
+        claim_support_source_kind: "transcript_ingest",
         subject: "Jim timezone",
       }),
     );
+    expect(ingestActual.rows[0]?.claim_support_locator).toContain("#observed_at:");
     expect(trustedStoreResult).toEqual({
       stored: 1,
       skipped: 0,
