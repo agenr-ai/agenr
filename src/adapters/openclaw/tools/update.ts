@@ -2,6 +2,7 @@ import type { AnyAgentTool } from "openclaw/plugin-sdk/agent-runtime";
 import { failedTextResult, readNumberParam, readStringParam, textResult } from "openclaw/plugin-sdk/agent-runtime";
 import type { OpenClawPluginToolContext, PluginLogger } from "openclaw/plugin-sdk/core";
 
+import { buildManualClaimKeyUpdateFields } from "../../../core/claim-key-lifecycle.js";
 import { normalizeClaimKey } from "../../../core/claim-key.js";
 import type { AgenrOpenClawServices } from "../types.js";
 import {
@@ -105,20 +106,22 @@ export function createAgenrUpdateTool(ctx: OpenClawPluginToolContext, servicesPr
           throw new Error("Provide at least one update field: importance, expiry, claimKey, validFrom, or validTo.");
         }
 
+        const claimSupport = normalizedClaimKey === undefined ? undefined : buildToolCallClaimSupport(ctx, "agenr_update", claimSupportObservedAt);
+        const manualClaimKeyUpdate =
+          normalizedClaimKey === undefined || claimSupport === undefined
+            ? undefined
+            : buildManualClaimKeyUpdateFields({
+                claimKey: normalizedClaimKey,
+                rawClaimKey: claimKeyInput,
+                supportSourceKind: claimSupport.claim_support_source_kind,
+                supportLocator: claimSupport.claim_support_locator,
+                supportObservedAt: claimSupport.claim_support_observed_at,
+                supportMode: claimSupport.claim_support_mode,
+              });
         const updated = await services.entries.updateEntry(entry.id, {
           ...(importance !== undefined ? { importance } : {}),
           ...(expiry !== undefined ? { expiry } : {}),
-          ...(normalizedClaimKey !== undefined
-            ? {
-                claim_key: normalizedClaimKey,
-                claim_key_raw: claimKeyInput,
-                claim_key_status: "trusted",
-                claim_key_source: "manual",
-                claim_key_confidence: 1,
-                claim_key_rationale: "manual claim key supplied by caller",
-                ...buildToolCallClaimSupport(ctx, "agenr_update", claimSupportObservedAt),
-              }
-            : {}),
+          ...(manualClaimKeyUpdate ?? {}),
           ...(validFrom !== undefined ? { valid_from: validFrom } : {}),
           ...(validTo !== undefined ? { valid_to: validTo } : {}),
         });

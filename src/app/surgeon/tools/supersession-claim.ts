@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type, type Static } from "@sinclair/typebox";
 
+import { buildManualClaimKeyUpdateFields } from "../../../core/claim-key-lifecycle.js";
 import { normalizeClaimKey } from "../../../core/claim-key.js";
 import type { SurgeonToolDeps } from "./index.js";
 import { toolResult } from "./shared.js";
@@ -92,7 +93,9 @@ export function createAssignClaimKeyTool(deps: SurgeonToolDeps): AgentTool<typeo
       }
 
       const updated = await deps.port.updateEntry(entry.id, {
-        claim_key: normalizedClaimKey.value.claimKey,
+        ...buildManualClaimKeyUpdateFields({
+          claimKey: normalizedClaimKey.value.claimKey,
+        }),
       });
 
       if (updated) {

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type { InArgs, InStatement, ResultSet } from "@libsql/client";
 
+import { validateDirectClaimKeyLifecycleUpdate } from "../../core/claim-key-lifecycle.js";
 import type { Entry, EntryUpdateInput } from "../../core/types.js";
 import { ACTIVE_ENTRY_CLAUSE, ENTRY_SELECT_COLUMNS, mapEntryRow, readRequiredString, serializeEmbeddingForVector, serializeTags } from "./row-mapping.js";
 
@@ -428,6 +429,7 @@ export async function updateEntry(
 ): Promise<boolean> {
   const assignments: string[] = [];
   const args: Array<number | string | null> = [];
+  const lifecycleUpdate = validateDirectClaimKeyLifecycleUpdate(fields);
 
   if (fields.importance !== undefined) {
     assignments.push("importance = ?");
@@ -439,54 +441,29 @@ export async function updateEntry(
     args.push(fields.expiry);
   }
 
-  if (fields.claim_key !== undefined) {
+  if (lifecycleUpdate) {
     assignments.push("claim_key = ?");
-    args.push(normalizeOptionalString(fields.claim_key));
-  }
-
-  if (fields.claim_key_raw !== undefined) {
     assignments.push("claim_key_raw = ?");
-    args.push(normalizeOptionalString(fields.claim_key_raw));
-  }
-
-  if (fields.claim_key_status !== undefined) {
     assignments.push("claim_key_status = ?");
-    args.push(normalizeOptionalString(fields.claim_key_status));
-  }
-
-  if (fields.claim_key_source !== undefined) {
     assignments.push("claim_key_source = ?");
-    args.push(normalizeOptionalString(fields.claim_key_source));
-  }
-
-  if (fields.claim_key_confidence !== undefined) {
     assignments.push("claim_key_confidence = ?");
-    args.push(normalizeOptionalNumber(fields.claim_key_confidence));
-  }
-
-  if (fields.claim_key_rationale !== undefined) {
     assignments.push("claim_key_rationale = ?");
-    args.push(normalizeOptionalString(fields.claim_key_rationale));
-  }
-
-  if (fields.claim_support_source_kind !== undefined) {
     assignments.push("claim_support_source_kind = ?");
-    args.push(normalizeOptionalString(fields.claim_support_source_kind));
-  }
-
-  if (fields.claim_support_locator !== undefined) {
     assignments.push("claim_support_locator = ?");
-    args.push(normalizeOptionalString(fields.claim_support_locator));
-  }
-
-  if (fields.claim_support_observed_at !== undefined) {
     assignments.push("claim_support_observed_at = ?");
-    args.push(normalizeTimestamp(fields.claim_support_observed_at));
-  }
-
-  if (fields.claim_support_mode !== undefined) {
     assignments.push("claim_support_mode = ?");
-    args.push(normalizeOptionalString(fields.claim_support_mode));
+    args.push(
+      normalizeOptionalString(lifecycleUpdate.claim_key),
+      normalizeOptionalString(lifecycleUpdate.claim_key_raw),
+      normalizeOptionalString(lifecycleUpdate.claim_key_status),
+      normalizeOptionalString(lifecycleUpdate.claim_key_source),
+      normalizeOptionalNumber(lifecycleUpdate.claim_key_confidence),
+      normalizeOptionalString(lifecycleUpdate.claim_key_rationale),
+      normalizeOptionalString(lifecycleUpdate.claim_support_source_kind),
+      normalizeOptionalString(lifecycleUpdate.claim_support_locator),
+      normalizeTimestamp(lifecycleUpdate.claim_support_observed_at),
+      normalizeOptionalString(lifecycleUpdate.claim_support_mode),
+    );
   }
 
   if (fields.valid_from !== undefined) {

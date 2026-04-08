@@ -133,8 +133,10 @@ export interface Entry extends ClaimKeyLifecycleMetadata {
 /**
  * Mutable entry fields supported by direct update paths.
  *
- * Direct update callers may set claim-key lifecycle fields when they are
- * preserving an explicit high-intent manual key outside the main store path.
+ * Claim-key lifecycle updates are replacement-style, not merge-style. When any
+ * lifecycle field is mutated, callers must provide one complete validated
+ * lifecycle payload for the target claim key. Partial lifecycle patches are
+ * rejected at the persistence boundary.
  */
 export interface EntryUpdateInput {
   importance?: Entry["importance"];

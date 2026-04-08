@@ -4,11 +4,13 @@ import {
   applyClaimKeyLifecycle,
   buildExtractedClaimKeyLifecycle,
   buildManualClaimKeyLifecycle,
+  buildManualClaimKeyUpdateFields,
   buildSurgeonAppliedClaimKeyLifecycle,
   buildSurgeonProposalClaimKeyLifecycle,
   parseClaimKeySource,
   parseClaimKeyStatus,
   parseClaimSupportMode,
+  validateDirectClaimKeyLifecycleUpdate,
 } from "../../src/core/claim-key-lifecycle.js";
 import type { StoreEntryInput } from "../../src/core/types.js";
 
@@ -32,6 +34,29 @@ describe("claim-key lifecycle helpers", () => {
       claim_key_rationale: "manual claim key supplied by caller",
       claim_support_source_kind: "tool_call",
       claim_support_locator: "session.jsonl#entry:1",
+      claim_support_observed_at: "2026-04-01T10:00:00.000Z",
+      claim_support_mode: "explicit",
+    });
+  });
+
+  it("builds direct-update fields for manual claim keys through the shared manual helper", () => {
+    expect(
+      buildManualClaimKeyUpdateFields({
+        claimKey: " Jim / Timezone ",
+        supportSourceKind: "tool_call",
+        supportLocator: "session.jsonl#agenr_update",
+        supportObservedAt: "2026-04-01T10:00:00.000Z",
+        supportMode: "explicit",
+      }),
+    ).toEqual({
+      claim_key: "jim/timezone",
+      claim_key_raw: "Jim / Timezone",
+      claim_key_status: "trusted",
+      claim_key_source: "manual",
+      claim_key_confidence: 1,
+      claim_key_rationale: "manual claim key supplied by caller",
+      claim_support_source_kind: "tool_call",
+      claim_support_locator: "session.jsonl#agenr_update",
       claim_support_observed_at: "2026-04-01T10:00:00.000Z",
       claim_support_mode: "explicit",
     });
@@ -116,5 +141,13 @@ describe("claim-key lifecycle helpers", () => {
     expect(parseClaimKeySource("handwritten")).toBeUndefined();
     expect(parseClaimSupportMode("explicit")).toBe("explicit");
     expect(parseClaimSupportMode("copied")).toBeUndefined();
+  });
+
+  it("rejects partial direct lifecycle update payloads", () => {
+    expect(() =>
+      validateDirectClaimKeyLifecycleUpdate({
+        claim_key: "jim/timezone",
+      }),
+    ).toThrow(/complete lifecycle payload/i);
   });
 });

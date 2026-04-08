@@ -1,8 +1,9 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type, type Static } from "@sinclair/typebox";
 
+import { buildManualClaimKeyUpdateFields } from "../../../core/claim-key-lifecycle.js";
 import { normalizeClaimKey } from "../../../core/claim-key.js";
-import { EXPIRY_LEVELS, type Expiry } from "../../../core/types.js";
+import { EXPIRY_LEVELS, type EntryUpdateInput, type Expiry } from "../../../core/types.js";
 import type { SurgeonToolDeps } from "./index.js";
 import { toolResult } from "./shared.js";
 
@@ -127,13 +128,7 @@ function buildRequestedFields(params: UpdateEntryParams): {
   valid_from?: string;
   valid_to?: string;
 } | null {
-  const fields: {
-    importance?: number;
-    expiry?: Expiry;
-    claim_key?: string;
-    valid_from?: string;
-    valid_to?: string;
-  } = {};
+  const fields: EntryUpdateInput = {};
 
   if (typeof params.importance === "number") {
     fields.importance = clampImportance(params.importance);
@@ -154,7 +149,12 @@ function buildRequestedFields(params: UpdateEntryParams): {
       return null;
     }
 
-    fields.claim_key = claimKey.value.claimKey;
+    Object.assign(
+      fields,
+      buildManualClaimKeyUpdateFields({
+        claimKey: claimKey.value.claimKey,
+      }),
+    );
   }
 
   if (params.valid_from !== undefined) {

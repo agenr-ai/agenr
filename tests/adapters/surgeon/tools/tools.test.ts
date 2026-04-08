@@ -565,6 +565,41 @@ describe("surgeon tools", () => {
     });
   });
 
+  it("persists the manual lifecycle bundle when update_entry sets a claim key", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "update-claim-key",
+      subject: "Update claim key",
+    });
+    const tool = createUpdateEntryTool(createToolDeps(client, { apply: true }));
+
+    const result = await tool.execute("tool-update-claim-key", {
+      entry_id: "update-claim-key",
+      claim_key: "jim/home_city",
+      reasoning: "This entry clearly describes the home_city slot.",
+    });
+
+    expect(result.details).toMatchObject({
+      success: true,
+      updated: true,
+    });
+    const row = await client.execute({
+      sql: `
+        SELECT claim_key, claim_key_status, claim_key_source, claim_key_confidence, claim_key_rationale
+        FROM entries
+        WHERE id = ?
+      `,
+      args: ["update-claim-key"],
+    });
+    expect(row.rows[0]).toMatchObject({
+      claim_key: "jim/home_city",
+      claim_key_status: "trusted",
+      claim_key_source: "manual",
+      claim_key_confidence: 1,
+      claim_key_rationale: "manual claim key supplied by caller",
+    });
+  });
+
   it("supports link_supersession happy path and logs a conflict-resolution action", async () => {
     const client = await createTestClient(clients);
     await insertEntry(client, {
@@ -809,7 +844,7 @@ describe("surgeon tools", () => {
     });
   });
 
-  it("assigns claim keys and validates claim-key format", async () => {
+  it("assigns claim keys with the canonical manual lifecycle bundle and validates claim-key format", async () => {
     const client = await createTestClient(clients);
     await insertEntry(client, {
       id: "claim-target",
@@ -873,10 +908,20 @@ describe("surgeon tools", () => {
       updated: true,
     });
     const row = await client.execute({
-      sql: "SELECT claim_key FROM entries WHERE id = ?",
+      sql: `
+        SELECT claim_key, claim_key_status, claim_key_source, claim_key_confidence, claim_key_rationale
+        FROM entries
+        WHERE id = ?
+      `,
       args: ["claim-target"],
     });
-    expect(row.rows[0]?.claim_key).toBe("jim/home_city");
+    expect(row.rows[0]).toMatchObject({
+      claim_key: "jim/home_city",
+      claim_key_status: "trusted",
+      claim_key_source: "manual",
+      claim_key_confidence: 1,
+      claim_key_rationale: "manual claim key supplied by caller",
+    });
   });
 
   it("sets temporal validity and validates timestamp input", async () => {

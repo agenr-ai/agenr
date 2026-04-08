@@ -264,6 +264,167 @@ describe("createDatabase", () => {
     expect(claimKeyExamples).toEqual(["agenr/default_model", "jim/home_city"]);
   });
 
+  it("replaces the full lifecycle bundle on direct claim-key updates", async () => {
+    const database = await createTestDatabase();
+    const entry = createEntry({
+      claim_key: "jim/timezone",
+      claim_key_raw: "Jim / Timezone",
+      claim_key_status: "trusted",
+      claim_key_source: "manual",
+      claim_key_confidence: 1,
+      claim_key_rationale: "manual claim key supplied by caller",
+      claim_support_source_kind: "tool_call",
+      claim_support_locator: "openclaw-session:agent:main:webchat:test#agenr_update",
+      claim_support_observed_at: "2026-03-01T00:00:00.000Z",
+      claim_support_mode: "explicit",
+    });
+
+    await database.insertEntry(entry, createEmbedding(0, 1), "replace-lifecycle-hash");
+    const updated = await database.updateEntry(entry.id, {
+      claim_key: "jim/home_city",
+      claim_key_raw: "Jim / Home City",
+      claim_key_status: "trusted",
+      claim_key_source: "surgeon_compaction",
+      claim_key_confidence: 0.99,
+      claim_key_rationale: 'Canonical normalization preserves the slot while rewriting "Jim / Home City".',
+    });
+    const stored = await database.getEntry(entry.id);
+
+    expect(updated).toBe(true);
+    expect(stored).toMatchObject({
+      claim_key: "jim/home_city",
+      claim_key_raw: "Jim / Home City",
+      claim_key_status: "trusted",
+      claim_key_source: "surgeon_compaction",
+      claim_key_confidence: 0.99,
+      claim_key_rationale: 'Canonical normalization preserves the slot while rewriting "Jim / Home City".',
+      claim_support_source_kind: undefined,
+      claim_support_locator: undefined,
+      claim_support_observed_at: undefined,
+      claim_support_mode: undefined,
+    });
+  });
+
+  it("rejects invalid claim-key lifecycle statuses on direct updates", async () => {
+    const database = await createTestDatabase();
+    const entry = createEntry();
+
+    await database.insertEntry(entry, createEmbedding(0, 1), "invalid-status-hash");
+
+    await expect(
+      database.updateEntry(entry.id, {
+        claim_key: "jim/home_city",
+        claim_key_status: "legacy" as Entry["claim_key_status"],
+        claim_key_source: "manual",
+        claim_key_confidence: 1,
+        claim_key_rationale: "manual claim key supplied by caller",
+      }),
+    ).rejects.toThrow(/claim_key_status/i);
+  });
+
+  it("rejects invalid claim-key lifecycle sources on direct updates", async () => {
+    const database = await createTestDatabase();
+    const entry = createEntry();
+
+    await database.insertEntry(entry, createEmbedding(0, 1), "invalid-source-hash");
+
+    await expect(
+      database.updateEntry(entry.id, {
+        claim_key: "jim/home_city",
+        claim_key_status: "trusted",
+        claim_key_source: "handwritten" as Entry["claim_key_source"],
+        claim_key_confidence: 1,
+        claim_key_rationale: "manual claim key supplied by caller",
+      }),
+    ).rejects.toThrow(/claim_key_source/i);
+  });
+
+  it("rejects invalid claim-support modes on direct updates", async () => {
+    const database = await createTestDatabase();
+    const entry = createEntry();
+
+    await database.insertEntry(entry, createEmbedding(0, 1), "invalid-support-mode-hash");
+
+    await expect(
+      database.updateEntry(entry.id, {
+        claim_key: "jim/home_city",
+        claim_key_status: "trusted",
+        claim_key_source: "manual",
+        claim_key_confidence: 1,
+        claim_key_rationale: "manual claim key supplied by caller",
+        claim_support_mode: "copied" as Entry["claim_support_mode"],
+      }),
+    ).rejects.toThrow(/claim_support_mode/i);
+  });
+
+  it("rejects invalid lifecycle confidence values on direct updates", async () => {
+    const database = await createTestDatabase();
+    const entry = createEntry();
+
+    await database.insertEntry(entry, createEmbedding(0, 1), "invalid-confidence-hash");
+
+    await expect(
+      database.updateEntry(entry.id, {
+        claim_key: "jim/home_city",
+        claim_key_status: "trusted",
+        claim_key_source: "manual",
+        claim_key_confidence: 1.2,
+        claim_key_rationale: "manual claim key supplied by caller",
+      }),
+    ).rejects.toThrow(/claim_key_confidence/i);
+  });
+
+  it("rejects partial lifecycle payloads on direct updates", async () => {
+    const database = await createTestDatabase();
+    const entry = createEntry();
+
+    await database.insertEntry(entry, createEmbedding(0, 1), "partial-lifecycle-hash");
+
+    await expect(
+      database.updateEntry(entry.id, {
+        claim_key: "jim/home_city",
+      }),
+    ).rejects.toThrow(/complete lifecycle payload/i);
+  });
+
+  it("supports importance-only direct updates without lifecycle fields", async () => {
+    const database = await createTestDatabase();
+    const entry = createEntry({ importance: 4 });
+
+    await database.insertEntry(entry, createEmbedding(0, 1), "importance-only-hash");
+
+    await expect(database.updateEntry(entry.id, { importance: 8 })).resolves.toBe(true);
+    expect((await database.getEntry(entry.id))?.importance).toBe(8);
+  });
+
+  it("supports expiry-only direct updates without lifecycle fields", async () => {
+    const database = await createTestDatabase();
+    const entry = createEntry({ expiry: "temporary" });
+
+    await database.insertEntry(entry, createEmbedding(0, 1), "expiry-only-hash");
+
+    await expect(database.updateEntry(entry.id, { expiry: "core" })).resolves.toBe(true);
+    expect((await database.getEntry(entry.id))?.expiry).toBe("core");
+  });
+
+  it("supports validity-only direct updates without lifecycle fields", async () => {
+    const database = await createTestDatabase();
+    const entry = createEntry();
+
+    await database.insertEntry(entry, createEmbedding(0, 1), "validity-only-hash");
+
+    await expect(
+      database.updateEntry(entry.id, {
+        valid_from: "2026-03-01T00:00:00.000Z",
+        valid_to: "2026-03-31T00:00:00.000Z",
+      }),
+    ).resolves.toBe(true);
+    expect(await database.getEntry(entry.id)).toMatchObject({
+      valid_from: "2026-03-01T00:00:00.000Z",
+      valid_to: "2026-03-31T00:00:00.000Z",
+    });
+  });
+
   it("supersedes an active entry and removes it from active recall surfaces", async () => {
     const database = await createTestDatabase();
     const adapter = createRecallAdapter(database, createEmbeddingPort());

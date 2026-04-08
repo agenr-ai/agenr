@@ -1,3 +1,4 @@
+import { describeClaimKeyNormalizationFailure, normalizeClaimKey } from "./claim-key.js";
 import {
   CLAIM_KEY_SOURCES,
   CLAIM_KEY_STATUSES,
@@ -6,6 +7,7 @@ import {
   type ClaimKeySource,
   type ClaimKeyStatus,
   type ClaimSupportMode,
+  type EntryUpdateInput,
   type StoreEntryInput,
 } from "./types.js";
 
@@ -26,6 +28,23 @@ export interface ResolvedClaimKeyLifecycle extends ClaimKeyLifecycleMetadata {
 export type PreservedClaimKeyMetadata = Pick<
   StoreEntryInput,
   "claim_key_raw" | "claim_support_source_kind" | "claim_support_locator" | "claim_support_observed_at" | "claim_support_mode"
+>;
+
+/**
+ * Lifecycle fields that may be mutated through direct entry updates.
+ */
+export type EntryLifecycleUpdateFields = Pick<
+  EntryUpdateInput,
+  | "claim_key"
+  | "claim_key_raw"
+  | "claim_key_status"
+  | "claim_key_source"
+  | "claim_key_confidence"
+  | "claim_key_rationale"
+  | "claim_support_source_kind"
+  | "claim_support_locator"
+  | "claim_support_observed_at"
+  | "claim_support_mode"
 >;
 
 /**
@@ -191,6 +210,33 @@ export function buildManualClaimKeyLifecycle(params: {
 }
 
 /**
+ * Builds one full replacement-style direct-update payload for a manual claim key.
+ *
+ * @param params - Raw or canonical claim key plus optional preserved support metadata.
+ * @returns Validated direct-update fields that replace the stored lifecycle bundle.
+ */
+export function buildManualClaimKeyUpdateFields(params: {
+  claimKey: string;
+  rawClaimKey?: string;
+  supportSourceKind?: string;
+  supportLocator?: string;
+  supportObservedAt?: string;
+  supportMode?: ClaimSupportMode;
+}): EntryLifecycleUpdateFields {
+  const normalized = normalizeLifecycleClaimKeyInput(params.claimKey, params.rawClaimKey, "claim_key");
+  return lifecycleToUpdateFields(
+    buildManualClaimKeyLifecycle({
+      claimKey: normalized.claimKey,
+      rawClaimKey: normalized.rawClaimKey,
+      supportSourceKind: params.supportSourceKind,
+      supportLocator: params.supportLocator,
+      supportObservedAt: params.supportObservedAt,
+      supportMode: params.supportMode,
+    }),
+  );
+}
+
+/**
  * Rehydrates an already-derived lifecycle payload when upstream code precomputed it.
  *
  * @param input - Store input carrying a canonical claim key plus lifecycle fields.
@@ -233,6 +279,53 @@ export function buildPrecomputedClaimKeyLifecycle(
     claim_support_observed_at: normalizeOptionalString(input.claim_support_observed_at),
     claim_support_mode: supportMode,
   };
+}
+
+/**
+ * Validates one direct-update lifecycle payload and normalizes it into the canonical persisted bundle.
+ *
+ * Direct update lifecycle writes are replacement-style. If any lifecycle field is
+ * present, callers must provide the full required lifecycle payload. Optional
+ * raw/support metadata may be included; omitted optional lifecycle metadata is
+ * cleared by the update layer.
+ *
+ * @param fields - Candidate direct-update mutation payload.
+ * @returns Canonical lifecycle bundle when the payload includes lifecycle fields.
+ */
+export function validateDirectClaimKeyLifecycleUpdate(fields: EntryUpdateInput): ResolvedClaimKeyLifecycle | undefined {
+  if (!hasDirectLifecycleFields(fields)) {
+    return undefined;
+  }
+
+  const missingRequired = REQUIRED_DIRECT_LIFECYCLE_FIELDS.filter((field) => fields[field] === undefined);
+  if (missingRequired.length > 0) {
+    throw new Error(`Direct claim-key lifecycle updates require a complete lifecycle payload. Missing: ${missingRequired.join(", ")}.`);
+  }
+
+  const normalizedClaimKey = normalizeLifecycleClaimKeyInput(fields.claim_key, fields.claim_key_raw, "claim_key");
+  const claimSupportObservedAt = normalizeOptionalString(fields.claim_support_observed_at);
+  if (claimSupportObservedAt !== undefined && Number.isNaN(Date.parse(claimSupportObservedAt))) {
+    throw new Error("Invalid claim_support_observed_at: expected an ISO 8601 timestamp.");
+  }
+
+  const lifecycle = buildPrecomputedClaimKeyLifecycle({
+    claim_key: normalizedClaimKey.claimKey,
+    claim_key_raw: normalizedClaimKey.rawClaimKey,
+    claim_key_status: requireClaimKeyStatus(fields.claim_key_status, "claim_key_status"),
+    claim_key_source: requireClaimKeySource(fields.claim_key_source, "claim_key_source"),
+    claim_key_confidence: requireClaimKeyConfidence(fields.claim_key_confidence, "claim_key_confidence"),
+    claim_key_rationale: requireNonEmptyString(fields.claim_key_rationale, "claim_key_rationale"),
+    claim_support_source_kind: normalizeOptionalString(fields.claim_support_source_kind),
+    claim_support_locator: normalizeOptionalString(fields.claim_support_locator),
+    claim_support_observed_at: claimSupportObservedAt,
+    claim_support_mode:
+      normalizeOptionalString(fields.claim_support_mode) === undefined ? undefined : requireClaimSupportMode(fields.claim_support_mode, "claim_support_mode"),
+  });
+  if (!lifecycle) {
+    throw new Error("Direct claim-key lifecycle update could not be normalized.");
+  }
+
+  return lifecycle;
 }
 
 /**
@@ -550,6 +643,83 @@ function resolveLifecycleRawClaimKey(input: {
   return undefined;
 }
 
+const DIRECT_LIFECYCLE_FIELDS = [
+  "claim_key",
+  "claim_key_raw",
+  "claim_key_status",
+  "claim_key_source",
+  "claim_key_confidence",
+  "claim_key_rationale",
+  "claim_support_source_kind",
+  "claim_support_locator",
+  "claim_support_observed_at",
+  "claim_support_mode",
+] as const satisfies ReadonlyArray<keyof EntryLifecycleUpdateFields>;
+
+const REQUIRED_DIRECT_LIFECYCLE_FIELDS = [
+  "claim_key",
+  "claim_key_status",
+  "claim_key_source",
+  "claim_key_confidence",
+  "claim_key_rationale",
+] as const satisfies ReadonlyArray<keyof EntryLifecycleUpdateFields>;
+
+/**
+ * Returns whether one direct-update payload touches any lifecycle field.
+ *
+ * @param fields - Candidate direct-update mutation payload.
+ * @returns True when lifecycle validation should run.
+ */
+function hasDirectLifecycleFields(fields: EntryUpdateInput): boolean {
+  return DIRECT_LIFECYCLE_FIELDS.some((field) => fields[field] !== undefined);
+}
+
+/**
+ * Normalizes one direct-update claim key into canonical storage form.
+ *
+ * @param claimKey - Candidate canonical or raw claim-key string.
+ * @param rawClaimKey - Optional explicit raw claim-key text to preserve.
+ * @param label - Human-readable label for error messages.
+ * @returns Canonical claim key plus any preserved raw variant.
+ */
+function normalizeLifecycleClaimKeyInput(
+  claimKey: string | undefined,
+  rawClaimKey: string | undefined,
+  label: string,
+): { claimKey: string; rawClaimKey?: string } {
+  const normalizedClaimKeyInput = requireNonEmptyString(claimKey, label);
+  const normalizedClaimKey = normalizeClaimKey(normalizedClaimKeyInput);
+  if (!normalizedClaimKey.ok) {
+    throw new Error(`Invalid ${label}: ${describeClaimKeyNormalizationFailure(normalizedClaimKey.reason)}. Use canonical entity/attribute format.`);
+  }
+
+  return {
+    claimKey: normalizedClaimKey.value.claimKey,
+    rawClaimKey: buildClaimKeyRaw(rawClaimKey ?? normalizedClaimKeyInput, normalizedClaimKey.value.claimKey),
+  };
+}
+
+/**
+ * Converts one canonical lifecycle bundle into the direct-update field shape.
+ *
+ * @param lifecycle - Canonical lifecycle payload.
+ * @returns Direct-update lifecycle field bundle.
+ */
+function lifecycleToUpdateFields(lifecycle: ResolvedClaimKeyLifecycle): EntryLifecycleUpdateFields {
+  return {
+    claim_key: lifecycle.claim_key,
+    claim_key_raw: lifecycle.claim_key_raw,
+    claim_key_status: lifecycle.claim_key_status,
+    claim_key_source: lifecycle.claim_key_source,
+    claim_key_confidence: lifecycle.claim_key_confidence,
+    claim_key_rationale: lifecycle.claim_key_rationale,
+    claim_support_source_kind: lifecycle.claim_support_source_kind,
+    claim_support_locator: lifecycle.claim_support_locator,
+    claim_support_observed_at: lifecycle.claim_support_observed_at,
+    claim_support_mode: lifecycle.claim_support_mode,
+  };
+}
+
 /**
  * Parses one optional string enum from a trusted constant list.
  *
@@ -559,6 +729,22 @@ function resolveLifecycleRawClaimKey(input: {
  */
 function parseStringEnum<T extends string>(value: unknown, values: readonly T[]): T | undefined {
   return typeof value === "string" && values.includes(value as T) ? (value as T) : undefined;
+}
+
+/**
+ * Requires one optional string field to be present and non-empty.
+ *
+ * @param value - Raw string boundary value.
+ * @param label - Human-readable field label for error messages.
+ * @returns Trimmed string value.
+ */
+function requireNonEmptyString(value: string | undefined, label: string): string {
+  const normalized = normalizeOptionalString(value);
+  if (!normalized) {
+    throw new Error(`Invalid ${label}: expected a non-empty string.`);
+  }
+
+  return normalized;
 }
 
 /**
@@ -580,6 +766,21 @@ function normalizeOptionalString(value: string | null | undefined): string | und
  */
 function normalizeOptionalNumber(value: number | null | undefined): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+/**
+ * Requires one lifecycle confidence score to be finite and bounded.
+ *
+ * @param value - Raw numeric boundary value.
+ * @param label - Human-readable field label for error messages.
+ * @returns Validated lifecycle confidence.
+ */
+function requireClaimKeyConfidence(value: number | undefined, label: string): number {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1) {
+    return value;
+  }
+
+  throw new Error(`Invalid ${label}: expected a finite number between 0 and 1.`);
 }
 
 /**
