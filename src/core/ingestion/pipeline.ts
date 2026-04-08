@@ -97,6 +97,8 @@ export interface StoreExtractedResultsOptions extends StorePipelineOptions {
   precomputedEmbeddings?: number[][];
   /** Optional progress hook for ingest-specific bulk write phases. */
   onBulkWriteProgress?: (event: StoreExtractedResultsProgressEvent) => void;
+  /** Optional warning sink for store and claim-extraction warnings. */
+  onWarning?: (warning: string) => void;
 }
 
 /**
@@ -327,6 +329,7 @@ export async function storeExtractedResults(
   const storeOptions: StoreEntriesOptions = {
     ...options,
     precomputedEmbeddings: options.precomputedEmbeddings,
+    onWarning: options.onWarning,
   };
 
   const shouldUseBulkWrites = options.dryRun !== true && allEntries.length > 0;

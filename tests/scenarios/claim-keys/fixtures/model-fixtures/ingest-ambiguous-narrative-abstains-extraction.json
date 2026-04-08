@@ -1,0 +1,13 @@
+[
+  {
+    "entries": [
+      {
+        "type": "decision",
+        "subject": "Deployment discussion summary",
+        "content": "We discussed a few deployment options, compared tradeoffs, and agreed to revisit the decision next week.",
+        "importance": 5,
+        "expiry": "temporary"
+      }
+    ]
+  }
+]

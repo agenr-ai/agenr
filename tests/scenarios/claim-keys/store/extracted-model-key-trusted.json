@@ -1,0 +1,49 @@
+{
+  "id": "claim-keys.store.extracted-model-key-trusted",
+  "kind": "store",
+  "description": "A clear store input uses claim extraction and persists a trusted model key.",
+  "tags": ["claim-keys", "store", "model", "trusted"],
+  "sandbox": {
+    "reset": true,
+    "preserveOnFailure": true
+  },
+  "input": {
+    "entries": [
+      {
+        "type": "fact",
+        "subject": "Jim timezone",
+        "content": "Jim's timezone is America/Chicago."
+      }
+    ],
+    "storeOptions": {
+      "claimExtraction": true
+    },
+    "modelFixtures": {
+      "claimExtractionResponsesFile": "fixtures/model-fixtures/store-extracted-model-key-trusted-claim.json"
+    }
+  },
+  "expect": {
+    "rows": [
+      {
+        "match": {
+          "subject": "Jim timezone"
+        },
+        "assert": {
+          "claim_key": "jim/timezone",
+          "claim_key_status": "trusted",
+          "claim_key_source": "model"
+        }
+      }
+    ],
+    "rowCount": {
+      "entries": 1,
+      "activeEntries": 1,
+      "entriesWithClaimKey": 1
+    },
+    "storeResult": {
+      "stored": 1,
+      "skipped": 0,
+      "rejected": 0
+    }
+  }
+}

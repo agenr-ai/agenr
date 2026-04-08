@@ -1,0 +1,39 @@
+{
+  "id": "claim-keys.ingest.ambiguous-narrative-abstains",
+  "kind": "ingest",
+  "description": "Narrative content stays unkeyed when claim extraction abstains.",
+  "tags": ["claim-keys", "ingest", "abstain", "ambiguous"],
+  "sandbox": {
+    "reset": true,
+    "preserveOnFailure": true
+  },
+  "input": {
+    "transcriptFile": "fixtures/transcripts/ambiguous-narrative-abstains.jsonl",
+    "modelFixtures": {
+      "extractionResponsesFile": "fixtures/model-fixtures/ingest-ambiguous-narrative-abstains-extraction.json",
+      "claimExtractionResponsesFile": "fixtures/model-fixtures/ingest-ambiguous-narrative-abstains-claim.json"
+    }
+  },
+  "expect": {
+    "rows": [
+      {
+        "match": {
+          "subject": "Deployment discussion summary"
+        },
+        "assert": {
+          "claim_key": null
+        }
+      }
+    ],
+    "rowCount": {
+      "entries": 1,
+      "activeEntries": 1,
+      "entriesWithClaimKey": 0
+    },
+    "storeResult": {
+      "stored": 1,
+      "skipped": 0,
+      "rejected": 0
+    }
+  }
+}

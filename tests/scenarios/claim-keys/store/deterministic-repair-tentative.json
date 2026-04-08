@@ -1,0 +1,49 @@
+{
+  "id": "claim-keys.store.deterministic-repair-tentative",
+  "kind": "store",
+  "description": "A deterministic claim-key repair remains tentative.",
+  "tags": ["claim-keys", "store", "deterministic-repair", "tentative"],
+  "sandbox": {
+    "reset": true,
+    "preserveOnFailure": true
+  },
+  "input": {
+    "entries": [
+      {
+        "type": "fact",
+        "subject": "Jim's timezone",
+        "content": "Jim's timezone is America/Chicago."
+      }
+    ],
+    "storeOptions": {
+      "claimExtraction": true
+    },
+    "modelFixtures": {
+      "claimExtractionResponsesFile": "fixtures/model-fixtures/store-deterministic-repair-tentative-claim.json"
+    }
+  },
+  "expect": {
+    "rows": [
+      {
+        "match": {
+          "subject": "Jim's timezone"
+        },
+        "assert": {
+          "claim_key": "jim/timezone",
+          "claim_key_status": "tentative",
+          "claim_key_source": "deterministic_repair"
+        }
+      }
+    ],
+    "rowCount": {
+      "entries": 1,
+      "activeEntries": 1,
+      "entriesWithClaimKey": 1
+    },
+    "storeResult": {
+      "stored": 1,
+      "skipped": 0,
+      "rejected": 0
+    }
+  }
+}

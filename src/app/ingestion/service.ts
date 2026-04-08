@@ -27,6 +27,8 @@ export interface IngestPathOptions extends IngestFileOptions {
   concurrency?: number;
   /** Override claim extraction config for this ingest run. */
   claimExtractionConfig?: ClaimExtractionConfig;
+  /** Optional warning sink for claim extraction or store pipeline warnings. */
+  onWarning?: (warning: string) => void;
   /** Optional callback invoked when a file finishes extraction. */
   onExtractionProgress?: (completed: number, total: number) => void;
   /** Optional callback invoked around ingest-specific bulk write phases. */
@@ -147,6 +149,7 @@ export async function ingestDiscoveredFiles(files: string[], ports: IngestPathPo
       },
       claimConfig,
       options.concurrency ?? DEFAULT_INGEST_CONCURRENCY,
+      options.onWarning,
     );
   }
 
@@ -163,6 +166,7 @@ export async function ingestDiscoveredFiles(files: string[], ports: IngestPathPo
             dryRun: options.dryRun,
             verbose: options.verbose,
             precomputedEmbeddings,
+            onWarning: options.onWarning,
             onBulkWriteProgress: options.onBulkWriteProgress,
           },
         );

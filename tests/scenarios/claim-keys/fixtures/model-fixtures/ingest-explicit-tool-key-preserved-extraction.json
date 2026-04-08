@@ -1,0 +1,14 @@
+[
+  {
+    "entries": [
+      {
+        "type": "fact",
+        "subject": "Jim timezone",
+        "content": "Jim's timezone is America/Chicago.",
+        "importance": 7,
+        "expiry": "permanent",
+        "claim_key": " Jim / Timezone "
+      }
+    ]
+  }
+]

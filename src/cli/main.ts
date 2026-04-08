@@ -6,6 +6,7 @@ import { registerDbCommand } from "./commands/db.js";
 import { registerIngestCommand } from "./commands/ingest.js";
 import { registerInitCommand } from "./commands/init/index.js";
 import { registerRecallCommand } from "./commands/recall.js";
+import { registerScenariosCommand } from "./commands/scenarios.js";
 import { registerSetupCommand } from "./commands/setup.js";
 import { registerSurgeonCommand } from "./commands/surgeon.js";
 
@@ -26,6 +27,7 @@ export function createProgram(): Command {
   registerIngestCommand(program);
   registerDbCommand(program);
   registerRecallCommand(program);
+  registerScenariosCommand(program);
   registerSetupCommand(program);
   registerInitCommand(program);
   registerSurgeonCommand(program);

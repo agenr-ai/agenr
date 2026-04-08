@@ -1,0 +1,46 @@
+{
+  "id": "claim-keys.ingest.explicit-tool-key-preserved",
+  "kind": "ingest",
+  "description": "Explicit tool-call claim key stays trusted/manual during ingest.",
+  "tags": ["claim-keys", "ingest", "manual", "trusted"],
+  "sandbox": {
+    "reset": true,
+    "preserveOnFailure": true
+  },
+  "input": {
+    "transcriptFile": "fixtures/transcripts/explicit-tool-key-preserved.jsonl",
+    "modelFixtures": {
+      "extractionResponsesFile": "fixtures/model-fixtures/ingest-explicit-tool-key-preserved-extraction.json"
+    }
+  },
+  "expect": {
+    "warnings": {
+      "absent": ["dropped claim_key", "invalid claim key"]
+    },
+    "rows": [
+      {
+        "match": {
+          "subject": "Jim timezone"
+        },
+        "assert": {
+          "claim_key": "jim/timezone",
+          "claim_key_raw": "Jim / Timezone",
+          "claim_key_status": "trusted",
+          "claim_key_source": "manual",
+          "claim_support_mode": "explicit"
+        }
+      }
+    ],
+    "rowCount": {
+      "entries": 1,
+      "activeEntries": 1,
+      "entriesWithClaimKey": 1,
+      "proposals": 0
+    },
+    "storeResult": {
+      "stored": 1,
+      "skipped": 0,
+      "rejected": 0
+    }
+  }
+}

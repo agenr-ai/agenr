@@ -1,0 +1,77 @@
+{
+  "id": "claim-keys.store.trusted-exact-sibling-auto-supersedes",
+  "kind": "store",
+  "description": "A new trusted/manual exact sibling auto-supersedes one older active sibling.",
+  "tags": ["claim-keys", "store", "supersession", "trusted"],
+  "sandbox": {
+    "reset": true,
+    "preserveOnFailure": true
+  },
+  "setup": {
+    "seedEntries": [
+      {
+        "id": "jim-timezone-old",
+        "type": "fact",
+        "subject": "Jim timezone",
+        "content": "Jim's timezone is America/New_York.",
+        "importance": 7,
+        "expiry": "permanent",
+        "claim_key": "jim/timezone",
+        "claim_key_raw": "jim/timezone",
+        "claim_key_status": "trusted",
+        "claim_key_source": "manual",
+        "claim_key_confidence": 1,
+        "claim_key_rationale": "manual claim key supplied by caller",
+        "created_at": "2026-04-01T10:00:00.000Z",
+        "updated_at": "2026-04-01T10:00:00.000Z"
+      }
+    ]
+  },
+  "input": {
+    "entries": [
+      {
+        "type": "fact",
+        "subject": "Jim timezone",
+        "content": "Jim's timezone is America/Chicago.",
+        "claim_key": "jim/timezone"
+      }
+    ]
+  },
+  "expect": {
+    "warnings": {
+      "absent": ["ambiguous multiple siblings", "skipped auto-supersession"]
+    },
+    "rows": [
+      {
+        "match": {
+          "content": "Jim's timezone is America/New_York."
+        },
+        "assert": {
+          "claim_key": "jim/timezone",
+          "claim_key_status": "trusted",
+          "claim_key_source": "manual"
+        }
+      },
+      {
+        "match": {
+          "content": "Jim's timezone is America/Chicago."
+        },
+        "assert": {
+          "claim_key": "jim/timezone",
+          "claim_key_status": "trusted",
+          "claim_key_source": "manual"
+        }
+      }
+    ],
+    "rowCount": {
+      "entries": 2,
+      "activeEntries": 1,
+      "entriesWithClaimKey": 2
+    },
+    "storeResult": {
+      "stored": 1,
+      "skipped": 0,
+      "rejected": 0
+    }
+  }
+}

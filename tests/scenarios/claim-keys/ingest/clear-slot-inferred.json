@@ -1,0 +1,43 @@
+{
+  "id": "claim-keys.ingest.clear-slot-inferred",
+  "kind": "ingest",
+  "description": "A clear slot without a manual claim key is inferred during ingest.",
+  "tags": ["claim-keys", "ingest", "inference", "trusted"],
+  "sandbox": {
+    "reset": true,
+    "preserveOnFailure": true
+  },
+  "input": {
+    "transcriptFile": "fixtures/transcripts/clear-slot-inferred.jsonl",
+    "modelFixtures": {
+      "extractionResponsesFile": "fixtures/model-fixtures/ingest-clear-slot-inferred-extraction.json",
+      "claimExtractionResponsesFile": "fixtures/model-fixtures/ingest-clear-slot-inferred-claim.json"
+    }
+  },
+  "expect": {
+    "warnings": {
+      "absent": ["rejected generic", "dropped claim key"]
+    },
+    "rows": [
+      {
+        "match": {
+          "subject": "Jim timezone"
+        },
+        "assert": {
+          "claim_key": "jim/timezone",
+          "claim_key_status": "trusted"
+        }
+      }
+    ],
+    "rowCount": {
+      "entries": 1,
+      "activeEntries": 1,
+      "entriesWithClaimKey": 1
+    },
+    "storeResult": {
+      "stored": 1,
+      "skipped": 0,
+      "rejected": 0
+    }
+  }
+}
