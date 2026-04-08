@@ -18,6 +18,7 @@ import {
   buildSurgeonProposalClaimKeyLifecycle as buildProposalClaimKeyLifecycle,
   buildSurgeonProposalLifecycleRationale as buildProposalLifecycleRationale,
   type ProposalClaimKeyLifecycleMetadata,
+  type ResolvedClaimKeyLifecycle,
 } from "../../core/claim-key-lifecycle.js";
 import {
   compactClaimKey,
@@ -373,6 +374,15 @@ interface EntityFamilyConvergenceAudit {
     preferredCanonicalEntityPrefix: string | null;
     evidence: ClaimKeyEntityFamilyEvidence[];
   }>;
+}
+
+interface ClaimKeyLifecycleSnapshot {
+  claimKey: Entry["claim_key"];
+  claimKeyRaw: Entry["claim_key_raw"];
+  claimKeyStatus: Entry["claim_key_status"];
+  claimKeySource: Entry["claim_key_source"];
+  claimKeyConfidence: Entry["claim_key_confidence"];
+  claimKeyRationale: Entry["claim_key_rationale"];
 }
 
 /**
@@ -1450,55 +1460,23 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
       entryIds: [entryId],
       reasoning: input.rationale,
       recallDelta: null,
-      details: {
-        issue_kind: input.issueKind,
-        old_claim_key: input.oldClaimKey,
-        new_claim_key: claimKey,
-        ...buildClaimKeyLifecycleAuditDetails(lifecycle),
-        proposal_source: input.source,
+      details: buildAppliedClaimKeyActionDetails({
+        issueKind: input.issueKind,
+        oldClaimKey: input.oldClaimKey,
+        newClaimKey: claimKey,
+        proposalSource: input.source,
         confidence: input.confidence,
-        auto_apply_threshold: input.promotion?.autoApplyThreshold,
-        auto_applied: true,
-        promotion_lane: input.promotion?.lane,
-        supported_auto_apply: input.support?.autoApplyClass !== null,
-        ...buildMissingBackfillSupportAuditDetails(input.support),
-        ...buildMissingBackfillShadowAuditDetails(input.shadow),
-        ...(input.compactness?.compactedFrom
-          ? {
-              claim_key_compacted_from: input.compactness.compactedFrom,
-              claim_key_compaction_reason: input.compactness.compactionReason,
-            }
-          : {}),
-        ...(input.entityFamilyAudit
-          ? {
-              competing_entity_prefixes: [...input.entityFamilyAudit.competingEntityPrefixes],
-              canonical_entity_prefix: input.entityFamilyAudit.canonicalEntityPrefix,
-              canonical_selection_reasons: [...input.entityFamilyAudit.canonicalSelectionReasons],
-              entity_family_unresolved_reason: input.entityFamilyAudit.unresolvedReason,
-              entity_family_evidence: input.entityFamilyAudit.evidence.map((evidence) => ({ ...evidence })),
-              entity_family_pair_support: input.entityFamilyAudit.pairSupport.map((support) => ({
-                ...support,
-                entityPrefixes: [...support.entityPrefixes],
-                supportingEntryIds: [...support.supportingEntryIds],
-                sharedAttributes: [...support.sharedAttributes],
-                evidence: support.evidence.map((evidence) => ({ ...evidence })),
-              })),
-            }
-          : {}),
-      },
+        lifecycle,
+        promotion: input.promotion,
+        support: input.support,
+        shadow: input.shadow,
+        compactness: input.compactness,
+        entityFamilyAudit: input.entityFamilyAudit,
+      }),
       createdAt: options.now().toISOString(),
     });
     actionsTaken += 1;
     return { projected: true, applied: true };
-
-    function restoreClaimKeyLifecycle(entry: Entry, snapshot: ReturnType<typeof snapshotClaimKeyLifecycle>): void {
-      entry.claim_key = snapshot.claimKey;
-      entry.claim_key_raw = snapshot.claimKeyRaw;
-      entry.claim_key_status = snapshot.claimKeyStatus;
-      entry.claim_key_source = snapshot.claimKeySource;
-      entry.claim_key_confidence = snapshot.claimKeyConfidence;
-      entry.claim_key_rationale = snapshot.claimKeyRationale;
-    }
   }
 
   async function persistProposal(
@@ -1522,50 +1500,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
       entryIds: proposal.entryIds,
       reasoning: proposal.rationale,
       recallDelta: null,
-      details: {
-        proposal_id: proposal.id,
-        group_id: proposal.groupId,
-        issue_kind: proposal.issueKind,
-        current_claim_keys: proposal.currentClaimKeys,
-        proposed_claim_keys: proposal.proposedClaimKeys,
-        confidence: proposal.confidence,
-        proposal_source: proposal.source,
-        auto_apply_threshold: audit?.promotion?.autoApplyThreshold,
-        auto_applied: false,
-        promotion_lane: audit?.promotion?.lane,
-        eligible_for_apply: proposal.eligibleForApply,
-        supported_candidate: audit?.supportedCandidate === true,
-        ...buildSurgeonProposalClaimKeyAuditDetails(audit?.proposalLifecycle),
-        ...buildMissingBackfillSupportAuditDetails(audit?.support),
-        ...buildMissingBackfillShadowAuditDetails(audit?.shadow),
-        ...(audit?.compactness?.compactedFrom
-          ? {
-              claim_key_compacted_from: audit.compactness.compactedFrom,
-              claim_key_compaction_reason: audit.compactness.compactionReason,
-            }
-          : {}),
-        ...(audit?.autoApplyBlocker
-          ? {
-              auto_apply_blocker: audit.autoApplyBlocker,
-            }
-          : {}),
-        ...(audit?.entityFamilyAudit
-          ? {
-              competing_entity_prefixes: [...audit.entityFamilyAudit.competingEntityPrefixes],
-              canonical_entity_prefix: audit.entityFamilyAudit.canonicalEntityPrefix,
-              canonical_selection_reasons: [...audit.entityFamilyAudit.canonicalSelectionReasons],
-              entity_family_unresolved_reason: audit.entityFamilyAudit.unresolvedReason,
-              entity_family_evidence: audit.entityFamilyAudit.evidence.map((evidence) => ({ ...evidence })),
-              entity_family_pair_support: audit.entityFamilyAudit.pairSupport.map((support) => ({
-                ...support,
-                entityPrefixes: [...support.entityPrefixes],
-                supportingEntryIds: [...support.supportingEntryIds],
-                sharedAttributes: [...support.sharedAttributes],
-                evidence: support.evidence.map((evidence) => ({ ...evidence })),
-              })),
-            }
-          : {}),
-      },
+      details: buildProposalClaimKeyActionDetails(proposal, audit),
       createdAt: proposal.createdAt,
     });
     actionsTaken += 1;
@@ -3197,14 +3132,7 @@ function buildMissingCompactionObservation(stats: MissingBackfillDecisionStats):
   );
 }
 
-function snapshotClaimKeyLifecycle(entry: Entry): {
-  claimKey: Entry["claim_key"];
-  claimKeyRaw: Entry["claim_key_raw"];
-  claimKeyStatus: Entry["claim_key_status"];
-  claimKeySource: Entry["claim_key_source"];
-  claimKeyConfidence: Entry["claim_key_confidence"];
-  claimKeyRationale: Entry["claim_key_rationale"];
-} {
+function snapshotClaimKeyLifecycle(entry: Entry): ClaimKeyLifecycleSnapshot {
   return {
     claimKey: entry.claim_key,
     claimKeyRaw: entry.claim_key_raw,
@@ -3213,6 +3141,15 @@ function snapshotClaimKeyLifecycle(entry: Entry): {
     claimKeyConfidence: entry.claim_key_confidence,
     claimKeyRationale: entry.claim_key_rationale,
   };
+}
+
+function restoreClaimKeyLifecycle(entry: Entry, snapshot: ClaimKeyLifecycleSnapshot): void {
+  entry.claim_key = snapshot.claimKey;
+  entry.claim_key_raw = snapshot.claimKeyRaw;
+  entry.claim_key_status = snapshot.claimKeyStatus;
+  entry.claim_key_source = snapshot.claimKeySource;
+  entry.claim_key_confidence = snapshot.claimKeyConfidence;
+  entry.claim_key_rationale = snapshot.claimKeyRationale;
 }
 
 function createProposal(input: Omit<SurgeonRunProposal, "id">): SurgeonRunProposal {
@@ -3268,6 +3205,76 @@ function buildMissingBackfillSupportAuditDetails(support?: MissingBackfillSuppor
   };
 }
 
+function buildAppliedClaimKeyActionDetails(input: {
+  issueKind: string;
+  oldClaimKey: string | null;
+  newClaimKey: string;
+  proposalSource: string;
+  confidence: number;
+  lifecycle: ResolvedClaimKeyLifecycle;
+  promotion?: MissingBackfillPromotionPolicy;
+  support?: MissingBackfillSupportEvaluation;
+  shadow?: MissingBackfillShadowAudit;
+  compactness?: ClaimKeyCompactnessEvaluation;
+  entityFamilyAudit?: EntityFamilyConvergenceAudit;
+}): Record<string, unknown> {
+  return {
+    issue_kind: input.issueKind,
+    old_claim_key: input.oldClaimKey,
+    new_claim_key: input.newClaimKey,
+    ...buildClaimKeyLifecycleAuditDetails(input.lifecycle),
+    proposal_source: input.proposalSource,
+    confidence: input.confidence,
+    auto_apply_threshold: input.promotion?.autoApplyThreshold,
+    auto_applied: true,
+    promotion_lane: input.promotion?.lane,
+    supported_auto_apply: input.support?.autoApplyClass !== null,
+    ...buildMissingBackfillSupportAuditDetails(input.support),
+    ...buildMissingBackfillShadowAuditDetails(input.shadow),
+    ...buildClaimKeyCompactionAuditDetails(input.compactness),
+    ...buildEntityFamilyAuditDetails(input.entityFamilyAudit),
+  };
+}
+
+function buildProposalClaimKeyActionDetails(
+  proposal: SurgeonRunProposal,
+  audit?: {
+    autoApplyBlocker?: string | null;
+    compactness?: ClaimKeyCompactnessEvaluation;
+    promotion?: MissingBackfillPromotionPolicy;
+    support?: MissingBackfillSupportEvaluation;
+    supportedCandidate?: boolean;
+    shadow?: MissingBackfillShadowAudit;
+    entityFamilyAudit?: EntityFamilyConvergenceAudit;
+    proposalLifecycle?: ProposalClaimKeyLifecycleMetadata;
+  },
+): Record<string, unknown> {
+  return {
+    proposal_id: proposal.id,
+    group_id: proposal.groupId,
+    issue_kind: proposal.issueKind,
+    current_claim_keys: proposal.currentClaimKeys,
+    proposed_claim_keys: proposal.proposedClaimKeys,
+    confidence: proposal.confidence,
+    proposal_source: proposal.source,
+    auto_apply_threshold: audit?.promotion?.autoApplyThreshold,
+    auto_applied: false,
+    promotion_lane: audit?.promotion?.lane,
+    eligible_for_apply: proposal.eligibleForApply,
+    supported_candidate: audit?.supportedCandidate === true,
+    ...buildSurgeonProposalClaimKeyAuditDetails(audit?.proposalLifecycle),
+    ...buildMissingBackfillSupportAuditDetails(audit?.support),
+    ...buildMissingBackfillShadowAuditDetails(audit?.shadow),
+    ...buildClaimKeyCompactionAuditDetails(audit?.compactness),
+    ...(audit?.autoApplyBlocker
+      ? {
+          auto_apply_blocker: audit.autoApplyBlocker,
+        }
+      : {}),
+    ...buildEntityFamilyAuditDetails(audit?.entityFamilyAudit),
+  };
+}
+
 function buildMissingBackfillShadowAuditDetails(shadow?: MissingBackfillShadowAudit): Record<string, unknown> {
   if (!shadow) {
     return {};
@@ -3277,6 +3284,34 @@ function buildMissingBackfillShadowAuditDetails(shadow?: MissingBackfillShadowAu
     shadow_threshold_only_bucket: shadow.thresholdOnlyBucket,
     shadow_would_qualify: shadow.shadowWouldQualify,
   };
+}
+
+function buildClaimKeyCompactionAuditDetails(compactness?: ClaimKeyCompactnessEvaluation): Record<string, unknown> {
+  return compactness?.compactedFrom
+    ? {
+        claim_key_compacted_from: compactness.compactedFrom,
+        claim_key_compaction_reason: compactness.compactionReason,
+      }
+    : {};
+}
+
+function buildEntityFamilyAuditDetails(entityFamilyAudit?: EntityFamilyConvergenceAudit): Record<string, unknown> {
+  return entityFamilyAudit
+    ? {
+        competing_entity_prefixes: [...entityFamilyAudit.competingEntityPrefixes],
+        canonical_entity_prefix: entityFamilyAudit.canonicalEntityPrefix,
+        canonical_selection_reasons: [...entityFamilyAudit.canonicalSelectionReasons],
+        entity_family_unresolved_reason: entityFamilyAudit.unresolvedReason,
+        entity_family_evidence: entityFamilyAudit.evidence.map((evidence) => ({ ...evidence })),
+        entity_family_pair_support: entityFamilyAudit.pairSupport.map((support) => ({
+          ...support,
+          entityPrefixes: [...support.entityPrefixes],
+          supportingEntryIds: [...support.supportingEntryIds],
+          sharedAttributes: [...support.sharedAttributes],
+          evidence: support.evidence.map((evidence) => ({ ...evidence })),
+        })),
+      }
+    : {};
 }
 
 function recordGroundedFamilyPromotionDecision(
