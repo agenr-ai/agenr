@@ -372,13 +372,18 @@ function applyExtractedClaimKeyMetadata(preparedEntries: PreparedEntry[], extrac
     }
 
     const extractedClaimKey = extractedClaimKeys.get(preparedEntry.inputIndex);
-    const acceptedClaimKey = buildExtractedAcceptedClaimKey(extractedClaimKey);
+    const acceptedClaimKey = buildExtractedAcceptedClaimKey(extractedClaimKey) ?? buildPrecomputedAcceptedClaimKey(preparedEntry.input);
     if (!acceptedClaimKey) {
       continue;
     }
 
     preparedEntry.claimKey = acceptedClaimKey;
     preparedEntry.input.claim_key = acceptedClaimKey.claimKey;
+    preparedEntry.input.claim_key_raw = acceptedClaimKey.rawClaimKey;
+    preparedEntry.input.claim_key_status = acceptedClaimKey.status;
+    preparedEntry.input.claim_key_source = acceptedClaimKey.source;
+    preparedEntry.input.claim_key_confidence = acceptedClaimKey.confidence;
+    preparedEntry.input.claim_key_rationale = acceptedClaimKey.rationale;
   }
 }
 
@@ -666,6 +671,11 @@ function buildManualAcceptedClaimKey(rawInput: StoreEntryInput | undefined, norm
     return undefined;
   }
 
+  const precomputedAcceptedClaimKey = buildPrecomputedAcceptedClaimKey(normalizedInput);
+  if (precomputedAcceptedClaimKey) {
+    return precomputedAcceptedClaimKey;
+  }
+
   return {
     claimKey: canonicalClaimKey,
     rawClaimKey: buildClaimKeyRaw(normalizedInput.claim_key_raw ?? normalizeOptionalString(rawInput?.claim_key), canonicalClaimKey),
@@ -673,6 +683,31 @@ function buildManualAcceptedClaimKey(rawInput: StoreEntryInput | undefined, norm
     source: "manual",
     confidence: 1,
     rationale: "manual claim key supplied by caller",
+    supportSourceKind: normalizeOptionalString(normalizedInput.claim_support_source_kind),
+    supportLocator: normalizeOptionalString(normalizedInput.claim_support_locator),
+    supportObservedAt: normalizeOptionalString(normalizedInput.claim_support_observed_at),
+    supportMode: normalizedInput.claim_support_mode,
+  };
+}
+
+/** Reuses lifecycle metadata precomputed upstream instead of reclassifying the key as manual. */
+function buildPrecomputedAcceptedClaimKey(normalizedInput: StoreEntryInput): AcceptedClaimKey | undefined {
+  const claimKey = normalizedInput.claim_key;
+  const status = normalizedInput.claim_key_status;
+  const source = normalizedInput.claim_key_source;
+  const confidence = normalizedInput.claim_key_confidence;
+  const rationale = normalizeOptionalString(normalizedInput.claim_key_rationale);
+  if (!claimKey || !status || !source || confidence === undefined || rationale === undefined) {
+    return undefined;
+  }
+
+  return {
+    claimKey,
+    rawClaimKey: buildClaimKeyRaw(normalizedInput.claim_key_raw, claimKey),
+    status,
+    source,
+    confidence,
+    rationale,
     supportSourceKind: normalizeOptionalString(normalizedInput.claim_support_source_kind),
     supportLocator: normalizeOptionalString(normalizedInput.claim_support_locator),
     supportObservedAt: normalizeOptionalString(normalizedInput.claim_support_observed_at),

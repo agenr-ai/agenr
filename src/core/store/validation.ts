@@ -136,6 +136,10 @@ export function validateEntriesWithIndexes(inputs: StoreEntryInput[]): IndexedVa
     }
 
     const claimKeyRaw = normalizedClaimKey ? normalizeOptionalString(input.claim_key_raw) : undefined;
+    const claimKeyStatus = normalizedClaimKey ? input.claim_key_status : undefined;
+    const claimKeySource = normalizedClaimKey ? input.claim_key_source : undefined;
+    const claimKeyConfidence = normalizedClaimKey ? input.claim_key_confidence : undefined;
+    const claimKeyRationale = normalizedClaimKey ? normalizeOptionalString(input.claim_key_rationale) : undefined;
     const claimSupportSourceKind = normalizedClaimKey ? normalizeOptionalString(input.claim_support_source_kind) : undefined;
     const claimSupportLocator = normalizedClaimKey ? normalizeOptionalString(input.claim_support_locator) : undefined;
     const claimSupportObservedAt =
@@ -162,6 +166,10 @@ export function validateEntriesWithIndexes(inputs: StoreEntryInput[]): IndexedVa
         supersedes: normalizeOptionalString(input.supersedes),
         claim_key: normalizedClaimKey,
         claim_key_raw: claimKeyRaw,
+        claim_key_status: claimKeyStatus,
+        claim_key_source: claimKeySource,
+        claim_key_confidence: claimKeyConfidence,
+        claim_key_rationale: claimKeyRationale,
         claim_support_source_kind: claimSupportSourceKind,
         claim_support_locator: claimSupportLocator,
         claim_support_observed_at: claimSupportObservedAt,

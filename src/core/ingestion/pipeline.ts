@@ -1,5 +1,5 @@
 import type { DatabasePort, EmbeddingPort, LlmPort, TranscriptPort } from "../ports.js";
-import { runBatchClaimExtraction, type ClaimExtractionConfig } from "../store/claim-extraction.js";
+import { applyClaimExtractionResultToEntry, runBatchClaimExtraction, type ClaimExtractionConfig } from "../store/claim-extraction.js";
 import { type StoreEntriesDetailedResult, type StoreEntriesOptions, type StorePipelineOptions, storeEntriesDetailed } from "../store/pipeline.js";
 import type { StoreEntryInput, StoreResult } from "../types.js";
 import { annotateExplicitClaimKeyEntry, restoreExplicitClaimKeysAfterDedup } from "./claim-key-preservation.js";
@@ -154,7 +154,7 @@ export async function ingestFile(
   };
 
   if (ports.claimExtractionLlm) {
-    await runBatchClaimExtraction(
+    const extractedClaimKeys = await runBatchClaimExtraction(
       [dedupedExtracted],
       {
         createLlm: ports.claimExtractionLlm,
@@ -167,6 +167,10 @@ export async function ingestFile(
       },
       1,
     );
+
+    for (const [entry, extractedClaimKey] of extractedClaimKeys) {
+      applyClaimExtractionResultToEntry(entry, extractedClaimKey);
+    }
   }
 
   const storeResults = await storeExtractedResults(

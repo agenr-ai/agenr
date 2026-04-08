@@ -208,6 +208,10 @@ export interface StoreEntryInput {
   supersedes?: string;
   claim_key?: string;
   claim_key_raw?: string;
+  claim_key_status?: Entry["claim_key_status"];
+  claim_key_source?: Entry["claim_key_source"];
+  claim_key_confidence?: Entry["claim_key_confidence"];
+  claim_key_rationale?: Entry["claim_key_rationale"];
   claim_support_source_kind?: string;
   claim_support_locator?: string;
   claim_support_observed_at?: string;

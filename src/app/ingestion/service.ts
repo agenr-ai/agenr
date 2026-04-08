@@ -12,7 +12,7 @@ import {
   type StoreExtractedResultsProgressEvent,
 } from "../../core/ingestion/index.js";
 import type { LlmPort } from "../../core/ports.js";
-import { runBatchClaimExtraction, type ClaimExtractionConfig } from "../../core/store/claim-extraction.js";
+import { applyClaimExtractionResultToEntry, runBatchClaimExtraction, type ClaimExtractionConfig } from "../../core/store/claim-extraction.js";
 import type { StoreEntryInput } from "../../core/types.js";
 import type { IngestPathPorts, IngestionLlmPort, UsageStats } from "./ports.js";
 
@@ -141,7 +141,7 @@ export async function ingestDiscoveredFiles(files: string[], ports: IngestPathPo
       confidenceThreshold: 0.8,
       eligibleTypes: ["fact", "preference", "decision", "lesson"],
     };
-    await runBatchClaimExtraction(
+    const extractedClaimKeys = await runBatchClaimExtraction(
       resultsToStore,
       {
         createLlm: ports.createClaimExtractionLlm,
@@ -151,6 +151,10 @@ export async function ingestDiscoveredFiles(files: string[], ports: IngestPathPo
       options.concurrency ?? DEFAULT_INGEST_CONCURRENCY,
       options.onWarning,
     );
+
+    for (const [entry, extractedClaimKey] of extractedClaimKeys) {
+      applyClaimExtractionResultToEntry(entry, extractedClaimKey);
+    }
   }
 
   const storeResults =

@@ -140,7 +140,13 @@ describe("ingestPath", () => {
 
     expect(claimCalls).toHaveLength(1);
     expect(db.insertions).toHaveLength(2);
-    expect(db.insertions[0]?.entry.claim_key).toBe("project_x/status");
+    expect(db.insertions[0]?.entry).toMatchObject({
+      claim_key: "project_x/status",
+      claim_key_status: "trusted",
+      claim_key_source: "model",
+      claim_key_confidence: 0.95,
+      claim_key_rationale: "claim key extracted from model output",
+    });
     expect(db.insertions[1]?.entry.claim_key).toBeUndefined();
   });
 
@@ -648,6 +654,10 @@ function createInput(overrides: Partial<StoreEntryInput> = {}): StoreEntryInput 
     source_context: overrides.source_context,
     claim_key: overrides.claim_key,
     claim_key_raw: overrides.claim_key_raw,
+    claim_key_status: overrides.claim_key_status,
+    claim_key_source: overrides.claim_key_source,
+    claim_key_confidence: overrides.claim_key_confidence,
+    claim_key_rationale: overrides.claim_key_rationale,
     claim_support_source_kind: overrides.claim_support_source_kind,
     claim_support_locator: overrides.claim_support_locator,
     claim_support_observed_at: overrides.claim_support_observed_at,

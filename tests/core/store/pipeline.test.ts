@@ -400,6 +400,37 @@ describe("storeEntries", () => {
     expect(db.supersedeCalls).toEqual([]);
   });
 
+  it("preserves precomputed extracted lifecycle metadata instead of reclassifying it as manual", async () => {
+    const db = new MockDatabase();
+    const embedding = new MockEmbeddingPort();
+
+    await storeEntries(
+      [
+        createInput({
+          subject: "Project X status",
+          content: "Project X is active.",
+          claim_key: "project_x/status",
+          claim_key_raw: "Project X/status",
+          claim_key_status: "trusted",
+          claim_key_source: "model",
+          claim_key_confidence: 0.95,
+          claim_key_rationale: "claim key extracted from model output",
+        }),
+      ],
+      db,
+      embedding,
+    );
+
+    expect(db.insertions[0]?.entry).toMatchObject({
+      claim_key: "project_x/status",
+      claim_key_raw: "Project X/status",
+      claim_key_status: "trusted",
+      claim_key_source: "model",
+      claim_key_confidence: 0.95,
+      claim_key_rationale: "claim key extracted from model output",
+    });
+  });
+
   it("auto-supersedes a manual claim key when exactly one active sibling exists", async () => {
     const activeSibling = createExistingEntry({
       claim_key: "jim/home_city",
@@ -881,6 +912,15 @@ function createInput(overrides: Partial<StoreEntryInput> = {}): StoreEntryInput 
     created_at: overrides.created_at,
     supersedes: overrides.supersedes,
     claim_key: overrides.claim_key,
+    claim_key_raw: overrides.claim_key_raw,
+    claim_key_status: overrides.claim_key_status,
+    claim_key_source: overrides.claim_key_source,
+    claim_key_confidence: overrides.claim_key_confidence,
+    claim_key_rationale: overrides.claim_key_rationale,
+    claim_support_source_kind: overrides.claim_support_source_kind,
+    claim_support_locator: overrides.claim_support_locator,
+    claim_support_observed_at: overrides.claim_support_observed_at,
+    claim_support_mode: overrides.claim_support_mode,
     valid_from: overrides.valid_from,
     valid_to: overrides.valid_to,
   };

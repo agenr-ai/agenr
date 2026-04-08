@@ -153,6 +153,20 @@ export interface ClaimExtractionResult {
   compactionReason?: string | null;
 }
 
+/** Applies extracted lifecycle metadata directly onto a store input for callers that precompute claim extraction before store. */
+export function applyClaimExtractionResultToEntry(entry: StoreEntryInput, extracted: ClaimExtractionResult): void {
+  if (!extracted.claimKey) {
+    return;
+  }
+
+  entry.claim_key = extracted.claimKey;
+  entry.claim_key_raw = buildAppliedClaimKeyRaw(extracted);
+  entry.claim_key_status = extracted.path === "deterministic_repair" ? "tentative" : "trusted";
+  entry.claim_key_source = extracted.path;
+  entry.claim_key_confidence = extracted.confidence;
+  entry.claim_key_rationale = buildAppliedClaimKeyRationale(extracted);
+}
+
 /**
  * Previews the best validated claim-key suggestion without applying a confidence threshold.
  *
@@ -329,7 +343,7 @@ export async function runBatchClaimExtraction(
         );
 
         if (extracted?.claimKey) {
-          entry.claim_key = extracted.claimKey;
+          applyClaimExtractionResultToEntry(entry, extracted);
           recordClaimKeyHint(hintState, extracted.claimKey);
           extractedEntries.set(entry, extracted);
         }
@@ -340,6 +354,29 @@ export async function runBatchClaimExtraction(
   }
 
   return extractedEntries;
+}
+
+/** Formats the raw extracted entity/attribute pair so precomputed lifecycle metadata matches store persistence. */
+function buildAppliedClaimKeyRaw(extracted: ClaimExtractionResult): string | undefined {
+  const rawEntity = normalizeAppliedOptionalString(extracted.rawEntity);
+  const rawAttribute = normalizeAppliedOptionalString(extracted.rawAttribute);
+  const rawClaimKey = rawEntity && rawAttribute ? `${rawEntity}/${rawAttribute}` : extracted.compactedFrom ?? undefined;
+  return rawClaimKey && rawClaimKey !== extracted.claimKey ? rawClaimKey : undefined;
+}
+
+/** Mirrors the store pipeline rationale text for precomputed claim extraction results. */
+function buildAppliedClaimKeyRationale(extracted: ClaimExtractionResult): string {
+  const rationalePrefix =
+    extracted.path === "deterministic_repair"
+      ? "claim key inferred by deterministic possessive-slot repair"
+      : `claim key extracted from ${extracted.path} output`;
+  return extracted.compactionReason ? `${rationalePrefix}; ${extracted.compactionReason}` : rationalePrefix;
+}
+
+/** Trims optional extracted strings and drops empty values. */
+function normalizeAppliedOptionalString(value: string | null | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized && normalized.length > 0 ? normalized : undefined;
 }
 
 /**
