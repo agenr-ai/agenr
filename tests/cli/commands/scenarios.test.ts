@@ -98,6 +98,37 @@ describe("registerScenariosCommand", () => {
     expect(stdout.output).toContain("/tmp/manual-key-trusted.json");
   });
 
+  it("renders JSON list output through dependency overrides", async () => {
+    const program = new Command();
+    const stdout = createOutputCapture();
+
+    registerScenariosCommand(program, {
+      stdout,
+      listScenarios: async () => [
+        {
+          id: "claim-keys.store.manual-key-trusted",
+          kind: "store",
+          filePath: "/tmp/manual-key-trusted.json",
+          description: "Manual claim key stays trusted.",
+          tags: ["store", "trusted"],
+          input: {
+            entries: [],
+          },
+          expect: {},
+        },
+      ],
+    });
+
+    await program.parseAsync(["scenarios", "list", "--json"], { from: "user" });
+
+    expect(JSON.parse(stdout.output)).toEqual([
+      expect.objectContaining({
+        id: "claim-keys.store.manual-key-trusted",
+        kind: "store",
+      }),
+    ]);
+  });
+
   it("sets exit code 1 when the run summary includes failures", async () => {
     const program = new Command();
     const stdout = createOutputCapture();
@@ -129,6 +160,54 @@ describe("registerScenariosCommand", () => {
 
     expect(process.exitCode).toBe(1);
     expect(stdout.output).toContain("FAIL  claim-keys.store.manual-key-trusted");
+  });
+
+  it("renders JSON run output and forwards fail-fast", async () => {
+    const program = new Command();
+    const stdout = createOutputCapture();
+    let capturedOptions: unknown;
+
+    registerScenariosCommand(program, {
+      stdout,
+      runScenarios: async (options): Promise<ClaimKeyScenarioSummary> => {
+        capturedOptions = options;
+        return {
+          runId: "run-1",
+          matchedCount: 1,
+          passedCount: 1,
+          failedCount: 0,
+          artifactRoot: "/tmp/artifacts",
+          results: [
+            {
+              scenarioId: "claim-keys.store.manual-key-trusted",
+              kind: "store",
+              filePath: "/tmp/manual-key-trusted.json",
+              status: "passed",
+              durationMs: 10,
+              assertionResults: [],
+              warnings: [],
+              diffSummary: [],
+            },
+          ],
+        };
+      },
+    });
+
+    await program.parseAsync(["scenarios", "run", "--id", "claim-keys.store.manual-key-trusted", "--fail-fast", "--json"], { from: "user" });
+
+    expect(capturedOptions).toEqual(
+      expect.objectContaining({
+        ids: ["claim-keys.store.manual-key-trusted"],
+        failFast: true,
+      }),
+    );
+    expect(JSON.parse(stdout.output)).toEqual(
+      expect.objectContaining({
+        matchedCount: 1,
+        passedCount: 1,
+        failedCount: 0,
+      }),
+    );
   });
 
   it("sets exit code 2 on configuration failures", async () => {

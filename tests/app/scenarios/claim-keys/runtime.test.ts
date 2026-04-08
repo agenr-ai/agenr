@@ -13,6 +13,16 @@ import {
 } from "../../../../src/app/scenarios/claim-keys/index.js";
 
 const tempDirectories: string[] = [];
+const WAVE_TWO_SCENARIO_IDS = [
+  "claim-keys.ingest.ambiguous-narrative-abstains",
+  "claim-keys.surgeon.ambiguous-family-proposal",
+  "claim-keys.surgeon.missing-key-backfill-high-confidence",
+] as const;
+const WAVE_THREE_SCENARIO_IDS = [
+  "claim-keys.ingest.clear-slot-inferred",
+  "claim-keys.store.extracted-model-key-trusted",
+  "claim-keys.store.deterministic-repair-tentative",
+] as const;
 
 afterEach(async () => {
   while (tempDirectories.length > 0) {
@@ -95,6 +105,104 @@ describe("claim-key scenario runtime", () => {
     expect(summary.matchedCount).toBe(10);
     expect(summary.passedCount).toBe(10);
     expect(summary.failedCount).toBe(0);
+  });
+
+  it("runs the Wave 2 scenario set end to end and writes surgeon artifacts", async () => {
+    const summary = await runClaimKeyScenariosRuntime({
+      ids: [...WAVE_TWO_SCENARIO_IDS],
+    });
+
+    expect(summary.matchedCount).toBe(3);
+    expect(summary.passedCount).toBe(3);
+    expect(summary.failedCount).toBe(0);
+
+    const ingestActual = JSON.parse(
+      await readFile(path.join(summary.artifactRoot, "claim-keys.ingest.ambiguous-narrative-abstains", "actual.json"), "utf8"),
+    ) as {
+      rowCount: {
+        entriesWithClaimKey: number;
+      };
+    };
+    const proposals = JSON.parse(
+      await readFile(path.join(summary.artifactRoot, "claim-keys.surgeon.ambiguous-family-proposal", "proposals.json"), "utf8"),
+    ) as Array<{
+      eligibleForApply: boolean;
+      issueKind: string;
+    }>;
+    const surgeonSummary = JSON.parse(
+      await readFile(path.join(summary.artifactRoot, "claim-keys.surgeon.missing-key-backfill-high-confidence", "surgeon-summary.json"), "utf8"),
+    ) as {
+      summary: {
+        counts: {
+          appliedBackfills: number;
+          identifiedBackfills: number;
+        };
+      };
+    };
+
+    expect(ingestActual.rowCount.entriesWithClaimKey).toBe(0);
+    expect(proposals).toEqual([
+      expect.objectContaining({
+        eligibleForApply: false,
+        issueKind: "mixed_claim_key_group",
+      }),
+    ]);
+    expect(surgeonSummary.summary.counts.identifiedBackfills).toBe(1);
+    expect(surgeonSummary.summary.counts.appliedBackfills).toBe(1);
+  });
+
+  it("runs the Wave 3 scenario set end to end and writes store artifacts", async () => {
+    const summary = await runClaimKeyScenariosRuntime({
+      ids: [...WAVE_THREE_SCENARIO_IDS],
+    });
+
+    expect(summary.matchedCount).toBe(3);
+    expect(summary.passedCount).toBe(3);
+    expect(summary.failedCount).toBe(0);
+
+    const ingestActual = JSON.parse(await readFile(path.join(summary.artifactRoot, "claim-keys.ingest.clear-slot-inferred", "actual.json"), "utf8")) as {
+      rows: Array<{
+        claim_key: string | null;
+        claim_key_status: string | null;
+        subject: string;
+      }>;
+    };
+    const trustedStoreResult = JSON.parse(
+      await readFile(path.join(summary.artifactRoot, "claim-keys.store.extracted-model-key-trusted", "store-result.json"), "utf8"),
+    ) as {
+      rejected: number;
+      skipped: number;
+      stored: number;
+    };
+    const repairActual = JSON.parse(
+      await readFile(path.join(summary.artifactRoot, "claim-keys.store.deterministic-repair-tentative", "actual.json"), "utf8"),
+    ) as {
+      rows: Array<{
+        claim_key_source: string | null;
+        claim_key_status: string | null;
+        subject: string;
+      }>;
+    };
+
+    expect(ingestActual.rows).toContainEqual(
+      expect.objectContaining({
+        claim_key: "jim/timezone",
+        claim_key_status: "trusted",
+        subject: "Jim timezone",
+      }),
+    );
+    expect(trustedStoreResult).toEqual({
+      stored: 1,
+      skipped: 0,
+      rejected: 0,
+    });
+    expect(repairActual.rows).toContainEqual(
+      expect.objectContaining({
+        claim_key_source: "deterministic_repair",
+        claim_key_status: "tentative",
+        subject: "Jim's timezone",
+      }),
+    );
   });
 
   it("preserves failed sandboxes and writes actual plus diff artifacts", async () => {
