@@ -360,7 +360,7 @@ export async function runBatchClaimExtraction(
 function buildAppliedClaimKeyRaw(extracted: ClaimExtractionResult): string | undefined {
   const rawEntity = normalizeAppliedOptionalString(extracted.rawEntity);
   const rawAttribute = normalizeAppliedOptionalString(extracted.rawAttribute);
-  const rawClaimKey = rawEntity && rawAttribute ? `${rawEntity}/${rawAttribute}` : extracted.compactedFrom ?? undefined;
+  const rawClaimKey = rawEntity && rawAttribute ? `${rawEntity}/${rawAttribute}` : (extracted.compactedFrom ?? undefined);
   return rawClaimKey && rawClaimKey !== extracted.claimKey ? rawClaimKey : undefined;
 }
 
