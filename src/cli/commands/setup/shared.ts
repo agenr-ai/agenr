@@ -1,4 +1,4 @@
-import { getAuthMethodDefinition, type AgenrAuthMethod, type AgenrConfig, type ModelConfig } from "../../../config.js";
+import { getAuthMethodDefinition, type AgenrAuthMethod, type AgenrConfigInput, type ModelConfig } from "../../../config.js";
 import type { SetupProvider } from "./types.js";
 
 /**
@@ -106,7 +106,7 @@ export function sameModelRef(left: ModelConfig | undefined, right: ModelConfig |
  * @param auth - Auth method whose stored credential should be read.
  * @returns Stored credential, or undefined when absent.
  */
-export function resolveStoredCredentialForAuth(config: AgenrConfig | undefined, auth: AgenrAuthMethod): string | undefined {
+export function resolveStoredCredentialForAuth(config: AgenrConfigInput | undefined, auth: AgenrAuthMethod): string | undefined {
   switch (auth) {
     case "openai-api-key":
       return normalizeOptionalString(config?.credentials?.openaiApiKey);
@@ -126,7 +126,7 @@ export function resolveStoredCredentialForAuth(config: AgenrConfig | undefined, 
  * @param config - Existing config values to inspect.
  * @returns Stored embedding key, or undefined when absent.
  */
-export function resolveStoredEmbeddingCredential(config: AgenrConfig | undefined): string | undefined {
+export function resolveStoredEmbeddingCredential(config: AgenrConfigInput | undefined): string | undefined {
   return normalizeOptionalString(config?.credentials?.openaiApiKey);
 }
 

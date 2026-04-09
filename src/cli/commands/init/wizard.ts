@@ -10,8 +10,9 @@ import {
   resolveClaimExtractionConfig,
   resolveConfigPath,
   resolveDbPath,
+  toAgenrConfigInput,
   type AgenrAuthMethod,
-  type AgenrConfig,
+  type AgenrConfigInput,
 } from "../../../config.js";
 import { pluralize } from "../ingest.js";
 import { formatExistingConfig, getSetupReadiness, isSetupConfigured, runSetupCore, type SetupCoreResult, type SetupProvider } from "../setup.js";
@@ -50,7 +51,7 @@ export interface InitWizardRuntime {
   /** Ingest cost estimator. */
   estimateIngestCost: typeof estimateIngestCost;
   /** Optional bulk-ingest executor used by init. */
-  runBulkIngest(files: string[], config: AgenrConfig, prompts: WizardPrompts): Promise<BulkIngestResult>;
+  runBulkIngest(files: string[], config: AgenrConfigInput, prompts: WizardPrompts): Promise<BulkIngestResult>;
 }
 
 /** Options accepted by the interactive init wizard. */
@@ -84,7 +85,10 @@ export async function runInitWizard(options: InitWizardOptions = {}): Promise<vo
   prompts.intro(banner());
 
   try {
-    const existingConfig = readConfig();
+    const existingRuntimeConfig = readConfig();
+    const existingConfig = toAgenrConfigInput(existingRuntimeConfig, {
+      defaultDbPath: resolveDbPath(),
+    });
     const hasExistingConfig = configFileExists();
     const configPath = resolveConfigPath();
     let activeConfig = hasExistingConfig ? existingConfig : undefined;
@@ -302,13 +306,13 @@ export async function runInitWizard(options: InitWizardOptions = {}): Promise<vo
 }
 
 /** Runs the init-time bulk-ingest path without shelling out to `agenr ingest`. */
-async function runBulkIngest(files: string[], config: AgenrConfig, prompts: WizardPrompts): Promise<BulkIngestResult> {
+async function runBulkIngest(files: string[], config: AgenrConfigInput, prompts: WizardPrompts): Promise<BulkIngestResult> {
   let database: Awaited<ReturnType<typeof createDatabase>> | null = null;
   const spinner = prompts.spinner();
   spinner.start(`Ingesting ${files.length} ${pluralize(files.length, "session")}... (0/${files.length} extracted)`);
 
   try {
-    database = await createDatabase(resolveDbPath(config));
+    database = await createDatabase(config.dbPath ?? resolveDbPath(config));
 
     const { provider, modelId } = resolveModel(config, "extraction");
     const { provider: dedupProvider, modelId: dedupModelId } = resolveModel(config, "dedup");
@@ -435,7 +439,7 @@ function buildIngestOptions(
 function buildInitSummary(options: {
   configPath: string;
   dbPath: string;
-  config: AgenrConfig;
+  config: AgenrConfigInput;
   detection: OpenClawDetection;
   pluginStatus: string;
   gatewayStatus: string;

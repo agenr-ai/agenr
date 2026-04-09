@@ -6,7 +6,7 @@ import * as clack from "@clack/prompts";
 import type { Command } from "commander";
 
 import { createDatabase } from "../../adapters/db/client.js";
-import { readConfig, resolveDbPath } from "../../config.js";
+import { readConfig } from "../../config.js";
 import { banner, ui } from "../../ui.js";
 
 /** CLI flags accepted by the `agenr db reset` command. */
@@ -31,7 +31,7 @@ export function registerDbCommand(program: Command): void {
 
       try {
         const config = readConfig();
-        const dbPath = resolveDbPath(config);
+        const dbPath = config.dbPath;
         const resolvedPath = resolveResetPath(dbPath);
 
         const confirmed =

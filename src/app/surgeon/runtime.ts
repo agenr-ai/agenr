@@ -16,7 +16,6 @@ import {
   type AgenrConfig,
   readConfig,
   resolveClaimExtractionConfig,
-  resolveDbPath,
 } from "../../config.js";
 import type { SurgeonRunAction } from "../../core/surgeon/domain/action-types.js";
 import { resolveSurgeonPassSequence, type ImplementedSurgeonPass, type SurgeonRunPreset } from "../../core/surgeon/domain/run-presets.js";
@@ -224,7 +223,7 @@ function loadRuntimeConfig(input: { dbPath?: string; env?: NodeJS.ProcessEnv }):
 
   return {
     config,
-    dbPath: dbPathOverride ?? resolveDbPath(config),
+    dbPath: dbPathOverride ?? config.dbPath,
   };
 }
 

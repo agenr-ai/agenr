@@ -1,4 +1,4 @@
-import { authMethodToProvider, type AgenrAuthMethod, type AgenrConfig, type ModelConfig } from "../../../config.js";
+import { authMethodToProvider, type AgenrAuthMethod, type AgenrConfigInput, type ModelConfig } from "../../../config.js";
 import { formatLabel, type WizardPrompts } from "../../ui.js";
 import { describeAuthMethod, formatModelRef, hasModelOverride, normalizeOptionalString, normalizeProvider, sameModelRef } from "./shared.js";
 import type { SetupModelDescriptor, SetupProvider, SetupRuntime } from "./types.js";
@@ -29,7 +29,7 @@ export interface SetupModelStageDefinition {
    * @param config - Config values to inspect.
    * @returns Current model override, or undefined when none is set.
    */
-  readOverride(config: AgenrConfig | undefined): ModelConfig | undefined;
+  readOverride(config: AgenrConfigInput | undefined): ModelConfig | undefined;
   /**
    * Applies one override to a config snapshot.
    *
@@ -37,7 +37,7 @@ export interface SetupModelStageDefinition {
    * @param override - Stage override to persist.
    * @returns Updated config snapshot.
    */
-  applyOverride(config: AgenrConfig, override: ModelConfig | undefined): AgenrConfig;
+  applyOverride(config: AgenrConfigInput, override: ModelConfig | undefined): AgenrConfigInput;
 }
 
 /**
@@ -103,7 +103,7 @@ export const SETUP_MODEL_STAGES: readonly SetupModelStageDefinition[] = [
  * @param config - Existing config values to inspect.
  * @returns Stage overrides keyed by stage identifier.
  */
-export function readSetupStageOverrides(config: AgenrConfig | undefined): SetupStageOverrides {
+export function readSetupStageOverrides(config: AgenrConfigInput | undefined): SetupStageOverrides {
   return SETUP_MODEL_STAGES.reduce<SetupStageOverrides>(
     (overrides, stage) => ({
       ...overrides,
@@ -126,7 +126,7 @@ export function readSetupStageOverrides(config: AgenrConfig | undefined): SetupS
  * @param overrides - Per-stage override selections.
  * @returns Updated config snapshot.
  */
-export function applySetupStageOverrides(config: AgenrConfig, overrides: SetupStageOverrides): AgenrConfig {
+export function applySetupStageOverrides(config: AgenrConfigInput, overrides: SetupStageOverrides): AgenrConfigInput {
   return SETUP_MODEL_STAGES.reduce((nextConfig, stage) => stage.applyOverride(nextConfig, overrides[stage.id]), config);
 }
 
@@ -138,7 +138,7 @@ export function applySetupStageOverrides(config: AgenrConfig, overrides: SetupSt
  * @param previousConfig - Previous config values when reconfiguring.
  * @returns Nothing.
  */
-export function appendSetupStageSummaryLines(lines: string[], config: AgenrConfig, previousConfig?: AgenrConfig): void {
+export function appendSetupStageSummaryLines(lines: string[], config: AgenrConfigInput, previousConfig?: AgenrConfigInput): void {
   for (const stage of SETUP_MODEL_STAGES) {
     const current = stage.readOverride(config);
     const previous = stage.readOverride(previousConfig);
@@ -161,7 +161,7 @@ export function appendSetupStageSummaryLines(lines: string[], config: AgenrConfi
  * @param config - Config values to inspect.
  * @returns Normalized provider identifiers in first-seen order.
  */
-export function collectSetupStageProviders(config: AgenrConfig | undefined): string[] {
+export function collectSetupStageProviders(config: AgenrConfigInput | undefined): string[] {
   const providers = new Set<string>();
 
   for (const stage of SETUP_MODEL_STAGES) {
@@ -230,7 +230,7 @@ export function resolveProbeModel(auth: AgenrAuthMethod, runtime: SetupRuntime):
 export function buildStageAuthOptions(
   runtime: SetupRuntime,
   defaultAuth: AgenrAuthMethod,
-  existingConfig?: AgenrConfig,
+  existingConfig?: AgenrConfigInput,
 ): Array<{ value: AgenrAuthMethod; label: string; hint?: string }> {
   const seen = new Set<AgenrAuthMethod>();
   const options: Array<{ value: AgenrAuthMethod; label: string; hint?: string }> = [];
@@ -377,9 +377,9 @@ function getPreferredModelIds(auth: AgenrAuthMethod): readonly string[] {
  * @returns Persistable claim-extraction config, or undefined when empty.
  */
 function buildNextClaimExtractionConfig(
-  existing: AgenrConfig["claimExtraction"] | undefined,
+  existing: AgenrConfigInput["claimExtraction"] | undefined,
   model: ModelConfig | undefined,
-): AgenrConfig["claimExtraction"] | undefined {
+): AgenrConfigInput["claimExtraction"] | undefined {
   if (!existing && !model) {
     return undefined;
   }
@@ -398,7 +398,9 @@ function buildNextClaimExtractionConfig(
  * @param config - Candidate claim-extraction config.
  * @returns True when the config should be persisted.
  */
-function hasPersistedClaimExtractionConfig(config: AgenrConfig["claimExtraction"] | undefined): config is NonNullable<AgenrConfig["claimExtraction"]> {
+function hasPersistedClaimExtractionConfig(
+  config: AgenrConfigInput["claimExtraction"] | undefined,
+): config is NonNullable<AgenrConfigInput["claimExtraction"]> {
   if (!config) {
     return false;
   }
@@ -420,9 +422,9 @@ function hasPersistedClaimExtractionConfig(config: AgenrConfig["claimExtraction"
  * @returns Persistable surgeon config, or undefined when empty.
  */
 function buildNextSurgeonConfig(
-  existingSurgeon: AgenrConfig["surgeon"] | undefined,
+  existingSurgeon: AgenrConfigInput["surgeon"] | undefined,
   surgeonModel: ModelConfig | undefined,
-): AgenrConfig["surgeon"] | undefined {
+): AgenrConfigInput["surgeon"] | undefined {
   if (!existingSurgeon && !surgeonModel) {
     return undefined;
   }
@@ -441,7 +443,7 @@ function buildNextSurgeonConfig(
  * @param config - Candidate surgeon config.
  * @returns True when the config should be persisted.
  */
-function hasPersistedSurgeonConfig(config: AgenrConfig["surgeon"] | undefined): config is NonNullable<AgenrConfig["surgeon"]> {
+function hasPersistedSurgeonConfig(config: AgenrConfigInput["surgeon"] | undefined): config is NonNullable<AgenrConfigInput["surgeon"]> {
   if (!config) {
     return false;
   }

@@ -7,7 +7,7 @@ import { createEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } 
 import { localTranscriptFiles } from "../../adapters/files/transcript-files.js";
 import { createLlmClient, resolveLlmApiKey, resolveModel, type UsageStats } from "../../adapters/llm.js";
 import { openClawTranscriptParser } from "../../adapters/openclaw/transcript/parser.js";
-import { readConfig, resolveClaimExtractionConfig, resolveDbPath } from "../../config.js";
+import { readConfig, resolveClaimExtractionConfig } from "../../config.js";
 import {
   type DedupResult,
   type ExtractedFileResult,
@@ -82,7 +82,7 @@ function registerIngestEntriesCommand(parent: Command): void {
 
     try {
       const config = readConfig();
-      const dbPath = resolveDbPath(config);
+      const dbPath = config.dbPath;
       db = await createDatabase(dbPath);
 
       const { provider, modelId } = resolveModel(config, "extraction");

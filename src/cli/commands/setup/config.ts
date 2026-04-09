@@ -1,6 +1,6 @@
 import { EMBEDDING_MODEL, resolveEmbeddingApiKey } from "../../../adapters/embeddings.js";
 import { resolveLlmCredentials } from "../../../adapters/llm.js";
-import { type AgenrAuthMethod, type AgenrConfig, type AgenrStoredCredentials } from "../../../config.js";
+import { type AgenrAuthMethod, type AgenrConfigInput, type AgenrStoredCredentials } from "../../../config.js";
 import { formatLabel, formatPathForDisplay } from "../../ui.js";
 import { appendSetupStageSummaryLines, applySetupStageOverrides, collectSetupStageProviders, type SetupStageOverrides } from "./stages.js";
 import {
@@ -41,7 +41,7 @@ export interface SavedConfigSummaryOptions {
   /** Whether embeddings reuse the main OpenAI key. */
   embeddingUsesPrimaryKey: boolean;
   /** Previously loaded config, when setup is reconfiguring an existing file. */
-  previousConfig?: AgenrConfig;
+  previousConfig?: AgenrConfigInput;
   /** Whether the saved config can run agenr commands immediately. */
   ready: boolean;
   /** Human-readable blocker when the saved config still needs credentials. */
@@ -55,14 +55,14 @@ export interface SavedConfigSummaryOptions {
  * @param values - Fresh setup selections that should be persisted.
  * @returns Persisted config snapshot.
  */
-export function buildNextConfig(existingConfig: AgenrConfig | undefined, values: BuildNextConfigValues): AgenrConfig {
+export function buildNextConfig(existingConfig: AgenrConfigInput | undefined, values: BuildNextConfigValues): AgenrConfigInput {
   const nextCredentials = mergeStoredCredentials(existingConfig?.credentials, {
     auth: values.auth,
     primaryCredential: values.primaryCredential,
     embeddingApiKey: values.embeddingApiKey,
   });
 
-  const baseConfig: AgenrConfig = {
+  const baseConfig: AgenrConfigInput = {
     ...existingConfig,
     auth: values.auth,
     provider: values.provider,
@@ -82,7 +82,7 @@ export function buildNextConfig(existingConfig: AgenrConfig | undefined, values:
  * @param dbPath - Effective database path.
  * @returns Multi-line summary string.
  */
-export function formatExistingConfig(config: AgenrConfig, configPath: string, dbPath: string): string {
+export function formatExistingConfig(config: AgenrConfigInput, configPath: string, dbPath: string): string {
   const lines = [
     formatLabel("Config", formatPathForDisplay(configPath)),
     formatLabel("Auth", config.auth ? describeAuthMethod(config.auth) : "(not set)"),
@@ -104,7 +104,7 @@ export function formatExistingConfig(config: AgenrConfig, configPath: string, db
  * @param env - Process environment used for credential fallback checks.
  * @returns True when the config is ready to run agenr commands.
  */
-export function isSetupConfigured(config: AgenrConfig | undefined, env: NodeJS.ProcessEnv = process.env): boolean {
+export function isSetupConfigured(config: AgenrConfigInput | undefined, env: NodeJS.ProcessEnv = process.env): boolean {
   return getSetupReadiness(config, env).ready;
 }
 
@@ -115,7 +115,7 @@ export function isSetupConfigured(config: AgenrConfig | undefined, env: NodeJS.P
  * @param env - Process environment used for credential fallback checks.
  * @returns Readiness plus a human-readable blocker when unavailable.
  */
-export function getSetupReadiness(config: AgenrConfig | undefined, env: NodeJS.ProcessEnv = process.env): { ready: boolean; guidance?: string } {
+export function getSetupReadiness(config: AgenrConfigInput | undefined, env: NodeJS.ProcessEnv = process.env): { ready: boolean; guidance?: string } {
   const provider = normalizeOptionalString(config?.provider);
   const model = normalizeOptionalString(config?.model);
   if (!provider || !model) {
@@ -154,7 +154,7 @@ export function getSetupReadiness(config: AgenrConfig | undefined, env: NodeJS.P
  * @param options - Summary rendering options.
  * @returns Multi-line saved-config summary.
  */
-export function formatSavedConfigSummary(config: AgenrConfig, configPath: string, dbPath: string, options: SavedConfigSummaryOptions): string {
+export function formatSavedConfigSummary(config: AgenrConfigInput, configPath: string, dbPath: string, options: SavedConfigSummaryOptions): string {
   const lines = [
     formatLabel("Config", formatPathForDisplay(configPath)),
     formatLabel("Auth", config.auth ? describeAuthMethod(config.auth) : "(not set)"),
@@ -182,7 +182,7 @@ export function formatSavedConfigSummary(config: AgenrConfig, configPath: string
  * @param config - Config values to describe.
  * @returns Human-readable primary-credential summary.
  */
-function describePrimaryCredentialConfig(config: AgenrConfig): string {
+function describePrimaryCredentialConfig(config: AgenrConfigInput): string {
   const auth = normalizeAuthMethod(config.auth);
   if (!auth) {
     return "not set";
@@ -209,7 +209,7 @@ function describePrimaryCredentialConfig(config: AgenrConfig): string {
  * @param config - Config values to describe.
  * @returns Human-readable embedding summary.
  */
-function describeEmbeddingConfig(config: AgenrConfig): string {
+function describeEmbeddingConfig(config: AgenrConfigInput): string {
   if (hasSecret(resolveStoredEmbeddingCredential(config))) {
     return normalizeAuthMethod(config.auth) === "openai-api-key" ? "uses the primary OpenAI key" : "separate OpenAI key configured";
   }

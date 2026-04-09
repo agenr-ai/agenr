@@ -1,5 +1,5 @@
 import { EMBEDDING_MODEL } from "../../../adapters/embeddings.js";
-import { authMethodToProvider, getAuthMethodDefinition, type AgenrAuthMethod, type AgenrConfig, type ModelConfig } from "../../../config.js";
+import { authMethodToProvider, getAuthMethodDefinition, type AgenrAuthMethod, type AgenrConfigInput, type ModelConfig } from "../../../config.js";
 import { cliPrompts, resolveUserPath, ui, type WizardPrompts } from "../../ui.js";
 import { buildNextConfig, formatSavedConfigSummary } from "./config.js";
 import {
@@ -255,7 +255,7 @@ async function preparePrimaryCredential(
   prompts: WizardPrompts,
   runtime: SetupRuntime,
   auth: AgenrAuthMethod,
-  existingConfig: AgenrConfig | undefined,
+  existingConfig: AgenrConfigInput | undefined,
   provider: SetupCoreResult["provider"],
   probeModel: string,
 ): Promise<SelectedPrimaryCredential | null> {
@@ -314,7 +314,7 @@ function authRequiresManualCredential(auth: AgenrAuthMethod): boolean {
  * @param existingConfig - Existing config values used for reuse prompts.
  * @returns Credential string, or `null` when cancelled.
  */
-async function promptManualCredential(prompts: WizardPrompts, auth: AgenrAuthMethod, existingConfig?: AgenrConfig): Promise<string | null> {
+async function promptManualCredential(prompts: WizardPrompts, auth: AgenrAuthMethod, existingConfig?: AgenrConfigInput): Promise<string | null> {
   const existingCredential = resolveStoredCredentialForAuth(existingConfig, auth);
   if (existingCredential) {
     const useExisting = await prompts.confirm({
@@ -350,7 +350,7 @@ async function promptManualCredential(prompts: WizardPrompts, auth: AgenrAuthMet
  * @param existingConfig - Existing config values used for reuse prompts.
  * @returns Embedding API key, or `null` when cancelled.
  */
-async function promptEmbeddingApiKey(prompts: WizardPrompts, existingConfig?: AgenrConfig): Promise<string | null> {
+async function promptEmbeddingApiKey(prompts: WizardPrompts, existingConfig?: AgenrConfigInput): Promise<string | null> {
   const existingEmbeddingKey = resolveStoredEmbeddingCredential(existingConfig);
   if (existingEmbeddingKey) {
     const useExisting = await prompts.confirm({
@@ -645,7 +645,7 @@ async function promptTaskModelOverrides(
   options: {
     defaultAuth: AgenrAuthMethod;
     defaultModel: string;
-    existingConfig?: AgenrConfig;
+    existingConfig?: AgenrConfigInput;
   },
 ): Promise<SetupStageOverrides | null> {
   const customize = await prompts.confirm({
@@ -697,7 +697,7 @@ async function promptStageOverride(
     defaultAuth: AgenrAuthMethod;
     defaultModel: string;
     current?: ModelConfig;
-    existingConfig?: AgenrConfig;
+    existingConfig?: AgenrConfigInput;
   },
 ): Promise<ModelConfig | undefined | null> {
   const defaultRef = `${describeAuthMethod(options.defaultAuth)} / ${options.defaultModel}`;

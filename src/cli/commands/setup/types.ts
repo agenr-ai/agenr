@@ -1,4 +1,4 @@
-import type { AgenrAuthMethod, AgenrConfig, AgenrProvider } from "../../../config.js";
+import type { AgenrAuthMethod, AgenrConfigInput, AgenrProvider } from "../../../config.js";
 import type { LlmCredentialProbeResult } from "../../../adapters/llm.js";
 import type { WizardPrompts } from "../../ui.js";
 
@@ -34,19 +34,19 @@ export interface SetupRuntime {
   /** Resolves the effective config file path. */
   resolveConfigPath(): string;
   /** Resolves the effective database path. */
-  resolveDbPath(config?: AgenrConfig): string;
+  resolveDbPath(config?: AgenrConfigInput): string;
   /** Persists the updated config. */
-  writeConfig(config: AgenrConfig): void;
+  writeConfig(config: AgenrConfigInput): void;
   /** Lists available models for one setup provider. */
   getModelsForProvider(provider: SetupProvider): SetupModelDescriptor[];
   /** Probes credentials for one auth method. */
-  probeCredentials(auth: AgenrAuthMethod, config?: AgenrConfig): LlmCredentialProbeResult;
+  probeCredentials(auth: AgenrAuthMethod, config?: AgenrConfigInput): LlmCredentialProbeResult;
   /** Verifies that the chosen LLM credential works. */
   testLlmConnection(provider: SetupProvider, modelId: string, apiKey: string): Promise<ConnectionTestResult>;
   /** Verifies that the embedding credential works. */
   testEmbeddingConnection(apiKey: string, modelId: string): Promise<ConnectionTestResult>;
   /** Explains whether the saved config can run agenr commands immediately. */
-  getSetupReadiness(config: AgenrConfig): { ready: boolean; guidance?: string };
+  getSetupReadiness(config: AgenrConfigInput): { ready: boolean; guidance?: string };
 }
 
 /**
@@ -54,7 +54,7 @@ export interface SetupRuntime {
  */
 export interface SetupCoreOptions {
   /** Existing config values used for defaults and key reuse prompts. */
-  existingConfig?: AgenrConfig;
+  existingConfig?: AgenrConfigInput;
   /** Prompt implementation used by the interactive flow. */
   prompts?: WizardPrompts;
   /** Runtime dependencies used by the interactive flow. */
@@ -66,7 +66,7 @@ export interface SetupCoreOptions {
  */
 export interface SetupCoreResult {
   /** Persisted agenr config. */
-  config: AgenrConfig;
+  config: AgenrConfigInput;
   /** Config file path written by setup. */
   configPath: string;
   /** Database path stored in the config. */

@@ -4,7 +4,22 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { configFileExists, readConfig, resolveClaimExtractionConfig, writeConfig } from "../src/config.js";
+import {
+  configFileExists,
+  DEFAULT_API_PORT,
+  DEFAULT_CLAIM_EXTRACTION_CONCURRENCY,
+  DEFAULT_CLAIM_EXTRACTION_CONFIDENCE_THRESHOLD,
+  DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES,
+  DEFAULT_SURGEON_CONTEXT_LIMIT,
+  DEFAULT_SURGEON_COST_CAP,
+  DEFAULT_SURGEON_DAILY_COST_CAP,
+  DEFAULT_SURGEON_RETIREMENT_PROTECT_MIN_IMPORTANCE,
+  DEFAULT_SURGEON_RETIREMENT_PROTECT_RECALLED_DAYS,
+  DEFAULT_SURGEON_SKIP_RECENTLY_EVALUATED_DAYS,
+  readConfig,
+  resolveClaimExtractionConfig,
+  writeConfig,
+} from "../src/config.js";
 
 const tempDirs: string[] = [];
 
@@ -39,11 +54,33 @@ describe("writeConfig", () => {
         openaiApiKey: "sk-test",
       },
       dbPath: path.join(directory, "knowledge.db"),
+      apiPort: DEFAULT_API_PORT,
+      claimExtraction: {
+        enabled: true,
+        confidenceThreshold: DEFAULT_CLAIM_EXTRACTION_CONFIDENCE_THRESHOLD,
+        eligibleTypes: [...DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES],
+        concurrency: DEFAULT_CLAIM_EXTRACTION_CONCURRENCY,
+      },
+      surgeon: {
+        costCap: DEFAULT_SURGEON_COST_CAP,
+        dailyCostCap: DEFAULT_SURGEON_DAILY_COST_CAP,
+        contextLimit: DEFAULT_SURGEON_CONTEXT_LIMIT,
+        passes: {
+          retirement: {
+            protectRecalledDays: DEFAULT_SURGEON_RETIREMENT_PROTECT_RECALLED_DAYS,
+            protectMinImportance: DEFAULT_SURGEON_RETIREMENT_PROTECT_MIN_IMPORTANCE,
+            skipRecentlyEvaluatedDays: DEFAULT_SURGEON_SKIP_RECENTLY_EVALUATED_DAYS,
+          },
+        },
+      },
     });
 
     const raw = await readFile(configPath, "utf8");
     expect(raw).toContain('\n  "auth": "openai-api-key"');
     expect(raw).toContain('\n  "provider": "openai"');
+    expect(raw).not.toContain('"apiPort"');
+    expect(raw).not.toContain('"claimExtraction"');
+    expect(raw).not.toContain('"surgeon"');
     expect(raw.endsWith("\n")).toBe(true);
   });
 
@@ -84,8 +121,19 @@ describe("readConfig", () => {
       }),
     );
 
-    expect(() => readConfig({ configPath })).toThrow(/unsupported agenr config field\(s\)/i);
+    expect(() => readConfig({ configPath })).toThrow(/invalid agenr config/i);
+    expect(() => readConfig({ configPath })).toThrow(/apiKey/);
     expect(() => readConfig({ configPath })).toThrow(/credentials\.openaiApiKey|credentials\.anthropicApiKey/i);
+  });
+
+  it("fails loudly on malformed JSON", async () => {
+    const directory = await createTempDir();
+    const configPath = path.join(directory, ".agenr", "config.json");
+
+    await mkdir(path.dirname(configPath), { recursive: true });
+    await writeFile(configPath, '{"provider":"openai"', "utf8");
+
+    expect(() => readConfig({ configPath })).toThrow(/json parse failed/i);
   });
 });
 

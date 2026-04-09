@@ -4,7 +4,7 @@ import { InvalidArgumentError, Option, type Command } from "commander";
 import { createDatabase } from "../../adapters/db/client.js";
 import { createRecallAdapter } from "../../adapters/db/recall-adapter.js";
 import { createEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../../adapters/embeddings.js";
-import { readConfig, resolveDbPath } from "../../config.js";
+import { readConfig } from "../../config.js";
 import { recall, type RecallInput, type RecallOutput } from "../../core/recall/index.js";
 import { ENTRY_TYPES, type EntryType } from "../../core/types.js";
 import { banner, ui } from "../../ui.js";
@@ -49,7 +49,7 @@ export function registerRecallCommand(program: Command): void {
 
       try {
         const config = readConfig();
-        const dbPath = resolveDbPath(config);
+        const dbPath = config.dbPath;
         const embeddingClient = createEmbeddingClient(resolveEmbeddingApiKey(config), resolveEmbeddingModel(config));
         db = await createDatabase(dbPath);
         const adapter = createRecallAdapter(db, embeddingClient);

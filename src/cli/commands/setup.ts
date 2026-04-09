@@ -3,7 +3,7 @@ import type { Command } from "commander";
 
 import { createEmbeddingClient } from "../../adapters/embeddings.js";
 import { createLlmClient, probeLlmCredentials } from "../../adapters/llm.js";
-import { configFileExists, readConfig, resolveConfigPath, resolveDbPath, writeConfig } from "../../config.js";
+import { configFileExists, readConfig, resolveConfigPath, resolveDbPath, toAgenrConfigInput, writeConfig } from "../../config.js";
 import { banner, cliPrompts, ui } from "../ui.js";
 import { formatExistingConfig, getSetupReadiness, isSetupConfigured } from "./setup/config.js";
 import { filterSetupModelsForAuth, buildStageAuthOptions } from "./setup/stages.js";
@@ -90,7 +90,10 @@ export async function runSetupCommand(): Promise<void> {
 
   try {
     const existingConfigPath = runtime.resolveConfigPath();
-    const existingConfig = readConfig();
+    const existingRuntimeConfig = readConfig();
+    const existingConfig = toAgenrConfigInput(existingRuntimeConfig, {
+      defaultDbPath: resolveDbPath(),
+    });
     const hasExistingConfig = configFileExists();
 
     if (hasExistingConfig) {

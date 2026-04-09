@@ -372,7 +372,7 @@ async function resolveSessionsDirectory(targetPath: string): Promise<string> {
 function resolveEpisodeDbPath(config: AgenrConfig | undefined, overridePath: string | undefined): string {
   const normalizedOverride = overridePath?.trim();
   if (!normalizedOverride) {
-    return resolveDbPath(config);
+    return config?.dbPath ?? resolveDbPath(config);
   }
 
   if (normalizedOverride === ":memory:" || normalizedOverride.startsWith("file:")) {

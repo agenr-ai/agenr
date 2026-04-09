@@ -1,0 +1,175 @@
+import { describe, expect, it } from "vitest";
+
+import { canonicalizeAgenrConfigInput, parseAgenrConfig, toAgenrConfigInput } from "../../../src/adapters/config/parse-agenr-config.js";
+import {
+  DEFAULT_API_PORT,
+  DEFAULT_CLAIM_EXTRACTION_CONCURRENCY,
+  DEFAULT_CLAIM_EXTRACTION_CONFIDENCE_THRESHOLD,
+  DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES,
+  DEFAULT_SURGEON_CONTEXT_LIMIT,
+  DEFAULT_SURGEON_COST_CAP,
+  DEFAULT_SURGEON_DAILY_COST_CAP,
+  DEFAULT_SURGEON_RETIREMENT_PROTECT_MIN_IMPORTANCE,
+  DEFAULT_SURGEON_RETIREMENT_PROTECT_RECALLED_DAYS,
+  DEFAULT_SURGEON_SKIP_RECENTLY_EVALUATED_DAYS,
+} from "../../../src/config.js";
+
+const DEFAULT_DB_PATH = "/tmp/agenr-default/knowledge.db";
+
+describe("parseAgenrConfig", () => {
+  it("resolves defaults for a valid partial config", () => {
+    const result = parseAgenrConfig(
+      {
+        provider: "openai",
+        model: "gpt-5.4-mini",
+        credentials: {
+          openaiApiKey: "sk-test",
+        },
+      },
+      { defaultDbPath: DEFAULT_DB_PATH },
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        provider: "openai",
+        model: "gpt-5.4-mini",
+        credentials: {
+          openaiApiKey: "sk-test",
+        },
+        dbPath: DEFAULT_DB_PATH,
+        apiPort: DEFAULT_API_PORT,
+        claimExtraction: {
+          enabled: true,
+          confidenceThreshold: DEFAULT_CLAIM_EXTRACTION_CONFIDENCE_THRESHOLD,
+          eligibleTypes: [...DEFAULT_CLAIM_EXTRACTION_ELIGIBLE_TYPES],
+          concurrency: DEFAULT_CLAIM_EXTRACTION_CONCURRENCY,
+        },
+        surgeon: {
+          costCap: DEFAULT_SURGEON_COST_CAP,
+          dailyCostCap: DEFAULT_SURGEON_DAILY_COST_CAP,
+          contextLimit: DEFAULT_SURGEON_CONTEXT_LIMIT,
+          passes: {
+            retirement: {
+              protectRecalledDays: DEFAULT_SURGEON_RETIREMENT_PROTECT_RECALLED_DAYS,
+              protectMinImportance: DEFAULT_SURGEON_RETIREMENT_PROTECT_MIN_IMPORTANCE,
+              skipRecentlyEvaluatedDays: DEFAULT_SURGEON_SKIP_RECENTLY_EVALUATED_DAYS,
+            },
+          },
+        },
+      },
+    });
+  });
+
+  it("reports explicit issues for wrong-shaped nested fields", () => {
+    const result = parseAgenrConfig(
+      {
+        provider: "bogus",
+        credentials: "sk-test",
+        claimExtraction: {
+          concurrency: 0,
+        },
+        surgeon: {
+          passes: {
+            retirement: {
+              protectMinImportance: -1,
+            },
+          },
+        },
+        apiPort: "3000",
+      },
+      { defaultDbPath: DEFAULT_DB_PATH },
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error("Expected config parse to fail.");
+    }
+
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        { path: "provider", message: "Expected a supported provider." },
+        { path: "credentials", message: "Expected an object." },
+        { path: "claimExtraction.concurrency", message: "Expected a positive integer." },
+        { path: "surgeon.passes.retirement.protectMinImportance", message: "Expected a non-negative integer." },
+        { path: "apiPort", message: "Expected an integer from 1 to 65535." },
+      ]),
+    );
+  });
+
+  it("rejects mismatched auth and provider combinations", () => {
+    const result = parseAgenrConfig(
+      {
+        auth: "openai-api-key",
+        provider: "anthropic",
+      },
+      { defaultDbPath: DEFAULT_DB_PATH },
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      issues: [{ path: "provider", message: 'Provider "anthropic" does not match auth method "openai-api-key".' }],
+    });
+  });
+});
+
+describe("canonicalizeAgenrConfigInput", () => {
+  it("trims persisted values and preserves only explicit fields", () => {
+    const result = canonicalizeAgenrConfigInput(
+      {
+        provider: "  openai  ",
+        model: " gpt-5.4-mini ",
+        credentials: {
+          openaiApiKey: " sk-test ",
+        },
+        claimExtraction: {
+          enabled: false,
+        },
+      },
+      { defaultDbPath: DEFAULT_DB_PATH },
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        provider: "openai",
+        model: "gpt-5.4-mini",
+        credentials: {
+          openaiApiKey: "sk-test",
+        },
+        claimExtraction: {
+          enabled: false,
+        },
+      },
+    });
+  });
+});
+
+describe("toAgenrConfigInput", () => {
+  it("strips resolved defaults back to the sparse persisted shape", () => {
+    const parsed = parseAgenrConfig(
+      {
+        provider: "openai",
+        model: "gpt-5.4-mini",
+        dbPath: "/tmp/custom.db",
+        claimExtraction: {
+          enabled: false,
+        },
+      },
+      { defaultDbPath: DEFAULT_DB_PATH },
+    );
+
+    if (!parsed.ok) {
+      throw new Error("Expected config parse to succeed.");
+    }
+
+    expect(toAgenrConfigInput(parsed.value, { defaultDbPath: DEFAULT_DB_PATH })).toEqual({
+      provider: "openai",
+      model: "gpt-5.4-mini",
+      dbPath: "/tmp/custom.db",
+      claimExtraction: {
+        enabled: false,
+      },
+    });
+  });
+});

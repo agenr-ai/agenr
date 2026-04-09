@@ -49,12 +49,7 @@ export function pushIssue(issues: ValidationIssue[], path: string, message: stri
  * @param basePath - Prefix prepended to emitted issue paths.
  * @param issues - Mutable validation issue collection.
  */
-export function pushUnexpectedFields(
-  value: Record<string, unknown>,
-  allowedKeys: ReadonlySet<string>,
-  basePath: string,
-  issues: ValidationIssue[],
-): void {
+export function pushUnexpectedFields(value: Record<string, unknown>, allowedKeys: ReadonlySet<string>, basePath: string, issues: ValidationIssue[]): void {
   for (const key of Object.keys(value)) {
     if (allowedKeys.has(key)) {
       continue;
@@ -137,12 +132,7 @@ export function parseOptionalTrimmedString(
  * @param message - Optional validation failure message override.
  * @returns Boolean value when valid, otherwise `undefined`.
  */
-export function parseOptionalBoolean(
-  value: unknown,
-  path: string,
-  issues: ValidationIssue[],
-  message = "Expected a boolean.",
-): boolean | undefined {
+export function parseOptionalBoolean(value: unknown, path: string, issues: ValidationIssue[], message = "Expected a boolean."): boolean | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -164,12 +154,7 @@ export function parseOptionalBoolean(
  * @param bounds - Inclusive integer bounds and optional message override.
  * @returns Integer value when valid, otherwise `undefined`.
  */
-export function parseOptionalIntegerInRange(
-  value: unknown,
-  path: string,
-  issues: ValidationIssue[],
-  bounds: IntegerRangeBounds,
-): number | undefined {
+export function parseOptionalIntegerInRange(value: unknown, path: string, issues: ValidationIssue[], bounds: IntegerRangeBounds): number | undefined {
   if (value === undefined) {
     return undefined;
   }
