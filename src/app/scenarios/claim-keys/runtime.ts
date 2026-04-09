@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { getModel } from "@mariozechner/pi-ai";
@@ -16,6 +16,7 @@ import type { Entry, StoreResult } from "../../../core/types.js";
 import { runSurgeon } from "../../surgeon/service.js";
 import { buildClaimKeyScenarioAssertions, summarizeClaimKeyScenarioDiffs } from "./assertions.js";
 import { createDeterministicEmbeddingPort, createFixtureIngestionLlm, createFixtureLlm } from "./deterministic-fixtures.js";
+import { loadClaimExtractionFixtureResponses, loadExtractionFixtureResponses, loadSeedFixtureEntries } from "./fixture-loader.js";
 import { getDefaultClaimKeyScenarioRoot, loadClaimKeyScenarios } from "./load-scenarios.js";
 import { createClaimKeyScenarioSandbox } from "./sandbox.js";
 import { seedClaimKeyScenarioEntries } from "./seed.js";
@@ -276,16 +277,9 @@ async function seedScenarioSetup(
   rootDir: string,
 ): Promise<void> {
   const seedEntries = [...(scenario.setup?.seedEntries ?? [])];
-
-  if (scenario.setup?.seedFixtureFile) {
-    const fixtureEntries = JSON.parse(await readFile(path.join(rootDir, scenario.setup.seedFixtureFile), "utf8")) as unknown;
-    if (!Array.isArray(fixtureEntries)) {
-      throw new Error(`Seed fixture ${scenario.setup.seedFixtureFile} must contain an array.`);
-    }
-
-    for (const entry of fixtureEntries) {
-      seedEntries.push(entry as never);
-    }
+  const fixtureEntries = await loadSeedFixtureEntries(rootDir, scenario.setup?.seedFixtureFile);
+  if (fixtureEntries) {
+    seedEntries.push(...fixtureEntries);
   }
 
   if (seedEntries.length > 0) {
@@ -309,8 +303,8 @@ async function runIngestScenario(
   rootDir: string,
 ): Promise<StoreResult> {
   const embedding = createDeterministicEmbeddingPort();
-  const extractionResponses = await loadFixtureResponses(rootDir, scenario.input.modelFixtures?.extractionResponsesFile);
-  const claimExtractionResponses = await loadFixtureResponses(rootDir, scenario.input.modelFixtures?.claimExtractionResponsesFile);
+  const extractionResponses = await loadExtractionFixtureResponses(rootDir, scenario.input.modelFixtures?.extractionResponsesFile);
+  const claimExtractionResponses = await loadClaimExtractionFixtureResponses(rootDir, scenario.input.modelFixtures?.claimExtractionResponsesFile);
   if (!extractionResponses) {
     throw new Error(`Scenario ${scenario.id} is missing extraction fixture responses.`);
   }
@@ -369,7 +363,7 @@ async function runStoreScenario(
   warnings: string[],
   rootDir: string,
 ): Promise<StoreResult> {
-  const claimExtractionResponses = await loadFixtureResponses(rootDir, scenario.input.modelFixtures?.claimExtractionResponsesFile);
+  const claimExtractionResponses = await loadClaimExtractionFixtureResponses(rootDir, scenario.input.modelFixtures?.claimExtractionResponsesFile);
   const result = await storeEntriesDetailed(scenario.input.entries, database, createDeterministicEmbeddingPort(), {
     ...(scenario.input.storeOptions?.claimExtraction === true && claimExtractionResponses
       ? {
@@ -407,7 +401,7 @@ async function runSurgeonScenario(
   _warnings: string[],
   rootDir: string,
 ): Promise<ClaimKeyScenarioSurgeonSummarySnapshot | null> {
-  const claimExtractionResponses = await loadFixtureResponses(rootDir, scenario.input.modelFixtures?.claimExtractionResponsesFile);
+  const claimExtractionResponses = await loadClaimExtractionFixtureResponses(rootDir, scenario.input.modelFixtures?.claimExtractionResponsesFile);
 
   await runSurgeon(
     {
@@ -579,26 +573,6 @@ async function writeScenarioArtifacts(
   if (actual.proposals.length > 0) {
     await writeJson(path.join(scenarioArtifactRoot, "proposals.json"), actual.proposals);
   }
-}
-
-/**
- * Loads one ordered JSON-array fixture file.
- *
- * @param rootDir - Scenario root used to resolve relative paths.
- * @param relativePath - Root-relative fixture path, when present.
- * @returns Ordered fixture responses, or null when no fixture file was declared.
- */
-async function loadFixtureResponses(rootDir: string, relativePath: string | undefined): Promise<unknown[] | null> {
-  if (!relativePath) {
-    return null;
-  }
-
-  const parsed = JSON.parse(await readFile(path.join(rootDir, relativePath), "utf8")) as unknown;
-  if (!Array.isArray(parsed)) {
-    throw new Error(`Fixture file ${relativePath} must contain a JSON array.`);
-  }
-
-  return parsed;
 }
 
 /**

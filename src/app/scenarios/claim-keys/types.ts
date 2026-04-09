@@ -1,5 +1,6 @@
 import type { ClaimKeyQualityPassSummary, SurgeonRunProposal, SurgeonRunStatus } from "../../../core/surgeon/types.js";
 import type { Entry, StoreEntryInput, StoreResult } from "../../../core/types.js";
+import type { DeepPartial } from "./validation/shared.js";
 
 /**
  * Supported claim-key scenario kinds.
@@ -223,7 +224,7 @@ export interface ClaimKeyScenarioRowCountExpectation {
  */
 export interface ClaimKeyScenarioSurgeonSummaryExpectation {
   status?: SurgeonRunStatus;
-  summary?: Partial<ClaimKeyQualityPassSummary> | null;
+  summary?: DeepPartial<ClaimKeyQualityPassSummary> | null;
 }
 
 /**

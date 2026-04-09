@@ -3,6 +3,58 @@ import { describe, expect, it } from "vitest";
 import { validateClaimKeyScenario } from "../../../../src/app/scenarios/claim-keys/load-scenarios.js";
 
 describe("validateClaimKeyScenario", () => {
+  it("uses the provided scenario root for setup.seedFixtureFile validation", () => {
+    const customRoot = "/tmp/custom-scenario-root";
+
+    expect(() =>
+      validateClaimKeyScenario(
+        {
+          id: "claim-keys.store.seed-fixture-root",
+          kind: "store",
+          setup: {
+            seedFixtureFile: "fixtures/seed.json",
+          },
+          input: {
+            entries: [
+              {
+                type: "fact",
+                subject: "Jim timezone",
+                content: "Jim uses America/Chicago.",
+              },
+            ],
+          },
+          expect: {},
+        },
+        "/tmp/custom-scenario-root/store/seed-fixture-root.json",
+        customRoot,
+      ),
+    ).not.toThrow();
+  });
+
+  it("rejects unexpected fields in nested scenario objects", () => {
+    expect(() =>
+      validateClaimKeyScenario(
+        {
+          id: "claim-keys.store.unexpected-field",
+          kind: "store",
+          input: {
+            entries: [
+              {
+                type: "fact",
+                subject: "Jim timezone",
+                content: "Jim uses America/Chicago.",
+                extraField: true,
+              },
+            ],
+          },
+          expect: {},
+        },
+        "/tmp/unexpected-field.json",
+        "/tmp",
+      ),
+    ).toThrow(/unsupported field "extraField"/i);
+  });
+
   it("rejects invalid lifecycle enum values in seed entries", () => {
     expect(() =>
       validateClaimKeyScenario(
@@ -69,5 +121,29 @@ describe("validateClaimKeyScenario", () => {
         "/tmp",
       ),
     ).toThrow(/claim_support_mode/i);
+  });
+
+  it("rejects unsupported top-level scenario fields", () => {
+    expect(() =>
+      validateClaimKeyScenario(
+        {
+          id: "claim-keys.store.extra-root-field",
+          kind: "store",
+          input: {
+            entries: [
+              {
+                type: "fact",
+                subject: "Jim timezone",
+                content: "Jim uses America/Chicago.",
+              },
+            ],
+          },
+          expect: {},
+          extraRoot: true,
+        },
+        "/tmp/extra-root-field.json",
+        "/tmp",
+      ),
+    ).toThrow(/unsupported field "extraRoot"/i);
   });
 });

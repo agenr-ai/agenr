@@ -2,15 +2,11 @@ import { createHash } from "node:crypto";
 
 import type { IngestionLlmPort, UsageStats } from "../../ingestion/ports.js";
 import type { EmbeddingPort, LlmPort } from "../../../core/ports.js";
+import type { ClaimKeyScenarioClaimExtractionFixtureResponse, ClaimKeyScenarioExtractionFixtureResponse } from "./fixture-loader.js";
 
 const DEFAULT_CONTEXT_WINDOW_TOKENS = 16_000;
 const DEFAULT_MAX_OUTPUT_TOKENS = 4_000;
 const EMBEDDING_DIMENSIONS = 1024;
-
-/**
- * Raw fixture response item accepted by the deterministic fixture LLM.
- */
-type FixtureResponse = unknown;
 
 /**
  * Shared metadata exposed by fixture-backed LLM clients.
@@ -39,10 +35,10 @@ export function createDeterministicEmbeddingPort(): EmbeddingPort {
 /**
  * Creates an ingestion-style LLM client backed by one ordered fixture response list.
  *
- * @param responses - Ordered fixture responses consumed in call order.
+ * @param responses - Ordered parsed extraction responses consumed in call order.
  * @returns Ingestion LLM port with deterministic replay behavior.
  */
-export function createFixtureIngestionLlm(responses: FixtureResponse[]): IngestionLlmPort {
+export function createFixtureIngestionLlm(responses: ClaimKeyScenarioExtractionFixtureResponse[]): IngestionLlmPort {
   const usage = createUsageStats();
 
   return {
@@ -64,10 +60,10 @@ export function createFixtureIngestionLlm(responses: FixtureResponse[]): Ingesti
 /**
  * Creates a generic fixture-backed LLM client for claim extraction or surgeon use.
  *
- * @param responses - Ordered fixture responses consumed in call order.
+ * @param responses - Ordered typed fixture responses consumed in call order.
  * @returns LLM port with deterministic replay behavior.
  */
-export function createFixtureLlm(responses: FixtureResponse[]): LlmPort & { metadata: FixtureLlmMetadata } {
+export function createFixtureLlm(responses: ClaimKeyScenarioClaimExtractionFixtureResponse[]): LlmPort & { metadata: FixtureLlmMetadata } {
   const usage = createLlmUsage();
 
   return {
@@ -150,10 +146,10 @@ function createLlmUsage(): FixtureLlmMetadata["usage"] {
  * @param metadata - Mutable call-accounting metadata.
  * @returns Next fixture response value.
  */
-function readFixtureResponse(
-  responses: FixtureResponse[],
+function readFixtureResponse<TResponse>(
+  responses: TResponse[],
   usage: Pick<UsageStats, "calls" | "inputTokens" | "outputTokens" | "totalTokens" | "totalCost"> | FixtureLlmMetadata["usage"],
-): FixtureResponse {
+): TResponse {
   const callIndex = usage.inputTokens;
   usage.inputTokens += 1;
   usage.outputTokens += 1;
@@ -177,7 +173,7 @@ function readFixtureResponse(
 /**
  * Checks whether one fixture response should be surfaced as a thrown error.
  *
- * @param value - Raw fixture response candidate.
+ * @param value - Typed fixture response candidate.
  * @returns True when the fixture represents a forced LLM error.
  */
 function isFixtureError(value: unknown): value is { __error: string } {
