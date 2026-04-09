@@ -15,6 +15,7 @@ import {
 } from "../../core/claim-key-support.js";
 import {
   detectClaimKeyEntityFamilyCandidates,
+  detectClaimKeySingletonAliasCandidates,
   type ClaimKeyEntityFamilyCandidate,
   type ClaimKeyEntityFamilyEvidence,
   type ClaimKeyEntityFamilyPairSupport,
@@ -1422,6 +1423,7 @@ export function summarizeClaimKeyHealth(entries: Entry[], eligibleTypes: string[
   }).length;
   const suspectCanonicalCount = entries.filter((entry) => inspectExistingClaimKey(entry).kind === "suspect").length;
   const entityFamilyCandidates = detectClaimKeyEntityFamilyCandidates(entries);
+  const singletonAliasCandidates = detectClaimKeySingletonAliasCandidates(entries);
 
   return {
     totalEntries: entries.length,
@@ -1433,6 +1435,7 @@ export function summarizeClaimKeyHealth(entries: Entry[], eligibleTypes: string[
     malformedOrNoncanonicalCount,
     suspectCanonicalCount,
     entityFamilyGroupCount: entityFamilyCandidates.length,
+    suspiciousSingletonAliasCount: singletonAliasCandidates.length,
     mixedGroupCount: findMixedKeyGroups(entries).length,
     exactKeyMultiActiveClusterCount: countExactKeyMultiActiveClusters(activeEntries),
   };

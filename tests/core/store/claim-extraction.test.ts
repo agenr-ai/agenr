@@ -458,6 +458,104 @@ describe("extractClaimKey", () => {
     });
   });
 
+  it("reuses a dominant trusted family when deterministic repair would mint a singleton alias namespace", async () => {
+    const llm = new MockLlmPort(() => ({
+      entity: "Jim Martin",
+      attribute: "skunk theme",
+      confidence: 0.2,
+    }));
+
+    const decision = await extractClaimKeyDecision(
+      {
+        type: "fact",
+        subject: "Jim Martin's skunk theme",
+        content: "Jim Martin's skunk theme comes from childhood lore.",
+      },
+      llm,
+      {
+        enabled: true,
+        confidenceThreshold: 0.8,
+        eligibleTypes: ["fact", "preference", "decision", "lesson"],
+      },
+      {
+        entityPrefixStats: [
+          {
+            entityPrefix: "jim",
+            activeEntryCount: 4,
+            trustedEntryCount: 4,
+            tentativeEntryCount: 0,
+            unresolvedEntryCount: 0,
+            legacyEntryCount: 0,
+            deterministicRepairEntryCount: 0,
+            manualEntryCount: 0,
+            modelEntryCount: 4,
+            jsonRetryEntryCount: 0,
+            surgeonFamilyReuseEntryCount: 0,
+          },
+        ],
+      },
+    );
+
+    expect(decision.result).toMatchObject({
+      claimKey: "jim/skunk_theme",
+      path: "deterministic_repair",
+      acceptanceRationale: expect.stringContaining('reused dominant entity family "jim"'),
+    });
+    expect(decision.diagnostic).toMatchObject({
+      outcome: "accepted",
+      suggestedClaimKey: "jim/skunk_theme",
+      rationale: expect.stringContaining('reused dominant family "jim"'),
+    });
+  });
+
+  it("does not rewrite intentional scoped namespaces during deterministic repair", async () => {
+    const llm = new MockLlmPort(() => ({
+      entity: "MacBook agenr repo",
+      attribute: "status",
+      confidence: 0.2,
+    }));
+
+    const decision = await extractClaimKeyDecision(
+      {
+        type: "decision",
+        subject: "MacBook agenr repo's status",
+        content: "The MacBook agenr repo's status is active.",
+      },
+      llm,
+      {
+        enabled: true,
+        confidenceThreshold: 0.8,
+        eligibleTypes: ["fact", "preference", "decision", "lesson"],
+      },
+      {
+        entityPrefixStats: [
+          {
+            entityPrefix: "agenr",
+            activeEntryCount: 5,
+            trustedEntryCount: 5,
+            tentativeEntryCount: 0,
+            unresolvedEntryCount: 0,
+            legacyEntryCount: 0,
+            deterministicRepairEntryCount: 0,
+            manualEntryCount: 0,
+            modelEntryCount: 5,
+            jsonRetryEntryCount: 0,
+            surgeonFamilyReuseEntryCount: 0,
+          },
+        ],
+      },
+    );
+
+    expect(decision.result).toMatchObject({
+      claimKey: "macbook_agenr_repo/status",
+      path: "deterministic_repair",
+    });
+    expect(decision.diagnostic).toMatchObject({
+      outcome: "accepted",
+      suggestedClaimKey: "macbook_agenr_repo/status",
+    });
+  });
+
   it("does not upgrade low-quality outputs into bad claim keys", async () => {
     const llm = new MockLlmPort(() => ({
       entity: "Jim",

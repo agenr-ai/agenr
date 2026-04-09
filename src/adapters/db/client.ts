@@ -17,6 +17,7 @@ import {
 } from "./episode-queries.js";
 import {
   findActiveEntriesByClaimKey,
+  getClaimKeyEntityPrefixStats,
   findExistingHashes,
   findExistingNormHashes,
   getClaimKeyExamples,
@@ -167,6 +168,11 @@ class LibsqlDatabase implements SqlDatabase {
   /** Lists bounded full claim-key examples ordered for extraction hinting. */
   public async getClaimKeyExamples(limit?: number): Promise<string[]> {
     return getClaimKeyExamples(this.executor, limit);
+  }
+
+  /** Lists active per-prefix claim-key counts for conservative alias-family handling. */
+  public async getClaimKeyEntityPrefixStats() {
+    return getClaimKeyEntityPrefixStats(this.executor);
   }
 
   /** Updates mutable entry fields such as importance, expiry, and temporal metadata. */

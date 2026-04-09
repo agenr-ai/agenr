@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { InArgs, InStatement, ResultSet } from "@libsql/client";
 
 import { validateDirectClaimKeyLifecycleUpdate } from "../../core/claim-key-lifecycle.js";
+import type { ClaimKeyEntityPrefixStats } from "../../core/claim-key-entity-family.js";
 import type { Entry, EntryUpdateInput } from "../../core/types.js";
 import { ACTIVE_ENTRY_CLAUSE, ENTRY_SELECT_COLUMNS, mapEntryRow, readRequiredString, serializeEmbeddingForVector, serializeTags } from "./row-mapping.js";
 
@@ -412,6 +413,60 @@ export async function getClaimKeyExamples(executor: SqlExecutor, limit = 8): Pro
 }
 
 /**
+ * Lists active per-prefix claim-key counts used by conservative alias-family handling.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @returns Ordered per-prefix counts across active keyed entries.
+ */
+export async function getClaimKeyEntityPrefixStats(executor: SqlExecutor): Promise<ClaimKeyEntityPrefixStats[]> {
+  const result = await executor.execute({
+    sql: `
+      SELECT
+        lower(trim(substr(claim_key, 1, instr(claim_key, '/') - 1))) AS claim_key_prefix,
+        COUNT(*) AS active_entry_count,
+        COALESCE(SUM(CASE WHEN claim_key_status = 'trusted' THEN 1 ELSE 0 END), 0) AS trusted_entry_count,
+        COALESCE(SUM(CASE WHEN claim_key_status = 'tentative' THEN 1 ELSE 0 END), 0) AS tentative_entry_count,
+        COALESCE(SUM(CASE WHEN claim_key_status = 'unresolved' THEN 1 ELSE 0 END), 0) AS unresolved_entry_count,
+        COALESCE(SUM(CASE WHEN claim_key_status IS NULL THEN 1 ELSE 0 END), 0) AS legacy_entry_count,
+        COALESCE(SUM(CASE WHEN claim_key_source = 'deterministic_repair' THEN 1 ELSE 0 END), 0) AS deterministic_repair_entry_count,
+        COALESCE(SUM(CASE WHEN claim_key_source = 'manual' THEN 1 ELSE 0 END), 0) AS manual_entry_count,
+        COALESCE(SUM(CASE WHEN claim_key_source = 'model' THEN 1 ELSE 0 END), 0) AS model_entry_count,
+        COALESCE(SUM(CASE WHEN claim_key_source = 'json_retry' THEN 1 ELSE 0 END), 0) AS json_retry_entry_count,
+        COALESCE(SUM(CASE WHEN claim_key_source = 'surgeon_family_reuse' THEN 1 ELSE 0 END), 0) AS surgeon_family_reuse_entry_count
+      FROM entries
+      WHERE claim_key IS NOT NULL
+        AND instr(claim_key, '/') > 1
+        AND ${ACTIVE_ENTRY_CLAUSE}
+      GROUP BY claim_key_prefix
+      ORDER BY active_entry_count DESC, trusted_entry_count DESC, claim_key_prefix ASC
+    `,
+  });
+
+  return result.rows.flatMap((row) => {
+    const entityPrefix = row.claim_key_prefix;
+    if (typeof entityPrefix !== "string" || entityPrefix.length === 0) {
+      return [];
+    }
+
+    return [
+      {
+        entityPrefix,
+        activeEntryCount: coerceRowInteger(row.active_entry_count),
+        trustedEntryCount: coerceRowInteger(row.trusted_entry_count),
+        tentativeEntryCount: coerceRowInteger(row.tentative_entry_count),
+        unresolvedEntryCount: coerceRowInteger(row.unresolved_entry_count),
+        legacyEntryCount: coerceRowInteger(row.legacy_entry_count),
+        deterministicRepairEntryCount: coerceRowInteger(row.deterministic_repair_entry_count),
+        manualEntryCount: coerceRowInteger(row.manual_entry_count),
+        modelEntryCount: coerceRowInteger(row.model_entry_count),
+        jsonRetryEntryCount: coerceRowInteger(row.json_retry_entry_count),
+        surgeonFamilyReuseEntryCount: coerceRowInteger(row.surgeon_family_reuse_entry_count),
+      } satisfies ClaimKeyEntityPrefixStats,
+    ];
+  });
+}
+
+/**
  * Updates mutable fields on an active entry.
  *
  * @param executor - SQL executor used for the update.
@@ -628,6 +683,24 @@ function normalizeTimestamp(value: string | undefined): string | null {
 /** Normalizes optional finite numbers into nullable values. */
 function normalizeOptionalNumber(value: number | undefined): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/** Coerces one aggregate query value into a non-negative integer. */
+function coerceRowInteger(value: unknown): number {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
+  }
+
+  if (typeof value === "bigint") {
+    return Number(value);
+  }
+
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? Math.max(0, Math.trunc(parsed)) : 0;
+  }
+
+  return 0;
 }
 
 /** Falls back when a numeric value is missing or non-finite. */

@@ -1,6 +1,7 @@
 import type { DatabasePort, LlmPort } from "../ports.js";
 import type { EntryType, StoreEntryInput } from "../types.js";
 import { applyClaimKeyLifecycle, buildExtractedClaimKeyLifecycle, buildInferredIngestClaimKeySupportContext } from "../claim-key-lifecycle.js";
+import { detectClaimKeySingletonAliasCandidatesFromStats, type ClaimKeyEntityPrefixStats } from "../claim-key-entity-family.js";
 import {
   buildClaimKeySupportSeedFromExamples,
   evaluateClaimKeyCompactness,
@@ -86,6 +87,7 @@ interface ClaimExtractionHintState {
   entityHints: string[];
   claimKeyExamples: string[];
   supportClaimKeys: string[];
+  entityPrefixStats: ClaimKeyEntityPrefixStats[];
 }
 
 /** Successful model attempt before confidence thresholding is applied. */
@@ -301,6 +303,7 @@ export async function extractClaimKey(
     hints?: ClaimExtractionHints;
     onWarning?: (warning: string) => void;
     supportClaimKeys?: string[];
+    entityPrefixStats?: ClaimKeyEntityPrefixStats[];
   } = {},
 ): Promise<ClaimExtractionResult | null> {
   const decision = await extractClaimKeyDecision(entry, llm, config, options);
@@ -324,6 +327,7 @@ export async function extractClaimKeyDecision(
     hints?: ClaimExtractionHints;
     onWarning?: (warning: string) => void;
     supportClaimKeys?: string[];
+    entityPrefixStats?: ClaimKeyEntityPrefixStats[];
   } = {},
 ): Promise<ClaimExtractionDecision> {
   if (!config.enabled || !config.eligibleTypes.includes(entry.type)) {
@@ -350,10 +354,7 @@ export async function extractClaimKeyDecision(
   } catch (error) {
     const repaired = tryDeterministicClaimKeyRepair(entry, normalizedHints);
     if (repaired) {
-      return {
-        result: repaired,
-        diagnostic: buildAcceptedDiagnostic(repaired, "deterministic possessive-slot repair recovered the missing claim key"),
-      };
+      return finalizeDeterministicRepairDecision(repaired, options.entityPrefixStats);
     }
 
     const warning = formatClaimExtractionError(error);
@@ -397,10 +398,7 @@ export async function extractClaimKeyDecision(
   if (!candidate) {
     const repaired = tryDeterministicClaimKeyRepair(entry, normalizedHints);
     if (repaired) {
-      return {
-        result: repaired,
-        diagnostic: buildAcceptedDiagnostic(repaired, "deterministic possessive-slot repair recovered the missing claim key"),
-      };
+      return finalizeDeterministicRepairDecision(repaired, options.entityPrefixStats);
     }
 
     return {
@@ -473,10 +471,7 @@ export async function extractClaimKeyDecision(
 
   const repaired = tryDeterministicClaimKeyRepair(entry, normalizedHints);
   if (repaired && (!result.claimKey || repaired.claimKey === result.claimKey)) {
-    return {
-      result: repaired,
-      diagnostic: buildAcceptedDiagnostic(repaired, "deterministic possessive-slot repair recovered the missing claim key"),
-    };
+    return finalizeDeterministicRepairDecision(repaired, options.entityPrefixStats);
   }
 
   if (result.confidence >= proposalThreshold) {
@@ -658,6 +653,7 @@ async function extractBatchClaimKeyDecision(
         hints: buildEntryHints(hintState, entry),
         onWarning,
         supportClaimKeys: [...hintState.supportClaimKeys],
+        entityPrefixStats: hintState.entityPrefixStats,
       },
     );
   } catch {
@@ -907,6 +903,128 @@ function buildAcceptedDiagnostic(result: ClaimExtractionResult, rationale: strin
 }
 
 /**
+ * Applies dominant-family singleton-alias handling to deterministic repair output.
+ *
+ * @param repaired - Deterministic repair result before alias-family handling.
+ * @param entityPrefixStats - Active per-prefix corpus counts, when available.
+ * @returns Accepted deterministic repair, canonical reuse, or reviewable proposal-first outcome.
+ */
+function finalizeDeterministicRepairDecision(repaired: ClaimExtractionResult, entityPrefixStats?: ClaimKeyEntityPrefixStats[]): ClaimExtractionDecision {
+  const aliasCandidate = findSingletonAliasReuseCandidate(repaired, entityPrefixStats);
+  if (!aliasCandidate) {
+    return {
+      result: repaired,
+      diagnostic: buildAcceptedDiagnostic(repaired, "deterministic possessive-slot repair recovered the missing claim key"),
+    };
+  }
+
+  if (aliasCandidate.canonicalReuseSafe) {
+    const reusedResult = rewriteClaimKeyEntityPrefix(repaired, aliasCandidate.dominantEntityPrefix);
+    reusedResult.acceptanceRationale = `reused dominant entity family "${aliasCandidate.dominantEntityPrefix}" instead of minting singleton alias "${aliasCandidate.aliasEntityPrefix}"`;
+    return {
+      result: reusedResult,
+      diagnostic: buildAcceptedDiagnostic(
+        reusedResult,
+        `deterministic repair reused dominant family "${aliasCandidate.dominantEntityPrefix}" instead of new singleton alias "${aliasCandidate.aliasEntityPrefix}"`,
+      ),
+    };
+  }
+
+  const suggestedClaimKey = rewriteClaimKeyEntityPrefix(repaired, aliasCandidate.dominantEntityPrefix).claimKey;
+  return {
+    result: null,
+    diagnostic: {
+      outcome: "low_confidence_candidate",
+      confidence: repaired.confidence,
+      path: repaired.path,
+      warning: null,
+      suggestedClaimKey,
+      reviewable: true,
+      supportEvidence: aliasCandidate.evidence.map((evidence) => evidence.kind),
+      rationale:
+        `deterministic repair would create singleton alias "${aliasCandidate.aliasEntityPrefix}" ` +
+        `next to dominant trusted family "${aliasCandidate.dominantEntityPrefix}", so the new namespace was staged for review`,
+    },
+  };
+}
+
+/**
+ * Finds the best dominant-family singleton-alias candidate for one repaired key.
+ *
+ * @param repaired - Deterministic repair result before canonical reuse.
+ * @param entityPrefixStats - Active per-prefix corpus counts, when available.
+ * @returns Matching singleton-alias candidate, or null when none applies.
+ */
+function findSingletonAliasReuseCandidate(
+  repaired: ClaimExtractionResult,
+  entityPrefixStats?: ClaimKeyEntityPrefixStats[],
+): ReturnType<typeof detectClaimKeySingletonAliasCandidatesFromStats>[number] | null {
+  const claimKey = repaired.claimKey;
+  if (!claimKey || !entityPrefixStats || entityPrefixStats.length === 0) {
+    return null;
+  }
+
+  const [entityPrefix = ""] = claimKey.split("/", 1);
+  if (!entityPrefix) {
+    return null;
+  }
+
+  const augmentedStats = summarizeAugmentedEntityPrefixStats(entityPrefixStats, entityPrefix);
+  return detectClaimKeySingletonAliasCandidatesFromStats(augmentedStats).find((candidate) => candidate.aliasEntityPrefix === entityPrefix) ?? null;
+}
+
+/**
+ * Adds one low-trust singleton prefix to the observed corpus stats when it is new.
+ *
+ * @param entityPrefixStats - Existing active per-prefix corpus counts.
+ * @param entityPrefix - New repaired entity prefix that is not yet persisted.
+ * @returns Corpus stats augmented with the tentative deterministic-repair prefix.
+ */
+function summarizeAugmentedEntityPrefixStats(entityPrefixStats: ClaimKeyEntityPrefixStats[], entityPrefix: string): ClaimKeyEntityPrefixStats[] {
+  const existing = entityPrefixStats.find((profile) => profile.entityPrefix === entityPrefix);
+  if (existing) {
+    return entityPrefixStats;
+  }
+
+  return [
+    ...entityPrefixStats,
+    {
+      entityPrefix,
+      activeEntryCount: 1,
+      trustedEntryCount: 0,
+      tentativeEntryCount: 1,
+      unresolvedEntryCount: 0,
+      legacyEntryCount: 0,
+      deterministicRepairEntryCount: 1,
+      manualEntryCount: 0,
+      modelEntryCount: 0,
+      jsonRetryEntryCount: 0,
+      surgeonFamilyReuseEntryCount: 0,
+    },
+  ];
+}
+
+/**
+ * Rewrites only the entity segment of one canonical claim key.
+ *
+ * @param result - Accepted extraction result whose entity prefix may change.
+ * @param entityPrefix - Canonical entity prefix to inject.
+ * @returns Extraction result with the entity prefix rewritten.
+ */
+function rewriteClaimKeyEntityPrefix(result: ClaimExtractionResult, entityPrefix: string): ClaimExtractionResult {
+  const claimKey = result.claimKey;
+  if (!claimKey) {
+    return result;
+  }
+
+  const [, attribute = ""] = claimKey.split("/", 2);
+  return {
+    ...result,
+    claimKey: `${entityPrefix}/${attribute}`,
+  };
+}
+
+/**
  * Converts one thrown extraction error into a stable diagnostic string.
  *
  * @param error - Unknown thrown value.
@@ -982,16 +1100,18 @@ function tryDeterministicClaimKeyRepair(entry: { subject: string; content: strin
  * @returns Ordered hint state for batch-local mutation.
  */
 async function loadClaimExtractionHintState(db: DatabasePort): Promise<ClaimExtractionHintState> {
-  const [entityHintResult, promptClaimKeyExampleResult, supportClaimKeyExampleResult] = await Promise.allSettled([
+  const [entityHintResult, promptClaimKeyExampleResult, supportClaimKeyExampleResult, entityPrefixStatsResult] = await Promise.allSettled([
     getEntityHints(db),
     getClaimKeyExamples(db, MAX_CLAIM_KEY_EXAMPLES),
     getClaimKeyExamples(db, MAX_SUPPORT_CLAIM_KEY_EXAMPLES),
+    getClaimKeyEntityPrefixStats(db),
   ]);
 
   return createHintState({
     entityHints: entityHintResult.status === "fulfilled" ? entityHintResult.value : [],
     claimKeyExamples: promptClaimKeyExampleResult.status === "fulfilled" ? promptClaimKeyExampleResult.value : [],
     supportClaimKeys: supportClaimKeyExampleResult.status === "fulfilled" ? supportClaimKeyExampleResult.value : [],
+    entityPrefixStats: entityPrefixStatsResult.status === "fulfilled" ? entityPrefixStatsResult.value : [],
   });
 }
 
@@ -1010,12 +1130,31 @@ async function getClaimKeyExamples(db: DatabasePort, limit: number): Promise<str
 }
 
 /**
+ * Loads active per-prefix claim-key counts when the database adapter supports them.
+ *
+ * @param db - Database port used to read prefix stats.
+ * @returns Per-prefix corpus counts, or an empty list when unsupported.
+ */
+async function getClaimKeyEntityPrefixStats(db: DatabasePort): Promise<ClaimKeyEntityPrefixStats[]> {
+  if (typeof db.getClaimKeyEntityPrefixStats !== "function") {
+    return [];
+  }
+
+  return db.getClaimKeyEntityPrefixStats();
+}
+
+/**
  * Creates normalized ordered hint state from raw entity and claim-key inputs.
  *
  * @param input - Raw hint inputs gathered from the database.
  * @returns Mutable ordered hint state with stable caps applied.
  */
-function createHintState(input: { entityHints?: string[]; claimKeyExamples?: string[]; supportClaimKeys?: string[] }): ClaimExtractionHintState {
+function createHintState(input: {
+  entityHints?: string[];
+  claimKeyExamples?: string[];
+  supportClaimKeys?: string[];
+  entityPrefixStats?: ClaimKeyEntityPrefixStats[];
+}): ClaimExtractionHintState {
   const claimKeyExamples = normalizeClaimKeyExamples(input.claimKeyExamples ?? []);
   const supportClaimKeys = normalizeSupportClaimKeys(input.supportClaimKeys ?? []);
   const entityHints = limitUnique(
@@ -1033,6 +1172,7 @@ function createHintState(input: { entityHints?: string[]; claimKeyExamples?: str
     entityHints,
     claimKeyExamples,
     supportClaimKeys,
+    entityPrefixStats: input.entityPrefixStats ?? [],
   };
 }
 

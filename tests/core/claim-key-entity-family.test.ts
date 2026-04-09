@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { detectClaimKeyEntityFamilyCandidates } from "../../src/core/claim-key-entity-family.js";
+import {
+  detectClaimKeyEntityFamilyCandidates,
+  detectClaimKeySingletonAliasCandidates,
+  detectClaimKeySingletonAliasCandidatesFromStats,
+  summarizeClaimKeyEntityPrefixStats,
+} from "../../src/core/claim-key-entity-family.js";
 import type { Entry } from "../../src/core/types.js";
 
 describe("detectClaimKeyEntityFamilyCandidates", () => {
@@ -202,6 +207,86 @@ describe("detectClaimKeyEntityFamilyCandidates", () => {
   });
 });
 
+describe("detectClaimKeySingletonAliasCandidates", () => {
+  it("detects a low-trust singleton alias next to a dominant trusted family", () => {
+    const candidates = detectClaimKeySingletonAliasCandidates([
+      buildEntry({ id: "jim-timezone", subject: "Jim timezone", claim_key: "jim/timezone", claim_key_status: "trusted", claim_key_source: "model" }),
+      buildEntry({
+        id: "jim-review",
+        subject: "Jim review preference",
+        claim_key: "jim/code_review_preference",
+        claim_key_status: "trusted",
+        claim_key_source: "model",
+      }),
+      buildEntry({
+        id: "jim-editor",
+        subject: "Jim editor preference",
+        claim_key: "jim/editor_preference",
+        claim_key_status: "trusted",
+        claim_key_source: "model",
+      }),
+      buildEntry({
+        id: "jim-skunk",
+        subject: "Jim Martin skunk identity",
+        claim_key: "jim_martin/skunk_theme",
+        claim_key_status: "tentative",
+        claim_key_source: "deterministic_repair",
+      }),
+    ]);
+
+    expect(candidates).toEqual([
+      expect.objectContaining({
+        aliasEntityPrefix: "jim_martin",
+        dominantEntityPrefix: "jim",
+        aliasFamilySize: 1,
+        dominantTrustedCount: 3,
+        canonicalReuseSafe: true,
+        evidence: expect.arrayContaining([
+          expect.objectContaining({ kind: "singleton_family_size" }),
+          expect.objectContaining({ kind: "dominant_trusted_family" }),
+          expect.objectContaining({ kind: "low_trust_creation_path" }),
+          expect.objectContaining({ kind: "lexical_token_subset" }),
+        ]),
+      }),
+    ]);
+  });
+
+  it("does not treat intentional scope nesting as a singleton alias family", () => {
+    const stats = summarizeClaimKeyEntityPrefixStats([
+      buildEntry({
+        id: "agenr-policy-1",
+        subject: "Agenr policy one",
+        claim_key: "agenr/release_strategy",
+        claim_key_status: "trusted",
+        claim_key_source: "model",
+      }),
+      buildEntry({
+        id: "agenr-policy-2",
+        subject: "Agenr policy two",
+        claim_key: "agenr/store_input_format",
+        claim_key_status: "trusted",
+        claim_key_source: "model",
+      }),
+      buildEntry({
+        id: "agenr-policy-3",
+        subject: "Agenr policy three",
+        claim_key: "agenr/brain_rebuild_workflow",
+        claim_key_status: "trusted",
+        claim_key_source: "model",
+      }),
+      buildEntry({
+        id: "scoped-repo",
+        subject: "MacBook agenr repo path",
+        claim_key: "macbook_agenr_repo/source_of_truth",
+        claim_key_status: "tentative",
+        claim_key_source: "deterministic_repair",
+      }),
+    ]);
+
+    expect(detectClaimKeySingletonAliasCandidatesFromStats(stats)).toEqual([]);
+  });
+});
+
 function buildEntry(overrides: Partial<Entry> & Pick<Entry, "id" | "subject" | "claim_key">): Entry {
   return {
     id: overrides.id,
@@ -223,6 +308,8 @@ function buildEntry(overrides: Partial<Entry> & Pick<Entry, "id" | "subject" | "
     valid_from: overrides.valid_from,
     valid_to: overrides.valid_to,
     claim_key: overrides.claim_key,
+    claim_key_status: overrides.claim_key_status,
+    claim_key_source: overrides.claim_key_source,
     supersession_kind: overrides.supersession_kind,
     supersession_reason: overrides.supersession_reason,
     cluster_id: overrides.cluster_id,

@@ -1,7 +1,7 @@
 /* eslint-disable jsdoc/require-jsdoc */
 
 import { inspectClaimKey, normalizeClaimKeySegment } from "./claim-key.js";
-import type { Entry } from "./types.js";
+import type { ClaimKeySource, ClaimKeyStatus, Entry } from "./types.js";
 
 const ENTITY_FAMILY_GROUNDING_STOP_TOKENS = new Set([
   "a",
@@ -32,6 +32,33 @@ const ENTITY_FAMILY_GROUNDING_STOP_TOKENS = new Set([
 const MAX_ATTRIBUTE_BUCKET_SIZE = 12;
 const MAX_EVIDENCE_VALUES = 6;
 const CANONICAL_SELECTION_MARGIN = 3;
+const SINGLETON_ALIAS_MAX_FAMILY_SIZE = 2;
+const SINGLETON_ALIAS_MIN_DOMINANT_TRUSTED_COUNT = 3;
+const SINGLETON_ALIAS_MIN_CONFIDENCE_DELTA = 0.05;
+const SINGLETON_ALIAS_SCOPE_TOKENS = new Set([
+  "agent",
+  "app",
+  "branch",
+  "build",
+  "cluster",
+  "daemon",
+  "device",
+  "env",
+  "environment",
+  "gateway",
+  "host",
+  "machine",
+  "node",
+  "plugin",
+  "project",
+  "repo",
+  "repository",
+  "server",
+  "service",
+  "session",
+  "system",
+  "workspace",
+]);
 
 /**
  * Structured evidence kinds emitted by entity-family convergence detection.
@@ -83,6 +110,65 @@ export interface ClaimKeyEntityFamilyCandidate {
   pairSupport: ClaimKeyEntityFamilyPairSupport[];
 }
 
+/**
+ * Minimal keyed-row shape used to summarize claim-key entity-prefix families.
+ */
+export interface ClaimKeyEntityPrefixObservation {
+  claim_key?: string;
+  claim_key_status?: ClaimKeyStatus;
+  claim_key_source?: ClaimKeySource;
+}
+
+/**
+ * Aggregate active corpus counts for one entity prefix.
+ */
+export interface ClaimKeyEntityPrefixStats {
+  entityPrefix: string;
+  activeEntryCount: number;
+  trustedEntryCount: number;
+  tentativeEntryCount: number;
+  unresolvedEntryCount: number;
+  legacyEntryCount: number;
+  deterministicRepairEntryCount: number;
+  manualEntryCount: number;
+  modelEntryCount: number;
+  jsonRetryEntryCount: number;
+  surgeonFamilyReuseEntryCount: number;
+}
+
+/**
+ * Evidence kinds emitted by singleton-alias family detection.
+ */
+export type ClaimKeySingletonAliasEvidenceKind =
+  | "dominant_trusted_family"
+  | "singleton_family_size"
+  | "low_trust_creation_path"
+  | "lexical_separator_variant"
+  | "lexical_token_subset";
+
+/**
+ * One structured evidence fragment supporting a suspicious singleton alias family.
+ */
+export interface ClaimKeySingletonAliasEvidence {
+  kind: ClaimKeySingletonAliasEvidenceKind;
+  detail: string;
+}
+
+/**
+ * Structured dominant-family singleton-alias candidate.
+ */
+export interface ClaimKeySingletonAliasCandidate {
+  aliasEntityPrefix: string;
+  dominantEntityPrefix: string;
+  aliasFamilySize: number;
+  dominantFamilySize: number;
+  dominantTrustedCount: number;
+  aliasLowTrustCount: number;
+  confidence: number;
+  canonicalReuseSafe: boolean;
+  evidence: ClaimKeySingletonAliasEvidence[];
+}
+
 interface TrustedClaimKeyEntityProfile {
   entityPrefix: string;
   entryIds: Set<string>;
@@ -111,6 +197,14 @@ interface CanonicalSelectionResult {
   canonicalEntityPrefix: string | null;
   reasons: string[];
   unresolvedReason: string | null;
+}
+
+interface SingletonAliasLexicalRelation {
+  kind: ClaimKeySingletonAliasEvidenceKind | null;
+  detail: string | null;
+  canonicalReuseSafe: boolean;
+  scopeLike: boolean;
+  strengthScore: number;
 }
 
 /**
@@ -203,6 +297,146 @@ export function detectClaimKeyEntityFamilyCandidates(entries: Entry[]): ClaimKey
     const rightKey = right.entityPrefixes.join("::");
     return leftKey.localeCompare(rightKey);
   });
+}
+
+/**
+ * Summarizes active claim-key rows into per-prefix corpus stats.
+ *
+ * @param observations - Keyed entry observations to aggregate.
+ * @returns Sorted per-prefix counts used by write-time and health detectors.
+ */
+export function summarizeClaimKeyEntityPrefixStats(observations: ClaimKeyEntityPrefixObservation[]): ClaimKeyEntityPrefixStats[] {
+  const counts = new Map<string, ClaimKeyEntityPrefixStats>();
+
+  for (const observation of observations) {
+    const rawClaimKey = observation.claim_key?.trim();
+    if (!rawClaimKey) {
+      continue;
+    }
+
+    const inspection = inspectClaimKey(rawClaimKey);
+    if (!inspection.normalized) {
+      continue;
+    }
+
+    const entityPrefix = inspection.normalized.entity;
+    const existing =
+      counts.get(entityPrefix) ??
+      ({
+        entityPrefix,
+        activeEntryCount: 0,
+        trustedEntryCount: 0,
+        tentativeEntryCount: 0,
+        unresolvedEntryCount: 0,
+        legacyEntryCount: 0,
+        deterministicRepairEntryCount: 0,
+        manualEntryCount: 0,
+        modelEntryCount: 0,
+        jsonRetryEntryCount: 0,
+        surgeonFamilyReuseEntryCount: 0,
+      } satisfies ClaimKeyEntityPrefixStats);
+
+    existing.activeEntryCount += 1;
+    switch (observation.claim_key_status) {
+      case "trusted":
+        existing.trustedEntryCount += 1;
+        break;
+      case "tentative":
+        existing.tentativeEntryCount += 1;
+        break;
+      case "unresolved":
+        existing.unresolvedEntryCount += 1;
+        break;
+      default:
+        existing.legacyEntryCount += 1;
+        break;
+    }
+
+    switch (observation.claim_key_source) {
+      case "deterministic_repair":
+        existing.deterministicRepairEntryCount += 1;
+        break;
+      case "manual":
+        existing.manualEntryCount += 1;
+        break;
+      case "model":
+        existing.modelEntryCount += 1;
+        break;
+      case "json_retry":
+        existing.jsonRetryEntryCount += 1;
+        break;
+      case "surgeon_family_reuse":
+        existing.surgeonFamilyReuseEntryCount += 1;
+        break;
+      default:
+        break;
+    }
+
+    counts.set(entityPrefix, existing);
+  }
+
+  return [...counts.values()].sort((left, right) => {
+    if (right.activeEntryCount !== left.activeEntryCount) {
+      return right.activeEntryCount - left.activeEntryCount;
+    }
+
+    if (right.trustedEntryCount !== left.trustedEntryCount) {
+      return right.trustedEntryCount - left.trustedEntryCount;
+    }
+
+    return left.entityPrefix.localeCompare(right.entityPrefix);
+  });
+}
+
+/**
+ * Detects narrow dominant-family singleton aliases such as one low-trust full-name
+ * repair appearing next to an established short-name family.
+ *
+ * @param observations - Active keyed rows to inspect.
+ * @returns Conservative singleton-alias candidates ordered by confidence.
+ */
+export function detectClaimKeySingletonAliasCandidates(observations: ClaimKeyEntityPrefixObservation[]): ClaimKeySingletonAliasCandidate[] {
+  return detectClaimKeySingletonAliasCandidatesFromStats(summarizeClaimKeyEntityPrefixStats(observations));
+}
+
+/**
+ * Detects singleton-alias candidates from pre-aggregated entity-prefix stats.
+ *
+ * @param stats - Active per-prefix corpus counts.
+ * @returns Conservative singleton-alias candidates ordered by confidence.
+ */
+export function detectClaimKeySingletonAliasCandidatesFromStats(stats: ClaimKeyEntityPrefixStats[]): ClaimKeySingletonAliasCandidate[] {
+  const candidatesByAlias = new Map<string, ClaimKeySingletonAliasCandidate[]>();
+  const dominantFamilies = stats.filter((profile) => profile.trustedEntryCount >= SINGLETON_ALIAS_MIN_DOMINANT_TRUSTED_COUNT);
+  const aliasFamilies = stats.filter((profile) => {
+    return (
+      profile.activeEntryCount > 0 &&
+      profile.activeEntryCount <= SINGLETON_ALIAS_MAX_FAMILY_SIZE &&
+      profile.trustedEntryCount < profile.activeEntryCount &&
+      buildLowTrustEntryCount(profile) >= 1
+    );
+  });
+
+  for (const aliasProfile of aliasFamilies) {
+    for (const dominantProfile of dominantFamilies) {
+      if (aliasProfile.entityPrefix === dominantProfile.entityPrefix || dominantProfile.activeEntryCount <= aliasProfile.activeEntryCount) {
+        continue;
+      }
+
+      const candidate = evaluateSingletonAliasCandidate(aliasProfile, dominantProfile);
+      if (!candidate) {
+        continue;
+      }
+
+      const existing = candidatesByAlias.get(aliasProfile.entityPrefix) ?? [];
+      existing.push(candidate);
+      candidatesByAlias.set(aliasProfile.entityPrefix, existing);
+    }
+  }
+
+  return [...candidatesByAlias.values()]
+    .flatMap(selectBestSingletonAliasCandidate)
+    .sort((left, right) => right.confidence - left.confidence || left.aliasEntityPrefix.localeCompare(right.aliasEntityPrefix));
 }
 
 function buildTrustedClaimKeyEntityProfiles(entries: Entry[]): Map<string, TrustedClaimKeyEntityProfile> {
@@ -651,6 +885,158 @@ function findPairSupport(
   return null;
 }
 
+function evaluateSingletonAliasCandidate(
+  aliasProfile: ClaimKeyEntityPrefixStats,
+  dominantProfile: ClaimKeyEntityPrefixStats,
+): ClaimKeySingletonAliasCandidate | null {
+  const lexicalRelation = evaluateSingletonAliasLexicalRelation(aliasProfile.entityPrefix, dominantProfile.entityPrefix);
+  if (!lexicalRelation.kind || !lexicalRelation.detail || lexicalRelation.scopeLike) {
+    return null;
+  }
+
+  const dominantTrustedCount = dominantProfile.trustedEntryCount;
+  if (dominantTrustedCount < SINGLETON_ALIAS_MIN_DOMINANT_TRUSTED_COUNT) {
+    return null;
+  }
+
+  const aliasLowTrustCount = buildLowTrustEntryCount(aliasProfile);
+  if (aliasLowTrustCount === 0) {
+    return null;
+  }
+
+  const evidence: ClaimKeySingletonAliasEvidence[] = [
+    {
+      kind: "singleton_family_size",
+      detail: `"${aliasProfile.entityPrefix}" has ${aliasProfile.activeEntryCount} active keyed ${pluralize(aliasProfile.activeEntryCount, "entry")}.`,
+    },
+    {
+      kind: "dominant_trusted_family",
+      detail: `"${dominantProfile.entityPrefix}" already has ${dominantTrustedCount} trusted ${pluralize(dominantTrustedCount, "entry")}.`,
+    },
+    {
+      kind: "low_trust_creation_path",
+      detail: describeLowTrustAliasFamily(aliasProfile),
+    },
+    {
+      kind: lexicalRelation.kind,
+      detail: lexicalRelation.detail,
+    },
+  ];
+
+  const confidence = Math.min(
+    0.98,
+    0.58 +
+      Math.min(dominantTrustedCount, 6) * 0.05 +
+      Math.min(aliasLowTrustCount, 2) * 0.05 +
+      Math.min(dominantProfile.activeEntryCount - aliasProfile.activeEntryCount, 6) * 0.02 +
+      lexicalRelation.strengthScore * 0.08,
+  );
+
+  return {
+    aliasEntityPrefix: aliasProfile.entityPrefix,
+    dominantEntityPrefix: dominantProfile.entityPrefix,
+    aliasFamilySize: aliasProfile.activeEntryCount,
+    dominantFamilySize: dominantProfile.activeEntryCount,
+    dominantTrustedCount,
+    aliasLowTrustCount,
+    confidence,
+    canonicalReuseSafe:
+      lexicalRelation.canonicalReuseSafe &&
+      aliasProfile.activeEntryCount === 1 &&
+      aliasLowTrustCount === aliasProfile.activeEntryCount &&
+      dominantTrustedCount >= SINGLETON_ALIAS_MIN_DOMINANT_TRUSTED_COUNT,
+    evidence,
+  };
+}
+
+function selectBestSingletonAliasCandidate(candidates: ClaimKeySingletonAliasCandidate[]): ClaimKeySingletonAliasCandidate[] {
+  const ranked = [...candidates].sort(
+    (left, right) => right.confidence - left.confidence || left.dominantEntityPrefix.localeCompare(right.dominantEntityPrefix),
+  );
+  const [best, runnerUp] = ranked;
+  if (!best) {
+    return [];
+  }
+
+  if (runnerUp && best.confidence - runnerUp.confidence < SINGLETON_ALIAS_MIN_CONFIDENCE_DELTA) {
+    return [];
+  }
+
+  return [best];
+}
+
+function evaluateSingletonAliasLexicalRelation(aliasEntityPrefix: string, dominantEntityPrefix: string): SingletonAliasLexicalRelation {
+  const aliasTokens = aliasEntityPrefix.split("_").filter((token) => token.length > 0);
+  const dominantTokens = dominantEntityPrefix.split("_").filter((token) => token.length > 0);
+
+  const aliasCompactSignature = aliasTokens.join("");
+  const dominantCompactSignature = dominantTokens.join("");
+  if (aliasCompactSignature === dominantCompactSignature && aliasEntityPrefix !== dominantEntityPrefix) {
+    return {
+      kind: "lexical_separator_variant",
+      detail: `Entity prefixes "${aliasEntityPrefix}" and "${dominantEntityPrefix}" collapse to the same compact lexical form.`,
+      canonicalReuseSafe: true,
+      scopeLike: false,
+      strengthScore: 3,
+    };
+  }
+
+  if (!isTokenSubset(dominantTokens, aliasTokens)) {
+    return {
+      kind: null,
+      detail: null,
+      canonicalReuseSafe: false,
+      scopeLike: false,
+      strengthScore: 0,
+    };
+  }
+
+  const dominantTokenSet = new Set(dominantTokens);
+  const addedTokens = aliasTokens.filter((token) => !dominantTokenSet.has(token));
+  const scopeLike = addedTokens.length !== 1 || addedTokens.some((token) => SINGLETON_ALIAS_SCOPE_TOKENS.has(token));
+  if (scopeLike) {
+    return {
+      kind: null,
+      detail: null,
+      canonicalReuseSafe: false,
+      scopeLike: true,
+      strengthScore: 0,
+    };
+  }
+
+  return {
+    kind: "lexical_token_subset",
+    detail: `"${aliasEntityPrefix}" extends "${dominantEntityPrefix}" by the added token "${addedTokens[0]}".`,
+    canonicalReuseSafe: true,
+    scopeLike: false,
+    strengthScore: 2,
+  };
+}
+
+function buildLowTrustEntryCount(profile: ClaimKeyEntityPrefixStats): number {
+  const deterministicOnlyCount = Math.max(0, profile.deterministicRepairEntryCount - profile.tentativeEntryCount);
+  return profile.tentativeEntryCount + profile.unresolvedEntryCount + deterministicOnlyCount;
+}
+
+function describeLowTrustAliasFamily(profile: ClaimKeyEntityPrefixStats): string {
+  const reasons: string[] = [];
+  if (profile.deterministicRepairEntryCount > 0) {
+    reasons.push(`${profile.deterministicRepairEntryCount} deterministic repair ${pluralize(profile.deterministicRepairEntryCount, "entry")}`);
+  }
+  if (profile.tentativeEntryCount > 0) {
+    reasons.push(`${profile.tentativeEntryCount} tentative ${pluralize(profile.tentativeEntryCount, "entry")}`);
+  }
+  if (profile.unresolvedEntryCount > 0) {
+    reasons.push(`${profile.unresolvedEntryCount} unresolved ${pluralize(profile.unresolvedEntryCount, "entry")}`);
+  }
+
+  if (reasons.length === 0) {
+    return `"${profile.entityPrefix}" is not fully trusted yet.`;
+  }
+
+  return `"${profile.entityPrefix}" is low-trust because it has ${reasons.join(", ")}.`;
+}
+
 function buildInitialism(tokens: string[]): string {
   if (tokens.length < 2) {
     return "";
@@ -711,4 +1097,8 @@ function getOrCreateSet<K>(map: Map<K, Set<string>>, key: K): Set<string> {
   const created = new Set<string>();
   map.set(key, created);
   return created;
+}
+
+function pluralize(count: number, noun: string): string {
+  return count === 1 ? noun : `${noun}s`;
 }

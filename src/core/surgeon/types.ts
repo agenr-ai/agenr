@@ -11,6 +11,7 @@ export interface ClaimKeyHealthSnapshot {
   malformedOrNoncanonicalCount: number;
   suspectCanonicalCount: number;
   entityFamilyGroupCount: number;
+  suspiciousSingletonAliasCount: number;
   mixedGroupCount: number;
   exactKeyMultiActiveClusterCount: number;
 }

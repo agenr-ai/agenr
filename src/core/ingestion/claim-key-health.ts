@@ -1,5 +1,6 @@
 import type { ClaimExtractionDiagnostic, ClaimExtractionDiagnosticOutcome } from "../store/claim-extraction.js";
 import type { ClaimKeySource, EntryType, StoreEntryInput } from "../types.js";
+import { detectClaimKeySingletonAliasCandidates } from "../claim-key-entity-family.js";
 import { isSnapshotStyleSourceFile } from "./source-metadata.js";
 
 /**
@@ -82,6 +83,7 @@ export interface IngestClaimKeyHealthSummary {
     ineligibleType: number;
     reviewable: number;
   };
+  suspiciousSingletonAliasCount: number;
   suspiciousSingletonNamespaceHints: string[];
   reviewCandidates: IngestClaimKeyHealthRow[];
   unresolvedRows: IngestClaimKeyHealthRow[];
@@ -210,6 +212,8 @@ export function summarizeIngestClaimKeyHealth(
       return left.subject.localeCompare(right.subject);
     });
 
+  const suspiciousSingletonAliases = detectClaimKeySingletonAliasCandidates(entries);
+
   return {
     totalRows: entries.length,
     eligibleRows: eligibleRows.length,
@@ -251,7 +255,8 @@ export function summarizeIngestClaimKeyHealth(
       ineligibleType: countDiagnostics(diagnosticsByIndex, "ineligible_type"),
       reviewable: unresolvedRows.filter((row) => row.reviewable).length,
     },
-    suspiciousSingletonNamespaceHints: buildSuspiciousSingletonNamespaceHints(entries),
+    suspiciousSingletonAliasCount: suspiciousSingletonAliases.length,
+    suspiciousSingletonNamespaceHints: buildSuspiciousSingletonNamespaceHints(suspiciousSingletonAliases),
     reviewCandidates: unresolvedRows.filter((row) => row.reviewable).slice(0, 10),
     unresolvedRows: unresolvedRows.slice(0, 10),
   };
@@ -292,51 +297,13 @@ function countDiagnostics(diagnosticsByIndex: Map<number, ClaimExtractionDiagnos
   return total;
 }
 
-/** Builds lightweight singleton-namespace hints for likely split-family follow-up review. */
-function buildSuspiciousSingletonNamespaceHints(entries: StoreEntryInput[]): string[] {
-  const counts = new Map<string, number>();
-
-  for (const entry of entries) {
-    const entity = entry.claim_key?.split("/", 1)[0]?.trim();
-    if (!entity) {
-      continue;
-    }
-
-    counts.set(entity, (counts.get(entity) ?? 0) + 1);
-  }
-
-  const entities = [...counts.keys()];
-  const hints: string[] = [];
-  for (const entity of entities) {
-    if ((counts.get(entity) ?? 0) !== 1) {
-      continue;
-    }
-
-    const entityTokens = new Set(entity.split("_").filter((token) => token.length > 0));
-    const match = entities.find((candidate) => {
-      if (candidate === entity || (counts.get(candidate) ?? 0) < 2) {
-        return false;
-      }
-
-      const candidateTokens = new Set(candidate.split("_").filter((token) => token.length > 0));
-      let overlap = 0;
-      for (const token of entityTokens) {
-        if (candidateTokens.has(token)) {
-          overlap += 1;
-        }
-      }
-
-      return overlap > 0;
-    });
-
-    if (match) {
-      hints.push(`${entity} -> ${match}`);
-    }
-
-    if (hints.length === 5) {
-      break;
-    }
-  }
-
-  return hints;
+/** Builds compact singleton-alias hints for likely split-family follow-up review. */
+function buildSuspiciousSingletonNamespaceHints(candidates: ReturnType<typeof detectClaimKeySingletonAliasCandidates>): string[] {
+  return candidates
+    .slice(0, 5)
+    .map(
+      (candidate) =>
+        `${candidate.aliasEntityPrefix} -> ${candidate.dominantEntityPrefix} ` +
+        `(alias ${candidate.aliasFamilySize}, dominant trusted ${candidate.dominantTrustedCount}${candidate.canonicalReuseSafe ? ", auto-reuse safe" : ""})`,
+    );
 }

@@ -303,7 +303,7 @@ function formatClaimKeyHealthSummary(summary: IngestClaimKeyHealthSummary): stri
   }
 
   if (summary.suspiciousSingletonNamespaceHints.length > 0) {
-    lines.push(formatLabel("Singleton hints", summary.suspiciousSingletonNamespaceHints.join(", ")));
+    lines.push(formatLabel("Singleton hints", `${summary.suspiciousSingletonAliasCount}: ${summary.suspiciousSingletonNamespaceHints.join(", ")}`));
   }
 
   if (summary.reviewCandidates.length > 0) {

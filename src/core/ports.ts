@@ -6,6 +6,7 @@
  */
 
 import type { EntryUpdateInput, Episode, EpisodeSource, Entry } from "./types.js";
+import type { ClaimKeyEntityPrefixStats } from "./claim-key-entity-family.js";
 import type { EpisodeInput, EpisodeUpsertResult, TemporalWindow } from "./episode/types.js";
 import type { EntryFilters, FtsCandidate, HistoricalPredecessorLookupParams, RecallCandidateEntry, VectorCandidate } from "./recall/types.js";
 
@@ -50,6 +51,9 @@ export interface DatabasePort {
 
   /** Get bounded full claim-key examples ordered for extraction hinting. */
   getClaimKeyExamples?(limit?: number): Promise<string[]>;
+
+  /** Get active per-prefix claim-key counts for conservative alias-family handling. */
+  getClaimKeyEntityPrefixStats?(): Promise<ClaimKeyEntityPrefixStats[]>;
 
   /** Update entry fields (importance, expiry, and temporal metadata). */
   updateEntry(id: string, fields: EntryUpdateInput): Promise<boolean>;
