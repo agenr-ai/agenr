@@ -6,7 +6,7 @@ It embeds the query, retrieves candidates through both vector search and SQLite 
 
 This document describes the code as it exists now, not just the intended flow.
 
-Since `1.3.0`, there is also a unified agent-facing recall layer on top of the entry pipeline documented here. The standalone CLI in `src/cli/commands/recall.ts` still exposes the entry-recall surface shown below, while `src/app/recall/unified.ts` plus the OpenClaw `agenr_recall` tool add mode routing and episodic recall.
+Current releases also layer a unified agent-facing recall surface and an automatic OpenClaw session-start recall path on top of the base entry pipeline documented here. The standalone CLI in `src/cli/commands/recall.ts` still exposes the entry-recall surface shown below, while `src/app/recall/unified.ts` plus the OpenClaw `agenr_recall` tool add mode routing and episodic recall. Separately, `src/adapters/openclaw/hooks/before-prompt-build.ts` injects continuity context plus core memory at session start without calling the public recall tool.
 
 ## Code map
 
@@ -17,24 +17,29 @@ Since `1.3.0`, there is also a unified agent-facing recall layer on top of the e
 - `src/core/recall/scoring.ts` - vector, lexical, recency, importance, and final-score math.
 - `src/core/recall/lexical.ts` - tokenization, lexical search-plan generation, and lexical overlap scoring.
 - `src/core/recall/temporal.ts` - explicit and inferred date parsing for temporal recall.
+- `src/core/recall/trace.ts` - typed per-call execution summaries for observability and recall-eval instrumentation.
 - `src/core/recall/types.ts` - recall input, output, candidate, and filter types.
 - `src/core/episode/search.ts` - temporal, semantic, and hybrid episode retrieval modes.
 - `src/core/episode/scoring.ts` - interval overlap scoring and temporal tie-break math for episodes.
 - `src/core/episode/temporal-window.ts` - calendar-aware time-phrase parsing for episodic recall.
 - `src/core/episode/types.ts` - episode query/result and temporal window types.
 - `src/core/ports.ts` - `RecallPorts` plus episode database interfaces used by the pure core pipelines.
-- `src/adapters/db/recall-adapter.ts` - libSQL implementation of vector search, FTS search, hydration, and recall-event recording.
+- `src/adapters/db/recall-adapter.ts` - libSQL implementation of vector search, FTS search, historical predecessor expansion, hydration, and recall-event recording.
 - `src/adapters/db/episode-queries.ts` - SQL overlap lookup and episode vector search.
 - `src/adapters/db/queries.ts` - `recordRecallEvent()` write path that updates counters and inserts `recall_events` rows.
-- `tests/cli/commands/recall.test.ts`, `tests/core/recall/search.integration.test.ts`, and `tests/app/recall/unified.test.ts` - CLI surface, end-to-end pipeline, unified routing, filter, telemetry, and concurrency coverage.
-- `tests/core/episode/temporal-window.test.ts` and `tests/adapters/openclaw/tools.test.ts` - parser coverage, routing, split-result formatting, and episode recall behavior.
+- `src/adapters/openclaw/tools/recall.ts` - `agenr_recall` schema, unified recall execution, and structured tool result shaping.
+- `src/adapters/openclaw/tools/shared.ts` - human-readable unified recall formatter used by the OpenClaw tool.
+- `src/adapters/openclaw/hooks/before-prompt-build.ts` - automatic session-start recall injection, continuity composition, and store-nudge gating.
+- `src/adapters/openclaw/format/recall-format.ts` - prompt formatter for the automatic session-start core-memory injection path.
+- `tests/cli/commands/recall.test.ts`, `tests/core/recall/search.integration.test.ts`, and `tests/app/recall/unified.test.ts` - CLI surface, end-to-end pipeline, unified routing, historical-state behavior, tracing, telemetry, and concurrency coverage.
+- `tests/core/episode/temporal-window.test.ts` and `tests/adapters/openclaw/tools.test.ts` - parser coverage, tool schema, split-result formatting, and episode recall behavior.
 
 ## Important architectural nuance
 
 Recall is split cleanly between core and adapter concerns:
 
-- `src/core/recall/` owns query parsing, candidate merge, scoring, thresholding, token budgeting, and final ranking.
-- `src/adapters/db/recall-adapter.ts` owns retrieval, SQL-pushable filters, full-entry hydration, and telemetry writes.
+- `src/core/recall/` owns query parsing, candidate merge, historical-state ranking, claim-key-aware result shaping, thresholding, token budgeting, tracing, and final ranking.
+- `src/adapters/db/recall-adapter.ts` owns retrieval, SQL-pushable filters, historical predecessor lookup, full-entry hydration, and telemetry writes.
 
 That split means the current recall implementation is already adapter-shaped:
 
@@ -42,9 +47,11 @@ That split means the current recall implementation is already adapter-shaped:
 - the core pipeline itself stays stateless
 - there is no direct `DatabasePort` dependency in `src/core/recall/search.ts`
 
-Two current-runtime details matter:
+Four current-runtime details matter:
 
 - vector search is not optional - if the vector query fails, recall throws instead of degrading to FTS-only
+- historical-state entry recall is still the same core pipeline, but it can ask the adapter for inactive predecessor candidates through the optional `fetchPredecessors()` port
+- typed recall tracing is opt-in and no-op by default, so observability can be added without changing ranking behavior
 - recall telemetry is awaited as part of `recall()`, but the adapter serializes the writes internally and swallows telemetry failures
 
 ## CLI surface
@@ -76,7 +83,7 @@ agenr recall <query> \
 
 Unlike ingest, recall currently has no `--dry-run` flag.
 
-## Unified routing and episodic recall (1.3.0)
+## Unified routing and episodic recall
 
 This section covers the newer unified recall layer used by `runUnifiedRecall()` and the OpenClaw `agenr_recall` tool. It sits above the entry-only CLI flow documented later and decides whether to query semantic entries, episodic memory, or both.
 
@@ -214,6 +221,7 @@ If the router wants semantic episode search but query embeddings are unavailable
 Unified recall does **not** merge episodes and entries into one ranked list. `UnifiedRecallResult` returns them separately:
 
 - `routing` - requested mode, detected intent, queried backends, and routing reason
+- optional `parsedTimeWindow` - the internal resolved temporal window object used by the app layer
 - optional `timeWindow` - resolved start/end/timezone/resolvedFrom metadata
 - `episodes` - episode matches
 - `entries` - semantic entry matches
@@ -224,13 +232,35 @@ The OpenClaw formatter preserves that separation in text output:
 
 - `Recall Route` first
 - then optional `Resolved Time Window`
-- then `Episode Matches`
-- then `Entry Matches`
+- then `Entry Matches` before `Episode Matches` when the detected intent is `historical_state`
+- otherwise `Episode Matches` before `Entry Matches`
 - then optional `Notices`
 
 This is why mixed recall responses show sessions and durable knowledge side by side without pretending they are the same kind of memory.
 
 One important caveat: `threshold`, `types`, and `tags` still apply to **entries only** in the current unified layer. When episodes are also queried, unified recall adds a notice saying so.
+
+Another caveat: semantic entry recall still depends on embeddings. In mixed or auto routing, unified recall can skip the entry side and return a notice when embeddings are unavailable. In explicit `mode=entries`, the same condition throws instead of degrading silently.
+
+## Automatic OpenClaw session-start recall
+
+The OpenClaw plugin has a second recall-related path that runs automatically on the first `before_prompt_build` call for a session. It is separate from `agenr_recall`.
+
+Current behavior in `handleAgenrBeforePromptBuild()` is:
+
+1. consume the session-start tracker so the recall injection runs only once per session
+2. resolve predecessor continuity and recent-session content through the OpenClaw continuity helpers
+3. kick off a background predecessor-episode write when a predecessor session exists
+4. fetch up to `4` core entries through `services.memory.listCoreEntries()`
+5. format those core entries as an `## Agenr Session Recall` prompt section
+6. prepend continuity summary, recent-session context, and core memory to the prompt in that order
+
+Important boundaries:
+
+- this path injects only always-on core memory from agenr itself, not general entry recall results
+- continuity summaries and recent-session snippets stay visibly separate from durable memory
+- duplicate session-start injections are blocked by in-memory tracker state
+- non-user follow-up turns may receive a separate store nudge, but that is not recall
 
 ## Memory authority levels
 
@@ -469,6 +499,41 @@ score = relevance * 0.5 + recency * 0.25 + importance * 0.25
 
 All component scores and the final score are clamped into `0-1`.
 
+### Historical-state expansion and claim-key shaping
+
+Entry recall has one important ranking variant that the old v1-only docs did not cover: `rankingProfile: "historical_state"`.
+
+Today that profile is set by unified recall when the router detects a prior-state question such as "what was the previous approach". The core pipeline then changes behavior in four ways:
+
+1. it asks the adapter for inactive predecessor candidates through `fetchPredecessors()`
+2. it flattens recency to a neutral `0.5` when there is no explicit `around` anchor
+3. it applies additive lineage bonuses for likely prior-state matches
+4. it applies light claim-key penalties to reduce redundant or low-trust current-state answers
+
+`fetchPredecessors()` is adapter-scoped to the active candidate set. The current libSQL adapter expands by:
+
+- direct `superseded_by` links first
+- same `claim_key` lineage next, preferring trusted historical siblings
+- retired same-subject rows as a weaker fallback
+
+Historical bonuses are additive and clamp back into `0-1`:
+
+- direct predecessor of an active candidate: `+0.08`
+- retired predecessor-like candidate: `+0.06`
+- older same-slot or same-topic prior state: `+0.08`
+
+Claim-key trust also changes how lineage is interpreted:
+
+- tentative same-slot lineage is suppressed when a trusted sibling for that slot exists
+- active tentative current-state siblings in a slot with a trusted peer receive a `0.08` penalty
+- extra trusted active siblings in the same slot receive a redundancy penalty of `0.05` per rank, capped at `0.15`
+
+These shaping signals are returned in the final score breakdown even though the CLI does not currently print them in verbose mode:
+
+- `historicalLineage`
+- `claimKeyTrustPenalty`
+- `claimKeyRedundancyPenalty`
+
 ## 7. Thresholding, budgeting, and limit
 
 After scoring:
@@ -522,6 +587,17 @@ Each returned result contains:
 - the final `score`
 - the score breakdown object
 
+The current `scores` payload includes:
+
+- `relevance`
+- `vector`
+- `lexical`
+- `recency`
+- `importance`
+- `historicalLineage`
+- `claimKeyTrustPenalty`
+- `claimKeyRedundancyPenalty`
+
 ## 9. CLI formatting
 
 The CLI prints each result as a multi-line block:
@@ -545,7 +621,36 @@ Current formatting details:
 - created dates are displayed as `YYYY-MM-DD`
 - tags, source-file metadata, and recall counters are not shown
 
-## 10. Recall telemetry
+## 10. Recall tracing
+
+`recall()` now supports an optional typed trace sink through `RecallExecutionOptions.trace`.
+
+Important properties of the tracing path:
+
+- tracing is observational only and defaults to `createNoopRecallTraceSink()`
+- the trace summary is emitted exactly once per recall call
+- tracing works for successful calls, no-result calls, and thrown errors
+- integration tests explicitly assert that enabling tracing does not change result ordering or scores
+
+The emitted `RecallExecutionTraceSummary` currently contains:
+
+- `filtering` - active `types`, `tags`, `since`, `until`, and optional `around`
+- `ranking` - normalized `limit`, `threshold`, `budget`, and optional stable `noResultReason`
+- `candidateCounts` - merged, threshold-qualified, budget-accepted, final-ranked, and returned counts
+- `claimKey` - historical boosts, tentative-lineage suppression, trust penalties, and redundancy penalties
+- `timings` - merge, score, threshold, budget, and result-shaping timings
+
+Stable no-result reasons today are:
+
+- `empty_query`
+- `limit_zero`
+- `no_candidates`
+- `below_threshold`
+- `hydrate_missing`
+
+This tracing surface is what the internal recall-eval seam and future observability hooks should consume. It is separate from user-facing recall telemetry.
+
+## 11. Recall telemetry
 
 If recall returns at least one result, it records telemetry for those entry IDs.
 
@@ -609,6 +714,7 @@ Notes:
 - `src/core/recall/scoring.ts`
 - `src/core/recall/lexical.ts`
 - `src/core/recall/temporal.ts`
+- `src/core/recall/trace.ts`
 - `src/core/recall/types.ts`
 - `src/core/episode/search.ts`
 - `src/core/episode/scoring.ts`
@@ -618,6 +724,10 @@ Notes:
 - `src/adapters/db/recall-adapter.ts`
 - `src/adapters/db/episode-queries.ts`
 - `src/adapters/db/queries.ts`
+- `src/adapters/openclaw/tools/recall.ts`
+- `src/adapters/openclaw/tools/shared.ts`
+- `src/adapters/openclaw/hooks/before-prompt-build.ts`
+- `src/adapters/openclaw/format/recall-format.ts`
 - `tests/cli/commands/recall.test.ts`
 - `tests/core/recall/search.integration.test.ts`
 - `tests/app/recall/unified.test.ts`
