@@ -1,78 +1,65 @@
 # OpenClaw Plugin
 
-`src/adapters/openclaw/` is the production agenr integration for OpenClaw.
-The publishable plugin package lives at `packages/openclaw-plugin` and ships as `@agenr/agenr-plugin`.
-The OpenClaw manifest id remains `agenr`, so runtime identity and config keys stay stable even though the npm package name is different.
+`src/adapters/openclaw/` is agenr's production OpenClaw integration.
+The publishable package lives in `packages/openclaw-plugin` and ships as `@agenr/agenr-plugin`.
+The OpenClaw plugin id remains `agenr`, so runtime identity and config keys stay stable.
 
-Today it plays four roles at once:
+This document describes the current codebase, not an aspirational design.
 
-- OpenClaw memory plugin entrypoint
-- OpenClaw tool adapter for five agenr tools
-- session continuity adapter around OpenClaw lifecycle hooks
-- OpenClaw transcript parser reused by ingest and continuity summary generation
+## What the plugin does today
 
-This document describes the code as it exists now, not just the intended flow.
+The OpenClaw plugin is a translator around agenr's existing core and app workflows. It currently does all of the following:
+
+- registers agenr as an OpenClaw memory plugin
+- exposes five agent tools: `agenr_store`, `agenr_recall`, `agenr_update`, `agenr_retire`, and `agenr_trace`
+- injects session-start context into the prompt from agenr core memory plus predecessor continuity
+- tracks mid-session memory activity and can inject `[MEMORY CHECK]` nudges after long gaps without memory actions
+- generates or reuses predecessor continuity summaries from OpenClaw transcript JSONL files
+- writes predecessor sessions into agenr episodic memory in the background
+- exposes OpenClaw memory-runtime status and vector/embedding probes
+- reuses the OpenClaw transcript parser for continuity and episode ingestion
+
+The adapter is intentionally not a second memory brain. Durable memory, recall ranking, episode ingest, and claim-key lifecycle still live in agenr core and app layers.
 
 ## Code map
 
-- `src/adapters/openclaw/index.ts` - plugin entry, OpenClaw event registration, tool registration, memory-slot wiring, and shutdown cleanup.
-- `src/adapters/openclaw/openclaw.plugin.json` and `src/adapters/openclaw/config.ts` - manifest-defined config schema plus runtime config normalization.
-- `packages/openclaw-plugin/package.json`, `packages/openclaw-plugin/openclaw.plugin.json`, and `packages/openclaw-plugin/src/index.ts` - plugin-only package metadata and publishable entrypoint.
-- `src/app/openclaw/runtime.ts` - shared service composition: config loading, DB setup, embedding availability resolution, repository wiring, and recall adapter construction.
-- `src/app/openclaw/ports.ts` - OpenClaw-owned read-model contracts for prompt memory, trace, and status probing.
-- `src/adapters/openclaw/runtime.ts` - thin adapter re-export of the app-owned runtime composition entrypoint.
-- `src/adapters/openclaw/tools.ts` - `agenr_store`, `agenr_recall`, `agenr_update`, `agenr_retire`, and `agenr_trace`.
-- `src/adapters/openclaw/format/prompt-section.ts` - static system-prompt guidance about when to use agenr tools.
-- `src/adapters/openclaw/format/recall-format.ts` - session-start prompt rendering for recalled core memory.
-- `src/adapters/openclaw/hooks/before-prompt-build.ts` - session-start recall plus predecessor continuity injection.
-- `src/adapters/openclaw/session/state.ts` - in-process continuity tracker for first-run suppression and predecessor lookup.
-- `src/adapters/openclaw/session/continuity/predecessor-resolver.ts` - session-key parsing, `resumedFrom` archive lookup, and narrow `sessions.json` fallback for `main` and `tui`.
-- `src/adapters/openclaw/session/continuity/continuity-summary-generator.ts` and `src/adapters/openclaw/session/continuity/continuity-summary-reader.ts` - sidecar continuity summary generation, reuse, and file lookup.
-- `src/adapters/openclaw/session/session-key-parser.ts`, `src/adapters/openclaw/session/tui-lane.ts`, and `src/adapters/openclaw/session/sessions-store-reader.ts` - continuity key parsing plus `sessions.json` normalization.
-- `src/adapters/openclaw/memory/runtime.ts` - newer OpenClaw memory runtime and status surface.
-- `src/adapters/openclaw/memory/flush-plan.ts` - deliberate pass-through flush-plan behavior.
-- `src/adapters/openclaw/transcript/*.ts` - OpenClaw JSONL transcript normalization used by ingest and continuity summaries.
-- `src/adapters/db/openclaw-repository.ts` - DB-backed OpenClaw repository for core-memory injection, trace, subject lookup, and status snapshots.
-- `tests/adapters/openclaw/*.test.ts` and `tests/adapters/openclaw/session/*.test.ts` - coverage for config, runtime wiring, hooks, tools, transcript parsing, continuity summaries, flush-plan behavior, and predecessor tracking.
+- `src/adapters/openclaw/index.ts` - plugin entry, hook registration, tool registration, memory-runtime wiring, and shutdown cleanup.
+- `src/adapters/openclaw/openclaw.plugin.json` and `src/adapters/openclaw/config.ts` - manifest-backed config schema, validation, UI hints, and store-nudge defaults.
+- `packages/openclaw-plugin/package.json`, `packages/openclaw-plugin/openclaw.plugin.json`, and `packages/openclaw-plugin/src/index.ts` - publishable plugin package metadata and entrypoint.
+- `src/app/openclaw/runtime.ts` - shared runtime composition: config resolution, DB open, OpenClaw repository wiring, recall adapter creation, embedding availability, and optional claim-extraction LLM wiring.
+- `src/app/openclaw/ports.ts` - OpenClaw-owned read-model contracts for trace and memory status.
+- `src/adapters/openclaw/runtime.ts` - thin re-export of the app-owned runtime composition function.
+- `src/adapters/openclaw/tools/` - one file per OpenClaw tool plus shared parsing, logging, and target-resolution helpers.
+- `src/adapters/openclaw/format/prompt-section.ts` - static system-prompt doctrine for memory recall and storage.
+- `src/adapters/openclaw/format/recall-format.ts` - session-start recall rendering.
+- `src/adapters/openclaw/format/nudge-format.ts` - mid-session `[MEMORY CHECK]` prompt generation.
+- `src/adapters/openclaw/hooks/before-prompt-build.ts` - session-start recall, predecessor continuity injection, background predecessor episode write, and mid-session store nudge logic.
+- `src/adapters/openclaw/hooks/after-tool-call.ts` - mid-session tracker updates after `agenr_store`, `agenr_update`, and `agenr_retire`.
+- `src/adapters/openclaw/session/state.ts` - in-process session-start dedup plus per-session mid-session state.
+- `src/adapters/openclaw/session/continuity/` - predecessor resolution, continuity summary read/write, and recent-session tail rendering.
+- `src/adapters/openclaw/session/session-key-parser.ts`, `src/adapters/openclaw/session/session-id.ts`, `src/adapters/openclaw/session/session-registry.ts`, `src/adapters/openclaw/session/transcript-files.ts`, `src/adapters/openclaw/session/sessions-store-reader.ts`, and `src/adapters/openclaw/session/tui-lane.ts` - OpenClaw session identity and continuity helpers.
+- `src/adapters/openclaw/episode/episode-writer.ts` - best-effort predecessor episode ingest backed by the shared `app/episode-ingest` workflow.
+- `src/adapters/openclaw/llm/openclaw-llm-client.ts` - lightweight OpenClaw-authenticated LLM client used for continuity, episode summaries, and optional claim extraction.
+- `src/adapters/openclaw/memory/runtime.ts` and `src/adapters/openclaw/memory/flush-plan.ts` - thin memory-runtime bridge and no-op flush-plan behavior.
+- `src/adapters/openclaw/transcript/` - OpenClaw JSONL parsing, cleanup, timestamp repair, tool summarization, and transcript-safe filtering.
+- `src/adapters/db/openclaw-repository.ts` - DB-backed OpenClaw repository for session-start core memory, trace, subject lookup, and status probes.
 
-## Important architectural nuance
+## Packaging and identity
 
-The OpenClaw adapter is intentionally not a second memory brain.
-
-Its job is to translate OpenClaw runtime concepts into agenr core and adapter calls:
-
-- tool calls become store, recall, update, retire, and trace operations
-- session lifecycle hooks become continuity summary and prompt-injection work
-- transcript JSONL becomes normalized agenr transcript input
-- newer OpenClaw memory-slot status surfaces become thin status/probe adapters
-
-Some current-runtime choices matter:
-
-- shared services are created once per plugin process and reused across tools and hooks
-- session-start prompt injection is narrow: it injects active `core` entries plus predecessor continuity, not a broad semantic recall pass
-- predecessor continuity is file-based, using sidecar continuity summary files next to transcript JSONL, not handoff entries stored back into agenr
-- continuity summary generation uses OpenClaw's embedded agent runner and the active OpenClaw agent model, not agenr's own LLM config
-- embeddings still come from agenr config and are required for `agenr_recall`
-- the newer memory runtime is mostly a status and capability bridge: `sync()` is a no-op and the flush-plan hook returns `null`
-
-## Packaging
-
-OpenClaw installs should use the plugin-only package:
+Install the plugin package, not the main CLI package:
 
 ```bash
 openclaw plugins install @agenr/agenr-plugin
 openclaw gateway restart
 ```
 
-The plugin id is still `agenr`, so:
+The runtime plugin id is still `agenr`, so existing OpenClaw references remain:
 
 - `plugins.entries.agenr`
 - `plugins.slots.memory = "agenr"`
 - `openclaw plugins update agenr`
 
-all continue to use the same runtime identity.
-
-For local development, run `pnpm build` from the repo root and point `plugins.load.paths` at the package root:
+For local development, build from the repo root and point OpenClaw at the package directory:
 
 ```json
 {
@@ -82,372 +69,443 @@ For local development, run `pnpm build` from the repo root and point `plugins.lo
 }
 ```
 
-## Plugin surface
-
-### Manifest and config
+## Manifest and config
 
 The plugin manifest declares:
 
-- plugin `id`: `agenr`
-- plugin `kind`: `memory`
-- tool contracts: `agenr_store`, `agenr_recall`, `agenr_retire`, `agenr_update`, `agenr_trace`
+- `id: "agenr"`
+- `kind: "memory"`
+- tool contracts for `agenr_store`, `agenr_recall`, `agenr_retire`, `agenr_update`, and `agenr_trace`
 
-The runtime config is deliberately small:
+The runtime config is currently:
 
-- `dbPath` is an optional override
-- `configPath` is an optional override
-- `continuityModel`, `episodeModel`, and `claimExtractionModel` are optional `provider/model` overrides for OpenClaw-auth LLM calls
-- unknown config keys are rejected
+- `dbPath` - optional DB path override
+- `configPath` - optional agenr config path override
+- `continuityModel` - optional `provider/model` override for continuity summary generation
+- `episodeModel` - optional `provider/model` override for predecessor episode summaries
+- `claimExtractionModel` - optional `provider/model` override for claim-key extraction during store calls
+- `storeNudge` - optional nested config with `enabled`, `threshold`, and `maxPerSession`
 
-If OpenClaw provides `resolvePath`, the adapter resolves any supplied path overrides before startup. After that, the app-owned OpenClaw runtime loads agenr config via the same config/db resolution used by the CLI:
+Unknown keys are rejected.
 
-- `configPath` override if supplied
-- otherwise `AGENR_CONFIG_PATH`
-- otherwise `config.json` next to an overridden `dbPath`
-- otherwise `~/.agenr/config.json`
+Current `storeNudge` defaults:
 
-The database path then resolves in this order:
+- `enabled = true`
+- `threshold = 8`
+- `maxPerSession = 5`
 
-- `dbPath` override if supplied
-- otherwise `AGENR_DB_PATH`
-- otherwise `dbPath` from agenr's config
-- otherwise `~/.agenr/knowledge.db`
+Path resolution still follows the shared agenr config rules:
 
-### Registration
+1. plugin `configPath`, if set
+2. `AGENR_CONFIG_PATH`
+3. `config.json` next to an overridden `dbPath`
+4. `~/.agenr/config.json`
 
-`src/adapters/openclaw/index.ts` registers all adapter behavior in one place:
+Then DB resolution is:
 
-- one shared `servicesPromise`
-- one per-process `SessionStartTracker`
-- one static memory prompt-section builder
-- optional memory flush-plan and memory runtime hooks when the host supports them
-- five tools
+1. plugin `dbPath`, if set
+2. `AGENR_DB_PATH`
+3. `dbPath` from agenr config
+4. `~/.agenr/knowledge.db`
+
+If OpenClaw provides `resolvePath`, the plugin resolves supplied path overrides through it before startup.
+
+## Registration lifecycle
+
+`src/adapters/openclaw/index.ts` registers one shared process-lifetime services promise plus one session-start tracker and one mid-session tracker.
+
+The plugin currently wires:
+
+- `registerMemoryPromptSection(buildAgenrMemoryPromptSection)`
+- optional memory flush-plan registration
+- optional memory runtime registration
+- the five tools
 - `before_prompt_build`
 - `session_start`
+- `after_tool_call`
+- `session_end`
 - `gateway_stop`
 
-On shutdown, `gateway_stop` awaits `services.close()` and ignores startup failures so shutdown stays best-effort.
+Current lifecycle behavior:
+
+- `session_start` only remembers `resumedFrom` by new `sessionId`
+- `before_prompt_build` performs session-start recall once per tracked session identity
+- repeated `before_prompt_build` calls for the same session can inject store nudges instead of session-start memory
+- `after_tool_call` updates mid-session tracker state after memory tool use
+- `session_end` clears mid-session state
+- `gateway_stop` awaits `services.close()` and ignores startup failures during shutdown
 
 ## Shared runtime services
 
-`createAgenrOpenClawServices()` builds the shared process-lifetime dependencies:
+`createAgenrOpenClawServices()` in `src/app/openclaw/runtime.ts` builds the shared services used by tools, hooks, and memory status.
 
-- a libSQL database adapter opened against `dbPath`
-- OpenClaw-specific repository methods for core-memory lookup, trace, subject resolution, and status probing
-- an embedding client when agenr config provides credentials
+Current composition includes:
+
+- the libSQL database adapter
+- the OpenClaw-specific repository read model
+- an embedding client when embedding config is valid
 - an always-throwing embedding port when embeddings are unavailable
-- a recall adapter built from the database plus embedding port
-- an embedding-status snapshot safe to expose to OpenClaw status surfaces
+- the recall adapter used by unified recall
+- an optional claim-extraction runtime backed by OpenClaw auth and model resolution
+- a public embedding-status snapshot safe for OpenClaw runtime surfaces
 
-Embedding availability is resolved statically from config. There is no startup network probe.
+Important current behavior:
 
-That leads to an important split:
-
-- `agenr_recall` checks `embeddingStatus.available` and fails early when embeddings are not configured
-- session-start core-memory injection still works without embeddings because it reads `core` rows through the OpenClaw repository
+- embedding availability is resolved from config without a startup network probe
+- `agenr_recall` fails when embeddings are unavailable
+- session-start core-memory injection does not need embeddings
+- claim extraction is only wired when agenr claim-extraction config is enabled and the OpenClaw LLM client can be created
 
 ## Static prompt guidance
 
-`buildAgenrMemoryPromptSection()` inserts the OpenClaw-facing instructions for when to use agenr.
+`buildAgenrMemoryPromptSection()` inserts static guidance into the OpenClaw system prompt.
 
-Current behavior:
+It is only included when `agenr_recall` is available.
 
-- if `agenr_recall` is unavailable, the section is omitted entirely
-- otherwise it tells the model to call `agenr_recall` before answering questions about prior work, preferences, unfinished work, dates, or past sessions
-- it teaches `mode=auto` for prior-state questions like "what was the previous approach" and "what changed from X to Y"
-- it teaches `mode=entries` for exact facts and `mode=episodes` for explicit narrative session recall
-- when `agenr_store` is available, it applies a stronger future-session test and explicitly asks whether the agent is storing durable memory or merely logging activity
-- it teaches a generic record-vs-memory distinction, warning against copying canonical records from version control, ticket systems, calendars, documents, chat/email threads, or external systems of record into agenr
-- it sharpens the `fact` / `decision` / `preference` / `lesson` / `milestone` boundaries and warns against using `decision` as a catch-all for important updates or `milestone` as a bucket for routine completions
-- it includes concise cross-domain negative and positive examples near the store decision
-- it conditionally adds guidance for `agenr_store`, `agenr_update`, `agenr_retire`, and `agenr_trace` only when those tools are available
-- it adds a citation rule based on `citationsMode`
+Current guidance covers:
 
-This section is static guidance only. It does not inject memory results by itself.
+- always call `agenr_recall` before answering questions about prior work, decisions, preferences, dates, unfinished work, or past sessions
+- `mode=entries` for exact durable facts and decisions
+- `mode=auto` for normal recall and historical-state questions such as "what was the previous approach"
+- `mode=episodes` for explicit session-narrative recall
+- put time phrases directly in the recall query for temporal questions
+- memory authority ordering: durable entries, then episodes, then continuity/handoffs, then live verification
+- storage doctrine, type boundaries, and what not to store when `agenr_store` is available
+- fix contradicted memory with `agenr_update` or `agenr_retire`
+- use `agenr_trace` for provenance or supersession questions
+- avoid overstating unfinished delegated work when non-memory orchestration tools are present
+- citation behavior based on `citationsMode`
 
-## End-to-end flow
+This section is static doctrine only. It does not itself recall memory or inject session-start results.
 
-### 1. Session-start prompt injection
+## Session flow
 
-`before_prompt_build` is where the adapter injects memory and predecessor continuity into the OpenClaw prompt.
+### 1. Session-start recall
 
-#### Duplicate suppression
-
-The handler first asks `SessionStartTracker.consume(...)` whether this session has already received session-start recall.
+`before_prompt_build` asks `SessionStartTracker.consume(...)` whether this is the first prompt-build for the current session identity.
 
 Tracking rules today:
 
 - `sessionId` wins when present
 - otherwise `sessionKey` is used
-- if neither is present, the handler treats the call as first-run
+- if neither is present, the call is treated as first-run
 
-If the tracker reports a duplicate, the hook returns `undefined` and nothing is injected.
+On the first run, the hook:
 
-#### Core-memory recall
-
-If this is the first run for the session, the adapter loads core entries through the OpenClaw repository's `listCoreEntries(...)`.
+1. resolves predecessor continuity
+2. starts a best-effort background predecessor episode write
+3. loads current agenr core entries through `services.memory.listCoreEntries(4)`
+4. renders any non-empty sections into `prependContext`
 
 Current session-start memory behavior is intentionally narrow:
 
-- limit is fixed at `4`
-- only active entries with `expiry = 'core'` qualify
-- ordering is `importance DESC, created_at DESC`
-- there is no session-start semantic query against non-core entries
-- there is no embedding call in this path
+- fixed limit of `4` core entries
+- only active `expiry = "core"` entries
+- no session-start semantic search against non-core entries
+- no embedding call on this path
 
-The prompt formatter renders these entries under `## Agenr Session Recall` and `### Core Memory`.
+The formatted prompt can include:
 
-#### Predecessor continuity lookup
+- `## Previous session summary`
+- `## Recent session`
+- `## Agenr Session Recall`
 
-The handler then tries to recover the immediately previous session for the same OpenClaw lane.
+If all sections are empty, the hook returns `undefined`.
 
-It resolves predecessors in this order:
+Any unexpected failure is logged and swallowed so prompt building can continue.
 
-1. parse the current OpenClaw session key into a continuity kind (`main`, `tui`, `direct`, `group`, `channel`, or an ineligible kind)
-2. if `session_start` provided `resumedFrom`, scan the agent sessions directory for `<sessionId>.jsonl`, `<sessionId>.jsonl.reset.*`, or `<sessionId>.jsonl.deleted.*`
-3. if `resumedFrom` does not resolve and the current kind is `main` or `tui`, fall back to scanning OpenClaw `sessions.json`
+### 2. Mid-session store nudges
 
-Current continuity behavior matches current OpenClaw session routing:
+When `before_prompt_build` is called again for an already-started session, the plugin does not rerun session-start recall. Instead it may inject a `[MEMORY CHECK]` nudge.
 
-- default direct-message and WebChat continuity uses the shared main session key `agent:<agentId>:<mainKey>` (default `main`)
-- DM-isolated modes such as `per-peer`, `per-channel-peer`, and `per-account-channel-peer` produce direct-message keys and rely on `resumedFrom`
-- group and channel continuity is exact-lane only, including Telegram `:topic:<id>` and Discord/Slack `:thread:<id>` suffixes
-- `subagent` and `acp` sessions are parsed but never considered continuity-eligible
+Current nudge rules:
 
-The `sessions.json` fallback is intentionally narrow:
+- no nudges for non-user triggers `heartbeat`, `cron`, or `memory`
+- no nudges when `storeNudge.enabled` is false
+- turns are counted per tracked session identity
+- a nudge is eligible only after the configured gap since both the last successful store and the last memory action
+- nudges stop after `maxPerSession`
 
-- `tui` fallback keeps the broad default `tui` bucket behavior and still allows a fresh `tui-<uuid>` session to recover from `agent:<agentId>:main`
-- `main` fallback is cheap insurance when the store still points at an older main-session transcript
-- `direct`, `group`, and `channel` sessions accept a cold start when `resumedFrom` is missing or its transcript file cannot be found
+Current nudge copy changes depending on:
 
-#### Previous-session continuity summary loading
+- whether anything has been stored this session
+- whether this is the first nudge
+- whether this is the final allowed nudge
+- the recent stored subjects, capped for display
 
-Once a predecessor session file is found, the adapter tries to load a sidecar continuity summary from:
+The nudge is a prompt reminder only. It does not write memory on its own.
+
+### 3. Mid-session tracker updates
+
+`after_tool_call` updates the same per-session tracker after these tools:
+
+- `agenr_store`
+- `agenr_update`
+- `agenr_retire`
+
+Current behavior:
+
+- successful `agenr_store` resets the successful-store and memory-action timers
+- skipped `agenr_store` resets only memory-action timers
+- `agenr_update` and `agenr_retire` reset memory-action timers
+- explicit claim-bearing store attempts also update explicit-memory-action timing
+- a bounded recent subject list is maintained for nudge copy
+
+## Predecessor continuity
+
+Continuity lives under `src/adapters/openclaw/session/continuity/`.
+
+The resolver currently:
+
+1. parses the current OpenClaw session key into a continuity identity
+2. rejects ineligible session kinds early
+3. resolves the agent-scoped sessions directory from OpenClaw runtime state
+4. tries `session_start.resumedFrom` first
+5. falls back to `sessions.json` scanning only for `main` and `tui`
+
+Current continuity behavior:
+
+- `resumedFrom` file discovery is preferred for all eligible session kinds
+- `sessions.json` fallback is intentionally narrow and only used for `main` and `tui`
+- direct, group, and channel lanes accept a cold start when `resumedFrom` is missing or does not resolve
+- ineligible kinds are ignored rather than forced through fallback logic
+
+When a predecessor transcript is found, the plugin tries to build two prompt sections from it:
+
+- a continuity summary
+- a compact recent-session transcript tail
+
+### Continuity summary read or generation
+
+The adapter reads a sidecar summary at:
 
 ```text
 <session-dir>/<session-id>.continuity-summary.md
 ```
 
-If that file exists and is non-empty, it is injected under `## Previous session summary`.
+If the sidecar exists and is non-empty, it is reused.
 
-If the file is missing, `before_prompt_build` may generate it on demand by calling `generateAndWriteOpenClawContinuitySummary(...)`.
+If it does not exist, `before_prompt_build` may trigger read-time generation through `generateAndWriteOpenClawContinuitySummary(...)`.
 
-Important runtime details:
+Current generation behavior:
 
-- read-time generation is wrapped in an outer `10_000 ms` timeout
-- a timeout or generation failure is swallowed and results in no continuity summary section
-- if generation succeeds, the sidecar file is written and reused on later starts
+- transcript comes from the OpenClaw JSONL parser, not raw file text
+- empty cleaned transcripts are skipped
+- transcripts with fewer than `4` cleaned messages are skipped
+- prompt transcript text is capped at `14_000` characters while preserving both head and tail
+- continuity generation uses the lightweight OpenClaw LLM client and OpenClaw auth, not agenr's own LLM config
+- model selection prefers `continuityModel` and otherwise falls back to the active agent's primary model
+- the generator has a `30_000 ms` timeout
+- the session-start read path waits up to `35_000 ms` before giving up
+- successful summaries are normalized and written back to the sidecar file for reuse
 
-#### Recent transcript tail
-
-The adapter also parses the predecessor transcript and injects a compact tail under `## Recent session`.
-
-Current limits:
-
-- last `6` normalized transcript messages
-- rendered as `U:` and `A:` lines
-- capped to `1_800` characters
-
-This recent-session section is a fallback continuity layer when the continuity summary is missing or too lossy.
-
-#### Final prompt mutation
-
-The final `prependContext` is the concatenation of:
-
-- previous-session continuity summary, when available
-- recent transcript tail, when available
-- `Agenr Session Recall`, when any core entries exist
-
-If all three are empty, the hook returns `undefined`.
-
-Any unexpected failure in the whole hook is logged and swallowed so prompt building can continue.
-
-### 2. Session reset and sidecar continuity summary generation
-
-The current continuity path does not depend on a `before_reset` hook. Instead, it loads or generates sidecar summaries at session start after predecessor resolution succeeds.
-
-#### Continuity summary generation pipeline
-
-`writeOpenClawContinuitySummary()` is currently a thin wrapper around `generateAndWriteOpenClawContinuitySummary(...)`.
-
-That generation pipeline does the following:
-
-1. derive `<session-id>.continuity-summary.md` from the transcript filename
-2. parse the transcript through the OpenClaw transcript parser
-3. drop empty normalized messages
-4. skip the run when there are fewer than `4` cleaned messages
-5. render a continuity summary prompt from the cleaned transcript
-6. cap transcript text to `14_000` characters while preserving both the start and end
-7. resolve the OpenClaw agent, provider, and model from host config
-8. call `runEmbeddedPiAgent(...)` with tools disabled and a `15_000 ms` timeout
-9. strip a duplicated top-level Markdown heading from the response
-10. write the normalized continuity summary to the sidecar file
-
-Two design choices matter here:
-
-- the continuity summary run uses OpenClaw's configured model and auth, not agenr's own LLM client
-- the run uses a temporary session file under a temp directory and removes that directory afterward
-
-Current skip and failure modes include:
+Current skip and failure reasons include:
 
 - `missing_session_id`
 - `empty`
 - `too_short`
-- `embedded_agent_unavailable`
 - `already_exists`
 - `empty_response`
-- arbitrary thrown error text
+- `timeout`
+- arbitrary error text
 
-### 3. OpenClaw tool behavior
+Failures are swallowed after logging so prompt build can proceed.
 
-The adapter registers five tools. All tool calls log an info-level summary plus sanitized parameters.
+### Recent session tail
 
-Sanitization is deliberate:
+The adapter also renders a fallback transcript tail from the predecessor transcript:
+
+- last `6` normalized messages
+- rendered as `U:` and `A:` lines
+- capped to `1_800` characters from the end
+
+This uses the normalized transcript parser output, so system messages and large tool payloads have already been filtered.
+
+## Background predecessor episode ingest
+
+After predecessor resolution succeeds, `before_prompt_build` kicks off `writeOpenClawPredecessorEpisode(...)` without awaiting it.
+
+This path is best-effort and never blocks prompt assembly.
+
+Current behavior:
+
+- routes through the shared `app/episode-ingest` workflow
+- parses the predecessor transcript with the same OpenClaw transcript parser
+- uses an OpenClaw-authenticated LLM client for summary generation
+- prefers plugin `episodeModel` and otherwise falls back to the active agent model
+- applies a `45_000 ms` overall timeout
+- skips active-session checks because the predecessor is already known
+- tries to embed the episode summary when embeddings are available and time budget remains
+- logs skipped, invalid, failed, timed-out, created, or updated outcomes
+
+This means the newest predecessor session can become episodic memory without a separate manual backfill step, but prompt continuity does not depend on that ingest succeeding.
+
+## Tool behavior
+
+The plugin registers five tools from `src/adapters/openclaw/tools/`.
+
+All tool calls log info-level summaries plus sanitized params. Raw user content is not logged wholesale.
+
+Current sanitization examples:
 
 - store logs `contentLength`, not raw content
 - retire logs `reasonLength`, not raw reason text
-- recall logs the full query in params plus a truncated query in the summary
+- recall logs the query for tool usefulness, but summary text stays compact
 
-#### `agenr_store`
+### `agenr_store`
 
-`agenr_store` is a thin tool wrapper over `storeEntriesDetailed(...)`.
+`agenr_store` is a thin wrapper over `storeEntriesDetailed(...)`.
 
-Current runtime behavior:
+Current request fields:
 
-- stores exactly one entry per tool call
-- uses `openclaw-session:<sessionKey|sessionId|agentId|unknown>` as `source_file`
+- required: `type`, `subject`, `content`
+- optional: `importance`, `expiry`, `tags`, `sourceContext`, `supersedes`, `claimKey`, `validFrom`, `validTo`
+
+Current behavior:
+
+- stores exactly one entry per call
+- sets `source_file` to `openclaw-session:<sessionKey|sessionId|agentId|unknown>`
 - defaults `source_context` to `Stored via agenr_store from OpenClaw.`
+- can attach manual claim-support metadata when `claimKey` is supplied
+- can also use the optional claim-extraction runtime when it is enabled
 - returns `stored`, `skipped`, or `failed`
-- resolves the stored entry again by subject so the tool can return `entryId` when possible
+- resolves the stored subject again so the tool can return `entryId` when possible
 
-#### `agenr_recall`
+### `agenr_recall`
 
-`agenr_recall` calls `runUnifiedRecall()`, which routes between entry recall and episodic recall.
+`agenr_recall` calls `runUnifiedRecall()`.
 
-Supported request fields today:
+Current request fields:
 
-- `query`
-- `mode`
-- `limit`
-- `threshold`
-- `types`
-- `tags`
+- required: `query`
+- optional: `mode`, `limit`, `threshold`, `types`, `tags`
 
-Important details:
+Current behavior:
 
-- `sessionKey` from the OpenClaw tool context is always attached for recall telemetry
-- if embeddings are unavailable, the tool fails before calling core recall
-- `mode=auto` now handles current-state, historical-state, and mixed entry-plus-episode routing
-- result text shows routing metadata plus separate entry and episode sections, with entries rendered first for historical-state queries
-- structured tool details also include the full returned entry metadata
+- attaches `sessionKey` for recall telemetry
+- fails when embeddings are unavailable
+- supports unified routing across exact entry recall, historical-state recall, and episodic recall
+- returns routing metadata, rendered text, structured entry results, structured episode results, and notices
 
-#### `agenr_update`
+### `agenr_update`
 
-`agenr_update` mutates only:
+`agenr_update` mutates an existing entry in place.
+
+Current target selectors:
+
+- exactly one of `id` or `subject`
+
+Current update fields:
 
 - `importance`
 - `expiry`
+- `claimKey`
+- `validFrom`
+- `validTo`
 
-It requires exactly one target selector:
+When `claimKey` is updated, the tool writes normalized manual claim-key metadata plus claim-support facts from the current OpenClaw session context.
 
-- `id`
-- `subject`
+### `agenr_retire`
 
-and at least one update field.
+`agenr_retire` soft-deletes an active entry.
 
-#### `agenr_retire`
+Current request fields:
 
-`agenr_retire` soft-deletes an entry by:
+- exactly one of `id` or `subject`
+- optional `reason`
 
-- `id`
-- `subject`
+Retired entries are excluded from recall.
 
-An optional `reason` is stored as retirement metadata.
+### `agenr_trace`
 
-#### `agenr_trace`
+`agenr_trace` exposes the current v1 provenance view.
 
-`agenr_trace` exposes the limited v1 provenance view:
-
-- the entry itself
-- `superseded_by`
-- entries it supersedes
-- recent recall events
-
-It accepts:
+Current selectors:
 
 - `id`
 - `subject`
 - `last`
 
-The `last` mode resolves the most recently created entry from any state.
+Current trace payload includes:
 
-#### Target resolution rules
+- the entry itself
+- `supersededBy`
+- entries it supersedes
+- recent recall events
 
-The tool layer resolves targets with a few non-obvious semantics:
+### Shared target-resolution rules
+
+The tool helper layer currently enforces these semantics:
 
 - callers must provide exactly one selector
-- subject lookup is case-insensitive and exact matches rank above substring matches
-- subject lookup returns the most recent match
-- id and subject lookup can resolve inactive entries for trace and for mutation attempts
-- update and retire still fail if the resolved entry is no longer active
+- subject lookup is case-insensitive
+- exact matches rank ahead of substring matches
+- the most recent matching entry wins
+- trace can resolve inactive entries
+- update and retire can resolve inactive entries for error reporting, but they still fail to mutate inactive entries
 
-### 4. Transcript parsing
+## Transcript parsing
 
-The OpenClaw transcript parser is used by both ingest and continuity summary generation, so its filtering rules shape more than one runtime path.
+The OpenClaw transcript parser is reused by continuity and predecessor episode ingest, so its filtering rules matter across several plugin features.
 
 Current parser behavior:
 
 - accepts OpenClaw JSONL session exports
-- ignores malformed JSONL lines but records warnings
-- captures `sessionId`, normalized `conversation_label`, start timestamp, and `modelsUsed`
-- normalizes roles into `user`, `assistant`, `toolResult`, `system`, or `unknown`
+- ignores malformed lines while recording warnings
+- captures transcript metadata such as session id, conversation label, timestamps, and models used
+- normalizes messages into adapter-safe roles
 - drops system messages
-- strips OpenClaw user metadata fence blocks before normalizing text
-- drops pure base64-like blobs
+- strips OpenClaw user metadata fence blocks before text normalization
+- drops obvious base64-like blobs
 - summarizes assistant tool calls into transcript-safe text
-- either keeps, truncates, or replaces tool results with placeholders based on tool name and output length
-- fills missing timestamps from session metadata, file mtime, or current time
+- truncates or replaces large tool results based on tool name and output shape
+- repairs missing timestamps from transcript metadata, file metadata, or current time
 
-Tool-result policy is intentionally opinionated:
+Continuity summaries, recent-session tails, and predecessor episode ingest all operate on this normalized transcript output rather than raw JSONL.
 
-- always drop raw results for tools like `read`, `web_fetch`, `browser`, `screenshot`, `snapshot`, `canvas`, `tts`, `agenr_recall`, and `image`
-- keep some raw results, truncated, for tools like `web_search`, `memory_search`, and `memory_get`
-- keep `exec` output only when it is short or looks like an error
+## OpenClaw memory-runtime bridge
 
-This matters for continuity because sidecar summaries and recent transcript tails are built from the normalized transcript, not the raw JSONL.
+The newer OpenClaw memory-runtime integration remains intentionally thin.
 
-### 5. Newer OpenClaw memory-slot bridge
+`createAgenrMemoryRuntime()` currently reports:
 
-The newer OpenClaw memory runtime integration is intentionally thin.
+- backend `builtin`
+- provider `agenr`
+- configured embedding model
+- DB path
+- source-file count
+- active entry count
+- core entry count
+- vector dimensions
+- vector availability probe result
+- embedding availability probe result
 
-`createAgenrMemoryRuntime()` returns a runtime object that:
+Current runtime behavior:
 
-- reports backend `builtin`
-- exposes provider status as `agenr`
-- includes db path, embedding model, active-entry counts, core-entry counts, and source-file counts
-- probes vector availability by calling `vector_top_k(...)` against agenr's vector index with a zero vector
-- exposes embedding availability based on the already-resolved embedding status
-- implements `sync()` as a no-op
-- closes shared services from `closeAllMemorySearchManagers()`
+- `sync()` is a no-op
+- `resolveMemoryBackendConfig()` returns `{ backend: "builtin" }`
+- `closeAllMemorySearchManagers()` closes the shared agenr services
 
-`buildAgenrMemoryFlushPlan()` always returns `null`.
+`buildAgenrMemoryFlushPlan()` still returns `null`.
 
-That means the plugin participates in OpenClaw's memory-slot APIs for status and runtime registration, but it does not take over transcript compaction or flush policy.
+So agenr participates in OpenClaw's memory-runtime status surface, but it does not take over transcript compaction or flush policy.
 
-## Current testing coverage
+## Current test coverage
 
-The adapter has direct tests for:
+The current adapter tests cover:
 
-- manifest-backed config parsing
-- runtime config and embedding resolution
-- prompt-section generation
-- tool execution and logging
-- transcript parsing and filtering
-- session-start dedup and predecessor injection
-- reset-time continuity summary writing
-- TUI predecessor fallback
-- continuity summary generation through the embedded OpenClaw runner
+- config parsing and manifest-backed package metadata
+- runtime wiring and embedding resolution
+- static prompt-section generation
+- tool behavior
+- after-tool-call tracking
+- session-start recall and mid-session nudge behavior
+- predecessor resolution and continuity summary generation
+- episode writer behavior
 - session-state tracking
-- pass-through flush-plan behavior
+- session-registry and transcript-file helpers
+- transcript parsing
+- OpenClaw-authenticated LLM client behavior
+- no-op flush-plan behavior
 
-So the current docs above are backed by targeted adapter tests, not just manual inspection.
+See `tests/adapters/openclaw/` for the current set of targeted plugin tests.
