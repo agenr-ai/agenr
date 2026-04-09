@@ -1,70 +1,48 @@
 # Ingest
 
-The `ingest` CLI now exposes two paths:
+`agenr ingest` has two production paths:
 
-- `agenr ingest <path>` or `agenr ingest entries <path>` for the production transcript-to-memory entry pipeline
-- `agenr ingest episodes <path>` for episodic-summary backfill over OpenClaw session transcripts
+- `agenr ingest <path>` or `agenr ingest entries <path>` for durable entry ingest
+- `agenr ingest episodes [path]` for episodic summary backfill and episode embedding backfill
 
-This document focuses primarily on the durable-entry ingest path. It is adapter-based in core, but the current CLI is wired specifically to the OpenClaw transcript parser.
+This document describes the code as it exists now.
 
-This document describes the code as it exists now, not just the intended flow.
+## Scope
+
+Entry ingest and episode ingest are related, but they are not the same pipeline.
+
+- Entry ingest turns OpenClaw transcripts into durable `entries` rows.
+- Episode ingest turns OpenClaw sessions into one narrative `episodes` row per session.
+- Both reuse the OpenClaw transcript parser.
+- They diverge at discovery, eligibility, storage shape, and CLI behavior.
+
+For the memory model and recall behavior after ingest, see [RECALL.md](./RECALL.md) and [EPISODES.md](./EPISODES.md).
 
 ## Code map
 
-- `src/cli/commands/ingest.ts` - CLI wiring, flag parsing, and progress reporting for entry ingest.
-- `src/app/ingestion/service.ts` - multi-file durable-entry ingest orchestration: discovery, parallel extraction, within-run dedup, and one bulk store pass.
-- `src/adapters/files/transcript-files.ts` - target path resolution, transcript file discovery, and file hashing.
-- `src/adapters/openclaw/transcript/parser.ts` - OpenClaw JSONL parsing and transcript normalization.
-- `src/core/ingestion/extract.ts` - whole-file decision, chunking, retry logic, and extraction prompting.
-- `src/core/ingestion/parser.ts` - validation and normalization of extraction-model JSON output.
-- `src/core/ingestion/dedup.ts` - within-run semantic dedup using embeddings plus LLM arbitration.
-- `src/core/ingestion/pipeline.ts` - single-file extract helper and multi-file store finalization.
-- `src/core/store/pipeline.ts` - validation, hash dedup, embedding generation, and persistence.
-- `tests/core/ingestion/*.test.ts` and `tests/cli/commands/ingest.test.ts` - behavior coverage for discovery, parsing, extraction, dedup, pipeline, and CLI flags.
+- `src/cli/commands/ingest.ts` - top-level `agenr ingest` registration and durable entry ingest CLI
+- `src/cli/commands/ingest-episodes.ts` - `agenr ingest episodes` CLI
+- `src/app/ingestion/service.ts` - multi-file durable entry orchestration
+- `src/app/episode-ingest/service/preflight.ts` - Stage 1 episode preflight and candidate classification
+- `src/app/episode-ingest/service/plan.ts` - Stage 2 episode planning and recent-window filtering
+- `src/app/episode-ingest/service/execute.ts` - Stage 2 episode generation and upsert execution
+- `src/app/episode-ingest/service/backfill.ts` - embedding-only episode backfill
+- `src/adapters/files/transcript-files.ts` - generic local file discovery and hashing used by entry ingest
+- `src/adapters/openclaw/session/transcript-files.ts` - OpenClaw-specific session discovery used by episode ingest
+- `src/adapters/openclaw/session/session-registry.ts` - `sessions.json` metadata lookup for episode ingest
+- `src/adapters/openclaw/transcript/parser.ts` - OpenClaw JSONL parsing and transcript normalization
+- `src/core/ingestion/extract.ts` - chunking, retry logic, and extraction prompting
+- `src/core/ingestion/parser.ts` - extraction-response validation and normalization
+- `src/core/ingestion/dedup.ts` - within-run semantic dedup
+- `src/core/ingestion/claim-key-preservation.ts` - explicit claim-key preservation across dedup
+- `src/core/ingestion/source-metadata.ts` - stable source-file, user, and project metadata resolution
+- `src/core/ingestion/pipeline.ts` - single-file extract helper plus batch store finalization
+- `src/core/store/claim-extraction.ts` - ingest-time claim-key extraction
+- `src/core/store/pipeline.ts` - validation, hash dedup, embedding generation, persistence, and auto-supersession
 
-## Important architectural nuance
+## Durable entry ingest
 
-`src/core/ingestion/pipeline.ts` exports `ingestFile()`, but the CLI does not use it directly for the normal multi-file ingest path.
-
-Instead, the CLI hands off to `ingestDiscoveredFiles()` in `src/app/ingestion/service.ts`, and that workflow does this:
-
-1. Discover files.
-2. Run `extractFile()` in parallel per file.
-3. Flatten all extracted entries into one batch.
-4. Run one dedup pass across the whole batch.
-5. Run one store phase across the whole batch.
-
-That design matters because it enables:
-
-- cross-file dedup inside a single ingest run
-- one bulk-write store phase instead of one transaction per file
-- reuse of dedup embeddings during the store phase
-
-## Supported inputs
-
-The CLI accepts:
-
-- a single file path
-- a directory path
-
-Discovery behavior is slightly different for those two cases:
-
-- If the target is a file, it is accepted as-is. There is no filename filter at discovery time.
-- If the target is a directory, discovery walks subdirectories recursively by default and includes files whose names contain `.jsonl` anywhere.
-
-That means these directory-discovered variants are included:
-
-- `session.jsonl`
-- `session.jsonl.reset.<timestamp>`
-- `session.jsonl.deleted.<timestamp>`
-
-Discovered files are converted to absolute paths and sorted lexicographically before processing.
-
-The parser itself is still OpenClaw-specific, so a random non-OpenClaw file may be discoverable but will not necessarily parse successfully.
-
-## CLI options
-
-### Entry ingest
+### CLI
 
 ```bash
 agenr ingest <path> \
@@ -75,13 +53,257 @@ agenr ingest <path> \
   [--concurrency <n>]
 ```
 
-- `--verbose` emits chunk-level progress, parser warnings, bulk-write lifecycle logs, and per-file usage/cost details.
-- `--dry-run` performs discovery, hashing, parsing, extraction, and dedup, but skips persistence and ingest-log writes.
-- `--whole-file auto|force|never` controls whether extraction uses one full-session prompt or message-bounded chunks.
-- `--skip-dedup` disables the semantic dedup arbitration pass.
-- `--concurrency <n>` sets extraction worker count. Default: `10`. Allowed range: `1-16`.
+Current limits:
 
-### Episode ingest
+- default concurrency: `10`
+- allowed range: `1-50`
+
+Current flag behavior:
+
+- `--verbose` prints chunk-level details, parser warnings, per-file usage, and bulk-write progress
+- `--dry-run` performs discovery, hashing, parsing, extraction, semantic dedup, and claim-key extraction, but skips persistence and ingest-log writes
+- `--whole-file auto|force|never` controls whole-transcript extraction versus chunking
+- `--skip-dedup` skips LLM arbitration, but the pipeline still computes embeddings so survivors can be stored with vectors
+- `--concurrency <n>` caps parallel extraction workers
+
+### Entry ingest architecture
+
+The durable ingest CLI does not call `ingestPath()` directly. It does discovery first, then hands the discovered files to `ingestDiscoveredFiles()` in `src/app/ingestion/service.ts`.
+
+That workflow is:
+
+1. Discover files.
+2. Run `extractFile()` in parallel per file.
+3. Flatten all extracted entries into one batch.
+4. Run one semantic dedup pass across the whole batch.
+5. Restore explicit claim-key metadata onto surviving dedup winners when possible.
+6. Run best-effort claim-key extraction across the surviving batch when configured.
+7. Run one bulk store pass.
+8. Update the ingest log for successful extracted files.
+
+That design matters because it enables:
+
+- cross-file semantic dedup inside a single run
+- reuse of dedup embeddings during store
+- one bulk store phase instead of one transaction per file
+- one shared claim-key extraction pass before persistence
+
+The init wizard's optional bulk ingest path reuses the same `ingestDiscoveredFiles()` workflow after it scans likely OpenClaw session files.
+
+### Entry discovery
+
+Entry ingest uses `src/adapters/files/transcript-files.ts`.
+
+Current behavior:
+
+- if the target is a file, the file is accepted as-is
+- if the target is a directory, discovery is recursive
+- recursive directory discovery keeps files whose names contain `.jsonl` anywhere
+- returned paths are absolute and lexicographically sorted
+
+That means entry ingest will discover:
+
+- `session.jsonl`
+- `session.jsonl.reset.<timestamp>`
+- `session.jsonl.deleted.<timestamp>`
+- any other file whose name contains `.jsonl`
+
+The parser is still OpenClaw-specific, so discovery is intentionally broader than what the parser can necessarily understand.
+
+### Per-file extract phase
+
+Each extraction worker:
+
+1. computes a SHA-256 file hash
+2. checks the ingest log by file path
+3. skips the file if the stored hash matches
+4. parses the transcript with the OpenClaw parser
+5. runs extraction
+6. returns entries, warnings, chunk stats, and the file hash
+
+Per-file failures do not abort the whole run. The batch continues and the failed file is reported at the end.
+
+### Transcript normalization
+
+The OpenClaw parser normalizes raw JSONL into `ParsedTranscript` plus warnings. The same parser is shared by entry ingest, episode ingest, and continuity-related OpenClaw flows.
+
+Important current behaviors include:
+
+- system messages are dropped
+- pure base64 blobs are dropped
+- user and assistant text is whitespace-normalized
+- assistant tool calls are summarized into assistant-visible text
+- many tool results are collapsed into placeholders instead of being kept verbatim
+- selected tool results can be preserved
+- assistant and kept-tool text may be truncated for prompt safety
+- timestamps are normalized to ISO-8601
+- transcript metadata carries session identity, transcript hash, source identity, working directory, and reconstructed surface hints when available
+
+### Whole-file versus chunked extraction
+
+The `--whole-file` flag controls whether extraction runs on the full transcript or on message-bounded chunks.
+
+- `auto` - use whole-file mode only if the estimated transcript fits inside the usable model window
+- `force` - require whole-file mode and throw if the transcript will not fit
+- `never` - always chunk
+
+The usable model window is:
+
+- context window
+- minus max output tokens
+- minus a fixed `4500` token reserve for the system prompt and safety margin
+
+If chunking is needed:
+
+- chunks never split messages
+- the soft ceiling is `8000` estimated tokens per chunk
+- token estimation uses a simple `chars / 4` heuristic
+- prompt lines are rendered as `[m00012][user] text`
+- later chunks receive a summary of previously extracted subjects to reduce duplicate output
+
+### Retry behavior
+
+Each chunk gets up to 3 attempts.
+
+- retry 2 happens after `200ms`
+- retry 3 happens after `400ms`
+- there is also a default `150ms` delay between chunk requests
+
+If a chunk still fails, the file stays in the batch with a warning and ingest continues with the remaining chunks.
+
+### Extraction response validation
+
+`parseExtractionResponse()` validates model output before any dedup or store step.
+
+Current normalization behavior includes:
+
+- accepts plural aliases like `facts`
+- maps `event` and `events` to `milestone`
+- rejects unsupported type labels
+- maps importance tiers `high`, `standard`, and `low` to `8`, `6`, and `4`
+- accepts numeric importance `1-10`
+- accepts `perm` and `temp` expiry aliases
+- downgrades extracted `core` expiry to `temporary`
+- blocks meta subjects such as `user`, `assistant`, `team`, `we`, and `this session`
+- requires content of at least 20 characters
+- lowercases and deduplicates tags, capped at 4
+- preserves explicit `claim_key` values when they normalize successfully
+
+### Semantic dedup
+
+After extraction, the workflow flattens all successful files and calls `dedupBatch()` once.
+
+This pass is within-run only. It does not look at already stored database rows.
+
+Current algorithm:
+
+1. compose embedding text for every extracted entry
+2. compute embeddings for the full batch
+3. cluster entries by cosine similarity using single-linkage union-find
+4. send only multi-entry clusters to the dedup LLM
+5. keep, drop, or merge entries based on the LLM decision
+
+Current runtime details:
+
+- default similarity threshold: `0.75`
+- singleton clusters pass through without an LLM call
+- malformed or failed arbitration keeps the whole cluster
+- `--skip-dedup` still computes embeddings, but returns a passthrough result with no LLM arbitration
+
+### Claim-key handling during ingest
+
+Claim-key handling is now part of the ingest workflow, not an afterthought.
+
+There are three relevant steps:
+
+1. Explicit `claim_key` values returned by extraction are normalized and preserved on the extracted rows.
+2. After semantic dedup, `restoreExplicitClaimKeysAfterDedup()` reattaches explicit claim-key metadata to winning survivors when the cluster agrees on a single explicit key.
+3. If claim extraction is enabled, `runBatchClaimExtraction()` runs across the dedup survivors and applies accepted lifecycle metadata directly onto the entries before store.
+
+The durable ingest CLI resolves claim extraction through `resolveClaimExtractionConfig(config)` and can use a dedicated claim model via `resolveModel(config, "claim")`.
+
+By default, claim extraction is:
+
+- enabled
+- thresholded at `0.8`
+- limited to `fact`, `preference`, `decision`, and `lesson`
+
+The CLI also prints a compact claim-key health summary for the final store candidates.
+
+### Source metadata resolution
+
+Before store, ingest also normalizes source metadata:
+
+- `source_file` is rewritten to a stable transcript identity when the raw path was a rotated `.reset` or `.deleted` snapshot
+- `user_id` falls back to transcript metadata when present
+- `project` can come from transcript metadata, or be inferred conservatively from the working directory when the extracted row clearly references that project
+
+### Store phase
+
+`storeExtractedResults()` regroups survivors by source file for reporting, then flattens them again for one store pass.
+
+When the run is not a dry run and there are entries to write, the database adapter performs a bulk-write cycle:
+
+1. drop entry FTS triggers
+2. drop vector indexes when supported by the SQLite build
+3. store the batch
+4. recreate triggers
+5. rebuild FTS
+6. recreate vector indexes
+
+Inside `storeEntriesDetailed()`, the current store pipeline does:
+
+1. validation and normalization
+2. within-batch exact content-hash dedup
+3. exact content-hash dedup against the existing database
+4. within-batch normalized-content-hash dedup
+5. normalized-content-hash dedup against the existing database
+6. embedding generation or reuse
+7. conservative claim-key auto-supersession planning for eligible same-slot entries
+8. persistence plus any explicit or auto-supersession links
+
+This means durable ingest has two dedup layers:
+
+- semantic dedup in `src/core/ingestion/dedup.ts`
+- hash-based dedup in `src/core/store/pipeline.ts`
+
+The store layer is what protects against duplicates that already existed before the current run.
+
+### Ingest log semantics
+
+The ingest log is only a file-level change detector.
+
+Current behavior:
+
+- hash comparison happens before parsing
+- skip requires the same file path and the same SHA-256 hash
+- successful extracted files get an ingest-log row even if zero entries were stored for that file
+- failed files do not update the ingest log
+- dry runs do not update the ingest log
+
+The logged `entryCount` is the post-store stored count for that file, not the raw extracted count.
+
+### Entry ingest reporting
+
+The CLI reports:
+
+- skipped, failed, and successful files
+- per-file warnings
+- dedup summary
+- claim-key health summary when available
+- total stored, deduped, rejected, skipped-file, failed-file, and warning counts
+- total tokens, cost, and LLM calls
+
+Verbose mode additionally prints:
+
+- chunk-by-chunk extraction outcomes
+- per-file duration and usage
+- bulk-write lifecycle updates
+- verbose dedup cluster details
+
+## Episode ingest
+
+### CLI
 
 ```bash
 agenr ingest episodes <path> \
@@ -96,331 +318,111 @@ agenr ingest episodes <path> \
   [--model <provider/model|model>]
 ```
 
-- `--db <path>` overrides the configured knowledge database path for the backfill run.
-- `--recent <duration>` limits candidates to sessions ending within a relative window such as `30d`, `90d`, or an ISO timestamp.
-- `--regenerate` reprocesses sessions that already have stored episodes instead of skipping them.
-- `--embed-only` skips summary generation and backfills embeddings for existing episodes that are missing them. No transcript path is required in this mode.
-- `--no-embed` skips embedding newly generated episode summaries.
-- `--dry-run` performs Stage 1 preflight and Stage 2 cost estimation without generating or writing episodes.
-- `--verbose` emits per-session progress while summaries are generated.
-- `--concurrency <n>` sets summary-generation worker count. Default: `10`. Allowed range: `1-20`.
-- `--model <provider/model|model>` overrides the configured episode summary model for the run.
+Current limits:
 
-## Episode ingest behavior
+- default concurrency: `10`
+- allowed range: `1-50`
 
-`agenr ingest episodes <path>` is a separate pipeline from entry ingest.
+Current flag behavior:
 
-Instead of extracting durable facts, decisions, lessons, and other knowledge entries, it produces one episodic summary per OpenClaw session and stores that summary in the `episodes` table for later temporal recall.
-
-### How episode ingest differs from entry ingest
-
-- **Entry ingest** turns transcripts into durable knowledge entries meant to survive beyond one conversation.
-- **Episode ingest** turns each session into a narrative summary of what happened during that session.
-- **Entry ingest** is optimized for knowledge extraction, semantic dedup, and long-term memory storage in `entries`.
-- **Episode ingest** is optimized for calendar- and session-oriented recall such as "what happened yesterday" or "what were we working on last week," with output stored in `episodes`.
-- **Entry ingest** can discover any file or directory that matches the transcript discovery rules, then parse through the OpenClaw transcript adapter.
-- **Episode ingest** is specifically shaped around OpenClaw session transcripts, session metadata, and one-summary-per-session backfill.
-
-### Session discovery and metadata reconstruction
-
-Episode ingest runs in two stages:
-
-1. **Stage 1 preflight** discovers transcript files, parses them, skips ineligible sessions, and builds a candidate list.
-2. **Stage 2 execution** generates summaries for the selected candidates and writes or updates episodes.
-
-Preflight discovery uses the same OpenClaw transcript file discovery rules as the rest of ingest, including rotated files such as:
-
-- `session.jsonl`
-- `session.jsonl.reset.<timestamp>`
-- `session.jsonl.deleted.<timestamp>`
-
-For session metadata, the episode pipeline prefers authoritative data from OpenClaw's `sessions.json` registry when it can find it:
-
-- the CLI resolves a sessions directory from the target path
-- if the target is a file, the parent directory is treated as the sessions directory
-- `sessions.json` is loaded from that directory and matched by parsed session id
-- registry metadata provides the best available `surface`, `agentId`, `provider`, and `chatType` for active sessions
-
-Rotated or older transcript files do not always have usable registry metadata, so the transcript parser also reconstructs the session surface directly from transcript content. Current reconstruction sources include:
-
-- `inbound_meta.surface`
-- `Sender (untrusted metadata)` blocks
-- `Conversation info (untrusted metadata)` blocks
-- content heuristics from the first user message when metadata blocks are absent, including subagent and heartbeat sessions
-
-That reconstruction is integrated into transcript parsing, so episode ingest does not need a second pass over each file.
-
-When registry metadata is unavailable, agent ownership falls back to the OpenClaw directory layout:
-
-- `.openclaw/agents/{agentId}/sessions/{file}`
-
-### Episode-only flags
-
-These are the flags that most directly affect episode backfill behavior:
-
-| Flag                  | What it does                                                                                        | Notes                                                                                                                      |
-| --------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `--recent <duration>` | Only keeps candidates whose `endedAt` falls within a recent window.                                 | Accepts relative values such as `30d` or `90d`, and also ISO timestamps. Applied after preflight candidate classification. |
-| `--regenerate`        | Rebuilds episodes even when a matching episode already exists.                                      | Without this flag, existing sessions are skipped during preflight.                                                         |
-| `--dry-run`           | Runs discovery, parsing, filtering, and Stage 2 estimation without generating or writing summaries. | Useful for cost checks before a large backfill.                                                                            |
-| `--concurrency <n>`   | Sets parallel worker count for preflight parsing and summary generation.                            | Default `10`. Allowed range `1-20`.                                                                                        |
-| `--embed-only`        | Backfills embeddings for existing episodes that are missing vectors.                                | No transcript path is required. This mode does not call the summary LLM.                                                   |
-| `--no-embed`          | Skips embedding newly generated episode summaries.                                                  | Cannot be combined with `--embed-only`. Useful when you want summaries now and vector backfill later.                      |
-
-A few other options still apply to episode ingest in the normal way:
-
-- `--db <path>` chooses the target database for the run
+- `--db <path>` overrides the configured database path for this run
+- `--recent <duration>` keeps only sessions ending within a relative window like `30d` or an ISO timestamp
+- `--regenerate` allows already-stored sessions to be regenerated
+- `--embed-only` backfills embeddings for stored episodes missing vectors and does not require a transcript path
+- `--no-embed` skips embedding newly generated summaries
+- `--dry-run` runs preflight and planning only, then stops before summary generation and writes
+- `--verbose` prints per-session progress
 - `--model <provider/model|model>` overrides the episode summary model
-- `--verbose` prints per-session progress lines
 
-### Practical examples
+### Episode discovery
 
-Backfill recent session episodes for the last 30 days:
+Episode ingest does not use the generic entry-ingest discovery adapter.
 
-```bash
-agenr ingest episodes ~/.openclaw/agents/<agent-id>/sessions --recent 30d
-```
+It uses `src/adapters/openclaw/session/transcript-files.ts`, which matches only OpenClaw session file names:
 
-Preview a backfill without generating summaries or writing anything:
+- `<uuid>.jsonl`
+- `<uuid>.jsonl.reset.<timestamp>`
+- `<uuid>.jsonl.deleted.<timestamp>`
 
-```bash
-agenr ingest episodes ~/.openclaw/agents/<agent-id>/sessions --recent 30d --dry-run
-```
+If the target is a single file and the basename does not match that OpenClaw pattern, episode ingest treats it as no files found.
 
-Backfill embeddings only for episodes that already exist but do not yet have vectors:
+### Episode pipeline
 
-```bash
-agenr ingest episodes --embed-only
-```
+Episode ingest is split into explicit stages.
 
-Rebuild previously written episodes from transcripts, then write fresh summaries:
+#### Stage 1 - Preflight
 
-```bash
-agenr ingest episodes ~/.openclaw/agents/<agent-id>/sessions --regenerate
-```
+`prepareEpisodeIngest()` discovers files, parses them, and classifies each transcript as:
 
-Rebuild episodes without embeddings now, for a later embedding pass:
+- candidate
+- skipped
+- invalid
 
-```bash
-agenr ingest episodes ~/.openclaw/agents/<agent-id>/sessions --recent 90d --regenerate --no-embed
-```
+Current preflight skip rules:
 
-## End-to-end flow
+- `skipped_exists` - an episode already exists for the session or transcript hash and `--regenerate` was not set
+- `skipped_short` - fewer than `4` cleaned messages remain after transcript normalization
+- `skipped_active` - the session appears active because `endedAt` is within the last `5` minutes
 
-### 1. Config and adapter setup
+Current invalid rule:
 
-At startup the entry-ingest command:
+- no usable session id and no cleaned messages
 
-- loads config via `readConfig()`
-- resolves the database path via `resolveDbPath()`
-- resolves extraction and dedup models independently
-- resolves the embedding model and API key
-- opens the database adapter
+For candidates, preflight renders the transcript text used by the summary model and caps it at `14000` characters.
 
-The extraction model and dedup model can be different. The intended pattern is a stronger extraction model and a cheaper dedup classifier.
+#### Session metadata reconstruction
 
-## 2. Discovery
+Episode preflight resolves session metadata in this order:
 
-`discoverFiles()` resolves the target path, checks whether it is a file or directory, and returns sorted absolute paths.
+1. authoritative `sessions.json` registry metadata when available
+2. reconstructed transcript surface metadata from the OpenClaw parser
+3. agent id derived from the OpenClaw directory layout when needed
 
-If no files are found, the command exits cleanly with a warning.
+That gives the current best-effort values for:
 
-## 3. Per-file extract phase
+- `sessionId`
+- `sourceRef`
+- `agentId`
+- `surface`
+- metadata source (`registry`, `reconstructed`, or `none`)
 
-The ingest workflow runs extraction workers in parallel but preserves input order in the final result list.
+#### Stage 2 - Plan
 
-For each file, `extractFile()` does the following:
+`createEpisodeIngestPlan()` applies the optional `--recent` cutoff and estimates:
 
-1. Read the raw file and compute a SHA-256 hash.
-2. Look up the file path in the ingest log.
-3. If the stored hash matches, skip the file without parsing.
-4. Parse the transcript through the OpenClaw parser.
-5. Run extraction over the normalized transcript.
-6. Return extracted entries plus warnings, chunk stats, and the file hash.
+- selected candidate count
+- input tokens
+- output tokens
+- estimated summary cost
 
-A per-file parse or extraction failure does not abort the whole ingest command. It is reported as a failed file and the batch continues.
+If `--recent` is set, undated candidates are excluded.
 
-### Transcript normalization
+#### Stage 2 - Execute
 
-The OpenClaw parser converts raw JSONL into normalized `TranscriptMessage[]` and metadata:
+`executeEpisodeIngestPlan()` runs summary generation with concurrency-limited workers and serialized writes.
 
-- system messages are dropped
-- pure base64 blobs are dropped
-- user and assistant text are whitespace-normalized
-- assistant tool calls are summarized into assistant-visible text
-- many tool results are dropped and replaced with placeholders rather than raw output
-- selected tool results can be kept
-- assistant and kept-tool text can be truncated for prompt safety
-- timestamps are normalized to ISO-8601 and filled from session metadata, file mtime, or current time when missing
+Each candidate:
 
-In verbose mode the parser emits a summary warning that includes counts of dropped system messages, dropped tool results, kept tool results, and dropped base64 blocks.
+1. generates a structured summary
+2. optionally embeds the summary
+3. upserts the episode row
 
-## 4. Extraction
+Session results are reported as:
 
-`extractFromTranscript()` is responsible for chunking, prompting, retrying, and parsing the extraction-model response.
+- `written`
+- `updated`
+- `unchanged`
+- `failed`
 
-### Whole-file vs chunked mode
+### Episode-only nuances
 
-The `--whole-file` option controls the extraction mode:
-
-- `auto` - use whole-file mode only if the transcript is estimated to fit inside the model context window
-- `force` - require whole-file mode and throw if the transcript does not fit
-- `never` - always chunk
-
-The auto-fit calculation is conservative. It subtracts:
-
-- the model's max output tokens
-- a fixed 4500-token reserve for the system prompt and safety margin
-
-from the model context window before deciding whether the full transcript can fit.
-
-### Chunking behavior
-
-When chunking is required:
-
-- chunks are split on message boundaries only
-- the soft ceiling is `8000` estimated tokens per chunk
-- token estimation uses a simple `chars / 4` heuristic
-- message lines are rendered as `[m00012][user] text`
-
-Each chunk is extracted independently, and later chunks receive a "previously extracted from this file" block so the model can avoid repeating the same knowledge.
-
-### Retry behavior
-
-Each chunk gets up to 3 extraction attempts:
-
-- attempt 1
-- retry after 200 ms
-- retry after 400 ms
-
-There is also a default 150 ms delay between successful chunk requests.
-
-If all attempts fail for a chunk, ingest records a warning and continues with the remaining chunks.
-
-### Extraction response validation
-
-`parseExtractionResponse()` normalizes the model JSON into `StoreEntryInput[]` and drops invalid entries with warnings.
-
-Current validation behavior includes:
-
-- accepts plural aliases like `facts` plus uppercase variants
-- maps legacy `event`/`events` labels to `milestone`
-- rejects removed task aliases like `task` and `tasks`
-- maps importance tiers `high|standard|low` to `8|6|4`
-- accepts numeric importance `1-10`
-- maps `perm` and `temp` expiry aliases
-- downgrades extracted `core` expiry to `temporary`
-- blocks meta subjects like `user`, `assistant`, `team`, `we`, and `this session`
-- requires non-empty content with at least 20 characters
-- lowercases and deduplicates tags, capped at 4
-
-## 5. Batch semantic dedup
-
-After all successful files finish extraction, the CLI flattens their entries into one list and runs `dedupBatch()` once.
-
-This dedup pass is within-run only. It compares entries extracted in the current ingest invocation before they reach the store pipeline.
-
-### How dedup works
-
-1. Compose embedding text for every extracted entry.
-2. Compute embeddings for the full batch.
-3. Cluster entries by cosine similarity using single-linkage union-find.
-4. Send only multi-entry clusters to the dedup LLM.
-5. Keep, drop, or merge entries based on the LLM decision.
-
-Current runtime details:
-
-- default similarity threshold: `0.75`
-- singleton clusters pass through without an LLM call
-- LLM arbitration may keep multiple entries in one cluster if they encode different knowledge
-- LLM arbitration may merge content into a kept survivor
-- if arbitration fails or the response is malformed, the entire cluster is kept
-
-### `--skip-dedup`
-
-When `--skip-dedup` is set, semantic arbitration is bypassed and every extracted entry passes through.
-
-Embeddings are still computed so the store phase can persist real vectors for every surviving entry.
-
-## 6. Store phase
-
-`storeExtractedResults()` receives the dedup survivors grouped back into their source files, then flattens them again for one store pass.
-
-When there are entries to persist and the run is not a dry run, the database adapter performs a bulk-write cycle:
-
-1. drop FTS triggers and the vector index
-2. insert the batch
-3. rebuild FTS and recreate the vector index
-
-### Store pipeline behavior
-
-`storeEntriesDetailed()` then performs:
-
-1. validation and normalization
-2. within-batch exact-hash dedup
-3. exact-hash dedup against the existing database
-4. within-batch normalized-content-hash dedup
-5. normalized-content-hash dedup against the existing database
-6. embedding generation or reuse
-7. persistence
-
-This means the ingest path has two separate dedup layers:
-
-- semantic dedup in `src/core/ingestion/dedup.ts`
-- hash-based dedup in `src/core/store/pipeline.ts`
-
-The store layer is what protects against cross-run duplicates that were already persisted in earlier ingests.
-
-### Embedding reuse
-
-If semantic dedup ran, the store phase reuses the survivor embeddings produced during dedup instead of embedding the survivors again.
-
-### Source-file nuance
-
-The lower-level store pipeline can include `source_file` in the exact content hash when callers provide it.
-
-The ingest pipeline stamps each extracted entry with its transcript file path before dedup and store. That means:
-
-- stored entries retain source-file provenance
-- exact-match content hashes can be source-file-aware
-- the ingest log still tracks file-level change detection separately
-
-## 7. Ingest log semantics
-
-The ingest log is used only for file-level change detection.
-
-Current behavior:
-
-- hash comparison happens before parsing
-- a file is skipped only when the ingest log has the same file path and same SHA-256 hash
-- a successfully extracted file gets an ingest-log row even if zero entries are eventually stored
-- failed files do not update the ingest log
-- dry runs do not update the ingest log
-
-The logged `entryCount` is the number of entries stored for that file after the store phase, not the number originally extracted.
-
-## 8. Reporting
-
-The CLI reports:
-
-- per-file skipped / failed / success lines
-- per-file warnings
-- chunk success and failure counts
-- dedup summary
-- total stored, deduped, rejected, skipped-file, failed-file, and warning counts
-- total tokens, total cost, and total LLM calls
-
-In verbose mode it also prints:
-
-- chunk-by-chunk extraction outcomes
-- per-file duration
-- per-file LLM cost and call count
-- bulk-write lifecycle steps
-- verbose dedup cluster details
+- `--embed-only` reads existing episodes from the database and backfills missing embeddings without parsing transcripts
+- normal episode ingest shows a relevance warning when the sampled transcript provenance does not look related to the existing database contents
+- episode ingest uses the OpenClaw session registry when it can, while durable entry ingest does not
 
 ## Config relevant to ingest
 
-A minimal ingest-relevant config looks like this:
+A representative ingest-relevant config looks like this:
 
 ```json
 {
@@ -438,17 +440,24 @@ A minimal ingest-relevant config looks like this:
   "dedupModel": {
     "model": "gpt-5.4-nano"
   },
+  "episodeModel": {
+    "model": "gpt-5.4-mini"
+  },
+  "claimExtraction": {
+    "enabled": true,
+    "confidenceThreshold": 0.8,
+    "eligibleTypes": ["fact", "preference", "decision", "lesson"]
+  },
   "dbPath": "/absolute/path/to/knowledge.db"
 }
 ```
 
-If extraction uses Anthropic auth or OpenAI subscription auth, embeddings still require `credentials.openaiApiKey` or `OPENAI_API_KEY`.
-
 Notes:
 
-- `extractionModel` and `dedupModel` fall back to the top-level `provider` and `model`
+- `extractionModel`, `dedupModel`, `episodeModel`, and `claimExtraction.model` all fall back to the top-level `provider` and `model`
 - `AGENR_DB_PATH` overrides `dbPath`
 - `AGENR_CONFIG_PATH` overrides the config file location
+- embeddings still require OpenAI-compatible embedding credentials even if extraction uses another auth path
 
 ## Resetting and sandboxing
 
@@ -457,18 +466,22 @@ Use `agenr db reset --yes` to delete and recreate the configured knowledge datab
 For sandbox work:
 
 - `sandbox-agenr ingest ...` targets the sandbox database and config
+- `sandbox-agenr ingest episodes ...` does the same for episode backfill
 - `sandbox-agenr db reset --yes` resets the sandbox database
 
-The sandbox wrapper already sets `AGENR_DB_PATH` and `AGENR_CONFIG_PATH`, so the config `dbPath` is optional there.
+The sandbox wrappers already set the database and config environment overrides.
 
 ## Good files to read before changing ingest
 
 - `src/cli/commands/ingest.ts`
+- `src/cli/commands/ingest-episodes.ts`
+- `src/app/ingestion/service.ts`
+- `src/app/episode-ingest/service/preflight.ts`
+- `src/app/episode-ingest/service/plan.ts`
+- `src/app/episode-ingest/service/execute.ts`
 - `src/core/ingestion/extract.ts`
 - `src/core/ingestion/dedup.ts`
 - `src/core/ingestion/pipeline.ts`
-- `src/adapters/openclaw/transcript/parser.ts`
+- `src/core/store/claim-extraction.ts`
 - `src/core/store/pipeline.ts`
-- `tests/core/ingestion/pipeline.test.ts`
-- `tests/core/ingestion/extract.test.ts`
-- `tests/core/ingestion/dedup.test.ts`
+- `src/adapters/openclaw/transcript/parser.ts`
