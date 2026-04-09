@@ -1,5 +1,6 @@
 import type { ClaimExtractionDiagnostic, ClaimExtractionDiagnosticOutcome } from "../store/claim-extraction.js";
 import type { ClaimKeySource, EntryType, StoreEntryInput } from "../types.js";
+import { isSnapshotStyleSourceFile } from "./source-metadata.js";
 
 /**
  * Per-type keyed coverage emitted in the compact ingest claim-key health view.
@@ -49,6 +50,18 @@ export interface IngestClaimKeyHealthSummary {
   keyedEligibleRows: number;
   missingEligibleRows: number;
   coveragePct: number;
+  metadataCoverage: {
+    rowsWithUserId: number;
+    rowsWithoutUserId: number;
+    userIdFillRate: number;
+    rowsWithProject: number;
+    rowsWithoutProject: number;
+    projectFillRate: number;
+    rowsWithSourceFile: number;
+    stableSourceRows: number;
+    snapshotStyleSourceRows: number;
+    stableSourceFillRate: number;
+  };
   byType: IngestClaimKeyHealthTypeCoverage[];
   lifecycle: {
     trusted: number;
@@ -90,6 +103,11 @@ export function summarizeIngestClaimKeyHealth(
   const eligibleTypeSet = new Set(eligibleTypes);
   const eligibleRows = entries.filter((entry) => eligibleTypeSet.has(entry.type));
   const keyedEligibleRows = eligibleRows.filter((entry) => hasClaimKey(entry)).length;
+  const rowsWithUserId = entries.filter((entry) => hasNonEmptyValue(entry.user_id)).length;
+  const rowsWithProject = entries.filter((entry) => hasNonEmptyValue(entry.project)).length;
+  const rowsWithSourceFile = entries.filter((entry) => hasNonEmptyValue(entry.source_file)).length;
+  const snapshotStyleSourceRows = entries.filter((entry) => isSnapshotStyleSourceFile(entry.source_file)).length;
+  const stableSourceRows = rowsWithSourceFile - snapshotStyleSourceRows;
   const lifecycle = {
     trusted: 0,
     tentative: 0,
@@ -198,6 +216,18 @@ export function summarizeIngestClaimKeyHealth(
     keyedEligibleRows,
     missingEligibleRows: eligibleRows.length - keyedEligibleRows,
     coveragePct: eligibleRows.length > 0 ? keyedEligibleRows / eligibleRows.length : 0,
+    metadataCoverage: {
+      rowsWithUserId,
+      rowsWithoutUserId: entries.length - rowsWithUserId,
+      userIdFillRate: entries.length > 0 ? rowsWithUserId / entries.length : 0,
+      rowsWithProject,
+      rowsWithoutProject: entries.length - rowsWithProject,
+      projectFillRate: entries.length > 0 ? rowsWithProject / entries.length : 0,
+      rowsWithSourceFile,
+      stableSourceRows,
+      snapshotStyleSourceRows,
+      stableSourceFillRate: rowsWithSourceFile > 0 ? stableSourceRows / rowsWithSourceFile : 0,
+    },
     byType,
     lifecycle,
     keyedRows,
@@ -230,6 +260,11 @@ export function summarizeIngestClaimKeyHealth(
 /** Returns whether one store candidate already carries a non-empty claim key. */
 function hasClaimKey(entry: StoreEntryInput): boolean {
   return typeof entry.claim_key === "string" && entry.claim_key.trim().length > 0;
+}
+
+/** Returns whether one optional metadata value is present and non-empty. */
+function hasNonEmptyValue(value?: string): boolean {
+  return typeof value === "string" && value.trim().length > 0;
 }
 
 /** Returns whether one keyed row carries the full persisted support bundle. */

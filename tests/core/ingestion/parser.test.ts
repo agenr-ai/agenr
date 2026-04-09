@@ -37,6 +37,39 @@ describe("parseExtractionResponse", () => {
     });
   });
 
+  it("preserves optional metadata fields when extraction output already includes them", () => {
+    const result = parseExtractionResponse({
+      entries: [
+        {
+          type: "decision",
+          subject: "project policy",
+          content: "The project uses a stable source identity and explicit project metadata during ingest.",
+          importance: "standard",
+          expiry: "permanent",
+          source_file: "openclaw-session:session-123",
+          source_context: "Transcript metadata carried this scope",
+          user_id: "jmartin",
+          project: "agenr",
+        },
+      ],
+    });
+
+    expect(result.entries).toEqual([
+      {
+        type: "decision",
+        subject: "project policy",
+        content: "The project uses a stable source identity and explicit project metadata during ingest.",
+        importance: 6,
+        expiry: "permanent",
+        tags: [],
+        source_file: "openclaw-session:session-123",
+        source_context: "Transcript metadata carried this scope",
+        user_id: "jmartin",
+        project: "agenr",
+      },
+    ]);
+  });
+
   it("returns an empty array for an empty entries list", () => {
     expect(parseExtractionResponse({ entries: [] })).toEqual({
       entries: [],

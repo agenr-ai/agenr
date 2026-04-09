@@ -68,6 +68,9 @@ describe("OpenClawTranscriptParser", () => {
       messageCount: 2,
       transcriptHash: expectedTranscriptHash(lines),
       modelsUsed: ["gpt-4.1"],
+      sourceIdentity: "openclaw-session:session-1",
+      sourceIdentityKind: "openclaw_session",
+      workingDirectory: undefined,
       reconstructedSurface: null,
       surfaceReconstructionSource: "none",
     });
@@ -341,6 +344,9 @@ describe("OpenClawTranscriptParser", () => {
       messageCount: 1,
       transcriptHash: expectedTranscriptHash(lines),
       modelsUsed: ["gpt-4.1", "gpt-4.1-mini"],
+      sourceIdentity: "openclaw-session:session-5",
+      sourceIdentityKind: "openclaw_session",
+      workingDirectory: undefined,
       reconstructedSurface: null,
       surfaceReconstructionSource: "none",
     });

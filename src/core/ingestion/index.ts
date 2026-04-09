@@ -14,6 +14,7 @@ export {
 } from "./pipeline.js";
 export { annotateExplicitClaimKeyEntry, restoreExplicitClaimKeysAfterDedup, type ExplicitClaimKeySupportContext } from "./claim-key-preservation.js";
 export { buildExtractionSystemPrompt, buildChunkPrompt } from "./prompts.js";
+export { isSnapshotStyleSourceFile, resolveStableTranscriptSourceFile, resolveTranscriptProject, resolveTranscriptUserId } from "./source-metadata.js";
 export {
   summarizeIngestClaimKeyHealth,
   type IngestClaimKeyHealthRow,

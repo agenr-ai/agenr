@@ -264,6 +264,16 @@ export interface ParsedTranscriptMetadata extends SessionTranscriptMetadata {
   reconstructedSurface?: string | null;
   /** Provenance for the reconstructed surface value. */
   surfaceReconstructionSource?: "reconstructed" | "none";
+  /** Stable source identity derived by the transcript adapter when available. */
+  sourceIdentity?: string;
+  /** Adapter-specific kind describing the stable source identity. */
+  sourceIdentityKind?: string;
+  /** Best-effort working-directory or workspace path for the session. */
+  workingDirectory?: string;
+  /** Explicit user identifier carried by the transcript source when available. */
+  userId?: string;
+  /** Explicit project identifier carried by the transcript source when available. */
+  project?: string;
 }
 
 /**

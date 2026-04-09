@@ -5,6 +5,7 @@ import type { StoreEntryInput, StoreResult } from "../types.js";
 import { annotateExplicitClaimKeyEntry, restoreExplicitClaimKeysAfterDedup } from "./claim-key-preservation.js";
 import { dedupBatch } from "./dedup.js";
 import { extractFromTranscript } from "./extract.js";
+import { resolveStableTranscriptSourceFile, resolveTranscriptProject, resolveTranscriptUserId } from "./source-metadata.js";
 
 /**
  * Runtime controls for single-file ingestion.
@@ -250,20 +251,23 @@ export async function extractFile(
     failedChunks = extraction.failedChunks;
     chunkDetails = extraction.chunkDetails;
     warnings.push(...extraction.warnings);
-    const extractedEntries = extraction.entries.map((entry, entryIndex) =>
-      annotateExplicitClaimKeyEntry(
+    const extractedEntries = extraction.entries.map((entry, entryIndex) => {
+      const sourceFile = resolveStableTranscriptSourceFile(filePath, transcript, entry.source_file);
+      return annotateExplicitClaimKeyEntry(
         {
           ...entry,
-          source_file: entry.source_file ?? filePath,
+          source_file: sourceFile,
+          user_id: resolveTranscriptUserId(transcript, entry.user_id),
+          project: resolveTranscriptProject(transcript, entry),
         },
         {
           sourceKind: "tool_call",
-          locator: `${filePath}#entry:${entryIndex + 1}`,
+          locator: `${sourceFile}#entry:${entryIndex + 1}`,
           observedAt: entry.created_at,
           mode: "explicit",
         },
-      ),
-    );
+      );
+    });
 
     return {
       file: filePath,

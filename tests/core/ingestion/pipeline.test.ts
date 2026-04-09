@@ -70,6 +70,53 @@ describe("extractFile", () => {
     expect(llm.completeJsonCalls).toBe(1);
   });
 
+  it("normalizes extracted source identity and project metadata from transcript metadata", async () => {
+    const { filePath, fileHash } = await writeTranscriptFile("session-project-metadata");
+    const db = new MockDatabase();
+    const transcript = new MockTranscriptPort(
+      buildTranscript({
+        metadata: {
+          sourceIdentity: "openclaw-session:session-project-metadata",
+          workingDirectory: "/Users/jmartin/Code/agenr",
+        },
+      }),
+    );
+    const llm = new MockLlmPort([
+      {
+        entries: [
+          {
+            type: "decision",
+            subject: "agenr package manager",
+            content: "Agenr uses pnpm for dependency management and workspace scripts.",
+            importance: "high",
+            expiry: "permanent",
+            tags: ["agenr", "workflow"],
+          },
+        ],
+      },
+    ]);
+
+    const result = await extractFile(
+      {
+        filePath,
+        fileHash,
+      },
+      {
+        transcript,
+        llm,
+        db,
+      },
+      {
+        wholeFile: "never",
+      },
+    );
+
+    expect(result.entries[0]).toMatchObject({
+      source_file: "openclaw-session:session-project-metadata",
+      project: "agenr",
+    });
+  });
+
   it("returns a skipped result when the ingest log hash matches", async () => {
     const { filePath, fileHash } = await writeTranscriptFile("session-two");
     const db = new MockDatabase({
@@ -793,7 +840,12 @@ class MockTranscriptPort implements TranscriptPort {
   }
 }
 
-function buildTranscript(options: { warnings?: string[] } = {}): ParsedTranscript {
+function buildTranscript(
+  options: {
+    warnings?: string[];
+    metadata?: Partial<ParsedTranscript["metadata"]>;
+  } = {},
+): ParsedTranscript {
   const messages = [
     {
       index: 0,
@@ -812,6 +864,7 @@ function buildTranscript(options: { warnings?: string[] } = {}): ParsedTranscrip
     metadata: {
       messageCount: messages.length,
       transcriptHash: "pipeline-transcript-hash",
+      ...options.metadata,
     },
     warnings: options.warnings ?? [],
   };
@@ -827,6 +880,8 @@ function createInput(overrides: Partial<StoreEntryInput> = {}): StoreEntryInput 
     tags: overrides.tags,
     source_file: overrides.source_file,
     source_context: overrides.source_context,
+    user_id: overrides.user_id,
+    project: overrides.project,
   };
 }
 

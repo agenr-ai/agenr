@@ -156,6 +156,9 @@ function parseEntry(value: unknown, index: number, warnings: string[]): StoreEnt
   const expiry = coerceExpiry(record.expiry, index, warnings);
   const sourceContext = coerceOptionalString(record.source_context);
   const claimKey = coerceClaimKey(record.claim_key ?? record.claimKey, index, warnings);
+  const sourceFile = coerceOptionalString(record.source_file ?? record.sourceFile);
+  const userId = coerceOptionalString(record.user_id ?? record.userId);
+  const project = coerceOptionalString(record.project);
 
   return {
     type,
@@ -164,9 +167,12 @@ function parseEntry(value: unknown, index: number, warnings: string[]): StoreEnt
     importance: coerceImportance(record.importance),
     expiry,
     tags: coerceTags(record.tags),
+    source_file: sourceFile,
     claim_key: claimKey?.claimKey,
     claim_key_raw: claimKey?.rawClaimKey,
     source_context: sourceContext,
+    user_id: userId,
+    project,
   };
 }
 

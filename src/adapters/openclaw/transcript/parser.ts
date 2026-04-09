@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises";
 
 import type { TranscriptPort } from "../../../core/ports.js";
 import type { ParsedTranscript, TranscriptMessage } from "../../../core/types.js";
+import { deriveOpenClawSessionIdFromFilePath } from "../session/session-id.js";
 import { parseJsonlLines } from "./jsonl.js";
 import {
   extractAssistantTextParts,
@@ -68,6 +69,7 @@ interface ParseState {
   sessionId?: string;
   sessionLabel?: string;
   sessionTimestamp?: string;
+  workingDirectory?: string;
   modelsUsed: string[];
   modelsUsedSet: Set<string>;
   pendingToolCalls: ToolCallContext[];
@@ -483,6 +485,7 @@ function handleRecord(state: ParseState, record: Record<string, unknown>): void 
     state.sessionId = getString(record.id) ?? state.sessionId;
     state.sessionTimestamp = extractTimestamp(record) ?? state.sessionTimestamp;
     state.sessionLabel = normalizeSessionLabel(getString(record.conversation_label) ?? "") ?? state.sessionLabel;
+    state.workingDirectory = getString(record.cwd) ?? state.workingDirectory;
     addModelUsed(state, record.model);
     if (!state.surfaceDetected) {
       setDetectedSurface(state, readInboundSurface(record));
@@ -554,6 +557,7 @@ export class OpenClawTranscriptParser implements TranscriptPort {
 
     const startedAt = state.sessionTimestamp ?? state.messages[0]?.timestamp ?? fallbackTimestamp;
     const endedAt = state.messages[state.messages.length - 1]?.timestamp ?? state.sessionTimestamp ?? fallbackTimestamp;
+    const stableSessionId = state.sessionId ?? deriveOpenClawSessionIdFromFilePath(filePath);
 
     return {
       messages: state.messages,
@@ -568,6 +572,9 @@ export class OpenClawTranscriptParser implements TranscriptPort {
         modelsUsed: state.modelsUsed.length > 0 ? state.modelsUsed : undefined,
         reconstructedSurface: state.detectedSurface,
         surfaceReconstructionSource: state.surfaceDetected ? "reconstructed" : "none",
+        sourceIdentity: stableSessionId ? `openclaw-session:${stableSessionId}` : undefined,
+        sourceIdentityKind: stableSessionId ? "openclaw_session" : undefined,
+        workingDirectory: state.workingDirectory,
       },
     };
   }

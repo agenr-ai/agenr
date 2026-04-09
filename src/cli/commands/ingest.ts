@@ -292,6 +292,10 @@ function formatClaimKeyHealthSummary(summary: IngestClaimKeyHealthSummary): stri
       "Support",
       `${summary.keyedWithSupportCount}/${summary.keyedRows} filled (${formatPercent(summary.supportFillRate)}), ${summary.keyedMissingSupportCount} missing`,
     ),
+    formatLabel(
+      "Metadata",
+      `user_id ${summary.metadataCoverage.rowsWithUserId}/${summary.totalRows} (${formatPercent(summary.metadataCoverage.userIdFillRate)}) | project ${summary.metadataCoverage.rowsWithProject}/${summary.totalRows} (${formatPercent(summary.metadataCoverage.projectFillRate)}) | stable source ${summary.metadataCoverage.stableSourceRows}/${summary.metadataCoverage.rowsWithSourceFile} (${formatPercent(summary.metadataCoverage.stableSourceFillRate)}), snapshot-style ${summary.metadataCoverage.snapshotStyleSourceRows}`,
+    ),
   ];
 
   if (supportBySource.length > 0) {

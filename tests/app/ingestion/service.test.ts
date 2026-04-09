@@ -158,6 +158,56 @@ describe("ingestPath", () => {
     expect(db.insertions[1]?.entry.claim_key).toBeUndefined();
   });
 
+  it("threads transcript-derived project metadata into claim extraction hints and persistence", async () => {
+    const filePath = "/tmp/session-project-metadata.jsonl.reset.2026-04-01T09-00-00.000Z";
+    const db = new MockDatabase();
+
+    await ingestPath(
+      "/tmp",
+      {
+        files: new MockFilePort([filePath], { [filePath]: "hash-project-metadata" }),
+        transcript: new MockTranscriptPort(
+          buildTranscript({
+            timestamps: ["2026-04-01T09:00:00.000Z", "2026-04-01T09:01:00.000Z"],
+            metadata: {
+              sourceIdentity: "openclaw-session:session-project-metadata",
+              workingDirectory: "/Users/jmartin/Code/project-x",
+            },
+          }),
+        ),
+        db,
+        embedding: new MockEmbeddingPort(),
+        createExtractionLlm: () =>
+          new MockIngestionLlm({
+            entries: [
+              createInput({
+                type: "fact",
+                subject: "Project X status",
+                content: "The project is active and healthy.",
+                tags: ["project_x", "status"],
+              }),
+            ],
+          }),
+        createClaimExtractionLlm: () =>
+          new MockClaimExtractionLlm((systemPrompt) => ({
+            entity: systemPrompt.includes("project=project_x") ? "the_project" : "new_project",
+            attribute: "status",
+            confidence: 0.95,
+          })),
+      },
+      {
+        skipDedup: true,
+        wholeFile: "never",
+      },
+    );
+
+    expect(db.insertions[0]?.entry).toMatchObject({
+      source_file: "openclaw-session:session-project-metadata",
+      project: "project_x",
+      claim_key: "project_x/status",
+    });
+  });
+
   it("extracts claim keys for lesson entries under the default config", async () => {
     const filePath = "/tmp/session-lesson-claims.jsonl";
     const db = new MockDatabase();
@@ -495,6 +545,11 @@ describe("ingestPath", () => {
       eligibleRows: 2,
       keyedEligibleRows: 1,
       missingEligibleRows: 1,
+      metadataCoverage: {
+        rowsWithUserId: 0,
+        rowsWithProject: 0,
+        snapshotStyleSourceRows: 0,
+      },
       keyedRows: 1,
       keyedWithSupportCount: 1,
       keyedMissingSupportCount: 0,
@@ -714,7 +769,12 @@ class MockClaimExtractionLlm implements LlmPort {
   }
 }
 
-function buildTranscript(options: { timestamps?: [string, string] | string[] } = {}): ParsedTranscript {
+function buildTranscript(
+  options: {
+    timestamps?: [string, string] | string[];
+    metadata?: Partial<ParsedTranscript["metadata"]>;
+  } = {},
+): ParsedTranscript {
   const messages = [
     {
       index: 0,
@@ -735,6 +795,7 @@ function buildTranscript(options: { timestamps?: [string, string] | string[] } =
     metadata: {
       messageCount: messages.length,
       transcriptHash: "service-transcript-hash",
+      ...options.metadata,
     },
     warnings: [],
   };
@@ -761,5 +822,7 @@ function createInput(overrides: Partial<StoreEntryInput> = {}): StoreEntryInput 
     claim_support_observed_at: overrides.claim_support_observed_at,
     claim_support_mode: overrides.claim_support_mode,
     created_at: overrides.created_at,
+    user_id: overrides.user_id,
+    project: overrides.project,
   };
 }
