@@ -1,57 +1,59 @@
 # Evals
 
-`agenr` currently exposes one eval seam: a narrow internal recall-eval HTTP adapter used to exercise the real recall pipeline against isolated case-local state.
+`agenr` currently exposes one eval seam: a narrow internal recall-eval HTTP adapter used by `agenr-evals` to run isolated case-local recall requests against real `agenr` behavior.
 
-It exists so an external runner such as `agenr-evals` can provision explicit fixtures, execute one real recall request, and collect small typed diagnostics without turning `agenr` into a general eval platform.
+This seam is intentionally small:
 
-This document describes the code as it exists now, not just the intended flow.
+- one transport: `POST /internal/evals/recall/run`
+- one eval family: recall
+- one case shape: one request in, one response out
+- one provisioning mode: exact fixture seeding into an isolated SQLite sandbox
+
+It is not a general eval platform. `agenr-evals` owns manifests, suite orchestration, artifacts, comparisons, summaries, and reporting. `agenr` owns the execution seam.
+
+This document describes the code as it exists today.
 
 ## Code map
 
-- `package.json` - `internal:recall-eval-server` script for local hosting.
-- `src/internal-recall-eval-server.ts` - dev-only entry point that starts the local server and handles shutdown.
-- `src/adapters/api/internal-recall-eval-server.ts` - tiny Node HTTP server that exposes exactly one internal route.
-- `src/adapters/api/routes/internal-recall-eval.ts` - thin `POST /internal/evals/recall/run` route and boundary error mapping.
-- `src/adapters/api/validation/recall-eval-request.ts` - strict JSON request validation and unexpected-field rejection.
-- `src/app/evals/recall/contracts.ts` - stable request, response, diagnostics, timing, and sandbox contract types.
-- `src/app/evals/recall/run-recall-eval-case.ts` - top-level app service that orchestrates sandbox setup, fixture seeding, recall, and response shaping.
-- `src/app/evals/recall/sandbox.ts` - isolated sandbox directory and case-local SQLite database lifecycle.
-- `src/app/evals/recall/provision-fixtures.ts` - exact fixture seeding into isolated storage, including ID synthesis and embedding generation.
-- `src/app/evals/recall/instrumented-recall-ports.ts` - wrappers around real recall ports to collect app-level timings and counts.
-- `src/app/evals/recall/collect-diagnostics.ts` - diagnostics collector that merges app-level observations with the core trace summary.
-- `src/app/evals/recall/normalize-response.ts` - stable success and error envelope shaping.
-- `src/core/recall/index.ts` and `src/core/recall/trace.ts` - the real recall algorithm plus the optional typed trace sink used by evals.
-- `tests/app/evals/recall/*.test.ts` and `tests/adapters/api/*.test.ts` - coverage for app orchestration, request validation, route behavior, and local server behavior.
+- `package.json` - `internal:recall-eval-server` dev script
+- `src/internal-recall-eval-server.ts` - dev-only entry point that resolves host and port, starts the server, and handles shutdown
+- `src/adapters/api/internal-recall-eval-server.ts` - tiny Node HTTP server with exactly one internal route
+- `src/adapters/api/routes/internal-recall-eval.ts` - thin `POST /internal/evals/recall/run` route and boundary error mapping
+- `src/adapters/api/validation/recall-eval-request.ts` - strict JSON request validation and unexpected-field rejection
+- `src/app/evals/recall/contracts.ts` - stable request, response, diagnostics, timing, sandbox, and execution-path types
+- `src/app/evals/recall/run-recall-eval-case.ts` - top-level app service that sets up the sandbox, provisions fixtures, runs recall, and normalizes the response
+- `src/app/evals/recall/sandbox.ts` - isolated sandbox directory and case-local database lifecycle
+- `src/app/evals/recall/provision-fixtures.ts` - exact fixture seeding with deterministic ID generation and embedding generation
+- `src/app/evals/recall/instrumented-recall-ports.ts` - adapter-boundary wrappers that collect timings and counts
+- `src/app/evals/recall/collect-diagnostics.ts` - diagnostics collector that merges app observations with the core trace summary
+- `src/app/evals/recall/normalize-response.ts` - stable success and error envelope shaping
+- `src/app/recall/unified.ts` - unified recall routing used when `recallPath: "unified"`
+- `src/core/recall/index.ts` and `src/core/recall/trace.ts` - the real recall algorithm plus the typed trace sink used for eval diagnostics
+- `tests/app/evals/recall/*.test.ts` and `tests/adapters/api/*.test.ts` - coverage for orchestration, validation, route behavior, and local server behavior
 
-## Important architectural nuance
+## Architecture boundaries
 
-The eval surface is intentionally narrower than the normal CLI commands:
+The split is deliberate:
 
-- one eval domain: recall
-- one case shape: one request in, one response out
-- one transport: one internal HTTP route
-- one app service behind that route
-- one provisioning mode: exact fixture seeding into isolated storage
-
-That split is deliberate:
-
-- `core/` still owns real recall behavior
+- `core/` owns real recall behavior and trace summaries
 - `app/evals/recall/` owns sandbox setup, exact fixture provisioning, diagnostics assembly, and response normalization
+- `app/recall/` owns unified recall routing when the eval request selects that path
 - `adapters/api/` owns JSON parsing, request validation, and HTTP mapping
-- `agenr-evals` or another external harness owns manifests, suite orchestration, scoring, summaries, and reporting
+- `agenr-evals` owns manifests, suites, artifacts, scoring, summaries, and reporting
 
 Current explicit non-goals:
 
-- no public eval API surface
-- no eval CLI command in the normal `agenr` CLI
+- no public eval API
+- no `agenr eval ...` CLI command
 - no suite orchestration inside `agenr`
 - no benchmark scoring or pass/fail policy inside `agenr`
 - no trace-file or candidate-snapshot artifact system
-- no alternate recall behavior just for evals
+- no fixture CRUD API
+- no second transport layer
 
 ## Surface
 
-There is no user-facing `agenr eval ...` CLI command.
+There is no user-facing eval CLI command.
 
 The current developer surface is:
 
@@ -59,7 +61,14 @@ The current developer surface is:
 pnpm internal:recall-eval-server
 ```
 
-That helper builds the repo and starts a local-only HTTP server exposing:
+That script currently runs:
+
+```bash
+pnpm run build:root
+node dist/internal-recall-eval-server.js
+```
+
+The local server exposes exactly one route:
 
 ```txt
 POST /internal/evals/recall/run
@@ -77,13 +86,12 @@ Optional overrides:
 
 Server behavior is intentionally tiny:
 
-- only the one recall-eval route exists
 - any other path returns `404 Not found.`
 - any other method on the route returns `405` with `Allow: POST`
 
 ## Request contract
 
-The request type is `RecallEvalCaseRequest` from `src/app/evals/recall/contracts.ts`.
+The request type is `RecallEvalCaseRequest` from [src/app/evals/recall/contracts.ts](/Users/jmartin/Code/agenr/src/app/evals/recall/contracts.ts).
 
 Top-level shape:
 
@@ -91,6 +99,7 @@ Top-level shape:
 {
   "caseId": "case-123",
   "description": "optional human-readable note",
+  "recallPath": "core",
   "sandbox": {
     "root": "/tmp/agenr-eval-case",
     "preserve": true
@@ -117,18 +126,26 @@ Top-level shape:
 
 Important request semantics:
 
-- `caseId` is required and echoed back on successful app-level responses.
-- `description` is optional and currently informational only.
-- `sandbox` is optional and controls where the isolated case DB lives and whether it is preserved.
-- `memoryPool` is required and is an explicit fixture array, not an ingest path.
-- `recallRequest` is required and aligns directly to the live `RecallInput` fields used by core recall.
-- `options.includeDiagnostics` requests typed diagnostics.
-- `options.includeCandidates` does not return raw candidates - it only requests stable aggregate diagnostics.
-- `options.includeTimings` requests stage timings.
+- `caseId` is required and echoed back whenever the boundary can safely do so
+- `description` is optional and informational only
+- `recallPath` is optional and defaults to `"core"`
+- `sandbox` is optional and controls where the isolated database lives and whether it is preserved
+- `memoryPool` is required but may be an empty array
+- `recallRequest` is required
+- `options.includeDiagnostics` enables structured diagnostics
+- `options.includeCandidates` does not return raw candidates - it only enables the same aggregate diagnostics used by the harness
+- `options.includeTimings` enables timing metadata
+
+### Supported `recallPath` values
+
+- `"core"` - run the real core recall pipeline
+- `"unified"` - run the higher-level unified recall router and return its entry results
+
+`"core"` is still the default path.
 
 ### Fixture entry rules
 
-Each `memoryPool` item is explicit and narrow. Supported fields are:
+Each `memoryPool` item supports these fields:
 
 - `id`
 - `type`
@@ -146,18 +163,18 @@ Each `memoryPool` item is explicit and narrow. Supported fields are:
 - `retired_reason`
 - `superseded_by`
 
-Validation details that matter:
+Boundary validation details:
 
-- `type` must be one of the real `EntryType` values
-- `expiry` must be one of the real `Expiry` values
+- `type` must be one of the live `EntryType` values
+- `expiry` must be one of the live `Expiry` values
 - `importance` must be an integer from `1-10`
-- timestamps must be parseable by `Date.parse(...)`
+- `created_at`, `updated_at`, and `retired_at` must be parseable timestamps
 - `tags` must be a string array
-- there is no project or platform field because `agenr` does not support those concepts
+- unsupported fields are rejected
 
-### Recall request rules
+### `recallRequest` rules
 
-Supported `recallRequest` fields are:
+The boundary accepts these fields:
 
 - `text`
 - `limit`
@@ -171,15 +188,22 @@ Supported `recallRequest` fields are:
 - `aroundRadius`
 - `rankingProfile`
 
-Validation details:
+Boundary validation details:
 
 - `text` must be a non-empty string
 - `limit` and `budget` must be non-negative integers
 - `threshold` must be a number from `0-1`
 - `aroundRadius` must be a positive integer
-- `rankingProfile`, when present, must currently be `historical_state`
 - `types` must be valid entry types
 - `tags` must be a string array
+- `rankingProfile`, when present, must currently be `historical_state`
+- `since`, `until`, and `around` are only validated as non-empty strings at the HTTP boundary today
+
+Execution-path nuance that matters:
+
+- on the `"core"` path, `runRecallEvalCase()` forwards the full validated `recallRequest` object to `core/recall`
+- on the `"unified"` path, `runRecallEvalCase()` currently forwards only `text`, `limit`, `threshold`, `types`, and `tags` into `runUnifiedRecall()`
+- that means `budget`, `since`, `until`, `around`, `aroundRadius`, and `rankingProfile` are accepted by the boundary for unified cases but are not currently consumed by unified execution
 
 ### Boundary strictness
 
@@ -202,30 +226,31 @@ Invalid JSON or invalid request shapes return a structured `400` response with:
 
 ### 1. Local server startup
 
-`pnpm internal:recall-eval-server` runs `pnpm build` first, then launches `dist/internal-recall-eval-server.js`.
+`pnpm internal:recall-eval-server` builds `dist/internal-recall-eval-server.js` from the root package, then starts the tiny dev server.
 
 The runtime entry point:
 
-- resolves host and port from environment
-- starts the tiny Node HTTP server
-- prints the bound base URL plus route path
+- resolves host and port from the environment
+- starts the local-only HTTP server
+- prints the base URL plus route path
 - installs `SIGINT` and `SIGTERM` handlers for graceful shutdown
 
 ### 2. HTTP boundary validation
 
 `createInternalRecallEvalRoute()` does the following:
 
-1. parse the request body as JSON
-2. validate and normalize it through `parseRecallEvalCaseRequest()`
-3. delegate the typed request to `runRecallEvalCase()`
-4. return the normalized JSON result
+1. parses the request body as JSON
+2. validates and normalizes it through `parseRecallEvalCaseRequest()`
+3. delegates the typed request to `runRecallEvalCase()`
+4. returns the normalized JSON result
 
-Boundary error behavior:
+HTTP status behavior is intentionally narrow:
 
-- malformed JSON becomes `invalid_request`
-- validation failures become `invalid_request`
-- unexpected route-level failures become `internal_error`
-- route-level `internal_error` responses echo the validated `caseId` when validation already succeeded
+- boundary validation failures return HTTP `400`
+- unexpected adapter failures return HTTP `500`
+- app-layer execution results, including app-layer error envelopes, return HTTP `200`
+
+That last point matters. If sandbox setup, fixture provisioning, or recall execution fails inside `runRecallEvalCase()`, the route still returns `200` with `status: "error"` because the app-layer contract completed successfully.
 
 ### 3. Sandbox setup
 
@@ -233,20 +258,20 @@ Each eval case runs against isolated storage created by `setupRecallEvalSandbox(
 
 Current sandbox behavior:
 
-- if `sandbox.root` is supplied, it is resolved and reused
-- otherwise a temp directory is created under the OS temp directory using the prefix `agenr-recall-eval-`
-- the case database path is always `<root>/knowledge.db`
-- any existing `knowledge.db`, `knowledge.db-wal`, and `knowledge.db-shm` files are removed before opening the database
+- if `sandbox.root` is supplied, it is resolved to an absolute path and reused
+- otherwise a temp directory is created under the OS temp directory with the prefix `agenr-recall-eval-`
+- the database path is always `<root>/knowledge.db`
+- any existing `knowledge.db`, `knowledge.db-wal`, and `knowledge.db-shm` files are removed before the database opens
 
-Cleanup behavior depends on the request:
+Cleanup depends on the request:
 
-- if `preserve: true`, the sandbox DB remains on disk
-- if `preserve: false` and the root was supplied, cleanup deletes only the DB files
+- if `preserve: true`, the sandbox stays on disk
+- if `preserve: false` and the root was supplied, cleanup deletes only the database files
 - if `preserve: false` and the root was generated, cleanup removes the whole temp directory
 
 ### 4. Exact fixture provisioning
 
-If `memoryPool` is non-empty, `provisionRecallEvalFixtures()` seeds those fixtures directly into isolated storage.
+If `memoryPool` is non-empty, `provisionRecallEvalFixtures()` seeds fixtures directly into isolated storage.
 
 This path intentionally bypasses the normal store pipeline so the eval harness can preserve fixture truth:
 
@@ -259,12 +284,12 @@ Current provisioning behavior:
 
 1. resolve fixture IDs, generating deterministic IDs when omitted
 2. validate that IDs are unique
-3. validate that any `superseded_by` reference points at another fixture ID
+3. validate that `superseded_by` points at another fixture ID
 4. build canonical `Entry` rows with storage defaults
-5. topologically sort fixtures so successors are inserted before superseded entries
+5. topologically sort fixtures so successor rows are inserted before superseded rows
 6. compose embedding text for each fixture
 7. embed the whole batch
-8. insert entries in one transaction
+8. insert entries inside one transaction
 
 Defaulting and normalization details:
 
@@ -286,54 +311,78 @@ Important failure cases:
 
 ### 5. Real recall execution
 
-After sandbox setup and fixture seeding, the app service executes the real recall pipeline.
+After sandbox setup and fixture seeding, the app service executes real `agenr` recall behavior.
 
-Current runtime behavior:
+Shared runtime behavior:
 
-- the app service reads config via `readConfig()`
-- it resolves the embedding API key and embedding model through the normal adapter helpers
-- it creates the normal libSQL recall adapter against the isolated sandbox database
-- it calls the same `core/recall` pipeline used by the CLI
+- the app service reads config through `readConfig()`
+- it resolves the embedding API key and embedding model through the normal embedding adapter helpers
+- it creates real recall ports against the isolated sandbox database
+- there is no eval-specific retrieval or ranking logic
 
-There is no eval-specific retrieval or ranking logic.
+#### Core path
 
-That means the eval path still uses:
+When `recallPath` is omitted or set to `"core"`, the app service calls the normal `core/recall` pipeline.
 
-- real query embedding
-- real vector search and FTS retrieval
+That path uses:
+
+- real query embeddings
+- real vector search and lexical retrieval
 - real merge, score, threshold, budget, and hydration behavior
 - normal recall telemetry writes
 
-The only eval-specific additions are observation and response shaping.
+#### Unified path
 
-### 6. Diagnostics and timing collection
+When `recallPath: "unified"`, the app service calls `runUnifiedRecall()` from [src/app/recall/unified.ts](/Users/jmartin/Code/agenr/src/app/recall/unified.ts).
+
+Important unified-path behavior:
+
+- the unified router may query both entries and episodes internally
+- the eval response still returns only `result.entries` and `result.entryIds`
+- episode results are not surfaced in the top-level eval `result`
+- unified routing metadata is surfaced in `diagnostics.unifiedRecall`
+
+When diagnostics are enabled, `diagnostics.unifiedRecall` may include:
+
+- `path: "unified"`
+- `routing`
+- `timeWindow`
+- `notices`
+- `episodeCount`
+
+## Diagnostics and timings
 
 When diagnostics or timings are requested, the app layer enables observation in two places:
 
-- `createInstrumentedRecallPorts()` wraps the real recall ports to collect stage timings and counts at adapter boundaries
-- `RecallTraceSink` receives one small typed summary from the recall core
+- `createInstrumentedRecallPorts()` wraps the real ports to collect adapter-boundary timings and counts
+- `RecallTraceSink` receives a typed summary from the recall core
 
-#### Diagnostics sections
+When diagnostics are included, the response can contain:
 
-When `includeDiagnostics` or `includeCandidates` is true, the response may include:
+- `diagnostics.execution`
+- `diagnostics.provision`
+- `diagnostics.retrieval`
+- `diagnostics.ranking`
+- `diagnostics.filtering`
+- `diagnostics.unifiedRecall`
+- `diagnostics.candidateCounts`
 
-- `diagnostics.execution` - mode, provisioning mode, memory-pool count, provisioned count, and requested flags
-- `diagnostics.provision` - exact-seed facts captured before recall telemetry can mutate rows
-- `diagnostics.retrieval` - query embedding dimensions and effective vector and lexical candidate limits
-- `diagnostics.ranking` - normalized `limit`, `threshold`, `budget`, and a stable no-result reason when present
-- `diagnostics.filtering` - active type, tag, date, and around-date filters actually applied
-- `diagnostics.candidateCounts` - vector, lexical, merged, thresholded, budgeted, ranked, hydrated, returned, and telemetry-attempted counts
+Current guarantees:
 
-Observation guarantees:
-
-- `diagnostics.execution` is present whenever diagnostics are returned
+- `diagnostics.execution` is always present when diagnostics are returned
 - `diagnostics.candidateCounts` is always present when diagnostics are returned
-- `diagnostics.provision` is present only after successful provisioning
-- `diagnostics.retrieval`, `diagnostics.ranking`, and `diagnostics.filtering` are best-effort based on how far execution progressed
+- `diagnostics.provision` appears only after successful provisioning
+- `diagnostics.retrieval` appears only after retrieval-stage observation occurs
+- `diagnostics.ranking` and `diagnostics.filtering` appear only after the core trace summary is emitted
+- `diagnostics.unifiedRecall` appears only for unified-path cases
 
-#### Timing sections
+`includeCandidates` remains intentionally narrow:
 
-When `includeTimings` is true, the response may include:
+- it does not authorize raw candidate dumps
+- it does not return candidate snapshots
+- it only enables the same aggregate diagnostics the harness needs for machine-readable evals
+
+When timings are included, the response can contain:
 
 - `totalMs`
 - `sandboxSetupMs`
@@ -350,17 +399,11 @@ When `includeTimings` is true, the response may include:
 - `shapeResultsMs`
 - `recordRecallEventsMs`
 
-`includeCandidates` is intentionally narrow:
-
-- it does not authorize raw candidate dumps
-- it does not return candidate snapshots
-- it only enables the same small aggregate diagnostics needed for machine-readable evals
-
-### 7. Response contract
+## Response contract
 
 The app-layer response type is `RecallEvalCaseResponse`.
 
-Top-level sections are intentionally bounded:
+Top-level fields are intentionally bounded:
 
 - `status`
 - `caseId`
@@ -370,15 +413,17 @@ Top-level sections are intentionally bounded:
 - `sandbox`
 - `error`
 
-#### Success responses
+### Success responses
 
 Successful responses include:
 
 - `status: "ok"`
 - `caseId`
-- `result.entries` with ranked entry payloads
-- `result.entryIds` as a convenience list of ranked IDs
-- optional diagnostics, timings, and sandbox references
+- `result.entries`
+- `result.entryIds`
+- `sandbox`
+- optional `diagnostics`
+- optional `timings`
 
 Each result entry includes:
 
@@ -393,7 +438,7 @@ Each result entry includes:
 - `score`
 - `scores`
 
-#### Error responses
+### Error responses
 
 App-layer failures map to these stable error codes:
 
@@ -414,13 +459,15 @@ The error envelope stays small:
 - `error.code`
 - `error.message`
 - optional `error.details`
-- optional diagnostics, timings, and sandbox references collected before failure
+- optional `diagnostics`
+- optional `timings`
+- optional `sandbox`
 
-### 8. Seeded state vs post-recall state
+## Seeded state vs post-recall state
 
 One subtle runtime detail matters when `sandbox.preserve` is true.
 
-The preserved sandbox DB reflects post-execution state, not just seeded fixture state.
+The preserved sandbox database reflects post-execution state, not just seeded fixture state.
 
 That matters because the real recall path still performs normal telemetry updates on returned entries, such as:
 
@@ -428,26 +475,11 @@ That matters because the real recall path still performs normal telemetry update
 - `last_recalled_at`
 - `updated_at`
 
-So the canonical record of seeded fixture truth is:
+If you need the exact fixture truth that existed before recall mutated anything, use:
 
 - `diagnostics.provision.seededEntries`
 
-not the preserved on-disk DB after recall has already run.
-
-### 9. What evals still do not do
-
-Current omissions are deliberate:
-
-- no fixture CRUD routes
-- no suite CRUD routes
-- no second eval route
-- no second provisioning mode
-- no eval-only memory-management API
-- no trace-file output such as `trace.json`
-- no candidate snapshot files
-- no benchmark scoring or summary generation inside `agenr`
-
-If the eval surface starts expanding beyond those constraints, it should get an explicit design review first.
+not the preserved on-disk database after the request has already run.
 
 ## Local `agenr-evals` loop
 
@@ -465,12 +497,16 @@ cd /Users/jmartin/Code/agenr-evals
 ./bin/evals run --manifest agenr-recall-http --adapter agenr-recall-http
 ```
 
-If you override the server host or port in `agenr`, point `agenr-evals` at the new base URL:
+That manifest exists today at [agenr-recall-http.json](/Users/jmartin/Code/agenr-evals/manifests/agenr-recall-http.json) and points at the same internal route.
+
+If you override the local server URL, point `agenr-evals` at it with:
 
 ```bash
 cd /Users/jmartin/Code/agenr-evals
 AGENR_EVALS_AGENR_BASE_URL=http://127.0.0.1:4010 ./bin/evals run --manifest agenr-recall-http --adapter agenr-recall-http
 ```
+
+`agenr-evals` also carries more focused manifests under `manifests/initial-recall-corpus/` and `manifests/memory-freshness/`, but they still run through the same `agenr-recall-http` adapter and the same `POST /internal/evals/recall/run` seam.
 
 ## Config relevant to evals
 
@@ -495,24 +531,25 @@ Important notes:
 - if extraction auth is Anthropic or OpenAI subscription auth, `credentials.openaiApiKey` still needs to hold an OpenAI API key for embeddings
 - `embeddingModel` falls back to `text-embedding-3-small`
 - `AGENR_CONFIG_PATH` overrides the config file location
-- the normal configured `dbPath` is not the execution database for eval cases because each case creates its own isolated sandbox DB
+- the normal configured `dbPath` is not used for case execution because each eval case creates its own isolated sandbox database
 
 ## Good files to read before changing evals
 
-- `src/internal-recall-eval-server.ts`
-- `src/adapters/api/internal-recall-eval-server.ts`
-- `src/adapters/api/routes/internal-recall-eval.ts`
-- `src/adapters/api/validation/recall-eval-request.ts`
-- `src/app/evals/recall/contracts.ts`
-- `src/app/evals/recall/run-recall-eval-case.ts`
-- `src/app/evals/recall/sandbox.ts`
-- `src/app/evals/recall/provision-fixtures.ts`
-- `src/app/evals/recall/instrumented-recall-ports.ts`
-- `src/app/evals/recall/collect-diagnostics.ts`
-- `src/app/evals/recall/normalize-response.ts`
-- `src/core/recall/index.ts`
-- `src/core/recall/trace.ts`
-- `tests/app/evals/recall/run-recall-eval-case.test.ts`
-- `tests/adapters/api/routes/internal-recall-eval.test.ts`
-- `tests/adapters/api/validation/recall-eval-request.test.ts`
-- `tests/adapters/api/internal-recall-eval-server.test.ts`
+- [src/internal-recall-eval-server.ts](/Users/jmartin/Code/agenr/src/internal-recall-eval-server.ts)
+- [src/adapters/api/internal-recall-eval-server.ts](/Users/jmartin/Code/agenr/src/adapters/api/internal-recall-eval-server.ts)
+- [src/adapters/api/routes/internal-recall-eval.ts](/Users/jmartin/Code/agenr/src/adapters/api/routes/internal-recall-eval.ts)
+- [src/adapters/api/validation/recall-eval-request.ts](/Users/jmartin/Code/agenr/src/adapters/api/validation/recall-eval-request.ts)
+- [src/app/evals/recall/contracts.ts](/Users/jmartin/Code/agenr/src/app/evals/recall/contracts.ts)
+- [src/app/evals/recall/run-recall-eval-case.ts](/Users/jmartin/Code/agenr/src/app/evals/recall/run-recall-eval-case.ts)
+- [src/app/evals/recall/sandbox.ts](/Users/jmartin/Code/agenr/src/app/evals/recall/sandbox.ts)
+- [src/app/evals/recall/provision-fixtures.ts](/Users/jmartin/Code/agenr/src/app/evals/recall/provision-fixtures.ts)
+- [src/app/evals/recall/instrumented-recall-ports.ts](/Users/jmartin/Code/agenr/src/app/evals/recall/instrumented-recall-ports.ts)
+- [src/app/evals/recall/collect-diagnostics.ts](/Users/jmartin/Code/agenr/src/app/evals/recall/collect-diagnostics.ts)
+- [src/app/evals/recall/normalize-response.ts](/Users/jmartin/Code/agenr/src/app/evals/recall/normalize-response.ts)
+- [src/app/recall/unified.ts](/Users/jmartin/Code/agenr/src/app/recall/unified.ts)
+- [src/core/recall/index.ts](/Users/jmartin/Code/agenr/src/core/recall/index.ts)
+- [src/core/recall/trace.ts](/Users/jmartin/Code/agenr/src/core/recall/trace.ts)
+- [tests/app/evals/recall/run-recall-eval-case.test.ts](/Users/jmartin/Code/agenr/tests/app/evals/recall/run-recall-eval-case.test.ts)
+- [tests/adapters/api/routes/internal-recall-eval.test.ts](/Users/jmartin/Code/agenr/tests/adapters/api/routes/internal-recall-eval.test.ts)
+- [tests/adapters/api/validation/recall-eval-request.test.ts](/Users/jmartin/Code/agenr/tests/adapters/api/validation/recall-eval-request.test.ts)
+- [tests/adapters/api/internal-recall-eval-server.test.ts](/Users/jmartin/Code/agenr/tests/adapters/api/internal-recall-eval-server.test.ts)
