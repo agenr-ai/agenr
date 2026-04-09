@@ -1,5 +1,10 @@
 import { runRecallEvalCase, type RecallEvalCaseRequest, type RecallEvalCaseResponse } from "../../../app/evals/recall/index.js";
-import { parseRecallEvalCaseRequest, RecallEvalRequestValidationError, type RecallEvalValidationIssue } from "../validation/recall-eval-request.js";
+import {
+  mapRecallEvalCaseRequestDto,
+  parseRecallEvalCaseRequest,
+  RecallEvalRequestValidationError,
+  type RecallEvalValidationIssue,
+} from "../validation/recall-eval-request.js";
 
 /**
  * Minimal route definition shape for internal API handlers.
@@ -60,8 +65,7 @@ export function createInternalRecallEvalRoute(runner: RecallEvalCaseRunner = run
       let validatedRequest: RecallEvalCaseRequest | undefined;
 
       try {
-        const payload = await parseJsonBody(request);
-        validatedRequest = parseRecallEvalCaseRequest(payload);
+        validatedRequest = await parseValidatedRequest(request);
         const result = await runner(validatedRequest);
         return jsonResponse(result, 200);
       } catch (error) {
@@ -108,6 +112,13 @@ const parseJsonBody = async (request: Request): Promise<unknown> => {
       },
     ]);
   }
+};
+
+/** Parses and maps the HTTP payload into the app-layer request contract. */
+const parseValidatedRequest = async (request: Request): Promise<RecallEvalCaseRequest> => {
+  const payload = await parseJsonBody(request);
+  const requestDto = parseRecallEvalCaseRequest(payload);
+  return mapRecallEvalCaseRequestDto(requestDto);
 };
 
 /** Encodes a stable JSON response body for the internal API route. */

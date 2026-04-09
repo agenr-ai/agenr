@@ -1,11 +1,23 @@
-import { ENTRY_TYPES, EXPIRY_LEVELS } from "../../../core/types.js";
 import type {
   RecallEvalCaseOptions,
   RecallEvalCaseRequest,
   RecallEvalFixtureEntry,
+  RecallEvalPath,
   RecallEvalQueryRequest,
   RecallEvalSandboxRequest,
 } from "../../../app/evals/recall/index.js";
+import { ENTRY_TYPES, EXPIRY_LEVELS } from "../../../core/types.js";
+import {
+  isRecord,
+  parseOptionalBoolean,
+  parseOptionalIntegerInRange,
+  parseOptionalTimestampString,
+  parseOptionalTrimmedString,
+  parseRequiredTrimmedString,
+  pushIssue,
+  pushUnexpectedFields,
+  type ValidationIssue,
+} from "../../shared/validation.js";
 
 const ROOT_REQUEST_KEYS = new Set<string>(["caseId", "description", "recallPath", "sandbox", "memoryPool", "recallRequest", "options"]);
 const SANDBOX_REQUEST_KEYS = new Set<string>(["root", "preserve"]);
@@ -46,11 +58,112 @@ const RECALL_RANKING_PROFILES = ["historical_state"] as const;
 /**
  * Structured request validation issue emitted at the HTTP boundary.
  */
-export interface RecallEvalValidationIssue {
-  /** Dot-path pointing to the invalid request field. */
-  path: string;
-  /** Human-readable explanation of the validation failure. */
-  message: string;
+export type RecallEvalValidationIssue = ValidationIssue;
+
+/**
+ * Adapter-owned normalized sandbox request DTO.
+ */
+export interface RecallEvalSandboxRequestDto {
+  /** Optional sandbox root path. */
+  root?: string;
+  /** When true, preserves the sandbox on disk for inspection. */
+  preserve?: boolean;
+}
+
+/**
+ * Adapter-owned normalized fixture entry DTO.
+ */
+export interface RecallEvalFixtureEntryDto {
+  /** Optional stable entry identifier. */
+  id?: string;
+  /** Durable entry type. */
+  type: RecallEvalFixtureEntry["type"];
+  /** Fixture subject line. */
+  subject: string;
+  /** Fixture content body. */
+  content: string;
+  /** Optional importance override. */
+  importance?: number;
+  /** Optional expiry override. */
+  expiry?: RecallEvalFixtureEntry["expiry"];
+  /** Optional normalized tag list. */
+  tags?: string[];
+  /** Optional source file path. */
+  source_file?: string;
+  /** Optional source context text. */
+  source_context?: string;
+  /** Optional creation timestamp. */
+  created_at?: string;
+  /** Optional update timestamp. */
+  updated_at?: string;
+  /** Optional retired state. */
+  retired?: boolean;
+  /** Optional retirement timestamp. */
+  retired_at?: string;
+  /** Optional retirement reason. */
+  retired_reason?: string;
+  /** Optional successor entry identifier. */
+  superseded_by?: string;
+}
+
+/**
+ * Adapter-owned normalized recall query DTO.
+ */
+export interface RecallEvalQueryRequestDto {
+  /** User query text. */
+  text: string;
+  /** Optional result limit. */
+  limit?: number;
+  /** Optional score threshold. */
+  threshold?: number;
+  /** Optional ranking budget. */
+  budget?: number;
+  /** Optional entry-type filters. */
+  types?: RecallEvalQueryRequest["types"];
+  /** Optional tag filters. */
+  tags?: string[];
+  /** Optional lower time bound. */
+  since?: string;
+  /** Optional upper time bound. */
+  until?: string;
+  /** Optional around-date hint. */
+  around?: string;
+  /** Optional around-date radius. */
+  aroundRadius?: number;
+  /** Optional ranking profile selector. */
+  rankingProfile?: RecallEvalQueryRequest["rankingProfile"];
+}
+
+/**
+ * Adapter-owned normalized options DTO.
+ */
+export interface RecallEvalCaseOptionsDto {
+  /** Include structured diagnostics in the response. */
+  includeDiagnostics?: boolean;
+  /** Include candidate-count diagnostics in the response. */
+  includeCandidates?: boolean;
+  /** Include timing metadata in the response. */
+  includeTimings?: boolean;
+}
+
+/**
+ * Adapter-owned normalized request DTO for the recall eval HTTP seam.
+ */
+export interface RecallEvalCaseRequestDto {
+  /** Stable external case identifier. */
+  caseId: string;
+  /** Optional human-readable case description. */
+  description?: string;
+  /** Optional recall execution path override. */
+  recallPath?: RecallEvalPath;
+  /** Optional sandbox controls. */
+  sandbox?: RecallEvalSandboxRequestDto;
+  /** Explicit fixture entries to provision. */
+  memoryPool: RecallEvalFixtureEntryDto[];
+  /** Normalized recall query payload. */
+  recallRequest: RecallEvalQueryRequestDto;
+  /** Optional response-shaping flags. */
+  options?: RecallEvalCaseOptionsDto;
 }
 
 /**
@@ -77,13 +190,14 @@ export class RecallEvalRequestValidationError extends Error {
 }
 
 /**
- * Validates and normalizes a raw recall eval case request payload.
+ * Validates and normalizes a raw recall eval case request payload into an
+ * adapter-owned DTO.
  *
  * @param input - Raw parsed JSON body from the HTTP adapter.
- * @returns Normalized typed recall eval request for the app layer.
+ * @returns Normalized request DTO for adapter-to-app mapping.
  * @throws RecallEvalRequestValidationError When the payload is invalid.
  */
-export function parseRecallEvalCaseRequest(input: unknown): RecallEvalCaseRequest {
+export function parseRecallEvalCaseRequest(input: unknown): RecallEvalCaseRequestDto {
   const caseId = extractParseableCaseId(input);
 
   if (!isRecord(input)) {
@@ -100,8 +214,8 @@ export function parseRecallEvalCaseRequest(input: unknown): RecallEvalCaseReques
 
   const issues: RecallEvalValidationIssue[] = [];
   pushUnexpectedFields(input, ROOT_REQUEST_KEYS, "", issues);
-  const parsedCaseId = parseRequiredString(input.caseId, "caseId", issues);
-  const description = parseOptionalString(input.description, "description", issues);
+  const parsedCaseId = parseRequiredTrimmedString(input.caseId, "caseId", issues);
+  const description = parseOptionalTrimmedString(input.description, "description", issues);
   const recallPath = parseOptionalRecallPath(input.recallPath, "recallPath", issues);
   const sandbox = parseSandbox(input.sandbox, issues);
   const memoryPool = parseMemoryPool(input.memoryPool, issues);
@@ -123,111 +237,72 @@ export function parseRecallEvalCaseRequest(input: unknown): RecallEvalCaseReques
   };
 }
 
-/** Checks whether a value is a plain object record. */
-const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
+/**
+ * Maps a validated adapter DTO into the app-layer request contract.
+ *
+ * @param dto - Normalized adapter request DTO.
+ * @returns App-layer request contract with no raw transport concerns.
+ */
+export function mapRecallEvalCaseRequestDto(dto: RecallEvalCaseRequestDto): RecallEvalCaseRequest {
+  return {
+    caseId: dto.caseId,
+    description: dto.description,
+    recallPath: dto.recallPath,
+    sandbox: mapSandboxRequestDto(dto.sandbox),
+    memoryPool: dto.memoryPool.map(mapFixtureEntryDto),
+    recallRequest: mapRecallRequestDto(dto.recallRequest),
+    options: mapCaseOptionsDto(dto.options),
+  };
+}
 
-/** Extracts a confidently parseable case identifier from a raw request envelope. */
-const extractParseableCaseId = (value: unknown): string | undefined => {
+/**
+ * Extracts a confidently parseable case identifier from a raw request envelope.
+ *
+ * @param value - Raw request value.
+ * @returns Trimmed case identifier when available.
+ */
+function extractParseableCaseId(value: unknown): string | undefined {
   if (!isRecord(value) || typeof value.caseId !== "string") {
     return undefined;
   }
 
   const normalized = value.caseId.trim();
   return normalized.length > 0 ? normalized : undefined;
-};
+}
 
-/** Appends a structured validation issue to the collector. */
-const pushIssue = (issues: RecallEvalValidationIssue[], path: string, message: string): void => {
-  issues.push({ path, message });
-};
-
-/** Records any unsupported object keys so the HTTP contract stays narrow. */
-const pushUnexpectedFields = (
-  value: Record<string, unknown>,
-  allowedKeys: ReadonlySet<string>,
-  basePath: string,
-  issues: RecallEvalValidationIssue[],
-): void => {
-  for (const key of Object.keys(value)) {
-    if (allowedKeys.has(key)) {
-      continue;
-    }
-
-    pushIssue(issues, basePath.length > 0 ? `${basePath}.${key}` : key, "Unexpected field.");
-  }
-};
-
-/** Parses a required trimmed string field. */
-const parseRequiredString = (value: unknown, path: string, issues: RecallEvalValidationIssue[]): string | undefined => {
-  if (typeof value !== "string") {
-    pushIssue(issues, path, "Expected a non-empty string.");
-    return undefined;
-  }
-
-  const normalized = value.trim();
-  if (normalized.length === 0) {
-    pushIssue(issues, path, "Expected a non-empty string.");
-    return undefined;
-  }
-
-  return normalized;
-};
-
-/** Parses an optional trimmed string field. */
-const parseOptionalString = (value: unknown, path: string, issues: RecallEvalValidationIssue[]): string | undefined => {
+/**
+ * Parses an optional sandbox request object.
+ *
+ * @param value - Raw sandbox field.
+ * @param issues - Mutable validation issue collection.
+ * @returns Normalized sandbox DTO when valid.
+ */
+function parseSandbox(value: unknown, issues: RecallEvalValidationIssue[]): RecallEvalSandboxRequestDto | undefined {
   if (value === undefined) {
     return undefined;
   }
 
-  if (typeof value !== "string") {
-    pushIssue(issues, path, "Expected a string.");
+  const sandbox = parseObject(value, "sandbox", issues);
+  if (sandbox === undefined) {
     return undefined;
   }
 
-  const normalized = value.trim();
-  if (normalized.length === 0) {
-    pushIssue(issues, path, "Expected a non-empty string.");
-    return undefined;
-  }
-
-  return normalized;
-};
-
-/** Parses an optional boolean field. */
-const parseOptionalBoolean = (value: unknown, path: string, issues: RecallEvalValidationIssue[]): boolean | undefined => {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (typeof value !== "boolean") {
-    pushIssue(issues, path, "Expected a boolean.");
-    return undefined;
-  }
-
-  return value;
-};
-
-/** Parses an optional sandbox request object. */
-const parseSandbox = (value: unknown, issues: RecallEvalValidationIssue[]): RecallEvalSandboxRequest | undefined => {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (!isRecord(value)) {
-    pushIssue(issues, "sandbox", "Expected an object.");
-    return undefined;
-  }
-
-  pushUnexpectedFields(value, SANDBOX_REQUEST_KEYS, "sandbox", issues);
+  pushUnexpectedFields(sandbox, SANDBOX_REQUEST_KEYS, "sandbox", issues);
 
   return {
-    root: parseOptionalString(value.root, "sandbox.root", issues),
-    preserve: parseOptionalBoolean(value.preserve, "sandbox.preserve", issues),
+    root: parseOptionalTrimmedString(sandbox.root, "sandbox.root", issues),
+    preserve: parseOptionalBoolean(sandbox.preserve, "sandbox.preserve", issues),
   };
-};
+}
 
-/** Parses the explicit memory fixture array. */
-const parseMemoryPool = (value: unknown, issues: RecallEvalValidationIssue[]): RecallEvalFixtureEntry[] | undefined => {
+/**
+ * Parses the explicit memory fixture array.
+ *
+ * @param value - Raw memory-pool field.
+ * @param issues - Mutable validation issue collection.
+ * @returns Normalized fixture DTO list when valid.
+ */
+function parseMemoryPool(value: unknown, issues: RecallEvalValidationIssue[]): RecallEvalFixtureEntryDto[] | undefined {
   if (!Array.isArray(value)) {
     pushIssue(issues, "memoryPool", "Expected an array of fixture entries.");
     return undefined;
@@ -237,124 +312,169 @@ const parseMemoryPool = (value: unknown, issues: RecallEvalValidationIssue[]): R
     const parsed = parseFixtureEntry(entry, index, issues);
     return parsed ? [parsed] : [];
   });
-};
+}
 
-/** Parses a single explicit memory fixture entry. */
-const parseFixtureEntry = (value: unknown, index: number, issues: RecallEvalValidationIssue[]): RecallEvalFixtureEntry | undefined => {
+/**
+ * Parses a single explicit memory fixture entry.
+ *
+ * @param value - Raw fixture value.
+ * @param index - Stable fixture index within the request.
+ * @param issues - Mutable validation issue collection.
+ * @returns Normalized fixture DTO when valid.
+ */
+function parseFixtureEntry(value: unknown, index: number, issues: RecallEvalValidationIssue[]): RecallEvalFixtureEntryDto | undefined {
   const basePath = `memoryPool[${index}]`;
-  if (!isRecord(value)) {
-    pushIssue(issues, basePath, "Expected an object.");
+  const fixture = parseObject(value, basePath, issues);
+  if (fixture === undefined) {
     return undefined;
   }
 
-  pushUnexpectedFields(value, FIXTURE_ENTRY_KEYS, basePath, issues);
+  pushUnexpectedFields(fixture, FIXTURE_ENTRY_KEYS, basePath, issues);
 
-  const type = parseEntryType(value.type, `${basePath}.type`, issues);
-  const subject = parseRequiredString(value.subject, `${basePath}.subject`, issues);
-  const content = parseRequiredString(value.content, `${basePath}.content`, issues);
+  const type = parseEntryType(fixture.type, `${basePath}.type`, issues);
+  const subject = parseRequiredTrimmedString(fixture.subject, `${basePath}.subject`, issues);
+  const content = parseRequiredTrimmedString(fixture.content, `${basePath}.content`, issues);
 
-  if (!type || !subject || !content) {
+  if (type === undefined || subject === undefined || content === undefined) {
     return undefined;
   }
 
   return {
-    id: parseOptionalString(value.id, `${basePath}.id`, issues),
+    id: parseOptionalTrimmedString(fixture.id, `${basePath}.id`, issues),
     type,
     subject,
     content,
-    importance: parseOptionalImportance(value.importance, `${basePath}.importance`, issues),
-    expiry: parseOptionalExpiry(value.expiry, `${basePath}.expiry`, issues),
-    tags: parseOptionalStringArray(value.tags, `${basePath}.tags`, issues),
-    source_file: parseOptionalString(value.source_file, `${basePath}.source_file`, issues),
-    source_context: parseOptionalString(value.source_context, `${basePath}.source_context`, issues),
-    created_at: parseOptionalTimestamp(value.created_at, `${basePath}.created_at`, issues),
-    updated_at: parseOptionalTimestamp(value.updated_at, `${basePath}.updated_at`, issues),
-    retired: parseOptionalBoolean(value.retired, `${basePath}.retired`, issues),
-    retired_at: parseOptionalTimestamp(value.retired_at, `${basePath}.retired_at`, issues),
-    retired_reason: parseOptionalString(value.retired_reason, `${basePath}.retired_reason`, issues),
-    superseded_by: parseOptionalString(value.superseded_by, `${basePath}.superseded_by`, issues),
+    importance: parseOptionalIntegerInRange(fixture.importance, `${basePath}.importance`, issues, {
+      min: 1,
+      max: 10,
+    }),
+    expiry: parseOptionalExpiry(fixture.expiry, `${basePath}.expiry`, issues),
+    tags: parseOptionalStringArray(fixture.tags, `${basePath}.tags`, issues),
+    source_file: parseOptionalTrimmedString(fixture.source_file, `${basePath}.source_file`, issues),
+    source_context: parseOptionalTrimmedString(fixture.source_context, `${basePath}.source_context`, issues),
+    created_at: parseOptionalTimestampString(fixture.created_at, `${basePath}.created_at`, issues),
+    updated_at: parseOptionalTimestampString(fixture.updated_at, `${basePath}.updated_at`, issues),
+    retired: parseOptionalBoolean(fixture.retired, `${basePath}.retired`, issues),
+    retired_at: parseOptionalTimestampString(fixture.retired_at, `${basePath}.retired_at`, issues),
+    retired_reason: parseOptionalTrimmedString(fixture.retired_reason, `${basePath}.retired_reason`, issues),
+    superseded_by: parseOptionalTrimmedString(fixture.superseded_by, `${basePath}.superseded_by`, issues),
   };
-};
+}
 
-/** Parses the recall query request aligned to the core recall input. */
-const parseRecallRequest = (value: unknown, issues: RecallEvalValidationIssue[]): RecallEvalQueryRequest | undefined => {
-  if (!isRecord(value)) {
-    pushIssue(issues, "recallRequest", "Expected an object.");
+/**
+ * Parses the recall query request aligned to the core recall input.
+ *
+ * @param value - Raw recall request field.
+ * @param issues - Mutable validation issue collection.
+ * @returns Normalized recall query DTO when valid.
+ */
+function parseRecallRequest(value: unknown, issues: RecallEvalValidationIssue[]): RecallEvalQueryRequestDto | undefined {
+  const recallRequest = parseObject(value, "recallRequest", issues);
+  if (recallRequest === undefined) {
     return undefined;
   }
 
-  pushUnexpectedFields(value, RECALL_REQUEST_KEYS, "recallRequest", issues);
+  pushUnexpectedFields(recallRequest, RECALL_REQUEST_KEYS, "recallRequest", issues);
 
-  const text = parseRequiredString(value.text, "recallRequest.text", issues);
-  if (!text) {
+  const text = parseRequiredTrimmedString(recallRequest.text, "recallRequest.text", issues);
+  if (text === undefined) {
     return undefined;
   }
 
   return {
     text,
-    limit: parseOptionalNonNegativeInteger(value.limit, "recallRequest.limit", issues),
-    threshold: parseOptionalThreshold(value.threshold, "recallRequest.threshold", issues),
-    budget: parseOptionalNonNegativeInteger(value.budget, "recallRequest.budget", issues),
-    types: parseOptionalEntryTypeArray(value.types, "recallRequest.types", issues),
-    tags: parseOptionalStringArray(value.tags, "recallRequest.tags", issues),
-    since: parseOptionalString(value.since, "recallRequest.since", issues),
-    until: parseOptionalString(value.until, "recallRequest.until", issues),
-    around: parseOptionalString(value.around, "recallRequest.around", issues),
-    aroundRadius: parseOptionalPositiveInteger(value.aroundRadius, "recallRequest.aroundRadius", issues),
-    rankingProfile: parseOptionalRankingProfile(value.rankingProfile, "recallRequest.rankingProfile", issues),
+    limit: parseOptionalIntegerInRange(recallRequest.limit, "recallRequest.limit", issues, {
+      min: 0,
+    }),
+    threshold: parseOptionalThreshold(recallRequest.threshold, "recallRequest.threshold", issues),
+    budget: parseOptionalIntegerInRange(recallRequest.budget, "recallRequest.budget", issues, {
+      min: 0,
+    }),
+    types: parseOptionalEntryTypeArray(recallRequest.types, "recallRequest.types", issues),
+    tags: parseOptionalStringArray(recallRequest.tags, "recallRequest.tags", issues),
+    since: parseOptionalTrimmedString(recallRequest.since, "recallRequest.since", issues),
+    until: parseOptionalTrimmedString(recallRequest.until, "recallRequest.until", issues),
+    around: parseOptionalTrimmedString(recallRequest.around, "recallRequest.around", issues),
+    aroundRadius: parseOptionalIntegerInRange(recallRequest.aroundRadius, "recallRequest.aroundRadius", issues, {
+      min: 1,
+    }),
+    rankingProfile: parseOptionalRankingProfile(recallRequest.rankingProfile, "recallRequest.rankingProfile", issues),
   };
-};
+}
 
-/** Parses optional case-level output controls. */
-const parseOptions = (value: unknown, issues: RecallEvalValidationIssue[]): RecallEvalCaseOptions | undefined => {
+/**
+ * Parses optional case-level output controls.
+ *
+ * @param value - Raw options field.
+ * @param issues - Mutable validation issue collection.
+ * @returns Normalized options DTO when valid.
+ */
+function parseOptions(value: unknown, issues: RecallEvalValidationIssue[]): RecallEvalCaseOptionsDto | undefined {
   if (value === undefined) {
     return undefined;
   }
 
-  if (!isRecord(value)) {
-    pushIssue(issues, "options", "Expected an object.");
+  const options = parseObject(value, "options", issues);
+  if (options === undefined) {
     return undefined;
   }
 
-  pushUnexpectedFields(value, OPTIONS_KEYS, "options", issues);
+  pushUnexpectedFields(options, OPTIONS_KEYS, "options", issues);
 
   return {
-    includeDiagnostics: parseOptionalBoolean(value.includeDiagnostics, "options.includeDiagnostics", issues),
-    includeCandidates: parseOptionalBoolean(value.includeCandidates, "options.includeCandidates", issues),
-    includeTimings: parseOptionalBoolean(value.includeTimings, "options.includeTimings", issues),
+    includeDiagnostics: parseOptionalBoolean(options.includeDiagnostics, "options.includeDiagnostics", issues),
+    includeCandidates: parseOptionalBoolean(options.includeCandidates, "options.includeCandidates", issues),
+    includeTimings: parseOptionalBoolean(options.includeTimings, "options.includeTimings", issues),
   };
-};
+}
 
-/** Parses a valid entry type enum member. */
-const parseEntryType = (value: unknown, path: string, issues: RecallEvalValidationIssue[]): RecallEvalFixtureEntry["type"] | undefined => {
+/**
+ * Parses a valid entry type enum member.
+ *
+ * @param value - Raw entry-type value.
+ * @param path - Stable validation path.
+ * @param issues - Mutable validation issue collection.
+ * @returns Valid entry type when recognized.
+ */
+function parseEntryType(value: unknown, path: string, issues: RecallEvalValidationIssue[]): RecallEvalFixtureEntry["type"] | undefined {
   if (typeof value !== "string" || !ENTRY_TYPES.includes(value as RecallEvalFixtureEntry["type"])) {
     pushIssue(issues, path, `Expected one of: ${ENTRY_TYPES.join(", ")}.`);
     return undefined;
   }
 
   return value as RecallEvalFixtureEntry["type"];
-};
+}
 
-/** Parses an optional recall execution path enum member. */
-const parseOptionalRecallPath = (value: unknown, path: string, issues: RecallEvalValidationIssue[]): RecallEvalCaseRequest["recallPath"] | undefined => {
+/**
+ * Parses an optional recall execution path enum member.
+ *
+ * @param value - Raw recall-path value.
+ * @param path - Stable validation path.
+ * @param issues - Mutable validation issue collection.
+ * @returns Valid recall path when recognized.
+ */
+function parseOptionalRecallPath(value: unknown, path: string, issues: RecallEvalValidationIssue[]): RecallEvalPath | undefined {
   if (value === undefined) {
     return undefined;
   }
 
-  if (typeof value !== "string" || !RECALL_PATHS.includes(value as (typeof RECALL_PATHS)[number])) {
+  if (typeof value !== "string" || !RECALL_PATHS.includes(value as RecallEvalPath)) {
     pushIssue(issues, path, `Expected one of: ${RECALL_PATHS.join(", ")}.`);
     return undefined;
   }
 
-  return value as RecallEvalCaseRequest["recallPath"];
-};
+  return value as RecallEvalPath;
+}
 
-/** Parses an optional internal recall ranking profile enum member. */
-const parseOptionalRankingProfile = (
-  value: unknown,
-  path: string,
-  issues: RecallEvalValidationIssue[],
-): RecallEvalQueryRequest["rankingProfile"] | undefined => {
+/**
+ * Parses an optional internal recall ranking profile enum member.
+ *
+ * @param value - Raw ranking-profile value.
+ * @param path - Stable validation path.
+ * @param issues - Mutable validation issue collection.
+ * @returns Valid ranking profile when recognized.
+ */
+function parseOptionalRankingProfile(value: unknown, path: string, issues: RecallEvalValidationIssue[]): RecallEvalQueryRequest["rankingProfile"] | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -365,10 +485,17 @@ const parseOptionalRankingProfile = (
   }
 
   return value as RecallEvalQueryRequest["rankingProfile"];
-};
+}
 
-/** Parses an optional expiry enum member. */
-const parseOptionalExpiry = (value: unknown, path: string, issues: RecallEvalValidationIssue[]): RecallEvalFixtureEntry["expiry"] | undefined => {
+/**
+ * Parses an optional expiry enum member.
+ *
+ * @param value - Raw expiry value.
+ * @param path - Stable validation path.
+ * @param issues - Mutable validation issue collection.
+ * @returns Valid expiry when recognized.
+ */
+function parseOptionalExpiry(value: unknown, path: string, issues: RecallEvalValidationIssue[]): RecallEvalFixtureEntry["expiry"] | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -379,24 +506,17 @@ const parseOptionalExpiry = (value: unknown, path: string, issues: RecallEvalVal
   }
 
   return value as NonNullable<RecallEvalFixtureEntry["expiry"]>;
-};
+}
 
-/** Parses an optional integer importance value in the supported 1-10 range. */
-const parseOptionalImportance = (value: unknown, path: string, issues: RecallEvalValidationIssue[]): number | undefined => {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 10) {
-    pushIssue(issues, path, "Expected an integer from 1 to 10.");
-    return undefined;
-  }
-
-  return value;
-};
-
-/** Parses an optional array of non-empty trimmed strings. */
-const parseOptionalStringArray = (value: unknown, path: string, issues: RecallEvalValidationIssue[]): string[] | undefined => {
+/**
+ * Parses an optional array of non-empty trimmed strings.
+ *
+ * @param value - Raw string-array field.
+ * @param path - Stable validation path.
+ * @param issues - Mutable validation issue collection.
+ * @returns Trimmed string array when valid.
+ */
+function parseOptionalStringArray(value: unknown, path: string, issues: RecallEvalValidationIssue[]): string[] | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -406,12 +526,18 @@ const parseOptionalStringArray = (value: unknown, path: string, issues: RecallEv
     return undefined;
   }
 
-  const normalized = value.map((item) => item.trim()).filter((item) => item.length > 0);
-  return normalized;
-};
+  return value.map((item) => item.trim()).filter((item) => item.length > 0);
+}
 
-/** Parses an optional array of valid entry type enum members. */
-const parseOptionalEntryTypeArray = (value: unknown, path: string, issues: RecallEvalValidationIssue[]): RecallEvalQueryRequest["types"] | undefined => {
+/**
+ * Parses an optional array of valid entry type enum members.
+ *
+ * @param value - Raw entry-type array field.
+ * @param path - Stable validation path.
+ * @param issues - Mutable validation issue collection.
+ * @returns Valid entry-type array when recognized.
+ */
+function parseOptionalEntryTypeArray(value: unknown, path: string, issues: RecallEvalValidationIssue[]): RecallEvalQueryRequest["types"] | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -424,44 +550,23 @@ const parseOptionalEntryTypeArray = (value: unknown, path: string, issues: Recal
   const parsed: NonNullable<RecallEvalQueryRequest["types"]> = [];
   for (const [index, item] of value.entries()) {
     const entryType = parseEntryType(item, `${path}[${index}]`, issues);
-    if (entryType) {
+    if (entryType !== undefined) {
       parsed.push(entryType);
     }
   }
 
   return parsed;
-};
+}
 
-/** Parses an optional non-negative integer field. */
-const parseOptionalNonNegativeInteger = (value: unknown, path: string, issues: RecallEvalValidationIssue[]): number | undefined => {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
-    pushIssue(issues, path, "Expected a non-negative integer.");
-    return undefined;
-  }
-
-  return value;
-};
-
-/** Parses an optional positive integer field. */
-const parseOptionalPositiveInteger = (value: unknown, path: string, issues: RecallEvalValidationIssue[]): number | undefined => {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
-    pushIssue(issues, path, "Expected a positive integer.");
-    return undefined;
-  }
-
-  return value;
-};
-
-/** Parses an optional recall threshold constrained to the 0-1 range. */
-const parseOptionalThreshold = (value: unknown, path: string, issues: RecallEvalValidationIssue[]): number | undefined => {
+/**
+ * Parses an optional recall threshold constrained to the 0-1 range.
+ *
+ * @param value - Raw threshold field.
+ * @param path - Stable validation path.
+ * @param issues - Mutable validation issue collection.
+ * @returns Threshold when valid.
+ */
+function parseOptionalThreshold(value: unknown, path: string, issues: RecallEvalValidationIssue[]): number | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -472,19 +577,104 @@ const parseOptionalThreshold = (value: unknown, path: string, issues: RecallEval
   }
 
   return value;
-};
+}
 
-/** Parses an optional ISO-like timestamp string. */
-const parseOptionalTimestamp = (value: unknown, path: string, issues: RecallEvalValidationIssue[]): string | undefined => {
-  const timestamp = parseOptionalString(value, path, issues);
-  if (timestamp === undefined) {
+/**
+ * Parses one required object field.
+ *
+ * @param value - Raw field value.
+ * @param path - Stable validation path.
+ * @param issues - Mutable validation issue collection.
+ * @returns Object record when valid.
+ */
+function parseObject(value: unknown, path: string, issues: RecallEvalValidationIssue[]): Record<string, unknown> | undefined {
+  if (!isRecord(value)) {
+    pushIssue(issues, path, "Expected an object.");
     return undefined;
   }
 
-  if (Number.isNaN(Date.parse(timestamp))) {
-    pushIssue(issues, path, "Expected a valid timestamp string.");
+  return value;
+}
+
+/**
+ * Maps an adapter sandbox DTO into the app-layer sandbox contract.
+ *
+ * @param dto - Adapter sandbox DTO.
+ * @returns App sandbox request or `undefined`.
+ */
+function mapSandboxRequestDto(dto: RecallEvalSandboxRequestDto | undefined): RecallEvalSandboxRequest | undefined {
+  if (dto === undefined) {
     return undefined;
   }
 
-  return timestamp;
-};
+  return {
+    root: dto.root,
+    preserve: dto.preserve,
+  };
+}
+
+/**
+ * Maps an adapter fixture-entry DTO into the app-layer fixture contract.
+ *
+ * @param dto - Adapter fixture-entry DTO.
+ * @returns App fixture request.
+ */
+function mapFixtureEntryDto(dto: RecallEvalFixtureEntryDto): RecallEvalFixtureEntry {
+  return {
+    id: dto.id,
+    type: dto.type,
+    subject: dto.subject,
+    content: dto.content,
+    importance: dto.importance,
+    expiry: dto.expiry,
+    tags: dto.tags,
+    source_file: dto.source_file,
+    source_context: dto.source_context,
+    created_at: dto.created_at,
+    updated_at: dto.updated_at,
+    retired: dto.retired,
+    retired_at: dto.retired_at,
+    retired_reason: dto.retired_reason,
+    superseded_by: dto.superseded_by,
+  };
+}
+
+/**
+ * Maps an adapter recall-query DTO into the app-layer query contract.
+ *
+ * @param dto - Adapter recall-query DTO.
+ * @returns App recall query request.
+ */
+function mapRecallRequestDto(dto: RecallEvalQueryRequestDto): RecallEvalQueryRequest {
+  return {
+    text: dto.text,
+    limit: dto.limit,
+    threshold: dto.threshold,
+    budget: dto.budget,
+    types: dto.types,
+    tags: dto.tags,
+    since: dto.since,
+    until: dto.until,
+    around: dto.around,
+    aroundRadius: dto.aroundRadius,
+    rankingProfile: dto.rankingProfile,
+  };
+}
+
+/**
+ * Maps an adapter options DTO into the app-layer options contract.
+ *
+ * @param dto - Adapter options DTO.
+ * @returns App case options or `undefined`.
+ */
+function mapCaseOptionsDto(dto: RecallEvalCaseOptionsDto | undefined): RecallEvalCaseOptions | undefined {
+  if (dto === undefined) {
+    return undefined;
+  }
+
+  return {
+    includeDiagnostics: dto.includeDiagnostics,
+    includeCandidates: dto.includeCandidates,
+    includeTimings: dto.includeTimings,
+  };
+}
