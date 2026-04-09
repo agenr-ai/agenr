@@ -9,6 +9,7 @@ import {
   buildInferredIngestClaimKeySupportContext,
   buildManualClaimKeyLifecycle,
   buildPrecomputedClaimKeyLifecycle,
+  hasPrecomputedClaimKeyLifecycleFields,
   type ResolvedClaimKeyLifecycle,
 } from "../claim-key-lifecycle.js";
 import { describeSupersessionRuleFailure, validateSupersessionRules } from "../supersession.js";
@@ -673,6 +674,10 @@ function buildManualAcceptedClaimKey(rawInput: StoreEntryInput | undefined, norm
   const precomputedAcceptedClaimKey = buildPrecomputedClaimKeyLifecycle(normalizedInput);
   if (precomputedAcceptedClaimKey) {
     return precomputedAcceptedClaimKey;
+  }
+
+  if (rawInput && hasPrecomputedClaimKeyLifecycleFields(rawInput)) {
+    throw new Error("Store inputs with claim-key lifecycle metadata must provide a complete valid lifecycle bundle.");
   }
 
   return buildManualClaimKeyLifecycle({

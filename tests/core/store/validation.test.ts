@@ -49,6 +49,39 @@ describe("validateEntries", () => {
     expect(result.warnings).toEqual([]);
   });
 
+  it("passes through strictly ordered temporal validity bounds", () => {
+    const result = validateEntries([
+      {
+        type: "fact",
+        subject: "subject",
+        content: "content",
+        valid_from: " 2026-03-01T00:00:00.000Z ",
+        valid_to: " 2026-03-31T00:00:00.000Z ",
+      },
+    ]);
+
+    expect(result.valid[0]).toMatchObject({
+      valid_from: "2026-03-01T00:00:00.000Z",
+      valid_to: "2026-03-31T00:00:00.000Z",
+    });
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("rejects reversed temporal validity bounds", () => {
+    const result = validateEntries([
+      {
+        type: "fact",
+        subject: "subject",
+        content: "content",
+        valid_from: "2026-04-01T00:00:00.000Z",
+        valid_to: "2026-03-01T00:00:00.000Z",
+      },
+    ]);
+
+    expect(result.rejected).toBe(1);
+    expect(result.errors).toEqual(["Entry 0 valid_from must be earlier than valid_to."]);
+  });
+
   it("passes through optional scoping fields", () => {
     const result = validateEntries([
       {
@@ -183,7 +216,7 @@ describe("validateEntries", () => {
     expect(result.warnings[0]).toMatch(/invalid claim key/i);
   });
 
-  it("drops invalid lifecycle boundary values while keeping the normalized claim key", () => {
+  it("rejects partial or invalid lifecycle bundles instead of silently falling back to manual semantics", () => {
     const result = validateEntries([
       {
         type: "fact",
@@ -192,8 +225,33 @@ describe("validateEntries", () => {
         claim_key: " Jim / Timezone ",
         claim_key_status: "legacy" as StoreEntryInput["claim_key_status"],
         claim_key_source: "handwritten" as StoreEntryInput["claim_key_source"],
-        claim_support_mode: "copied" as StoreEntryInput["claim_support_mode"],
         claim_key_confidence: Number.NaN,
+      },
+    ]);
+
+    expect(result.rejected).toBe(1);
+    expect(result.valid).toEqual([]);
+    expect(result.errors).toEqual([
+      "Entry 0 provided partial or invalid claim-key lifecycle metadata. Complete bundles require claim_key_status, claim_key_source, claim_key_confidence, and claim_key_rationale.",
+    ]);
+    expect(result.warnings).toEqual([
+      expect.stringMatching(/claim_key_status/i),
+      expect.stringMatching(/claim_key_source/i),
+      expect.stringMatching(/claim_key_confidence/i),
+    ]);
+  });
+
+  it("keeps manual claim keys eligible for manual lifecycle fallback when only support metadata is provided", () => {
+    const result = validateEntries([
+      {
+        type: "fact",
+        subject: "subject",
+        content: "content",
+        claim_key: " Jim / Timezone ",
+        claim_support_source_kind: "tool_call",
+        claim_support_locator: "session.jsonl#entry:1",
+        claim_support_observed_at: "2026-03-01T00:00:00.000Z",
+        claim_support_mode: "explicit",
       },
     ]);
 
@@ -202,15 +260,13 @@ describe("validateEntries", () => {
       claim_key: "jim/timezone",
       claim_key_status: undefined,
       claim_key_source: undefined,
-      claim_support_mode: undefined,
       claim_key_confidence: undefined,
+      claim_key_rationale: undefined,
+      claim_support_source_kind: "tool_call",
+      claim_support_locator: "session.jsonl#entry:1",
+      claim_support_observed_at: "2026-03-01T00:00:00.000Z",
+      claim_support_mode: "explicit",
     });
-    expect(result.warnings).toEqual([
-      expect.stringMatching(/claim_key_status/i),
-      expect.stringMatching(/claim_key_source/i),
-      expect.stringMatching(/claim_key_confidence/i),
-      expect.stringMatching(/claim_support_mode/i),
-    ]);
   });
 
   it("returns correct counts for mixed valid and invalid entries", () => {

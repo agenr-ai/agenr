@@ -645,6 +645,33 @@ describe("agenr OpenClaw tools", () => {
     expect(updateParamsMessage).toContain('"hasValidTo":true');
   });
 
+  it("rejects agenr_update validity changes that conflict with an existing bound", async () => {
+    const database = await createTestDatabase();
+    const logger = createLogger();
+    const services = createDatabaseBackedServices(database);
+    const storeTool = createAgenrStoreTool(createToolContext(), Promise.resolve(services), logger);
+    const updateTool = createAgenrUpdateTool(createToolContext(), Promise.resolve(services), logger);
+
+    await storeTool.execute("tool-17a", {
+      type: "fact",
+      subject: "Jim timezone",
+      content: "Jim's timezone is America/Chicago.",
+      validTo: "2026-03-31T00:00:00.000Z",
+    });
+    const storedEntry = await createOpenClawRepository(database).findEntryBySubject("Jim timezone");
+
+    const updateResult = await updateTool.execute("tool-17b", {
+      id: storedEntry?.id,
+      validFrom: "2026-04-01T00:00:00.000Z",
+    });
+
+    expect(updateResult.content[0]?.type).toBe("text");
+    expect(updateResult.content[0]?.text).toContain("valid_from must be earlier than valid_to.");
+    expect(updateResult.details).toMatchObject({
+      status: "failed",
+    });
+  });
+
   it("extracts claim keys at store time using OpenClaw auth", async () => {
     const database = await createTestDatabase();
     const logger = createLogger();

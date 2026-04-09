@@ -1,4 +1,12 @@
-import { parseClaimKeySource, parseClaimKeyStatus, parseClaimSupportMode } from "../claim-key-lifecycle.js";
+import {
+  buildPrecomputedClaimKeyLifecycle,
+  hasPrecomputedClaimKeyLifecycleFields,
+  parseClaimKeyConfidence,
+  parseClaimKeySource,
+  parseClaimKeyStatus,
+  parseClaimSupportMode,
+} from "../claim-key-lifecycle.js";
+import { validateTemporalValidityRange } from "../temporal-validity.js";
 import { ENTRY_TYPES, EXPIRY_LEVELS, type Expiry, type StoreEntryInput } from "../types.js";
 import { describeClaimKeyNormalizationFailure, normalizeClaimKey } from "../claim-key.js";
 
@@ -108,14 +116,9 @@ export function validateEntriesWithIndexes(inputs: StoreEntryInput[]): IndexedVa
       continue;
     }
 
-    if (input.valid_from !== undefined && !isIsoTimestamp(input.valid_from)) {
-      errors.push(`Entry ${index} has an invalid valid_from timestamp.`);
-      rejectedInputIndexes.push(index);
-      continue;
-    }
-
-    if (input.valid_to !== undefined && !isIsoTimestamp(input.valid_to)) {
-      errors.push(`Entry ${index} has an invalid valid_to timestamp.`);
+    const temporalValidity = validateTemporalValidityRange(input.valid_from, input.valid_to);
+    if (!temporalValidity.ok) {
+      errors.push(`Entry ${index} ${temporalValidity.message}`);
       rejectedInputIndexes.push(index);
       continue;
     }
@@ -149,6 +152,38 @@ export function validateEntriesWithIndexes(inputs: StoreEntryInput[]): IndexedVa
         : undefined;
     const claimSupportMode =
       normalizedClaimKey && input.claim_support_mode !== undefined ? normalizeClaimSupportMode(input.claim_support_mode, index, warnings) : undefined;
+    const hasPrecomputedLifecycleFields = hasPrecomputedClaimKeyLifecycleFields(input);
+    const resolvedPrecomputedLifecycle =
+      normalizedClaimKey && hasPrecomputedLifecycleFields
+        ? buildPrecomputedClaimKeyLifecycle({
+            claim_key: normalizedClaimKey,
+            claim_key_raw: claimKeyRaw,
+            claim_key_status: claimKeyStatus,
+            claim_key_source: claimKeySource,
+            claim_key_confidence: claimKeyConfidence,
+            claim_key_rationale: claimKeyRationale,
+            claim_support_source_kind: claimSupportSourceKind,
+            claim_support_locator: claimSupportLocator,
+            claim_support_observed_at: claimSupportObservedAt,
+            claim_support_mode: claimSupportMode,
+          })
+        : undefined;
+
+    if (hasPrecomputedLifecycleFields) {
+      if (!normalizedClaimKey) {
+        errors.push(`Entry ${index} provided claim-key lifecycle metadata without a valid claim key.`);
+        rejectedInputIndexes.push(index);
+        continue;
+      }
+
+      if (!resolvedPrecomputedLifecycle) {
+        errors.push(
+          `Entry ${index} provided partial or invalid claim-key lifecycle metadata. Complete bundles require claim_key_status, claim_key_source, claim_key_confidence, and claim_key_rationale.`,
+        );
+        rejectedInputIndexes.push(index);
+        continue;
+      }
+    }
 
     valid.push({
       inputIndex: index,
@@ -166,17 +201,17 @@ export function validateEntriesWithIndexes(inputs: StoreEntryInput[]): IndexedVa
         created_at: normalizeOptionalString(input.created_at),
         supersedes: normalizeOptionalString(input.supersedes),
         claim_key: normalizedClaimKey,
-        claim_key_raw: claimKeyRaw,
-        claim_key_status: claimKeyStatus,
-        claim_key_source: claimKeySource,
-        claim_key_confidence: claimKeyConfidence,
-        claim_key_rationale: claimKeyRationale,
-        claim_support_source_kind: claimSupportSourceKind,
-        claim_support_locator: claimSupportLocator,
-        claim_support_observed_at: claimSupportObservedAt,
-        claim_support_mode: claimSupportMode,
-        valid_from: normalizeOptionalString(input.valid_from),
-        valid_to: normalizeOptionalString(input.valid_to),
+        claim_key_raw: resolvedPrecomputedLifecycle?.claim_key_raw ?? claimKeyRaw,
+        claim_key_status: resolvedPrecomputedLifecycle?.claim_key_status,
+        claim_key_source: resolvedPrecomputedLifecycle?.claim_key_source,
+        claim_key_confidence: resolvedPrecomputedLifecycle?.claim_key_confidence,
+        claim_key_rationale: resolvedPrecomputedLifecycle?.claim_key_rationale,
+        claim_support_source_kind: resolvedPrecomputedLifecycle?.claim_support_source_kind ?? claimSupportSourceKind,
+        claim_support_locator: resolvedPrecomputedLifecycle?.claim_support_locator ?? claimSupportLocator,
+        claim_support_observed_at: resolvedPrecomputedLifecycle?.claim_support_observed_at ?? claimSupportObservedAt,
+        claim_support_mode: resolvedPrecomputedLifecycle?.claim_support_mode ?? claimSupportMode,
+        valid_from: temporalValidity.value.validFrom,
+        valid_to: temporalValidity.value.validTo,
       },
     });
   }
@@ -263,8 +298,9 @@ function normalizeClaimKeyConfidence(
     return undefined;
   }
 
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
+  const parsed = parseClaimKeyConfidence(value);
+  if (parsed !== undefined) {
+    return parsed;
   }
 
   warnings.push(`Entry ${index} provided invalid claim_key_confidence ${JSON.stringify(value)} and it was dropped.`);

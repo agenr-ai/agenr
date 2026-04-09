@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type, type Static } from "@sinclair/typebox";
 
+import { validateTemporalValidityRange } from "../../../core/temporal-validity.js";
 import type { SurgeonToolDeps } from "./index.js";
 import { toolResult } from "./shared.js";
 
@@ -31,8 +32,6 @@ export function createSetValidityTool(deps: SurgeonToolDeps): AgentTool<typeof S
     async execute(_toolCallId, params: SetValidityParams) {
       const entryId = params.entry_id.trim();
       const reasoning = params.reasoning.trim();
-      const validFrom = normalizeOptionalTimestamp(params.valid_from);
-      const validTo = normalizeOptionalTimestamp(params.valid_to);
 
       if (reasoning.length === 0) {
         return toolResult({
@@ -43,7 +42,7 @@ export function createSetValidityTool(deps: SurgeonToolDeps): AgentTool<typeof S
         });
       }
 
-      if (validFrom === undefined && validTo === undefined) {
+      if (params.valid_from === undefined && params.valid_to === undefined) {
         return toolResult({
           success: false,
           dryRun: !deps.apply,
@@ -52,30 +51,31 @@ export function createSetValidityTool(deps: SurgeonToolDeps): AgentTool<typeof S
         });
       }
 
-      if (params.valid_from !== undefined && validFrom === null) {
+      const requestedValidity = validateTemporalValidityRange(params.valid_from, params.valid_to);
+      if (!requestedValidity.ok && requestedValidity.code === "invalid_valid_from") {
         return toolResult({
           success: false,
           dryRun: !deps.apply,
           entryId,
-          reason: "valid_from must be a valid ISO 8601 timestamp.",
+          reason: requestedValidity.message,
         });
       }
 
-      if (params.valid_to !== undefined && validTo === null) {
+      if (!requestedValidity.ok && requestedValidity.code === "invalid_valid_to") {
         return toolResult({
           success: false,
           dryRun: !deps.apply,
           entryId,
-          reason: "valid_to must be a valid ISO 8601 timestamp.",
+          reason: requestedValidity.message,
         });
       }
 
-      if (validFrom && validTo && Date.parse(validFrom) >= Date.parse(validTo)) {
+      if (!requestedValidity.ok) {
         return toolResult({
           success: false,
           dryRun: !deps.apply,
           entryId,
-          reason: "valid_from must be earlier than valid_to.",
+          reason: requestedValidity.message,
         });
       }
 
@@ -89,9 +89,22 @@ export function createSetValidityTool(deps: SurgeonToolDeps): AgentTool<typeof S
         });
       }
 
+      const mergedValidity = validateTemporalValidityRange(
+        params.valid_from !== undefined ? requestedValidity.value.validFrom : entry.valid_from,
+        params.valid_to !== undefined ? requestedValidity.value.validTo : entry.valid_to,
+      );
+      if (!mergedValidity.ok) {
+        return toolResult({
+          success: false,
+          dryRun: !deps.apply,
+          entryId: entry.id,
+          reason: mergedValidity.message,
+        });
+      }
+
       const changes = buildValidityChanges(entry, {
-        valid_from: validFrom ?? undefined,
-        valid_to: validTo ?? undefined,
+        valid_from: params.valid_from !== undefined ? requestedValidity.value.validFrom : undefined,
+        valid_to: params.valid_to !== undefined ? requestedValidity.value.validTo : undefined,
       });
 
       if (Object.keys(changes).length === 0) {
@@ -116,8 +129,8 @@ export function createSetValidityTool(deps: SurgeonToolDeps): AgentTool<typeof S
       }
 
       const updated = await deps.port.updateEntry(entry.id, {
-        ...(validFrom !== undefined ? { valid_from: validFrom ?? undefined } : {}),
-        ...(validTo !== undefined ? { valid_to: validTo ?? undefined } : {}),
+        ...(params.valid_from !== undefined ? { valid_from: requestedValidity.value.validFrom } : {}),
+        ...(params.valid_to !== undefined ? { valid_to: requestedValidity.value.validTo } : {}),
       });
 
       if (updated) {
@@ -141,25 +154,6 @@ export function createSetValidityTool(deps: SurgeonToolDeps): AgentTool<typeof S
       });
     },
   };
-}
-
-/**
- * Validates and normalizes one optional ISO 8601 timestamp.
- *
- * @param value - Raw timestamp input.
- * @returns Trimmed timestamp, null when invalid, or undefined when absent.
- */
-function normalizeOptionalTimestamp(value: string | undefined): string | null | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  const normalized = value.trim();
-  if (normalized.length === 0 || !normalized.includes("T") || Number.isNaN(Date.parse(normalized))) {
-    return null;
-  }
-
-  return normalized;
 }
 
 /**

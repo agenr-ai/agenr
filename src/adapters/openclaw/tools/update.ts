@@ -4,6 +4,7 @@ import type { OpenClawPluginToolContext, PluginLogger } from "openclaw/plugin-sd
 
 import { buildManualClaimKeyUpdateFields } from "../../../core/claim-key-lifecycle.js";
 import { normalizeClaimKey } from "../../../core/claim-key.js";
+import { validateTemporalValidityRange } from "../../../core/temporal-validity.js";
 import type { AgenrOpenClawServices } from "../types.js";
 import {
   UPDATE_EXPIRY_DESCRIPTION,
@@ -106,6 +107,14 @@ export function createAgenrUpdateTool(ctx: OpenClawPluginToolContext, servicesPr
           throw new Error("Provide at least one update field: importance, expiry, claimKey, validFrom, or validTo.");
         }
 
+        const mergedValidity = validateTemporalValidityRange(validFrom ?? entry.valid_from, validTo ?? entry.valid_to);
+        if (!mergedValidity.ok) {
+          throw new Error(mergedValidity.message);
+        }
+
+        const normalizedValidFrom = validFrom !== undefined ? mergedValidity.value.validFrom : undefined;
+        const normalizedValidTo = validTo !== undefined ? mergedValidity.value.validTo : undefined;
+
         const claimSupport = normalizedClaimKey === undefined ? undefined : buildToolCallClaimSupport(ctx, "agenr_update", claimSupportObservedAt);
         const manualClaimKeyUpdate =
           normalizedClaimKey === undefined || claimSupport === undefined
@@ -122,8 +131,8 @@ export function createAgenrUpdateTool(ctx: OpenClawPluginToolContext, servicesPr
           ...(importance !== undefined ? { importance } : {}),
           ...(expiry !== undefined ? { expiry } : {}),
           ...(manualClaimKeyUpdate ?? {}),
-          ...(validFrom !== undefined ? { valid_from: validFrom } : {}),
-          ...(validTo !== undefined ? { valid_to: validTo } : {}),
+          ...(validFrom !== undefined ? { valid_from: normalizedValidFrom } : {}),
+          ...(validTo !== undefined ? { valid_to: normalizedValidTo } : {}),
         });
 
         if (!updated) {
@@ -141,8 +150,8 @@ export function createAgenrUpdateTool(ctx: OpenClawPluginToolContext, servicesPr
           ...(importance !== undefined ? { importance } : {}),
           ...(expiry !== undefined ? { expiry } : {}),
           ...(normalizedClaimKey !== undefined ? { claimKey: normalizedClaimKey } : {}),
-          ...(validFrom !== undefined ? { validFrom } : {}),
-          ...(validTo !== undefined ? { validTo } : {}),
+          ...(validFrom !== undefined ? { validFrom: normalizedValidFrom } : {}),
+          ...(validTo !== undefined ? { validTo: normalizedValidTo } : {}),
         });
       } catch (error) {
         logToolFailure(logger, "agenr_update", ctx, error);

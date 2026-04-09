@@ -477,6 +477,60 @@ describe("storeEntries", () => {
     });
   });
 
+  it("rejects partial lifecycle bundles instead of silently storing them as manual claim keys", async () => {
+    const db = new MockDatabase();
+    const embedding = new MockEmbeddingPort();
+
+    const result = await storeEntries(
+      [
+        createInput({
+          subject: "Project X status",
+          content: "Project X is active.",
+          claim_key: "project_x/status",
+          claim_key_status: "trusted",
+        }),
+      ],
+      db,
+      embedding,
+    );
+
+    expect(result).toEqual({ stored: 0, skipped: 0, rejected: 1 });
+    expect(db.insertions).toEqual([]);
+  });
+
+  it("keeps manual claim keys on the manual path when only support metadata is supplied", async () => {
+    const db = new MockDatabase();
+    const embedding = new MockEmbeddingPort();
+
+    await storeEntries(
+      [
+        createInput({
+          subject: "Jim timezone",
+          content: "Jim uses America/Chicago.",
+          claim_key: "jim/timezone",
+          claim_support_source_kind: "tool_call",
+          claim_support_locator: "session.jsonl#entry:1",
+          claim_support_observed_at: "2026-04-01T10:00:00.000Z",
+          claim_support_mode: "explicit",
+        }),
+      ],
+      db,
+      embedding,
+    );
+
+    expect(db.insertions[0]?.entry).toMatchObject({
+      claim_key: "jim/timezone",
+      claim_key_status: "trusted",
+      claim_key_source: "manual",
+      claim_key_confidence: 1,
+      claim_key_rationale: "manual claim key supplied by caller",
+      claim_support_source_kind: "tool_call",
+      claim_support_locator: "session.jsonl#entry:1",
+      claim_support_observed_at: "2026-04-01T10:00:00.000Z",
+      claim_support_mode: "explicit",
+    });
+  });
+
   it("auto-supersedes a manual claim key when exactly one active sibling exists", async () => {
     const activeSibling = createExistingEntry({
       claim_key: "jim/home_city",

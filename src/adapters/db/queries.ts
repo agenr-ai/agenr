@@ -4,6 +4,7 @@ import type { InArgs, InStatement, ResultSet } from "@libsql/client";
 
 import { validateDirectClaimKeyLifecycleUpdate } from "../../core/claim-key-lifecycle.js";
 import type { ClaimKeyEntityPrefixStats } from "../../core/claim-key-entity-family.js";
+import { validateTemporalValidityRange } from "../../core/temporal-validity.js";
 import type { Entry, EntryUpdateInput } from "../../core/types.js";
 import { ACTIVE_ENTRY_CLAUSE, ENTRY_SELECT_COLUMNS, mapEntryRow, readRequiredString, serializeEmbeddingForVector, serializeTags } from "./row-mapping.js";
 
@@ -485,6 +486,26 @@ export async function updateEntry(
   const assignments: string[] = [];
   const args: Array<number | string | null> = [];
   const lifecycleUpdate = validateDirectClaimKeyLifecycleUpdate(fields);
+  const hasValidityUpdates = fields.valid_from !== undefined || fields.valid_to !== undefined;
+  const currentValidity = hasValidityUpdates
+    ? await loadCurrentValidityBounds(executor, id, {
+        includeInactive: options?.includeInactive === true,
+      })
+    : null;
+
+  if (hasValidityUpdates && currentValidity === null) {
+    return false;
+  }
+
+  if (currentValidity) {
+    const nextValidity = validateTemporalValidityRange(
+      fields.valid_from !== undefined ? fields.valid_from : currentValidity.validFrom,
+      fields.valid_to !== undefined ? fields.valid_to : currentValidity.validTo,
+    );
+    if (!nextValidity.ok) {
+      throw new Error(nextValidity.message);
+    }
+  }
 
   if (fields.importance !== undefined) {
     assignments.push("importance = ?");
@@ -550,6 +571,43 @@ export async function updateEntry(
   });
 
   return result.rowsAffected > 0;
+}
+
+/**
+ * Loads the currently persisted validity bounds for one mutable entry.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @param id - Target entry id.
+ * @param options - Whether inactive rows are addressable for this mutation.
+ * @returns Current bounds, or null when the entry is missing/inactive.
+ */
+async function loadCurrentValidityBounds(
+  executor: SqlExecutor,
+  id: string,
+  options?: {
+    includeInactive?: boolean;
+  },
+): Promise<{ validFrom?: string; validTo?: string } | null> {
+  const result = await executor.execute({
+    sql: `
+      SELECT valid_from, valid_to
+      FROM entries
+      WHERE id = ?
+        AND ${options?.includeInactive === true ? "1 = 1" : ACTIVE_ENTRY_CLAUSE}
+      LIMIT 1
+    `,
+    args: [id],
+  });
+
+  const row = result.rows[0];
+  if (!row) {
+    return null;
+  }
+
+  return {
+    validFrom: typeof row.valid_from === "string" ? row.valid_from : undefined,
+    validTo: typeof row.valid_to === "string" ? row.valid_to : undefined,
+  };
 }
 
 /**

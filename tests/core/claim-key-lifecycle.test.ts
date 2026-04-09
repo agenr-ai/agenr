@@ -8,6 +8,9 @@ import {
   buildInferredIngestClaimKeySupportContext,
   buildManualClaimKeyLifecycle,
   buildManualClaimKeyUpdateFields,
+  buildPrecomputedClaimKeyLifecycle,
+  hasPrecomputedClaimKeyLifecycleFields,
+  parseClaimKeyConfidence,
   buildSurgeonAppliedClaimKeyLifecycle,
   buildSurgeonAppliedClaimKeyLifecycleBundle,
   buildSurgeonProposalClaimKeyAuditDetails,
@@ -246,6 +249,8 @@ describe("claim-key lifecycle helpers", () => {
     expect(parseClaimKeyStatus("legacy")).toBeUndefined();
     expect(parseClaimKeySource("surgeon_compaction")).toBe("surgeon_compaction");
     expect(parseClaimKeySource("handwritten")).toBeUndefined();
+    expect(parseClaimKeyConfidence(0.75)).toBe(0.75);
+    expect(parseClaimKeyConfidence(1.2)).toBeUndefined();
     expect(parseClaimSupportMode("explicit")).toBe("explicit");
     expect(parseClaimSupportMode("copied")).toBeUndefined();
   });
@@ -256,5 +261,32 @@ describe("claim-key lifecycle helpers", () => {
         claim_key: "jim/timezone",
       }),
     ).toThrow(/complete lifecycle payload/i);
+  });
+
+  it("treats only the primary lifecycle bundle fields as explicit precomputed lifecycle metadata", () => {
+    expect(
+      hasPrecomputedClaimKeyLifecycleFields({
+        claim_key_status: "trusted",
+      }),
+    ).toBe(true);
+    const supportOnlyEntry: StoreEntryInput = {
+      type: "fact",
+      subject: "subject",
+      content: "content",
+      claim_support_mode: "explicit",
+    };
+    expect(hasPrecomputedClaimKeyLifecycleFields(supportOnlyEntry)).toBe(false);
+  });
+
+  it("rejects out-of-range precomputed lifecycle confidence values", () => {
+    expect(
+      buildPrecomputedClaimKeyLifecycle({
+        claim_key: "jim/timezone",
+        claim_key_status: "trusted",
+        claim_key_source: "manual",
+        claim_key_confidence: 1.2,
+        claim_key_rationale: "manual claim key supplied by caller",
+      }),
+    ).toBeUndefined();
   });
 });

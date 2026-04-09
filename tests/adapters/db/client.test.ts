@@ -425,6 +425,36 @@ describe("createDatabase", () => {
     });
   });
 
+  it("rejects invalid temporal validity ranges on direct updates", async () => {
+    const database = await createTestDatabase();
+    const entry = createEntry();
+
+    await database.insertEntry(entry, createEmbedding(0, 1), "invalid-validity-range-hash");
+
+    await expect(
+      database.updateEntry(entry.id, {
+        valid_from: "2026-04-01T00:00:00.000Z",
+        valid_to: "2026-03-01T00:00:00.000Z",
+      }),
+    ).rejects.toThrow("valid_from must be earlier than valid_to.");
+  });
+
+  it("rejects one-sided validity updates that would invert an existing persisted range", async () => {
+    const database = await createTestDatabase();
+    const entry = createEntry({
+      valid_from: "2026-03-01T00:00:00.000Z",
+      valid_to: "2026-03-31T00:00:00.000Z",
+    });
+
+    await database.insertEntry(entry, createEmbedding(0, 1), "existing-validity-range-hash");
+
+    await expect(
+      database.updateEntry(entry.id, {
+        valid_from: "2026-04-15T00:00:00.000Z",
+      }),
+    ).rejects.toThrow("valid_from must be earlier than valid_to.");
+  });
+
   it("supersedes an active entry and removes it from active recall surfaces", async () => {
     const database = await createTestDatabase();
     const adapter = createRecallAdapter(database, createEmbeddingPort());

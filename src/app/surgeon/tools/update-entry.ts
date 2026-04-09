@@ -3,6 +3,7 @@ import { Type, type Static } from "@sinclair/typebox";
 
 import { buildManualClaimKeyUpdateFields } from "../../../core/claim-key-lifecycle.js";
 import { normalizeClaimKey } from "../../../core/claim-key.js";
+import { validateTemporalValidityRange } from "../../../core/temporal-validity.js";
 import { EXPIRY_LEVELS, type EntryUpdateInput, type Expiry } from "../../../core/types.js";
 import type { SurgeonToolDeps } from "./index.js";
 import { toolResult } from "./shared.js";
@@ -78,6 +79,16 @@ export function createUpdateEntryTool(deps: SurgeonToolDeps): AgentTool<typeof U
           dryRun: !deps.apply,
           entryId: params.entry_id,
           reason: "Entry not found or is no longer active.",
+        });
+      }
+
+      const mergedValidity = validateTemporalValidityRange(requestedFields.valid_from ?? entry.valid_from, requestedFields.valid_to ?? entry.valid_to);
+      if (!mergedValidity.ok) {
+        return toolResult({
+          success: false,
+          dryRun: !deps.apply,
+          entryId: entry.id,
+          reason: mergedValidity.message,
         });
       }
 
@@ -175,7 +186,8 @@ function buildRequestedFields(params: UpdateEntryParams): {
     fields.valid_to = validTo;
   }
 
-  if (fields.valid_from && fields.valid_to && Date.parse(fields.valid_from) >= Date.parse(fields.valid_to)) {
+  const requestedValidity = validateTemporalValidityRange(fields.valid_from, fields.valid_to);
+  if (!requestedValidity.ok) {
     return null;
   }
 

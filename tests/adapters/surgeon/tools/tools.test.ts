@@ -600,6 +600,28 @@ describe("surgeon tools", () => {
     });
   });
 
+  it("rejects update_entry validity changes that conflict with an existing bound", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "update-existing-validity",
+      subject: "Update existing validity",
+      valid_from: "2026-03-01T00:00:00.000Z",
+      valid_to: "2026-03-31T00:00:00.000Z",
+    });
+    const tool = createUpdateEntryTool(createToolDeps(client, { apply: false }));
+
+    const result = await tool.execute("tool-update-existing-validity", {
+      entry_id: "update-existing-validity",
+      valid_from: "2026-04-15T00:00:00.000Z",
+      reasoning: "Attempting a conflicting lower bound.",
+    });
+
+    expect(result.details).toMatchObject({
+      success: false,
+      reason: "valid_from must be earlier than valid_to.",
+    });
+  });
+
   it("supports link_supersession happy path and logs a conflict-resolution action", async () => {
     const client = await createTestClient(clients);
     await insertEntry(client, {
@@ -1000,6 +1022,33 @@ describe("surgeon tools", () => {
     expect(row.rows[0]).toMatchObject({
       valid_from: "2026-03-01T00:00:00.000Z",
       valid_to: "2026-03-31T00:00:00.000Z",
+    });
+  });
+
+  it("rejects set_validity updates that conflict with an existing bound", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "validity-existing-bound",
+      subject: "Validity existing bound",
+      valid_from: "2026-03-01T00:00:00.000Z",
+      valid_to: "2026-03-31T00:00:00.000Z",
+    });
+    const tool = createSetValidityTool(
+      createToolDeps(client, {
+        passType: "supersession",
+        apply: false,
+      }),
+    );
+
+    const result = await tool.execute("tool-validity-existing-bound", {
+      entry_id: "validity-existing-bound",
+      valid_from: "2026-04-10T00:00:00.000Z",
+      reasoning: "This should conflict with the persisted valid_to bound.",
+    });
+
+    expect(result.details).toMatchObject({
+      success: false,
+      reason: "valid_from must be earlier than valid_to.",
     });
   });
 

@@ -133,6 +133,10 @@ export interface ProposalClaimKeyLifecycleAuditDetails {
   proposal_claim_key_raw?: string;
 }
 
+const PRECOMPUTED_LIFECYCLE_FIELDS = ["claim_key_status", "claim_key_source", "claim_key_confidence", "claim_key_rationale"] as const satisfies ReadonlyArray<
+  keyof Pick<StoreEntryInput, "claim_key_status" | "claim_key_source" | "claim_key_confidence" | "claim_key_rationale">
+>;
+
 /**
  * Parses one optional claim-key lifecycle status.
  *
@@ -161,6 +165,16 @@ export function parseClaimKeySource(value: unknown): ClaimKeySource | undefined 
  */
 export function parseClaimSupportMode(value: unknown): ClaimSupportMode | undefined {
   return parseStringEnum(value, CLAIM_SUPPORT_MODES);
+}
+
+/**
+ * Parses one optional bounded claim-key confidence score.
+ *
+ * @param value - Raw boundary value.
+ * @returns Confidence in the inclusive [0, 1] range, or undefined when absent or invalid.
+ */
+export function parseClaimKeyConfidence(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1 ? value : undefined;
 }
 
 /**
@@ -209,6 +223,22 @@ export function requireClaimSupportMode(value: unknown, label: string): ClaimSup
   }
 
   return parsed;
+}
+
+/**
+ * Returns whether a store input already carries explicit lifecycle bundle fields.
+ *
+ * Support metadata does not count as an explicit lifecycle bundle because
+ * callers may preserve transcript or tool provenance for manual claim keys
+ * without precomputing lifecycle semantics.
+ *
+ * @param input - Candidate store input.
+ * @returns True when any explicit lifecycle bundle field is present.
+ */
+export function hasPrecomputedClaimKeyLifecycleFields(
+  input: Pick<StoreEntryInput, "claim_key_status" | "claim_key_source" | "claim_key_confidence" | "claim_key_rationale">,
+): boolean {
+  return PRECOMPUTED_LIFECYCLE_FIELDS.some((field) => input[field] !== undefined);
 }
 
 /**
@@ -316,7 +346,7 @@ export function buildPrecomputedClaimKeyLifecycle(
   const claimKey = normalizeOptionalString(input.claim_key);
   const status = parseClaimKeyStatus(input.claim_key_status);
   const source = parseClaimKeySource(input.claim_key_source);
-  const confidence = normalizeOptionalNumber(input.claim_key_confidence);
+  const confidence = parseClaimKeyConfidence(input.claim_key_confidence);
   const rationale = normalizeOptionalString(input.claim_key_rationale);
   const supportMode = parseClaimSupportMode(input.claim_support_mode);
   if (!claimKey || !status || !source || confidence === undefined || !rationale) {
@@ -923,16 +953,6 @@ function normalizeOptionalString(value: string | null | undefined): string | und
 }
 
 /**
- * Normalizes one optional numeric field used by lifecycle metadata.
- *
- * @param value - Raw numeric boundary value.
- * @returns Finite number, or undefined when invalid.
- */
-function normalizeOptionalNumber(value: number | null | undefined): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-/**
  * Requires one lifecycle confidence score to be finite and bounded.
  *
  * @param value - Raw numeric boundary value.
@@ -940,8 +960,9 @@ function normalizeOptionalNumber(value: number | null | undefined): number | und
  * @returns Validated lifecycle confidence.
  */
 function requireClaimKeyConfidence(value: number | undefined, label: string): number {
-  if (typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1) {
-    return value;
+  const parsed = parseClaimKeyConfidence(value);
+  if (parsed !== undefined) {
+    return parsed;
   }
 
   throw new Error(`Invalid ${label}: expected a finite number between 0 and 1.`);
