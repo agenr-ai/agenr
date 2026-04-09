@@ -1,164 +1,361 @@
 # Episodes
 
-Episodic memory gives the brain temporal awareness. While durable entries capture facts, decisions, and preferences that persist indefinitely, episodes capture _what happened_ during each session - narrative summaries tied to concrete time ranges.
+Episodes are agenr's historical memory layer. Durable entries capture distilled knowledge that should stay true across sessions. Episodes capture what happened during a completed session as a narrative summary tied to a real time range.
 
-This lets the agent answer questions like "what happened yesterday?", "what were we working on last week?", and "sessions about schema changes" without those answers being stored as permanent knowledge entries.
+That split lets the system answer questions like "what happened yesterday?", "what were we doing last week?", or "what was the previous deployment approach?" without flattening every session recap into permanent semantic memory.
+
+Current production behavior is centered on OpenClaw sessions:
+
+- the OpenClaw plugin writes predecessor-session episodes in the background at session start
+- the `agenr ingest episodes` CLI backfills or regenerates episodes from OpenClaw transcript files
+- unified recall can query episodes directly or alongside durable entries
 
 ## Episodes vs Entries
 
-| Dimension       | Entries                                                                      | Episodes                                                                      |
-| --------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| **Granularity** | Individual facts, decisions, preferences, lessons, milestones, relationships | One summary per session                                                       |
-| **Lifecycle**   | Persist until retired by the surgeon or manually                             | Persist indefinitely, regenerable from transcripts                            |
-| **Recall mode** | Semantic similarity + lexical FTS + importance weighting                     | Temporal interval overlap + optional semantic rerank                          |
-| **Source**      | Extracted from transcripts by the LLM extraction pipeline                    | Generated per-session by the LLM summary pipeline                             |
-| **Schema**      | `entries` table with typed fields, tags, embeddings                          | `episodes` table with time range, surface, agent, summary, optional embedding |
+| Dimension   | Entries                                                                  | Episodes                                                                          |
+| ----------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
+| Granularity | Atomic facts, decisions, preferences, lessons, relationships, milestones | One narrative summary for one completed session                                   |
+| Authority   | Canonical durable memory                                                 | Historical context only                                                           |
+| Lifecycle   | May be updated, superseded, or retired                                   | May be regenerated, updated, superseded, or retired                               |
+| Retrieval   | Semantic similarity, lexical FTS, importance and recency shaping         | Temporal overlap, semantic vector search, or hybrid temporal + semantic reranking |
+| Source      | LLM extraction from transcripts and other inputs                         | LLM summary generation from normalized session transcripts                        |
+| Storage     | `entries` plus `entries_fts`                                             | `episodes`                                                                        |
 
-Authority note: episodes are LLM-generated narrative summaries. They preserve the shape of what happened and useful specifics, but they are not verbatim transcripts or authoritative logs. Treat episode recall as historical context that may need confirmation when exact wording, timestamps, or counts matter.
+Authority note: episode summaries are not transcripts, logs, or exact records. They are useful historical compression. When exact wording, exact counts, or exact timestamps matter, confirm against the source transcript or live state.
 
-## Episode Lifecycle
+Freshness note: episode recall currently carries an explicit notice that episodes cover consolidated prior sessions only. The most recent completed session may not appear yet.
 
-Episodes are generated through two paths:
+## Episode Record Shape
 
-### 1. Automatic - at session start
+The stored `Episode` shape in `src/core/types.ts` includes:
 
-When a new session starts, the plugin records lineage on `session_start`, and the first `before_prompt_build` resolves the predecessor session and fires a best-effort background episode write. This uses the OpenClaw embedded-agent task runner with the active agent's model, or the plugin `episodeModel` override when set. The write path carries forward predecessor lineage plus current session context for hints like `sessionId`, `surface`, and `agentId`.
+- identity and provenance: `id`, `source`, `sourceId`, `sourceRef`, `transcriptHash`, `summaryHash`
+- session metadata: `agentId`, `surface`, `startedAt`, `endedAt`, `messageCount`
+- summary payload: `summary`, `tags`, `activityLevel`, optional `project`
+- generation metadata: `genModel`, `genVersion`
+- retrieval fields: optional `embedding`
+- lifecycle fields: `retired`, `retiredAt`, `retiredReason`, `supersededBy`, `createdAt`, `updatedAt`
 
-If the predecessor already has an episode, the write is skipped. If the LLM call times out or fails, the session starts normally - episode generation is never blocking.
+The schema supports episode sources `openclaw`, `codex`, `cli`, and `synthesis`, but the current OpenClaw session ingest path writes `source: "openclaw"`.
 
-### 2. Backfill - via CLI
+Episode writes are idempotent:
+
+- primary identity is `(source, source_id)` when a stable session id exists
+- fallback identity is `(source, transcript_hash)` when it does not
+- normalized payload hashing drives `inserted`, `updated`, or `unchanged` write outcomes
+
+Episode recall and embedding backfill operate on active episodes only, meaning rows that are not retired and not superseded.
+
+## How Episodes Are Generated
+
+Episodes are generated through two current paths.
+
+### 1. Automatic predecessor write at session start
+
+On OpenClaw `session_start`, agenr records lineage facts. On the first `before_prompt_build` for the new session, the plugin resolves the predecessor session and triggers a best-effort background episode write for that predecessor.
+
+Important current behavior:
+
+- it runs through the shared `app/episode-ingest` workflow, not a separate plugin-only pipeline
+- it uses the active agent model by default, or the plugin `episodeModel` override when configured
+- it skips the active-session check because the host already knows it is writing a predecessor session
+- it times out after 45 seconds
+- it may embed the summary if embeddings are available and there is enough time budget left
+- it never blocks prompt construction or session startup
+
+If the predecessor already has an episode, the write is skipped. If parsing fails, the summary call fails, or the timeout is hit, the session still continues normally.
+
+### 2. CLI backfill and regeneration
+
+The CLI repair and backfill path is:
 
 ```bash
 agenr ingest episodes ~/.openclaw/agents/main/sessions/
 ```
 
-The CLI scans a directory of OpenClaw session transcripts (including rotated `.reset.*` and `.deleted.*` files), runs preflight parsing in parallel, and generates episodes for sessions that don't already have one. This is the canonical repair path - run it after a database reset, after bulk entry ingestion, or to catch sessions that didn't get episodes at start time.
+Useful current flags:
 
-See [INGEST.md](./INGEST.md) for full CLI flag documentation.
+```bash
+agenr ingest episodes <path> --dry-run
+agenr ingest episodes <path> --recent 30d
+agenr ingest episodes <path> --regenerate
+agenr ingest episodes <path> --no-embed
+agenr ingest episodes --embed-only
+agenr ingest episodes <path> --model openai/gpt-5.4-mini
+agenr ingest episodes <path> --concurrency 12
+```
 
-## Episode Content
+This is the canonical repair path after a database reset, after plugin downtime, or when you want to regenerate summaries with current code.
 
-Each episode contains:
+## Episode Ingest Pipeline
 
-- **Summary** - a narrative paragraph describing what happened in the session
-- **Time range** - `startedAt` and `endedAt` from transcript metadata
-- **Surface** - where the session happened, for example `tui`, `telegram`, `signal`, `subagent`, or `heartbeat`
-- **Agent ID** - which OpenClaw agent ran the session
-- **Activity level** - `substantial`, `minimal`, or `none`
-- **Topics** - LLM-extracted topic tags for semantic grouping
-- **Project** - optional project scope inferred from the session
-- **Source ID** - the OpenClaw session UUID, used for dedup
-- **Embedding** - optional 1024-dim vector for semantic episode search
+The shared app workflow under `src/app/episode-ingest/` has four practical stages.
+
+### 1. Discovery
+
+Transcript discovery accepts either a single file or a directory tree. The OpenClaw adapter matches:
+
+- normal session files: `<uuid>.jsonl`
+- rotated reset files: `<uuid>.jsonl.reset.*`
+- rotated deleted files: `<uuid>.jsonl.deleted.*`
+
+### 2. Preflight classification
+
+Each transcript is parsed and classified in parallel before any LLM calls happen.
+
+Current skip rules:
+
+- `skipped_exists` - an episode already exists and `--regenerate` was not requested
+- `skipped_short` - fewer than `MIN_EPISODE_MESSAGES` cleaned messages are left after transcript normalization; this is currently `4`
+- `skipped_active` - the session still looks active because `endedAt` is within the 5 minute active-session window
+- `invalid` - there is no stable session id and no cleaned messages
+
+Current transcript preparation behavior:
+
+- empty messages are dropped before counting
+- rendered transcript text uses stable `User:` and `Assistant:` prefixes
+- transcript text is capped at `MAX_EPISODE_TRANSCRIPT_CHARS`, currently `14_000`
+- when capping is required, the renderer preserves the beginning and end and omits the middle
+
+### 3. Planning
+
+The plan step can optionally apply `--recent`, which accepts relative shorthand like `30d` or an ISO timestamp. Candidates older than the cutoff are excluded before summary generation starts.
+
+The plan also estimates:
+
+- input tokens
+- output tokens
+- model cost
+
+### 4. Execution
+
+Execution runs summary generation concurrently, but database writes are serialized for stable upserts.
+
+For each candidate:
+
+- `generateEpisodeSummary()` asks the summary model for strict JSON
+- the response is parsed into `summary`, `tags`, `activityLevel`, and optional `project`
+- an embedding is generated when enabled and available
+- the row is upserted into `episodes`
+
+## Summary Content
+
+The current summary prompt in `src/core/episode/summary-prompt.ts` asks for exactly one JSON object:
+
+- `summary: string`
+- `tags: string[]`
+- `activityLevel: "substantial" | "minimal" | "none"`
+- `project: string | null`
+
+Current prompt requirements:
+
+- summary should be 100 to 300 words
+- it should describe what was discussed, decided, or accomplished
+- it should preserve concrete specifics worth historical recall
+- tags are lowercase anchors drawn from the transcript
+- project is omitted when there is no clear project scope
+
+## Session Metadata Resolution
+
+Episode ingest prefers registry-backed metadata when it can get it, then falls back to transcript reconstruction.
+
+### `sessions.json` registry
+
+`loadOpenClawSessionRegistry()` reads `sessions.json` and provides:
+
+- stable session id
+- source reference
+- agent id
+- surface
+- provider
+- chat type
+
+Registry metadata is marked as `metadataSource: "registry"`.
+
+### Transcript reconstruction fallback
+
+When registry metadata is missing, the transcript parser reconstructs what it can from:
+
+- `inbound_meta`
+- sender metadata blocks
+- conversation info blocks
+- path-derived agent identity
+- content heuristics in the first user message
+
+Current reconstructed surfaces include values such as `telegram`, `signal`, `tui`, `subagent`, and `heartbeat` when the parser can infer them.
 
 ## Episode Recall
 
-Recall routes to episodes through the unified recall layer (`src/app/recall/unified.ts`). The `mode` parameter controls routing:
+Unified recall lives in `src/app/recall/unified.ts`. Public mode options are:
 
-| Mode       | Behavior                                                                                       |
-| ---------- | ---------------------------------------------------------------------------------------------- |
-| `auto`     | Routes based on query analysis: temporal narrative → episodes, factual → entries, mixed → both |
-| `entries`  | Only queries durable entries                                                                   |
-| `episodes` | Only queries episodes                                                                          |
+- `auto`
+- `entries`
+- `episodes`
 
-### Auto-Routing Rules
+Results are returned as separate `entries` and `episodes` arrays. The system does not merge them into one global ranked list.
 
-The router inspects the query text for signals:
+### Current intent buckets
 
-- **Factual phrases** (`"what decision"`, `"what's the default"`, `"which version"`) -> entries only
-- **Factual + time window** -> both episodes and entries
-- **Narrative phrases** (`"what happened"`, `"what were we doing"`, `"catch me up"`) + time window -> episodes only
-- **Narrative + time window + topic anchor** -> both episodes and entries
-- **Time window + topic anchor** -> both episodes and entries
-- **Time window without narrative or topic anchor** -> entries only
-- **No signals** -> entries only (safe default)
+Auto mode now distinguishes four intent families:
 
-### Temporal Window Parser
+- `factual`
+- `temporal_narrative`
+- `mixed`
+- `historical_state`
 
-The parser (`src/core/episode/temporal-window.ts`) recognizes natural language time expressions and converts them to precise calendar intervals:
+`historical_state` is important current behavior. Queries like "what was the previous deployment approach", "what changed", or "what workflow did we use before" route to both entries and episodes even without a time phrase.
 
-| Expression                  | Resolved to                                         |
-| --------------------------- | --------------------------------------------------- |
-| `today`                     | Start of current local day through `now`            |
-| `yesterday`                 | Start to end of previous local calendar day         |
-| `this week`                 | Start of the local week through `now`               |
-| `last week`                 | Previous local week                                 |
-| `this month`                | Start of the local month through `now`              |
-| `last month`                | Previous local calendar month                       |
-| `N days ago`                | That single local calendar day                      |
-| `N weeks ago`               | Anchor window centered N weeks back, radius +/- 3d  |
-| `N months ago`              | Anchor window centered N months back, radius +/- 3d |
-| `in March`, `in January`    | Full named month (current or previous year)         |
-| `March 15th`, `January 1st` | That single local calendar day                      |
-| `last Friday`               | Most recent occurrence of that weekday              |
-| ISO dates (`2026-03-15`)    | That single local calendar day                      |
+When `historical_state` is detected:
 
-All dates resolve in the system's local timezone.
+- entry recall receives `rankingProfile: "historical_state"`
+- semantic episode search is allowed even without a resolved time window
+- OpenClaw tool output renders entries before episodes
+
+### Current routing rules
+
+| Situation                                            | Queried                                                                                                                |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `mode=entries`                                       | entries only                                                                                                           |
+| `mode=episodes` with time window                     | episodes only                                                                                                          |
+| `mode=episodes` without time window                  | episodes only, using semantic search when embeddings are available and otherwise returning no semantic episode matches |
+| historical-state query                               | entries and episodes                                                                                                   |
+| factual query with time window                       | entries and episodes                                                                                                   |
+| factual query without time window                    | entries only                                                                                                           |
+| narrative query with time window and no topic anchor | episodes only                                                                                                          |
+| narrative query with time window and topic anchor    | episodes and entries                                                                                                   |
+| time window with topic anchor                        | episodes and entries                                                                                                   |
+| no supported episode signal                          | entries only                                                                                                           |
+
+Topic-anchor detection is intentionally simple. It currently treats `about`, `regarding`, `with`, `on <topic>`, or entry-only filters as signals that semantic episode search would help.
+
+## Temporal Window Parsing
+
+Episode recall does not reuse the older entry `around` parsing. It has its own parser in `src/core/episode/temporal-window.ts`.
+
+Supported expressions currently include:
+
+- `today`
+- `yesterday`
+- `this week`
+- `last week`
+- `this month`
+- `last month`
+- `N days ago`
+- `N weeks ago`
+- `N months ago`
+- `in March`
+- `March 15` or `March 15th`
+- `last Friday`
+- ISO dates like `2026-03-15`
+
+Resolution behavior:
+
+- dates are resolved in the system local timezone
+- `today`, `this week`, and `this month` end at `now`
+- `N weeks ago` and `N months ago` resolve to anchor windows with a default `+/- 3 day` radius
+- named month and month-day parsing pick the most recent matching calendar period
 
 ## Episode Search Modes
 
-The episode search pipeline (`src/core/episode/search.ts`) supports three modes depending on what's available:
+`src/core/episode/search.ts` supports three real search modes.
 
-### Pure Temporal
+### Pure temporal
 
-When no embedding is available for the query (or mode forces temporal-only), episodes are scored by interval overlap with the query time window. Scoring factors:
+Used when a time window exists but no query embedding exists.
 
-- **Overlap quality** - what fraction of the episode's time range intersects the query window
-- **Midpoint proximity** - how close the episode's midpoint is to the query window's midpoint
-- **Activity level** - `substantial` outranks `minimal`, which outranks `none`
-- **Recency** - more recent episodes get a small boost
+Search flow:
 
-### Pure Semantic
+- fetch overlapping active episodes with `listEpisodesByTimeWindow()`
+- overfetch candidates using `limit * 5`, bounded to `25-100`
+- rank in memory by temporal overlap
 
-When no time window is detected but a query embedding is available, episodes are retrieved by vector similarity (cosine distance against the episode embedding). This handles topic-based episode queries like "sessions about database migrations".
+Temporal ranking uses:
+
+- `overlapQuality` as the primary signal
+- `midpointProximity` as the secondary signal
+- `activity`
+- `recency`
+
+The final temporal score is currently:
+
+```text
+overlapQuality * 0.75
++ midpointProximity * 0.20
++ activity * 0.04
++ recency * 0.01
+```
+
+### Pure semantic
+
+Used when no time window exists but a query embedding does.
+
+Search flow:
+
+- query `vector_top_k('idx_episodes_embedding', ...)`
+- filter to active episodes
+- compute cosine similarity
+- rank by semantic similarity first, with temporal, activity, and recency used only as tie-breakers
 
 ### Hybrid
 
-When both a time window and query embedding are available, the pipeline applies a hard temporal filter first (only episodes overlapping the time window), then reranks by semantic similarity. This handles queries like "what happened with the schema changes last week?"
+Used when both a time window and a query embedding exist.
 
-## Episode Embeddings
+Important current behavior: this is a hard temporal filter plus semantic reranking, not a global vector search with a soft time bias.
 
-Embeddings are generated at episode write time using the configured embedding model (`text-embedding-3-small` by default). They're stored in the `episodes` table and indexed via `idx_episodes_embedding` for vector search.
+The pipeline:
 
-If episodes were written without embeddings (e.g., embedding API was unavailable), backfill them:
+- first fetches only overlapping episodes
+- then scores those candidates by semantic similarity
+- then uses temporal, activity, and recency as tie-breakers
+
+## Embeddings
+
+Episodes can store an optional 1024-dimension embedding vector. Pure temporal recall does not require embeddings. Semantic and hybrid episode search do.
+
+Current behavior:
+
+- write-time embedding is best-effort
+- active episodes without embeddings can be repaired with `--embed-only`
+- backfill uses the stored episode summary text, not the original transcript
+
+Backfill command:
 
 ```bash
-agenr ingest episodes ~/.openclaw/agents/main/sessions/ --embed-only
+agenr ingest episodes --embed-only
 ```
 
-This reads existing episodes from the database and generates missing embeddings without re-running the LLM summary pipeline.
+## Recall Notices
 
-## Session Discovery
+Unified episode recall can currently add several user-facing notices:
 
-Episode ingest discovers sessions through two mechanisms:
+- `Episodes cover consolidated prior sessions only; the most recent completed session may not appear yet.`
+- `Semantic episode search unavailable - showing temporal results only.`
+- `Semantic episode search unavailable - no semantic episode results could be returned.`
+- `Threshold, type filters, and tag filters were applied to entries only.`
 
-### sessions.json Registry
-
-OpenClaw maintains a `sessions.json` file with authoritative metadata for active sessions: surface type, agent ID, chat type, and session key. Episode ingest reads this first for accurate metadata.
-
-### Transcript-Based Fallback
-
-For rotated/deleted sessions not in the registry, episode ingest reconstructs metadata from the transcript itself:
-
-- **Surface** - detected from Sender metadata blocks, Conversation info blocks, `inbound_meta` fields, and content heuristics
-- **Agent ID** - derived from the directory path (`agents/{agentId}/sessions/...`)
-- **Time range** - from transcript `startedAt`/`endedAt` metadata
+That last notice matters because `threshold`, `types`, and `tags` still apply only to entry recall in the unified layer.
 
 ## Architecture
 
-Episode code follows agenr's hexagonal structure:
+Episode functionality is split cleanly across core, app, and adapter layers.
 
-| Location                                    | Responsibility                                                                                         |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `src/core/episode/`                         | Pure episode logic: search, scoring, temporal windows, summary generation, transcript rendering, types |
-| `src/core/episode/search.ts`                | Episode search pipeline (temporal, semantic, hybrid)                                                   |
-| `src/core/episode/scoring.ts`               | Interval overlap scoring, activity scoring, recency decay                                              |
-| `src/core/episode/temporal-window.ts`       | Calendar-aware natural language time parser                                                            |
-| `src/core/episode/summary-generator.ts`     | LLM summary generation (core port, no infra deps)                                                      |
-| `src/core/episode/summary-prompt.ts`        | Episode summary system prompt and response parser                                                      |
-| `src/adapters/openclaw/episode/`            | OpenClaw-specific predecessor-episode writer using the embedded-agent task runner                      |
-| `src/adapters/openclaw/session/continuity/` | OpenClaw-specific predecessor resolution and continuity summary loading/generation                     |
-| `src/adapters/db/`                          | Episode table schema, queries, vector search                                                           |
-| `src/app/recall/unified.ts`                 | Mode routing, episode + entry result merging                                                           |
-| `src/app/episode-ingest/`                   | Episode ingest service (CLI pipeline orchestration)                                                    |
+| Location                                            | Current responsibility                                                |
+| --------------------------------------------------- | --------------------------------------------------------------------- |
+| `src/core/episode/summary-prompt.ts`                | Summary output contract, prompt text, JSON parsing                    |
+| `src/core/episode/summary-generator.ts`             | Pure summary-generation orchestration against an `LlmPort`            |
+| `src/core/episode/transcript-render.ts`             | Clean transcript rendering and transcript capping constants           |
+| `src/core/episode/temporal-window.ts`               | Natural-language temporal parsing and window resolution               |
+| `src/core/episode/scoring.ts`                       | Temporal overlap math, activity score, recency score                  |
+| `src/core/episode/search.ts`                        | Pure temporal, semantic, and hybrid episode retrieval                 |
+| `src/app/episode-ingest/service/preflight.ts`       | Discovery preflight, eligibility checks, transcript preparation       |
+| `src/app/episode-ingest/service/plan.ts`            | Recent-cutoff filtering and cost estimation                           |
+| `src/app/episode-ingest/service/execute.ts`         | Summary execution, embedding, serialized upserts                      |
+| `src/app/episode-ingest/service/backfill.ts`        | Embedding-only repair path                                            |
+| `src/app/recall/unified.ts`                         | Unified routing between entries and episodes                          |
+| `src/adapters/db/episode-queries.ts`                | Episode persistence, overlap lookup, vector search, embedding updates |
+| `src/adapters/openclaw/transcript/parser.ts`        | OpenClaw transcript normalization and surface reconstruction          |
+| `src/adapters/openclaw/session/session-registry.ts` | `sessions.json` metadata lookup                                       |
+| `src/adapters/openclaw/episode/episode-writer.ts`   | Background predecessor-session episode generation at session start    |
+| `src/cli/commands/ingest-episodes.ts`               | CLI wiring, flags, execution, and reporting                           |
 
-The core episode code has zero infrastructure dependencies. The OpenClaw adapter handles transcript parsing, predecessor resolution, and LLM calls through OpenClaw's embedded-agent task runner, while CLI backfill consults `sessions.json` directly when it is available.
+The design intent is unchanged: core episode logic stays infrastructure-free, app code owns workflow orchestration, and OpenClaw-specific concerns remain in the adapter layer.
