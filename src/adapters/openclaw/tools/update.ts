@@ -2,8 +2,7 @@ import type { AnyAgentTool } from "openclaw/plugin-sdk/agent-runtime";
 import { failedTextResult, readNumberParam, readStringParam, textResult } from "openclaw/plugin-sdk/agent-runtime";
 import type { OpenClawPluginToolContext, PluginLogger } from "openclaw/plugin-sdk/core";
 
-import { buildManualClaimKeyUpdateFields } from "../../../core/claim-key-lifecycle.js";
-import { normalizeClaimKey } from "../../../core/claim-key.js";
+import { normalizeManualClaimKeyUpdate } from "../../../core/claim-key-lifecycle.js";
 import { validateTemporalValidityRange } from "../../../core/temporal-validity.js";
 import type { AgenrOpenClawServices } from "../types.js";
 import {
@@ -82,28 +81,35 @@ export function createAgenrUpdateTool(ctx: OpenClawPluginToolContext, servicesPr
         const validFrom = readStringParam(params, "validFrom");
         const validTo = readStringParam(params, "validTo");
         const claimSupportObservedAt = new Date().toISOString();
-        const normalizedClaimKey =
+        const claimSupport = claimKeyInput === undefined ? undefined : buildToolCallClaimSupport(ctx, "agenr_update", claimSupportObservedAt);
+        const normalizedClaimKeyUpdate =
           claimKeyInput === undefined
             ? undefined
             : (() => {
-                const claimKey = normalizeClaimKey(claimKeyInput);
-                if (!claimKey.ok) {
+                try {
+                  return normalizeManualClaimKeyUpdate({
+                    claimKey: claimKeyInput,
+                    rawClaimKey: claimKeyInput,
+                    supportSourceKind: claimSupport?.claim_support_source_kind,
+                    supportLocator: claimSupport?.claim_support_locator,
+                    supportObservedAt: claimSupport?.claim_support_observed_at,
+                    supportMode: claimSupport?.claim_support_mode,
+                  });
+                } catch {
                   throw new Error("claimKey must use canonical entity/attribute format.");
                 }
-
-                return claimKey.value.claimKey;
               })();
         logToolCall(
           logger,
           "agenr_update",
           ctx,
           `target=${formatTargetSelector(id, subject)}${importance !== undefined ? ` importance=${importance}` : ""}${expiry !== undefined ? ` expiry=${expiry}` : ""}`,
-          sanitizeUpdateToolParams({ id, subject, importance, expiry, claimKey: normalizedClaimKey, validFrom, validTo }),
+          sanitizeUpdateToolParams({ id, subject, importance, expiry, claimKey: normalizedClaimKeyUpdate?.claimKey, validFrom, validTo }),
         );
         const services = await servicesPromise;
         const entry = await resolveTargetEntry(services, params);
 
-        if (importance === undefined && expiry === undefined && normalizedClaimKey === undefined && validFrom === undefined && validTo === undefined) {
+        if (importance === undefined && expiry === undefined && normalizedClaimKeyUpdate === undefined && validFrom === undefined && validTo === undefined) {
           throw new Error("Provide at least one update field: importance, expiry, claimKey, validFrom, or validTo.");
         }
 
@@ -115,22 +121,10 @@ export function createAgenrUpdateTool(ctx: OpenClawPluginToolContext, servicesPr
         const normalizedValidFrom = validFrom !== undefined ? mergedValidity.value.validFrom : undefined;
         const normalizedValidTo = validTo !== undefined ? mergedValidity.value.validTo : undefined;
 
-        const claimSupport = normalizedClaimKey === undefined ? undefined : buildToolCallClaimSupport(ctx, "agenr_update", claimSupportObservedAt);
-        const manualClaimKeyUpdate =
-          normalizedClaimKey === undefined || claimSupport === undefined
-            ? undefined
-            : buildManualClaimKeyUpdateFields({
-                claimKey: normalizedClaimKey,
-                rawClaimKey: claimKeyInput,
-                supportSourceKind: claimSupport.claim_support_source_kind,
-                supportLocator: claimSupport.claim_support_locator,
-                supportObservedAt: claimSupport.claim_support_observed_at,
-                supportMode: claimSupport.claim_support_mode,
-              });
         const updated = await services.entries.updateEntry(entry.id, {
           ...(importance !== undefined ? { importance } : {}),
           ...(expiry !== undefined ? { expiry } : {}),
-          ...(manualClaimKeyUpdate ?? {}),
+          ...(normalizedClaimKeyUpdate?.updateFields ?? {}),
           ...(validFrom !== undefined ? { valid_from: normalizedValidFrom } : {}),
           ...(validTo !== undefined ? { valid_to: normalizedValidTo } : {}),
         });
@@ -149,7 +143,7 @@ export function createAgenrUpdateTool(ctx: OpenClawPluginToolContext, servicesPr
           sessionKey: ctx.sessionKey,
           ...(importance !== undefined ? { importance } : {}),
           ...(expiry !== undefined ? { expiry } : {}),
-          ...(normalizedClaimKey !== undefined ? { claimKey: normalizedClaimKey } : {}),
+          ...(normalizedClaimKeyUpdate !== undefined ? { claimKey: normalizedClaimKeyUpdate.claimKey } : {}),
           ...(validFrom !== undefined ? { validFrom: normalizedValidFrom } : {}),
           ...(validTo !== undefined ? { validTo: normalizedValidTo } : {}),
         });

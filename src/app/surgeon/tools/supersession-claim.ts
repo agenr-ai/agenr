@@ -3,8 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type, type Static } from "@sinclair/typebox";
 
-import { buildManualClaimKeyUpdateFields } from "../../../core/claim-key-lifecycle.js";
-import { normalizeClaimKey } from "../../../core/claim-key.js";
+import { normalizeManualClaimKeyUpdate } from "../../../core/claim-key-lifecycle.js";
 import type { SurgeonToolDeps } from "./index.js";
 import { toolResult } from "./shared.js";
 
@@ -31,7 +30,15 @@ export function createAssignClaimKeyTool(deps: SurgeonToolDeps): AgentTool<typeo
     parameters: ASSIGN_CLAIM_KEY_SCHEMA,
     async execute(_toolCallId, params: AssignClaimKeyParams) {
       const reasoning = params.reasoning.trim();
-      const normalizedClaimKey = normalizeClaimKey(params.claim_key);
+      let normalizedClaimKeyUpdate;
+
+      try {
+        normalizedClaimKeyUpdate = normalizeManualClaimKeyUpdate({
+          claimKey: params.claim_key,
+        });
+      } catch {
+        normalizedClaimKeyUpdate = undefined;
+      }
 
       if (reasoning.length === 0) {
         return toolResult({
@@ -42,7 +49,7 @@ export function createAssignClaimKeyTool(deps: SurgeonToolDeps): AgentTool<typeo
         });
       }
 
-      if (!normalizedClaimKey.ok) {
+      if (!normalizedClaimKeyUpdate) {
         return toolResult({
           success: false,
           dryRun: !deps.apply,
@@ -62,12 +69,12 @@ export function createAssignClaimKeyTool(deps: SurgeonToolDeps): AgentTool<typeo
       }
 
       const changes =
-        entry.claim_key === normalizedClaimKey.value.claimKey
+        entry.claim_key === normalizedClaimKeyUpdate.claimKey
           ? {}
           : {
               claim_key: {
                 from: entry.claim_key ?? null,
-                to: normalizedClaimKey.value.claimKey,
+                to: normalizedClaimKeyUpdate.claimKey,
               },
             };
 
@@ -93,9 +100,7 @@ export function createAssignClaimKeyTool(deps: SurgeonToolDeps): AgentTool<typeo
       }
 
       const updated = await deps.port.updateEntry(entry.id, {
-        ...buildManualClaimKeyUpdateFields({
-          claimKey: normalizedClaimKey.value.claimKey,
-        }),
+        ...normalizedClaimKeyUpdate.updateFields,
       });
 
       if (updated) {

@@ -600,6 +600,27 @@ describe("surgeon tools", () => {
     });
   });
 
+  it("rejects update_entry when claim_key is invalid", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "update-claim-key-invalid",
+      subject: "Update claim key invalid",
+    });
+    const tool = createUpdateEntryTool(createToolDeps(client, { apply: false }));
+
+    const result = await tool.execute("tool-update-claim-key-invalid", {
+      entry_id: "update-claim-key-invalid",
+      claim_key: "invalid",
+      reasoning: "Attempting an invalid claim key.",
+    });
+
+    expect(result.details).toMatchObject({
+      success: false,
+      reason:
+        "Expiry must be one of: core, permanent, temporary. Claim keys must use entity/attribute format. Validity timestamps must be ISO 8601 and ordered correctly.",
+    });
+  });
+
   it("rejects update_entry validity changes that conflict with an existing bound", async () => {
     const client = await createTestClient(clients);
     await insertEntry(client, {
@@ -895,6 +916,7 @@ describe("surgeon tools", () => {
       ).details,
     ).toMatchObject({
       success: false,
+      reason: "Claim key must contain exactly one '/' with non-empty entity and attribute parts.",
     });
     expect(
       (
@@ -906,6 +928,7 @@ describe("surgeon tools", () => {
       ).details,
     ).toMatchObject({
       success: false,
+      reason: "Claim key must contain exactly one '/' with non-empty entity and attribute parts.",
     });
     expect(
       (
@@ -917,6 +940,7 @@ describe("surgeon tools", () => {
       ).details,
     ).toMatchObject({
       success: false,
+      reason: "Claim key must contain exactly one '/' with non-empty entity and attribute parts.",
     });
 
     const result = await applyTool.execute("tool-claim-valid", {

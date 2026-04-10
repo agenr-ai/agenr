@@ -1,8 +1,7 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type, type Static } from "@sinclair/typebox";
 
-import { buildManualClaimKeyUpdateFields } from "../../../core/claim-key-lifecycle.js";
-import { normalizeClaimKey } from "../../../core/claim-key.js";
+import { normalizeManualClaimKeyUpdate } from "../../../core/claim-key-lifecycle.js";
 import { validateTemporalValidityRange } from "../../../core/temporal-validity.js";
 import { EXPIRY_LEVELS, type EntryUpdateInput, type Expiry } from "../../../core/types.js";
 import type { SurgeonToolDeps } from "./index.js";
@@ -136,6 +135,15 @@ function buildRequestedFields(params: UpdateEntryParams): {
   importance?: number;
   expiry?: Expiry;
   claim_key?: string;
+  claim_key_raw?: string;
+  claim_key_status?: EntryUpdateInput["claim_key_status"];
+  claim_key_source?: EntryUpdateInput["claim_key_source"];
+  claim_key_confidence?: number;
+  claim_key_rationale?: string;
+  claim_support_source_kind?: string;
+  claim_support_locator?: string;
+  claim_support_observed_at?: string;
+  claim_support_mode?: EntryUpdateInput["claim_support_mode"];
   valid_from?: string;
   valid_to?: string;
 } | null {
@@ -155,17 +163,16 @@ function buildRequestedFields(params: UpdateEntryParams): {
   }
 
   if (params.claim_key !== undefined) {
-    const claimKey = normalizeClaimKey(params.claim_key);
-    if (!claimKey.ok) {
+    try {
+      Object.assign(
+        fields,
+        normalizeManualClaimKeyUpdate({
+          claimKey: params.claim_key,
+        }).updateFields,
+      );
+    } catch {
       return null;
     }
-
-    Object.assign(
-      fields,
-      buildManualClaimKeyUpdateFields({
-        claimKey: claimKey.value.claimKey,
-      }),
-    );
   }
 
   if (params.valid_from !== undefined) {

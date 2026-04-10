@@ -23,6 +23,14 @@ export interface ResolvedClaimKeyLifecycle extends ClaimKeyLifecycleMetadata {
 }
 
 /**
+ * Canonical manual claim-key update derived from raw caller input.
+ */
+export interface NormalizedManualClaimKeyUpdate {
+  claimKey: string;
+  updateFields: EntryLifecycleUpdateFields;
+}
+
+/**
  * Partial metadata preserved when an explicit claim key is replayed from a trusted source.
  */
 export type PreservedClaimKeyMetadata = Pick<
@@ -270,6 +278,36 @@ export function buildManualClaimKeyLifecycle(params: {
 }
 
 /**
+ * Normalizes raw manual claim-key update input into canonical update fields.
+ *
+ * @param params - Raw or canonical claim key plus optional preserved support metadata.
+ * @returns Canonical claim key plus validated lifecycle update fields.
+ */
+export function normalizeManualClaimKeyUpdate(params: {
+  claimKey: string;
+  rawClaimKey?: string;
+  supportSourceKind?: string;
+  supportLocator?: string;
+  supportObservedAt?: string;
+  supportMode?: ClaimSupportMode;
+}): NormalizedManualClaimKeyUpdate {
+  const normalized = normalizeLifecycleClaimKeyInput(params.claimKey, params.rawClaimKey, "claim_key");
+  return {
+    claimKey: normalized.claimKey,
+    updateFields: lifecycleToUpdateFields(
+      buildManualClaimKeyLifecycle({
+        claimKey: normalized.claimKey,
+        rawClaimKey: normalized.rawClaimKey,
+        supportSourceKind: params.supportSourceKind,
+        supportLocator: params.supportLocator,
+        supportObservedAt: params.supportObservedAt,
+        supportMode: params.supportMode,
+      }),
+    ),
+  };
+}
+
+/**
  * Builds one full replacement-style direct-update payload for a manual claim key.
  *
  * @param params - Raw or canonical claim key plus optional preserved support metadata.
@@ -283,17 +321,7 @@ export function buildManualClaimKeyUpdateFields(params: {
   supportObservedAt?: string;
   supportMode?: ClaimSupportMode;
 }): EntryLifecycleUpdateFields {
-  const normalized = normalizeLifecycleClaimKeyInput(params.claimKey, params.rawClaimKey, "claim_key");
-  return lifecycleToUpdateFields(
-    buildManualClaimKeyLifecycle({
-      claimKey: normalized.claimKey,
-      rawClaimKey: normalized.rawClaimKey,
-      supportSourceKind: params.supportSourceKind,
-      supportLocator: params.supportLocator,
-      supportObservedAt: params.supportObservedAt,
-      supportMode: params.supportMode,
-    }),
-  );
+  return normalizeManualClaimKeyUpdate(params).updateFields;
 }
 
 /**

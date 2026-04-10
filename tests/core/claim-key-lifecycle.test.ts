@@ -10,6 +10,7 @@ import {
   buildManualClaimKeyUpdateFields,
   buildPrecomputedClaimKeyLifecycle,
   hasPrecomputedClaimKeyLifecycleFields,
+  normalizeManualClaimKeyUpdate,
   parseClaimKeyConfidence,
   buildSurgeonAppliedClaimKeyLifecycle,
   buildSurgeonAppliedClaimKeyLifecycleBundle,
@@ -67,6 +68,32 @@ describe("claim-key lifecycle helpers", () => {
       claim_support_locator: "session.jsonl#agenr_update",
       claim_support_observed_at: "2026-04-01T10:00:00.000Z",
       claim_support_mode: "explicit",
+    });
+  });
+
+  it("normalizes raw manual claim-key updates once and returns the canonical key plus lifecycle fields", () => {
+    expect(
+      normalizeManualClaimKeyUpdate({
+        claimKey: " Jim / Timezone ",
+        supportSourceKind: "tool_call",
+        supportLocator: "session.jsonl#agenr_update",
+        supportObservedAt: "2026-04-01T10:00:00.000Z",
+        supportMode: "explicit",
+      }),
+    ).toEqual({
+      claimKey: "jim/timezone",
+      updateFields: {
+        claim_key: "jim/timezone",
+        claim_key_raw: "Jim / Timezone",
+        claim_key_status: "trusted",
+        claim_key_source: "manual",
+        claim_key_confidence: 1,
+        claim_key_rationale: "manual claim key supplied by caller",
+        claim_support_source_kind: "tool_call",
+        claim_support_locator: "session.jsonl#agenr_update",
+        claim_support_observed_at: "2026-04-01T10:00:00.000Z",
+        claim_support_mode: "explicit",
+      },
     });
   });
 
