@@ -22,6 +22,15 @@ describe("discoverTranscriptFiles", () => {
     expect(result).toEqual([path.resolve(filePath)]);
   });
 
+  it("rejects direct files that are not admissible transcript names", async () => {
+    const directory = await createTempDirectory();
+    const plainJson = await writeTempFile(directory, "session.json");
+    const backupJsonl = await writeTempFile(directory, "session.jsonl.bak");
+
+    await expect(discoverTranscriptFiles(plainJson)).resolves.toEqual([]);
+    await expect(discoverTranscriptFiles(backupJsonl)).resolves.toEqual([]);
+  });
+
   it("returns matching jsonl files from a directory", async () => {
     const directory = await createTempDirectory();
     const first = await writeTempFile(directory, "a.jsonl");
@@ -56,6 +65,7 @@ describe("discoverTranscriptFiles", () => {
     await writeTempFile(directory, "notes.txt");
     await writeTempFile(directory, "session.json");
     await writeTempFile(directory, "memory.md");
+    await writeTempFile(directory, "session.jsonl.bak");
 
     const result = await discoverTranscriptFiles(directory, { recursive: false });
 

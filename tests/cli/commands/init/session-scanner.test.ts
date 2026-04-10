@@ -28,7 +28,7 @@ describe("scanSessionFiles", () => {
   it("counts all session transcripts and recent ones separately", async () => {
     const root = await createTempDir();
     const recentFile = await writeSessionFile(root, "agents/main/sessions/recent.jsonl", "{}");
-    const oldFile = await writeSessionFile(root, "agents/other/sessions/old.jsonl.gz", "{}{}");
+    const oldFile = await writeSessionFile(root, "agents/other/sessions/old.jsonl.deleted.2026-04-01T00:00:00.000Z", "{}{}");
     await writeSessionFile(root, "agents/main/logs/not-a-session.jsonl", "{}");
 
     const oldTimestamp = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);

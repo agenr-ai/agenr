@@ -37,10 +37,13 @@ describe("discoverOpenClawTranscriptFiles", () => {
     tempDirectories.push(root);
     const validFile = path.join(root, "123e4567-e89b-12d3-a456-426614174003.jsonl");
     const invalidFile = path.join(root, "manual-session.jsonl");
+    const backupFile = path.join(root, "123e4567-e89b-12d3-a456-426614174003.jsonl.bak");
     await writeFile(validFile, "", "utf8");
     await writeFile(invalidFile, "", "utf8");
+    await writeFile(backupFile, "", "utf8");
 
     expect(await discoverOpenClawTranscriptFiles(validFile)).toEqual([validFile]);
     expect(await discoverOpenClawTranscriptFiles(invalidFile)).toEqual([]);
+    expect(await discoverOpenClawTranscriptFiles(backupFile)).toEqual([]);
   });
 });

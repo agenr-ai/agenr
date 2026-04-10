@@ -4,6 +4,8 @@ import path from "node:path";
 
 import type { IngestFilePort } from "../../app/ingestion/ports.js";
 
+const GENERIC_TRANSCRIPT_FILE_PATTERN = /^.+\.jsonl(?:\.(?:reset|deleted)\..+)?$/iu;
+
 /**
  * Discovers transcript files from a target file or directory path.
  *
@@ -16,7 +18,7 @@ export async function discoverTranscriptFiles(targetPath: string, options: { rec
   const stat = await fs.stat(resolvedTargetPath);
 
   if (stat.isFile()) {
-    return [resolvedTargetPath];
+    return matchesTranscriptFileName(path.basename(resolvedTargetPath)) ? [resolvedTargetPath] : [];
   }
 
   const recursive = options.recursive ?? true;
@@ -25,7 +27,7 @@ export async function discoverTranscriptFiles(targetPath: string, options: { rec
     : await fs.readdir(resolvedTargetPath, { withFileTypes: true });
 
   return entries
-    .filter((entry) => entry.isFile() && entry.name.includes(".jsonl"))
+    .filter((entry) => entry.isFile() && matchesTranscriptFileName(entry.name))
     .map((entry) => path.resolve(entry.parentPath ?? resolvedTargetPath, entry.name))
     .sort((left, right) => left.localeCompare(right));
 }
@@ -50,3 +52,18 @@ const localTranscriptFiles: IngestFilePort = {
 };
 
 export { localTranscriptFiles };
+
+/**
+ * Checks whether a basename matches the generic transcript-file shapes.
+ *
+ * Generic ingest intentionally accepts arbitrary `.jsonl` transcript basenames
+ * plus rotated `.jsonl.reset.*` and `.jsonl.deleted.*` variants. Narrower
+ * adapter-specific filtering, such as OpenClaw UUID-only names, belongs in the
+ * adapter-specific discovery layer.
+ *
+ * @param fileName - Basename to inspect.
+ * @returns `true` when the file name is an admissible transcript candidate.
+ */
+function matchesTranscriptFileName(fileName: string): boolean {
+  return GENERIC_TRANSCRIPT_FILE_PATTERN.test(fileName.trim());
+}

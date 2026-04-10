@@ -36,6 +36,10 @@ export const openClawTranscriptFiles = {
 /**
  * Checks whether a filename matches the supported OpenClaw transcript shapes.
  *
+ * Unlike generic transcript discovery, this predicate is intentionally narrow
+ * and only accepts OpenClaw UUID-based session exports plus their rotated
+ * reset/deleted variants.
+ *
  * @param fileName - Basename to inspect.
  * @returns `true` when the file is an OpenClaw transcript candidate.
  */

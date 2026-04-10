@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import type { OpenClawTranscriptParseError } from "../../../../src/adapters/openclaw/transcript/parser.js";
 import { OpenClawTranscriptParser } from "../../../../src/adapters/openclaw/transcript/parser.js";
 
 const parser = new OpenClawTranscriptParser();
@@ -708,6 +709,54 @@ describe("OpenClawTranscriptParser", () => {
     expect(transcript.messages).toHaveLength(1);
     expect(transcript.messages[0]?.text).toBe("Still works");
     expect(transcript.warnings).toContain("Skipped malformed JSONL line 2");
+  });
+
+  it("reports non-object and structurally invalid transcript records as warnings", async () => {
+    const filePath = await writeSessionFile([
+      JSON.stringify({
+        type: "session",
+        id: "session-structure",
+      }),
+      JSON.stringify(["not", "an", "object"]),
+      JSON.stringify({
+        type: "message",
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "assistant",
+          content: "Still valid",
+        },
+      }),
+    ]);
+
+    const transcript = await parser.parseFile(filePath);
+
+    expect(transcript.messages).toHaveLength(1);
+    expect(transcript.messages[0]?.text).toBe("Still valid");
+    expect(transcript.warnings).toContain("Skipped non-object JSONL line 2");
+    expect(transcript.warnings).toContain("Skipped structurally invalid transcript record on line 3");
+  });
+
+  it("throws a typed error when the transcript file is missing", async () => {
+    const missingPath = path.join(tmpdir(), `agenr-openclaw-missing-${Date.now()}.jsonl`);
+
+    await expect(parser.parseFile(missingPath)).rejects.toMatchObject<Partial<OpenClawTranscriptParseError>>({
+      name: "OpenClawTranscriptParseError",
+      kind: "missing_file",
+      filePath: missingPath,
+    });
+  });
+
+  it("throws a typed error when the transcript path cannot be read as a file", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "agenr-openclaw-unreadable-"));
+    tempDirectories.push(directory);
+
+    await expect(parser.parseFile(directory)).rejects.toMatchObject<Partial<OpenClawTranscriptParseError>>({
+      name: "OpenClawTranscriptParseError",
+      kind: "unreadable_file",
+      filePath: directory,
+    });
   });
 });
 

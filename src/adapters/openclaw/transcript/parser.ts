@@ -4,7 +4,7 @@ import * as fs from "node:fs/promises";
 import type { TranscriptPort } from "../../../core/ports.js";
 import type { ParsedTranscript, TranscriptMessage } from "../../../core/types.js";
 import { deriveOpenClawSessionIdFromFilePath } from "../session/session-id.js";
-import { parseJsonlLines } from "./jsonl.js";
+import { parseJsonlLines, type JsonlParseDiagnostic } from "./jsonl.js";
 import {
   extractAssistantTextParts,
   extractConversationLabel,
@@ -82,6 +82,70 @@ interface ParseState {
   firstUserRawText: string | null;
 }
 
+/**
+ * Stable issue kinds surfaced when strict transcript file reads fail.
+ */
+export type OpenClawTranscriptParseErrorKind = "missing_file" | "unreadable_file";
+
+/**
+ * Structured diagnostic emitted while tolerantly parsing one transcript file.
+ */
+export interface OpenClawTranscriptParseDiagnostic {
+  /**
+   * Machine-readable issue classification.
+   */
+  kind: "malformed_json" | "non_object_record" | "structurally_invalid_record";
+  /**
+   * One-based line number when the issue came from a specific JSONL line.
+   */
+  lineNumber?: number;
+  /**
+   * Human-readable issue description.
+   */
+  message: string;
+}
+
+/**
+ * Error thrown when a transcript file cannot be read on the strict path.
+ */
+export class OpenClawTranscriptParseError extends Error {
+  /**
+   * Stable error classification for caller-side handling and tests.
+   */
+  public readonly kind: OpenClawTranscriptParseErrorKind;
+
+  /**
+   * File path that failed to parse.
+   */
+  public readonly filePath: string;
+
+  /**
+   * Underlying read failure when available.
+   */
+  public readonly cause?: unknown;
+
+  /**
+   * Creates a typed transcript parse failure.
+   *
+   * @param kind - Stable failure kind.
+   * @param filePath - File path that failed to parse.
+   * @param message - Human-readable error message.
+   * @param options - Optional underlying cause.
+   */
+  public constructor(kind: OpenClawTranscriptParseErrorKind, filePath: string, message: string, options?: { cause?: unknown }) {
+    super(message);
+    this.name = "OpenClawTranscriptParseError";
+    this.kind = kind;
+    this.filePath = filePath;
+    this.cause = options?.cause;
+  }
+}
+
+/**
+ * Internal classification of how one parsed record affected transcript parsing.
+ */
+type RecordHandlingOutcome = "accepted" | "known_skip" | "structurally_invalid";
+
 /** Creates the mutable state container used for one file parse. */
 function createParseState(): ParseState {
   return {
@@ -103,6 +167,50 @@ function createParseState(): ParseState {
     surfaceDetected: false,
     firstUserRawText: null,
   };
+}
+
+/**
+ * Maps low-level JSONL diagnostics into transcript-parser diagnostics.
+ *
+ * @param diagnostic - Raw JSONL diagnostic.
+ * @returns Adapter-level transcript diagnostic.
+ */
+function toTranscriptDiagnostic(diagnostic: JsonlParseDiagnostic): OpenClawTranscriptParseDiagnostic {
+  return {
+    kind: diagnostic.kind,
+    lineNumber: diagnostic.lineNumber,
+    message: diagnostic.message,
+  };
+}
+
+/**
+ * Formats one parse diagnostic into the existing warning surface.
+ *
+ * @param diagnostic - Structured transcript parse diagnostic.
+ * @returns Human-readable warning text.
+ */
+function formatTranscriptDiagnosticWarning(diagnostic: OpenClawTranscriptParseDiagnostic): string {
+  return diagnostic.message;
+}
+
+/**
+ * Reads one transcript file or throws a typed strict-path parse error.
+ *
+ * @param filePath - Transcript file path.
+ * @returns Raw file contents.
+ */
+async function readTranscriptFileStrict(filePath: string): Promise<string> {
+  try {
+    return await fs.readFile(filePath, "utf8");
+  } catch (error) {
+    if (isFileNotFound(error)) {
+      throw new OpenClawTranscriptParseError("missing_file", filePath, `Transcript file not found: ${filePath}`, { cause: error });
+    }
+
+    throw new OpenClawTranscriptParseError("unreadable_file", filePath, `Could not read transcript file ${filePath}: ${formatErrorMessage(error)}`, {
+      cause: error,
+    });
+  }
 }
 
 /** Reassembles raw text blocks so metadata fences can be stripped before normalization. */
@@ -377,7 +485,7 @@ function resolveToolContext(state: ParseState, message: Record<string, unknown>)
 }
 
 /** Handles one non-session message record from the transcript stream. */
-function handleMessageRecord(state: ParseState, record: Record<string, unknown>, message: Record<string, unknown>): void {
+function handleMessageRecord(state: ParseState, record: Record<string, unknown>, message: Record<string, unknown>): RecordHandlingOutcome {
   state.stats.totalMessageRecords += 1;
 
   const role = normalizeOpenClawRole(message.role);
@@ -400,7 +508,7 @@ function handleMessageRecord(state: ParseState, record: Record<string, unknown>,
 
   if (role === "system") {
     state.stats.systemDropped += 1;
-    return;
+    return "known_skip";
   }
 
   const timestamp = extractTimestamp(record) ?? extractTimestamp(message);
@@ -413,16 +521,16 @@ function handleMessageRecord(state: ParseState, record: Record<string, unknown>,
 
     const text = stripOpenClawUserMetadata(message.content);
     if (!text) {
-      return;
+      return "known_skip";
     }
 
     if (isPureBase64(text)) {
       state.stats.base64Dropped += 1;
-      return;
+      return "known_skip";
     }
 
     pushMessage(state.messages, "user", text, timestamp);
-    return;
+    return "accepted";
   }
 
   if (role === "assistant") {
@@ -438,20 +546,20 @@ function handleMessageRecord(state: ParseState, record: Record<string, unknown>,
     addModelUsed(state, message.model);
 
     if (!assistantText) {
-      return;
+      return "known_skip";
     }
 
     if (isPureBase64(assistantText)) {
       state.stats.base64Dropped += 1;
-      return;
+      return "known_skip";
     }
 
     pushMessage(state.messages, "assistant", truncateWithMarker(assistantText, 5000), timestamp);
-    return;
+    return "accepted";
   }
 
   if (role !== "toolResult") {
-    return;
+    return "structurally_invalid";
   }
 
   const toolContext = resolveToolContext(state, message);
@@ -460,27 +568,28 @@ function handleMessageRecord(state: ParseState, record: Record<string, unknown>,
   const toolText = normalizeMessageText(message.content);
 
   if (!toolText) {
-    return;
+    return "known_skip";
   }
 
   if (isPureBase64(toolText)) {
     state.stats.base64Dropped += 1;
-    return;
+    return "known_skip";
   }
 
   const decision = shouldKeepToolResult(toolName, toolText, TOOL_RESULT_POLICY);
   if (decision.keep) {
     state.stats.toolResultsKept += 1;
     pushMessage(state.messages, "assistant", decision.truncateTo ? truncateWithMarker(toolText, decision.truncateTo) : toolText, timestamp);
-    return;
+    return "accepted";
   }
 
   state.stats.toolResultsDropped += 1;
   pushMessage(state.messages, "assistant", toolResultPlaceholder(toolName ?? "unknown", toolArgs), timestamp);
+  return "accepted";
 }
 
 /** Handles one parsed JSONL record and updates parser state. */
-function handleRecord(state: ParseState, record: Record<string, unknown>): void {
+function handleRecord(state: ParseState, record: Record<string, unknown>): RecordHandlingOutcome {
   if (record.type === "session") {
     state.sessionId = getString(record.id) ?? state.sessionId;
     state.sessionTimestamp = extractTimestamp(record) ?? state.sessionTimestamp;
@@ -490,7 +599,7 @@ function handleRecord(state: ParseState, record: Record<string, unknown>): void 
     if (!state.surfaceDetected) {
       setDetectedSurface(state, readInboundSurface(record));
     }
-    return;
+    return "accepted";
   }
 
   if (!state.surfaceDetected) {
@@ -500,25 +609,39 @@ function handleRecord(state: ParseState, record: Record<string, unknown>): void 
   if (record.type === "model_change") {
     addModelUsed(state, record.modelId);
     state.stats.skippedRecordTypes += 1;
-    return;
+    return "known_skip";
   }
 
   if (typeof record.type === "string" && SKIPPED_RECORD_TYPES.has(record.type)) {
     state.stats.skippedRecordTypes += 1;
-    return;
+    return "known_skip";
   }
 
   const message = asRecord(record.message);
   if (!message) {
-    return;
+    return "structurally_invalid";
   }
 
-  handleMessageRecord(state, record, message);
+  return handleMessageRecord(state, record, message);
 }
 
 /** Formats the verbose dropped-content summary warning. */
 function buildFilterWarning(stats: ParseStats): string {
   return `Filtered transcript: ${stats.toolResultsDropped} tool results dropped, ${stats.toolResultsKept} kept, ${stats.systemDropped} system dropped, ${stats.base64Dropped} base64 dropped.`;
+}
+
+/** Detects stable file-not-found failures from Node.js fs calls. */
+function isFileNotFound(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+
+/** Formats unknown read failures into human-readable text. */
+function formatErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return String(error);
 }
 
 /**
@@ -533,14 +656,24 @@ export class OpenClawTranscriptParser implements TranscriptPort {
    * @returns Parsed transcript messages, warnings, and metadata.
    */
   async parseFile(filePath: string, options?: { verbose?: boolean }): Promise<ParsedTranscript> {
-    const raw = await fs.readFile(filePath, "utf8");
+    const raw = await readTranscriptFileStrict(filePath);
     const verbose = options?.verbose === true;
     const state = createParseState();
     const transcriptHash = createHash("sha256").update(raw).digest("hex");
+    const diagnostics: OpenClawTranscriptParseDiagnostic[] = [];
 
-    parseJsonlLines(raw, state.warnings, (record) => {
-      handleRecord(state, record);
+    const jsonlResult = parseJsonlLines(raw, (record, lineNumber) => {
+      const outcome = handleRecord(state, record);
+      if (outcome === "structurally_invalid") {
+        diagnostics.push({
+          kind: "structurally_invalid_record",
+          lineNumber,
+          message: `Skipped structurally invalid transcript record on line ${lineNumber}`,
+        });
+      }
     });
+    diagnostics.push(...jsonlResult.diagnostics.map(toTranscriptDiagnostic));
+    state.warnings.push(...diagnostics.map(formatTranscriptDiagnosticWarning));
 
     if (!state.surfaceDetected && state.firstUserRawText) {
       setDetectedSurface(state, inferSurfaceFromContent(state.firstUserRawText));

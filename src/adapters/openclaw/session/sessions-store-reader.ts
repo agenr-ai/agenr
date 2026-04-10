@@ -38,6 +38,43 @@ export interface OpenClawSessionsStoreEntry {
 }
 
 /**
+ * Stable issue kinds surfaced while reading `sessions.json`.
+ */
+export type OpenClawSessionsStoreDiagnosticKind = "missing_file" | "malformed_json" | "unreadable_file" | "structurally_invalid_file";
+
+/**
+ * Structured diagnostic emitted for one `sessions.json` read outcome.
+ */
+export interface OpenClawSessionsStoreDiagnostic {
+  /**
+   * Machine-readable failure or warning classification.
+   */
+  kind: OpenClawSessionsStoreDiagnosticKind;
+  /**
+   * Human-readable issue description.
+   */
+  message: string;
+  /**
+   * Path of the `sessions.json` file involved in the diagnostic.
+   */
+  path: string;
+}
+
+/**
+ * Best-effort `sessions.json` read result with normalized entries and diagnostics.
+ */
+export interface OpenClawSessionsStoreReadResult {
+  /**
+   * Normalized entries recovered from the store.
+   */
+  entries: OpenClawSessionsStoreEntry[];
+  /**
+   * Structured diagnostics describing why entries were skipped or absent.
+   */
+  diagnostics: OpenClawSessionsStoreDiagnostic[];
+}
+
+/**
  * Reads and normalizes OpenClaw `sessions.json` entries from a sessions directory.
  *
  * Missing files, malformed JSON, and malformed entries are treated as empty
@@ -48,10 +85,42 @@ export interface OpenClawSessionsStoreEntry {
  * @returns Normalized session-store entries.
  */
 export async function readOpenClawSessionsStore(sessionsDir: string, logger?: PluginLogger): Promise<OpenClawSessionsStoreEntry[]> {
-  const normalizedSessionsDir = sessionsDir.trim();
-  if (normalizedSessionsDir.length === 0) {
+  if (sessionsDir.trim().length === 0) {
     debugLog(logger, "sessions-store-reader", "skipping sessions.json read because sessionsDir is empty");
     return [];
+  }
+
+  const result = await readOpenClawSessionsStoreWithDiagnostics(sessionsDir);
+
+  for (const diagnostic of result.diagnostics) {
+    debugLog(logger, "sessions-store-reader", diagnostic.message);
+  }
+
+  if (result.diagnostics.length === 0) {
+    debugLog(
+      logger,
+      "sessions-store-reader",
+      `loaded sessions.json entries=${result.entries.length} path=${path.join(path.resolve(sessionsDir.trim()), "sessions.json")}`,
+    );
+  }
+
+  return result.entries;
+}
+
+/**
+ * Reads and normalizes OpenClaw `sessions.json` entries while preserving
+ * best-effort behavior and surfacing explicit diagnostics for failures.
+ *
+ * @param sessionsDir - Absolute or relative OpenClaw sessions directory.
+ * @returns Normalized entries plus structured diagnostics.
+ */
+export async function readOpenClawSessionsStoreWithDiagnostics(sessionsDir: string): Promise<OpenClawSessionsStoreReadResult> {
+  const normalizedSessionsDir = sessionsDir.trim();
+  if (normalizedSessionsDir.length === 0) {
+    return {
+      entries: [],
+      diagnostics: [],
+    };
   }
 
   const resolvedSessionsDir = path.resolve(normalizedSessionsDir);
@@ -61,20 +130,26 @@ export async function readOpenClawSessionsStore(sessionsDir: string, logger?: Pl
     const raw = await fs.readFile(sessionsJsonPath, "utf8");
     const parsed = JSON.parse(raw) as unknown;
     if (!isRecord(parsed)) {
-      debugLog(logger, "sessions-store-reader", `sessions.json did not contain an object: path=${sessionsJsonPath}`);
-      return [];
+      return {
+        entries: [],
+        diagnostics: [
+          {
+            kind: "structurally_invalid_file",
+            message: `sessions.json did not contain an object: path=${sessionsJsonPath}`,
+            path: sessionsJsonPath,
+          },
+        ],
+      };
     }
 
     const entries: OpenClawSessionsStoreEntry[] = [];
     for (const [sessionKey, value] of Object.entries(parsed)) {
       const normalizedSessionKey = sessionKey.trim();
       if (normalizedSessionKey.length === 0) {
-        debugLog(logger, "sessions-store-reader", `skipping blank session key in ${sessionsJsonPath}`);
         continue;
       }
 
       if (!isRecord(value)) {
-        debugLog(logger, "sessions-store-reader", `skipping non-object entry for key=${normalizedSessionKey}`);
         continue;
       }
 
@@ -97,21 +172,47 @@ export async function readOpenClawSessionsStore(sessionsDir: string, logger?: Pl
       });
     }
 
-    debugLog(logger, "sessions-store-reader", `loaded sessions.json entries=${entries.length} path=${sessionsJsonPath}`);
-    return entries;
+    return {
+      entries,
+      diagnostics: [],
+    };
   } catch (error) {
     if (isFileNotFound(error)) {
-      debugLog(logger, "sessions-store-reader", `sessions.json missing at ${sessionsJsonPath}`);
-      return [];
+      return {
+        entries: [],
+        diagnostics: [
+          {
+            kind: "missing_file",
+            message: `sessions.json missing at ${sessionsJsonPath}`,
+            path: sessionsJsonPath,
+          },
+        ],
+      };
     }
 
     if (error instanceof SyntaxError) {
-      debugLog(logger, "sessions-store-reader", `sessions.json parse failed at ${sessionsJsonPath}: ${error.message}`);
-      return [];
+      return {
+        entries: [],
+        diagnostics: [
+          {
+            kind: "malformed_json",
+            message: `sessions.json parse failed at ${sessionsJsonPath}: ${error.message}`,
+            path: sessionsJsonPath,
+          },
+        ],
+      };
     }
 
-    debugLog(logger, "sessions-store-reader", `sessions.json read failed at ${sessionsJsonPath}: ${formatErrorMessage(error)}`);
-    return [];
+    return {
+      entries: [],
+      diagnostics: [
+        {
+          kind: "unreadable_file",
+          message: `sessions.json read failed at ${sessionsJsonPath}: ${formatErrorMessage(error)}`,
+          path: sessionsJsonPath,
+        },
+      ],
+    };
   }
 }
 
@@ -122,7 +223,7 @@ function resolveSessionStorePath(candidatePath: string, sessionsDir: string): st
 
 /** Narrows unknown JSON values to record-like objects. */
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** Extracts a trimmed non-empty string from untyped JSON fields. */
