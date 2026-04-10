@@ -137,7 +137,6 @@ pnpm build
 pnpm build:debug
 pnpm typecheck
 pnpm lint
-pnpm style:audit
 pnpm test
 pnpm check
 ```
