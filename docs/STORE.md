@@ -89,7 +89,7 @@ Notable properties:
 - `created_at` is trimmed and preserved when supplied, but is not format-validated by the store validator
 - `supersedes` lets a caller explicitly mark one active entry as replaced by the new stored row
 - `claim_key` and its lifecycle/support fields may be supplied directly, inferred earlier by ingest, or extracted inside the store pipeline
-- `valid_from` and `valid_to` are stored as temporal world-state bounds and are format-validated as ISO timestamps
+- `valid_from` and `valid_to` are stored as temporal world-state bounds, must parse as ISO timestamps when present, and must be strictly ordered when both are supplied
 
 ## Durable-memory fit
 
@@ -159,6 +159,9 @@ Current hard rejections:
 - invalid `supersedes` UUID
 - invalid `valid_from` timestamp
 - invalid `valid_to` timestamp
+- equal or reversed `valid_from` / `valid_to`
+- claim-key lifecycle metadata without a valid normalized `claim_key`
+- partial or invalid precomputed claim-key lifecycle bundles
 
 Current normalization behavior:
 
@@ -173,7 +176,8 @@ Current normalization behavior:
 Current warning-only behavior:
 
 - malformed `claim_key` values are dropped instead of rejecting the entry
-- invalid `claim_key_status`, `claim_key_source`, `claim_key_confidence`, `claim_support_observed_at`, and `claim_support_mode` are dropped with warnings
+- invalid `claim_key_status`, `claim_key_source`, `claim_key_confidence`, `claim_support_observed_at`, and `claim_support_mode` are dropped with warnings during normalization
+- if any precomputed lifecycle field is present, those warnings become part of a hard rejection unless the caller supplied a complete valid lifecycle bundle
 
 This validator is intentionally simpler than the extraction parser:
 
@@ -210,6 +214,7 @@ During the same preparation step, the pipeline also builds accepted manual claim
 
 - precomputed accepted lifecycle metadata is preserved as-is
 - otherwise a normalized caller-supplied `claim_key` becomes a trusted manual claim key
+- support provenance by itself does not count as a precomputed lifecycle bundle, so callers can preserve support facts for manual claim keys without inventing lifecycle semantics
 - raw claim-key text and optional support metadata are preserved when available
 
 ### 3. Hash-based dedup plan

@@ -30,6 +30,7 @@ For the memory model and recall behavior after ingest, see [RECALL.md](./RECALL.
 - `src/adapters/files/transcript-files.ts` - generic local file discovery and hashing used by entry ingest
 - `src/adapters/openclaw/session/transcript-files.ts` - OpenClaw-specific session discovery used by episode ingest
 - `src/adapters/openclaw/session/session-registry.ts` - `sessions.json` metadata lookup for episode ingest
+- `src/adapters/openclaw/session/sessions-store-reader.ts` - best-effort `sessions.json` reader with explicit diagnostics for missing, malformed, or unreadable files
 - `src/adapters/openclaw/transcript/parser.ts` - OpenClaw JSONL parsing and transcript normalization
 - `src/core/ingestion/extract.ts` - chunking, retry logic, and extraction prompting
 - `src/core/ingestion/parser.ts` - extraction-response validation and normalization
@@ -96,9 +97,9 @@ Entry ingest uses `src/adapters/files/transcript-files.ts`.
 
 Current behavior:
 
-- if the target is a file, the file is accepted as-is
+- if the target is a file, it is accepted only when the basename matches a supported transcript shape
 - if the target is a directory, discovery is recursive
-- recursive directory discovery keeps files whose names contain `.jsonl` anywhere
+- recursive directory discovery keeps basenames that match `*.jsonl`, `*.jsonl.reset.*`, or `*.jsonl.deleted.*`
 - returned paths are absolute and lexicographically sorted
 
 That means entry ingest will discover:
@@ -106,9 +107,14 @@ That means entry ingest will discover:
 - `session.jsonl`
 - `session.jsonl.reset.<timestamp>`
 - `session.jsonl.deleted.<timestamp>`
-- any other file whose name contains `.jsonl`
+- `nested/path/custom-export.jsonl`
 
-The parser is still OpenClaw-specific, so discovery is intentionally broader than what the parser can necessarily understand.
+And it will not discover lookalikes such as:
+
+- `session.jsonl.bak`
+- `session.json`
+
+The parser is still OpenClaw-specific, but generic discovery is now strict about transcript basenames so backup and sidecar files do not drift into ingest accidentally.
 
 ### Per-file extract phase
 
@@ -132,6 +138,7 @@ Important current behaviors include:
 - system messages are dropped
 - pure base64 blobs are dropped
 - user and assistant text is whitespace-normalized
+- leading untrusted metadata blocks are stripped from user messages before extraction
 - assistant tool calls are summarized into assistant-visible text
 - many tool results are collapsed into placeholders instead of being kept verbatim
 - selected tool results can be preserved
@@ -377,6 +384,8 @@ Episode preflight resolves session metadata in this order:
 1. authoritative `sessions.json` registry metadata when available
 2. reconstructed transcript surface metadata from the OpenClaw parser
 3. agent id derived from the OpenClaw directory layout when needed
+
+If `sessions.json` is missing, malformed, unreadable, or structurally invalid, episode ingest treats the registry as unavailable and continues with transcript reconstruction instead of aborting preflight.
 
 That gives the current best-effort values for:
 

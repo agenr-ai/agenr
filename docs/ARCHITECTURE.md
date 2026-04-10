@@ -41,6 +41,7 @@ src/
 │   └── scenarios/claim-keys/
 ├── adapters/
 │   ├── api/
+│   ├── config/
 │   ├── db/
 │   ├── files/
 │   ├── openclaw/
@@ -49,6 +50,7 @@ src/
 │   └── llm.ts
 ├── cli/
 │   ├── main.ts
+│   ├── shared/
 │   ├── ui.ts
 │   └── commands/
 ├── config.ts
@@ -69,7 +71,7 @@ Important points about the current tree:
 
 - `src/core/` contains the main domain model, claim-key lifecycle logic, entry recall, episode search, ingest parsing, and pure port interfaces.
 - `src/app/` owns orchestration for durable ingest, episode ingest, unified recall, surgeon execution, OpenClaw runtime composition, the narrow recall-eval seam, and the repo-local claim-key scenario harness.
-- `src/adapters/` implements libSQL persistence, transcript discovery, external model clients, OpenClaw host translation, and the internal HTTP adapter.
+- `src/adapters/` implements libSQL persistence, transcript discovery, config parsing, external model clients, OpenClaw host translation, and the internal HTTP adapter.
 - `src/config.ts`, `src/logger.ts`, `src/ui.ts`, and `src/version.ts` are shared runtime infrastructure, not domain logic.
 - `packages/openclaw-plugin/` is a packaging wrapper that re-exports the built plugin entry from `dist/`.
 
@@ -113,6 +115,7 @@ Core is infrastructure-agnostic. It still depends on ports for embeddings, LLM c
 `src/adapters/` translates external systems into the core and app boundaries:
 
 - `db/` is the main persistence adapter and query layer
+- `config/` owns adapter-boundary config parsing, validation, canonicalization, and resolved-default shaping
 - `files/` discovers transcript files from the local filesystem
 - `embeddings.ts` and `llm.ts` resolve external model providers for the CLI and generic runtimes
 - `openclaw/` translates host hooks, session state, transcript parsing, formatting, memory runtime hooks, and agent tools
@@ -294,6 +297,7 @@ Important implementation details:
 
 - whole-file extraction is configurable in the CLI
 - batch ingest has configurable concurrency
+- generic entry discovery accepts `*.jsonl` plus rotated `.jsonl.reset.*` and `.jsonl.deleted.*` variants, but rejects lookalikes such as `.jsonl.bak`
 - chunking stays aware of transcript message boundaries
 - store-time dedup uses both exact and normalized hashes
 - claim extraction can run before persistence and can preserve trusted explicit keys
@@ -353,7 +357,7 @@ Stage 1 preflight:
 
 - discovers transcript files
 - parses and cleans them
-- resolves session metadata from the OpenClaw session registry when available
+- resolves session metadata from the OpenClaw session registry when available, with best-effort fallback when `sessions.json` is missing or malformed
 - skips already-ingested sessions unless regenerating
 - skips short or still-active sessions
 - renders transcript text for summarization
@@ -473,6 +477,8 @@ The repo includes a dedicated scenario runtime under `src/app/scenarios/claim-ke
 This harness:
 
 - loads fixture-backed scenarios from `tests/scenarios/claim-keys/`
+- validates scenario roots, typed inputs, and expectation blocks before execution
+- loads transcript, extraction, claim-extraction, and seed fixtures through dedicated fixture-loader helpers
 - creates isolated sandboxes
 - runs ingest, store, or surgeon paths
 - captures resulting rows, proposals, warnings, and summaries
@@ -514,7 +520,8 @@ Feature-scoped seams also matter:
 
 Configuration is another important seam:
 
-- `src/config.ts` resolves config files, database paths, credentials, and stage-specific model settings
+- `src/adapters/config/parse-agenr-config.ts` and `src/adapters/config/types.ts` own adapter-side config validation, canonical persisted shape, auth/provider checks, and resolved runtime defaults
+- `src/config.ts` handles config file IO, path resolution, credentials, and stage-specific model settings on top of that parser
 - OpenClaw-hosted claim extraction uses host auth and plugin config overrides
 - CLI and plugin flows can share core logic while resolving credentials differently
 

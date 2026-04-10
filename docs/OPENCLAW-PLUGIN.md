@@ -267,6 +267,7 @@ Current continuity behavior:
 
 - `resumedFrom` file discovery is preferred for all eligible session kinds
 - `sessions.json` fallback is intentionally narrow and only used for `main` and `tui`
+- missing or malformed `sessions.json` files are logged as explicit diagnostics and treated as an empty fallback source
 - direct, group, and channel lanes accept a cold start when `resumedFrom` is missing or does not resolve
 - ineligible kinds are ignored rather than forced through fallback logic
 
@@ -367,6 +368,7 @@ Current behavior:
 - sets `source_file` to `openclaw-session:<sessionKey|sessionId|agentId|unknown>`
 - defaults `source_context` to `Stored via agenr_store from OpenClaw.`
 - can attach manual claim-support metadata when `claimKey` is supplied
+- rejects invalid temporal bounds, including equal or reversed `validFrom` / `validTo`
 - can also use the optional claim-extraction runtime when it is enabled
 - returns `stored`, `skipped`, or `failed`
 - resolves the stored subject again so the tool can return `entryId` when possible
@@ -403,7 +405,9 @@ Current update fields:
 - `validFrom`
 - `validTo`
 
-When `claimKey` is updated, the tool writes normalized manual claim-key metadata plus claim-support facts from the current OpenClaw session context.
+When `claimKey` is updated, the tool writes the shared normalized manual claim-key lifecycle bundle plus claim-support facts from the current OpenClaw session context.
+
+When `validFrom` or `validTo` are updated, the tool applies the same strict range validation used by the core store path: both bounds must parse, and `validFrom` must be earlier than `validTo` when both are present.
 
 ### `agenr_retire`
 

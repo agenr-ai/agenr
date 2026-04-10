@@ -172,6 +172,12 @@ Episode ingest prefers registry-backed metadata when it can get it, then falls b
 
 Registry metadata is marked as `metadataSource: "registry"`.
 
+The underlying `sessions.json` reader is intentionally best-effort:
+
+- missing, malformed, unreadable, or structurally invalid files are treated as an empty registry
+- episode ingest then falls back to transcript reconstruction instead of failing the whole pass
+- OpenClaw plugin continuity code logs those diagnostics but does not block prompt building on them
+
 ### Transcript reconstruction fallback
 
 When registry metadata is missing, the transcript parser reconstructs what it can from:
