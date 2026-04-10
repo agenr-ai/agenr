@@ -4,6 +4,7 @@ import { InvalidArgumentError, Option, type Command } from "commander";
 import { createDatabase } from "../../adapters/db/client.js";
 import { createRecallAdapter } from "../../adapters/db/recall-adapter.js";
 import { createEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../../adapters/embeddings.js";
+import { normalizeOptionalString, normalizeStringList, parseCsvList, parsePositiveInteger, parsePositiveNumber, parseUnitInterval } from "../shared/parse.js";
 import { readConfig } from "../../config.js";
 import { recall, type RecallInput, type RecallOutput } from "../../core/recall/index.js";
 import { ENTRY_TYPES, type EntryType } from "../../core/types.js";
@@ -21,6 +22,12 @@ interface RecallCommandOptions {
   around?: string;
   aroundRadius?: number;
   verbose?: boolean;
+}
+
+/** Normalized recall request assembled at the CLI boundary. */
+interface NormalizedRecallCommand {
+  request: RecallInput;
+  verbose: boolean;
 }
 
 /**
@@ -48,6 +55,7 @@ export function registerRecallCommand(program: Command): void {
       let db: Awaited<ReturnType<typeof createDatabase>> | null = null;
 
       try {
+        const commandInput = normalizeRecallCommand(query, options);
         const config = readConfig();
         const dbPath = config.dbPath;
         const embeddingClient = createEmbeddingClient(resolveEmbeddingApiKey(config), resolveEmbeddingModel(config));
@@ -56,7 +64,7 @@ export function registerRecallCommand(program: Command): void {
 
         const spinner = clack.spinner();
         spinner.start("Searching knowledge...");
-        const results = await recall(buildRecallInput(query, options), adapter);
+        const results = await recall(commandInput.request, adapter);
         spinner.stop(`Found ${results.length} ${pluralize(results.length, "result")}.`);
 
         if (results.length === 0) {
@@ -65,7 +73,7 @@ export function registerRecallCommand(program: Command): void {
         }
 
         for (const result of results) {
-          clack.log.step(formatResult(result, options.verbose === true));
+          clack.log.step(formatResult(result, commandInput.verbose));
         }
 
         clack.outro(`Recall complete: ${results.length} ${pluralize(results.length, "result")}.`);
@@ -80,24 +88,32 @@ export function registerRecallCommand(program: Command): void {
 }
 
 /**
- * Builds the core recall input shape from parsed CLI options.
+ * Builds one normalized recall command object from parsed CLI values.
  *
  * @param query - Raw recall query text.
  * @param options - Parsed commander options.
- * @returns Core recall input payload.
+ * @returns Normalized CLI command payload.
  */
-function buildRecallInput(query: string, options: RecallCommandOptions): RecallInput {
+function normalizeRecallCommand(query: string, options: RecallCommandOptions): NormalizedRecallCommand {
+  const normalizedQuery = normalizeOptionalString(query);
+  if (!normalizedQuery) {
+    throw new InvalidArgumentError("Query cannot be empty.");
+  }
+
   return {
-    text: query,
-    limit: options.limit,
-    threshold: options.threshold,
-    budget: options.budget,
-    types: options.types,
-    tags: options.tags,
-    since: normalizeOptionalString(options.since),
-    until: normalizeOptionalString(options.until),
-    around: normalizeOptionalString(options.around),
-    aroundRadius: options.aroundRadius,
+    request: {
+      text: normalizedQuery,
+      limit: options.limit,
+      threshold: options.threshold,
+      budget: options.budget,
+      types: options.types,
+      tags: normalizeStringList(options.tags),
+      since: normalizeOptionalString(options.since),
+      until: normalizeOptionalString(options.until),
+      around: normalizeOptionalString(options.around),
+      aroundRadius: options.aroundRadius,
+    },
+    verbose: options.verbose === true,
   };
 }
 
@@ -126,25 +142,6 @@ function formatResult(result: RecallOutput, verbose: boolean): string {
 }
 
 /**
- * Parses a comma-separated CLI list into trimmed non-empty values.
- *
- * @param value - Raw commander option text.
- * @returns Normalized list of string values.
- */
-function parseCsvList(value: string): string[] {
-  const items = value
-    .split(",")
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0);
-
-  if (items.length === 0) {
-    throw new InvalidArgumentError("Expected at least one comma-separated value.");
-  }
-
-  return Array.from(new Set(items));
-}
-
-/**
  * Parses and validates a comma-separated entry-type list.
  *
  * @param value - Raw commander option text.
@@ -158,51 +155,6 @@ function parseEntryTypes(value: string): EntryType[] {
   }
 
   return parsed as EntryType[];
-}
-
-/**
- * Parses a positive integer CLI option.
- *
- * @param value - Raw commander option text.
- * @returns Parsed integer value.
- */
-function parsePositiveInteger(value: string): number {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new InvalidArgumentError("Value must be a positive integer.");
-  }
-
-  return parsed;
-}
-
-/**
- * Parses a positive numeric CLI option.
- *
- * @param value - Raw commander option text.
- * @returns Parsed numeric value.
- */
-function parsePositiveNumber(value: string): number {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    throw new InvalidArgumentError("Value must be a positive number.");
-  }
-
-  return parsed;
-}
-
-/**
- * Parses a unit-interval CLI option.
- *
- * @param value - Raw commander option text.
- * @returns Parsed number in the inclusive 0-1 range.
- */
-function parseUnitInterval(value: string): number {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
-    throw new InvalidArgumentError("Value must be between 0 and 1.");
-  }
-
-  return parsed;
 }
 
 /** Formats a timestamp as an ISO date string. */
@@ -223,12 +175,6 @@ function truncateText(text: string, maxLength: number): string {
   }
 
   return `${normalized.slice(0, maxLength - 3)}...`;
-}
-
-/** Normalizes optional CLI string inputs into trimmed values. */
-function normalizeOptionalString(value: string | undefined): string | undefined {
-  const normalized = value?.trim();
-  return normalized && normalized.length > 0 ? normalized : undefined;
 }
 
 /**

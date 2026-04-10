@@ -12,6 +12,7 @@ import { loadOpenClawSessionRegistry } from "../../adapters/openclaw/session/ses
 import { openClawTranscriptFiles } from "../../adapters/openclaw/session/transcript-files.js";
 import { openClawTranscriptParser } from "../../adapters/openclaw/transcript/parser.js";
 import { backfillEpisodeEmbeddings, createEpisodeIngestPlan, executeEpisodeIngestPlan, prepareEpisodeIngest } from "../../app/episode-ingest/index.js";
+import { normalizeOptionalString, parseIntegerInRange, parseModelRef, type ParsedModelRef } from "../shared/parse.js";
 import { readConfig, resolveDbPath } from "../../config.js";
 import { setVerbose } from "../../logger.js";
 import { banner, formatLabel, ui } from "../../ui.js";
@@ -39,6 +40,20 @@ interface IngestEpisodesCommandOptions {
   model?: string;
 }
 
+/** Normalized CLI payload for `agenr ingest episodes`. */
+interface NormalizedIngestEpisodesCommand {
+  targetPath?: string;
+  verbose: boolean;
+  dryRun: boolean;
+  regenerate: boolean;
+  embedOnly: boolean;
+  noEmbed: boolean;
+  recent?: string;
+  concurrency: number;
+  dbOverride?: string;
+  modelOverride?: ParsedModelRef;
+}
+
 /**
  * Registers the `agenr ingest episodes` CLI command.
  *
@@ -62,55 +77,55 @@ export function registerIngestEpisodesCommand(parent: Command): void {
     .action(async (targetPath: string | undefined, options: IngestEpisodesCommandOptions) => {
       const startedAt = Date.now();
       let database: Awaited<ReturnType<typeof createDatabase>> | null = null;
+      const commandInput = normalizeEpisodeIngestCommand(targetPath, options);
 
-      setVerbose(options.verbose === true);
+      setVerbose(commandInput.verbose);
       clack.intro(banner());
 
       try {
         const now = new Date();
         const config = readConfig();
-        const dbPath = resolveEpisodeDbPath(config, options.db);
-        validateEpisodeIngestOptions(options, targetPath);
+        const dbPath = resolveEpisodeDbPath(config, commandInput.dbOverride);
 
         database = await createDatabase(dbPath);
         const support = createEpisodeIngestSupportPort(database);
 
-        if (options.embedOnly === true) {
+        if (commandInput.embedOnly) {
           await runEpisodeEmbeddingBackfill({
             db: database,
             config,
             dbPath,
-            options,
+            options: commandInput,
             startedAt,
           });
           return;
         }
 
-        const normalizedTargetPath = targetPath?.trim();
+        const normalizedTargetPath = commandInput.targetPath;
         if (!normalizedTargetPath) {
           throw new InvalidArgumentError("Path is required unless --embed-only is set.");
         }
 
-        const { provider, modelId } = resolveEpisodeModel(config, options.model);
+        const { provider, modelId } = resolveEpisodeModel(config, commandInput.modelOverride);
         const modelInfo = createEpisodeIngestSummaryModelInfo(provider, modelId);
         const resolvedTargetPath = path.resolve(normalizedTargetPath);
         const sessionsDir = await resolveSessionsDirectory(resolvedTargetPath);
         const ports = await createEpisodeIngestPorts(database, sessionsDir);
-        const embeddingSetup = resolveEpisodeEmbeddingSetup(config, options);
+        const embeddingSetup = resolveEpisodeEmbeddingSetup(config, commandInput);
 
-        if (options.verbose === true) {
+        if (commandInput.verbose) {
           clack.log.step(`Preparing episode ingest for ${resolvedTargetPath}...`);
         }
 
-        const preflightSpinner = options.verbose === true ? null : clack.spinner();
+        const preflightSpinner = commandInput.verbose ? null : clack.spinner();
         preflightSpinner?.start("Parsing transcripts...");
 
         let preflight;
         try {
           preflight = await prepareEpisodeIngest(resolvedTargetPath, ports, {
-            regenerate: options.regenerate,
+            regenerate: commandInput.regenerate,
             now,
-            preflightConcurrency: options.concurrency ?? DEFAULT_EPISODE_INGEST_CONCURRENCY,
+            preflightConcurrency: commandInput.concurrency,
             onPreflightProgress: preflightSpinner
               ? (completed, total) => {
                   preflightSpinner.message(`Parsing transcripts... (${completed}/${total})`);
@@ -130,14 +145,14 @@ export function registerIngestEpisodesCommand(parent: Command): void {
           return;
         }
 
-        const shouldContinue = await handleRelevanceWarning(support, preflight.files, resolvedTargetPath, options.dryRun === true);
+        const shouldContinue = await handleRelevanceWarning(support, preflight.files, resolvedTargetPath, commandInput.dryRun);
         if (!shouldContinue) {
           clack.outro("Cancelled.");
           return;
         }
 
         const plan = createEpisodeIngestPlan(preflight, modelInfo, {
-          recent: options.recent,
+          recent: commandInput.recent,
           now,
         });
 
@@ -148,10 +163,10 @@ export function registerIngestEpisodesCommand(parent: Command): void {
           targetPath: resolvedTargetPath,
           preflight,
           plan,
-          options,
+          options: commandInput,
         });
 
-        if (options.dryRun === true) {
+        if (commandInput.dryRun) {
           clack.outro(
             `Dry run complete: ${plan.candidates.length} ${pluralize(plan.candidates.length, "candidate")} ready (${formatPreflightTail(preflight)}).`,
           );
@@ -170,11 +185,11 @@ export function registerIngestEpisodesCommand(parent: Command): void {
           createSummaryLlm: () => createEpisodeIngestSummaryLlm(provider, modelId, llmApiKey),
         };
 
-        const spinner = options.verbose === true ? null : clack.spinner();
+        const spinner = commandInput.verbose ? null : clack.spinner();
         spinner?.start(`Generating episodes... (0/${plan.candidates.length})`);
 
         const execution = await executeEpisodeIngestPlan(plan, executionPorts, {
-          concurrency: options.concurrency ?? DEFAULT_EPISODE_INGEST_CONCURRENCY,
+          concurrency: commandInput.concurrency,
           genVersion: CLI_EPISODE_GENERATOR_VERSION,
           onProgress: (completed, total, session) => {
             if (spinner) {
@@ -187,7 +202,7 @@ export function registerIngestEpisodesCommand(parent: Command): void {
 
         spinner?.stop("Episode ingest complete.");
 
-        if (options.verbose !== true) {
+        if (!commandInput.verbose) {
           for (const session of execution.sessions.filter((result) => result.action === "failed")) {
             clack.log.error(formatEpisodeProgressLine(undefined, undefined, session));
           }
@@ -236,12 +251,12 @@ async function createEpisodeIngestPorts(database: EpisodeDatabasePort, sessionsD
 }
 
 /** Validates mutually exclusive CLI flags and required arguments. */
-function validateEpisodeIngestOptions(options: IngestEpisodesCommandOptions, targetPath: string | undefined): void {
-  if (options.embedOnly === true && options.noEmbed === true) {
+function validateEpisodeIngestOptions(options: NormalizedIngestEpisodesCommand): void {
+  if (options.embedOnly && options.noEmbed) {
     throw new InvalidArgumentError("--embed-only cannot be combined with --no-embed.");
   }
 
-  if (options.embedOnly !== true && !targetPath?.trim()) {
+  if (!options.embedOnly && !options.targetPath) {
     throw new InvalidArgumentError("Path is required unless --embed-only is set.");
   }
 }
@@ -251,7 +266,7 @@ async function runEpisodeEmbeddingBackfill(params: {
   db: EpisodeDatabasePort;
   config: AgenrConfig | undefined;
   dbPath: string;
-  options: IngestEpisodesCommandOptions;
+  options: NormalizedIngestEpisodesCommand;
   startedAt: number;
 }): Promise<void> {
   const embeddingModel = resolveEmbeddingModel(params.config);
@@ -268,8 +283,8 @@ async function runEpisodeEmbeddingBackfill(params: {
     dbPath: params.dbPath,
     model: embeddingModel,
     missing: missingEpisodes.length,
-    concurrency: params.options.concurrency ?? DEFAULT_EPISODE_INGEST_CONCURRENCY,
-    dryRun: params.options.dryRun === true,
+    concurrency: params.options.concurrency,
+    dryRun: params.options.dryRun,
   });
 
   if (missingEpisodes.length === 0) {
@@ -277,16 +292,16 @@ async function runEpisodeEmbeddingBackfill(params: {
     return;
   }
 
-  if (params.options.dryRun === true) {
+  if (params.options.dryRun) {
     clack.outro(`Dry run complete: ${missingEpisodes.length} ${pluralize(missingEpisodes.length, "episode")} need embeddings.`);
     return;
   }
 
-  const spinner = params.options.verbose === true ? null : clack.spinner();
+  const spinner = params.options.verbose ? null : clack.spinner();
   spinner?.start(`Embedding episodes... (0/${missingEpisodes.length})`);
 
   const result = await backfillEpisodeEmbeddings(ports, {
-    concurrency: params.options.concurrency ?? DEFAULT_EPISODE_INGEST_CONCURRENCY,
+    concurrency: params.options.concurrency,
     onProgress: (completed, total, episode, status) => {
       if (spinner) {
         spinner.message(`Embedding episodes... (${completed}/${total})`);
@@ -310,12 +325,12 @@ async function runEpisodeEmbeddingBackfill(params: {
 /** Resolves the optional episode-summary embedding client for normal ingest. */
 export function resolveEpisodeEmbeddingSetup(
   config: AgenrConfig | undefined,
-  options: IngestEpisodesCommandOptions,
+  options: Pick<NormalizedIngestEpisodesCommand, "noEmbed">,
 ): {
   port?: EpisodeIngestPorts["embedding"];
   statusLabel: string;
 } {
-  if (options.noEmbed === true) {
+  if (options.noEmbed) {
     return {
       statusLabel: "skipped (--no-embed)",
     };
@@ -370,7 +385,7 @@ async function resolveSessionsDirectory(targetPath: string): Promise<string> {
 
 /** Resolves the effective database path for one episode-ingest run. */
 function resolveEpisodeDbPath(config: AgenrConfig | undefined, overridePath: string | undefined): string {
-  const normalizedOverride = overridePath?.trim();
+  const normalizedOverride = normalizeOptionalString(overridePath);
   if (!normalizedOverride) {
     return config?.dbPath ?? resolveDbPath(config);
   }
@@ -383,30 +398,15 @@ function resolveEpisodeDbPath(config: AgenrConfig | undefined, overridePath: str
 }
 
 /** Resolves the effective episode summary model, applying an optional CLI override. */
-function resolveEpisodeModel(config: AgenrConfig | undefined, overrideRef: string | undefined): { provider: string; modelId: string } {
+function resolveEpisodeModel(config: AgenrConfig | undefined, overrideRef: ParsedModelRef | undefined): { provider: string; modelId: string } {
   const resolved = resolveModel(config, "episode");
-  const normalizedOverride = overrideRef?.trim();
-  if (!normalizedOverride) {
+  if (!overrideRef) {
     return resolved;
   }
 
-  const separatorIndex = normalizedOverride.indexOf("/");
-  if (separatorIndex < 0) {
-    return {
-      provider: resolved.provider,
-      modelId: normalizedOverride,
-    };
-  }
-
-  const provider = normalizedOverride.slice(0, separatorIndex).trim();
-  const modelId = normalizedOverride.slice(separatorIndex + 1).trim();
-  if (!provider || !modelId) {
-    throw new InvalidArgumentError(`Model override must look like "provider/model" or "model". Received: ${overrideRef}.`);
-  }
-
   return {
-    provider,
-    modelId,
+    provider: overrideRef.provider ?? resolved.provider,
+    modelId: overrideRef.modelId,
   };
 }
 
@@ -453,7 +453,7 @@ function printEpisodeIngestSummary(params: {
   targetPath: string;
   preflight: Awaited<ReturnType<typeof prepareEpisodeIngest>>;
   plan: ReturnType<typeof createEpisodeIngestPlan>;
-  options: IngestEpisodesCommandOptions;
+  options: NormalizedIngestEpisodesCommand;
 }): void {
   const { dbPath, embeddingStatus, modelRef, targetPath, preflight, plan, options } = params;
   const lines = [
@@ -465,18 +465,18 @@ function printEpisodeIngestSummary(params: {
     formatLabel("Candidates", `${plan.candidates.length} selected from ${preflight.totals.candidates} preflight candidates`),
     formatLabel("Preflight", formatPreflightTail(preflight)),
     formatLabel("Estimated", formatEstimate(plan)),
-    formatLabel("Concurrency", `${options.concurrency ?? DEFAULT_EPISODE_INGEST_CONCURRENCY}`),
+    formatLabel("Concurrency", `${options.concurrency}`),
   ];
 
-  if (options.recent?.trim()) {
-    lines.push(formatLabel("Recent", `${options.recent.trim()}${plan.recentCutoff ? ` (cutoff ${plan.recentCutoff})` : ""}`));
+  if (options.recent) {
+    lines.push(formatLabel("Recent", `${options.recent}${plan.recentCutoff ? ` (cutoff ${plan.recentCutoff})` : ""}`));
   }
 
-  if (options.regenerate === true) {
+  if (options.regenerate) {
     lines.push(formatLabel("Regenerate", "enabled"));
   }
 
-  if (options.dryRun === true) {
+  if (options.dryRun) {
     lines.push(formatLabel("Mode", "dry run"));
   }
 
@@ -584,16 +584,32 @@ function formatUnknownError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * Builds one normalized episode-ingest payload from parsed CLI options.
+ *
+ * @param targetPath - Raw optional path argument.
+ * @param options - Parsed commander options.
+ * @returns Normalized CLI command input.
+ */
+function normalizeEpisodeIngestCommand(targetPath: string | undefined, options: IngestEpisodesCommandOptions): NormalizedIngestEpisodesCommand {
+  const commandInput: NormalizedIngestEpisodesCommand = {
+    targetPath: normalizeOptionalString(targetPath),
+    verbose: options.verbose === true,
+    dryRun: options.dryRun === true,
+    regenerate: options.regenerate === true,
+    embedOnly: options.embedOnly === true,
+    noEmbed: options.noEmbed === true,
+    recent: normalizeOptionalString(options.recent),
+    concurrency: options.concurrency ?? DEFAULT_EPISODE_INGEST_CONCURRENCY,
+    dbOverride: normalizeOptionalString(options.db),
+    modelOverride: options.model ? parseModelRef(options.model) : undefined,
+  };
+
+  validateEpisodeIngestOptions(commandInput);
+  return commandInput;
+}
+
 /** Parses and validates the episode-ingest concurrency option. */
 function parseEpisodeIngestConcurrency(value: string): number {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isInteger(parsed)) {
-    throw new InvalidArgumentError("Concurrency must be an integer.");
-  }
-
-  if (parsed < MIN_EPISODE_INGEST_CONCURRENCY || parsed > MAX_EPISODE_INGEST_CONCURRENCY) {
-    throw new InvalidArgumentError(`Concurrency must be between ${MIN_EPISODE_INGEST_CONCURRENCY} and ${MAX_EPISODE_INGEST_CONCURRENCY}.`);
-  }
-
-  return parsed;
+  return parseIntegerInRange(value, "Concurrency", MIN_EPISODE_INGEST_CONCURRENCY, MAX_EPISODE_INGEST_CONCURRENCY);
 }

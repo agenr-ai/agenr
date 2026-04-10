@@ -118,6 +118,131 @@ describe("registerIngestEpisodesCommand", () => {
 
     expect(backfillEpisodeEmbeddings).toHaveBeenCalledTimes(1);
   });
+
+  it("normalizes the target path and model override before preflight", async () => {
+    const statMock = vi.fn(async () => ({
+      isFile: () => false,
+    }));
+    const createDatabaseMock = vi.fn(async () => ({
+      close: vi.fn(async () => undefined),
+    }));
+    const createLlmClientMock = vi.fn(() => ({
+      complete: vi.fn(),
+      completeJson: vi.fn(),
+      metadata: {
+        model: {
+          cost: {},
+        },
+        usage: {},
+      },
+    }));
+    const prepareEpisodeIngestMock = vi.fn(async () => ({
+      files: ["/tmp/sessions/session-1.jsonl"],
+      totals: {
+        discovered: 1,
+        skippedExists: 1,
+        skippedShort: 0,
+        skippedActive: 0,
+        invalid: 0,
+        candidates: 0,
+      },
+    }));
+
+    vi.doMock("@clack/prompts", () => createClackMock());
+    vi.doMock("node:fs/promises", () => ({
+      default: {
+        stat: statMock,
+      },
+      stat: statMock,
+    }));
+    vi.doMock("../../../src/adapters/db/client.js", () => ({
+      createDatabase: createDatabaseMock,
+    }));
+    vi.doMock("../../../src/adapters/db/episode-ingest-support.js", () => ({
+      createEpisodeIngestSupportPort: vi.fn(() => ({
+        countEntries: vi.fn(async () => 0),
+        hasRelevantProvenanceMatch: vi.fn(async () => true),
+      })),
+    }));
+    vi.doMock("../../../src/adapters/embeddings.js", () => ({
+      EMBEDDING_MODEL: "text-embedding-3-small",
+      createEmbeddingClient: vi.fn(() => ({
+        embed: vi.fn(async () => [[1, 0]]),
+      })),
+      resolveEmbeddingApiKey: vi.fn(() => "sk-test"),
+      resolveEmbeddingModel: vi.fn(() => "text-embedding-3-small"),
+    }));
+    vi.doMock("../../../src/adapters/llm.js", () => ({
+      createLlmClient: createLlmClientMock,
+      resolveLlmApiKey: vi.fn(() => "sk-test"),
+      resolveModel: vi.fn(() => ({
+        provider: "openai",
+        modelId: "gpt-5.4-mini",
+      })),
+    }));
+    vi.doMock("../../../src/adapters/openclaw/session/session-registry.js", () => ({
+      loadOpenClawSessionRegistry: vi.fn(async () => ({})),
+    }));
+    vi.doMock("../../../src/adapters/openclaw/session/transcript-files.js", () => ({
+      openClawTranscriptFiles: {
+        discoverFiles: vi.fn(),
+      },
+    }));
+    vi.doMock("../../../src/adapters/openclaw/transcript/parser.js", () => ({
+      openClawTranscriptParser: {
+        parseFile: vi.fn(),
+      },
+    }));
+    vi.doMock("../../../src/app/episode-ingest/index.js", () => ({
+      prepareEpisodeIngest: prepareEpisodeIngestMock,
+      createEpisodeIngestPlan: vi.fn(() => ({
+        candidates: [],
+        estimate: {
+          inputTokens: 0,
+          outputTokens: 0,
+          estimatedCostUsd: 0,
+        },
+        model: {
+          modelRef: "anthropic/claude-sonnet-4-6",
+        },
+      })),
+      executeEpisodeIngestPlan: vi.fn(),
+      backfillEpisodeEmbeddings: vi.fn(),
+    }));
+    vi.doMock("../../../src/config.js", () => ({
+      readConfig: vi.fn(() => ({})),
+      resolveDbPath: vi.fn(() => "/tmp/ignored.db"),
+    }));
+    vi.doMock("../../../src/logger.js", () => ({
+      setVerbose: vi.fn(),
+    }));
+    vi.doMock("../../../src/ui.js", () => ({
+      banner: vi.fn(() => "agenr"),
+      formatLabel: vi.fn((label: string, value: string) => `${label}: ${value}`),
+      ui: {
+        error: (text: string) => text,
+      },
+    }));
+
+    const { registerIngestEpisodesCommand } = await import("../../../src/cli/commands/ingest-episodes.js");
+    const program = new Command();
+    registerIngestEpisodesCommand(program);
+
+    await program.parseAsync(["node", "test", "episodes", "  /tmp/sessions  ", "--db", "  /tmp/knowledge.db  ", "--model", " anthropic/claude-sonnet-4-6 "], {
+      from: "node",
+    });
+
+    expect(createDatabaseMock).toHaveBeenCalledWith("/tmp/knowledge.db");
+    expect(statMock).toHaveBeenCalledWith("/tmp/sessions");
+    expect(createLlmClientMock).toHaveBeenCalledWith("anthropic", "claude-sonnet-4-6", {});
+    expect(prepareEpisodeIngestMock).toHaveBeenCalledWith(
+      "/tmp/sessions",
+      expect.anything(),
+      expect.objectContaining({
+        preflightConcurrency: 10,
+      }),
+    );
+  });
 });
 
 function createClackMock() {

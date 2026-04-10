@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { pluralize, registerIngestCommand } from "../../../src/cli/commands/ingest.js";
 import { createProgram } from "../../../src/cli/main.js";
@@ -8,6 +8,12 @@ import { APP_VERSION } from "../../../src/version.js";
 const ANSI_PATTERN = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
 
 describe("registerIngestCommand", () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.restoreAllMocks();
+    process.exitCode = undefined;
+  });
+
   it("registers the ingest command group on the program", () => {
     const program = createProgram();
     const ingestCommand = findIngestCommand(program);
@@ -168,6 +174,77 @@ describe("registerIngestCommand", () => {
     expect(help).toContain("agenr");
     expect(help).toContain(APP_VERSION.toLowerCase());
   });
+
+  it("normalizes the entries path before discovering transcript files", async () => {
+    const discoverFilesMock = vi.fn(async () => []);
+
+    vi.resetModules();
+    vi.doMock("@clack/prompts", () => createClackMock());
+    vi.doMock("../../../src/adapters/db/client.js", () => ({
+      createDatabase: vi.fn(async () => ({
+        close: vi.fn(async () => undefined),
+      })),
+    }));
+    vi.doMock("../../../src/adapters/embeddings.js", () => ({
+      createEmbeddingClient: vi.fn(() => ({ embed: vi.fn() })),
+      resolveEmbeddingApiKey: vi.fn(() => "sk-test"),
+      resolveEmbeddingModel: vi.fn(() => "text-embedding-3-small"),
+    }));
+    vi.doMock("../../../src/adapters/files/transcript-files.js", () => ({
+      localTranscriptFiles: {
+        discoverFiles: discoverFilesMock,
+      },
+    }));
+    vi.doMock("../../../src/adapters/llm.js", () => ({
+      createLlmClient: vi.fn(() => ({
+        complete: vi.fn(),
+        completeJson: vi.fn(),
+      })),
+      resolveLlmApiKey: vi.fn(() => "sk-test"),
+      resolveModel: vi.fn(() => ({
+        provider: "openai",
+        modelId: "gpt-5.4-mini",
+      })),
+    }));
+    vi.doMock("../../../src/adapters/openclaw/transcript/parser.js", () => ({
+      openClawTranscriptParser: {
+        parseFile: vi.fn(),
+      },
+    }));
+    vi.doMock("../../../src/app/ingestion/index.js", () => ({
+      DEFAULT_INGEST_CONCURRENCY: 10,
+      ingestDiscoveredFiles: vi.fn(),
+    }));
+    vi.doMock("../../../src/config.js", () => ({
+      readConfig: vi.fn(() => ({
+        dbPath: "/tmp/knowledge.db",
+        extractionContext: undefined,
+      })),
+      resolveClaimExtractionConfig: vi.fn(() => ({
+        enabled: false,
+      })),
+    }));
+    vi.doMock("../../../src/logger.js", () => ({
+      setVerbose: vi.fn(),
+    }));
+    vi.doMock("../../../src/ui.js", () => ({
+      banner: vi.fn(() => "agenr"),
+      formatLabel: vi.fn((label: string, value: string) => `${label}: ${value}`),
+      ui: {
+        error: (text: string) => text,
+      },
+    }));
+
+    const { registerIngestCommand: registerMockedIngestCommand } = await import("../../../src/cli/commands/ingest.js");
+    const program = new Command();
+    registerMockedIngestCommand(program);
+
+    await program.parseAsync(["node", "test", "ingest", "entries", "  /tmp/transcripts  "], {
+      from: "node",
+    });
+
+    expect(discoverFilesMock).toHaveBeenCalledWith("/tmp/transcripts");
+  });
 });
 
 describe("pluralize", () => {
@@ -190,6 +267,24 @@ describe("pluralize", () => {
 
 function stripAnsi(text: string): string {
   return text.replace(ANSI_PATTERN, "");
+}
+
+function createClackMock() {
+  return {
+    intro: vi.fn(),
+    outro: vi.fn(),
+    spinner: vi.fn(() => ({
+      start: vi.fn(),
+      stop: vi.fn(),
+      message: vi.fn(),
+    })),
+    log: {
+      step: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    },
+  };
 }
 
 function findIngestCommand(program: Command) {

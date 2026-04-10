@@ -6,10 +6,19 @@ import {
   loadSurgeonHistoryRuntime,
   loadSurgeonStatusRuntime,
   runSurgeonRuntime,
+  type SurgeonRuntimeOptions,
   type SurgeonRuntimeResult,
 } from "../../app/surgeon/runtime.js";
 import { isImplementedSurgeonPass, isSurgeonPassType, type SurgeonPassType } from "../../core/surgeon/domain/pass-types.js";
 import { isSurgeonRunPreset, type ImplementedSurgeonPass, type SurgeonRunPreset } from "../../core/surgeon/domain/run-presets.js";
+import {
+  collectStringValue,
+  normalizeOptionalString,
+  normalizeStringList,
+  parseNonNegativeInteger,
+  parsePositiveInteger,
+  parsePositiveNumber,
+} from "../shared/parse.js";
 import { createLogger } from "../../logger.js";
 
 /** Parsed commander options for `agenr surgeon run`. */
@@ -37,6 +46,9 @@ interface SurgeonHistoryCommandOptions {
   limit?: number;
 }
 
+/** Normalized CLI payload for `agenr surgeon run`. */
+type NormalizedSurgeonRunCommand = Omit<SurgeonRuntimeOptions, "dbPath" | "env" | "onProgress" | "signal">;
+
 /**
  * Registers the `agenr surgeon` command group and its subcommands.
  *
@@ -53,7 +65,7 @@ export function registerSurgeonCommand(program: Command): void {
     .option("--project <name>", "Restrict the run to one project")
     .option("--type <entryType>", "Restrict claim-key-quality cleanup to one entry type")
     .option("--claim-key-prefix <prefix>", "Restrict claim-key-quality cleanup to one claim-key entity prefix")
-    .option("--entry-id <id>", "Restrict claim-key-quality cleanup to one or more entry IDs", collectValues, [])
+    .option("--entry-id <id>", "Restrict claim-key-quality cleanup to one or more entry IDs", collectStringValue, [])
     .option("--include-inactive", "Allow claim-key-quality cleanup to include retired or superseded rows")
     .addOption(new Option("--budget <usd>", "Cost cap for this run in USD").argParser(parsePositiveNumber))
     .addOption(new Option("--context-limit <tokens>", "Context limit override in tokens").argParser(parsePositiveInteger))
@@ -81,31 +93,17 @@ export function registerSurgeonCommand(program: Command): void {
       process.on("SIGINT", onSigint);
 
       try {
-        validateRunCommandOptions(options);
-        const reportProgress = createCliSurgeonProgressReporter(options.verbose === true);
+        const commandInput = normalizeSurgeonRunCommand(options);
+        validateRunCommandOptions(commandInput);
+        const reportProgress = createCliSurgeonProgressReporter(commandInput.verbose);
         const result = await runSurgeonRuntime({
-          pass: options.pass,
-          preset: options.preset,
-          project: options.project,
-          budget: options.budget ?? 0,
-          contextLimit: options.contextLimit,
-          type: options.type,
-          claimKeyPrefix: options.claimKeyPrefix,
-          entryIds: options.entryId,
-          includeInactive: options.includeInactive === true,
-          skipEvaluatedDays: options.skipEvaluatedDays,
-          apply: options.apply === true,
-          model: options.model,
-          provider: options.provider,
-          verbose: options.verbose === true,
-          tracePath: options.trace,
-          json: options.json === true,
+          ...commandInput,
           signal: abortController.signal,
           env: process.env,
           onProgress: reportProgress,
         });
 
-        process.stdout.write(options.json === true ? `${JSON.stringify(result, null, 2)}\n` : renderRunResult(result, options.apply === true));
+        process.stdout.write(commandInput.json ? `${JSON.stringify(result, null, 2)}\n` : renderRunResult(result, commandInput.apply));
       } catch (error) {
         process.exitCode = 1;
         process.stderr.write(`Surgeon run failed: ${formatUnknownError(error)}\n`);
@@ -206,7 +204,7 @@ function parseSurgeonRunPreset(value: string): SurgeonRunPreset {
  *
  * @param options - Parsed run command options.
  */
-function validateRunCommandOptions(options: SurgeonRunCommandOptions): void {
+function validateRunCommandOptions(options: NormalizedSurgeonRunCommand): void {
   if (options.pass && options.preset) {
     throw new InvalidArgumentError("Specify either --pass or --preset, not both.");
   }
@@ -226,14 +224,30 @@ function validateRunCommandOptions(options: SurgeonRunCommandOptions): void {
 }
 
 /**
- * Collects repeated commander option values into a string array.
+ * Builds one normalized surgeon run payload from parsed CLI options.
  *
- * @param value - Raw option value.
- * @param previous - Accumulated previous values.
- * @returns Updated ordered value array.
+ * @param options - Parsed commander options.
+ * @returns Normalized runtime input used by the CLI command.
  */
-function collectValues(value: string, previous: string[]): string[] {
-  return [...previous, value];
+function normalizeSurgeonRunCommand(options: SurgeonRunCommandOptions): NormalizedSurgeonRunCommand {
+  return {
+    pass: options.pass,
+    preset: options.preset,
+    project: normalizeOptionalString(options.project),
+    type: normalizeOptionalString(options.type),
+    claimKeyPrefix: normalizeOptionalString(options.claimKeyPrefix),
+    entryIds: normalizeStringList(options.entryId),
+    includeInactive: options.includeInactive === true,
+    budget: options.budget ?? 0,
+    contextLimit: options.contextLimit,
+    skipEvaluatedDays: options.skipEvaluatedDays,
+    apply: options.apply === true,
+    model: normalizeOptionalString(options.model),
+    provider: normalizeOptionalString(options.provider),
+    verbose: options.verbose === true,
+    tracePath: normalizeOptionalString(options.trace),
+    json: options.json === true,
+  };
 }
 
 /**
@@ -242,16 +256,16 @@ function collectValues(value: string, previous: string[]): string[] {
  * @param options - Parsed run options.
  * @returns True when claim-key targeting is requested.
  */
-function hasClaimKeyTargeting(options: SurgeonRunCommandOptions): boolean {
-  if (typeof options.type === "string" && options.type.trim().length > 0) {
+function hasClaimKeyTargeting(options: NormalizedSurgeonRunCommand): boolean {
+  if (options.type) {
     return true;
   }
 
-  if (typeof options.claimKeyPrefix === "string" && options.claimKeyPrefix.trim().length > 0) {
+  if (options.claimKeyPrefix) {
     return true;
   }
 
-  if ((options.entryId ?? []).some((entryId) => entryId.trim().length > 0)) {
+  if ((options.entryIds ?? []).length > 0) {
     return true;
   }
 
@@ -613,51 +627,6 @@ function formatElapsed(elapsedMs: number): string {
  */
 function formatUsd(value: number): string {
   return `$${value.toFixed(4)}`;
-}
-
-/**
- * Parses a strictly positive integer commander option.
- *
- * @param value - Raw commander option text.
- * @returns Parsed integer.
- */
-function parsePositiveInteger(value: string): number {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new InvalidArgumentError("Value must be a positive integer.");
-  }
-
-  return parsed;
-}
-
-/**
- * Parses a non-negative integer commander option.
- *
- * @param value - Raw commander option text.
- * @returns Parsed integer.
- */
-function parseNonNegativeInteger(value: string): number {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isInteger(parsed) || parsed < 0) {
-    throw new InvalidArgumentError("Value must be a non-negative integer.");
-  }
-
-  return parsed;
-}
-
-/**
- * Parses a strictly positive numeric commander option.
- *
- * @param value - Raw commander option text.
- * @returns Parsed number.
- */
-function parsePositiveNumber(value: string): number {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    throw new InvalidArgumentError("Value must be a positive number.");
-  }
-
-  return parsed;
 }
 
 /**

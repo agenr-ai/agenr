@@ -231,6 +231,48 @@ describe("registerSurgeonCommand", () => {
     expect(stdout.join("")).toContain("Summary: Structural cleanup complete.");
   });
 
+  it("normalizes run arguments before invoking the runtime", async () => {
+    const { program } = createProgramWithCapturedOutput();
+
+    await program.parseAsync(
+      [
+        "surgeon",
+        "run",
+        "--pass",
+        "claim_key_quality",
+        "--project",
+        " Agenr ",
+        "--type",
+        " decision ",
+        "--claim-key-prefix",
+        " agent:jim ",
+        "--entry-id",
+        " entry-1 ",
+        "--entry-id",
+        "entry-1",
+        "--provider",
+        " openai ",
+        "--model",
+        " gpt-5.4-mini ",
+        "--trace",
+        " /tmp/surgeon.log ",
+      ],
+      { from: "user" },
+    );
+
+    expect(runSurgeonRuntimeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project: "Agenr",
+        type: "decision",
+        claimKeyPrefix: "agent:jim",
+        entryIds: ["entry-1"],
+        provider: "openai",
+        model: "gpt-5.4-mini",
+        tracePath: "/tmp/surgeon.log",
+      }),
+    );
+  });
+
   it("renders lifecycle health counts in surgeon status output", async () => {
     const { program, stdout } = createProgramWithCapturedOutput();
     loadSurgeonStatusRuntimeMock.mockResolvedValue({

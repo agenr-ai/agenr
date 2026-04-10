@@ -7,6 +7,7 @@ import { createEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } 
 import { localTranscriptFiles } from "../../adapters/files/transcript-files.js";
 import { createLlmClient, resolveLlmApiKey, resolveModel, type UsageStats } from "../../adapters/llm.js";
 import { openClawTranscriptParser } from "../../adapters/openclaw/transcript/parser.js";
+import { normalizeOptionalString, parseIntegerInRange } from "../shared/parse.js";
 import { readConfig, resolveClaimExtractionConfig } from "../../config.js";
 import {
   type DedupResult,
@@ -34,6 +35,16 @@ interface IngestCommandOptions {
   wholeFile?: WholeFileMode;
   skipDedup?: boolean;
   concurrency?: number;
+}
+
+/** Normalized CLI payload for `agenr ingest entries`. */
+interface NormalizedIngestEntriesCommand {
+  targetPath: string;
+  verbose: boolean;
+  dryRun: boolean;
+  wholeFile: WholeFileMode;
+  skipDedup: boolean;
+  concurrency: number;
 }
 
 /** Per-file LLM usage summary used in CLI output. */
@@ -76,8 +87,9 @@ function registerIngestEntriesCommand(parent: Command): void {
   ingestCommand.action(async (targetPath: string, options: IngestCommandOptions) => {
     const startedAt = Date.now();
     let db: Awaited<ReturnType<typeof createDatabase>> | null = null;
+    const commandInput = normalizeIngestEntriesCommand(targetPath, options);
 
-    setVerbose(options.verbose === true);
+    setVerbose(commandInput.verbose);
     clack.intro(banner());
 
     try {
@@ -94,13 +106,13 @@ function registerIngestEntriesCommand(parent: Command): void {
       const claimApiKey = claimModel ? resolveLlmApiKey(config, claimModel.provider) : undefined;
       const sharedEmbedding = createEmbeddingClient(resolveEmbeddingApiKey(config), resolveEmbeddingModel(config));
 
-      if (options.verbose === true) {
-        clack.log.step(`Discovering transcript files in ${path.resolve(targetPath)}...`);
+      if (commandInput.verbose) {
+        clack.log.step(`Discovering transcript files in ${path.resolve(commandInput.targetPath)}...`);
       }
 
-      const files = await localTranscriptFiles.discoverFiles(targetPath);
+      const files = await localTranscriptFiles.discoverFiles(commandInput.targetPath);
       if (files.length === 0) {
-        clack.log.warn(`No transcript files found at ${path.resolve(targetPath)}.`);
+        clack.log.warn(`No transcript files found at ${path.resolve(commandInput.targetPath)}.`);
         clack.outro("Nothing to ingest.");
         return;
       }
@@ -108,21 +120,21 @@ function registerIngestEntriesCommand(parent: Command): void {
       clack.log.info(
         [
           formatLabel("Extraction model", `${provider}/${modelId}`),
-          formatLabel("Dedup model", options.skipDedup === true ? "skipped" : `${dedupProvider}/${dedupModelId}`),
+          formatLabel("Dedup model", commandInput.skipDedup ? "skipped" : `${dedupProvider}/${dedupModelId}`),
           formatLabel("Database", dbPath),
           formatLabel("Files", `${files.length} ${pluralize(files.length, "file")} found`),
-          formatLabel("Whole-file", options.wholeFile ?? "auto"),
-          formatLabel("Within-batch dedup", options.skipDedup === true ? "skipped" : "enabled"),
+          formatLabel("Whole-file", commandInput.wholeFile),
+          formatLabel("Within-batch dedup", commandInput.skipDedup ? "skipped" : "enabled"),
           formatLabel("Embeddings", "stored"),
-          formatLabel("Concurrency", `${options.concurrency ?? DEFAULT_INGEST_CONCURRENCY}`),
+          formatLabel("Concurrency", `${commandInput.concurrency}`),
         ].join("\n"),
       );
 
-      if (options.dryRun === true) {
+      if (commandInput.dryRun) {
         clack.log.warn("Dry run mode - no entries will be stored.");
       }
 
-      const useVerboseBulkWriteProgress = options.verbose === true && options.dryRun !== true;
+      const useVerboseBulkWriteProgress = commandInput.verbose && !commandInput.dryRun;
       const spinner = useVerboseBulkWriteProgress ? null : clack.spinner();
       spinner?.start(`Processing transcripts... (0/${files.length} extracted)`);
 
@@ -142,12 +154,12 @@ function registerIngestEntriesCommand(parent: Command): void {
             : {}),
         },
         {
-          concurrency: options.concurrency ?? DEFAULT_INGEST_CONCURRENCY,
+          concurrency: commandInput.concurrency,
           claimExtractionConfig,
-          dryRun: options.dryRun,
-          verbose: options.verbose,
-          wholeFile: options.wholeFile,
-          skipDedup: options.skipDedup,
+          dryRun: commandInput.dryRun,
+          verbose: commandInput.verbose,
+          wholeFile: commandInput.wholeFile,
+          skipDedup: commandInput.skipDedup,
           extractionContext: config.extractionContext,
           onExtractionProgress: (completed, total) => {
             spinner?.message(`Processing transcripts... (${completed}/${total} extracted)`);
@@ -168,7 +180,7 @@ function registerIngestEntriesCommand(parent: Command): void {
       const claimKeyHealth = ingestResult.claimKeyHealth;
 
       if (extractedSuccesses.length > 0) {
-        printDedupSummary(dedupResult, taggedEntries, options, dedupUsage.totalCost);
+        printDedupSummary(dedupResult, taggedEntries, commandInput, dedupUsage.totalCost);
       }
 
       if (claimKeyHealth) {
@@ -197,8 +209,8 @@ function registerIngestEntriesCommand(parent: Command): void {
 
         if (result.skipped) {
           totals.skippedFiles += 1;
-          if (options.verbose === true) {
-            printVerboseFileDetails(result, options, usage);
+          if (commandInput.verbose) {
+            printVerboseFileDetails(result, commandInput, usage);
             clack.log.step(buildSkippedMessage(path.basename(result.file)));
           } else {
             clack.log.step(buildSkippedMessage(path.basename(result.file)));
@@ -208,10 +220,10 @@ function registerIngestEntriesCommand(parent: Command): void {
 
         if (result.error) {
           totals.failedFiles += 1;
-          if (options.verbose === true) {
-            printVerboseFileDetails(result, options, usage);
+          if (commandInput.verbose) {
+            printVerboseFileDetails(result, commandInput, usage);
           }
-          clack.log.error(buildFailureMessage(path.basename(result.file), result, options, usage, index === 0));
+          clack.log.error(buildFailureMessage(path.basename(result.file), result, commandInput, usage, index === 0));
           continue;
         }
 
@@ -220,10 +232,10 @@ function registerIngestEntriesCommand(parent: Command): void {
         totals.deduped += storeResult.skipped;
         totals.rejected += storeResult.rejected;
 
-        if (options.verbose === true) {
-          printVerboseFileDetails(result, options, usage);
+        if (commandInput.verbose) {
+          printVerboseFileDetails(result, commandInput, usage);
         }
-        clack.log.step(buildSuccessMessage(path.basename(result.file), result, options, usage, index === 0));
+        clack.log.step(buildSuccessMessage(path.basename(result.file), result, commandInput, usage, index === 0));
       }
 
       const summaryParts = [`${totals.stored} ${pluralize(totals.stored, "entry", "entries")} stored`, `${totals.deduped} deduped`];
@@ -254,7 +266,7 @@ function registerIngestEntriesCommand(parent: Command): void {
         );
       }
 
-      const dryRunSuffix = options.dryRun === true ? " Dry run only." : "";
+      const dryRunSuffix = commandInput.dryRun ? " Dry run only." : "";
       clack.outro(`Done: ${summaryParts.join(", ")}. (${formatCost(usageTotals.totalCost)}, ${formatDurationMs(Date.now() - startedAt)})${dryRunSuffix}`);
     } catch (error) {
       process.exitCode = 1;
@@ -264,6 +276,29 @@ function registerIngestEntriesCommand(parent: Command): void {
       await db?.close();
     }
   });
+}
+
+/**
+ * Builds one normalized ingest-entries payload from parsed CLI values.
+ *
+ * @param targetPath - Raw required path argument.
+ * @param options - Parsed commander options.
+ * @returns Normalized command input.
+ */
+function normalizeIngestEntriesCommand(targetPath: string, options: IngestCommandOptions): NormalizedIngestEntriesCommand {
+  const normalizedTargetPath = normalizeOptionalString(targetPath);
+  if (!normalizedTargetPath) {
+    throw new InvalidArgumentError("Path cannot be empty.");
+  }
+
+  return {
+    targetPath: normalizedTargetPath,
+    verbose: options.verbose === true,
+    dryRun: options.dryRun === true,
+    wholeFile: options.wholeFile ?? "auto",
+    skipDedup: options.skipDedup === true,
+    concurrency: options.concurrency ?? DEFAULT_INGEST_CONCURRENCY,
+  };
 }
 
 /** Formats the compact post-ingest claim-key health summary. */
@@ -728,15 +763,5 @@ function toFileUsageSummary(usage: UsageStats, runningCost: number): FileUsageSu
 
 /** Parses and validates the ingest concurrency CLI option. */
 function parseConcurrency(value: string): number {
-  const parsed = Number.parseInt(value, 10);
-
-  if (!Number.isInteger(parsed)) {
-    throw new InvalidArgumentError("Concurrency must be an integer.");
-  }
-
-  if (parsed < MIN_INGEST_CONCURRENCY || parsed > MAX_INGEST_CONCURRENCY) {
-    throw new InvalidArgumentError(`Concurrency must be between ${MIN_INGEST_CONCURRENCY} and ${MAX_INGEST_CONCURRENCY}.`);
-  }
-
-  return parsed;
+  return parseIntegerInRange(value, "Concurrency", MIN_INGEST_CONCURRENCY, MAX_INGEST_CONCURRENCY);
 }

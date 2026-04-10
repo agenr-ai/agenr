@@ -9,6 +9,7 @@ import {
   type ClaimKeyScenarioRunOptions,
   type ClaimKeyScenarioSummary,
 } from "../../app/scenarios/claim-keys/index.js";
+import { collectStringValue, normalizeStringList } from "../shared/parse.js";
 
 /**
  * Dependency overrides used by CLI tests.
@@ -43,6 +44,25 @@ interface ScenarioRunCommandOptions {
   failFast?: boolean;
 }
 
+/** Normalized `agenr scenarios list` input passed into the runtime layer. */
+interface NormalizedScenarioListCommand {
+  kind?: ClaimKeyScenarioKind;
+  tags?: string[];
+  json: boolean;
+}
+
+/** Normalized `agenr scenarios run` input passed into the runtime layer. */
+interface NormalizedScenarioRunCommand {
+  ids?: string[];
+  kind?: ClaimKeyScenarioKind;
+  tags?: string[];
+  preserveOnFailure: boolean;
+  preserveAlways: boolean;
+  verbose: boolean;
+  json: boolean;
+  failFast: boolean;
+}
+
 /**
  * Registers the `agenr scenarios` command group.
  *
@@ -60,16 +80,17 @@ export function registerScenariosCommand(program: Command, deps: ScenarioCommand
     .command("list")
     .description("List available claim-key scenarios")
     .addOption(new Option("--kind <kind>", "Filter by scenario kind").argParser(parseScenarioKind))
-    .option("--tag <tag>", "Filter by tag", collectValues, [])
+    .option("--tag <tag>", "Filter by tag", collectStringValue, [])
     .option("--json", "Emit machine-readable JSON output")
     .action(async (options: ScenarioListCommandOptions) => {
       try {
+        const commandInput = normalizeScenarioListCommand(options);
         const scenarios = await listScenarios({
-          kind: options.kind,
-          tags: options.tag,
+          kind: commandInput.kind,
+          tags: commandInput.tags,
         });
 
-        stdout.write(options.json === true ? `${JSON.stringify(scenarios, null, 2)}\n` : renderScenarioList(scenarios));
+        stdout.write(commandInput.json ? `${JSON.stringify(scenarios, null, 2)}\n` : renderScenarioList(scenarios));
       } catch (error) {
         process.exitCode = error instanceof ClaimKeyScenarioConfigurationError ? 2 : 1;
         stderr.write(`Scenario list failed: ${formatUnknownError(error)}\n`);
@@ -79,9 +100,9 @@ export function registerScenariosCommand(program: Command, deps: ScenarioCommand
   scenariosCommand
     .command("run")
     .description("Run claim-key sandbox scenarios")
-    .option("--id <scenarioId>", "Run one or more scenario IDs", collectValues, [])
+    .option("--id <scenarioId>", "Run one or more scenario IDs", collectStringValue, [])
     .addOption(new Option("--kind <kind>", "Filter by scenario kind").argParser(parseScenarioKind))
-    .option("--tag <tag>", "Filter by tag", collectValues, [])
+    .option("--tag <tag>", "Filter by tag", collectStringValue, [])
     .option("--preserve-on-failure", "Preserve the sandbox directory when a scenario fails")
     .option("--preserve", "Always preserve the sandbox directory")
     .option("--verbose", "Show extra runtime detail")
@@ -89,26 +110,60 @@ export function registerScenariosCommand(program: Command, deps: ScenarioCommand
     .option("--fail-fast", "Stop after the first failing scenario")
     .action(async (options: ScenarioRunCommandOptions) => {
       try {
+        const commandInput = normalizeScenarioRunCommand(options);
         const summary = await runScenarios({
-          ids: options.id,
-          kind: options.kind,
-          tags: options.tag,
-          preserveOnFailure: options.preserveOnFailure === true,
-          preserveAlways: options.preserve === true,
-          verbose: options.verbose === true,
-          failFast: options.failFast === true,
+          ids: commandInput.ids,
+          kind: commandInput.kind,
+          tags: commandInput.tags,
+          preserveOnFailure: commandInput.preserveOnFailure,
+          preserveAlways: commandInput.preserveAlways,
+          verbose: commandInput.verbose,
+          failFast: commandInput.failFast,
         });
 
         if (summary.failedCount > 0) {
           process.exitCode = 1;
         }
 
-        stdout.write(options.json === true ? `${JSON.stringify(summary, null, 2)}\n` : renderScenarioRunSummary(summary));
+        stdout.write(commandInput.json ? `${JSON.stringify(summary, null, 2)}\n` : renderScenarioRunSummary(summary));
       } catch (error) {
         process.exitCode = error instanceof ClaimKeyScenarioConfigurationError ? 2 : 1;
         stderr.write(`Scenario run failed: ${formatUnknownError(error)}\n`);
       }
     });
+}
+
+/**
+ * Builds one normalized list-command payload from parsed CLI options.
+ *
+ * @param options - Parsed commander options.
+ * @returns Normalized list-command input.
+ */
+function normalizeScenarioListCommand(options: ScenarioListCommandOptions): NormalizedScenarioListCommand {
+  return {
+    kind: options.kind,
+    tags: normalizeStringList(options.tag),
+    json: options.json === true,
+  };
+}
+
+/**
+ * Builds one normalized run-command payload from parsed CLI options.
+ *
+ * @param options - Parsed commander options.
+ * @returns Normalized run-command input.
+ */
+function normalizeScenarioRunCommand(options: ScenarioRunCommandOptions): NormalizedScenarioRunCommand {
+  return {
+    ids: normalizeStringList(options.id),
+    kind: options.kind,
+    tags: normalizeStringList(options.tag),
+    preserveOnFailure: options.preserveOnFailure === true,
+    preserveAlways: options.preserve === true,
+    verbose: options.verbose === true,
+    json: options.json === true,
+    failFast: options.failFast === true,
+  };
 }
 
 /**
@@ -177,17 +232,6 @@ function parseScenarioKind(value: string): ClaimKeyScenarioKind {
   }
 
   return normalized;
-}
-
-/**
- * Collects repeated commander option values into one ordered array.
- *
- * @param value - Raw option value.
- * @param previous - Previously collected values.
- * @returns Updated ordered list.
- */
-function collectValues(value: string, previous: string[]): string[] {
-  return [...previous, value];
 }
 
 /**

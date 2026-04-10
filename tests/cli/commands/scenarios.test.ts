@@ -210,6 +210,61 @@ describe("registerScenariosCommand", () => {
     );
   });
 
+  it("normalizes repeated ids and tags before invoking the runtime", async () => {
+    const program = new Command();
+    const stdout = createOutputCapture();
+    let capturedOptions: unknown;
+
+    registerScenariosCommand(program, {
+      stdout,
+      runScenarios: async (options): Promise<ClaimKeyScenarioSummary> => {
+        capturedOptions = options;
+        return {
+          runId: "run-1",
+          matchedCount: 1,
+          passedCount: 1,
+          failedCount: 0,
+          artifactRoot: "/tmp/artifacts",
+          results: [
+            {
+              scenarioId: "claim-keys.store.manual-key-trusted",
+              kind: "store",
+              filePath: "/tmp/manual-key-trusted.json",
+              status: "passed",
+              durationMs: 10,
+              assertionResults: [],
+              warnings: [],
+              diffSummary: [],
+            },
+          ],
+        };
+      },
+    });
+
+    await program.parseAsync(
+      [
+        "scenarios",
+        "run",
+        "--id",
+        " claim-keys.store.manual-key-trusted ",
+        "--id",
+        "claim-keys.store.manual-key-trusted",
+        "--tag",
+        " trusted ",
+        "--tag",
+        "trusted",
+      ],
+      { from: "user" },
+    );
+
+    expect(capturedOptions).toEqual(
+      expect.objectContaining({
+        ids: ["claim-keys.store.manual-key-trusted"],
+        tags: ["trusted"],
+      }),
+    );
+  });
+
   it("sets exit code 2 on configuration failures", async () => {
     const program = new Command();
     const stderr = createOutputCapture();
