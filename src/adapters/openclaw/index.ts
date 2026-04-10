@@ -9,7 +9,6 @@ import { buildAgenrMemoryFlushPlan } from "./memory/flush-plan.js";
 import { createAgenrMemoryRuntime } from "./memory/runtime.js";
 import { createAgenrOpenClawServices } from "./runtime.js";
 import { createMidSessionTracker, createSessionStartTracker } from "./session/state.js";
-import type { AgenrOpenClawMemoryPluginApi } from "./types.js";
 
 export default definePluginEntry({
   id: "agenr",
@@ -18,7 +17,6 @@ export default definePluginEntry({
   kind: "memory",
   configSchema: createAgenrOpenClawPluginConfigSchema(),
   register(api) {
-    const memoryApi = api as AgenrOpenClawMemoryPluginApi;
     const sessionStartTracker = createSessionStartTracker();
     const midSessionTracker = createMidSessionTracker();
     const pluginConfig = coerceAgenrOpenClawPluginConfig(api.pluginConfig);
@@ -35,9 +33,11 @@ export default definePluginEntry({
       resolvePath: api.resolvePath,
     });
 
-    api.registerMemoryPromptSection(buildAgenrMemoryPromptSection);
-    memoryApi.registerMemoryFlushPlan?.((params) => buildAgenrMemoryFlushPlan(params, api.logger));
-    memoryApi.registerMemoryRuntime?.(createAgenrMemoryRuntime(servicesPromise));
+    api.registerMemoryCapability({
+      promptBuilder: buildAgenrMemoryPromptSection,
+      flushPlanResolver: (params) => buildAgenrMemoryFlushPlan(params, api.logger),
+      runtime: createAgenrMemoryRuntime(servicesPromise),
+    });
 
     registerAgenrOpenClawTools(api, servicesPromise, api.logger);
 

@@ -238,6 +238,34 @@ async function cleanupTempEmbeddedAgentSessionFile(tempSessionFile: string): Pro
  * @param result - Embedded-agent response payload.
  * @returns First non-empty text body, or an empty string when none exists.
  */
-function extractEmbeddedAgentText(result: { payloads?: Array<{ text?: string }> }): string {
+function extractEmbeddedAgentText(result: unknown): string {
+  if (!isEmbeddedAgentTextPayloadResult(result)) {
+    return "";
+  }
+
   return result.payloads?.find((payload) => payload.text?.trim())?.text ?? "";
+}
+
+/**
+ * Checks whether an embedded-agent result carries text payloads.
+ *
+ * @param value - Unknown result value from the OpenClaw runtime.
+ * @returns `true` when the value exposes the expected payload shape.
+ */
+function isEmbeddedAgentTextPayloadResult(value: unknown): value is { payloads?: Array<{ text?: string }> } {
+  if (!value || typeof value !== "object" || !("payloads" in value)) {
+    return false;
+  }
+
+  const payloads = value.payloads;
+  if (payloads === undefined) {
+    return true;
+  }
+
+  return (
+    Array.isArray(payloads) &&
+    payloads.every(
+      (payload) => payload && typeof payload === "object" && (!("text" in payload) || payload.text === undefined || typeof payload.text === "string"),
+    )
+  );
 }

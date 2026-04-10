@@ -34,6 +34,14 @@ export function createAgenrMemoryRuntime(servicesPromise: Promise<AgenrOpenClawS
 
       return {
         manager: {
+          async search() {
+            // agenr does not expose a file-backed memory corpus through the generic
+            // OpenClaw memory host yet, so status registration reports no search hits.
+            return [];
+          },
+          async readFile({ relPath }) {
+            throw new Error(`[agenr] memory file reads are not supported for "${relPath}"`);
+          },
           status() {
             return status;
           },

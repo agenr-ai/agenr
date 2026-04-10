@@ -116,9 +116,7 @@ If OpenClaw provides `resolvePath`, the plugin resolves supplied path overrides 
 
 The plugin currently wires:
 
-- `registerMemoryPromptSection(buildAgenrMemoryPromptSection)`
-- optional memory flush-plan registration
-- optional memory runtime registration
+- `registerMemoryCapability({ promptBuilder, flushPlanResolver, runtime })`
 - the five tools
 - `before_prompt_build`
 - `session_start`

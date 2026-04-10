@@ -1,4 +1,10 @@
 import type { OpenClawConfig, OpenClawPluginApi, PluginLogger } from "openclaw/plugin-sdk/core";
+import type {
+  MemoryEmbeddingProbeResult as OpenClawMemoryEmbeddingProbeResult,
+  MemoryProviderStatus as OpenClawMemoryProviderStatus,
+  MemorySearchManager as OpenClawMemorySearchManager,
+  MemorySearchResult as OpenClawMemorySearchResult,
+} from "openclaw/plugin-sdk/memory-core-host-engine-storage";
 
 import type { OpenClawRepository } from "../../app/openclaw/ports.js";
 import type { AgenrConfig } from "../../config.js";
@@ -221,46 +227,24 @@ export interface AgenrOpenClawBeforePromptBuildResult {
 }
 
 /**
- * Memory embedding probe result expected by newer OpenClaw memory runtimes.
+ * Memory search result shape consumed by OpenClaw memory-host surfaces.
  */
-export interface AgenrOpenClawMemoryEmbeddingProbeResult {
-  ok: boolean;
-  error?: string;
-}
+export type AgenrOpenClawMemorySearchResult = OpenClawMemorySearchResult;
+
+/**
+ * Memory embedding probe result expected by current OpenClaw memory runtimes.
+ */
+export type AgenrOpenClawMemoryEmbeddingProbeResult = OpenClawMemoryEmbeddingProbeResult;
 
 /**
  * Memory runtime status payload consumed by OpenClaw status surfaces.
  */
-export interface AgenrOpenClawMemoryProviderStatus {
-  backend: "builtin" | "qmd";
-  provider: string;
-  model?: string;
-  dbPath?: string;
-  files?: number;
-  chunks?: number;
-  vector?: {
-    enabled: boolean;
-    available?: boolean;
-    dims?: number;
-  };
-  custom?: Record<string, unknown>;
-}
+export type AgenrOpenClawMemoryProviderStatus = OpenClawMemoryProviderStatus;
 
 /**
  * Lightweight memory search manager contract needed by OpenClaw status/inspect flows.
  */
-export interface AgenrOpenClawRegisteredMemorySearchManager {
-  status(): AgenrOpenClawMemoryProviderStatus;
-  probeEmbeddingAvailability(): Promise<AgenrOpenClawMemoryEmbeddingProbeResult>;
-  probeVectorAvailability(): Promise<boolean>;
-  sync?(params?: {
-    reason?: string;
-    force?: boolean;
-    sessionFiles?: string[];
-    progress?: (update: { completed: number; total: number; label?: string }) => void;
-  }): Promise<void>;
-  close?(): Promise<void>;
-}
+export type AgenrOpenClawRegisteredMemorySearchManager = OpenClawMemorySearchManager;
 
 /**
  * Backend selection payload returned by the agenr memory runtime.
@@ -305,15 +289,37 @@ export type AgenrOpenClawMemoryFlushPlanResolver = (params: { cfg?: OpenClawConf
 export type AgenrOpenClawMemoryPromptSectionBuilder = (params: { availableTools: Set<string>; citationsMode?: "auto" | "on" | "off" }) => string[];
 
 /**
- * OpenClaw plugin API plus newer memory-slot registration hooks when available.
- *
- * The published npm SDK currently lags these methods, so they are optional here
- * and the adapter feature-detects them at runtime.
+ * Public artifact content types supported by the OpenClaw memory capability API.
  */
-export interface AgenrOpenClawMemoryPluginApi extends OpenClawPluginApi {
-  registerMemoryPromptSection(builder: AgenrOpenClawMemoryPromptSectionBuilder): void;
-  registerMemoryFlushPlan?: (resolver: AgenrOpenClawMemoryFlushPlanResolver) => void;
-  registerMemoryRuntime?: (runtime: AgenrOpenClawMemoryPluginRuntime) => void;
+export type AgenrOpenClawMemoryPluginPublicArtifactContentType = "markdown" | "json" | "text";
+
+/**
+ * Public artifact shape exposed by OpenClaw memory plugins.
+ */
+export interface AgenrOpenClawMemoryPluginPublicArtifact {
+  kind: string;
+  workspaceDir: string;
+  relativePath: string;
+  absolutePath: string;
+  agentIds: string[];
+  contentType: AgenrOpenClawMemoryPluginPublicArtifactContentType;
+}
+
+/**
+ * Public artifact provider contract used by the unified OpenClaw memory capability API.
+ */
+export interface AgenrOpenClawMemoryPluginPublicArtifactsProvider {
+  listArtifacts(params: { cfg: OpenClawConfig }): Promise<AgenrOpenClawMemoryPluginPublicArtifact[]>;
+}
+
+/**
+ * Unified memory capability registration payload used by current OpenClaw builds.
+ */
+export interface AgenrOpenClawMemoryPluginCapability {
+  promptBuilder?: AgenrOpenClawMemoryPromptSectionBuilder;
+  flushPlanResolver?: AgenrOpenClawMemoryFlushPlanResolver;
+  runtime?: AgenrOpenClawMemoryPluginRuntime;
+  publicArtifacts?: AgenrOpenClawMemoryPluginPublicArtifactsProvider;
 }
 
 /**
