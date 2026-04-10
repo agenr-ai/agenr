@@ -21,6 +21,7 @@
     "build:plugin:debug": "pnpm --filter @agenr/agenr-plugin build:debug",
     "dev": "tsup --watch",
     "internal:recall-eval-server": "pnpm run build:root && node dist/internal-recall-eval-server.js",
+    "style:audit": "bash scripts/style-audit.sh",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
