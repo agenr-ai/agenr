@@ -153,12 +153,23 @@ pnpm check
 ## Code Style
 
 - No `any` types.
+- Never add `@ts-nocheck` or broad lint suppressions by default. Fix the root cause first.
+- Prefer real types, `unknown`, or a narrow helper or adapter over `any`.
 - Errors should be descriptive and actionable.
 - Keep functions focused.
+- At external boundaries such as config, persisted JSON, CLI JSON output, and third-party responses, prefer explicit validation using existing repo helpers.
+- Prefer discriminated unions when input shape changes runtime behavior.
+- Do not use freeform strings as the source of truth for control flow when a closed union or typed code is reasonable.
+- Avoid magic sentinel values such as empty strings, empty objects, or silent `?? 0` fallbacks when they can change behavior implicitly.
 - No em-dashes - use hyphens.
+- If lazy loading is needed, use a dedicated runtime boundary and do not mix static and dynamic imports for the same module in production paths.
 - Prefer composition over inheritance.
+- Do not share behavior through prototype mutation. Prefer composition or explicit inheritance.
+- In tests, prefer per-instance stubs over prototype patching unless there is a documented reason to patch the prototype.
+- Add brief comments for tricky or non-obvious logic.
 - Use `type` imports where applicable.
 - Add Google-style JSDoc on exported functions, interfaces, and types.
+- Use American English spelling in code comments, docs, and user-facing strings.
 - Follow SOLID principles.
 
 ## Repo Workflow
