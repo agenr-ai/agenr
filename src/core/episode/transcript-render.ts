@@ -1,13 +1,15 @@
 /**
  * Minimum cleaned-message count required for episode generation.
+ *
+ * @type {number}
  */
-// eslint-disable-next-line jsdoc/require-jsdoc
 export const MIN_EPISODE_MESSAGES = 4;
 
 /**
  * Maximum transcript size retained for one episode-generation prompt.
+ *
+ * @type {number}
  */
-// eslint-disable-next-line jsdoc/require-jsdoc
 export const MAX_EPISODE_TRANSCRIPT_CHARS = 14_000;
 
 /**

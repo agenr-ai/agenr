@@ -389,7 +389,17 @@ function normalizeMode(value: UnifiedRecallMode | undefined): UnifiedRecallMode 
  * @returns True when entry-only filters were supplied.
  */
 function hasEntryScopedFilters(input: UnifiedRecallInput): boolean {
-  return Boolean(input.threshold !== undefined || (input.types?.length ?? 0) > 0 || (input.tags?.length ?? 0) > 0);
+  return Boolean(input.threshold !== undefined || hasNonEmptyArray(input.types) || hasNonEmptyArray(input.tags));
+}
+
+/**
+ * Returns whether one optional array contains at least one item.
+ *
+ * @param value - Candidate array input.
+ * @returns True when the array is present and non-empty.
+ */
+function hasNonEmptyArray<TValue>(value: TValue[] | undefined): boolean {
+  return Array.isArray(value) && value.length > 0;
 }
 
 /**

@@ -27,8 +27,9 @@ export async function discoverOpenClawTranscriptFiles(targetPath: string): Promi
 
 /**
  * Shared discovery adapter used by episode-ingest preflight.
+ *
+ * @type {{ discoverFiles: typeof discoverOpenClawTranscriptFiles }}
  */
-// eslint-disable-next-line jsdoc/require-jsdoc
 export const openClawTranscriptFiles = {
   discoverFiles: discoverOpenClawTranscriptFiles,
 };

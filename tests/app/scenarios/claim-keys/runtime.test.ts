@@ -85,6 +85,17 @@ describe("claim-key scenario runtime", () => {
     await expect(loadClaimKeyScenarioFile(filePath, tempRoot)).rejects.toThrow(/sandbox\.reset=false/iu);
   });
 
+  it("surfaces scenario JSON parse failures with the scenario path", async () => {
+    const tempRoot = await createScenarioRoot("claim-key-parse-");
+    const filePath = path.join(tempRoot, "store", "broken.json");
+
+    await writeFile(filePath, "{not valid json", "utf8");
+
+    await expect(loadClaimKeyScenarioFile(filePath, tempRoot)).rejects.toThrow(
+      new RegExp(`Invalid scenario ${escapeRegex(filePath)}: JSON parse failed`, "iu"),
+    );
+  });
+
   it("runs real store, ingest, and surgeon scenarios end to end", async () => {
     const summary = await runClaimKeyScenariosRuntime({
       ids: ["claim-keys.store.manual-key-trusted", "claim-keys.ingest.explicit-tool-key-preserved", "claim-keys.surgeon.malformed-key-normalized"],
@@ -288,6 +299,10 @@ async function createScenarioRoot(prefix: string): Promise<string> {
   ]);
 
   return root;
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 describe("default scenario root", () => {

@@ -3,10 +3,12 @@ import { randomUUID } from "node:crypto";
 import type { Row } from "@libsql/client";
 
 import type { SurgeonRunAction } from "../../core/surgeon/domain/action-types.js";
-import type { SurgeonPassType } from "../../core/surgeon/domain/pass-types.js";
+import { isSurgeonPassType, type SurgeonPassType } from "../../core/surgeon/domain/pass-types.js";
 import type { SurgeonCompletionSummary, SurgeonRunProposal, SurgeonRunStatus } from "../../core/surgeon/types.js";
 import { readBoolean, readNumber, readOptionalString, readRequiredString } from "./row-mapping.js";
 import type { SqlExecutor } from "./queries.js";
+
+const SURGEON_RUN_STATUSES = ["running", "completed", "failed", "aborted", "budget_exhausted", "cost_capped"] as const;
 
 /**
  * Persisted surgeon run metadata row.
@@ -358,16 +360,16 @@ export async function getDailySurgeonCost(executor: SqlExecutor, now = new Date(
  * @returns Hydrated surgeon run.
  */
 function mapRunRow(row: Row): SurgeonRun {
-  const passType = readOptionalString(row, "pass_type") ?? "retirement";
-  const status = readOptionalString(row, "status") ?? "running";
+  const passType = parseStoredSurgeonPassType(readOptionalString(row, "pass_type"));
+  const status = parseStoredSurgeonRunStatus(readOptionalString(row, "status"));
 
   return {
     id: readRequiredString(row, "id"),
-    passType: passType as SurgeonPassType,
+    passType,
     project: readOptionalString(row, "project") ?? null,
     startedAt: readRequiredString(row, "started_at"),
     completedAt: readOptionalString(row, "completed_at") ?? null,
-    status: status as SurgeonRunStatus,
+    status,
     inputTokens: readNumber(row, "input_tokens", 0),
     outputTokens: readNumber(row, "output_tokens", 0),
     estimatedCostUsd: readNumber(row, "estimated_cost_usd", 0),
@@ -393,7 +395,7 @@ function mapActionRow(row: Row): SurgeonRunAction {
     id: readRequiredString(row, "id"),
     runId: readRequiredString(row, "run_id"),
     actionType: readRequiredString(row, "action_type") as SurgeonRunAction["actionType"],
-    entryIds: parseJsonValue<string[]>(readOptionalString(row, "entry_ids"), []),
+    entryIds: parseJsonStringArray(readOptionalString(row, "entry_ids")),
     reasoning: readRequiredString(row, "reasoning"),
     recallDelta: parseJsonValue<SurgeonRunAction["recallDelta"]>(readOptionalString(row, "recall_delta"), null),
     details: parseJsonRecord(readOptionalString(row, "details_json")),
@@ -414,9 +416,9 @@ function mapProposalRow(row: Row): SurgeonRunProposal {
     groupId: readRequiredString(row, "group_id"),
     issueKind: readRequiredString(row, "issue_kind"),
     scope: readRequiredString(row, "scope") as SurgeonRunProposal["scope"],
-    entryIds: parseJsonValue<string[]>(readOptionalString(row, "entry_ids"), []),
-    currentClaimKeys: parseJsonValue<string[]>(readOptionalString(row, "current_claim_keys"), []),
-    proposedClaimKeys: parseJsonValue<string[]>(readOptionalString(row, "proposed_claim_keys"), []),
+    entryIds: parseJsonStringArray(readOptionalString(row, "entry_ids")),
+    currentClaimKeys: parseJsonStringArray(readOptionalString(row, "current_claim_keys")),
+    proposedClaimKeys: parseJsonStringArray(readOptionalString(row, "proposed_claim_keys")),
     rationale: readRequiredString(row, "rationale"),
     confidence: readNumber(row, "confidence", 0),
     source: readRequiredString(row, "source"),
@@ -458,6 +460,57 @@ function parseJsonRecord(raw: string | undefined): Record<string, unknown> | nul
   }
 
   return parsed as Record<string, unknown>;
+}
+
+/**
+ * Parses a stored JSON array and keeps only string members.
+ *
+ * @param raw - JSON array payload from storage.
+ * @returns Filtered string array, or an empty array when invalid.
+ */
+function parseJsonStringArray(raw: string | undefined): string[] {
+  const parsed = parseJsonValue<unknown>(raw, []);
+  if (!Array.isArray(parsed)) {
+    return [];
+  }
+
+  return parsed.filter((value): value is string => typeof value === "string");
+}
+
+/**
+ * Parses one persisted surgeon pass identifier with a safe legacy fallback.
+ *
+ * @param value - Raw stored pass type.
+ * @returns Valid surgeon pass type.
+ */
+function parseStoredSurgeonPassType(value: string | undefined): SurgeonPassType {
+  if (value === undefined) {
+    return "retirement";
+  }
+
+  if (isSurgeonPassType(value)) {
+    return value;
+  }
+
+  throw new Error(`Invalid surgeon pass type ${JSON.stringify(value)} in surgeon_runs.pass_type.`);
+}
+
+/**
+ * Parses one persisted surgeon status code with a safe legacy fallback.
+ *
+ * @param value - Raw stored status string.
+ * @returns Valid surgeon run status.
+ */
+function parseStoredSurgeonRunStatus(value: string | undefined): SurgeonRunStatus {
+  if (value === undefined) {
+    return "running";
+  }
+
+  if ((SURGEON_RUN_STATUSES as readonly string[]).includes(value)) {
+    return value as SurgeonRunStatus;
+  }
+
+  throw new Error(`Invalid surgeon run status ${JSON.stringify(value)} in surgeon_runs.status.`);
 }
 
 /**

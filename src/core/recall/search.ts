@@ -841,11 +841,11 @@ function parseAroundDate(value: string): Date | null {
  * @returns Effective result limit.
  */
 function normalizeLimit(value?: number): number {
-  if (!Number.isFinite(value)) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
     return 10;
   }
 
-  return Math.max(0, Math.floor(value ?? 10));
+  return Math.max(0, Math.floor(value));
 }
 
 /**
@@ -855,11 +855,11 @@ function normalizeLimit(value?: number): number {
  * @returns Effective threshold.
  */
 function normalizeThreshold(value?: number): number {
-  if (!Number.isFinite(value)) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
     return 0;
   }
 
-  return Math.min(1, Math.max(0, value ?? 0));
+  return Math.min(1, Math.max(0, value));
 }
 
 /**
@@ -869,11 +869,11 @@ function normalizeThreshold(value?: number): number {
  * @returns Normalized budget, or null when no budget should apply.
  */
 function normalizeBudget(value?: number): number | null {
-  if (!Number.isFinite(value)) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
     return null;
   }
 
-  return Math.max(0, value ?? 0);
+  return Math.max(0, value);
 }
 
 /**
@@ -883,11 +883,11 @@ function normalizeBudget(value?: number): number | null {
  * @returns Effective radius value.
  */
 function normalizeAroundRadius(value?: number): number {
-  if (!Number.isFinite(value) || (value ?? 0) <= 0) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
     return 14;
   }
 
-  return value!;
+  return value;
 }
 
 /** Returns a non-negative elapsed millisecond count for one stage. */

@@ -24,8 +24,9 @@ export interface EpisodeSummaryOutput {
 
 /**
  * System prompt used for episodic summary generation.
+ *
+ * @type {string}
  */
-// eslint-disable-next-line jsdoc/require-jsdoc
 export const EPISODE_SUMMARY_SYSTEM_PROMPT = [
   "You write strict JSON episode summaries for historical recall.",
   "The transcript can be about any topic - technical work, casual conversation, planning, research, creative projects, life events, or anything else.",

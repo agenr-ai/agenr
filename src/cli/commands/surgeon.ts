@@ -238,7 +238,7 @@ function normalizeSurgeonRunCommand(options: SurgeonRunCommandOptions): Normaliz
     claimKeyPrefix: normalizeOptionalString(options.claimKeyPrefix),
     entryIds: normalizeStringList(options.entryId),
     includeInactive: options.includeInactive === true,
-    budget: options.budget ?? 0,
+    budget: normalizeOptionalBudget(options.budget),
     contextLimit: options.contextLimit,
     skipEvaluatedDays: options.skipEvaluatedDays,
     apply: options.apply === true,
@@ -498,11 +498,11 @@ function formatProgressEvent(event: SurgeonProgressEvent, verbose: boolean): str
       case "load_working_set_start":
         return "Loading claim-key-quality working set.";
       case "load_working_set_complete":
-        return `Working set loaded: ${event.workingSetSize ?? 0} entries.`;
+        return `Working set loaded: ${formatOptionalCount(event.workingSetSize)} entries.`;
       case "load_pass_context_start":
         return `Loading ${event.passType} pass context.`;
       case "load_pass_context_complete":
-        return `Pass context ready: ${event.workingSetSize ?? 0} entries in scope.`;
+        return `Pass context ready: ${formatOptionalCount(event.workingSetSize)} entries in scope.`;
       case "pass_start":
         return `Starting ${event.passType} pass.`;
       default:
@@ -528,8 +528,8 @@ function formatProgressEvent(event: SurgeonProgressEvent, verbose: boolean): str
 
   const stageLabel = formatClaimKeyQualityStage(event.stage);
   if (event.status === "started") {
-    const previewQueued = event.previewQueued ?? 0;
-    const previewTotal = event.previewTotal ?? 0;
+    const previewQueued = formatOptionalCount(event.previewQueued);
+    const previewTotal = formatOptionalCount(event.previewTotal);
     if (previewTotal > 0) {
       const concurrency = event.previewConcurrency ? ` | preview concurrency ${event.previewConcurrency}` : "";
       return `Claim-key-quality stage ${stageLabel}: ${event.total} ${event.unitLabel} | preview queued ${previewQueued}/${previewTotal}${concurrency}.`;
@@ -540,8 +540,8 @@ function formatProgressEvent(event: SurgeonProgressEvent, verbose: boolean): str
 
   const appliedTotal =
     event.counts.appliedNormalizations + event.counts.appliedBackfills + event.counts.appliedMetadataRewrites + event.counts.appliedEntityFamilyConvergences;
-  const previewTotal = event.previewTotal ?? 0;
-  const previewCompleted = event.previewCompleted ?? 0;
+  const previewTotal = formatOptionalCount(event.previewTotal);
+  const previewCompleted = formatOptionalCount(event.previewCompleted);
   const stageProgress =
     event.status === "preview_progress" && previewTotal > 0
       ? `Claim-key-quality ${stageLabel} preview ${previewCompleted}/${previewTotal} ${event.unitLabel} | decided ${event.completed}/${event.total}`
@@ -637,4 +637,24 @@ function formatUsd(value: number): string {
  */
 function formatUnknownError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Normalizes the optional CLI budget value while keeping the existing zero-default behavior.
+ *
+ * @param value - Parsed budget flag value.
+ * @returns Numeric budget cap used by the runtime layer.
+ */
+function normalizeOptionalBudget(value: number | undefined): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+/**
+ * Formats optional progress counts with a stable zero fallback for missing events.
+ *
+ * @param value - Optional emitted count.
+ * @returns Finite count value for CLI rendering.
+ */
+function formatOptionalCount(value: number | undefined): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }

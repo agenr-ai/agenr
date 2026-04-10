@@ -1,4 +1,4 @@
-/* eslint-disable jsdoc/require-jsdoc */
+/* eslint-disable jsdoc/require-jsdoc -- this pass has many private local helpers; exported entry points remain documented. */
 
 import { randomUUID } from "node:crypto";
 
@@ -51,6 +51,7 @@ import type {
   ClaimKeyQualityRepairCounts,
   ClaimKeyQualityShadowBucket,
   ClaimKeyQualityShadowBucketSummary,
+  ClaimKeyQualityCircuitBreakerKind,
   SurgeonCompletionSummary,
   SurgeonRunProposal,
   SurgeonRunStatus,
@@ -168,7 +169,7 @@ interface ClaimKeyCircuitBreakerState {
 }
 
 interface ClaimKeyCircuitBreakerTrip {
-  kind: string;
+  kind: ClaimKeyQualityCircuitBreakerKind;
   message: string;
 }
 
@@ -1532,7 +1533,7 @@ function createClaimKeyQualityProgressTracker(input: {
         previewConcurrency?: number;
       },
     ): void {
-      const previewTotal = Math.max(0, options?.previewTotal ?? 0);
+      const previewTotal = normalizeOptionalNonNegativeCount(options?.previewTotal);
       activeStage =
         total > 0
           ? {
@@ -2368,6 +2369,14 @@ function maxCounterValue(counter: Map<string, number>): number {
   }
 
   return max;
+}
+
+function normalizeOptionalNonNegativeCount(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.floor(value));
 }
 
 function maxCounterKey(counter: Map<string, number>): string | null {

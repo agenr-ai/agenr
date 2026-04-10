@@ -118,11 +118,11 @@ function createSimulationRecallPorts(inner: RecallPorts, excludeEntryId?: string
  * @returns Safe simulated recall limit.
  */
 function normalizeLimit(value: number | undefined): number {
-  if (!Number.isFinite(value) || (value ?? 0) <= 0) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
     return 10;
   }
 
-  return Math.floor(value as number);
+  return Math.floor(value);
 }
 
 /**

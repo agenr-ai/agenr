@@ -93,11 +93,11 @@ export function createQueryCandidatesTool(deps: SurgeonToolDeps): AgentTool<type
  * @returns Safe candidate page size.
  */
 function normalizeLimit(value: number | undefined): number {
-  if (!Number.isFinite(value) || (value ?? 0) <= 0) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
     return 20;
   }
 
-  return Math.floor(value as number);
+  return Math.floor(value);
 }
 
 /**
@@ -107,11 +107,11 @@ function normalizeLimit(value: number | undefined): number {
  * @returns Safe non-negative page offset.
  */
 function normalizeOffset(value: number | undefined): number {
-  if (!Number.isFinite(value) || (value ?? 0) < 0) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
     return 0;
   }
 
-  return Math.floor(value as number);
+  return Math.floor(value);
 }
 
 /**

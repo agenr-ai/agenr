@@ -68,10 +68,10 @@ export function createBudgetTracker(options: { contextLimit: number; costCapUsd:
 
   return {
     addUsage(usage: Usage): void {
-      const input = Math.max(0, usage.input ?? 0);
+      const input = normalizeUsageAmount(usage.input);
       inputTokens += input;
-      outputTokens += Math.max(0, usage.output ?? 0);
-      costUsd += Math.max(0, usage.cost?.total ?? 0);
+      outputTokens += normalizeUsageAmount(usage.output);
+      costUsd += normalizeUsageAmount(usage.cost?.total);
       lastInputTokens = input;
     },
 
@@ -113,4 +113,18 @@ export function createBudgetTracker(options: { contextLimit: number; costCapUsd:
       };
     },
   };
+}
+
+/**
+ * Normalizes an optional usage amount into a finite non-negative number.
+ *
+ * @param value - Reported usage amount.
+ * @returns Safe numeric amount for budget tracking.
+ */
+function normalizeUsageAmount(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return 0;
+  }
+
+  return Math.max(0, value);
 }

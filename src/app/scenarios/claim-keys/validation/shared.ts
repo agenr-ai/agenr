@@ -1,4 +1,5 @@
 import type {
+  ClaimKeyQualityCircuitBreakerKind,
   ClaimKeyQualityPassSummary,
   ClaimKeyQualityRepairCounts,
   ClaimKeyQualityShadowBucket,
@@ -20,6 +21,11 @@ const SUPPORTED_PROPOSAL_SCOPES = ["single_entry", "cluster"] as const;
 const SURGEON_RUN_STATUSES = ["running", "completed", "failed", "aborted", "budget_exhausted", "cost_capped"] as const;
 const CLAIM_KEY_QUALITY_EXECUTION_STYLES = ["autonomous", "targeted"] as const;
 const CLAIM_KEY_QUALITY_SUPPORT_CLASSES = ["trusted_family_grounded_alignment"] as const;
+const CLAIM_KEY_QUALITY_CIRCUIT_BREAKER_KINDS = [
+  "claim_key_concentration",
+  "entity_prefix_concentration",
+  "collision_spike",
+] as const satisfies readonly ClaimKeyQualityCircuitBreakerKind[];
 const CLAIM_KEY_QUALITY_SHADOW_BUCKETS = [
   "high_density_grounded_family",
   "large_grounding_diluted_grounded_family",
@@ -668,7 +674,7 @@ function readCircuitBreaker(value: unknown, label: string, filePath: string): De
   const record = readObject(value, label, filePath, circuitBreakerKeys);
 
   return {
-    ...(record.kind !== undefined ? { kind: readRequiredString(record.kind, `${label}.kind`, filePath) } : {}),
+    ...(record.kind !== undefined ? { kind: readRequiredEnum(record.kind, `${label}.kind`, filePath, CLAIM_KEY_QUALITY_CIRCUIT_BREAKER_KINDS) } : {}),
     ...(record.message !== undefined ? { message: readRequiredString(record.message, `${label}.message`, filePath) } : {}),
   };
 }

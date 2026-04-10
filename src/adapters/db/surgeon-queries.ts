@@ -628,13 +628,13 @@ function buildCandidateFilter(query: SurgeonCandidateQuery): CandidateFilterStat
     args.push(normalizeNonNegativeInteger(query.importanceMax as number));
   }
 
-  if (Number.isFinite(query.minAgeDays) && (query.minAgeDays ?? 0) > 0) {
+  if (typeof query.minAgeDays === "number" && Number.isFinite(query.minAgeDays) && query.minAgeDays > 0) {
     const minAgeCutoffIso = new Date(now.getTime() - normalizeNonNegativeInteger(query.minAgeDays as number) * DAY_MS).toISOString();
     whereClauses.push("e.created_at <= ?");
     args.push(minAgeCutoffIso);
   }
 
-  if (Number.isFinite(query.skipRecentlyEvaluatedDays) && (query.skipRecentlyEvaluatedDays ?? 0) > 0) {
+  if (typeof query.skipRecentlyEvaluatedDays === "number" && Number.isFinite(query.skipRecentlyEvaluatedDays) && query.skipRecentlyEvaluatedDays > 0) {
     const skipCutoffIso = new Date(now.getTime() - normalizeNonNegativeInteger(query.skipRecentlyEvaluatedDays as number) * DAY_MS).toISOString();
     whereClauses.push(`NOT EXISTS (
       SELECT 1
@@ -978,11 +978,11 @@ function parseTimestamp(value: string): number {
  * @returns Safe list limit.
  */
 function normalizeLimit(limit: number | undefined): number {
-  if (!Number.isFinite(limit) || (limit ?? 0) <= 0) {
+  if (typeof limit !== "number" || !Number.isFinite(limit) || limit <= 0) {
     return 20;
   }
 
-  return Math.floor(limit as number);
+  return Math.floor(limit);
 }
 
 /**
@@ -992,11 +992,11 @@ function normalizeLimit(limit: number | undefined): number {
  * @returns Safe list limit, or null when no explicit limit was requested.
  */
 function normalizeOptionalLimit(limit: number | undefined): number | null {
-  if (!Number.isFinite(limit) || (limit ?? 0) <= 0) {
+  if (typeof limit !== "number" || !Number.isFinite(limit) || limit <= 0) {
     return null;
   }
 
-  return Math.floor(limit as number);
+  return Math.floor(limit);
 }
 
 /**
@@ -1006,11 +1006,11 @@ function normalizeOptionalLimit(limit: number | undefined): number | null {
  * @returns Safe list offset.
  */
 function normalizeOffset(offset: number | undefined): number {
-  if (!Number.isFinite(offset) || (offset ?? 0) <= 0) {
+  if (typeof offset !== "number" || !Number.isFinite(offset) || offset <= 0) {
     return 0;
   }
 
-  return Math.floor(offset as number);
+  return Math.floor(offset);
 }
 
 /**

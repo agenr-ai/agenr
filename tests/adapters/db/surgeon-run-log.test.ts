@@ -210,6 +210,114 @@ describe("surgeon run log", () => {
     ]);
   });
 
+  it("filters non-string JSON array members from stored action and proposal payloads", async () => {
+    const client = await createTestClient(clients);
+    const runId = await createSurgeonRun(client, {
+      passType: "claim_key_quality",
+      dryRun: true,
+      startedAt: "2026-03-29T12:00:00.000Z",
+    });
+
+    await client.execute({
+      sql: `
+        INSERT INTO surgeon_run_actions (
+          id,
+          run_id,
+          action_type,
+          entry_ids,
+          reasoning,
+          recall_delta,
+          details_json,
+          created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      args: [
+        "action-invalid-array",
+        runId,
+        "skip",
+        '["entry-a",42,null,"entry-b"]',
+        "Malformed row from legacy storage.",
+        null,
+        null,
+        "2026-03-29T12:01:00.000Z",
+      ],
+    });
+    await client.execute({
+      sql: `
+        INSERT INTO surgeon_run_proposals (
+          id,
+          run_id,
+          group_id,
+          issue_kind,
+          scope,
+          entry_ids,
+          current_claim_keys,
+          proposed_claim_keys,
+          rationale,
+          confidence,
+          source,
+          eligible_for_apply,
+          created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      args: [
+        "proposal-invalid-array",
+        runId,
+        "group-1",
+        "mixed_claim_key_group",
+        "cluster",
+        '["entry-a",false,"entry-b"]',
+        '["jim/home_city",3]',
+        '["jim/home_city",null]',
+        "Legacy row with mixed JSON types.",
+        0.5,
+        "manual",
+        0,
+        "2026-03-29T12:02:00.000Z",
+      ],
+    });
+
+    await expect(getSurgeonRunActions(client, runId)).resolves.toEqual([
+      expect.objectContaining({
+        id: "action-invalid-array",
+        entryIds: ["entry-a", "entry-b"],
+      }),
+    ]);
+    await expect(getSurgeonRunProposals(client, runId)).resolves.toEqual([
+      expect.objectContaining({
+        id: "proposal-invalid-array",
+        entryIds: ["entry-a", "entry-b"],
+        currentClaimKeys: ["jim/home_city"],
+        proposedClaimKeys: ["jim/home_city"],
+      }),
+    ]);
+  });
+
+  it("rejects invalid stored surgeon pass and status codes", async () => {
+    const client = await createTestClient(clients);
+
+    await client.execute({
+      sql: `
+        INSERT INTO surgeon_runs (
+          id,
+          pass_type,
+          project,
+          started_at,
+          status,
+          model,
+          dry_run,
+          config_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      args: ["invalid-run", "not_a_real_pass", null, "2026-03-29T09:00:00.000Z", "not_a_real_status", null, 0, null],
+    });
+
+    await expect(getSurgeonRunHistory(client, 10)).rejects.toThrow(/Invalid surgeon pass type|Invalid surgeon run status/i);
+  });
+
   it("returns recent history in descending order and sums last-day cost", async () => {
     const client = await createTestClient(clients);
     const now = new Date("2026-03-29T12:00:00.000Z");

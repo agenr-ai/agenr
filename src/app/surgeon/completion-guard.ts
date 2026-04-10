@@ -140,14 +140,14 @@ export function createSurgeonCompletionGuardState(input: {
   supersessionClaimKeyClusters?: number;
   supersessionSubjectClusters?: number;
 }): SurgeonCompletionGuardState {
-  const supersessionClaimKeyClusters = normalizeCount(input.supersessionClaimKeyClusters ?? 0);
-  const supersessionSubjectClusters = normalizeCount(input.supersessionSubjectClusters ?? 0);
+  const supersessionClaimKeyClusters = normalizeOptionalCount(input.supersessionClaimKeyClusters);
+  const supersessionSubjectClusters = normalizeOptionalCount(input.supersessionSubjectClusters);
 
   return {
     rejectionCounts: new Map<string, number>(),
     initialHealth: {
       totalEntries: normalizeCount(input.totalEntries),
-      retirementCandidates: normalizeCount(input.retirementCandidates ?? 0),
+      retirementCandidates: normalizeOptionalCount(input.retirementCandidates),
       supersessionClaimKeyClusters,
       supersessionSubjectClusters,
     },
@@ -357,4 +357,14 @@ function normalizeCount(value: number): number {
   }
 
   return Math.max(0, Math.floor(value));
+}
+
+/**
+ * Normalizes an optional count into a safe non-negative integer.
+ *
+ * @param value - Optional count input.
+ * @returns Zero when absent, otherwise the normalized count.
+ */
+function normalizeOptionalCount(value: number | undefined): number {
+  return value === undefined ? 0 : normalizeCount(value);
 }

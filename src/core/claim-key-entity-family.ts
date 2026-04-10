@@ -1,4 +1,4 @@
-/* eslint-disable jsdoc/require-jsdoc */
+/* eslint-disable jsdoc/require-jsdoc -- private scoring helpers are intentionally dense; exported API is documented. */
 
 import { inspectClaimKey, normalizeClaimKeySegment } from "./claim-key.js";
 import type { ClaimKeySource, ClaimKeyStatus, Entry } from "./types.js";

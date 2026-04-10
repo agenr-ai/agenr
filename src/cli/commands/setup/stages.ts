@@ -42,8 +42,9 @@ export interface SetupModelStageDefinition {
 
 /**
  * Single registry for every setup model stage.
+ *
+ * @type {readonly SetupModelStageDefinition[]}
  */
-// eslint-disable-next-line jsdoc/require-jsdoc
 export const SETUP_MODEL_STAGES: readonly SetupModelStageDefinition[] = [
   {
     id: "extraction",

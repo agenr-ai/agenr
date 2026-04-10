@@ -7,34 +7,39 @@ import type { AgenrOpenClawServices } from "../types.js";
 
 /**
  * Human-readable guidance shown in the store tool schema.
+ *
+ * @type {string}
  */
-// eslint-disable-next-line jsdoc/require-jsdoc
 export const ENTRY_TYPE_DESCRIPTION =
   "Knowledge type to store. Use fact for durable truth about a person, system, place, or how something works. Use decision for a standing rule, constraint, policy, or chosen approach future sessions should follow - not a progress update or completed action. Use preference for what someone likes, wants, values, or wants avoided. Use lesson for a non-obvious takeaway learned from experience that should change future behavior. Use milestone for a rare one-time event with durable future significance - not ordinary execution progress. Use relationship for a meaningful durable connection between people, groups, or systems.";
 
 /**
  * Human-readable guidance shown in expiry-related tool schemas.
+ *
+ * @type {string}
  */
-// eslint-disable-next-line jsdoc/require-jsdoc
 export const EXPIRY_DESCRIPTION =
   "Lifetime bucket: core (always injected at session start, use sparingly), permanent (durable and recalled on demand), or temporary (short-horizon).";
 
 /**
  * Human-readable guidance shown in the update tool schema.
+ *
+ * @type {string}
  */
-// eslint-disable-next-line jsdoc/require-jsdoc
 export const UPDATE_EXPIRY_DESCRIPTION = `${EXPIRY_DESCRIPTION} Accepted values: ${EXPIRY_LEVELS.join(", ")}.`;
 
 /**
  * Default recall limit used when building log summaries.
+ *
+ * @type {number}
  */
-// eslint-disable-next-line jsdoc/require-jsdoc
 export const DEFAULT_RECALL_LIMIT = 10;
 
 /**
  * Supported recall-mode values accepted by `agenr_recall`.
+ *
+ * @type {readonly string[]}
  */
-// eslint-disable-next-line jsdoc/require-jsdoc
 export const RECALL_MODES = ["auto", "entries", "episodes"] as const;
 
 const RESULT_SUBJECT_LOG_LIMIT = 5;

@@ -37,7 +37,7 @@ export async function loadClaimKeyScenarios(rootDir = getDefaultClaimKeyScenario
  * @returns Validated scenario object.
  */
 export async function loadClaimKeyScenarioFile(filePath: string, rootDir = getDefaultClaimKeyScenarioRoot()): Promise<ClaimKeyScenario> {
-  const raw = JSON.parse(await readFile(filePath, "utf8")) as unknown;
+  const raw = await readScenarioJsonFile(filePath);
   return validateClaimKeyScenario(raw, filePath, rootDir);
 }
 
@@ -121,4 +121,21 @@ async function discoverScenarioFiles(rootDir: string): Promise<string[]> {
   }
 
   return files.sort();
+}
+
+/**
+ * Reads one scenario JSON file with contextual parse failures.
+ *
+ * @param filePath - Absolute scenario file path.
+ * @returns Parsed raw JSON payload.
+ */
+async function readScenarioJsonFile(filePath: string): Promise<unknown> {
+  try {
+    return JSON.parse(await readFile(filePath, "utf8")) as unknown;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Invalid scenario ${filePath}: JSON parse failed - ${message}`, {
+      cause: error,
+    });
+  }
 }

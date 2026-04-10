@@ -46,6 +46,11 @@ export type ClaimKeyQualityShadowBucket =
   | "other_grounded_family_alignment";
 
 /**
+ * Stable machine-readable circuit-breaker categories for claim-key-quality runs.
+ */
+export type ClaimKeyQualityCircuitBreakerKind = "claim_key_concentration" | "entity_prefix_concentration" | "collision_spike";
+
+/**
  * Summary counts for one threshold-only shadow-evaluation bucket.
  */
 export interface ClaimKeyQualityShadowBucketSummary {
@@ -94,7 +99,7 @@ export interface ClaimKeyQualityPassSummary {
   counts: ClaimKeyQualityRepairCounts;
   shadowSiblingSlotResonance?: ClaimKeyQualitySiblingSlotResonanceShadowSummary | null;
   circuitBreaker?: {
-    kind: string;
+    kind: ClaimKeyQualityCircuitBreakerKind;
     message: string;
   } | null;
 }

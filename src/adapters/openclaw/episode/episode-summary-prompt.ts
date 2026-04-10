@@ -8,6 +8,7 @@ export {
 /**
  * Fixed generator version stored on episodic-memory rows written by the
  * OpenClaw adapter.
+ *
+ * @type {string}
  */
-// eslint-disable-next-line jsdoc/require-jsdoc
 export const OPENCLAW_EPISODE_GENERATOR_VERSION = "openclaw-episodic-summary-v1";

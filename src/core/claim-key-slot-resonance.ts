@@ -1,4 +1,4 @@
-/* eslint-disable jsdoc/require-jsdoc */
+/* eslint-disable jsdoc/require-jsdoc -- private lexical helpers are intentionally compact; exported API is documented. */
 
 import { compactClaimKey, normalizeClaimKey } from "./claim-key.js";
 

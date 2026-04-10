@@ -125,6 +125,18 @@ describe("claim-key scenario fixture loader", () => {
     ]);
     await expect(loadClaimExtractionFixtureResponses(root, invalidPath)).rejects.toThrow(/entity, attribute, and confidence/i);
   });
+
+  it("surfaces JSON parse failures with the fixture path", async () => {
+    const root = await createScenarioRoot();
+    const relativePath = "fixtures/bad.json";
+    const absolutePath = path.join(root, relativePath);
+
+    await writeFile(absolutePath, "{not valid json", "utf8");
+
+    await expect(loadSeedFixtureEntries(root, relativePath)).rejects.toThrow(
+      new RegExp(`Invalid fixture file ${escapeRegex(absolutePath)}: JSON parse failed`, "iu"),
+    );
+  });
 });
 
 async function createScenarioRoot(): Promise<string> {
@@ -138,4 +150,8 @@ async function writeJsonFixture(root: string, relativePath: string, value: unkno
   const absolutePath = path.join(root, relativePath);
   await mkdir(path.dirname(absolutePath), { recursive: true });
   await writeFile(absolutePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }

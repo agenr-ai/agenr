@@ -213,7 +213,14 @@ async function readArrayFixture(rootDir: string, relativePath: string | undefine
  * @returns Parsed JSON value.
  */
 async function readJsonFile(filePath: string): Promise<unknown> {
-  return JSON.parse(await readFile(filePath, "utf8")) as unknown;
+  try {
+    return JSON.parse(await readFile(filePath, "utf8")) as unknown;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Invalid fixture file ${filePath}: JSON parse failed - ${message}`, {
+      cause: error,
+    });
+  }
 }
 
 /**
