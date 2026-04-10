@@ -22,7 +22,7 @@
   },
   "dependencies": {
     "@libsql/client": "^0.17.2",
-    "openclaw": "^2026.3.24"
+    "openclaw": "^2026.4.9"
   },
   "engines": {
     "node": ">=24"
