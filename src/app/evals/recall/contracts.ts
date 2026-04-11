@@ -1,7 +1,7 @@
 import type { RecallInput, RecallOutput } from "../../../core/recall/types.js";
 import type { RecallClaimKeyTrace, RecallDegradedTrace, RecallNoResultReason } from "../../../core/recall/trace.js";
 import type { ClaimKeySource, ClaimKeyStatus, ClaimSupportMode, EntryType, Expiry } from "../../../core/types.js";
-import type { ClaimSlotPolicy } from "../../../core/claim-slot-policy.js";
+import type { ClaimSlotPolicy, ClaimSlotPolicyConfig } from "../../../core/claim-slot-policy.js";
 import type {
   ClaimCentricClaimStatus,
   ClaimCentricFreshness,
@@ -9,7 +9,7 @@ import type {
   ClaimCentricProvenance,
   ClaimCentricRecallExplanation,
 } from "../../recall/claim-centric.js";
-import type { UnifiedRecallRouting, UnifiedRecallTimeWindow } from "../../recall/types.js";
+import type { ClaimTransitionExplanation, UnifiedRecallMode, UnifiedRecallRouting, UnifiedRecallTimeWindow } from "../../recall/types.js";
 
 /**
  * Recall execution path exposed by the eval seam.
@@ -93,6 +93,26 @@ export type RecallEvalQueryRequest = Pick<
 >;
 
 /**
+ * Narrow unified-recall memory-policy block aligned with the OpenClaw adapter.
+ */
+export interface RecallEvalUnifiedMemoryPolicyRequest {
+  /** Optional runtime slot-policy overrides keyed by attribute head. */
+  slotPolicies?: ClaimSlotPolicyConfig;
+}
+
+/**
+ * Unified-recall caller context that mirrors the real OpenClaw adapter surface.
+ */
+export interface RecallEvalUnifiedRequest {
+  /** Optional unified routing mode. */
+  mode?: UnifiedRecallMode;
+  /** Optional session key forwarded into underlying entry recall telemetry. */
+  sessionKey?: string;
+  /** Optional memory-policy overrides used by unified recall shaping. */
+  memoryPolicy?: RecallEvalUnifiedMemoryPolicyRequest;
+}
+
+/**
  * Optional output controls for the recall eval execution seam.
  */
 export interface RecallEvalCaseOptions {
@@ -120,6 +140,8 @@ export interface RecallEvalCaseRequest {
   memoryPool: RecallEvalFixtureEntry[];
   /** Recall query configuration for the case under test. */
   recallRequest: RecallEvalQueryRequest;
+  /** Unified-only caller context used when the seam exercises unified recall. */
+  unified?: RecallEvalUnifiedRequest;
   /** Optional response-shaping flags for diagnostics and timings. */
   options?: RecallEvalCaseOptions;
 }
@@ -177,6 +199,100 @@ export interface RecallEvalCaseResult {
   entries: RecallEvalResultEntry[];
   /** Convenience list of ranked entry IDs in output order. */
   entryIds: string[];
+}
+
+/**
+ * Claim-centric row metadata exposed separately from the primary result rows.
+ */
+export interface RecallEvalProjectedEntryMetadata {
+  /** Stable entry identifier mirrored for machine-readable assertions. */
+  entryId: string;
+  /** Grouping key used for claim-family views. */
+  familyKey: string;
+  /** Shared claim key when the row belongs to a claim family. */
+  claimKey?: string;
+  /** Runtime slot-policy class used for read-time shaping. */
+  slotPolicy: ClaimSlotPolicy;
+  /** High-level current vs historical state label. */
+  memoryState: ClaimCentricMemoryState;
+  /** Lifecycle label for trust surfaces. */
+  claimStatus: ClaimCentricClaimStatus;
+  /** Freshness metadata surfaced with the recalled row. */
+  freshness: ClaimCentricFreshness;
+  /** Provenance cues persisted on the recalled row. */
+  provenance: ClaimCentricProvenance;
+  /** Concise reason the row surfaced in recall. */
+  whySurfaced: ClaimCentricRecallExplanation;
+}
+
+/**
+ * Compact family-member summary used in claim-family metadata.
+ */
+export interface RecallEvalClaimFamilyEntryMetadata {
+  /** Stable entry identifier for the family member. */
+  id: string;
+  /** High-level current vs historical state label. */
+  memoryState: ClaimCentricMemoryState;
+  /** Lifecycle label for trust surfaces. */
+  claimStatus: ClaimCentricClaimStatus;
+}
+
+/**
+ * Compact claim-family metadata emitted for unified recall assertions.
+ */
+export interface RecallEvalClaimFamilyMetadata {
+  /** Grouping key shared by related recall rows. */
+  familyKey: string;
+  /** Shared claim key when the family is keyed. */
+  claimKey?: string;
+  /** Runtime slot-policy class used while interpreting the family. */
+  slotPolicy: ClaimSlotPolicy;
+  /** Family subject shown to callers. */
+  subject: string;
+  /** Highest-ranked row in the family. */
+  primaryEntryId: string;
+  /** Compact family-member summaries in ranked order. */
+  entries: RecallEvalClaimFamilyEntryMetadata[];
+}
+
+/**
+ * Product-facing claim-centric metadata emitted by the seam.
+ */
+export interface RecallEvalClaimMetadata {
+  /** Flat projected rows in ranked order. */
+  projectedEntries: RecallEvalProjectedEntryMetadata[];
+  /** Grouped claim families when unified recall produced them. */
+  entryFamilies?: RecallEvalClaimFamilyMetadata[];
+  /** Compact transition summaries when unified recall produced them. */
+  transitions?: ClaimTransitionExplanation[];
+}
+
+/**
+ * Product-facing unified recall metadata emitted by the seam.
+ */
+export interface RecallEvalUnifiedMetadata {
+  /** Router metadata explaining the queried sources and intent. */
+  routing: UnifiedRecallRouting;
+  /** Optional resolved time-window metadata from unified recall. */
+  timeWindow?: UnifiedRecallTimeWindow;
+  /** Optional explicit as-of reference point echoed by unified recall. */
+  asOf?: string;
+  /** User-facing notices returned by unified recall. */
+  notices: string[];
+  /** Number of episode results returned alongside entries. */
+  episodeCount: number;
+}
+
+/**
+ * Product-facing response metadata emitted separately from execution diagnostics.
+ */
+export interface RecallEvalCaseMetadata {
+  /** Which top-level recall path produced the response. */
+  path: RecallEvalPath;
+  /** Claim-centric metadata shared across core and unified paths. */
+  claim: RecallEvalClaimMetadata;
+  /** Unified-only product metadata when the seam used the unified path. */
+  unified?: RecallEvalUnifiedMetadata;
 }
 
 /**
@@ -301,23 +417,6 @@ export interface RecallEvalCandidateCounts {
 }
 
 /**
- * Unified-recall routing diagnostics emitted when the eval seam uses the
- * higher-level routing path.
- */
-export interface RecallEvalUnifiedDiagnostics {
-  /** Confirms that the eval seam executed through unified recall. */
-  path: "unified";
-  /** Router metadata explaining intent detection and queried sources. */
-  routing: UnifiedRecallRouting;
-  /** Optional resolved time-window metadata from unified recall. */
-  timeWindow?: UnifiedRecallTimeWindow;
-  /** User-facing notices returned by unified recall. */
-  notices: string[];
-  /** Number of episode results returned alongside entries. */
-  episodeCount: number;
-}
-
-/**
  * Degraded recall facts emitted when the core falls back away from the normal
  * vector-backed path.
  */
@@ -356,8 +455,6 @@ export interface RecallEvalCaseDiagnostics {
   claimKey?: RecallClaimKeyTrace;
   /** Degraded-mode facts emitted by the core recall path. */
   degraded?: RecallEvalDegradedDiagnostics;
-  /** Unified-recall routing metadata when the case used the unified path. */
-  unifiedRecall?: RecallEvalUnifiedDiagnostics;
   /** Stage-by-stage candidate counts across the recall pipeline. Always present when diagnostics are included. */
   candidateCounts?: RecallEvalCandidateCounts;
 }
@@ -430,6 +527,8 @@ export interface RecallEvalCaseResponse {
   caseId: string;
   /** Ranked recall result payload when execution succeeds. */
   result?: RecallEvalCaseResult;
+  /** Product-facing metadata emitted separately from execution diagnostics. */
+  metadata?: RecallEvalCaseMetadata;
   /** Optional typed diagnostics returned for eval analysis. */
   diagnostics?: RecallEvalCaseDiagnostics;
   /** Optional timing metadata for the execution. */

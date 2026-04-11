@@ -89,6 +89,19 @@ describe("runRecallEvalCase", () => {
       result: {
         entryIds: ["policy-new"],
       },
+      metadata: {
+        path: "core",
+        claim: {
+          projectedEntries: [
+            expect.objectContaining({
+              entryId: "policy-new",
+              familyKey: "entry:policy-new",
+              memoryState: "current",
+              claimStatus: "no_key",
+            }),
+          ],
+        },
+      },
       diagnostics: {
         execution: {
           mode: "isolated-case",
@@ -400,6 +413,17 @@ describe("runRecallEvalCase", () => {
       result: {
         entryIds: ["fixture-id"],
       },
+      metadata: {
+        path: "core",
+        claim: {
+          projectedEntries: [
+            expect.objectContaining({
+              entryId: "fixture-id",
+              memoryState: "current",
+            }),
+          ],
+        },
+      },
       diagnostics: {
         execution: {
           mode: "isolated-case",
@@ -455,32 +479,53 @@ describe("runRecallEvalCase", () => {
     await expect(access(response.sandbox?.dbPath ?? "")).resolves.toBeUndefined();
   });
 
-  it("routes unified recall eval cases through the unified recall service", async () => {
+  it("routes unified recall eval cases through the unified recall service with real unified caller context", async () => {
     process.env.OPENAI_API_KEY = "test-key";
     vi.stubGlobal("fetch", createEmbeddingFetchStub());
 
+    const tempRoot = await createTempDirectory("agenr-eval-unified-");
     const response = await runRecallEvalCase({
       caseId: "case-unified-recall-path",
       recallPath: "unified",
+      sandbox: {
+        root: path.join(tempRoot, "sandbox"),
+        preserve: true,
+      },
       memoryPool: [
         {
-          id: "approach-old",
+          id: "owner-old",
           type: "decision",
-          subject: "deployment approach",
-          content: "Before the migration we used webpack for deployment builds.",
+          subject: "repository owner",
+          content: "Before the reorg, platform owned the repository.",
           created_at: "2026-02-01T00:00:00.000Z",
+          claim_key: "repo/owner_primary",
+          claim_key_status: "trusted",
+          superseded_by: "owner-new",
         },
         {
-          id: "approach-new",
+          id: "owner-new",
           type: "decision",
-          subject: "deployment approach",
-          content: "The current deployment approach uses vite after the migration.",
+          subject: "repository owner",
+          content: "After the reorg, infra owns the repository.",
           created_at: "2026-03-20T00:00:00.000Z",
+          claim_key: "repo/owner_primary",
+          claim_key_status: "trusted",
         },
       ],
       recallRequest: {
-        text: "what was the previous deployment approach",
+        text: "what was the previous repository owner",
         limit: 2,
+      },
+      unified: {
+        mode: "entries",
+        sessionKey: "agent:test:tui",
+        memoryPolicy: {
+          slotPolicies: {
+            attributeHeads: {
+              owner: "multivalued",
+            },
+          },
+        },
       },
       options: {
         includeDiagnostics: true,
@@ -490,28 +535,58 @@ describe("runRecallEvalCase", () => {
     expect(response).toMatchObject({
       status: "ok",
       caseId: "case-unified-recall-path",
+      metadata: {
+        path: "unified",
+        unified: {
+          routing: {
+            requested: "entries",
+            detectedIntent: "historical_state",
+            queried: ["entries"],
+          },
+          notices: [],
+          episodeCount: 0,
+        },
+        claim: {
+          projectedEntries: expect.arrayContaining([
+            expect.objectContaining({
+              entryId: "owner-old",
+              familyKey: "repo/owner_primary",
+              slotPolicy: "multivalued",
+            }),
+          ]),
+          entryFamilies: expect.arrayContaining([
+            expect.objectContaining({
+              familyKey: "repo/owner_primary",
+              slotPolicy: "multivalued",
+            }),
+          ]),
+        },
+      },
       diagnostics: {
         execution: {
           recallPath: "unified",
         },
-        unifiedRecall: {
-          path: "unified",
-          routing: {
-            requested: "auto",
-            detectedIntent: "historical_state",
-            queried: ["entries", "episodes"],
-          },
-          episodeCount: 0,
-        },
       },
     });
-    expect(response.diagnostics?.unifiedRecall?.notices).toContain(
-      "Episodes cover consolidated prior sessions only; the most recent completed session may not appear yet.",
-    );
-    expect(response.result?.entryIds).toContain("approach-old");
+    expect(response.result?.entryIds).toContain("owner-old");
+
+    const sandboxDatabase = await createDatabase(response.sandbox?.dbPath ?? "");
+    try {
+      const rows = await sandboxDatabase.execute({
+        sql: `
+          SELECT session_key
+          FROM recall_events
+          ORDER BY recalled_at DESC
+          LIMIT 1
+        `,
+      });
+      expect(rows.rows[0]?.session_key).toBe("agent:test:tui");
+    } finally {
+      await sandboxDatabase.close();
+    }
   });
 
-  it("accepts rankingProfile in the internal eval seam and runs recall successfully", async () => {
+  it("forwards the full core recall request shape through the core path", async () => {
     process.env.OPENAI_API_KEY = "test-key";
     vi.stubGlobal("fetch", createEmbeddingFetchStub());
 
@@ -536,13 +611,42 @@ describe("runRecallEvalCase", () => {
       recallRequest: {
         text: "what was the previous deployment approach",
         limit: 2,
+        threshold: 0,
+        budget: 64,
+        since: "2026-01-01T00:00:00.000Z",
+        until: "2026-04-01T00:00:00.000Z",
+        around: "2026-03-01T00:00:00.000Z",
+        aroundRadius: 21,
+        asOf: "2026-03-10T00:00:00.000Z",
         rankingProfile: "historical_state",
+      },
+      options: {
+        includeDiagnostics: true,
       },
     });
 
     expect(response).toMatchObject({
       status: "ok",
       caseId: "case-ranking-profile",
+      metadata: {
+        path: "core",
+      },
+      diagnostics: {
+        ranking: {
+          budget: 64,
+          limit: 2,
+          threshold: 0,
+        },
+        filtering: {
+          since: "2026-01-01T00:00:00.000Z",
+          until: "2026-04-01T00:00:00.000Z",
+          around: {
+            source: "explicit",
+            anchor: "2026-03-01T00:00:00.000Z",
+            radiusDays: 21,
+          },
+        },
+      },
     });
     expect(response.result?.entryIds).toEqual(expect.arrayContaining([expect.any(String)]));
     expect(response.result?.entries.length).toBeGreaterThan(0);
@@ -598,6 +702,21 @@ describe("runRecallEvalCase", () => {
     expect(response).toMatchObject({
       status: "ok",
       caseId: "case-claim-centric",
+      metadata: {
+        path: "core",
+        claim: {
+          projectedEntries: expect.arrayContaining([
+            expect.objectContaining({
+              entryId: "approach-old",
+              familyKey: "deployment/approach",
+              claimKey: "deployment/approach",
+              slotPolicy: "exclusive",
+              memoryState: "superseded",
+              claimStatus: "trusted",
+            }),
+          ]),
+        },
+      },
     });
     expect(response.result?.entries[0]).toMatchObject({
       id: "approach-old",
@@ -666,6 +785,9 @@ describe("runRecallEvalCase", () => {
     expect(response).toMatchObject({
       status: "ok",
       caseId: "case-as-of",
+      metadata: {
+        path: "core",
+      },
     });
     expect(response.result?.entries[0]).toMatchObject({
       id: "approach-old",

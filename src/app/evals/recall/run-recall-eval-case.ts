@@ -119,22 +119,30 @@ export async function runRecallEvalCase(request: RecallEvalCaseRequest): Promise
         embeddingSupport.port ?? createUnavailableEmbeddingPort(embeddingSupport.error ?? "Embeddings are unavailable."),
       );
       const recallPorts = diagnostics.isObservationEnabled() ? createInstrumentedRecallPorts(basePorts, diagnostics) : basePorts;
+      const slotPolicyConfig = request.unified?.memoryPolicy?.slotPolicies;
+      const unifiedRecallOptions = {
+        ...(slotPolicyConfig ? { slotPolicyConfig } : {}),
+        ...(diagnostics.isObservationEnabled() ? { trace: diagnostics.traceSink } : {}),
+      };
       const results =
         recallPath === "unified"
           ? await runUnifiedRecall(
               {
                 text: request.recallRequest.text,
+                ...(request.unified?.mode ? { mode: request.unified.mode } : {}),
                 ...(request.recallRequest.limit !== undefined ? { limit: request.recallRequest.limit } : {}),
                 ...(request.recallRequest.threshold !== undefined ? { threshold: request.recallRequest.threshold } : {}),
                 ...(request.recallRequest.types && request.recallRequest.types.length > 0 ? { types: request.recallRequest.types } : {}),
                 ...(request.recallRequest.tags && request.recallRequest.tags.length > 0 ? { tags: request.recallRequest.tags } : {}),
                 ...(request.recallRequest.asOf ? { asOf: request.recallRequest.asOf } : {}),
+                ...(request.unified?.sessionKey ? { sessionKey: request.unified.sessionKey } : {}),
               },
               {
                 database: sandbox.episodeDatabase,
                 recall: recallPorts,
                 embeddingAvailable: embeddingSupport.available,
                 ...(embeddingSupport.error ? { embeddingError: embeddingSupport.error } : {}),
+                ...(slotPolicyConfig ? { claimSlotPolicyConfig: slotPolicyConfig } : {}),
                 ...(embeddingSupport.available
                   ? {
                       embedQuery: async (text: string) => {
@@ -143,19 +151,10 @@ export async function runRecallEvalCase(request: RecallEvalCaseRequest): Promise
                       },
                     }
                   : {}),
-                ...(diagnostics.isObservationEnabled() ? { recallOptions: { trace: diagnostics.traceSink } } : {}),
+                ...(Object.keys(unifiedRecallOptions).length > 0 ? { recallOptions: unifiedRecallOptions } : {}),
               },
             )
           : await recall(request.recallRequest, recallPorts, diagnostics.isObservationEnabled() ? { trace: diagnostics.traceSink } : undefined);
-      if (!Array.isArray(results)) {
-        diagnostics.recordUnifiedRecall({
-          path: "unified",
-          routing: results.routing,
-          ...(results.timeWindow ? { timeWindow: results.timeWindow } : {}),
-          notices: results.notices,
-          episodeCount: results.episodes.length,
-        });
-      }
       diagnostics.recordRecall(elapsedMs(recallStartedAt));
       return buildRecallEvalSuccessResponse({
         request,

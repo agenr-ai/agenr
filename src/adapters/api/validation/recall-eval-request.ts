@@ -5,7 +5,9 @@ import type {
   RecallEvalPath,
   RecallEvalQueryRequest,
   RecallEvalSandboxRequest,
+  RecallEvalUnifiedRequest,
 } from "../../../app/evals/recall/index.js";
+import type { ClaimSlotPolicyConfig, ClaimSlotPolicy } from "../../../core/claim-slot-policy.js";
 import { CLAIM_KEY_SOURCES, CLAIM_KEY_STATUSES, CLAIM_SUPPORT_MODES, ENTRY_TYPES, EXPIRY_LEVELS } from "../../../core/types.js";
 import {
   isRecord,
@@ -19,7 +21,7 @@ import {
   type ValidationIssue,
 } from "../../shared/validation.js";
 
-const ROOT_REQUEST_KEYS = new Set<string>(["caseId", "description", "recallPath", "sandbox", "memoryPool", "recallRequest", "options"]);
+const ROOT_REQUEST_KEYS = new Set<string>(["caseId", "description", "recallPath", "sandbox", "memoryPool", "recallRequest", "unified", "options"]);
 const SANDBOX_REQUEST_KEYS = new Set<string>(["root", "preserve"]);
 const FIXTURE_ENTRY_KEYS = new Set<string>([
   "id",
@@ -63,9 +65,14 @@ const RECALL_REQUEST_KEYS = new Set<string>([
   "asOf",
   "rankingProfile",
 ]);
+const UNIFIED_REQUEST_KEYS = new Set<string>(["mode", "sessionKey", "memoryPolicy"]);
+const UNIFIED_MEMORY_POLICY_KEYS = new Set<string>(["slotPolicies"]);
+const SLOT_POLICY_KEYS = new Set<string>(["attributeHeads"]);
 const OPTIONS_KEYS = new Set<string>(["includeDiagnostics", "includeCandidates", "includeTimings"]);
 const RECALL_PATHS = ["core", "unified"] as const;
 const RECALL_RANKING_PROFILES = ["historical_state"] as const;
+const UNIFIED_RECALL_MODES = ["auto", "entries", "episodes"] as const;
+const CLAIM_SLOT_POLICIES = ["exclusive", "multivalued"] as const;
 
 /**
  * Structured request validation issue emitted at the HTTP boundary.
@@ -183,6 +190,26 @@ export interface RecallEvalCaseOptionsDto {
 }
 
 /**
+ * Adapter-owned normalized memory-policy DTO for unified recall execution.
+ */
+export interface RecallEvalUnifiedMemoryPolicyRequestDto {
+  /** Optional slot-policy overrides aligned with the OpenClaw adapter. */
+  slotPolicies?: ClaimSlotPolicyConfig;
+}
+
+/**
+ * Adapter-owned normalized unified-caller DTO.
+ */
+export interface RecallEvalUnifiedRequestDto {
+  /** Optional unified routing mode. */
+  mode?: RecallEvalUnifiedRequest["mode"];
+  /** Optional session key forwarded into real recall telemetry. */
+  sessionKey?: string;
+  /** Optional runtime memory-policy overrides. */
+  memoryPolicy?: RecallEvalUnifiedMemoryPolicyRequestDto;
+}
+
+/**
  * Adapter-owned normalized request DTO for the recall eval HTTP seam.
  */
 export interface RecallEvalCaseRequestDto {
@@ -198,6 +225,8 @@ export interface RecallEvalCaseRequestDto {
   memoryPool: RecallEvalFixtureEntryDto[];
   /** Normalized recall query payload. */
   recallRequest: RecallEvalQueryRequestDto;
+  /** Optional unified-only caller context. */
+  unified?: RecallEvalUnifiedRequestDto;
   /** Optional response-shaping flags. */
   options?: RecallEvalCaseOptionsDto;
 }
@@ -256,7 +285,9 @@ export function parseRecallEvalCaseRequest(input: unknown): RecallEvalCaseReques
   const sandbox = parseSandbox(input.sandbox, issues);
   const memoryPool = parseMemoryPool(input.memoryPool, issues);
   const recallRequest = parseRecallRequest(input.recallRequest, issues);
+  const unified = parseUnifiedRequest(input.unified, issues);
   const options = parseOptions(input.options, issues);
+  validatePathSpecificRequest(recallPath, recallRequest, unified, issues);
 
   if (issues.length > 0 || parsedCaseId === undefined || memoryPool === undefined || recallRequest === undefined) {
     throw new RecallEvalRequestValidationError(issues, caseId);
@@ -269,6 +300,7 @@ export function parseRecallEvalCaseRequest(input: unknown): RecallEvalCaseReques
     sandbox,
     memoryPool,
     recallRequest,
+    unified,
     options,
   };
 }
@@ -287,6 +319,7 @@ export function mapRecallEvalCaseRequestDto(dto: RecallEvalCaseRequestDto): Reca
     sandbox: mapSandboxRequestDto(dto.sandbox),
     memoryPool: dto.memoryPool.map(mapFixtureEntryDto),
     recallRequest: mapRecallRequestDto(dto.recallRequest),
+    unified: mapUnifiedRequestDto(dto.unified),
     options: mapCaseOptionsDto(dto.options),
   };
 }
@@ -451,6 +484,32 @@ function parseRecallRequest(value: unknown, issues: RecallEvalValidationIssue[])
 }
 
 /**
+ * Parses optional unified-caller context aligned with the OpenClaw tool surface.
+ *
+ * @param value - Raw unified request field.
+ * @param issues - Mutable validation issue collection.
+ * @returns Normalized unified DTO when valid.
+ */
+function parseUnifiedRequest(value: unknown, issues: RecallEvalValidationIssue[]): RecallEvalUnifiedRequestDto | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const unified = parseObject(value, "unified", issues);
+  if (unified === undefined) {
+    return undefined;
+  }
+
+  pushUnexpectedFields(unified, UNIFIED_REQUEST_KEYS, "unified", issues);
+
+  return {
+    mode: parseOptionalUnifiedRecallMode(unified.mode, "unified.mode", issues),
+    sessionKey: parseOptionalTrimmedString(unified.sessionKey, "unified.sessionKey", issues),
+    memoryPolicy: parseUnifiedMemoryPolicy(unified.memoryPolicy, issues),
+  };
+}
+
+/**
  * Parses optional case-level output controls.
  *
  * @param value - Raw options field.
@@ -473,6 +532,30 @@ function parseOptions(value: unknown, issues: RecallEvalValidationIssue[]): Reca
     includeDiagnostics: parseOptionalBoolean(options.includeDiagnostics, "options.includeDiagnostics", issues),
     includeCandidates: parseOptionalBoolean(options.includeCandidates, "options.includeCandidates", issues),
     includeTimings: parseOptionalBoolean(options.includeTimings, "options.includeTimings", issues),
+  };
+}
+
+/**
+ * Parses the optional unified memory-policy block.
+ *
+ * @param value - Raw unified memory-policy field.
+ * @param issues - Mutable validation issue collection.
+ * @returns Normalized unified memory-policy DTO when valid.
+ */
+function parseUnifiedMemoryPolicy(value: unknown, issues: RecallEvalValidationIssue[]): RecallEvalUnifiedMemoryPolicyRequestDto | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const memoryPolicy = parseObject(value, "unified.memoryPolicy", issues);
+  if (memoryPolicy === undefined) {
+    return undefined;
+  }
+
+  pushUnexpectedFields(memoryPolicy, UNIFIED_MEMORY_POLICY_KEYS, "unified.memoryPolicy", issues);
+
+  return {
+    slotPolicies: parseClaimSlotPolicyConfig(memoryPolicy.slotPolicies, "unified.memoryPolicy.slotPolicies", issues),
   };
 }
 
@@ -512,6 +595,27 @@ function parseOptionalRecallPath(value: unknown, path: string, issues: RecallEva
   }
 
   return value as RecallEvalPath;
+}
+
+/**
+ * Parses an optional unified recall mode enum member.
+ *
+ * @param value - Raw unified-mode value.
+ * @param path - Stable validation path.
+ * @param issues - Mutable validation issue collection.
+ * @returns Valid unified mode when recognized.
+ */
+function parseOptionalUnifiedRecallMode(value: unknown, path: string, issues: RecallEvalValidationIssue[]): RecallEvalUnifiedRequest["mode"] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "string" || !UNIFIED_RECALL_MODES.includes(value as (typeof UNIFIED_RECALL_MODES)[number])) {
+    pushIssue(issues, path, `Expected one of: ${UNIFIED_RECALL_MODES.join(", ")}.`);
+    return undefined;
+  }
+
+  return value as RecallEvalUnifiedRequest["mode"];
 }
 
 /**
@@ -703,6 +807,70 @@ function parseOptionalThreshold(value: unknown, path: string, issues: RecallEval
 }
 
 /**
+ * Parses one optional slot-policy config block keyed by canonical attribute head.
+ *
+ * @param value - Raw slot-policy config field.
+ * @param path - Stable validation path.
+ * @param issues - Mutable validation issue collection.
+ * @returns Normalized slot-policy config when valid.
+ */
+function parseClaimSlotPolicyConfig(value: unknown, path: string, issues: RecallEvalValidationIssue[]): ClaimSlotPolicyConfig | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const config = parseObject(value, path, issues);
+  if (config === undefined) {
+    return undefined;
+  }
+
+  pushUnexpectedFields(config, SLOT_POLICY_KEYS, path, issues);
+  const attributeHeads = parseClaimSlotPolicyAttributeHeads(config.attributeHeads, `${path}.attributeHeads`, issues);
+  return attributeHeads ? { attributeHeads } : undefined;
+}
+
+/**
+ * Parses optional attribute-head slot-policy overrides.
+ *
+ * @param value - Raw attribute-head map.
+ * @param path - Stable validation path.
+ * @param issues - Mutable validation issue collection.
+ * @returns Canonicalized attribute-head map when valid.
+ */
+function parseClaimSlotPolicyAttributeHeads(
+  value: unknown,
+  path: string,
+  issues: RecallEvalValidationIssue[],
+): Readonly<Record<string, ClaimSlotPolicy>> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!isRecord(value)) {
+    pushIssue(issues, path, "Expected an object.");
+    return undefined;
+  }
+
+  const normalized: Record<string, ClaimSlotPolicy> = {};
+  for (const [rawKey, rawValue] of Object.entries(value)) {
+    const attributeHead = rawKey.trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9_-]*$/.test(attributeHead)) {
+      pushIssue(issues, `${path}.${rawKey}`, "Expected a canonical attribute-head label.");
+      continue;
+    }
+
+    if (typeof rawValue !== "string" || !CLAIM_SLOT_POLICIES.includes(rawValue as ClaimSlotPolicy)) {
+      pushIssue(issues, `${path}.${attributeHead}`, `Expected one of: ${CLAIM_SLOT_POLICIES.join(", ")}.`);
+      continue;
+    }
+
+    normalized[attributeHead] = rawValue as ClaimSlotPolicy;
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+/**
  * Parses one required object field.
  *
  * @param value - Raw field value.
@@ -717,6 +885,52 @@ function parseObject(value: unknown, path: string, issues: RecallEvalValidationI
   }
 
   return value;
+}
+
+/**
+ * Enforces path-specific request rules so the seam mirrors real callers.
+ *
+ * @param recallPath - Requested top-level recall path.
+ * @param recallRequest - Parsed recall request DTO.
+ * @param unified - Parsed unified-only request block.
+ * @param issues - Mutable validation issue collection.
+ */
+function validatePathSpecificRequest(
+  recallPath: RecallEvalPath | undefined,
+  recallRequest: RecallEvalQueryRequestDto | undefined,
+  unified: RecallEvalUnifiedRequestDto | undefined,
+  issues: RecallEvalValidationIssue[],
+): void {
+  const effectivePath = recallPath ?? "core";
+  if (effectivePath !== "unified") {
+    if (unified !== undefined) {
+      pushIssue(issues, "unified", 'The "unified" block is only allowed when recallPath is "unified".');
+    }
+    return;
+  }
+
+  if (recallRequest === undefined) {
+    return;
+  }
+
+  if (recallRequest.budget !== undefined) {
+    pushIssue(issues, "recallRequest.budget", 'This field is only supported when recallPath is "core".');
+  }
+  if (recallRequest.since !== undefined) {
+    pushIssue(issues, "recallRequest.since", 'This field is only supported when recallPath is "core".');
+  }
+  if (recallRequest.until !== undefined) {
+    pushIssue(issues, "recallRequest.until", 'This field is only supported when recallPath is "core".');
+  }
+  if (recallRequest.around !== undefined) {
+    pushIssue(issues, "recallRequest.around", 'This field is only supported when recallPath is "core".');
+  }
+  if (recallRequest.aroundRadius !== undefined) {
+    pushIssue(issues, "recallRequest.aroundRadius", 'This field is only supported when recallPath is "core".');
+  }
+  if (recallRequest.rankingProfile !== undefined) {
+    pushIssue(issues, "recallRequest.rankingProfile", 'This field is derived by unified recall and cannot be supplied when recallPath is "unified".');
+  }
 }
 
 /**
@@ -793,6 +1007,29 @@ function mapRecallRequestDto(dto: RecallEvalQueryRequestDto): RecallEvalQueryReq
     aroundRadius: dto.aroundRadius,
     asOf: dto.asOf,
     rankingProfile: dto.rankingProfile,
+  };
+}
+
+/**
+ * Maps an adapter unified-request DTO into the app-layer unified contract.
+ *
+ * @param dto - Adapter unified-request DTO.
+ * @returns App unified request or `undefined`.
+ */
+function mapUnifiedRequestDto(dto: RecallEvalUnifiedRequestDto | undefined): RecallEvalUnifiedRequest | undefined {
+  if (dto === undefined) {
+    return undefined;
+  }
+
+  return {
+    mode: dto.mode,
+    sessionKey: dto.sessionKey,
+    memoryPolicy:
+      dto.memoryPolicy !== undefined
+        ? {
+            slotPolicies: dto.memoryPolicy.slotPolicies,
+          }
+        : undefined,
   };
 }
 

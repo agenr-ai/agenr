@@ -7,7 +7,7 @@ describe("parseRecallEvalCaseRequest", () => {
     const result = parseRecallEvalCaseRequest({
       caseId: "  case-001  ",
       description: "  simple recall case  ",
-      recallPath: "unified",
+      recallPath: "core",
       sandbox: {
         root: "  /tmp/evals/case-001  ",
         preserve: false,
@@ -40,7 +40,7 @@ describe("parseRecallEvalCaseRequest", () => {
     expect(result).toEqual({
       caseId: "case-001",
       description: "simple recall case",
-      recallPath: "unified",
+      recallPath: "core",
       sandbox: {
         root: "/tmp/evals/case-001",
         preserve: false,
@@ -89,6 +89,7 @@ describe("parseRecallEvalCaseRequest", () => {
         asOf: undefined,
         rankingProfile: "historical_state",
       },
+      unified: undefined,
       options: {
         includeDiagnostics: true,
         includeCandidates: undefined,
@@ -216,6 +217,64 @@ describe("parseRecallEvalCaseRequest", () => {
     });
   });
 
+  it("accepts unified caller context with slot-policy overrides", () => {
+    const result = parseRecallEvalCaseRequest({
+      caseId: "case-unified-context",
+      recallPath: "unified",
+      memoryPool: [],
+      recallRequest: {
+        text: "what was the previous repository owner",
+        limit: 3,
+        asOf: "2026-03-01T00:00:00.000Z",
+      },
+      unified: {
+        mode: "entries",
+        sessionKey: "agent:test:tui",
+        memoryPolicy: {
+          slotPolicies: {
+            attributeHeads: {
+              owner: "multivalued",
+            },
+          },
+        },
+      },
+    });
+
+    expect(result).toEqual({
+      caseId: "case-unified-context",
+      description: undefined,
+      recallPath: "unified",
+      sandbox: undefined,
+      memoryPool: [],
+      recallRequest: {
+        text: "what was the previous repository owner",
+        limit: 3,
+        threshold: undefined,
+        budget: undefined,
+        types: undefined,
+        tags: undefined,
+        since: undefined,
+        until: undefined,
+        around: undefined,
+        aroundRadius: undefined,
+        asOf: "2026-03-01T00:00:00.000Z",
+        rankingProfile: undefined,
+      },
+      unified: {
+        mode: "entries",
+        sessionKey: "agent:test:tui",
+        memoryPolicy: {
+          slotPolicies: {
+            attributeHeads: {
+              owner: "multivalued",
+            },
+          },
+        },
+      },
+      options: undefined,
+    });
+  });
+
   it("rejects malformed recall request fields", () => {
     expect(() =>
       parseRecallEvalCaseRequest({
@@ -267,6 +326,108 @@ describe("parseRecallEvalCaseRequest", () => {
         {
           path: "recallRequest.rankingProfile",
           message: "Expected one of: historical_state.",
+        },
+      ]);
+    }
+  });
+
+  it("rejects unified-only caller context on the core path", () => {
+    expect(() =>
+      parseRecallEvalCaseRequest({
+        caseId: "case-core-with-unified",
+        recallPath: "core",
+        memoryPool: [],
+        recallRequest: {
+          text: "who owns the repository",
+        },
+        unified: {
+          mode: "entries",
+        },
+      }),
+    ).toThrowError(RecallEvalRequestValidationError);
+
+    try {
+      parseRecallEvalCaseRequest({
+        caseId: "case-core-with-unified",
+        recallPath: "core",
+        memoryPool: [],
+        recallRequest: {
+          text: "who owns the repository",
+        },
+        unified: {
+          mode: "entries",
+        },
+      });
+    } catch (error) {
+      expect(error).toBeInstanceOf(RecallEvalRequestValidationError);
+      expect((error as RecallEvalRequestValidationError).issues).toEqual([
+        {
+          path: "unified",
+          message: 'The "unified" block is only allowed when recallPath is "unified".',
+        },
+      ]);
+    }
+  });
+
+  it("rejects core-only recall controls on the unified path", () => {
+    expect(() =>
+      parseRecallEvalCaseRequest({
+        caseId: "case-unified-core-controls",
+        recallPath: "unified",
+        memoryPool: [],
+        recallRequest: {
+          text: "what was the previous repository owner",
+          budget: 50,
+          since: "2026-01-01T00:00:00.000Z",
+          until: "2026-04-01T00:00:00.000Z",
+          around: "2026-03-01T00:00:00.000Z",
+          aroundRadius: 14,
+          rankingProfile: "historical_state",
+        },
+      }),
+    ).toThrowError(RecallEvalRequestValidationError);
+
+    try {
+      parseRecallEvalCaseRequest({
+        caseId: "case-unified-core-controls",
+        recallPath: "unified",
+        memoryPool: [],
+        recallRequest: {
+          text: "what was the previous repository owner",
+          budget: 50,
+          since: "2026-01-01T00:00:00.000Z",
+          until: "2026-04-01T00:00:00.000Z",
+          around: "2026-03-01T00:00:00.000Z",
+          aroundRadius: 14,
+          rankingProfile: "historical_state",
+        },
+      });
+    } catch (error) {
+      expect(error).toBeInstanceOf(RecallEvalRequestValidationError);
+      expect((error as RecallEvalRequestValidationError).issues).toEqual([
+        {
+          path: "recallRequest.budget",
+          message: 'This field is only supported when recallPath is "core".',
+        },
+        {
+          path: "recallRequest.since",
+          message: 'This field is only supported when recallPath is "core".',
+        },
+        {
+          path: "recallRequest.until",
+          message: 'This field is only supported when recallPath is "core".',
+        },
+        {
+          path: "recallRequest.around",
+          message: 'This field is only supported when recallPath is "core".',
+        },
+        {
+          path: "recallRequest.aroundRadius",
+          message: 'This field is only supported when recallPath is "core".',
+        },
+        {
+          path: "recallRequest.rankingProfile",
+          message: 'This field is derived by unified recall and cannot be supplied when recallPath is "unified".',
         },
       ]);
     }

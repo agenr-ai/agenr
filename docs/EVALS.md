@@ -1,6 +1,11 @@
 # Evals
 
-`agenr` currently exposes one eval seam: a narrow internal recall-eval HTTP adapter used by `agenr-evals` to run isolated case-local recall requests against real `agenr` behavior, including degraded lexical fallback and unified-recall notices.
+`agenr` currently exposes one eval seam: a narrow internal recall-eval HTTP adapter used by `agenr-evals` to run isolated case-local recall requests against real `agenr` behavior, including degraded lexical fallback and unified recall.
+
+The current contract is intentionally shaped around production parity rather than backward compatibility. The seam distinguishes:
+
+- core-path evals that exercise the same `recall()` path as the CLI
+- unified-path evals that exercise the same `runUnifiedRecall()` path and caller context as the OpenClaw recall tool
 
 This seam is intentionally small:
 
@@ -116,6 +121,17 @@ Top-level shape:
     "text": "who is on call this week",
     "limit": 5
   },
+  "unified": {
+    "mode": "entries",
+    "sessionKey": "agent:test:tui",
+    "memoryPolicy": {
+      "slotPolicies": {
+        "attributeHeads": {
+          "owner": "multivalued"
+        }
+      }
+    }
+  },
   "options": {
     "includeDiagnostics": true,
     "includeCandidates": true,
@@ -132,6 +148,7 @@ Important request semantics:
 - `sandbox` is optional and controls where the isolated database lives and whether it is preserved
 - `memoryPool` is required but may be an empty array
 - `recallRequest` is required
+- `unified` is optional and is only valid when `recallPath: "unified"`
 - `options.includeDiagnostics` enables structured diagnostics
 - `options.includeCandidates` does not return raw candidates - it only enables the same aggregate diagnostics used by the harness
 - `options.includeTimings` enables timing metadata
@@ -214,8 +231,26 @@ Boundary validation details:
 Execution-path nuance that matters:
 
 - on the `"core"` path, `runRecallEvalCase()` forwards the full validated `recallRequest` object to `core/recall`
-- on the `"unified"` path, `runRecallEvalCase()` currently forwards only `text`, `limit`, `threshold`, `types`, and `tags` into `runUnifiedRecall()`
-- that means `budget`, `since`, `until`, `around`, `aroundRadius`, and `rankingProfile` are accepted by the boundary for unified cases but are not currently consumed by unified execution
+- on the `"unified"` path, the seam only accepts the subset that real unified callers use today: `text`, `limit`, `threshold`, `types`, `tags`, and `asOf`
+- `budget`, `since`, `until`, `around`, `aroundRadius`, and caller-supplied `rankingProfile` are rejected on the unified path instead of being silently ignored
+
+### `unified` rules
+
+The `unified` block mirrors real unified caller context rather than core recall input.
+
+Supported fields:
+
+- `mode`
+- `sessionKey`
+- `memoryPolicy.slotPolicies.attributeHeads`
+
+Boundary validation details:
+
+- `mode` must be one of `auto`, `entries`, or `episodes`
+- `sessionKey` must be a non-empty string when present
+- `memoryPolicy.slotPolicies.attributeHeads` must be an object keyed by canonical attribute-head labels
+- each attribute-head policy must be `exclusive` or `multivalued`
+- the `unified` block is rejected unless `recallPath` is `"unified"`
 
 ### Boundary strictness
 
@@ -354,14 +389,6 @@ Important unified-path behavior:
 - episode results are not surfaced in the top-level eval `result`
 - unified routing metadata is surfaced in `diagnostics.unifiedRecall`
 
-When diagnostics are enabled, `diagnostics.unifiedRecall` may include:
-
-- `path: "unified"`
-- `routing`
-- `timeWindow`
-- `notices`
-- `episodeCount`
-
 ## Diagnostics and timings
 
 When diagnostics or timings are requested, the app layer enables observation in two places:
@@ -378,7 +405,6 @@ When diagnostics are included, the response can contain:
 - `diagnostics.filtering`
 - `diagnostics.claimKey`
 - `diagnostics.degraded`
-- `diagnostics.unifiedRecall`
 - `diagnostics.candidateCounts`
 
 Current guarantees:
@@ -389,7 +415,6 @@ Current guarantees:
 - `diagnostics.retrieval` appears only after retrieval-stage observation occurs
 - `diagnostics.ranking` and `diagnostics.filtering` appear only after the core trace summary is emitted
 - `diagnostics.degraded` appears only after the core trace summary is emitted
-- `diagnostics.unifiedRecall` appears only for unified-path cases
 
 `diagnostics.degraded` is the stable place to assert:
 
@@ -430,6 +455,7 @@ Top-level fields are intentionally bounded:
 - `status`
 - `caseId`
 - `result`
+- `metadata`
 - `diagnostics`
 - `timings`
 - `sandbox`
@@ -443,6 +469,7 @@ Successful responses include:
 - `caseId`
 - `result.entries`
 - `result.entryIds`
+- `metadata`
 - `sandbox`
 - optional `diagnostics`
 - optional `timings`
@@ -460,6 +487,20 @@ Each result entry includes:
 - `score`
 - `scores`
 - optional `claim` projection with family key, memory-state label, claim-status label, freshness, provenance, and `whySurfaced`
+
+`metadata` is the stable place for product-surface facts that the harness should assert on separately from execution diagnostics.
+
+Current `metadata` fields:
+
+- `path`
+- `claim.projectedEntries`
+- `claim.entryFamilies` for unified-path cases
+- `claim.transitions` for unified-path cases
+- `unified.routing` for unified-path cases
+- `unified.timeWindow` when unified recall resolved one
+- `unified.asOf` when unified recall echoed one
+- `unified.notices`
+- `unified.episodeCount`
 
 ### Error responses
 

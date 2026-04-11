@@ -1,7 +1,16 @@
 import { projectClaimCentricRecallEntry } from "../../recall/claim-centric.js";
 import type { RecallOutput } from "../../../core/recall/types.js";
 import type { UnifiedRecallResult } from "../../recall/types.js";
-import type { RecallEvalCaseDiagnostics, RecallEvalCaseRequest, RecallEvalCaseResponse, RecallEvalCaseTimings, RecallEvalSandboxResult } from "./contracts.js";
+import type {
+  RecallEvalCaseDiagnostics,
+  RecallEvalCaseMetadata,
+  RecallEvalCaseRequest,
+  RecallEvalCaseResponse,
+  RecallEvalCaseTimings,
+  RecallEvalClaimFamilyMetadata,
+  RecallEvalProjectedEntryMetadata,
+  RecallEvalSandboxResult,
+} from "./contracts.js";
 import type { RecallEvalSandboxContext } from "./ports.js";
 
 /**
@@ -21,6 +30,7 @@ export function buildRecallEvalSuccessResponse(params: {
   const projectedEntries = Array.isArray(params.results)
     ? entryResults.map((result) => projectClaimCentricRecallEntry(result, { asOf: params.request.recallRequest.asOf }))
     : params.results.projectedEntries;
+  const metadata = buildMetadata(params.request, params.results, projectedEntries);
 
   return {
     status: "ok",
@@ -57,6 +67,7 @@ export function buildRecallEvalSuccessResponse(params: {
       })),
       entryIds: entryResults.map((result) => result.entry.id),
     },
+    metadata,
     diagnostics: params.diagnostics,
     timings: params.timings,
     sandbox: buildSandboxResult(params.sandbox),
@@ -98,5 +109,78 @@ function buildSandboxResult(sandbox: RecallEvalSandboxContext): RecallEvalSandbo
     root: sandbox.root,
     dbPath: sandbox.dbPath,
     preserved: sandbox.preserved,
+  };
+}
+
+/** Builds product-facing metadata for the normalized recall eval response. */
+function buildMetadata(
+  request: RecallEvalCaseRequest,
+  results: RecallOutput[] | UnifiedRecallResult,
+  projectedEntries: Array<{ entryId: string; familyKey: string; claimKey?: string; slotPolicy: RecallEvalProjectedEntryMetadata["slotPolicy"]; memoryState: RecallEvalProjectedEntryMetadata["memoryState"]; claimStatus: RecallEvalProjectedEntryMetadata["claimStatus"]; freshness: RecallEvalProjectedEntryMetadata["freshness"]; provenance: RecallEvalProjectedEntryMetadata["provenance"]; whySurfaced: RecallEvalProjectedEntryMetadata["whySurfaced"] }>,
+): RecallEvalCaseMetadata {
+  if (Array.isArray(results)) {
+    return {
+      path: request.recallPath ?? "core",
+      claim: {
+        projectedEntries: projectedEntries.map(buildProjectedEntryMetadata),
+      },
+    };
+  }
+
+  return {
+    path: "unified",
+    claim: {
+      projectedEntries: projectedEntries.map(buildProjectedEntryMetadata),
+      entryFamilies: results.entryFamilies.map(buildClaimFamilyMetadata),
+      transitions: results.claimTransitions,
+    },
+    unified: {
+      routing: results.routing,
+      timeWindow: results.timeWindow,
+      asOf: results.asOf,
+      notices: results.notices,
+      episodeCount: results.episodes.length,
+    },
+  };
+}
+
+/** Maps one projected claim-centric row into stable response metadata. */
+function buildProjectedEntryMetadata(entry: {
+  entryId: string;
+  familyKey: string;
+  claimKey?: string;
+  slotPolicy: RecallEvalProjectedEntryMetadata["slotPolicy"];
+  memoryState: RecallEvalProjectedEntryMetadata["memoryState"];
+  claimStatus: RecallEvalProjectedEntryMetadata["claimStatus"];
+  freshness: RecallEvalProjectedEntryMetadata["freshness"];
+  provenance: RecallEvalProjectedEntryMetadata["provenance"];
+  whySurfaced: RecallEvalProjectedEntryMetadata["whySurfaced"];
+}): RecallEvalProjectedEntryMetadata {
+  return {
+    entryId: entry.entryId,
+    familyKey: entry.familyKey,
+    claimKey: entry.claimKey,
+    slotPolicy: entry.slotPolicy,
+    memoryState: entry.memoryState,
+    claimStatus: entry.claimStatus,
+    freshness: entry.freshness,
+    provenance: entry.provenance,
+    whySurfaced: entry.whySurfaced,
+  };
+}
+
+/** Maps one claim family into compact family metadata for eval assertions. */
+function buildClaimFamilyMetadata(family: UnifiedRecallResult["entryFamilies"][number]): RecallEvalClaimFamilyMetadata {
+  return {
+    familyKey: family.familyKey,
+    claimKey: family.claimKey,
+    slotPolicy: family.slotPolicy,
+    subject: family.subject,
+    primaryEntryId: family.primary.entryId,
+    entries: family.entries.map((entry) => ({
+      id: entry.entryId,
+      memoryState: entry.memoryState,
+      claimStatus: entry.claimStatus,
+    })),
   };
 }

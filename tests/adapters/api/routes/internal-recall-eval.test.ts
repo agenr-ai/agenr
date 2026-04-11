@@ -41,10 +41,17 @@ describe("createInternalRecallEvalRoute", () => {
         entries: [],
         entryIds: [],
       },
+      metadata: {
+        path: request.recallPath ?? "core",
+        claim: {
+          projectedEntries: [],
+        },
+      },
       diagnostics: {
         execution: {
           mode: "isolated-case",
           provisioning: "exact-fixture-seed",
+          recallPath: request.recallPath ?? "core",
           memoryPoolCount: request.memoryPool.length,
           provisionedCount: request.memoryPool.length,
           requestedDiagnostics: false,
@@ -91,12 +98,15 @@ describe("createInternalRecallEvalRoute", () => {
         until: undefined,
         around: undefined,
         aroundRadius: undefined,
+        asOf: undefined,
+        rankingProfile: undefined,
       },
+      unified: undefined,
       options: undefined,
     });
-    const body = await response.json();
+    const body = (await response.json()) as Record<string, unknown>;
 
-    expect(Object.keys(body).sort()).toEqual(["caseId", "diagnostics", "result", "status"]);
+    expect(Object.keys(body).sort()).toEqual(["caseId", "diagnostics", "metadata", "result", "status"]);
     expect(body).toEqual({
       status: "ok",
       caseId: "case-route",
@@ -104,10 +114,17 @@ describe("createInternalRecallEvalRoute", () => {
         entries: [],
         entryIds: [],
       },
+      metadata: {
+        path: "core",
+        claim: {
+          projectedEntries: [],
+        },
+      },
       diagnostics: {
         execution: {
           mode: "isolated-case",
           provisioning: "exact-fixture-seed",
+          recallPath: "core",
           memoryPoolCount: 0,
           provisionedCount: 0,
           requestedDiagnostics: false,
@@ -185,19 +202,31 @@ describe("createInternalRecallEvalRoute", () => {
     );
 
     expect(response.status).toBe(200);
-    const body = await response.json();
+    const body = (await response.json()) as Record<string, unknown>;
 
-    expect(Object.keys(body).sort()).toEqual(["caseId", "diagnostics", "result", "sandbox", "status", "timings"]);
+    expect(Object.keys(body).sort()).toEqual(["caseId", "diagnostics", "metadata", "result", "sandbox", "status", "timings"]);
     expect(body).toMatchObject({
       status: "ok",
       caseId: "case-route-e2e",
       result: {
         entryIds: ["fixture-new"],
       },
+      metadata: {
+        path: "core",
+        claim: {
+          projectedEntries: [
+            expect.objectContaining({
+              entryId: "fixture-new",
+              memoryState: "current",
+            }),
+          ],
+        },
+      },
       diagnostics: {
         execution: {
           mode: "isolated-case",
           provisioning: "exact-fixture-seed",
+          recallPath: "core",
           memoryPoolCount: 3,
           provisionedCount: 3,
           requestedDiagnostics: true,
@@ -279,7 +308,7 @@ describe("createInternalRecallEvalRoute", () => {
     );
 
     expect(response.status).toBe(400);
-    const body = await response.json();
+    const body = (await response.json()) as Record<string, unknown>;
 
     expect(Object.keys(body).sort()).toEqual(["caseId", "error", "status"]);
     expect(body).toEqual({
@@ -316,7 +345,7 @@ describe("createInternalRecallEvalRoute", () => {
     );
 
     expect(response.status).toBe(400);
-    const body = await response.json();
+    const body = (await response.json()) as Record<string, unknown>;
 
     expect(Object.keys(body).sort()).toEqual(["error", "status"]);
     expect(body).toEqual({
@@ -358,7 +387,7 @@ describe("createInternalRecallEvalRoute", () => {
 
     expect(response.status).toBe(500);
 
-    const body = await response.json();
+    const body = (await response.json()) as Record<string, unknown>;
 
     expect(Object.keys(body).sort()).toEqual(["caseId", "error", "status"]);
     expect(body).toEqual({
