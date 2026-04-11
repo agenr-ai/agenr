@@ -29,6 +29,7 @@ export interface RecallInput {
   until?: string;
   around?: string;
   aroundRadius?: number;
+  asOf?: string;
   sessionKey?: string;
   rankingProfile?: RecallRankingProfile;
 }
@@ -56,7 +57,20 @@ export interface RecallOutput {
  */
 export type RecallCandidateEntry = Pick<
   Entry,
-  "id" | "subject" | "content" | "importance" | "expiry" | "created_at" | "embedding" | "superseded_by" | "claim_key" | "claim_key_status" | "retired"
+  | "id"
+  | "subject"
+  | "content"
+  | "importance"
+  | "expiry"
+  | "created_at"
+  | "embedding"
+  | "superseded_by"
+  | "claim_key"
+  | "claim_key_status"
+  | "claim_support_observed_at"
+  | "valid_from"
+  | "valid_to"
+  | "retired"
 >;
 
 /**

@@ -6,6 +6,7 @@ import type { RecallExecutionOptions, RecallExecutionTraceSummary, RecallTraceSi
 import type { RecallInput } from "../../core/recall/types.js";
 
 import { flattenClaimCentricRecallFamilies, projectClaimCentricRecallEntries } from "./claim-centric.js";
+import { buildClaimTransitionExplanations } from "./transitions.js";
 import type { UnifiedRecallInput, UnifiedRecallMode, UnifiedRecallResult, UnifiedRecallRouting } from "./types.js";
 
 const EPISODE_FRESHNESS_NOTICE = "Episodes cover consolidated prior sessions only; the most recent completed session may not appear yet.";
@@ -109,8 +110,15 @@ export async function runUnifiedRecall(input: UnifiedRecallInput, deps: UnifiedR
   }
 
   const rawEntries = entries.kind === "results" ? entries.results : [];
-  const entryFamilies = projectClaimCentricRecallEntries(rawEntries);
+  const entryFamilies = projectClaimCentricRecallEntries(rawEntries, {
+    asOf: input.asOf,
+  });
   const projectedEntries = flattenClaimCentricRecallFamilies(entryFamilies);
+  const claimTransitions = buildClaimTransitionExplanations({
+    families: entryFamilies,
+    episodes,
+    detectedIntent: routing.detectedIntent,
+  });
 
   return {
     routing,
@@ -125,10 +133,12 @@ export async function runUnifiedRecall(input: UnifiedRecallInput, deps: UnifiedR
           },
         }
       : {}),
+    ...(input.asOf ? { asOf: input.asOf.trim() } : {}),
     episodes,
     entries: rawEntries,
     projectedEntries,
     entryFamilies,
+    claimTransitions,
     notices: dedupePreservingOrder(notices),
     count: episodes.length + rawEntries.length,
   };
@@ -365,10 +375,11 @@ function buildEntryRecallInput(
     ...(input.types && input.types.length > 0 ? { types: input.types } : {}),
     ...(input.tags && input.tags.length > 0 ? { tags: input.tags } : {}),
     ...(input.sessionKey ? { sessionKey: input.sessionKey } : {}),
+    ...(input.asOf ? { asOf: input.asOf } : {}),
     ...(routing.detectedIntent === "historical_state" ? { rankingProfile: "historical_state" } : {}),
   };
 
-  if (!parsedTimeWindow) {
+  if (!parsedTimeWindow || input.asOf) {
     return request;
   }
 

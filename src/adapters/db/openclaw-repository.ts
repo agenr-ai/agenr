@@ -7,6 +7,7 @@ import type {
   OpenClawRepository,
   OpenClawRecallEvent,
 } from "../../app/openclaw/ports.js";
+import { resolveClaimSlotPolicy } from "../../core/claim-slot-policy.js";
 import type { Entry } from "../../core/types.js";
 import { buildActiveEntryClause, ENTRY_SELECT_COLUMNS, mapEntryRow, readNumber, readOptionalString, readRequiredString } from "./row-mapping.js";
 import type { SqlExecutor } from "./queries.js";
@@ -277,6 +278,7 @@ async function getClaimFamily(executor: SqlExecutor, claimKey: string): Promise<
 
   return {
     claimKey: normalizedClaimKey,
+    slotPolicy: resolveClaimSlotPolicy(normalizedClaimKey).policy,
     entries,
   };
 }

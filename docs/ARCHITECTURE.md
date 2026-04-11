@@ -322,9 +322,12 @@ Current behavior:
 - lexical tiers for exact phrase, all-token, and any-token matches
 - relevance combined with recency and importance
 - optional temporal biasing through `since`, `until`, `around`, and `aroundRadius`
+- explicit `asOf` resolution that prefers validity windows, then claim-support observation time, then created-at
 - best-effort recall telemetry writes to `recall_events`
 
 One repo-specific feature matters here: historical-state expansion. The adapter can reintroduce inactive lineage-linked predecessors when the query appears to ask about an earlier or previous state.
+
+Another Phase 3 feature now lives at the same read boundary: a lightweight runtime slot-policy registry. Claim keys still identify exact slots, but read-time shaping can now distinguish `exclusive` slots from `multivalued` slots so same-key siblings are not always treated as mutually competing current truth.
 
 ### 7.3 Unified recall
 
@@ -343,7 +346,7 @@ Routing uses actual heuristics in code, including:
 - topic anchors
 - historical-state patterns such as "what changed" or "what did we use before"
 
-The router also emits user-facing notices about entry-only filters, episode freshness, and semantic episode fallback behavior.
+The router also emits user-facing notices about entry-only filters, episode freshness, and semantic episode fallback behavior. Its Phase 3 response shape now includes explicit `asOf` metadata when requested plus compact claim-transition summaries that can attach nearby episode context without collapsing durable entries and episodes into one undifferentiated result list.
 
 ### 7.4 Episode ingest
 

@@ -112,7 +112,8 @@ describe("registerTraceCommand", () => {
       }),
     );
     expect(stdout.join("")).toContain("Trace for entry-1 | Jim home city");
-    expect(stdout.join("")).toContain("claim_family=jim/home_city | entry-1:superseded:trusted, entry-2:current:trusted");
+    expect(stdout.join("")).toContain("claim_family=jim/home_city | slot_policy=exclusive | entry-1:superseded:trusted, entry-2:current:trusted");
+    expect(stdout.join("")).toContain("transition=entry-1 -> entry-2");
   });
 });
 

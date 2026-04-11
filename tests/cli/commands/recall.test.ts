@@ -64,6 +64,8 @@ describe("registerRecallCommand", () => {
       "2026-03-01",
       "--around",
       "yesterday",
+      "--as-of",
+      "2026-03-01",
       "--around-radius",
       "21",
       "--verbose",
@@ -80,6 +82,7 @@ describe("registerRecallCommand", () => {
         since: "7d",
         until: "2026-03-01",
         around: "yesterday",
+        asOf: "2026-03-01",
         aroundRadius: 21,
         verbose: true,
       }),
@@ -123,9 +126,12 @@ describe("registerRecallCommand", () => {
     const program = new Command();
     registerMockedRecallCommand(program);
 
-    await program.parseAsync(["recall", "  hybrid retrieval  ", "--tags", " codex , workflow , codex ", "--since", " 7d ", "--around", " yesterday "], {
-      from: "user",
-    });
+    await program.parseAsync(
+      ["recall", "  hybrid retrieval  ", "--tags", " codex , workflow , codex ", "--since", " 7d ", "--around", " yesterday ", "--as-of", " 2026-03-01 "],
+      {
+        from: "user",
+      },
+    );
 
     expect(recallMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -133,6 +139,7 @@ describe("registerRecallCommand", () => {
         tags: ["codex", "workflow"],
         since: "7d",
         around: "yesterday",
+        asOf: "2026-03-01",
       }),
       expect.anything(),
       expect.objectContaining({
@@ -218,12 +225,14 @@ describe("registerRecallCommand", () => {
     const program = new Command();
     registerMockedRecallCommand(program);
 
-    await program.parseAsync(["recall", "previous deployment approach", "--verbose"], { from: "user" });
+    await program.parseAsync(["recall", "previous deployment approach", "--verbose", "--as-of", "2026-03-01"], { from: "user" });
 
     const rendered = stepMock.mock.calls[0]?.[0] as string;
-    expect(rendered).toContain("state=superseded");
+    expect(rendered).toContain("state=current");
     expect(rendered).toContain("claim_status=trusted");
+    expect(rendered).toContain("slot_policy=exclusive");
     expect(rendered).toContain("family=deployment/approach");
+    expect(rendered).toContain("as_of 2026-03-01T00:00:00.000Z via validity");
     expect(rendered).toContain("why=semantic similarity 0.80; lexical overlap 0.60; historical lineage boost 0.08");
     expect(rendered).toContain("historicalLineage=0.08");
   });

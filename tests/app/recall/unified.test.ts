@@ -245,6 +245,90 @@ describe("runUnifiedRecall", () => {
     expect(result.entries.map((item) => item.entry.id)).toEqual(["policy-new"]);
     expect(result.notices).toContain("Embeddings failed during recall, so Agenr fell back to lexical-only entry ranking.");
   });
+
+  it("surfaces explicit as-of resolution and claim-transition context for historical-state queries", async () => {
+    const episodeVectorSearch = vi.fn(async () => [
+      {
+        episode: createEpisode({
+          id: "history-episode",
+          sourceId: "history-episode",
+          embedding: [1, 0],
+          summary: "We migrated the deployment approach from webpack to vite.",
+          tags: ["deployment", "migration"],
+        }),
+        vectorSim: 0.9,
+      },
+    ]);
+    const database = createEpisodeDatabase({
+      episodeVectorSearch,
+    });
+    const priorEntry = createEntry({
+      id: "approach-old",
+      subject: "deployment approach",
+      content: "Webpack was the deployment approach before the migration.",
+      claim_key: "deployment/approach",
+      claim_key_status: "trusted",
+      valid_from: "2026-02-01T00:00:00.000Z",
+      valid_to: "2026-03-20T00:00:00.000Z",
+      superseded_by: "approach-new",
+    });
+    const currentEntry = createEntry({
+      id: "approach-new",
+      subject: "deployment approach",
+      content: "Vite is the deployment approach after the migration.",
+      claim_key: "deployment/approach",
+      claim_key_status: "trusted",
+      valid_from: "2026-03-20T00:00:00.000Z",
+    });
+
+    const result = await runUnifiedRecall(
+      {
+        text: "what was the previous deployment approach",
+        asOf: "2026-03-01T00:00:00.000Z",
+        limit: 3,
+      },
+      {
+        database,
+        recall: createRecallPorts({
+          vectorSearch: async () => [
+            {
+              entry: toRecallCandidateEntry(priorEntry),
+              vectorSim: 0.82,
+            },
+            {
+              entry: toRecallCandidateEntry(currentEntry),
+              vectorSim: 0.82,
+            },
+          ],
+          hydrateEntries: async (ids) => [priorEntry, currentEntry].filter((entry) => ids.includes(entry.id)),
+        }),
+        embeddingAvailable: true,
+        embedQuery: async () => [1, 0],
+      },
+    );
+
+    expect(result.asOf).toBe("2026-03-01T00:00:00.000Z");
+    expect(result.projectedEntries[0]).toMatchObject({
+      entryId: "approach-old",
+      slotPolicy: "exclusive",
+      freshness: {
+        asOf: {
+          clock: "validity",
+          relation: "active",
+        },
+      },
+    });
+    expect(result.claimTransitions).toMatchObject([
+      {
+        claimKey: "deployment/approach",
+        currentEntryId: "approach-old",
+        priorEntryId: "approach-new",
+        episodeContext: {
+          episodeId: "history-episode",
+        },
+      },
+    ]);
+  });
 });
 
 function createEpisodeDatabase(overrides: Partial<EpisodeDatabasePort> = {}): EpisodeDatabasePort {
@@ -374,6 +458,9 @@ function toRecallCandidateEntry(entry: Entry): RecallCandidateEntry {
     superseded_by: entry.superseded_by,
     claim_key: entry.claim_key,
     claim_key_status: entry.claim_key_status,
+    claim_support_observed_at: entry.claim_support_observed_at,
+    valid_from: entry.valid_from,
+    valid_to: entry.valid_to,
     retired: entry.retired,
   };
 }

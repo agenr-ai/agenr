@@ -128,6 +128,7 @@ export async function runRecallEvalCase(request: RecallEvalCaseRequest): Promise
                 ...(request.recallRequest.threshold !== undefined ? { threshold: request.recallRequest.threshold } : {}),
                 ...(request.recallRequest.types && request.recallRequest.types.length > 0 ? { types: request.recallRequest.types } : {}),
                 ...(request.recallRequest.tags && request.recallRequest.tags.length > 0 ? { tags: request.recallRequest.tags } : {}),
+                ...(request.recallRequest.asOf ? { asOf: request.recallRequest.asOf } : {}),
               },
               {
                 database: sandbox.episodeDatabase,

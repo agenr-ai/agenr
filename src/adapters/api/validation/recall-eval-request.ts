@@ -60,6 +60,7 @@ const RECALL_REQUEST_KEYS = new Set<string>([
   "until",
   "around",
   "aroundRadius",
+  "asOf",
   "rankingProfile",
 ]);
 const OPTIONS_KEYS = new Set<string>(["includeDiagnostics", "includeCandidates", "includeTimings"]);
@@ -163,6 +164,8 @@ export interface RecallEvalQueryRequestDto {
   around?: string;
   /** Optional around-date radius. */
   aroundRadius?: number;
+  /** Optional explicit as-of reference point. */
+  asOf?: string;
   /** Optional ranking profile selector. */
   rankingProfile?: RecallEvalQueryRequest["rankingProfile"];
 }
@@ -442,6 +445,7 @@ function parseRecallRequest(value: unknown, issues: RecallEvalValidationIssue[])
     aroundRadius: parseOptionalIntegerInRange(recallRequest.aroundRadius, "recallRequest.aroundRadius", issues, {
       min: 1,
     }),
+    asOf: parseOptionalTrimmedString(recallRequest.asOf, "recallRequest.asOf", issues),
     rankingProfile: parseOptionalRankingProfile(recallRequest.rankingProfile, "recallRequest.rankingProfile", issues),
   };
 }
@@ -787,6 +791,7 @@ function mapRecallRequestDto(dto: RecallEvalQueryRequestDto): RecallEvalQueryReq
     until: dto.until,
     around: dto.around,
     aroundRadius: dto.aroundRadius,
+    asOf: dto.asOf,
     rankingProfile: dto.rankingProfile,
   };
 }

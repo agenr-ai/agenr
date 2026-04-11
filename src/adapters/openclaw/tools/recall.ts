@@ -60,6 +60,11 @@ const RECALL_TOOL_PARAMETERS = {
       items: { type: "string" },
       description: "Optional tags to filter by once you already know the relevant entity, system, or theme.",
     },
+    asOf: {
+      type: "string",
+      description:
+        "Optional reference time for current-vs-prior resolution. Supports ISO timestamps and the same natural-language date phrases used elsewhere in recall.",
+    },
   },
   required: ["query"],
 } as const;
@@ -89,6 +94,7 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
         const services = await servicesPromise;
         const types = parseEntryTypes(readStringArrayParam(params, "types"));
         const tags = normalizeStringArray(readStringArrayParam(params, "tags"));
+        const asOf = readStringParam(params, "asOf");
         const request = {
           text: query,
           ...(mode ? { mode } : {}),
@@ -96,6 +102,7 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
           ...(threshold !== undefined ? { threshold } : {}),
           ...(types.length > 0 ? { types } : {}),
           ...(tags.length > 0 ? { tags } : {}),
+          ...(asOf ? { asOf } : {}),
           sessionKey: ctx.sessionKey,
         };
 
@@ -109,6 +116,7 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
             limit,
             types,
             tags,
+            ...(asOf ? { asOf } : {}),
           }),
           sanitizeRecallToolParams({
             query,
@@ -117,6 +125,7 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
             threshold,
             types,
             tags,
+            ...(asOf ? { asOf } : {}),
           }),
         );
         const result = await runUnifiedRecall(request, {
@@ -147,6 +156,7 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
             queried: result.routing.queried,
             reason: result.routing.reason,
           },
+          ...(result.asOf ? { asOf: result.asOf } : {}),
           ...(result.timeWindow ? { timeWindow: result.timeWindow } : {}),
           episodes: result.episodes.map((episode) => ({
             id: episode.episode.id,
@@ -181,6 +191,7 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
             id: entry.entryId,
             familyKey: entry.familyKey,
             claimKey: entry.claimKey,
+            slotPolicy: entry.slotPolicy,
             memoryState: entry.memoryState,
             claimStatus: entry.claimStatus,
             freshness: entry.freshness,
@@ -190,6 +201,7 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
           entryFamilies: result.entryFamilies.map((family) => ({
             familyKey: family.familyKey,
             claimKey: family.claimKey,
+            slotPolicy: family.slotPolicy,
             subject: family.subject,
             primaryEntryId: family.primary.entryId,
             entries: family.entries.map((entry) => ({
@@ -198,6 +210,7 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
               claimStatus: entry.claimStatus,
             })),
           })),
+          claimTransitions: result.claimTransitions,
           notices: result.notices,
         });
       } catch (error) {

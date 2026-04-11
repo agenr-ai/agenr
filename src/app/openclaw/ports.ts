@@ -1,3 +1,4 @@
+import type { ClaimSlotPolicy } from "../../core/claim-slot-policy.js";
 import type { Entry } from "../../core/types.js";
 
 /**
@@ -15,6 +16,8 @@ export interface OpenClawRecallEvent {
 export interface OpenClawClaimFamily {
   /** Shared claim key for the family. */
   claimKey: string;
+  /** Runtime slot-policy used when reading this lineage. */
+  slotPolicy: ClaimSlotPolicy;
   /** Family rows ordered oldest-first for lineage inspection. */
   entries: Entry[];
 }

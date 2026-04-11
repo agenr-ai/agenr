@@ -1,3 +1,4 @@
+import { resolveClaimSlotPolicy, type ClaimSlotPolicy } from "../../core/claim-slot-policy.js";
 import type { ClaimKeyStatus, ClaimSupportMode } from "../../core/types.js";
 import type { RecallOutput } from "../../core/recall/types.js";
 
@@ -23,7 +24,23 @@ export interface ClaimCentricFreshness {
   validTo?: string;
   /** Whether this recalled row still represents the current active state. */
   isCurrent: boolean;
+  /** Optional explicit as-of resolution details for historical targeting. */
+  asOf?: ClaimCentricAsOfResolution;
   /** Concise human-readable freshness summary for UI surfaces. */
+  label: string;
+}
+
+/**
+ * Structured explanation of how an explicit as-of reference point was resolved.
+ */
+export interface ClaimCentricAsOfResolution {
+  /** Normalized as-of timestamp requested by the caller. */
+  asOf: string;
+  /** Which temporal clock determined the as-of interpretation. */
+  clock: "validity" | "support_observed_at" | "created_at";
+  /** Relationship between the row and the as-of reference point. */
+  relation: "active" | "before_start" | "after_end" | "observed_before" | "observed_after" | "created_before" | "created_after";
+  /** Human-readable explanation of the chosen clock and relation. */
   label: string;
 }
 
@@ -67,6 +84,8 @@ export interface ClaimCentricRecallEntry {
   familyKey: string;
   /** Claim key when the row participates in a claim family. */
   claimKey?: string;
+  /** Runtime slot-policy class used for read-time shaping. */
+  slotPolicy: ClaimSlotPolicy;
   /** High-level memory-state label used in trust surfaces. */
   memoryState: ClaimCentricMemoryState;
   /** Normalized lifecycle label for trust annotations. */
@@ -89,6 +108,8 @@ export interface ClaimCentricRecallFamily {
   familyKey: string;
   /** Shared claim key for the family, when present. */
   claimKey?: string;
+  /** Runtime slot-policy class shared across the family. */
+  slotPolicy: ClaimSlotPolicy;
   /** Subject from the first ranked row in the family. */
   subject: string;
   /** Highest-ranked row in the family. */
@@ -103,11 +124,11 @@ export interface ClaimCentricRecallFamily {
  * @param entries - Ranked raw recall rows returned by the unified layer.
  * @returns Claim-aware grouped projection preserving ranked order.
  */
-export function projectClaimCentricRecallEntries(entries: RecallOutput[]): ClaimCentricRecallFamily[] {
+export function projectClaimCentricRecallEntries(entries: RecallOutput[], options: { asOf?: string } = {}): ClaimCentricRecallFamily[] {
   const families = new Map<string, ClaimCentricRecallFamily>();
 
   for (const recall of entries) {
-    const projected = projectClaimCentricRecallEntry(recall);
+    const projected = projectClaimCentricRecallEntry(recall, options);
     const family = families.get(projected.familyKey);
     if (family) {
       family.entries.push(projected);
@@ -117,6 +138,7 @@ export function projectClaimCentricRecallEntries(entries: RecallOutput[]): Claim
     families.set(projected.familyKey, {
       familyKey: projected.familyKey,
       claimKey: projected.claimKey,
+      slotPolicy: projected.slotPolicy,
       subject: recall.entry.subject,
       primary: projected,
       entries: [projected],
@@ -142,22 +164,25 @@ export function flattenClaimCentricRecallFamilies(families: ClaimCentricRecallFa
  * @param recall - Raw scored recall row from the core recall pipeline.
  * @returns Claim-aware projected row used by app and adapter surfaces.
  */
-export function projectClaimCentricRecallEntry(recall: RecallOutput): ClaimCentricRecallEntry {
+export function projectClaimCentricRecallEntry(recall: RecallOutput, options: { asOf?: string } = {}): ClaimCentricRecallEntry {
   const entry = recall.entry;
   const claimKey = normalizeOptionalString(entry.claim_key);
   const familyKey = claimKey ?? `entry:${entry.id}`;
-  const memoryState = resolveMemoryState(recall);
+  const slotPolicy = resolveClaimSlotPolicy(claimKey).policy;
+  const asOfResolution = buildAsOfResolution(recall, options.asOf);
+  const memoryState = resolveMemoryState(recall, asOfResolution);
   const claimStatus = resolveClaimStatus(recall);
 
   return {
     entryId: entry.id,
     familyKey,
     ...(claimKey ? { claimKey } : {}),
+    slotPolicy,
     memoryState,
     claimStatus,
-    freshness: buildFreshness(recall, memoryState),
+    freshness: buildFreshness(recall, memoryState, asOfResolution),
     provenance: buildProvenance(recall),
-    whySurfaced: buildWhySurfaced(recall),
+    whySurfaced: buildWhySurfaced(recall, asOfResolution),
     recall,
   };
 }
@@ -168,8 +193,32 @@ export function projectClaimCentricRecallEntry(recall: RecallOutput): ClaimCentr
  * @param recall - Raw scored recall row.
  * @returns Memory-state label for trust surfaces.
  */
-function resolveMemoryState(recall: RecallOutput): ClaimCentricMemoryState {
+function resolveMemoryState(recall: RecallOutput, asOfResolution?: ClaimCentricAsOfResolution): ClaimCentricMemoryState {
   const entry = recall.entry;
+  if (asOfResolution) {
+    if (asOfResolution.clock === "validity") {
+      if (asOfResolution.relation === "active") {
+        return "current";
+      }
+
+      return normalizeOptionalString(entry.superseded_by) ? "superseded" : "historical";
+    }
+
+    if (asOfResolution.relation === "observed_after" || asOfResolution.relation === "created_after") {
+      return "historical";
+    }
+
+    if (normalizeOptionalString(entry.superseded_by)) {
+      return "superseded";
+    }
+
+    if (entry.retired || normalizeOptionalString(entry.valid_to)) {
+      return "historical";
+    }
+
+    return "current";
+  }
+
   if (normalizeOptionalString(entry.superseded_by)) {
     return "superseded";
   }
@@ -203,7 +252,7 @@ function resolveClaimStatus(recall: RecallOutput): ClaimCentricClaimStatus {
  * @param memoryState - Resolved memory-state label for the row.
  * @returns Freshness metadata for tool and CLI rendering.
  */
-function buildFreshness(recall: RecallOutput, memoryState: ClaimCentricMemoryState): ClaimCentricFreshness {
+function buildFreshness(recall: RecallOutput, memoryState: ClaimCentricMemoryState, asOfResolution?: ClaimCentricAsOfResolution): ClaimCentricFreshness {
   const entry = recall.entry;
   const validFrom = normalizeOptionalString(entry.valid_from);
   const validTo = normalizeOptionalString(entry.valid_to);
@@ -222,11 +271,16 @@ function buildFreshness(recall: RecallOutput, memoryState: ClaimCentricMemorySta
     labelParts.push("current state");
   }
 
+  if (asOfResolution) {
+    labelParts.push(asOfResolution.label);
+  }
+
   return {
     createdAt,
     ...(validFrom ? { validFrom } : {}),
     ...(validTo ? { validTo } : {}),
     isCurrent: memoryState === "current",
+    ...(asOfResolution ? { asOf: asOfResolution } : {}),
     label: labelParts.join(" | "),
   };
 }
@@ -256,7 +310,7 @@ function buildProvenance(recall: RecallOutput): ClaimCentricProvenance {
  * @param recall - Raw scored recall row.
  * @returns Ordered reasons plus a one-line summary.
  */
-function buildWhySurfaced(recall: RecallOutput): ClaimCentricRecallExplanation {
+function buildWhySurfaced(recall: RecallOutput, asOfResolution?: ClaimCentricAsOfResolution): ClaimCentricRecallExplanation {
   const reasons: string[] = [];
 
   if (recall.scores.vector > 0) {
@@ -276,6 +330,9 @@ function buildWhySurfaced(recall: RecallOutput): ClaimCentricRecallExplanation {
   }
   if (recall.scores.recency > 0) {
     reasons.push(`freshness ${formatScore(recall.scores.recency)}`);
+  }
+  if (asOfResolution) {
+    reasons.push(`as_of ${asOfResolution.asOf} via ${asOfResolution.clock} (${formatAsOfRelation(asOfResolution.relation)})`);
   }
 
   const summary = reasons.slice(0, 3).join("; ") || `ranked score ${formatScore(recall.score)}`;
@@ -304,4 +361,94 @@ function formatScore(value: number): string {
 function normalizeOptionalString(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : undefined;
+}
+
+/**
+ * Resolves how an explicit as-of reference point applies to one recalled row.
+ *
+ * @param recall - Raw scored recall row.
+ * @param asOf - Optional caller-supplied as-of timestamp text.
+ * @returns Structured as-of facts, or undefined when the caller did not request one.
+ */
+function buildAsOfResolution(recall: RecallOutput, asOf: string | undefined): ClaimCentricAsOfResolution | undefined {
+  const normalizedAsOf = normalizeOptionalString(asOf);
+  if (!normalizedAsOf) {
+    return undefined;
+  }
+
+  const asOfDate = parseTimestamp(normalizedAsOf);
+  if (!asOfDate) {
+    return undefined;
+  }
+
+  const entry = recall.entry;
+  const validFrom = parseTimestamp(entry.valid_from);
+  const validTo = parseTimestamp(entry.valid_to);
+  if (validFrom || validTo) {
+    const asOfMs = asOfDate.getTime();
+    const startMs = validFrom?.getTime() ?? Number.NEGATIVE_INFINITY;
+    const endMs = validTo?.getTime() ?? Number.POSITIVE_INFINITY;
+    const relation: ClaimCentricAsOfResolution["relation"] = asOfMs < startMs ? "before_start" : asOfMs > endMs ? "after_end" : "active";
+    return {
+      asOf: asOfDate.toISOString(),
+      clock: "validity",
+      relation,
+      label: `as_of ${asOfDate.toISOString()} via validity (${formatAsOfRelation(relation)})`,
+    };
+  }
+
+  const supportObservedAt = parseTimestamp(entry.claim_support_observed_at);
+  if (supportObservedAt) {
+    const relation: ClaimCentricAsOfResolution["relation"] = supportObservedAt.getTime() <= asOfDate.getTime() ? "observed_before" : "observed_after";
+    return {
+      asOf: asOfDate.toISOString(),
+      clock: "support_observed_at",
+      relation,
+      label: `as_of ${asOfDate.toISOString()} via support_observed_at (${formatAsOfRelation(relation)})`,
+    };
+  }
+
+  const createdAt = parseTimestamp(entry.created_at);
+  if (!createdAt) {
+    return undefined;
+  }
+
+  const relation: ClaimCentricAsOfResolution["relation"] = createdAt.getTime() <= asOfDate.getTime() ? "created_before" : "created_after";
+  return {
+    asOf: asOfDate.toISOString(),
+    clock: "created_at",
+    relation,
+    label: `as_of ${asOfDate.toISOString()} via created_at (${formatAsOfRelation(relation)})`,
+  };
+}
+
+/** Formats one as-of relation into a concise user-facing label. */
+function formatAsOfRelation(relation: ClaimCentricAsOfResolution["relation"]): string {
+  switch (relation) {
+    case "active":
+      return "active at reference time";
+    case "before_start":
+      return "starts after the reference time";
+    case "after_end":
+      return "ended before the reference time";
+    case "observed_before":
+      return "support observed before the reference time";
+    case "observed_after":
+      return "support observed after the reference time";
+    case "created_before":
+      return "created before the reference time";
+    case "created_after":
+      return "created after the reference time";
+  }
+}
+
+/** Parses one optional timestamp into a Date when valid. */
+function parseTimestamp(value: string | undefined): Date | undefined {
+  const normalized = normalizeOptionalString(value);
+  if (!normalized) {
+    return undefined;
+  }
+
+  const parsed = new Date(normalized);
+  return Number.isFinite(parsed.getTime()) ? parsed : undefined;
 }

@@ -29,6 +29,9 @@ const RECALL_CANDIDATE_SELECT_COLUMNS = `
   e.superseded_by,
   e.claim_key,
   e.claim_key_status,
+  e.claim_support_observed_at,
+  e.valid_from,
+  e.valid_to,
   e.retired,
   e.created_at
 `;
@@ -398,6 +401,9 @@ function mapRecallCandidateRow(row: Row): RecallCandidateEntry {
     superseded_by: readOptionalString(row, "superseded_by"),
     claim_key: readOptionalString(row, "claim_key"),
     claim_key_status: readOptionalClaimKeyStatus(row),
+    claim_support_observed_at: readOptionalString(row, "claim_support_observed_at"),
+    valid_from: readOptionalString(row, "valid_from"),
+    valid_to: readOptionalString(row, "valid_to"),
     retired: readBoolean(row, "retired"),
     created_at: readRequiredString(row, "created_at"),
   };

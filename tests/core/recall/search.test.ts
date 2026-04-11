@@ -685,6 +685,134 @@ describe("recall raw evidence gating", () => {
     expect(results.map((result) => result.entry.id)).toEqual(["approach-feb", "approach-mar"]);
     expect(results[0]?.scores.recency).toBeGreaterThan(results[1]?.scores.recency ?? 0);
   });
+
+  it("does not apply same-slot redundancy shaping to multivalued claim families", async () => {
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "dependency-sqlite",
+          subject: "runtime dependency",
+          content: "SQLite is a supported runtime dependency for local development.",
+          claim_key: "runtime/dependency",
+          claim_key_status: "trusted",
+          created_at: "2026-03-20T09:00:00.000Z",
+        }),
+        buildEntry({
+          id: "dependency-libsql",
+          subject: "runtime dependency",
+          content: "libSQL is also a supported runtime dependency for local development.",
+          claim_key: "runtime/dependency",
+          claim_key_status: "trusted",
+          created_at: "2026-03-19T09:00:00.000Z",
+        }),
+        buildEntry({
+          id: "dependency-docs",
+          subject: "dependency docs",
+          content: "Document runtime dependencies in the setup guide.",
+          created_at: "2026-03-18T09:00:00.000Z",
+        }),
+      ],
+      vectorCandidates: [
+        { id: "dependency-sqlite", vectorSim: 0.74 },
+        { id: "dependency-libsql", vectorSim: 0.72 },
+        { id: "dependency-docs", vectorSim: 0.7 },
+      ],
+    });
+
+    const results = await recall(
+      {
+        text: "runtime dependency",
+        limit: 5,
+      },
+      fixture.ports,
+    );
+
+    expect(results.map((result) => result.entry.id)).toEqual(["dependency-sqlite", "dependency-libsql", "dependency-docs"]);
+    expect(results[0]?.scores.claimKeyRedundancyPenalty).toBe(0);
+    expect(results[1]?.scores.claimKeyRedundancyPenalty).toBe(0);
+  });
+
+  it("uses validity windows first when resolving an explicit as-of reference", async () => {
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "approach-old",
+          subject: "deployment approach",
+          content: "Webpack was the deployment approach before the migration.",
+          claim_key: "deployment/approach",
+          claim_key_status: "trusted",
+          valid_from: "2026-02-01T00:00:00.000Z",
+          valid_to: "2026-03-20T00:00:00.000Z",
+          superseded_by: "approach-new",
+          created_at: "2026-02-01T00:00:00.000Z",
+        }),
+        buildEntry({
+          id: "approach-new",
+          subject: "deployment approach",
+          content: "Vite is the deployment approach after the migration.",
+          claim_key: "deployment/approach",
+          claim_key_status: "trusted",
+          valid_from: "2026-03-20T00:00:00.000Z",
+          created_at: "2026-03-20T00:00:00.000Z",
+        }),
+      ],
+      vectorCandidates: [
+        { id: "approach-old", vectorSim: 0.71 },
+        { id: "approach-new", vectorSim: 0.71 },
+      ],
+    });
+
+    const results = await recall(
+      {
+        text: "deployment approach",
+        asOf: "2026-03-01T00:00:00.000Z",
+        limit: 5,
+      },
+      fixture.ports,
+    );
+
+    expect(results.map((result) => result.entry.id)).toEqual(["approach-old", "approach-new"]);
+    expect(results[0]?.scores.recency).toBeGreaterThan(results[1]?.scores.recency ?? 0);
+  });
+
+  it("falls back to support observation time before created-at for explicit as-of ranking", async () => {
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "timezone-observed",
+          subject: "Jim timezone",
+          content: "Jim's timezone is America/Denver.",
+          claim_key: "jim/timezone",
+          claim_key_status: "trusted",
+          claim_support_observed_at: "2026-03-01T00:00:00.000Z",
+          created_at: "2026-03-20T00:00:00.000Z",
+        }),
+        buildEntry({
+          id: "timezone-created",
+          subject: "Jim timezone",
+          content: "Jim's timezone is America/Chicago.",
+          claim_key: "jim/timezone",
+          claim_key_status: "trusted",
+          created_at: "2026-02-01T00:00:00.000Z",
+        }),
+      ],
+      vectorCandidates: [
+        { id: "timezone-observed", vectorSim: 0.7 },
+        { id: "timezone-created", vectorSim: 0.7 },
+      ],
+    });
+
+    const results = await recall(
+      {
+        text: "Jim timezone",
+        asOf: "2026-03-02T00:00:00.000Z",
+        limit: 5,
+      },
+      fixture.ports,
+    );
+
+    expect(results.map((result) => result.entry.id)).toEqual(["timezone-observed", "timezone-created"]);
+  });
 });
 
 /**
@@ -760,6 +888,9 @@ function toRecallCandidateEntry(entry: Entry): RecallCandidateEntry {
     superseded_by: entry.superseded_by,
     claim_key: entry.claim_key,
     claim_key_status: entry.claim_key_status,
+    claim_support_observed_at: entry.claim_support_observed_at,
+    valid_from: entry.valid_from,
+    valid_to: entry.valid_to,
     retired: entry.retired,
   };
 }
@@ -807,8 +938,11 @@ function buildEntry(overrides: Partial<Entry> & Pick<Entry, "id" | "subject" | "
     recall_count: overrides.recall_count ?? 0,
     last_recalled_at: overrides.last_recalled_at,
     superseded_by: overrides.superseded_by,
+    valid_from: overrides.valid_from,
+    valid_to: overrides.valid_to,
     claim_key: overrides.claim_key,
     claim_key_status: overrides.claim_key_status,
+    claim_support_observed_at: overrides.claim_support_observed_at,
     cluster_id: overrides.cluster_id,
     retired: overrides.retired ?? false,
     retired_at: overrides.retired_at,

@@ -604,6 +604,7 @@ describe("runRecallEvalCase", () => {
       claim: {
         familyKey: "deployment/approach",
         claimKey: "deployment/approach",
+        slotPolicy: "exclusive",
         memoryState: "superseded",
         claimStatus: "trusted",
         provenance: {
@@ -622,6 +623,61 @@ describe("runRecallEvalCase", () => {
         valid_to: "2026-03-20T00:00:00.000Z",
       }),
     );
+  });
+
+  it("preserves explicit as-of resolution metadata in claim-centric eval responses", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    vi.stubGlobal("fetch", createEmbeddingFetchStub());
+
+    const response = await runRecallEvalCase({
+      caseId: "case-as-of",
+      memoryPool: [
+        {
+          id: "approach-old",
+          type: "decision",
+          subject: "deployment approach",
+          content: "Webpack was the deployment approach before the migration.",
+          created_at: "2026-02-01T00:00:00.000Z",
+          claim_key: "deployment/approach",
+          claim_key_status: "trusted",
+          valid_from: "2026-02-01T00:00:00.000Z",
+          valid_to: "2026-03-20T00:00:00.000Z",
+          superseded_by: "approach-new",
+        },
+        {
+          id: "approach-new",
+          type: "decision",
+          subject: "deployment approach",
+          content: "Vite is the deployment approach after the migration.",
+          created_at: "2026-03-20T00:00:00.000Z",
+          claim_key: "deployment/approach",
+          claim_key_status: "trusted",
+          valid_from: "2026-03-20T00:00:00.000Z",
+        },
+      ],
+      recallRequest: {
+        text: "what was the previous deployment approach",
+        asOf: "2026-03-01T00:00:00.000Z",
+        limit: 2,
+        rankingProfile: "historical_state",
+      },
+    });
+
+    expect(response).toMatchObject({
+      status: "ok",
+      caseId: "case-as-of",
+    });
+    expect(response.result?.entries[0]).toMatchObject({
+      id: "approach-old",
+      claim: {
+        freshness: {
+          asOf: {
+            clock: "validity",
+            relation: "active",
+          },
+        },
+      },
+    });
   });
 });
 

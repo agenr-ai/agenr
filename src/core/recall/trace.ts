@@ -38,6 +38,11 @@ export interface RecallFilterTrace {
     /** Effective gaussian radius in days. */
     radiusDays: number;
   };
+  /** Applied as-of reference point when present. */
+  asOf?: {
+    /** As-of anchor supplied by the caller in ISO format. */
+    anchor: string;
+  };
 }
 
 /**

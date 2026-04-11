@@ -86,6 +86,7 @@ describe("parseRecallEvalCaseRequest", () => {
         until: undefined,
         around: undefined,
         aroundRadius: undefined,
+        asOf: undefined,
         rankingProfile: "historical_state",
       },
       options: {

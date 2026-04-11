@@ -1,4 +1,5 @@
 import type { RecallPorts } from "../ports.js";
+import { resolveClaimSlotPolicy } from "../claim-slot-policy.js";
 
 import { computeLexicalScore, tokenize } from "./lexical.js";
 import { cosineSimilarity, gaussianRecency, importanceScore, recencyScore, scoreCandidate } from "./scoring.js";
@@ -47,6 +48,7 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
   const limit = normalizeLimit(query.limit);
   const threshold = normalizeThreshold(query.threshold);
   const budget = normalizeBudget(query.budget);
+  const asOfDate = query.asOf ? parseAroundDate(query.asOf) : null;
   const aroundDate = query.around !== undefined ? parseAroundDate(query.around) : inferAroundDate(text);
   const since = query.since ? parseRelativeDate(query.since) : null;
   const until = query.until ? parseRelativeDate(query.until) : null;
@@ -57,6 +59,7 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
     limit,
     threshold,
     budget,
+    asOfDate,
     aroundDate,
     aroundSource: query.around !== undefined ? "explicit" : "inferred",
     aroundRadius: aroundDate ? normalizeAroundRadius(query.aroundRadius) : undefined,
@@ -134,6 +137,7 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
       applyHistoricalLineageBoosts(
         Array.from(mergedCandidates.values()).map((candidate) =>
           scoreMergedCandidate(candidate, text, queryEmbedding, {
+            asOfDate,
             aroundDate,
             aroundRadius: query.aroundRadius,
             rankingProfile: query.rankingProfile,
@@ -223,6 +227,7 @@ function buildRecallTraceSummary(params: {
   limit: number;
   threshold: number;
   budget: number | null;
+  asOfDate: Date | null;
   aroundDate: Date | null;
   aroundSource: "explicit" | "inferred";
   aroundRadius?: number;
@@ -240,6 +245,13 @@ function buildRecallTraceSummary(params: {
             radiusDays: params.aroundRadius ?? 14,
           }
         : undefined,
+      ...(params.asOfDate
+        ? {
+            asOf: {
+              anchor: params.asOfDate.toISOString(),
+            },
+          }
+        : {}),
     },
     ranking: {
       limit: params.limit,
@@ -346,6 +358,7 @@ function scoreMergedCandidate(
   queryText: string,
   queryEmbedding: number[],
   params: {
+    asOfDate: Date | null;
     aroundDate: Date | null;
     aroundRadius?: number;
     rankingProfile?: RecallRankingProfile;
@@ -421,11 +434,16 @@ async function expandHistoricalCandidates(
 function resolveRecencyScore(
   entry: RecallCandidateEntry,
   params: {
+    asOfDate: Date | null;
     aroundDate: Date | null;
     aroundRadius?: number;
     rankingProfile?: RecallRankingProfile;
   },
 ): number {
+  if (params.asOfDate) {
+    return resolveAsOfScore(entry, params.asOfDate);
+  }
+
   if (params.aroundDate) {
     return gaussianRecency(entry.created_at, params.aroundDate, normalizeAroundRadius(params.aroundRadius));
   }
@@ -435,6 +453,49 @@ function resolveRecencyScore(
   }
 
   return recencyScore(entry.created_at, entry.expiry);
+}
+
+/**
+ * Resolves how well one candidate matches an explicit as-of reference point.
+ *
+ * World-valid bounds win when present. If a row lacks those bounds, support
+ * observation time becomes the next-best temporal signal, with created-at kept
+ * as the weakest fallback clock.
+ *
+ * @param entry - Candidate entry being scored.
+ * @param asOfDate - Explicit reference point requested by the caller.
+ * @returns Normalized temporal fit score in the 0-1 range.
+ */
+function resolveAsOfScore(entry: RecallCandidateEntry, asOfDate: Date): number {
+  const validFrom = parseTimestamp(entry.valid_from);
+  const validTo = parseTimestamp(entry.valid_to);
+  if (validFrom || validTo) {
+    const startMs = validFrom?.getTime() ?? Number.NEGATIVE_INFINITY;
+    const endMs = validTo?.getTime() ?? Number.POSITIVE_INFINITY;
+    const asOfMs = asOfDate.getTime();
+    if (asOfMs >= startMs && asOfMs <= endMs) {
+      return 1;
+    }
+
+    const nearestBoundaryMs = asOfMs < startMs ? startMs : endMs;
+    return Math.max(0.1, gaussianRecency(new Date(nearestBoundaryMs).toISOString(), asOfDate, 21) * 0.65);
+  }
+
+  const observedAt = parseTimestamp(entry.claim_support_observed_at);
+  if (observedAt) {
+    const observedBeforeAsOf = observedAt.getTime() <= asOfDate.getTime();
+    const proximity = gaussianRecency(observedAt.toISOString(), asOfDate, 30);
+    return observedBeforeAsOf ? Math.max(0.45, proximity * 0.8) : Math.max(0.05, proximity * 0.2);
+  }
+
+  const createdAt = parseTimestamp(entry.created_at);
+  if (createdAt) {
+    const createdBeforeAsOf = createdAt.getTime() <= asOfDate.getTime();
+    const proximity = gaussianRecency(createdAt.toISOString(), asOfDate, 45);
+    return createdBeforeAsOf ? Math.max(0.35, proximity * 0.7) : Math.max(0.05, proximity * 0.15);
+  }
+
+  return HISTORICAL_STATE_FLAT_RECENCY;
 }
 
 /**
@@ -566,6 +627,9 @@ function resolveHistoricalPeerRelation(
   entries: RecallCandidateEntry[],
 ): "claim_key" | "topic" | "tentative_claim_key_suppressed" | null {
   if (left.claim_key && right.claim_key && left.claim_key === right.claim_key) {
+    if (resolveClaimSlotPolicy(left.claim_key).policy === "multivalued") {
+      return null;
+    }
     return canUseClaimKeyLineage(left, entries) ? "claim_key" : "tentative_claim_key_suppressed";
   }
 
@@ -584,6 +648,10 @@ function resolveHistoricalPeerRelation(
  */
 function canUseClaimKeyLineage(entry: RecallCandidateEntry, entries: RecallCandidateEntry[]): boolean {
   if (!entry.claim_key) {
+    return false;
+  }
+
+  if (resolveClaimSlotPolicy(entry.claim_key).policy === "multivalued") {
     return false;
   }
 
@@ -625,8 +693,18 @@ function sharesHistoricalTopic(left: RecallCandidateEntry, right: RecallCandidat
 
 /** Parse a candidate timestamp into milliseconds, or zero when invalid. */
 function createdAtMs(value: string): number {
-  const timestamp = new Date(value).getTime();
-  return Number.isFinite(timestamp) ? timestamp : 0;
+  return parseTimestamp(value)?.getTime() ?? 0;
+}
+
+/** Parse an optional ISO-like timestamp into a Date when valid. */
+function parseTimestamp(value: string | undefined): Date | null {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const timestamp = new Date(normalized);
+  return Number.isFinite(timestamp.getTime()) ? timestamp : null;
 }
 
 /** Count the consecutive shared prefix tokens between two subject token lists. */
@@ -665,7 +743,13 @@ function applyClaimKeyResultShaping(candidates: RankedCandidate[], claimKeyTrace
   const trustedActiveClaimKeys = new Set(
     candidates
       .map((candidate) => candidate.entry)
-      .filter((entry) => isPotentialCurrentPeer(entry) && entry.claim_key && entry.claim_key_status === "trusted")
+      .filter(
+        (entry) =>
+          isPotentialCurrentPeer(entry) &&
+          entry.claim_key &&
+          entry.claim_key_status === "trusted" &&
+          resolveClaimSlotPolicy(entry.claim_key).policy === "exclusive",
+      )
       .map((entry) => entry.claim_key!),
   );
   const trustedSlotRankById = rankTrustedSlotSiblings(candidates);
@@ -709,7 +793,12 @@ function rankTrustedSlotSiblings(candidates: RankedCandidate[]): Map<string, num
 
   for (const candidate of candidates) {
     const claimKey = candidate.entry.claim_key;
-    if (!claimKey || candidate.entry.claim_key_status !== "trusted" || !isPotentialCurrentPeer(candidate.entry)) {
+    if (
+      !claimKey ||
+      candidate.entry.claim_key_status !== "trusted" ||
+      !isPotentialCurrentPeer(candidate.entry) ||
+      resolveClaimSlotPolicy(claimKey).policy !== "exclusive"
+    ) {
       continue;
     }
 

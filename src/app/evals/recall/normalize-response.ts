@@ -19,7 +19,7 @@ export function buildRecallEvalSuccessResponse(params: {
 }): RecallEvalCaseResponse {
   const entryResults = Array.isArray(params.results) ? params.results : params.results.entries;
   const projectedEntries = Array.isArray(params.results)
-    ? entryResults.map((result) => projectClaimCentricRecallEntry(result))
+    ? entryResults.map((result) => projectClaimCentricRecallEntry(result, { asOf: params.request.recallRequest.asOf }))
     : params.results.projectedEntries;
 
   return {
@@ -40,6 +40,7 @@ export function buildRecallEvalSuccessResponse(params: {
         claim: {
           familyKey: projectedEntries[index]?.familyKey ?? `entry:${result.entry.id}`,
           claimKey: projectedEntries[index]?.claimKey,
+          slotPolicy: projectedEntries[index]?.slotPolicy ?? "exclusive",
           memoryState: projectedEntries[index]?.memoryState ?? "current",
           claimStatus: projectedEntries[index]?.claimStatus ?? "no_key",
           freshness: projectedEntries[index]?.freshness ?? {

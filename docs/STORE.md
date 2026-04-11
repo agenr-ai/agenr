@@ -91,6 +91,12 @@ Notable properties:
 - `claim_key` and its lifecycle/support fields may be supplied directly, inferred earlier by ingest, or extracted inside the store pipeline
 - `valid_from` and `valid_to` are stored as temporal world-state bounds, must parse as ISO timestamps when present, and must be strictly ordered when both are supplied
 
+Read-side Phase 3 semantics now use these clocks differently:
+
+- `valid_from` / `valid_to` are the strongest signal for explicit `asOf` state resolution
+- `claim_support_observed_at` is the next-best source/assertion-time fallback when no validity window exists
+- `created_at` remains the weakest fallback clock and should not be treated as authoritative world-valid time
+
 ## Durable-memory fit
 
 Callers should apply a durable-memory filter before writing. The store pipeline validates shape, deduplicates content, and may attach claim-key lifecycle metadata, but it does not decide whether something belongs in long-term memory.

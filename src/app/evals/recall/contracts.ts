@@ -1,6 +1,7 @@
 import type { RecallInput, RecallOutput } from "../../../core/recall/types.js";
 import type { RecallClaimKeyTrace, RecallDegradedTrace, RecallNoResultReason } from "../../../core/recall/trace.js";
 import type { ClaimKeySource, ClaimKeyStatus, ClaimSupportMode, EntryType, Expiry } from "../../../core/types.js";
+import type { ClaimSlotPolicy } from "../../../core/claim-slot-policy.js";
 import type {
   ClaimCentricClaimStatus,
   ClaimCentricFreshness,
@@ -88,7 +89,7 @@ export interface RecallEvalFixtureEntry {
  */
 export type RecallEvalQueryRequest = Pick<
   RecallInput,
-  "text" | "limit" | "threshold" | "budget" | "types" | "tags" | "since" | "until" | "around" | "aroundRadius" | "rankingProfile"
+  "text" | "limit" | "threshold" | "budget" | "types" | "tags" | "since" | "until" | "around" | "aroundRadius" | "asOf" | "rankingProfile"
 >;
 
 /**
@@ -153,6 +154,8 @@ export interface RecallEvalResultEntry {
     familyKey: string;
     /** Shared claim key when the row belongs to a claim family. */
     claimKey?: string;
+    /** Runtime slot-policy class used for read-time shaping. */
+    slotPolicy: ClaimSlotPolicy;
     /** High-level current vs historical state label. */
     memoryState: ClaimCentricMemoryState;
     /** Lifecycle label for trust surfaces. */

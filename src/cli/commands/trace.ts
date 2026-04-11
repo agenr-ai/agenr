@@ -2,6 +2,7 @@ import { Option, type Command } from "commander";
 
 import { loadOpenClawEntryTraceRuntime } from "../../app/openclaw/inspect.js";
 import type { OpenClawEntryTrace } from "../../app/openclaw/ports.js";
+import { resolveClaimSlotPolicy } from "../../core/claim-slot-policy.js";
 import type { Entry } from "../../core/types.js";
 
 interface TraceCommandOptions {
@@ -61,14 +62,20 @@ function renderTrace(trace: OpenClawEntryTrace): string {
 
   if (trace.entry.claim_key) {
     lines.push(`claim_key=${trace.entry.claim_key}`);
+    lines.push(`slot_policy=${resolveClaimSlotPolicy(trace.entry.claim_key).policy}`);
   }
 
   if (trace.claimFamily && trace.claimFamily.entries.length > 0) {
+    const slotPolicy = trace.claimFamily.slotPolicy ?? resolveClaimSlotPolicy(trace.claimFamily.claimKey).policy;
     lines.push(
-      `claim_family=${trace.claimFamily.claimKey} | ${trace.claimFamily.entries
+      `claim_family=${trace.claimFamily.claimKey} | slot_policy=${slotPolicy} | ${trace.claimFamily.entries
         .map((entry) => `${entry.id}:${describeEntryState(entry)}:${formatClaimLifecycle(entry)}`)
         .join(", ")}`,
     );
+    const transitionSummary = summarizeClaimFamilyTransition(trace.claimFamily.entries);
+    if (transitionSummary) {
+      lines.push(`transition=${transitionSummary}`);
+    }
   }
 
   if (trace.entry.valid_from || trace.entry.valid_to) {
@@ -122,6 +129,24 @@ function formatClaimLifecycle(entry: Entry): string {
   }
 
   return entry.claim_key_status ?? "legacy";
+}
+
+/** Builds a compact change summary from one traced claim family. */
+function summarizeClaimFamilyTransition(entries: Entry[]): string | undefined {
+  const current = entries.find((entry) => !entry.retired && !entry.superseded_by);
+  const prior = [...entries]
+    .reverse()
+    .find((entry) => entry.id !== current?.id && (entry.superseded_by !== undefined || entry.retired || entry.valid_to !== undefined));
+  if (current && prior) {
+    return `${prior.id} -> ${current.id}`;
+  }
+  if (prior) {
+    return `${prior.id} is historical with no current sibling in the traced family`;
+  }
+  if (current) {
+    return `${current.id} is the only current sibling in the traced family`;
+  }
+  return undefined;
 }
 
 /**

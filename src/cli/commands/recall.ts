@@ -23,6 +23,7 @@ interface RecallCommandOptions {
   until?: string;
   around?: string;
   aroundRadius?: number;
+  asOf?: string;
   verbose?: boolean;
 }
 
@@ -49,6 +50,7 @@ export function registerRecallCommand(program: Command): void {
     .option("--since <date>", "Only entries after this date (ISO or relative like 7d)")
     .option("--until <date>", "Only entries before this date")
     .option("--around <date>", "Bias results toward this date")
+    .option("--as-of <date>", "Resolve current vs prior state at this reference time")
     .addOption(new Option("--around-radius <n>", "Gaussian radius in days").argParser(parsePositiveNumber).default(14))
     .option("--verbose", "Show score breakdowns")
     .action(async (query: string, options: RecallCommandOptions) => {
@@ -87,7 +89,7 @@ export function registerRecallCommand(program: Command): void {
         }
 
         for (const result of results) {
-          clack.log.step(formatResult(result, commandInput.verbose));
+          clack.log.step(formatResult(result, commandInput.verbose, commandInput.request.asOf));
         }
 
         clack.outro(`Recall complete: ${results.length} ${pluralize(results.length, "result")}.`);
@@ -126,6 +128,7 @@ function normalizeRecallCommand(query: string, options: RecallCommandOptions): N
       until: normalizeOptionalString(options.until),
       around: normalizeOptionalString(options.around),
       aroundRadius: options.aroundRadius,
+      asOf: normalizeOptionalString(options.asOf),
     },
     verbose: options.verbose === true,
   };
@@ -138,14 +141,16 @@ function normalizeRecallCommand(query: string, options: RecallCommandOptions): N
  * @param verbose - Whether to include detailed score breakdowns.
  * @returns Multi-line formatted CLI block.
  */
-function formatResult(result: RecallOutput, verbose: boolean): string {
-  const projected = projectClaimCentricRecallEntry(result);
+function formatResult(result: RecallOutput, verbose: boolean, asOf?: string): string {
+  const projected = projectClaimCentricRecallEntry(result, {
+    asOf,
+  });
   const contentLength = verbose ? 200 : 120;
   const lines = [
     `${ui.bold(`[${result.score.toFixed(2)}]`)} ${result.entry.subject}`,
     `  ${truncateText(result.entry.content, contentLength)}`,
     `  type=${result.entry.type}  importance=${result.entry.importance}  expiry=${result.entry.expiry}  created=${formatDate(result.entry.created_at)}  state=${projected.memoryState}  claim_status=${formatClaimStatus(projected.claimStatus)}`,
-    `  family=${projected.claimKey ?? projected.familyKey}  freshness=${projected.freshness.label}`,
+    `  family=${projected.claimKey ?? projected.familyKey}  slot_policy=${projected.slotPolicy}  freshness=${projected.freshness.label}`,
   ];
 
   const provenance = formatProvenance(projected);

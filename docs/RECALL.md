@@ -223,8 +223,10 @@ Unified recall does **not** merge episodes and entries into one ranked list. `Un
 - `routing` - requested mode, detected intent, queried backends, and routing reason
 - optional `parsedTimeWindow` - the internal resolved temporal window object used by the app layer
 - optional `timeWindow` - resolved start/end/timezone/resolvedFrom metadata
+- optional `asOf` - explicit current-vs-prior reference point applied to entry recall
 - `episodes` - episode matches
 - `entries` - semantic entry matches
+- `claimTransitions` - compact read-side change summaries built from recalled claim families plus any nearby episode context
 - `notices` - fallback and scope notes
 - `count` - total across both sections
 
@@ -232,16 +234,20 @@ The OpenClaw formatter preserves that separation in text output:
 
 - `Recall Route` first
 - then optional `Resolved Time Window`
+- then optional `As Of`
 - then claim-aware `Entry Matches` before `Episode Matches` when the detected intent is `historical_state`
+- then optional `Claim Transitions`
 - otherwise `Episode Matches` before `Entry Matches`
 - then optional `Notices`
 
 Entry matches now carry a lightweight claim-centric projection on top of the raw ranked rows:
 
 - rows are grouped into claim families when `claim_key` is present
+- each family carries a runtime slot policy of `exclusive` or `multivalued`
 - each row is labeled as `current`, `historical`, or `superseded`
 - trust surfaces include normalized claim lifecycle labels such as `trusted`, `tentative`, `unresolved`, `legacy`, and `no-key`
 - freshness and provenance cues come from `created_at`, `valid_from`, `valid_to`, supersession metadata, and stored claim-support metadata
+- explicit `asOf` resolution prefers `valid_from` / `valid_to`, then `claim_support_observed_at`, then `created_at`
 - a short `why_surfaced` explanation summarizes the score signals that pushed the row into the final answer
 
 This is why mixed recall responses show sessions and durable knowledge side by side without pretending they are the same kind of memory.

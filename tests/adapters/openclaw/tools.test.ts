@@ -488,6 +488,8 @@ describe("agenr OpenClaw tools", () => {
       subject: "deployment approach",
       content: "Before the migration we used the previous deployment path.",
       type: "decision",
+      claim_key: "deployment/approach",
+      claim_key_status: "trusted",
     });
     const services = createServices(database, {
       available: true,
@@ -507,10 +509,18 @@ describe("agenr OpenClaw tools", () => {
         detectedIntent: "historical_state",
         queried: ["entries", "episodes"],
       },
+      claimTransitions: [
+        expect.objectContaining({
+          claimKey: "deployment/approach",
+          slotPolicy: "exclusive",
+        }),
+      ],
     });
     const text = result.content[0]?.text ?? "";
     expect(text).toContain("requested=auto detected=historical_state queried=entries, episodes");
     expect(text.indexOf("Entry Matches")).toBeLessThan(text.indexOf("Episode Matches"));
+    expect(text).toContain("Claim Transitions");
+    expect(text).toContain("slot_policy=exclusive");
     expect(getMessages(logger.debug)).toEqual(
       expect.arrayContaining([expect.stringContaining('unified recall matched historical-state pattern="what was the previous"')]),
     );

@@ -234,6 +234,8 @@ When `historical_state` is detected:
 
 Topic-anchor detection is intentionally simple. It currently treats `about`, `regarding`, `with`, `on <topic>`, or entry-only filters as signals that semantic episode search would help.
 
+One important Phase 3 nuance: explicit `asOf` targeting is currently an entry-side contract. It sharpens current-vs-prior state resolution on durable entries, while episode recall stays oriented around time-window parsing or semantic episode matching. Episodes then act as nearby transition context rather than as the canonical authority for `asOf` truth.
+
 ## Temporal Window Parsing
 
 Episode recall does not reuse the older entry `around` parsing. It has its own parser in `src/core/episode/temporal-window.ts`.

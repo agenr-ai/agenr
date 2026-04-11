@@ -2,6 +2,7 @@ import { failedTextResult, readStringParam } from "openclaw/plugin-sdk/agent-run
 import type { OpenClawPluginToolContext, PluginLogger } from "openclaw/plugin-sdk/core";
 
 import type { ClaimCentricRecallEntry, UnifiedRecallMode, UnifiedRecallResult } from "../../../app/recall/index.js";
+import { resolveClaimSlotPolicy } from "../../../core/claim-slot-policy.js";
 import { ENTRY_TYPES, EXPIRY_LEVELS, type Entry, type EntryType, type Expiry } from "../../../core/types.js";
 import type { AgenrOpenClawServices } from "../types.js";
 
@@ -323,6 +324,7 @@ export function formatRecallToolSummary(params: {
   limit: number | undefined;
   types: EntryType[];
   tags: string[];
+  asOf?: string;
 }): string {
   const parts = [`query=${JSON.stringify(truncate(params.query, 80))}`];
 
@@ -342,6 +344,10 @@ export function formatRecallToolSummary(params: {
     parts.push(`tags=${JSON.stringify(params.tags)}`);
   }
 
+  if (params.asOf) {
+    parts.push(`as_of=${JSON.stringify(params.asOf)}`);
+  }
+
   return parts.join(" ");
 }
 
@@ -358,6 +364,7 @@ export function sanitizeRecallToolParams(params: {
   threshold: number | undefined;
   types: EntryType[];
   tags: string[];
+  asOf?: string;
 }): Record<string, unknown> {
   return {
     query: params.query,
@@ -366,6 +373,7 @@ export function sanitizeRecallToolParams(params: {
     ...(params.threshold !== undefined ? { threshold: params.threshold } : {}),
     ...(params.types.length > 0 ? { types: params.types } : {}),
     ...(params.tags.length > 0 ? { tags: params.tags } : {}),
+    ...(params.asOf ? { asOf: params.asOf } : {}),
   };
 }
 
@@ -443,15 +451,25 @@ export function formatUnifiedRecallResults(result: UnifiedRecallResult): string 
     lines.push("");
   }
 
+  if (result.asOf) {
+    lines.push("As Of");
+    lines.push(result.asOf);
+    lines.push("");
+  }
+
   const renderEntriesFirst = result.routing.detectedIntent === "historical_state";
   if (renderEntriesFirst) {
     appendEntryMatches(lines, result);
+    lines.push("");
+    appendClaimTransitions(lines, result);
     lines.push("");
     appendEpisodeMatches(lines, result);
   } else {
     appendEpisodeMatches(lines, result);
     lines.push("");
     appendEntryMatches(lines, result);
+    lines.push("");
+    appendClaimTransitions(lines, result);
   }
 
   if (result.notices.length > 0) {
@@ -476,7 +494,7 @@ function appendEntryMatches(lines: string[], result: UnifiedRecallResult): void 
   for (const [familyIndex, family] of result.entryFamilies.entries()) {
     lines.push(
       family.claimKey
-        ? `Family ${familyIndex + 1}. claim_key=${family.claimKey} | primary=${family.primary.entryId} | subject=${family.subject}`
+        ? `Family ${familyIndex + 1}. claim_key=${family.claimKey} | slot_policy=${family.slotPolicy} | primary=${family.primary.entryId} | subject=${family.subject}`
         : `Standalone ${familyIndex + 1}. ${family.primary.entryId} | subject=${family.subject}`,
     );
     for (const [entryIndex, entry] of family.entries.entries()) {
@@ -511,6 +529,30 @@ function appendEpisodeMatches(lines: string[], result: UnifiedRecallResult): voi
   }
 }
 
+/** Append the compact claim-transition explanation section. */
+function appendClaimTransitions(lines: string[], result: UnifiedRecallResult): void {
+  lines.push("Claim Transitions");
+  if (result.claimTransitions.length === 0) {
+    lines.push("None.");
+    return;
+  }
+
+  for (const [index, transition] of result.claimTransitions.entries()) {
+    lines.push(
+      `${index + 1}. family=${transition.claimKey ?? transition.familyKey} | slot_policy=${transition.slotPolicy}${transition.currentEntryId ? ` | current=${transition.currentEntryId}` : ""}${
+        transition.priorEntryId ? ` | prior=${transition.priorEntryId}` : ""
+      }`,
+    );
+    lines.push(`   ${transition.summary}`);
+    if (transition.episodeContext) {
+      lines.push(
+        `   episode=${transition.episodeContext.episodeId} | ${transition.episodeContext.startedAt} -> ${transition.episodeContext.endedAt ?? transition.episodeContext.startedAt}`,
+      );
+      lines.push(`   ${truncate(transition.episodeContext.summary.trim(), 220)}`);
+    }
+  }
+}
+
 /**
  * Formats a concise unified recall summary for info-level logging.
  *
@@ -540,7 +582,7 @@ export function formatTrace(
   entry: Entry,
   supersededBy: Entry | undefined,
   supersedes: Entry[],
-  claimFamily: { claimKey: string; entries: Entry[] } | undefined,
+  claimFamily: { claimKey: string; slotPolicy?: "exclusive" | "multivalued"; entries: Entry[] } | undefined,
   recallEvents: Array<{ query?: string; sessionKey?: string; recalledAt: string }>,
 ): string {
   const lines = [
@@ -562,11 +604,16 @@ export function formatTrace(
   }
 
   if (claimFamily && claimFamily.entries.length > 0) {
+    const slotPolicy = claimFamily.slotPolicy ?? resolveClaimSlotPolicy(claimFamily.claimKey).policy;
     lines.push(
-      `claim_family=${claimFamily.claimKey} | ${claimFamily.entries
+      `claim_family=${claimFamily.claimKey} | slot_policy=${slotPolicy} | ${claimFamily.entries
         .map((item) => `${item.id}:${describeTraceEntryState(item)}:${formatClaimLifecycleLabel(item)}`)
         .join(", ")}`,
     );
+    const transitionSummary = summarizeTraceClaimFamilyTransition(claimFamily.entries);
+    if (transitionSummary) {
+      lines.push(`transition=${transitionSummary}`);
+    }
   }
 
   if (entry.valid_from || entry.valid_to) {
@@ -750,4 +797,22 @@ function formatClaimLifecycleLabel(entry: Entry): string {
   }
 
   return entry.claim_key_status ?? "legacy";
+}
+
+/** Builds a compact change summary from a traced claim family when possible. */
+function summarizeTraceClaimFamilyTransition(entries: Entry[]): string | undefined {
+  const current = entries.find((entry) => !entry.retired && !entry.superseded_by);
+  const prior = [...entries]
+    .reverse()
+    .find((entry) => entry.id !== current?.id && (entry.superseded_by !== undefined || entry.retired || entry.valid_to !== undefined));
+  if (current && prior) {
+    return `${prior.id} -> ${current.id}`;
+  }
+  if (prior) {
+    return `${prior.id} is historical with no current sibling in the traced family`;
+  }
+  if (current) {
+    return `${current.id} is the only current sibling in the traced family`;
+  }
+  return undefined;
 }
