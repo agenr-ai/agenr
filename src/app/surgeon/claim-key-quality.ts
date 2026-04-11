@@ -2693,13 +2693,17 @@ function restoreClaimKeyLifecycle(entry: Entry, snapshot: ClaimKeyLifecycleSnaps
   entry.claim_key_rationale = snapshot.claimKeyRationale;
 }
 
-function createProposal(input: Omit<SurgeonRunProposal, "id">): SurgeonRunProposal {
+function createProposal(input: Omit<SurgeonRunProposal, "id" | "reviewStatus" | "reviewedAt" | "reviewReason" | "appliedActionCount">): SurgeonRunProposal {
   return {
     id: randomUUID(),
     ...input,
     entryIds: normalizeStringArray(input.entryIds),
     currentClaimKeys: normalizeStringArray(input.currentClaimKeys),
     proposedClaimKeys: normalizeStringArray(input.proposedClaimKeys),
+    reviewStatus: "open",
+    reviewedAt: null,
+    reviewReason: null,
+    appliedActionCount: 0,
   };
 }
 

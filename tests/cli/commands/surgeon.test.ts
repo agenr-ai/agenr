@@ -3,20 +3,31 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SurgeonProgressEvent } from "../../../src/app/surgeon/progress.js";
 
-const { loadSurgeonActionsRuntimeMock, loadSurgeonHistoryRuntimeMock, loadSurgeonProposalsRuntimeMock, loadSurgeonStatusRuntimeMock, runSurgeonRuntimeMock } =
-  vi.hoisted(() => ({
-    loadSurgeonActionsRuntimeMock: vi.fn(),
-    loadSurgeonHistoryRuntimeMock: vi.fn(),
-    loadSurgeonProposalsRuntimeMock: vi.fn(),
-    loadSurgeonStatusRuntimeMock: vi.fn(),
-    runSurgeonRuntimeMock: vi.fn(),
-  }));
+const {
+  loadSurgeonActionsRuntimeMock,
+  loadSurgeonBacklogRuntimeMock,
+  loadSurgeonHistoryRuntimeMock,
+  loadSurgeonProposalsRuntimeMock,
+  loadSurgeonStatusRuntimeMock,
+  reviewSurgeonProposalRuntimeMock,
+  runSurgeonRuntimeMock,
+} = vi.hoisted(() => ({
+  loadSurgeonActionsRuntimeMock: vi.fn(),
+  loadSurgeonBacklogRuntimeMock: vi.fn(),
+  loadSurgeonHistoryRuntimeMock: vi.fn(),
+  loadSurgeonProposalsRuntimeMock: vi.fn(),
+  loadSurgeonStatusRuntimeMock: vi.fn(),
+  reviewSurgeonProposalRuntimeMock: vi.fn(),
+  runSurgeonRuntimeMock: vi.fn(),
+}));
 
 vi.mock("../../../src/app/surgeon/runtime.js", () => ({
   loadSurgeonActionsRuntime: loadSurgeonActionsRuntimeMock,
+  loadSurgeonBacklogRuntime: loadSurgeonBacklogRuntimeMock,
   loadSurgeonHistoryRuntime: loadSurgeonHistoryRuntimeMock,
   loadSurgeonProposalsRuntime: loadSurgeonProposalsRuntimeMock,
   loadSurgeonStatusRuntime: loadSurgeonStatusRuntimeMock,
+  reviewSurgeonProposalRuntime: reviewSurgeonProposalRuntimeMock,
   runSurgeonRuntime: runSurgeonRuntimeMock,
 }));
 
@@ -40,9 +51,11 @@ describe("registerSurgeonCommand", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     loadSurgeonActionsRuntimeMock.mockReset();
+    loadSurgeonBacklogRuntimeMock.mockReset();
     loadSurgeonHistoryRuntimeMock.mockReset();
     loadSurgeonProposalsRuntimeMock.mockReset();
     loadSurgeonStatusRuntimeMock.mockReset();
+    reviewSurgeonProposalRuntimeMock.mockReset();
     runSurgeonRuntimeMock.mockReset();
   });
 
@@ -290,6 +303,8 @@ describe("registerSurgeonCommand", () => {
           noKey: 3,
         },
         proposalBacklogCount: 4,
+        eligibleProposalBacklogCount: 3,
+        oldestOpenProposalCreatedAt: "2026-03-28T08:00:00.000Z",
         retirementCandidateCount: 6,
         recentlyEvaluatedCount: 2,
       },
@@ -311,10 +326,54 @@ describe("registerSurgeonCommand", () => {
     expect(stdout.join("")).toContain("Surgeon Status");
     expect(stdout.join("")).toContain("Entries: 17");
     expect(stdout.join("")).toContain("Claim keys: trusted 8 | tentative 2 | unresolved 1 | legacy 3 | no key 3");
-    expect(stdout.join("")).toContain("Proposal backlog: 4");
+    expect(stdout.join("")).toContain("Proposal backlog: 4 open | 3 eligible to apply | oldest 2026-03-28T08:00:00.000Z");
     expect(stdout.join("")).toContain("Retirement candidates: 6 total (4 new, 2 recently evaluated)");
     expect(stdout.join("")).toContain("Last surgeon run: claim_key_quality completed (dry-run)");
     expect(stdout.join("")).toContain("Last surgeon cost: $0.0400");
+  });
+
+  it("renders the global proposal backlog", async () => {
+    const { program, stdout } = createProgramWithCapturedOutput();
+    loadSurgeonBacklogRuntimeMock.mockResolvedValue([
+      {
+        proposal: {
+          id: "proposal-1",
+          runId: "run-1",
+          groupId: "group-1",
+          issueKind: "mixed_claim_family",
+          scope: "cluster",
+          entryIds: ["entry-1", "entry-2"],
+          currentClaimKeys: ["jim/home_city"],
+          proposedClaimKeys: ["jim/location"],
+          rationale: "Review split-family entries.",
+          confidence: 0.86,
+          source: "claim_key_quality",
+          eligibleForApply: true,
+          createdAt: "2026-03-30T12:00:00.000Z",
+          reviewStatus: "open",
+          reviewedAt: null,
+          reviewReason: null,
+          appliedActionCount: 0,
+        },
+        runPassType: "claim_key_quality",
+        runStartedAt: "2026-03-30T11:55:00.000Z",
+        runStatus: "completed",
+        runDryRun: true,
+      },
+    ]);
+
+    await program.parseAsync(["surgeon", "backlog", "--eligible-only"], { from: "user" });
+
+    expect(loadSurgeonBacklogRuntimeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        state: "open",
+        eligibleOnly: true,
+        env: process.env,
+      }),
+    );
+    expect(stdout.join("")).toContain("Surgeon Backlog");
+    expect(stdout.join("")).toContain("eligible=true  status=open");
+    expect(stdout.join("")).toContain("run=claim_key_quality completed (dry-run)");
   });
 
   it("renders unresolved proposals for one surgeon run", async () => {
@@ -334,6 +393,10 @@ describe("registerSurgeonCommand", () => {
         source: "claim_key_quality",
         eligibleForApply: false,
         createdAt: "2026-03-30T12:00:00.000Z",
+        reviewStatus: "open",
+        reviewedAt: null,
+        reviewReason: null,
+        appliedActionCount: 0,
       },
     ]);
 
@@ -346,9 +409,53 @@ describe("registerSurgeonCommand", () => {
       }),
     );
     expect(stdout.join("")).toContain("Surgeon Proposals run-1");
-    expect(stdout.join("")).toContain("mixed_claim_family  scope=cluster  confidence=0.86  eligible=false");
+    expect(stdout.join("")).toContain("mixed_claim_family  scope=cluster  confidence=0.86  eligible=false  status=open");
     expect(stdout.join("")).toContain("entries=entry-1, entry-2");
     expect(stdout.join("")).toContain("claim_keys current=jim/home_city -> proposed=jim/home_city, jim/location");
+  });
+
+  it("renders proposal review results after apply or reject", async () => {
+    const { program, stdout } = createProgramWithCapturedOutput();
+    reviewSurgeonProposalRuntimeMock.mockResolvedValue({
+      proposal: {
+        id: "proposal-1",
+        runId: "run-1",
+        groupId: "group-1",
+        issueKind: "mixed_claim_family",
+        scope: "cluster",
+        entryIds: ["entry-1", "entry-2"],
+        currentClaimKeys: ["jim/home_city"],
+        proposedClaimKeys: ["jim/location"],
+        rationale: "Review split-family entries.",
+        confidence: 0.86,
+        source: "claim_key_quality",
+        eligibleForApply: true,
+        createdAt: "2026-03-30T12:00:00.000Z",
+        reviewStatus: "applied",
+        reviewedAt: "2026-03-30T13:00:00.000Z",
+        reviewReason: "Canonical family already exists.",
+        appliedActionCount: 1,
+      },
+      updatedEntryIds: ["entry-1", "entry-2"],
+      backupPath: "/tmp/knowledge.db.surgeon-backup",
+    });
+
+    await program.parseAsync(["surgeon", "review", "proposal-1", "--decision", "apply", "--reason", "Canonical family already exists."], {
+      from: "user",
+    });
+
+    expect(reviewSurgeonProposalRuntimeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        proposalId: "proposal-1",
+        decision: "apply",
+        reason: "Canonical family already exists.",
+        env: process.env,
+      }),
+    );
+    expect(stdout.join("")).toContain("Surgeon Proposal Review proposal-1");
+    expect(stdout.join("")).toContain("Status: applied");
+    expect(stdout.join("")).toContain("Updated entries: entry-1, entry-2");
+    expect(stdout.join("")).toContain("Backup: /tmp/knowledge.db.surgeon-backup");
   });
 });
 

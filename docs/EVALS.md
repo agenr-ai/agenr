@@ -1,6 +1,6 @@
 # Evals
 
-`agenr` currently exposes one eval seam: a narrow internal recall-eval HTTP adapter used by `agenr-evals` to run isolated case-local recall requests against real `agenr` behavior.
+`agenr` currently exposes one eval seam: a narrow internal recall-eval HTTP adapter used by `agenr-evals` to run isolated case-local recall requests against real `agenr` behavior, including degraded lexical fallback and unified-recall notices.
 
 This seam is intentionally small:
 
@@ -91,7 +91,7 @@ Server behavior is intentionally tiny:
 
 ## Request contract
 
-The request type is `RecallEvalCaseRequest` from [src/app/evals/recall/contracts.ts](/Users/jmartin/Code/agenr/src/app/evals/recall/contracts.ts).
+The request type is `RecallEvalCaseRequest` from [src/app/evals/recall/contracts.ts](../src/app/evals/recall/contracts.ts).
 
 Top-level shape:
 
@@ -345,7 +345,7 @@ That path uses:
 
 #### Unified path
 
-When `recallPath: "unified"`, the app service calls `runUnifiedRecall()` from [src/app/recall/unified.ts](/Users/jmartin/Code/agenr/src/app/recall/unified.ts).
+When `recallPath: "unified"`, the app service calls `runUnifiedRecall()` from [src/app/recall/unified.ts](../src/app/recall/unified.ts).
 
 Important unified-path behavior:
 
@@ -377,6 +377,7 @@ When diagnostics are included, the response can contain:
 - `diagnostics.ranking`
 - `diagnostics.filtering`
 - `diagnostics.claimKey`
+- `diagnostics.degraded`
 - `diagnostics.unifiedRecall`
 - `diagnostics.candidateCounts`
 
@@ -387,7 +388,15 @@ Current guarantees:
 - `diagnostics.provision` appears only after successful provisioning
 - `diagnostics.retrieval` appears only after retrieval-stage observation occurs
 - `diagnostics.ranking` and `diagnostics.filtering` appear only after the core trace summary is emitted
+- `diagnostics.degraded` appears only after the core trace summary is emitted
 - `diagnostics.unifiedRecall` appears only for unified-path cases
+
+`diagnostics.degraded` is the stable place to assert:
+
+- whether recall fell back away from the normal vector-backed path
+- the degraded causes such as `query_embedding_failed` or `vector_search_failed`
+- whether the run became lexical-only
+- the exact user-facing degraded notices returned by the product surface
 
 `includeCandidates` remains intentionally narrow:
 
@@ -500,23 +509,23 @@ not the preserved on-disk database after the request has already run.
 The intended local flow is:
 
 ```bash
-cd /Users/jmartin/Code/agenr
+cd /path/to/agenr
 pnpm internal:recall-eval-server
 ```
 
 Then from `agenr-evals`:
 
 ```bash
-cd /Users/jmartin/Code/agenr-evals
+cd /path/to/agenr-evals
 ./bin/evals run --manifest agenr-recall-http --adapter agenr-recall-http
 ```
 
-That manifest exists today at [agenr-recall-http.json](/Users/jmartin/Code/agenr-evals/manifests/agenr-recall-http.json) and points at the same internal route.
+That manifest exists today at `manifests/agenr-recall-http.json` in the `agenr-evals` repo and points at the same internal route.
 
 If you override the local server URL, point `agenr-evals` at it with:
 
 ```bash
-cd /Users/jmartin/Code/agenr-evals
+cd /path/to/agenr-evals
 AGENR_EVALS_AGENR_BASE_URL=http://127.0.0.1:4010 ./bin/evals run --manifest agenr-recall-http --adapter agenr-recall-http
 ```
 
@@ -549,21 +558,21 @@ Important notes:
 
 ## Good files to read before changing evals
 
-- [src/internal-recall-eval-server.ts](/Users/jmartin/Code/agenr/src/internal-recall-eval-server.ts)
-- [src/adapters/api/internal-recall-eval-server.ts](/Users/jmartin/Code/agenr/src/adapters/api/internal-recall-eval-server.ts)
-- [src/adapters/api/routes/internal-recall-eval.ts](/Users/jmartin/Code/agenr/src/adapters/api/routes/internal-recall-eval.ts)
-- [src/adapters/api/validation/recall-eval-request.ts](/Users/jmartin/Code/agenr/src/adapters/api/validation/recall-eval-request.ts)
-- [src/app/evals/recall/contracts.ts](/Users/jmartin/Code/agenr/src/app/evals/recall/contracts.ts)
-- [src/app/evals/recall/run-recall-eval-case.ts](/Users/jmartin/Code/agenr/src/app/evals/recall/run-recall-eval-case.ts)
-- [src/app/evals/recall/sandbox.ts](/Users/jmartin/Code/agenr/src/app/evals/recall/sandbox.ts)
-- [src/app/evals/recall/provision-fixtures.ts](/Users/jmartin/Code/agenr/src/app/evals/recall/provision-fixtures.ts)
-- [src/app/evals/recall/instrumented-recall-ports.ts](/Users/jmartin/Code/agenr/src/app/evals/recall/instrumented-recall-ports.ts)
-- [src/app/evals/recall/collect-diagnostics.ts](/Users/jmartin/Code/agenr/src/app/evals/recall/collect-diagnostics.ts)
-- [src/app/evals/recall/normalize-response.ts](/Users/jmartin/Code/agenr/src/app/evals/recall/normalize-response.ts)
-- [src/app/recall/unified.ts](/Users/jmartin/Code/agenr/src/app/recall/unified.ts)
-- [src/core/recall/index.ts](/Users/jmartin/Code/agenr/src/core/recall/index.ts)
-- [src/core/recall/trace.ts](/Users/jmartin/Code/agenr/src/core/recall/trace.ts)
-- [tests/app/evals/recall/run-recall-eval-case.test.ts](/Users/jmartin/Code/agenr/tests/app/evals/recall/run-recall-eval-case.test.ts)
-- [tests/adapters/api/routes/internal-recall-eval.test.ts](/Users/jmartin/Code/agenr/tests/adapters/api/routes/internal-recall-eval.test.ts)
-- [tests/adapters/api/validation/recall-eval-request.test.ts](/Users/jmartin/Code/agenr/tests/adapters/api/validation/recall-eval-request.test.ts)
-- [tests/adapters/api/internal-recall-eval-server.test.ts](/Users/jmartin/Code/agenr/tests/adapters/api/internal-recall-eval-server.test.ts)
+- [src/internal-recall-eval-server.ts](../src/internal-recall-eval-server.ts)
+- [src/adapters/api/internal-recall-eval-server.ts](../src/adapters/api/internal-recall-eval-server.ts)
+- [src/adapters/api/routes/internal-recall-eval.ts](../src/adapters/api/routes/internal-recall-eval.ts)
+- [src/adapters/api/validation/recall-eval-request.ts](../src/adapters/api/validation/recall-eval-request.ts)
+- [src/app/evals/recall/contracts.ts](../src/app/evals/recall/contracts.ts)
+- [src/app/evals/recall/run-recall-eval-case.ts](../src/app/evals/recall/run-recall-eval-case.ts)
+- [src/app/evals/recall/sandbox.ts](../src/app/evals/recall/sandbox.ts)
+- [src/app/evals/recall/provision-fixtures.ts](../src/app/evals/recall/provision-fixtures.ts)
+- [src/app/evals/recall/instrumented-recall-ports.ts](../src/app/evals/recall/instrumented-recall-ports.ts)
+- [src/app/evals/recall/collect-diagnostics.ts](../src/app/evals/recall/collect-diagnostics.ts)
+- [src/app/evals/recall/normalize-response.ts](../src/app/evals/recall/normalize-response.ts)
+- [src/app/recall/unified.ts](../src/app/recall/unified.ts)
+- [src/core/recall/index.ts](../src/core/recall/index.ts)
+- [src/core/recall/trace.ts](../src/core/recall/trace.ts)
+- [tests/app/evals/recall/run-recall-eval-case.test.ts](../tests/app/evals/recall/run-recall-eval-case.test.ts)
+- [tests/adapters/api/routes/internal-recall-eval.test.ts](../tests/adapters/api/routes/internal-recall-eval.test.ts)
+- [tests/adapters/api/validation/recall-eval-request.test.ts](../tests/adapters/api/validation/recall-eval-request.test.ts)
+- [tests/adapters/api/internal-recall-eval-server.test.ts](../tests/adapters/api/internal-recall-eval-server.test.ts)

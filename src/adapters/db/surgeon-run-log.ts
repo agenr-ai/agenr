@@ -4,11 +4,12 @@ import type { Row } from "@libsql/client";
 
 import type { SurgeonRunAction } from "../../core/surgeon/domain/action-types.js";
 import { isSurgeonPassType, type SurgeonPassType } from "../../core/surgeon/domain/pass-types.js";
-import type { SurgeonCompletionSummary, SurgeonRunProposal, SurgeonRunStatus } from "../../core/surgeon/types.js";
+import type { SurgeonCompletionSummary, SurgeonProposalReviewStatus, SurgeonRunProposal, SurgeonRunStatus } from "../../core/surgeon/types.js";
 import { readBoolean, readNumber, readOptionalString, readRequiredString } from "./row-mapping.js";
 import type { SqlExecutor } from "./queries.js";
 
 const SURGEON_RUN_STATUSES = ["running", "completed", "failed", "aborted", "budget_exhausted", "cost_capped"] as const;
+const SURGEON_PROPOSAL_REVIEW_STATUSES = ["open", "applied", "rejected"] as const;
 
 /**
  * Persisted surgeon run metadata row.
@@ -32,6 +33,23 @@ export interface SurgeonRun {
   dryRun: boolean;
   config: Record<string, unknown> | null;
 }
+
+/**
+ * Joined backlog row that pairs one proposal with its originating run metadata.
+ */
+export interface SurgeonProposalBacklogRow {
+  proposal: SurgeonRunProposal;
+  runPassType: SurgeonPassType;
+  runStartedAt: string;
+  runStatus: SurgeonRunStatus;
+  runDryRun: boolean;
+}
+
+/**
+ * Proposal payload accepted by persistence helpers, with review metadata
+ * defaulting to the open state when omitted by older call sites.
+ */
+type PersistedSurgeonProposalInput = SurgeonRunProposal | Omit<SurgeonRunProposal, "reviewStatus" | "reviewedAt" | "reviewReason" | "appliedActionCount">;
 
 /**
  * Inserts a new surgeon run row and returns the generated run ID.
@@ -180,7 +198,12 @@ export async function logSurgeonAction(executor: SqlExecutor, action: SurgeonRun
  * @param executor - SQL executor used for the insert.
  * @param proposal - Structured unresolved proposal payload.
  */
-export async function logSurgeonProposal(executor: SqlExecutor, proposal: SurgeonRunProposal): Promise<void> {
+export async function logSurgeonProposal(executor: SqlExecutor, proposal: PersistedSurgeonProposalInput): Promise<void> {
+  const reviewStatus = "reviewStatus" in proposal ? proposal.reviewStatus : "open";
+  const reviewedAt = "reviewedAt" in proposal ? proposal.reviewedAt : null;
+  const reviewReason = "reviewReason" in proposal ? proposal.reviewReason : null;
+  const appliedActionCount = "appliedActionCount" in proposal ? proposal.appliedActionCount : 0;
+
   await executor.execute({
     sql: `
       INSERT INTO surgeon_run_proposals (
@@ -196,9 +219,13 @@ export async function logSurgeonProposal(executor: SqlExecutor, proposal: Surgeo
         confidence,
         source,
         eligible_for_apply,
+        review_status,
+        reviewed_at,
+        review_reason,
+        applied_action_count,
         created_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     args: [
       proposal.id.trim().length > 0 ? proposal.id.trim() : randomUUID(),
@@ -213,6 +240,10 @@ export async function logSurgeonProposal(executor: SqlExecutor, proposal: Surgeo
       normalizeNumber(proposal.confidence),
       proposal.source.trim(),
       proposal.eligibleForApply ? 1 : 0,
+      reviewStatus,
+      normalizeTimestamp(reviewedAt ?? undefined),
+      normalizeOptionalString(reviewReason ?? undefined),
+      normalizeInteger(appliedActionCount ?? 0),
       normalizeTimestamp(proposal.createdAt) ?? new Date().toISOString(),
     ],
   });
@@ -320,6 +351,10 @@ export async function getSurgeonRunProposals(executor: SqlExecutor, runId: strin
         confidence,
         source,
         eligible_for_apply,
+        review_status,
+        reviewed_at,
+        review_reason,
+        applied_action_count,
         created_at
       FROM surgeon_run_proposals
       WHERE run_id = ?
@@ -329,6 +364,170 @@ export async function getSurgeonRunProposals(executor: SqlExecutor, runId: strin
   });
 
   return result.rows.map((row) => mapProposalRow(row));
+}
+
+/**
+ * Loads one persisted proposal by ID.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @param proposalId - Proposal identifier to inspect.
+ * @returns Matching proposal payload, or null when absent.
+ */
+export async function getSurgeonProposal(executor: SqlExecutor, proposalId: string): Promise<SurgeonRunProposal | null> {
+  const result = await executor.execute({
+    sql: `
+      SELECT
+        id,
+        run_id,
+        group_id,
+        issue_kind,
+        scope,
+        entry_ids,
+        current_claim_keys,
+        proposed_claim_keys,
+        rationale,
+        confidence,
+        source,
+        eligible_for_apply,
+        review_status,
+        reviewed_at,
+        review_reason,
+        applied_action_count,
+        created_at
+      FROM surgeon_run_proposals
+      WHERE id = ?
+      LIMIT 1
+    `,
+    args: [proposalId.trim()],
+  });
+
+  const row = result.rows[0];
+  return row ? mapProposalRow(row) : null;
+}
+
+/**
+ * Lists proposal backlog rows across runs using review-state filters.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @param query - Optional review-state and pagination filters.
+ * @returns Joined backlog rows ordered for operator review.
+ */
+export async function listSurgeonProposalBacklog(
+  executor: SqlExecutor,
+  query: {
+    state?: SurgeonProposalReviewStatus | "all";
+    issueKind?: string;
+    eligibleOnly?: boolean;
+    entryId?: string;
+    limit?: number;
+    offset?: number;
+  } = {},
+): Promise<SurgeonProposalBacklogRow[]> {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (query.state && query.state !== "all") {
+    clauses.push("p.review_status = ?");
+    args.push(query.state);
+  }
+  if (query.issueKind) {
+    clauses.push("p.issue_kind = ?");
+    args.push(query.issueKind.trim());
+  }
+  if (query.eligibleOnly) {
+    clauses.push("p.eligible_for_apply = 1");
+  }
+  if (query.entryId) {
+    clauses.push("EXISTS (SELECT 1 FROM json_each(p.entry_ids) AS je WHERE je.value = ?)");
+    args.push(query.entryId.trim());
+  }
+
+  const limit = Number.isFinite(query.limit) && (query.limit ?? 0) > 0 ? Math.floor(query.limit!) : 25;
+  const offset = Number.isFinite(query.offset) && (query.offset ?? 0) >= 0 ? Math.floor(query.offset!) : 0;
+  const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+  const result = await executor.execute({
+    sql: `
+      SELECT
+        p.id,
+        p.run_id,
+        p.group_id,
+        p.issue_kind,
+        p.scope,
+        p.entry_ids,
+        p.current_claim_keys,
+        p.proposed_claim_keys,
+        p.rationale,
+        p.confidence,
+        p.source,
+        p.eligible_for_apply,
+        p.review_status,
+        p.reviewed_at,
+        p.review_reason,
+        p.applied_action_count,
+        p.created_at,
+        r.pass_type AS run_pass_type,
+        r.started_at AS run_started_at,
+        r.status AS run_status,
+        r.dry_run AS run_dry_run
+      FROM surgeon_run_proposals AS p
+      JOIN surgeon_runs AS r ON r.id = p.run_id
+      ${whereClause}
+      ORDER BY
+        CASE WHEN p.review_status = 'open' THEN 0 ELSE 1 END ASC,
+        CASE WHEN p.review_status = 'open' THEN p.created_at END ASC,
+        CASE WHEN p.review_status <> 'open' THEN p.reviewed_at END DESC,
+        p.created_at DESC
+      LIMIT ?
+      OFFSET ?
+    `,
+    args: [...args, limit, offset],
+  });
+
+  return result.rows.map((row) => ({
+    proposal: mapProposalRow(row),
+    runPassType: parseStoredSurgeonPassType(readOptionalString(row, "run_pass_type")),
+    runStartedAt: readRequiredString(row, "run_started_at"),
+    runStatus: parseStoredSurgeonRunStatus(readOptionalString(row, "run_status")),
+    runDryRun: readBoolean(row, "run_dry_run"),
+  }));
+}
+
+/**
+ * Persists one operator review decision for an existing proposal.
+ *
+ * @param executor - SQL executor used for the update.
+ * @param input - Review outcome plus audit metadata.
+ * @returns `true` when the proposal row was updated.
+ */
+export async function reviewSurgeonProposal(
+  executor: SqlExecutor,
+  input: {
+    proposalId: string;
+    status: Exclude<SurgeonProposalReviewStatus, "open">;
+    reason: string;
+    reviewedAt?: string;
+    appliedActionCount?: number;
+  },
+): Promise<boolean> {
+  const result = await executor.execute({
+    sql: `
+      UPDATE surgeon_run_proposals
+      SET review_status = ?,
+          reviewed_at = ?,
+          review_reason = ?,
+          applied_action_count = ?
+      WHERE id = ?
+        AND review_status = 'open'
+    `,
+    args: [
+      input.status,
+      normalizeTimestamp(input.reviewedAt) ?? new Date().toISOString(),
+      input.reason.trim(),
+      normalizeInteger(input.appliedActionCount ?? 0),
+      input.proposalId.trim(),
+    ],
+  });
+
+  return result.rowsAffected > 0;
 }
 
 /**
@@ -424,6 +623,10 @@ function mapProposalRow(row: Row): SurgeonRunProposal {
     source: readRequiredString(row, "source"),
     eligibleForApply: readBoolean(row, "eligible_for_apply"),
     createdAt: readRequiredString(row, "created_at"),
+    reviewStatus: parseStoredSurgeonProposalReviewStatus(readOptionalString(row, "review_status")),
+    reviewedAt: readOptionalString(row, "reviewed_at") ?? null,
+    reviewReason: readOptionalString(row, "review_reason") ?? null,
+    appliedActionCount: readNumber(row, "applied_action_count", 0),
   };
 }
 
@@ -511,6 +714,24 @@ function parseStoredSurgeonRunStatus(value: string | undefined): SurgeonRunStatu
   }
 
   throw new Error(`Invalid surgeon run status ${JSON.stringify(value)} in surgeon_runs.status.`);
+}
+
+/**
+ * Parses one persisted proposal review state with a safe legacy fallback.
+ *
+ * @param value - Raw stored review-status string.
+ * @returns Valid proposal review status.
+ */
+function parseStoredSurgeonProposalReviewStatus(value: string | undefined): SurgeonProposalReviewStatus {
+  if (value === undefined) {
+    return "open";
+  }
+
+  if ((SURGEON_PROPOSAL_REVIEW_STATUSES as readonly string[]).includes(value)) {
+    return value as SurgeonProposalReviewStatus;
+  }
+
+  throw new Error(`Invalid surgeon proposal review status ${JSON.stringify(value)} in surgeon_run_proposals.review_status.`);
 }
 
 /**

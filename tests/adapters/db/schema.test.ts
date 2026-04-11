@@ -173,6 +173,10 @@ describe("initSchema", () => {
       "confidence",
       "source",
       "eligible_for_apply",
+      "review_status",
+      "reviewed_at",
+      "review_reason",
+      "applied_action_count",
       "created_at",
     ]);
     expect(await indexExists(client, "idx_surgeon_run_actions_run_id")).toBe(true);
@@ -181,6 +185,7 @@ describe("initSchema", () => {
     expect(await indexExists(client, "idx_surgeon_run_proposals_run_id")).toBe(true);
     expect(await indexExists(client, "idx_surgeon_run_proposals_group_id")).toBe(true);
     expect(await indexExists(client, "idx_surgeon_run_proposals_created_at")).toBe(true);
+    expect(await indexExists(client, "idx_surgeon_run_proposals_review_status")).toBe(true);
     expect(await indexExists(client, "idx_entries_claim_key")).toBe(true);
     expect(await indexExists(client, "idx_entries_valid_from")).toBe(true);
     expect(await indexExists(client, "idx_entries_valid_to")).toBe(true);
@@ -200,7 +205,7 @@ describe("initSchema", () => {
     await expect(initSchema(client)).resolves.toBeUndefined();
 
     const version = await client.execute("SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1");
-    expect(version.rows[0]?.value).toBe("8");
+    expect(version.rows[0]?.value).toBe("9");
     expect(await indexExists(client, "idx_episodes_started_at")).toBe(true);
   });
 
@@ -360,7 +365,7 @@ describe("initSchema", () => {
     });
 
     const version = await client.execute("SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1");
-    expect(version.rows[0]?.value).toBe("8");
+    expect(version.rows[0]?.value).toBe("9");
   });
 
   it("migrates a v7 database to the current schema version", async () => {
@@ -514,7 +519,7 @@ describe("initSchema", () => {
     });
 
     const version = await client.execute("SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1");
-    expect(version.rows[0]?.value).toBe("8");
+    expect(version.rows[0]?.value).toBe("9");
   });
 
   for (const version of ["2", "3", "4"] as const) {
@@ -626,6 +631,10 @@ describe("initSchema", () => {
       "confidence",
       "source",
       "eligible_for_apply",
+      "review_status",
+      "reviewed_at",
+      "review_reason",
+      "applied_action_count",
       "created_at",
     ]);
   });

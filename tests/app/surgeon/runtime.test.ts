@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createDatabase } from "../../../src/adapters/db/client.js";
-import { createSurgeonRun } from "../../../src/adapters/db/surgeon-run-log.js";
+import { createSurgeonRun, getSurgeonRunActions, logSurgeonProposal } from "../../../src/adapters/db/surgeon-run-log.js";
 
 const { runSurgeonMock, runSurgeonPresetMock } = vi.hoisted(() => ({
   runSurgeonMock: vi.fn(),
@@ -17,7 +17,7 @@ vi.mock("../../../src/app/surgeon/service.js", () => ({
   runSurgeonPreset: runSurgeonPresetMock,
 }));
 
-import { loadSurgeonStatusRuntime, runSurgeonRuntime } from "../../../src/app/surgeon/runtime.js";
+import { loadSurgeonBacklogRuntime, loadSurgeonStatusRuntime, reviewSurgeonProposalRuntime, runSurgeonRuntime } from "../../../src/app/surgeon/runtime.js";
 
 const tempPaths: string[] = [];
 
@@ -297,6 +297,127 @@ describe("surgeon runtime", () => {
       passType: "retirement",
       dryRun: true,
     });
+  });
+
+  it("lists backlog rows and applies eligible proposals through the existing update path", async () => {
+    const tempRoot = await createTempDirectory("agenr-surgeon-review-");
+    const dbPath = path.join(tempRoot, "knowledge.db");
+    const configPath = path.join(tempRoot, "config.json");
+
+    await writeJson(configPath, {
+      dbPath,
+    });
+
+    const database = await createDatabase(dbPath);
+    let runId!: string;
+    try {
+      await database.insertEntry(
+        {
+          id: "entry-1",
+          type: "fact",
+          subject: "pager policy",
+          content: "Taylor is on call this week.",
+          importance: 8,
+          expiry: "permanent",
+          tags: [],
+          quality_score: 0.8,
+          recall_count: 0,
+          retired: false,
+          created_at: "2026-03-20T00:00:00.000Z",
+          updated_at: "2026-03-20T00:00:00.000Z",
+        },
+        Array.from({ length: 1024 }, () => 0),
+        "hash-1",
+      );
+      runId = await createSurgeonRun(database, {
+        passType: "claim_key_quality",
+        dryRun: true,
+        startedAt: "2026-03-29T10:00:00.000Z",
+      });
+      await logSurgeonProposal(database, {
+        id: "proposal-1",
+        runId,
+        groupId: "group-1",
+        issueKind: "missing_claim_key",
+        scope: "single_entry",
+        entryIds: ["entry-1"],
+        currentClaimKeys: [],
+        proposedClaimKeys: ["ops/on_call_owner"],
+        rationale: "This entry is clearly about the on-call owner slot.",
+        confidence: 0.93,
+        source: "mixed_group_consensus",
+        eligibleForApply: true,
+        createdAt: "2026-03-29T10:01:00.000Z",
+      });
+    } finally {
+      await database.close();
+    }
+
+    const backlog = await loadSurgeonBacklogRuntime({
+      dbPath,
+      state: "open",
+      env: {
+        AGENR_CONFIG_PATH: configPath,
+      },
+    });
+    expect(backlog).toHaveLength(1);
+    expect(backlog[0]).toMatchObject({
+      proposal: {
+        id: "proposal-1",
+        reviewStatus: "open",
+      },
+      runPassType: "claim_key_quality",
+    });
+
+    const result = await reviewSurgeonProposalRuntime({
+      proposalId: "proposal-1",
+      decision: "apply",
+      reason: "Canonical slot is obvious.",
+      dbPath,
+      env: {
+        AGENR_CONFIG_PATH: configPath,
+      },
+    });
+
+    expect(result.proposal).toMatchObject({
+      id: "proposal-1",
+      reviewStatus: "applied",
+      reviewReason: "Canonical slot is obvious.",
+      appliedActionCount: 1,
+    });
+    expect(result.updatedEntryIds).toEqual(["entry-1"]);
+    expect(result.backupPath).toContain("surgeon-backup");
+
+    const reloadedDatabase = await createDatabase(dbPath);
+    try {
+      const updatedEntry = await reloadedDatabase.getEntry("entry-1");
+      expect(updatedEntry).toMatchObject({
+        claim_key: "ops/on_call_owner",
+        claim_key_status: "trusted",
+      });
+      const proposals = await reloadedDatabase.execute({
+        sql: "SELECT review_status, review_reason, applied_action_count FROM surgeon_run_proposals WHERE id = ?",
+        args: ["proposal-1"],
+      });
+      expect(proposals.rows[0]).toEqual({
+        review_status: "applied",
+        review_reason: "Canonical slot is obvious.",
+        applied_action_count: 1,
+      });
+      expect(await getSurgeonRunActions(reloadedDatabase, runId)).toEqual([
+        expect.objectContaining({
+          actionType: "update_entry",
+          entryIds: ["entry-1"],
+          details: expect.objectContaining({
+            proposal_id: "proposal-1",
+            proposal_review_status: "applied",
+            target_claim_key: "ops/on_call_owner",
+          }),
+        }),
+      ]);
+    } finally {
+      await reloadedDatabase.close();
+    }
   });
 });
 

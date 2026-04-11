@@ -434,6 +434,8 @@ describe("surgeon queries", () => {
         noKey: 1,
       },
       proposalBacklogCount: 1,
+      eligibleProposalBacklogCount: 0,
+      oldestOpenProposalCreatedAt: daysAgoIso(1),
       recency: {
         last7: 1,
         last30: 1,

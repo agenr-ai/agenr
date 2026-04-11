@@ -107,6 +107,11 @@ export interface ClaimKeyQualityPassSummary {
 /**
  * Structured unresolved claim-key proposal persisted for later adjudication.
  */
+export type SurgeonProposalReviewStatus = "open" | "applied" | "rejected";
+
+/**
+ * Structured unresolved claim-key proposal persisted for later adjudication.
+ */
 export interface SurgeonRunProposal {
   id: string;
   runId: string;
@@ -121,6 +126,10 @@ export interface SurgeonRunProposal {
   source: string;
   eligibleForApply: boolean;
   createdAt: string;
+  reviewStatus: SurgeonProposalReviewStatus;
+  reviewedAt: string | null;
+  reviewReason: string | null;
+  appliedActionCount: number;
 }
 
 /**

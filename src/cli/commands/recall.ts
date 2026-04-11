@@ -8,6 +8,7 @@ import { projectClaimCentricRecallEntry } from "../../app/recall/index.js";
 import { normalizeOptionalString, normalizeStringList, parseCsvList, parsePositiveInteger, parsePositiveNumber, parseUnitInterval } from "../shared/parse.js";
 import { readConfig } from "../../config.js";
 import { recall, type RecallInput, type RecallOutput } from "../../core/recall/index.js";
+import type { RecallExecutionTraceSummary } from "../../core/recall/trace.js";
 import { ENTRY_TYPES, type EntryType } from "../../core/types.js";
 import { banner, ui } from "../../ui.js";
 
@@ -62,11 +63,23 @@ export function registerRecallCommand(program: Command): void {
         const embeddingClient = createEmbeddingClient(resolveEmbeddingApiKey(config), resolveEmbeddingModel(config));
         db = await createDatabase(dbPath);
         const adapter = createRecallAdapter(db, embeddingClient);
+        let lastTraceSummary: RecallExecutionTraceSummary | undefined;
 
         const spinner = clack.spinner();
         spinner.start("Searching knowledge...");
-        const results = await recall(commandInput.request, adapter);
+        const results = await recall(commandInput.request, adapter, {
+          trace: {
+            reportSummary(summary): void {
+              lastTraceSummary = summary;
+            },
+          },
+        });
         spinner.stop(`Found ${results.length} ${pluralize(results.length, "result")}.`);
+        if (lastTraceSummary?.degraded.active) {
+          for (const notice of lastTraceSummary.degraded.notices) {
+            clack.log.warn(notice);
+          }
+        }
 
         if (results.length === 0) {
           clack.outro("No matching entries found.");

@@ -1,6 +1,6 @@
 import type { SurgeonRunAction } from "../../core/surgeon/domain/action-types.js";
 import type { SurgeonPassType } from "../../core/surgeon/domain/pass-types.js";
-import type { SurgeonCompletionSummary, SurgeonRunProposal, SurgeonRunStatus } from "../../core/surgeon/types.js";
+import type { SurgeonCompletionSummary, SurgeonProposalReviewStatus, SurgeonRunProposal, SurgeonRunStatus } from "../../core/surgeon/types.js";
 import type { Entry, EntryUpdateInput } from "../../core/types.js";
 
 /**
@@ -42,6 +42,10 @@ export interface SurgeonHealthStats {
   };
   /** Count of durable unresolved surgeon proposals awaiting review. */
   proposalBacklogCount: number;
+  /** Open proposals that are already safe to apply. */
+  eligibleProposalBacklogCount: number;
+  /** Oldest still-open proposal creation timestamp, when one exists. */
+  oldestOpenProposalCreatedAt: string | null;
   recency: {
     last7: number;
     last30: number;
@@ -61,6 +65,29 @@ export interface SurgeonHealthStats {
   };
   retirementCandidateCount: number;
   recentlyEvaluatedCount: number;
+}
+
+/**
+ * Query options for the global proposal backlog view.
+ */
+export interface SurgeonProposalBacklogQuery {
+  state?: SurgeonProposalReviewStatus | "all";
+  issueKind?: string;
+  eligibleOnly?: boolean;
+  entryId?: string;
+  limit?: number;
+  offset?: number;
+}
+
+/**
+ * Global backlog row that joins one proposal to its originating run metadata.
+ */
+export interface SurgeonProposalBacklogItem {
+  proposal: SurgeonRunProposal;
+  runPassType: SurgeonPassType;
+  runStartedAt: string;
+  runStatus: SurgeonRunStatus;
+  runDryRun: boolean;
 }
 
 /**
@@ -249,6 +276,22 @@ export interface SurgeonPort {
   getRunProposals(runId: string): Promise<SurgeonRunProposal[]>;
 
   /**
+   * Loads one proposal by its stable identifier.
+   *
+   * @param proposalId - Proposal identifier to inspect.
+   * @returns Proposal payload, or `null` when missing.
+   */
+  getProposal(proposalId: string): Promise<SurgeonRunProposal | null>;
+
+  /**
+   * Lists proposal backlog rows across runs using optional review filters.
+   *
+   * @param query - Optional review-state and pagination filters.
+   * @returns Backlog rows ordered oldest-open-first, then newest reviewed-first.
+   */
+  listProposalBacklog(query?: SurgeonProposalBacklogQuery): Promise<SurgeonProposalBacklogItem[]>;
+
+  /**
    * Loads aggregate corpus health stats for the current protection settings.
    *
    * @param options - Retirement protection configuration and optional clock.
@@ -377,4 +420,18 @@ export interface SurgeonPort {
    * @returns Promise that resolves after the proposal is stored.
    */
   logRunProposal(proposal: SurgeonRunProposal): Promise<void>;
+
+  /**
+   * Persists one operator review decision for an existing proposal.
+   *
+   * @param input - Review outcome plus audit metadata.
+   * @returns `true` when the proposal review row was updated.
+   */
+  reviewProposal(input: {
+    proposalId: string;
+    status: Exclude<SurgeonProposalReviewStatus, "open">;
+    reason: string;
+    reviewedAt?: string;
+    appliedActionCount?: number;
+  }): Promise<boolean>;
 }

@@ -2,7 +2,7 @@ import type { EpisodeDatabasePort, RecallPorts } from "../../core/ports.js";
 import { recall } from "../../core/recall/search.js";
 import { parseTemporalWindow } from "../../core/episode/temporal-window.js";
 import { searchEpisodes } from "../../core/episode/search.js";
-import type { RecallExecutionOptions } from "../../core/recall/trace.js";
+import type { RecallExecutionOptions, RecallExecutionTraceSummary, RecallTraceSink } from "../../core/recall/trace.js";
 import type { RecallInput } from "../../core/recall/types.js";
 
 import { flattenClaimCentricRecallFamilies, projectClaimCentricRecallEntries } from "./claim-centric.js";
@@ -103,6 +103,9 @@ export async function runUnifiedRecall(input: UnifiedRecallInput, deps: UnifiedR
   });
   if (routing.queried.includes("entries") && entries.kind === "skipped") {
     notices.push(entries.notice);
+  }
+  if (entries.kind === "results") {
+    notices.push(...entries.notices);
   }
 
   const rawEntries = entries.kind === "results" ? entries.results : [];
@@ -291,6 +294,7 @@ async function maybeRunEntryRecall(params: {
   | {
       kind: "results";
       results: import("../../core/recall/types.js").RecallOutput[];
+      notices: string[];
     }
   | {
       kind: "skipped";
@@ -301,24 +305,44 @@ async function maybeRunEntryRecall(params: {
     return {
       kind: "results",
       results: [],
+      notices: [],
     };
   }
-
-  if (!params.deps.embeddingAvailable) {
-    const message = params.deps.embeddingError ?? "Embeddings are unavailable, so entry recall could not run.";
-    if (params.routing.requested === "entries") {
-      throw new Error(message);
+  const notices: string[] = [];
+  const trace = composeRecallTrace(params.deps.recallOptions?.trace, (summary) => {
+    if (summary.degraded.active) {
+      for (const notice of summary.degraded.notices) {
+        if (!notices.includes(notice)) {
+          notices.push(notice);
+        }
+      }
     }
-
-    return {
-      kind: "skipped",
-      notice: `${message} Entry recall was skipped.`,
-    };
-  }
+  });
 
   return {
     kind: "results",
-    results: await recall(buildEntryRecallInput(params.input, params.parsedTimeWindow, params.routing), params.deps.recall, params.deps.recallOptions),
+    results: await recall(buildEntryRecallInput(params.input, params.parsedTimeWindow, params.routing), params.deps.recall, {
+      ...params.deps.recallOptions,
+      trace,
+    }),
+    notices,
+  };
+}
+
+/**
+ * Fan out one recall trace summary to both the upstream observer and a local
+ * degraded-mode notice collector.
+ *
+ * @param upstream - Optional upstream trace sink supplied by the caller.
+ * @param onSummary - Local callback used to observe the final recall summary.
+ * @returns Composite trace sink safe to pass into the core recall call.
+ */
+function composeRecallTrace(upstream: RecallTraceSink | undefined, onSummary: (summary: RecallExecutionTraceSummary) => void): RecallTraceSink {
+  return {
+    reportSummary(summary: RecallExecutionTraceSummary): void {
+      onSummary(summary);
+      upstream?.reportSummary(summary);
+    },
   };
 }
 

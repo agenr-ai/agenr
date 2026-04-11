@@ -150,7 +150,7 @@ Current composition includes:
 Important current behavior:
 
 - embedding availability is resolved from config without a startup network probe
-- `agenr_recall` fails when embeddings are unavailable
+- `agenr_recall` stays available even when embeddings are unavailable and can degrade entry recall into lexical-only mode
 - session-start core-memory injection does not need embeddings
 - claim extraction is only wired when agenr claim-extraction config is enabled and the OpenClaw LLM client can be created
 
@@ -383,11 +383,12 @@ Current request fields:
 Current behavior:
 
 - attaches `sessionKey` for recall telemetry
-- fails when embeddings are unavailable
+- degrades entry recall into lexical-only mode when query embeddings or vector search fail
 - supports unified routing across exact entry recall, historical-state recall, and episodic recall
 - returns routing metadata, rendered text, structured entry results, claim-centric projected entry annotations, structured episode results, and notices
 - groups entry output by claim family when `claim_key` is present and labels rows as `current`, `historical`, or `superseded`
 - includes freshness, provenance, and `why_surfaced` cues in the human-readable text output
+- uses `notices` to surface degraded recall and episode-semantic fallback instead of silently hiding those paths
 
 ### `agenr_update`
 

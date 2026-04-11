@@ -2,7 +2,7 @@
 
 `agenr recall <query>` is a live CLI command backed by the v1 hybrid recall pipeline.
 
-It embeds the query, retrieves candidates through both vector search and SQLite FTS, scores them in core, hydrates full entries, and records recall telemetry.
+It embeds the query when possible, retrieves candidates through vector search plus SQLite FTS, degrades to lexical-only entry recall when query embeddings or vector search fail at runtime, scores candidates in core, hydrates full entries, and records recall telemetry.
 
 This document describes the code as it exists now, not just the intended flow.
 
@@ -49,7 +49,7 @@ That split means the current recall implementation is already adapter-shaped:
 
 Four current-runtime details matter:
 
-- vector search is not optional - if the vector query fails, recall throws instead of degrading to FTS-only
+- runtime query-embedding failures and vector-search failures degrade entry recall into an explicitly labeled lexical path instead of aborting the whole call
 - historical-state entry recall is still the same core pipeline, but it can ask the adapter for inactive predecessor candidates through the optional `fetchPredecessors()` port
 - typed recall tracing is opt-in and no-op by default, so observability can be added without changing ranking behavior
 - recall telemetry is awaited as part of `recall()`, but the adapter serializes the writes internally and swallows telemetry failures
@@ -417,7 +417,12 @@ Current behavior to know:
 - if vector serialization fails, it returns `[]`
 - if the libSQL vector query itself fails, the adapter throws `Vector search is unavailable: ...`
 
-That thrown error aborts the whole recall command. There is no current FTS-only fallback mode.
+The core recall pipeline now treats query-embedding failure and vector-query failure as degraded-mode signals:
+
+- embedding failure -> skip vector retrieval, keep lexical retrieval, label the call as lexical-only degraded mode
+- vector query failure -> keep lexical retrieval, preserve explicit degraded notices, and continue scoring any lexical candidates
+- CLI recall prints degraded notices
+- unified recall and the OpenClaw `agenr_recall` tool surface the same notices through their `notices` output
 
 ### Lexical retrieval
 
@@ -652,6 +657,7 @@ The emitted `RecallExecutionTraceSummary` currently contains:
 - `ranking` - normalized `limit`, `threshold`, `budget`, and optional stable `noResultReason`
 - `candidateCounts` - merged, threshold-qualified, budget-accepted, final-ranked, and returned counts
 - `claimKey` - historical boosts, tentative-lineage suppression, trust penalties, and redundancy penalties
+- `degraded` - whether recall fell back away from the normal vector-backed path, the stable causes, whether the run was lexical-only, and the user-facing notices
 - `timings` - merge, score, threshold, budget, and result-shaping timings
 
 Stable no-result reasons today are:
@@ -661,6 +667,8 @@ Stable no-result reasons today are:
 - `no_candidates`
 - `below_threshold`
 - `hydrate_missing`
+- `degraded_no_candidates`
+- `degraded_below_threshold`
 
 This tracing surface is what the internal recall-eval seam and future observability hooks should consume. It is separate from user-facing recall telemetry.
 

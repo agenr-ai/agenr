@@ -135,6 +135,9 @@ describe("registerRecallCommand", () => {
         around: "yesterday",
       }),
       expect.anything(),
+      expect.objectContaining({
+        trace: expect.any(Object),
+      }),
     );
   });
 
@@ -223,6 +226,95 @@ describe("registerRecallCommand", () => {
     expect(rendered).toContain("family=deployment/approach");
     expect(rendered).toContain("why=semantic similarity 0.80; lexical overlap 0.60; historical lineage boost 0.08");
     expect(rendered).toContain("historicalLineage=0.08");
+  });
+
+  it("warns when recall had to degrade into lexical-only mode", async () => {
+    const warnMock = vi.fn();
+    vi.resetModules();
+    vi.doMock("@clack/prompts", () => ({
+      ...createClackMock(),
+      log: {
+        step: vi.fn(),
+        info: vi.fn(),
+        warn: warnMock,
+        error: vi.fn(),
+      },
+    }));
+    vi.doMock("../../../src/adapters/db/client.js", () => ({
+      createDatabase: vi.fn(async () => ({
+        close: vi.fn(async () => undefined),
+      })),
+    }));
+    vi.doMock("../../../src/adapters/db/recall-adapter.js", () => ({
+      createRecallAdapter: vi.fn(() => ({ search: vi.fn() })),
+    }));
+    vi.doMock("../../../src/adapters/embeddings.js", () => ({
+      createEmbeddingClient: vi.fn(() => ({ embed: vi.fn() })),
+      resolveEmbeddingApiKey: vi.fn(() => "sk-test"),
+      resolveEmbeddingModel: vi.fn(() => "text-embedding-3-small"),
+    }));
+    vi.doMock("../../../src/config.js", () => ({
+      readConfig: vi.fn(() => ({
+        dbPath: "/tmp/knowledge.db",
+      })),
+    }));
+    const recallMock = vi.fn(async (_request, _adapter, options) => {
+      options?.trace?.reportSummary({
+        filtering: {
+          types: [],
+          tags: [],
+        },
+        ranking: {
+          limit: 10,
+          threshold: 0,
+          budget: null,
+        },
+        candidateCounts: {
+          merged: 1,
+          thresholdQualified: 1,
+          budgetAccepted: 1,
+          finalRanked: 1,
+          returned: 1,
+        },
+        claimKey: {
+          historicalBoosted: 0,
+          tentativeLineageSuppressed: 0,
+          trustPenalized: 0,
+          redundancyPenalized: 0,
+        },
+        degraded: {
+          active: true,
+          reasons: ["query_embedding_failed"],
+          lexicalOnly: true,
+          notices: ["Embeddings failed during recall, so Agenr fell back to lexical-only entry ranking."],
+        },
+        timings: {
+          mergeCandidatesMs: 0,
+          scoreCandidatesMs: 0,
+          thresholdMs: 0,
+          budgetMs: 0,
+          shapeResultsMs: 0,
+        },
+      });
+      return [];
+    });
+    vi.doMock("../../../src/core/recall/index.js", () => ({
+      recall: recallMock,
+    }));
+    vi.doMock("../../../src/ui.js", () => ({
+      banner: vi.fn(() => "agenr"),
+      ui: {
+        error: (text: string) => text,
+      },
+    }));
+
+    const { registerRecallCommand: registerMockedRecallCommand } = await import("../../../src/cli/commands/recall.js");
+    const program = new Command();
+    registerMockedRecallCommand(program);
+
+    await program.parseAsync(["recall", "who is on call"], { from: "user" });
+
+    expect(warnMock).toHaveBeenCalledWith("Embeddings failed during recall, so Agenr fell back to lexical-only entry ranking.");
   });
 });
 

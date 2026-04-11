@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { copyFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +10,7 @@ import { createSurgeonPort } from "../../adapters/db/surgeon-port.js";
 import { createRecallAdapter } from "../../adapters/db/recall-adapter.js";
 import { createEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../../adapters/embeddings.js";
 import { createLlmClient, resolveLlmCredentials, resolveModel } from "../../adapters/llm.js";
+import { buildClaimKeyLifecycleUpdateFields, buildSurgeonAppliedClaimKeyLifecycleBundle } from "../../core/claim-key-lifecycle.js";
 import {
   DEFAULT_SURGEON_RETIREMENT_PROTECT_MIN_IMPORTANCE,
   DEFAULT_SURGEON_RETIREMENT_PROTECT_RECALLED_DAYS,
@@ -20,7 +22,7 @@ import {
 import type { SurgeonRunAction } from "../../core/surgeon/domain/action-types.js";
 import { resolveSurgeonPassSequence, type ImplementedSurgeonPass, type SurgeonRunPreset } from "../../core/surgeon/domain/run-presets.js";
 import type { SurgeonRunProposal } from "../../core/surgeon/types.js";
-import type { SurgeonHealthStats, SurgeonRunRecord } from "./ports.js";
+import type { SurgeonHealthStats, SurgeonProposalBacklogItem, SurgeonProposalBacklogQuery, SurgeonRunRecord } from "./ports.js";
 import type { SurgeonProgressReporter } from "./progress.js";
 import {
   runSurgeon,
@@ -227,6 +229,141 @@ export async function loadSurgeonProposalsRuntime(input: { runId: string; dbPath
 }
 
 /**
+ * Loads the global proposal backlog across runs for operator review.
+ *
+ * @param input - Runtime input with optional db-path and backlog filters.
+ * @returns Joined backlog rows ordered for review.
+ */
+export async function loadSurgeonBacklogRuntime(
+  input: { dbPath?: string; env?: NodeJS.ProcessEnv } & SurgeonProposalBacklogQuery,
+): Promise<SurgeonProposalBacklogItem[]> {
+  const runtime = loadRuntimeConfig(input);
+  const database = await createDatabase(runtime.dbPath);
+  const port = createSurgeonPort(database);
+
+  try {
+    return await port.listProposalBacklog(input);
+  } finally {
+    await database.close();
+  }
+}
+
+/**
+ * Applies or rejects one open proposal using the existing claim-key mutation path.
+ *
+ * @param input - Runtime input with the target proposal, decision, and review reason.
+ * @returns Final proposal state plus any affected entry IDs and backup path.
+ */
+export async function reviewSurgeonProposalRuntime(input: {
+  proposalId: string;
+  decision: "apply" | "reject";
+  reason: string;
+  dbPath?: string;
+  env?: NodeJS.ProcessEnv;
+}): Promise<{ proposal: SurgeonRunProposal; updatedEntryIds: string[]; backupPath: string | null }> {
+  const runtime = loadRuntimeConfig(input);
+  const database = await createDatabase(runtime.dbPath);
+  const port = createSurgeonPort(database);
+
+  try {
+    const proposal = await port.getProposal(input.proposalId);
+    if (!proposal) {
+      throw new Error(`Proposal not found: ${input.proposalId}.`);
+    }
+    if (proposal.reviewStatus !== "open") {
+      throw new Error(`Proposal ${proposal.id} was already reviewed as ${proposal.reviewStatus}.`);
+    }
+
+    const reviewReason = normalizeOptionalString(input.reason);
+    if (!reviewReason) {
+      throw new Error("Review reason is required.");
+    }
+
+    const reviewedAt = new Date().toISOString();
+    const backupPath = input.decision === "apply" && runtime.dbPath !== ":memory:" ? await backupDatabaseFile(runtime.dbPath) : null;
+    const updatedEntryIds: string[] = [];
+
+    await database.execute("BEGIN IMMEDIATE");
+    try {
+      if (input.decision === "apply") {
+        const targetClaimKey = normalizeProposalApplyTarget(proposal);
+        const entries = await Promise.all(
+          proposal.entryIds.map(async (entryId) => {
+            const entry = await port.getEntry(entryId);
+            if (!entry) {
+              throw new Error(`Proposal ${proposal.id} can no longer update missing or inactive entry ${entryId}.`);
+            }
+            return entry;
+          }),
+        );
+
+        for (const entry of entries) {
+          const lifecycle = buildSurgeonAppliedClaimKeyLifecycleBundle({
+            targetClaimKey,
+            priorClaimKey: entry.claim_key ?? null,
+            priorClaimKeyRaw: entry.claim_key_raw,
+            source: proposal.source,
+            confidence: proposal.confidence,
+            rationale: buildProposalReviewReason(proposal, reviewReason),
+          });
+          const updated = await port.updateEntry(entry.id, buildClaimKeyLifecycleUpdateFields(lifecycle));
+          if (!updated) {
+            throw new Error(`Failed to apply proposal ${proposal.id} to entry ${entry.id}.`);
+          }
+          updatedEntryIds.push(entry.id);
+        }
+
+        await port.logRunAction({
+          id: randomUUID(),
+          runId: proposal.runId,
+          actionType: "update_entry",
+          entryIds: [...updatedEntryIds],
+          reasoning: buildProposalReviewReason(proposal, reviewReason),
+          recallDelta: null,
+          details: {
+            proposal_id: proposal.id,
+            proposal_issue_kind: proposal.issueKind,
+            proposal_source: proposal.source,
+            proposal_review_status: "applied",
+            target_claim_key: targetClaimKey,
+          },
+          createdAt: reviewedAt,
+        });
+      }
+
+      const reviewed = await port.reviewProposal({
+        proposalId: proposal.id,
+        status: input.decision === "apply" ? "applied" : "rejected",
+        reason: reviewReason,
+        reviewedAt,
+        appliedActionCount: input.decision === "apply" ? 1 : 0,
+      });
+      if (!reviewed) {
+        throw new Error(`Proposal ${proposal.id} could not be marked ${input.decision} because it is no longer open.`);
+      }
+
+      await database.execute("COMMIT");
+    } catch (error) {
+      await database.execute("ROLLBACK").catch(() => undefined);
+      throw error;
+    }
+
+    const reviewedProposal = await port.getProposal(proposal.id);
+    if (!reviewedProposal) {
+      throw new Error(`Proposal ${proposal.id} disappeared after review.`);
+    }
+
+    return {
+      proposal: reviewedProposal,
+      updatedEntryIds,
+      backupPath,
+    };
+  } finally {
+    await database.close();
+  }
+}
+
+/**
  * Resolves config and db-path overrides for surgeon runtime helpers.
  *
  * @param input - Runtime input with optional db-path and env overrides.
@@ -382,6 +519,39 @@ function resolveFilesystemPath(value: string): string {
  */
 function isMissingFileError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+
+/**
+ * Builds the persisted rationale used for operator-reviewed proposal application.
+ *
+ * @param proposal - Proposal being reviewed.
+ * @param reviewReason - Operator-supplied review note.
+ * @returns Durable rationale string used for persistence and audit logs.
+ */
+function buildProposalReviewReason(proposal: SurgeonRunProposal, reviewReason: string): string {
+  return `Approved surgeon proposal ${proposal.id}: ${proposal.rationale} Review note: ${reviewReason}`.trim();
+}
+
+/**
+ * Resolves the only safe apply target supported by the first review-loop slice.
+ *
+ * @param proposal - Open proposal selected for application.
+ * @returns Stable claim key that should be written to the target entries.
+ */
+function normalizeProposalApplyTarget(proposal: SurgeonRunProposal): string {
+  if (!proposal.eligibleForApply) {
+    throw new Error(`Proposal ${proposal.id} is reviewable but not eligible for direct apply.`);
+  }
+  if (proposal.proposedClaimKeys.length !== 1) {
+    throw new Error(`Proposal ${proposal.id} cannot be applied automatically because it does not resolve to exactly one proposed claim key.`);
+  }
+
+  const targetClaimKey = normalizeOptionalString(proposal.proposedClaimKeys[0]);
+  if (!targetClaimKey) {
+    throw new Error(`Proposal ${proposal.id} is missing a valid proposed claim key.`);
+  }
+
+  return targetClaimKey;
 }
 
 /**

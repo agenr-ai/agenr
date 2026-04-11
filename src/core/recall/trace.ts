@@ -3,7 +3,19 @@ import type { EntryType } from "../types.js";
 /**
  * Stable reason emitted when recall returns no final results.
  */
-export type RecallNoResultReason = "empty_query" | "limit_zero" | "no_candidates" | "below_threshold" | "hydrate_missing";
+export type RecallNoResultReason =
+  | "empty_query"
+  | "limit_zero"
+  | "no_candidates"
+  | "below_threshold"
+  | "hydrate_missing"
+  | "degraded_no_candidates"
+  | "degraded_below_threshold";
+
+/**
+ * Stable degraded-mode causes observed during one recall execution.
+ */
+export type RecallDegradedReason = "query_embedding_failed" | "vector_search_failed";
 
 /**
  * Active filter summary for one recall execution.
@@ -40,6 +52,20 @@ export interface RecallRankingTrace {
   budget: number | null;
   /** Stable no-result reason when recall returns no final entries. */
   noResultReason?: RecallNoResultReason;
+}
+
+/**
+ * Degraded-mode facts observed during one recall execution.
+ */
+export interface RecallDegradedTrace {
+  /** Whether recall had to fall back to lexical-only ranking. */
+  active: boolean;
+  /** Stable degraded-mode causes observed during the run. */
+  reasons: RecallDegradedReason[];
+  /** Whether the final ranking ran without vector candidates. */
+  lexicalOnly: boolean;
+  /** User-facing notices that explain the degraded path. */
+  notices: string[];
 }
 
 /**
@@ -100,6 +126,8 @@ export interface RecallExecutionTraceSummary {
   candidateCounts: RecallCoreCandidateCountsTrace;
   /** Claim-key lineage and diversity shaping facts observed during ranking. */
   claimKey: RecallClaimKeyTrace;
+  /** Whether recall had to degrade into lexical-only ranking. */
+  degraded: RecallDegradedTrace;
   /** Core-only timings observed inside the ranking flow. */
   timings: RecallCoreTimingTrace;
 }

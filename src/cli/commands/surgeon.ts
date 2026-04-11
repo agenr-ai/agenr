@@ -2,10 +2,12 @@ import { InvalidArgumentError, Option, type Command } from "commander";
 
 import { type SurgeonProgressEvent, type SurgeonProgressReporter } from "../../app/surgeon/progress.js";
 import {
+  loadSurgeonBacklogRuntime,
   loadSurgeonActionsRuntime,
   loadSurgeonHistoryRuntime,
   loadSurgeonProposalsRuntime,
   loadSurgeonStatusRuntime,
+  reviewSurgeonProposalRuntime,
   runSurgeonRuntime,
   type SurgeonRuntimeOptions,
   type SurgeonRuntimeResult,
@@ -45,6 +47,22 @@ interface SurgeonRunCommandOptions {
 /** Parsed commander options for `agenr surgeon history`. */
 interface SurgeonHistoryCommandOptions {
   limit?: number;
+}
+
+/** Parsed commander options for `agenr surgeon backlog`. */
+interface SurgeonBacklogCommandOptions {
+  state?: "open" | "applied" | "rejected" | "all";
+  issueKind?: string;
+  eligibleOnly?: boolean;
+  entryId?: string;
+  limit?: number;
+  offset?: number;
+}
+
+/** Parsed commander options for `agenr surgeon review`. */
+interface SurgeonReviewCommandOptions {
+  decision?: "apply" | "reject";
+  reason?: string;
 }
 
 /** Normalized CLI payload for `agenr surgeon run`. */
@@ -149,6 +167,43 @@ export function registerSurgeonCommand(program: Command): void {
     });
 
   surgeonCommand
+    .command("backlog")
+    .description("Show proposal backlog across surgeon runs")
+    .addOption(new Option("--state <state>", "Proposal state filter").choices(["open", "applied", "rejected", "all"]).default("open"))
+    .option("--issue-kind <kind>", "Only proposals for one issue kind")
+    .option("--eligible-only", "Only proposals that are already safe to apply")
+    .option("--entry-id <id>", "Only proposals that mention one entry ID")
+    .addOption(new Option("--limit <n>", "Maximum number of proposals to show").argParser(parsePositiveInteger).default(20))
+    .addOption(new Option("--offset <n>", "Rows to skip before listing results").argParser(parseNonNegativeInteger).default(0))
+    .action(async (options: SurgeonBacklogCommandOptions) => {
+      try {
+        const backlog = await loadSurgeonBacklogRuntime({
+          state: options.state,
+          issueKind: normalizeOptionalString(options.issueKind),
+          eligibleOnly: options.eligibleOnly === true,
+          entryId: normalizeOptionalString(options.entryId),
+          limit: options.limit,
+          offset: options.offset,
+          env: process.env,
+        });
+
+        process.stdout.write(
+          renderBacklog(backlog, {
+            state: options.state ?? "open",
+            eligibleOnly: options.eligibleOnly === true,
+            issueKind: normalizeOptionalString(options.issueKind),
+            entryId: normalizeOptionalString(options.entryId),
+            limit: options.limit ?? 20,
+            offset: options.offset ?? 0,
+          }),
+        );
+      } catch (error) {
+        process.exitCode = 1;
+        process.stderr.write(`Failed to load surgeon backlog: ${formatUnknownError(error)}\n`);
+      }
+    });
+
+  surgeonCommand
     .command("actions <runId>")
     .description("Show actions recorded for a surgeon run")
     .action(async (runId: string) => {
@@ -167,7 +222,7 @@ export function registerSurgeonCommand(program: Command): void {
 
   surgeonCommand
     .command("proposals <runId>")
-    .description("Show unresolved proposals recorded for a surgeon run")
+    .description("Show proposals recorded for a surgeon run")
     .action(async (runId: string) => {
       try {
         const proposals = await loadSurgeonProposalsRuntime({
@@ -179,6 +234,32 @@ export function registerSurgeonCommand(program: Command): void {
       } catch (error) {
         process.exitCode = 1;
         process.stderr.write(`Failed to load surgeon proposals: ${formatUnknownError(error)}\n`);
+      }
+    });
+
+  surgeonCommand
+    .command("review <proposalId>")
+    .description("Apply or reject one open proposal")
+    .addOption(new Option("--decision <decision>", "Review decision").choices(["apply", "reject"]).makeOptionMandatory(true))
+    .option("--reason <text>", "Why this review decision was taken")
+    .action(async (proposalId: string, options: SurgeonReviewCommandOptions) => {
+      try {
+        const reason = normalizeOptionalString(options.reason);
+        if (!reason) {
+          throw new InvalidArgumentError("Review reason is required.");
+        }
+
+        const result = await reviewSurgeonProposalRuntime({
+          proposalId,
+          decision: options.decision ?? "reject",
+          reason,
+          env: process.env,
+        });
+
+        process.stdout.write(renderProposalReviewResult(result));
+      } catch (error) {
+        process.exitCode = 1;
+        process.stderr.write(`Failed to review surgeon proposal: ${formatUnknownError(error)}\n`);
       }
     });
 }
@@ -388,6 +469,8 @@ function renderStatus(input: {
       noKey: number;
     };
     proposalBacklogCount: number;
+    eligibleProposalBacklogCount: number;
+    oldestOpenProposalCreatedAt: string | null;
     retirementCandidateCount: number;
     recentlyEvaluatedCount: number;
   };
@@ -406,13 +489,17 @@ function renderStatus(input: {
   const claimKeyLine =
     `Claim keys: trusted ${input.health.claimKeyLifecycle.trusted} | tentative ${input.health.claimKeyLifecycle.tentative} | ` +
     `unresolved ${input.health.claimKeyLifecycle.unresolved} | legacy ${input.health.claimKeyLifecycle.legacy} | no key ${input.health.claimKeyLifecycle.noKey}`;
+  const backlogLine =
+    input.health.proposalBacklogCount > 0
+      ? `Proposal backlog: ${input.health.proposalBacklogCount} open | ${input.health.eligibleProposalBacklogCount} eligible to apply | oldest ${input.health.oldestOpenProposalCreatedAt ?? "n/a"}`
+      : "Proposal backlog: 0";
 
   return [
     "Surgeon Status",
     "",
     `Entries: ${input.health.total}`,
     claimKeyLine,
-    `Proposal backlog: ${input.health.proposalBacklogCount}`,
+    backlogLine,
     candidateLine,
     `Last surgeon run: ${input.lastRun ? `${input.lastRun.passType} ${input.lastRun.status} (${input.lastRun.dryRun ? "dry-run" : "apply"})` : "none"}`,
     `Last surgeon cost: ${input.lastRun ? formatUsd(input.lastRun.estimatedCostUsd) : "n/a"}`,
@@ -502,6 +589,10 @@ function renderProposals(
     confidence: number;
     eligibleForApply: boolean;
     rationale: string;
+    reviewStatus: string;
+    reviewedAt: string | null;
+    reviewReason: string | null;
+    appliedActionCount: number;
   }>,
 ): string {
   if (proposals.length === 0) {
@@ -511,17 +602,117 @@ function renderProposals(
   const lines = [`Surgeon Proposals ${runId}`, ""];
   for (const proposal of proposals) {
     lines.push(
-      `${proposal.createdAt}  ${proposal.issueKind}  scope=${proposal.scope}  confidence=${proposal.confidence.toFixed(2)}  eligible=${proposal.eligibleForApply}`,
+      `${proposal.createdAt}  ${proposal.issueKind}  scope=${proposal.scope}  confidence=${proposal.confidence.toFixed(2)}  eligible=${proposal.eligibleForApply}  status=${proposal.reviewStatus}`,
     );
     lines.push(`  entries=${proposal.entryIds.join(", ") || "(none)"}`);
     if (proposal.currentClaimKeys.length > 0 || proposal.proposedClaimKeys.length > 0) {
       lines.push(`  claim_keys current=${proposal.currentClaimKeys.join(", ") || "(none)"} -> proposed=${proposal.proposedClaimKeys.join(", ") || "(none)"}`);
+    }
+    if (proposal.reviewStatus !== "open") {
+      lines.push(`  reviewed_at=${proposal.reviewedAt ?? "n/a"}  applied_actions=${proposal.appliedActionCount}`);
+      if (proposal.reviewReason) {
+        lines.push(`  review_reason=${proposal.reviewReason}`);
+      }
     }
     lines.push(`  ${proposal.rationale}`);
   }
   lines.push("");
 
   return lines.join("\n");
+}
+
+/**
+ * Formats the global proposal backlog across runs.
+ *
+ * @param backlog - Joined backlog rows returned by the runtime.
+ * @param filters - Active filter metadata for the header.
+ * @returns Human-readable backlog block.
+ */
+function renderBacklog(
+  backlog: Array<{
+    proposal: {
+      id: string;
+      createdAt: string;
+      issueKind: string;
+      scope: string;
+      entryIds: string[];
+      proposedClaimKeys: string[];
+      confidence: number;
+      eligibleForApply: boolean;
+      reviewStatus: string;
+    };
+    runPassType: string;
+    runStartedAt: string;
+    runStatus: string;
+    runDryRun: boolean;
+  }>,
+  filters: {
+    state: string;
+    eligibleOnly: boolean;
+    issueKind?: string;
+    entryId?: string;
+    limit: number;
+    offset: number;
+  },
+): string {
+  const filterParts = [`state=${filters.state}`, `limit=${filters.limit}`, `offset=${filters.offset}`];
+  if (filters.eligibleOnly) {
+    filterParts.push("eligible_only=true");
+  }
+  if (filters.issueKind) {
+    filterParts.push(`issue_kind=${filters.issueKind}`);
+  }
+  if (filters.entryId) {
+    filterParts.push(`entry_id=${filters.entryId}`);
+  }
+  if (backlog.length === 0) {
+    return `Surgeon Backlog (${filterParts.join(" ")})\n\nNo proposals matched the current filters.\n`;
+  }
+
+  const lines = [`Surgeon Backlog (${filterParts.join(" ")})`, ""];
+  for (const item of backlog) {
+    lines.push(
+      `${item.proposal.id}  ${item.proposal.createdAt}  ${item.proposal.issueKind}  scope=${item.proposal.scope}  confidence=${item.proposal.confidence.toFixed(2)}  eligible=${item.proposal.eligibleForApply}  status=${item.proposal.reviewStatus}`,
+    );
+    lines.push(`  run=${item.runPassType} ${item.runStatus} (${item.runDryRun ? "dry-run" : "apply"}) started=${item.runStartedAt}`);
+    lines.push(`  proposal_id=${item.proposal.id}  entries=${item.proposal.entryIds.join(", ") || "(none)"}`);
+    if (item.proposal.proposedClaimKeys.length > 0) {
+      lines.push(`  proposed=${item.proposal.proposedClaimKeys.join(", ")}`);
+    }
+  }
+  lines.push("");
+
+  return lines.join("\n");
+}
+
+/**
+ * Formats the result of one proposal review/apply decision.
+ *
+ * @param result - Runtime output after proposal review completes.
+ * @returns Human-readable review result block.
+ */
+function renderProposalReviewResult(result: {
+  proposal: {
+    id: string;
+    reviewStatus: string;
+    reviewedAt: string | null;
+    reviewReason: string | null;
+    appliedActionCount: number;
+  };
+  updatedEntryIds: string[];
+  backupPath: string | null;
+}): string {
+  return [
+    `Surgeon Proposal Review ${result.proposal.id}`,
+    "",
+    `Status: ${result.proposal.reviewStatus}`,
+    `Reviewed at: ${result.proposal.reviewedAt ?? "n/a"}`,
+    `Applied actions: ${result.proposal.appliedActionCount}`,
+    `Updated entries: ${result.updatedEntryIds.join(", ") || "(none)"}`,
+    `Backup: ${result.backupPath ?? "none"}`,
+    `Reason: ${result.proposal.reviewReason ?? "n/a"}`,
+    "",
+  ].join("\n");
 }
 
 /**

@@ -6,11 +6,14 @@ import {
   createSurgeonRun,
   getDailySurgeonCost,
   getLastSurgeonRun,
+  getSurgeonProposal,
   getSurgeonRunActions,
   getSurgeonRunProposals,
   getSurgeonRunHistory,
+  listSurgeonProposalBacklog,
   logSurgeonAction,
   logSurgeonProposal,
+  reviewSurgeonProposal,
 } from "./surgeon-run-log.js";
 import {
   countRetirementCandidates,
@@ -39,6 +42,8 @@ export function createSurgeonPort(executor: SqlExecutor): SurgeonPort {
     getRunHistory: async (limit) => getSurgeonRunHistory(executor, limit),
     getRunActions: async (runId) => getSurgeonRunActions(executor, runId),
     getRunProposals: async (runId) => getSurgeonRunProposals(executor, runId),
+    getProposal: async (proposalId) => getSurgeonProposal(executor, proposalId),
+    listProposalBacklog: async (query) => listSurgeonProposalBacklog(executor, query),
     getHealthStats: async (options) => getSurgeonHealthStats(executor, options),
     countRetirementCandidates: async (options) => countRetirementCandidates(executor, options),
     listRetirementCandidates: async (query) => listRetirementCandidates(executor, query),
@@ -50,5 +55,6 @@ export function createSurgeonPort(executor: SqlExecutor): SurgeonPort {
     supersedeEntry: async (oldEntryId, newEntryId, kind, reason) => supersedeEntry(executor, oldEntryId, newEntryId, kind, reason),
     updateEntry: async (entryId, fields, options) => updateEntry(executor, entryId, fields, options),
     getLastBulkIngestAt: async () => getLastBulkIngestAt(executor),
+    reviewProposal: async (input) => reviewSurgeonProposal(executor, input),
   };
 }

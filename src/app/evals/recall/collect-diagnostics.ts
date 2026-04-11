@@ -155,6 +155,7 @@ export function createRecallEvalDiagnosticsCollector(request: RecallEvalCaseRequ
   let ranking: RecallEvalRankingDiagnostics | undefined;
   let filtering: RecallEvalFilteringDiagnostics | undefined;
   let claimKey: RecallEvalCaseDiagnostics["claimKey"] | undefined;
+  let degraded: RecallEvalCaseDiagnostics["degraded"] | undefined;
   let unifiedRecall: RecallEvalUnifiedDiagnostics | undefined;
   let provisionObserved = false;
   let retrievalObserved = false;
@@ -192,6 +193,12 @@ export function createRecallEvalDiagnosticsCollector(request: RecallEvalCaseRequ
         tentativeLineageSuppressed: summary.claimKey.tentativeLineageSuppressed,
         trustPenalized: summary.claimKey.trustPenalized,
         redundancyPenalized: summary.claimKey.redundancyPenalized,
+      };
+      degraded = {
+        active: summary.degraded.active,
+        reasons: [...summary.degraded.reasons],
+        lexicalOnly: summary.degraded.lexicalOnly,
+        notices: [...summary.degraded.notices],
       };
       stageTimings.mergeCandidatesMs = summary.timings.mergeCandidatesMs;
       stageTimings.scoreCandidatesMs = summary.timings.scoreCandidatesMs;
@@ -283,6 +290,7 @@ export function createRecallEvalDiagnosticsCollector(request: RecallEvalCaseRequ
         ranking: traceObserved ? ranking : undefined,
         filtering: traceObserved ? filtering : undefined,
         claimKey: traceObserved ? claimKey : undefined,
+        degraded: traceObserved ? degraded : undefined,
         unifiedRecall,
         candidateCounts,
       };

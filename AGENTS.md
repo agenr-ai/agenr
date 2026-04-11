@@ -103,8 +103,10 @@ agenr trace
 agenr surgeon run
 agenr surgeon status
 agenr surgeon history
+agenr surgeon backlog
 agenr surgeon actions <runId>
 agenr surgeon proposals <runId>
+agenr surgeon review <proposalId>
 agenr scenarios list
 agenr scenarios run
 agenr db reset

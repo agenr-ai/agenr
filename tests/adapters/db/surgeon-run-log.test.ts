@@ -206,6 +206,10 @@ describe("surgeon run log", () => {
         source: "mixed_group_consensus",
         eligibleForApply: true,
         createdAt: "2026-03-29T12:01:00.000Z",
+        reviewStatus: "open",
+        reviewedAt: null,
+        reviewReason: null,
+        appliedActionCount: 0,
       },
     ]);
   });
@@ -258,9 +262,13 @@ describe("surgeon run log", () => {
           confidence,
           source,
           eligible_for_apply,
+          review_status,
+          reviewed_at,
+          review_reason,
+          applied_action_count,
           created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       args: [
         "proposal-invalid-array",
@@ -274,6 +282,10 @@ describe("surgeon run log", () => {
         "Legacy row with mixed JSON types.",
         0.5,
         "manual",
+        0,
+        "open",
+        null,
+        null,
         0,
         "2026-03-29T12:02:00.000Z",
       ],

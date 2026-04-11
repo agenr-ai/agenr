@@ -456,7 +456,7 @@ function buildInitSummary(options: {
     formatLabel("Gateway", options.gatewayStatus),
     formatLabel("Sessions", options.sessionStatus),
     formatLabel("Ingest", options.ingestStatus),
-    formatLabel("Corpus health", "Not yet available in v1"),
+    formatLabel("Corpus health", "Use `agenr surgeon status` after ingest to review backlog and claim-key health"),
   ];
 
   return lines.join("\n");

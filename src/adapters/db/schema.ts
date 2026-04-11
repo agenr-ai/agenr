@@ -5,7 +5,7 @@ import type { SqlExecutor } from "./queries.js";
 /**
  * Logical schema version stored in the metadata table.
  */
-const SCHEMA_VERSION = "8";
+const SCHEMA_VERSION = "9";
 
 /**
  * libSQL vector index name for entry embeddings.
@@ -240,6 +240,10 @@ const CREATE_SURGEON_RUN_PROPOSALS_TABLE_SQL = `
     confidence REAL NOT NULL DEFAULT 0,
     source TEXT NOT NULL DEFAULT '',
     eligible_for_apply INTEGER NOT NULL DEFAULT 0,
+    review_status TEXT NOT NULL DEFAULT 'open',
+    reviewed_at TEXT,
+    review_reason TEXT,
+    applied_action_count INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
   )
 `;
@@ -257,6 +261,11 @@ const CREATE_SURGEON_RUN_PROPOSALS_GROUP_ID_INDEX_SQL = `
 const CREATE_SURGEON_RUN_PROPOSALS_CREATED_AT_INDEX_SQL = `
   CREATE INDEX IF NOT EXISTS idx_surgeon_run_proposals_created_at
   ON surgeon_run_proposals(created_at)
+`;
+
+const CREATE_SURGEON_RUN_PROPOSALS_REVIEW_STATUS_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_surgeon_run_proposals_review_status
+  ON surgeon_run_proposals(review_status)
 `;
 
 /** SQL statement that stores key-value metadata for the database. */
@@ -409,6 +418,7 @@ const SCHEMA_STATEMENTS = [
   CREATE_SURGEON_RUN_PROPOSALS_RUN_ID_INDEX_SQL,
   CREATE_SURGEON_RUN_PROPOSALS_GROUP_ID_INDEX_SQL,
   CREATE_SURGEON_RUN_PROPOSALS_CREATED_AT_INDEX_SQL,
+  CREATE_SURGEON_RUN_PROPOSALS_REVIEW_STATUS_INDEX_SQL,
   CREATE_META_TABLE_SQL,
   CREATE_ENTRIES_CONTENT_HASH_INDEX_SQL,
   CREATE_ENTRIES_NORM_CONTENT_HASH_INDEX_SQL,
@@ -465,6 +475,10 @@ export async function initSchema(db: Client): Promise<void> {
     await migrateV7ToV8(db);
     currentVersion = "8";
   }
+  if (currentVersion === "8") {
+    await migrateV8ToV9(db);
+    currentVersion = "9";
+  }
   const hadEntriesFts = await tableExists(db, "entries_fts");
 
   for (const statement of SCHEMA_STATEMENTS) {
@@ -499,7 +513,14 @@ export async function initSchema(db: Client): Promise<void> {
  * @param currentVersion - Stored schema version, when present.
  */
 async function assertSupportedSchemaState(db: Client, currentVersion: string | null): Promise<void> {
-  if (currentVersion && currentVersion !== "5" && currentVersion !== "6" && currentVersion !== "7" && currentVersion !== SCHEMA_VERSION) {
+  if (
+    currentVersion &&
+    currentVersion !== "5" &&
+    currentVersion !== "6" &&
+    currentVersion !== "7" &&
+    currentVersion !== "8" &&
+    currentVersion !== SCHEMA_VERSION
+  ) {
     throw new Error(
       `Unsupported agenr database schema version "${currentVersion}". ` +
         `This build only supports schema version ${SCHEMA_VERSION}. ` +
@@ -594,6 +615,37 @@ async function migrateV7ToV8(db: Client): Promise<void> {
       }
     }
   }
+}
+
+/**
+ * Migrates a v8 surgeon proposal schema to v9 explicit review-state storage.
+ *
+ * @param db - libSQL client connected to the target database.
+ * @returns Promise that resolves once the migration completes.
+ */
+async function migrateV8ToV9(db: Client): Promise<void> {
+  if (!(await tableExists(db, "surgeon_run_proposals"))) {
+    await db.execute(CREATE_SURGEON_RUN_PROPOSALS_TABLE_SQL);
+    await db.execute(CREATE_SURGEON_RUN_PROPOSALS_RUN_ID_INDEX_SQL);
+    await db.execute(CREATE_SURGEON_RUN_PROPOSALS_GROUP_ID_INDEX_SQL);
+    await db.execute(CREATE_SURGEON_RUN_PROPOSALS_CREATED_AT_INDEX_SQL);
+    await db.execute(CREATE_SURGEON_RUN_PROPOSALS_REVIEW_STATUS_INDEX_SQL);
+    return;
+  }
+
+  const columns = ["review_status TEXT NOT NULL DEFAULT 'open'", "reviewed_at TEXT", "review_reason TEXT", "applied_action_count INTEGER NOT NULL DEFAULT 0"];
+
+  for (const column of columns) {
+    try {
+      await db.execute(`ALTER TABLE surgeon_run_proposals ADD COLUMN ${column}`);
+    } catch (error) {
+      if (!(error instanceof Error && /duplicate column/i.test(error.message))) {
+        throw error;
+      }
+    }
+  }
+
+  await db.execute(CREATE_SURGEON_RUN_PROPOSALS_REVIEW_STATUS_INDEX_SQL);
 }
 
 /**

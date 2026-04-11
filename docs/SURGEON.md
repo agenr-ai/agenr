@@ -204,7 +204,14 @@ Tentative and unresolved claim keys do not trigger auto-supersession.
 
 `claim_key_quality` records unresolved work in `surgeon_run_proposals` instead of forcing ambiguous rewrites.
 
-These proposals are durable review artifacts, not applied mutations. The CLI now exposes both backlog counts through `agenr surgeon status` and run-scoped proposal inspection through `agenr surgeon proposals <runId>`.
+These proposals are durable review artifacts with explicit review state. They start as `open`, can later become `applied` or `rejected`, and keep the review note plus applied-action count in the same durable row.
+
+The CLI now exposes:
+
+- backlog counts through `agenr surgeon status`
+- a global backlog view through `agenr surgeon backlog`
+- run-scoped proposal inspection through `agenr surgeon proposals <runId>`
+- explicit operator review through `agenr surgeon review <proposalId> --decision <apply|reject> --reason <text>`
 
 ## CLI surface
 
@@ -214,6 +221,7 @@ Current read-only inspection commands:
 
 - `agenr surgeon status`
 - `agenr surgeon history`
+- `agenr surgeon backlog`
 - `agenr surgeon actions <runId>`
 - `agenr surgeon proposals <runId>`
 
@@ -294,9 +302,23 @@ Current human output includes:
 - active entry count
 - claim-key lifecycle buckets
 - proposal backlog count
+- open proposals already eligible to apply
+- oldest still-open proposal timestamp when one exists
 - retirement-candidate total, plus new vs recently evaluated when applicable
 - latest surgeon run
 - latest surgeon cost
+
+### `agenr surgeon backlog`
+
+```bash
+agenr surgeon backlog [--state <open|applied|rejected|all>] [--eligible-only] [--issue-kind <kind>] [--entry-id <id>] [--limit <n>] [--offset <n>]
+```
+
+This shows proposal rows across runs with:
+
+- proposal ID, issue kind, scope, confidence, review status, and apply eligibility
+- originating run pass, status, and dry-run/apply mode
+- entry IDs plus proposed claim keys
 
 ### `agenr surgeon history`
 
@@ -327,6 +349,41 @@ This prints the action audit trail for one run. The CLI currently renders:
 - reasoning
 
 The DB also persists structured `details_json`, but the CLI does not print it yet.
+
+### `agenr surgeon proposals <runId>`
+
+```bash
+agenr surgeon proposals <runId>
+```
+
+This prints the proposal trail for one run with:
+
+- `created_at`
+- `issue_kind`
+- `scope`
+- `entry_ids`
+- `current_claim_keys` -> `proposed_claim_keys`
+- `confidence`
+- `eligible_for_apply`
+- `review_status`
+- `reviewed_at`
+- `review_reason`
+- `applied_action_count`
+- freeform rationale
+
+### `agenr surgeon review <proposalId>`
+
+```bash
+agenr surgeon review <proposalId> --decision <apply|reject> --reason <text>
+```
+
+Current behavior:
+
+- `--decision apply` uses the existing entry-update path and the canonical surgeon-applied claim-key lifecycle bundle
+- apply mode creates a DB backup before mutating a non-memory database
+- proposals are only directly applicable when they are still `open`, are flagged `eligible_for_apply`, and resolve to exactly one proposed claim key
+- successful application records an `update_entry` surgeon action tied back to the proposal ID
+- both apply and reject persist the review decision, review timestamp, review note, and applied-action count on the proposal row
 
 ## Progress events
 

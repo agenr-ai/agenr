@@ -3,7 +3,13 @@ import type { RecallPorts } from "../ports.js";
 import { computeLexicalScore, tokenize } from "./lexical.js";
 import { cosineSimilarity, gaussianRecency, importanceScore, recencyScore, scoreCandidate } from "./scoring.js";
 import { inferAroundDate, parseRelativeDate } from "./temporal.js";
-import { createNoopRecallTraceSink, type RecallExecutionOptions, type RecallExecutionTraceSummary, type RecallNoResultReason } from "./trace.js";
+import {
+  createNoopRecallTraceSink,
+  type RecallDegradedReason,
+  type RecallExecutionOptions,
+  type RecallExecutionTraceSummary,
+  type RecallNoResultReason,
+} from "./trace.js";
 import type {
   EntryFilters,
   FtsCandidate,
@@ -25,6 +31,8 @@ const HISTORICAL_TOPIC_PREFIX_OF_CANDIDATE_MIN = 0.6;
 const CLAIM_KEY_TENTATIVE_CURRENT_PENALTY = 0.08;
 const CLAIM_KEY_REDUNDANT_TRUSTED_SLOT_PENALTY = 0.05;
 const CLAIM_KEY_REDUNDANT_TRUSTED_SLOT_MAX_PENALTY = 0.15;
+const QUERY_EMBEDDING_FAILURE_NOTICE = "Embeddings failed during recall, so Agenr fell back to lexical-only entry ranking.";
+const VECTOR_SEARCH_FAILURE_NOTICE = "Vector search failed during recall, so Agenr continued with lexical entry candidates only.";
 
 /**
  * Execute the v1 recall pipeline against the provided adapter ports.
@@ -74,20 +82,43 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
   }
 
   try {
-    const queryEmbedding = await ports.embed(text);
+    let queryEmbedding: number[] = [];
+    try {
+      queryEmbedding = await ports.embed(text);
+    } catch {
+      markRecallDegraded(summary, "query_embedding_failed", QUERY_EMBEDDING_FAILURE_NOTICE);
+    }
 
-    const [vectorCandidates, ftsCandidates] = await Promise.all([
-      ports.vectorSearch({
-        embedding: queryEmbedding,
-        limit: limit * 4,
-        filters,
-      }),
-      ports.ftsSearch({
-        text,
-        limit: limit * 2,
-        filters,
-      }),
-    ]);
+    const vectorSearchLimit = limit * 4;
+    const lexicalSearchLimit = limit * 2;
+    const [vectorCandidates, ftsCandidates] =
+      queryEmbedding.length > 0
+        ? await Promise.all([
+            ports
+              .vectorSearch({
+                embedding: queryEmbedding,
+                limit: vectorSearchLimit,
+                filters,
+              })
+              .catch(() => {
+                markRecallDegraded(summary, "vector_search_failed", VECTOR_SEARCH_FAILURE_NOTICE);
+                return [];
+              }),
+            ports.ftsSearch({
+              text,
+              limit: lexicalSearchLimit,
+              filters,
+            }),
+          ])
+        : [
+            [],
+            await ports.ftsSearch({
+              text,
+              limit: lexicalSearchLimit,
+              filters,
+            }),
+          ];
+    summary.degraded.lexicalOnly = summary.degraded.active && queryEmbedding.length === 0;
 
     const mergeStartedAt = Date.now();
     const mergedCandidates = mergeCandidates(vectorCandidates, ftsCandidates);
@@ -123,7 +154,7 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
     summary.candidateCounts.thresholdQualified = thresholded.length;
     summary.timings.thresholdMs = elapsedMs(thresholdStartedAt);
     if (thresholded.length === 0) {
-      reportTrace(scored.length === 0 ? "no_candidates" : "below_threshold");
+      reportTrace(resolveNoResultReason(summary, scored.length === 0 ? "no_candidates" : "below_threshold"));
       return [];
     }
 
@@ -159,7 +190,7 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
     summary.timings.shapeResultsMs = elapsedMs(shapeStartedAt);
 
     if (results.length === 0) {
-      reportTrace("hydrate_missing");
+      reportTrace(resolveNoResultReason(summary, "hydrate_missing"));
       return [];
     }
 
@@ -235,6 +266,12 @@ function buildRecallTraceSummary(params: {
       budgetMs: 0,
       shapeResultsMs: 0,
     },
+    degraded: {
+      active: false,
+      reasons: [],
+      lexicalOnly: false,
+      notices: [],
+    },
   };
 }
 
@@ -255,6 +292,43 @@ function finishRecallTrace(
   }
 
   trace.reportSummary(summary);
+}
+
+/**
+ * Records one degraded-mode cause exactly once on the mutable trace summary.
+ *
+ * @param summary - Mutable recall execution summary.
+ * @param reason - Stable degraded-mode cause.
+ * @param notice - User-facing explanation of the degraded path.
+ */
+function markRecallDegraded(summary: RecallExecutionTraceSummary, reason: RecallDegradedReason, notice: string): void {
+  summary.degraded.active = true;
+  if (!summary.degraded.reasons.includes(reason)) {
+    summary.degraded.reasons.push(reason);
+  }
+  if (!summary.degraded.notices.includes(notice)) {
+    summary.degraded.notices.push(notice);
+  }
+}
+
+/**
+ * Refines no-result reasons when recall already degraded earlier in execution.
+ *
+ * @param summary - Mutable recall execution summary.
+ * @param reason - Baseline no-result reason derived from the ranking flow.
+ * @returns Stable no-result reason for trace emission.
+ */
+function resolveNoResultReason(summary: RecallExecutionTraceSummary, reason: RecallNoResultReason): RecallNoResultReason {
+  if (!summary.degraded.active) {
+    return reason;
+  }
+  if (reason === "no_candidates") {
+    return "degraded_no_candidates";
+  }
+  if (reason === "below_threshold") {
+    return "degraded_below_threshold";
+  }
+  return reason;
 }
 
 /**

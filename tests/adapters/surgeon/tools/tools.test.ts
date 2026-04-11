@@ -110,6 +110,8 @@ describe("surgeon tools", () => {
           noKey: 1,
         },
         proposalBacklogCount: 0,
+        eligibleProposalBacklogCount: 0,
+        oldestOpenProposalCreatedAt: null,
       },
       lastRun: {
         passType: "retirement",

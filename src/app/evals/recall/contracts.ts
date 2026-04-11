@@ -1,5 +1,5 @@
 import type { RecallInput, RecallOutput } from "../../../core/recall/types.js";
-import type { RecallClaimKeyTrace, RecallNoResultReason } from "../../../core/recall/trace.js";
+import type { RecallClaimKeyTrace, RecallDegradedTrace, RecallNoResultReason } from "../../../core/recall/trace.js";
 import type { ClaimKeySource, ClaimKeyStatus, ClaimSupportMode, EntryType, Expiry } from "../../../core/types.js";
 import type {
   ClaimCentricClaimStatus,
@@ -315,6 +315,12 @@ export interface RecallEvalUnifiedDiagnostics {
 }
 
 /**
+ * Degraded recall facts emitted when the core falls back away from the normal
+ * vector-backed path.
+ */
+export type RecallEvalDegradedDiagnostics = RecallDegradedTrace;
+
+/**
  * Small typed diagnostics emitted by the isolated recall eval execution flow.
  */
 export interface RecallEvalCaseDiagnostics {
@@ -345,6 +351,8 @@ export interface RecallEvalCaseDiagnostics {
   filtering?: RecallEvalFilteringDiagnostics;
   /** Claim-key lineage and trust shaping facts emitted by the core recall path. */
   claimKey?: RecallClaimKeyTrace;
+  /** Degraded-mode facts emitted by the core recall path. */
+  degraded?: RecallEvalDegradedDiagnostics;
   /** Unified-recall routing metadata when the case used the unified path. */
   unifiedRecall?: RecallEvalUnifiedDiagnostics;
   /** Stage-by-stage candidate counts across the recall pipeline. Always present when diagnostics are included. */

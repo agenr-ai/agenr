@@ -365,7 +365,7 @@ describe("runRecallEvalCase", () => {
     });
   });
 
-  it("maps recall execution failures to a structured error response", async () => {
+  it("returns degraded lexical results when query embeddings fail during recall execution", async () => {
     const tempRoot = await createTempDirectory("agenr-eval-recall-fail-");
 
     process.env.OPENAI_API_KEY = "test-key";
@@ -395,11 +395,10 @@ describe("runRecallEvalCase", () => {
     });
 
     expect(response).toMatchObject({
-      status: "error",
+      status: "ok",
       caseId: "case-recall-fail",
-      error: {
-        code: "recall_execution_failed",
-        message: "Failed to execute real recall against isolated eval state.",
+      result: {
+        entryIds: ["fixture-id"],
       },
       diagnostics: {
         execution: {
@@ -423,26 +422,35 @@ describe("runRecallEvalCase", () => {
         retrieval: {
           queryEmbeddingDimensions: 0,
           vectorSearchLimit: 0,
-          lexicalSearchLimit: 0,
+          lexicalSearchLimit: 20,
+        },
+        degraded: {
+          active: true,
+          reasons: ["query_embedding_failed"],
+          lexicalOnly: true,
+          notices: [expect.stringContaining("fell back to lexical-only entry ranking")],
         },
         candidateCounts: {
           vectorRetrieved: 0,
-          lexicalRetrieved: 0,
-          merged: 0,
-          thresholdQualified: 0,
-          budgetAccepted: 0,
-          finalRanked: 0,
-          hydrated: 0,
-          returned: 0,
-          telemetryAttempted: 0,
+          lexicalRetrieved: 1,
+          merged: 1,
+          thresholdQualified: 1,
+          budgetAccepted: 1,
+          finalRanked: 1,
+          hydrated: 1,
+          returned: 1,
+          telemetryAttempted: 1,
         },
       },
       sandbox: {
         preserved: true,
       },
     });
-    expect(response.error?.details).toEqual({
-      cause: "OpenAI embeddings request failed (401): invalid API key. invalid API key",
+    expect(response.result?.entries[0]).toMatchObject({
+      id: "fixture-id",
+      claim: {
+        memoryState: "current",
+      },
     });
     await expect(access(response.sandbox?.dbPath ?? "")).resolves.toBeUndefined();
   });

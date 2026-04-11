@@ -18,6 +18,99 @@ afterEach(() => {
 });
 
 describe("recall raw evidence gating", () => {
+  it("falls back to lexical-only ranking when query embeddings fail", async () => {
+    const traceSummaries: RecallExecutionTraceSummary[] = [];
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "policy-new",
+          type: "decision",
+          subject: "pager policy",
+          content: "Taylor is on call this week.",
+        }),
+      ],
+      vectorCandidates: [],
+      ftsCandidates: [{ id: "policy-new", rank: 1, tier: "all_tokens" }],
+      embedError: new Error("invalid API key"),
+    });
+
+    const results = await recall(
+      {
+        text: "who is on call this week",
+        limit: 5,
+      },
+      fixture.ports,
+      {
+        trace: {
+          reportSummary(summary): void {
+            traceSummaries.push(summary);
+          },
+        },
+      },
+    );
+
+    expect(results.map((result) => result.entry.id)).toEqual(["policy-new"]);
+    expect(results[0]?.scores.vector).toBe(0);
+    expect(results[0]?.scores.lexical).toBeGreaterThan(0);
+    expect(traceSummaries).toEqual([
+      expect.objectContaining({
+        degraded: {
+          active: true,
+          reasons: ["query_embedding_failed"],
+          lexicalOnly: true,
+          notices: [expect.stringContaining("fell back to lexical-only entry ranking")],
+        },
+      }),
+    ]);
+  });
+
+  it("keeps lexical recall working when vector search fails", async () => {
+    const traceSummaries: RecallExecutionTraceSummary[] = [];
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "policy-new",
+          type: "decision",
+          subject: "pager policy",
+          content: "Taylor is on call this week.",
+          embedding: createCosineEmbedding(0.81),
+        }),
+      ],
+      vectorCandidates: [],
+      ftsCandidates: [{ id: "policy-new", rank: 1, tier: "all_tokens" }],
+      vectorSearchError: new Error("vector index unavailable"),
+    });
+
+    const results = await recall(
+      {
+        text: "who is on call this week",
+        limit: 5,
+      },
+      fixture.ports,
+      {
+        trace: {
+          reportSummary(summary): void {
+            traceSummaries.push(summary);
+          },
+        },
+      },
+    );
+
+    expect(results.map((result) => result.entry.id)).toEqual(["policy-new"]);
+    expect(results[0]?.scores.vector).toBeGreaterThan(0);
+    expect(results[0]?.scores.lexical).toBeGreaterThan(0);
+    expect(traceSummaries).toEqual([
+      expect.objectContaining({
+        degraded: {
+          active: true,
+          reasons: ["vector_search_failed"],
+          lexicalOnly: false,
+          notices: [expect.stringContaining("continued with lexical entry candidates only")],
+        },
+      }),
+    ]);
+  });
+
   it("abstains when every candidate is a weak vector-only match", async () => {
     const traceSummaries: RecallExecutionTraceSummary[] = [];
     const fixture = createRecallPortsFixture({
@@ -605,6 +698,8 @@ function createRecallPortsFixture(params: {
   vectorCandidates: Array<{ id: string; vectorSim: number }>;
   ftsCandidates?: Array<{ id: string; rank: number; tier: FtsCandidate["tier"] }>;
   predecessorCandidateIds?: string[];
+  embedError?: Error;
+  vectorSearchError?: Error;
 }): {
   ports: RecallPorts;
   recordRecallEvents: ReturnType<typeof vi.fn>;
@@ -614,12 +709,21 @@ function createRecallPortsFixture(params: {
   const recordRecallEvents = vi.fn(async () => undefined);
   const fetchPredecessors = vi.fn(async () => (params.predecessorCandidateIds ?? []).map((id) => toRecallCandidateEntry(requireEntry(entriesById, id))));
   const ports: RecallPorts = {
-    embed: async (): Promise<number[]> => [1, 0, 0],
-    vectorSearch: async (): Promise<VectorCandidate[]> =>
-      params.vectorCandidates.map((candidate) => ({
+    embed: async (): Promise<number[]> => {
+      if (params.embedError) {
+        throw params.embedError;
+      }
+      return [1, 0, 0];
+    },
+    vectorSearch: async (): Promise<VectorCandidate[]> => {
+      if (params.vectorSearchError) {
+        throw params.vectorSearchError;
+      }
+      return params.vectorCandidates.map((candidate) => ({
         entry: toRecallCandidateEntry(requireEntry(entriesById, candidate.id)),
         vectorSim: candidate.vectorSim,
-      })),
+      }));
+    },
     ftsSearch: async (): Promise<FtsCandidate[]> =>
       (params.ftsCandidates ?? []).map((candidate) => ({
         entry: toRecallCandidateEntry(requireEntry(entriesById, candidate.id)),

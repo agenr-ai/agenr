@@ -31,6 +31,10 @@ export interface SurgeonHealthStats {
   };
   /** Count of durable unresolved surgeon proposals awaiting review. */
   proposalBacklogCount: number;
+  /** Open proposals that are already safe to apply. */
+  eligibleProposalBacklogCount: number;
+  /** Oldest still-open proposal creation timestamp, when one exists. */
+  oldestOpenProposalCreatedAt: string | null;
   recency: {
     last7: number;
     last30: number;
@@ -201,7 +205,10 @@ export async function getSurgeonHealthStats(
       }),
       executor.execute({
         sql: `
-        SELECT COUNT(*) AS proposal_backlog_count
+        SELECT
+          COALESCE(SUM(CASE WHEN review_status = 'open' THEN 1 ELSE 0 END), 0) AS proposal_backlog_count,
+          COALESCE(SUM(CASE WHEN review_status = 'open' AND eligible_for_apply = 1 THEN 1 ELSE 0 END), 0) AS eligible_proposal_backlog_count,
+          MIN(CASE WHEN review_status = 'open' THEN created_at ELSE NULL END) AS oldest_open_proposal_created_at
         FROM surgeon_run_proposals
       `,
       }),
@@ -269,6 +276,8 @@ export async function getSurgeonHealthStats(
       noKey: lifecycleRow ? readNumber(lifecycleRow, "no_key_count", 0) : 0,
     },
     proposalBacklogCount: proposalBacklogRow ? readNumber(proposalBacklogRow, "proposal_backlog_count", 0) : 0,
+    eligibleProposalBacklogCount: proposalBacklogRow ? readNumber(proposalBacklogRow, "eligible_proposal_backlog_count", 0) : 0,
+    oldestOpenProposalCreatedAt: proposalBacklogRow ? (readOptionalString(proposalBacklogRow, "oldest_open_proposal_created_at") ?? null) : null,
     recency: {
       last7: recencyRow ? readNumber(recencyRow, "last7", 0) : 0,
       last30: recencyRow ? readNumber(recencyRow, "last30", 0) : 0,

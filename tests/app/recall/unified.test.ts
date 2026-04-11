@@ -209,6 +209,42 @@ describe("runUnifiedRecall", () => {
     expect(result.episodes.map((episode) => episode.episode.id)).toEqual(["temporal-episode"]);
     expect(result.notices).toContain("Semantic episode search unavailable - showing temporal results only.");
   });
+
+  it("surfaces degraded entry notices instead of skipping entry recall when embeddings are unavailable", async () => {
+    const entry = createEntry({
+      id: "policy-new",
+      subject: "pager policy",
+      content: "Taylor is on call this week.",
+    });
+
+    const result = await runUnifiedRecall(
+      {
+        text: "who is on call this week",
+        limit: 3,
+      },
+      {
+        database: createEpisodeDatabase(),
+        recall: createRecallPorts({
+          embed: async () => {
+            throw new Error("Embeddings are unavailable.");
+          },
+          ftsSearch: async () => [
+            {
+              entry: toRecallCandidateEntry(entry),
+              rank: 1,
+              tier: "all_tokens",
+            },
+          ],
+          hydrateEntries: async () => [entry],
+        }),
+        embeddingAvailable: false,
+        embeddingError: "Embeddings are unavailable.",
+      },
+    );
+
+    expect(result.entries.map((item) => item.entry.id)).toEqual(["policy-new"]);
+    expect(result.notices).toContain("Embeddings failed during recall, so Agenr fell back to lexical-only entry ranking.");
+  });
 });
 
 function createEpisodeDatabase(overrides: Partial<EpisodeDatabasePort> = {}): EpisodeDatabasePort {
