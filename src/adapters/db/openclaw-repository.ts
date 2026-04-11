@@ -7,7 +7,7 @@ import type {
   OpenClawRepository,
   OpenClawRecallEvent,
 } from "../../app/openclaw/ports.js";
-import { resolveClaimSlotPolicy } from "../../core/claim-slot-policy.js";
+import { resolveClaimSlotPolicy, type ClaimSlotPolicyConfig } from "../../core/claim-slot-policy.js";
 import type { Entry } from "../../core/types.js";
 import { buildActiveEntryClause, ENTRY_SELECT_COLUMNS, mapEntryRow, readNumber, readOptionalString, readRequiredString } from "./row-mapping.js";
 import type { SqlExecutor } from "./queries.js";
@@ -18,14 +18,20 @@ const ZERO_VECTOR = JSON.stringify(Array.from({ length: EMBEDDING_DIMENSIONS }, 
  * Creates the DB-backed OpenClaw repository used by adapter-facing runtime code.
  *
  * @param executor - SQL executor used for all OpenClaw read-model queries.
+ * @param options - Optional read-side policy overrides for claim-aware surfaces.
  * @returns Repository that hides DB internals behind feature-scoped methods.
  */
-export function createOpenClawRepository(executor: SqlExecutor): OpenClawRepository {
+export function createOpenClawRepository(
+  executor: SqlExecutor,
+  options: {
+    claimSlotPolicyConfig?: ClaimSlotPolicyConfig;
+  } = {},
+): OpenClawRepository {
   return {
     listCoreEntries: async (limit) => listCoreEntries(executor, limit),
     findEntryBySubject: async (subject) => findEntryBySubject(executor, subject),
     findMostRecentEntry: async () => findMostRecentEntry(executor),
-    getEntryTrace: async (entryId) => getEntryTrace(executor, entryId),
+    getEntryTrace: async (entryId) => getEntryTrace(executor, entryId, options.claimSlotPolicyConfig),
     getMemoryStatusSnapshot: async () => getMemoryStatusSnapshot(executor),
     probeVectorAvailability: async () => probeVectorAvailability(executor),
   };
@@ -124,7 +130,7 @@ async function findMostRecentEntry(executor: SqlExecutor): Promise<Entry | null>
  * @param entryId - Entry identifier to trace.
  * @returns Minimal provenance facts for the requested entry, or `null` when missing.
  */
-async function getEntryTrace(executor: SqlExecutor, entryId: string): Promise<OpenClawEntryTrace | null> {
+async function getEntryTrace(executor: SqlExecutor, entryId: string, claimSlotPolicyConfig?: ClaimSlotPolicyConfig): Promise<OpenClawEntryTrace | null> {
   const entry = await getEntryByIdIncludingInactive(executor, entryId);
   if (!entry) {
     return null;
@@ -133,7 +139,7 @@ async function getEntryTrace(executor: SqlExecutor, entryId: string): Promise<Op
   const [supersededBy, supersedes, claimFamily, recallEvents] = await Promise.all([
     entry.superseded_by ? getEntryByIdIncludingInactive(executor, entry.superseded_by) : Promise.resolve(null),
     listSupersededEntries(executor, entry.id),
-    entry.claim_key ? getClaimFamily(executor, entry.claim_key) : Promise.resolve(undefined),
+    entry.claim_key ? getClaimFamily(executor, entry.claim_key, claimSlotPolicyConfig) : Promise.resolve(undefined),
     listRecallEvents(executor, entry.id),
   ]);
 
@@ -258,7 +264,11 @@ async function listSupersededEntries(executor: SqlExecutor, entryId: string): Pr
  * @param claimKey - Shared claim key to inspect.
  * @returns Ordered claim family, or undefined when the key is empty.
  */
-async function getClaimFamily(executor: SqlExecutor, claimKey: string): Promise<OpenClawClaimFamily | undefined> {
+async function getClaimFamily(
+  executor: SqlExecutor,
+  claimKey: string,
+  claimSlotPolicyConfig?: ClaimSlotPolicyConfig,
+): Promise<OpenClawClaimFamily | undefined> {
   const normalizedClaimKey = claimKey.trim();
   if (normalizedClaimKey.length === 0) {
     return undefined;
@@ -276,9 +286,12 @@ async function getClaimFamily(executor: SqlExecutor, claimKey: string): Promise<
   });
   const entries = result.rows.map((row) => mapEntryRow(row));
 
+  const slotPolicy = resolveClaimSlotPolicy(normalizedClaimKey, claimSlotPolicyConfig);
+
   return {
     claimKey: normalizedClaimKey,
-    slotPolicy: resolveClaimSlotPolicy(normalizedClaimKey).policy,
+    slotPolicy: slotPolicy.policy,
+    slotPolicyReason: slotPolicy.reason,
     entries,
   };
 }

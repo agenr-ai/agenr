@@ -5,10 +5,12 @@ import type { OpenClawEntryTrace } from "../../app/openclaw/ports.js";
 import { resolveClaimSlotPolicy } from "../../core/claim-slot-policy.js";
 import type { Entry } from "../../core/types.js";
 
+/** Commander options accepted by the `agenr trace` command. */
 interface TraceCommandOptions {
   id?: string;
   subject?: string;
   last?: boolean;
+  json?: boolean;
 }
 
 /**
@@ -23,6 +25,7 @@ export function registerTraceCommand(program: Command): void {
     .addOption(new Option("--id <id>", "Entry id to inspect"))
     .addOption(new Option("--subject <text>", "Subject text to resolve when the id is unknown"))
     .option("--last", "Inspect the most recently created entry")
+    .option("--json", "Emit structured JSON output")
     .action(async (options: TraceCommandOptions) => {
       try {
         const trace = await loadOpenClawEntryTraceRuntime({
@@ -31,7 +34,7 @@ export function registerTraceCommand(program: Command): void {
           last: options.last === true,
           env: process.env,
         });
-        process.stdout.write(renderTrace(trace));
+        process.stdout.write(options.json === true ? renderTraceJson(trace) : renderTrace(trace));
       } catch (error) {
         process.exitCode = 1;
         process.stderr.write(`Failed to load trace: ${formatUnknownError(error)}\n`);
@@ -46,6 +49,7 @@ export function registerTraceCommand(program: Command): void {
  * @returns Human-readable trace output block.
  */
 function renderTrace(trace: OpenClawEntryTrace): string {
+  const entrySlotPolicy = resolveTraceSlotPolicy(trace);
   const lines = [
     `Trace for ${trace.entry.id} | ${trace.entry.subject}`,
     `type=${trace.entry.type} expiry=${trace.entry.expiry} importance=${trace.entry.importance} retired=${trace.entry.retired}`,
@@ -62,16 +66,17 @@ function renderTrace(trace: OpenClawEntryTrace): string {
 
   if (trace.entry.claim_key) {
     lines.push(`claim_key=${trace.entry.claim_key}`);
-    lines.push(`slot_policy=${resolveClaimSlotPolicy(trace.entry.claim_key).policy}`);
+    lines.push(`slot_policy=${entrySlotPolicy.policy}`);
+    lines.push(`slot_policy_reason=${entrySlotPolicy.reason}`);
   }
 
   if (trace.claimFamily && trace.claimFamily.entries.length > 0) {
-    const slotPolicy = trace.claimFamily.slotPolicy ?? resolveClaimSlotPolicy(trace.claimFamily.claimKey).policy;
     lines.push(
-      `claim_family=${trace.claimFamily.claimKey} | slot_policy=${slotPolicy} | ${trace.claimFamily.entries
+      `claim_family=${trace.claimFamily.claimKey} | slot_policy=${entrySlotPolicy.policy} | ${trace.claimFamily.entries
         .map((entry) => `${entry.id}:${describeEntryState(entry)}:${formatClaimLifecycle(entry)}`)
         .join(", ")}`,
     );
+    lines.push(`claim_family_policy_reason=${entrySlotPolicy.reason}`);
     const transitionSummary = summarizeClaimFamilyTransition(trace.claimFamily.entries);
     if (transitionSummary) {
       lines.push(`transition=${transitionSummary}`);
@@ -97,6 +102,39 @@ function renderTrace(trace: OpenClawEntryTrace): string {
   }
 
   return `${lines.join("\n")}\n`;
+}
+
+/**
+ * Formats one trace payload as structured JSON for scripting and review workflows.
+ *
+ * @param trace - Loaded trace payload.
+ * @returns Pretty-printed JSON output.
+ */
+function renderTraceJson(trace: OpenClawEntryTrace): string {
+  const slotPolicy = resolveTraceSlotPolicy(trace);
+  const transitionSummary = trace.claimFamily ? summarizeClaimFamilyTransition(trace.claimFamily.entries) : undefined;
+
+  return `${JSON.stringify(
+    {
+      entry: serializeTraceEntry(trace.entry, slotPolicy),
+      ...(trace.supersededBy ? { supersededBy: serializeTraceEntry(trace.supersededBy) } : {}),
+      supersedes: trace.supersedes.map((entry) => serializeTraceEntry(entry)),
+      ...(trace.claimFamily
+        ? {
+            claimFamily: {
+              claimKey: trace.claimFamily.claimKey,
+              slotPolicy: slotPolicy.policy,
+              slotPolicyReason: slotPolicy.reason,
+              ...(transitionSummary ? { transition: transitionSummary } : {}),
+              entries: trace.claimFamily.entries.map((entry) => serializeTraceEntry(entry)),
+            },
+          }
+        : {}),
+      recallEvents: trace.recallEvents,
+    },
+    null,
+    2,
+  )}\n`;
 }
 
 /**
@@ -147,6 +185,77 @@ function summarizeClaimFamilyTransition(entries: Entry[]): string | undefined {
     return `${current.id} is the only current sibling in the traced family`;
   }
   return undefined;
+}
+
+/**
+ * Resolves the effective trace slot policy and explanation for the target family.
+ *
+ * @param trace - Loaded trace payload.
+ * @returns Effective slot-policy metadata for the traced family.
+ */
+function resolveTraceSlotPolicy(trace: OpenClawEntryTrace): { policy: string; reason: string } {
+  if (trace.claimFamily) {
+    const resolved = resolveClaimSlotPolicy(trace.claimFamily.claimKey);
+    return {
+      policy: trace.claimFamily.slotPolicy ?? resolved.policy,
+      reason: trace.claimFamily.slotPolicyReason ?? resolved.reason,
+    };
+  }
+
+  if (trace.entry.claim_key) {
+    const resolved = resolveClaimSlotPolicy(trace.entry.claim_key);
+    return {
+      policy: resolved.policy,
+      reason: resolved.reason,
+    };
+  }
+
+  return {
+    policy: "exclusive",
+    reason: "No canonical claim key was available, so the slot policy defaulted to exclusive.",
+  };
+}
+
+/**
+ * Converts one trace entry into a structured inspection payload.
+ *
+ * @param entry - Entry to serialize.
+ * @param slotPolicy - Optional slot-policy metadata when the entry has a claim key.
+ * @returns Structured trace entry payload.
+ */
+function serializeTraceEntry(entry: Entry, slotPolicy?: { policy: string; reason: string }): Record<string, unknown> {
+  return {
+    id: entry.id,
+    subject: entry.subject,
+    content: entry.content,
+    type: entry.type,
+    expiry: entry.expiry,
+    importance: entry.importance,
+    retired: entry.retired,
+    createdAt: entry.created_at,
+    updatedAt: entry.updated_at,
+    memoryState: describeEntryState(entry),
+    claimLifecycle: formatClaimLifecycle(entry),
+    ...(entry.claim_key ? { claimKey: entry.claim_key } : {}),
+    ...(entry.claim_key && slotPolicy ? { slotPolicy: slotPolicy.policy, slotPolicyReason: slotPolicy.reason } : {}),
+    ...(entry.valid_from || entry.valid_to
+      ? {
+          validity: {
+            from: entry.valid_from ?? null,
+            to: entry.valid_to ?? null,
+          },
+        }
+      : {}),
+    ...(entry.supersession_kind || entry.supersession_reason
+      ? {
+          supersession: {
+            ...(entry.supersession_kind ? { kind: entry.supersession_kind } : {}),
+            ...(entry.supersession_reason ? { reason: entry.supersession_reason } : {}),
+          },
+        }
+      : {}),
+    ...(entry.superseded_by ? { supersededById: entry.superseded_by } : {}),
+  };
 }
 
 /**

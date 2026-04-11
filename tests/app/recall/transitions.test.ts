@@ -82,6 +82,57 @@ describe("buildClaimTransitionExplanations", () => {
     expect(transitions).toHaveLength(1);
     expect(transitions[0]?.episodeContext).toBeUndefined();
   });
+
+  it("emits transitions for factual recall when both prior and current rows are visible", () => {
+    const priorEntry = createEntry({
+      id: "runtime-old",
+      subject: "deployment runtime",
+      content: "Deployment runtime used Node 22.",
+      claim_key: "deployment/runtime",
+      claim_key_status: "trusted",
+      superseded_by: "runtime-new",
+    });
+    const currentEntry = createEntry({
+      id: "runtime-new",
+      subject: "deployment runtime",
+      content: "Deployment runtime uses Node 24.",
+      claim_key: "deployment/runtime",
+      claim_key_status: "trusted",
+    });
+
+    const transitions = buildClaimTransitionExplanations({
+      families: projectClaimCentricRecallEntries([createRecallOutput(currentEntry, 0.9), createRecallOutput(priorEntry, 0.7)]),
+      episodes: [],
+      detectedIntent: "factual",
+    });
+
+    expect(transitions).toEqual([
+      expect.objectContaining({
+        claimKey: "deployment/runtime",
+        currentEntryId: "runtime-new",
+        priorEntryId: "runtime-old",
+        summary: "deployment runtime changed from runtime-old to runtime-new.",
+      }),
+    ]);
+  });
+
+  it("keeps one-sided explanations limited to historical-state intent", () => {
+    const currentEntry = createEntry({
+      id: "runtime-new",
+      subject: "deployment runtime",
+      content: "Deployment runtime uses Node 24.",
+      claim_key: "deployment/runtime",
+      claim_key_status: "trusted",
+    });
+
+    const transitions = buildClaimTransitionExplanations({
+      families: projectClaimCentricRecallEntries([createRecallOutput(currentEntry, 0.9)]),
+      episodes: [],
+      detectedIntent: "factual",
+    });
+
+    expect(transitions).toEqual([]);
+  });
 });
 
 function createRecallOutput(entry: Entry, score: number): RecallOutput {

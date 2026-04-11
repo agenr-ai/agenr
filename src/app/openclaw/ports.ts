@@ -18,6 +18,8 @@ export interface OpenClawClaimFamily {
   claimKey: string;
   /** Runtime slot-policy used when reading this lineage. */
   slotPolicy: ClaimSlotPolicy;
+  /** Human-readable explanation of how the slot policy was chosen. */
+  slotPolicyReason?: string;
   /** Family rows ordered oldest-first for lineage inspection. */
   entries: Entry[];
 }

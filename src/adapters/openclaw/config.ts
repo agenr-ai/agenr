@@ -1,6 +1,7 @@
 import type { OpenClawPluginConfigSchema } from "openclaw/plugin-sdk/plugin-entry";
 
-import type { AgenrOpenClawPluginConfig, StoreNudgeConfig } from "./types.js";
+import type { ClaimSlotPolicy } from "../../core/claim-slot-policy.js";
+import type { AgenrOpenClawClaimSlotPolicyConfig, AgenrOpenClawMemoryPolicyConfig, AgenrOpenClawPluginConfig, StoreNudgeConfig } from "./types.js";
 import pluginManifest from "./openclaw.plugin.json" with { type: "json" };
 
 /**
@@ -72,7 +73,12 @@ export function normalizeAgenrOpenClawPluginConfig(value: unknown): { ok: true; 
     errors.push(...storeNudgeResult.errors);
   }
 
-  const allowedKeys = new Set(["dbPath", "configPath", "continuityModel", "episodeModel", "claimExtractionModel", "storeNudge"]);
+  const memoryPolicyResult = normalizeMemoryPolicyConfig(value.memoryPolicy);
+  if (!memoryPolicyResult.ok) {
+    errors.push(...memoryPolicyResult.errors);
+  }
+
+  const allowedKeys = new Set(["dbPath", "configPath", "continuityModel", "episodeModel", "claimExtractionModel", "storeNudge", "memoryPolicy"]);
   for (const key of Object.keys(value)) {
     if (!allowedKeys.has(key)) {
       errors.push(`unknown config field: ${key}`);
@@ -92,6 +98,7 @@ export function normalizeAgenrOpenClawPluginConfig(value: unknown): { ok: true; 
       ...(episodeModel ? { episodeModel } : {}),
       ...(claimExtractionModel ? { claimExtractionModel } : {}),
       ...(storeNudgeResult.ok && storeNudgeResult.value ? { storeNudge: storeNudgeResult.value } : {}),
+      ...(memoryPolicyResult.ok && memoryPolicyResult.value ? { memoryPolicy: memoryPolicyResult.value } : {}),
     },
   };
 }
@@ -196,6 +203,120 @@ function normalizeStoreNudgeConfig(value: unknown): { ok: true; value: Partial<S
     ok: true,
     value: Object.keys(normalizedValue).length > 0 ? resolveStoreNudgeConfig(normalizedValue) : undefined,
   };
+}
+
+/**
+ * Validates and normalizes the nested `memoryPolicy` plugin config block.
+ *
+ * @param value - Raw nested config value.
+ * @returns Normalized memory-policy config or stable validation errors.
+ */
+function normalizeMemoryPolicyConfig(value: unknown): { ok: true; value: AgenrOpenClawMemoryPolicyConfig | undefined } | { ok: false; errors: string[] } {
+  if (value === undefined) {
+    return { ok: true, value: undefined };
+  }
+
+  if (!isRecord(value)) {
+    return { ok: false, errors: ["memoryPolicy must be an object when provided"] };
+  }
+
+  const errors: string[] = [];
+  const slotPoliciesResult = normalizeClaimSlotPolicyConfig(value.slotPolicies);
+  if (!slotPoliciesResult.ok) {
+    errors.push(...slotPoliciesResult.errors);
+  }
+
+  const allowedKeys = new Set(["slotPolicies"]);
+  for (const key of Object.keys(value)) {
+    if (!allowedKeys.has(key)) {
+      errors.push(`unknown config field: memoryPolicy.${key}`);
+    }
+  }
+
+  if (errors.length > 0) {
+    return { ok: false, errors };
+  }
+
+  return {
+    ok: true,
+    value:
+      slotPoliciesResult.ok && slotPoliciesResult.value
+        ? {
+            slotPolicies: slotPoliciesResult.value,
+          }
+        : undefined,
+  };
+}
+
+/**
+ * Validates and normalizes slot-policy overrides nested under `memoryPolicy`.
+ *
+ * @param value - Raw nested config value.
+ * @returns Normalized slot-policy config or stable validation errors.
+ */
+function normalizeClaimSlotPolicyConfig(value: unknown): { ok: true; value: AgenrOpenClawClaimSlotPolicyConfig | undefined } | { ok: false; errors: string[] } {
+  if (value === undefined) {
+    return { ok: true, value: undefined };
+  }
+
+  if (!isRecord(value)) {
+    return { ok: false, errors: ["memoryPolicy.slotPolicies must be an object when provided"] };
+  }
+
+  const errors: string[] = [];
+  const attributeHeads = normalizeClaimSlotPolicyAttributeHeads(value.attributeHeads, errors);
+
+  const allowedKeys = new Set(["attributeHeads"]);
+  for (const key of Object.keys(value)) {
+    if (!allowedKeys.has(key)) {
+      errors.push(`unknown config field: memoryPolicy.slotPolicies.${key}`);
+    }
+  }
+
+  if (errors.length > 0) {
+    return { ok: false, errors };
+  }
+
+  return {
+    ok: true,
+    value: attributeHeads ? { attributeHeads } : undefined,
+  };
+}
+
+/**
+ * Validates and normalizes slot-policy overrides keyed by attribute head.
+ *
+ * @param value - Raw nested object.
+ * @param errors - Mutable validation error collection.
+ * @returns Canonicalized attribute-head map when valid.
+ */
+function normalizeClaimSlotPolicyAttributeHeads(value: unknown, errors: string[]): Record<string, ClaimSlotPolicy> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!isRecord(value)) {
+    errors.push("memoryPolicy.slotPolicies.attributeHeads must be an object when provided");
+    return undefined;
+  }
+
+  const normalized: Record<string, ClaimSlotPolicy> = {};
+  for (const [rawKey, rawPolicy] of Object.entries(value)) {
+    const attributeHead = rawKey.trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9_-]*$/.test(attributeHead)) {
+      errors.push(`memoryPolicy.slotPolicies.attributeHeads.${rawKey} must use a canonical attribute-head label`);
+      continue;
+    }
+
+    if (rawPolicy !== "exclusive" && rawPolicy !== "multivalued") {
+      errors.push(`memoryPolicy.slotPolicies.attributeHeads.${attributeHead} must be "exclusive" or "multivalued"`);
+      continue;
+    }
+
+    normalized[attributeHead] = rawPolicy;
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
 }
 
 /**

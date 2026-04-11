@@ -85,6 +85,7 @@ The runtime config is currently:
 - `episodeModel` - optional `provider/model` override for predecessor episode summaries
 - `claimExtractionModel` - optional `provider/model` override for claim-key extraction during store calls
 - `storeNudge` - optional nested config with `enabled`, `threshold`, and `maxPerSession`
+- `memoryPolicy.slotPolicies.attributeHeads` - optional attribute-head overrides for read-time claim-slot policy classes
 
 Unknown keys are rejected.
 
@@ -436,7 +437,7 @@ Current trace payload includes:
 - the entry itself
 - `supersededBy`
 - entries it supersedes
-- same-claim-key family rows ordered for lineage inspection when `claim_key` exists
+- same-claim-key family rows ordered for lineage inspection when `claim_key` exists, including the effective slot policy and policy reason
 - recent recall events
 
 ### Shared target-resolution rules

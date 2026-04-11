@@ -54,6 +54,7 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
   const until = query.until ? parseRelativeDate(query.until) : null;
   const filters = buildEntryFilters(query.types, query.tags, since, until);
   const trace = options.trace ?? createNoopRecallTraceSink();
+  const slotPolicyConfig = options.slotPolicyConfig;
   const summary = buildRecallTraceSummary({
     filters,
     limit,
@@ -148,8 +149,10 @@ export async function recall(query: RecallInput, ports: RecallPorts, options: Re
           rankingProfile: query.rankingProfile,
         },
         summary.claimKey,
+        slotPolicyConfig,
       ),
       summary.claimKey,
+      slotPolicyConfig,
     ).sort((left, right) => right.score - left.score);
     summary.timings.scoreCandidatesMs = elapsedMs(scoreStartedAt);
 
@@ -516,6 +519,7 @@ function applyHistoricalLineageBoosts(
     rankingProfile?: RecallRankingProfile;
   },
   claimKeyTrace: RecallExecutionTraceSummary["claimKey"],
+  slotPolicyConfig?: RecallExecutionOptions["slotPolicyConfig"],
 ): RankedCandidate[] {
   if (params.rankingProfile !== "historical_state") {
     return candidates;
@@ -523,7 +527,7 @@ function applyHistoricalLineageBoosts(
 
   const entries = candidates.map((candidate) => candidate.entry);
   return candidates.map((candidate) => {
-    const decision = resolveHistoricalLineageBonus(candidate.entry, entries, params.aroundDate);
+    const decision = resolveHistoricalLineageBonus(candidate.entry, entries, params.aroundDate, slotPolicyConfig);
     if (decision.tentativeLineageSuppressed) {
       claimKeyTrace.tentativeLineageSuppressed += 1;
     }
@@ -557,6 +561,7 @@ function resolveHistoricalLineageBonus(
   entry: RecallCandidateEntry,
   entries: RecallCandidateEntry[],
   aroundDate: Date | null,
+  slotPolicyConfig?: RecallExecutionOptions["slotPolicyConfig"],
 ): {
   bonus: number;
   tentativeLineageSuppressed: boolean;
@@ -581,7 +586,7 @@ function resolveHistoricalLineageBonus(
       continue;
     }
 
-    const relation = resolveHistoricalPeerRelation(entry, peer, entries);
+    const relation = resolveHistoricalPeerRelation(entry, peer, entries, slotPolicyConfig);
     if (relation === "tentative_claim_key_suppressed") {
       tentativeLineageSuppressed = true;
       continue;
@@ -625,12 +630,13 @@ function resolveHistoricalPeerRelation(
   left: RecallCandidateEntry,
   right: RecallCandidateEntry,
   entries: RecallCandidateEntry[],
+  slotPolicyConfig?: RecallExecutionOptions["slotPolicyConfig"],
 ): "claim_key" | "topic" | "tentative_claim_key_suppressed" | null {
   if (left.claim_key && right.claim_key && left.claim_key === right.claim_key) {
-    if (resolveClaimSlotPolicy(left.claim_key).policy === "multivalued") {
+    if (resolveClaimSlotPolicy(left.claim_key, slotPolicyConfig).policy === "multivalued") {
       return null;
     }
-    return canUseClaimKeyLineage(left, entries) ? "claim_key" : "tentative_claim_key_suppressed";
+    return canUseClaimKeyLineage(left, entries, slotPolicyConfig) ? "claim_key" : "tentative_claim_key_suppressed";
   }
 
   return sharesHistoricalTopic(left, right) ? "topic" : null;
@@ -646,12 +652,16 @@ function resolveHistoricalPeerRelation(
  * @param entries - All candidate entries currently in the result set.
  * @returns True when the entry may use claim-key lineage for boosting.
  */
-function canUseClaimKeyLineage(entry: RecallCandidateEntry, entries: RecallCandidateEntry[]): boolean {
+function canUseClaimKeyLineage(
+  entry: RecallCandidateEntry,
+  entries: RecallCandidateEntry[],
+  slotPolicyConfig?: RecallExecutionOptions["slotPolicyConfig"],
+): boolean {
   if (!entry.claim_key) {
     return false;
   }
 
-  if (resolveClaimSlotPolicy(entry.claim_key).policy === "multivalued") {
+  if (resolveClaimSlotPolicy(entry.claim_key, slotPolicyConfig).policy === "multivalued") {
     return false;
   }
 
@@ -735,7 +745,11 @@ function countSharedPrefixTokens(leftTokens: string[], rightTokens: string[]): n
  * @param claimKeyTrace - Mutable claim-key trace counters for one recall execution.
  * @returns Candidates with score penalties applied when needed.
  */
-function applyClaimKeyResultShaping(candidates: RankedCandidate[], claimKeyTrace: RecallExecutionTraceSummary["claimKey"]): RankedCandidate[] {
+function applyClaimKeyResultShaping(
+  candidates: RankedCandidate[],
+  claimKeyTrace: RecallExecutionTraceSummary["claimKey"],
+  slotPolicyConfig?: RecallExecutionOptions["slotPolicyConfig"],
+): RankedCandidate[] {
   if (candidates.length === 0) {
     return candidates;
   }
@@ -748,11 +762,11 @@ function applyClaimKeyResultShaping(candidates: RankedCandidate[], claimKeyTrace
           isPotentialCurrentPeer(entry) &&
           entry.claim_key &&
           entry.claim_key_status === "trusted" &&
-          resolveClaimSlotPolicy(entry.claim_key).policy === "exclusive",
+          resolveClaimSlotPolicy(entry.claim_key, slotPolicyConfig).policy === "exclusive",
       )
       .map((entry) => entry.claim_key!),
   );
-  const trustedSlotRankById = rankTrustedSlotSiblings(candidates);
+  const trustedSlotRankById = rankTrustedSlotSiblings(candidates, slotPolicyConfig);
 
   return candidates.map((candidate) => {
     const trustPenalty = shouldPenalizeTentativeCurrentSibling(candidate.entry, trustedActiveClaimKeys) ? CLAIM_KEY_TENTATIVE_CURRENT_PENALTY : 0;
@@ -787,7 +801,7 @@ function applyClaimKeyResultShaping(candidates: RankedCandidate[], claimKeyTrace
  * @param candidates - Ranked candidates before final sorting.
  * @returns Candidate-to-rank mapping where zero is the best trusted sibling.
  */
-function rankTrustedSlotSiblings(candidates: RankedCandidate[]): Map<string, number> {
+function rankTrustedSlotSiblings(candidates: RankedCandidate[], slotPolicyConfig?: RecallExecutionOptions["slotPolicyConfig"]): Map<string, number> {
   const candidatesById = new Map(candidates.map((candidate) => [candidate.entry.id, candidate]));
   const trustedByClaimKey = new Map<string, RankedCandidate[]>();
 
@@ -797,7 +811,7 @@ function rankTrustedSlotSiblings(candidates: RankedCandidate[]): Map<string, num
       !claimKey ||
       candidate.entry.claim_key_status !== "trusted" ||
       !isPotentialCurrentPeer(candidate.entry) ||
-      resolveClaimSlotPolicy(claimKey).policy !== "exclusive"
+      resolveClaimSlotPolicy(claimKey, slotPolicyConfig).policy !== "exclusive"
     ) {
       continue;
     }

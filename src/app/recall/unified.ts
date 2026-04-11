@@ -1,4 +1,5 @@
 import type { EpisodeDatabasePort, RecallPorts } from "../../core/ports.js";
+import type { ClaimSlotPolicyConfig } from "../../core/claim-slot-policy.js";
 import { recall } from "../../core/recall/search.js";
 import { parseTemporalWindow } from "../../core/episode/temporal-window.js";
 import { searchEpisodes } from "../../core/episode/search.js";
@@ -44,6 +45,7 @@ export interface UnifiedRecallDeps {
   embeddingError?: string;
   embedQuery?: (text: string) => Promise<number[]>;
   recallOptions?: RecallExecutionOptions;
+  claimSlotPolicyConfig?: ClaimSlotPolicyConfig;
   debugLog?: (message: string) => void;
   now?: Date;
 }
@@ -112,6 +114,7 @@ export async function runUnifiedRecall(input: UnifiedRecallInput, deps: UnifiedR
   const rawEntries = entries.kind === "results" ? entries.results : [];
   const entryFamilies = projectClaimCentricRecallEntries(rawEntries, {
     asOf: input.asOf,
+    slotPolicyConfig: deps.claimSlotPolicyConfig,
   });
   const projectedEntries = flattenClaimCentricRecallFamilies(entryFamilies);
   const claimTransitions = buildClaimTransitionExplanations({

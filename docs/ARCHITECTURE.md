@@ -139,12 +139,14 @@ The CLI currently exposes:
 - `agenr ingest entries <path>` with `agenr ingest <path>` as the default durable-ingest form
 - `agenr ingest episodes [path]`
 - `agenr recall <query>`
-- `agenr surgeon run|status|history|actions|proposals`
+- `agenr surgeon run|status|history|backlog|actions|proposals|review`
 - `agenr trace`
 - `agenr scenarios list|run`
 - `agenr db reset`
 
 There are still no standalone CLI commands for `store`, `retire`, or `update`. Those remain OpenClaw tool surfaces rather than first-class CLI commands.
+
+The OpenClaw adapter also exposes a deliberately narrow `memoryPolicy.slotPolicies.attributeHeads` config seam so claim-aware read behavior can override slot-policy classes without turning the plugin config into a broad platform API.
 
 ## 5. Domain model
 

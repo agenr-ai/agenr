@@ -449,13 +449,13 @@ Current tiers are:
 
 Tokenization is deliberately simple:
 
-- lowercase only
-- regex: `[a-z0-9][a-z0-9._-]*`
+- Unicode-aware lowercase normalization
+- regex: `[\p{L}\p{N}][\p{L}\p{N}._-]*`
 - minimum token length `2`
 - English stop words removed
 - reserved FTS operator words like `or`, `not`, and `near` removed from token tiers
 
-Important consequence: non-ASCII text degrades toward the exact-phrase tier because the tokenizer is ASCII-centric.
+Important consequence: accented and other non-ASCII word tokens now participate in the all-token and any-token lexical tiers instead of degrading immediately to exact-phrase-only fallback.
 
 If the tokenized query is empty after stop-word removal, recall still runs the exact-phrase tier.
 

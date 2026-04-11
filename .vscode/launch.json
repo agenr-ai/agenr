@@ -39,22 +39,13 @@
       "request": "launch",
       "runtimeExecutable": "node",
       "program": "${workspaceFolder}/dist/cli.js",
-      "args": [
-        "ingest",
-        "entries",
-        "${input:transcriptPath}",
-        "--verbose"
-      ],
+      "args": ["ingest", "entries", "${input:transcriptPath}", "--verbose"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
       "sourceMaps": true,
-      "outFiles": [
-        "${workspaceFolder}/dist/**/*.js"
-      ],
-      "skipFiles": [
-        "<node_internals>/**"
-      ],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "skipFiles": ["<node_internals>/**"],
       "env": {
         "AGENR_DB_PATH": "/Users/jmartin/.openclaw-sandbox/agenr-data/knowledge.db",
         "AGENR_CONFIG_PATH": "/Users/jmartin/.openclaw-sandbox/agenr-data/config.json"
@@ -67,22 +58,13 @@
       "request": "launch",
       "runtimeExecutable": "node",
       "program": "${workspaceFolder}/dist/cli.js",
-      "args": [
-        "ingest",
-        "episodes",
-        "${input:episodePath}",
-        "--verbose"
-      ],
+      "args": ["ingest", "episodes", "${input:episodePath}", "--verbose"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
       "sourceMaps": true,
-      "outFiles": [
-        "${workspaceFolder}/dist/**/*.js"
-      ],
-      "skipFiles": [
-        "<node_internals>/**"
-      ],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "skipFiles": ["<node_internals>/**"],
       "env": {
         "AGENR_DB_PATH": "/Users/jmartin/.openclaw-sandbox/agenr-data/knowledge.db",
         "AGENR_CONFIG_PATH": "/Users/jmartin/.openclaw-sandbox/agenr-data/config.json"
@@ -95,21 +77,13 @@
       "request": "launch",
       "runtimeExecutable": "node",
       "program": "${workspaceFolder}/dist/cli.js",
-      "args": [
-        "recall",
-        "${input:recallQuery}",
-        "--verbose"
-      ],
+      "args": ["recall", "${input:recallQuery}", "--verbose"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
       "sourceMaps": true,
-      "outFiles": [
-        "${workspaceFolder}/dist/**/*.js"
-      ],
-      "skipFiles": [
-        "<node_internals>/**"
-      ],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "skipFiles": ["<node_internals>/**"],
       "env": {
         "AGENR_DB_PATH": "/Users/jmartin/.openclaw-sandbox/agenr-data/knowledge.db",
         "AGENR_CONFIG_PATH": "/Users/jmartin/.openclaw-sandbox/agenr-data/config.json"
@@ -122,23 +96,13 @@
       "request": "launch",
       "runtimeExecutable": "node",
       "program": "${workspaceFolder}/dist/cli.js",
-      "args": [
-        "surgeon",
-        "run",
-        "--preset",
-        "structural",
-        "--verbose"
-      ],
+      "args": ["surgeon", "run", "--preset", "structural", "--verbose"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
       "sourceMaps": true,
-      "outFiles": [
-        "${workspaceFolder}/dist/**/*.js"
-      ],
-      "skipFiles": [
-        "<node_internals>/**"
-      ],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "skipFiles": ["<node_internals>/**"],
       "env": {
         "AGENR_DB_PATH": "/Users/jmartin/.openclaw-sandbox/agenr-data/knowledge.db",
         "AGENR_CONFIG_PATH": "/Users/jmartin/.openclaw-sandbox/agenr-data/config.json"
@@ -151,20 +115,13 @@
       "request": "launch",
       "runtimeExecutable": "node",
       "program": "${workspaceFolder}/dist/cli.js",
-      "args": [
-        "surgeon",
-        "status"
-      ],
+      "args": ["surgeon", "status"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
       "sourceMaps": true,
-      "outFiles": [
-        "${workspaceFolder}/dist/**/*.js"
-      ],
-      "skipFiles": [
-        "<node_internals>/**"
-      ],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "skipFiles": ["<node_internals>/**"],
       "env": {
         "AGENR_DB_PATH": "/Users/jmartin/.openclaw-sandbox/agenr-data/knowledge.db",
         "AGENR_CONFIG_PATH": "/Users/jmartin/.openclaw-sandbox/agenr-data/config.json"
@@ -177,22 +134,13 @@
       "request": "launch",
       "runtimeExecutable": "node",
       "program": "${workspaceFolder}/dist/cli.js",
-      "args": [
-        "surgeon",
-        "history",
-        "--limit",
-        "20"
-      ],
+      "args": ["surgeon", "history", "--limit", "20"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
       "sourceMaps": true,
-      "outFiles": [
-        "${workspaceFolder}/dist/**/*.js"
-      ],
-      "skipFiles": [
-        "<node_internals>/**"
-      ],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "skipFiles": ["<node_internals>/**"],
       "env": {
         "AGENR_DB_PATH": "/Users/jmartin/.openclaw-sandbox/agenr-data/knowledge.db",
         "AGENR_CONFIG_PATH": "/Users/jmartin/.openclaw-sandbox/agenr-data/config.json"
@@ -205,21 +153,13 @@
       "request": "launch",
       "runtimeExecutable": "node",
       "program": "${workspaceFolder}/dist/cli.js",
-      "args": [
-        "surgeon",
-        "actions",
-        "${input:surgeonRunId}"
-      ],
+      "args": ["surgeon", "actions", "${input:surgeonRunId}"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
       "sourceMaps": true,
-      "outFiles": [
-        "${workspaceFolder}/dist/**/*.js"
-      ],
-      "skipFiles": [
-        "<node_internals>/**"
-      ],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "skipFiles": ["<node_internals>/**"],
       "env": {
         "AGENR_DB_PATH": "/Users/jmartin/.openclaw-sandbox/agenr-data/knowledge.db",
         "AGENR_CONFIG_PATH": "/Users/jmartin/.openclaw-sandbox/agenr-data/config.json"
@@ -232,20 +172,13 @@
       "request": "launch",
       "runtimeExecutable": "node",
       "program": "${workspaceFolder}/dist/cli.js",
-      "args": [
-        "scenarios",
-        "list"
-      ],
+      "args": ["scenarios", "list"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
       "sourceMaps": true,
-      "outFiles": [
-        "${workspaceFolder}/dist/**/*.js"
-      ],
-      "skipFiles": [
-        "<node_internals>/**"
-      ],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "skipFiles": ["<node_internals>/**"],
       "preLaunchTask": "pnpm: build:debug"
     },
     {
@@ -254,24 +187,13 @@
       "request": "launch",
       "runtimeExecutable": "node",
       "program": "${workspaceFolder}/dist/cli.js",
-      "args": [
-        "scenarios",
-        "run",
-        "--kind",
-        "ingest",
-        "--preserve",
-        "--verbose"
-      ],
+      "args": ["scenarios", "run", "--kind", "ingest", "--preserve", "--verbose"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
       "sourceMaps": true,
-      "outFiles": [
-        "${workspaceFolder}/dist/**/*.js"
-      ],
-      "skipFiles": [
-        "<node_internals>/**"
-      ],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "skipFiles": ["<node_internals>/**"],
       "preLaunchTask": "pnpm: build:debug"
     },
     {
@@ -280,24 +202,13 @@
       "request": "launch",
       "runtimeExecutable": "node",
       "program": "${workspaceFolder}/dist/cli.js",
-      "args": [
-        "scenarios",
-        "run",
-        "--kind",
-        "store",
-        "--preserve",
-        "--verbose"
-      ],
+      "args": ["scenarios", "run", "--kind", "store", "--preserve", "--verbose"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
       "sourceMaps": true,
-      "outFiles": [
-        "${workspaceFolder}/dist/**/*.js"
-      ],
-      "skipFiles": [
-        "<node_internals>/**"
-      ],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "skipFiles": ["<node_internals>/**"],
       "preLaunchTask": "pnpm: build:debug"
     },
     {
@@ -306,24 +217,13 @@
       "request": "launch",
       "runtimeExecutable": "node",
       "program": "${workspaceFolder}/dist/cli.js",
-      "args": [
-        "scenarios",
-        "run",
-        "--kind",
-        "surgeon",
-        "--preserve",
-        "--verbose"
-      ],
+      "args": ["scenarios", "run", "--kind", "surgeon", "--preserve", "--verbose"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
       "sourceMaps": true,
-      "outFiles": [
-        "${workspaceFolder}/dist/**/*.js"
-      ],
-      "skipFiles": [
-        "<node_internals>/**"
-      ],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "skipFiles": ["<node_internals>/**"],
       "preLaunchTask": "pnpm: build:debug"
     },
     {
@@ -332,24 +232,13 @@
       "request": "launch",
       "runtimeExecutable": "node",
       "program": "${workspaceFolder}/dist/cli.js",
-      "args": [
-        "scenarios",
-        "run",
-        "--id",
-        "${input:scenarioId}",
-        "--preserve",
-        "--verbose"
-      ],
+      "args": ["scenarios", "run", "--id", "${input:scenarioId}", "--preserve", "--verbose"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
       "sourceMaps": true,
-      "outFiles": [
-        "${workspaceFolder}/dist/**/*.js"
-      ],
-      "skipFiles": [
-        "<node_internals>/**"
-      ],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "skipFiles": ["<node_internals>/**"],
       "preLaunchTask": "pnpm: build:debug"
     },
     {
@@ -358,21 +247,13 @@
       "request": "launch",
       "runtimeExecutable": "node",
       "program": "${workspaceFolder}/dist/cli.js",
-      "args": [
-        "db",
-        "reset",
-        "--yes"
-      ],
+      "args": ["db", "reset", "--yes"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
       "sourceMaps": true,
-      "outFiles": [
-        "${workspaceFolder}/dist/**/*.js"
-      ],
-      "skipFiles": [
-        "<node_internals>/**"
-      ],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "skipFiles": ["<node_internals>/**"],
       "env": {
         "AGENR_DB_PATH": "/Users/jmartin/.openclaw-sandbox/agenr-data/knowledge.db",
         "AGENR_CONFIG_PATH": "/Users/jmartin/.openclaw-sandbox/agenr-data/config.json"

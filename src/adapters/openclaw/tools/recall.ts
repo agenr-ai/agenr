@@ -133,6 +133,7 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
           recall: services.recall,
           embeddingAvailable: services.embeddingStatus.available,
           embeddingError: services.embeddingStatus.error,
+          claimSlotPolicyConfig: services.pluginConfig.memoryPolicy?.slotPolicies,
           debugLog: (message: string) => {
             logger.debug?.(message);
           },
@@ -142,6 +143,9 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
                 return vectors[0] ?? [];
               }
             : undefined,
+          recallOptions: {
+            slotPolicyConfig: services.pluginConfig.memoryPolicy?.slotPolicies,
+          },
         });
         logger.info(
           `[agenr] tool=agenr_recall session=${ctx.sessionId ?? "unknown"} key=${ctx.sessionKey ?? "unknown"} result: ${formatUnifiedRecallLogSummary(result)}`,

@@ -26,6 +26,11 @@ describe("tokenize", () => {
     expect(tokenize('subject:"alpha!" / beta* + gamma?')).toEqual(["subject", "alpha", "beta", "gamma"]);
   });
 
+  it("keeps accented and non-ASCII word tokens", () => {
+    expect(tokenize("Café naïve résumé")).toEqual(["café", "naïve", "résumé"]);
+    expect(tokenize("東京 サービス")).toEqual(["東京", "サービス"]);
+  });
+
   it("returns an empty array for empty strings", () => {
     expect(tokenize("")).toEqual([]);
   });
@@ -62,6 +67,14 @@ describe("buildLexicalPlan", () => {
       { tier: "any_tokens", tokens: ["subject", "alpha", "beta"] },
     ]);
   });
+
+  it("builds token tiers for non-ASCII queries instead of exact-only fallback", () => {
+    expect(buildLexicalPlan("café upgrade")).toEqual([
+      { tier: "exact", text: "café upgrade" },
+      { tier: "all_tokens", tokens: ["café", "upgrade"] },
+      { tier: "any_tokens", tokens: ["café", "upgrade"] },
+    ]);
+  });
 });
 
 describe("computeLexicalScore", () => {
@@ -87,5 +100,9 @@ describe("computeLexicalScore", () => {
 
   it("caps the score at 1.0", () => {
     expect(computeLexicalScore("alpha beta gamma delta", "alpha beta gamma delta", "alpha beta gamma delta")).toBe(1);
+  });
+
+  it("matches accented query tokens against accented content", () => {
+    expect(computeLexicalScore("café policy", "Café policy", "The café policy changed yesterday.")).toBeGreaterThan(0.9);
   });
 });

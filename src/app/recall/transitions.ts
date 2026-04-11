@@ -15,14 +15,14 @@ export function buildClaimTransitionExplanations(params: {
   episodes: EpisodeResult[];
   detectedIntent: UnifiedRecallDetectedIntent;
 }): ClaimTransitionExplanation[] {
-  if (params.families.length === 0 || params.detectedIntent !== "historical_state") {
+  if (params.families.length === 0 || params.detectedIntent === "temporal_narrative") {
     return [];
   }
 
   return params.families.flatMap((family) => {
     const current = family.entries.find((entry) => entry.memoryState === "current");
     const prior = family.entries.find((entry) => entry.memoryState === "superseded" || entry.memoryState === "historical");
-    if (!current && !prior) {
+    if (!shouldExplainFamilyTransition(current, prior, params.detectedIntent)) {
       return [];
     }
 
@@ -40,6 +40,30 @@ export function buildClaimTransitionExplanations(params: {
       },
     ];
   });
+}
+
+/**
+ * Decides whether one recalled family should emit a transition explanation.
+ *
+ * Historical-state queries can explain one-sided current or prior evidence.
+ * Other intents only emit a transition when both prior and current rows are
+ * present, which keeps factual recall from producing noisy pseudo-history.
+ *
+ * @param current - Current family row when one was recalled.
+ * @param prior - Prior family row when one was recalled.
+ * @param detectedIntent - Unified routing intent bucket.
+ * @returns True when the family should produce a transition explanation.
+ */
+function shouldExplainFamilyTransition(
+  current: ClaimCentricRecallFamily["entries"][number] | undefined,
+  prior: ClaimCentricRecallFamily["entries"][number] | undefined,
+  detectedIntent: UnifiedRecallDetectedIntent,
+): boolean {
+  if (detectedIntent === "historical_state") {
+    return Boolean(current || prior);
+  }
+
+  return Boolean(current && prior);
 }
 
 /**

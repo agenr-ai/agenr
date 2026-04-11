@@ -8,6 +8,7 @@ import type {
 
 import type { OpenClawRepository } from "../../app/openclaw/ports.js";
 import type { AgenrConfig } from "../../config.js";
+import type { ClaimSlotPolicy, ClaimSlotPolicyConfig } from "../../core/claim-slot-policy.js";
 import type { DatabasePort, EmbeddingPort, EpisodeDatabasePort, LlmPort, RecallPorts } from "../../core/ports.js";
 import type { ClaimExtractionConfig } from "../../core/store/claim-extraction.js";
 import type { Entry } from "../../core/types.js";
@@ -22,6 +23,22 @@ export interface StoreNudgeConfig {
   threshold: number;
   /** Maximum nudges to inject during one session lifetime. */
   maxPerSession: number;
+}
+
+/**
+ * Slot-policy overrides that the OpenClaw adapter can apply at runtime.
+ */
+export interface AgenrOpenClawClaimSlotPolicyConfig extends ClaimSlotPolicyConfig {
+  /** Optional attribute-head policy overrides keyed by canonical attribute head. */
+  attributeHeads?: Readonly<Record<string, ClaimSlotPolicy>>;
+}
+
+/**
+ * Narrow memory-policy settings exposed through the OpenClaw plugin config.
+ */
+export interface AgenrOpenClawMemoryPolicyConfig {
+  /** Read-time slot-policy overrides used by recall and trace surfaces. */
+  slotPolicies?: AgenrOpenClawClaimSlotPolicyConfig;
 }
 
 /**
@@ -68,6 +85,8 @@ export interface AgenrOpenClawPluginConfig {
   claimExtractionModel?: string;
   /** Mid-session nudging config for reminding the agent to store durable memory. */
   storeNudge?: Partial<StoreNudgeConfig>;
+  /** Narrow runtime memory-policy overrides for claim-aware read surfaces. */
+  memoryPolicy?: AgenrOpenClawMemoryPolicyConfig;
 }
 
 /**

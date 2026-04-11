@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- **Roadmap close-out hardening.** Added a narrow OpenClaw `memoryPolicy.slotPolicies.attributeHeads` seam for claim-aware read overrides, expanded operator trace surfaces with structured CLI JSON output and broader claim-transition explanations, hardened lexical recall for non-ASCII queries, and aligned docs plus a dedicated `pnpm typecheck:tests` guardrail with the delivered roadmap state.
+- **Still intentionally deferred.** Agenr still does not ship a standalone `agenr store` CLI, a full provenance graph, or the broader external eval/reporting work owned by `agenr-evals`.
+
 ## [1.7.4] - 2026-04-04
 
 OpenClaw plugin complete-chunk fix release.

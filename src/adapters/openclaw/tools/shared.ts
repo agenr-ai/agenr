@@ -582,9 +582,17 @@ export function formatTrace(
   entry: Entry,
   supersededBy: Entry | undefined,
   supersedes: Entry[],
-  claimFamily: { claimKey: string; slotPolicy?: "exclusive" | "multivalued"; entries: Entry[] } | undefined,
+  claimFamily: { claimKey: string; slotPolicy?: "exclusive" | "multivalued"; slotPolicyReason?: string; entries: Entry[] } | undefined,
   recallEvents: Array<{ query?: string; sessionKey?: string; recalledAt: string }>,
 ): string {
+  const slotPolicy = entry.claim_key
+    ? claimFamily
+      ? {
+          policy: claimFamily.slotPolicy ?? resolveClaimSlotPolicy(claimFamily.claimKey).policy,
+          reason: claimFamily.slotPolicyReason ?? resolveClaimSlotPolicy(claimFamily.claimKey).reason,
+        }
+      : resolveClaimSlotPolicy(entry.claim_key)
+    : undefined;
   const lines = [
     `Trace for ${entry.id} | ${entry.subject}`,
     `type=${entry.type} expiry=${entry.expiry} importance=${entry.importance} retired=${entry.retired}`,
@@ -601,15 +609,21 @@ export function formatTrace(
 
   if (entry.claim_key) {
     lines.push(`claim_key=${entry.claim_key}`);
+    if (slotPolicy) {
+      lines.push(`slot_policy=${slotPolicy.policy}`);
+      lines.push(`slot_policy_reason=${slotPolicy.reason}`);
+    }
   }
 
   if (claimFamily && claimFamily.entries.length > 0) {
-    const slotPolicy = claimFamily.slotPolicy ?? resolveClaimSlotPolicy(claimFamily.claimKey).policy;
     lines.push(
-      `claim_family=${claimFamily.claimKey} | slot_policy=${slotPolicy} | ${claimFamily.entries
+      `claim_family=${claimFamily.claimKey} | slot_policy=${slotPolicy?.policy ?? "exclusive"} | ${claimFamily.entries
         .map((item) => `${item.id}:${describeTraceEntryState(item)}:${formatClaimLifecycleLabel(item)}`)
         .join(", ")}`,
     );
+    if (slotPolicy) {
+      lines.push(`claim_family_policy_reason=${slotPolicy.reason}`);
+    }
     const transitionSummary = summarizeTraceClaimFamilyTransition(claimFamily.entries);
     if (transitionSummary) {
       lines.push(`transition=${transitionSummary}`);

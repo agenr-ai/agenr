@@ -30,7 +30,7 @@ This document describes the code as it exists now.
 
 ## Important architectural nuance
 
-There is still no registered `store` CLI command. `src/cli/main.ts` registers `init`, `setup`, `ingest`, `recall`, `surgeon`, `db`, and `scenarios`, while `registerStoreCommand(program)` remains commented out.
+There is still no registered `store` CLI command. `src/cli/main.ts` registers `init`, `setup`, `ingest`, `recall`, `surgeon`, `trace`, `db`, and `scenarios`, while `registerStoreCommand(program)` remains commented out.
 
 That means:
 

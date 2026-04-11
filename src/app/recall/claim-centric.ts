@@ -1,4 +1,4 @@
-import { resolveClaimSlotPolicy, type ClaimSlotPolicy } from "../../core/claim-slot-policy.js";
+import { resolveClaimSlotPolicy, type ClaimSlotPolicy, type ClaimSlotPolicyConfig } from "../../core/claim-slot-policy.js";
 import type { ClaimKeyStatus, ClaimSupportMode } from "../../core/types.js";
 import type { RecallOutput } from "../../core/recall/types.js";
 
@@ -124,7 +124,10 @@ export interface ClaimCentricRecallFamily {
  * @param entries - Ranked raw recall rows returned by the unified layer.
  * @returns Claim-aware grouped projection preserving ranked order.
  */
-export function projectClaimCentricRecallEntries(entries: RecallOutput[], options: { asOf?: string } = {}): ClaimCentricRecallFamily[] {
+export function projectClaimCentricRecallEntries(
+  entries: RecallOutput[],
+  options: { asOf?: string; slotPolicyConfig?: ClaimSlotPolicyConfig } = {},
+): ClaimCentricRecallFamily[] {
   const families = new Map<string, ClaimCentricRecallFamily>();
 
   for (const recall of entries) {
@@ -164,11 +167,14 @@ export function flattenClaimCentricRecallFamilies(families: ClaimCentricRecallFa
  * @param recall - Raw scored recall row from the core recall pipeline.
  * @returns Claim-aware projected row used by app and adapter surfaces.
  */
-export function projectClaimCentricRecallEntry(recall: RecallOutput, options: { asOf?: string } = {}): ClaimCentricRecallEntry {
+export function projectClaimCentricRecallEntry(
+  recall: RecallOutput,
+  options: { asOf?: string; slotPolicyConfig?: ClaimSlotPolicyConfig } = {},
+): ClaimCentricRecallEntry {
   const entry = recall.entry;
   const claimKey = normalizeOptionalString(entry.claim_key);
   const familyKey = claimKey ?? `entry:${entry.id}`;
-  const slotPolicy = resolveClaimSlotPolicy(claimKey).policy;
+  const slotPolicy = resolveClaimSlotPolicy(claimKey, options.slotPolicyConfig).policy;
   const asOfResolution = buildAsOfResolution(recall, options.asOf);
   const memoryState = resolveMemoryState(recall, asOfResolution);
   const claimStatus = resolveClaimStatus(recall);

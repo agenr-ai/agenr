@@ -135,7 +135,9 @@ async function createRuntimeServices(
   return {
     entries: database,
     episodes: database,
-    memory: createOpenClawRepository(database),
+    memory: createOpenClawRepository(database, {
+      claimSlotPolicyConfig: openClawContext.pluginConfig.memoryPolicy?.slotPolicies,
+    }),
     embedding,
     recall: createRecallAdapter(database, embedding),
     claimExtraction,

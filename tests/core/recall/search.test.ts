@@ -111,6 +111,34 @@ describe("recall raw evidence gating", () => {
     ]);
   });
 
+  it("keeps degraded lexical ranking useful for non-ASCII queries", async () => {
+    const fixture = createRecallPortsFixture({
+      entries: [
+        buildEntry({
+          id: "cafe-policy",
+          type: "decision",
+          subject: "café policy",
+          content: "The café policy requires badge access after hours.",
+        }),
+      ],
+      vectorCandidates: [],
+      ftsCandidates: [{ id: "cafe-policy", rank: 1, tier: "all_tokens" }],
+      embedError: new Error("embedding unavailable"),
+    });
+
+    const results = await recall(
+      {
+        text: "café policy",
+        limit: 5,
+      },
+      fixture.ports,
+    );
+
+    expect(results).toHaveLength(1);
+    expect(results[0]?.entry.id).toBe("cafe-policy");
+    expect(results[0]?.scores.lexical).toBeGreaterThan(0.9);
+  });
+
   it("abstains when every candidate is a weak vector-only match", async () => {
     const traceSummaries: RecallExecutionTraceSummary[] = [];
     const fixture = createRecallPortsFixture({

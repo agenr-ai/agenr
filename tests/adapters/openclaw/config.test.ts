@@ -47,6 +47,14 @@ describe("agenr OpenClaw plugin config", () => {
         storeNudge: {
           threshold: 10,
         },
+        memoryPolicy: {
+          slotPolicies: {
+            attributeHeads: {
+              integration: "exclusive",
+              preference: "multivalued",
+            },
+          },
+        },
       }),
     ).toEqual({
       dbPath: "/tmp/knowledge.db",
@@ -58,6 +66,14 @@ describe("agenr OpenClaw plugin config", () => {
         enabled: true,
         threshold: 10,
         maxPerSession: 5,
+      },
+      memoryPolicy: {
+        slotPolicies: {
+          attributeHeads: {
+            integration: "exclusive",
+            preference: "multivalued",
+          },
+        },
       },
     });
   });
@@ -106,6 +122,31 @@ describe("agenr OpenClaw plugin config", () => {
         "storeNudge.threshold must be a positive integer when provided",
         "storeNudge.maxPerSession must be a positive integer when provided",
         "unknown config field: storeNudge.extra",
+      ]),
+    );
+  });
+
+  it("rejects invalid nested memory-policy settings", () => {
+    const parsed = normalizeAgenrOpenClawPluginConfig({
+      memoryPolicy: {
+        slotPolicies: {
+          attributeHeads: {
+            "bad key!": "exclusive",
+            support: "sometimes",
+          },
+          extra: true,
+        },
+        surprise: true,
+      },
+    });
+
+    expect(parsed.ok).toBe(false);
+    expect(parsed.ok ? [] : parsed.errors).toEqual(
+      expect.arrayContaining([
+        "memoryPolicy.slotPolicies.attributeHeads.bad key! must use a canonical attribute-head label",
+        'memoryPolicy.slotPolicies.attributeHeads.support must be "exclusive" or "multivalued"',
+        "unknown config field: memoryPolicy.slotPolicies.extra",
+        "unknown config field: memoryPolicy.surprise",
       ]),
     );
   });

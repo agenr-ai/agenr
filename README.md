@@ -209,8 +209,11 @@ The surgeon is a maintenance system for the durable-memory corpus. Today it supp
 ```bash
 pnpm install
 pnpm build
+pnpm typecheck:tests
 pnpm test
-pnpm check        # format + lint + typecheck + test
+pnpm check                    # format + lint + source typecheck + test
+pnpm internal:recall-eval-server
+agenr scenarios run --kind store --preserve --verbose
 ```
 
 ## Troubleshooting

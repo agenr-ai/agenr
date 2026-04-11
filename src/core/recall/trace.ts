@@ -1,3 +1,4 @@
+import type { ClaimSlotPolicyConfig } from "../claim-slot-policy.js";
 import type { EntryType } from "../types.js";
 
 /**
@@ -155,6 +156,8 @@ export interface RecallTraceSink {
 export interface RecallExecutionOptions {
   /** Optional sink that receives a typed execution summary. */
   trace?: RecallTraceSink;
+  /** Optional runtime slot-policy overrides used during claim-aware ranking. */
+  slotPolicyConfig?: ClaimSlotPolicyConfig;
 }
 
 const NOOP_RECALL_TRACE_SINK: RecallTraceSink = {

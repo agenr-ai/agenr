@@ -31,6 +31,10 @@
     "storeNudge": {
       "label": "Store nudge",
       "help": "Optional mid-session reminder settings for prompting durable memory storage after several turns of memory silence."
+    },
+    "memoryPolicy": {
+      "label": "Memory policy",
+      "help": "Optional runtime overrides for claim-aware read behavior such as slot-policy classes."
     }
   },
   "configSchema": {
@@ -78,6 +82,31 @@
             "type": "integer",
             "minimum": 1,
             "description": "Maximum nudges injected during one session lifetime. Defaults to 5."
+          }
+        }
+      },
+      "memoryPolicy": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Optional runtime overrides for claim-aware read behavior exposed by the OpenClaw adapter.",
+        "properties": {
+          "slotPolicies": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Claim-slot policy overrides keyed by canonical claim-key attribute head.",
+            "properties": {
+              "attributeHeads": {
+                "type": "object",
+                "description": "Map canonical attribute heads such as `integration` or `preference` to `exclusive` or `multivalued` read-time slot behavior.",
+                "propertyNames": {
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+                },
+                "additionalProperties": {
+                  "type": "string",
+                  "enum": ["exclusive", "multivalued"]
+                }
+              }
+            }
           }
         }
       }

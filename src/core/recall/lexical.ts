@@ -99,6 +99,7 @@ const STOP_WORDS = new Set([
 export { STOP_WORDS };
 
 const FTS_OPERATOR_TOKENS = new Set(["or", "not", "near"]);
+const LEXICAL_TOKEN_PATTERN = /[\p{L}\p{N}][\p{L}\p{N}._-]*/gu;
 
 /**
  * Backend-agnostic lexical search tier used to plan adapter queries.
@@ -120,7 +121,7 @@ export type LexicalSearchTier =
  * @returns Lowercased non-stopword tokens.
  */
 export function tokenize(text: string): string[] {
-  const matches = text.toLowerCase().match(/[a-z0-9][a-z0-9._-]*/g) ?? [];
+  const matches = normalizeLexicalText(text).match(LEXICAL_TOKEN_PATTERN) ?? [];
   return matches.filter((token) => token.length >= 2 && !STOP_WORDS.has(token));
 }
 
@@ -202,7 +203,10 @@ export function computeLexicalScore(query: string, subject: string, content: str
 }
 
 /** Normalize raw text for exact string comparisons. */
-const normalizeText = (text: string): string => text.trim().toLowerCase();
+const normalizeText = (text: string): string => normalizeLexicalText(text).trim();
+
+/** Normalize raw text before lexical tokenization and exact comparisons. */
+const normalizeLexicalText = (text: string): string => text.normalize("NFKC").toLocaleLowerCase();
 
 /** Count matching 2+ token query subsequences found in subject or content order. */
 const countPhraseMatches = (queryTokens: string[], subjectTokens: string[], contentTokens: string[]): number => {

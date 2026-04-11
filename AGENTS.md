@@ -140,6 +140,7 @@ pnpm install
 pnpm build
 pnpm build:debug
 pnpm typecheck
+pnpm typecheck:tests
 pnpm lint
 pnpm test
 pnpm check
@@ -148,6 +149,7 @@ pnpm check
 ## Testing
 
 - Run `pnpm check` before committing when code changes are involved.
+- `pnpm typecheck:tests` validates the Vitest suite under `tests/`.
 - Tests live in `tests/` and mirror major feature areas.
 - Core logic is primarily tested with doubles around ports.
 - Adapters are exercised with focused integration tests.
