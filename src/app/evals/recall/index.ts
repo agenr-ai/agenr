@@ -12,6 +12,7 @@ export type {
   RecallEvalClaimFamilyEntryMetadata,
   RecallEvalClaimFamilyMetadata,
   RecallEvalClaimMetadata,
+  RecallEvalFaultInjectionRequest,
   RecallEvalFilteringDiagnostics,
   RecallEvalFixtureEntry,
   RecallEvalPath,

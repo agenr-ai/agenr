@@ -113,6 +113,16 @@ export interface RecallEvalUnifiedRequest {
 }
 
 /**
+ * Internal-only fault injection controls for deterministic degraded-mode evals.
+ */
+export interface RecallEvalFaultInjectionRequest {
+  /** Force the recall query embedding step to fail after fixture provisioning completes. */
+  queryEmbeddingFailure?: boolean;
+  /** Force the vector-search step to fail after query embedding succeeds. */
+  vectorSearchFailure?: boolean;
+}
+
+/**
  * Optional output controls for the recall eval execution seam.
  */
 export interface RecallEvalCaseOptions {
@@ -122,6 +132,8 @@ export interface RecallEvalCaseOptions {
   includeCandidates?: boolean;
   /** Include timing metadata in the response. */
   includeTimings?: boolean;
+  /** Internal deterministic degradation controls used by eval corpora and tests. */
+  faultInjection?: RecallEvalFaultInjectionRequest;
 }
 
 /**

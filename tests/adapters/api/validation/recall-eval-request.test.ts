@@ -275,6 +275,33 @@ describe("parseRecallEvalCaseRequest", () => {
     });
   });
 
+  it("accepts internal fault-injection controls for deterministic degraded evals", () => {
+    const result = parseRecallEvalCaseRequest({
+      caseId: "case-fault-injection",
+      memoryPool: [],
+      recallRequest: {
+        text: "who is on call",
+      },
+      options: {
+        includeDiagnostics: true,
+        faultInjection: {
+          queryEmbeddingFailure: true,
+          vectorSearchFailure: false,
+        },
+      },
+    });
+
+    expect(result.options).toEqual({
+      includeDiagnostics: true,
+      includeCandidates: undefined,
+      includeTimings: undefined,
+      faultInjection: {
+        queryEmbeddingFailure: true,
+        vectorSearchFailure: false,
+      },
+    });
+  });
+
   it("rejects malformed recall request fields", () => {
     expect(() =>
       parseRecallEvalCaseRequest({
@@ -508,6 +535,52 @@ describe("parseRecallEvalCaseRequest", () => {
         {
           path: "options.extraOption",
           message: "Unexpected field.",
+        },
+      ]);
+    }
+  });
+
+  it("rejects malformed fault-injection options", () => {
+    expect(() =>
+      parseRecallEvalCaseRequest({
+        caseId: "case-fault-injection-invalid",
+        memoryPool: [],
+        recallRequest: {
+          text: "who is on call",
+        },
+        options: {
+          faultInjection: {
+            queryEmbeddingFailure: "yes",
+            extraFault: true,
+          },
+        },
+      }),
+    ).toThrowError(RecallEvalRequestValidationError);
+
+    try {
+      parseRecallEvalCaseRequest({
+        caseId: "case-fault-injection-invalid",
+        memoryPool: [],
+        recallRequest: {
+          text: "who is on call",
+        },
+        options: {
+          faultInjection: {
+            queryEmbeddingFailure: "yes",
+            extraFault: true,
+          },
+        },
+      });
+    } catch (error) {
+      expect(error).toBeInstanceOf(RecallEvalRequestValidationError);
+      expect((error as RecallEvalRequestValidationError).issues).toEqual([
+        {
+          path: "options.faultInjection.extraFault",
+          message: "Unexpected field.",
+        },
+        {
+          path: "options.faultInjection.queryEmbeddingFailure",
+          message: "Expected a boolean.",
         },
       ]);
     }

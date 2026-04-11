@@ -1,6 +1,6 @@
 import { createEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../../../adapters/embeddings.js";
 import { readConfig } from "../../../config.js";
-import type { EmbeddingPort } from "../../../core/ports.js";
+import type { EmbeddingPort, RecallPorts } from "../../../core/ports.js";
 import { recall } from "../../../core/recall/index.js";
 import { runUnifiedRecall } from "../../recall/index.js";
 import { createRecallEvalDiagnosticsCollector } from "./collect-diagnostics.js";
@@ -115,10 +115,18 @@ export async function runRecallEvalCase(request: RecallEvalCaseRequest): Promise
     const recallStartedAt = Date.now();
     try {
       const embeddingSupport = getEmbeddingSupport();
-      const basePorts = sandbox.createRecallPorts(
-        embeddingSupport.port ?? createUnavailableEmbeddingPort(embeddingSupport.error ?? "Embeddings are unavailable."),
+      const recallEmbeddingPort =
+        request.options?.faultInjection?.queryEmbeddingFailure === true
+          ? createUnavailableEmbeddingPort("Injected recall eval query embedding failure.")
+          : embeddingSupport.port ??
+            createUnavailableEmbeddingPort(embeddingSupport.error ?? "Embeddings are unavailable.");
+      const basePorts = applyRecallEvalFaultInjection(
+        sandbox.createRecallPorts(recallEmbeddingPort),
+        request,
       );
-      const recallPorts = diagnostics.isObservationEnabled() ? createInstrumentedRecallPorts(basePorts, diagnostics) : basePorts;
+      const recallPorts = diagnostics.isObservationEnabled()
+        ? createInstrumentedRecallPorts(basePorts, diagnostics)
+        : basePorts;
       const slotPolicyConfig = request.unified?.memoryPolicy?.slotPolicies;
       const unifiedRecallOptions = {
         ...(slotPolicyConfig ? { slotPolicyConfig } : {}),
@@ -146,7 +154,7 @@ export async function runRecallEvalCase(request: RecallEvalCaseRequest): Promise
                 ...(embeddingSupport.available
                   ? {
                       embedQuery: async (text: string) => {
-                        const vectors = await getEmbeddingPort().embed([text]);
+                        const vectors = await recallEmbeddingPort.embed([text]);
                         return vectors[0] ?? [];
                       },
                     }
@@ -208,6 +216,41 @@ function createUnavailableEmbeddingPort(message: string): EmbeddingPort {
   return {
     async embed(): Promise<number[][]> {
       throw new Error(message);
+    },
+  };
+}
+
+/** Applies internal deterministic fault injection for degraded-mode eval cases. */
+function applyRecallEvalFaultInjection(
+  ports: RecallPorts,
+  request: RecallEvalCaseRequest,
+): RecallPorts {
+  if (request.options?.faultInjection?.vectorSearchFailure !== true) {
+    return ports;
+  }
+
+  return {
+    async embed(text: string): Promise<number[]> {
+      return ports.embed(text);
+    },
+    async vectorSearch(): Promise<never> {
+      throw new Error("Injected recall eval vector search failure.");
+    },
+    async ftsSearch(params) {
+      return ports.ftsSearch(params);
+    },
+    ...(ports.fetchPredecessors
+      ? {
+          async fetchPredecessors(params) {
+            return ports.fetchPredecessors!(params);
+          },
+        }
+      : {}),
+    async hydrateEntries(ids: string[]) {
+      return ports.hydrateEntries(ids);
+    },
+    async recordRecallEvents(params) {
+      return ports.recordRecallEvents(params);
     },
   };
 }

@@ -135,7 +135,10 @@ Top-level shape:
   "options": {
     "includeDiagnostics": true,
     "includeCandidates": true,
-    "includeTimings": true
+    "includeTimings": true,
+    "faultInjection": {
+      "queryEmbeddingFailure": true
+    }
   }
 }
 ```
@@ -152,6 +155,7 @@ Important request semantics:
 - `options.includeDiagnostics` enables structured diagnostics
 - `options.includeCandidates` does not return raw candidates - it only enables the same aggregate diagnostics used by the harness
 - `options.includeTimings` enables timing metadata
+- `options.faultInjection` is an internal-only deterministic degradation hook for eval corpora and tests; it is not part of any public product surface
 
 ### Supported `recallPath` values
 
@@ -428,6 +432,13 @@ Current guarantees:
 - it does not authorize raw candidate dumps
 - it does not return candidate snapshots
 - it only enables the same aggregate diagnostics the harness needs for machine-readable evals
+
+`faultInjection` is also intentionally narrow:
+
+- `queryEmbeddingFailure` forces the recall query embedding step to fail after fixture seeding has already succeeded
+- `vectorSearchFailure` forces vector retrieval to fail after query embedding succeeds
+- these hooks exist only so `agenr-evals` can carry deterministic degraded-mode corpora through the real HTTP seam
+- the degraded response still comes from the normal recall codepath, so notices, no-result reasons, and lexical fallback behavior stay product-faithful
 
 When timings are included, the response can contain:
 

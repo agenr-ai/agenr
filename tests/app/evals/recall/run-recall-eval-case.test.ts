@@ -479,6 +479,124 @@ describe("runRecallEvalCase", () => {
     await expect(access(response.sandbox?.dbPath ?? "")).resolves.toBeUndefined();
   });
 
+  it("injects a deterministic query-embedding failure after fixture provisioning", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    vi.stubGlobal("fetch", createEmbeddingFetchStub());
+
+    const response = await runRecallEvalCase({
+      caseId: "case-fault-query-embedding",
+      memoryPool: [
+        {
+          id: "fallback-entry",
+          type: "fact",
+          subject: "ops handoff",
+          content: "Taylor owns the deployment handoff.",
+        },
+      ],
+      recallRequest: {
+        text: "who owns the deployment handoff",
+        limit: 5,
+      },
+      options: {
+        includeDiagnostics: true,
+        faultInjection: {
+          queryEmbeddingFailure: true,
+        },
+      },
+    });
+
+    expect(response).toMatchObject({
+      status: "ok",
+      caseId: "case-fault-query-embedding",
+      result: {
+        entryIds: ["fallback-entry"],
+      },
+      diagnostics: {
+        retrieval: {
+          queryEmbeddingDimensions: 0,
+          vectorSearchLimit: 0,
+          lexicalSearchLimit: 10,
+        },
+        degraded: {
+          active: true,
+          reasons: ["query_embedding_failed"],
+          lexicalOnly: true,
+          notices: [expect.stringContaining("fell back to lexical-only entry ranking")],
+        },
+        candidateCounts: {
+          vectorRetrieved: 0,
+          lexicalRetrieved: 1,
+          merged: 1,
+          thresholdQualified: 1,
+          budgetAccepted: 1,
+          finalRanked: 1,
+          hydrated: 1,
+          returned: 1,
+          telemetryAttempted: 1,
+        },
+      },
+    });
+  });
+
+  it("injects a deterministic vector-search failure while preserving useful lexical results", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    vi.stubGlobal("fetch", createEmbeddingFetchStub());
+
+    const response = await runRecallEvalCase({
+      caseId: "case-fault-vector-search",
+      memoryPool: [
+        {
+          id: "vector-fallback-entry",
+          type: "fact",
+          subject: "ops handoff",
+          content: "Taylor owns the deployment handoff.",
+        },
+      ],
+      recallRequest: {
+        text: "who owns the deployment handoff",
+        limit: 5,
+      },
+      options: {
+        includeDiagnostics: true,
+        faultInjection: {
+          vectorSearchFailure: true,
+        },
+      },
+    });
+
+    expect(response).toMatchObject({
+      status: "ok",
+      caseId: "case-fault-vector-search",
+      result: {
+        entryIds: ["vector-fallback-entry"],
+      },
+      diagnostics: {
+        retrieval: {
+          queryEmbeddingDimensions: 1024,
+          vectorSearchLimit: 20,
+          lexicalSearchLimit: 10,
+        },
+        degraded: {
+          active: true,
+          reasons: ["vector_search_failed"],
+          lexicalOnly: false,
+          notices: [expect.stringContaining("continued with lexical entry candidates only")],
+        },
+        candidateCounts: {
+          vectorRetrieved: 0,
+          lexicalRetrieved: 1,
+          merged: 1,
+          thresholdQualified: 1,
+          budgetAccepted: 1,
+          finalRanked: 1,
+          hydrated: 1,
+          returned: 1,
+          telemetryAttempted: 1,
+        },
+      },
+    });
+  });
+
   it("routes unified recall eval cases through the unified recall service with real unified caller context", async () => {
     process.env.OPENAI_API_KEY = "test-key";
     vi.stubGlobal("fetch", createEmbeddingFetchStub());

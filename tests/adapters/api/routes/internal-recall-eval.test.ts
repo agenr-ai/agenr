@@ -282,6 +282,80 @@ describe("createInternalRecallEvalRoute", () => {
     });
   });
 
+  it("forwards internal fault-injection options through the HTTP boundary", async () => {
+    const runner = vi.fn<RecallEvalCaseRunner>(async (request) => ({
+      status: "ok",
+      caseId: request.caseId,
+      result: {
+        entries: [],
+        entryIds: [],
+      },
+      metadata: {
+        path: request.recallPath ?? "core",
+        claim: {
+          projectedEntries: [],
+        },
+      },
+    }));
+    const route = createInternalRecallEvalRoute(runner);
+
+    const response = await route.handler(
+      new Request("http://localhost/internal/evals/recall/run", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          caseId: "case-route-fault-injection",
+          memoryPool: [],
+          recallRequest: {
+            text: "who owns the deployment handoff",
+          },
+          options: {
+            includeDiagnostics: true,
+            faultInjection: {
+              queryEmbeddingFailure: true,
+              vectorSearchFailure: false,
+            },
+          },
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(runner).toHaveBeenCalledWith({
+      caseId: "case-route-fault-injection",
+      description: undefined,
+      recallPath: undefined,
+      sandbox: undefined,
+      memoryPool: [],
+      recallRequest: {
+        text: "who owns the deployment handoff",
+        limit: undefined,
+        threshold: undefined,
+        budget: undefined,
+        types: undefined,
+        tags: undefined,
+        since: undefined,
+        until: undefined,
+        around: undefined,
+        aroundRadius: undefined,
+        asOf: undefined,
+        rankingProfile: undefined,
+      },
+      unified: undefined,
+      options: {
+        includeDiagnostics: true,
+        includeCandidates: undefined,
+        includeTimings: undefined,
+        faultInjection: {
+          queryEmbeddingFailure: true,
+          vectorSearchFailure: false,
+        },
+      },
+    });
+  });
+
   it("returns a structured invalid_request response and echoes a parseable caseId", async () => {
     const route = createInternalRecallEvalRoute();
 
