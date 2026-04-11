@@ -204,11 +204,18 @@ Tentative and unresolved claim keys do not trigger auto-supersession.
 
 `claim_key_quality` records unresolved work in `surgeon_run_proposals` instead of forcing ambiguous rewrites.
 
-These proposals are durable review artifacts, not applied mutations. The CLI currently exposes only backlog counts through `agenr surgeon status`; there is no dedicated proposal-inspection command yet.
+These proposals are durable review artifacts, not applied mutations. The CLI now exposes both backlog counts through `agenr surgeon status` and run-scoped proposal inspection through `agenr surgeon proposals <runId>`.
 
 ## CLI surface
 
 The surgeon CLI lives under `agenr surgeon`.
+
+Current read-only inspection commands:
+
+- `agenr surgeon status`
+- `agenr surgeon history`
+- `agenr surgeon actions <runId>`
+- `agenr surgeon proposals <runId>`
 
 ### `agenr surgeon run`
 

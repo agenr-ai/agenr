@@ -251,10 +251,18 @@ describe("agenr OpenClaw tools", () => {
         detectedIntent: "factual",
         queried: ["entries"],
       },
+      projectedEntries: [
+        expect.objectContaining({
+          id: entry.id,
+          memoryState: "current",
+        }),
+      ],
     });
     expect(result.content[0]?.text).toContain("Recall Route");
     expect(result.content[0]?.text).toContain("Entry Matches");
     expect(result.content[0]?.text).toContain("session recall");
+    expect(result.content[0]?.text).toContain("state=current");
+    expect(result.content[0]?.text).toContain("why_surfaced=");
     expect(recordedRecallEvents).toBe(1);
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
@@ -583,6 +591,7 @@ describe("agenr OpenClaw tools", () => {
     expect(traceResult.content[0]?.text).toContain("superseded_by=");
     expect(traceResult.content[0]?.text).toContain("supersession_kind=update");
     expect(traceResult.content[0]?.text).toContain("claim_key=jim/home_city");
+    expect(traceResult.content[0]?.text).toContain("claim_family=jim/home_city");
 
     const storeParamsMessages = getMessages(logger.info).filter((message) => message.includes("tool=agenr_store") && message.includes("params="));
     expect(storeParamsMessages.join("\n")).toContain('"hasSupersedes":true');
@@ -637,6 +646,7 @@ describe("agenr OpenClaw tools", () => {
     expect(updatedEntry?.claim_support_locator).toContain("#agenr_update");
     expect(updatedEntry?.claim_support_observed_at).toMatch(/^20\d\d-/);
     expect(traceResult.content[0]?.text).toContain("claim_key=jim/timezone");
+    expect(traceResult.content[0]?.text).toContain("claim_family=jim/timezone");
     expect(traceResult.content[0]?.text).toContain("validity=2026-03-01T00:00:00.000Z -> 2026-03-31T00:00:00.000Z");
 
     const updateParamsMessage = getMessages(logger.info).find((message) => message.includes("tool=agenr_update") && message.includes("params="));

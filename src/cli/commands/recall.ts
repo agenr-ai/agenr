@@ -4,6 +4,7 @@ import { InvalidArgumentError, Option, type Command } from "commander";
 import { createDatabase } from "../../adapters/db/client.js";
 import { createRecallAdapter } from "../../adapters/db/recall-adapter.js";
 import { createEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../../adapters/embeddings.js";
+import { projectClaimCentricRecallEntry } from "../../app/recall/index.js";
 import { normalizeOptionalString, normalizeStringList, parseCsvList, parsePositiveInteger, parsePositiveNumber, parseUnitInterval } from "../shared/parse.js";
 import { readConfig } from "../../config.js";
 import { recall, type RecallInput, type RecallOutput } from "../../core/recall/index.js";
@@ -125,16 +126,24 @@ function normalizeRecallCommand(query: string, options: RecallCommandOptions): N
  * @returns Multi-line formatted CLI block.
  */
 function formatResult(result: RecallOutput, verbose: boolean): string {
+  const projected = projectClaimCentricRecallEntry(result);
   const contentLength = verbose ? 200 : 120;
   const lines = [
     `${ui.bold(`[${result.score.toFixed(2)}]`)} ${result.entry.subject}`,
     `  ${truncateText(result.entry.content, contentLength)}`,
-    `  type=${result.entry.type}  importance=${result.entry.importance}  expiry=${result.entry.expiry}  created=${formatDate(result.entry.created_at)}`,
+    `  type=${result.entry.type}  importance=${result.entry.importance}  expiry=${result.entry.expiry}  created=${formatDate(result.entry.created_at)}  state=${projected.memoryState}  claim_status=${formatClaimStatus(projected.claimStatus)}`,
+    `  family=${projected.claimKey ?? projected.familyKey}  freshness=${projected.freshness.label}`,
   ];
+
+  const provenance = formatProvenance(projected);
+  if (provenance) {
+    lines.push(`  provenance=${provenance}`);
+  }
+  lines.push(`  why=${projected.whySurfaced.summary}`);
 
   if (verbose) {
     lines.push(
-      `  vector=${result.scores.vector.toFixed(2)}  lexical=${result.scores.lexical.toFixed(2)}  recency=${result.scores.recency.toFixed(2)}  importance=${result.scores.importance.toFixed(2)}  relevance=${result.scores.relevance.toFixed(2)}`,
+      `  vector=${result.scores.vector.toFixed(2)}  lexical=${result.scores.lexical.toFixed(2)}  recency=${result.scores.recency.toFixed(2)}  importance=${result.scores.importance.toFixed(2)}  relevance=${result.scores.relevance.toFixed(2)}  historicalLineage=${result.scores.historicalLineage.toFixed(2)}  claimKeyTrustPenalty=${result.scores.claimKeyTrustPenalty.toFixed(2)}  claimKeyRedundancyPenalty=${result.scores.claimKeyRedundancyPenalty.toFixed(2)}`,
     );
   }
 
@@ -175,6 +184,25 @@ function truncateText(text: string, maxLength: number): string {
   }
 
   return `${normalized.slice(0, maxLength - 3)}...`;
+}
+
+/** Formats the normalized claim-status label for CLI output. */
+function formatClaimStatus(status: ReturnType<typeof projectClaimCentricRecallEntry>["claimStatus"]): string {
+  return status === "no_key" ? "no-key" : status;
+}
+
+/** Formats compact provenance metadata for one projected recall row. */
+function formatProvenance(projected: ReturnType<typeof projectClaimCentricRecallEntry>): string {
+  const parts = [
+    projected.provenance.supersededById ? `superseded_by=${projected.provenance.supersededById}` : undefined,
+    projected.provenance.supersessionKind ? `kind=${projected.provenance.supersessionKind}` : undefined,
+    projected.provenance.supersessionReason ? `reason=${truncateText(projected.provenance.supersessionReason, 120)}` : undefined,
+    projected.provenance.supportSourceKind ? `support=${projected.provenance.supportSourceKind}` : undefined,
+    projected.provenance.supportMode ? `support_mode=${projected.provenance.supportMode}` : undefined,
+    projected.provenance.supportObservedAt ? `observed=${projected.provenance.supportObservedAt}` : undefined,
+  ].filter((value): value is string => value !== undefined);
+
+  return parts.join("  ");
 }
 
 /**

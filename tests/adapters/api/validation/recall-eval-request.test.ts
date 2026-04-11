@@ -62,6 +62,17 @@ describe("parseRecallEvalCaseRequest", () => {
           retired_at: undefined,
           retired_reason: undefined,
           superseded_by: undefined,
+          claim_key: undefined,
+          claim_key_status: undefined,
+          claim_key_source: undefined,
+          claim_support_source_kind: undefined,
+          claim_support_locator: undefined,
+          claim_support_observed_at: undefined,
+          claim_support_mode: undefined,
+          valid_from: undefined,
+          valid_to: undefined,
+          supersession_kind: undefined,
+          supersession_reason: undefined,
         },
       ],
       recallRequest: {
@@ -161,6 +172,47 @@ describe("parseRecallEvalCaseRequest", () => {
         },
       ]);
     }
+  });
+
+  it("accepts claim-key lineage fixture fields for deterministic eval cases", () => {
+    const result = parseRecallEvalCaseRequest({
+      caseId: "case-claim-lineage",
+      memoryPool: [
+        {
+          id: "entry-old",
+          type: "decision",
+          subject: "deployment approach",
+          content: "Webpack was the previous deployment approach.",
+          claim_key: "deployment/approach",
+          claim_key_status: "trusted",
+          claim_key_source: "manual",
+          claim_support_source_kind: "tool_call",
+          claim_support_locator: "fixture://case-claim-lineage",
+          claim_support_observed_at: "2026-03-01T00:00:00.000Z",
+          claim_support_mode: "explicit",
+          valid_from: "2026-02-01T00:00:00.000Z",
+          valid_to: "2026-03-20T00:00:00.000Z",
+          superseded_by: "entry-new",
+          supersession_kind: "update",
+          supersession_reason: "Migration completed.",
+        },
+      ],
+      recallRequest: {
+        text: "what was the previous deployment approach",
+      },
+    });
+
+    expect(result.memoryPool[0]).toMatchObject({
+      claim_key: "deployment/approach",
+      claim_key_status: "trusted",
+      claim_key_source: "manual",
+      claim_support_source_kind: "tool_call",
+      claim_support_mode: "explicit",
+      valid_from: "2026-02-01T00:00:00.000Z",
+      valid_to: "2026-03-20T00:00:00.000Z",
+      supersession_kind: "update",
+      supersession_reason: "Migration completed.",
+    });
   });
 
   it("rejects malformed recall request fields", () => {

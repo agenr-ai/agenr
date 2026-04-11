@@ -3,16 +3,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SurgeonProgressEvent } from "../../../src/app/surgeon/progress.js";
 
-const { loadSurgeonActionsRuntimeMock, loadSurgeonHistoryRuntimeMock, loadSurgeonStatusRuntimeMock, runSurgeonRuntimeMock } = vi.hoisted(() => ({
-  loadSurgeonActionsRuntimeMock: vi.fn(),
-  loadSurgeonHistoryRuntimeMock: vi.fn(),
-  loadSurgeonStatusRuntimeMock: vi.fn(),
-  runSurgeonRuntimeMock: vi.fn(),
-}));
+const { loadSurgeonActionsRuntimeMock, loadSurgeonHistoryRuntimeMock, loadSurgeonProposalsRuntimeMock, loadSurgeonStatusRuntimeMock, runSurgeonRuntimeMock } =
+  vi.hoisted(() => ({
+    loadSurgeonActionsRuntimeMock: vi.fn(),
+    loadSurgeonHistoryRuntimeMock: vi.fn(),
+    loadSurgeonProposalsRuntimeMock: vi.fn(),
+    loadSurgeonStatusRuntimeMock: vi.fn(),
+    runSurgeonRuntimeMock: vi.fn(),
+  }));
 
 vi.mock("../../../src/app/surgeon/runtime.js", () => ({
   loadSurgeonActionsRuntime: loadSurgeonActionsRuntimeMock,
   loadSurgeonHistoryRuntime: loadSurgeonHistoryRuntimeMock,
+  loadSurgeonProposalsRuntime: loadSurgeonProposalsRuntimeMock,
   loadSurgeonStatusRuntime: loadSurgeonStatusRuntimeMock,
   runSurgeonRuntime: runSurgeonRuntimeMock,
 }));
@@ -38,6 +41,7 @@ describe("registerSurgeonCommand", () => {
     vi.restoreAllMocks();
     loadSurgeonActionsRuntimeMock.mockReset();
     loadSurgeonHistoryRuntimeMock.mockReset();
+    loadSurgeonProposalsRuntimeMock.mockReset();
     loadSurgeonStatusRuntimeMock.mockReset();
     runSurgeonRuntimeMock.mockReset();
   });
@@ -311,6 +315,40 @@ describe("registerSurgeonCommand", () => {
     expect(stdout.join("")).toContain("Retirement candidates: 6 total (4 new, 2 recently evaluated)");
     expect(stdout.join("")).toContain("Last surgeon run: claim_key_quality completed (dry-run)");
     expect(stdout.join("")).toContain("Last surgeon cost: $0.0400");
+  });
+
+  it("renders unresolved proposals for one surgeon run", async () => {
+    const { program, stdout } = createProgramWithCapturedOutput();
+    loadSurgeonProposalsRuntimeMock.mockResolvedValue([
+      {
+        id: "proposal-1",
+        runId: "run-1",
+        groupId: "group-1",
+        issueKind: "mixed_claim_family",
+        scope: "cluster",
+        entryIds: ["entry-1", "entry-2"],
+        currentClaimKeys: ["jim/home_city"],
+        proposedClaimKeys: ["jim/home_city", "jim/location"],
+        rationale: "The family mixes a trusted canonical key with an alternative candidate that needs review.",
+        confidence: 0.86,
+        source: "claim_key_quality",
+        eligibleForApply: false,
+        createdAt: "2026-03-30T12:00:00.000Z",
+      },
+    ]);
+
+    await program.parseAsync(["surgeon", "proposals", "run-1"], { from: "user" });
+
+    expect(loadSurgeonProposalsRuntimeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "run-1",
+        env: process.env,
+      }),
+    );
+    expect(stdout.join("")).toContain("Surgeon Proposals run-1");
+    expect(stdout.join("")).toContain("mixed_claim_family  scope=cluster  confidence=0.86  eligible=false");
+    expect(stdout.join("")).toContain("entries=entry-1, entry-2");
+    expect(stdout.join("")).toContain("claim_keys current=jim/home_city -> proposed=jim/home_city, jim/location");
   });
 });
 

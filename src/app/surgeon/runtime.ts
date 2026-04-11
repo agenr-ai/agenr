@@ -19,6 +19,7 @@ import {
 } from "../../config.js";
 import type { SurgeonRunAction } from "../../core/surgeon/domain/action-types.js";
 import { resolveSurgeonPassSequence, type ImplementedSurgeonPass, type SurgeonRunPreset } from "../../core/surgeon/domain/run-presets.js";
+import type { SurgeonRunProposal } from "../../core/surgeon/types.js";
 import type { SurgeonHealthStats, SurgeonRunRecord } from "./ports.js";
 import type { SurgeonProgressReporter } from "./progress.js";
 import {
@@ -202,6 +203,24 @@ export async function loadSurgeonActionsRuntime(input: { runId: string; dbPath?:
 
   try {
     return await port.getRunActions(input.runId);
+  } finally {
+    await database.close();
+  }
+}
+
+/**
+ * Loads the unresolved proposal trail for one surgeon run.
+ *
+ * @param input - Runtime input with optional db-path and required run ID.
+ * @returns Recorded unresolved proposals for the requested run.
+ */
+export async function loadSurgeonProposalsRuntime(input: { runId: string; dbPath?: string; env?: NodeJS.ProcessEnv }): Promise<SurgeonRunProposal[]> {
+  const runtime = loadRuntimeConfig(input);
+  const database = await createDatabase(runtime.dbPath);
+  const port = createSurgeonPort(database);
+
+  try {
+    return await port.getRunProposals(input.runId);
   } finally {
     await database.close();
   }

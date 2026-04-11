@@ -232,9 +232,17 @@ The OpenClaw formatter preserves that separation in text output:
 
 - `Recall Route` first
 - then optional `Resolved Time Window`
-- then `Entry Matches` before `Episode Matches` when the detected intent is `historical_state`
+- then claim-aware `Entry Matches` before `Episode Matches` when the detected intent is `historical_state`
 - otherwise `Episode Matches` before `Entry Matches`
 - then optional `Notices`
+
+Entry matches now carry a lightweight claim-centric projection on top of the raw ranked rows:
+
+- rows are grouped into claim families when `claim_key` is present
+- each row is labeled as `current`, `historical`, or `superseded`
+- trust surfaces include normalized claim lifecycle labels such as `trusted`, `tentative`, `unresolved`, `legacy`, and `no-key`
+- freshness and provenance cues come from `created_at`, `valid_from`, `valid_to`, supersession metadata, and stored claim-support metadata
+- a short `why_surfaced` explanation summarizes the score signals that pushed the row into the final answer
 
 This is why mixed recall responses show sessions and durable knowledge side by side without pretending they are the same kind of memory.
 
@@ -528,7 +536,7 @@ Claim-key trust also changes how lineage is interpreted:
 - active tentative current-state siblings in a slot with a trusted peer receive a `0.08` penalty
 - extra trusted active siblings in the same slot receive a redundancy penalty of `0.05` per rank, capped at `0.15`
 
-These shaping signals are returned in the final score breakdown even though the CLI does not currently print them in verbose mode:
+These shaping signals are returned in the final score breakdown and are now surfaced in the CLI verbose view plus the OpenClaw claim-centric entry formatter:
 
 - `historicalLineage`
 - `claimKeyTrustPenalty`
@@ -577,7 +585,7 @@ Before returning, recall calls `hydrateEntries()` for the ranked IDs and rebuild
 
 Current hydration behavior:
 
-- hydration re-reads only active entries
+- hydration re-reads the ranked IDs without filtering out inactive historical rows
 - missing hydrated rows are silently dropped
 - final ordering follows the ranked candidate list, not SQL return order
 
@@ -604,7 +612,10 @@ The CLI prints each result as a multi-line block:
 
 - `[<score>] <subject>`
 - truncated content preview
-- `type`, `importance`, `expiry`, and created date
+- `type`, `importance`, `expiry`, created date, memory-state label, and claim-status label
+- claim family and freshness summary
+- optional provenance summary when the row has supersession or claim-support metadata
+- one `why=...` line that summarizes why the row surfaced
 
 In verbose mode it also prints:
 
@@ -613,6 +624,9 @@ In verbose mode it also prints:
 - `recency`
 - `importance`
 - `relevance`
+- `historicalLineage`
+- `claimKeyTrustPenalty`
+- `claimKeyRedundancyPenalty`
 
 Current formatting details:
 

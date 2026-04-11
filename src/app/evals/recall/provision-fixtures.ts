@@ -160,6 +160,17 @@ function buildEntry(fixture: RecallEvalFixtureEntry, id: string, provisionedAt: 
     quality_score: DEFAULT_QUALITY_SCORE,
     recall_count: 0,
     superseded_by: fixture.superseded_by,
+    claim_key: fixture.claim_key,
+    claim_key_status: fixture.claim_key_status,
+    claim_key_source: fixture.claim_key_source,
+    claim_support_source_kind: fixture.claim_support_source_kind,
+    claim_support_locator: fixture.claim_support_locator,
+    claim_support_observed_at: fixture.claim_support_observed_at,
+    claim_support_mode: fixture.claim_support_mode,
+    valid_from: fixture.valid_from,
+    valid_to: fixture.valid_to,
+    supersession_kind: fixture.supersession_kind,
+    supersession_reason: fixture.supersession_reason,
     retired: fixture.retired ?? false,
     retired_at: fixture.retired_at,
     retired_reason: fixture.retired_reason,
@@ -176,6 +187,10 @@ function summarizePreparedFixture(entry: Entry): RecallEvalProvisionedEntrySumma
     updated_at: entry.updated_at,
     retired: entry.retired,
     superseded_by: entry.superseded_by,
+    claim_key: entry.claim_key,
+    claim_key_status: entry.claim_key_status,
+    valid_from: entry.valid_from,
+    valid_to: entry.valid_to,
   };
 }
 

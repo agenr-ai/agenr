@@ -177,6 +177,27 @@ export function createAgenrRecallTool(ctx: OpenClawPluginToolContext, servicesPr
             tags: entry.entry.tags,
             content: entry.entry.content,
           })),
+          projectedEntries: result.projectedEntries.map((entry) => ({
+            id: entry.entryId,
+            familyKey: entry.familyKey,
+            claimKey: entry.claimKey,
+            memoryState: entry.memoryState,
+            claimStatus: entry.claimStatus,
+            freshness: entry.freshness,
+            provenance: entry.provenance,
+            whySurfaced: entry.whySurfaced,
+          })),
+          entryFamilies: result.entryFamilies.map((family) => ({
+            familyKey: family.familyKey,
+            claimKey: family.claimKey,
+            subject: family.subject,
+            primaryEntryId: family.primary.entryId,
+            entries: family.entries.map((entry) => ({
+              id: entry.entryId,
+              memoryState: entry.memoryState,
+              claimStatus: entry.claimStatus,
+            })),
+          })),
           notices: result.notices,
         });
       } catch (error) {

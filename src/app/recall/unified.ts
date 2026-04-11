@@ -5,6 +5,7 @@ import { searchEpisodes } from "../../core/episode/search.js";
 import type { RecallExecutionOptions } from "../../core/recall/trace.js";
 import type { RecallInput } from "../../core/recall/types.js";
 
+import { flattenClaimCentricRecallFamilies, projectClaimCentricRecallEntries } from "./claim-centric.js";
 import type { UnifiedRecallInput, UnifiedRecallMode, UnifiedRecallResult, UnifiedRecallRouting } from "./types.js";
 
 const EPISODE_FRESHNESS_NOTICE = "Episodes cover consolidated prior sessions only; the most recent completed session may not appear yet.";
@@ -104,6 +105,10 @@ export async function runUnifiedRecall(input: UnifiedRecallInput, deps: UnifiedR
     notices.push(entries.notice);
   }
 
+  const rawEntries = entries.kind === "results" ? entries.results : [];
+  const entryFamilies = projectClaimCentricRecallEntries(rawEntries);
+  const projectedEntries = flattenClaimCentricRecallFamilies(entryFamilies);
+
   return {
     routing,
     ...(parsedTimeWindow
@@ -118,9 +123,11 @@ export async function runUnifiedRecall(input: UnifiedRecallInput, deps: UnifiedR
         }
       : {}),
     episodes,
-    entries: entries.kind === "results" ? entries.results : [],
+    entries: rawEntries,
+    projectedEntries,
+    entryFamilies,
     notices: dedupePreservingOrder(notices),
-    count: episodes.length + (entries.kind === "results" ? entries.results.length : 0),
+    count: episodes.length + rawEntries.length,
   };
 }
 

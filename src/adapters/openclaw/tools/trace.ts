@@ -68,13 +68,14 @@ export function createAgenrTraceTool(ctx: OpenClawPluginToolContext, servicesPro
           });
         }
 
-        return textResult(formatTrace(trace.entry, trace.supersededBy, trace.supersedes, trace.recallEvents), {
+        return textResult(formatTrace(trace.entry, trace.supersededBy, trace.supersedes, trace.claimFamily, trace.recallEvents), {
           status: "ok",
           sessionKey: ctx.sessionKey,
           trace: {
             entry: trace.entry,
             supersededBy: trace.supersededBy,
             supersedes: trace.supersedes,
+            claimFamily: trace.claimFamily,
             recallEvents: trace.recallEvents,
           },
         });

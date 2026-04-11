@@ -162,14 +162,26 @@ Each `memoryPool` item supports these fields:
 - `retired_at`
 - `retired_reason`
 - `superseded_by`
+- `claim_key`
+- `claim_key_status`
+- `claim_key_source`
+- `claim_support_source_kind`
+- `claim_support_locator`
+- `claim_support_observed_at`
+- `claim_support_mode`
+- `valid_from`
+- `valid_to`
+- `supersession_kind`
+- `supersession_reason`
 
 Boundary validation details:
 
 - `type` must be one of the live `EntryType` values
 - `expiry` must be one of the live `Expiry` values
 - `importance` must be an integer from `1-10`
-- `created_at`, `updated_at`, and `retired_at` must be parseable timestamps
+- `created_at`, `updated_at`, `retired_at`, `claim_support_observed_at`, `valid_from`, and `valid_to` must be parseable timestamps
 - `tags` must be a string array
+- claim-key enums must match the live lifecycle/source/mode unions
 - unsupported fields are rejected
 
 ### `recallRequest` rules
@@ -364,6 +376,7 @@ When diagnostics are included, the response can contain:
 - `diagnostics.retrieval`
 - `diagnostics.ranking`
 - `diagnostics.filtering`
+- `diagnostics.claimKey`
 - `diagnostics.unifiedRecall`
 - `diagnostics.candidateCounts`
 
@@ -437,6 +450,7 @@ Each result entry includes:
 - `created_at`
 - `score`
 - `scores`
+- optional `claim` projection with family key, memory-state label, claim-status label, freshness, provenance, and `whySurfaced`
 
 ### Error responses
 

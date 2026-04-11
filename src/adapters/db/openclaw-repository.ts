@@ -1,6 +1,12 @@
 import { VECTOR_INDEX_NAME } from "./schema.js";
 import { EMBEDDING_DIMENSIONS } from "../embeddings.js";
-import type { OpenClawEntryTrace, OpenClawMemoryStatusSnapshot, OpenClawRepository, OpenClawRecallEvent } from "../../app/openclaw/ports.js";
+import type {
+  OpenClawClaimFamily,
+  OpenClawEntryTrace,
+  OpenClawMemoryStatusSnapshot,
+  OpenClawRepository,
+  OpenClawRecallEvent,
+} from "../../app/openclaw/ports.js";
 import type { Entry } from "../../core/types.js";
 import { buildActiveEntryClause, ENTRY_SELECT_COLUMNS, mapEntryRow, readNumber, readOptionalString, readRequiredString } from "./row-mapping.js";
 import type { SqlExecutor } from "./queries.js";
@@ -123,9 +129,10 @@ async function getEntryTrace(executor: SqlExecutor, entryId: string): Promise<Op
     return null;
   }
 
-  const [supersededBy, supersedes, recallEvents] = await Promise.all([
+  const [supersededBy, supersedes, claimFamily, recallEvents] = await Promise.all([
     entry.superseded_by ? getEntryByIdIncludingInactive(executor, entry.superseded_by) : Promise.resolve(null),
     listSupersededEntries(executor, entry.id),
+    entry.claim_key ? getClaimFamily(executor, entry.claim_key) : Promise.resolve(undefined),
     listRecallEvents(executor, entry.id),
   ]);
 
@@ -133,6 +140,7 @@ async function getEntryTrace(executor: SqlExecutor, entryId: string): Promise<Op
     entry,
     ...(supersededBy ? { supersededBy } : {}),
     supersedes,
+    ...(claimFamily ? { claimFamily } : {}),
     recallEvents,
   };
 }
@@ -240,6 +248,37 @@ async function listSupersededEntries(executor: SqlExecutor, entryId: string): Pr
   });
 
   return result.rows.map((row) => mapEntryRow(row));
+}
+
+/**
+ * Loads the narrow same-claim-key family view used by trace inspection.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @param claimKey - Shared claim key to inspect.
+ * @returns Ordered claim family, or undefined when the key is empty.
+ */
+async function getClaimFamily(executor: SqlExecutor, claimKey: string): Promise<OpenClawClaimFamily | undefined> {
+  const normalizedClaimKey = claimKey.trim();
+  if (normalizedClaimKey.length === 0) {
+    return undefined;
+  }
+
+  const result = await executor.execute({
+    sql: `
+      SELECT
+        ${ENTRY_SELECT_COLUMNS}
+      FROM entries
+      WHERE claim_key = ?
+      ORDER BY created_at ASC, id ASC
+    `,
+    args: [normalizedClaimKey],
+  });
+  const entries = result.rows.map((row) => mapEntryRow(row));
+
+  return {
+    claimKey: normalizedClaimKey,
+    entries,
+  };
 }
 
 /**

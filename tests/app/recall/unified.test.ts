@@ -124,6 +124,10 @@ describe("runUnifiedRecall", () => {
       id: "old-approach",
       subject: "deployment approach",
       content: "Before the migration we used the legacy deploy path.",
+      claim_key: "deployment/approach",
+      claim_key_status: "trusted",
+      superseded_by: "new-approach",
+      valid_to: "2026-03-20T00:00:00.000Z",
     });
 
     const result = await runUnifiedRecall(
@@ -157,6 +161,22 @@ describe("runUnifiedRecall", () => {
       limit: 2,
     });
     expect(result.entries.map((entry) => entry.entry.id)).toEqual(["old-approach"]);
+    expect(result.projectedEntries).toMatchObject([
+      {
+        entryId: "old-approach",
+        claimKey: "deployment/approach",
+        memoryState: "superseded",
+        claimStatus: "trusted",
+      },
+    ]);
+    expect(result.entryFamilies).toMatchObject([
+      {
+        claimKey: "deployment/approach",
+        primary: {
+          entryId: "old-approach",
+        },
+      },
+    ]);
     expect(result.episodes.map((episode) => episode.episode.id)).toEqual(["history-episode"]);
   });
 

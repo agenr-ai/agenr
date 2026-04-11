@@ -154,6 +154,7 @@ export function createRecallEvalDiagnosticsCollector(request: RecallEvalCaseRequ
   let provision: RecallEvalProvisionDiagnostics | undefined;
   let ranking: RecallEvalRankingDiagnostics | undefined;
   let filtering: RecallEvalFilteringDiagnostics | undefined;
+  let claimKey: RecallEvalCaseDiagnostics["claimKey"] | undefined;
   let unifiedRecall: RecallEvalUnifiedDiagnostics | undefined;
   let provisionObserved = false;
   let retrievalObserved = false;
@@ -186,6 +187,12 @@ export function createRecallEvalDiagnosticsCollector(request: RecallEvalCaseRequ
       candidateCounts.budgetAccepted = summary.candidateCounts.budgetAccepted;
       candidateCounts.finalRanked = summary.candidateCounts.finalRanked;
       candidateCounts.returned = summary.candidateCounts.returned;
+      claimKey = {
+        historicalBoosted: summary.claimKey.historicalBoosted,
+        tentativeLineageSuppressed: summary.claimKey.tentativeLineageSuppressed,
+        trustPenalized: summary.claimKey.trustPenalized,
+        redundancyPenalized: summary.claimKey.redundancyPenalized,
+      };
       stageTimings.mergeCandidatesMs = summary.timings.mergeCandidatesMs;
       stageTimings.scoreCandidatesMs = summary.timings.scoreCandidatesMs;
       stageTimings.thresholdMs = summary.timings.thresholdMs;
@@ -224,6 +231,10 @@ export function createRecallEvalDiagnosticsCollector(request: RecallEvalCaseRequ
           updated_at: entry.updated_at,
           retired: entry.retired,
           superseded_by: entry.superseded_by,
+          claim_key: entry.claim_key,
+          claim_key_status: entry.claim_key_status,
+          valid_from: entry.valid_from,
+          valid_to: entry.valid_to,
         })),
       };
     },
@@ -271,6 +282,7 @@ export function createRecallEvalDiagnosticsCollector(request: RecallEvalCaseRequ
         retrieval: retrievalObserved ? retrieval : undefined,
         ranking: traceObserved ? ranking : undefined,
         filtering: traceObserved ? filtering : undefined,
+        claimKey: traceObserved ? claimKey : undefined,
         unifiedRecall,
         candidateCounts,
       };

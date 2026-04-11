@@ -1,6 +1,7 @@
 import type { ResolvedTemporalWindow } from "../../core/episode/types.js";
 import type { RecallOutput } from "../../core/recall/types.js";
 import type { EntryType } from "../../core/types.js";
+import type { ClaimCentricRecallEntry, ClaimCentricRecallFamily } from "./claim-centric.js";
 
 /**
  * Agent-facing recall mode.
@@ -54,6 +55,8 @@ export interface UnifiedRecallResult {
   timeWindow?: UnifiedRecallTimeWindow;
   episodes: import("../../core/episode/types.js").EpisodeResult[];
   entries: RecallOutput[];
+  projectedEntries: ClaimCentricRecallEntry[];
+  entryFamilies: ClaimCentricRecallFamily[];
   notices: string[];
   count: number;
 }

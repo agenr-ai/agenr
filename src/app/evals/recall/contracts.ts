@@ -1,6 +1,13 @@
 import type { RecallInput, RecallOutput } from "../../../core/recall/types.js";
-import type { RecallNoResultReason } from "../../../core/recall/trace.js";
-import type { EntryType, Expiry } from "../../../core/types.js";
+import type { RecallClaimKeyTrace, RecallNoResultReason } from "../../../core/recall/trace.js";
+import type { ClaimKeySource, ClaimKeyStatus, ClaimSupportMode, EntryType, Expiry } from "../../../core/types.js";
+import type {
+  ClaimCentricClaimStatus,
+  ClaimCentricFreshness,
+  ClaimCentricMemoryState,
+  ClaimCentricProvenance,
+  ClaimCentricRecallExplanation,
+} from "../../recall/claim-centric.js";
 import type { UnifiedRecallRouting, UnifiedRecallTimeWindow } from "../../recall/types.js";
 
 /**
@@ -52,6 +59,28 @@ export interface RecallEvalFixtureEntry {
   retired_reason?: string;
   /** Optional successor entry ID when the fixture is superseded. */
   superseded_by?: string;
+  /** Optional canonical claim key for deterministic lineage scenarios. */
+  claim_key?: string;
+  /** Optional claim-key lifecycle status. */
+  claim_key_status?: ClaimKeyStatus;
+  /** Optional claim-key provenance source. */
+  claim_key_source?: ClaimKeySource;
+  /** Optional explicit supporting source kind for the claim. */
+  claim_support_source_kind?: string;
+  /** Optional explicit supporting source locator for the claim. */
+  claim_support_locator?: string;
+  /** Optional observed-at timestamp for the supporting source. */
+  claim_support_observed_at?: string;
+  /** Optional supporting-source normalization mode. */
+  claim_support_mode?: ClaimSupportMode;
+  /** Optional validity lower bound for deterministic current-vs-prior cases. */
+  valid_from?: string;
+  /** Optional validity upper bound for deterministic current-vs-prior cases. */
+  valid_to?: string;
+  /** Optional explicit supersession relationship kind. */
+  supersession_kind?: string;
+  /** Optional explicit supersession rationale. */
+  supersession_reason?: string;
 }
 
 /**
@@ -118,6 +147,23 @@ export interface RecallEvalResultEntry {
   score: number;
   /** Signal-level score breakdown returned by the recall engine. */
   scores: RecallOutput["scores"];
+  /** Claim-centric trust annotation projected from the recall output. */
+  claim?: {
+    /** Grouping key used for claim-family views. */
+    familyKey: string;
+    /** Shared claim key when the row belongs to a claim family. */
+    claimKey?: string;
+    /** High-level current vs historical state label. */
+    memoryState: ClaimCentricMemoryState;
+    /** Lifecycle label for trust surfaces. */
+    claimStatus: ClaimCentricClaimStatus;
+    /** Freshness metadata surfaced with the recalled row. */
+    freshness: ClaimCentricFreshness;
+    /** Provenance cues persisted on the recalled row. */
+    provenance: ClaimCentricProvenance;
+    /** Concise reason the row surfaced in recall. */
+    whySurfaced: ClaimCentricRecallExplanation;
+  };
 }
 
 /**
@@ -144,6 +190,14 @@ export interface RecallEvalProvisionedEntrySummary {
   retired: boolean;
   /** Optional successor entry ID preserved during exact seeding. */
   superseded_by?: string;
+  /** Optional canonical claim key preserved during exact seeding. */
+  claim_key?: string;
+  /** Optional claim-key lifecycle status preserved during exact seeding. */
+  claim_key_status?: ClaimKeyStatus;
+  /** Optional validity lower bound preserved during exact seeding. */
+  valid_from?: string;
+  /** Optional validity upper bound preserved during exact seeding. */
+  valid_to?: string;
 }
 
 /**
@@ -289,6 +343,8 @@ export interface RecallEvalCaseDiagnostics {
   ranking?: RecallEvalRankingDiagnostics;
   /** Active filtering summary for the executed recall query. */
   filtering?: RecallEvalFilteringDiagnostics;
+  /** Claim-key lineage and trust shaping facts emitted by the core recall path. */
+  claimKey?: RecallClaimKeyTrace;
   /** Unified-recall routing metadata when the case used the unified path. */
   unifiedRecall?: RecallEvalUnifiedDiagnostics;
   /** Stage-by-stage candidate counts across the recall pipeline. Always present when diagnostics are included. */

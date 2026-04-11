@@ -139,11 +139,12 @@ The CLI currently exposes:
 - `agenr ingest entries <path>` with `agenr ingest <path>` as the default durable-ingest form
 - `agenr ingest episodes [path]`
 - `agenr recall <query>`
-- `agenr surgeon run|status|history|actions`
+- `agenr surgeon run|status|history|actions|proposals`
+- `agenr trace`
 - `agenr scenarios list|run`
 - `agenr db reset`
 
-There are still no standalone CLI commands for `store`, `retire`, `update`, or `trace`. Those remain OpenClaw tool surfaces rather than first-class CLI commands.
+There are still no standalone CLI commands for `store`, `retire`, or `update`. Those remain OpenClaw tool surfaces rather than first-class CLI commands.
 
 ## 5. Domain model
 

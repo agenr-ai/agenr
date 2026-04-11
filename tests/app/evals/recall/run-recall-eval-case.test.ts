@@ -539,6 +539,82 @@ describe("runRecallEvalCase", () => {
     expect(response.result?.entryIds).toEqual(expect.arrayContaining([expect.any(String)]));
     expect(response.result?.entries.length).toBeGreaterThan(0);
   });
+
+  it("returns claim-centric result annotations and claim-key diagnostics for historical-state evals", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    vi.stubGlobal("fetch", createEmbeddingFetchStub());
+
+    const response = await runRecallEvalCase({
+      caseId: "case-claim-centric",
+      memoryPool: [
+        {
+          id: "approach-old",
+          type: "decision",
+          subject: "deployment approach",
+          content: "Webpack was the previous deployment approach before the migration.",
+          created_at: "2026-02-01T00:00:00.000Z",
+          claim_key: "deployment/approach",
+          claim_key_status: "trusted",
+          claim_key_source: "manual",
+          claim_support_source_kind: "tool_call",
+          claim_support_locator: "fixture://case-claim-centric",
+          claim_support_observed_at: "2026-02-01T00:00:00.000Z",
+          claim_support_mode: "explicit",
+          valid_from: "2026-02-01T00:00:00.000Z",
+          valid_to: "2026-03-20T00:00:00.000Z",
+          superseded_by: "approach-new",
+          supersession_kind: "update",
+          supersession_reason: "Migration to vite completed.",
+        },
+        {
+          id: "approach-new",
+          type: "decision",
+          subject: "deployment approach",
+          content: "The current deployment approach uses vite after the migration.",
+          created_at: "2026-03-20T00:00:00.000Z",
+          claim_key: "deployment/approach",
+          claim_key_status: "trusted",
+          claim_key_source: "manual",
+        },
+      ],
+      recallRequest: {
+        text: "what was the previous deployment approach",
+        limit: 2,
+        rankingProfile: "historical_state",
+      },
+      options: {
+        includeDiagnostics: true,
+      },
+    });
+
+    expect(response).toMatchObject({
+      status: "ok",
+      caseId: "case-claim-centric",
+    });
+    expect(response.result?.entries[0]).toMatchObject({
+      id: "approach-old",
+      claim: {
+        familyKey: "deployment/approach",
+        claimKey: "deployment/approach",
+        memoryState: "superseded",
+        claimStatus: "trusted",
+        provenance: {
+          supersededById: "approach-new",
+          supersessionKind: "update",
+        },
+      },
+    });
+    expect(response.diagnostics?.claimKey?.historicalBoosted ?? 0).toBeGreaterThanOrEqual(1);
+    expect(response.diagnostics?.claimKey?.trustPenalized ?? 0).toBeGreaterThanOrEqual(0);
+    expect(response.diagnostics?.provision?.seededEntries).toContainEqual(
+      expect.objectContaining({
+        id: "approach-old",
+        claim_key: "deployment/approach",
+        claim_key_status: "trusted",
+        valid_to: "2026-03-20T00:00:00.000Z",
+      }),
+    );
+  });
 });
 
 /** Creates a temp directory and tracks it for cleanup. */

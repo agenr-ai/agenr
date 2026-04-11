@@ -385,7 +385,9 @@ Current behavior:
 - attaches `sessionKey` for recall telemetry
 - fails when embeddings are unavailable
 - supports unified routing across exact entry recall, historical-state recall, and episodic recall
-- returns routing metadata, rendered text, structured entry results, structured episode results, and notices
+- returns routing metadata, rendered text, structured entry results, claim-centric projected entry annotations, structured episode results, and notices
+- groups entry output by claim family when `claim_key` is present and labels rows as `current`, `historical`, or `superseded`
+- includes freshness, provenance, and `why_surfaced` cues in the human-readable text output
 
 ### `agenr_update`
 
@@ -420,7 +422,7 @@ Retired entries are excluded from recall.
 
 ### `agenr_trace`
 
-`agenr_trace` exposes the current v1 provenance view.
+`agenr_trace` exposes the current v1 provenance view plus a narrow claim-family lineage view.
 
 Current selectors:
 
@@ -433,6 +435,7 @@ Current trace payload includes:
 - the entry itself
 - `supersededBy`
 - entries it supersedes
+- same-claim-key family rows ordered for lineage inspection when `claim_key` exists
 - recent recall events
 
 ### Shared target-resolution rules

@@ -1,7 +1,7 @@
 import { failedTextResult, readStringParam } from "openclaw/plugin-sdk/agent-runtime";
 import type { OpenClawPluginToolContext, PluginLogger } from "openclaw/plugin-sdk/core";
 
-import type { UnifiedRecallMode, UnifiedRecallResult } from "../../../app/recall/index.js";
+import type { ClaimCentricRecallEntry, UnifiedRecallMode, UnifiedRecallResult } from "../../../app/recall/index.js";
 import { ENTRY_TYPES, EXPIRY_LEVELS, type Entry, type EntryType, type Expiry } from "../../../core/types.js";
 import type { AgenrOpenClawServices } from "../types.js";
 
@@ -468,16 +468,29 @@ export function formatUnifiedRecallResults(result: UnifiedRecallResult): string 
 /** Append the entry result section in tool-readable text format. */
 function appendEntryMatches(lines: string[], result: UnifiedRecallResult): void {
   lines.push("Entry Matches");
-  if (result.entries.length === 0) {
+  if (result.projectedEntries.length === 0) {
     lines.push("None.");
     return;
   }
 
-  for (const [index, entry] of result.entries.entries()) {
+  for (const [familyIndex, family] of result.entryFamilies.entries()) {
     lines.push(
-      `${index + 1}. ${entry.entry.id} | ${entry.entry.type} | ${entry.entry.subject} | score ${entry.score.toFixed(2)} | importance ${entry.entry.importance}`,
+      family.claimKey
+        ? `Family ${familyIndex + 1}. claim_key=${family.claimKey} | primary=${family.primary.entryId} | subject=${family.subject}`
+        : `Standalone ${familyIndex + 1}. ${family.primary.entryId} | subject=${family.subject}`,
     );
-    lines.push(`   ${truncate(entry.entry.content, 220)}`);
+    for (const [entryIndex, entry] of family.entries.entries()) {
+      lines.push(
+        `   ${entryIndex + 1}. ${entry.entryId} | ${entry.recall.entry.type} | ${entry.recall.entry.subject} | score ${entry.recall.score.toFixed(2)} | state=${entry.memoryState} | claim_status=${formatClaimStatus(entry.claimStatus)}`,
+      );
+      lines.push(`      ${truncate(entry.recall.entry.content, 220)}`);
+      lines.push(`      freshness=${entry.freshness.label}`);
+      const provenance = formatProjectedEntryProvenance(entry);
+      if (provenance) {
+        lines.push(`      provenance=${provenance}`);
+      }
+      lines.push(`      why_surfaced=${entry.whySurfaced.summary}`);
+    }
   }
 }
 
@@ -527,6 +540,7 @@ export function formatTrace(
   entry: Entry,
   supersededBy: Entry | undefined,
   supersedes: Entry[],
+  claimFamily: { claimKey: string; entries: Entry[] } | undefined,
   recallEvents: Array<{ query?: string; sessionKey?: string; recalledAt: string }>,
 ): string {
   const lines = [
@@ -545,6 +559,14 @@ export function formatTrace(
 
   if (entry.claim_key) {
     lines.push(`claim_key=${entry.claim_key}`);
+  }
+
+  if (claimFamily && claimFamily.entries.length > 0) {
+    lines.push(
+      `claim_family=${claimFamily.claimKey} | ${claimFamily.entries
+        .map((item) => `${item.id}:${describeTraceEntryState(item)}:${formatClaimLifecycleLabel(item)}`)
+        .join(", ")}`,
+    );
   }
 
   if (entry.valid_from || entry.valid_to) {
@@ -666,4 +688,66 @@ function describeEpisodeMatch(result: UnifiedRecallResult["episodes"][number]): 
   }
 
   return "Matched episodic recall ranking.";
+}
+
+/**
+ * Formats the normalized claim-status label for user-facing text output.
+ *
+ * @param status - Claim-centric lifecycle label.
+ * @returns Text label suitable for human-facing output.
+ */
+function formatClaimStatus(status: ClaimCentricRecallEntry["claimStatus"]): string {
+  return status === "no_key" ? "no-key" : status;
+}
+
+/**
+ * Formats provenance cues for one projected recall row.
+ *
+ * @param entry - Claim-aware recalled entry.
+ * @returns Concise provenance text, or an empty string when none exist.
+ */
+function formatProjectedEntryProvenance(entry: ClaimCentricRecallEntry): string {
+  const parts = [
+    entry.provenance.supersededById ? `superseded_by=${entry.provenance.supersededById}` : undefined,
+    entry.provenance.supersessionKind ? `kind=${entry.provenance.supersessionKind}` : undefined,
+    entry.provenance.supersessionReason ? `reason=${truncate(entry.provenance.supersessionReason, 120)}` : undefined,
+    entry.provenance.supportSourceKind ? `support=${entry.provenance.supportSourceKind}` : undefined,
+    entry.provenance.supportMode ? `support_mode=${entry.provenance.supportMode}` : undefined,
+    entry.provenance.supportObservedAt ? `observed=${entry.provenance.supportObservedAt}` : undefined,
+    entry.provenance.supportLocator ? `locator=${truncate(entry.provenance.supportLocator, 120)}` : undefined,
+  ].filter((value): value is string => value !== undefined);
+
+  return parts.join(" | ");
+}
+
+/**
+ * Formats one entry state label for trace lineage output.
+ *
+ * @param entry - Trace entry to describe.
+ * @returns Narrow state label for lineage inspection.
+ */
+function describeTraceEntryState(entry: Entry): string {
+  if (entry.superseded_by) {
+    return "superseded";
+  }
+
+  if (entry.retired || entry.valid_to) {
+    return "historical";
+  }
+
+  return "current";
+}
+
+/**
+ * Formats the claim-key lifecycle label for trace lineage output.
+ *
+ * @param entry - Trace entry to describe.
+ * @returns Lifecycle label used in lineage inspection.
+ */
+function formatClaimLifecycleLabel(entry: Entry): string {
+  if (!entry.claim_key) {
+    return "no-key";
+  }
+
+  return entry.claim_key_status ?? "legacy";
 }

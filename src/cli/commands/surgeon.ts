@@ -4,6 +4,7 @@ import { type SurgeonProgressEvent, type SurgeonProgressReporter } from "../../a
 import {
   loadSurgeonActionsRuntime,
   loadSurgeonHistoryRuntime,
+  loadSurgeonProposalsRuntime,
   loadSurgeonStatusRuntime,
   runSurgeonRuntime,
   type SurgeonRuntimeOptions,
@@ -161,6 +162,23 @@ export function registerSurgeonCommand(program: Command): void {
       } catch (error) {
         process.exitCode = 1;
         process.stderr.write(`Failed to load surgeon actions: ${formatUnknownError(error)}\n`);
+      }
+    });
+
+  surgeonCommand
+    .command("proposals <runId>")
+    .description("Show unresolved proposals recorded for a surgeon run")
+    .action(async (runId: string) => {
+      try {
+        const proposals = await loadSurgeonProposalsRuntime({
+          runId,
+          env: process.env,
+        });
+
+        process.stdout.write(renderProposals(runId, proposals));
+      } catch (error) {
+        process.exitCode = 1;
+        process.stderr.write(`Failed to load surgeon proposals: ${formatUnknownError(error)}\n`);
       }
     });
 }
@@ -459,6 +477,47 @@ function renderActions(
   for (const action of actions) {
     lines.push(`${action.createdAt}  ${action.actionType}  entries=${action.entryIds.join(", ") || "(none)"}`);
     lines.push(`  ${action.reasoning}`);
+  }
+  lines.push("");
+
+  return lines.join("\n");
+}
+
+/**
+ * Formats one run's unresolved proposal trail.
+ *
+ * @param runId - Persisted surgeon run ID.
+ * @param proposals - Proposal rows loaded for the run.
+ * @returns Human-readable proposal block.
+ */
+function renderProposals(
+  runId: string,
+  proposals: Array<{
+    createdAt: string;
+    issueKind: string;
+    scope: string;
+    entryIds: string[];
+    currentClaimKeys: string[];
+    proposedClaimKeys: string[];
+    confidence: number;
+    eligibleForApply: boolean;
+    rationale: string;
+  }>,
+): string {
+  if (proposals.length === 0) {
+    return `Surgeon Proposals ${runId}\n\nNo surgeon proposals recorded for this run.\n`;
+  }
+
+  const lines = [`Surgeon Proposals ${runId}`, ""];
+  for (const proposal of proposals) {
+    lines.push(
+      `${proposal.createdAt}  ${proposal.issueKind}  scope=${proposal.scope}  confidence=${proposal.confidence.toFixed(2)}  eligible=${proposal.eligibleForApply}`,
+    );
+    lines.push(`  entries=${proposal.entryIds.join(", ") || "(none)"}`);
+    if (proposal.currentClaimKeys.length > 0 || proposal.proposedClaimKeys.length > 0) {
+      lines.push(`  claim_keys current=${proposal.currentClaimKeys.join(", ") || "(none)"} -> proposed=${proposal.proposedClaimKeys.join(", ") || "(none)"}`);
+    }
+    lines.push(`  ${proposal.rationale}`);
   }
   lines.push("");
 

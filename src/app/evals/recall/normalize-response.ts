@@ -1,3 +1,4 @@
+import { projectClaimCentricRecallEntry } from "../../recall/claim-centric.js";
 import type { RecallOutput } from "../../../core/recall/types.js";
 import type { UnifiedRecallResult } from "../../recall/types.js";
 import type { RecallEvalCaseDiagnostics, RecallEvalCaseRequest, RecallEvalCaseResponse, RecallEvalCaseTimings, RecallEvalSandboxResult } from "./contracts.js";
@@ -17,12 +18,15 @@ export function buildRecallEvalSuccessResponse(params: {
   sandbox: RecallEvalSandboxContext;
 }): RecallEvalCaseResponse {
   const entryResults = Array.isArray(params.results) ? params.results : params.results.entries;
+  const projectedEntries = Array.isArray(params.results)
+    ? entryResults.map((result) => projectClaimCentricRecallEntry(result))
+    : params.results.projectedEntries;
 
   return {
     status: "ok",
     caseId: params.request.caseId,
     result: {
-      entries: entryResults.map((result) => ({
+      entries: entryResults.map((result, index) => ({
         id: result.entry.id,
         subject: result.entry.subject,
         content: result.entry.content,
@@ -33,6 +37,22 @@ export function buildRecallEvalSuccessResponse(params: {
         created_at: result.entry.created_at,
         score: result.score,
         scores: result.scores,
+        claim: {
+          familyKey: projectedEntries[index]?.familyKey ?? `entry:${result.entry.id}`,
+          claimKey: projectedEntries[index]?.claimKey,
+          memoryState: projectedEntries[index]?.memoryState ?? "current",
+          claimStatus: projectedEntries[index]?.claimStatus ?? "no_key",
+          freshness: projectedEntries[index]?.freshness ?? {
+            createdAt: result.entry.created_at,
+            isCurrent: true,
+            label: `created ${result.entry.created_at} | current state`,
+          },
+          provenance: projectedEntries[index]?.provenance ?? {},
+          whySurfaced: projectedEntries[index]?.whySurfaced ?? {
+            summary: `ranked score ${result.score.toFixed(2)}`,
+            reasons: [],
+          },
+        },
       })),
       entryIds: entryResults.map((result) => result.entry.id),
     },

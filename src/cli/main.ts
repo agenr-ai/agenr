@@ -9,6 +9,7 @@ import { registerRecallCommand } from "./commands/recall.js";
 import { registerScenariosCommand } from "./commands/scenarios.js";
 import { registerSetupCommand } from "./commands/setup.js";
 import { registerSurgeonCommand } from "./commands/surgeon.js";
+import { registerTraceCommand } from "./commands/trace.js";
 
 /**
  * Creates the root CLI program and applies global agenr metadata.
@@ -31,12 +32,12 @@ export function createProgram(): Command {
   registerSetupCommand(program);
   registerInitCommand(program);
   registerSurgeonCommand(program);
+  registerTraceCommand(program);
 
   // Commands will be registered here as modules are built:
   // registerStoreCommand(program);
   // registerRetireCommand(program);
   // registerUpdateCommand(program);
-  // registerTraceCommand(program);
   // registerMcpCommand(program);
   // registerConfigCommand(program);
 

@@ -137,6 +137,93 @@ describe("registerRecallCommand", () => {
       expect.anything(),
     );
   });
+
+  it("renders claim-centric trust annotations in verbose recall output", async () => {
+    const stepMock = vi.fn();
+    vi.resetModules();
+    vi.doMock("@clack/prompts", () => ({
+      ...createClackMock(),
+      log: {
+        step: stepMock,
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+      },
+    }));
+    vi.doMock("../../../src/adapters/db/client.js", () => ({
+      createDatabase: vi.fn(async () => ({
+        close: vi.fn(async () => undefined),
+      })),
+    }));
+    vi.doMock("../../../src/adapters/db/recall-adapter.js", () => ({
+      createRecallAdapter: vi.fn(() => ({ search: vi.fn() })),
+    }));
+    vi.doMock("../../../src/adapters/embeddings.js", () => ({
+      createEmbeddingClient: vi.fn(() => ({ embed: vi.fn() })),
+      resolveEmbeddingApiKey: vi.fn(() => "sk-test"),
+      resolveEmbeddingModel: vi.fn(() => "text-embedding-3-small"),
+    }));
+    vi.doMock("../../../src/config.js", () => ({
+      readConfig: vi.fn(() => ({
+        dbPath: "/tmp/knowledge.db",
+      })),
+    }));
+    vi.doMock("../../../src/core/recall/index.js", () => ({
+      recall: vi.fn(async () => [
+        {
+          entry: {
+            id: "entry-1",
+            type: "decision",
+            subject: "deployment approach",
+            content: "Before the migration we used webpack.",
+            importance: 8,
+            expiry: "permanent",
+            tags: ["deploy"],
+            quality_score: 0.5,
+            recall_count: 0,
+            created_at: "2026-02-01T00:00:00.000Z",
+            updated_at: "2026-02-01T00:00:00.000Z",
+            claim_key: "deployment/approach",
+            claim_key_status: "trusted",
+            superseded_by: "entry-2",
+            valid_to: "2026-03-20T00:00:00.000Z",
+            retired: false,
+          },
+          score: 0.88,
+          scores: {
+            vector: 0.8,
+            lexical: 0.6,
+            recency: 0.5,
+            importance: 0.8,
+            relevance: 0.72,
+            historicalLineage: 0.08,
+            claimKeyTrustPenalty: 0,
+            claimKeyRedundancyPenalty: 0,
+          },
+        },
+      ]),
+    }));
+    vi.doMock("../../../src/ui.js", () => ({
+      banner: vi.fn(() => "agenr"),
+      ui: {
+        bold: (text: string) => text,
+        error: (text: string) => text,
+      },
+    }));
+
+    const { registerRecallCommand: registerMockedRecallCommand } = await import("../../../src/cli/commands/recall.js");
+    const program = new Command();
+    registerMockedRecallCommand(program);
+
+    await program.parseAsync(["recall", "previous deployment approach", "--verbose"], { from: "user" });
+
+    const rendered = stepMock.mock.calls[0]?.[0] as string;
+    expect(rendered).toContain("state=superseded");
+    expect(rendered).toContain("claim_status=trusted");
+    expect(rendered).toContain("family=deployment/approach");
+    expect(rendered).toContain("why=semantic similarity 0.80; lexical overlap 0.60; historical lineage boost 0.08");
+    expect(rendered).toContain("historicalLineage=0.08");
+  });
 });
 
 function createClackMock() {

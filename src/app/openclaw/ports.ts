@@ -10,12 +10,23 @@ export interface OpenClawRecallEvent {
 }
 
 /**
+ * Narrow claim-family lineage view returned by trace surfaces.
+ */
+export interface OpenClawClaimFamily {
+  /** Shared claim key for the family. */
+  claimKey: string;
+  /** Family rows ordered oldest-first for lineage inspection. */
+  entries: Entry[];
+}
+
+/**
  * Minimal provenance view available from the current v1 schema.
  */
 export interface OpenClawEntryTrace {
   entry: Entry;
   supersededBy?: Entry;
   supersedes: Entry[];
+  claimFamily?: OpenClawClaimFamily;
   recallEvents: OpenClawRecallEvent[];
 }
 

@@ -99,10 +99,12 @@ agenr ingest <path>
 agenr ingest entries <path>
 agenr ingest episodes [path]
 agenr recall <query>
+agenr trace
 agenr surgeon run
 agenr surgeon status
 agenr surgeon history
 agenr surgeon actions <runId>
+agenr surgeon proposals <runId>
 agenr scenarios list
 agenr scenarios run
 agenr db reset

@@ -6,7 +6,7 @@ import type {
   RecallEvalQueryRequest,
   RecallEvalSandboxRequest,
 } from "../../../app/evals/recall/index.js";
-import { ENTRY_TYPES, EXPIRY_LEVELS } from "../../../core/types.js";
+import { CLAIM_KEY_SOURCES, CLAIM_KEY_STATUSES, CLAIM_SUPPORT_MODES, ENTRY_TYPES, EXPIRY_LEVELS } from "../../../core/types.js";
 import {
   isRecord,
   parseOptionalBoolean,
@@ -37,6 +37,17 @@ const FIXTURE_ENTRY_KEYS = new Set<string>([
   "retired_at",
   "retired_reason",
   "superseded_by",
+  "claim_key",
+  "claim_key_status",
+  "claim_key_source",
+  "claim_support_source_kind",
+  "claim_support_locator",
+  "claim_support_observed_at",
+  "claim_support_mode",
+  "valid_from",
+  "valid_to",
+  "supersession_kind",
+  "supersession_reason",
 ]);
 const RECALL_REQUEST_KEYS = new Set<string>([
   "text",
@@ -104,6 +115,28 @@ export interface RecallEvalFixtureEntryDto {
   retired_reason?: string;
   /** Optional successor entry identifier. */
   superseded_by?: string;
+  /** Optional canonical claim key. */
+  claim_key?: string;
+  /** Optional claim-key lifecycle status. */
+  claim_key_status?: RecallEvalFixtureEntry["claim_key_status"];
+  /** Optional claim-key provenance source. */
+  claim_key_source?: RecallEvalFixtureEntry["claim_key_source"];
+  /** Optional claim support source kind. */
+  claim_support_source_kind?: string;
+  /** Optional claim support locator. */
+  claim_support_locator?: string;
+  /** Optional claim support observed-at timestamp. */
+  claim_support_observed_at?: string;
+  /** Optional claim support normalization mode. */
+  claim_support_mode?: RecallEvalFixtureEntry["claim_support_mode"];
+  /** Optional validity lower bound. */
+  valid_from?: string;
+  /** Optional validity upper bound. */
+  valid_to?: string;
+  /** Optional explicit supersession kind. */
+  supersession_kind?: string;
+  /** Optional explicit supersession rationale. */
+  supersession_reason?: string;
 }
 
 /**
@@ -358,6 +391,17 @@ function parseFixtureEntry(value: unknown, index: number, issues: RecallEvalVali
     retired_at: parseOptionalTimestampString(fixture.retired_at, `${basePath}.retired_at`, issues),
     retired_reason: parseOptionalTrimmedString(fixture.retired_reason, `${basePath}.retired_reason`, issues),
     superseded_by: parseOptionalTrimmedString(fixture.superseded_by, `${basePath}.superseded_by`, issues),
+    claim_key: parseOptionalTrimmedString(fixture.claim_key, `${basePath}.claim_key`, issues),
+    claim_key_status: parseOptionalClaimKeyStatus(fixture.claim_key_status, `${basePath}.claim_key_status`, issues),
+    claim_key_source: parseOptionalClaimKeySource(fixture.claim_key_source, `${basePath}.claim_key_source`, issues),
+    claim_support_source_kind: parseOptionalTrimmedString(fixture.claim_support_source_kind, `${basePath}.claim_support_source_kind`, issues),
+    claim_support_locator: parseOptionalTrimmedString(fixture.claim_support_locator, `${basePath}.claim_support_locator`, issues),
+    claim_support_observed_at: parseOptionalTimestampString(fixture.claim_support_observed_at, `${basePath}.claim_support_observed_at`, issues),
+    claim_support_mode: parseOptionalClaimSupportMode(fixture.claim_support_mode, `${basePath}.claim_support_mode`, issues),
+    valid_from: parseOptionalTimestampString(fixture.valid_from, `${basePath}.valid_from`, issues),
+    valid_to: parseOptionalTimestampString(fixture.valid_to, `${basePath}.valid_to`, issues),
+    supersession_kind: parseOptionalTrimmedString(fixture.supersession_kind, `${basePath}.supersession_kind`, issues),
+    supersession_reason: parseOptionalTrimmedString(fixture.supersession_reason, `${basePath}.supersession_reason`, issues),
   };
 }
 
@@ -509,6 +553,81 @@ function parseOptionalExpiry(value: unknown, path: string, issues: RecallEvalVal
 }
 
 /**
+ * Parses an optional claim-key lifecycle status.
+ *
+ * @param value - Raw claim-status value.
+ * @param path - Stable validation path.
+ * @param issues - Mutable validation issue collection.
+ * @returns Valid lifecycle status when recognized.
+ */
+function parseOptionalClaimKeyStatus(
+  value: unknown,
+  path: string,
+  issues: RecallEvalValidationIssue[],
+): RecallEvalFixtureEntry["claim_key_status"] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "string" || !CLAIM_KEY_STATUSES.includes(value as NonNullable<RecallEvalFixtureEntry["claim_key_status"]>)) {
+    pushIssue(issues, path, `Expected one of: ${CLAIM_KEY_STATUSES.join(", ")}.`);
+    return undefined;
+  }
+
+  return value as NonNullable<RecallEvalFixtureEntry["claim_key_status"]>;
+}
+
+/**
+ * Parses an optional claim-key provenance source.
+ *
+ * @param value - Raw claim-source value.
+ * @param path - Stable validation path.
+ * @param issues - Mutable validation issue collection.
+ * @returns Valid provenance source when recognized.
+ */
+function parseOptionalClaimKeySource(
+  value: unknown,
+  path: string,
+  issues: RecallEvalValidationIssue[],
+): RecallEvalFixtureEntry["claim_key_source"] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "string" || !CLAIM_KEY_SOURCES.includes(value as NonNullable<RecallEvalFixtureEntry["claim_key_source"]>)) {
+    pushIssue(issues, path, `Expected one of: ${CLAIM_KEY_SOURCES.join(", ")}.`);
+    return undefined;
+  }
+
+  return value as NonNullable<RecallEvalFixtureEntry["claim_key_source"]>;
+}
+
+/**
+ * Parses an optional claim-support normalization mode.
+ *
+ * @param value - Raw support-mode value.
+ * @param path - Stable validation path.
+ * @param issues - Mutable validation issue collection.
+ * @returns Valid support mode when recognized.
+ */
+function parseOptionalClaimSupportMode(
+  value: unknown,
+  path: string,
+  issues: RecallEvalValidationIssue[],
+): RecallEvalFixtureEntry["claim_support_mode"] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "string" || !CLAIM_SUPPORT_MODES.includes(value as NonNullable<RecallEvalFixtureEntry["claim_support_mode"]>)) {
+    pushIssue(issues, path, `Expected one of: ${CLAIM_SUPPORT_MODES.join(", ")}.`);
+    return undefined;
+  }
+
+  return value as NonNullable<RecallEvalFixtureEntry["claim_support_mode"]>;
+}
+
+/**
  * Parses an optional array of non-empty trimmed strings.
  *
  * @param value - Raw string-array field.
@@ -636,6 +755,17 @@ function mapFixtureEntryDto(dto: RecallEvalFixtureEntryDto): RecallEvalFixtureEn
     retired_at: dto.retired_at,
     retired_reason: dto.retired_reason,
     superseded_by: dto.superseded_by,
+    claim_key: dto.claim_key,
+    claim_key_status: dto.claim_key_status,
+    claim_key_source: dto.claim_key_source,
+    claim_support_source_kind: dto.claim_support_source_kind,
+    claim_support_locator: dto.claim_support_locator,
+    claim_support_observed_at: dto.claim_support_observed_at,
+    claim_support_mode: dto.claim_support_mode,
+    valid_from: dto.valid_from,
+    valid_to: dto.valid_to,
+    supersession_kind: dto.supersession_kind,
+    supersession_reason: dto.supersession_reason,
   };
 }
 
