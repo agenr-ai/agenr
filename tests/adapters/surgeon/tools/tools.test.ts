@@ -146,12 +146,23 @@ describe("surgeon tools", () => {
     expect(result.details).toMatchObject({
       count: 1,
       scope: "actionable",
+      totalMatching: 1,
+      availableCount: 1,
+      scopeExhausted: true,
+      nextOffset: null,
     });
     expect(completionGuards.retirement.snapshot()).toEqual({
       queryCalls: 1,
-      maxWindowEnd: 1,
-      totalCount: null,
-      sawExhaustedPage: false,
+      actionable: {
+        maxWindowEnd: 1,
+        totalCount: 1,
+        sawExhaustedPage: true,
+      },
+      all: {
+        maxWindowEnd: 0,
+        totalCount: null,
+        sawExhaustedPage: false,
+      },
     });
   });
 
@@ -167,11 +178,19 @@ describe("surgeon tools", () => {
     expect(actionableResult.details).toMatchObject({
       count: 0,
       scope: "actionable",
+      totalMatching: 0,
+      availableCount: 0,
+      scopeExhausted: true,
+      nextOffset: null,
     });
     expect(actionableResult.details.message).toContain("scope = 'all'");
     expect(allScopeResult.details).toMatchObject({
       count: 0,
       scope: "all",
+      totalMatching: 0,
+      availableCount: 0,
+      scopeExhausted: true,
+      nextOffset: null,
     });
     expect(allScopeResult.details.message).toContain("candidate pool appears exhausted");
   });

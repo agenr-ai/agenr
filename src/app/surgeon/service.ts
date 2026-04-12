@@ -14,6 +14,7 @@ import {
   DEFAULT_SURGEON_SKIP_RECENTLY_EVALUATED_DAYS,
   type AgenrConfig,
 } from "../../config.js";
+import { buildClaimKeyLifecycleUpdateFields, buildSurgeonAppliedClaimKeyLifecycleBundle } from "../../core/claim-key-lifecycle.js";
 import type { Logger } from "../../logger.js";
 import type { LlmPort, RecallPorts } from "../../core/ports.js";
 import type { SurgeonRunAction } from "../../core/surgeon/domain/action-types.js";
@@ -34,7 +35,8 @@ import { createSupersessionTools, createSurgeonTools, type SurgeonToolCompletion
  * model repeatedly stops without completing. This is a last resort - the
  * primary constraints are budget and candidate exhaustion.
  */
-const MAX_CONTINUATION_ATTEMPTS = 50;
+const MAX_AGENT_SLICES = 24;
+const MAX_STALLED_SLICES = 2;
 const USER_ABORT_ERROR = "Run aborted by user (SIGINT).";
 const USER_ABORT_SUMMARY = "Run aborted by user.";
 
@@ -112,6 +114,17 @@ export interface SurgeonWorkflowDeps {
   logger?: Logger;
 }
 
+interface SurgeonPassStartContext {
+  retirementRawActionableCandidates: number;
+  retirementAvailableActionableCandidates: number;
+  retirementAvailableAllCandidates: number;
+  retirementRecentlyEvaluatedCandidates: number;
+  supersessionClaimKeyClusters: number;
+  supersessionSubjectClusters: number;
+}
+
+type AgentSurgeonPass = Extract<SurgeonPassType, "retirement" | "supersession">;
+
 /**
  * Runs the full autonomous surgeon sequence until no direct work remains or the run stops early.
  *
@@ -160,7 +173,15 @@ export async function runAutonomousSurgeon(options: SurgeonAutonomousRunOptions,
       results.push(result);
       remainingBudget = Math.max(0, remainingBudget - result.estimatedCostUsd);
 
-      if (result.status !== "completed") {
+      if (result.status === "stalled") {
+        return finalizeAutonomousRun({
+          cyclesCompleted,
+          passes: results,
+          status: result.status,
+        });
+      }
+
+      if (result.status !== "completed" && result.status !== "no_work") {
         return finalizeAutonomousRun({
           cyclesCompleted,
           passes: results,
@@ -220,8 +241,6 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
     throw new Error(`Surgeon daily cost cap exceeded. Cost in the last 24 hours is ${formatUsd(dailyCost)} and the cap is ${formatUsd(dailyCostCap)}.`);
   }
 
-  const systemPrompt = buildSystemPrompt(options.pass, deps.config);
-
   if (options.apply && deps.dbPath && deps.dbPath !== ":memory:" && deps.backupDb) {
     emitSurgeonProgress(deps.reportProgress, {
       kind: "phase",
@@ -239,24 +258,6 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
     });
   }
 
-  const runId = await deps.port.createRun({
-    passType: options.pass,
-    project: options.project,
-    model: typeof deps.model.id === "string" ? deps.model.id : (options.model ?? null),
-    dryRun: !options.apply,
-    startedAt: nowFn().toISOString(),
-    config: {
-      project: options.project ?? null,
-      apply: options.apply,
-      budget: runCostCap,
-      contextLimit: contextLimit || null,
-      model: options.model ?? null,
-      provider: options.provider ?? null,
-      skipEvaluatedDays: protection.skipRecentlyEvaluatedDays,
-      verbose: options.verbose,
-    },
-  });
-
   const budgetTracker = createBudgetTracker({
     contextLimit,
     costCapUsd: runCostCap,
@@ -266,14 +267,27 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
     actionsTaken: 0,
     entriesRetired: 0,
   };
-  const usageSeen = new Set<string>();
-  let continuationAttempts = 0;
-  let terminalStatus: SurgeonRunStatus | null = null;
-  let terminalError: string | null = null;
-  let traceLogger: SurgeonTraceLogger | null = null;
 
-  try {
-    if (options.pass === "claim_key_quality") {
+  if (options.pass === "claim_key_quality") {
+    const runId = await deps.port.createRun({
+      passType: options.pass,
+      project: options.project,
+      model: typeof deps.model.id === "string" ? deps.model.id : (options.model ?? null),
+      dryRun: !options.apply,
+      startedAt: nowFn().toISOString(),
+      config: {
+        project: options.project ?? null,
+        apply: options.apply,
+        budget: runCostCap,
+        contextLimit: contextLimit || null,
+        model: options.model ?? null,
+        provider: options.provider ?? null,
+        skipEvaluatedDays: protection.skipRecentlyEvaluatedDays,
+        verbose: options.verbose,
+      },
+    });
+
+    try {
       emitSurgeonProgress(deps.reportProgress, {
         kind: "phase",
         phase: "load_working_set_start",
@@ -314,48 +328,176 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
         port: deps.port,
         now: nowFn,
       });
+    } catch (error) {
+      if (signal?.aborted === true) {
+        return finalizeRun({
+          runId,
+          status: "aborted",
+          passType: options.pass,
+          completionState,
+          actionMetrics,
+          budgetTracker,
+          error: USER_ABORT_ERROR,
+          summaryOverride: USER_ABORT_SUMMARY,
+          port: deps.port,
+          now: nowFn,
+        });
+      }
+
+      const message = error instanceof Error ? error.message : String(error);
+      return finalizeRun({
+        runId,
+        status: "failed",
+        passType: options.pass,
+        completionState,
+        actionMetrics,
+        budgetTracker,
+        error: message,
+        port: deps.port,
+        now: nowFn,
+      });
     }
+  }
 
-    const agentPass: Extract<SurgeonPassType, "retirement" | "supersession"> = options.pass;
+  emitSurgeonProgress(deps.reportProgress, {
+    kind: "phase",
+    phase: "load_pass_context_start",
+    passType: options.pass,
+    apply: options.apply,
+  });
+  const [health, passStartContext, lastRun] = await Promise.all([
+    deps.port.getHealthStats({
+      protectRecalledDays: protection.protectRecalledDays,
+      protectMinImportance: protection.protectMinImportance,
+      skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
+      now: nowFn(),
+    }),
+    loadPassStartContext(options.pass, deps.port, {
+      protectRecalledDays: protection.protectRecalledDays,
+      protectMinImportance: protection.protectMinImportance,
+      skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
+      now: nowFn(),
+    }),
+    deps.port.getLastRun(),
+  ]);
+  emitSurgeonProgress(deps.reportProgress, {
+    kind: "phase",
+    phase: "load_pass_context_complete",
+    passType: options.pass,
+    apply: options.apply,
+    workingSetSize: health.total,
+  });
+  emitSurgeonProgress(deps.reportProgress, {
+    kind: "phase",
+    phase: "pass_start",
+    passType: options.pass,
+    apply: options.apply,
+  });
 
-    emitSurgeonProgress(deps.reportProgress, {
-      kind: "phase",
-      phase: "load_pass_context_start",
-      passType: options.pass,
+  const runId = await deps.port.createRun({
+    passType: options.pass,
+    project: options.project,
+    model: typeof deps.model.id === "string" ? deps.model.id : (options.model ?? null),
+    dryRun: !options.apply,
+    startedAt: nowFn().toISOString(),
+    config: {
+      project: options.project ?? null,
       apply: options.apply,
-    });
-    const [health, passStartContext, lastRun] = await Promise.all([
-      deps.port.getHealthStats({
-        protectRecalledDays: protection.protectRecalledDays,
-        protectMinImportance: protection.protectMinImportance,
-        skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
-        now: nowFn(),
-      }),
-      loadPassStartContext(agentPass, deps.port, {
-        protectRecalledDays: protection.protectRecalledDays,
-        protectMinImportance: protection.protectMinImportance,
-        skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
-        now: nowFn(),
-      }),
-      deps.port.getLastRun(),
-    ]);
-    emitSurgeonProgress(deps.reportProgress, {
-      kind: "phase",
-      phase: "load_pass_context_complete",
-      passType: options.pass,
-      apply: options.apply,
-      workingSetSize: health.total,
-    });
-    emitSurgeonProgress(deps.reportProgress, {
-      kind: "phase",
-      phase: "pass_start",
-      passType: options.pass,
-      apply: options.apply,
-    });
+      budget: runCostCap,
+      contextLimit: contextLimit || null,
+      model: options.model ?? null,
+      provider: options.provider ?? null,
+      skipEvaluatedDays: protection.skipRecentlyEvaluatedDays,
+      verbose: options.verbose,
+    },
+  });
 
+  if (options.pass === "proposal_resolution") {
+    try {
+      const proposalResult = await runProposalResolutionPass(
+        {
+          runId,
+          apply: options.apply,
+          now: nowFn,
+        },
+        {
+          port: deps.port,
+          recordRunAction: async (action) => {
+            await deps.port.logRunAction(action);
+            if (action.actionType !== "skip") {
+              actionMetrics.actionsTaken += 1;
+            }
+          },
+        },
+      );
+      if (proposalResult.completion) {
+        completionState.setComplete(proposalResult.completion);
+      }
+
+      return finalizeRun({
+        runId,
+        status: proposalResult.status,
+        passType: options.pass,
+        completionState,
+        actionMetrics,
+        budgetTracker,
+        error: proposalResult.error,
+        summaryOverride: proposalResult.summaryOverride,
+        port: deps.port,
+        now: nowFn,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return finalizeRun({
+        runId,
+        status: signal?.aborted === true ? "aborted" : "failed",
+        passType: options.pass,
+        completionState,
+        actionMetrics,
+        budgetTracker,
+        error: signal?.aborted === true ? USER_ABORT_ERROR : message,
+        summaryOverride: signal?.aborted === true ? USER_ABORT_SUMMARY : undefined,
+        port: deps.port,
+        now: nowFn,
+      });
+    }
+  }
+
+  const agentPass: AgentSurgeonPass = options.pass;
+  const noDirectWork =
+    agentPass === "retirement"
+      ? passStartContext.retirementAvailableAllCandidates === 0
+      : passStartContext.supersessionClaimKeyClusters + passStartContext.supersessionSubjectClusters === 0;
+  if (noDirectWork) {
+    return finalizeRun({
+      runId,
+      status: "no_work",
+      passType: options.pass,
+      completionState,
+      actionMetrics,
+      budgetTracker,
+      error: null,
+      summaryOverride:
+        agentPass === "retirement"
+          ? "No retirement candidates were available after applying current filters."
+          : "No supersession clusters were available after applying current filters.",
+      port: deps.port,
+      now: nowFn,
+    });
+  }
+
+  const usageSeen = new Set<string>();
+  let terminalStatus: SurgeonRunStatus | null = null;
+  let terminalError: string | null = null;
+  let traceLogger: SurgeonTraceLogger | null = null;
+
+  try {
+    const systemPrompt = buildSystemPrompt(options.pass, deps.config);
     const completionGuards = createSurgeonCompletionGuardState({
       totalEntries: health.total,
-      retirementCandidates: passStartContext.retirementCandidates,
+      retirementCandidates: passStartContext.retirementRawActionableCandidates,
+      retirementAvailableActionableCandidates: passStartContext.retirementAvailableActionableCandidates,
+      retirementAvailableAllCandidates: passStartContext.retirementAvailableAllCandidates,
       supersessionClaimKeyClusters: passStartContext.supersessionClaimKeyClusters,
       supersessionSubjectClusters: passStartContext.supersessionSubjectClusters,
     });
@@ -396,7 +538,7 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
       pass: agentPass,
       project: options.project,
       totalEntries: health.total,
-      retirementCandidates: passStartContext.retirementCandidates,
+      retirementCandidates: passStartContext.retirementAvailableActionableCandidates,
       supersessionClaimKeyClusters: passStartContext.supersessionClaimKeyClusters,
       supersessionSubjectClusters: passStartContext.supersessionSubjectClusters,
       lastRun,
@@ -404,166 +546,173 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
       contextLimit,
     });
 
-    await runAgentLoop(
-      [
+    let sliceAttempt = 0;
+    let stalledSlices = 0;
+    let previousFingerprint: string | null = null;
+
+    while (!completionState.isComplete && terminalStatus === null) {
+      if (signal?.aborted === true) {
+        terminalStatus = "aborted";
+        terminalError = USER_ABORT_ERROR;
+        break;
+      }
+      if (budgetTracker.isExhausted()) {
+        terminalStatus = "budget_exhausted";
+        terminalError = "Context limit exhausted.";
+        break;
+      }
+      if (budgetTracker.isCostCapExceeded()) {
+        terminalStatus = "cost_capped";
+        terminalError = "Cost cap exceeded.";
+        break;
+      }
+      if (sliceAttempt >= MAX_AGENT_SLICES) {
+        terminalStatus = "stalled";
+        terminalError = `${agentPass} pass exhausted ${MAX_AGENT_SLICES} bounded slices without reaching complete_pass.`;
+        break;
+      }
+
+      const prompt =
+        sliceAttempt === 0
+          ? initialPrompt
+          : buildContinuationPrompt({
+              pass: agentPass,
+              currentContextTokens: budgetTracker.remaining().currentContextTokens,
+              contextLimit: budgetTracker.remaining().contextLimit,
+              remainingCostUsd: budgetTracker.remaining().remainingCostUsd,
+              attempt: sliceAttempt,
+            });
+      sliceAttempt += 1;
+
+      await runAgentLoop(
+        [
+          {
+            role: "user",
+            content: prompt,
+            timestamp: Date.now(),
+          },
+        ],
         {
-          role: "user",
-          content: initialPrompt,
-          timestamp: Date.now(),
+          systemPrompt,
+          messages: [],
+          tools,
         },
-      ],
-      {
-        systemPrompt,
-        messages: [],
-        tools,
-      },
-      {
-        model: deps.model,
-        convertToLlm,
-        toolExecution: "sequential",
-        getApiKey: deps.getApiKey,
-        getFollowUpMessages: async () => {
-          if (
-            completionState.isComplete ||
-            signal?.aborted === true ||
-            budgetTracker.isExhausted() ||
-            budgetTracker.isCostCapExceeded() ||
-            continuationAttempts >= MAX_CONTINUATION_ATTEMPTS
-          ) {
-            return [];
-          }
+        {
+          model: deps.model,
+          convertToLlm,
+          toolExecution: "sequential",
+          getApiKey: deps.getApiKey,
+          getFollowUpMessages: async () => [],
+          beforeToolCall: async (context: BeforeToolCallContext) => {
+            registerUsage(context.assistantMessage, usageSeen, budgetTracker);
 
-          continuationAttempts += 1;
-          const remaining = budgetTracker.remaining();
+            if (signal?.aborted === true) {
+              terminalStatus = terminalStatus ?? "aborted";
+              terminalError = terminalError ?? USER_ABORT_ERROR;
 
-          return [
-            {
-              role: "user",
-              content: buildContinuationPrompt({
-                pass: agentPass,
-                currentContextTokens: remaining.currentContextTokens,
-                contextLimit: remaining.contextLimit,
-                remainingCostUsd: remaining.remainingCostUsd,
-                attempt: continuationAttempts,
-              }),
-              timestamp: Date.now(),
-            },
-          ];
-        },
-        beforeToolCall: async (context: BeforeToolCallContext) => {
-          registerUsage(context.assistantMessage, usageSeen, budgetTracker);
+              if (context.toolCall.name !== "complete_pass") {
+                return {
+                  block: true,
+                  reason: USER_ABORT_SUMMARY,
+                };
+              }
+            }
 
-          if (signal?.aborted === true) {
-            terminalStatus = terminalStatus ?? "aborted";
-            terminalError = terminalError ?? USER_ABORT_ERROR;
+            if (budgetTracker.isExhausted()) {
+              terminalStatus = terminalStatus ?? "budget_exhausted";
+              terminalError = terminalError ?? "Context limit exhausted.";
 
-            if (context.toolCall.name !== "complete_pass") {
+              if (context.toolCall.name !== "complete_pass") {
+                return {
+                  block: true,
+                  reason: terminalError,
+                };
+              }
+            }
+
+            if (budgetTracker.isCostCapExceeded()) {
+              terminalStatus = terminalStatus ?? "cost_capped";
+              terminalError = terminalError ?? "Cost cap exceeded.";
+
+              if (context.toolCall.name !== "complete_pass") {
+                return {
+                  block: true,
+                  reason: terminalError,
+                };
+              }
+            }
+
+            if (completionState.isComplete && context.toolCall.name !== "complete_pass") {
               return {
                 block: true,
-                reason: USER_ABORT_SUMMARY,
+                reason: "Pass already completed.",
               };
             }
-          }
 
-          if (budgetTracker.isExhausted()) {
-            terminalStatus = terminalStatus ?? "budget_exhausted";
-            terminalError = terminalError ?? "Context limit exhausted.";
+            return undefined;
+          },
+          afterToolCall: async (context: AfterToolCallContext) => {
+            try {
+              const actionType = toolNameToActionType(context.toolCall.name);
+              if (!actionType || context.isError || !shouldAuditAction(actionType, context.result.details)) {
+                return undefined;
+              }
 
-            if (context.toolCall.name !== "complete_pass") {
-              return {
-                block: true,
-                reason: terminalError,
+              const entryIds = extractEntryIds(context.args);
+              const reasoning = extractActionReasoning(context.assistantMessage, context.args, context.result.details, context.toolCall.name);
+              const action: SurgeonRunAction = {
+                id: randomUUID(),
+                runId,
+                actionType,
+                entryIds,
+                reasoning,
+                recallDelta: null,
+                createdAt: nowFn().toISOString(),
               };
+
+              await deps.port.logRunAction(action);
+              traceLogger?.logAction(action);
+              actionMetrics.actionsTaken += 1;
+
+              if (actionType === "retire") {
+                actionMetrics.entriesRetired += 1;
+              }
+            } catch {
+              // afterToolCall must never throw
             }
-          }
 
-          if (budgetTracker.isCostCapExceeded()) {
-            terminalStatus = terminalStatus ?? "cost_capped";
-            terminalError = terminalError ?? "Cost cap exceeded.";
-
-            if (context.toolCall.name !== "complete_pass") {
-              return {
-                block: true,
-                reason: terminalError,
-              };
-            }
-          }
-
-          if (completionState.isComplete && context.toolCall.name !== "complete_pass") {
-            return {
-              block: true,
-              reason: "Pass already completed.",
-            };
-          }
-
-          return undefined;
+            return undefined;
+          },
         },
-        afterToolCall: async (context: AfterToolCallContext) => {
-          try {
-            const actionType = toolNameToActionType(context.toolCall.name);
-            if (!actionType || context.isError || !shouldAuditAction(actionType, context.result.details)) {
-              return undefined;
-            }
-
-            const entryIds = extractEntryIds(context.args);
-            const reasoning = extractActionReasoning(context.assistantMessage, context.args, context.result.details, context.toolCall.name);
-            const action: SurgeonRunAction = {
-              id: randomUUID(),
-              runId,
-              actionType,
-              entryIds,
-              reasoning,
-              recallDelta: null,
-              createdAt: nowFn().toISOString(),
-            };
-
-            await deps.port.logRunAction(action);
-            traceLogger?.logAction(action);
-            actionMetrics.actionsTaken += 1;
-
-            if (actionType === "retire") {
-              actionMetrics.entriesRetired += 1;
-            }
-          } catch {
-            // afterToolCall must never throw
+        (event: AgentEvent) => {
+          if (event.type === "message_end" && isAssistantMessage(event.message)) {
+            registerUsage(event.message, usageSeen, budgetTracker);
           }
 
-          return undefined;
+          traceLogger?.onEvent(event);
         },
-      },
-      (event: AgentEvent) => {
-        if (event.type === "message_end" && isAssistantMessage(event.message)) {
-          registerUsage(event.message, usageSeen, budgetTracker);
-        }
+        signal,
+      );
 
-        traceLogger?.onEvent(event);
-      },
-      signal,
-    );
+      if (completionState.isComplete || terminalStatus !== null) {
+        continue;
+      }
 
-    if (signal?.aborted === true) {
-      terminalStatus = terminalStatus ?? "aborted";
-      terminalError = terminalError ?? USER_ABORT_ERROR;
-      return finalizeRun({
-        runId,
-        status: "aborted",
-        passType: options.pass,
-        completionState,
-        actionMetrics,
-        budgetTracker,
-        error: terminalError,
-        summaryOverride: USER_ABORT_SUMMARY,
-        port: deps.port,
-        now: nowFn,
-      });
+      const fingerprint = createPassProgressFingerprint(agentPass, completionGuards, actionMetrics, completionState);
+      if (previousFingerprint !== null && previousFingerprint === fingerprint) {
+        stalledSlices += 1;
+      } else {
+        stalledSlices = 0;
+      }
+      previousFingerprint = fingerprint;
+
+      if (stalledSlices >= MAX_STALLED_SLICES) {
+        terminalStatus = "stalled";
+        terminalError = `${agentPass} pass stopped making semantic progress across bounded slices.`;
+      }
     }
 
-    const finalStatus = completionState.summary
-      ? terminalStatus && terminalStatus !== "failed"
-        ? terminalStatus
-        : "completed"
-      : (terminalStatus ?? "completed");
-
+    const finalStatus = completionState.summary ? (terminalStatus ?? "completed") : (terminalStatus ?? "stalled");
     return finalizeRun({
       runId,
       status: finalStatus,
@@ -572,13 +721,12 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
       actionMetrics,
       budgetTracker,
       error: terminalError,
+      summaryOverride: finalStatus === "aborted" ? USER_ABORT_SUMMARY : undefined,
       port: deps.port,
       now: nowFn,
     });
   } catch (error) {
     if (signal?.aborted === true) {
-      terminalStatus = terminalStatus ?? "aborted";
-      terminalError = terminalError ?? USER_ABORT_ERROR;
       return finalizeRun({
         runId,
         status: "aborted",
@@ -586,7 +734,7 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
         completionState,
         actionMetrics,
         budgetTracker,
-        error: terminalError,
+        error: USER_ABORT_ERROR,
         summaryOverride: USER_ABORT_SUMMARY,
         port: deps.port,
         now: nowFn,
@@ -811,6 +959,188 @@ function buildContinuationPrompt(input: {
   return lines.join(" ");
 }
 
+async function runProposalResolutionPass(
+  input: {
+    runId: string;
+    apply: boolean;
+    now: () => Date;
+  },
+  deps: {
+    port: SurgeonPort;
+    recordRunAction(action: SurgeonRunAction): Promise<void>;
+  },
+): Promise<{
+  status: SurgeonRunStatus;
+  completion: SurgeonCompletionSummary | null;
+  error: string | null;
+  summaryOverride?: string;
+}> {
+  const backlog = await deps.port.listProposalBacklog({
+    state: "open",
+    eligibleOnly: true,
+    limit: 100,
+    offset: 0,
+  });
+
+  if (backlog.length === 0) {
+    return {
+      status: "no_work",
+      completion: null,
+      error: null,
+      summaryOverride: "No eligible surgeon proposals were available for autonomous resolution.",
+    };
+  }
+
+  let appliedCount = 0;
+  const updatedEntryIds = new Set<string>();
+
+  for (const item of backlog) {
+    const proposal = item.proposal;
+    const targetClaimKey = normalizeProposalApplyTarget(proposal);
+    const reasoning = buildProposalReviewReason(proposal, "Autonomous eligible proposal resolution.");
+    const proposalEntryIds: string[] = [];
+
+    if (input.apply) {
+      for (const entryId of proposal.entryIds) {
+        const entry = await deps.port.getEntry(entryId);
+        if (!entry) {
+          continue;
+        }
+
+        const lifecycle = buildSurgeonAppliedClaimKeyLifecycleBundle({
+          targetClaimKey,
+          priorClaimKey: entry.claim_key ?? null,
+          priorClaimKeyRaw: entry.claim_key_raw,
+          source: proposal.source,
+          confidence: proposal.confidence,
+          rationale: reasoning,
+        });
+        const updated = await deps.port.updateEntry(entry.id, buildClaimKeyLifecycleUpdateFields(lifecycle));
+        if (updated) {
+          proposalEntryIds.push(entry.id);
+          updatedEntryIds.add(entry.id);
+        }
+      }
+
+      if (proposalEntryIds.length === 0) {
+        continue;
+      }
+
+      await deps.port.reviewProposal({
+        proposalId: proposal.id,
+        status: "applied",
+        reason: "Autonomously applied eligible surgeon proposal.",
+        reviewedAt: input.now().toISOString(),
+        appliedActionCount: 1,
+      });
+    } else {
+      for (const entryId of proposal.entryIds) {
+        proposalEntryIds.push(entryId);
+        updatedEntryIds.add(entryId);
+      }
+    }
+
+    await deps.recordRunAction({
+      id: randomUUID(),
+      runId: input.runId,
+      actionType: "update_entry",
+      entryIds: proposalEntryIds,
+      reasoning,
+      recallDelta: null,
+      details: {
+        proposal_id: proposal.id,
+        proposal_issue_kind: proposal.issueKind,
+        proposal_source: proposal.source,
+        proposal_review_status: input.apply ? "applied" : "dry_run",
+        target_claim_key: targetClaimKey,
+      },
+      createdAt: input.now().toISOString(),
+    });
+    appliedCount += 1;
+  }
+
+  if (appliedCount === 0) {
+    return {
+      status: "stalled",
+      completion: null,
+      error: "Eligible proposal backlog was present, but no proposal could be advanced.",
+      summaryOverride: "Eligible surgeon proposals were present, but none could be advanced safely.",
+    };
+  }
+
+  return {
+    status: "completed",
+    completion: {
+      actions_taken: appliedCount,
+      entries_skipped: [],
+      observations: [
+        `Processed ${appliedCount} eligible surgeon proposal${appliedCount === 1 ? "" : "s"}.`,
+        `${updatedEntryIds.size} entr${updatedEntryIds.size === 1 ? "y was" : "ies were"} targeted by proposal resolution.`,
+      ],
+      recommendations: ["Leave non-eligible surgeon proposals on the manual review path."],
+    },
+    error: null,
+  };
+}
+
+function buildProposalReviewReason(proposal: { id: string; rationale: string }, reviewReason: string): string {
+  return `Approved surgeon proposal ${proposal.id}: ${proposal.rationale} Review note: ${reviewReason}`.trim();
+}
+
+function normalizeProposalApplyTarget(proposal: { id: string; eligibleForApply: boolean; proposedClaimKeys: string[] }): string {
+  if (!proposal.eligibleForApply) {
+    throw new Error(`Proposal ${proposal.id} is not eligible for autonomous apply.`);
+  }
+  if (proposal.proposedClaimKeys.length !== 1) {
+    throw new Error(`Proposal ${proposal.id} cannot be applied automatically because it does not resolve to exactly one proposed claim key.`);
+  }
+
+  const targetClaimKey = proposal.proposedClaimKeys[0]?.trim();
+  if (!targetClaimKey) {
+    throw new Error(`Proposal ${proposal.id} is missing a valid proposed claim key.`);
+  }
+
+  return targetClaimKey;
+}
+
+function createPassProgressFingerprint(
+  pass: AgentSurgeonPass,
+  completionGuards: ReturnType<typeof createSurgeonCompletionGuardState>,
+  actionMetrics: {
+    actionsTaken: number;
+    entriesRetired: number;
+  },
+  completionState: SurgeonToolCompletionState,
+): string {
+  if (pass === "retirement") {
+    const progress = completionGuards.retirement.snapshot();
+    return JSON.stringify({
+      completed: completionState.isComplete,
+      actionsTaken: actionMetrics.actionsTaken,
+      entriesRetired: actionMetrics.entriesRetired,
+      actionableMaxWindowEnd: progress.actionable.maxWindowEnd,
+      actionableTotalCount: progress.actionable.totalCount,
+      actionableExhausted: progress.actionable.sawExhaustedPage,
+      allMaxWindowEnd: progress.all.maxWindowEnd,
+      allTotalCount: progress.all.totalCount,
+      allExhausted: progress.all.sawExhaustedPage,
+    });
+  }
+
+  const progress = completionGuards.supersession.snapshot();
+  return JSON.stringify({
+    completed: completionState.isComplete,
+    actionsTaken: actionMetrics.actionsTaken,
+    claimKeyClustersViewed: progress.claimKeyClustersViewed,
+    claimKeyClustersAdjudicated: progress.claimKeyClustersAdjudicated,
+    claimKeyScopeExhausted: progress.claimKeyScopeExhausted,
+    subjectClustersViewed: progress.subjectClustersViewed,
+    subjectClustersAdjudicated: progress.subjectClustersAdjudicated,
+    subjectScopeExhausted: progress.subjectScopeExhausted,
+    widenedBeforeClaimKeyExhausted: progress.widenedBeforeClaimKeyExhausted,
+  });
+}
+
 /**
  * Loads pass-specific counts needed for startup prompts and completion guards.
  *
@@ -820,7 +1150,7 @@ function buildContinuationPrompt(input: {
  * @returns Pass-specific candidate counts known before the first model turn.
  */
 async function loadPassStartContext(
-  pass: Extract<SurgeonPassType, "retirement" | "supersession">,
+  pass: ImplementedSurgeonPass,
   port: SurgeonPort,
   protection: {
     protectRecalledDays: number;
@@ -828,11 +1158,7 @@ async function loadPassStartContext(
     skipRecentlyEvaluatedDays: number;
     now: Date;
   },
-): Promise<{
-  retirementCandidates: number;
-  supersessionClaimKeyClusters: number;
-  supersessionSubjectClusters: number;
-}> {
+): Promise<SurgeonPassStartContext> {
   if (pass === "supersession") {
     const [claimKeyClusters, subjectClusters] = await Promise.all([
       port.listSupersessionCandidates({ scope: "claim_key" }),
@@ -840,21 +1166,38 @@ async function loadPassStartContext(
     ]);
 
     return {
-      retirementCandidates: 0,
+      retirementRawActionableCandidates: 0,
+      retirementAvailableActionableCandidates: 0,
+      retirementAvailableAllCandidates: 0,
+      retirementRecentlyEvaluatedCandidates: 0,
       supersessionClaimKeyClusters: claimKeyClusters.length,
       supersessionSubjectClusters: subjectClusters.length,
     };
   }
 
-  const retirementCandidateResult = await port.countRetirementCandidates({
-    protectRecalledDays: protection.protectRecalledDays,
-    protectMinImportance: protection.protectMinImportance,
-    skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
-    now: protection.now,
-  });
+  if (pass === "retirement") {
+    const retirementCandidateResult = await port.countRetirementCandidates({
+      protectRecalledDays: protection.protectRecalledDays,
+      protectMinImportance: protection.protectMinImportance,
+      skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
+      now: protection.now,
+    });
+
+    return {
+      retirementRawActionableCandidates: retirementCandidateResult.rawActionableCount,
+      retirementAvailableActionableCandidates: retirementCandidateResult.availableActionableCount,
+      retirementAvailableAllCandidates: retirementCandidateResult.availableAllCount,
+      retirementRecentlyEvaluatedCandidates: retirementCandidateResult.recentlyEvaluatedFilteredCount,
+      supersessionClaimKeyClusters: 0,
+      supersessionSubjectClusters: 0,
+    };
+  }
 
   return {
-    retirementCandidates: retirementCandidateResult.total,
+    retirementRawActionableCandidates: 0,
+    retirementAvailableActionableCandidates: 0,
+    retirementAvailableAllCandidates: 0,
+    retirementRecentlyEvaluatedCandidates: 0,
     supersessionClaimKeyClusters: 0,
     supersessionSubjectClusters: 0,
   };
@@ -877,20 +1220,27 @@ async function loadAutonomousCycleWork(
     now: Date;
   },
 ): Promise<Record<ImplementedSurgeonPass, number>> {
-  const [claimKeyEntries, supersessionContext, retirementContext] = await Promise.all([
+  const [claimKeyEntries, health, supersessionContext, retirementContext] = await Promise.all([
     protection.includeClaimKeyQuality
       ? port.listClaimKeyQualityEntries({
           includeInactive: true,
         })
       : Promise.resolve([]),
+    port.getHealthStats({
+      protectRecalledDays: protection.protectRecalledDays,
+      protectMinImportance: protection.protectMinImportance,
+      skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
+      now: protection.now,
+    }),
     loadPassStartContext("supersession", port, protection),
     loadPassStartContext("retirement", port, protection),
   ]);
 
   return {
     claim_key_quality: claimKeyEntries.length,
+    proposal_resolution: health.eligibleProposalBacklogCount,
     supersession: supersessionContext.supersessionClaimKeyClusters + supersessionContext.supersessionSubjectClusters,
-    retirement: retirementContext.retirementCandidates,
+    retirement: retirementContext.retirementAvailableActionableCandidates,
   };
 }
 

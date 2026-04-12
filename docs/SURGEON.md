@@ -2,9 +2,10 @@
 
 The surgeon is agenr's bounded corpus-maintenance subsystem.
 
-As of the current codebase, three surgeon passes are implemented:
+As of the current codebase, four surgeon passes are implemented:
 
 - `claim_key_quality` - deterministic claim-key cleanup, backfill, proposal emission, and health reporting
+- `proposal_resolution` - deterministic application of already-eligible claim-key proposals
 - `supersession` - bounded agent-loop review that links older active entries to their surviving replacements
 - `retirement` - bounded agent-loop review that retires or downgrades semantically stale entries conservatively
 
@@ -33,7 +34,7 @@ The goal is corpus health, not aggressive deletion. The surgeon is designed to p
 
 ## Runtime shape
 
-`claim_key_quality` is deterministic. `retirement` and `supersession` run through `@mariozechner/pi-agent-core`'s `runAgentLoop()` with sequential tool execution.
+`claim_key_quality` and `proposal_resolution` are deterministic. `retirement` and `supersession` still use `@mariozechner/pi-agent-core`'s `runAgentLoop()` with sequential tool execution, but they now run as bounded fresh-context slices instead of one long continuation-heavy conversation.
 
 For every `agenr surgeon run`, agenr currently:
 
@@ -48,12 +49,15 @@ For every `agenr surgeon run`, agenr currently:
 5. Tries to create embedding-enabled recall ports for `simulate_recall`.
 6. Checks the trailing 24-hour surgeon spend against the daily cap.
 7. In apply mode, creates a timestamped backup of the SQLite DB plus `-wal` / `-shm` sidecars when present.
-8. Creates a `surgeon_runs` row with status `running` for each executed pass.
-9. Executes either:
-   - one explicit pass, or
-   - the autonomous sequence `claim_key_quality -> supersession -> retirement`
-10. In autonomous mode, repeats later-cycle `supersession` and `retirement` work until no direct work remains or budget stops the run.
-11. Persists final status, usage, cost, action counts, summary JSON, and error text.
+8. Loads prior-run context before creating the current `surgeon_runs` row so prompt history points at the previous run, not the in-flight row.
+9. Creates a `surgeon_runs` row with status `running` for each executed pass.
+10. Executes either:
+
+- one explicit pass, or
+- the autonomous sequence `claim_key_quality -> proposal_resolution -> supersession -> retirement`
+
+11. In autonomous mode, repeats later-cycle `proposal_resolution`, `supersession`, and `retirement` work until no direct work remains, a pass stalls, or budget stops the run.
+12. Persists final status, usage, cost, action counts, summary JSON, and error text.
 
 ## Passes
 
@@ -95,6 +99,19 @@ The persisted `summary_json.claim_key_quality` payload includes:
 - optional `circuitBreaker`
 
 `claim_key_quality` never retires entries. Its output is structural cleanup plus proposal backlog.
+
+### `proposal_resolution`
+
+`proposal_resolution` does not use the agent loop and does not expose public surgeon tools. It operates only on proposals that are already `open`, `eligible_for_apply`, and resolvable to exactly one target claim key.
+
+The pass:
+
+- returns `no_work` when there is no eligible proposal backlog
+- applies eligible proposals conservatively in apply mode using the same claim-key lifecycle update path as manual proposal review
+- records `update_entry` audit actions for the affected entries
+- returns `stalled` if eligible backlog exists but none of it can be advanced safely
+
+Non-eligible or ambiguous proposals remain on the manual review path.
 
 ### `supersession`
 
@@ -146,6 +163,8 @@ The pass can:
 - downgrade or otherwise update entries
 - complete the pass with a structured summary
 
+Retirement now has an explicit preflight. If both actionable and widened all-scope availability are empty after current filters are applied, the pass finalizes as `no_work` without entering the agent loop.
+
 ## Tool surface
 
 Only `retirement` and `supersession` use tools.
@@ -154,7 +173,7 @@ Only `retirement` and `supersession` use tools.
 
 | Tool               | What it does                               | Current details                                                                                                                                                                                                                                                                                                                                                     |
 | ------------------ | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `get_health_stats` | Returns health data for orientation.       | Takes no parameters. Returns `now`, `health`, `lastRun`, and `lastBulkIngestAt`. `health` includes type counts, claim-key lifecycle buckets, proposal backlog, recency, recall, quality, retirement-candidate count, and recently-evaluated count.                                                                                                                  |
+| `get_health_stats` | Returns health data for orientation.       | Takes no parameters. Returns `now`, `health`, `lastRun`, and `lastBulkIngestAt`. `health` includes type counts, claim-key lifecycle buckets, proposal backlog, recency, recall, quality, retirement raw actionable count, retirement available actionable count, retirement available all-scope count, and recently-evaluated count.                                |
 | `inspect_entry`    | Loads one entry with related context.      | Returns `found`, `entry`, `tags`, and `related`. `related` includes `sameSubject`, `sameCluster`, `supersedesCount`, and `supersedesSample`.                                                                                                                                                                                                                        |
 | `simulate_recall`  | Runs normal recall without telemetry.      | Params: `query`, optional `exclude_entry_id`, optional `limit` default `10`, max `20`. Throws if embedding-enabled recall ports are unavailable.                                                                                                                                                                                                                    |
 | `update_entry`     | Updates mutable fields on an active entry. | Params: `entry_id`, `reasoning`, and any of `importance`, `expiry`, `claim_key`, `valid_from`, `valid_to`. Claim-key updates go through the shared manual lifecycle normalizer, and temporal updates reject invalid, equal, or reversed timestamps. `expiry: "core"` requires reasoning that explicitly mentions `core`. In dry-run it returns `wouldUpdate: true`. |
@@ -162,10 +181,10 @@ Only `retirement` and `supersession` use tools.
 
 ### Retirement-only tools
 
-| Tool               | What it does                                | Current details                                                                                                                                                                                                                              |
-| ------------------ | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `query_candidates` | Pages retirement candidates.                | Params: `scope`, `type`, `importance_max`, `min_age_days`, `project`, `limit`, `offset`. `scope` is `actionable` or `all`, default `actionable`. Default page size `20`, max `100`. Empty actionable pages tell the model to widen to `all`. |
-| `retire_entry`     | Retires one active entry after hard checks. | Params: `entry_id`, `reason`. Rejects protected entries. In dry-run it returns `wouldRetire: true`.                                                                                                                                          |
+| Tool               | What it does                                | Current details                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------ | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `query_candidates` | Pages retirement candidates.                | Params: `scope`, `type`, `importance_max`, `min_age_days`, `project`, `limit`, `offset`. `scope` is `actionable` or `all`, default `actionable`. Default page size `20`, max `100`. Results now include `totalMatching`, `availableCount`, `scopeExhausted`, `nextOffset`, and `recentlyEvaluatedFilteredCount`. Empty actionable pages tell the model to widen to `all`. |
+| `retire_entry`     | Retires one active entry after hard checks. | Params: `entry_id`, `reason`. Rejects protected entries. In dry-run it returns `wouldRetire: true`.                                                                                                                                                                                                                                                                       |
 
 ### Supersession-only tools
 
@@ -232,22 +251,22 @@ Current read-only inspection commands:
 agenr surgeon run [options]
 ```
 
-If `--pass` is omitted, `agenr surgeon run` executes the autonomous sequence `claim_key_quality -> supersession -> retirement` and repeats later-cycle `supersession` and `retirement` work until no direct work remains or budget is exhausted.
+If `--pass` is omitted, `agenr surgeon run` executes the autonomous sequence `claim_key_quality -> proposal_resolution -> supersession -> retirement` and repeats later-cycle `proposal_resolution`, `supersession`, and `retirement` work until no direct work remains, a pass stalls, or budget is exhausted.
 
 #### Flags
 
-| Flag                        | Meaning                                                                                      | Default                                                                              |
-| --------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `--pass <type>`             | Run one explicit pass: `retirement`, `supersession`, or `claim_key_quality`                  | autonomous multi-pass run                                                            |
-| `--budget <usd>`            | Total cost cap for the run                                                                   | `config.surgeon.costCap`, else `15.00`                                               |
-| `--context-limit <tokens>`  | Override per-turn context limit tracking                                                     | `config.surgeon.contextLimit`, else 85% of model context window when known, else `0` |
-| `--skip-evaluated-days <n>` | Skip entries evaluated within the last `n` days                                              | `config.surgeon.passes.retirement.skipRecentlyEvaluatedDays`, else `7`               |
-| `--apply`                   | Apply mutations instead of dry-run                                                           | off                                                                                  |
-| `--model <id>`              | Override model ID                                                                            | config/top-level/default resolution                                                  |
-| `--provider <name>`         | Override provider                                                                            | config/top-level/default resolution                                                  |
-| `--verbose`                 | Emit richer stderr progress                                                                  | off                                                                                  |
-| `--trace <path>`            | Write compact trace JSONL records to a file, or into an existing directory as per-pass files | none                                                                                 |
-| `--json`                    | Emit JSON instead of human-readable final output                                             | off                                                                                  |
+| Flag                        | Meaning                                                                                            | Default                                                                              |
+| --------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `--pass <type>`             | Run one explicit pass: `retirement`, `supersession`, `proposal_resolution`, or `claim_key_quality` | autonomous multi-pass run                                                            |
+| `--budget <usd>`            | Total cost cap for the run                                                                         | `config.surgeon.costCap`, else `15.00`                                               |
+| `--context-limit <tokens>`  | Override per-turn context limit tracking                                                           | `config.surgeon.contextLimit`, else 85% of model context window when known, else `0` |
+| `--skip-evaluated-days <n>` | Skip entries evaluated within the last `n` days                                                    | `config.surgeon.passes.retirement.skipRecentlyEvaluatedDays`, else `7`               |
+| `--apply`                   | Apply mutations instead of dry-run                                                                 | off                                                                                  |
+| `--model <id>`              | Override model ID                                                                                  | config/top-level/default resolution                                                  |
+| `--provider <name>`         | Override provider                                                                                  | config/top-level/default resolution                                                  |
+| `--verbose`                 | Emit richer stderr progress                                                                        | off                                                                                  |
+| `--trace <path>`            | Write compact trace JSONL records to a file, or into an existing directory as per-pass files       | none                                                                                 |
+| `--json`                    | Emit JSON instead of human-readable final output                                                   | off                                                                                  |
 
 #### Output
 
@@ -257,7 +276,7 @@ Human-readable single-pass `run` output currently looks like:
 Surgeon run <run-id>
 Pass: retirement
 Mode: dry-run | apply
-Status: completed | failed | aborted | budget_exhausted | cost_capped
+Status: completed | no_work | stalled | failed | aborted | budget_exhausted | cost_capped
 Actions: <total> total | retired <n>
 Usage: input <n> | output <n> | cost $<amount>
 Summary: <summary or n/a>
@@ -268,7 +287,7 @@ Autonomous output uses:
 ```text
 Surgeon Run (autonomous)
 Cycles: <n>
-Passes: claim_key_quality -> supersession -> retirement -> ...
+Passes: claim_key_quality -> proposal_resolution -> supersession -> retirement -> ...
 ...
 ```
 
@@ -289,7 +308,7 @@ Current human output includes:
 - proposal backlog count
 - open proposals already eligible to apply
 - oldest still-open proposal timestamp when one exists
-- retirement-candidate total, plus new vs recently evaluated when applicable
+- retirement candidate availability, including actionable vs all-scope vs raw actionable counts
 - latest surgeon run
 - latest surgeon cost
 
@@ -387,7 +406,7 @@ High-level phases:
 
 `claim_key_quality` also emits bounded stage progress snapshots, including preview counters, cumulative repair counts, processed-entry counts, and elapsed time. The CLI turns these into terse stderr lines, with richer detail in `--verbose` mode.
 
-## Budget, completion, and continuation
+## Budget, completion, and bounded slices
 
 ### Cost and context guards
 
@@ -405,17 +424,19 @@ High-level phases:
 
 Retirement completion currently tracks:
 
-- number of `query_candidates` calls
-- largest candidate window paged so far
-- whether an exhausted page was seen
-- the run-start estimate of actionable candidates
+- largest actionable candidate window paged so far
+- largest widened all-scope candidate window paged so far
+- whether an exhausted page was seen for actionable and all-scope sweeps
+- the run-start estimates of actionable and all-scope availability
 - rejection counts
 
 It can reject completion when:
 
-- the pass barely used any budget
-- the surgeon has spot-checked only a small slice of known work
+- the surgeon has spot-checked only a small slice of still-available work
 - the actionable pool is exhausted but it has not widened to `scope = "all"` yet
+- widened all-scope work remains unpaged
+
+It can now accept completion with low spend when the widened all-scope sweep is already exhausted.
 
 Supersession completion currently tracks:
 
@@ -433,17 +454,19 @@ It can reject completion when:
 
 Both passes use a 50-rejection safety valve.
 
-### Continuation prompts
+### Bounded slices
 
-If the model stops without calling `complete_pass`, the workflow can inject another user prompt telling it to continue.
+If the model stops without calling `complete_pass`, the workflow now starts a fresh bounded slice instead of extending one unbounded conversation.
 
-Continuation stops when any of these are true:
+Slice progression stops when any of these are true:
 
 - the pass completed
+- the pass hit `no_work` before entering the loop
+- the pass is marked `stalled` because repeated slices stopped making semantic progress
 - the user aborted
 - the context budget is exhausted
 - the cost cap is exceeded
-- 50 continuation attempts have been reached
+- the bounded slice cap has been reached
 
 ### Abort behavior
 
@@ -555,6 +578,8 @@ Run statuses are:
 
 - `running`
 - `completed`
+- `no_work`
+- `stalled`
 - `failed`
 - `aborted`
 - `budget_exhausted`

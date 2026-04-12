@@ -260,18 +260,7 @@ describe("registerSurgeonCommand", () => {
     const { program } = createProgramWithCapturedOutput();
 
     await program.parseAsync(
-      [
-        "surgeon",
-        "run",
-        "--pass",
-        "claim_key_quality",
-        "--provider",
-        " openai ",
-        "--model",
-        " gpt-5.4-mini ",
-        "--trace",
-        " /tmp/surgeon.log ",
-      ],
+      ["surgeon", "run", "--pass", "claim_key_quality", "--provider", " openai ", "--model", " gpt-5.4-mini ", "--trace", " /tmp/surgeon.log "],
       { from: "user" },
     );
 

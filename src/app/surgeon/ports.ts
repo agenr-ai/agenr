@@ -64,7 +64,19 @@ export interface SurgeonHealthStats {
     average: number;
   };
   retirementCandidateCount: number;
+  retirementAvailableActionableCount: number;
+  retirementAvailableAllCount: number;
   recentlyEvaluatedCount: number;
+}
+
+/**
+ * Shared retirement candidate count snapshots used for startup, health, and scheduling.
+ */
+export interface SurgeonRetirementCandidateCounts {
+  rawActionableCount: number;
+  availableActionableCount: number;
+  availableAllCount: number;
+  recentlyEvaluatedFilteredCount: number;
 }
 
 /**
@@ -123,6 +135,21 @@ export interface SurgeonCandidateSummary {
   recallCount: number;
   lastRecalledAt: string | null;
   tags: string[];
+}
+
+/**
+ * One paged retirement-candidate response enriched with count metadata.
+ */
+export interface SurgeonCandidatePage {
+  candidates: SurgeonCandidateSummary[];
+  totalMatching: number;
+  availableCount: number;
+  recentlyEvaluatedFilteredCount: number;
+  scope: "actionable" | "all";
+  limit: number;
+  offset: number;
+  scopeExhausted: boolean;
+  nextOffset: number | null;
 }
 
 /**
@@ -315,7 +342,7 @@ export interface SurgeonPort {
     protectMinImportance: number;
     skipRecentlyEvaluatedDays?: number;
     now?: Date;
-  }): Promise<{ total: number; recentlyEvaluated: number }>;
+  }): Promise<SurgeonRetirementCandidateCounts>;
 
   /**
    * Lists retirement candidates for the requested scope and filters.
@@ -323,7 +350,7 @@ export interface SurgeonPort {
    * @param query - Candidate filtering and pagination options.
    * @returns Prioritized candidate summaries.
    */
-  listRetirementCandidates(query: SurgeonCandidateQuery): Promise<SurgeonCandidateSummary[]>;
+  listRetirementCandidates(query: SurgeonCandidateQuery): Promise<SurgeonCandidatePage>;
 
   /**
    * Lists supersession candidate clusters using the requested grouping strategy.

@@ -5,9 +5,16 @@ import type { SurgeonSupersessionCluster } from "./ports.js";
  */
 export interface PaginatedQueryProgress {
   queryCalls: number;
-  maxWindowEnd: number;
-  totalCount: number | null;
-  sawExhaustedPage: boolean;
+  actionable: {
+    maxWindowEnd: number;
+    totalCount: number | null;
+    sawExhaustedPage: boolean;
+  };
+  all: {
+    maxWindowEnd: number;
+    totalCount: number | null;
+    sawExhaustedPage: boolean;
+  };
 }
 
 /**
@@ -24,7 +31,7 @@ export interface PaginatedQueryTracker {
    *
    * @param input - Pagination metadata for the page.
    */
-  recordPage(input: { offset: number; returnedCount: number; totalCount?: number; exhausted: boolean }): void;
+  recordPage(input: { scope: "actionable" | "all"; offset: number; returnedCount: number; totalCount?: number; exhausted: boolean }): void;
 
   /**
    * Returns an immutable snapshot of current progress.
@@ -89,6 +96,8 @@ export interface SurgeonCompletionGuardState {
   initialHealth: {
     totalEntries: number;
     retirementCandidates: number;
+    retirementAvailableActionableCandidates: number;
+    retirementAvailableAllCandidates: number;
     supersessionClaimKeyClusters: number;
     supersessionSubjectClusters: number;
   };
@@ -110,15 +119,30 @@ export function createPaginatedQueryTracker(): PaginatedQueryTracker {
     },
 
     recordPage(input): void {
+      const scope = input.scope === "all" ? "all" : "actionable";
       const offset = normalizeCount(input.offset);
       const returnedCount = normalizeCount(input.returnedCount);
       const totalCount = input.totalCount === undefined ? null : normalizeCount(input.totalCount);
+      const scopedProgress = progress[scope];
 
       progress = {
         queryCalls: progress.queryCalls + 1,
-        maxWindowEnd: Math.max(progress.maxWindowEnd, offset + returnedCount),
-        totalCount: totalCount ?? progress.totalCount,
-        sawExhaustedPage: progress.sawExhaustedPage || input.exhausted,
+        actionable:
+          scope === "actionable"
+            ? {
+                maxWindowEnd: Math.max(scopedProgress.maxWindowEnd, offset + returnedCount),
+                totalCount: totalCount ?? scopedProgress.totalCount,
+                sawExhaustedPage: scopedProgress.sawExhaustedPage || input.exhausted,
+              }
+            : progress.actionable,
+        all:
+          scope === "all"
+            ? {
+                maxWindowEnd: Math.max(scopedProgress.maxWindowEnd, offset + returnedCount),
+                totalCount: totalCount ?? scopedProgress.totalCount,
+                sawExhaustedPage: scopedProgress.sawExhaustedPage || input.exhausted,
+              }
+            : progress.all,
       };
     },
 
@@ -137,6 +161,8 @@ export function createPaginatedQueryTracker(): PaginatedQueryTracker {
 export function createSurgeonCompletionGuardState(input: {
   totalEntries: number;
   retirementCandidates?: number;
+  retirementAvailableActionableCandidates?: number;
+  retirementAvailableAllCandidates?: number;
   supersessionClaimKeyClusters?: number;
   supersessionSubjectClusters?: number;
 }): SurgeonCompletionGuardState {
@@ -148,6 +174,8 @@ export function createSurgeonCompletionGuardState(input: {
     initialHealth: {
       totalEntries: normalizeCount(input.totalEntries),
       retirementCandidates: normalizeOptionalCount(input.retirementCandidates),
+      retirementAvailableActionableCandidates: normalizeOptionalCount(input.retirementAvailableActionableCandidates),
+      retirementAvailableAllCandidates: normalizeOptionalCount(input.retirementAvailableAllCandidates),
       supersessionClaimKeyClusters,
       supersessionSubjectClusters,
     },
@@ -263,9 +291,16 @@ export function createSupersessionReviewTracker(input: { claimKeyTotal: number; 
 function createEmptyProgress(): PaginatedQueryProgress {
   return {
     queryCalls: 0,
-    maxWindowEnd: 0,
-    totalCount: null,
-    sawExhaustedPage: false,
+    actionable: {
+      maxWindowEnd: 0,
+      totalCount: null,
+      sawExhaustedPage: false,
+    },
+    all: {
+      maxWindowEnd: 0,
+      totalCount: null,
+      sawExhaustedPage: false,
+    },
   };
 }
 

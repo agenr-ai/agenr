@@ -36,7 +36,14 @@ describe("surgeon queries", () => {
       now: TEST_NOW,
     });
 
-    expect(actionable.map((candidate) => candidate.id)).toEqual([ids.temporary, ids.milestone, ids.statusArtifact, ids.fact]);
+    expect(actionable.candidates.map((candidate) => candidate.id)).toEqual([ids.temporary, ids.milestone, ids.statusArtifact, ids.fact]);
+    expect(actionable).toMatchObject({
+      totalMatching: 4,
+      availableCount: 4,
+      scope: "actionable",
+      scopeExhausted: true,
+      nextOffset: null,
+    });
 
     const allScope = await listRetirementCandidates(client, {
       scope: "all",
@@ -45,7 +52,14 @@ describe("surgeon queries", () => {
       now: TEST_NOW,
     });
 
-    expect(allScope.map((candidate) => candidate.id)).toEqual([ids.temporary, ids.milestone, ids.statusArtifact, ids.fact, ids.lesson]);
+    expect(allScope.candidates.map((candidate) => candidate.id)).toEqual([ids.temporary, ids.milestone, ids.statusArtifact, ids.fact, ids.lesson]);
+    expect(allScope).toMatchObject({
+      totalMatching: 5,
+      availableCount: 5,
+      scope: "all",
+      scopeExhausted: true,
+      nextOffset: null,
+    });
   });
 
   it("applies candidate filters for project tags, type, age, pagination, and recent evaluations", async () => {
@@ -124,7 +138,13 @@ describe("surgeon queries", () => {
       now: TEST_NOW,
     });
 
-    expect(filtered).toEqual([]);
+    expect(filtered.candidates).toEqual([]);
+    expect(filtered).toMatchObject({
+      totalMatching: 1,
+      availableCount: 0,
+      recentlyEvaluatedFilteredCount: 1,
+      scopeExhausted: true,
+    });
 
     const paginated = await listRetirementCandidates(client, {
       scope: "all",
@@ -136,7 +156,14 @@ describe("surgeon queries", () => {
       now: TEST_NOW,
     });
 
-    expect(paginated.map((candidate) => candidate.id)).toEqual(["alpha-fact-1"]);
+    expect(paginated.candidates.map((candidate) => candidate.id)).toEqual(["alpha-fact-1"]);
+    expect(paginated).toMatchObject({
+      totalMatching: 3,
+      availableCount: 3,
+      offset: 1,
+      nextOffset: 2,
+      scopeExhausted: false,
+    });
   });
 
   it("lists claim_key supersession clusters with two or more active entries", async () => {
@@ -454,6 +481,8 @@ describe("surgeon queries", () => {
         average: 0.62,
       },
       retirementCandidateCount: 3,
+      retirementAvailableActionableCount: 3,
+      retirementAvailableAllCount: 4,
       recentlyEvaluatedCount: 0,
     });
 
@@ -463,7 +492,12 @@ describe("surgeon queries", () => {
         protectMinImportance: 9,
         now: TEST_NOW,
       }),
-    ).toEqual({ total: 3, recentlyEvaluated: 0 });
+    ).toEqual({
+      rawActionableCount: 3,
+      availableActionableCount: 3,
+      availableAllCount: 4,
+      recentlyEvaluatedFilteredCount: 0,
+    });
   });
 });
 

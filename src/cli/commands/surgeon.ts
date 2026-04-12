@@ -67,7 +67,11 @@ export function registerSurgeonCommand(program: Command): void {
   surgeonCommand
     .command("run")
     .description("Execute the autonomous surgeon run or one explicit pass")
-    .addOption(new Option("--pass <type>", "Run one surgeon pass: retirement, supersession, or claim_key_quality").argParser(parseImplementedSurgeonPass))
+    .addOption(
+      new Option("--pass <type>", "Run one surgeon pass: retirement, supersession, proposal_resolution, or claim_key_quality").argParser(
+        parseImplementedSurgeonPass,
+      ),
+    )
     .addOption(new Option("--budget <usd>", "Cost cap for this run in USD").argParser(parsePositiveNumber))
     .addOption(new Option("--context-limit <tokens>", "Context limit override in tokens").argParser(parsePositiveInteger))
     .addOption(new Option("--skip-evaluated-days <n>", "Skip entries evaluated within the last N days").argParser(parseNonNegativeInteger))
@@ -253,7 +257,7 @@ export function registerSurgeonCommand(program: Command): void {
  * @param value - Raw commander option value.
  * @returns Supported implemented surgeon pass.
  */
-function parseImplementedSurgeonPass(value: string): Extract<SurgeonPassType, "claim_key_quality" | "retirement" | "supersession"> {
+function parseImplementedSurgeonPass(value: string): Extract<SurgeonPassType, "claim_key_quality" | "proposal_resolution" | "retirement" | "supersession"> {
   const normalized = value.trim().toLowerCase();
   if (!isSurgeonPassType(normalized)) {
     throw new InvalidArgumentError(`Invalid surgeon pass: ${value}`);
@@ -391,6 +395,8 @@ function renderStatus(input: {
     eligibleProposalBacklogCount: number;
     oldestOpenProposalCreatedAt: string | null;
     retirementCandidateCount: number;
+    retirementAvailableActionableCount: number;
+    retirementAvailableAllCount: number;
     recentlyEvaluatedCount: number;
   };
   lastRun: {
@@ -401,6 +407,14 @@ function renderStatus(input: {
   } | null;
 }): string {
   const ck = input.health.claimKeyLifecycle;
+  const availableActionableCount =
+    typeof input.health.retirementAvailableActionableCount === "number"
+      ? input.health.retirementAvailableActionableCount
+      : Math.max(0, input.health.retirementCandidateCount - input.health.recentlyEvaluatedCount);
+  const availableAllCount =
+    typeof input.health.retirementAvailableAllCount === "number" ? input.health.retirementAvailableAllCount : input.health.retirementCandidateCount;
+  const hasExtendedRetirementCounts =
+    typeof input.health.retirementAvailableActionableCount === "number" && typeof input.health.retirementAvailableAllCount === "number";
   const newCandidates = Math.max(0, input.health.retirementCandidateCount - input.health.recentlyEvaluatedCount);
   const candidateDetail = input.health.recentlyEvaluatedCount > 0 ? ` (${newCandidates} new, ${input.health.recentlyEvaluatedCount} recently evaluated)` : "";
 
@@ -419,7 +433,11 @@ function renderStatus(input: {
     `${ui.label("Entries")}        ${input.health.total}`,
     `${ui.label("Claim keys")}     ${ui.success(String(ck.trusted))} trusted, ${ck.tentative} tentative, ${ck.unresolved > 0 ? ui.warn(String(ck.unresolved)) : "0"} unresolved, ${ck.legacy} legacy, ${ck.noKey > 0 ? ui.warn(String(ck.noKey)) : "0"} no key`,
     `${ui.label("Backlog")}        ${backlogDetail}`,
-    `${ui.label("Retirement")}     ${input.health.retirementCandidateCount} candidates${candidateDetail}`,
+    `${ui.label("Retirement")}     ${
+      hasExtendedRetirementCounts
+        ? `${availableActionableCount} actionable, ${availableAllCount} all-scope, ${input.health.retirementCandidateCount} raw${candidateDetail}`
+        : `${input.health.retirementCandidateCount} candidates${candidateDetail}`
+    }`,
     `${ui.label("Last run")}       ${lastRunDetail}`,
     "",
   ].join("\n");
@@ -935,9 +953,12 @@ function colorizeStatus(status: string): string {
   switch (status) {
     case "completed":
       return ui.success(status);
+    case "no_work":
+      return ui.dim(status);
     case "failed":
       return ui.error(status);
     case "aborted":
+    case "stalled":
     case "cost_capped":
     case "budget_exhausted":
       return ui.warn(status);

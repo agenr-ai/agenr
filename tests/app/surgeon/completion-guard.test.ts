@@ -7,12 +7,14 @@ describe("createPaginatedQueryTracker", () => {
     const tracker = createPaginatedQueryTracker();
 
     tracker.recordPage({
+      scope: "actionable",
       offset: 0,
       returnedCount: 20,
       totalCount: 55,
       exhausted: false,
     });
     tracker.recordPage({
+      scope: "actionable",
       offset: 20,
       returnedCount: 15,
       exhausted: true,
@@ -20,9 +22,16 @@ describe("createPaginatedQueryTracker", () => {
 
     expect(tracker.snapshot()).toEqual({
       queryCalls: 2,
-      maxWindowEnd: 35,
-      totalCount: 55,
-      sawExhaustedPage: true,
+      actionable: {
+        maxWindowEnd: 35,
+        totalCount: 55,
+        sawExhaustedPage: true,
+      },
+      all: {
+        maxWindowEnd: 0,
+        totalCount: null,
+        sawExhaustedPage: false,
+      },
     });
   });
 
@@ -30,6 +39,7 @@ describe("createPaginatedQueryTracker", () => {
     const tracker = createPaginatedQueryTracker();
 
     tracker.recordPage({
+      scope: "actionable",
       offset: 10,
       returnedCount: 5,
       totalCount: 10,
@@ -39,9 +49,16 @@ describe("createPaginatedQueryTracker", () => {
 
     expect(tracker.snapshot()).toEqual({
       queryCalls: 0,
-      maxWindowEnd: 0,
-      totalCount: null,
-      sawExhaustedPage: false,
+      actionable: {
+        maxWindowEnd: 0,
+        totalCount: null,
+        sawExhaustedPage: false,
+      },
+      all: {
+        maxWindowEnd: 0,
+        totalCount: null,
+        sawExhaustedPage: false,
+      },
     });
   });
 });
@@ -51,6 +68,8 @@ describe("createSurgeonCompletionGuardState", () => {
     const state = createSurgeonCompletionGuardState({
       totalEntries: 123.8,
       retirementCandidates: -9,
+      retirementAvailableActionableCandidates: -9,
+      retirementAvailableAllCandidates: -3,
       supersessionClaimKeyClusters: 4.7,
       supersessionSubjectClusters: -3,
     });
@@ -60,15 +79,24 @@ describe("createSurgeonCompletionGuardState", () => {
     expect(state.initialHealth).toEqual({
       totalEntries: 123,
       retirementCandidates: 0,
+      retirementAvailableActionableCandidates: 0,
+      retirementAvailableAllCandidates: 0,
       supersessionClaimKeyClusters: 4,
       supersessionSubjectClusters: 0,
     });
     expect(state.rejectionCounts.get("already-reviewed")).toBe(2);
     expect(state.retirement.snapshot()).toEqual({
       queryCalls: 0,
-      maxWindowEnd: 0,
-      totalCount: null,
-      sawExhaustedPage: false,
+      actionable: {
+        maxWindowEnd: 0,
+        totalCount: null,
+        sawExhaustedPage: false,
+      },
+      all: {
+        maxWindowEnd: 0,
+        totalCount: null,
+        sawExhaustedPage: false,
+      },
     });
     expect(state.supersession.snapshot()).toEqual({
       claimKeyClustersViewed: 0,

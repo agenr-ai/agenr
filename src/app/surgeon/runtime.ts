@@ -413,9 +413,7 @@ function resolveSurgeonModel(config: AgenrConfig, input: { provider?: string; mo
  */
 function resolveRuntimeSelection(input: {
   pass?: ImplementedSurgeonPass;
-}):
-  | { kind: "pass"; pass: ImplementedSurgeonPass; includesClaimKeyQuality: boolean }
-  | { kind: "autonomous"; includesClaimKeyQuality: true } {
+}): { kind: "pass"; pass: ImplementedSurgeonPass; includesClaimKeyQuality: boolean } | { kind: "autonomous"; includesClaimKeyQuality: true } {
   if (input.pass) {
     return {
       kind: "pass",

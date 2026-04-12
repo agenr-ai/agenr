@@ -21,7 +21,6 @@ const COMPLETE_PASS_SCHEMA = Type.Object({
 });
 
 const MIN_BUDGET_USED_FRACTION = 0.75;
-const MIN_BUDGET_USED_FRACTION_HARD = 0.2;
 const SAFETY_VALVE_REJECTION_LIMIT = 50;
 const RETIREMENT_COMPLETION_KEY = "retirement";
 const SUPERSESSION_COMPLETION_KEY = "supersession";
@@ -99,18 +98,26 @@ function buildRetirementCompletionRejection(deps: SurgeonToolDeps, summary: Surg
   }
 
   const progress = deps.completionGuards.retirement.snapshot();
-  const knownCandidates = progress.totalCount ?? deps.completionGuards.initialHealth.retirementCandidates;
-  const hasKnownWork = knownCandidates > 0 || progress.queryCalls > 0;
+  const fallbackAvailableCount = deps.completionGuards.initialHealth.retirementCandidates;
+  const actionableAvailableCount =
+    (progress.actionable.totalCount ?? deps.completionGuards.initialHealth.retirementAvailableActionableCandidates) || fallbackAvailableCount;
+  const allAvailableCount = (progress.all.totalCount ?? deps.completionGuards.initialHealth.retirementAvailableAllCandidates) || fallbackAvailableCount;
+  const allScopeExhausted = progress.all.sawExhaustedPage || (allAvailableCount > 0 && progress.all.maxWindowEnd >= allAvailableCount);
+  const actionableScopeExhausted =
+    progress.actionable.sawExhaustedPage || (actionableAvailableCount > 0 && progress.actionable.maxWindowEnd >= actionableAvailableCount);
 
-  // If barely any budget is used, reject even if the actionable scope was
-  // exhausted - the surgeon should widen to scope="all" and keep working.
-  const budgetBarelyUsed = budgetUsage.budgetUsedPct < MIN_BUDGET_USED_FRACTION_HARD;
+  if (allAvailableCount === 0 && (progress.queryCalls > 0 || deps.completionGuards.initialHealth.retirementAvailableAllCandidates === 0)) {
+    return null;
+  }
+
+  if (allScopeExhausted) {
+    return null;
+  }
+
   const shouldReject =
-    budgetBarelyUsed ||
-    (hasKnownWork &&
-      !progress.sawExhaustedPage &&
-      ((progress.queryCalls === 0 && knownCandidates > handledCount) ||
-        (progress.queryCalls > 0 && (knownCandidates === 0 || progress.maxWindowEnd < knownCandidates))));
+    (progress.queryCalls === 0 && allAvailableCount > handledCount) ||
+    (actionableScopeExhausted && progress.all.maxWindowEnd === 0 && allAvailableCount > 0) ||
+    progress.all.maxWindowEnd < allAvailableCount;
 
   if (!shouldReject) {
     return null;
@@ -125,16 +132,14 @@ function buildRetirementCompletionRejection(deps: SurgeonToolDeps, summary: Surg
     rejectionCount,
     summary,
     budgetUsedPct: formatPercent(budgetUsage.budgetUsedPct),
-    pagedCandidates: progress.maxWindowEnd,
-    knownCandidates: knownCandidates || null,
+    pagedCandidates: progress.all.maxWindowEnd > 0 ? progress.all.maxWindowEnd : progress.actionable.maxWindowEnd,
+    knownCandidates: allAvailableCount || null,
     contextUsedTokens: budgetUsage.contextUsedTokens,
     contextLimit: budgetUsage.contextLimit || null,
     costUsedUsd: budgetUsage.costUsedUsd,
     costCapUsd: budgetUsage.costCapUsd || null,
     remainingCostUsd: budgetUsage.remainingCostUsd,
-    message: budgetBarelyUsed
-      ? `Completion rejected: only ${formatPercent(budgetUsage.budgetUsedPct)}% of the cost budget has been used ($${budgetUsage.costUsedUsd.toFixed(2)} of $${budgetUsage.costCapUsd.toFixed(2)}). If the actionable scope is exhausted, widen to scope='all' and continue paging through the broader candidate pool. Do not stop after a spot check.`
-      : `Completion rejected: ${describeRetirementProgress(progress, knownCandidates)} and only ${formatPercent(budgetUsage.budgetUsedPct)}% of the cost budget has been used.`,
+    message: `Completion rejected: ${describeRetirementProgress(progress, actionableAvailableCount, allAvailableCount)} and only ${formatPercent(budgetUsage.budgetUsedPct)}% of the cost budget has been used.`,
   };
 }
 
@@ -269,18 +274,22 @@ function rejectionSafetyValveUsed(deps: SurgeonToolDeps): boolean {
  * @param knownCandidates - Known candidate count for the guarded sweep.
  * @returns Human-readable progress summary.
  */
-function describeRetirementProgress(progress: PaginatedQueryProgress, knownCandidates: number): string {
+function describeRetirementProgress(progress: PaginatedQueryProgress, actionableAvailableCount: number, allAvailableCount: number): string {
   if (progress.queryCalls === 0) {
-    return knownCandidates > 0
-      ? `about ${knownCandidates} retirement candidates were available before the pass started, but query_candidates has not been called yet`
+    return allAvailableCount > 0
+      ? `about ${allAvailableCount} retirement candidates were available before the pass started, but query_candidates has not been called yet`
       : "query_candidates has not been called yet";
   }
 
-  if (knownCandidates > 0) {
-    return `only ${progress.maxWindowEnd} of about ${knownCandidates} retirement candidates have been paged so far`;
+  if (progress.actionable.sawExhaustedPage && progress.all.maxWindowEnd === 0 && allAvailableCount > 0) {
+    return `the actionable scope is exhausted (${actionableAvailableCount} available), but the broader all scope has not been paged yet`;
   }
 
-  return `only ${progress.maxWindowEnd} retirement candidates have been paged so far and query_candidates has not been exhausted`;
+  if (allAvailableCount > 0) {
+    return `only ${progress.all.maxWindowEnd} of about ${allAvailableCount} retirement candidates in scope='all' have been paged so far`;
+  }
+
+  return `the broader retirement scope is not exhausted yet`;
 }
 
 /**

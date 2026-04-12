@@ -1,4 +1,4 @@
-const SURGEON_PASS_TYPES = ["claim_key_quality", "retirement", "supersession"] as const;
+const SURGEON_PASS_TYPES = ["claim_key_quality", "proposal_resolution", "retirement", "supersession"] as const;
 
 /**
  * Supported surgeon pass identifiers.
@@ -23,6 +23,8 @@ export function isSurgeonPassType(value: string): value is SurgeonPassType {
  * @param pass - Pass type to inspect.
  * @returns True only for currently implemented pass types.
  */
-export function isImplementedSurgeonPass(pass: SurgeonPassType): pass is Extract<SurgeonPassType, "claim_key_quality" | "retirement" | "supersession"> {
-  return pass === "claim_key_quality" || pass === "retirement" || pass === "supersession";
+export function isImplementedSurgeonPass(
+  pass: SurgeonPassType,
+): pass is Extract<SurgeonPassType, "claim_key_quality" | "proposal_resolution" | "retirement" | "supersession"> {
+  return pass === "claim_key_quality" || pass === "proposal_resolution" || pass === "retirement" || pass === "supersession";
 }

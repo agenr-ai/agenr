@@ -1,6 +1,6 @@
 import type { SurgeonPassType } from "./pass-types.js";
 
-const AUTONOMOUS_SURGEON_SEQUENCE = ["claim_key_quality", "supersession", "retirement"] as const;
+const AUTONOMOUS_SURGEON_SEQUENCE = ["claim_key_quality", "proposal_resolution", "supersession", "retirement"] as const;
 
 /**
  * Supported implemented single-pass surgeon identifiers.

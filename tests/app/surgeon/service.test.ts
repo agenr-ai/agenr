@@ -28,6 +28,7 @@ import {
   getLastSurgeonRun,
   getSurgeonRunActions,
   getSurgeonRunHistory,
+  logSurgeonProposal,
 } from "../../../src/adapters/db/surgeon-run-log.js";
 import { runAutonomousSurgeon, runSurgeon, type SurgeonRunOptions } from "../../../src/app/surgeon/service.js";
 import type { Entry } from "../../../src/core/types.js";
@@ -592,12 +593,146 @@ describe("runSurgeon", () => {
     });
   });
 
+  it("returns no_work for retirement when no candidates remain after preflight filtering", async () => {
+    const db = await createDatabase(":memory:");
+    databases.push(db);
+    await insertEntry(db, {
+      id: "protected-decision",
+      subject: "Keep libsql as the durable store",
+      type: "decision",
+      importance: 10,
+      expiry: "permanent",
+      recall_count: 3,
+      created_at: daysAgoIso(180),
+      updated_at: daysAgoIso(5),
+    });
+
+    const result = await runSurgeon(createRunOptions(), {
+      port: createSurgeonPort(db),
+      config: null,
+      model: TEST_MODEL,
+      now: () => TEST_NOW,
+    });
+
+    expect(result).toMatchObject({
+      status: "no_work",
+      passType: "retirement",
+      summary: "No retirement candidates were available after applying current filters.",
+    });
+    expect(runAgentLoopMock).not.toHaveBeenCalled();
+  });
+
+  it("marks an agent-loop pass as stalled when bounded slices stop making progress", async () => {
+    const db = await createTestDatabase(databases);
+    runAgentLoopMock.mockImplementation(async (prompts: AgentMessage[]) => prompts);
+
+    const result = await runSurgeon(createRunOptions(), {
+      port: createSurgeonPort(db),
+      config: null,
+      model: TEST_MODEL,
+      now: () => TEST_NOW,
+    });
+
+    expect(result).toMatchObject({
+      status: "stalled",
+      passType: "retirement",
+    });
+    expect(runAgentLoopMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("returns no_work for proposal_resolution when no eligible proposal backlog exists", async () => {
+    const db = await createTestDatabase(databases);
+
+    const result = await runSurgeon(
+      createRunOptions({
+        pass: "proposal_resolution",
+      }),
+      {
+        port: createSurgeonPort(db),
+        config: null,
+        model: TEST_MODEL,
+        now: () => TEST_NOW,
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: "no_work",
+      passType: "proposal_resolution",
+      summary: "No eligible surgeon proposals were available for autonomous resolution.",
+    });
+    expect(runAgentLoopMock).not.toHaveBeenCalled();
+  });
+
+  it("applies eligible proposals during the proposal_resolution pass", async () => {
+    const db = await createDatabase(":memory:");
+    databases.push(db);
+    await insertEntry(db, {
+      id: "proposal-entry",
+      subject: "Pager owner",
+      type: "fact",
+      importance: 8,
+      expiry: "permanent",
+      created_at: daysAgoIso(40),
+      updated_at: daysAgoIso(40),
+    });
+    const proposalRunId = await createSurgeonRun(db, {
+      passType: "claim_key_quality",
+      dryRun: true,
+      startedAt: daysAgoIso(2),
+    });
+    await logSurgeonProposal(db, {
+      id: "proposal-eligible-1",
+      runId: proposalRunId,
+      groupId: "group-eligible-1",
+      issueKind: "missing_claim_key",
+      scope: "single_entry",
+      entryIds: ["proposal-entry"],
+      currentClaimKeys: [],
+      proposedClaimKeys: ["ops/pager_owner"],
+      rationale: "The subject clearly identifies the pager owner slot.",
+      confidence: 0.93,
+      source: "mixed_group_consensus",
+      eligibleForApply: true,
+      createdAt: daysAgoIso(2),
+    });
+
+    const result = await runSurgeon(
+      createRunOptions({
+        pass: "proposal_resolution",
+        apply: true,
+      }),
+      {
+        port: createSurgeonPort(db),
+        config: null,
+        model: TEST_MODEL,
+        now: () => TEST_NOW,
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: "completed",
+      passType: "proposal_resolution",
+      actionsTaken: 1,
+    });
+    await expect(readClaimKey(db, "proposal-entry")).resolves.toBe("ops/pager_owner");
+
+    const proposals = await db.execute({
+      sql: "SELECT review_status, applied_action_count FROM surgeon_run_proposals WHERE id = ?",
+      args: ["proposal-eligible-1"],
+    });
+    expect(proposals.rows[0]).toEqual({
+      review_status: "applied",
+      applied_action_count: 1,
+    });
+  });
+
   it("repeats the autonomous sequence until direct work is exhausted", async () => {
     const db = await createTestDatabase(databases);
     await insertEntry(db, {
       id: "claim-noncanonical-autonomous",
       subject: "Jim editor preference",
       type: "preference",
+      importance: 9,
       claim_key: " Jim / Editor ",
       created_at: daysAgoIso(80),
       updated_at: daysAgoIso(80),
@@ -740,7 +875,7 @@ async function createTestDatabase(databases: SqlDatabase[]): Promise<SqlDatabase
     id: "durable-decision",
     subject: "Use libsql for the v1 corpus store",
     type: "decision",
-    importance: 8,
+    importance: 9,
     expiry: "permanent",
     recall_count: 2,
     quality_score: 0.9,
@@ -861,14 +996,14 @@ function mockSuccessfulRunAgentLoop(): void {
       emit: (event: AgentEvent) => void,
       signal?: AbortSignal,
     ): Promise<AgentMessage[]> => {
-      const queryArgs = {
+      const actionableQueryArgs = {
         limit: 20,
         offset: 0,
       };
-      const queryAssistantMessage = createAssistantToolMessage({
-        id: "tool-query",
+      const actionableQueryAssistantMessage = createAssistantToolMessage({
+        id: "tool-query-actionable",
         name: "query_candidates",
-        arguments: queryArgs,
+        arguments: actionableQueryArgs,
         reasoning: "Checking the actionable cleanup pool first.",
         usage: TEST_USAGE,
       });
@@ -877,8 +1012,28 @@ function mockSuccessfulRunAgentLoop(): void {
         config,
         emit,
         signal,
-        assistantMessage: queryAssistantMessage,
-        args: queryArgs,
+        assistantMessage: actionableQueryAssistantMessage,
+        args: actionableQueryArgs,
+      });
+
+      const allScopeQueryArgs = {
+        scope: "all",
+        limit: 20,
+        offset: 0,
+      };
+      const allScopeQueryAssistantMessage = createAssistantToolMessage({
+        id: "tool-query-all",
+        name: "query_candidates",
+        arguments: allScopeQueryArgs,
+        reasoning: "The actionable scope is exhausted, so widen to the broader candidate pool.",
+      });
+      await executeToolCall({
+        context,
+        config,
+        emit,
+        signal,
+        assistantMessage: allScopeQueryAssistantMessage,
+        args: allScopeQueryArgs,
       });
 
       const completeArgs = {
@@ -902,7 +1057,7 @@ function mockSuccessfulRunAgentLoop(): void {
         args: completeArgs,
       });
 
-      return [...prompts, queryAssistantMessage, completeAssistantMessage];
+      return [...prompts, actionableQueryAssistantMessage, allScopeQueryAssistantMessage, completeAssistantMessage];
     },
   );
 }
@@ -1068,14 +1223,14 @@ function mockAutonomousCompletionRunAgentLoop(): void {
         const targetEntryId = retirementRuns === 0 ? "stale-temp" : "stale-milestone";
         retirementRuns += 1;
 
-        const queryArgs = {
+        const actionableQueryArgs = {
           limit: 20,
           offset: 0,
         };
-        const queryAssistantMessage = createAssistantToolMessage({
-          id: `tool-query-retirement-${retirementRuns}`,
+        const actionableQueryAssistantMessage = createAssistantToolMessage({
+          id: `tool-query-retirement-actionable-${retirementRuns}`,
           name: "query_candidates",
-          arguments: queryArgs,
+          arguments: actionableQueryArgs,
           reasoning: "Load the next retirement candidates.",
           usage: TEST_USAGE,
         });
@@ -1084,8 +1239,28 @@ function mockAutonomousCompletionRunAgentLoop(): void {
           config,
           emit,
           signal,
-          assistantMessage: queryAssistantMessage,
-          args: queryArgs,
+          assistantMessage: actionableQueryAssistantMessage,
+          args: actionableQueryArgs,
+        });
+
+        const allScopeQueryArgs = {
+          scope: "all",
+          limit: 20,
+          offset: 0,
+        };
+        const allScopeQueryAssistantMessage = createAssistantToolMessage({
+          id: `tool-query-retirement-all-${retirementRuns}`,
+          name: "query_candidates",
+          arguments: allScopeQueryArgs,
+          reasoning: "Widen the retirement sweep before completing the slice.",
+        });
+        await executeToolCall({
+          context,
+          config,
+          emit,
+          signal,
+          assistantMessage: allScopeQueryAssistantMessage,
+          args: allScopeQueryArgs,
         });
 
         const retireArgs = {
@@ -1128,7 +1303,7 @@ function mockAutonomousCompletionRunAgentLoop(): void {
           args: completeArgs,
         });
 
-        return [...prompts, queryAssistantMessage, retireAssistantMessage, completeAssistantMessage];
+        return [...prompts, actionableQueryAssistantMessage, allScopeQueryAssistantMessage, retireAssistantMessage, completeAssistantMessage];
       }
 
       throw new Error("Unexpected tool set for autonomous surgeon test.");

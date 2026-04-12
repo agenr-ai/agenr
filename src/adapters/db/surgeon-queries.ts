@@ -53,8 +53,20 @@ export interface SurgeonHealthStats {
     average: number;
   };
   retirementCandidateCount: number;
+  retirementAvailableActionableCount: number;
+  retirementAvailableAllCount: number;
   /** Candidates that were recently evaluated and will be skipped on the next run. */
   recentlyEvaluatedCount: number;
+}
+
+/**
+ * Shared retirement candidate count snapshots used for startup, health, and scheduling.
+ */
+export interface SurgeonRetirementCandidateCounts {
+  rawActionableCount: number;
+  availableActionableCount: number;
+  availableAllCount: number;
+  recentlyEvaluatedFilteredCount: number;
 }
 
 /**
@@ -90,6 +102,21 @@ export interface SurgeonCandidateSummary {
   recallCount: number;
   lastRecalledAt: string | null;
   tags: string[];
+}
+
+/**
+ * One paged retirement-candidate response enriched with count metadata.
+ */
+export interface SurgeonCandidatePage {
+  candidates: SurgeonCandidateSummary[];
+  totalMatching: number;
+  availableCount: number;
+  recentlyEvaluatedFilteredCount: number;
+  scope: "actionable" | "all";
+  limit: number;
+  offset: number;
+  scopeExhausted: boolean;
+  nextOffset: number | null;
 }
 
 /**
@@ -295,8 +322,10 @@ export async function getSurgeonHealthStats(
       low: qualityRow ? readNumber(qualityRow, "low_count", 0) : 0,
       average: qualityRow ? readNumber(qualityRow, "average_score", 0) : 0,
     },
-    retirementCandidateCount: retirementCandidateCount.total,
-    recentlyEvaluatedCount: retirementCandidateCount.recentlyEvaluated,
+    retirementCandidateCount: retirementCandidateCount.rawActionableCount,
+    retirementAvailableActionableCount: retirementCandidateCount.availableActionableCount,
+    retirementAvailableAllCount: retirementCandidateCount.availableAllCount,
+    recentlyEvaluatedCount: retirementCandidateCount.recentlyEvaluatedFilteredCount,
   };
 }
 
@@ -310,35 +339,64 @@ export async function getSurgeonHealthStats(
  * @param query - Candidate filtering and pagination options.
  * @returns Prioritized candidate summaries.
  */
-export async function listRetirementCandidates(executor: SqlExecutor, query: SurgeonCandidateQuery): Promise<SurgeonCandidateSummary[]> {
-  const filter = buildCandidateFilter(query);
-  const result = await executor.execute({
-    sql: `
-      SELECT
-        e.id,
-        e.subject,
-        e.type,
-        e.importance,
-        e.quality_score,
-        e.expiry,
-        e.created_at,
-        e.updated_at,
-        e.recall_count,
-        e.last_recalled_at,
-        e.tags
-      FROM entries AS e
-      WHERE ${filter.whereClauses.join("\n        AND ")}
-      ORDER BY e.updated_at ASC
-    `,
-    args: filter.args,
+export async function listRetirementCandidates(executor: SqlExecutor, query: SurgeonCandidateQuery): Promise<SurgeonCandidatePage> {
+  const availableFilter = buildCandidateFilter(query);
+  const rawFilter = buildCandidateFilter({
+    ...query,
+    skipRecentlyEvaluatedDays: undefined,
   });
+  const [availableResult, rawCountResult] = await Promise.all([
+    executor.execute({
+      sql: `
+        SELECT
+          e.id,
+          e.subject,
+          e.type,
+          e.importance,
+          e.quality_score,
+          e.expiry,
+          e.created_at,
+          e.updated_at,
+          e.recall_count,
+          e.last_recalled_at,
+          e.tags
+        FROM entries AS e
+        WHERE ${availableFilter.whereClauses.join("\n          AND ")}
+        ORDER BY e.updated_at ASC
+      `,
+      args: availableFilter.args,
+    }),
+    executor.execute({
+      sql: `
+        SELECT COUNT(*) AS candidate_count
+        FROM entries AS e
+        WHERE ${rawFilter.whereClauses.join("\n          AND ")}
+      `,
+      args: rawFilter.args,
+    }),
+  ]);
 
-  const candidates = result.rows.map((row) => mapCandidateRow(row));
+  const candidates = availableResult.rows.map((row) => mapCandidateRow(row));
   candidates.sort(compareCandidates);
 
   const offset = normalizeOffset(query.offset);
   const limit = normalizeLimit(query.limit);
-  return candidates.slice(offset, offset + limit);
+  const pagedCandidates = candidates.slice(offset, offset + limit);
+  const availableCount = candidates.length;
+  const totalMatching = rawCountResult.rows[0] ? readNumber(rawCountResult.rows[0], "candidate_count", 0) : availableCount;
+  const scopeExhausted = offset + pagedCandidates.length >= availableCount;
+
+  return {
+    candidates: pagedCandidates,
+    totalMatching,
+    availableCount,
+    recentlyEvaluatedFilteredCount: Math.max(0, totalMatching - availableCount),
+    scope: normalizeScope(query.scope),
+    limit,
+    offset,
+    scopeExhausted,
+    nextOffset: scopeExhausted ? null : offset + pagedCandidates.length,
+  };
 }
 
 /**
@@ -381,49 +439,67 @@ export async function countRetirementCandidates(
     skipRecentlyEvaluatedDays?: number;
     now?: Date;
   },
-): Promise<{ total: number; recentlyEvaluated: number }> {
+): Promise<SurgeonRetirementCandidateCounts> {
   const now = options.now ?? new Date();
 
-  const totalFilter = buildCandidateFilter({
+  const rawActionableFilter = buildCandidateFilter({
     scope: "actionable",
     protectRecalledDays: options.protectRecalledDays,
     protectMinImportance: options.protectMinImportance,
     now,
   });
 
-  const withSkipFilter = buildCandidateFilter({
+  const availableActionableFilter = buildCandidateFilter({
     scope: "actionable",
     protectRecalledDays: options.protectRecalledDays,
     protectMinImportance: options.protectMinImportance,
     skipRecentlyEvaluatedDays: options.skipRecentlyEvaluatedDays,
     now,
   });
+  const availableAllFilter = buildCandidateFilter({
+    scope: "all",
+    protectRecalledDays: options.protectRecalledDays,
+    protectMinImportance: options.protectMinImportance,
+    skipRecentlyEvaluatedDays: options.skipRecentlyEvaluatedDays,
+    now,
+  });
 
-  const [totalResult, withSkipResult] = await Promise.all([
+  const [rawActionableResult, availableActionableResult, availableAllResult] = await Promise.all([
     executor.execute({
       sql: `
         SELECT COUNT(*) AS candidate_count
         FROM entries AS e
-        WHERE ${totalFilter.whereClauses.join("\n        AND ")}
+        WHERE ${rawActionableFilter.whereClauses.join("\n        AND ")}
       `,
-      args: totalFilter.args,
+      args: rawActionableFilter.args,
     }),
     executor.execute({
       sql: `
         SELECT COUNT(*) AS candidate_count
         FROM entries AS e
-        WHERE ${withSkipFilter.whereClauses.join("\n        AND ")}
+        WHERE ${availableActionableFilter.whereClauses.join("\n        AND ")}
       `,
-      args: withSkipFilter.args,
+      args: availableActionableFilter.args,
+    }),
+    executor.execute({
+      sql: `
+        SELECT COUNT(*) AS candidate_count
+        FROM entries AS e
+        WHERE ${availableAllFilter.whereClauses.join("\n        AND ")}
+      `,
+      args: availableAllFilter.args,
     }),
   ]);
 
-  const total = totalResult.rows[0] ? readNumber(totalResult.rows[0], "candidate_count", 0) : 0;
-  const afterSkip = withSkipResult.rows[0] ? readNumber(withSkipResult.rows[0], "candidate_count", 0) : 0;
+  const rawActionableCount = rawActionableResult.rows[0] ? readNumber(rawActionableResult.rows[0], "candidate_count", 0) : 0;
+  const availableActionableCount = availableActionableResult.rows[0] ? readNumber(availableActionableResult.rows[0], "candidate_count", 0) : 0;
+  const availableAllCount = availableAllResult.rows[0] ? readNumber(availableAllResult.rows[0], "candidate_count", 0) : 0;
 
   return {
-    total,
-    recentlyEvaluated: total - afterSkip,
+    rawActionableCount,
+    availableActionableCount,
+    availableAllCount,
+    recentlyEvaluatedFilteredCount: Math.max(0, rawActionableCount - availableActionableCount),
   };
 }
 

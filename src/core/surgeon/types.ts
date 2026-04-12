@@ -135,7 +135,7 @@ export interface SurgeonRunProposal {
 /**
  * Lifecycle states for one surgeon run.
  */
-export type SurgeonRunStatus = "running" | "completed" | "failed" | "aborted" | "budget_exhausted" | "cost_capped";
+export type SurgeonRunStatus = "running" | "completed" | "failed" | "aborted" | "budget_exhausted" | "cost_capped" | "no_work" | "stalled";
 
 /**
  * Minimal persisted completion summary for a surgeon run.

@@ -4,8 +4,9 @@ import { SURGEON_PASS_TYPES, isImplementedSurgeonPass, isSurgeonPassType } from 
 
 describe("surgeon pass types", () => {
   it("recognizes valid pass types", () => {
-    expect(SURGEON_PASS_TYPES).toEqual(["claim_key_quality", "retirement", "supersession"]);
+    expect(SURGEON_PASS_TYPES).toEqual(["claim_key_quality", "proposal_resolution", "retirement", "supersession"]);
     expect(isSurgeonPassType("claim_key_quality")).toBe(true);
+    expect(isSurgeonPassType("proposal_resolution")).toBe(true);
     expect(isSurgeonPassType("retirement")).toBe(true);
     expect(isSurgeonPassType("supersession")).toBe(true);
     expect(isSurgeonPassType("dedup")).toBe(false);

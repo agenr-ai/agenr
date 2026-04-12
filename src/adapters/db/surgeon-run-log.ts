@@ -8,7 +8,7 @@ import type { SurgeonCompletionSummary, SurgeonProposalReviewStatus, SurgeonRunP
 import { readBoolean, readNumber, readOptionalString, readRequiredString } from "./row-mapping.js";
 import type { SqlExecutor } from "./queries.js";
 
-const SURGEON_RUN_STATUSES = ["running", "completed", "failed", "aborted", "budget_exhausted", "cost_capped"] as const;
+const SURGEON_RUN_STATUSES = ["running", "completed", "failed", "aborted", "budget_exhausted", "cost_capped", "no_work", "stalled"] as const;
 const SURGEON_PROPOSAL_REVIEW_STATUSES = ["open", "applied", "rejected"] as const;
 
 /**

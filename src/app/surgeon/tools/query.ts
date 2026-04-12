@@ -40,7 +40,7 @@ export function createQueryCandidatesTool(deps: SurgeonToolDeps): AgentTool<type
       const scope = normalizeScope(params.scope);
       const limit = normalizeLimit(params.limit);
       const offset = normalizeOffset(params.offset);
-      const candidates = await deps.port.listRetirementCandidates({
+      const page = await deps.port.listRetirementCandidates({
         scope,
         type: normalizeOptionalString(params.type),
         importanceMax: params.importance_max,
@@ -56,31 +56,43 @@ export function createQueryCandidatesTool(deps: SurgeonToolDeps): AgentTool<type
       });
 
       deps.completionGuards?.retirement.recordPage({
+        scope: page.scope,
         offset,
-        returnedCount: candidates.length,
-        exhausted: candidates.length < limit,
+        returnedCount: page.candidates.length,
+        totalCount: page.availableCount,
+        exhausted: page.scopeExhausted,
       });
 
-      if (candidates.length === 0) {
+      if (page.candidates.length === 0) {
         return toolResult({
           candidates: [],
           count: 0,
-          scope,
-          limit,
-          offset,
+          scope: page.scope,
+          limit: page.limit,
+          offset: page.offset,
+          totalMatching: page.totalMatching,
+          availableCount: page.availableCount,
+          recentlyEvaluatedFilteredCount: page.recentlyEvaluatedFilteredCount,
+          scopeExhausted: page.scopeExhausted,
+          nextOffset: page.nextOffset,
           message:
-            scope === "actionable"
+            page.scope === "actionable"
               ? "No more candidates match the actionable scope. Consider widening to scope = 'all' before completing the pass."
               : "No more candidates match the current filters. The candidate pool appears exhausted.",
         });
       }
 
       return toolResult({
-        candidates,
-        count: candidates.length,
-        scope,
-        limit,
-        offset,
+        candidates: page.candidates,
+        count: page.candidates.length,
+        scope: page.scope,
+        limit: page.limit,
+        offset: page.offset,
+        totalMatching: page.totalMatching,
+        availableCount: page.availableCount,
+        recentlyEvaluatedFilteredCount: page.recentlyEvaluatedFilteredCount,
+        scopeExhausted: page.scopeExhausted,
+        nextOffset: page.nextOffset,
       });
     },
   };
