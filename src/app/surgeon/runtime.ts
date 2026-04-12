@@ -11,6 +11,7 @@ import { createRecallAdapter } from "../../adapters/db/recall-adapter.js";
 import { createEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../../adapters/embeddings.js";
 import { createLlmClient, resolveLlmCredentials, resolveModel } from "../../adapters/llm.js";
 import { buildClaimKeyLifecycleUpdateFields, buildSurgeonAppliedClaimKeyLifecycleBundle } from "../../core/claim-key-lifecycle.js";
+import type { Logger } from "../../logger.js";
 import {
   DEFAULT_SURGEON_RETIREMENT_PROTECT_MIN_IMPORTANCE,
   DEFAULT_SURGEON_RETIREMENT_PROTECT_RECALLED_DAYS,
@@ -50,6 +51,7 @@ export interface SurgeonRuntimeOptions extends Omit<SurgeonRunOptions, "pass"> {
   dbPath?: string;
   env?: NodeJS.ProcessEnv;
   onProgress?: SurgeonProgressReporter;
+  logger?: Logger;
 }
 
 /**
@@ -104,6 +106,7 @@ export async function runSurgeonRuntime(input: SurgeonRuntimeOptions): Promise<S
       recallPorts,
       backupDb: backupDatabaseFile,
       reportProgress: input.onProgress,
+      logger: input.logger,
     };
     const sharedOptions = {
       model: modelSelection.modelId,

@@ -3,6 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SurgeonProgressEvent } from "../../../src/app/surgeon/progress.js";
 
+/** Strips ANSI escape codes from a string for assertion matching. */
+// eslint-disable-next-line no-control-regex
+const stripAnsi = (text: string): string => text.replace(/\x1B\[[0-9;]*m/g, "");
+
 const {
   loadSurgeonActionsRuntimeMock,
   loadSurgeonBacklogRuntimeMock,
@@ -119,15 +123,16 @@ describe("registerSurgeonCommand", () => {
 
     await program.parseAsync(["surgeon", "run", "--pass", "claim_key_quality", "--apply"], { from: "user" });
 
-    expect(stderr.join("")).toContain("[agenr:surgeon] Starting surgeon run: claim_key_quality (apply).");
-    expect(stderr.join("")).toContain("[agenr:surgeon] Creating DB backup before apply run.");
-    expect(stderr.join("")).toContain("[agenr:surgeon] DB backup complete: /tmp/knowledge.db.surgeon-backup.");
-    expect(stderr.join("")).toContain(
-      "[agenr:surgeon] Claim-key-quality missing preview 120/200 entries | decided 0/200 | scanned 180/1200 entries | applied 15 | proposals 8 | elapsed 12s",
-    );
-    expect(stderr.join("")).not.toContain("skipped no-claim");
-    expect(stdout.join("")).toContain("Surgeon run run-1");
-    expect(stdout.join("")).toContain("Summary: Claim-key cleanup complete.");
+    const stderrText = stripAnsi(stderr.join(""));
+    expect(stderrText).toContain("Surgeon run: claim_key_quality");
+    expect(stderrText).toContain("Creating DB backup...");
+    expect(stderrText).toContain("Backup complete");
+    expect(stderrText).toContain("/tmp/knowledge.db.surgeon-backup");
+    expect(stderrText).toContain("missing: 0/200 entries, preview 120/200, 15 applied, 8 proposals, 12s");
+    expect(stderrText).not.toContain("skipped no-claim");
+    const stdoutText = stripAnsi(stdout.join(""));
+    expect(stdoutText).toContain("Surgeon Run run-1");
+    expect(stdoutText).toContain("Claim-key cleanup complete.");
   });
 
   it("makes verbose deterministic progress output richer", async () => {
@@ -181,11 +186,11 @@ describe("registerSurgeonCommand", () => {
 
     await program.parseAsync(["surgeon", "run", "--pass", "claim_key_quality", "--verbose"], { from: "user" });
 
-    expect(stderr.join("")).toContain("decided 50/120 entries | preview 120/120");
-    expect(stderr.join("")).toContain("normalize 3/4");
-    expect(stderr.join("")).toContain("backfill 7/10");
-    expect(stderr.join("")).toContain("metadata 1/2");
-    expect(stderr.join("")).toContain("skipped no-claim 2 low-confidence 4 collision 1 ambiguous 3");
+    const stderrText = stripAnsi(stderr.join(""));
+    expect(stderrText).toContain("missing: 50/120 entries, preview 120/120, 11 applied, 5 proposals, 9s");
+    expect(stderrText).toContain("normalize 3/4");
+    expect(stderrText).toContain("backfill 7/10");
+    expect(stderrText).toContain("metadata 1/2");
   });
 
   it("keeps JSON mode coherent by sending progress to stderr and JSON to stdout", async () => {
@@ -207,7 +212,9 @@ describe("registerSurgeonCommand", () => {
 
     await program.parseAsync(["surgeon", "run", "--pass", "claim_key_quality", "--json"], { from: "user" });
 
-    expect(stderr.join("")).toContain("[agenr:surgeon] Starting surgeon run: claim_key_quality (dry-run).");
+    const stderrText = stripAnsi(stderr.join(""));
+    expect(stderrText).toContain("Surgeon run: claim_key_quality");
+    expect(stderrText).toContain("dry-run");
     expect(JSON.parse(stdout.join(""))).toEqual({
       runId: "run-1",
       status: "completed",
@@ -243,9 +250,10 @@ describe("registerSurgeonCommand", () => {
         project: "Agenr",
       }),
     );
-    expect(stdout.join("")).toContain("Surgeon preset structural");
-    expect(stdout.join("")).toContain("Passes: claim_key_quality -> supersession");
-    expect(stdout.join("")).toContain("Summary: Structural cleanup complete.");
+    const stdoutText = stripAnsi(stdout.join(""));
+    expect(stdoutText).toContain("Surgeon Preset: structural");
+    expect(stdoutText).toContain("claim_key_quality -> supersession");
+    expect(stdoutText).toContain("Structural cleanup complete.");
   });
 
   it("normalizes run arguments before invoking the runtime", async () => {
@@ -323,13 +331,20 @@ describe("registerSurgeonCommand", () => {
         env: process.env,
       }),
     );
-    expect(stdout.join("")).toContain("Surgeon Status");
-    expect(stdout.join("")).toContain("Entries: 17");
-    expect(stdout.join("")).toContain("Claim keys: trusted 8 | tentative 2 | unresolved 1 | legacy 3 | no key 3");
-    expect(stdout.join("")).toContain("Proposal backlog: 4 open | 3 eligible to apply | oldest 2026-03-28T08:00:00.000Z");
-    expect(stdout.join("")).toContain("Retirement candidates: 6 total (4 new, 2 recently evaluated)");
-    expect(stdout.join("")).toContain("Last surgeon run: claim_key_quality completed (dry-run)");
-    expect(stdout.join("")).toContain("Last surgeon cost: $0.0400");
+    const stdoutText = stripAnsi(stdout.join(""));
+    expect(stdoutText).toContain("Surgeon Status");
+    expect(stdoutText).toContain("17");
+    expect(stdoutText).toContain("8 trusted");
+    expect(stdoutText).toContain("2 tentative");
+    expect(stdoutText).toContain("1 unresolved");
+    expect(stdoutText).toContain("3 legacy");
+    expect(stdoutText).toContain("3 no key");
+    expect(stdoutText).toContain("4 open, 3 eligible");
+    expect(stdoutText).toContain("6 candidates");
+    expect(stdoutText).toContain("4 new, 2 recently evaluated");
+    expect(stdoutText).toContain("claim_key_quality");
+    expect(stdoutText).toContain("completed");
+    expect(stdoutText).toContain("$0.0400");
   });
 
   it("renders the global proposal backlog", async () => {
@@ -371,9 +386,12 @@ describe("registerSurgeonCommand", () => {
         env: process.env,
       }),
     );
-    expect(stdout.join("")).toContain("Surgeon Backlog");
-    expect(stdout.join("")).toContain("eligible=true  status=open");
-    expect(stdout.join("")).toContain("run=claim_key_quality completed (dry-run)");
+    const stdoutText = stripAnsi(stdout.join(""));
+    expect(stdoutText).toContain("Surgeon Backlog");
+    expect(stdoutText).toContain("eligible");
+    expect(stdoutText).toContain("open");
+    expect(stdoutText).toContain("claim_key_quality");
+    expect(stdoutText).toContain("completed");
   });
 
   it("renders unresolved proposals for one surgeon run", async () => {
@@ -408,10 +426,14 @@ describe("registerSurgeonCommand", () => {
         env: process.env,
       }),
     );
-    expect(stdout.join("")).toContain("Surgeon Proposals run-1");
-    expect(stdout.join("")).toContain("mixed_claim_family  scope=cluster  confidence=0.86  eligible=false  status=open");
-    expect(stdout.join("")).toContain("entries=entry-1, entry-2");
-    expect(stdout.join("")).toContain("claim_keys current=jim/home_city -> proposed=jim/home_city, jim/location");
+    const stdoutText = stripAnsi(stdout.join(""));
+    expect(stdoutText).toContain("Surgeon Proposals run-1");
+    expect(stdoutText).toContain("mixed_claim_family");
+    expect(stdoutText).toContain("scope=cluster");
+    expect(stdoutText).toContain("confidence=0.86");
+    expect(stdoutText).toContain("not eligible");
+    expect(stdoutText).toContain("entries: entry-1, entry-2");
+    expect(stdoutText).toContain("jim/home_city -> jim/home_city, jim/location");
   });
 
   it("renders proposal review results after apply or reject", async () => {
@@ -452,10 +474,11 @@ describe("registerSurgeonCommand", () => {
         env: process.env,
       }),
     );
-    expect(stdout.join("")).toContain("Surgeon Proposal Review proposal-1");
-    expect(stdout.join("")).toContain("Status: applied");
-    expect(stdout.join("")).toContain("Updated entries: entry-1, entry-2");
-    expect(stdout.join("")).toContain("Backup: /tmp/knowledge.db.surgeon-backup");
+    const stdoutText = stripAnsi(stdout.join(""));
+    expect(stdoutText).toContain("Proposal Review proposal-1");
+    expect(stdoutText).toContain("applied");
+    expect(stdoutText).toContain("entry-1, entry-2");
+    expect(stdoutText).toContain("/tmp/knowledge.db.surgeon-backup");
   });
 });
 

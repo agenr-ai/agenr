@@ -12,6 +12,7 @@ import {
   DEFAULT_SURGEON_SKIP_RECENTLY_EVALUATED_DAYS,
   type AgenrConfig,
 } from "../../config.js";
+import type { Logger } from "../../logger.js";
 import type { LlmPort, RecallPorts } from "../../core/ports.js";
 import type { SurgeonRunAction } from "../../core/surgeon/domain/action-types.js";
 import type { SurgeonPassType } from "../../core/surgeon/domain/pass-types.js";
@@ -108,6 +109,7 @@ export interface SurgeonWorkflowDeps {
   now?: () => Date;
   backupDb?: (dbPath: string) => Promise<string>;
   reportProgress?: SurgeonProgressReporter;
+  logger?: Logger;
 }
 
 /**
@@ -344,6 +346,7 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
       verbose: options.verbose,
       tracePath: options.tracePath,
       budgetTracker,
+      logger: deps.logger,
     });
 
     const tools = createToolsForPass(agentPass, {
