@@ -236,18 +236,18 @@ If `--pass` is omitted, `agenr surgeon run` executes the autonomous sequence `cl
 
 #### Flags
 
-| Flag                        | Meaning                                                                             | Default                                                                              |
-| --------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `--pass <type>`             | Run one explicit pass: `retirement`, `supersession`, or `claim_key_quality`         | autonomous multi-pass run                                                            |
-| `--budget <usd>`            | Total cost cap for the run                                                          | `config.surgeon.costCap`, else `15.00`                                               |
-| `--context-limit <tokens>`  | Override per-turn context limit tracking                                            | `config.surgeon.contextLimit`, else 85% of model context window when known, else `0` |
-| `--skip-evaluated-days <n>` | Skip entries evaluated within the last `n` days                                     | `config.surgeon.passes.retirement.skipRecentlyEvaluatedDays`, else `7`               |
-| `--apply`                   | Apply mutations instead of dry-run                                                  | off                                                                                  |
-| `--model <id>`              | Override model ID                                                                   | config/top-level/default resolution                                                  |
-| `--provider <name>`         | Override provider                                                                   | config/top-level/default resolution                                                  |
-| `--verbose`                 | Emit richer stderr progress                                                         | off                                                                                  |
-| `--trace <path>`            | Write trace events to a file, or into an existing directory as per-pass JSONL files | none                                                                                 |
-| `--json`                    | Emit JSON instead of human-readable final output                                    | off                                                                                  |
+| Flag                        | Meaning                                                                                      | Default                                                                              |
+| --------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `--pass <type>`             | Run one explicit pass: `retirement`, `supersession`, or `claim_key_quality`                  | autonomous multi-pass run                                                            |
+| `--budget <usd>`            | Total cost cap for the run                                                                   | `config.surgeon.costCap`, else `15.00`                                               |
+| `--context-limit <tokens>`  | Override per-turn context limit tracking                                                     | `config.surgeon.contextLimit`, else 85% of model context window when known, else `0` |
+| `--skip-evaluated-days <n>` | Skip entries evaluated within the last `n` days                                              | `config.surgeon.passes.retirement.skipRecentlyEvaluatedDays`, else `7`               |
+| `--apply`                   | Apply mutations instead of dry-run                                                           | off                                                                                  |
+| `--model <id>`              | Override model ID                                                                            | config/top-level/default resolution                                                  |
+| `--provider <name>`         | Override provider                                                                            | config/top-level/default resolution                                                  |
+| `--verbose`                 | Emit richer stderr progress                                                                  | off                                                                                  |
+| `--trace <path>`            | Write compact trace JSONL records to a file, or into an existing directory as per-pass files | none                                                                                 |
+| `--json`                    | Emit JSON instead of human-readable final output                                             | off                                                                                  |
 
 #### Output
 
@@ -273,6 +273,8 @@ Passes: claim_key_quality -> supersession -> retirement -> ...
 ```
 
 Progress always goes to stderr, including in `--json` mode.
+
+When `--trace` is enabled, the file output is a compact JSONL stream intended for post-run inspection. It keeps user prompts, assistant decisions, tool calls, tool results, surgeon actions, and turn budget summaries while dropping low-signal streaming deltas and large blobs such as embedding vectors.
 
 ### `agenr surgeon status`
 

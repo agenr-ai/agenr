@@ -25,6 +25,10 @@ interface TraceBudgetTracker {
   };
 }
 
+const TRACE_MAX_STRING_LENGTH = 320;
+const TRACE_MAX_ARRAY_ITEMS = 12;
+const TRACE_MAX_OBJECT_KEYS = 20;
+
 /**
  * Emits verbose surgeon agent traces to the console and optional trace file.
  */
@@ -62,14 +66,19 @@ export function createTraceLogger(options: { verbose: boolean; tracePath?: strin
   return {
     onEvent(event: AgentEvent): void {
       try {
-        appendTrace(options.tracePath, event, logger);
-
         switch (event.type) {
+          case "agent_start":
+            appendTrace(options.tracePath, { kind: "agent_start" }, logger);
+            return;
+
           case "turn_start":
+            appendTrace(options.tracePath, { kind: "turn_start" }, logger);
             logger.info("surgeon turn started");
             return;
 
           case "message_end":
+            appendTrace(options.tracePath, buildMessageTraceRecord(event), logger);
+
             if (event.message.role !== "assistant") {
               return;
             }
@@ -78,18 +87,40 @@ export function createTraceLogger(options: { verbose: boolean; tracePath?: strin
 
           case "tool_execution_start":
             startedTools.set(event.toolCallId, Date.now());
+            appendTrace(
+              options.tracePath,
+              {
+                kind: "tool_start",
+                toolCallId: event.toolCallId,
+                toolName: event.toolName,
+                args: sanitizeTraceValue(event.args),
+              },
+              logger,
+            );
             logger.info(options.verbose ? `tool ${event.toolName} start args=${safeStringify(event.args)}` : `tool ${event.toolName} start`);
             return;
 
-          case "tool_execution_end":
-            logToolExecutionEnd(logger, event, startedTools);
+          case "tool_execution_end": {
+            const durationMs = consumeToolDurationMs(startedTools, event.toolCallId);
+            appendTrace(options.tracePath, buildToolExecutionEndTraceRecord(event, durationMs), logger);
+            logToolExecutionEnd(logger, event, durationMs);
             return;
+          }
 
           case "turn_end":
+            appendTrace(options.tracePath, buildTurnSummaryTraceRecord(options.budgetTracker), logger);
             logTurnEnd(logger, options.budgetTracker);
             return;
 
           case "agent_end":
+            appendTrace(
+              options.tracePath,
+              {
+                kind: "agent_end",
+                messageCount: event.messages.length,
+              },
+              logger,
+            );
             logger.info(`agent end messages=${event.messages.length}`);
             return;
 
@@ -106,8 +137,13 @@ export function createTraceLogger(options: { verbose: boolean; tracePath?: strin
         appendTrace(
           options.tracePath,
           {
-            type: "surgeon_action",
-            action,
+            kind: "surgeon_action",
+            actionType: action.actionType,
+            entryIds: action.entryIds,
+            reasoning: truncate(action.reasoning.trim(), TRACE_MAX_STRING_LENGTH),
+            details: sanitizeTraceValue(action.details),
+            recallDelta: sanitizeTraceValue(action.recallDelta),
+            createdAt: action.createdAt,
           },
           logger,
         );
@@ -159,13 +195,9 @@ function logAssistantMessage(logger: Logger, event: Extract<AgentEvent, { type: 
  *
  * @param logger - Destination logger.
  * @param event - Tool-execution completion event.
- * @param startedTools - In-memory tool start timestamps keyed by tool call ID.
+ * @param durationMs - Measured execution duration in milliseconds.
  */
-function logToolExecutionEnd(logger: Logger, event: Extract<AgentEvent, { type: "tool_execution_end" }>, startedTools: Map<string, number>): void {
-  const startedAt = startedTools.get(event.toolCallId);
-  startedTools.delete(event.toolCallId);
-  const durationMs = startedAt ? Math.max(0, Date.now() - startedAt) : 0;
-
+function logToolExecutionEnd(logger: Logger, event: Extract<AgentEvent, { type: "tool_execution_end" }>, durationMs: number): void {
   logger.info(`tool ${event.toolName} end error=${event.isError ? "yes" : "no"} duration=${durationMs}ms result="${summarizeToolResult(event.result)}"`);
 }
 
@@ -193,6 +225,115 @@ function logTurnEnd(logger: Logger, budgetTracker: TraceBudgetTracker | undefine
 }
 
 /**
+ * Builds one compact trace record for a completed message.
+ *
+ * User messages preserve the prompt text. Assistant messages preserve the
+ * text, tool calls, and usage that explain the model's decisions. Streaming
+ * updates and tool-result echo messages are intentionally excluded.
+ *
+ * @param event - Completed message event.
+ * @returns Compact trace record, or null when the message is not useful in file traces.
+ */
+function buildMessageTraceRecord(event: Extract<AgentEvent, { type: "message_end" }>): Record<string, unknown> | null {
+  if (event.message.role === "user") {
+    return {
+      kind: "user_message",
+      text: extractUserText(event.message.content),
+    };
+  }
+
+  if (!isAssistantMessage(event.message)) {
+    return null;
+  }
+
+  const toolCalls = event.message.content
+    .filter((block): block is Extract<(typeof event.message.content)[number], { type: "toolCall" }> => block.type === "toolCall")
+    .map((toolCall) => ({
+      id: toolCall.id,
+      name: toolCall.name,
+      args: sanitizeTraceValue(toolCall.arguments),
+    }));
+
+  return {
+    kind: "assistant_message",
+    text: extractAssistantText(event.message),
+    toolCalls,
+    usage: {
+      input: event.message.usage.input,
+      output: event.message.usage.output,
+      totalTokens: event.message.usage.totalTokens,
+      costUsd: Number(event.message.usage.cost.total.toFixed(6)),
+    },
+    stopReason: event.message.stopReason,
+  };
+}
+
+/**
+ * Builds one compact trace record for a completed tool execution.
+ *
+ * @param event - Tool completion event.
+ * @param durationMs - Measured execution duration in milliseconds.
+ * @returns Compact trace record.
+ */
+function buildToolExecutionEndTraceRecord(event: Extract<AgentEvent, { type: "tool_execution_end" }>, durationMs: number): Record<string, unknown> {
+  return {
+    kind: "tool_end",
+    toolCallId: event.toolCallId,
+    toolName: event.toolName,
+    durationMs,
+    isError: event.isError,
+    summary: summarizeToolResult(event.result),
+    result: summarizeTraceToolResult(event.result),
+  };
+}
+
+/**
+ * Builds one compact trace record for end-of-turn budget state.
+ *
+ * @param budgetTracker - Optional run budget tracker.
+ * @returns Compact trace record.
+ */
+function buildTurnSummaryTraceRecord(budgetTracker: TraceBudgetTracker | undefined): Record<string, unknown> {
+  const totals = budgetTracker?.totals();
+  const remaining = budgetTracker?.remaining();
+
+  if (!totals || !remaining) {
+    return { kind: "turn_summary" };
+  }
+
+  return {
+    kind: "turn_summary",
+    totals: {
+      inputTokens: totals.inputTokens,
+      outputTokens: totals.outputTokens,
+      costUsd: Number(totals.costUsd.toFixed(6)),
+    },
+    context: {
+      usedTokens: remaining.currentContextTokens,
+      limitTokens: remaining.contextLimit > 0 ? remaining.contextLimit : null,
+      remainingTokens: remaining.remainingContextTokens,
+    },
+    cost: {
+      capUsd: remaining.costCapUsd > 0 ? Number(remaining.costCapUsd.toFixed(6)) : null,
+      remainingUsd: Number(remaining.remainingCostUsd.toFixed(6)),
+    },
+  };
+}
+
+/**
+ * Consumes the tracked start time for one tool call and returns its duration.
+ *
+ * @param startedTools - Tool start timestamps keyed by tool call ID.
+ * @param toolCallId - Tool call to resolve.
+ * @returns Elapsed milliseconds, or `0` when the start is unavailable.
+ */
+function consumeToolDurationMs(startedTools: Map<string, number>, toolCallId: string): number {
+  const startedAt = startedTools.get(toolCallId);
+  startedTools.delete(toolCallId);
+  return startedAt ? Math.max(0, Date.now() - startedAt) : 0;
+}
+
+/**
  * Truncates a string to the requested maximum length.
  *
  * @param text - Source text.
@@ -211,17 +352,17 @@ function truncate(text: string, maxLength: number): string {
  * Appends one structured trace record to disk when file tracing is enabled.
  *
  * @param tracePath - Optional destination file path.
- * @param payload - Event payload to serialize.
+ * @param payload - Compact trace payload to serialize.
  * @param logger - Destination logger for write failures.
  */
-function appendTrace(tracePath: string | undefined, payload: unknown, logger: Logger): void {
-  if (!tracePath) {
+function appendTrace(tracePath: string | undefined, payload: Record<string, unknown> | null, logger: Logger): void {
+  if (!tracePath || !payload) {
     return;
   }
 
   try {
     fs.mkdirSync(path.dirname(tracePath), { recursive: true });
-    fs.appendFileSync(tracePath, `${JSON.stringify({ timestamp: new Date().toISOString(), event: payload })}\n`, "utf8");
+    fs.appendFileSync(tracePath, `${JSON.stringify({ timestamp: new Date().toISOString(), ...payload })}\n`, "utf8");
   } catch (error) {
     logger.warn(`failed to write trace file ${tracePath}: ${formatError(error)}`);
   }
@@ -239,6 +380,27 @@ function extractAssistantText(message: AssistantMessageLike): string {
     .map((block) => block.text)
     .join("\n")
     .trim();
+}
+
+/**
+ * Extracts readable user text from a user message payload.
+ *
+ * @param content - Raw user-message content.
+ * @returns Human-readable user text.
+ */
+function extractUserText(content: Extract<AgentEvent, { type: "message_end" }>["message"]["content"]): string {
+  if (typeof content === "string") {
+    return truncate(content.trim(), TRACE_MAX_STRING_LENGTH);
+  }
+
+  return truncate(
+    content
+      .filter((block): block is Extract<(typeof content)[number], { type: "text" }> => block.type === "text")
+      .map((block) => block.text)
+      .join("\n")
+      .trim(),
+    TRACE_MAX_STRING_LENGTH,
+  );
 }
 
 /**
@@ -263,6 +425,90 @@ function summarizeToolResult(result: unknown): string {
   }
 
   return truncate(safeStringify(result), 200);
+}
+
+/**
+ * Summarizes a tool result for compact file tracing.
+ *
+ * Structured tool results prefer `details` over the duplicated rendered text.
+ *
+ * @param result - Raw tool result.
+ * @returns Signal-rich tool result payload with large blobs removed.
+ */
+function summarizeTraceToolResult(result: unknown): unknown {
+  if (isToolResultWithDetails(result)) {
+    return sanitizeTraceValue(result.details);
+  }
+
+  return sanitizeTraceValue(result);
+}
+
+/**
+ * Detects the repo-standard tool-result wrapper.
+ *
+ * @param value - Candidate tool result payload.
+ * @returns True when the payload exposes a structured `details` field.
+ */
+function isToolResultWithDetails(value: unknown): value is { details: unknown } {
+  return typeof value === "object" && value !== null && "details" in value;
+}
+
+/**
+ * Compacts arbitrary trace values so the JSONL file stays readable.
+ *
+ * Strings are truncated, embeddings are replaced with size markers, long
+ * arrays are trimmed, and large objects are capped to the most relevant keys.
+ *
+ * @param value - Arbitrary trace value.
+ * @returns Compact trace-safe value.
+ */
+function sanitizeTraceValue(value: unknown): unknown {
+  if (value == null || typeof value === "boolean" || typeof value === "number") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    return truncate(value, TRACE_MAX_STRING_LENGTH);
+  }
+
+  if (Array.isArray(value)) {
+    if (value.length > TRACE_MAX_ARRAY_ITEMS && value.every((item) => typeof item === "number")) {
+      return {
+        omitted: "numeric_array",
+        length: value.length,
+      };
+    }
+
+    if (value.length <= TRACE_MAX_ARRAY_ITEMS) {
+      return value.map((item) => sanitizeTraceValue(item));
+    }
+
+    return {
+      items: value.slice(0, TRACE_MAX_ARRAY_ITEMS).map((item) => sanitizeTraceValue(item)),
+      totalCount: value.length,
+      truncatedCount: value.length - TRACE_MAX_ARRAY_ITEMS,
+    };
+  }
+
+  const entries = Object.entries(value);
+  const compactEntries = entries.slice(0, TRACE_MAX_OBJECT_KEYS).map(([key, entryValue]) => {
+    if ((key === "embedding" || key === "embeddings") && Array.isArray(entryValue)) {
+      return [
+        key,
+        {
+          omitted: "embedding",
+          dimensions: entryValue.length,
+        },
+      ] as const;
+    }
+
+    return [key, sanitizeTraceValue(entryValue)] as const;
+  });
+
+  return {
+    ...Object.fromEntries(compactEntries),
+    ...(entries.length > TRACE_MAX_OBJECT_KEYS ? { truncatedKeyCount: entries.length - TRACE_MAX_OBJECT_KEYS } : {}),
+  };
 }
 
 /**

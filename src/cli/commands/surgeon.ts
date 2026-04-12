@@ -75,7 +75,7 @@ export function registerSurgeonCommand(program: Command): void {
     .option("--model <id>", "Override the surgeon model ID")
     .option("--provider <name>", "Override the surgeon model provider")
     .option("--verbose", "Enable verbose trace logging")
-    .option("--trace <path>", "Write surgeon trace events to a file or existing directory")
+    .option("--trace <path>", "Write compact surgeon trace JSONL to a file or existing directory")
     .option("--json", "Emit machine-readable JSON output")
     .action(async (options: SurgeonRunCommandOptions) => {
       const abortController = new AbortController();

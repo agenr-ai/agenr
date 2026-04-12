@@ -144,15 +144,13 @@ describe("runSurgeon", () => {
     const traceLines = (await readFile(path.join(traceDir, files[0] ?? ""), "utf8"))
       .trim()
       .split("\n")
-      .map((line) => JSON.parse(line) as { timestamp: string; event: { type: string } });
+      .map((line) => JSON.parse(line) as { timestamp: string; kind: string });
 
     expect(traceLines.length).toBeGreaterThan(0);
     expect(traceLines[0]).toEqual(
       expect.objectContaining({
         timestamp: expect.any(String),
-        event: expect.objectContaining({
-          type: "message_end",
-        }),
+        kind: "assistant_message",
       }),
     );
   });
