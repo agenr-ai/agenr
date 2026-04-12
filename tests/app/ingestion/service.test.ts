@@ -283,6 +283,72 @@ describe("ingestPath", () => {
     await ingestPromise;
   });
 
+  it("honors claimExtractionConfig concurrency across path ingest", async () => {
+    const filePath = "/tmp/session-claim-concurrency-path.jsonl";
+    const db = new MockDatabase();
+    const responses = [
+      deferred<{ entity: string; attribute: string; confidence: number }>(),
+      deferred<{ entity: string; attribute: string; confidence: number }>(),
+    ];
+    let claimLlm: MockClaimExtractionLlm | null = null;
+
+    const ingestPromise = ingestPath(
+      "/tmp",
+      {
+        files: new MockFilePort([filePath], { [filePath]: "hash-claim-concurrency-path" }),
+        transcript: new MockTranscriptPort(buildTranscript()),
+        db,
+        embedding: new MockEmbeddingPort(),
+        createExtractionLlm: () =>
+          new MockIngestionLlm({
+            entries: [
+              createInput({
+                type: "fact",
+                subject: "Jim timezone",
+                content: "Jim's timezone is America/Chicago.",
+                source_file: filePath,
+              }),
+              createInput({
+                type: "fact",
+                subject: "Jim city",
+                content: "Jim lives in Denver, Colorado.",
+                source_file: filePath,
+              }),
+            ],
+          }),
+        createClaimExtractionLlm: () => {
+          claimLlm = new MockClaimExtractionLlm(responses.map((response) => response.promise));
+          return claimLlm;
+        },
+      },
+      {
+        concurrency: 10,
+        skipDedup: true,
+        wholeFile: "never",
+        claimExtractionConfig: {
+          enabled: true,
+          confidenceThreshold: 0.8,
+          eligibleTypes: ["fact", "preference", "decision", "lesson"],
+          concurrency: 1,
+        },
+      },
+    );
+
+    await vi.waitFor(() => {
+      expect(claimLlm?.completeJsonCalls).toBe(1);
+    });
+    expect(claimLlm?.maxActiveRequests).toBe(1);
+
+    responses[0].resolve({ entity: "jim", attribute: "timezone", confidence: 0.95 });
+    await vi.waitFor(() => {
+      expect(claimLlm?.completeJsonCalls).toBe(2);
+    });
+    expect(claimLlm?.maxActiveRequests).toBe(1);
+
+    responses[1].resolve({ entity: "jim", attribute: "home_city", confidence: 0.95 });
+    await ingestPromise;
+  });
+
   it("threads transcript-derived project metadata into claim extraction hints and persistence", async () => {
     const filePath = "/tmp/session-project-metadata.jsonl.reset.2026-04-01T09-00-00.000Z";
     const db = new MockDatabase();
@@ -912,20 +978,43 @@ class MockDedupLlm implements IngestionLlmPort {
   }
 }
 
+type MockClaimExtractionResponse =
+  | unknown
+  | Promise<{ entity: string; attribute: string; confidence: number }>;
+
 class MockClaimExtractionLlm implements LlmPort {
-  public constructor(private readonly responder: (systemPrompt: string, userMessage: string) => unknown) {}
+  public completeJsonCalls = 0;
+  public maxActiveRequests = 0;
+  private activeRequests = 0;
+
+  public constructor(
+    private readonly responder:
+      | ((systemPrompt: string, userMessage: string) => MockClaimExtractionResponse)
+      | MockClaimExtractionResponse[],
+  ) {}
 
   public async complete(): Promise<string> {
     throw new Error("complete should not be used in this test.");
   }
 
   public async completeJson<T>(systemPrompt: string, userMessage: string): Promise<T> {
-    const response = this.responder(systemPrompt, userMessage);
-    if (response instanceof Error) {
-      throw response;
-    }
+    const response =
+      typeof this.responder === "function"
+        ? this.responder(systemPrompt, userMessage)
+        : this.responder[this.completeJsonCalls] ?? this.responder.at(-1);
+    this.completeJsonCalls += 1;
+    this.activeRequests += 1;
+    this.maxActiveRequests = Math.max(this.maxActiveRequests, this.activeRequests);
 
-    return response as T;
+    try {
+      if (response instanceof Error) {
+        throw response;
+      }
+
+      return (await response) as T;
+    } finally {
+      this.activeRequests -= 1;
+    }
   }
 }
 

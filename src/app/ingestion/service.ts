@@ -178,7 +178,7 @@ export async function ingestDiscoveredFiles(files: string[], ports: IngestPathPo
         db: ports.db,
       },
       claimConfig,
-      options.concurrency ?? DEFAULT_INGEST_CONCURRENCY,
+      claimConfig.concurrency ?? options.concurrency ?? DEFAULT_INGEST_CONCURRENCY,
       options.onWarning,
       (entry, diagnostic) => {
         const flattenedIndex = findFlattenedEntryIndex(resultsToStore, entry);

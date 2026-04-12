@@ -74,7 +74,7 @@ describe("registerIngestCommand", () => {
     );
   });
 
-  it("defaults entries concurrency to 10", () => {
+  it("leaves entries concurrency unset until runtime resolution", () => {
     const program = new Command();
     registerIngestCommand(program);
 
@@ -82,11 +82,7 @@ describe("registerIngestCommand", () => {
 
     entriesCommand.parseOptions(["/tmp/session.jsonl"]);
 
-    expect(entriesCommand.opts()).toEqual(
-      expect.objectContaining({
-        concurrency: 10,
-      }),
-    );
+    expect(entriesCommand.opts()).not.toHaveProperty("concurrency");
   });
 
   it("allows omitting the episodes path when --embed-only is used", () => {
@@ -348,6 +344,198 @@ describe("registerIngestCommand", () => {
         "Preparing database indexes for bulk ingest...",
         "Rebuilding indexes after bulk ingest...",
       ]),
+    );
+  });
+
+  it("overrides claim extraction concurrency from the CLI flag", async () => {
+    const ingestDiscoveredFilesMock = vi.fn(async () => ({
+      files: ["/tmp/session-a.jsonl"],
+      extractionRuns: [],
+      dedupResult: { removedCount: 0 },
+      dedupUsage: {
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        totalCost: 0,
+        calls: 0,
+      },
+      storeResults: new Map(),
+      claimKeyHealth: null,
+    }));
+
+    vi.resetModules();
+    vi.doMock("@clack/prompts", () => createClackMock());
+    vi.doMock("../../../src/adapters/db/client.js", () => ({
+      createDatabase: vi.fn(async () => ({
+        close: vi.fn(async () => undefined),
+      })),
+    }));
+    vi.doMock("../../../src/adapters/embeddings.js", () => ({
+      createEmbeddingClient: vi.fn(() => ({ embed: vi.fn() })),
+      resolveEmbeddingApiKey: vi.fn(() => "sk-test"),
+      resolveEmbeddingModel: vi.fn(() => "text-embedding-3-small"),
+    }));
+    vi.doMock("../../../src/adapters/files/transcript-files.js", () => ({
+      localTranscriptFiles: {
+        discoverFiles: vi.fn(async () => ["/tmp/session-a.jsonl"]),
+      },
+    }));
+    vi.doMock("../../../src/adapters/llm.js", () => ({
+      createLlmClient: vi.fn(() => ({
+        complete: vi.fn(),
+        completeJson: vi.fn(),
+      })),
+      resolveLlmApiKey: vi.fn(() => "sk-test"),
+      resolveModel: vi.fn(() => ({
+        provider: "openai",
+        modelId: "gpt-5.4-mini",
+      })),
+    }));
+    vi.doMock("../../../src/adapters/openclaw/transcript/parser.js", () => ({
+      openClawTranscriptParser: {
+        parseFile: vi.fn(),
+      },
+    }));
+    vi.doMock("../../../src/app/ingestion/index.js", () => ({
+      DEFAULT_INGEST_CONCURRENCY: 10,
+      ingestDiscoveredFiles: ingestDiscoveredFilesMock,
+    }));
+    vi.doMock("../../../src/config.js", () => ({
+      readConfig: vi.fn(() => ({
+        dbPath: "/tmp/knowledge.db",
+        extractionContext: undefined,
+      })),
+      resolveClaimExtractionConfig: vi.fn(() => ({
+        enabled: true,
+        confidenceThreshold: 0.8,
+        eligibleTypes: ["fact", "preference", "decision", "lesson"],
+        concurrency: 3,
+      })),
+    }));
+    vi.doMock("../../../src/logger.js", () => ({
+      setVerbose: vi.fn(),
+    }));
+    vi.doMock("../../../src/ui.js", () => ({
+      banner: vi.fn(() => "agenr"),
+      formatLabel: vi.fn((label: string, value: string) => `${label}: ${value}`),
+      ui: {
+        error: (text: string) => text,
+      },
+    }));
+
+    const { registerIngestCommand: registerMockedIngestCommand } = await import("../../../src/cli/commands/ingest.js");
+    const program = new Command();
+    registerMockedIngestCommand(program);
+
+    await program.parseAsync(["node", "test", "ingest", "entries", "/tmp/transcripts", "--concurrency", "50"], {
+      from: "node",
+    });
+
+    expect(ingestDiscoveredFilesMock).toHaveBeenCalledWith(
+      ["/tmp/session-a.jsonl"],
+      expect.any(Object),
+      expect.objectContaining({
+        concurrency: 50,
+        claimExtractionConfig: expect.objectContaining({
+          concurrency: 50,
+        }),
+      }),
+    );
+  });
+
+  it("uses config concurrency for extraction, dedup, and claim extraction when the CLI flag is omitted", async () => {
+    const ingestDiscoveredFilesMock = vi.fn(async () => ({
+      files: ["/tmp/session-a.jsonl"],
+      extractionRuns: [],
+      dedupResult: { removedCount: 0 },
+      dedupUsage: {
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        totalCost: 0,
+        calls: 0,
+      },
+      storeResults: new Map(),
+      claimKeyHealth: null,
+    }));
+
+    vi.resetModules();
+    vi.doMock("@clack/prompts", () => createClackMock());
+    vi.doMock("../../../src/adapters/db/client.js", () => ({
+      createDatabase: vi.fn(async () => ({
+        close: vi.fn(async () => undefined),
+      })),
+    }));
+    vi.doMock("../../../src/adapters/embeddings.js", () => ({
+      createEmbeddingClient: vi.fn(() => ({ embed: vi.fn() })),
+      resolveEmbeddingApiKey: vi.fn(() => "sk-test"),
+      resolveEmbeddingModel: vi.fn(() => "text-embedding-3-small"),
+    }));
+    vi.doMock("../../../src/adapters/files/transcript-files.js", () => ({
+      localTranscriptFiles: {
+        discoverFiles: vi.fn(async () => ["/tmp/session-a.jsonl"]),
+      },
+    }));
+    vi.doMock("../../../src/adapters/llm.js", () => ({
+      createLlmClient: vi.fn(() => ({
+        complete: vi.fn(),
+        completeJson: vi.fn(),
+      })),
+      resolveLlmApiKey: vi.fn(() => "sk-test"),
+      resolveModel: vi.fn(() => ({
+        provider: "openai",
+        modelId: "gpt-5.4-mini",
+      })),
+    }));
+    vi.doMock("../../../src/adapters/openclaw/transcript/parser.js", () => ({
+      openClawTranscriptParser: {
+        parseFile: vi.fn(),
+      },
+    }));
+    vi.doMock("../../../src/app/ingestion/index.js", () => ({
+      DEFAULT_INGEST_CONCURRENCY: 10,
+      ingestDiscoveredFiles: ingestDiscoveredFilesMock,
+    }));
+    vi.doMock("../../../src/config.js", () => ({
+      readConfig: vi.fn(() => ({
+        dbPath: "/tmp/knowledge.db",
+        extractionContext: undefined,
+      })),
+      resolveClaimExtractionConfig: vi.fn(() => ({
+        enabled: true,
+        confidenceThreshold: 0.8,
+        eligibleTypes: ["fact", "preference", "decision", "lesson"],
+        concurrency: 7,
+      })),
+    }));
+    vi.doMock("../../../src/logger.js", () => ({
+      setVerbose: vi.fn(),
+    }));
+    vi.doMock("../../../src/ui.js", () => ({
+      banner: vi.fn(() => "agenr"),
+      formatLabel: vi.fn((label: string, value: string) => `${label}: ${value}`),
+      ui: {
+        error: (text: string) => text,
+      },
+    }));
+
+    const { registerIngestCommand: registerMockedIngestCommand } = await import("../../../src/cli/commands/ingest.js");
+    const program = new Command();
+    registerMockedIngestCommand(program);
+
+    await program.parseAsync(["node", "test", "ingest", "entries", "/tmp/transcripts"], {
+      from: "node",
+    });
+
+    expect(ingestDiscoveredFilesMock).toHaveBeenCalledWith(
+      ["/tmp/session-a.jsonl"],
+      expect.any(Object),
+      expect.objectContaining({
+        concurrency: 7,
+        claimExtractionConfig: expect.objectContaining({
+          concurrency: 7,
+        }),
+      }),
     );
   });
 });

@@ -49,7 +49,7 @@ interface NormalizedIngestEntriesCommand {
   dryRun: boolean;
   wholeFile: WholeFileMode;
   skipDedup: boolean;
-  concurrency: number;
+  concurrency?: number;
 }
 
 /** Per-file LLM usage summary used in CLI output. */
@@ -87,7 +87,7 @@ function registerIngestEntriesCommand(parent: Command): void {
     .option("--dry-run", "Parse and extract without storing")
     .addOption(new Option("--whole-file <mode>", "Whole-file mode: auto|force|never").choices(["auto", "force", "never"]).default("auto"))
     .option("--skip-dedup", "Skip within-batch semantic dedup")
-    .addOption(new Option("--concurrency <n>", "Max files to extract in parallel").argParser(parseConcurrency).default(DEFAULT_INGEST_CONCURRENCY));
+    .addOption(new Option("--concurrency <n>", "Max files to extract in parallel").argParser(parseConcurrency));
 
   ingestCommand.action(async (targetPath: string, options: IngestCommandOptions) => {
     const startedAt = Date.now();
@@ -105,6 +105,11 @@ function registerIngestEntriesCommand(parent: Command): void {
       const { provider, modelId } = resolveModel(config, "extraction");
       const { provider: dedupProvider, modelId: dedupModelId } = resolveModel(config, "dedup");
       const claimExtractionConfig = resolveClaimExtractionConfig(config);
+      const effectiveConcurrency = commandInput.concurrency ?? claimExtractionConfig.concurrency ?? DEFAULT_INGEST_CONCURRENCY;
+      const cliClaimExtractionConfig = {
+        ...claimExtractionConfig,
+        concurrency: effectiveConcurrency,
+      };
       const claimModel = claimExtractionConfig.enabled ? resolveModel(config, "claim") : null;
       const llmApiKey = resolveLlmApiKey(config, provider);
       const dedupApiKey = resolveLlmApiKey(config, dedupProvider);
@@ -131,7 +136,7 @@ function registerIngestEntriesCommand(parent: Command): void {
           formatLabel("Whole-file", commandInput.wholeFile),
           formatLabel("Within-batch dedup", commandInput.skipDedup ? "skipped" : "enabled"),
           formatLabel("Embeddings", "stored"),
-          formatLabel("Concurrency", `${commandInput.concurrency}`),
+          formatLabel("Concurrency", `${effectiveConcurrency}`),
         ].join("\n"),
       );
 
@@ -159,8 +164,8 @@ function registerIngestEntriesCommand(parent: Command): void {
             : {}),
         },
         {
-          concurrency: commandInput.concurrency,
-          claimExtractionConfig,
+          concurrency: effectiveConcurrency,
+          claimExtractionConfig: cliClaimExtractionConfig,
           dryRun: commandInput.dryRun,
           verbose: commandInput.verbose,
           wholeFile: commandInput.wholeFile,
@@ -309,7 +314,7 @@ function normalizeIngestEntriesCommand(targetPath: string, options: IngestComman
     dryRun: options.dryRun === true,
     wholeFile: options.wholeFile ?? "auto",
     skipDedup: options.skipDedup === true,
-    concurrency: options.concurrency ?? DEFAULT_INGEST_CONCURRENCY,
+    concurrency: options.concurrency,
   };
 }
 
