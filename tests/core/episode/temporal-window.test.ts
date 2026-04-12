@@ -40,6 +40,22 @@ describe("parseTemporalWindow", () => {
     expect(formatLocalDate(resolved?.bounds.end)).toBe("2026-03-19");
   });
 
+  it("parses small spelled-out relative amounts", () => {
+    const days = parseTemporalWindow("what were we working on two days ago", NOW);
+    const weeks = parseTemporalWindow("what happened two weeks ago", NOW);
+    const months = parseTemporalWindow("what changed two months ago", NOW);
+
+    expect(days?.resolvedFrom).toBe("two days ago");
+    expect(formatLocalDate(days?.bounds.start)).toBe("2026-03-28");
+    expect(formatLocalDate(days?.bounds.end)).toBe("2026-03-28");
+    expect(weeks?.resolvedFrom).toBe("two weeks ago");
+    expect(formatLocalDate(weeks?.bounds.start)).toBe("2026-03-13");
+    expect(formatLocalDate(weeks?.bounds.end)).toBe("2026-03-19");
+    expect(months?.resolvedFrom).toBe("two months ago");
+    expect(formatLocalDate(months?.bounds.start)).toBe("2026-01-27");
+    expect(formatLocalDate(months?.bounds.end)).toBe("2026-02-02");
+  });
+
   it("parses month-day queries into the most recent matching calendar date", () => {
     expect(parseTemporalWindow("what happened on March 30", NOW)?.resolvedFrom).toBe("March 30");
     expect(formatLocalDate(parseTemporalWindow("what happened on March 30", NOW)?.bounds.start)).toBe("2026-03-30");

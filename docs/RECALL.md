@@ -147,9 +147,9 @@ Supported phrases today include:
 - `yesterday`
 - `this week` / `last week`
 - `this month` / `last month`
-- `N days ago`
-- `N weeks ago`
-- `N months ago`
+- `N days ago`, including small spelled-out forms like `two days ago`
+- `N weeks ago`, including small spelled-out forms like `two weeks ago`
+- `N months ago`, including small spelled-out forms like `two months ago`
 - `in March` (and the other month names)
 - `March 15th`, `March 15`, `on March 15`, and similar month-day forms
 - `last Friday` and the other weekdays

@@ -2,6 +2,20 @@ import type { ResolvedTemporalWindow, TemporalWindow, TemporalWindowBounds } fro
 
 const DAY_IN_MILLISECONDS = 24 * 60 * 60 * 1000;
 const DEFAULT_ANCHOR_RADIUS_DAYS = 3;
+const RELATIVE_NUMBER_WORDS = new Map<string, number>([
+  ["one", 1],
+  ["two", 2],
+  ["three", 3],
+  ["four", 4],
+  ["five", 5],
+  ["six", 6],
+  ["seven", 7],
+  ["eight", 8],
+  ["nine", 9],
+  ["ten", 10],
+  ["eleven", 11],
+  ["twelve", 12],
+]);
 const MONTH_INDEX = new Map<string, number>([
   ["january", 0],
   ["february", 1],
@@ -170,9 +184,9 @@ export function parseTemporalWindow(text: string, now: Date = new Date()): Resol
     });
   }
 
-  const relativeMatch = lower.match(/\b(\d+)\s+(day|days|week|weeks|month|months)\s+ago\b/);
+  const relativeMatch = lower.match(/\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(day|days|week|weeks|month|months)\s+ago\b/);
   if (relativeMatch?.[1] && relativeMatch[2]) {
-    const amount = Number(relativeMatch[1]);
+    const amount = parseRelativeAmount(relativeMatch[1]);
     if (Number.isFinite(amount) && amount > 0) {
       const unit = relativeMatch[2];
       if (unit.startsWith("day")) {
@@ -513,6 +527,20 @@ function buildLocalDateAtNoon(year: number, month: number, day: number): Date | 
   }
 
   return parsed;
+}
+
+/**
+ * Parses one relative amount token used in `N days ago` style phrases.
+ *
+ * @param value - Numeric or small spelled-out amount token.
+ * @returns Parsed positive integer, or `NaN` when unsupported.
+ */
+function parseRelativeAmount(value: string): number {
+  if (/^\d+$/u.test(value)) {
+    return Number(value);
+  }
+
+  return RELATIVE_NUMBER_WORDS.get(value) ?? Number.NaN;
 }
 
 /**

@@ -248,9 +248,9 @@ Supported expressions currently include:
 - `last week`
 - `this month`
 - `last month`
-- `N days ago`
-- `N weeks ago`
-- `N months ago`
+- `N days ago`, including small spelled-out forms like `two days ago`
+- `N weeks ago`, including small spelled-out forms like `two weeks ago`
+- `N months ago`, including small spelled-out forms like `two months ago`
 - `in March`
 - `March 15` or `March 15th`
 - `last Friday`

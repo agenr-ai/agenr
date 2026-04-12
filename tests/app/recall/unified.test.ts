@@ -1,9 +1,30 @@
-import { describe, expect, it, vi } from "vitest";
+import { randomUUID } from "node:crypto";
+import { rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";
 import { routeRecall, runUnifiedRecall } from "../../../src/app/recall/unified.js";
 import type { EpisodeDatabasePort, RecallPorts } from "../../../src/core/ports.js";
 import type { RecallCandidateEntry } from "../../../src/core/recall/types.js";
 import type { Entry, Episode } from "../../../src/core/types.js";
+
+const databases: SqlDatabase[] = [];
+const databasePaths: string[] = [];
+
+afterEach(async () => {
+  vi.useRealTimers();
+
+  while (databases.length > 0) {
+    await databases.pop()?.close();
+  }
+
+  while (databasePaths.length > 0) {
+    await rm(databasePaths.pop() ?? "", { force: true });
+  }
+});
 
 describe("runUnifiedRecall", () => {
   it("detects historical-state queries with conservative composite phrases", () => {
@@ -329,6 +350,100 @@ describe("runUnifiedRecall", () => {
       },
     ]);
   });
+
+  it("uses source-time episode windows for relative and explicit temporal queries, not row creation time", async () => {
+    vi.useFakeTimers();
+
+    const now = new Date(2026, 3, 11, 12, 0, 0, 0);
+    vi.setSystemTime(now);
+
+    const database = await createTestEpisodeDatabase();
+    const targetBounds = createLocalDayBounds(2026, 3, 9);
+    const olderBounds = createLocalDayBounds(2026, 3, 8);
+    const newerBounds = createLocalDayBounds(2026, 3, 10);
+
+    await database.upsertEpisode({
+      source: "openclaw",
+      sourceId: "episode-apr-9",
+      sourceRef: "/tmp/episode-apr-9.jsonl",
+      transcriptHash: "episode-apr-9-hash",
+      startedAt: targetBounds.start,
+      endedAt: targetBounds.end,
+      summary: "We worked on agenr episode temporal recall and query-time filtering.",
+      tags: ["agenr", "recall"],
+      activityLevel: "substantial",
+      embedding: createEmbedding(0, 1),
+    });
+    await database.upsertEpisode({
+      source: "openclaw",
+      sourceId: "episode-apr-8",
+      sourceRef: "/tmp/episode-apr-8.jsonl",
+      transcriptHash: "episode-apr-8-hash",
+      startedAt: olderBounds.start,
+      endedAt: olderBounds.end,
+      summary: "We worked on agenr episode temporal recall and query-time filtering.",
+      tags: ["agenr", "recall"],
+      activityLevel: "substantial",
+      embedding: createEmbedding(0, 1),
+    });
+    await database.upsertEpisode({
+      source: "openclaw",
+      sourceId: "episode-apr-10",
+      sourceRef: "/tmp/episode-apr-10.jsonl",
+      transcriptHash: "episode-apr-10-hash",
+      startedAt: newerBounds.start,
+      endedAt: newerBounds.end,
+      summary: "We worked on agenr episode temporal recall and query-time filtering.",
+      tags: ["agenr", "recall"],
+      activityLevel: "substantial",
+      embedding: createEmbedding(0, 1),
+    });
+
+    const targetEpisode = await database.getEpisodeBySourceId("openclaw", "episode-apr-9");
+    expect(targetEpisode?.createdAt).toBe(now.toISOString());
+    expect(targetEpisode?.startedAt).toBe(targetBounds.start);
+    expect(targetEpisode?.endedAt).toBe(targetBounds.end);
+
+    const relative = await runUnifiedRecall(
+      {
+        text: "what were we working on two days ago",
+        mode: "episodes",
+        limit: 5,
+      },
+      {
+        database,
+        recall: createRecallPorts(),
+        embeddingAvailable: true,
+        embedQuery: async () => createEmbedding(0, 1),
+        now,
+      },
+    );
+    const explicitDate = await runUnifiedRecall(
+      {
+        text: "what happened on 2026-04-09",
+        limit: 5,
+      },
+      {
+        database,
+        recall: createRecallPorts(),
+        embeddingAvailable: true,
+        embedQuery: async () => createEmbedding(0, 1),
+        now,
+      },
+    );
+
+    expect(relative.timeWindow?.resolvedFrom).toBe("two days ago");
+    expect(relative.episodes.map((episode) => episode.episode.sourceId)).toEqual(["episode-apr-9"]);
+    expect(relative.episodes.map((episode) => episode.episode.sourceId)).not.toContain("episode-apr-8");
+    expect(relative.episodes.map((episode) => episode.episode.sourceId)).not.toContain("episode-apr-10");
+    expect(explicitDate.routing).toMatchObject({
+      requested: "auto",
+      detectedIntent: "temporal_narrative",
+      queried: ["episodes"],
+    });
+    expect(explicitDate.timeWindow?.resolvedFrom).toBe("2026-04-09");
+    expect(explicitDate.episodes.map((episode) => episode.episode.sourceId)).toEqual(["episode-apr-9"]);
+  });
 });
 
 function createEpisodeDatabase(overrides: Partial<EpisodeDatabasePort> = {}): EpisodeDatabasePort {
@@ -463,4 +578,26 @@ function toRecallCandidateEntry(entry: Entry): RecallCandidateEntry {
     valid_to: entry.valid_to,
     retired: entry.retired,
   };
+}
+
+async function createTestEpisodeDatabase(): Promise<SqlDatabase> {
+  const databasePath = path.join(os.tmpdir(), `agenr-unified-recall-${randomUUID()}.sqlite`);
+  databasePaths.push(databasePath);
+
+  const database = await createDatabase(databasePath);
+  databases.push(database);
+  return database;
+}
+
+function createLocalDayBounds(year: number, monthIndex: number, day: number): { start: string; end: string } {
+  return {
+    start: new Date(year, monthIndex, day, 0, 0, 0, 0).toISOString(),
+    end: new Date(year, monthIndex, day, 23, 59, 59, 999).toISOString(),
+  };
+}
+
+function createEmbedding(index: number, value: number): number[] {
+  const vector = Array.from({ length: 1024 }, () => 0);
+  vector[index] = value;
+  return vector;
 }

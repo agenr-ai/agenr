@@ -587,6 +587,29 @@ describe("createDatabase", () => {
     expect(byTranscriptHash?.id).toBe(result.episode.id);
   });
 
+  it("stores source session time separately from row creation time for episodes", async () => {
+    vi.useFakeTimers();
+
+    const database = await createTestDatabase();
+    const insertedAt = new Date("2026-04-11T12:00:00.000Z");
+    vi.setSystemTime(insertedAt);
+
+    const result = await database.upsertEpisode(
+      createEpisodeInput({
+        sourceId: "session-old-source-time",
+        transcriptHash: "session-old-source-time-hash",
+        startedAt: "2026-04-09T09:00:00.000Z",
+        endedAt: "2026-04-09T10:00:00.000Z",
+        summary: "We investigated episode temporal recall for older sessions.",
+      }),
+    );
+
+    expect(result.episode.startedAt).toBe("2026-04-09T09:00:00.000Z");
+    expect(result.episode.endedAt).toBe("2026-04-09T10:00:00.000Z");
+    expect(result.episode.createdAt).toBe(insertedAt.toISOString());
+    expect(result.episode.updatedAt).toBe(insertedAt.toISOString());
+  });
+
   it("returns unchanged for normalized episode payload matches without bumping updated_at", async () => {
     vi.useFakeTimers();
 
