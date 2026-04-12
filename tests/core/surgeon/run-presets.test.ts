@@ -1,19 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { SURGEON_RUN_PRESETS, isSurgeonRunPreset, resolveSurgeonPassSequence } from "../../../src/core/surgeon/domain/run-presets.js";
+import { AUTONOMOUS_SURGEON_SEQUENCE, getAutonomousSurgeonPassSequence } from "../../../src/core/surgeon/domain/run-presets.js";
 
-describe("surgeon run presets", () => {
-  it("recognizes supported preset identifiers", () => {
-    expect(SURGEON_RUN_PRESETS).toEqual(["claim-key-only", "structural", "full"]);
-    expect(isSurgeonRunPreset("claim-key-only")).toBe(true);
-    expect(isSurgeonRunPreset("structural")).toBe(true);
-    expect(isSurgeonRunPreset("full")).toBe(true);
-    expect(isSurgeonRunPreset("single")).toBe(false);
-  });
-
-  it("orders structural and full presets with claim_key_quality before supersession", () => {
-    expect(resolveSurgeonPassSequence("claim-key-only")).toEqual(["claim_key_quality"]);
-    expect(resolveSurgeonPassSequence("structural")).toEqual(["claim_key_quality", "supersession"]);
-    expect(resolveSurgeonPassSequence("full")).toEqual(["claim_key_quality", "supersession", "retirement"]);
+describe("surgeon autonomous sequence", () => {
+  it("uses the full autonomous pass order", () => {
+    expect(AUTONOMOUS_SURGEON_SEQUENCE).toEqual(["claim_key_quality", "supersession", "retirement"]);
+    expect(getAutonomousSurgeonPassSequence()).toEqual(["claim_key_quality", "supersession", "retirement"]);
   });
 });

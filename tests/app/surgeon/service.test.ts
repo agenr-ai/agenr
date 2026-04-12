@@ -25,7 +25,7 @@ import {
   getSurgeonRunActions,
   getSurgeonRunHistory,
 } from "../../../src/adapters/db/surgeon-run-log.js";
-import { runSurgeon, runSurgeonPreset, type SurgeonRunOptions } from "../../../src/app/surgeon/service.js";
+import { runAutonomousSurgeon, runSurgeon, type SurgeonRunOptions } from "../../../src/app/surgeon/service.js";
 import type { Entry } from "../../../src/core/types.js";
 
 const TEST_NOW = new Date("2026-03-29T12:00:00.000Z");
@@ -548,8 +548,16 @@ describe("runSurgeon", () => {
     });
   });
 
-  it("composes structural preset runs with claim_key_quality before supersession", async () => {
+  it("repeats the autonomous sequence until direct work is exhausted", async () => {
     const db = await createTestDatabase(databases);
+    await insertEntry(db, {
+      id: "claim-noncanonical-autonomous",
+      subject: "Jim editor preference",
+      type: "preference",
+      claim_key: " Jim / Editor ",
+      created_at: daysAgoIso(80),
+      updated_at: daysAgoIso(80),
+    });
     await insertEntry(db, {
       id: "slot-old",
       subject: "Mac mini update policy",
@@ -566,12 +574,43 @@ describe("runSurgeon", () => {
       created_at: daysAgoIso(10),
       updated_at: daysAgoIso(10),
     });
+    mockAutonomousCompletionRunAgentLoop();
+
+    const result = await runAutonomousSurgeon(
+      {
+        budget: 0.2,
+        apply: true,
+        contextLimit: 4_096,
+        verbose: false,
+        json: false,
+      },
+      {
+        port: createSurgeonPort(db),
+        config: null,
+        model: TEST_MODEL,
+        now: () => TEST_NOW,
+      },
+    );
+
+    expect(result).toMatchObject({
+      cyclesCompleted: 2,
+      status: "completed",
+    });
+    expect(result.passes.map((pass) => pass.passType)).toEqual(["claim_key_quality", "supersession", "retirement", "retirement"]);
+    expect(runAgentLoopMock).toHaveBeenCalledTimes(3);
+    await expect(readClaimKey(db, "claim-noncanonical-autonomous")).resolves.toBe("jim/editor");
+    await expect(readRetiredFlag(db, "stale-temp")).resolves.toBe(true);
+    await expect(readRetiredFlag(db, "stale-milestone")).resolves.toBe(true);
+    await expect(readSupersededBy(db, "slot-old")).resolves.toBe("slot-new");
+  });
+
+  it("stops the autonomous sequence when a pass hits the cost cap", async () => {
+    const db = await createTestDatabase(databases);
     mockSuccessfulRunAgentLoop();
 
-    const result = await runSurgeonPreset(
+    const result = await runAutonomousSurgeon(
       {
-        preset: "structural",
-        budget: 0.1,
+        budget: 0.01,
         apply: false,
         contextLimit: 4_096,
         verbose: false,
@@ -585,34 +624,11 @@ describe("runSurgeon", () => {
       },
     );
 
-    expect(result.passes.map((pass) => pass.passType)).toEqual(["claim_key_quality", "supersession"]);
-    expect(runAgentLoopMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("rejects claim-key targeted selectors on multi-pass presets", async () => {
-    const db = await createTestDatabase(databases);
-
-    await expect(
-      runSurgeonPreset(
-        {
-          preset: "structural",
-          claimKeyPrefix: "jim",
-          budget: 0.1,
-          apply: false,
-          contextLimit: 4_096,
-          verbose: false,
-          json: false,
-        },
-        {
-          port: createSurgeonPort(db),
-          config: null,
-          model: TEST_MODEL,
-          now: () => TEST_NOW,
-        },
-      ),
-    ).rejects.toThrow("Claim-key-quality targeted selectors are only supported with the claim-key-only preset.");
-
-    expect(runAgentLoopMock).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      cyclesCompleted: 1,
+      status: "cost_capped",
+    });
+    expect(result.passes.map((pass) => pass.passType)).toEqual(["claim_key_quality", "retirement"]);
   });
 });
 
@@ -918,6 +934,158 @@ function mockSuccessfulSupersessionRunAgentLoop(): void {
   );
 }
 
+function mockAutonomousCompletionRunAgentLoop(): void {
+  let retirementRuns = 0;
+
+  runAgentLoopMock.mockImplementation(
+    async (
+      prompts: AgentMessage[],
+      context: AgentContext,
+      config: AgentLoopConfig,
+      emit: (event: AgentEvent) => void,
+      signal?: AbortSignal,
+    ): Promise<AgentMessage[]> => {
+      const toolNames = new Set((context.tools ?? []).map((tool) => tool.name));
+
+      if (toolNames.has("query_supersession_candidates")) {
+        const queryArgs = {
+          scope: "claim_key",
+          limit: 20,
+          offset: 0,
+        };
+        const queryAssistantMessage = createAssistantToolMessage({
+          id: "tool-query-supersession",
+          name: "query_supersession_candidates",
+          arguments: queryArgs,
+          reasoning: "Start with the claim_key sweep before widening the review.",
+          usage: TEST_USAGE,
+        });
+        await executeToolCall({
+          context,
+          config,
+          emit,
+          signal,
+          assistantMessage: queryAssistantMessage,
+          args: queryArgs,
+        });
+
+        const linkArgs = {
+          old_entry_id: "slot-old",
+          new_entry_id: "slot-new",
+          kind: "duplicate",
+          reason: "These preferences say the same thing. Keep the newer wording as the survivor.",
+        };
+        const linkAssistantMessage = createAssistantToolMessage({
+          id: "tool-link-supersession",
+          name: "link_supersession",
+          arguments: linkArgs,
+          reasoning: "This is a clear duplicate pair in the same claim_key slot.",
+        });
+        await executeToolCall({
+          context,
+          config,
+          emit,
+          signal,
+          assistantMessage: linkAssistantMessage,
+          args: linkArgs,
+        });
+
+        const completeArgs = {
+          actions_taken: 1,
+          entries_skipped: [],
+          observations: ["Resolved one duplicate supersession pair."],
+          recommendations: ["Continue the autonomous cleanup sweep."],
+        };
+        const completeAssistantMessage = createAssistantToolMessage({
+          id: "tool-complete-supersession",
+          name: "complete_pass",
+          arguments: completeArgs,
+          reasoning: "The claim_key sweep is complete for this autonomous cycle.",
+        });
+        await executeToolCall({
+          context,
+          config,
+          emit,
+          signal,
+          assistantMessage: completeAssistantMessage,
+          args: completeArgs,
+        });
+
+        return [...prompts, queryAssistantMessage, linkAssistantMessage, completeAssistantMessage];
+      }
+
+      if (toolNames.has("retire_entry")) {
+        const targetEntryId = retirementRuns === 0 ? "stale-temp" : "stale-milestone";
+        retirementRuns += 1;
+
+        const queryArgs = {
+          limit: 20,
+          offset: 0,
+        };
+        const queryAssistantMessage = createAssistantToolMessage({
+          id: `tool-query-retirement-${retirementRuns}`,
+          name: "query_candidates",
+          arguments: queryArgs,
+          reasoning: "Load the next retirement candidates.",
+          usage: TEST_USAGE,
+        });
+        await executeToolCall({
+          context,
+          config,
+          emit,
+          signal,
+          assistantMessage: queryAssistantMessage,
+          args: queryArgs,
+        });
+
+        const retireArgs = {
+          entry_id: targetEntryId,
+          reason: "This stale entry is safe to retire in the autonomous cleanup run.",
+        };
+        const retireAssistantMessage = createAssistantToolMessage({
+          id: `tool-retire-${retirementRuns}`,
+          name: "retire_entry",
+          arguments: retireArgs,
+          reasoning: "Retire the oldest safe candidate first.",
+        });
+        await executeToolCall({
+          context,
+          config,
+          emit,
+          signal,
+          assistantMessage: retireAssistantMessage,
+          args: retireArgs,
+        });
+
+        const completeArgs = {
+          actions_taken: 1,
+          entries_skipped: [],
+          observations: [`Retired ${targetEntryId}.`],
+          recommendations: ["Continue the autonomous cleanup sweep."],
+        };
+        const completeAssistantMessage = createAssistantToolMessage({
+          id: `tool-complete-retirement-${retirementRuns}`,
+          name: "complete_pass",
+          arguments: completeArgs,
+          reasoning: "The current retirement slice is complete.",
+        });
+        await executeToolCall({
+          context,
+          config,
+          emit,
+          signal,
+          assistantMessage: completeAssistantMessage,
+          args: completeArgs,
+        });
+
+        return [...prompts, queryAssistantMessage, retireAssistantMessage, completeAssistantMessage];
+      }
+
+      throw new Error("Unexpected tool set for autonomous surgeon test.");
+    },
+  );
+}
+
 async function executeToolCall(input: {
   context: AgentContext;
   config: AgentLoopConfig;
@@ -1019,6 +1187,33 @@ function getUserMessageText(message: AgentMessage): string {
     .filter((block): block is Extract<(typeof message.content)[number], { type: "text" }> => block.type === "text")
     .map((block) => block.text)
     .join("\n");
+}
+
+async function readClaimKey(db: SqlDatabase, entryId: string): Promise<string | null> {
+  const rows = await db.execute({
+    sql: "SELECT claim_key FROM entries WHERE id = ?",
+    args: [entryId],
+  });
+
+  return (rows.rows[0]?.claim_key as string | null | undefined) ?? null;
+}
+
+async function readRetiredFlag(db: SqlDatabase, entryId: string): Promise<boolean> {
+  const rows = await db.execute({
+    sql: "SELECT retired FROM entries WHERE id = ?",
+    args: [entryId],
+  });
+
+  return rows.rows[0]?.retired === 1;
+}
+
+async function readSupersededBy(db: SqlDatabase, entryId: string): Promise<string | null> {
+  const rows = await db.execute({
+    sql: "SELECT superseded_by FROM entries WHERE id = ?",
+    args: [entryId],
+  });
+
+  return (rows.rows[0]?.superseded_by as string | null | undefined) ?? null;
 }
 
 function daysAgoIso(days: number): string {

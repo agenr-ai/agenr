@@ -16,7 +16,7 @@ import type { Logger } from "../../logger.js";
 import type { LlmPort, RecallPorts } from "../../core/ports.js";
 import type { SurgeonRunAction } from "../../core/surgeon/domain/action-types.js";
 import type { SurgeonPassType } from "../../core/surgeon/domain/pass-types.js";
-import { resolveSurgeonPassSequence, type ImplementedSurgeonPass, type SurgeonRunPreset } from "../../core/surgeon/domain/run-presets.js";
+import { getAutonomousSurgeonPassSequence, type ImplementedSurgeonPass } from "../../core/surgeon/domain/run-presets.js";
 import type { SurgeonCompletionSummary, SurgeonRunStatus } from "../../core/surgeon/types.js";
 import { createBudgetTracker } from "./budget.js";
 import { runClaimKeyQualityPass } from "./claim-key-quality.js";
@@ -74,17 +74,15 @@ export interface SurgeonRunResult {
 }
 
 /**
- * Options accepted by one composed surgeon preset run.
+ * Options accepted by one autonomous multi-pass surgeon run.
  */
-export interface SurgeonPresetRunOptions extends Omit<SurgeonRunOptions, "pass"> {
-  preset: SurgeonRunPreset;
-}
+export interface SurgeonAutonomousRunOptions extends Omit<SurgeonRunOptions, "pass"> {}
 
 /**
- * Aggregate summary returned after a composed surgeon preset run completes.
+ * Aggregate summary returned after an autonomous surgeon run completes.
  */
-export interface SurgeonPresetRunResult {
-  preset: SurgeonRunPreset;
+export interface SurgeonAutonomousRunResult {
+  cyclesCompleted: number;
   passes: SurgeonRunResult[];
   status: SurgeonRunStatus;
   actionsTaken: number;
@@ -113,67 +111,87 @@ export interface SurgeonWorkflowDeps {
 }
 
 /**
- * Runs one composed surgeon preset by executing its ordered pass sequence.
+ * Runs the full autonomous surgeon sequence until no direct work remains or the run stops early.
  *
- * @param options - Preset selection and shared run options.
+ * @param options - Shared run options for all passes in the autonomous loop.
  * @param deps - Resolved database, model, config, and optional recall runtime dependencies.
- * @returns Aggregate preset summary plus per-pass results.
+ * @returns Aggregate autonomous run summary plus per-pass results.
  */
-export async function runSurgeonPreset(options: SurgeonPresetRunOptions, deps: SurgeonWorkflowDeps): Promise<SurgeonPresetRunResult> {
-  validatePresetRunOptions(options);
-  const passes = resolveSurgeonPassSequence(options.preset);
+export async function runAutonomousSurgeon(
+  options: SurgeonAutonomousRunOptions,
+  deps: SurgeonWorkflowDeps,
+): Promise<SurgeonAutonomousRunResult> {
   const results: SurgeonRunResult[] = [];
+  let cyclesCompleted = 0;
+  let remainingBudget = resolveRunCostCap(options, deps.config);
+  const protection = resolveProtectionConfig(options, deps.config);
+  const autonomousSequence = getAutonomousSurgeonPassSequence();
 
-  for (const pass of passes) {
-    const result = await runSurgeon(
-      {
-        ...options,
-        pass,
-      },
-      deps,
-    );
-    results.push(result);
+  while (remainingBudget > 0) {
+    const cycleWork = await loadAutonomousCycleWork(deps.port, {
+      includeClaimKeyQuality: cyclesCompleted === 0,
+      protectRecalledDays: protection.protectRecalledDays,
+      protectMinImportance: protection.protectMinImportance,
+      skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
+      now: deps.now ? deps.now() : new Date(),
+    });
+    const nextPasses = autonomousSequence.filter((pass) => cycleWork[pass] > 0);
 
-    if (result.status !== "completed") {
-      break;
+    if (nextPasses.length === 0) {
+      return finalizeAutonomousRun({
+        cyclesCompleted,
+        passes: results,
+        status: "completed",
+        summaryOverride: results.length === 0 ? "No direct surgeon work remained." : null,
+      });
+    }
+
+    cyclesCompleted += 1;
+
+    for (const pass of nextPasses) {
+      const result = await runSurgeon(
+        {
+          ...options,
+          budget: remainingBudget,
+          includeInactive: true,
+          pass,
+        },
+        deps,
+      );
+      results.push(result);
+      remainingBudget = Math.max(0, remainingBudget - result.estimatedCostUsd);
+
+      if (result.status !== "completed") {
+        return finalizeAutonomousRun({
+          cyclesCompleted,
+          passes: results,
+          status: result.status,
+        });
+      }
+    }
+
+    if (remainingBudget <= 0) {
+      const pendingWork = await loadAutonomousCycleWork(deps.port, {
+        includeClaimKeyQuality: false,
+        protectRecalledDays: protection.protectRecalledDays,
+        protectMinImportance: protection.protectMinImportance,
+        skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
+        now: deps.now ? deps.now() : new Date(),
+      });
+
+      return finalizeAutonomousRun({
+        cyclesCompleted,
+        passes: results,
+        status: hasAutonomousWork(pendingWork) ? "cost_capped" : "completed",
+      });
     }
   }
 
-  return {
-    preset: options.preset,
+  return finalizeAutonomousRun({
+    cyclesCompleted,
     passes: results,
-    status: results.at(-1)?.status ?? "completed",
-    actionsTaken: results.reduce((sum, result) => sum + result.actionsTaken, 0),
-    entriesRetired: results.reduce((sum, result) => sum + result.entriesRetired, 0),
-    inputTokens: results.reduce((sum, result) => sum + result.inputTokens, 0),
-    outputTokens: results.reduce((sum, result) => sum + result.outputTokens, 0),
-    estimatedCostUsd: results.reduce((sum, result) => sum + result.estimatedCostUsd, 0),
-    summary:
-      results
-        .map((result) => result.summary)
-        .filter((summary): summary is string => Boolean(summary))
-        .join(" ")
-        .trim() || null,
-  };
-}
-
-/**
- * Rejects claim-key-quality-only selectors on multi-pass presets.
- *
- * @param options - Preset run options to validate.
- */
-function validatePresetRunOptions(options: SurgeonPresetRunOptions): void {
-  if (options.preset === "claim-key-only") {
-    return;
-  }
-
-  if (!hasClaimKeyQualityTargeting(options)) {
-    return;
-  }
-
-  throw new Error(
-    "Claim-key-quality targeted selectors are only supported with the claim-key-only preset. Use --preset claim-key-only or run claim_key_quality directly.",
-  );
+    status: "completed",
+  });
 }
 
 /**
@@ -600,7 +618,7 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
  * @param config - Optional persisted agenr configuration.
  * @returns Positive cost cap in USD.
  */
-function resolveRunCostCap(options: SurgeonRunOptions, config: AgenrConfig | null): number {
+function resolveRunCostCap(options: { budget: number }, config: AgenrConfig | null): number {
   if (Number.isFinite(options.budget) && options.budget > 0) {
     return options.budget;
   }
@@ -649,7 +667,7 @@ function resolveContextLimit(options: SurgeonRunOptions, config: AgenrConfig | n
  * @returns Hard-protection thresholds for the retirement pass.
  */
 function resolveProtectionConfig(
-  options: SurgeonRunOptions,
+  options: { skipEvaluatedDays?: number },
   config: AgenrConfig | null,
 ): {
   protectRecalledDays: number;
@@ -817,6 +835,50 @@ async function loadPassStartContext(
 }
 
 /**
+ * Loads the current direct-work counts used by autonomous surgeon runs.
+ *
+ * @param port - Persistence boundary used to load candidate counts.
+ * @param protection - Retirement protection configuration for health queries.
+ * @returns Current direct-work counts keyed by pass.
+ */
+async function loadAutonomousCycleWork(
+  port: SurgeonPort,
+  protection: {
+    includeClaimKeyQuality: boolean;
+    protectRecalledDays: number;
+    protectMinImportance: number;
+    skipRecentlyEvaluatedDays: number;
+    now: Date;
+  },
+): Promise<Record<ImplementedSurgeonPass, number>> {
+  const [claimKeyEntries, supersessionContext, retirementContext] = await Promise.all([
+    protection.includeClaimKeyQuality
+      ? port.listClaimKeyQualityEntries({
+          includeInactive: true,
+        })
+      : Promise.resolve([]),
+    loadPassStartContext("supersession", port, protection),
+    loadPassStartContext("retirement", port, protection),
+  ]);
+
+  return {
+    claim_key_quality: claimKeyEntries.length,
+    supersession: supersessionContext.supersessionClaimKeyClusters + supersessionContext.supersessionSubjectClusters,
+    retirement: retirementContext.retirementCandidates,
+  };
+}
+
+/**
+ * Checks whether any autonomous pass still has direct work remaining.
+ *
+ * @param cycleWork - Current direct-work counts keyed by pass.
+ * @returns True when at least one pass still has work remaining.
+ */
+function hasAutonomousWork(cycleWork: Record<ImplementedSurgeonPass, number>): boolean {
+  return Object.values(cycleWork).some((count) => count > 0);
+}
+
+/**
  * Selects the pass-specific prompt block.
  *
  * @param pass - Surgeon pass being executed.
@@ -871,28 +933,6 @@ function createCompletionState(): SurgeonToolCompletionState {
       this.summary = summary;
     },
   };
-}
-
-/**
- * Checks whether a run request includes claim-key-quality-only targeting selectors.
- *
- * @param input - Shared pass or preset options.
- * @returns True when claim-key-quality targeting is requested.
- */
-function hasClaimKeyQualityTargeting(input: { type?: string; claimKeyPrefix?: string; entryIds?: string[]; includeInactive?: boolean }): boolean {
-  if (typeof input.type === "string" && input.type.trim().length > 0) {
-    return true;
-  }
-
-  if (typeof input.claimKeyPrefix === "string" && input.claimKeyPrefix.trim().length > 0) {
-    return true;
-  }
-
-  if ((input.entryIds ?? []).some((entryId) => entryId.trim().length > 0)) {
-    return true;
-  }
-
-  return input.includeInactive === true;
 }
 
 /**
@@ -953,6 +993,47 @@ async function finalizeRun(input: {
     estimatedCostUsd: totals.costUsd,
     summary,
   };
+}
+
+/**
+ * Builds the aggregate public result returned by autonomous surgeon runs.
+ *
+ * @param input - Finalized autonomous run state.
+ * @returns Public autonomous run result.
+ */
+function finalizeAutonomousRun(input: {
+  cyclesCompleted: number;
+  passes: SurgeonRunResult[];
+  status: SurgeonRunStatus;
+  summaryOverride?: string | null;
+}): SurgeonAutonomousRunResult {
+  return {
+    cyclesCompleted: input.cyclesCompleted,
+    passes: input.passes,
+    status: input.status,
+    actionsTaken: input.passes.reduce((sum, pass) => sum + pass.actionsTaken, 0),
+    entriesRetired: input.passes.reduce((sum, pass) => sum + pass.entriesRetired, 0),
+    inputTokens: input.passes.reduce((sum, pass) => sum + pass.inputTokens, 0),
+    outputTokens: input.passes.reduce((sum, pass) => sum + pass.outputTokens, 0),
+    estimatedCostUsd: input.passes.reduce((sum, pass) => sum + pass.estimatedCostUsd, 0),
+    summary: input.summaryOverride ?? buildAutonomousSummary(input.passes),
+  };
+}
+
+/**
+ * Collapses per-pass summaries into one autonomous run summary string.
+ *
+ * @param passes - Completed pass results for one autonomous run.
+ * @returns Joined summary text, or null when none was produced.
+ */
+function buildAutonomousSummary(passes: SurgeonRunResult[]): string | null {
+  const summary = passes
+    .map((pass) => pass.summary)
+    .filter((value): value is string => Boolean(value))
+    .join(" ")
+    .trim();
+
+  return summary.length > 0 ? summary : null;
 }
 
 /**

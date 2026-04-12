@@ -228,32 +228,32 @@ describe("registerSurgeonCommand", () => {
     });
   });
 
-  it("forwards preset and project selection to runtime and renders aggregate preset output", async () => {
+  it("runs the autonomous mode by default and renders aggregate output", async () => {
     const { program, stdout } = createProgramWithCapturedOutput();
     runSurgeonRuntimeMock.mockResolvedValue({
-      preset: "structural",
-      passes: [{ passType: "claim_key_quality" }, { passType: "supersession" }],
+      cyclesCompleted: 2,
+      passes: [{ passType: "claim_key_quality" }, { passType: "supersession" }, { passType: "retirement" }, { passType: "retirement" }],
       status: "completed",
       actionsTaken: 3,
-      entriesRetired: 0,
+      entriesRetired: 2,
       inputTokens: 150,
       outputTokens: 20,
       estimatedCostUsd: 0.03,
-      summary: "Structural cleanup complete.",
+      summary: "Autonomous cleanup complete.",
     });
 
-    await program.parseAsync(["surgeon", "run", "--preset", "structural", "--project", "Agenr"], { from: "user" });
+    await program.parseAsync(["surgeon", "run"], { from: "user" });
 
     expect(runSurgeonRuntimeMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        preset: "structural",
-        project: "Agenr",
+        pass: undefined,
       }),
     );
     const stdoutText = stripAnsi(stdout.join(""));
-    expect(stdoutText).toContain("Surgeon Preset: structural");
-    expect(stdoutText).toContain("claim_key_quality -> supersession");
-    expect(stdoutText).toContain("Structural cleanup complete.");
+    expect(stdoutText).toContain("Surgeon Run (autonomous)");
+    expect(stdoutText).toContain("2");
+    expect(stdoutText).toContain("claim_key_quality -> supersession -> retirement -> retirement");
+    expect(stdoutText).toContain("Autonomous cleanup complete.");
   });
 
   it("normalizes run arguments before invoking the runtime", async () => {
@@ -265,16 +265,6 @@ describe("registerSurgeonCommand", () => {
         "run",
         "--pass",
         "claim_key_quality",
-        "--project",
-        " Agenr ",
-        "--type",
-        " decision ",
-        "--claim-key-prefix",
-        " agent:jim ",
-        "--entry-id",
-        " entry-1 ",
-        "--entry-id",
-        "entry-1",
         "--provider",
         " openai ",
         "--model",
@@ -287,15 +277,20 @@ describe("registerSurgeonCommand", () => {
 
     expect(runSurgeonRuntimeMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        project: "Agenr",
-        type: "decision",
-        claimKeyPrefix: "agent:jim",
-        entryIds: ["entry-1"],
+        pass: "claim_key_quality",
         provider: "openai",
         model: "gpt-5.4-mini",
         tracePath: "/tmp/surgeon.log",
       }),
     );
+  });
+
+  it("rejects removed surgeon run flags", async () => {
+    const { program, stderr } = createProgramWithCapturedOutput();
+
+    await expect(program.parseAsync(["surgeon", "run", "--preset", "structural"], { from: "user" })).rejects.toThrow();
+
+    expect(stripAnsi(stderr.join(""))).toContain("unknown option '--preset'");
   });
 
   it("renders lifecycle health counts in surgeon status output", async () => {

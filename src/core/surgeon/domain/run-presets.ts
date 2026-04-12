@@ -1,42 +1,19 @@
 import type { SurgeonPassType } from "./pass-types.js";
 
-const SURGEON_RUN_PRESETS = ["claim-key-only", "structural", "full"] as const;
-
-/**
- * Supported composed surgeon run presets.
- */
-export type SurgeonRunPreset = (typeof SURGEON_RUN_PRESETS)[number];
+const AUTONOMOUS_SURGEON_SEQUENCE = ["claim_key_quality", "supersession", "retirement"] as const;
 
 /**
  * Supported implemented single-pass surgeon identifiers.
  */
-export type ImplementedSurgeonPass = Extract<SurgeonPassType, "claim_key_quality" | "retirement" | "supersession">;
+export type ImplementedSurgeonPass = Extract<SurgeonPassType, (typeof AUTONOMOUS_SURGEON_SEQUENCE)[number]>;
 
-export { SURGEON_RUN_PRESETS };
-
-/**
- * Checks whether a string is a supported surgeon run preset.
- *
- * @param value - Candidate preset identifier.
- * @returns True when the value is a known preset.
- */
-export function isSurgeonRunPreset(value: string): value is SurgeonRunPreset {
-  return (SURGEON_RUN_PRESETS as readonly string[]).includes(value);
-}
+export { AUTONOMOUS_SURGEON_SEQUENCE };
 
 /**
- * Resolves a composed preset into its ordered pass sequence.
+ * Returns the ordered pass sequence used by autonomous surgeon runs.
  *
- * @param preset - Named surgeon run preset.
  * @returns Ordered implemented pass sequence.
  */
-export function resolveSurgeonPassSequence(preset: SurgeonRunPreset): ImplementedSurgeonPass[] {
-  switch (preset) {
-    case "claim-key-only":
-      return ["claim_key_quality"];
-    case "structural":
-      return ["claim_key_quality", "supersession"];
-    case "full":
-      return ["claim_key_quality", "supersession", "retirement"];
-  }
+export function getAutonomousSurgeonPassSequence(): ImplementedSurgeonPass[] {
+  return [...AUTONOMOUS_SURGEON_SEQUENCE];
 }

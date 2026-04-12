@@ -7,14 +7,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDatabase } from "../../../src/adapters/db/client.js";
 import { createSurgeonRun, getSurgeonRunActions, logSurgeonProposal } from "../../../src/adapters/db/surgeon-run-log.js";
 
-const { runSurgeonMock, runSurgeonPresetMock } = vi.hoisted(() => ({
+const { runAutonomousSurgeonMock, runSurgeonMock } = vi.hoisted(() => ({
+  runAutonomousSurgeonMock: vi.fn(),
   runSurgeonMock: vi.fn(),
-  runSurgeonPresetMock: vi.fn(),
 }));
 
 vi.mock("../../../src/app/surgeon/service.js", () => ({
+  runAutonomousSurgeon: runAutonomousSurgeonMock,
   runSurgeon: runSurgeonMock,
-  runSurgeonPreset: runSurgeonPresetMock,
 }));
 
 import { loadSurgeonBacklogRuntime, loadSurgeonStatusRuntime, reviewSurgeonProposalRuntime, runSurgeonRuntime } from "../../../src/app/surgeon/runtime.js";
@@ -22,8 +22,8 @@ import { loadSurgeonBacklogRuntime, loadSurgeonStatusRuntime, reviewSurgeonPropo
 const tempPaths: string[] = [];
 
 afterEach(async () => {
+  runAutonomousSurgeonMock.mockReset();
   runSurgeonMock.mockReset();
-  runSurgeonPresetMock.mockReset();
 
   while (tempPaths.length > 0) {
     await rm(tempPaths.pop() ?? "", { recursive: true, force: true });
@@ -42,8 +42,8 @@ beforeEach(() => {
     estimatedCostUsd: 0,
     summary: null,
   });
-  runSurgeonPresetMock.mockResolvedValue({
-    preset: "structural",
+  runAutonomousSurgeonMock.mockResolvedValue({
+    cyclesCompleted: 1,
     passes: [],
     status: "completed",
     actionsTaken: 0,
@@ -167,12 +167,16 @@ describe("surgeon runtime", () => {
     });
 
     expect(runSurgeonMock).toHaveBeenCalledTimes(1);
-    const [, deps] = runSurgeonMock.mock.calls[0] as Parameters<typeof runSurgeonMock>;
+    const [options, deps] = runSurgeonMock.mock.calls[0] as Parameters<typeof runSurgeonMock>;
 
+    expect(options).toMatchObject({
+      pass: "claim_key_quality",
+      includeInactive: true,
+    });
     expect(deps.reportProgress).toBe(onProgress);
   });
 
-  it("routes presets through the composed service entry point and forwards project targeting", async () => {
+  it("routes bare runs through the autonomous service entry point", async () => {
     const tempRoot = await createTempDirectory("agenr-surgeon-runtime-");
     const dbPath = path.join(tempRoot, "knowledge.db");
     const configPath = path.join(tempRoot, "config.json");
@@ -186,8 +190,6 @@ describe("surgeon runtime", () => {
     });
 
     await runSurgeonRuntime({
-      preset: "structural",
-      project: "Agenr",
       budget: 0,
       apply: false,
       verbose: false,
@@ -198,13 +200,12 @@ describe("surgeon runtime", () => {
       },
     });
 
-    expect(runSurgeonPresetMock).toHaveBeenCalledTimes(1);
+    expect(runAutonomousSurgeonMock).toHaveBeenCalledTimes(1);
     expect(runSurgeonMock).not.toHaveBeenCalled();
-    const [options, deps] = runSurgeonPresetMock.mock.calls[0] as Parameters<typeof runSurgeonPresetMock>;
+    const [options, deps] = runAutonomousSurgeonMock.mock.calls[0] as Parameters<typeof runAutonomousSurgeonMock>;
 
     expect(options).toMatchObject({
-      preset: "structural",
-      project: "Agenr",
+      includeInactive: true,
     });
     expect(deps.createClaimExtractionLlm).toBeDefined();
   });

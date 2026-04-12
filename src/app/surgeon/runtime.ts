@@ -21,15 +21,15 @@ import {
   resolveClaimExtractionConfig,
 } from "../../config.js";
 import type { SurgeonRunAction } from "../../core/surgeon/domain/action-types.js";
-import { resolveSurgeonPassSequence, type ImplementedSurgeonPass, type SurgeonRunPreset } from "../../core/surgeon/domain/run-presets.js";
+import { type ImplementedSurgeonPass } from "../../core/surgeon/domain/run-presets.js";
 import type { SurgeonRunProposal } from "../../core/surgeon/types.js";
 import type { SurgeonHealthStats, SurgeonProposalBacklogItem, SurgeonProposalBacklogQuery, SurgeonRunRecord } from "./ports.js";
 import type { SurgeonProgressReporter } from "./progress.js";
 import {
+  runAutonomousSurgeon,
   runSurgeon,
-  runSurgeonPreset,
-  type SurgeonPresetRunOptions,
-  type SurgeonPresetRunResult,
+  type SurgeonAutonomousRunOptions,
+  type SurgeonAutonomousRunResult,
   type SurgeonRunOptions,
   type SurgeonRunResult,
 } from "./service.js";
@@ -47,7 +47,6 @@ const getModelWithStrings = getModel as unknown as GetModelWithStrings;
  */
 export interface SurgeonRuntimeOptions extends Omit<SurgeonRunOptions, "pass"> {
   pass?: ImplementedSurgeonPass;
-  preset?: SurgeonRunPreset;
   dbPath?: string;
   env?: NodeJS.ProcessEnv;
   onProgress?: SurgeonProgressReporter;
@@ -55,15 +54,15 @@ export interface SurgeonRuntimeOptions extends Omit<SurgeonRunOptions, "pass"> {
 }
 
 /**
- * Runtime result for either a single pass or a composed preset.
+ * Runtime result for either a single pass or an autonomous run.
  */
-export type SurgeonRuntimeResult = SurgeonRunResult | SurgeonPresetRunResult;
+export type SurgeonRuntimeResult = SurgeonRunResult | SurgeonAutonomousRunResult;
 
 /**
- * Resolves configuration and adapter instances, then runs one surgeon pass or preset.
+ * Resolves configuration and adapter instances, then runs one surgeon pass or the autonomous sequence.
  *
  * @param input - Runtime input with optional db-path and env overrides.
- * @returns Final surgeon run or preset result.
+ * @returns Final surgeon run result.
  */
 export async function runSurgeonRuntime(input: SurgeonRuntimeOptions): Promise<SurgeonRuntimeResult> {
   const runtime = loadRuntimeConfig(input);
@@ -115,7 +114,7 @@ export async function runSurgeonRuntime(input: SurgeonRuntimeOptions): Promise<S
       type: input.type,
       claimKeyPrefix: input.claimKeyPrefix,
       entryIds: input.entryIds,
-      includeInactive: input.includeInactive,
+      includeInactive: true,
       budget: input.budget,
       contextLimit: input.contextLimit,
       apply: input.apply,
@@ -126,13 +125,12 @@ export async function runSurgeonRuntime(input: SurgeonRuntimeOptions): Promise<S
       signal: input.signal,
     };
 
-    if (selection.kind === "preset") {
-      const presetOptions: SurgeonPresetRunOptions = {
+    if (selection.kind === "autonomous") {
+      const autonomousOptions: SurgeonAutonomousRunOptions = {
         ...sharedOptions,
-        preset: selection.preset,
       };
 
-      return await runSurgeonPreset(presetOptions, workflowDeps);
+      return await runAutonomousSurgeon(autonomousOptions, workflowDeps);
     }
 
     const runOptions: SurgeonRunOptions = {
@@ -408,35 +406,27 @@ function resolveSurgeonModel(config: AgenrConfig, input: { provider?: string; mo
 }
 
 /**
- * Resolves whether the runtime should execute one pass or a composed preset.
+ * Resolves whether the runtime should execute one explicit pass or the autonomous sequence.
  *
  * @param input - Raw runtime selection fields.
  * @returns Discriminated run selection plus claim-key-quality availability.
  */
 function resolveRuntimeSelection(input: {
   pass?: ImplementedSurgeonPass;
-  preset?: SurgeonRunPreset;
 }):
   | { kind: "pass"; pass: ImplementedSurgeonPass; includesClaimKeyQuality: boolean }
-  | { kind: "preset"; preset: SurgeonRunPreset; includesClaimKeyQuality: boolean } {
-  if (input.preset && input.pass) {
-    throw new Error("Specify either a surgeon pass or a preset, not both.");
-  }
-
-  if (input.preset) {
-    const sequence = resolveSurgeonPassSequence(input.preset);
+  | { kind: "autonomous"; includesClaimKeyQuality: true } {
+  if (input.pass) {
     return {
-      kind: "preset",
-      preset: input.preset,
-      includesClaimKeyQuality: sequence.includes("claim_key_quality"),
+      kind: "pass",
+      pass: input.pass,
+      includesClaimKeyQuality: input.pass === "claim_key_quality",
     };
   }
 
-  const pass = input.pass ?? "retirement";
   return {
-    kind: "pass",
-    pass,
-    includesClaimKeyQuality: pass === "claim_key_quality",
+    kind: "autonomous",
+    includesClaimKeyQuality: true,
   };
 }
 

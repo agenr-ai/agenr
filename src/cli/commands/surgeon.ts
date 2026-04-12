@@ -13,12 +13,10 @@ import {
   type SurgeonRuntimeResult,
 } from "../../app/surgeon/runtime.js";
 import { isImplementedSurgeonPass, isSurgeonPassType, type SurgeonPassType } from "../../core/surgeon/domain/pass-types.js";
-import { isSurgeonRunPreset, type ImplementedSurgeonPass, type SurgeonRunPreset } from "../../core/surgeon/domain/run-presets.js";
+import { type ImplementedSurgeonPass } from "../../core/surgeon/domain/run-presets.js";
 import type { Logger } from "../../logger.js";
 import {
-  collectStringValue,
   normalizeOptionalString,
-  normalizeStringList,
   parseNonNegativeInteger,
   parsePositiveInteger,
   parsePositiveNumber,
@@ -28,12 +26,6 @@ import { ui } from "../../ui.js";
 /** Parsed commander options for `agenr surgeon run`. */
 interface SurgeonRunCommandOptions {
   pass?: ImplementedSurgeonPass;
-  preset?: SurgeonRunPreset;
-  project?: string;
-  type?: string;
-  claimKeyPrefix?: string;
-  entryId?: string[];
-  includeInactive?: boolean;
   budget?: number;
   contextLimit?: number;
   skipEvaluatedDays?: number;
@@ -79,14 +71,8 @@ export function registerSurgeonCommand(program: Command): void {
 
   surgeonCommand
     .command("run")
-    .description("Execute a surgeon maintenance pass or composed preset")
-    .addOption(new Option("--pass <type>", "Surgeon pass: retirement (default), supersession, or claim_key_quality").argParser(parseImplementedSurgeonPass))
-    .addOption(new Option("--preset <name>", "Composed surgeon preset: claim-key-only, structural, or full").argParser(parseSurgeonRunPreset))
-    .option("--project <name>", "Restrict the run to one project")
-    .option("--type <entryType>", "Restrict claim-key-quality cleanup to one entry type")
-    .option("--claim-key-prefix <prefix>", "Restrict claim-key-quality cleanup to one claim-key entity prefix")
-    .option("--entry-id <id>", "Restrict claim-key-quality cleanup to one or more entry IDs", collectStringValue, [])
-    .option("--include-inactive", "Allow claim-key-quality cleanup to include retired or superseded rows")
+    .description("Execute the autonomous surgeon run or one explicit pass")
+    .addOption(new Option("--pass <type>", "Run one surgeon pass: retirement, supersession, or claim_key_quality").argParser(parseImplementedSurgeonPass))
     .addOption(new Option("--budget <usd>", "Cost cap for this run in USD").argParser(parsePositiveNumber))
     .addOption(new Option("--context-limit <tokens>", "Context limit override in tokens").argParser(parsePositiveInteger))
     .addOption(new Option("--skip-evaluated-days <n>", "Skip entries evaluated within the last N days").argParser(parseNonNegativeInteger))
@@ -114,7 +100,6 @@ export function registerSurgeonCommand(program: Command): void {
 
       try {
         const commandInput = normalizeSurgeonRunCommand(options);
-        validateRunCommandOptions(commandInput);
         const display = createSurgeonRunDisplay(commandInput.verbose);
         const result = await runSurgeonRuntime({
           ...commandInput,
@@ -287,45 +272,6 @@ function parseImplementedSurgeonPass(value: string): Extract<SurgeonPassType, "c
 }
 
 /**
- * Validates a composed surgeon preset identifier.
- *
- * @param value - Raw commander option value.
- * @returns Supported surgeon preset identifier.
- */
-function parseSurgeonRunPreset(value: string): SurgeonRunPreset {
-  const normalized = value.trim().toLowerCase();
-  if (!isSurgeonRunPreset(normalized)) {
-    throw new InvalidArgumentError(`Invalid surgeon preset: ${value}`);
-  }
-
-  return normalized;
-}
-
-/**
- * Validates option combinations before invoking the runtime layer.
- *
- * @param options - Parsed run command options.
- */
-function validateRunCommandOptions(options: NormalizedSurgeonRunCommand): void {
-  if (options.pass && options.preset) {
-    throw new InvalidArgumentError("Specify either --pass or --preset, not both.");
-  }
-
-  if (!hasClaimKeyTargeting(options)) {
-    return;
-  }
-
-  const selection = options.preset ?? options.pass ?? "retirement";
-  if (selection === "claim_key_quality" || selection === "claim-key-only") {
-    return;
-  }
-
-  throw new InvalidArgumentError(
-    "Claim-key-quality selectors (--type, --claim-key-prefix, --entry-id, --include-inactive) require --pass claim_key_quality or --preset claim-key-only.",
-  );
-}
-
-/**
  * Builds one normalized surgeon run payload from parsed CLI options.
  *
  * @param options - Parsed commander options.
@@ -334,12 +280,6 @@ function validateRunCommandOptions(options: NormalizedSurgeonRunCommand): void {
 function normalizeSurgeonRunCommand(options: SurgeonRunCommandOptions): NormalizedSurgeonRunCommand {
   return {
     pass: options.pass,
-    preset: options.preset,
-    project: normalizeOptionalString(options.project),
-    type: normalizeOptionalString(options.type),
-    claimKeyPrefix: normalizeOptionalString(options.claimKeyPrefix),
-    entryIds: normalizeStringList(options.entryId),
-    includeInactive: options.includeInactive === true,
     budget: normalizeOptionalBudget(options.budget),
     contextLimit: options.contextLimit,
     skipEvaluatedDays: options.skipEvaluatedDays,
@@ -353,28 +293,6 @@ function normalizeSurgeonRunCommand(options: SurgeonRunCommandOptions): Normaliz
 }
 
 /**
- * Checks whether the CLI request uses claim-key-quality-only targeting flags.
- *
- * @param options - Parsed run options.
- * @returns True when claim-key targeting is requested.
- */
-function hasClaimKeyTargeting(options: NormalizedSurgeonRunCommand): boolean {
-  if (options.type) {
-    return true;
-  }
-
-  if (options.claimKeyPrefix) {
-    return true;
-  }
-
-  if ((options.entryIds ?? []).length > 0) {
-    return true;
-  }
-
-  return options.includeInactive === true;
-}
-
-/**
  * Formats the final output for `agenr surgeon run`.
  *
  * @param result - Completed surgeon run result.
@@ -382,11 +300,11 @@ function hasClaimKeyTargeting(options: NormalizedSurgeonRunCommand): boolean {
  * @returns Human-readable multi-line output block.
  */
 function renderRunResult(result: SurgeonRuntimeResult, apply: boolean): string {
-  if ("preset" in result) {
-    return renderPresetRunResult(result, apply);
+  if ("runId" in result) {
+    return renderSingleRunResult(result, apply);
   }
 
-  return renderSingleRunResult(result, apply);
+  return renderAutonomousRunResult(result, apply);
 }
 
 /**
@@ -424,15 +342,15 @@ function renderSingleRunResult(
 }
 
 /**
- * Formats the final output for a composed surgeon preset run.
+ * Formats the final output for an autonomous multi-pass surgeon run.
  *
- * @param result - Completed surgeon preset result.
+ * @param result - Completed autonomous run result.
  * @param apply - Whether the command ran in apply mode.
  * @returns Human-readable multi-line output block.
  */
-function renderPresetRunResult(
+function renderAutonomousRunResult(
   result: {
-    preset: string;
+    cyclesCompleted: number;
     passes: Array<{ passType: string }>;
     status: string;
     actionsTaken: number;
@@ -445,8 +363,9 @@ function renderPresetRunResult(
   apply: boolean,
 ): string {
   return [
-    ui.header(`Surgeon Preset: ${result.preset}`),
+    ui.header("Surgeon Run (autonomous)"),
     "",
+    `${ui.label("Cycles")}   ${result.cyclesCompleted}`,
     `${ui.label("Passes")}   ${result.passes.map((pass) => pass.passType).join(" -> ") || ui.dim("none")}`,
     `${ui.label("Mode")}     ${apply ? ui.warn("apply") : ui.dim("dry-run")}`,
     `${ui.label("Status")}   ${colorizeStatus(result.status)}`,
