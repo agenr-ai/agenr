@@ -1,4 +1,0 @@
-interface:
-  display_name: "First-Principles Planning"
-  short_description: "Plan through first-principles dialogue"
-  default_prompt: "Use $first-principles-planning to question assumptions with me and build a concrete plan."
