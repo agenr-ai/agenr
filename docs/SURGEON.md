@@ -48,7 +48,7 @@ For every `agenr surgeon run`, agenr currently:
 4. Resolves LLM credentials.
 5. Tries to create embedding-enabled recall ports for `simulate_recall`.
 6. Checks the trailing 24-hour surgeon spend against the daily cap.
-7. In apply mode, creates a timestamped backup of the SQLite DB plus `-wal` / `-shm` sidecars when present.
+7. In apply mode, creates one timestamped backup of the SQLite DB plus `-wal` / `-shm` sidecars when present before the first actionable pass mutates the corpus.
 8. Loads prior-run context before creating the current `surgeon_runs` row so prompt history points at the previous run, not the in-flight row.
 9. Creates a `surgeon_runs` row with status `running` for each executed pass.
 10. Executes either:
@@ -251,7 +251,7 @@ Current read-only inspection commands:
 agenr surgeon run [options]
 ```
 
-If `--pass` is omitted, `agenr surgeon run` executes the autonomous sequence `claim_key_quality -> proposal_resolution -> supersession -> retirement` and repeats later-cycle `proposal_resolution`, `supersession`, and `retirement` work until no direct work remains, a pass stalls, or budget is exhausted.
+If `--pass` is omitted, `agenr surgeon run` executes the autonomous sequence `claim_key_quality -> proposal_resolution -> supersession -> retirement` and repeats later-cycle `proposal_resolution`, `supersession`, and `retirement` work until no direct work remains, a pass stalls, or budget is exhausted. Autonomous cycling treats an unchanged direct-work surface as no progress even if the model spent tokens, which prevents repeated no-op supersession or proposal-resolution re-entry.
 
 #### Flags
 
@@ -474,7 +474,7 @@ Slice progression stops when any of these are true:
 
 ## Backups before apply
 
-In apply mode, agenr creates a filesystem backup before any mutation tool can change the DB.
+In apply mode, agenr creates a filesystem backup before any mutation tool can change the DB. Autonomous runs create that backup once, before the first actionable pass, and later passes in the same run reuse that protected starting point instead of creating new backups.
 
 Current behavior:
 

@@ -785,6 +785,56 @@ describe("runSurgeon", () => {
     expect(runAgentLoopMock).not.toHaveBeenCalled();
   });
 
+  it("stalls autonomous supersession when the same no-op cluster work repeats", async () => {
+    const db = await createDatabase(":memory:");
+    databases.push(db);
+    await insertEntry(db, {
+      id: "mixed-type-lesson",
+      subject: "memory strategy rationale",
+      type: "lesson",
+      importance: 8,
+      expiry: "permanent",
+      claim_key: "agenr/memory_strategy",
+      created_at: daysAgoIso(60),
+      updated_at: daysAgoIso(60),
+    });
+    await insertEntry(db, {
+      id: "mixed-type-decision",
+      subject: "memory strategy decision",
+      type: "decision",
+      importance: 9,
+      expiry: "permanent",
+      claim_key: "agenr/memory_strategy",
+      created_at: daysAgoIso(10),
+      updated_at: daysAgoIso(10),
+    });
+    mockNoOpSupersessionRunAgentLoop();
+
+    const result = await runAutonomousSurgeon(
+      {
+        budget: 0.2,
+        apply: false,
+        contextLimit: 4_096,
+        verbose: false,
+        json: false,
+      },
+      {
+        port: createSurgeonPort(db),
+        config: null,
+        model: TEST_MODEL,
+        now: () => TEST_NOW,
+      },
+    );
+
+    expect(result).toMatchObject({
+      cyclesCompleted: 1,
+      status: "stalled",
+      summary: "Autonomous surgeon cycle stopped making direct progress.",
+    });
+    expect(result.passes.map((pass) => pass.passType)).toEqual(["claim_key_quality", "supersession"]);
+    expect(runAgentLoopMock).toHaveBeenCalledTimes(1);
+  });
+
   it("repeats the autonomous sequence until direct work is exhausted", async () => {
     const db = await createTestDatabase(databases);
     await insertEntry(db, {
@@ -840,6 +890,62 @@ describe("runSurgeon", () => {
     await expect(readRetiredFlag(db, "stale-temp")).resolves.toBe(true);
     await expect(readRetiredFlag(db, "stale-milestone")).resolves.toBe(true);
     await expect(readSupersededBy(db, "slot-old")).resolves.toBe("slot-new");
+  });
+
+  it("creates one backup for an autonomous apply run even when multiple passes execute", async () => {
+    const db = await createTestDatabase(databases);
+    await insertEntry(db, {
+      id: "claim-noncanonical-autonomous",
+      subject: "Jim editor preference",
+      type: "preference",
+      importance: 9,
+      claim_key: " Jim / Editor ",
+      created_at: daysAgoIso(80),
+      updated_at: daysAgoIso(80),
+    });
+    await insertEntry(db, {
+      id: "slot-old",
+      subject: "Mac mini update policy",
+      type: "preference",
+      claim_key: "mac_mini/manual_update_policy",
+      created_at: daysAgoIso(50),
+      updated_at: daysAgoIso(50),
+    });
+    await insertEntry(db, {
+      id: "slot-new",
+      subject: "Mac mini update policy clarified",
+      type: "preference",
+      claim_key: "mac_mini/manual_update_policy",
+      created_at: daysAgoIso(10),
+      updated_at: daysAgoIso(10),
+    });
+    const backupDb = vi.fn(async () => "/tmp/knowledge.db.surgeon-backup");
+    mockAutonomousCompletionRunAgentLoop();
+
+    const result = await runAutonomousSurgeon(
+      {
+        budget: 0.2,
+        apply: true,
+        contextLimit: 4_096,
+        verbose: false,
+        json: false,
+      },
+      {
+        port: createSurgeonPort(db),
+        dbPath: "/tmp/knowledge.db",
+        backupDb,
+        config: null,
+        model: TEST_MODEL,
+        now: () => TEST_NOW,
+      },
+    );
+
+    expect(result).toMatchObject({
+      cyclesCompleted: 2,
+      status: "completed",
+    });
+    expect(backupDb).toHaveBeenCalledTimes(1);
+    expect(backupDb).toHaveBeenCalledWith("/tmp/knowledge.db");
   });
 
   it("stops the autonomous sequence when a pass hits the cost cap", async () => {
@@ -1366,6 +1472,76 @@ function mockAutonomousCompletionRunAgentLoop(): void {
       }
 
       throw new Error("Unexpected tool set for autonomous surgeon test.");
+    },
+  );
+}
+
+function mockNoOpSupersessionRunAgentLoop(): void {
+  runAgentLoopMock.mockImplementation(
+    async (
+      prompts: AgentMessage[],
+      context: AgentContext,
+      config: AgentLoopConfig,
+      emit: (event: AgentEvent) => void,
+      signal?: AbortSignal,
+    ): Promise<AgentMessage[]> => {
+      const toolNames = new Set((context.tools ?? []).map((tool) => tool.name));
+      if (!toolNames.has("query_supersession_candidates")) {
+        throw new Error("Unexpected tool set for no-op supersession test.");
+      }
+
+      const queryArgs = {
+        scope: "claim_key",
+        limit: 20,
+        offset: 0,
+      };
+      const queryAssistantMessage = createAssistantToolMessage({
+        id: "tool-query-noop-supersession",
+        name: "query_supersession_candidates",
+        arguments: queryArgs,
+        reasoning: "Inspect the claim_key sweep before deciding whether any lineage is warranted.",
+        usage: TEST_USAGE,
+      });
+      await executeToolCall({
+        context,
+        config,
+        emit,
+        signal,
+        assistantMessage: queryAssistantMessage,
+        args: queryArgs,
+      });
+
+      const completeArgs = {
+        actions_taken: 0,
+        entries_skipped: [
+          {
+            entry_id: "mixed-type-lesson",
+            reason: "The lesson and decision share a claim key but occupy different semantic slots.",
+          },
+          {
+            entry_id: "mixed-type-decision",
+            reason: "The decision is the canonical durable statement for the cluster.",
+          },
+        ],
+        observations: ["Claim-key sweep is exhausted and no safe supersession link exists."],
+        recommendations: ["Leave the mixed-type cluster unlinked."],
+      };
+      const completeAssistantMessage = createAssistantToolMessage({
+        id: "tool-complete-noop-supersession",
+        name: "complete_pass",
+        arguments: completeArgs,
+        reasoning: "The claim_key sweep is exhausted and there is nothing safe to link.",
+      });
+      await executeToolCall({
+        context,
+        config,
+        emit,
+        signal,
+        assistantMessage: completeAssistantMessage,
+        args: completeArgs,
+      });
+
+      return [...prompts, queryAssistantMessage, completeAssistantMessage];
     },
   );
 }

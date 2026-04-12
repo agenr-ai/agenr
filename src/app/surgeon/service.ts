@@ -60,6 +60,7 @@ export interface SurgeonRunOptions {
   tracePath?: string;
   json: boolean;
   signal?: AbortSignal;
+  skipBackup?: boolean;
 }
 
 /**
@@ -136,6 +137,7 @@ export async function runAutonomousSurgeon(options: SurgeonAutonomousRunOptions,
   const results: SurgeonRunResult[] = [];
   let cyclesCompleted = 0;
   let remainingBudget = resolveRunCostCap(options, deps.config);
+  let backupCreated = false;
   const protection = resolveProtectionConfig(options, deps.config);
   const autonomousSequence = getAutonomousSurgeonPassSequence();
 
@@ -160,20 +162,26 @@ export async function runAutonomousSurgeon(options: SurgeonAutonomousRunOptions,
     }
 
     cyclesCompleted += 1;
-    const cycleBudgetBeforePasses = remainingBudget;
     const repeatableCycleWork = normalizeRepeatableAutonomousCycleWork(cycleWork, includeClaimKeyQuality);
+    const cycleResults: SurgeonRunResult[] = [];
 
     for (const pass of nextPasses) {
+      const skipBackup = backupCreated;
+      if (!skipBackup && options.apply && deps.dbPath && deps.dbPath !== ":memory:" && deps.backupDb) {
+        backupCreated = true;
+      }
       const result = await runSurgeon(
         {
           ...options,
           budget: remainingBudget,
           includeInactive: true,
           pass,
+          skipBackup,
         },
         deps,
       );
       results.push(result);
+      cycleResults.push(result);
       remainingBudget = Math.max(0, remainingBudget - result.estimatedCostUsd);
 
       if (result.status === "stalled") {
@@ -209,7 +217,14 @@ export async function runAutonomousSurgeon(options: SurgeonAutonomousRunOptions,
       });
     }
 
-    if (remainingBudget === cycleBudgetBeforePasses && autonomousCycleWorkFingerprint(repeatableCycleWork) === autonomousCycleWorkFingerprint(pendingWork)) {
+    if (
+      !autonomousCycleMadeDirectProgress({
+        apply: options.apply,
+        cycleResults,
+        cycleWorkBefore: repeatableCycleWork,
+        cycleWorkAfter: pendingWork,
+      })
+    ) {
       return finalizeAutonomousRun({
         cyclesCompleted,
         passes: results,
@@ -261,7 +276,7 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
     throw new Error(`Surgeon daily cost cap exceeded. Cost in the last 24 hours is ${formatUsd(dailyCost)} and the cap is ${formatUsd(dailyCostCap)}.`);
   }
 
-  if (options.apply && deps.dbPath && deps.dbPath !== ":memory:" && deps.backupDb) {
+  if (!options.skipBackup && options.apply && deps.dbPath && deps.dbPath !== ":memory:" && deps.backupDb) {
     emitSurgeonProgress(deps.reportProgress, {
       kind: "phase",
       phase: "backup_start",
@@ -1303,6 +1318,34 @@ function normalizeRepeatableAutonomousCycleWork(
  */
 function autonomousCycleWorkFingerprint(cycleWork: Record<ImplementedSurgeonPass, number>): string {
   return JSON.stringify(cycleWork);
+}
+
+/**
+ * Checks whether one autonomous cycle changed the direct-work surface enough to
+ * justify another cycle.
+ *
+ * Equal work counts mean no visible scheduling progress. In apply mode, direct
+ * mutations still count as progress because they can replace one candidate with
+ * another while keeping counts flat.
+ *
+ * @param input - Completed cycle results plus before/after work snapshots.
+ * @returns True when the cycle made direct progress.
+ */
+function autonomousCycleMadeDirectProgress(input: {
+  apply: boolean;
+  cycleResults: SurgeonRunResult[];
+  cycleWorkBefore: Record<ImplementedSurgeonPass, number>;
+  cycleWorkAfter: Record<ImplementedSurgeonPass, number>;
+}): boolean {
+  if (autonomousCycleWorkFingerprint(input.cycleWorkBefore) !== autonomousCycleWorkFingerprint(input.cycleWorkAfter)) {
+    return true;
+  }
+
+  if (!input.apply) {
+    return false;
+  }
+
+  return input.cycleResults.some((result) => result.actionsTaken > 0 || result.entriesRetired > 0);
 }
 
 /**
