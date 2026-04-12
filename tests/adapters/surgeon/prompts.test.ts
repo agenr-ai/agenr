@@ -72,14 +72,14 @@ describe("surgeon prompts", () => {
     expect(prompt).toContain("preference");
   });
 
-  it("retirement prompt protects personal knowledge from low-signal retirement", () => {
+  it("retirement prompt protects person-anchored knowledge from low-signal retirement", () => {
     const prompt = getSurgeonRetirementPassPrompt();
 
-    expect(prompt).toContain("## Personal Knowledge");
-    expect(prompt).toContain("pets");
-    expect(prompt).toContain("Do NOT retire personal knowledge entries because:");
+    expect(prompt).toContain("## Person-Anchored Knowledge");
+    expect(prompt).toContain("household");
+    expect(prompt).toContain("Do NOT retire person-anchored knowledge entries because:");
     expect(prompt).toContain("## What Looks Like a Pattern But Is Not");
-    expect(prompt).toContain("Hardware, infrastructure, and environment details");
+    expect(prompt).toContain("Environment, equipment, account, or configuration details");
   });
 
   it("retirement prompt does not reference removed supersession tooling", () => {

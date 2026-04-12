@@ -366,6 +366,9 @@ describe("runSurgeon", () => {
     expect(context.systemPrompt).toContain("## Protection Rules");
     expect(context.systemPrompt).toContain("# Retirement Pass");
     expect(initialPrompt).toContain("Entries: 4.");
+    expect(initialPrompt).toContain("Requested scope: corpus-wide.");
+    expect(initialPrompt).toContain("Observed type mix: fact=2, decision=1, milestone=1.");
+    expect(initialPrompt).toContain("Claim-key coverage: trusted=0, tentative=0, unresolved=0, legacy=0, noKey=4.");
     expect(initialPrompt).toContain("Actionable cleanup pool: 2.");
     expect(initialPrompt).toContain("Your cost budget is $1.2500.");
     expect(initialPrompt).toContain("Your context window is 4096 tokens.");
@@ -410,6 +413,7 @@ describe("runSurgeon", () => {
 
     expect(context.systemPrompt).toContain("# Supersession Pass");
     expect(context.systemPrompt).not.toContain("Retirement is the only pass in scope.");
+    expect(context.systemPrompt).toContain("Do not assume the entries are about software");
     expect(context.tools?.map((tool) => tool.name)).toEqual([
       "get_health_stats",
       "query_supersession_candidates",
@@ -422,6 +426,9 @@ describe("runSurgeon", () => {
       "complete_pass",
     ]);
     expect(initialPrompt).toContain("Begin supersession pass.");
+    expect(initialPrompt).toContain("Requested scope: corpus-wide.");
+    expect(initialPrompt).toContain("Observed type mix:");
+    expect(initialPrompt).toContain("Claim-key coverage:");
     expect(initialPrompt).toContain("Claim-key clusters: 1.");
     expect(initialPrompt).toContain("Subject clusters:");
   });

@@ -575,6 +575,8 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
       pass: agentPass,
       project: options.project,
       totalEntries: health.total,
+      typeMix: health.byType,
+      claimKeyLifecycle: health.claimKeyLifecycle,
       retirementCandidates: passStartContext.retirementAvailableActionableCandidates,
       supersessionClaimKeyClusters: passStartContext.supersessionClaimKeyClusters,
       supersessionSubjectClusters: passStartContext.supersessionSubjectClusters,
@@ -923,6 +925,14 @@ function buildInitialUserPrompt(input: {
   pass: Extract<SurgeonPassType, "retirement" | "supersession">;
   project?: string;
   totalEntries: number;
+  typeMix: Record<string, number>;
+  claimKeyLifecycle: {
+    trusted: number;
+    tentative: number;
+    unresolved: number;
+    legacy: number;
+    noKey: number;
+  };
   retirementCandidates: number;
   supersessionClaimKeyClusters: number;
   supersessionSubjectClusters: number;
@@ -939,8 +949,10 @@ function buildInitialUserPrompt(input: {
     input.pass === "supersession"
       ? [
           "Begin supersession pass.",
-          `Project focus: ${input.project?.trim() || "all projects"}.`,
+          formatRequestedScope(input.project),
           `Entries: ${input.totalEntries}.`,
+          `Observed type mix: ${formatTypeMix(input.typeMix)}.`,
+          `Claim-key coverage: ${formatClaimKeyCoverage(input.claimKeyLifecycle)}.`,
           `Claim-key clusters: ${input.supersessionClaimKeyClusters}.`,
           `Subject clusters: ${input.supersessionSubjectClusters}.`,
           `Last surgeon run: ${formatLastRun(input.lastRun)}.`,
@@ -951,8 +963,10 @@ function buildInitialUserPrompt(input: {
         ]
       : [
           "Begin retirement pass.",
-          `Project scope: ${input.project?.trim() || "all projects"}.`,
+          formatRequestedScope(input.project),
           `Entries: ${input.totalEntries}.`,
+          `Observed type mix: ${formatTypeMix(input.typeMix)}.`,
+          `Claim-key coverage: ${formatClaimKeyCoverage(input.claimKeyLifecycle)}.`,
           `Actionable cleanup pool: ${input.retirementCandidates}.`,
           `Last surgeon run: ${formatLastRun(input.lastRun)}.`,
           input.contextLimit > 0
@@ -962,6 +976,51 @@ function buildInitialUserPrompt(input: {
         ];
 
   return lines.join(" ");
+}
+
+/**
+ * Formats the requested run scope for startup prompts.
+ *
+ * @param project - Optional project filter supplied by the operator.
+ * @returns User-facing scope label.
+ */
+function formatRequestedScope(project: string | undefined): string {
+  const normalized = project?.trim();
+  return normalized ? `Requested scope: project = ${normalized}.` : "Requested scope: corpus-wide.";
+}
+
+/**
+ * Formats the observed entry-type distribution for startup prompts.
+ *
+ * @param typeMix - Aggregate per-type entry counts from health stats.
+ * @returns Stable human-readable type-mix summary.
+ */
+function formatTypeMix(typeMix: Record<string, number>): string {
+  const populated = Object.entries(typeMix)
+    .filter(([, count]) => count > 0)
+    .sort((left, right) => {
+      if (right[1] !== left[1]) {
+        return right[1] - left[1];
+      }
+
+      return left[0].localeCompare(right[0]);
+    });
+
+  if (populated.length === 0) {
+    return "none";
+  }
+
+  return populated.map(([type, count]) => `${type}=${count}`).join(", ");
+}
+
+/**
+ * Formats claim-key lifecycle coverage for startup prompts.
+ *
+ * @param lifecycle - Aggregate claim-key lifecycle counts from health stats.
+ * @returns Stable human-readable lifecycle summary.
+ */
+function formatClaimKeyCoverage(input: { trusted: number; tentative: number; unresolved: number; legacy: number; noKey: number }): string {
+  return `trusted=${input.trusted}, tentative=${input.tentative}, unresolved=${input.unresolved}, legacy=${input.legacy}, noKey=${input.noKey}`;
 }
 
 /**
