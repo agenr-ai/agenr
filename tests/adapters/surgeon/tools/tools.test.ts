@@ -237,10 +237,12 @@ describe("surgeon tools", () => {
     expect(completionGuards.supersession.snapshot()).toEqual({
       claimKeyClustersViewed: 1,
       claimKeyClustersTotal: 1,
+      claimKeyClustersRemaining: 1,
       claimKeyClustersAdjudicated: 0,
-      claimKeyScopeExhausted: true,
+      claimKeyScopeExhausted: false,
       subjectClustersViewed: 0,
-      subjectClustersTotal: 0,
+      subjectClustersTotal: 1,
+      subjectClustersRemaining: 0,
       subjectClustersAdjudicated: 0,
       subjectScopeExhausted: true,
       adjudicatedClusters: 0,
@@ -1622,12 +1624,13 @@ describe("surgeon tools", () => {
       rejected: true,
       claimKeyClustersViewed: 1,
       claimKeyClustersTotal: 5,
+      claimKeyClustersRemaining: 4,
     });
     expect(completionState.isComplete).toBe(false);
 
     completionGuards.supersession.recordPage({
       scope: "claim_key",
-      claimKeyTotal: 5,
+      claimKeyTotal: 4,
       subjectTotal: 0,
       clusters: [
         {
@@ -1757,6 +1760,59 @@ describe("surgeon tools", () => {
       completed: true,
     });
     expect(completionState.isComplete).toBe(true);
+  });
+
+  it("accepts complete_pass when skipped supersession entries exhaust the remaining reviewed work", async () => {
+    const client = await createTestClient(clients);
+    const recordRunAction = vi.fn<SurgeonToolDeps["recordRunAction"]>().mockResolvedValue(undefined);
+    const completionState = createCompletionState();
+    const completionGuards = createSurgeonCompletionGuardState({
+      totalEntries: 20,
+      supersessionClaimKeyClusters: 1,
+      supersessionSubjectClusters: 0,
+    });
+    completionGuards.supersession.recordPage({
+      scope: "claim_key",
+      claimKeyTotal: 1,
+      subjectTotal: 0,
+      clusters: [
+        {
+          groupKey: "mixed-slot",
+          groupedBy: "claim_key",
+          entries: [{ id: "mixed-slot-a" }, { id: "mixed-slot-b" }] as never,
+        },
+      ],
+    });
+
+    const tool = createCompletePassTool(
+      createToolDeps(client, {
+        passType: "supersession",
+        recordRunAction,
+        completionState,
+        completionGuards,
+      }),
+    );
+
+    const accepted = await tool.execute("tool-complete-supersession-skip-exhaustion", {
+      actions_taken: 0,
+      entries_skipped: [{ entry_id: "mixed-slot-a", reason: "Mixed-type cluster was reviewed and intentionally left unlinked." }],
+      observations: ["Claim-key work was reviewed and no lower-confidence subject sweep was available."],
+      recommendations: [],
+    });
+
+    expect(accepted.details).toMatchObject({
+      completed: true,
+      summary: {
+        entries_skipped: [{ entry_id: "mixed-slot-a", reason: "Mixed-type cluster was reviewed and intentionally left unlinked." }],
+      },
+    });
+    expect(completionState.isComplete).toBe(true);
+    expect(recordRunAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actionType: "skip",
+        entryIds: ["mixed-slot-a"],
+      }),
+    );
   });
 
   it("rejects complete_pass when a supersession skip references an unseen entry", async () => {

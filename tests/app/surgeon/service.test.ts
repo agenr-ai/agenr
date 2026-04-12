@@ -1286,7 +1286,7 @@ describe("runSurgeon", () => {
     expect(runAgentLoopMock).toHaveBeenCalledTimes(1);
   });
 
-  it("stalls autonomous supersession when the same no-op cluster work repeats", async () => {
+  it("completes autonomous supersession when the remaining cluster is reviewed but intentionally unlinked", async () => {
     const db = await createDatabase(":memory:");
     databases.push(db);
     await insertEntry(db, {
@@ -1329,7 +1329,7 @@ describe("runSurgeon", () => {
 
     expect(result).toMatchObject({
       cyclesCompleted: 1,
-      status: "stalled",
+      status: "completed",
     });
     expect(result.passes.map((pass) => pass.passType)).toEqual(["claim_key_quality", "supersession"]);
     expect(runAgentLoopMock).toHaveBeenCalled();

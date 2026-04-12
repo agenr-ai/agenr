@@ -230,7 +230,7 @@ function buildSupersessionCompletionRejection(deps: SurgeonToolDeps, summary: Su
     return null;
   }
 
-  const progress = deps.completionGuards.supersession.snapshot();
+  const progress = previewSupersessionCompletionProgress(deps, summary);
   const budgetUsage = calculateBudgetUsage(deps);
   const claimKeyTotal = progress.claimKeyClustersTotal || deps.completionGuards.initialHealth.supersessionClaimKeyClusters;
   const subjectTotal = progress.subjectClustersTotal || deps.completionGuards.initialHealth.supersessionSubjectClusters;
@@ -238,12 +238,11 @@ function buildSupersessionCompletionRejection(deps: SurgeonToolDeps, summary: Su
   const viewedThreshold = Math.ceil(claimKeyTotal / 2);
   const viewedEnoughClaimKey = claimKeyTotal === 0 || progress.claimKeyClustersViewed >= viewedThreshold;
   const adjudicatedAny = progress.adjudicatedClusters > 0 || noKnownWork;
-  const claimKeySweepComplete =
-    claimKeyTotal === 0 ||
-    (progress.claimKeyScopeExhausted && progress.claimKeyClustersViewed >= claimKeyTotal && progress.claimKeyClustersAdjudicated >= claimKeyTotal);
+  const claimKeySweepComplete = claimKeyTotal === 0 || progress.claimKeyScopeExhausted;
+  const subjectSweepComplete = subjectTotal === 0 || progress.subjectScopeExhausted;
   const budgetForcedStop = budgetUsage ? budgetUsage.budgetUsedPct >= MIN_BUDGET_USED_FRACTION : false;
 
-  if (claimKeySweepComplete) {
+  if (claimKeySweepComplete && subjectSweepComplete) {
     return null;
   }
 
@@ -264,9 +263,12 @@ function buildSupersessionCompletionRejection(deps: SurgeonToolDeps, summary: Su
     budgetUsedPct: budgetUsage ? formatPercent(budgetUsage.budgetUsedPct) : null,
     claimKeyClustersViewed: progress.claimKeyClustersViewed,
     claimKeyClustersTotal: claimKeyTotal,
+    claimKeyClustersRemaining: progress.claimKeyClustersRemaining,
     claimKeyClustersAdjudicated: progress.claimKeyClustersAdjudicated,
     subjectClustersViewed: progress.subjectClustersViewed,
     subjectClustersTotal: subjectTotal,
+    subjectClustersRemaining: progress.subjectClustersRemaining,
+    subjectClustersAdjudicated: progress.subjectClustersAdjudicated,
     adjudicatedClusters: progress.adjudicatedClusters,
     widenedBeforeClaimKeyExhausted: progress.widenedBeforeClaimKeyExhausted,
     contextUsedTokens: budgetUsage?.contextUsedTokens ?? null,
@@ -276,11 +278,24 @@ function buildSupersessionCompletionRejection(deps: SurgeonToolDeps, summary: Su
     remainingCostUsd: budgetUsage?.remainingCostUsd ?? null,
     message: describeSupersessionRejection(progress, {
       claimKeyTotal,
+      subjectTotal,
       budgetUsedPct: budgetUsage ? formatPercent(budgetUsage.budgetUsedPct) : null,
       budgetForcedStop,
       noKnownWork,
     }),
   };
+}
+
+/**
+ * Builds the effective supersession progress snapshot for this completion call.
+ *
+ * @param deps - Shared run dependencies containing the supersession tracker.
+ * @param summary - Structured completion summary from `complete_pass`.
+ * @returns Current progress, including skipped entries as pending adjudications.
+ */
+function previewSupersessionCompletionProgress(deps: SurgeonToolDeps, summary: SurgeonCompletionSummary): SurgeonSupersessionReviewProgress {
+  const skippedEntryIds = summary.entries_skipped.flatMap((skipped) => (skipped.entry_id ? [skipped.entry_id] : []));
+  return skippedEntryIds.length > 0 ? deps.completionGuards!.supersession.previewAdjudication(skippedEntryIds) : deps.completionGuards!.supersession.snapshot();
 }
 
 /**
@@ -377,6 +392,7 @@ function describeSupersessionRejection(
   progress: SurgeonSupersessionReviewProgress,
   input: {
     claimKeyTotal: number;
+    subjectTotal: number;
     budgetUsedPct: number | null;
     budgetForcedStop: boolean;
     noKnownWork: boolean;
@@ -398,10 +414,22 @@ function describeSupersessionRejection(
     return "Completion rejected: the review widened beyond claim_key clusters before the claim_key sweep was exhausted.";
   }
 
+  if (!progress.claimKeyScopeExhausted) {
+    return input.budgetUsedPct === null
+      ? `Completion rejected: ${progress.claimKeyClustersRemaining} claim_key clusters still remain in the current sweep.`
+      : `Completion rejected: ${progress.claimKeyClustersRemaining} claim_key clusters still remain in the current sweep and only ${input.budgetUsedPct}% of the cost budget has been used.`;
+  }
+
+  if (input.subjectTotal > 0 && !progress.subjectScopeExhausted) {
+    return input.budgetUsedPct === null
+      ? `Completion rejected: the claim_key sweep is exhausted, but ${progress.subjectClustersRemaining} subject clusters still remain.`
+      : `Completion rejected: the claim_key sweep is exhausted, but ${progress.subjectClustersRemaining} subject clusters still remain and only ${input.budgetUsedPct}% of the cost budget has been used.`;
+  }
+
   if (!input.budgetForcedStop) {
     return input.budgetUsedPct === null
-      ? "Completion rejected: the claim_key sweep is not exhausted yet."
-      : `Completion rejected: the claim_key sweep is not exhausted yet and only ${input.budgetUsedPct}% of the cost budget has been used.`;
+      ? "Completion rejected: the supersession sweep still has unfinished work."
+      : `Completion rejected: the supersession sweep still has unfinished work and only ${input.budgetUsedPct}% of the cost budget has been used.`;
   }
 
   return "Completion rejected: the supersession pass needs either a finished claim_key sweep or a clearer budget-constrained stopping point.";

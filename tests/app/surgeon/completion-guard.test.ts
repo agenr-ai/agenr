@@ -108,10 +108,12 @@ describe("createSurgeonCompletionGuardState", () => {
     expect(state.supersession.snapshot()).toEqual({
       claimKeyClustersViewed: 0,
       claimKeyClustersTotal: 4,
+      claimKeyClustersRemaining: 4,
       claimKeyClustersAdjudicated: 0,
       claimKeyScopeExhausted: false,
       subjectClustersViewed: 0,
       subjectClustersTotal: 0,
+      subjectClustersRemaining: 0,
       subjectClustersAdjudicated: 0,
       subjectScopeExhausted: true,
       adjudicatedClusters: 0,
@@ -142,7 +144,7 @@ describe("createSupersessionReviewTracker", () => {
     tracker.markAdjudicated(["entry-a"]);
     tracker.recordPage({
       scope: "subject",
-      claimKeyTotal: 2,
+      claimKeyTotal: 1,
       subjectTotal: 1,
       clusters: [
         {
@@ -156,17 +158,82 @@ describe("createSupersessionReviewTracker", () => {
     expect(tracker.snapshot()).toEqual({
       claimKeyClustersViewed: 1,
       claimKeyClustersTotal: 2,
+      claimKeyClustersRemaining: 1,
       claimKeyClustersAdjudicated: 1,
       claimKeyScopeExhausted: false,
       subjectClustersViewed: 1,
       subjectClustersTotal: 1,
+      subjectClustersRemaining: 1,
       subjectClustersAdjudicated: 0,
-      subjectScopeExhausted: true,
+      subjectScopeExhausted: false,
       adjudicatedClusters: 1,
       widenedBeforeClaimKeyExhausted: true,
     });
     expect(tracker.hasSeenEntry("entry-a")).toBe(true);
     expect(tracker.hasSeenEntry("entry-c")).toBe(true);
     expect(tracker.hasSeenEntry("missing")).toBe(false);
+  });
+
+  it("keeps stable totals while pending counts shrink and can preview skipped adjudications", () => {
+    const tracker = createSupersessionReviewTracker({
+      claimKeyTotal: 2,
+      subjectTotal: 1,
+    });
+
+    tracker.recordPage({
+      scope: "claim_key",
+      claimKeyTotal: 2,
+      subjectTotal: 1,
+      clusters: [
+        {
+          groupKey: "slot-1",
+          groupedBy: "claim_key",
+          entries: [{ id: "entry-a" }, { id: "entry-b" }] as never,
+        },
+      ],
+    });
+    tracker.markAdjudicated(["entry-a"]);
+    tracker.recordPage({
+      scope: "claim_key",
+      claimKeyTotal: 1,
+      subjectTotal: 1,
+      clusters: [
+        {
+          groupKey: "slot-2",
+          groupedBy: "claim_key",
+          entries: [{ id: "entry-c" }, { id: "entry-d" }] as never,
+        },
+      ],
+    });
+
+    expect(tracker.snapshot()).toEqual({
+      claimKeyClustersViewed: 2,
+      claimKeyClustersTotal: 2,
+      claimKeyClustersRemaining: 1,
+      claimKeyClustersAdjudicated: 1,
+      claimKeyScopeExhausted: false,
+      subjectClustersViewed: 0,
+      subjectClustersTotal: 1,
+      subjectClustersRemaining: 1,
+      subjectClustersAdjudicated: 0,
+      subjectScopeExhausted: false,
+      adjudicatedClusters: 1,
+      widenedBeforeClaimKeyExhausted: false,
+    });
+    expect(tracker.previewAdjudication(["entry-c"])).toEqual({
+      claimKeyClustersViewed: 2,
+      claimKeyClustersTotal: 2,
+      claimKeyClustersRemaining: 0,
+      claimKeyClustersAdjudicated: 2,
+      claimKeyScopeExhausted: true,
+      subjectClustersViewed: 0,
+      subjectClustersTotal: 1,
+      subjectClustersRemaining: 1,
+      subjectClustersAdjudicated: 0,
+      subjectScopeExhausted: false,
+      adjudicatedClusters: 2,
+      widenedBeforeClaimKeyExhausted: false,
+    });
+    expect(tracker.snapshot().claimKeyClustersRemaining).toBe(1);
   });
 });

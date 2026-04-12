@@ -55,10 +55,12 @@ export interface PaginatedQueryTracker {
 export interface SurgeonSupersessionReviewProgress {
   claimKeyClustersViewed: number;
   claimKeyClustersTotal: number;
+  claimKeyClustersRemaining: number;
   claimKeyClustersAdjudicated: number;
   claimKeyScopeExhausted: boolean;
   subjectClustersViewed: number;
   subjectClustersTotal: number;
+  subjectClustersRemaining: number;
   subjectClustersAdjudicated: number;
   subjectScopeExhausted: boolean;
   adjudicatedClusters: number;
@@ -95,6 +97,14 @@ export interface SurgeonSupersessionReviewTracker {
    * @param entryIds - Entry IDs touched by a decisive supersession action.
    */
   markAdjudicated(entryIds: string[]): void;
+
+  /**
+   * Builds a progress snapshot as if the provided entries were adjudicated.
+   *
+   * @param entryIds - Entry IDs that would count as adjudicated.
+   * @returns Review progress without mutating tracker state.
+   */
+  previewAdjudication(entryIds: string[]): SurgeonSupersessionReviewProgress;
 
   /**
    * Checks whether an entry ID appeared in a previously paged cluster.
@@ -240,16 +250,12 @@ export function createSupersessionReviewTracker(input: { claimKeyTotal: number; 
     },
 
     recordPage({ scope, claimKeyTotal, subjectTotal, clusters }): void {
-      const normalizedClaimKeyTotal = normalizeCount(claimKeyTotal);
-      const normalizedSubjectTotal = normalizeCount(subjectTotal);
+      const normalizedClaimKeyRemaining = normalizeCount(claimKeyTotal);
+      const normalizedSubjectRemaining = normalizeCount(subjectTotal);
       const nextClaimKeyViewed = new Set(progress.claimKeyViewedKeys);
       const nextSubjectViewed = new Set(progress.subjectViewedKeys);
       const nextEntryMap = cloneEntryClusterMap(entryToClusterKeys);
-      const wideningIntoSubject =
-        (scope === "subject" || scope === "all") &&
-        normalizedClaimKeyTotal > 0 &&
-        !progress.claimKeyScopeExhausted &&
-        nextClaimKeyViewed.size < normalizedClaimKeyTotal;
+      const wideningIntoSubject = (scope === "subject" || scope === "all") && !progress.claimKeyScopeExhausted && progress.claimKeyRemainingTotal > 0;
 
       for (const cluster of clusters) {
         const clusterKey = buildScopedClusterKey(cluster);
@@ -266,14 +272,18 @@ export function createSupersessionReviewTracker(input: { claimKeyTotal: number; 
         }
       }
 
+      const claimKeyClustersAdjudicated = countScopedClusters(progress.adjudicatedClusterKeys, "claim_key");
+      const subjectClustersAdjudicated = countScopedClusters(progress.adjudicatedClusterKeys, "subject");
       progress = {
-        claimKeyTotal: normalizedClaimKeyTotal,
-        subjectTotal: normalizedSubjectTotal,
+        claimKeyTotal: Math.max(progress.claimKeyTotal, normalizedClaimKeyRemaining + claimKeyClustersAdjudicated),
+        subjectTotal: Math.max(progress.subjectTotal, normalizedSubjectRemaining + subjectClustersAdjudicated),
+        claimKeyRemainingTotal: normalizedClaimKeyRemaining,
+        subjectRemainingTotal: normalizedSubjectRemaining,
         claimKeyViewedKeys: nextClaimKeyViewed,
         subjectViewedKeys: nextSubjectViewed,
         adjudicatedClusterKeys: new Set(progress.adjudicatedClusterKeys),
-        claimKeyScopeExhausted: normalizedClaimKeyTotal === 0 || nextClaimKeyViewed.size >= normalizedClaimKeyTotal,
-        subjectScopeExhausted: normalizedSubjectTotal === 0 || nextSubjectViewed.size >= normalizedSubjectTotal,
+        claimKeyScopeExhausted: normalizedClaimKeyRemaining === 0,
+        subjectScopeExhausted: normalizedSubjectRemaining === 0,
         widenedBeforeClaimKeyExhausted: progress.widenedBeforeClaimKeyExhausted || wideningIntoSubject,
       };
       entryToClusterKeys = nextEntryMap;
@@ -284,45 +294,19 @@ export function createSupersessionReviewTracker(input: { claimKeyTotal: number; 
     },
 
     markAdjudicated(entryIds): void {
-      const nextAdjudicated = new Set(progress.adjudicatedClusterKeys);
-
-      for (const entryId of entryIds) {
-        const clusterKeys = entryToClusterKeys.get(entryId.trim());
-        if (!clusterKeys) {
-          continue;
-        }
-
-        for (const clusterKey of clusterKeys) {
-          nextAdjudicated.add(clusterKey);
-        }
-      }
-
-      progress = {
-        ...progress,
-        adjudicatedClusterKeys: nextAdjudicated,
-      };
+      progress = applyAdjudicatedEntries(progress, entryIds, entryToClusterKeys);
     },
 
     hasSeenEntry(entryId: string): boolean {
       return entryToClusterKeys.has(entryId.trim());
     },
 
-    snapshot(): SurgeonSupersessionReviewProgress {
-      const claimKeyClustersAdjudicated = countScopedClusters(progress.adjudicatedClusterKeys, "claim_key");
-      const subjectClustersAdjudicated = countScopedClusters(progress.adjudicatedClusterKeys, "subject");
+    previewAdjudication(entryIds): SurgeonSupersessionReviewProgress {
+      return buildSupersessionProgressSnapshot(applyAdjudicatedEntries(progress, entryIds, entryToClusterKeys));
+    },
 
-      return {
-        claimKeyClustersViewed: progress.claimKeyViewedKeys.size,
-        claimKeyClustersTotal: progress.claimKeyTotal,
-        claimKeyClustersAdjudicated,
-        claimKeyScopeExhausted: progress.claimKeyScopeExhausted,
-        subjectClustersViewed: progress.subjectViewedKeys.size,
-        subjectClustersTotal: progress.subjectTotal,
-        subjectClustersAdjudicated,
-        subjectScopeExhausted: progress.subjectScopeExhausted,
-        adjudicatedClusters: progress.adjudicatedClusterKeys.size,
-        widenedBeforeClaimKeyExhausted: progress.widenedBeforeClaimKeyExhausted,
-      };
+    snapshot(): SurgeonSupersessionReviewProgress {
+      return buildSupersessionProgressSnapshot(progress);
     },
   };
 }
@@ -354,6 +338,8 @@ function createEmptyProgress(): PaginatedQueryProgress {
 interface MutableSupersessionProgress {
   claimKeyTotal: number;
   subjectTotal: number;
+  claimKeyRemainingTotal: number;
+  subjectRemainingTotal: number;
   claimKeyViewedKeys: Set<string>;
   subjectViewedKeys: Set<string>;
   adjudicatedClusterKeys: Set<string>;
@@ -375,6 +361,8 @@ function createEmptySupersessionProgress(input: { claimKeyTotal: number; subject
   return {
     claimKeyTotal,
     subjectTotal,
+    claimKeyRemainingTotal: claimKeyTotal,
+    subjectRemainingTotal: subjectTotal,
     claimKeyViewedKeys: new Set<string>(),
     subjectViewedKeys: new Set<string>(),
     adjudicatedClusterKeys: new Set<string>(),
@@ -392,6 +380,114 @@ function createEmptySupersessionProgress(input: { claimKeyTotal: number; subject
  */
 function cloneEntryClusterMap(input: Map<string, Set<string>>): Map<string, Set<string>> {
   return new Map([...input.entries()].map(([entryId, clusterKeys]) => [entryId, new Set(clusterKeys)]));
+}
+
+/**
+ * Applies additional adjudicated entry IDs without mutating existing tracker state.
+ *
+ * @param progress - Existing mutable review progress.
+ * @param entryIds - Entry IDs that should count as adjudicated.
+ * @param entryToClusterKeys - Mapping from seen entries to their cluster keys.
+ * @returns Updated progress snapshot.
+ */
+function applyAdjudicatedEntries(
+  progress: MutableSupersessionProgress,
+  entryIds: string[],
+  entryToClusterKeys: Map<string, Set<string>>,
+): MutableSupersessionProgress {
+  const clusterKeys = collectClusterKeysForEntries(entryIds, entryToClusterKeys);
+  if (clusterKeys.size === 0) {
+    return progress;
+  }
+
+  const nextAdjudicated = new Set(progress.adjudicatedClusterKeys);
+  let newlyAdjudicatedClaimKey = 0;
+  let newlyAdjudicatedSubject = 0;
+
+  for (const clusterKey of clusterKeys) {
+    if (nextAdjudicated.has(clusterKey)) {
+      continue;
+    }
+
+    nextAdjudicated.add(clusterKey);
+    if (clusterKey.startsWith("claim_key:")) {
+      newlyAdjudicatedClaimKey += 1;
+      continue;
+    }
+    if (clusterKey.startsWith("subject:")) {
+      newlyAdjudicatedSubject += 1;
+    }
+  }
+
+  if (newlyAdjudicatedClaimKey === 0 && newlyAdjudicatedSubject === 0) {
+    return progress;
+  }
+
+  const claimKeyRemainingTotal = Math.max(0, progress.claimKeyRemainingTotal - newlyAdjudicatedClaimKey);
+  const subjectRemainingTotal = Math.max(0, progress.subjectRemainingTotal - newlyAdjudicatedSubject);
+  return {
+    ...progress,
+    adjudicatedClusterKeys: nextAdjudicated,
+    claimKeyRemainingTotal,
+    subjectRemainingTotal,
+    claimKeyScopeExhausted: claimKeyRemainingTotal === 0,
+    subjectScopeExhausted: subjectRemainingTotal === 0,
+  };
+}
+
+/**
+ * Collects scoped cluster keys for the provided entry IDs.
+ *
+ * @param entryIds - Entry IDs to resolve.
+ * @param entryToClusterKeys - Mapping from seen entries to their cluster keys.
+ * @returns Unique scoped cluster keys tied to the entries.
+ */
+function collectClusterKeysForEntries(entryIds: string[], entryToClusterKeys: Map<string, Set<string>>): Set<string> {
+  const clusterKeys = new Set<string>();
+
+  for (const entryId of entryIds) {
+    const normalizedEntryId = entryId.trim();
+    if (!normalizedEntryId) {
+      continue;
+    }
+
+    const resolvedClusterKeys = entryToClusterKeys.get(normalizedEntryId);
+    if (!resolvedClusterKeys) {
+      continue;
+    }
+
+    for (const clusterKey of resolvedClusterKeys) {
+      clusterKeys.add(clusterKey);
+    }
+  }
+
+  return clusterKeys;
+}
+
+/**
+ * Converts mutable tracker state into the public review-progress snapshot.
+ *
+ * @param progress - Mutable supersession review progress.
+ * @returns Immutable snapshot for reporting and completion guards.
+ */
+function buildSupersessionProgressSnapshot(progress: MutableSupersessionProgress): SurgeonSupersessionReviewProgress {
+  const claimKeyClustersAdjudicated = countScopedClusters(progress.adjudicatedClusterKeys, "claim_key");
+  const subjectClustersAdjudicated = countScopedClusters(progress.adjudicatedClusterKeys, "subject");
+
+  return {
+    claimKeyClustersViewed: progress.claimKeyViewedKeys.size,
+    claimKeyClustersTotal: Math.max(progress.claimKeyTotal, progress.claimKeyViewedKeys.size),
+    claimKeyClustersRemaining: progress.claimKeyRemainingTotal,
+    claimKeyClustersAdjudicated,
+    claimKeyScopeExhausted: progress.claimKeyScopeExhausted,
+    subjectClustersViewed: progress.subjectViewedKeys.size,
+    subjectClustersTotal: Math.max(progress.subjectTotal, progress.subjectViewedKeys.size),
+    subjectClustersRemaining: progress.subjectRemainingTotal,
+    subjectClustersAdjudicated,
+    subjectScopeExhausted: progress.subjectScopeExhausted,
+    adjudicatedClusters: progress.adjudicatedClusterKeys.size,
+    widenedBeforeClaimKeyExhausted: progress.widenedBeforeClaimKeyExhausted,
+  };
 }
 
 /**

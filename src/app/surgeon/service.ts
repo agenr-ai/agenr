@@ -265,6 +265,21 @@ export async function runAutonomousSurgeon(options: SurgeonAutonomousRunOptions,
     }
 
     if (
+      shouldStopAfterNonActionableSupersessionCycle({
+        cycleResults,
+        cycleWorkBefore: repeatableCycleWork,
+        cycleWorkAfter: pendingWork,
+      })
+    ) {
+      return finalizeAutonomousRun({
+        cyclesCompleted,
+        passes: results,
+        status: "completed",
+        summaryOverride: "Autonomous supersession review exhausted with only non-actionable clusters remaining.",
+      });
+    }
+
+    if (
       !autonomousCycleMadeDirectProgress({
         apply: options.apply,
         cycleResults,
@@ -1097,8 +1112,9 @@ function buildContinuationPrompt(input: {
             : `You stopped without calling complete_pass and still have about ${formatUsd(input.remainingCostUsd)} of run budget remaining. The latest turn context size was ${input.currentContextTokens} tokens.`,
           "Continue the supersession pass.",
           progressReminder,
-          "Keep paginating claim_key clusters. Widen to scope = 'subject' only after the claim_key sweep is exhausted or budget pressure forces an early stop.",
-          "Do not call complete_pass until claim_key clusters are genuinely exhausted or budget constraints force you to stop.",
+          "Keep paginating claim_key clusters while any remain. Once the claim_key sweep returns no remaining clusters, query scope = 'subject' to confirm whether lower-confidence work remains.",
+          "If both claim_key and subject sweeps are exhausted, call complete_pass and include any reviewed but intentionally unlinked clusters in entries_skipped.",
+          "Avoid no-op metadata actions that do not change persisted state.",
         ]
       : [
           input.contextLimit > 0
@@ -1302,9 +1318,11 @@ function createPassProgressFingerprint(
     completed: completionState.isComplete,
     actionsTaken: actionMetrics.actionsTaken,
     claimKeyClustersViewed: progress.claimKeyClustersViewed,
+    claimKeyClustersRemaining: progress.claimKeyClustersRemaining,
     claimKeyClustersAdjudicated: progress.claimKeyClustersAdjudicated,
     claimKeyScopeExhausted: progress.claimKeyScopeExhausted,
     subjectClustersViewed: progress.subjectClustersViewed,
+    subjectClustersRemaining: progress.subjectClustersRemaining,
     subjectClustersAdjudicated: progress.subjectClustersAdjudicated,
     subjectScopeExhausted: progress.subjectScopeExhausted,
     widenedBeforeClaimKeyExhausted: progress.widenedBeforeClaimKeyExhausted,
@@ -1335,7 +1353,7 @@ function buildContinuationProgressReminder(
   }
 
   const progress = completionGuards.supersession.snapshot();
-  return `Persisted actions so far: ${actionMetrics.actionsTaken}. Already adjudicated claim_key clusters: ${progress.claimKeyClustersAdjudicated}/${progress.claimKeyClustersTotal}. Already adjudicated subject clusters: ${progress.subjectClustersAdjudicated}/${progress.subjectClustersTotal}. Same-run adjudicated clusters are suppressed from later supersession queries.`;
+  return `Persisted actions so far: ${actionMetrics.actionsTaken}. Already adjudicated claim_key clusters: ${progress.claimKeyClustersAdjudicated}/${progress.claimKeyClustersTotal} (${progress.claimKeyClustersRemaining} remaining). Already adjudicated subject clusters: ${progress.subjectClustersAdjudicated}/${progress.subjectClustersTotal} (${progress.subjectClustersRemaining} remaining). Same-run adjudicated clusters are suppressed from later supersession queries.`;
 }
 
 /**
@@ -1532,6 +1550,42 @@ function autonomousCycleMadeDirectProgress(input: {
   }
 
   return input.cycleResults.some((result) => result.actionsTaken > 0 || result.entriesRetired > 0);
+}
+
+/**
+ * Detects the narrow supersession case where the cycle finished cleanly, but
+ * the remaining work surface is unchanged because the only leftovers were
+ * intentionally skipped non-actionable clusters.
+ *
+ * @param input - Completed cycle results plus before/after work snapshots.
+ * @returns True when the autonomous run should stop cleanly instead of stalling.
+ */
+function shouldStopAfterNonActionableSupersessionCycle(input: {
+  cycleResults: SurgeonRunResult[];
+  cycleWorkBefore: Record<ImplementedSurgeonPass, number>;
+  cycleWorkAfter: Record<ImplementedSurgeonPass, number>;
+}): boolean {
+  if (
+    input.cycleWorkBefore.claim_key_quality > 0 ||
+    input.cycleWorkBefore.proposal_resolution > 0 ||
+    input.cycleWorkBefore.retirement > 0 ||
+    input.cycleWorkAfter.claim_key_quality > 0 ||
+    input.cycleWorkAfter.proposal_resolution > 0 ||
+    input.cycleWorkAfter.retirement > 0
+  ) {
+    return false;
+  }
+
+  if (input.cycleWorkBefore.supersession <= 0 || input.cycleWorkAfter.supersession !== input.cycleWorkBefore.supersession) {
+    return false;
+  }
+
+  const supersessionResult = [...input.cycleResults].reverse().find((result) => result.passType === "supersession");
+  if (!supersessionResult || supersessionResult.status !== "completed" || supersessionResult.actionsTaken > 0 || supersessionResult.entriesRetired > 0) {
+    return false;
+  }
+
+  return true;
 }
 
 /**
