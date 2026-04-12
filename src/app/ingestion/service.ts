@@ -28,6 +28,12 @@ const DEFAULT_INGEST_CONCURRENCY = 10;
 
 export { DEFAULT_INGEST_CONCURRENCY };
 
+/** High-level ingest phases surfaced to callers for user-facing progress. */
+export interface IngestStageProgressEvent {
+  phase: "dedup_start" | "claim_extraction_start" | "store_start";
+  totalEntries: number;
+}
+
 /** Runtime options for application-layer path ingestion. */
 export interface IngestPathOptions extends IngestFileOptions {
   /** Maximum number of transcript files to extract in parallel. */
@@ -38,6 +44,8 @@ export interface IngestPathOptions extends IngestFileOptions {
   onWarning?: (warning: string) => void;
   /** Optional callback invoked when a file finishes extraction. */
   onExtractionProgress?: (completed: number, total: number) => void;
+  /** Optional callback invoked when ingest advances into a new post-extraction stage. */
+  onStageProgress?: (event: IngestStageProgressEvent) => void;
   /** Optional callback invoked around ingest-specific bulk write phases. */
   onBulkWriteProgress?: (event: StoreExtractedResultsProgressEvent) => void;
 }
@@ -124,6 +132,12 @@ export async function ingestDiscoveredFiles(files: string[], ports: IngestPathPo
   const claimKeyDiagnostics = new Map<number, ClaimExtractionDiagnostic>();
 
   if (taggedEntries.length > 0) {
+    if (options.skipDedup !== true) {
+      options.onStageProgress?.({
+        phase: "dedup_start",
+        totalEntries: taggedEntries.length,
+      });
+    }
     const dedupLlm = options.skipDedup === true ? createNoopLlmPort() : (ports.createDedupLlm?.() ?? ports.createExtractionLlm());
     dedupResult = await dedupBatch(
       taggedEntries.map((taggedEntry) => taggedEntry.entry),
@@ -152,6 +166,12 @@ export async function ingestDiscoveredFiles(files: string[], ports: IngestPathPo
       confidenceThreshold: 0.8,
       eligibleTypes: ["fact", "preference", "decision", "lesson"],
     };
+    if (claimConfig.enabled) {
+      options.onStageProgress?.({
+        phase: "claim_extraction_start",
+        totalEntries: flattenEntries(resultsToStore).length,
+      });
+    }
     const extractedClaimKeys = await runBatchClaimExtraction(
       resultsToStore,
       {
@@ -192,20 +212,26 @@ export async function ingestDiscoveredFiles(files: string[], ports: IngestPathPo
   const storeResults =
     resultsToStore.length === 0
       ? new Map<string, IngestFileResult>()
-      : await storeExtractedResults(
-          resultsToStore,
-          {
-            db: ports.db,
-            embedding: ports.embedding,
-          },
-          {
-            dryRun: options.dryRun,
-            verbose: options.verbose,
-            precomputedEmbeddings,
-            onWarning: options.onWarning,
-            onBulkWriteProgress: options.onBulkWriteProgress,
-          },
-        );
+      : await (async () => {
+          options.onStageProgress?.({
+            phase: "store_start",
+            totalEntries: flattenEntries(resultsToStore).length,
+          });
+          return storeExtractedResults(
+            resultsToStore,
+            {
+              db: ports.db,
+              embedding: ports.embedding,
+            },
+            {
+              dryRun: options.dryRun,
+              verbose: options.verbose,
+              precomputedEmbeddings,
+              onWarning: options.onWarning,
+              onBulkWriteProgress: options.onBulkWriteProgress,
+            },
+          );
+        })();
 
   return {
     files,

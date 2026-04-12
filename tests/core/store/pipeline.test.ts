@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { composeEmbeddingText } from "../../../src/adapters/embeddings.js";
 import { annotateExplicitClaimKeyEntry } from "../../../src/core/ingestion/claim-key-preservation.js";
@@ -253,6 +253,110 @@ describe("storeEntries", () => {
       claim_key_rationale: "claim key extracted from model output",
     });
     expect(llm.calls).toHaveLength(1);
+  });
+
+  it("propagates configured claim extraction concurrency through the store pipeline", async () => {
+    const db = new MockDatabase({
+      claimKeyPrefixes: ["jim"],
+    });
+    const embedding = new MockEmbeddingPort();
+    const responses = [
+      deferred<{ entity: string; attribute: string; confidence: number }>(),
+      deferred<{ entity: string; attribute: string; confidence: number }>(),
+      deferred<{ entity: string; attribute: string; confidence: number }>(),
+    ];
+    let activeRequests = 0;
+    let maxActiveRequests = 0;
+    const llm = new MockLlmPort((callIndex) => {
+      const response = responses[callIndex];
+      activeRequests += 1;
+      maxActiveRequests = Math.max(maxActiveRequests, activeRequests);
+      return response.promise.finally(() => {
+        activeRequests -= 1;
+      });
+    });
+
+    const storePromise = storeEntries(
+      [
+        createInput({ subject: "Jim timezone", content: "Jim's timezone is America/Chicago." }),
+        createInput({ subject: "Jim city", content: "Jim lives in Denver, Colorado." }),
+        createInput({ subject: "Jim employer", content: "Jim works at Agenr." }),
+      ],
+      db,
+      embedding,
+      {
+        claimExtraction: {
+          llm,
+          db,
+          config: {
+            enabled: true,
+            confidenceThreshold: 0.8,
+            eligibleTypes: ["fact", "preference", "decision"],
+            concurrency: 2,
+          },
+        },
+      },
+    );
+
+    await vi.waitFor(() => {
+      expect(llm.calls).toHaveLength(2);
+    });
+    expect(maxActiveRequests).toBe(2);
+
+    responses[0].resolve({ entity: "Jim", attribute: "timezone", confidence: 0.95 });
+    await vi.waitFor(() => {
+      expect(llm.calls).toHaveLength(2);
+    });
+
+    responses[1].resolve({ entity: "Jim", attribute: "home city", confidence: 0.95 });
+    await vi.waitFor(() => {
+      expect(llm.calls).toHaveLength(3);
+    });
+
+    responses[2].resolve({ entity: "Jim", attribute: "employer", confidence: 0.95 });
+    await storePromise;
+
+    expect(maxActiveRequests).toBe(2);
+  });
+
+  it("defaults store-pipeline claim extraction concurrency to 10 when unset", async () => {
+    const db = new MockDatabase({
+      claimKeyPrefixes: ["jim"],
+    });
+    const embedding = new MockEmbeddingPort();
+    const responses = [
+      deferred<{ entity: string; attribute: string; confidence: number }>(),
+      deferred<{ entity: string; attribute: string; confidence: number }>(),
+    ];
+    const llm = new MockLlmPort((callIndex) => responses[callIndex]?.promise);
+
+    const storePromise = storeEntries(
+      [
+        createInput({ subject: "Jim timezone", content: "Jim's timezone is America/Chicago." }),
+        createInput({ subject: "Jim city", content: "Jim lives in Denver, Colorado." }),
+      ],
+      db,
+      embedding,
+      {
+        claimExtraction: {
+          llm,
+          db,
+          config: {
+            enabled: true,
+            confidenceThreshold: 0.8,
+            eligibleTypes: ["fact", "preference", "decision"],
+          },
+        },
+      },
+    );
+
+    await vi.waitFor(() => {
+      expect(llm.calls).toHaveLength(2);
+    });
+
+    responses[0].resolve({ entity: "Jim", attribute: "timezone", confidence: 0.95 });
+    responses[1].resolve({ entity: "Jim", attribute: "home city", confidence: 0.95 });
+    await storePromise;
   });
 
   it("assigns trusted lifecycle metadata when extraction succeeds after a json retry", async () => {
@@ -1048,6 +1152,15 @@ class MockLlmPort implements LlmPort {
 
     return response as T;
   }
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((innerResolve) => {
+    resolve = innerResolve;
+  });
+
+  return { promise, resolve };
 }
 
 function createInput(overrides: Partial<StoreEntryInput> = {}): StoreEntryInput {

@@ -166,7 +166,7 @@ export async function ingestFile(
         confidenceThreshold: 0.8,
         eligibleTypes: ["fact", "preference", "decision", "lesson"],
       },
-      1,
+      options.claimExtractionConfig?.concurrency ?? 10,
     );
 
     for (const [entry, extractedClaimKey] of extractedClaimKeys) {

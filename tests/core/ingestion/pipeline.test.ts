@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { OpenClawTranscriptParser } from "../../../src/adapters/openclaw/transcript/parser.js";
 import { extractFile, ingestFile, storeExtractedResults, type ExtractedFileResult } from "../../../src/core/ingestion/pipeline.js";
@@ -458,6 +458,119 @@ describe("ingestFile", () => {
     expect(db.insertions[0]?.entry.claim_key).toBe("project_x/status");
   });
 
+  it("propagates configured claim extraction concurrency through single-file ingest", async () => {
+    const { filePath, fileHash } = await writeTranscriptFile("session-four-claim-concurrency");
+    const db = new MockDatabase();
+    const transcript = new MockTranscriptPort(buildTranscript());
+    const llm = new MockLlmPort([
+      {
+        entries: [
+          createInput({ type: "fact", subject: "Jim timezone", content: "Jim's timezone is America/Chicago.", source_file: filePath }),
+          createInput({ type: "fact", subject: "Jim city", content: "Jim lives in Denver, Colorado.", source_file: filePath }),
+        ],
+      },
+    ]);
+    const embedding = new MockEmbeddingPort();
+    const responses = [
+      deferred<{ entity: string; attribute: string; confidence: number }>(),
+      deferred<{ entity: string; attribute: string; confidence: number }>(),
+    ];
+    let claimLlm: MockLlmPort | null = null;
+
+    const ingestPromise = ingestFile(
+      {
+        filePath,
+        fileHash,
+      },
+      {
+        transcript,
+        llm,
+        embedding,
+        db,
+        claimExtractionLlm: () => {
+          claimLlm = new MockLlmPort(responses.map((response) => response.promise));
+          return claimLlm;
+        },
+      },
+      {
+        wholeFile: "never",
+        skipDedup: true,
+        claimExtractionConfig: {
+          enabled: true,
+          confidenceThreshold: 0.8,
+          eligibleTypes: ["fact", "preference", "decision", "lesson"],
+          concurrency: 2,
+        },
+      },
+    );
+
+    await vi.waitFor(() => {
+      expect(claimLlm?.calls).toHaveLength(2);
+    });
+
+    responses[0].resolve({ entity: "Jim", attribute: "timezone", confidence: 0.95 });
+    await vi.waitFor(() => {
+      expect(claimLlm?.calls).toHaveLength(2);
+    });
+
+    responses[1].resolve({ entity: "Jim", attribute: "home city", confidence: 0.95 });
+    await ingestPromise;
+  });
+
+  it("defaults single-file ingest claim extraction concurrency to 10 when unset", async () => {
+    const { filePath, fileHash } = await writeTranscriptFile("session-four-claim-default-concurrency");
+    const db = new MockDatabase();
+    const transcript = new MockTranscriptPort(buildTranscript());
+    const llm = new MockLlmPort([
+      {
+        entries: [
+          createInput({ type: "fact", subject: "Jim timezone", content: "Jim's timezone is America/Chicago.", source_file: filePath }),
+          createInput({ type: "fact", subject: "Jim city", content: "Jim lives in Denver, Colorado.", source_file: filePath }),
+        ],
+      },
+    ]);
+    const embedding = new MockEmbeddingPort();
+    const responses = [
+      deferred<{ entity: string; attribute: string; confidence: number }>(),
+      deferred<{ entity: string; attribute: string; confidence: number }>(),
+    ];
+    let claimLlm: MockLlmPort | null = null;
+
+    const ingestPromise = ingestFile(
+      {
+        filePath,
+        fileHash,
+      },
+      {
+        transcript,
+        llm,
+        embedding,
+        db,
+        claimExtractionLlm: () => {
+          claimLlm = new MockLlmPort(responses.map((response) => response.promise));
+          return claimLlm;
+        },
+      },
+      {
+        wholeFile: "never",
+        skipDedup: true,
+        claimExtractionConfig: {
+          enabled: true,
+          confidenceThreshold: 0.8,
+          eligibleTypes: ["fact", "preference", "decision", "lesson"],
+        },
+      },
+    );
+
+    await vi.waitFor(() => {
+      expect(claimLlm?.calls).toHaveLength(2);
+    });
+
+    responses[0].resolve({ entity: "Jim", attribute: "timezone", confidence: 0.95 });
+    responses[1].resolve({ entity: "Jim", attribute: "home city", confidence: 0.95 });
+    await ingestPromise;
+  });
+
   it("preserves explicit claim keys through OpenClaw transcript re-ingest", async () => {
     const transcriptLines = [
       JSON.stringify({
@@ -807,6 +920,15 @@ class MockLlmPort implements LlmPort {
 
     return response as T;
   }
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((innerResolve) => {
+    resolve = innerResolve;
+  });
+
+  return { promise, resolve };
 }
 
 class TranscriptAwareLlmPort implements LlmPort {

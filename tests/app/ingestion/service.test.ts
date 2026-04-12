@@ -158,6 +158,48 @@ describe("ingestPath", () => {
     expect(db.insertions[1]?.entry.claim_key).toBeUndefined();
   });
 
+  it("emits post-extraction stage progress during ingest", async () => {
+    const files = ["/tmp/session-stage-a.jsonl", "/tmp/session-stage-b.jsonl"];
+    const phases: string[] = [];
+
+    await ingestPath(
+      "/tmp",
+      {
+        files: new MockFilePort(files, {
+          [files[0]]: "hash-stage-a",
+          [files[1]]: "hash-stage-b",
+        }),
+        transcript: new MockTranscriptPort(buildTranscript()),
+        db: new MockDatabase(),
+        embedding: new MockEmbeddingPort(),
+        createExtractionLlm: () =>
+          new MockIngestionLlm({
+            entries: [
+              createInput({
+                type: "fact",
+                subject: "Project X status",
+                content: "Project X is active.",
+              }),
+            ],
+          }),
+        createClaimExtractionLlm: () =>
+          new MockClaimExtractionLlm(() => ({
+            entity: "project_x",
+            attribute: "status",
+            confidence: 0.95,
+          })),
+      },
+      {
+        wholeFile: "never",
+        onStageProgress: (event) => {
+          phases.push(`${event.phase}:${event.totalEntries}`);
+        },
+      },
+    );
+
+    expect(phases).toEqual(["dedup_start:2", "claim_extraction_start:2", "store_start:2"]);
+  });
+
   it("threads transcript-derived project metadata into claim extraction hints and persistence", async () => {
     const filePath = "/tmp/session-project-metadata.jsonl.reset.2026-04-01T09-00-00.000Z";
     const db = new MockDatabase();

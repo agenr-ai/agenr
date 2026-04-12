@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { DatabasePort, LlmPort } from "../../../src/core/ports.js";
 import { extractClaimKey, extractClaimKeyDecision, getEntityHints, runBatchClaimExtraction } from "../../../src/core/store/claim-extraction.js";
@@ -649,12 +649,158 @@ describe("extractClaimKey", () => {
 });
 
 describe("runBatchClaimExtraction", () => {
-  it("uses bounded full-key hints and same-batch updates for later entries", async () => {
+  it("honors the configured batch concurrency", async () => {
+    const entries: StoreEntryInput[] = [
+      {
+        type: "fact",
+        subject: "Jim timezone",
+        content: "Jim's timezone is America/Chicago.",
+      },
+      {
+        type: "fact",
+        subject: "Jim city",
+        content: "Jim lives in Denver, Colorado.",
+      },
+      {
+        type: "fact",
+        subject: "Jim employer",
+        content: "Jim works at Agenr.",
+      },
+    ];
+    const responses = [
+      deferred<{ entity: string; attribute: string; confidence: number }>(),
+      deferred<{ entity: string; attribute: string; confidence: number }>(),
+      deferred<{ entity: string; attribute: string; confidence: number }>(),
+    ];
+    let activeRequests = 0;
+    let maxActiveRequests = 0;
+    const llm = new MockLlmPort((callIndex) => {
+      const response = responses[callIndex];
+      activeRequests += 1;
+      maxActiveRequests = Math.max(maxActiveRequests, activeRequests);
+      return response.promise.finally(() => {
+        activeRequests -= 1;
+      });
+    });
+
+    const extractionPromise = runBatchClaimExtraction(
+      [{ entries }],
+      {
+        createLlm: () => llm,
+        db: new MockDatabasePort(),
+      },
+      {
+        enabled: true,
+        confidenceThreshold: 0.8,
+        eligibleTypes: ["fact", "preference", "decision", "lesson"],
+      },
+      2,
+    );
+
+    await vi.waitFor(() => {
+      expect(llm.calls).toHaveLength(2);
+    });
+    expect(maxActiveRequests).toBe(2);
+
+    responses[0].resolve({
+      entity: "Jim",
+      attribute: "timezone",
+      confidence: 0.95,
+    });
+    await vi.waitFor(() => {
+      expect(llm.calls).toHaveLength(2);
+    });
+
+    responses[1].resolve({
+      entity: "Jim",
+      attribute: "home city",
+      confidence: 0.95,
+    });
+    await vi.waitFor(() => {
+      expect(llm.calls).toHaveLength(3);
+    });
+
+    responses[2].resolve({
+      entity: "Jim",
+      attribute: "employer",
+      confidence: 0.95,
+    });
+    await extractionPromise;
+
+    expect(maxActiveRequests).toBe(2);
+    expect(entries[0]?.claim_key).toBe("jim/timezone");
+    expect(entries[1]?.claim_key).toBe("jim/home_city");
+    expect(entries[2]?.claim_key).toBe("jim/employer");
+  });
+
+  it("does not let later pre-keyed entries influence earlier entries in the same stage", async () => {
+    const entries: StoreEntryInput[] = [
+      {
+        type: "fact",
+        subject: "Current status",
+        content: "The project is active.",
+        project: "Project X",
+      },
+      {
+        type: "fact",
+        subject: "Canonical status",
+        content: "Project X is active.",
+        project: "Project X",
+        claim_key: "project_x/status",
+      },
+      {
+        type: "fact",
+        subject: "Current owner",
+        content: "The project is owned by the platform team.",
+        project: "Project X",
+      },
+    ];
+    const llm = new MockLlmPort((callIndex, systemPrompt) => {
+      if (callIndex === 0) {
+        expect(systemPrompt).not.toContain("project_x/status");
+        return {
+          no_claim: true,
+        };
+      }
+
+      expect(systemPrompt).toContain("project_x/status");
+      return {
+        no_claim: true,
+      };
+    });
+
+    await runBatchClaimExtraction(
+      [{ entries }],
+      {
+        createLlm: () => llm,
+        db: new MockDatabasePort(),
+      },
+      {
+        enabled: true,
+        confidenceThreshold: 0.8,
+        eligibleTypes: ["fact", "preference", "decision", "lesson"],
+      },
+      2,
+    );
+
+    expect(llm.calls).toHaveLength(2);
+    expect(entries[0]?.claim_key).toBeUndefined();
+    expect(entries[1]?.claim_key).toBe("project_x/status");
+    expect(entries[2]?.claim_key).toBeUndefined();
+  });
+
+  it("uses bounded full-key hints and same-batch updates for later stages", async () => {
     const entries: StoreEntryInput[] = [
       {
         type: "fact",
         subject: "Project X status",
         content: "Project X is active.",
+        project: "Project X",
+      },
+      {
+        type: "fact",
+        subject: "Project X owner",
+        content: "Project X is owned by the platform team.",
         project: "Project X",
       },
       {
@@ -672,6 +818,14 @@ describe("runBatchClaimExtraction", () => {
         return {
           entity: "project_x",
           attribute: "status",
+          confidence: 0.95,
+        };
+      }
+
+      if (callIndex === 1) {
+        return {
+          entity: "project_x",
+          attribute: "owner",
           confidence: 0.95,
         };
       }
@@ -699,11 +853,12 @@ describe("runBatchClaimExtraction", () => {
         confidenceThreshold: 0.8,
         eligibleTypes: ["fact", "preference", "decision", "lesson"],
       },
-      4,
+      2,
     );
 
     expect(entries[0]?.claim_key).toBe("project_x/status");
-    expect(entries[1]?.claim_key).toBe("project_x/status");
+    expect(entries[1]?.claim_key).toBe("project_x/owner");
+    expect(entries[2]?.claim_key).toBe("project_x/status");
   });
 
   it("retries unresolved earlier entries after later trusted siblings expand same-batch support", async () => {
@@ -798,6 +953,15 @@ class MockLlmPort implements LlmPort {
 
     return response as T;
   }
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((innerResolve) => {
+    resolve = innerResolve;
+  });
+
+  return { promise, resolve };
 }
 
 class MockDatabasePort implements DatabasePort {

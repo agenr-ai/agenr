@@ -336,7 +336,7 @@ async function maybeExtractClaimKeys(preparedEntries: PreparedEntry[], options: 
         db: claimExtraction.db,
       },
       claimExtraction.config,
-      1,
+      claimExtraction.config.concurrency ?? 10,
       options.onWarning,
       (entry, diagnostic) => {
         const preparedEntry = preparedEntries.find((candidate) => candidate.input === entry);

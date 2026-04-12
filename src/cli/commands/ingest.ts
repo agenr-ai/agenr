@@ -1,7 +1,12 @@
 import path from "node:path";
 
 import * as clack from "@clack/prompts";
-import { DEFAULT_INGEST_CONCURRENCY, ingestDiscoveredFiles, type IngestPathOptions } from "../../app/ingestion/index.js";
+import {
+  DEFAULT_INGEST_CONCURRENCY,
+  ingestDiscoveredFiles,
+  type IngestPathOptions,
+  type IngestStageProgressEvent,
+} from "../../app/ingestion/index.js";
 import { createDatabase } from "../../adapters/db/client.js";
 import { createEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../../adapters/embeddings.js";
 import { localTranscriptFiles } from "../../adapters/files/transcript-files.js";
@@ -164,7 +169,14 @@ function registerIngestEntriesCommand(parent: Command): void {
           onExtractionProgress: (completed, total) => {
             spinner?.message(`Processing transcripts... (${completed}/${total} extracted)`);
           },
-          onBulkWriteProgress: useVerboseBulkWriteProgress ? reportBulkWriteProgress : undefined,
+          onStageProgress: (event) => {
+            spinner?.message(progressMessageForIngestStage(event, files.length));
+          },
+          onBulkWriteProgress: useVerboseBulkWriteProgress
+            ? reportBulkWriteProgress
+            : (event) => {
+                spinner?.message(progressMessageForBulkWrite(event.phase));
+              },
         },
       );
 
@@ -687,6 +699,32 @@ function emptyStoreResult(): StoreResult {
     skipped: 0,
     rejected: 0,
   };
+}
+
+/** Maps post-extraction ingest phases into concise spinner text. */
+function progressMessageForIngestStage(event: IngestStageProgressEvent, totalFiles: number): string {
+  switch (event.phase) {
+    case "dedup_start":
+      return `Deduplicating ${event.totalEntries} ${pluralize(event.totalEntries, "entry", "entries")} from ${totalFiles} ${pluralize(totalFiles, "file")}...`;
+    case "claim_extraction_start":
+      return `Extracting claim keys for ${event.totalEntries} ${pluralize(event.totalEntries, "entry", "entries")}...`;
+    case "store_start":
+      return `Running store pipeline for ${event.totalEntries} ${pluralize(event.totalEntries, "entry", "entries")}...`;
+  }
+}
+
+/** Maps bulk-write progress phases into spinner text. */
+function progressMessageForBulkWrite(phase: StoreExtractedResultsProgressEvent["phase"]): string {
+  switch (phase) {
+    case "prepare_start":
+      return "Preparing database indexes for bulk ingest...";
+    case "store_complete":
+      return "Bulk ingest store phase complete...";
+    case "finalize_start":
+      return "Rebuilding indexes after bulk ingest...";
+    case "finalize_complete":
+      return "Bulk ingest finalization complete...";
+  }
 }
 
 /** Reports ingest bulk-write lifecycle events through the CLI logger. */

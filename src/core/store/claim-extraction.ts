@@ -528,7 +528,7 @@ export async function getEntityHints(db: DatabasePort): Promise<string[]> {
  * @param results - Entry batches whose members may be stamped with `claim_key`.
  * @param ports - Claim-extraction LLM factory plus database access for hint loading.
  * @param config - Runtime extraction controls.
- * @param _concurrency - Reserved for interface compatibility. Batch extraction stays ordered so same-batch hints remain deterministic.
+ * @param concurrency - Maximum number of entries evaluated concurrently per ordered stage.
  * @param onWarning - Optional warning sink for deterministic rejection reasons.
  * @param onDiagnostic - Optional sink for structured per-entry routing diagnostics.
  */
@@ -539,7 +539,7 @@ export async function runBatchClaimExtraction(
     db: DatabasePort;
   },
   config: ClaimExtractionConfig,
-  _concurrency = 10,
+  concurrency = 10,
   onWarning?: (warning: string) => void,
   onDiagnostic?: (entry: StoreEntryInput, diagnostic: ClaimExtractionDiagnostic) => void,
 ): Promise<Map<StoreEntryInput, ClaimExtractionResult>> {
@@ -552,9 +552,23 @@ export async function runBatchClaimExtraction(
   const extractedEntries = new Map<StoreEntryInput, ClaimExtractionResult>();
   const diagnostics = new Map<StoreEntryInput, ClaimExtractionDiagnostic>();
   const retryEntries: StoreEntryInput[] = [];
+  const stageSize = normalizeClaimExtractionConcurrency(concurrency);
+  const orderedEntries = results.flatMap((result) => result.entries);
 
-  for (const result of results) {
-    for (const entry of result.entries) {
+  // Commit accepted hints after each bounded stage so later stages and retries
+  // can reuse same-batch support without reordering diagnostics or mutations.
+  for (let stageStart = 0; stageStart < orderedEntries.length; stageStart += stageSize) {
+    const stageEntries = orderedEntries.slice(stageStart, stageStart + stageSize);
+    const stageRequests: Array<{
+      entry: StoreEntryInput;
+      hintSnapshot: {
+        hints: ClaimExtractionHints;
+        supportClaimKeys: string[];
+        entityPrefixStats: ClaimKeyEntityPrefixStats[];
+      };
+    }> = [];
+
+    for (const entry of stageEntries) {
       if (entry.claim_key) {
         recordClaimKeyHint(hintState, entry.claim_key);
         continue;
@@ -574,7 +588,19 @@ export async function runBatchClaimExtraction(
         continue;
       }
 
-      const decision = await extractBatchClaimKeyDecision(entry, llm, config, hintState, onWarning);
+      stageRequests.push({
+        entry,
+        hintSnapshot: buildClaimExtractionHintSnapshot(hintState, entry),
+      });
+    }
+
+    const stageDecisions = await Promise.all(
+      stageRequests.map(async ({ entry, hintSnapshot }) => ({
+        entry,
+        decision: await extractBatchClaimKeyDecision(entry, llm, config, hintSnapshot, onWarning),
+      })),
+    );
+    for (const { entry, decision } of stageDecisions) {
       diagnostics.set(entry, decision.diagnostic);
 
       if (decision.result?.claimKey) {
@@ -589,21 +615,32 @@ export async function runBatchClaimExtraction(
   }
 
   if (retryEntries.length > 0 && extractedEntries.size > 0) {
-    for (const entry of retryEntries) {
-      if (entry.claim_key) {
-        continue;
+    for (let stageStart = 0; stageStart < retryEntries.length; stageStart += stageSize) {
+      const stageRequests = retryEntries
+        .slice(stageStart, stageStart + stageSize)
+        .filter((entry) => !entry.claim_key)
+        .map((entry) => ({
+          entry,
+          hintSnapshot: buildClaimExtractionHintSnapshot(hintState, entry),
+        }));
+      const stageDecisions = await Promise.all(
+        stageRequests.map(async ({ entry, hintSnapshot }) => ({
+          entry,
+          decision: await extractBatchClaimKeyDecision(entry, llm, config, hintSnapshot, onWarning),
+        })),
+      );
+
+      for (const { entry, decision } of stageDecisions) {
+        diagnostics.set(entry, decision.diagnostic);
+
+        if (!decision.result?.claimKey) {
+          continue;
+        }
+
+        applyClaimExtractionResultToEntry(entry, decision.result);
+        recordClaimKeyHint(hintState, decision.result.claimKey);
+        extractedEntries.set(entry, decision.result);
       }
-
-      const decision = await extractBatchClaimKeyDecision(entry, llm, config, hintState, onWarning);
-      diagnostics.set(entry, decision.diagnostic);
-
-      if (!decision.result?.claimKey) {
-        continue;
-      }
-
-      applyClaimExtractionResultToEntry(entry, decision.result);
-      recordClaimKeyHint(hintState, decision.result.claimKey);
-      extractedEntries.set(entry, decision.result);
     }
   }
 
@@ -620,14 +657,50 @@ export async function runBatchClaimExtraction(
 }
 
 /**
+ * Normalizes one requested batch concurrency into a safe positive integer.
+ *
+ * @param value - Candidate configured concurrency.
+ * @returns Positive concurrency limit, or the default of `10`.
+ */
+function normalizeClaimExtractionConcurrency(value: number): number {
+  if (!Number.isInteger(value) || value <= 0) {
+    return 10;
+  }
+
+  return value;
+}
+
+/**
+ * Freezes the hint inputs visible to one entry at its ordered position in the batch.
+ *
+ * @param hintState - Mutable same-batch hint state accumulated so far.
+ * @param entry - Current entry whose metadata should be folded into the snapshot.
+ * @returns Immutable hint snapshot for one extraction request.
+ */
+function buildClaimExtractionHintSnapshot(
+  hintState: ClaimExtractionHintState,
+  entry: StoreEntryInput,
+): {
+  hints: ClaimExtractionHints;
+  supportClaimKeys: string[];
+  entityPrefixStats: ClaimKeyEntityPrefixStats[];
+} {
+  return {
+    hints: buildEntryHints(hintState, entry),
+    supportClaimKeys: [...hintState.supportClaimKeys],
+    entityPrefixStats: hintState.entityPrefixStats,
+  };
+}
+
+/**
  * Runs the shared claim-extraction decision logic for one batch entry using the
- * current mutable hint state. Unexpected failures are converted into structured
+ * current immutable hint snapshot. Unexpected failures are converted into structured
  * extraction-failure diagnostics so ingest can continue.
  *
  * @param entry - Store input currently being evaluated.
  * @param llm - Claim-extraction model port.
  * @param config - Runtime extraction controls.
- * @param hintState - Mutable same-batch claim-key hint state.
+ * @param hintSnapshot - Frozen same-batch hint snapshot for this entry.
  * @param onWarning - Optional warning sink.
  * @returns Structured claim-extraction decision for the entry.
  */
@@ -635,7 +708,11 @@ async function extractBatchClaimKeyDecision(
   entry: StoreEntryInput,
   llm: LlmPort,
   config: ClaimExtractionConfig,
-  hintState: ClaimExtractionHintState,
+  hintSnapshot: {
+    hints: ClaimExtractionHints;
+    supportClaimKeys: string[];
+    entityPrefixStats: ClaimKeyEntityPrefixStats[];
+  },
   onWarning?: (warning: string) => void,
 ): Promise<ClaimExtractionDecision> {
   try {
@@ -650,10 +727,10 @@ async function extractBatchClaimKeyDecision(
       llm,
       config,
       {
-        hints: buildEntryHints(hintState, entry),
+        hints: hintSnapshot.hints,
         onWarning,
-        supportClaimKeys: [...hintState.supportClaimKeys],
-        entityPrefixStats: hintState.entityPrefixStats,
+        supportClaimKeys: hintSnapshot.supportClaimKeys,
+        entityPrefixStats: hintSnapshot.entityPrefixStats,
       },
     );
   } catch {

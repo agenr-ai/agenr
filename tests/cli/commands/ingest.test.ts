@@ -245,6 +245,111 @@ describe("registerIngestCommand", () => {
 
     expect(discoverFilesMock).toHaveBeenCalledWith("/tmp/transcripts");
   });
+
+  it("updates the non-verbose spinner as ingest advances through post-extraction stages", async () => {
+    const clackMock = createClackMock();
+    const ingestDiscoveredFilesMock = vi.fn(async (_files: string[], _ports: unknown, options: any) => {
+      options.onExtractionProgress?.(2, 2);
+      options.onStageProgress?.({ phase: "dedup_start", totalEntries: 4 });
+      options.onStageProgress?.({ phase: "claim_extraction_start", totalEntries: 4 });
+      options.onStageProgress?.({ phase: "store_start", totalEntries: 4 });
+      options.onBulkWriteProgress?.({ phase: "prepare_start" });
+      options.onBulkWriteProgress?.({ phase: "finalize_start" });
+      return {
+        files: ["/tmp/session-a.jsonl", "/tmp/session-b.jsonl"],
+        extractionRuns: [],
+        dedupResult: { removedCount: 0 },
+        dedupUsage: {
+          inputTokens: 0,
+          outputTokens: 0,
+          totalTokens: 0,
+          totalCost: 0,
+          calls: 0,
+        },
+        storeResults: new Map(),
+        claimKeyHealth: null,
+      };
+    });
+
+    vi.resetModules();
+    vi.doMock("@clack/prompts", () => clackMock);
+    vi.doMock("../../../src/adapters/db/client.js", () => ({
+      createDatabase: vi.fn(async () => ({
+        close: vi.fn(async () => undefined),
+      })),
+    }));
+    vi.doMock("../../../src/adapters/embeddings.js", () => ({
+      createEmbeddingClient: vi.fn(() => ({ embed: vi.fn() })),
+      resolveEmbeddingApiKey: vi.fn(() => "sk-test"),
+      resolveEmbeddingModel: vi.fn(() => "text-embedding-3-small"),
+    }));
+    vi.doMock("../../../src/adapters/files/transcript-files.js", () => ({
+      localTranscriptFiles: {
+        discoverFiles: vi.fn(async () => ["/tmp/session-a.jsonl", "/tmp/session-b.jsonl"]),
+      },
+    }));
+    vi.doMock("../../../src/adapters/llm.js", () => ({
+      createLlmClient: vi.fn(() => ({
+        complete: vi.fn(),
+        completeJson: vi.fn(),
+      })),
+      resolveLlmApiKey: vi.fn(() => "sk-test"),
+      resolveModel: vi.fn(() => ({
+        provider: "openai",
+        modelId: "gpt-5.4-mini",
+      })),
+    }));
+    vi.doMock("../../../src/adapters/openclaw/transcript/parser.js", () => ({
+      openClawTranscriptParser: {
+        parseFile: vi.fn(),
+      },
+    }));
+    vi.doMock("../../../src/app/ingestion/index.js", () => ({
+      DEFAULT_INGEST_CONCURRENCY: 10,
+      ingestDiscoveredFiles: ingestDiscoveredFilesMock,
+    }));
+    vi.doMock("../../../src/config.js", () => ({
+      readConfig: vi.fn(() => ({
+        dbPath: "/tmp/knowledge.db",
+        extractionContext: undefined,
+      })),
+      resolveClaimExtractionConfig: vi.fn(() => ({
+        enabled: false,
+      })),
+    }));
+    vi.doMock("../../../src/logger.js", () => ({
+      setVerbose: vi.fn(),
+    }));
+    vi.doMock("../../../src/ui.js", () => ({
+      banner: vi.fn(() => "agenr"),
+      formatLabel: vi.fn((label: string, value: string) => `${label}: ${value}`),
+      ui: {
+        error: (text: string) => text,
+      },
+    }));
+
+    const { registerIngestCommand: registerMockedIngestCommand } = await import("../../../src/cli/commands/ingest.js");
+    const program = new Command();
+    registerMockedIngestCommand(program);
+
+    await program.parseAsync(["node", "test", "ingest", "entries", "/tmp/transcripts"], {
+      from: "node",
+    });
+
+    const spinnerInstance = (clackMock.spinner as ReturnType<typeof vi.fn>).mock.results[0]?.value;
+    const messages = (spinnerInstance?.message as ReturnType<typeof vi.fn>).mock.calls.map(([message]: [string]) => message);
+
+    expect(messages).toEqual(
+      expect.arrayContaining([
+        "Processing transcripts... (2/2 extracted)",
+        "Deduplicating 4 entries from 2 files...",
+        "Extracting claim keys for 4 entries...",
+        "Running store pipeline for 4 entries...",
+        "Preparing database indexes for bulk ingest...",
+        "Rebuilding indexes after bulk ingest...",
+      ]),
+    );
+  });
 });
 
 describe("pluralize", () => {
