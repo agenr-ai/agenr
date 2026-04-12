@@ -7,3 +7,5 @@ docs/internal/
 *.db-shm
 *.db-wal
 .DS_Store
+.cursor/rules/*
+.cursor/skills/*
