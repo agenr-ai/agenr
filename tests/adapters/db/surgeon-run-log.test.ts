@@ -6,6 +6,7 @@ import {
   createSurgeonRun,
   getDailySurgeonCost,
   getLastSurgeonRun,
+  listSurgeonProposalBacklog,
   getSurgeonRunActions,
   getSurgeonRunProposals,
   getSurgeonRunHistory,
@@ -211,6 +212,90 @@ describe("surgeon run log", () => {
         reviewReason: null,
         appliedActionCount: 0,
       },
+    ]);
+  });
+
+  it("refreshes an existing open proposal instead of appending duplicate backlog rows", async () => {
+    const client = await createTestClient(clients);
+    const firstRunId = await createSurgeonRun(client, {
+      passType: "claim_key_quality",
+      dryRun: true,
+      startedAt: "2026-03-29T12:00:00.000Z",
+    });
+    const secondRunId = await createSurgeonRun(client, {
+      passType: "claim_key_quality",
+      dryRun: true,
+      startedAt: "2026-03-30T12:00:00.000Z",
+    });
+
+    await logSurgeonProposal(client, {
+      id: "proposal-open-1",
+      runId: firstRunId,
+      groupId: "claim-key-mixed:shared-subject::fact",
+      issueKind: "mixed_claim_key_group",
+      scope: "cluster",
+      entryIds: ["entry-a", "entry-b"],
+      currentClaimKeys: ["jim/home_city", "jim/city_of_residence"],
+      proposedClaimKeys: ["jim/home_city"],
+      rationale: "First pass rationale.",
+      confidence: 0.72,
+      source: "mixed_group_consensus",
+      eligibleForApply: false,
+      createdAt: "2026-03-29T12:01:00.000Z",
+    });
+
+    await logSurgeonProposal(client, {
+      id: "proposal-open-2",
+      runId: secondRunId,
+      groupId: "claim-key-mixed:shared-subject::fact",
+      issueKind: "mixed_claim_key_group",
+      scope: "cluster",
+      entryIds: ["entry-a", "entry-b"],
+      currentClaimKeys: ["jim/home_city", "jim/city_of_residence"],
+      proposedClaimKeys: ["jim/home_city"],
+      rationale: "Second pass rationale.",
+      confidence: 0.91,
+      source: "mixed_group_consensus",
+      eligibleForApply: true,
+      createdAt: "2026-03-30T12:01:00.000Z",
+    });
+
+    const stored = await client.execute({
+      sql: `
+        SELECT id, run_id, rationale, confidence, eligible_for_apply, created_at
+        FROM surgeon_run_proposals
+        WHERE group_id = ?
+          AND issue_kind = ?
+          AND review_status = 'open'
+      `,
+      args: ["claim-key-mixed:shared-subject::fact", "mixed_claim_key_group"],
+    });
+
+    expect(stored.rows).toEqual([
+      {
+        id: "proposal-open-1",
+        run_id: secondRunId,
+        rationale: "Second pass rationale.",
+        confidence: 0.91,
+        eligible_for_apply: 1,
+        created_at: "2026-03-29T12:01:00.000Z",
+      },
+    ]);
+
+    await expect(
+      listSurgeonProposalBacklog(client, {
+        state: "open",
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        proposal: expect.objectContaining({
+          id: "proposal-open-1",
+          runId: secondRunId,
+          rationale: "Second pass rationale.",
+          eligibleForApply: true,
+          createdAt: "2026-03-29T12:01:00.000Z",
+        }),
+      }),
     ]);
   });
 

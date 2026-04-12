@@ -133,6 +133,23 @@ describe("scoreCandidate", () => {
     });
   });
 
+  it("moves the final score by about 0.0167 for a one-step importance demotion", () => {
+    const higher = scoreCandidate({
+      vectorSim: 0.8,
+      lexical: 0.5,
+      recency: 0.6,
+      importance: importanceScore(5),
+    }).score;
+    const lower = scoreCandidate({
+      vectorSim: 0.8,
+      lexical: 0.5,
+      recency: 0.6,
+      importance: importanceScore(4),
+    }).score;
+
+    expect(higher - lower).toBeCloseTo(1 / 60, 6);
+  });
+
   it("treats NaN inputs as zero and clamps negative scores to zero", () => {
     expect(
       scoreCandidate({

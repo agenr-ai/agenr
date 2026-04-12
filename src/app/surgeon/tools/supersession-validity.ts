@@ -134,6 +134,7 @@ export function createSetValidityTool(deps: SurgeonToolDeps): AgentTool<typeof S
       });
 
       if (updated) {
+        deps.completionGuards?.supersession.markAdjudicated([entry.id]);
         await deps.recordRunAction({
           id: randomUUID(),
           runId: deps.runId,

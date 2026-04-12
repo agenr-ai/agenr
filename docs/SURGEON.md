@@ -59,6 +59,8 @@ For every `agenr surgeon run`, agenr currently:
 11. In autonomous mode, repeats later-cycle `proposal_resolution`, `supersession`, and `retirement` work until no direct work remains, a pass stalls, the cycle stops making direct progress, or budget stops the run.
 12. Persists final status, usage, cost, action counts, summary JSON, and error text.
 
+Persisted `actions_taken` reflects actual stored non-skip actions, not model-reported `complete_pass` counts. If a pass stalls after already mutating the corpus, the stalled summary says so explicitly.
+
 ## Passes
 
 ### `claim_key_quality`
@@ -100,6 +102,8 @@ The persisted `summary_json.claim_key_quality` payload includes:
 
 `claim_key_quality` never retires entries. Its output is structural cleanup plus proposal backlog.
 
+Open proposal backlog is deduplicated by logical issue (`group_id + issue_kind`). When a later run rediscovers the same unresolved issue, agenr refreshes the existing open row instead of appending another backlog item. Applied and rejected proposal rows remain separate history records.
+
 ### `proposal_resolution`
 
 `proposal_resolution` does not use the agent loop and does not expose public surgeon tools. It operates only on proposals that are already `open`, `eligible_for_apply`, and resolvable to exactly one target claim key.
@@ -139,6 +143,8 @@ The current tool surface lets it:
 
 `retirement` is an agent-loop pass that pages protected candidate pools and decides whether an entry should be retired or merely downgraded.
 
+Permanent entries are demotion-first. `retire_entry` rejects `expiry = "permanent"` rows, and surgeon must use `update_entry` when the content is still true but should carry less recall weight. Surgeon-driven permanent demotions are bounded at `importance >= 4` so durable facts can be softened without being silently buried.
+
 The current actionable scope is a high-yield subset:
 
 - all `temporary` entries
@@ -163,7 +169,21 @@ The pass can:
 - downgrade or otherwise update entries
 - complete the pass with a structured summary
 
+Same-run retirement suppression is explicit. Once an entry has been skipped, retired, or updated in the current retirement run, later `query_candidates` calls suppress it and `retire_entry` refuses a second contradictory action.
+
 Retirement now has an explicit preflight. If both actionable and widened all-scope availability are empty after current filters are applied, the pass finalizes as `no_work` without entering the agent loop.
+
+### Recall effect of demotion
+
+Recall scoring combines:
+
+- relevance at `0.50`
+- recency at `0.25`
+- importance at `0.25`
+
+`importanceScore()` maps the stored `importance` range `1-10` onto `0.4-1.0`, so each one-step importance change moves the normalized importance signal by about `0.0667`. After the `0.25` recall weight is applied, one surgeon demotion step changes the final recall score by about `0.0167` when the other signals stay constant.
+
+That calibration is why the surgeon floor is `importance = 4`: it is enough to reduce prominence over repeated maintenance runs without making durable permanent facts disappear from ranking unless relevance and recency are already weak too.
 
 ## Tool surface
 

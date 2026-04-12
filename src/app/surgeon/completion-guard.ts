@@ -74,6 +74,14 @@ export interface SurgeonSupersessionReviewTracker {
   recordPage(input: { scope: "claim_key" | "subject" | "all"; claimKeyTotal: number; subjectTotal: number; clusters: SurgeonSupersessionCluster[] }): void;
 
   /**
+   * Drops clusters already adjudicated earlier in the same run.
+   *
+   * @param clusters - Candidate clusters about to be shown to the model.
+   * @returns Only clusters that still need review in the current run.
+   */
+  filterPendingClusters(clusters: SurgeonSupersessionCluster[]): SurgeonSupersessionCluster[];
+
+  /**
    * Marks one or more viewed clusters as adjudicated.
    *
    * @param entryIds - Entry IDs touched by a decisive supersession action.
@@ -241,6 +249,10 @@ export function createSupersessionReviewTracker(input: { claimKeyTotal: number; 
         widenedBeforeClaimKeyExhausted: progress.widenedBeforeClaimKeyExhausted || wideningIntoSubject,
       };
       entryToClusterKeys = nextEntryMap;
+    },
+
+    filterPendingClusters(clusters): SurgeonSupersessionCluster[] {
+      return clusters.filter((cluster) => !progress.adjudicatedClusterKeys.has(buildScopedClusterKey(cluster)));
     },
 
     markAdjudicated(entryIds): void {

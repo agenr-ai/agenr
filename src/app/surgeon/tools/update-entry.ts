@@ -2,6 +2,7 @@ import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type, type Static } from "@sinclair/typebox";
 
 import { normalizeManualClaimKeyUpdate } from "../../../core/claim-key-lifecycle.js";
+import { SURGEON_PERMANENT_ENTRY_DEMOTION_FLOOR } from "../../../core/surgeon/domain/protection-rules.js";
 import { validateTemporalValidityRange } from "../../../core/temporal-validity.js";
 import { EXPIRY_LEVELS, type EntryUpdateInput, type Expiry } from "../../../core/types.js";
 import type { SurgeonToolDeps } from "./index.js";
@@ -78,6 +79,16 @@ export function createUpdateEntryTool(deps: SurgeonToolDeps): AgentTool<typeof U
           dryRun: !deps.apply,
           entryId: params.entry_id,
           reason: "Entry not found or is no longer active.",
+        });
+      }
+
+      const permanentDemotionError = validatePermanentEntryDemotion(entry, requestedFields);
+      if (permanentDemotionError) {
+        return toolResult({
+          success: false,
+          dryRun: !deps.apply,
+          entryId: entry.id,
+          reason: permanentDemotionError,
         });
       }
 
@@ -228,6 +239,37 @@ function normalizeExpiry(value: string | undefined): Expiry | undefined | null {
  */
 function clampImportance(value: number): number {
   return Math.max(1, Math.min(10, Math.round(value)));
+}
+
+/**
+ * Prevents surgeon-driven permanent-entry demotions from silently burying durable facts.
+ *
+ * @param entry - Current persisted entry values.
+ * @param fields - Requested field updates.
+ * @returns Validation error when the demotion exceeds policy bounds, otherwise null.
+ */
+function validatePermanentEntryDemotion(
+  entry: {
+    expiry: Expiry;
+    importance: number;
+  },
+  fields: {
+    importance?: number;
+  },
+): string | null {
+  if (entry.expiry !== "permanent" || typeof fields.importance !== "number" || fields.importance >= entry.importance) {
+    return null;
+  }
+
+  if (entry.importance <= SURGEON_PERMANENT_ENTRY_DEMOTION_FLOOR) {
+    return `Permanent entries already at importance ${entry.importance} cannot be demoted further by surgeon.`;
+  }
+
+  if (fields.importance < SURGEON_PERMANENT_ENTRY_DEMOTION_FLOOR) {
+    return `Permanent entries can only be demoted to importance ${SURGEON_PERMANENT_ENTRY_DEMOTION_FLOOR} or higher by surgeon.`;
+  }
+
+  return null;
 }
 
 /**

@@ -233,10 +233,19 @@ export async function getSurgeonHealthStats(
       executor.execute({
         sql: `
         SELECT
-          COALESCE(SUM(CASE WHEN review_status = 'open' THEN 1 ELSE 0 END), 0) AS proposal_backlog_count,
-          COALESCE(SUM(CASE WHEN review_status = 'open' AND eligible_for_apply = 1 THEN 1 ELSE 0 END), 0) AS eligible_proposal_backlog_count,
-          MIN(CASE WHEN review_status = 'open' THEN created_at ELSE NULL END) AS oldest_open_proposal_created_at
-        FROM surgeon_run_proposals
+          COALESCE(COUNT(*), 0) AS proposal_backlog_count,
+          COALESCE(SUM(CASE WHEN eligible_for_apply = 1 THEN 1 ELSE 0 END), 0) AS eligible_proposal_backlog_count,
+          MIN(created_at) AS oldest_open_proposal_created_at
+        FROM (
+          SELECT
+            group_id,
+            issue_kind,
+            MIN(created_at) AS created_at,
+            MAX(eligible_for_apply) AS eligible_for_apply
+          FROM surgeon_run_proposals
+          WHERE review_status = 'open'
+          GROUP BY group_id, issue_kind
+        ) AS open_issue_backlog
       `,
       }),
       executor.execute({
@@ -688,6 +697,17 @@ function buildCandidateFilter(query: SurgeonCandidateQuery): CandidateFilterStat
   const whereClauses = [buildActiveEntryClause("e"), "e.expiry <> 'core'", "e.importance < ?", "(e.last_recalled_at IS NULL OR e.last_recalled_at < ?)"];
   const args: Array<string | number | null> = [protectMinImportance, protectRecalledCutoffIso];
 
+  if (currentRunId) {
+    whereClauses.push(`NOT EXISTS (
+      SELECT 1
+      FROM surgeon_run_actions AS sra
+      WHERE sra.run_id = ?
+        AND sra.action_type IN ('skip', 'retire', 'update_entry')
+        AND (sra.entry_id = e.id OR EXISTS (SELECT 1 FROM json_each(sra.entry_ids) AS je WHERE je.value = e.id))
+    )`);
+    args.push(currentRunId);
+  }
+
   const project = normalizeOptionalString(query.project);
   if (project) {
     whereClauses.push(buildTagContainsClause("e"));
@@ -725,11 +745,11 @@ function buildCandidateFilter(query: SurgeonCandidateQuery): CandidateFilterStat
       SELECT 1
       FROM surgeon_run_actions AS sra
       INNER JOIN surgeon_runs AS sr ON sr.id = sra.run_id
-      WHERE sra.entry_id = e.id
+      WHERE sra.action_type IN ('skip', 'retire', 'update_entry')
+        AND (sra.entry_id = e.id OR EXISTS (SELECT 1 FROM json_each(sra.entry_ids) AS je WHERE je.value = e.id))
         AND sr.started_at > ?
-        AND (? IS NULL OR sr.id <> ?)
     )`);
-    args.push(skipCutoffIso, currentRunId, currentRunId);
+    args.push(skipCutoffIso);
   }
 
   return { whereClauses, args };

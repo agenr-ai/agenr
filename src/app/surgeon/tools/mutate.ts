@@ -1,6 +1,7 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type, type Static } from "@sinclair/typebox";
 
+import type { SurgeonRunAction } from "../../../core/surgeon/domain/action-types.js";
 import { isProtectedFromRetirement } from "../../../core/surgeon/domain/protection-rules.js";
 import type { SurgeonToolDeps } from "./index.js";
 import { toolResult } from "./shared.js";
@@ -12,6 +13,9 @@ const RETIRE_ENTRY_SCHEMA = Type.Object({
 
 /** Validated parameter payload for the retire tool. */
 type RetireEntryParams = Static<typeof RETIRE_ENTRY_SCHEMA>;
+type RetirementSuppressionAction = SurgeonRunAction & {
+  actionType: "skip" | "retire" | "update_entry";
+};
 
 /**
  * Creates the retirement mutation tool.
@@ -26,6 +30,16 @@ export function createRetireEntryTool(deps: SurgeonToolDeps): AgentTool<typeof R
     description: "Retire a single entry after checking hard retirement protections. Respects dry-run mode.",
     parameters: RETIRE_ENTRY_SCHEMA,
     async execute(_toolCallId, params: RetireEntryParams) {
+      const priorRunAction = await findPriorSameRunRetirementSuppression(deps, params.entry_id);
+      if (priorRunAction) {
+        return toolResult({
+          success: false,
+          dryRun: !deps.apply,
+          entryId: params.entry_id.trim(),
+          reason: describePriorSameRunRetirementSuppression(priorRunAction),
+        });
+      }
+
       const entry = await deps.port.getEntry(params.entry_id);
       if (!entry) {
         return toolResult({
@@ -80,4 +94,45 @@ export function createRetireEntryTool(deps: SurgeonToolDeps): AgentTool<typeof R
       });
     },
   };
+}
+
+/**
+ * Resolves whether the current run has already adjudicated the entry in a way
+ * that should suppress a later retirement attempt.
+ *
+ * @param deps - Shared run dependencies for surgeon tools.
+ * @param entryId - Candidate entry identifier.
+ * @returns Prior same-run action when retirement should be blocked, otherwise null.
+ */
+async function findPriorSameRunRetirementSuppression(deps: SurgeonToolDeps, entryId: string): Promise<RetirementSuppressionAction | null> {
+  const normalizedEntryId = entryId.trim();
+  if (normalizedEntryId.length === 0) {
+    return null;
+  }
+
+  const actions = await deps.port.getRunActions(deps.runId);
+  return (
+    actions.find(
+      (action): action is RetirementSuppressionAction =>
+        (action.actionType === "skip" || action.actionType === "retire" || action.actionType === "update_entry") && action.entryIds.includes(normalizedEntryId),
+    ) ?? null
+  );
+}
+
+/**
+ * Formats the same-run suppression reason returned by `retire_entry`.
+ *
+ * @param action - Prior same-run action touching the entry.
+ * @returns User-facing rejection reason.
+ */
+function describePriorSameRunRetirementSuppression(action: RetirementSuppressionAction): string {
+  if (action.actionType === "skip") {
+    return "Entry was already skipped earlier in this run and cannot be retired in the same run.";
+  }
+
+  if (action.actionType === "retire") {
+    return "Entry was already retired earlier in this run.";
+  }
+
+  return "Entry was already updated earlier in this run and cannot be retired in the same run.";
 }

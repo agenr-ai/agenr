@@ -50,13 +50,20 @@ export function createQuerySupersessionCandidatesTool(deps: SurgeonToolDeps): Ag
         }),
       ]);
 
-      const allClusters = scope === "claim_key" ? claimKeyClusters : scope === "subject" ? subjectClusters : [...claimKeyClusters, ...subjectClusters];
+      const pendingClaimKeyClusters = deps.completionGuards?.supersession.filterPendingClusters(claimKeyClusters) ?? claimKeyClusters;
+      const pendingSubjectClusters = deps.completionGuards?.supersession.filterPendingClusters(subjectClusters) ?? subjectClusters;
+      const allClusters =
+        scope === "claim_key"
+          ? pendingClaimKeyClusters
+          : scope === "subject"
+            ? pendingSubjectClusters
+            : [...pendingClaimKeyClusters, ...pendingSubjectClusters];
       const clusters = allClusters.slice(offset, offset + limit);
 
       deps.completionGuards?.supersession.recordPage({
         scope,
-        claimKeyTotal: claimKeyClusters.length,
-        subjectTotal: subjectClusters.length,
+        claimKeyTotal: pendingClaimKeyClusters.length,
+        subjectTotal: pendingSubjectClusters.length,
         clusters,
       });
 
@@ -67,8 +74,8 @@ export function createQuerySupersessionCandidatesTool(deps: SurgeonToolDeps): Ag
           scope,
           limit,
           offset,
-          claimKeyClusterCount: claimKeyClusters.length,
-          subjectClusterCount: subjectClusters.length,
+          claimKeyClusterCount: pendingClaimKeyClusters.length,
+          subjectClusterCount: pendingSubjectClusters.length,
           message: buildEmptyResultMessage(scope),
         });
       }
@@ -79,8 +86,8 @@ export function createQuerySupersessionCandidatesTool(deps: SurgeonToolDeps): Ag
         scope,
         limit,
         offset,
-        claimKeyClusterCount: claimKeyClusters.length,
-        subjectClusterCount: subjectClusters.length,
+        claimKeyClusterCount: pendingClaimKeyClusters.length,
+        subjectClusterCount: pendingSubjectClusters.length,
         exhausted: offset + clusters.length >= allClusters.length,
       });
     },

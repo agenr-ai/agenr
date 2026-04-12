@@ -392,6 +392,54 @@ describe("claim_key_quality surgeon pass", () => {
     });
   });
 
+  it("reuses the same open proposal row when the same logical issue is rediscovered on a later run", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "metadata-proposal-repeat",
+      subject: "Project status",
+      type: "fact",
+      content: "The project is active.",
+      project: "Agenr",
+    });
+    const llm = new MockClaimLlm(() => ({
+      entity: "project",
+      attribute: "status",
+      confidence: 0.68,
+    }));
+
+    const firstResult = await runClaimKeyPass(client, {
+      apply: true,
+      createClaimExtractionLlm: () => llm,
+    });
+    const firstProposal = (await getSurgeonRunProposals(client, firstResult.runId))[0];
+    const secondResult = await runClaimKeyPass(client, {
+      apply: true,
+      createClaimExtractionLlm: () => llm,
+    });
+    const openRows = await client.execute({
+      sql: `
+        SELECT id, run_id, created_at
+        FROM surgeon_run_proposals
+        WHERE review_status = 'open'
+          AND issue_kind = 'missing_claim_key'
+          AND EXISTS (SELECT 1 FROM json_each(entry_ids) AS je WHERE je.value = ?)
+      `,
+      args: ["metadata-proposal-repeat"],
+    });
+
+    expect(firstProposal).toMatchObject({
+      issueKind: "missing_claim_key",
+      entryIds: ["metadata-proposal-repeat"],
+    });
+    expect(openRows.rows).toEqual([
+      {
+        id: firstProposal?.id,
+        run_id: secondResult.runId,
+        created_at: firstProposal?.createdAt,
+      },
+    ]);
+  });
+
   it("auto-applies supported mid-confidence source-of-truth candidates when trusted local grounding aligns", async () => {
     const client = await createTestClient(clients);
     await insertEntry(client, {

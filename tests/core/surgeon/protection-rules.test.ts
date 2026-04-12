@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isProtectedFromRetirement } from "../../../src/core/surgeon/domain/protection-rules.js";
+import { isProtectedFromRetirement, SURGEON_PERMANENT_ENTRY_DEMOTION_FLOOR } from "../../../src/core/surgeon/domain/protection-rules.js";
 
 describe("isProtectedFromRetirement", () => {
   const config = {
@@ -39,6 +39,21 @@ describe("isProtectedFromRetirement", () => {
     });
   });
 
+  it("protects permanent entries and points surgeon toward bounded demotion", () => {
+    expect(
+      isProtectedFromRetirement(
+        {
+          expiry: "permanent",
+          importance: 4,
+        },
+        config,
+      ),
+    ).toEqual({
+      protected: true,
+      reason: `Entry expiry is permanent. Use update_entry to demote importance instead, but keep importance at or above ${SURGEON_PERMANENT_ENTRY_DEMOTION_FLOOR}.`,
+    });
+  });
+
   it("protects recently recalled entries", () => {
     expect(
       isProtectedFromRetirement(
@@ -74,7 +89,7 @@ describe("isProtectedFromRetirement", () => {
     expect(
       isProtectedFromRetirement(
         {
-          expiry: "permanent",
+          expiry: "temporary",
           importance: 8,
         },
         config,

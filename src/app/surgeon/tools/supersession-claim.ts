@@ -104,6 +104,7 @@ export function createAssignClaimKeyTool(deps: SurgeonToolDeps): AgentTool<typeo
       });
 
       if (updated) {
+        deps.completionGuards?.supersession.markAdjudicated([entry.id]);
         await deps.recordRunAction({
           id: randomUUID(),
           runId: deps.runId,

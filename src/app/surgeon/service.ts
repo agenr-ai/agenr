@@ -351,6 +351,8 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
         },
       );
       completionState.setComplete(deterministicResult.completion);
+      actionMetrics.actionsTaken = deterministicResult.completion.actions_taken;
+      actionMetrics.entriesRetired = deterministicResult.entriesRetired;
 
       return finalizeRun({
         runId,
@@ -616,6 +618,8 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
               contextLimit: budgetTracker.remaining().contextLimit,
               remainingCostUsd: budgetTracker.remaining().remainingCostUsd,
               attempt: sliceAttempt,
+              completionGuards,
+              actionMetrics,
             });
       sliceAttempt += 1;
 
@@ -756,7 +760,8 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
       actionMetrics,
       budgetTracker,
       error: terminalError,
-      summaryOverride: finalStatus === "aborted" ? USER_ABORT_SUMMARY : undefined,
+      summaryOverride:
+        finalStatus === "aborted" ? USER_ABORT_SUMMARY : finalStatus === "stalled" ? buildStalledRunSummary(agentPass, actionMetrics) : undefined,
       port: deps.port,
       now: nowFn,
     });
@@ -971,7 +976,13 @@ function buildContinuationPrompt(input: {
   contextLimit: number;
   remainingCostUsd: number;
   attempt: number;
+  completionGuards: ReturnType<typeof createSurgeonCompletionGuardState>;
+  actionMetrics: {
+    actionsTaken: number;
+    entriesRetired: number;
+  };
 }): string {
+  const progressReminder = buildContinuationProgressReminder(input.pass, input.completionGuards, input.actionMetrics);
   const lines =
     input.pass === "supersession"
       ? [
@@ -979,6 +990,7 @@ function buildContinuationPrompt(input: {
             ? `You stopped without calling complete_pass and the latest turn used ${input.currentContextTokens}/${input.contextLimit} context tokens, with about ${formatUsd(input.remainingCostUsd)} of run budget remaining.`
             : `You stopped without calling complete_pass and still have about ${formatUsd(input.remainingCostUsd)} of run budget remaining. The latest turn context size was ${input.currentContextTokens} tokens.`,
           "Continue the supersession pass.",
+          progressReminder,
           "Keep paginating claim_key clusters. Widen to scope = 'subject' only after the claim_key sweep is exhausted or budget pressure forces an early stop.",
           "Do not call complete_pass until claim_key clusters are genuinely exhausted or budget constraints force you to stop.",
         ]
@@ -987,6 +999,7 @@ function buildContinuationPrompt(input: {
             ? `You stopped without calling complete_pass and the latest turn used ${input.currentContextTokens}/${input.contextLimit} context tokens, with about ${formatUsd(input.remainingCostUsd)} of run budget remaining.`
             : `You stopped without calling complete_pass and still have about ${formatUsd(input.remainingCostUsd)} of run budget remaining. The latest turn context size was ${input.currentContextTokens} tokens.`,
           "Continue the retirement pass.",
+          progressReminder,
           "Keep paginating candidates. If the actionable scope is exhausted and meaningful budget remains, widen to scope = 'all'.",
           "Do not call complete_pass until candidates are genuinely exhausted or budget constraints force you to stop.",
         ];
@@ -1174,6 +1187,33 @@ function createPassProgressFingerprint(
     subjectScopeExhausted: progress.subjectScopeExhausted,
     widenedBeforeClaimKeyExhausted: progress.widenedBeforeClaimKeyExhausted,
   });
+}
+
+/**
+ * Summarizes same-run progress for continuation prompts so later slices do not
+ * rely on the model remembering prior adjudications.
+ *
+ * @param pass - Surgeon pass being continued.
+ * @param completionGuards - Mutable completion-guard state for the run.
+ * @param actionMetrics - Persisted non-skip action counters for the run.
+ * @returns Short progress reminder for the next bounded slice.
+ */
+function buildContinuationProgressReminder(
+  pass: AgentSurgeonPass,
+  completionGuards: ReturnType<typeof createSurgeonCompletionGuardState>,
+  actionMetrics: {
+    actionsTaken: number;
+    entriesRetired: number;
+  },
+): string {
+  if (pass === "retirement") {
+    const progress = completionGuards.retirement.snapshot();
+    const pagedCandidates = progress.all.maxWindowEnd > 0 ? progress.all.maxWindowEnd : progress.actionable.maxWindowEnd;
+    return `Persisted actions so far: ${actionMetrics.actionsTaken} (${actionMetrics.entriesRetired} retired). Candidates skipped or updated earlier in this run are suppressed from later candidate queries. Pages explored so far: ${pagedCandidates}.`;
+  }
+
+  const progress = completionGuards.supersession.snapshot();
+  return `Persisted actions so far: ${actionMetrics.actionsTaken}. Already adjudicated claim_key clusters: ${progress.claimKeyClustersAdjudicated}/${progress.claimKeyClustersTotal}. Already adjudicated subject clusters: ${progress.subjectClustersAdjudicated}/${progress.subjectClustersTotal}. Same-run adjudicated clusters are suppressed from later supersession queries.`;
 }
 
 /**
@@ -1406,6 +1446,31 @@ function createCompletionState(): SurgeonToolCompletionState {
 }
 
 /**
+ * Describes why a stalled run is still meaningful when it already persisted work.
+ *
+ * @param pass - Surgeon pass that stalled.
+ * @param actionMetrics - Persisted non-skip action counters for the run.
+ * @returns Short stalled-run summary.
+ */
+function buildStalledRunSummary(
+  pass: AgentSurgeonPass | ImplementedSurgeonPass,
+  actionMetrics: {
+    actionsTaken: number;
+    entriesRetired: number;
+  },
+): string {
+  if (actionMetrics.actionsTaken > 0) {
+    if (pass === "retirement") {
+      return `The ${pass} pass stalled after persisting ${actionMetrics.actionsTaken} non-skip action${actionMetrics.actionsTaken === 1 ? "" : "s"}, including ${actionMetrics.entriesRetired} retirement${actionMetrics.entriesRetired === 1 ? "" : "s"}.`;
+    }
+
+    return `The ${pass} pass stalled after persisting ${actionMetrics.actionsTaken} non-skip action${actionMetrics.actionsTaken === 1 ? "" : "s"}.`;
+  }
+
+  return `The ${pass} pass stalled without persisting any non-skip actions.`;
+}
+
+/**
  * Writes the final run row and returns the public result object.
  *
  * @param input - Finalized run state.
@@ -1438,13 +1503,14 @@ async function finalizeRun(input: {
     costUsd: input.usageTotals?.estimatedCostUsd ?? trackerTotals?.costUsd ?? 0,
   };
   const summary = input.summaryOverride ?? summarizeCompletion(input.completionState.summary);
+  const actualActionsTaken = input.actionMetrics.actionsTaken;
 
   await input.port.completeRun(input.runId, {
     status: input.status,
     inputTokens: totals.inputTokens,
     outputTokens: totals.outputTokens,
     estimatedCostUsd: totals.costUsd,
-    actionsTaken: input.completionState.summary?.actions_taken ?? input.actionMetrics.actionsTaken,
+    actionsTaken: actualActionsTaken,
     actionsSkipped: input.completionState.summary?.entries_skipped.length ?? 0,
     entriesRetired: input.actionMetrics.entriesRetired,
     summaryJson: input.completionState.summary,
@@ -1456,7 +1522,7 @@ async function finalizeRun(input: {
     runId: input.runId,
     status: input.status,
     passType: input.passType,
-    actionsTaken: input.completionState.summary?.actions_taken ?? input.actionMetrics.actionsTaken,
+    actionsTaken: actualActionsTaken,
     entriesRetired: input.actionMetrics.entriesRetired,
     inputTokens: totals.inputTokens,
     outputTokens: totals.outputTokens,
@@ -1606,10 +1672,10 @@ function shouldAuditAction(actionType: "retire" | "update_entry", details: unkno
   }
 
   if (actionType === "retire") {
-    return record.wouldRetire === true || record.retired === true || normalizeNonNegativeInteger(record.retiredCount) === 1;
+    return record.retired === true || normalizeNonNegativeInteger(record.retiredCount) === 1;
   }
 
-  return record.wouldUpdate === true || record.updated === true || hasNonEmptyRecord(record.changes);
+  return record.updated === true;
 }
 
 /**

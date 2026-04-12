@@ -23,6 +23,7 @@ import { createQuerySupersessionCandidatesTool } from "../../../../src/adapters/
 import { createSetValidityTool } from "../../../../src/adapters/surgeon/tools/supersession-validity.js";
 import { createUpdateEntryTool } from "../../../../src/adapters/surgeon/tools/update-entry.js";
 import { createSurgeonCompletionGuardState } from "../../../../src/app/surgeon/completion-guard.js";
+import { SURGEON_PERMANENT_ENTRY_DEMOTION_FLOOR } from "../../../../src/core/surgeon/domain/protection-rules.js";
 import type { RecallPorts } from "../../../../src/core/ports.js";
 import type { Entry } from "../../../../src/core/types.js";
 
@@ -247,6 +248,81 @@ describe("surgeon tools", () => {
     });
   });
 
+  it("suppresses supersession clusters already adjudicated earlier in the same run", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "claim-entry-1",
+      subject: "Jim home city",
+      claim_key: "jim/home_city",
+      created_at: daysAgoIso(40),
+    });
+    await insertEntry(client, {
+      id: "claim-entry-2",
+      subject: "Jim home city update",
+      claim_key: "jim/home_city",
+      created_at: daysAgoIso(20),
+    });
+
+    const completionGuards = createSurgeonCompletionGuardState({
+      totalEntries: 2,
+      supersessionClaimKeyClusters: 1,
+      supersessionSubjectClusters: 0,
+    });
+    completionGuards.supersession.recordPage({
+      scope: "claim_key",
+      claimKeyTotal: 1,
+      subjectTotal: 0,
+      clusters: [
+        {
+          groupKey: "jim/home_city",
+          groupedBy: "claim_key",
+          entries: [
+            {
+              id: "claim-entry-1",
+              subject: "Jim home city",
+              type: "fact",
+              importance: 3,
+              expiry: "permanent",
+              createdAt: daysAgoIso(40),
+              content: "content for claim-entry-1",
+              claimKey: "jim/home_city",
+              tags: [],
+            },
+            {
+              id: "claim-entry-2",
+              subject: "Jim home city update",
+              type: "fact",
+              importance: 3,
+              expiry: "permanent",
+              createdAt: daysAgoIso(20),
+              content: "content for claim-entry-2",
+              claimKey: "jim/home_city",
+              tags: [],
+            },
+          ],
+        },
+      ],
+    });
+    completionGuards.supersession.markAdjudicated(["claim-entry-1"]);
+    const tool = createQuerySupersessionCandidatesTool(
+      createToolDeps(client, {
+        passType: "supersession",
+        completionGuards,
+      }),
+    );
+
+    const result = await tool.execute("tool-query-supersession-suppressed", {
+      scope: "claim_key",
+      limit: 10,
+      offset: 0,
+    });
+
+    expect(result.details).toMatchObject({
+      count: 0,
+      claimKeyClusterCount: 0,
+    });
+  });
+
   it("inspects one entry with related context", async () => {
     const client = await createTestClient(clients);
     await insertEntry(client, {
@@ -392,6 +468,66 @@ describe("surgeon tools", () => {
       dryRun: false,
       retired: true,
       retiredCount: 1,
+    });
+  });
+
+  it("blocks retiring permanent entries and entries already adjudicated earlier in the same run", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "permanent-entry",
+      subject: "Durable entry",
+      expiry: "permanent",
+      importance: 3,
+      created_at: daysAgoIso(80),
+      updated_at: daysAgoIso(50),
+    });
+    await insertEntry(client, {
+      id: "same-run-skipped",
+      subject: "Already skipped entry",
+      expiry: "temporary",
+      importance: 2,
+      created_at: daysAgoIso(80),
+      updated_at: daysAgoIso(50),
+    });
+    const tool = createRetireEntryTool(
+      createToolDeps(client, {
+        apply: true,
+        port: {
+          ...createSurgeonPort(client),
+          async getRunActions() {
+            return [
+              {
+                id: "skip-1",
+                runId: "run-1",
+                actionType: "skip",
+                entryIds: ["same-run-skipped"],
+                reasoning: "Already reviewed.",
+                recallDelta: null,
+                createdAt: TEST_NOW.toISOString(),
+              },
+            ];
+          },
+        },
+      }),
+    );
+
+    const permanentResult = await tool.execute("tool-retire-permanent", {
+      entry_id: "permanent-entry",
+      reason: "cleanup",
+    });
+    const sameRunResult = await tool.execute("tool-retire-same-run", {
+      entry_id: "same-run-skipped",
+      reason: "cleanup",
+    });
+
+    expect(permanentResult.details).toMatchObject({
+      success: false,
+      protected: true,
+      reason: `Entry expiry is permanent. Use update_entry to demote importance instead, but keep importance at or above ${SURGEON_PERMANENT_ENTRY_DEMOTION_FLOOR}.`,
+    });
+    expect(sameRunResult.details).toMatchObject({
+      success: false,
+      reason: "Entry was already skipped earlier in this run and cannot be retired in the same run.",
     });
   });
 
@@ -664,6 +800,43 @@ describe("surgeon tools", () => {
     });
   });
 
+  it("keeps permanent-entry demotions bounded above the surgeon floor", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "permanent-demotion",
+      subject: "Permanent demotion target",
+      expiry: "permanent",
+      importance: 5,
+    });
+    const tool = createUpdateEntryTool(createToolDeps(client, { apply: true }));
+
+    const rejected = await tool.execute("tool-update-permanent-too-low", {
+      entry_id: "permanent-demotion",
+      importance: SURGEON_PERMANENT_ENTRY_DEMOTION_FLOOR - 1,
+      reasoning: "Still true, but not top-tier anymore.",
+    });
+    const accepted = await tool.execute("tool-update-permanent-floor", {
+      entry_id: "permanent-demotion",
+      importance: SURGEON_PERMANENT_ENTRY_DEMOTION_FLOOR,
+      reasoning: "Still true, but lower-priority than the top recall set.",
+    });
+
+    expect(rejected.details).toMatchObject({
+      success: false,
+      reason: `Permanent entries can only be demoted to importance ${SURGEON_PERMANENT_ENTRY_DEMOTION_FLOOR} or higher by surgeon.`,
+    });
+    expect(accepted.details).toMatchObject({
+      success: true,
+      updated: true,
+      changes: {
+        importance: {
+          from: 5,
+          to: SURGEON_PERMANENT_ENTRY_DEMOTION_FLOOR,
+        },
+      },
+    });
+  });
+
   it("supports link_supersession happy path and logs a conflict-resolution action", async () => {
     const client = await createTestClient(clients);
     await insertEntry(client, {
@@ -914,10 +1087,51 @@ describe("surgeon tools", () => {
       id: "claim-target",
       subject: "Claim target",
     });
+    const completionGuards = createSurgeonCompletionGuardState({
+      totalEntries: 1,
+      supersessionClaimKeyClusters: 1,
+      supersessionSubjectClusters: 0,
+    });
+    completionGuards.supersession.recordPage({
+      scope: "claim_key",
+      claimKeyTotal: 1,
+      subjectTotal: 0,
+      clusters: [
+        {
+          groupKey: "claim-target-slot",
+          groupedBy: "claim_key",
+          entries: [
+            {
+              id: "claim-target",
+              subject: "Claim target",
+              type: "fact",
+              importance: 3,
+              expiry: "permanent",
+              createdAt: daysAgoIso(30),
+              content: "content for claim-target",
+              claimKey: null,
+              tags: [],
+            },
+            {
+              id: "claim-sibling",
+              subject: "Claim sibling",
+              type: "fact",
+              importance: 3,
+              expiry: "permanent",
+              createdAt: daysAgoIso(20),
+              content: "content for claim-sibling",
+              claimKey: "claim-target-slot",
+              tags: [],
+            },
+          ],
+        },
+      ],
+    });
     const applyTool = createAssignClaimKeyTool(
       createToolDeps(client, {
         passType: "supersession",
         apply: true,
+        completionGuards,
       }),
     );
     const invalidTool = createAssignClaimKeyTool(
@@ -989,6 +1203,7 @@ describe("surgeon tools", () => {
       claim_key_confidence: 1,
       claim_key_rationale: "manual claim key supplied by caller",
     });
+    expect(completionGuards.supersession.snapshot().adjudicatedClusters).toBe(1);
   });
 
   it("sets temporal validity and validates timestamp input", async () => {
@@ -997,10 +1212,51 @@ describe("surgeon tools", () => {
       id: "validity-target",
       subject: "Validity target",
     });
+    const completionGuards = createSurgeonCompletionGuardState({
+      totalEntries: 1,
+      supersessionClaimKeyClusters: 0,
+      supersessionSubjectClusters: 1,
+    });
+    completionGuards.supersession.recordPage({
+      scope: "subject",
+      claimKeyTotal: 0,
+      subjectTotal: 1,
+      clusters: [
+        {
+          groupKey: "validity-target::fact",
+          groupedBy: "subject",
+          entries: [
+            {
+              id: "validity-target",
+              subject: "Validity target",
+              type: "fact",
+              importance: 3,
+              expiry: "permanent",
+              createdAt: daysAgoIso(30),
+              content: "content for validity-target",
+              claimKey: null,
+              tags: [],
+            },
+            {
+              id: "validity-target-sibling",
+              subject: "Validity target",
+              type: "fact",
+              importance: 3,
+              expiry: "permanent",
+              createdAt: daysAgoIso(20),
+              content: "content for validity-target-sibling",
+              claimKey: null,
+              tags: [],
+            },
+          ],
+        },
+      ],
+    });
     const applyTool = createSetValidityTool(
       createToolDeps(client, {
         passType: "supersession",
         apply: true,
+        completionGuards,
       }),
     );
     const invalidTool = createSetValidityTool(
@@ -1068,6 +1324,7 @@ describe("surgeon tools", () => {
       valid_from: "2026-03-01T00:00:00.000Z",
       valid_to: "2026-03-31T00:00:00.000Z",
     });
+    expect(completionGuards.supersession.snapshot().adjudicatedClusters).toBe(1);
   });
 
   it("rejects set_validity updates that conflict with an existing bound", async () => {

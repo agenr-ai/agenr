@@ -203,6 +203,50 @@ export async function logSurgeonProposal(executor: SqlExecutor, proposal: Persis
   const reviewedAt = "reviewedAt" in proposal ? proposal.reviewedAt : null;
   const reviewReason = "reviewReason" in proposal ? proposal.reviewReason : null;
   const appliedActionCount = "appliedActionCount" in proposal ? proposal.appliedActionCount : 0;
+  const normalizedGroupId = proposal.groupId.trim();
+  const normalizedIssueKind = proposal.issueKind.trim();
+
+  if (reviewStatus === "open") {
+    const existingOpenProposal = await findOpenProposalIssue(executor, {
+      groupId: normalizedGroupId,
+      issueKind: normalizedIssueKind,
+    });
+
+    if (existingOpenProposal) {
+      await executor.execute({
+        sql: `
+          UPDATE surgeon_run_proposals
+          SET run_id = ?,
+              scope = ?,
+              entry_ids = ?,
+              current_claim_keys = ?,
+              proposed_claim_keys = ?,
+              rationale = ?,
+              confidence = ?,
+              source = ?,
+              eligible_for_apply = ?,
+              review_status = 'open',
+              reviewed_at = NULL,
+              review_reason = NULL,
+              applied_action_count = 0
+          WHERE id = ?
+        `,
+        args: [
+          proposal.runId.trim(),
+          proposal.scope,
+          JSON.stringify(normalizeEntryIds(proposal.entryIds)),
+          JSON.stringify(normalizeStringArray(proposal.currentClaimKeys)),
+          JSON.stringify(normalizeStringArray(proposal.proposedClaimKeys)),
+          proposal.rationale,
+          normalizeNumber(proposal.confidence),
+          proposal.source.trim(),
+          proposal.eligibleForApply ? 1 : 0,
+          existingOpenProposal.id,
+        ],
+      });
+      return;
+    }
+  }
 
   await executor.execute({
     sql: `
@@ -230,8 +274,8 @@ export async function logSurgeonProposal(executor: SqlExecutor, proposal: Persis
     args: [
       proposal.id.trim().length > 0 ? proposal.id.trim() : randomUUID(),
       proposal.runId.trim(),
-      proposal.groupId.trim(),
-      proposal.issueKind,
+      normalizedGroupId,
+      normalizedIssueKind,
       proposal.scope,
       JSON.stringify(normalizeEntryIds(proposal.entryIds)),
       JSON.stringify(normalizeStringArray(proposal.currentClaimKeys)),
@@ -247,6 +291,37 @@ export async function logSurgeonProposal(executor: SqlExecutor, proposal: Persis
       normalizeTimestamp(proposal.createdAt) ?? new Date().toISOString(),
     ],
   });
+}
+
+/**
+ * Finds the currently open proposal row for one logical surgeon issue.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @param input - Stable logical-issue identifiers.
+ * @returns Existing open proposal row identity, or null when none exists.
+ */
+async function findOpenProposalIssue(
+  executor: SqlExecutor,
+  input: {
+    groupId: string;
+    issueKind: string;
+  },
+): Promise<{ id: string } | null> {
+  const result = await executor.execute({
+    sql: `
+      SELECT id
+      FROM surgeon_run_proposals
+      WHERE group_id = ?
+        AND issue_kind = ?
+        AND review_status = 'open'
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1
+    `,
+    args: [input.groupId, input.issueKind],
+  });
+
+  const row = result.rows[0];
+  return row ? { id: readRequiredString(row, "id") } : null;
 }
 
 /**
@@ -443,9 +518,24 @@ export async function listSurgeonProposalBacklog(
 
   const limit = Number.isFinite(query.limit) && (query.limit ?? 0) > 0 ? Math.floor(query.limit!) : 25;
   const offset = Number.isFinite(query.offset) && (query.offset ?? 0) >= 0 ? Math.floor(query.offset!) : 0;
-  const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+  const dedupeClause = "(p.review_status <> 'open' OR p.open_issue_rank = 1)";
+  const whereClause = [dedupeClause, ...clauses].join(" AND ");
   const result = await executor.execute({
     sql: `
+      WITH ranked_proposals AS (
+        SELECT
+          proposal.*,
+          CASE
+            WHEN proposal.review_status = 'open' THEN MIN(proposal.created_at) OVER (PARTITION BY proposal.group_id, proposal.issue_kind)
+            ELSE proposal.created_at
+          END AS logical_created_at,
+          CASE
+            WHEN proposal.review_status = 'open'
+              THEN ROW_NUMBER() OVER (PARTITION BY proposal.group_id, proposal.issue_kind ORDER BY proposal.created_at DESC, proposal.id DESC)
+            ELSE 1
+          END AS open_issue_rank
+        FROM surgeon_run_proposals AS proposal
+      )
       SELECT
         p.id,
         p.run_id,
@@ -463,19 +553,19 @@ export async function listSurgeonProposalBacklog(
         p.reviewed_at,
         p.review_reason,
         p.applied_action_count,
-        p.created_at,
+        p.logical_created_at AS created_at,
         r.pass_type AS run_pass_type,
         r.started_at AS run_started_at,
         r.status AS run_status,
         r.dry_run AS run_dry_run
-      FROM surgeon_run_proposals AS p
+      FROM ranked_proposals AS p
       JOIN surgeon_runs AS r ON r.id = p.run_id
-      ${whereClause}
+      WHERE ${whereClause}
       ORDER BY
         CASE WHEN p.review_status = 'open' THEN 0 ELSE 1 END ASC,
-        CASE WHEN p.review_status = 'open' THEN p.created_at END ASC,
+        CASE WHEN p.review_status = 'open' THEN p.logical_created_at END ASC,
         CASE WHEN p.review_status <> 'open' THEN p.reviewed_at END DESC,
-        p.created_at DESC
+        p.logical_created_at DESC
       LIMIT ?
       OFFSET ?
     `,

@@ -1,6 +1,7 @@
 import type { Expiry } from "../../types.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+export const SURGEON_PERMANENT_ENTRY_DEMOTION_FLOOR = 4;
 
 /**
  * Entry fields used by retirement protection guards.
@@ -36,6 +37,13 @@ export function isProtectedFromRetirement(entry: SurgeonProtectionEntry, config:
     return {
       protected: true,
       reason: `Entry importance is at or above ${config.protectMinImportance}.`,
+    };
+  }
+
+  if (entry.expiry === "permanent") {
+    return {
+      protected: true,
+      reason: `Entry expiry is permanent. Use update_entry to demote importance instead, but keep importance at or above ${SURGEON_PERMANENT_ENTRY_DEMOTION_FLOOR}.`,
     };
   }
 

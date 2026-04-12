@@ -622,6 +622,136 @@ describe("runSurgeon", () => {
     expect(runAgentLoopMock).not.toHaveBeenCalled();
   });
 
+  it("uses persisted non-skip action counts instead of trusting complete_pass totals", async () => {
+    const db = await createTestDatabase(databases);
+    await insertEntry(db, {
+      id: "persisted-retire-once",
+      subject: "Retire once",
+      type: "fact",
+      importance: 2,
+      expiry: "temporary",
+      recall_count: 0,
+      created_at: daysAgoIso(180),
+      updated_at: daysAgoIso(90),
+    });
+    runAgentLoopMock.mockImplementation(
+      async (
+        prompts: AgentMessage[],
+        context: AgentContext,
+        config: AgentLoopConfig,
+        emit: (event: AgentEvent) => void,
+        signal?: AbortSignal,
+      ): Promise<AgentMessage[]> => {
+        const actionableQueryArgs = {
+          limit: 20,
+          offset: 0,
+        };
+        const actionableQueryAssistantMessage = createAssistantToolMessage({
+          id: "tool-query-persisted-actionable",
+          name: "query_candidates",
+          arguments: actionableQueryArgs,
+          reasoning: "Inspect the actionable retirement pool first.",
+          usage: TEST_USAGE,
+        });
+        await executeToolCall({
+          context,
+          config,
+          emit,
+          signal,
+          assistantMessage: actionableQueryAssistantMessage,
+          args: actionableQueryArgs,
+        });
+
+        const allScopeQueryArgs = {
+          scope: "all",
+          limit: 20,
+          offset: 0,
+        };
+        const allScopeQueryAssistantMessage = createAssistantToolMessage({
+          id: "tool-query-persisted-all",
+          name: "query_candidates",
+          arguments: allScopeQueryArgs,
+          reasoning: "Confirm the broader pool before completing.",
+        });
+        await executeToolCall({
+          context,
+          config,
+          emit,
+          signal,
+          assistantMessage: allScopeQueryAssistantMessage,
+          args: allScopeQueryArgs,
+        });
+
+        const retireArgs = {
+          entry_id: "persisted-retire-once",
+          reason: "This temporary artifact is obsolete.",
+        };
+        const retireAssistantMessage = createAssistantToolMessage({
+          id: "tool-retire-persisted-count",
+          name: "retire_entry",
+          arguments: retireArgs,
+          reasoning: "There is one clear safe retirement.",
+        });
+        await executeToolCall({
+          context,
+          config,
+          emit,
+          signal,
+          assistantMessage: retireAssistantMessage,
+          args: retireArgs,
+        });
+
+        const completeArgs = {
+          actions_taken: 9,
+          entries_skipped: [],
+          observations: ["One retirement was persisted."],
+          recommendations: [],
+        };
+        const completeAssistantMessage = createAssistantToolMessage({
+          id: "tool-complete-persisted-count",
+          name: "complete_pass",
+          arguments: completeArgs,
+          reasoning: "The bounded slice is complete.",
+        });
+        await executeToolCall({
+          context,
+          config,
+          emit,
+          signal,
+          assistantMessage: completeAssistantMessage,
+          args: completeArgs,
+        });
+
+        return [...prompts, actionableQueryAssistantMessage, allScopeQueryAssistantMessage, retireAssistantMessage, completeAssistantMessage];
+      },
+    );
+
+    const result = await runSurgeon(
+      createRunOptions({
+        apply: true,
+      }),
+      {
+        port: createSurgeonPort(db),
+        config: null,
+        model: TEST_MODEL,
+        now: () => TEST_NOW,
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: "completed",
+      actionsTaken: 1,
+      entriesRetired: 1,
+    });
+    expect(await getLastSurgeonRun(db)).toMatchObject({
+      actionsTaken: 1,
+      entriesRetired: 1,
+      summaryJson: expect.objectContaining({
+        actions_taken: 9,
+      }),
+    });
+  });
+
   it("marks an agent-loop pass as stalled when bounded slices stop making progress", async () => {
     const db = await createTestDatabase(databases);
     runAgentLoopMock.mockImplementation(async (prompts: AgentMessage[]) => prompts);
@@ -638,6 +768,101 @@ describe("runSurgeon", () => {
       passType: "retirement",
     });
     expect(runAgentLoopMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("reports when a stalled pass already persisted meaningful work", async () => {
+    const db = await createTestDatabase(databases);
+    await insertEntry(db, {
+      id: "stall-after-retire",
+      subject: "Retire before stall",
+      type: "fact",
+      importance: 2,
+      expiry: "temporary",
+      recall_count: 0,
+      created_at: daysAgoIso(180),
+      updated_at: daysAgoIso(90),
+    });
+    let sliceCalls = 0;
+    runAgentLoopMock.mockImplementation(
+      async (
+        prompts: AgentMessage[],
+        context: AgentContext,
+        config: AgentLoopConfig,
+        emit: (event: AgentEvent) => void,
+        signal?: AbortSignal,
+      ): Promise<AgentMessage[]> => {
+        sliceCalls += 1;
+
+        if (sliceCalls === 1) {
+          const queryArgs = {
+            limit: 20,
+            offset: 0,
+          };
+          const queryAssistantMessage = createAssistantToolMessage({
+            id: "tool-query-stall-after-work",
+            name: "query_candidates",
+            arguments: queryArgs,
+            reasoning: "Inspect the actionable retirement pool first.",
+            usage: TEST_USAGE,
+          });
+          await executeToolCall({
+            context,
+            config,
+            emit,
+            signal,
+            assistantMessage: queryAssistantMessage,
+            args: queryArgs,
+          });
+
+          const retireArgs = {
+            entry_id: "stall-after-retire",
+            reason: "This temporary artifact is obsolete.",
+          };
+          const retireAssistantMessage = createAssistantToolMessage({
+            id: "tool-retire-before-stall",
+            name: "retire_entry",
+            arguments: retireArgs,
+            reasoning: "There is one clear safe retirement before the run stalls.",
+          });
+          await executeToolCall({
+            context,
+            config,
+            emit,
+            signal,
+            assistantMessage: retireAssistantMessage,
+            args: retireArgs,
+          });
+
+          return [...prompts, queryAssistantMessage, retireAssistantMessage];
+        }
+
+        return prompts;
+      },
+    );
+
+    const result = await runSurgeon(
+      createRunOptions({
+        apply: true,
+      }),
+      {
+        port: createSurgeonPort(db),
+        config: null,
+        model: TEST_MODEL,
+        now: () => TEST_NOW,
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: "stalled",
+      actionsTaken: 1,
+      entriesRetired: 1,
+      summary: "The retirement pass stalled after persisting 1 non-skip action, including 1 retirement.",
+    });
+    expect(await getLastSurgeonRun(db)).toMatchObject({
+      status: "stalled",
+      actionsTaken: 1,
+      entriesRetired: 1,
+    });
   });
 
   it("returns no_work for proposal_resolution when no eligible proposal backlog exists", async () => {
@@ -888,7 +1113,8 @@ describe("runSurgeon", () => {
     expect(runAgentLoopMock).toHaveBeenCalledTimes(3);
     await expect(readClaimKey(db, "claim-noncanonical-autonomous")).resolves.toBe("jim/editor");
     await expect(readRetiredFlag(db, "stale-temp")).resolves.toBe(true);
-    await expect(readRetiredFlag(db, "stale-milestone")).resolves.toBe(true);
+    await expect(readRetiredFlag(db, "stale-milestone")).resolves.toBe(false);
+    await expect(readImportance(db, "stale-milestone")).resolves.toBe(4);
     await expect(readSupersededBy(db, "slot-old")).resolves.toBe("slot-new");
   });
 
@@ -1015,7 +1241,7 @@ async function createTestDatabase(databases: SqlDatabase[]): Promise<SqlDatabase
     id: "stale-milestone",
     subject: "retired rollout checklist completion",
     type: "milestone",
-    importance: 3,
+    importance: 5,
     expiry: "permanent",
     recall_count: 0,
     quality_score: 0.4,
@@ -1428,29 +1654,74 @@ function mockAutonomousCompletionRunAgentLoop(): void {
           args: allScopeQueryArgs,
         });
 
-        const retireArgs = {
+        if (targetEntryId === "stale-temp") {
+          const retireArgs = {
+            entry_id: targetEntryId,
+            reason: "This stale entry is safe to retire in the autonomous cleanup run.",
+          };
+          const retireAssistantMessage = createAssistantToolMessage({
+            id: `tool-retire-${retirementRuns}`,
+            name: "retire_entry",
+            arguments: retireArgs,
+            reasoning: "Retire the oldest safe candidate first.",
+          });
+          await executeToolCall({
+            context,
+            config,
+            emit,
+            signal,
+            assistantMessage: retireAssistantMessage,
+            args: retireArgs,
+          });
+
+          const completeArgs = {
+            actions_taken: 1,
+            entries_skipped: [],
+            observations: [`Retired ${targetEntryId}.`],
+            recommendations: ["Continue the autonomous cleanup sweep."],
+          };
+          const completeAssistantMessage = createAssistantToolMessage({
+            id: `tool-complete-retirement-${retirementRuns}`,
+            name: "complete_pass",
+            arguments: completeArgs,
+            reasoning: "The current retirement slice is complete.",
+          });
+          await executeToolCall({
+            context,
+            config,
+            emit,
+            signal,
+            assistantMessage: completeAssistantMessage,
+            args: completeArgs,
+          });
+
+          return [...prompts, actionableQueryAssistantMessage, allScopeQueryAssistantMessage, retireAssistantMessage, completeAssistantMessage];
+        }
+
+        const updateArgs = {
           entry_id: targetEntryId,
-          reason: "This stale entry is safe to retire in the autonomous cleanup run.",
+          importance: 4,
+          reasoning: "The milestone remains historically true, but it should be slightly less prominent than top-tier durable recall.",
         };
-        const retireAssistantMessage = createAssistantToolMessage({
-          id: `tool-retire-${retirementRuns}`,
-          name: "retire_entry",
-          arguments: retireArgs,
-          reasoning: "Retire the oldest safe candidate first.",
+        const updateAssistantMessage = createAssistantToolMessage({
+          id: `tool-update-${retirementRuns}`,
+          name: "update_entry",
+          arguments: updateArgs,
+          reasoning: "Permanent milestones should be demoted instead of retired.",
         });
         await executeToolCall({
           context,
           config,
           emit,
           signal,
-          assistantMessage: retireAssistantMessage,
-          args: retireArgs,
+          assistantMessage: updateAssistantMessage,
+          args: updateArgs,
         });
 
         const completeArgs = {
           actions_taken: 1,
           entries_skipped: [],
-          observations: [`Retired ${targetEntryId}.`],
+          observations: [`Demoted ${targetEntryId}.`],
           recommendations: ["Continue the autonomous cleanup sweep."],
         };
         const completeAssistantMessage = createAssistantToolMessage({
@@ -1468,7 +1739,7 @@ function mockAutonomousCompletionRunAgentLoop(): void {
           args: completeArgs,
         });
 
-        return [...prompts, actionableQueryAssistantMessage, allScopeQueryAssistantMessage, retireAssistantMessage, completeAssistantMessage];
+        return [...prompts, actionableQueryAssistantMessage, allScopeQueryAssistantMessage, updateAssistantMessage, completeAssistantMessage];
       }
 
       throw new Error("Unexpected tool set for autonomous surgeon test.");
@@ -1665,6 +1936,15 @@ async function readRetiredFlag(db: SqlDatabase, entryId: string): Promise<boolea
   });
 
   return rows.rows[0]?.retired === 1;
+}
+
+async function readImportance(db: SqlDatabase, entryId: string): Promise<number | null> {
+  const rows = await db.execute({
+    sql: "SELECT importance FROM entries WHERE id = ?",
+    args: [entryId],
+  });
+
+  return (rows.rows[0]?.importance as number | null | undefined) ?? null;
 }
 
 async function readSupersededBy(db: SqlDatabase, entryId: string): Promise<string | null> {

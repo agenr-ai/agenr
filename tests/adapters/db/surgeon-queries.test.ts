@@ -166,6 +166,51 @@ describe("surgeon queries", () => {
     });
   });
 
+  it("suppresses candidates already skipped or updated earlier in the same run", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "same-run-fact",
+      subject: "Same run candidate",
+      type: "fact",
+      importance: 4,
+      expiry: "permanent",
+      recall_count: 0,
+      created_at: daysAgoIso(120),
+      updated_at: daysAgoIso(90),
+    });
+
+    const runId = await createSurgeonRun(client, {
+      passType: "retirement",
+      dryRun: false,
+      startedAt: daysAgoIso(1),
+    });
+    await logSurgeonAction(client, {
+      id: "same-run-update",
+      runId,
+      actionType: "update_entry",
+      entryIds: ["same-run-fact"],
+      reasoning: "Demoted instead of retiring.",
+      recallDelta: null,
+      createdAt: daysAgoIso(1),
+    });
+
+    const page = await listRetirementCandidates(client, {
+      scope: "all",
+      protectRecalledDays: 14,
+      protectMinImportance: 9,
+      skipRecentlyEvaluatedDays: 0,
+      runId,
+      now: TEST_NOW,
+    });
+
+    expect(page.candidates).toEqual([]);
+    expect(page).toMatchObject({
+      totalMatching: 0,
+      availableCount: 0,
+      scopeExhausted: true,
+    });
+  });
+
   it("lists claim_key supersession clusters with two or more active entries", async () => {
     const client = await createTestClient(clients);
 
@@ -497,6 +542,63 @@ describe("surgeon queries", () => {
       availableActionableCount: 3,
       availableAllCount: 4,
       recentlyEvaluatedFilteredCount: 0,
+    });
+  });
+
+  it("counts duplicate open proposals as one logical backlog issue", async () => {
+    const client = await createTestClient(clients);
+    const firstRunId = await createSurgeonRun(client, {
+      passType: "claim_key_quality",
+      dryRun: true,
+      startedAt: daysAgoIso(2),
+    });
+    const secondRunId = await createSurgeonRun(client, {
+      passType: "claim_key_quality",
+      dryRun: true,
+      startedAt: daysAgoIso(1),
+    });
+
+    await logSurgeonProposal(client, {
+      id: "duplicate-proposal-1",
+      runId: firstRunId,
+      groupId: "group-duplicate",
+      issueKind: "missing_claim_key",
+      scope: "single_entry",
+      entryIds: ["entry-a"],
+      currentClaimKeys: [],
+      proposedClaimKeys: ["jim/home_city"],
+      rationale: "First open issue record.",
+      confidence: 0.7,
+      source: "mixed_group_consensus",
+      eligibleForApply: false,
+      createdAt: daysAgoIso(2),
+    });
+    await logSurgeonProposal(client, {
+      id: "duplicate-proposal-2",
+      runId: secondRunId,
+      groupId: "group-duplicate",
+      issueKind: "missing_claim_key",
+      scope: "single_entry",
+      entryIds: ["entry-a"],
+      currentClaimKeys: [],
+      proposedClaimKeys: ["jim/home_city"],
+      rationale: "Refreshed open issue record.",
+      confidence: 0.9,
+      source: "mixed_group_consensus",
+      eligibleForApply: true,
+      createdAt: daysAgoIso(1),
+    });
+
+    const health = await getSurgeonHealthStats(client, {
+      protectRecalledDays: 14,
+      protectMinImportance: 9,
+      now: TEST_NOW,
+    });
+
+    expect(health).toMatchObject({
+      proposalBacklogCount: 1,
+      eligibleProposalBacklogCount: 1,
+      oldestOpenProposalCreatedAt: daysAgoIso(2),
     });
   });
 });

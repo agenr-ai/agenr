@@ -186,6 +186,7 @@ describe("initSchema", () => {
     expect(await indexExists(client, "idx_surgeon_run_proposals_group_id")).toBe(true);
     expect(await indexExists(client, "idx_surgeon_run_proposals_created_at")).toBe(true);
     expect(await indexExists(client, "idx_surgeon_run_proposals_review_status")).toBe(true);
+    expect(await indexExists(client, "idx_surgeon_run_proposals_open_issue")).toBe(true);
     expect(await indexExists(client, "idx_entries_claim_key")).toBe(true);
     expect(await indexExists(client, "idx_entries_valid_from")).toBe(true);
     expect(await indexExists(client, "idx_entries_valid_to")).toBe(true);
