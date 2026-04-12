@@ -1,6 +1,6 @@
 {
   "name": "@agenr/agenr-plugin",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "description": "agenr memory plugin for OpenClaw",
   "type": "module",
   "exports": {

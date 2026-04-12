@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-04-11
+
+Ingest concurrency and progress reporting patch release.
+
+### Fixed
+
+- **Dedup now honors bounded concurrency.** Multi-entry similarity clusters are now arbitrated in parallel with deterministic result ordering, and ingest paths explicitly thread configured/default concurrency into dedup instead of leaving arbitration serial.
+- **Claim extraction now uses real batch concurrency without violating ordered semantics.** Batch claim-key extraction now honors configured concurrency, preserves past-only hint visibility via per-entry frozen hint snapshots, and propagates sensible defaults through the relevant ingest/store paths instead of falling back to historical hardcoded single-worker behavior.
+- **Ingest spinner now reports real post-extraction stages.** Non-verbose `agenr ingest entries` runs now surface dedup, claim-key extraction, store pipeline, and bulk-write index preparation/finalization stages instead of looking stuck after `(N/N extracted)`.
+
+### Validation
+
+Changes since last push to `origin/master`:
+
+- Enhance ingestion process with stage progress events
+- Refactor deduplication process to support configurable concurrency
+- Refactor concurrency handling in ingestion process
+
 ## [1.8.0] - 2026-04-11
 
 Claim-centric trust loop close-out release.
