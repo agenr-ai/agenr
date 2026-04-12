@@ -1,3 +1,7 @@
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
 import type { AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AgentTool } from "@mariozechner/pi-agent-core";
 
 import { getModel, type AssistantMessage, type Usage } from "@mariozechner/pi-ai";
@@ -47,6 +51,7 @@ const TEST_USAGE: Usage = {
 
 describe("runSurgeon", () => {
   const databases: SqlDatabase[] = [];
+  const tempPaths: string[] = [];
 
   afterEach(async () => {
     vi.restoreAllMocks();
@@ -54,6 +59,10 @@ describe("runSurgeon", () => {
 
     while (databases.length > 0) {
       await databases.pop()?.close();
+    }
+
+    while (tempPaths.length > 0) {
+      await rm(tempPaths.pop() ?? "", { recursive: true, force: true });
     }
   });
 
@@ -109,6 +118,43 @@ describe("runSurgeon", () => {
         reasoning: "Needs another pass.",
       }),
     ]);
+  });
+
+  it("writes trace output into a generated file when the trace path is an existing directory", async () => {
+    const db = await createTestDatabase(databases);
+    const traceDir = await createTempDirectory(tempPaths, "agenr-surgeon-trace-");
+    mockSuccessfulRunAgentLoop();
+
+    const result = await runSurgeon(
+      createRunOptions({
+        budget: 0.1,
+        tracePath: traceDir,
+      }),
+      {
+        port: createSurgeonPort(db),
+        config: null,
+        model: TEST_MODEL,
+        now: () => TEST_NOW,
+      },
+    );
+
+    const files = await readdir(traceDir);
+    expect(files).toEqual([`surgeon-retirement-${result.runId}.jsonl`]);
+
+    const traceLines = (await readFile(path.join(traceDir, files[0] ?? ""), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { timestamp: string; event: { type: string } });
+
+    expect(traceLines.length).toBeGreaterThan(0);
+    expect(traceLines[0]).toEqual(
+      expect.objectContaining({
+        timestamp: expect.any(String),
+        event: expect.objectContaining({
+          type: "message_end",
+        }),
+      }),
+    );
   });
 
   it("rejects a new run when the daily cost cap has already been exceeded", async () => {
@@ -642,6 +688,12 @@ function createRunOptions(overrides: Partial<SurgeonRunOptions> = {}): SurgeonRu
     json: false,
     ...overrides,
   };
+}
+
+async function createTempDirectory(tempPaths: string[], prefix: string): Promise<string> {
+  const tempPath = await mkdtemp(path.join(os.tmpdir(), prefix));
+  tempPaths.push(tempPath);
+  return tempPath;
 }
 
 async function createTestDatabase(databases: SqlDatabase[]): Promise<SqlDatabase> {

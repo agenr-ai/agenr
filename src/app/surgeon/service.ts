@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 
 import { runAgentLoop, type AfterToolCallContext, type AgentEvent, type AgentMessage, type BeforeToolCallContext } from "@mariozechner/pi-agent-core";
 import type { Api, AssistantMessage, Message, Model, Usage } from "@mariozechner/pi-ai";
@@ -76,7 +78,7 @@ export interface SurgeonRunResult {
 /**
  * Options accepted by one autonomous multi-pass surgeon run.
  */
-export interface SurgeonAutonomousRunOptions extends Omit<SurgeonRunOptions, "pass"> {}
+export type SurgeonAutonomousRunOptions = Omit<SurgeonRunOptions, "pass">;
 
 /**
  * Aggregate summary returned after an autonomous surgeon run completes.
@@ -117,10 +119,7 @@ export interface SurgeonWorkflowDeps {
  * @param deps - Resolved database, model, config, and optional recall runtime dependencies.
  * @returns Aggregate autonomous run summary plus per-pass results.
  */
-export async function runAutonomousSurgeon(
-  options: SurgeonAutonomousRunOptions,
-  deps: SurgeonWorkflowDeps,
-): Promise<SurgeonAutonomousRunResult> {
+export async function runAutonomousSurgeon(options: SurgeonAutonomousRunOptions, deps: SurgeonWorkflowDeps): Promise<SurgeonAutonomousRunResult> {
   const results: SurgeonRunResult[] = [];
   let cyclesCompleted = 0;
   let remainingBudget = resolveRunCostCap(options, deps.config);
@@ -362,7 +361,7 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
     });
     traceLogger = createTraceLogger({
       verbose: options.verbose,
-      tracePath: options.tracePath,
+      tracePath: resolveTracePath(options.tracePath, agentPass, runId),
       budgetTracker,
       logger: deps.logger,
     });
@@ -684,6 +683,33 @@ function resolveProtectionConfig(
       normalizeNonNegativeInteger(passConfig?.skipRecentlyEvaluatedDays) ??
       DEFAULT_SURGEON_SKIP_RECENTLY_EVALUATED_DAYS,
   };
+}
+
+/**
+ * Resolves one pass trace destination to a concrete file path.
+ *
+ * Existing directories receive one per-pass JSONL file so `--trace <dir>` can
+ * be used without changing current file-path semantics.
+ *
+ * @param tracePath - Raw trace path supplied by the caller.
+ * @param passType - Pass currently running.
+ * @param runId - Persisted run identifier for this pass.
+ * @returns Concrete trace file path.
+ */
+function resolveTracePath(tracePath: string | undefined, passType: Extract<SurgeonPassType, "retirement" | "supersession">, runId: string): string | undefined {
+  if (!tracePath) {
+    return undefined;
+  }
+
+  try {
+    if (fs.statSync(tracePath).isDirectory()) {
+      return path.join(tracePath, `surgeon-${passType}-${runId}.jsonl`);
+    }
+  } catch {
+    return tracePath;
+  }
+
+  return tracePath;
 }
 
 /**

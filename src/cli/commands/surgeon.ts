@@ -15,12 +15,7 @@ import {
 import { isImplementedSurgeonPass, isSurgeonPassType, type SurgeonPassType } from "../../core/surgeon/domain/pass-types.js";
 import { type ImplementedSurgeonPass } from "../../core/surgeon/domain/run-presets.js";
 import type { Logger } from "../../logger.js";
-import {
-  normalizeOptionalString,
-  parseNonNegativeInteger,
-  parsePositiveInteger,
-  parsePositiveNumber,
-} from "../shared/parse.js";
+import { normalizeOptionalString, parseNonNegativeInteger, parsePositiveInteger, parsePositiveNumber } from "../shared/parse.js";
 import { ui } from "../../ui.js";
 
 /** Parsed commander options for `agenr surgeon run`. */
@@ -80,7 +75,7 @@ export function registerSurgeonCommand(program: Command): void {
     .option("--model <id>", "Override the surgeon model ID")
     .option("--provider <name>", "Override the surgeon model provider")
     .option("--verbose", "Enable verbose trace logging")
-    .option("--trace <path>", "Write surgeon trace events to a file")
+    .option("--trace <path>", "Write surgeon trace events to a file or existing directory")
     .option("--json", "Emit machine-readable JSON output")
     .action(async (options: SurgeonRunCommandOptions) => {
       const abortController = new AbortController();
