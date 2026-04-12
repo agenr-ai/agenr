@@ -5,6 +5,7 @@ import {
   getDefaultDedupSimilarityThreshold,
   summarizeIngestClaimKeyHealth,
   storeExtractedResults,
+  type DedupProgressEvent as CoreDedupProgressEvent,
   type DedupResult,
   type ExtractedFileResult,
   type IngestFileOptions,
@@ -19,6 +20,7 @@ import {
   runBatchClaimExtraction,
   type ClaimExtractionConfig,
   type ClaimExtractionDiagnostic,
+  type ClaimExtractionProgressEvent as CoreClaimExtractionProgressEvent,
 } from "../../core/store/claim-extraction.js";
 import type { StoreEntryInput } from "../../core/types.js";
 import type { IngestPathPorts, IngestionLlmPort, UsageStats } from "./ports.js";
@@ -34,6 +36,12 @@ export interface IngestStageProgressEvent {
   totalEntries: number;
 }
 
+/** Application-layer dedup progress payload forwarded from core ingestion. */
+export type DedupProgressEvent = CoreDedupProgressEvent;
+
+/** Application-layer claim-extraction progress payload forwarded from core store logic. */
+export type ClaimExtractionProgressEvent = CoreClaimExtractionProgressEvent;
+
 /** Runtime options for application-layer path ingestion. */
 export interface IngestPathOptions extends IngestFileOptions {
   /** Override claim extraction config for this ingest run. */
@@ -44,6 +52,10 @@ export interface IngestPathOptions extends IngestFileOptions {
   onExtractionProgress?: (completed: number, total: number) => void;
   /** Optional callback invoked when ingest advances into a new post-extraction stage. */
   onStageProgress?: (event: IngestStageProgressEvent) => void;
+  /** Optional callback invoked as multi-entry dedup arbitrations finish. */
+  onDedupProgress?: (event: DedupProgressEvent) => void;
+  /** Optional callback invoked as eligible claim-extraction work finishes. */
+  onClaimExtractionProgress?: (event: ClaimExtractionProgressEvent) => void;
   /** Optional callback invoked around ingest-specific bulk write phases. */
   onBulkWriteProgress?: (event: StoreExtractedResultsProgressEvent) => void;
 }
@@ -145,6 +157,7 @@ export async function ingestDiscoveredFiles(files: string[], ports: IngestPathPo
         concurrency: options.concurrency ?? DEFAULT_INGEST_CONCURRENCY,
         skip: options.skipDedup,
         verbose: options.verbose,
+        onProgress: options.onDedupProgress,
       },
     );
     const preservedDedupResult: DedupResult = {
@@ -186,6 +199,7 @@ export async function ingestDiscoveredFiles(files: string[], ports: IngestPathPo
           claimKeyDiagnostics.set(flattenedIndex, diagnostic);
         }
       },
+      options.onClaimExtractionProgress,
     );
 
     for (const [entry, extractedClaimKey] of extractedClaimKeys) {

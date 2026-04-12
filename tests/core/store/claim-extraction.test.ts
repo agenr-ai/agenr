@@ -733,6 +733,84 @@ describe("runBatchClaimExtraction", () => {
     expect(entries[2]?.claim_key).toBe("jim/employer");
   });
 
+  it("reports progress for only eligible entries that need extraction", async () => {
+    const entries: StoreEntryInput[] = [
+      {
+        type: "fact",
+        subject: "Pre-keyed timezone",
+        content: "Jim's timezone is America/Chicago.",
+        claim_key: "jim/timezone",
+      },
+      {
+        type: "milestone",
+        subject: "Launch day",
+        content: "Project X launched today.",
+      },
+      {
+        type: "fact",
+        subject: "Jim city",
+        content: "Jim lives in Denver, Colorado.",
+      },
+      {
+        type: "decision",
+        subject: "Repo workflow",
+        content: "AGENTS.md is the source of truth for the repo workflow.",
+      },
+    ];
+    const progressEvents: Array<{ phase: string; completedEntries: number; totalEntries: number; totalEligibleEntries: number }> = [];
+
+    await runBatchClaimExtraction(
+      [{ entries }],
+      {
+        createLlm: () =>
+          new MockLlmPort((callIndex) =>
+            callIndex === 0
+              ? {
+                  entity: "Jim",
+                  attribute: "home city",
+                  confidence: 0.95,
+                }
+              : {
+                  entity: "Repo workflow",
+                  attribute: "source of truth",
+                  confidence: 0.95,
+                },
+          ),
+        db: new MockDatabasePort(),
+      },
+      {
+        enabled: true,
+        confidenceThreshold: 0.8,
+        eligibleTypes: ["fact", "preference", "decision", "lesson"],
+      },
+      2,
+      undefined,
+      undefined,
+      (event) => {
+        progressEvents.push({ ...event });
+      },
+    );
+
+    expect(progressEvents).toEqual([
+      {
+        phase: "primary",
+        completedEntries: 1,
+        totalEntries: 2,
+        totalEligibleEntries: 2,
+      },
+      {
+        phase: "primary",
+        completedEntries: 2,
+        totalEntries: 2,
+        totalEligibleEntries: 2,
+      },
+    ]);
+    expect(entries[0]?.claim_key).toBe("jim/timezone");
+    expect(entries[1]?.claim_key).toBeUndefined();
+    expect(entries[2]?.claim_key).toBe("jim/home_city");
+    expect(entries[3]?.claim_key).toBe("repo_workflow/source_of_truth");
+  });
+
   it("does not let later pre-keyed entries influence earlier entries in the same stage", async () => {
     const entries: StoreEntryInput[] = [
       {
@@ -921,6 +999,87 @@ describe("runBatchClaimExtraction", () => {
     expect(entries[1]?.claim_key).toBe("repo_workflow/source_of_truth");
     expect(llm.calls).toHaveLength(3);
     expect(diagnostics).toContain("Repo workflow docs|accepted|repo_workflow/source_of_truth");
+  });
+
+  it("reports retry-phase progress separately after the primary pass", async () => {
+    const entries: StoreEntryInput[] = [
+      {
+        type: "decision",
+        subject: "Repo workflow docs",
+        content: "AGENTS.md is the source of truth for the repo workflow, even when older notes disagree.",
+      },
+      {
+        type: "decision",
+        subject: "Canonical repo workflow",
+        content: "The repo workflow uses AGENTS.md as its source of truth.",
+      },
+    ];
+    const progressEvents: Array<{ phase: string; completedEntries: number; totalEntries: number; totalEligibleEntries: number }> = [];
+
+    await runBatchClaimExtraction(
+      [{ entries }],
+      {
+        createLlm: () =>
+          new MockLlmPort((callIndex) => {
+            if (callIndex === 0) {
+              return {
+                entity: "Repo workflow",
+                attribute: "source of truth",
+                confidence: 0.68,
+              };
+            }
+
+            if (callIndex === 1) {
+              return {
+                entity: "Repo workflow",
+                attribute: "source of truth",
+                confidence: 0.94,
+              };
+            }
+
+            return {
+              entity: "Repo workflow",
+              attribute: "source of truth",
+              confidence: 0.74,
+            };
+          }),
+        db: new MockDatabasePort(),
+      },
+      {
+        enabled: true,
+        confidenceThreshold: 0.8,
+        eligibleTypes: ["fact", "preference", "decision", "lesson"],
+      },
+      1,
+      undefined,
+      undefined,
+      (event) => {
+        progressEvents.push({ ...event });
+      },
+    );
+
+    expect(progressEvents).toEqual([
+      {
+        phase: "primary",
+        completedEntries: 1,
+        totalEntries: 2,
+        totalEligibleEntries: 2,
+      },
+      {
+        phase: "primary",
+        completedEntries: 2,
+        totalEntries: 2,
+        totalEligibleEntries: 2,
+      },
+      {
+        phase: "retry",
+        completedEntries: 1,
+        totalEntries: 1,
+        totalEligibleEntries: 2,
+      },
+    ]);
+    expect(entries[0]?.claim_key).toBe("repo_workflow/source_of_truth");
+    expect(entries[1]?.claim_key).toBe("repo_workflow/source_of_truth");
   });
 });
 

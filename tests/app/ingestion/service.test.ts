@@ -201,6 +201,106 @@ describe("ingestPath", () => {
     expect(phases).toEqual(["dedup_start:2", "claim_extraction_start:2", "store_start:2"]);
   });
 
+  it("propagates dedup and claim-extraction progress events", async () => {
+    const filePath = "/tmp/session-progress.jsonl";
+    const entries = [
+      createInput({
+        type: "fact",
+        subject: "Project X status",
+        content: "Project X is active and healthy with a stable release train.",
+      }),
+      createInput({
+        type: "fact",
+        subject: "Project X current status",
+        content: "The project is active and healthy with a stable release train.",
+      }),
+      createInput({
+        type: "decision",
+        subject: "Repo workflow source of truth",
+        content: "AGENTS.md is the source of truth for the repo workflow when notes disagree.",
+      }),
+      createInput({
+        type: "decision",
+        subject: "Repo workflow docs",
+        content: "Use AGENTS.md as the repo workflow source of truth even when older notes conflict.",
+      }),
+    ];
+    const vectors = [
+      [1, 0],
+      [1, 0],
+      [0, 1],
+      [0, 1],
+    ];
+    const dedupProgress: Array<{ completedClusters: number; totalClusters: number; completedEntries: number; totalEntries: number }> = [];
+    const claimProgress: Array<{ phase: string; completedEntries: number; totalEntries: number; totalEligibleEntries: number }> = [];
+
+    const result = await ingestPath(
+      "/tmp",
+      {
+        files: new MockFilePort([filePath], { [filePath]: "hash-progress" }),
+        transcript: new MockTranscriptPort(buildTranscript()),
+        db: new MockDatabase(),
+        embedding: new MockEmbeddingPort(entries, vectors),
+        createExtractionLlm: () => new MockIngestionLlm({ entries }),
+        createDedupLlm: () => new MockDedupLlm(['{"keep":[0],"drop":[1]}', '{"keep":[1],"drop":[0]}']),
+        createClaimExtractionLlm: () =>
+          new MockClaimExtractionLlm((_, userMessage) =>
+            userMessage.includes("Project X")
+              ? {
+                  entity: "project_x",
+                  attribute: "status",
+                  confidence: 0.95,
+                }
+              : {
+                  entity: "repo_workflow",
+                  attribute: "source_of_truth",
+                  confidence: 0.95,
+                },
+          ),
+      },
+      {
+        concurrency: 1,
+        wholeFile: "never",
+        onDedupProgress: (event) => {
+          dedupProgress.push({ ...event });
+        },
+        onClaimExtractionProgress: (event) => {
+          claimProgress.push({ ...event });
+        },
+      },
+    );
+
+    expect(result.dedupResult.clustersArbitrated).toBe(2);
+    expect(dedupProgress).toEqual([
+      {
+        completedClusters: 1,
+        totalClusters: 2,
+        completedEntries: 2,
+        totalEntries: 4,
+      },
+      {
+        completedClusters: 2,
+        totalClusters: 2,
+        completedEntries: 4,
+        totalEntries: 4,
+      },
+    ]);
+    expect(claimProgress).toEqual([
+      {
+        phase: "primary",
+        completedEntries: 1,
+        totalEntries: 2,
+        totalEligibleEntries: 2,
+      },
+      {
+        phase: "primary",
+        completedEntries: 2,
+        totalEntries: 2,
+        totalEligibleEntries: 2,
+      },
+    ]);
+  });
+
   it("propagates configured ingest concurrency into dedup arbitration", async () => {
     const filePath = "/tmp/session-dedup-concurrency.jsonl";
     const { entries, vectors } = createPairedClusterScenario(3);

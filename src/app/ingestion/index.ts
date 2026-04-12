@@ -1,5 +1,7 @@
 export {
   DEFAULT_INGEST_CONCURRENCY,
+  type ClaimExtractionProgressEvent,
+  type DedupProgressEvent,
   ingestDiscoveredFiles,
   ingestPath,
   type ExtractionExecutionResult,

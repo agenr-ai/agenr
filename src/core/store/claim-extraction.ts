@@ -90,6 +90,22 @@ interface ClaimExtractionHintState {
   entityPrefixStats: ClaimKeyEntityPrefixStats[];
 }
 
+/** Immutable request bundle for one ordered batch extraction attempt. */
+interface ClaimExtractionStageRequest {
+  entry: StoreEntryInput;
+  hintSnapshot: {
+    hints: ClaimExtractionHints;
+    supportClaimKeys: string[];
+    entityPrefixStats: ClaimKeyEntityPrefixStats[];
+  };
+}
+
+/** Completed decision paired back to the source entry. */
+interface ClaimExtractionStageDecision {
+  entry: StoreEntryInput;
+  decision: ClaimExtractionDecision;
+}
+
 /** Successful model attempt before confidence thresholding is applied. */
 interface ClaimExtractionCandidate {
   claimKey: string;
@@ -115,6 +131,20 @@ export interface ClaimExtractionConfig {
   eligibleTypes: EntryType[];
   /** Maximum preview workers used by cleanup flows that parallelize claim extraction. Defaults to `10`. */
   concurrency?: number;
+}
+
+/**
+ * Structured progress emitted while batch claim extraction evaluates eligible entries.
+ */
+export interface ClaimExtractionProgressEvent {
+  /** Current extraction phase. */
+  phase: "primary" | "retry";
+  /** Number of entries completed in the current phase. */
+  completedEntries: number;
+  /** Total number of entries scheduled in the current phase. */
+  totalEntries: number;
+  /** Total number of primary-pass eligible entries in the batch. */
+  totalEligibleEntries: number;
 }
 
 /**
@@ -542,6 +572,7 @@ export async function runBatchClaimExtraction(
   concurrency = 10,
   onWarning?: (warning: string) => void,
   onDiagnostic?: (entry: StoreEntryInput, diagnostic: ClaimExtractionDiagnostic) => void,
+  onProgress?: (event: ClaimExtractionProgressEvent) => void,
 ): Promise<Map<StoreEntryInput, ClaimExtractionResult>> {
   if (!config.enabled) {
     return new Map();
@@ -554,19 +585,14 @@ export async function runBatchClaimExtraction(
   const retryEntries: StoreEntryInput[] = [];
   const stageSize = normalizeClaimExtractionConcurrency(concurrency);
   const orderedEntries = results.flatMap((result) => result.entries);
+  const totalEligibleEntries = orderedEntries.filter((entry) => !entry.claim_key && config.eligibleTypes.includes(entry.type)).length;
+  let completedPrimaryEntries = 0;
 
   // Commit accepted hints after each bounded stage so later stages and retries
   // can reuse same-batch support without reordering diagnostics or mutations.
   for (let stageStart = 0; stageStart < orderedEntries.length; stageStart += stageSize) {
     const stageEntries = orderedEntries.slice(stageStart, stageStart + stageSize);
-    const stageRequests: Array<{
-      entry: StoreEntryInput;
-      hintSnapshot: {
-        hints: ClaimExtractionHints;
-        supportClaimKeys: string[];
-        entityPrefixStats: ClaimKeyEntityPrefixStats[];
-      };
-    }> = [];
+    const stageRequests: ClaimExtractionStageRequest[] = [];
 
     for (const entry of stageEntries) {
       if (entry.claim_key) {
@@ -594,11 +620,22 @@ export async function runBatchClaimExtraction(
       });
     }
 
-    const stageDecisions = await Promise.all(
-      stageRequests.map(async ({ entry, hintSnapshot }) => ({
-        entry,
-        decision: await extractBatchClaimKeyDecision(entry, llm, config, hintSnapshot, onWarning),
-      })),
+    const stageDecisions = await executeClaimExtractionStageRequests(
+      stageRequests,
+      llm,
+      config,
+      onWarning,
+      completedPrimaryEntries,
+      totalEligibleEntries,
+      (completedEntries, totalEntries) => {
+        completedPrimaryEntries = completedEntries;
+        onProgress?.({
+          phase: "primary",
+          completedEntries,
+          totalEntries,
+          totalEligibleEntries,
+        });
+      },
     );
     for (const { entry, decision } of stageDecisions) {
       diagnostics.set(entry, decision.diagnostic);
@@ -615,19 +652,31 @@ export async function runBatchClaimExtraction(
   }
 
   if (retryEntries.length > 0 && extractedEntries.size > 0) {
-    for (let stageStart = 0; stageStart < retryEntries.length; stageStart += stageSize) {
-      const stageRequests = retryEntries
-        .slice(stageStart, stageStart + stageSize)
-        .filter((entry) => !entry.claim_key)
-        .map((entry) => ({
-          entry,
-          hintSnapshot: buildClaimExtractionHintSnapshot(hintState, entry),
-        }));
-      const stageDecisions = await Promise.all(
-        stageRequests.map(async ({ entry, hintSnapshot }) => ({
-          entry,
-          decision: await extractBatchClaimKeyDecision(entry, llm, config, hintSnapshot, onWarning),
-        })),
+    const retryEligibleEntries = retryEntries.filter((entry) => !entry.claim_key);
+    const totalRetryEntries = retryEligibleEntries.length;
+    let completedRetryEntries = 0;
+
+    for (let stageStart = 0; stageStart < retryEligibleEntries.length; stageStart += stageSize) {
+      const stageRequests = retryEligibleEntries.slice(stageStart, stageStart + stageSize).map((entry) => ({
+        entry,
+        hintSnapshot: buildClaimExtractionHintSnapshot(hintState, entry),
+      }));
+      const stageDecisions = await executeClaimExtractionStageRequests(
+        stageRequests,
+        llm,
+        config,
+        onWarning,
+        completedRetryEntries,
+        totalRetryEntries,
+        (completedEntries, totalEntries) => {
+          completedRetryEntries = completedEntries;
+          onProgress?.({
+            phase: "retry",
+            completedEntries,
+            totalEntries,
+            totalEligibleEntries,
+          });
+        },
       );
 
       for (const { entry, decision } of stageDecisions) {
@@ -654,6 +703,42 @@ export async function runBatchClaimExtraction(
   }
 
   return extractedEntries;
+}
+
+/**
+ * Executes one bounded batch stage while emitting monotonic completion progress.
+ *
+ * @param stageRequests - Ordered entries scheduled in the current stage.
+ * @param llm - Claim-extraction model port.
+ * @param config - Runtime extraction controls.
+ * @param onWarning - Optional warning sink.
+ * @param initialCompletedEntries - Completed count carried into this stage.
+ * @param totalEntries - Total entries scheduled in the current phase.
+ * @param onProgress - Progress sink for each completed stage request.
+ * @returns Ordered extraction decisions aligned to the supplied requests.
+ */
+async function executeClaimExtractionStageRequests(
+  stageRequests: ClaimExtractionStageRequest[],
+  llm: LlmPort,
+  config: ClaimExtractionConfig,
+  onWarning: ((warning: string) => void) | undefined,
+  initialCompletedEntries: number,
+  totalEntries: number,
+  onProgress: (completedEntries: number, totalEntries: number) => void,
+): Promise<ClaimExtractionStageDecision[]> {
+  let completedEntries = initialCompletedEntries;
+
+  return Promise.all(
+    stageRequests.map(async ({ entry, hintSnapshot }) => {
+      const decision = await extractBatchClaimKeyDecision(entry, llm, config, hintSnapshot, onWarning);
+      completedEntries += 1;
+      onProgress(completedEntries, totalEntries);
+      return {
+        entry,
+        decision,
+      };
+    }),
+  );
 }
 
 /**

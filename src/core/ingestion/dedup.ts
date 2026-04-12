@@ -35,6 +35,22 @@ export interface DedupOptions {
   skip?: boolean;
   /** Enables verbose debug logging at the caller level. */
   verbose?: boolean;
+  /** Optional callback invoked as multi-entry cluster arbitrations finish. */
+  onProgress?: (event: DedupProgressEvent) => void;
+}
+
+/**
+ * Structured progress emitted as multi-entry dedup arbitrations complete.
+ */
+export interface DedupProgressEvent {
+  /** Number of multi-entry clusters whose arbitration has completed. */
+  completedClusters: number;
+  /** Total number of multi-entry clusters queued for arbitration. */
+  totalClusters: number;
+  /** Number of entries covered by completed multi-entry cluster arbitrations. */
+  completedEntries: number;
+  /** Total number of entries that belong to arbitrated multi-entry clusters. */
+  totalEntries: number;
 }
 
 /**
@@ -181,8 +197,22 @@ export async function dedupBatch(entries: StoreEntryInput[], llm: LlmPort, embed
     });
   }
 
+  const totalArbitratedEntries = arbitrationTasks.reduce((sum, task) => sum + task.cluster.length, 0);
+  let completedClusters = 0;
+  let completedEntries = 0;
+
   const arbitrationResults = await runBoundedArbitrations(arbitrationTasks, concurrency, async (task) =>
     arbitrateCluster(task.clusterIndex, task.cluster, entries, llm, task.maxSimilarity),
+    (task) => {
+      completedClusters += 1;
+      completedEntries += task.cluster.length;
+      options.onProgress?.({
+        completedClusters,
+        totalClusters: arbitrationTasks.length,
+        completedEntries,
+        totalEntries: totalArbitratedEntries,
+      });
+    },
   );
 
   for (const arbitration of arbitrationResults) {
@@ -256,6 +286,7 @@ async function runBoundedArbitrations<TTask, TResult>(
   tasks: TTask[],
   concurrency: number,
   worker: (task: TTask, taskIndex: number) => Promise<TResult>,
+  onTaskComplete?: (task: TTask, taskIndex: number) => void,
 ): Promise<TResult[]> {
   if (tasks.length === 0) {
     return [];
@@ -281,6 +312,7 @@ async function runBoundedArbitrations<TTask, TResult>(
         }
 
         results[taskIndex] = await worker(task, taskIndex);
+        onTaskComplete?.(task, taskIndex);
       }
     }),
   );

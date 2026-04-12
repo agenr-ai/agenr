@@ -242,12 +242,30 @@ describe("registerIngestCommand", () => {
     expect(discoverFilesMock).toHaveBeenCalledWith("/tmp/transcripts");
   });
 
-  it("updates the non-verbose spinner as ingest advances through post-extraction stages", async () => {
+  it("updates the non-verbose spinner with in-phase dedup and claim-extraction progress", async () => {
     const clackMock = createClackMock();
     const ingestDiscoveredFilesMock = vi.fn(async (_files: string[], _ports: unknown, options: any) => {
       options.onExtractionProgress?.(2, 2);
       options.onStageProgress?.({ phase: "dedup_start", totalEntries: 4 });
+      options.onDedupProgress?.({
+        completedClusters: 12,
+        totalClusters: 47,
+        completedEntries: 388,
+        totalEntries: 1098,
+      });
       options.onStageProgress?.({ phase: "claim_extraction_start", totalEntries: 4 });
+      options.onClaimExtractionProgress?.({
+        phase: "primary",
+        completedEntries: 437,
+        totalEntries: 1098,
+        totalEligibleEntries: 1098,
+      });
+      options.onClaimExtractionProgress?.({
+        phase: "retry",
+        completedEntries: 21,
+        totalEntries: 94,
+        totalEligibleEntries: 1098,
+      });
       options.onStageProgress?.({ phase: "store_start", totalEntries: 4 });
       options.onBulkWriteProgress?.({ phase: "prepare_start" });
       options.onBulkWriteProgress?.({ phase: "finalize_start" });
@@ -338,8 +356,11 @@ describe("registerIngestCommand", () => {
     expect(messages).toEqual(
       expect.arrayContaining([
         "Processing transcripts... (2/2 extracted)",
-        "Deduplicating 4 entries from 2 files...",
-        "Extracting claim keys for 4 entries...",
+        "Deduplicating entries...",
+        "Deduplicating entries... 12/47 clusters arbitrated (388/1098 entries covered)",
+        "Extracting claim keys...",
+        "Extracting claim keys... 437/1098 entries",
+        "Retrying unresolved claim keys... 21/94 entries",
         "Running store pipeline for 4 entries...",
         "Preparing database indexes for bulk ingest...",
         "Rebuilding indexes after bulk ingest...",

@@ -5,6 +5,7 @@ export {
   getDefaultDedupSimilarityThreshold,
   type DedupClusterDetail,
   type DedupOptions,
+  type DedupProgressEvent,
   type DedupResult,
 } from "./dedup.js";
 export { parseExtractionResponse, type ExtractionResponse } from "./parser.js";

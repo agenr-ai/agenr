@@ -329,6 +329,45 @@ describe("dedupBatch", () => {
     expect(maxActiveRequests).toBe(2);
   });
 
+  it("reports arbitration progress using only multi-entry clusters", async () => {
+    const entries = [
+      createInput({ subject: "cluster-0 primary", content: "cluster-0 primary" }),
+      createInput({ subject: "cluster-0 secondary", content: "cluster-0 secondary" }),
+      createInput({ subject: "cluster-1 primary", content: "cluster-1 primary" }),
+      createInput({ subject: "cluster-1 secondary", content: "cluster-1 secondary" }),
+      createInput({ subject: "singleton", content: "singleton" }),
+    ];
+    const vectors = [
+      [1, 0, 0],
+      [1, 0, 0],
+      [0, 1, 0],
+      [0, 1, 0],
+      [0, 0, 1],
+    ];
+    const events: Array<{ completedClusters: number; totalClusters: number; completedEntries: number; totalEntries: number }> = [];
+
+    await dedupBatch(entries, new MockLlmPort(['{"keep":[0],"drop":[1]}', '{"keep":[1],"drop":[0]}']), new MockEmbeddingPort(vectors, entries), {
+      onProgress: (event) => {
+        events.push({ ...event });
+      },
+    });
+
+    expect(events).toEqual([
+      {
+        completedClusters: 1,
+        totalClusters: 2,
+        completedEntries: 2,
+        totalEntries: 4,
+      },
+      {
+        completedClusters: 2,
+        totalClusters: 2,
+        completedEntries: 4,
+        totalEntries: 4,
+      },
+    ]);
+  });
+
   it("matches the sequential baseline under parallel arbitration", async () => {
     const { entries, vectors } = createPairedClusterScenario(3);
     const responses = ['{"keep":[0],"drop":[1]}', '{"keep":[1],"drop":[0]}', '{"keep":[0,1],"drop":[]}'];
@@ -369,6 +408,52 @@ describe("dedupBatch", () => {
     expect(result.warnings).toEqual([
       "Cluster 1: dedup arbitration failed, keeping all entries (Dedup response did not contain a JSON object.).",
       "Cluster 3: dedup arbitration failed, keeping all entries (Dedup response did not contain a JSON object.).",
+    ]);
+  });
+
+  it("reports monotonic arbitration progress when clusters resolve out of order", async () => {
+    const { entries, vectors } = createPairedClusterScenario(3);
+    const responses = [deferred<string>(), deferred<string>(), deferred<string>()];
+    const progressEvents: Array<{ completedClusters: number; totalClusters: number; completedEntries: number; totalEntries: number }> = [];
+    const llm = new MockLlmPort((callIndex) => responses[callIndex]?.promise ?? '{"keep":[0],"drop":[1]}' );
+    const embedding = new MockEmbeddingPort(vectors, entries);
+
+    const dedupPromise = dedupBatch(entries, llm, embedding, {
+      concurrency: 3,
+      onProgress: (event) => {
+        progressEvents.push({ ...event });
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(llm.completeCalls).toBe(3);
+    });
+
+    responses[2].resolve('{"keep":[0],"drop":[1]}');
+    responses[0].resolve('{"keep":[0],"drop":[1]}');
+    responses[1].resolve('{"keep":[0],"drop":[1]}');
+
+    await dedupPromise;
+
+    expect(progressEvents).toEqual([
+      {
+        completedClusters: 1,
+        totalClusters: 3,
+        completedEntries: 2,
+        totalEntries: 6,
+      },
+      {
+        completedClusters: 2,
+        totalClusters: 3,
+        completedEntries: 4,
+        totalEntries: 6,
+      },
+      {
+        completedClusters: 3,
+        totalClusters: 3,
+        completedEntries: 6,
+        totalEntries: 6,
+      },
     ]);
   });
 

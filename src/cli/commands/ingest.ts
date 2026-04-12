@@ -3,6 +3,8 @@ import path from "node:path";
 import * as clack from "@clack/prompts";
 import {
   DEFAULT_INGEST_CONCURRENCY,
+  type ClaimExtractionProgressEvent,
+  type DedupProgressEvent,
   ingestDiscoveredFiles,
   type IngestPathOptions,
   type IngestStageProgressEvent,
@@ -175,7 +177,13 @@ function registerIngestEntriesCommand(parent: Command): void {
             spinner?.message(`Processing transcripts... (${completed}/${total} extracted)`);
           },
           onStageProgress: (event) => {
-            spinner?.message(progressMessageForIngestStage(event, files.length));
+            spinner?.message(progressMessageForIngestStage(event));
+          },
+          onDedupProgress: (event) => {
+            spinner?.message(progressMessageForDedup(event));
+          },
+          onClaimExtractionProgress: (event) => {
+            spinner?.message(progressMessageForClaimExtraction(event));
           },
           onBulkWriteProgress: useVerboseBulkWriteProgress
             ? reportBulkWriteProgress
@@ -707,14 +715,29 @@ function emptyStoreResult(): StoreResult {
 }
 
 /** Maps post-extraction ingest phases into concise spinner text. */
-function progressMessageForIngestStage(event: IngestStageProgressEvent, totalFiles: number): string {
+function progressMessageForIngestStage(event: IngestStageProgressEvent): string {
   switch (event.phase) {
     case "dedup_start":
-      return `Deduplicating ${event.totalEntries} ${pluralize(event.totalEntries, "entry", "entries")} from ${totalFiles} ${pluralize(totalFiles, "file")}...`;
+      return "Deduplicating entries...";
     case "claim_extraction_start":
-      return `Extracting claim keys for ${event.totalEntries} ${pluralize(event.totalEntries, "entry", "entries")}...`;
+      return "Extracting claim keys...";
     case "store_start":
       return `Running store pipeline for ${event.totalEntries} ${pluralize(event.totalEntries, "entry", "entries")}...`;
+  }
+}
+
+/** Formats live spinner text for in-phase dedup arbitration progress. */
+function progressMessageForDedup(event: DedupProgressEvent): string {
+  return `Deduplicating entries... ${event.completedClusters}/${event.totalClusters} ${pluralize(event.totalClusters, "cluster")} arbitrated (${event.completedEntries}/${event.totalEntries} entries covered)`;
+}
+
+/** Formats live spinner text for primary and retry claim-extraction progress. */
+function progressMessageForClaimExtraction(event: ClaimExtractionProgressEvent): string {
+  switch (event.phase) {
+    case "primary":
+      return `Extracting claim keys... ${event.completedEntries}/${event.totalEntries} entries`;
+    case "retry":
+      return `Retrying unresolved claim keys... ${event.completedEntries}/${event.totalEntries} entries`;
   }
 }
 
