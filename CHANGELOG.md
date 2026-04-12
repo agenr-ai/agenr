@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-04-11
+
+Claim-centric trust loop close-out release.
+
 ### Changed
 
 - **Roadmap close-out hardening.** Added a narrow OpenClaw `memoryPolicy.slotPolicies.attributeHeads` seam for claim-aware read overrides, expanded operator trace surfaces with structured CLI JSON output and broader claim-transition explanations, hardened lexical recall for non-ASCII queries, and aligned docs plus a dedicated `pnpm typecheck:tests` guardrail with the delivered roadmap state.

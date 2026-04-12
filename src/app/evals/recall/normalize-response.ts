@@ -116,7 +116,17 @@ function buildSandboxResult(sandbox: RecallEvalSandboxContext): RecallEvalSandbo
 function buildMetadata(
   request: RecallEvalCaseRequest,
   results: RecallOutput[] | UnifiedRecallResult,
-  projectedEntries: Array<{ entryId: string; familyKey: string; claimKey?: string; slotPolicy: RecallEvalProjectedEntryMetadata["slotPolicy"]; memoryState: RecallEvalProjectedEntryMetadata["memoryState"]; claimStatus: RecallEvalProjectedEntryMetadata["claimStatus"]; freshness: RecallEvalProjectedEntryMetadata["freshness"]; provenance: RecallEvalProjectedEntryMetadata["provenance"]; whySurfaced: RecallEvalProjectedEntryMetadata["whySurfaced"] }>,
+  projectedEntries: Array<{
+    entryId: string;
+    familyKey: string;
+    claimKey?: string;
+    slotPolicy: RecallEvalProjectedEntryMetadata["slotPolicy"];
+    memoryState: RecallEvalProjectedEntryMetadata["memoryState"];
+    claimStatus: RecallEvalProjectedEntryMetadata["claimStatus"];
+    freshness: RecallEvalProjectedEntryMetadata["freshness"];
+    provenance: RecallEvalProjectedEntryMetadata["provenance"];
+    whySurfaced: RecallEvalProjectedEntryMetadata["whySurfaced"];
+  }>,
 ): RecallEvalCaseMetadata {
   if (Array.isArray(results)) {
     return {

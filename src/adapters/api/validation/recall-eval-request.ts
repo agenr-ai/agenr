@@ -69,12 +69,7 @@ const RECALL_REQUEST_KEYS = new Set<string>([
 const UNIFIED_REQUEST_KEYS = new Set<string>(["mode", "sessionKey", "memoryPolicy"]);
 const UNIFIED_MEMORY_POLICY_KEYS = new Set<string>(["slotPolicies"]);
 const SLOT_POLICY_KEYS = new Set<string>(["attributeHeads"]);
-const OPTIONS_KEYS = new Set<string>([
-  "includeDiagnostics",
-  "includeCandidates",
-  "includeTimings",
-  "faultInjection",
-]);
+const OPTIONS_KEYS = new Set<string>(["includeDiagnostics", "includeCandidates", "includeTimings", "faultInjection"]);
 const FAULT_INJECTION_KEYS = new Set<string>(["queryEmbeddingFailure", "vectorSearchFailure"]);
 const RECALL_PATHS = ["core", "unified"] as const;
 const RECALL_RANKING_PROFILES = ["historical_state"] as const;
@@ -552,10 +547,7 @@ function parseOptions(value: unknown, issues: RecallEvalValidationIssue[]): Reca
  * @param issues - Mutable validation issue collection.
  * @returns Normalized fault-injection config when valid.
  */
-function parseFaultInjection(
-  value: unknown,
-  issues: RecallEvalValidationIssue[],
-): RecallEvalFaultInjectionRequest | undefined {
+function parseFaultInjection(value: unknown, issues: RecallEvalValidationIssue[]): RecallEvalFaultInjectionRequest | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -568,16 +560,8 @@ function parseFaultInjection(
   pushUnexpectedFields(faultInjection, FAULT_INJECTION_KEYS, "options.faultInjection", issues);
 
   return {
-    queryEmbeddingFailure: parseOptionalBoolean(
-      faultInjection.queryEmbeddingFailure,
-      "options.faultInjection.queryEmbeddingFailure",
-      issues,
-    ),
-    vectorSearchFailure: parseOptionalBoolean(
-      faultInjection.vectorSearchFailure,
-      "options.faultInjection.vectorSearchFailure",
-      issues,
-    ),
+    queryEmbeddingFailure: parseOptionalBoolean(faultInjection.queryEmbeddingFailure, "options.faultInjection.queryEmbeddingFailure", issues),
+    vectorSearchFailure: parseOptionalBoolean(faultInjection.vectorSearchFailure, "options.faultInjection.vectorSearchFailure", issues),
   };
 }
 
