@@ -140,8 +140,9 @@ export async function runAutonomousSurgeon(options: SurgeonAutonomousRunOptions,
   const autonomousSequence = getAutonomousSurgeonPassSequence();
 
   while (remainingBudget > 0) {
+    const includeClaimKeyQuality = cyclesCompleted === 0;
     const cycleWork = await loadAutonomousCycleWork(deps.port, {
-      includeClaimKeyQuality: cyclesCompleted === 0,
+      includeClaimKeyQuality,
       protectRecalledDays: protection.protectRecalledDays,
       protectMinImportance: protection.protectMinImportance,
       skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
@@ -159,6 +160,8 @@ export async function runAutonomousSurgeon(options: SurgeonAutonomousRunOptions,
     }
 
     cyclesCompleted += 1;
+    const cycleBudgetBeforePasses = remainingBudget;
+    const repeatableCycleWork = normalizeRepeatableAutonomousCycleWork(cycleWork, includeClaimKeyQuality);
 
     for (const pass of nextPasses) {
       const result = await runSurgeon(
@@ -190,15 +193,32 @@ export async function runAutonomousSurgeon(options: SurgeonAutonomousRunOptions,
       }
     }
 
-    if (remainingBudget <= 0) {
-      const pendingWork = await loadAutonomousCycleWork(deps.port, {
-        includeClaimKeyQuality: false,
-        protectRecalledDays: protection.protectRecalledDays,
-        protectMinImportance: protection.protectMinImportance,
-        skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
-        now: deps.now ? deps.now() : new Date(),
-      });
+    const pendingWork = await loadAutonomousCycleWork(deps.port, {
+      includeClaimKeyQuality: false,
+      protectRecalledDays: protection.protectRecalledDays,
+      protectMinImportance: protection.protectMinImportance,
+      skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
+      now: deps.now ? deps.now() : new Date(),
+    });
 
+    if (!hasAutonomousWork(pendingWork)) {
+      return finalizeAutonomousRun({
+        cyclesCompleted,
+        passes: results,
+        status: "completed",
+      });
+    }
+
+    if (remainingBudget === cycleBudgetBeforePasses && autonomousCycleWorkFingerprint(repeatableCycleWork) === autonomousCycleWorkFingerprint(pendingWork)) {
+      return finalizeAutonomousRun({
+        cyclesCompleted,
+        passes: results,
+        status: "stalled",
+        summaryOverride: "Autonomous surgeon cycle stopped making direct progress.",
+      });
+    }
+
+    if (remainingBudget <= 0) {
       return finalizeAutonomousRun({
         cyclesCompleted,
         passes: results,
@@ -1252,6 +1272,37 @@ async function loadAutonomousCycleWork(
  */
 function hasAutonomousWork(cycleWork: Record<ImplementedSurgeonPass, number>): boolean {
   return Object.values(cycleWork).some((count) => count > 0);
+}
+
+/**
+ * Normalizes cycle work into the set of passes that can repeat on later autonomous cycles.
+ *
+ * @param cycleWork - Direct-work counts observed at the start of the current cycle.
+ * @param includeClaimKeyQuality - Whether this cycle included the one-time claim-key pass.
+ * @returns Comparable direct-work counts for repeatable later cycles.
+ */
+function normalizeRepeatableAutonomousCycleWork(
+  cycleWork: Record<ImplementedSurgeonPass, number>,
+  includeClaimKeyQuality: boolean,
+): Record<ImplementedSurgeonPass, number> {
+  if (!includeClaimKeyQuality) {
+    return cycleWork;
+  }
+
+  return {
+    ...cycleWork,
+    claim_key_quality: 0,
+  };
+}
+
+/**
+ * Builds a stable fingerprint for the autonomous direct-work scheduler.
+ *
+ * @param cycleWork - Direct-work counts keyed by implemented pass.
+ * @returns Serialized fingerprint suitable for equality checks.
+ */
+function autonomousCycleWorkFingerprint(cycleWork: Record<ImplementedSurgeonPass, number>): string {
+  return JSON.stringify(cycleWork);
 }
 
 /**

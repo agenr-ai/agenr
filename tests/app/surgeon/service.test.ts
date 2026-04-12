@@ -726,6 +726,65 @@ describe("runSurgeon", () => {
     });
   });
 
+  it("stalls autonomous dry-run mode when eligible proposal work repeats without direct progress", async () => {
+    const db = await createDatabase(":memory:");
+    databases.push(db);
+    await insertEntry(db, {
+      id: "proposal-dry-run-entry",
+      subject: "Pager owner",
+      type: "fact",
+      importance: 8,
+      expiry: "permanent",
+      claim_key: "ops/pager_owner",
+      created_at: daysAgoIso(40),
+      updated_at: daysAgoIso(40),
+    });
+    const proposalRunId = await createSurgeonRun(db, {
+      passType: "claim_key_quality",
+      dryRun: true,
+      startedAt: daysAgoIso(2),
+    });
+    await logSurgeonProposal(db, {
+      id: "proposal-dry-run-eligible-1",
+      runId: proposalRunId,
+      groupId: "group-dry-run-eligible-1",
+      issueKind: "missing_claim_key",
+      scope: "single_entry",
+      entryIds: ["proposal-dry-run-entry"],
+      currentClaimKeys: ["ops/pager_owner"],
+      proposedClaimKeys: ["ops/pager_owner"],
+      rationale: "The slot is already clear and eligible for autonomous application.",
+      confidence: 0.93,
+      source: "mixed_group_consensus",
+      eligibleForApply: true,
+      createdAt: daysAgoIso(2),
+    });
+
+    const result = await runAutonomousSurgeon(
+      {
+        budget: 0.2,
+        apply: false,
+        contextLimit: 4_096,
+        verbose: false,
+        json: false,
+      },
+      {
+        port: createSurgeonPort(db),
+        config: null,
+        model: TEST_MODEL,
+        now: () => TEST_NOW,
+      },
+    );
+
+    expect(result).toMatchObject({
+      cyclesCompleted: 1,
+      status: "stalled",
+      summary: "Autonomous surgeon cycle stopped making direct progress.",
+    });
+    expect(result.passes.map((pass) => pass.passType)).toEqual(["claim_key_quality", "proposal_resolution"]);
+    expect(runAgentLoopMock).not.toHaveBeenCalled();
+  });
+
   it("repeats the autonomous sequence until direct work is exhausted", async () => {
     const db = await createTestDatabase(databases);
     await insertEntry(db, {

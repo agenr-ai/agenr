@@ -56,7 +56,7 @@ For every `agenr surgeon run`, agenr currently:
 - one explicit pass, or
 - the autonomous sequence `claim_key_quality -> proposal_resolution -> supersession -> retirement`
 
-11. In autonomous mode, repeats later-cycle `proposal_resolution`, `supersession`, and `retirement` work until no direct work remains, a pass stalls, or budget stops the run.
+11. In autonomous mode, repeats later-cycle `proposal_resolution`, `supersession`, and `retirement` work until no direct work remains, a pass stalls, the cycle stops making direct progress, or budget stops the run.
 12. Persists final status, usage, cost, action counts, summary JSON, and error text.
 
 ## Passes
