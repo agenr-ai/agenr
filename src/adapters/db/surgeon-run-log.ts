@@ -162,6 +162,7 @@ export async function completeSurgeonRun(
  */
 export async function logSurgeonAction(executor: SqlExecutor, action: SurgeonRunAction): Promise<void> {
   const entryIds = normalizeEntryIds(action.entryIds);
+  await assertEntriesExist(executor, entryIds);
 
   await executor.execute({
     sql: `
@@ -190,6 +191,28 @@ export async function logSurgeonAction(executor: SqlExecutor, action: SurgeonRun
       normalizeTimestamp(action.createdAt) ?? new Date().toISOString(),
     ],
   });
+}
+
+/**
+ * Verifies that all referenced entry IDs exist before one action row is persisted.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @param entryIds - Normalized entry IDs referenced by the action.
+ */
+async function assertEntriesExist(executor: SqlExecutor, entryIds: string[]): Promise<void> {
+  if (entryIds.length === 0) {
+    return;
+  }
+
+  const result = await executor.execute({
+    sql: `SELECT id FROM entries WHERE id IN (${entryIds.map(() => "?").join(", ")})`,
+    args: entryIds,
+  });
+  const existingIds = new Set(result.rows.map((row) => String(row.id ?? "")));
+  const missingEntryIds = entryIds.filter((entryId) => !existingIds.has(entryId));
+  if (missingEntryIds.length > 0) {
+    throw new Error(`Cannot persist surgeon action for unknown entr${missingEntryIds.length === 1 ? "y" : "ies"}: ${missingEntryIds.join(", ")}.`);
+  }
 }
 
 /**

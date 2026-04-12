@@ -41,7 +41,30 @@ export function createCompletePassTool(deps: SurgeonToolDeps): AgentTool<typeof 
     description: "Signal that the current surgeon pass is complete and provide the structured summary.",
     parameters: COMPLETE_PASS_SCHEMA,
     async execute(_toolCallId, params: CompletePassParams) {
-      for (const skipped of params.entries_skipped) {
+      const normalizedSkippedEntries = normalizeSkippedEntries(params.entries_skipped);
+      const validationError = validateSkippedEntries(deps, normalizedSkippedEntries);
+      if (validationError) {
+        return toolResult({
+          completed: false,
+          rejected: true,
+          message: validationError,
+        });
+      }
+
+      const summary: SurgeonCompletionSummary = {
+        actions_taken: params.actions_taken,
+        entries_skipped: normalizedSkippedEntries,
+        observations: params.observations,
+        recommendations: params.recommendations,
+      };
+
+      const rejection =
+        deps.passType === "supersession" ? buildSupersessionCompletionRejection(deps, summary) : buildRetirementCompletionRejection(deps, summary);
+      if (rejection) {
+        return toolResult(rejection);
+      }
+
+      for (const skipped of normalizedSkippedEntries) {
         const entryId = skipped.entry_id?.trim();
         if (deps.passType === "supersession" && entryId) {
           deps.completionGuards?.supersession.markAdjudicated([entryId]);
@@ -58,19 +81,6 @@ export function createCompletePassTool(deps: SurgeonToolDeps): AgentTool<typeof 
         });
       }
 
-      const summary: SurgeonCompletionSummary = {
-        actions_taken: params.actions_taken,
-        entries_skipped: params.entries_skipped,
-        observations: params.observations,
-        recommendations: params.recommendations,
-      };
-
-      const rejection =
-        deps.passType === "supersession" ? buildSupersessionCompletionRejection(deps, summary) : buildRetirementCompletionRejection(deps, summary);
-      if (rejection) {
-        return toolResult(rejection);
-      }
-
       deps.completionState.setComplete(summary);
       return toolResult({
         completed: true,
@@ -79,6 +89,70 @@ export function createCompletePassTool(deps: SurgeonToolDeps): AgentTool<typeof 
       });
     },
   };
+}
+
+/**
+ * Normalizes skipped-entry rows before completion validation and persistence.
+ *
+ * @param skippedEntries - Raw skip rows from the model.
+ * @returns Trimmed rows safe for validation and persistence.
+ */
+function normalizeSkippedEntries(
+  skippedEntries: Array<{
+    entry_id?: string;
+    reason: string;
+  }>,
+): Array<{
+  entry_id?: string;
+  reason: string;
+}> {
+  return skippedEntries.map((skipped) => {
+    const entryId = skipped.entry_id?.trim();
+    return {
+      ...(entryId ? { entry_id: entryId } : {}),
+      reason: skipped.reason.trim(),
+    };
+  });
+}
+
+/**
+ * Validates skipped-entry references against the current pass context.
+ *
+ * @param deps - Shared run dependencies containing pass progress.
+ * @param skippedEntries - Normalized skipped-entry rows.
+ * @returns Human-readable rejection text, or null when valid.
+ */
+function validateSkippedEntries(
+  deps: SurgeonToolDeps,
+  skippedEntries: Array<{
+    entry_id?: string;
+    reason: string;
+  }>,
+): string | null {
+  const seenEntryIds = new Set<string>();
+
+  for (const skipped of skippedEntries) {
+    const entryId = skipped.entry_id?.trim();
+    if (!entryId) {
+      continue;
+    }
+    if (seenEntryIds.has(entryId)) {
+      return `Completion rejected: duplicate skipped entry '${entryId}' was provided. Re-query the current page and list each skipped entry only once.`;
+    }
+    seenEntryIds.add(entryId);
+
+    if (!deps.completionGuards) {
+      continue;
+    }
+
+    const wasSeen =
+      deps.passType === "supersession" ? deps.completionGuards.supersession.hasSeenEntry(entryId) : deps.completionGuards.retirement.hasSeenEntry(entryId);
+    if (!wasSeen) {
+      return `Completion rejected: skipped entry '${entryId}' was not paged in this run. Re-query the current page before calling complete_pass.`;
+    }
+  }
+
+  return null;
 }
 
 /**

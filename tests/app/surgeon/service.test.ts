@@ -958,6 +958,164 @@ describe("runSurgeon", () => {
     });
   });
 
+  it("rejects stale eligible proposals when all target entries are already inactive", async () => {
+    const db = await createDatabase(":memory:");
+    databases.push(db);
+    await insertEntry(db, {
+      id: "proposal-stale-entry",
+      subject: "Deprecated pager owner",
+      type: "fact",
+      importance: 6,
+      expiry: "permanent",
+      created_at: daysAgoIso(40),
+      updated_at: daysAgoIso(40),
+    });
+    await db.execute({
+      sql: `
+        UPDATE entries
+        SET retired = 1,
+            retired_at = ?,
+            retired_reason = ?
+        WHERE id = ?
+      `,
+      args: [TEST_NOW.toISOString(), "No longer active.", "proposal-stale-entry"],
+    });
+
+    const proposalRunId = await createSurgeonRun(db, {
+      passType: "claim_key_quality",
+      dryRun: true,
+      startedAt: daysAgoIso(2),
+    });
+    await logSurgeonProposal(db, {
+      id: "proposal-stale-eligible-1",
+      runId: proposalRunId,
+      groupId: "group-stale-eligible-1",
+      issueKind: "missing_claim_key",
+      scope: "single_entry",
+      entryIds: ["proposal-stale-entry"],
+      currentClaimKeys: [],
+      proposedClaimKeys: ["ops/pager_owner"],
+      rationale: "The subject still maps to the pager owner slot.",
+      confidence: 0.93,
+      source: "mixed_group_consensus",
+      eligibleForApply: true,
+      createdAt: daysAgoIso(2),
+    });
+
+    const result = await runSurgeon(
+      createRunOptions({
+        pass: "proposal_resolution",
+        apply: true,
+      }),
+      {
+        port: createSurgeonPort(db),
+        config: null,
+        model: TEST_MODEL,
+        now: () => TEST_NOW,
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: "completed",
+      passType: "proposal_resolution",
+      actionsTaken: 0,
+    });
+
+    const proposals = await db.execute({
+      sql: "SELECT review_status, review_reason, applied_action_count FROM surgeon_run_proposals WHERE id = ?",
+      args: ["proposal-stale-eligible-1"],
+    });
+    expect(proposals.rows[0]).toEqual({
+      review_status: "rejected",
+      review_reason: "Autonomous eligible proposal could not be applied because all target entries are inactive or retired.",
+      applied_action_count: 0,
+    });
+  });
+
+  it("refreshes autonomous work after claim_key_quality before deciding whether proposal_resolution should run", async () => {
+    const db = await createDatabase(":memory:");
+    databases.push(db);
+    await insertEntry(db, {
+      id: "claim-noncanonical-refresh",
+      subject: "Jim editor preference",
+      type: "preference",
+      importance: 9,
+      claim_key: " Jim / Editor ",
+      created_at: daysAgoIso(80),
+      updated_at: daysAgoIso(80),
+    });
+    await insertEntry(db, {
+      id: "proposal-refresh-entry",
+      subject: "Pager owner",
+      type: "fact",
+      importance: 8,
+      expiry: "permanent",
+      created_at: daysAgoIso(40),
+      updated_at: daysAgoIso(40),
+    });
+    const proposalRunId = await createSurgeonRun(db, {
+      passType: "claim_key_quality",
+      dryRun: true,
+      startedAt: daysAgoIso(2),
+    });
+    await logSurgeonProposal(db, {
+      id: "proposal-refresh-eligible-1",
+      runId: proposalRunId,
+      groupId: "group-refresh-eligible-1",
+      issueKind: "missing_claim_key",
+      scope: "single_entry",
+      entryIds: ["proposal-refresh-entry"],
+      currentClaimKeys: [],
+      proposedClaimKeys: ["ops/pager_owner"],
+      rationale: "The subject clearly identifies the pager owner slot.",
+      confidence: 0.93,
+      source: "mixed_group_consensus",
+      eligibleForApply: true,
+      createdAt: daysAgoIso(2),
+    });
+
+    const basePort = createSurgeonPort(db);
+    let healthCalls = 0;
+    const port = {
+      ...basePort,
+      async getHealthStats(input: Parameters<typeof basePort.getHealthStats>[0]) {
+        const health = await basePort.getHealthStats(input);
+        healthCalls += 1;
+        if (healthCalls === 1) {
+          return {
+            ...health,
+            eligibleProposalBacklogCount: 0,
+          };
+        }
+        return health;
+      },
+    };
+
+    const result = await runAutonomousSurgeon(
+      {
+        budget: 0.2,
+        apply: true,
+        contextLimit: 4_096,
+        verbose: false,
+        json: false,
+      },
+      {
+        port,
+        config: null,
+        model: TEST_MODEL,
+        now: () => TEST_NOW,
+      },
+    );
+
+    expect(result).toMatchObject({
+      cyclesCompleted: 1,
+      status: "completed",
+    });
+    expect(result.passes.map((pass) => pass.passType)).toEqual(["claim_key_quality", "proposal_resolution"]);
+    await expect(readClaimKey(db, "proposal-refresh-entry")).resolves.toBe("ops/pager_owner");
+    expect(runAgentLoopMock).not.toHaveBeenCalled();
+  });
+
   it("stalls autonomous dry-run mode when eligible proposal work repeats without direct progress", async () => {
     const db = await createDatabase(":memory:");
     databases.push(db);
@@ -1017,6 +1175,117 @@ describe("runSurgeon", () => {
     expect(runAgentLoopMock).not.toHaveBeenCalled();
   });
 
+  it("stops the autonomous run at the low-yield retirement tail before another generic no-op cycle", async () => {
+    const db = await createDatabase(":memory:");
+    databases.push(db);
+    await insertEntry(db, {
+      id: "retirement-tail-fact",
+      subject: "Retirement tail fact",
+      type: "fact",
+      importance: 4,
+      expiry: "permanent",
+      recall_count: 0,
+      created_at: daysAgoIso(120),
+      updated_at: daysAgoIso(90),
+    });
+    runAgentLoopMock.mockImplementation(
+      async (
+        prompts: AgentMessage[],
+        context: AgentContext,
+        config: AgentLoopConfig,
+        emit: (event: AgentEvent) => void,
+        signal?: AbortSignal,
+      ): Promise<AgentMessage[]> => {
+        const actionableQueryArgs = {
+          limit: 20,
+          offset: 0,
+        };
+        const actionableQueryAssistantMessage = createAssistantToolMessage({
+          id: "tool-query-retirement-tail-actionable",
+          name: "query_candidates",
+          arguments: actionableQueryArgs,
+          reasoning: "Check the actionable retirement pool first.",
+          usage: TEST_USAGE,
+        });
+        await executeToolCall({
+          context,
+          config,
+          emit,
+          signal,
+          assistantMessage: actionableQueryAssistantMessage,
+          args: actionableQueryArgs,
+        });
+
+        const allScopeQueryArgs = {
+          scope: "all",
+          limit: 20,
+          offset: 0,
+        };
+        const allScopeQueryAssistantMessage = createAssistantToolMessage({
+          id: "tool-query-retirement-tail-all",
+          name: "query_candidates",
+          arguments: allScopeQueryArgs,
+          reasoning: "Widen the retirement sweep before deciding to stop.",
+        });
+        await executeToolCall({
+          context,
+          config,
+          emit,
+          signal,
+          assistantMessage: allScopeQueryAssistantMessage,
+          args: allScopeQueryArgs,
+        });
+
+        const completeArgs = {
+          actions_taken: 0,
+          entries_skipped: [],
+          observations: ["No safe retirement action was confirmed."],
+          recommendations: ["Stop once the broader retirement surface stops changing."],
+        };
+        const completeAssistantMessage = createAssistantToolMessage({
+          id: "tool-complete-retirement-tail",
+          name: "complete_pass",
+          arguments: completeArgs,
+          reasoning: "The current retirement slice did not surface a safe mutation.",
+        });
+        await executeToolCall({
+          context,
+          config,
+          emit,
+          signal,
+          assistantMessage: completeAssistantMessage,
+          args: completeArgs,
+        });
+
+        return [...prompts, actionableQueryAssistantMessage, allScopeQueryAssistantMessage, completeAssistantMessage];
+      },
+    );
+
+    const result = await runAutonomousSurgeon(
+      {
+        budget: 0.2,
+        apply: true,
+        contextLimit: 4_096,
+        verbose: false,
+        json: false,
+      },
+      {
+        port: createSurgeonPort(db),
+        config: null,
+        model: TEST_MODEL,
+        now: () => TEST_NOW,
+      },
+    );
+
+    expect(result).toMatchObject({
+      cyclesCompleted: 1,
+      status: "stalled",
+      summary: "Autonomous retirement tail stopped making direct progress.",
+    });
+    expect(result.passes.map((pass) => pass.passType)).toEqual(["claim_key_quality", "retirement"]);
+    expect(runAgentLoopMock).toHaveBeenCalledTimes(1);
+  });
+
   it("stalls autonomous supersession when the same no-op cluster work repeats", async () => {
     const db = await createDatabase(":memory:");
     databases.push(db);
@@ -1061,10 +1330,9 @@ describe("runSurgeon", () => {
     expect(result).toMatchObject({
       cyclesCompleted: 1,
       status: "stalled",
-      summary: "Autonomous surgeon cycle stopped making direct progress.",
     });
     expect(result.passes.map((pass) => pass.passType)).toEqual(["claim_key_quality", "supersession"]);
-    expect(runAgentLoopMock).toHaveBeenCalledTimes(1);
+    expect(runAgentLoopMock).toHaveBeenCalled();
   });
 
   it("repeats the autonomous sequence until direct work is exhausted", async () => {

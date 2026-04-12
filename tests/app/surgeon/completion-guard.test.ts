@@ -12,12 +12,14 @@ describe("createPaginatedQueryTracker", () => {
       returnedCount: 20,
       totalCount: 55,
       exhausted: false,
+      entryIds: ["entry-a", "entry-b"],
     });
     tracker.recordPage({
       scope: "actionable",
       offset: 20,
       returnedCount: 15,
       exhausted: true,
+      entryIds: ["entry-c"],
     });
 
     expect(tracker.snapshot()).toEqual({
@@ -33,6 +35,9 @@ describe("createPaginatedQueryTracker", () => {
         sawExhaustedPage: false,
       },
     });
+    expect(tracker.hasSeenEntry("entry-a")).toBe(true);
+    expect(tracker.hasSeenEntry("entry-c")).toBe(true);
+    expect(tracker.hasSeenEntry("missing")).toBe(false);
   });
 
   it("resets pagination progress back to the initial empty state", () => {
@@ -44,6 +49,7 @@ describe("createPaginatedQueryTracker", () => {
       returnedCount: 5,
       totalCount: 10,
       exhausted: true,
+      entryIds: ["entry-a"],
     });
     tracker.reset();
 
@@ -60,6 +66,7 @@ describe("createPaginatedQueryTracker", () => {
         sawExhaustedPage: false,
       },
     });
+    expect(tracker.hasSeenEntry("entry-a")).toBe(false);
   });
 });
 
@@ -158,5 +165,8 @@ describe("createSupersessionReviewTracker", () => {
       adjudicatedClusters: 1,
       widenedBeforeClaimKeyExhausted: true,
     });
+    expect(tracker.hasSeenEntry("entry-a")).toBe(true);
+    expect(tracker.hasSeenEntry("entry-c")).toBe(true);
+    expect(tracker.hasSeenEntry("missing")).toBe(false);
   });
 });

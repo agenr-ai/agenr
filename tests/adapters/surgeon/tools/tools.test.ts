@@ -1362,6 +1362,14 @@ describe("surgeon tools", () => {
       retirementCandidates: 12,
     });
     const completionState = createCompletionState();
+    completionGuards.retirement.recordPage({
+      scope: "actionable",
+      offset: 0,
+      returnedCount: 1,
+      totalCount: 12,
+      exhausted: false,
+      entryIds: ["entry-skip"],
+    });
     const tool = createCompletePassTool(
       createToolDeps(client, {
         recordRunAction,
@@ -1389,19 +1397,12 @@ describe("surgeon tools", () => {
       completed: false,
       rejected: true,
       rejectionCount: 1,
-      pagedCandidates: 0,
+      pagedCandidates: 1,
       knownCandidates: 12,
     });
     expect(completionState.isComplete).toBe(false);
     expect(completionGuards.rejectionCounts.get("retirement")).toBe(1);
-    expect(recordRunAction).toHaveBeenCalledTimes(1);
-    expect(recordRunAction).toHaveBeenCalledWith(
-      expect.objectContaining({
-        actionType: "skip",
-        entryIds: ["entry-skip"],
-        reasoning: "uncertain",
-      }),
-    );
+    expect(recordRunAction).not.toHaveBeenCalled();
   });
 
   it("accepts complete_pass after enough prior rejections via the safety valve", async () => {
@@ -1477,6 +1478,75 @@ describe("surgeon tools", () => {
       entryIds: [],
       reasoning: "needs human review",
     });
+  });
+
+  it("rejects complete_pass when a skipped retirement entry was never paged", async () => {
+    const client = await createTestClient(clients);
+    const recordRunAction = vi.fn<SurgeonToolDeps["recordRunAction"]>().mockResolvedValue(undefined);
+    const completionGuards = createSurgeonCompletionGuardState({
+      totalEntries: 10,
+      retirementCandidates: 1,
+    });
+    const tool = createCompletePassTool(
+      createToolDeps(client, {
+        recordRunAction,
+        completionGuards,
+      }),
+    );
+
+    const result = await tool.execute("tool-complete-invalid-retirement-skip", {
+      actions_taken: 0,
+      entries_skipped: [{ entry_id: "missing-entry", reason: "uncertain" }],
+      observations: [],
+      recommendations: [],
+    });
+
+    expect(result.details).toMatchObject({
+      completed: false,
+      rejected: true,
+      message: "Completion rejected: skipped entry 'missing-entry' was not paged in this run. Re-query the current page before calling complete_pass.",
+    });
+    expect(recordRunAction).not.toHaveBeenCalled();
+  });
+
+  it("rejects complete_pass when the same skipped entry is listed twice", async () => {
+    const client = await createTestClient(clients);
+    const recordRunAction = vi.fn<SurgeonToolDeps["recordRunAction"]>().mockResolvedValue(undefined);
+    const completionGuards = createSurgeonCompletionGuardState({
+      totalEntries: 10,
+      retirementCandidates: 2,
+    });
+    completionGuards.retirement.recordPage({
+      scope: "actionable",
+      offset: 0,
+      returnedCount: 2,
+      totalCount: 2,
+      exhausted: true,
+      entryIds: ["entry-a", "entry-b"],
+    });
+    const tool = createCompletePassTool(
+      createToolDeps(client, {
+        recordRunAction,
+        completionGuards,
+      }),
+    );
+
+    const result = await tool.execute("tool-complete-duplicate-skip", {
+      actions_taken: 0,
+      entries_skipped: [
+        { entry_id: "entry-a", reason: "first mention" },
+        { entry_id: "entry-a", reason: "duplicate mention" },
+      ],
+      observations: [],
+      recommendations: [],
+    });
+
+    expect(result.details).toMatchObject({
+      completed: false,
+      rejected: true,
+      message: "Completion rejected: duplicate skipped entry 'entry-a' was provided. Re-query the current page and list each skipped entry only once.",
+    });
+    expect(recordRunAction).not.toHaveBeenCalled();
   });
 
   it("rejects shallow supersession completion until enough claim_key clusters are reviewed", async () => {
@@ -1687,6 +1757,49 @@ describe("surgeon tools", () => {
       completed: true,
     });
     expect(completionState.isComplete).toBe(true);
+  });
+
+  it("rejects complete_pass when a supersession skip references an unseen entry", async () => {
+    const client = await createTestClient(clients);
+    const recordRunAction = vi.fn<SurgeonToolDeps["recordRunAction"]>().mockResolvedValue(undefined);
+    const completionGuards = createSurgeonCompletionGuardState({
+      totalEntries: 20,
+      supersessionClaimKeyClusters: 1,
+      supersessionSubjectClusters: 0,
+    });
+    completionGuards.supersession.recordPage({
+      scope: "claim_key",
+      claimKeyTotal: 1,
+      subjectTotal: 0,
+      clusters: [
+        {
+          groupKey: "slot-1",
+          groupedBy: "claim_key",
+          entries: [{ id: "slot-1-a" }, { id: "slot-1-b" }] as never,
+        },
+      ],
+    });
+    const tool = createCompletePassTool(
+      createToolDeps(client, {
+        passType: "supersession",
+        recordRunAction,
+        completionGuards,
+      }),
+    );
+
+    const result = await tool.execute("tool-complete-invalid-supersession-skip", {
+      actions_taken: 0,
+      entries_skipped: [{ entry_id: "slot-unknown", reason: "not actually reviewed" }],
+      observations: [],
+      recommendations: [],
+    });
+
+    expect(result.details).toMatchObject({
+      completed: false,
+      rejected: true,
+      message: "Completion rejected: skipped entry 'slot-unknown' was not paged in this run. Re-query the current page before calling complete_pass.",
+    });
+    expect(recordRunAction).not.toHaveBeenCalled();
   });
 });
 

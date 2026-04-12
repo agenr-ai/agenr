@@ -98,6 +98,8 @@ describe("surgeon run log", () => {
       dryRun: false,
       startedAt: "2026-03-29T11:00:00.000Z",
     });
+    await insertTestEntry(client, "entry-a");
+    await insertTestEntry(client, "entry-b");
 
     await logSurgeonAction(client, {
       id: "action-1",
@@ -162,6 +164,27 @@ describe("surgeon run log", () => {
         createdAt: "2026-03-29T11:01:00.000Z",
       },
     ]);
+  });
+
+  it("rejects surgeon action rows that reference unknown entries", async () => {
+    const client = await createTestClient(clients);
+    const runId = await createSurgeonRun(client, {
+      passType: "retirement",
+      dryRun: false,
+      startedAt: "2026-03-29T11:00:00.000Z",
+    });
+
+    await expect(
+      logSurgeonAction(client, {
+        id: "action-missing-entry",
+        runId,
+        actionType: "skip",
+        entryIds: ["missing-entry"],
+        reasoning: "This should fail validation.",
+        recallDelta: null,
+        createdAt: "2026-03-29T11:01:00.000Z",
+      }),
+    ).rejects.toThrow("Cannot persist surgeon action for unknown entry: missing-entry.");
   });
 
   it("stores structured unresolved proposals for later adjudication", async () => {
@@ -533,4 +556,26 @@ async function createTestClient(clients: Client[]): Promise<Client> {
   clients.push(client);
   await initSchema(client);
   return client;
+}
+
+async function insertTestEntry(client: Client, id: string): Promise<void> {
+  await client.execute({
+    sql: `
+      INSERT INTO entries (
+        id,
+        type,
+        subject,
+        content,
+        importance,
+        expiry,
+        quality_score,
+        recall_count,
+        retired,
+        created_at,
+        updated_at
+      )
+      VALUES (?, 'fact', ?, ?, 5, 'permanent', 0.5, 0, 0, ?, ?)
+    `,
+    args: [id, `Subject ${id}`, `Content ${id}`, "2026-03-29T11:00:00.000Z", "2026-03-29T11:00:00.000Z"],
+  });
 }

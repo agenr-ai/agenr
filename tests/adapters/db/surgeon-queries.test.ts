@@ -211,6 +211,58 @@ describe("surgeon queries", () => {
     });
   });
 
+  it("ignores malformed action entry_ids JSON when filtering recently evaluated candidates", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "json-valid-candidate",
+      subject: "JSON valid candidate",
+      type: "fact",
+      importance: 4,
+      expiry: "permanent",
+      recall_count: 0,
+      created_at: daysAgoIso(120),
+      updated_at: daysAgoIso(90),
+    });
+
+    const runId = await createSurgeonRun(client, {
+      passType: "retirement",
+      dryRun: false,
+      startedAt: daysAgoIso(1),
+    });
+    await client.execute({
+      sql: `
+        INSERT INTO surgeon_run_actions (
+          id,
+          run_id,
+          action_type,
+          entry_id,
+          entry_ids,
+          reasoning,
+          recall_delta,
+          details_json,
+          created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      args: ["action-malformed-json", runId, "skip", null, '{"not":"an array"', "Legacy malformed JSON.", null, null, daysAgoIso(1)],
+    });
+
+    const page = await listRetirementCandidates(client, {
+      scope: "all",
+      protectRecalledDays: 14,
+      protectMinImportance: 9,
+      skipRecentlyEvaluatedDays: 7,
+      now: TEST_NOW,
+    });
+
+    expect(page.candidates.map((candidate) => candidate.id)).toEqual(["json-valid-candidate"]);
+    expect(page).toMatchObject({
+      totalMatching: 1,
+      availableCount: 1,
+      recentlyEvaluatedFilteredCount: 0,
+    });
+  });
+
   it("lists claim_key supersession clusters with two or more active entries", async () => {
     const client = await createTestClient(clients);
 

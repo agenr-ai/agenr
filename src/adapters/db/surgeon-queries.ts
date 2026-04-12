@@ -703,7 +703,7 @@ function buildCandidateFilter(query: SurgeonCandidateQuery): CandidateFilterStat
       FROM surgeon_run_actions AS sra
       WHERE sra.run_id = ?
         AND sra.action_type IN ('skip', 'retire', 'update_entry')
-        AND (sra.entry_id = e.id OR EXISTS (SELECT 1 FROM json_each(sra.entry_ids) AS je WHERE je.value = e.id))
+        AND (sra.entry_id = e.id OR (json_valid(sra.entry_ids) AND EXISTS (SELECT 1 FROM json_each(sra.entry_ids) AS je WHERE je.value = e.id)))
     )`);
     args.push(currentRunId);
   }
@@ -746,7 +746,7 @@ function buildCandidateFilter(query: SurgeonCandidateQuery): CandidateFilterStat
       FROM surgeon_run_actions AS sra
       INNER JOIN surgeon_runs AS sr ON sr.id = sra.run_id
       WHERE sra.action_type IN ('skip', 'retire', 'update_entry')
-        AND (sra.entry_id = e.id OR EXISTS (SELECT 1 FROM json_each(sra.entry_ids) AS je WHERE je.value = e.id))
+        AND (sra.entry_id = e.id OR (json_valid(sra.entry_ids) AND EXISTS (SELECT 1 FROM json_each(sra.entry_ids) AS je WHERE je.value = e.id)))
         AND sr.started_at > ?
     )`);
     args.push(skipCutoffIso);

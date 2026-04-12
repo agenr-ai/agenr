@@ -31,7 +31,15 @@ export interface PaginatedQueryTracker {
    *
    * @param input - Pagination metadata for the page.
    */
-  recordPage(input: { scope: "actionable" | "all"; offset: number; returnedCount: number; totalCount?: number; exhausted: boolean }): void;
+  recordPage(input: { scope: "actionable" | "all"; offset: number; returnedCount: number; totalCount?: number; exhausted: boolean; entryIds?: string[] }): void;
+
+  /**
+   * Checks whether an entry ID appeared in a previously paged result.
+   *
+   * @param entryId - Entry ID to validate.
+   * @returns True when the entry was observed in this run.
+   */
+  hasSeenEntry(entryId: string): boolean;
 
   /**
    * Returns an immutable snapshot of current progress.
@@ -89,6 +97,14 @@ export interface SurgeonSupersessionReviewTracker {
   markAdjudicated(entryIds: string[]): void;
 
   /**
+   * Checks whether an entry ID appeared in a previously paged cluster.
+   *
+   * @param entryId - Entry ID to validate.
+   * @returns True when the entry was observed in this run.
+   */
+  hasSeenEntry(entryId: string): boolean;
+
+  /**
    * Returns an immutable snapshot of current supersession progress.
    *
    * @returns Current review progress.
@@ -120,10 +136,12 @@ export interface SurgeonCompletionGuardState {
  */
 export function createPaginatedQueryTracker(): PaginatedQueryTracker {
   let progress = createEmptyProgress();
+  let seenEntryIds = new Set<string>();
 
   return {
     reset(): void {
       progress = createEmptyProgress();
+      seenEntryIds = new Set<string>();
     },
 
     recordPage(input): void {
@@ -152,6 +170,16 @@ export function createPaginatedQueryTracker(): PaginatedQueryTracker {
               }
             : progress.all,
       };
+      for (const entryId of input.entryIds ?? []) {
+        const normalizedEntryId = entryId.trim();
+        if (normalizedEntryId) {
+          seenEntryIds.add(normalizedEntryId);
+        }
+      }
+    },
+
+    hasSeenEntry(entryId: string): boolean {
+      return seenEntryIds.has(entryId.trim());
     },
 
     snapshot(): PaginatedQueryProgress {
@@ -273,6 +301,10 @@ export function createSupersessionReviewTracker(input: { claimKeyTotal: number; 
         ...progress,
         adjudicatedClusterKeys: nextAdjudicated,
       };
+    },
+
+    hasSeenEntry(entryId: string): boolean {
+      return entryToClusterKeys.has(entryId.trim());
     },
 
     snapshot(): SurgeonSupersessionReviewProgress {

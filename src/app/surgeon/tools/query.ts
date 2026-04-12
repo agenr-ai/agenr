@@ -61,6 +61,7 @@ export function createQueryCandidatesTool(deps: SurgeonToolDeps): AgentTool<type
         returnedCount: page.candidates.length,
         totalCount: page.availableCount,
         exhausted: page.scopeExhausted,
+        entryIds: page.candidates.map((candidate) => candidate.id),
       });
 
       if (page.candidates.length === 0) {

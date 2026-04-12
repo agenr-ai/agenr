@@ -164,8 +164,29 @@ export async function runAutonomousSurgeon(options: SurgeonAutonomousRunOptions,
     cyclesCompleted += 1;
     const repeatableCycleWork = normalizeRepeatableAutonomousCycleWork(cycleWork, includeClaimKeyQuality);
     const cycleResults: SurgeonRunResult[] = [];
+    const executedPasses = new Set<ImplementedSurgeonPass>();
+    let pendingWork = cycleWork;
 
-    for (const pass of nextPasses) {
+    while (true) {
+      const workBeforePass = pendingWork;
+      const pass = findNextAutonomousPass({
+        autonomousSequence,
+        cycleWork: workBeforePass,
+        executedPasses,
+      });
+      if (!pass) {
+        break;
+      }
+
+      const retirementContextBefore =
+        pass === "retirement"
+          ? await loadPassStartContext("retirement", deps.port, {
+              protectRecalledDays: protection.protectRecalledDays,
+              protectMinImportance: protection.protectMinImportance,
+              skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
+              now: deps.now ? deps.now() : new Date(),
+            })
+          : null;
       const skipBackup = backupCreated;
       if (!skipBackup && options.apply && deps.dbPath && deps.dbPath !== ":memory:" && deps.backupDb) {
         backupCreated = true;
@@ -182,6 +203,7 @@ export async function runAutonomousSurgeon(options: SurgeonAutonomousRunOptions,
       );
       results.push(result);
       cycleResults.push(result);
+      executedPasses.add(pass);
       remainingBudget = Math.max(0, remainingBudget - result.estimatedCostUsd);
 
       if (result.status === "stalled") {
@@ -199,15 +221,40 @@ export async function runAutonomousSurgeon(options: SurgeonAutonomousRunOptions,
           status: result.status,
         });
       }
-    }
 
-    const pendingWork = await loadAutonomousCycleWork(deps.port, {
-      includeClaimKeyQuality: false,
-      protectRecalledDays: protection.protectRecalledDays,
-      protectMinImportance: protection.protectMinImportance,
-      skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
-      now: deps.now ? deps.now() : new Date(),
-    });
+      pendingWork = await loadAutonomousCycleWork(deps.port, {
+        includeClaimKeyQuality: false,
+        protectRecalledDays: protection.protectRecalledDays,
+        protectMinImportance: protection.protectMinImportance,
+        skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
+        now: deps.now ? deps.now() : new Date(),
+      });
+
+      if (
+        pass === "retirement" &&
+        retirementContextBefore &&
+        (await shouldStopAfterLowYieldRetirementPass({
+          result,
+          cycleWorkBefore: workBeforePass,
+          cycleWorkAfter: pendingWork,
+          retirementContextBefore,
+          port: deps.port,
+          protection: {
+            protectRecalledDays: protection.protectRecalledDays,
+            protectMinImportance: protection.protectMinImportance,
+            skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
+            now: deps.now ? deps.now() : new Date(),
+          },
+        }))
+      ) {
+        return finalizeAutonomousRun({
+          cyclesCompleted,
+          passes: results,
+          status: "stalled",
+          summaryOverride: "Autonomous retirement tail stopped making direct progress.",
+        });
+      }
+    }
 
     if (!hasAutonomousWork(pendingWork)) {
       return finalizeAutonomousRun({
@@ -1099,6 +1146,7 @@ async function runProposalResolutionPass(
   }
 
   let appliedCount = 0;
+  let rejectedInactiveCount = 0;
   const updatedEntryIds = new Set<string>();
 
   for (const item of backlog) {
@@ -1106,6 +1154,7 @@ async function runProposalResolutionPass(
     const targetClaimKey = normalizeProposalApplyTarget(proposal);
     const reasoning = buildProposalReviewReason(proposal, "Autonomous eligible proposal resolution.");
     const proposalEntryIds: string[] = [];
+    let sawActiveEntry = false;
 
     if (input.apply) {
       for (const entryId of proposal.entryIds) {
@@ -1113,6 +1162,7 @@ async function runProposalResolutionPass(
         if (!entry) {
           continue;
         }
+        sawActiveEntry = true;
 
         const lifecycle = buildSurgeonAppliedClaimKeyLifecycleBundle({
           targetClaimKey,
@@ -1130,6 +1180,16 @@ async function runProposalResolutionPass(
       }
 
       if (proposalEntryIds.length === 0) {
+        if (!sawActiveEntry) {
+          await deps.port.reviewProposal({
+            proposalId: proposal.id,
+            status: "rejected",
+            reason: "Autonomous eligible proposal could not be applied because all target entries are inactive or retired.",
+            reviewedAt: input.now().toISOString(),
+            appliedActionCount: 0,
+          });
+          rejectedInactiveCount += 1;
+        }
         continue;
       }
 
@@ -1166,7 +1226,7 @@ async function runProposalResolutionPass(
     appliedCount += 1;
   }
 
-  if (appliedCount === 0) {
+  if (appliedCount === 0 && rejectedInactiveCount === 0) {
     return {
       status: "stalled",
       completion: null,
@@ -1183,6 +1243,9 @@ async function runProposalResolutionPass(
       observations: [
         `Processed ${appliedCount} eligible surgeon proposal${appliedCount === 1 ? "" : "s"}.`,
         `${updatedEntryIds.size} entr${updatedEntryIds.size === 1 ? "y was" : "ies were"} targeted by proposal resolution.`,
+        ...(rejectedInactiveCount > 0
+          ? [`Rejected ${rejectedInactiveCount} stale eligible proposal${rejectedInactiveCount === 1 ? "" : "s"} whose target entries were no longer active.`]
+          : []),
       ],
       recommendations: ["Leave non-eligible surgeon proposals on the manual review path."],
     },
@@ -1420,6 +1483,30 @@ function autonomousCycleWorkFingerprint(cycleWork: Record<ImplementedSurgeonPass
 }
 
 /**
+ * Selects the next autonomous pass that still has work and has not already run
+ * in the current cycle.
+ *
+ * @param input - Canonical pass order plus current work counts.
+ * @returns The next pass to execute, or null when the cycle is exhausted.
+ */
+function findNextAutonomousPass(input: {
+  autonomousSequence: ImplementedSurgeonPass[];
+  cycleWork: Record<ImplementedSurgeonPass, number>;
+  executedPasses: ReadonlySet<ImplementedSurgeonPass>;
+}): ImplementedSurgeonPass | null {
+  for (const pass of input.autonomousSequence) {
+    if (input.executedPasses.has(pass)) {
+      continue;
+    }
+    if (input.cycleWork[pass] > 0) {
+      return pass;
+    }
+  }
+
+  return null;
+}
+
+/**
  * Checks whether one autonomous cycle changed the direct-work surface enough to
  * justify another cycle.
  *
@@ -1445,6 +1532,51 @@ function autonomousCycleMadeDirectProgress(input: {
   }
 
   return input.cycleResults.some((result) => result.actionsTaken > 0 || result.entriesRetired > 0);
+}
+
+/**
+ * Detects the narrow tail case where retirement is the only remaining pass and
+ * another autonomous cycle would likely spend budget without changing the
+ * candidate surface.
+ *
+ * @param input - Pass result plus before/after work snapshots.
+ * @returns True when the autonomous run should stop instead of repeating retirement.
+ */
+async function shouldStopAfterLowYieldRetirementPass(input: {
+  result: SurgeonRunResult;
+  cycleWorkBefore: Record<ImplementedSurgeonPass, number>;
+  cycleWorkAfter: Record<ImplementedSurgeonPass, number>;
+  retirementContextBefore: SurgeonPassStartContext;
+  port: SurgeonPort;
+  protection: {
+    protectRecalledDays: number;
+    protectMinImportance: number;
+    skipRecentlyEvaluatedDays: number;
+    now: Date;
+  };
+}): Promise<boolean> {
+  if (input.result.status !== "completed" || input.result.actionsTaken > 0 || input.result.entriesRetired > 0) {
+    return false;
+  }
+
+  if (
+    input.cycleWorkAfter.claim_key_quality > 0 ||
+    input.cycleWorkAfter.proposal_resolution > 0 ||
+    input.cycleWorkAfter.supersession > 0 ||
+    input.cycleWorkAfter.retirement <= 0
+  ) {
+    return false;
+  }
+
+  if (input.cycleWorkBefore.claim_key_quality > 0 || input.cycleWorkBefore.proposal_resolution > 0 || input.cycleWorkBefore.supersession > 0) {
+    return false;
+  }
+
+  const retirementContextAfter = await loadPassStartContext("retirement", input.port, input.protection);
+  return (
+    retirementContextAfter.retirementAvailableActionableCandidates === input.retirementContextBefore.retirementAvailableActionableCandidates &&
+    retirementContextAfter.retirementAvailableAllCandidates === input.retirementContextBefore.retirementAvailableAllCandidates
+  );
 }
 
 /**
