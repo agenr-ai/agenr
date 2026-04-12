@@ -3,7 +3,7 @@ import { applyClaimExtractionResultToEntry, runBatchClaimExtraction, type ClaimE
 import { type StoreEntriesDetailedResult, type StoreEntriesOptions, type StorePipelineOptions, storeEntriesDetailed } from "../store/pipeline.js";
 import type { StoreEntryInput, StoreResult } from "../types.js";
 import { annotateExplicitClaimKeyEntry, restoreExplicitClaimKeysAfterDedup } from "./claim-key-preservation.js";
-import { dedupBatch } from "./dedup.js";
+import { dedupBatch, getDefaultDedupConcurrency } from "./dedup.js";
 import { extractFromTranscript } from "./extract.js";
 import { resolveStableTranscriptSourceFile, resolveTranscriptProject, resolveTranscriptUserId } from "./source-metadata.js";
 
@@ -13,6 +13,8 @@ import { resolveStableTranscriptSourceFile, resolveTranscriptProject, resolveTra
 export interface IngestFileOptions {
   verbose?: boolean;
   dryRun?: boolean;
+  /** Maximum number of parallel workers for ingest phases that honor concurrency. */
+  concurrency?: number;
   /** Whole-file mode override. */
   wholeFile?: "auto" | "force" | "never";
   /** Skip within-batch semantic dedup and pass extracted entries through. */
@@ -145,6 +147,7 @@ export async function ingestFile(
   }
 
   const dedupResult = await dedupBatch(extracted.entries, ports.dedupLlm ?? ports.llm, ports.embedding, {
+    concurrency: options.concurrency ?? getDefaultDedupConcurrency(),
     skip: options.skipDedup,
     verbose: options.verbose,
   });

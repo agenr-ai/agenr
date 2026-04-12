@@ -3,6 +3,7 @@ import { composeEmbeddingText } from "../store/embedding-text.js";
 import type { StoreEntryInput } from "../types.js";
 
 const DEFAULT_SIMILARITY_THRESHOLD = 0.75;
+const DEFAULT_DEDUP_CONCURRENCY = 10;
 
 /**
  * Returns the default cosine similarity threshold used for semantic dedup clustering.
@@ -14,11 +15,22 @@ export function getDefaultDedupSimilarityThreshold(): number {
 }
 
 /**
+ * Returns the default arbitration concurrency used for cluster-level dedup.
+ *
+ * @returns Default maximum number of concurrent cluster arbitrations.
+ */
+export function getDefaultDedupConcurrency(): number {
+  return DEFAULT_DEDUP_CONCURRENCY;
+}
+
+/**
  * Runtime controls for within-batch semantic deduplication.
  */
 export interface DedupOptions {
   /** Cosine similarity threshold for clustering. Default: 0.75. */
   similarityThreshold?: number;
+  /** Maximum number of multi-entry clusters arbitrated concurrently. Default: 10. */
+  concurrency?: number;
   /** Skip LLM arbitration and pass every extracted entry through. */
   skip?: boolean;
   /** Enables verbose debug logging at the caller level. */
@@ -99,6 +111,13 @@ interface ArbitrationResult {
   warning?: string;
 }
 
+/** Stable metadata for one multi-entry cluster that needs arbitration. */
+interface ArbitrationTask {
+  clusterIndex: number;
+  cluster: number[];
+  maxSimilarity: number;
+}
+
 /**
  * Clusters extracted entries by embedding similarity and arbitrates each
  * multi-entry cluster with a lightweight LLM dedup classifier.
@@ -111,6 +130,7 @@ interface ArbitrationResult {
  */
 export async function dedupBatch(entries: StoreEntryInput[], llm: LlmPort, embedding: EmbeddingPort, options: DedupOptions = {}): Promise<DedupResult> {
   const similarityThreshold = options.similarityThreshold ?? DEFAULT_SIMILARITY_THRESHOLD;
+  const concurrency = normalizeDedupConcurrency(options.concurrency);
   if (entries.length === 0) {
     return {
       survivors: [],
@@ -141,8 +161,8 @@ export async function dedupBatch(entries: StoreEntryInput[], llm: LlmPort, embed
   const survivorByIndex = new Map<number, StoreEntryInput>();
   const clusterDetails: DedupClusterDetail[] = [];
   const warnings: string[] = [];
+  const arbitrationTasks: ArbitrationTask[] = [];
   let singletonsPassedThrough = 0;
-  let llmCalls = 0;
 
   for (const [clusterIndex, cluster] of clusters.entries()) {
     if (cluster.length === 1) {
@@ -154,9 +174,18 @@ export async function dedupBatch(entries: StoreEntryInput[], llm: LlmPort, embed
       continue;
     }
 
-    const maxSimilarity = calculateClusterMaxSimilarity(cluster, embeddings);
-    const arbitration = await arbitrateCluster(clusterIndex, cluster, entries, llm, maxSimilarity);
-    llmCalls += 1;
+    arbitrationTasks.push({
+      clusterIndex,
+      cluster,
+      maxSimilarity: calculateClusterMaxSimilarity(cluster, embeddings),
+    });
+  }
+
+  const arbitrationResults = await runBoundedArbitrations(arbitrationTasks, concurrency, async (task) =>
+    arbitrateCluster(task.clusterIndex, task.cluster, entries, llm, task.maxSimilarity),
+  );
+
+  for (const arbitration of arbitrationResults) {
     clusterDetails.push(arbitration.detail);
     if (arbitration.warning) {
       warnings.push(arbitration.warning);
@@ -165,7 +194,7 @@ export async function dedupBatch(entries: StoreEntryInput[], llm: LlmPort, embed
     for (const keptIndex of arbitration.detail.kept) {
       const updatedEntry =
         arbitration.detail.merged === true && arbitration.detail.mergedContent && keptIndex === arbitration.detail.mergeTarget
-          ? mergeClusterEntry(cluster, keptIndex, arbitration.detail.mergedContent, entries)
+          ? mergeClusterEntry(arbitration.detail.entryIndices, keptIndex, arbitration.detail.mergedContent, entries)
           : entries[keptIndex];
       survivorByIndex.set(keptIndex, updatedEntry);
     }
@@ -194,11 +223,69 @@ export async function dedupBatch(entries: StoreEntryInput[], llm: LlmPort, embed
     removedCount: entries.length - survivors.length,
     clustersArbitrated: clusterDetails.length,
     singletonsPassedThrough,
-    llmCalls,
+    llmCalls: arbitrationTasks.length,
     clusterDetails,
     warnings,
     similarityThreshold,
   };
+}
+
+/**
+ * Normalizes the requested arbitration concurrency into a safe positive integer.
+ *
+ * @param value - Candidate configured concurrency.
+ * @returns Positive concurrency limit, or the default of `10`.
+ */
+function normalizeDedupConcurrency(value: number | undefined): number {
+  if (!Number.isInteger(value) || value === undefined || value <= 0) {
+    return DEFAULT_DEDUP_CONCURRENCY;
+  }
+
+  return value;
+}
+
+/**
+ * Runs cluster arbitrations with bounded concurrency while preserving task order.
+ *
+ * @param tasks - Multi-entry clusters queued in original cluster order.
+ * @param concurrency - Maximum number of arbitration workers.
+ * @param worker - Arbitration function for one cluster task.
+ * @returns Arbitration results aligned to the original task order.
+ */
+async function runBoundedArbitrations<TTask, TResult>(
+  tasks: TTask[],
+  concurrency: number,
+  worker: (task: TTask, taskIndex: number) => Promise<TResult>,
+): Promise<TResult[]> {
+  if (tasks.length === 0) {
+    return [];
+  }
+
+  const results = new Array<TResult>(tasks.length);
+  const workerCount = Math.min(concurrency, tasks.length);
+  let nextTaskIndex = 0;
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (true) {
+        const taskIndex = nextTaskIndex;
+        nextTaskIndex += 1;
+
+        if (taskIndex >= tasks.length) {
+          return;
+        }
+
+        const task = tasks[taskIndex];
+        if (task === undefined) {
+          return;
+        }
+
+        results[taskIndex] = await worker(task, taskIndex);
+      }
+    }),
+  );
+
+  return results;
 }
 
 /** Runs LLM arbitration for one similarity cluster and records debug detail. */

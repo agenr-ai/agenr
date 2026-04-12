@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { OpenClawTranscriptParser } from "../../../src/adapters/openclaw/transcript/parser.js";
 import { extractFile, ingestFile, storeExtractedResults, type ExtractedFileResult } from "../../../src/core/ingestion/pipeline.js";
 import type { DatabasePort, EmbeddingPort, LlmPort, TranscriptPort } from "../../../src/core/ports.js";
+import { composeEmbeddingText } from "../../../src/core/store/embedding-text.js";
 import type { Entry, ParsedTranscript, StoreEntryInput } from "../../../src/core/types.js";
 
 const tempDirectories: string[] = [];
@@ -458,6 +459,92 @@ describe("ingestFile", () => {
     expect(db.insertions[0]?.entry.claim_key).toBe("project_x/status");
   });
 
+  it("propagates configured concurrency through single-file dedup arbitration", async () => {
+    const { filePath, fileHash } = await writeTranscriptFile("session-four-dedup-concurrency");
+    const { entries, vectors } = createPairedClusterScenario(3, filePath);
+    const responses = [deferred<string>(), deferred<string>(), deferred<string>()];
+    let dedupLlm: MockDedupLlm | null = null;
+
+    const ingestPromise = ingestFile(
+      {
+        filePath,
+        fileHash,
+      },
+      {
+        transcript: new MockTranscriptPort(buildTranscript()),
+        llm: new MockLlmPort([{ entries }]),
+        dedupLlm: (() => {
+          dedupLlm = new MockDedupLlm(responses.map((response) => response.promise));
+          return dedupLlm;
+        })(),
+        embedding: new MockEmbeddingPort(entries, vectors),
+        db: new MockDatabase(),
+      },
+      {
+        concurrency: 2,
+        wholeFile: "never",
+      },
+    );
+
+    await vi.waitFor(() => {
+      expect(dedupLlm?.completeCalls).toBe(2);
+    });
+    expect(dedupLlm?.maxActiveRequests).toBe(2);
+
+    responses[0].resolve('{"keep":[0],"drop":[1]}');
+    await vi.waitFor(() => {
+      expect(dedupLlm?.completeCalls).toBe(3);
+    });
+    expect(dedupLlm?.maxActiveRequests).toBe(2);
+
+    responses[1].resolve('{"keep":[0],"drop":[1]}');
+    responses[2].resolve('{"keep":[0],"drop":[1]}');
+    await ingestPromise;
+  });
+
+  it("defaults single-file dedup arbitration concurrency to 10 when unset", async () => {
+    const { filePath, fileHash } = await writeTranscriptFile("session-four-dedup-default-concurrency");
+    const { entries, vectors } = createPairedClusterScenario(11, filePath);
+    const responses = Array.from({ length: 11 }, () => deferred<string>());
+    let dedupLlm: MockDedupLlm | null = null;
+
+    const ingestPromise = ingestFile(
+      {
+        filePath,
+        fileHash,
+      },
+      {
+        transcript: new MockTranscriptPort(buildTranscript()),
+        llm: new MockLlmPort([{ entries }]),
+        dedupLlm: (() => {
+          dedupLlm = new MockDedupLlm(responses.map((response) => response.promise));
+          return dedupLlm;
+        })(),
+        embedding: new MockEmbeddingPort(entries, vectors),
+        db: new MockDatabase(),
+      },
+      {
+        wholeFile: "never",
+      },
+    );
+
+    await vi.waitFor(() => {
+      expect(dedupLlm?.completeCalls).toBe(10);
+    });
+    expect(dedupLlm?.maxActiveRequests).toBe(10);
+
+    responses[0]?.resolve('{"keep":[0],"drop":[1]}');
+    await vi.waitFor(() => {
+      expect(dedupLlm?.completeCalls).toBe(11);
+    });
+    expect(dedupLlm?.maxActiveRequests).toBe(10);
+
+    for (const response of responses.slice(1)) {
+      response.resolve('{"keep":[0],"drop":[1]}');
+    }
+    await ingestPromise;
+  });
+
   it("propagates configured claim extraction concurrency through single-file ingest", async () => {
     const { filePath, fileHash } = await writeTranscriptFile("session-four-claim-concurrency");
     const db = new MockDatabase();
@@ -892,9 +979,28 @@ class MockDatabase implements DatabasePort {
 
 class MockEmbeddingPort implements EmbeddingPort {
   public readonly calls: string[][] = [];
+  private readonly vectorsByText?: Map<string, number[]>;
+
+  public constructor(entries: StoreEntryInput[] = [], vectors: number[][] = []) {
+    this.vectorsByText =
+      entries.length > 0
+        ? new Map(entries.map((entry, index) => [composeEmbeddingText(entry), vectors[index] ?? []]))
+        : undefined;
+  }
 
   public async embed(texts: string[]): Promise<number[][]> {
     this.calls.push(texts);
+    if (this.vectorsByText) {
+      return texts.map((text) => {
+        const vector = this.vectorsByText?.get(text);
+        if (!vector) {
+          throw new Error(`No mock embedding configured for ${text}.`);
+        }
+
+        return vector;
+      });
+    }
+
     return texts.map((_, index) => [index + 1, index + 2]);
   }
 }
@@ -922,6 +1028,31 @@ class MockLlmPort implements LlmPort {
   }
 }
 
+class MockDedupLlm implements LlmPort {
+  public completeCalls = 0;
+  public maxActiveRequests = 0;
+  private activeRequests = 0;
+
+  public constructor(private readonly responses: Array<string | Promise<string>>) {}
+
+  public async complete(): Promise<string> {
+    const response = this.responses[this.completeCalls] ?? this.responses.at(-1) ?? '{"keep":[0],"drop":[1]}';
+    this.completeCalls += 1;
+    this.activeRequests += 1;
+    this.maxActiveRequests = Math.max(this.maxActiveRequests, this.activeRequests);
+
+    try {
+      return await response;
+    } finally {
+      this.activeRequests -= 1;
+    }
+  }
+
+  public async completeJson<T>(): Promise<T> {
+    throw new Error("completeJson should not be used by dedup tests.");
+  }
+}
+
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((innerResolve) => {
@@ -929,6 +1060,30 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   });
 
   return { promise, resolve };
+}
+
+function createPairedClusterScenario(clusterCount: number, sourceFile: string): { entries: StoreEntryInput[]; vectors: number[][] } {
+  const entries: StoreEntryInput[] = [];
+  const vectors: number[][] = [];
+
+  for (let clusterIndex = 0; clusterIndex < clusterCount; clusterIndex += 1) {
+    const vector = Array.from({ length: clusterCount }, (_, index) => (index === clusterIndex ? 1 : 0));
+    entries.push(
+      createInput({
+        subject: `cluster-${clusterIndex}-primary`,
+        content: `cluster-${clusterIndex}-primary content`,
+        source_file: sourceFile,
+      }),
+      createInput({
+        subject: `cluster-${clusterIndex}-secondary`,
+        content: `cluster-${clusterIndex}-secondary content`,
+        source_file: sourceFile,
+      }),
+    );
+    vectors.push([...vector], [...vector]);
+  }
+
+  return { entries, vectors };
 }
 
 class TranscriptAwareLlmPort implements LlmPort {

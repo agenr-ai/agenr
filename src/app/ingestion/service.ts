@@ -36,8 +36,6 @@ export interface IngestStageProgressEvent {
 
 /** Runtime options for application-layer path ingestion. */
 export interface IngestPathOptions extends IngestFileOptions {
-  /** Maximum number of transcript files to extract in parallel. */
-  concurrency?: number;
   /** Override claim extraction config for this ingest run. */
   claimExtractionConfig?: ClaimExtractionConfig;
   /** Optional warning sink for claim extraction or store pipeline warnings. */
@@ -144,6 +142,7 @@ export async function ingestDiscoveredFiles(files: string[], ports: IngestPathPo
       dedupLlm,
       ports.embedding,
       {
+        concurrency: options.concurrency ?? DEFAULT_INGEST_CONCURRENCY,
         skip: options.skipDedup,
         verbose: options.verbose,
       },

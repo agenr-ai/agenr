@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { dedupBatch } from "../../../src/core/ingestion/dedup.js";
 import type { EmbeddingPort, LlmPort } from "../../../src/core/ports.js";
@@ -293,6 +293,123 @@ describe("dedupBatch", () => {
       [0, 1],
     ]);
   });
+
+  it("honors the configured arbitration concurrency", async () => {
+    const { entries, vectors } = createPairedClusterScenario(3);
+    const responses = [deferred<string>(), deferred<string>(), deferred<string>()];
+    let activeRequests = 0;
+    let maxActiveRequests = 0;
+    const llm = new MockLlmPort((callIndex) => {
+      const response = responses[callIndex];
+      activeRequests += 1;
+      maxActiveRequests = Math.max(maxActiveRequests, activeRequests);
+      return response.promise.finally(() => {
+        activeRequests -= 1;
+      });
+    });
+    const embedding = new MockEmbeddingPort(vectors, entries);
+
+    const dedupPromise = dedupBatch(entries, llm, embedding, { concurrency: 2 });
+
+    await vi.waitFor(() => {
+      expect(llm.completeCalls).toBe(2);
+    });
+    expect(maxActiveRequests).toBe(2);
+
+    responses[0].resolve('{"keep":[0],"drop":[1]}');
+    await vi.waitFor(() => {
+      expect(llm.completeCalls).toBe(3);
+    });
+    expect(maxActiveRequests).toBe(2);
+
+    responses[1].resolve('{"keep":[0],"drop":[1]}');
+    responses[2].resolve('{"keep":[0],"drop":[1]}');
+    await dedupPromise;
+
+    expect(maxActiveRequests).toBe(2);
+  });
+
+  it("matches the sequential baseline under parallel arbitration", async () => {
+    const { entries, vectors } = createPairedClusterScenario(3);
+    const responses = ['{"keep":[0],"drop":[1]}', '{"keep":[1],"drop":[0]}', '{"keep":[0,1],"drop":[]}'];
+
+    const sequentialResult = await dedupBatch(entries, new MockLlmPort(responses), new MockEmbeddingPort(vectors, entries), {
+      concurrency: 1,
+    });
+    const parallelResult = await dedupBatch(entries, new MockLlmPort(responses), new MockEmbeddingPort(vectors, entries), {
+      concurrency: 2,
+    });
+
+    expect(parallelResult).toEqual(sequentialResult);
+  });
+
+  it("keeps cluster details and warnings in original cluster order when arbitration resolves out of order", async () => {
+    const { entries, vectors } = createPairedClusterScenario(3);
+    const responses = [deferred<string>(), deferred<string>(), deferred<string>()];
+    const llm = new MockLlmPort((callIndex) => responses[callIndex]?.promise ?? '{"keep":[0],"drop":[1]}' );
+    const embedding = new MockEmbeddingPort(vectors, entries);
+
+    const dedupPromise = dedupBatch(entries, llm, embedding, { concurrency: 3 });
+
+    await vi.waitFor(() => {
+      expect(llm.completeCalls).toBe(3);
+    });
+
+    responses[2].resolve("not valid json");
+    responses[0].resolve("not valid json");
+    responses[1].resolve('{"keep":[0],"drop":[1]}');
+
+    const result = await dedupPromise;
+
+    expect(result.clusterDetails.map((detail) => detail.entryIndices)).toEqual([
+      [0, 1],
+      [2, 3],
+      [4, 5],
+    ]);
+    expect(result.warnings).toEqual([
+      "Cluster 1: dedup arbitration failed, keeping all entries (Dedup response did not contain a JSON object.).",
+      "Cluster 3: dedup arbitration failed, keeping all entries (Dedup response did not contain a JSON object.).",
+    ]);
+  });
+
+  it("preserves survivor order when cluster arbitration completes out of order", async () => {
+    const entries = [
+      createInput({ subject: "cluster-0 primary", content: "cluster-0 primary" }),
+      createInput({ subject: "cluster-0 secondary", content: "cluster-0 secondary" }),
+      createInput({ subject: "singleton", content: "singleton" }),
+      createInput({ subject: "cluster-1 primary", content: "cluster-1 primary" }),
+      createInput({ subject: "cluster-1 secondary", content: "cluster-1 secondary" }),
+    ];
+    const vectors = [
+      [1, 0, 0],
+      [1, 0, 0],
+      [0, 1, 0],
+      [0, 0, 1],
+      [0, 0, 1],
+    ];
+    const responses = [deferred<string>(), deferred<string>()];
+    const llm = new MockLlmPort((callIndex) => responses[callIndex]?.promise ?? '{"keep":[0],"drop":[1]}' );
+    const embedding = new MockEmbeddingPort(vectors, entries);
+
+    const dedupPromise = dedupBatch(entries, llm, embedding, { concurrency: 2 });
+
+    await vi.waitFor(() => {
+      expect(llm.completeCalls).toBe(2);
+    });
+
+    responses[1].resolve('{"keep":[0],"drop":[1]}');
+    responses[0].resolve('{"keep":[1],"drop":[0]}');
+
+    const result = await dedupPromise;
+
+    expect(result.survivors).toEqual([entries[1], entries[2], entries[3]]);
+    expect(result.survivorIndices).toEqual([1, 2, 3]);
+    expect(result.embeddings).toEqual([
+      [1, 0, 0],
+      [0, 1, 0],
+      [0, 0, 1],
+    ]);
+  });
 });
 
 class MockEmbeddingPort implements EmbeddingPort {
@@ -316,25 +433,63 @@ class MockEmbeddingPort implements EmbeddingPort {
   }
 }
 
+type MockLlmResponse = string | Error | Promise<string>;
+
 class MockLlmPort implements LlmPort {
+  public readonly calls: Array<{ systemPrompt: string; userMessage: string }> = [];
   public completeCalls = 0;
 
-  public constructor(private readonly responses: Array<string | Error>) {}
+  public constructor(private readonly responses: MockLlmResponse[] | ((callIndex: number, systemPrompt: string, userMessage: string) => MockLlmResponse)) {}
 
-  public async complete(): Promise<string> {
-    const response = this.responses[this.completeCalls] ?? this.responses.at(-1) ?? '{"keep":[],"drop":[]}';
+  public async complete(systemPrompt: string, userMessage: string): Promise<string> {
+    this.calls.push({ systemPrompt, userMessage });
+    const response =
+      typeof this.responses === "function"
+        ? this.responses(this.completeCalls, systemPrompt, userMessage)
+        : this.responses[this.completeCalls] ?? this.responses.at(-1) ?? '{"keep":[],"drop":[]}';
     this.completeCalls += 1;
 
     if (response instanceof Error) {
       throw response;
     }
 
-    return response;
+    return await response;
   }
 
   public async completeJson<T>(): Promise<T> {
     throw new Error("completeJson should not be used by dedupBatch tests.");
   }
+}
+
+function createPairedClusterScenario(clusterCount: number): { entries: StoreEntryInput[]; vectors: number[][] } {
+  const entries: StoreEntryInput[] = [];
+  const vectors: number[][] = [];
+
+  for (let clusterIndex = 0; clusterIndex < clusterCount; clusterIndex += 1) {
+    const vector = Array.from({ length: clusterCount }, (_, index) => (index === clusterIndex ? 1 : 0));
+    entries.push(
+      createInput({
+        subject: `cluster-${clusterIndex}-primary`,
+        content: `cluster-${clusterIndex}-primary content`,
+      }),
+      createInput({
+        subject: `cluster-${clusterIndex}-secondary`,
+        content: `cluster-${clusterIndex}-secondary content`,
+      }),
+    );
+    vectors.push([...vector], [...vector]);
+  }
+
+  return { entries, vectors };
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((innerResolve) => {
+    resolve = innerResolve;
+  });
+
+  return { promise, resolve };
 }
 
 function createInput(overrides: Partial<StoreEntryInput> = {}): StoreEntryInput {

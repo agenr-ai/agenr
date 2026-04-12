@@ -1,5 +1,12 @@
 export { extractFromTranscript, chunkTranscript, type ExtractionOptions, type ExtractionResult } from "./extract.js";
-export { dedupBatch, getDefaultDedupSimilarityThreshold, type DedupClusterDetail, type DedupOptions, type DedupResult } from "./dedup.js";
+export {
+  dedupBatch,
+  getDefaultDedupConcurrency,
+  getDefaultDedupSimilarityThreshold,
+  type DedupClusterDetail,
+  type DedupOptions,
+  type DedupResult,
+} from "./dedup.js";
 export { parseExtractionResponse, type ExtractionResponse } from "./parser.js";
 export {
   extractFile,

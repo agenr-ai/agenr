@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ingestPath } from "../../../src/app/ingestion/index.js";
 import type { IngestFilePort, IngestionLlmPort, UsageStats } from "../../../src/app/ingestion/ports.js";
 import type { DatabasePort, EmbeddingPort, LlmPort, TranscriptPort } from "../../../src/core/ports.js";
+import { composeEmbeddingText } from "../../../src/core/store/embedding-text.js";
 import type { Entry, ParsedTranscript, StoreEntryInput } from "../../../src/core/types.js";
 
 describe("ingestPath", () => {
@@ -198,6 +199,88 @@ describe("ingestPath", () => {
     );
 
     expect(phases).toEqual(["dedup_start:2", "claim_extraction_start:2", "store_start:2"]);
+  });
+
+  it("propagates configured ingest concurrency into dedup arbitration", async () => {
+    const filePath = "/tmp/session-dedup-concurrency.jsonl";
+    const { entries, vectors } = createPairedClusterScenario(3);
+    const responses = [deferred<string>(), deferred<string>(), deferred<string>()];
+    let dedupLlm: MockDedupLlm | null = null;
+
+    const ingestPromise = ingestPath(
+      "/tmp",
+      {
+        files: new MockFilePort([filePath], { [filePath]: "hash-dedup-concurrency" }),
+        transcript: new MockTranscriptPort(buildTranscript()),
+        db: new MockDatabase(),
+        embedding: new MockEmbeddingPort(entries, vectors),
+        createExtractionLlm: () => new MockIngestionLlm({ entries }),
+        createDedupLlm: () => {
+          dedupLlm = new MockDedupLlm(responses.map((response) => response.promise));
+          return dedupLlm;
+        },
+      },
+      {
+        concurrency: 2,
+        wholeFile: "never",
+      },
+    );
+
+    await vi.waitFor(() => {
+      expect(dedupLlm?.completeCalls).toBe(2);
+    });
+    expect(dedupLlm?.maxActiveRequests).toBe(2);
+
+    responses[0].resolve('{"keep":[0],"drop":[1]}');
+    await vi.waitFor(() => {
+      expect(dedupLlm?.completeCalls).toBe(3);
+    });
+    expect(dedupLlm?.maxActiveRequests).toBe(2);
+
+    responses[1].resolve('{"keep":[0],"drop":[1]}');
+    responses[2].resolve('{"keep":[0],"drop":[1]}');
+    await ingestPromise;
+  });
+
+  it("defaults dedup arbitration concurrency to 10 when ingest concurrency is unset", async () => {
+    const filePath = "/tmp/session-dedup-default-concurrency.jsonl";
+    const { entries, vectors } = createPairedClusterScenario(11);
+    const responses = Array.from({ length: 11 }, () => deferred<string>());
+    let dedupLlm: MockDedupLlm | null = null;
+
+    const ingestPromise = ingestPath(
+      "/tmp",
+      {
+        files: new MockFilePort([filePath], { [filePath]: "hash-dedup-default" }),
+        transcript: new MockTranscriptPort(buildTranscript()),
+        db: new MockDatabase(),
+        embedding: new MockEmbeddingPort(entries, vectors),
+        createExtractionLlm: () => new MockIngestionLlm({ entries }),
+        createDedupLlm: () => {
+          dedupLlm = new MockDedupLlm(responses.map((response) => response.promise));
+          return dedupLlm;
+        },
+      },
+      {
+        wholeFile: "never",
+      },
+    );
+
+    await vi.waitFor(() => {
+      expect(dedupLlm?.completeCalls).toBe(10);
+    });
+    expect(dedupLlm?.maxActiveRequests).toBe(10);
+
+    responses[0]?.resolve('{"keep":[0],"drop":[1]}');
+    await vi.waitFor(() => {
+      expect(dedupLlm?.completeCalls).toBe(11);
+    });
+    expect(dedupLlm?.maxActiveRequests).toBe(10);
+
+    for (const response of responses.slice(1)) {
+      response.resolve('{"keep":[0],"drop":[1]}');
+    }
+    await ingestPromise;
   });
 
   it("threads transcript-derived project metadata into claim extraction hints and persistence", async () => {
@@ -722,9 +805,28 @@ class MockDatabase implements DatabasePort {
 
 class MockEmbeddingPort implements EmbeddingPort {
   public readonly calls: string[][] = [];
+  private readonly vectorsByText?: Map<string, number[]>;
+
+  public constructor(entries: StoreEntryInput[] = [], vectors: number[][] = []) {
+    this.vectorsByText =
+      entries.length > 0
+        ? new Map(entries.map((entry, index) => [composeEmbeddingText(entry), vectors[index] ?? []]))
+        : undefined;
+  }
 
   public async embed(texts: string[]): Promise<number[][]> {
     this.calls.push(texts);
+    if (this.vectorsByText) {
+      return texts.map((text) => {
+        const vector = this.vectorsByText?.get(text);
+        if (!vector) {
+          throw new Error(`No mock embedding configured for ${text}.`);
+        }
+
+        return vector;
+      });
+    }
+
     return texts.map((_, index) => [index + 1, index + 2]);
   }
 }
@@ -767,6 +869,8 @@ class MockIngestionLlm implements IngestionLlmPort {
   }
 }
 
+type MockDedupResponse = string | Promise<string>;
+
 class MockDedupLlm implements IngestionLlmPort {
   public readonly metadata: { contextWindowTokens: number; maxOutputTokens: number; usage: UsageStats } = {
     contextWindowTokens: 16_000,
@@ -781,12 +885,26 @@ class MockDedupLlm implements IngestionLlmPort {
       totalCost: 0,
     },
   };
+  public completeCalls = 0;
+  public maxActiveRequests = 0;
+  private activeRequests = 0;
 
-  public constructor(private readonly response: string) {}
+  public constructor(private readonly responses: MockDedupResponse[] | MockDedupResponse) {}
 
   public async complete(): Promise<string> {
     this.metadata.usage.calls += 1;
-    return this.response;
+    const response = Array.isArray(this.responses)
+      ? this.responses[this.completeCalls] ?? this.responses.at(-1) ?? '{"keep":[0],"drop":[1]}'
+      : this.responses;
+    this.completeCalls += 1;
+    this.activeRequests += 1;
+    this.maxActiveRequests = Math.max(this.maxActiveRequests, this.activeRequests);
+
+    try {
+      return await response;
+    } finally {
+      this.activeRequests -= 1;
+    }
   }
 
   public async completeJson<T>(): Promise<T> {
@@ -809,6 +927,37 @@ class MockClaimExtractionLlm implements LlmPort {
 
     return response as T;
   }
+}
+
+function createPairedClusterScenario(clusterCount: number): { entries: StoreEntryInput[]; vectors: number[][] } {
+  const entries: StoreEntryInput[] = [];
+  const vectors: number[][] = [];
+
+  for (let clusterIndex = 0; clusterIndex < clusterCount; clusterIndex += 1) {
+    const vector = Array.from({ length: clusterCount }, (_, index) => (index === clusterIndex ? 1 : 0));
+    entries.push(
+      createInput({
+        subject: `cluster-${clusterIndex}-primary`,
+        content: `cluster-${clusterIndex}-primary content`,
+      }),
+      createInput({
+        subject: `cluster-${clusterIndex}-secondary`,
+        content: `cluster-${clusterIndex}-secondary content`,
+      }),
+    );
+    vectors.push([...vector], [...vector]);
+  }
+
+  return { entries, vectors };
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((innerResolve) => {
+    resolve = innerResolve;
+  });
+
+  return { promise, resolve };
 }
 
 function buildTranscript(
