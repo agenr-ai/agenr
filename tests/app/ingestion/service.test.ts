@@ -974,10 +974,7 @@ class MockEmbeddingPort implements EmbeddingPort {
   private readonly vectorsByText?: Map<string, number[]>;
 
   public constructor(entries: StoreEntryInput[] = [], vectors: number[][] = []) {
-    this.vectorsByText =
-      entries.length > 0
-        ? new Map(entries.map((entry, index) => [composeEmbeddingText(entry), vectors[index] ?? []]))
-        : undefined;
+    this.vectorsByText = entries.length > 0 ? new Map(entries.map((entry, index) => [composeEmbeddingText(entry), vectors[index] ?? []])) : undefined;
   }
 
   public async embed(texts: string[]): Promise<number[][]> {
@@ -1060,7 +1057,7 @@ class MockDedupLlm implements IngestionLlmPort {
   public async complete(): Promise<string> {
     this.metadata.usage.calls += 1;
     const response = Array.isArray(this.responses)
-      ? this.responses[this.completeCalls] ?? this.responses.at(-1) ?? '{"keep":[0],"drop":[1]}'
+      ? (this.responses[this.completeCalls] ?? this.responses.at(-1) ?? '{"keep":[0],"drop":[1]}')
       : this.responses;
     this.completeCalls += 1;
     this.activeRequests += 1;
@@ -1078,9 +1075,7 @@ class MockDedupLlm implements IngestionLlmPort {
   }
 }
 
-type MockClaimExtractionResponse =
-  | unknown
-  | Promise<{ entity: string; attribute: string; confidence: number }>;
+type MockClaimExtractionResponse = unknown | Promise<{ entity: string; attribute: string; confidence: number }>;
 
 class MockClaimExtractionLlm implements LlmPort {
   public completeJsonCalls = 0;
@@ -1088,9 +1083,7 @@ class MockClaimExtractionLlm implements LlmPort {
   private activeRequests = 0;
 
   public constructor(
-    private readonly responder:
-      | ((systemPrompt: string, userMessage: string) => MockClaimExtractionResponse)
-      | MockClaimExtractionResponse[],
+    private readonly responder: ((systemPrompt: string, userMessage: string) => MockClaimExtractionResponse) | MockClaimExtractionResponse[],
   ) {}
 
   public async complete(): Promise<string> {
@@ -1099,9 +1092,7 @@ class MockClaimExtractionLlm implements LlmPort {
 
   public async completeJson<T>(systemPrompt: string, userMessage: string): Promise<T> {
     const response =
-      typeof this.responder === "function"
-        ? this.responder(systemPrompt, userMessage)
-        : this.responder[this.completeJsonCalls] ?? this.responder.at(-1);
+      typeof this.responder === "function" ? this.responder(systemPrompt, userMessage) : (this.responder[this.completeJsonCalls] ?? this.responder.at(-1));
     this.completeJsonCalls += 1;
     this.activeRequests += 1;
     this.maxActiveRequests = Math.max(this.maxActiveRequests, this.activeRequests);

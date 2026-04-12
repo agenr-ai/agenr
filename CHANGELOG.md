@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+## [1.8.2] - 2026-04-12
+
+Temporal parsing and ingest workflow polish patch release.
+
+### Changed
+
+- **Relative time parsing now accepts small spelled-out amounts.** Episode temporal-window parsing now recognizes natural language queries such as "two days ago" for small relative ranges, improving recall routing for conversational phrasing.
+- **Local Cursor scaffolding stays out of repo status.** `.gitignore` now excludes local Cursor rules and skills directories so release work and day-to-day development stay focused on product changes.
+
+### Fixed
+
+- **Ingest progress propagation now reaches the CLI consistently.** The ingestion app and CLI layers now forward progress events end-to-end so long-running ingest runs surface stage updates reliably.
+
+### Validation
+
+Changes since last push to `origin/master`:
+
+- Update `.gitignore` to exclude cursor rules and skills directories
+- Enhance temporal parsing with small spelled-out relative amounts
+- Enhance ingestion process with progress event propagation
+
 ## [1.8.1] - 2026-04-11
 
 Ingest concurrency and progress reporting patch release.

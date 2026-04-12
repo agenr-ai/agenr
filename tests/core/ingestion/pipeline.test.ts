@@ -982,10 +982,7 @@ class MockEmbeddingPort implements EmbeddingPort {
   private readonly vectorsByText?: Map<string, number[]>;
 
   public constructor(entries: StoreEntryInput[] = [], vectors: number[][] = []) {
-    this.vectorsByText =
-      entries.length > 0
-        ? new Map(entries.map((entry, index) => [composeEmbeddingText(entry), vectors[index] ?? []]))
-        : undefined;
+    this.vectorsByText = entries.length > 0 ? new Map(entries.map((entry, index) => [composeEmbeddingText(entry), vectors[index] ?? []])) : undefined;
   }
 
   public async embed(texts: string[]): Promise<number[][]> {

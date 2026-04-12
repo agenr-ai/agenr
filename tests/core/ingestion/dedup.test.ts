@@ -385,7 +385,7 @@ describe("dedupBatch", () => {
   it("keeps cluster details and warnings in original cluster order when arbitration resolves out of order", async () => {
     const { entries, vectors } = createPairedClusterScenario(3);
     const responses = [deferred<string>(), deferred<string>(), deferred<string>()];
-    const llm = new MockLlmPort((callIndex) => responses[callIndex]?.promise ?? '{"keep":[0],"drop":[1]}' );
+    const llm = new MockLlmPort((callIndex) => responses[callIndex]?.promise ?? '{"keep":[0],"drop":[1]}');
     const embedding = new MockEmbeddingPort(vectors, entries);
 
     const dedupPromise = dedupBatch(entries, llm, embedding, { concurrency: 3 });
@@ -415,7 +415,7 @@ describe("dedupBatch", () => {
     const { entries, vectors } = createPairedClusterScenario(3);
     const responses = [deferred<string>(), deferred<string>(), deferred<string>()];
     const progressEvents: Array<{ completedClusters: number; totalClusters: number; completedEntries: number; totalEntries: number }> = [];
-    const llm = new MockLlmPort((callIndex) => responses[callIndex]?.promise ?? '{"keep":[0],"drop":[1]}' );
+    const llm = new MockLlmPort((callIndex) => responses[callIndex]?.promise ?? '{"keep":[0],"drop":[1]}');
     const embedding = new MockEmbeddingPort(vectors, entries);
 
     const dedupPromise = dedupBatch(entries, llm, embedding, {
@@ -473,7 +473,7 @@ describe("dedupBatch", () => {
       [0, 0, 1],
     ];
     const responses = [deferred<string>(), deferred<string>()];
-    const llm = new MockLlmPort((callIndex) => responses[callIndex]?.promise ?? '{"keep":[0],"drop":[1]}' );
+    const llm = new MockLlmPort((callIndex) => responses[callIndex]?.promise ?? '{"keep":[0],"drop":[1]}');
     const embedding = new MockEmbeddingPort(vectors, entries);
 
     const dedupPromise = dedupBatch(entries, llm, embedding, { concurrency: 2 });
@@ -531,7 +531,7 @@ class MockLlmPort implements LlmPort {
     const response =
       typeof this.responses === "function"
         ? this.responses(this.completeCalls, systemPrompt, userMessage)
-        : this.responses[this.completeCalls] ?? this.responses.at(-1) ?? '{"keep":[],"drop":[]}';
+        : (this.responses[this.completeCalls] ?? this.responses.at(-1) ?? '{"keep":[],"drop":[]}');
     this.completeCalls += 1;
 
     if (response instanceof Error) {

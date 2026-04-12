@@ -201,8 +201,10 @@ export async function dedupBatch(entries: StoreEntryInput[], llm: LlmPort, embed
   let completedClusters = 0;
   let completedEntries = 0;
 
-  const arbitrationResults = await runBoundedArbitrations(arbitrationTasks, concurrency, async (task) =>
-    arbitrateCluster(task.clusterIndex, task.cluster, entries, llm, task.maxSimilarity),
+  const arbitrationResults = await runBoundedArbitrations(
+    arbitrationTasks,
+    concurrency,
+    async (task) => arbitrateCluster(task.clusterIndex, task.cluster, entries, llm, task.maxSimilarity),
     (task) => {
       completedClusters += 1;
       completedEntries += task.cluster.length;
