@@ -1134,6 +1134,7 @@ function buildContinuationPrompt(input: {
           "Continue the supersession pass.",
           progressReminder,
           "Keep paginating claim_key clusters while any remain. Once the claim_key sweep returns no remaining clusters, query scope = 'subject' to confirm whether lower-confidence work remains.",
+          "Viewed supersession clusters do not count as adjudicated unless you mutate them or include one paged entry_id from the cluster in entries_skipped during complete_pass.",
           "If both claim_key and subject sweeps are exhausted, call complete_pass and include any reviewed but intentionally unlinked clusters in entries_skipped.",
           "Avoid no-op metadata actions that do not change persisted state.",
         ]

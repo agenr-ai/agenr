@@ -38,12 +38,27 @@ export function createQuerySupersessionCandidatesTool(deps: SurgeonToolDeps): Ag
       const limit = normalizeLimit(params.limit);
       const offset = normalizeOffset(params.offset);
       const type = normalizeOptionalString(params.type);
+      const progress = deps.completionGuards?.supersession.snapshot();
+
+      if ((scope === "subject" || scope === "all") && shouldBlockLowerConfidenceScope(progress)) {
+        return toolResult({
+          clusters: [],
+          count: 0,
+          scope,
+          limit,
+          offset,
+          claimKeyClusterCount: progress?.claimKeyClustersRemaining ?? 0,
+          subjectClusterCount: progress?.subjectClustersRemaining ?? 0,
+          blocked: true,
+          message: buildClaimKeyFirstMessage(progress!.claimKeyClustersRemaining),
+        });
+      }
+
       const counts = await deps.port.countSupersessionCandidates({
         type,
         skipRecentlyEvaluatedDays: deps.skipRecentlyEvaluatedDays,
         now: deps.now(),
       });
-      const progress = deps.completionGuards?.supersession.snapshot();
 
       const claimKeyClusters =
         scope === "subject"
@@ -126,6 +141,32 @@ function buildEmptyResultMessage(scope: SupersessionCandidateScope): string {
   }
 
   return "No more supersession clusters match the current filters. The review pool appears exhausted.";
+}
+
+/**
+ * Returns whether lower-confidence supersession scopes should remain blocked.
+ *
+ * @param progress - Current same-run supersession review progress, if any.
+ * @returns True when the claim_key sweep still has work remaining.
+ */
+function shouldBlockLowerConfidenceScope(progress: { claimKeyScopeExhausted: boolean; claimKeyClustersRemaining: number } | undefined): boolean {
+  if (!progress) {
+    return false;
+  }
+
+  return !progress.claimKeyScopeExhausted && progress.claimKeyClustersRemaining > 0;
+}
+
+/**
+ * Builds the guidance returned when the model tries to widen too early.
+ *
+ * @param remainingClaimKeyClusters - Claim-key clusters that still need adjudication.
+ * @returns Human-readable claim-key-first reminder.
+ */
+function buildClaimKeyFirstMessage(remainingClaimKeyClusters: number): string {
+  return remainingClaimKeyClusters === 1
+    ? "The subject sweep is blocked until the claim_key sweep is exhausted. One claim_key cluster still remains - continue with scope = 'claim_key'."
+    : `The subject sweep is blocked until the claim_key sweep is exhausted. ${remainingClaimKeyClusters} claim_key clusters still remain - continue with scope = 'claim_key'.`;
 }
 
 /**

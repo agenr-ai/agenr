@@ -416,14 +416,14 @@ function describeSupersessionRejection(
 
   if (!progress.claimKeyScopeExhausted) {
     return input.budgetUsedPct === null
-      ? `Completion rejected: ${progress.claimKeyClustersRemaining} claim_key clusters still remain in the current sweep.`
-      : `Completion rejected: ${progress.claimKeyClustersRemaining} claim_key clusters still remain in the current sweep and only ${input.budgetUsedPct}% of the cost budget has been used.`;
+      ? `Completion rejected: ${progress.claimKeyClustersRemaining} claim_key clusters still remain in the current sweep. For reviewed-but-intentionally-unlinked clusters, include one paged entry_id per cluster in entries_skipped.`
+      : `Completion rejected: ${progress.claimKeyClustersRemaining} claim_key clusters still remain in the current sweep and only ${input.budgetUsedPct}% of the cost budget has been used. For reviewed-but-intentionally-unlinked clusters, include one paged entry_id per cluster in entries_skipped.`;
   }
 
   if (input.subjectTotal > 0 && !progress.subjectScopeExhausted) {
     return input.budgetUsedPct === null
-      ? `Completion rejected: the claim_key sweep is exhausted, but ${progress.subjectClustersRemaining} subject clusters still remain.`
-      : `Completion rejected: the claim_key sweep is exhausted, but ${progress.subjectClustersRemaining} subject clusters still remain and only ${input.budgetUsedPct}% of the cost budget has been used.`;
+      ? `Completion rejected: the claim_key sweep is exhausted, but ${progress.subjectClustersRemaining} subject clusters still remain. For reviewed-but-intentionally-unlinked clusters, include one paged entry_id per cluster in entries_skipped.`
+      : `Completion rejected: the claim_key sweep is exhausted, but ${progress.subjectClustersRemaining} subject clusters still remain and only ${input.budgetUsedPct}% of the cost budget has been used. For reviewed-but-intentionally-unlinked clusters, include one paged entry_id per cluster in entries_skipped.`;
   }
 
   if (!input.budgetForcedStop) {

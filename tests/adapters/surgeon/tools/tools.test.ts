@@ -452,6 +452,103 @@ describe("surgeon tools", () => {
     });
   });
 
+  it("blocks the subject supersession sweep until claim_key work is exhausted", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "claim-entry-1",
+      subject: "Jim home city",
+      claim_key: "jim/home_city",
+      created_at: daysAgoIso(40),
+    });
+    await insertEntry(client, {
+      id: "claim-entry-2",
+      subject: "Jim home city update",
+      claim_key: "jim/home_city",
+      created_at: daysAgoIso(20),
+    });
+
+    const completionGuards = createSurgeonCompletionGuardState({
+      totalEntries: 2,
+      supersessionClaimKeyClusters: 1,
+      supersessionSubjectClusters: 1,
+    });
+    const tool = createQuerySupersessionCandidatesTool(
+      createToolDeps(client, {
+        passType: "supersession",
+        completionGuards,
+      }),
+    );
+
+    const result = await tool.execute("tool-query-supersession-subject-blocked", {
+      scope: "subject",
+      limit: 10,
+      offset: 0,
+    });
+
+    expect(result.details).toMatchObject({
+      count: 0,
+      scope: "subject",
+      blocked: true,
+      claimKeyClusterCount: 1,
+      subjectClusterCount: 1,
+      message: "The subject sweep is blocked until the claim_key sweep is exhausted. One claim_key cluster still remains - continue with scope = 'claim_key'.",
+    });
+    expect(completionGuards.supersession.snapshot()).toEqual({
+      claimKeyClustersViewed: 0,
+      claimKeyClustersTotal: 1,
+      claimKeyClustersRemaining: 1,
+      claimKeyClustersAdjudicated: 0,
+      claimKeyScopeExhausted: false,
+      subjectClustersViewed: 0,
+      subjectClustersTotal: 1,
+      subjectClustersRemaining: 1,
+      subjectClustersAdjudicated: 0,
+      subjectScopeExhausted: false,
+      adjudicatedClusters: 0,
+      widenedBeforeClaimKeyExhausted: false,
+    });
+  });
+
+  it("allows the subject supersession sweep after claim_key exhaustion", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "subject-entry-1",
+      subject: "Shared subject",
+      created_at: daysAgoIso(40),
+    });
+    await insertEntry(client, {
+      id: "subject-entry-2",
+      subject: "Shared subject",
+      created_at: daysAgoIso(20),
+    });
+
+    const completionGuards = createSurgeonCompletionGuardState({
+      totalEntries: 2,
+      supersessionClaimKeyClusters: 0,
+      supersessionSubjectClusters: 1,
+    });
+    const tool = createQuerySupersessionCandidatesTool(
+      createToolDeps(client, {
+        passType: "supersession",
+        completionGuards,
+      }),
+    );
+
+    const result = await tool.execute("tool-query-supersession-subject-allowed", {
+      scope: "subject",
+      limit: 10,
+      offset: 0,
+    });
+
+    expect(result.details).toMatchObject({
+      count: 1,
+      scope: "subject",
+      subjectClusterCount: 1,
+    });
+    expect(completionGuards.supersession.snapshot().subjectClustersViewed).toBe(1);
+    expect(completionGuards.supersession.snapshot().widenedBeforeClaimKeyExhausted).toBe(false);
+  });
+
   it("inspects one entry with related context", async () => {
     const client = await createTestClient(clients);
     await insertEntry(client, {
