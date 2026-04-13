@@ -216,6 +216,7 @@ describe("registerSurgeonCommand", () => {
         passType: "proposal_resolution",
         apply: true,
         workingSetSize: 102,
+        eligibleProposalBacklogCount: 3,
       });
       input.onProgress?.({
         kind: "phase",
@@ -279,9 +280,113 @@ describe("registerSurgeonCommand", () => {
 
     const stderrText = stripAnsi(stderr.join(""));
     expect(stderrText).toContain("Surgeon run: proposal_resolution");
+    expect(stderrText).toContain("Pass context ready: 102 active entries | Proposal backlog: 3 eligible proposals");
     expect(stderrText).toContain("Proposal backlog: 3 eligible proposals");
     expect(stderrText).toContain("proposal_resolution: 1/3 proposals, applied 1, inactive 0, no-op 0, targeted 2, applied");
     expect(stderrText).toContain("proposal_resolution complete: applied 2, inactive 1, no-op 0, targeted 3");
+  });
+
+  it("renders retirement context with remaining candidate counts in stderr", async () => {
+    const { program, stderr } = createProgramWithCapturedOutput();
+    runSurgeonRuntimeMock.mockImplementation(async (input: { onProgress?: (event: SurgeonProgressEvent) => void }) => {
+      input.onProgress?.({
+        kind: "phase",
+        phase: "start",
+        passType: "retirement",
+        apply: true,
+      });
+      input.onProgress?.({
+        kind: "phase",
+        phase: "load_pass_context_start",
+        passType: "retirement",
+        apply: true,
+      });
+      input.onProgress?.({
+        kind: "phase",
+        phase: "load_pass_context_complete",
+        passType: "retirement",
+        apply: true,
+        workingSetSize: 94,
+        retirementAvailableActionableCount: 12,
+        retirementAvailableAllCount: 27,
+        retirementRecentlyEvaluatedCount: 4,
+      });
+      input.onProgress?.({
+        kind: "phase",
+        phase: "pass_start",
+        passType: "retirement",
+        apply: true,
+      });
+
+      return {
+        runId: "run-1",
+        status: "completed",
+        passType: "retirement",
+        actionsTaken: 1,
+        entriesRetired: 1,
+        inputTokens: 55,
+        outputTokens: 8,
+        estimatedCostUsd: 0.01,
+        summary: "Retired one stale entry.",
+      };
+    });
+
+    await program.parseAsync(["surgeon", "run", "--pass", "retirement", "--apply"], { from: "user" });
+
+    const stderrText = stripAnsi(stderr.join(""));
+    expect(stderrText).toContain(
+      "Pass context ready: 94 active entries | Retirement remaining: 12 actionable, 27 if widened to all scope, 4 skipped as recently evaluated",
+    );
+  });
+
+  it("renders supersession context with remaining cluster counts in stderr", async () => {
+    const { program, stderr } = createProgramWithCapturedOutput();
+    runSurgeonRuntimeMock.mockImplementation(async (input: { onProgress?: (event: SurgeonProgressEvent) => void }) => {
+      input.onProgress?.({
+        kind: "phase",
+        phase: "start",
+        passType: "supersession",
+        apply: false,
+      });
+      input.onProgress?.({
+        kind: "phase",
+        phase: "load_pass_context_start",
+        passType: "supersession",
+        apply: false,
+      });
+      input.onProgress?.({
+        kind: "phase",
+        phase: "load_pass_context_complete",
+        passType: "supersession",
+        apply: false,
+        workingSetSize: 94,
+        supersessionClaimKeyCount: 7,
+        supersessionSubjectCount: 2,
+      });
+      input.onProgress?.({
+        kind: "phase",
+        phase: "pass_start",
+        passType: "supersession",
+        apply: false,
+      });
+
+      return {
+        runId: "run-1",
+        status: "completed",
+        passType: "supersession",
+        actionsTaken: 1,
+        entriesRetired: 0,
+        inputTokens: 55,
+        outputTokens: 8,
+        estimatedCostUsd: 0.01,
+        summary: "Linked one stale cluster.",
+      };
+    });
+
+    await program.parseAsync(["surgeon", "run", "--pass", "supersession"], { from: "user" });
+
+    const stderrText = stripAnsi(stderr.join(""));
+    expect(stderrText).toContain("Pass context ready: 94 active entries | Supersession remaining: 7 claim_key clusters, 2 subject clusters");
   });
 
   it("keeps JSON mode coherent by sending progress to stderr and JSON to stdout", async () => {

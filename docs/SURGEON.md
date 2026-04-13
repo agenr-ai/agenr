@@ -426,6 +426,8 @@ High-level phases:
 
 `claim_key_quality` also emits bounded stage progress snapshots, including preview counters, cumulative repair counts, processed-entry counts, and elapsed time. The CLI turns these into terse stderr lines, with richer detail in `--verbose` mode.
 
+For agent-loop passes, `load_pass_context_complete` now reports the active-entry count plus pass-specific remaining work. That means eligible proposal backlog for `proposal_resolution`, claim-key and subject clusters for `supersession`, and actionable vs widened all-scope retirement counts for `retirement`.
+
 ## Budget, completion, and bounded slices
 
 ### Cost and context guards

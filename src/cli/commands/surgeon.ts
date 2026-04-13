@@ -1059,7 +1059,7 @@ function handlePhaseEvent(event: Extract<SurgeonProgressEvent, { kind: "phase" }
       return;
     case "load_pass_context_complete":
       setActiveWaitingMessage(null);
-      writeStderr(`  ${ui.success("Pass context ready:")} ${formatOptionalCount(event.workingSetSize)} entries in scope`);
+      writeStderr(`  ${ui.success("Pass context ready:")} ${formatPassContextSummary(event)}`);
       return;
     case "pass_start":
       setActiveWaitingMessage(describePassWait(event.passType));
@@ -1544,4 +1544,42 @@ function normalizeOptionalBudget(value: number | undefined): number {
  */
 function formatOptionalCount(value: number | undefined): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+/**
+ * Formats the per-pass startup summary shown after context preflight completes.
+ *
+ * @param event - Phase event carrying current pass counts.
+ * @returns Human-readable active corpus and remaining-work summary.
+ */
+function formatPassContextSummary(event: Extract<SurgeonProgressEvent, { kind: "phase" }>): string {
+  const activeEntryCount = formatOptionalCount(event.workingSetSize);
+  const activeEntriesSummary = `${activeEntryCount} active ${pluralize(activeEntryCount, "entry", "entries")}`;
+
+  if (event.passType === "proposal_resolution") {
+    const eligibleProposalCount = formatOptionalCount(event.eligibleProposalBacklogCount);
+    return `${activeEntriesSummary} | Proposal backlog: ${eligibleProposalCount} eligible ${pluralize(eligibleProposalCount, "proposal")}`;
+  }
+
+  if (event.passType === "supersession") {
+    const claimKeyClusterCount = formatOptionalCount(event.supersessionClaimKeyCount);
+    const subjectClusterCount = formatOptionalCount(event.supersessionSubjectCount);
+    return (
+      `${activeEntriesSummary} | Supersession remaining: ` +
+      `${claimKeyClusterCount} claim_key ${pluralize(claimKeyClusterCount, "cluster")}, ` +
+      `${subjectClusterCount} subject ${pluralize(subjectClusterCount, "cluster")}`
+    );
+  }
+
+  if (event.passType === "retirement") {
+    const actionableCount = formatOptionalCount(event.retirementAvailableActionableCount);
+    const allScopeCount = formatOptionalCount(event.retirementAvailableAllCount);
+    const recentlyEvaluatedCount = formatOptionalCount(event.retirementRecentlyEvaluatedCount);
+    const recentlyEvaluatedSuffix = recentlyEvaluatedCount > 0 ? `, ${recentlyEvaluatedCount} skipped as recently evaluated` : "";
+    return (
+      `${activeEntriesSummary} | Retirement remaining: ` + `${actionableCount} actionable, ${allScopeCount} if widened to all scope${recentlyEvaluatedSuffix}`
+    );
+  }
+
+  return activeEntriesSummary;
 }

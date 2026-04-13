@@ -34,6 +34,12 @@ export interface SurgeonPhaseProgressEvent {
   passType: ImplementedSurgeonPass;
   apply: boolean;
   workingSetSize?: number;
+  eligibleProposalBacklogCount?: number;
+  retirementAvailableActionableCount?: number;
+  retirementAvailableAllCount?: number;
+  retirementRecentlyEvaluatedCount?: number;
+  supersessionClaimKeyCount?: number;
+  supersessionSubjectCount?: number;
   backupPath?: string;
 }
 

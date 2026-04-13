@@ -495,6 +495,12 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
     passType: options.pass,
     apply: options.apply,
     workingSetSize: health.total,
+    eligibleProposalBacklogCount: health.eligibleProposalBacklogCount,
+    retirementAvailableActionableCount: passStartContext.retirementAvailableActionableCandidates,
+    retirementAvailableAllCount: passStartContext.retirementAvailableAllCandidates,
+    retirementRecentlyEvaluatedCount: passStartContext.retirementRecentlyEvaluatedCandidates,
+    supersessionClaimKeyCount: passStartContext.supersessionClaimKeyClusters,
+    supersessionSubjectCount: passStartContext.supersessionSubjectClusters,
   });
   emitSurgeonProgress(deps.reportProgress, {
     kind: "phase",

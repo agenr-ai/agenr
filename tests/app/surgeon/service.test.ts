@@ -670,7 +670,15 @@ describe("runSurgeon", () => {
       expect.arrayContaining([
         expect.objectContaining({ kind: "phase", phase: "start", passType: "retirement" }),
         expect.objectContaining({ kind: "phase", phase: "load_pass_context_start", passType: "retirement" }),
-        expect.objectContaining({ kind: "phase", phase: "load_pass_context_complete", passType: "retirement" }),
+        expect.objectContaining({
+          kind: "phase",
+          phase: "load_pass_context_complete",
+          passType: "retirement",
+          workingSetSize: 4,
+          retirementAvailableActionableCount: expect.any(Number),
+          retirementAvailableAllCount: expect.any(Number),
+          retirementRecentlyEvaluatedCount: expect.any(Number),
+        }),
         expect.objectContaining({ kind: "phase", phase: "pass_start", passType: "retirement" }),
       ]),
     );
