@@ -2,14 +2,15 @@
 
 Procedures are agenr's durable how-to memory layer. Entries capture reusable facts and decisions. Episodes capture what happened in a session. Procedures capture the canonical method for doing something in this repository or runtime.
 
-Current Phase 2 behavior is intentionally narrow:
+Current implemented behavior spans Phase 2 write-side sync plus the dedicated Phase 3 read-side service:
 
 - procedures are authored in repo-owned YAML under `procedures/`
 - `agenr ingest procedures [path]` validates and syncs them into the database
 - the database stores canonical normalized procedure revisions plus recall text and optional embeddings
-- dedicated procedure recall and unified recall routing are not live yet
+- `src/app/procedures/recall/` provides a dedicated internal procedure recall pipeline
+- unified recall routing and OpenClaw-specific procedure answers are not live yet
 
-That means procedures already exist as first-class stored artifacts, but they are still a write-side and corpus-authoring subsystem first. The read-side recall path belongs to later phases.
+That means procedures now have their own internal read path, but they are not yet wired into the public `agenr recall` surface, unified recall routing, or OpenClaw-specific response shaping.
 
 ## Procedures vs Other Memory
 
@@ -21,6 +22,7 @@ That means procedures already exist as first-class stored artifacts, but they ar
 | Runtime form               | Stored entry rows                           | Stored episode rows            | Stored normalized procedure revisions |
 | Current public write path  | `agenr ingest entries <path>` and tools     | `agenr ingest episodes [path]` | `agenr ingest procedures [path]`      |
 | Current public recall path | Live                                        | Live                           | Not yet live                          |
+| Current internal recall path | Core + unified recall                     | Unified recall                 | Dedicated app-layer recall service    |
 
 ## Code Map
 
@@ -35,9 +37,11 @@ That means procedures already exist as first-class stored artifacts, but they ar
 - `src/adapters/db/procedure-queries.ts` - procedure persistence and active lookup queries
 - `src/adapters/files/procedure-files.ts` - local YAML discovery and raw file reads
 - `src/app/procedures/sync/` - prepare and execute sync workflow
+- `src/app/procedures/recall/` - dedicated procedure retrieval and canonical-match selection
 - `src/cli/commands/ingest-procedures.ts` - `agenr ingest procedures [path]`
 - `tests/core/procedures/normalization.test.ts` - core parse and normalization coverage
 - `tests/app/procedures/sync/service.test.ts` - sync planning and execution coverage
+- `tests/app/procedures/recall/service.test.ts` - dedicated procedure recall coverage
 
 ## Current CLI Surface
 
@@ -134,7 +138,7 @@ Current storage rules:
 - only one active row may exist per `procedure_key`
 - active means not retired and not superseded
 - `procedures_fts` indexes active procedure `title` and `recall_text`
-- a procedure vector index exists for later read-side retrieval work
+- the procedure vector index supports optional semantic reranking for dedicated procedure recall
 
 ## Sync Pipeline
 
@@ -186,6 +190,19 @@ This staged supersession flow exists because the schema enforces one active row 
 
 ## Important Current Semantics
 
+### Dedicated procedure recall is internal-first
+
+Phase 3 adds `runProcedureRecall()` under `src/app/procedures/recall/`.
+
+Current read-side behavior:
+
+- retrieval is FTS-first over active procedures
+- query embeddings are optional and only enable vector reranking when available
+- embedding or vector-search failures degrade to lexical-only ranking instead of failing the full recall path
+- callers receive ranked candidates plus one canonical top procedure only when the leader clears conservative thresholding and separation rules
+
+This service is intentionally separate from `src/core/recall/search.ts` and does not treat procedures as another `EntryType`.
+
 ### Source-only updates do not create new revisions
 
 If formatting or other non-semantic authoring changes only affect raw YAML and `source_hash`, agenr updates the existing row in place. It does not create a fresh historical revision just because the YAML formatting changed.
@@ -224,9 +241,9 @@ These seed files intentionally pressure-test:
 
 ## What Procedures Do Not Do Yet
 
-Procedures are not yet part of the live read path.
+Procedures are not yet part of the live public or unified recall path.
 
-Current non-goals for the implemented Phase 2 state:
+Current non-goals for the implemented Phase 3 state:
 
 - no dedicated public procedure recall command
 - no unified recall routing into `procedures`

@@ -871,6 +871,21 @@ describe("createDatabase", () => {
     expect(results.map((result) => result.procedure.id)).toContain(procedure.id);
   });
 
+  it("matches procedure FTS results for natural-language queries through lexical tier fallback", async () => {
+    const database = await createTestDatabase();
+    const procedure = createProcedure({
+      procedure_key: "agenr/release",
+      title: "Release agenr and publish packages",
+      goal: "Cut a release and publish packages safely.",
+    });
+
+    await database.upsertProcedure(procedure);
+
+    const results = await database.procedureFtsSearch({ text: "how do I do an agenr release", limit: 5 });
+
+    expect(results.map((result) => result.procedure.id)).toContain(procedure.id);
+  });
+
   it("returns procedure vector matches when vector search is supported", async () => {
     const database = await createTestDatabase();
     const left = createProcedure({

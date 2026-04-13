@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { buildLexicalPlan, type LexicalSearchTier } from "../../core/recall/lexical.js";
 import { normalizeProcedureDefinition } from "../../core/procedures/normalization.js";
 import type { Procedure, ProcedureDefinition } from "../../core/types.js";
 import {
@@ -13,6 +14,7 @@ import type { SqlExecutor } from "./queries.js";
 import { cosineSimilarity, readNumber, serializeEmbeddingForVector } from "./row-mapping.js";
 
 const LOOKUP_CHUNK_SIZE = 100;
+const FTS_TIERS = ["exact", "all_tokens", "any_tokens"] as const;
 
 /**
  * Inserts or updates one procedure revision row.
@@ -238,30 +240,62 @@ export async function procedureFtsSearch(
     return [];
   }
 
-  let result;
-  try {
-    result = await executor.execute({
-      sql: `
-        SELECT
-          ${prefixColumns(PROCEDURE_SELECT_COLUMNS, "p")},
-          bm25(procedures_fts, 1.0, 2.0) AS rank
-        FROM procedures_fts
-        JOIN procedures AS p ON p.rowid = procedures_fts.rowid
-        WHERE procedures_fts MATCH ?
-          AND ${buildActiveProcedureClause("p")}
-        ORDER BY bm25(procedures_fts, 1.0, 2.0)
-        LIMIT ?
-      `,
-      args: [query, params.limit],
-    });
-  } catch {
+  const plan = buildLexicalPlan(query);
+  if (plan.length === 0) {
     return [];
   }
 
-  return result.rows.map((row) => ({
-    procedure: mapProcedureRow(row),
-    rank: readNumber(row, "rank", Number.POSITIVE_INFINITY),
-  }));
+  const matches = new Map<
+    string,
+    {
+      procedure: Procedure;
+      rank: number;
+      tier: LexicalSearchTier["tier"];
+    }
+  >();
+
+  for (const tier of plan) {
+    let result;
+    try {
+      result = await executor.execute({
+        sql: `
+          SELECT
+            ${prefixColumns(PROCEDURE_SELECT_COLUMNS, "p")},
+            bm25(procedures_fts, 1.0, 2.0) AS rank
+          FROM procedures_fts
+          JOIN procedures AS p ON p.rowid = procedures_fts.rowid
+          WHERE procedures_fts MATCH ?
+            AND ${buildActiveProcedureClause("p")}
+          ORDER BY bm25(procedures_fts, 1.0, 2.0)
+          LIMIT ?
+        `,
+        args: [compileLexicalTier(tier), params.limit],
+      });
+    } catch {
+      continue;
+    }
+
+    for (const row of result.rows) {
+      const procedure = mapProcedureRow(row);
+      if (matches.has(procedure.id)) {
+        continue;
+      }
+
+      matches.set(procedure.id, {
+        procedure,
+        rank: readNumber(row, "rank", Number.POSITIVE_INFINITY),
+        tier: tier.tier,
+      });
+    }
+  }
+
+  return Array.from(matches.values())
+    .sort(compareProcedureFtsMatches)
+    .slice(0, params.limit)
+    .map(({ procedure, rank }) => ({
+      procedure,
+      rank,
+    }));
 }
 
 /**
@@ -537,6 +571,53 @@ function prefixColumns(columns: string, alias: string): string {
     .filter((column) => column.length > 0)
     .map((column) => `${alias}.${column}`)
     .join(", ");
+}
+
+/**
+ * Orders FTS candidates by lexical tier priority, then BM25 rank.
+ *
+ * @param left - Left procedure FTS candidate.
+ * @param right - Right procedure FTS candidate.
+ * @returns Negative when `left` should sort first.
+ */
+function compareProcedureFtsMatches(
+  left: { procedure: Procedure; rank: number; tier: LexicalSearchTier["tier"] },
+  right: { procedure: Procedure; rank: number; tier: LexicalSearchTier["tier"] },
+): number {
+  const tierDelta = ftsTierPriority(left.tier) - ftsTierPriority(right.tier);
+  if (tierDelta !== 0) {
+    return tierDelta;
+  }
+
+  if (left.rank !== right.rank) {
+    return left.rank - right.rank;
+  }
+
+  return left.procedure.procedure_key.localeCompare(right.procedure.procedure_key);
+}
+
+/**
+ * Resolves a stable numeric sort priority for one procedure FTS tier.
+ *
+ * @param tier - Candidate lexical tier.
+ * @returns Lower numbers sort first.
+ */
+function ftsTierPriority(tier: LexicalSearchTier["tier"]): number {
+  return FTS_TIERS.indexOf(tier as (typeof FTS_TIERS)[number]);
+}
+
+/**
+ * Compiles one lexical search tier into a SQLite FTS5 MATCH expression.
+ *
+ * @param tier - Planned lexical tier.
+ * @returns SQLite FTS5 MATCH query text.
+ */
+function compileLexicalTier(tier: LexicalSearchTier): string {
+  if (tier.tier === "exact") {
+    return `"${tier.text.replaceAll('"', '""')}"`;
+  }
+
+  return tier.tier === "all_tokens" ? tier.tokens.join(" ") : tier.tokens.join(" OR ");
 }
 
 /**
