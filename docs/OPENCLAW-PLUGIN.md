@@ -385,11 +385,12 @@ Current behavior:
 
 - attaches `sessionKey` for recall telemetry
 - degrades entry recall into lexical-only mode when query embeddings or vector search fail
-- supports unified routing across exact entry recall, historical-state recall, and episodic recall
-- returns routing metadata, rendered text, structured entry results, claim-centric projected entry annotations, structured episode results, and notices
+- supports unified routing across exact entry recall, historical-state recall, procedural recall, and episodic recall
+- supports `mode=procedures` to force dedicated procedure recall
+- returns routing metadata, rendered text, canonical procedure data, ranked procedure candidates, structured entry results, claim-centric projected entry annotations, structured episode results, and notices
 - groups entry output by claim family when `claim_key` is present and labels rows as `current`, `historical`, or `superseded`
 - includes freshness, provenance, and `why_surfaced` cues in the human-readable text output
-- uses `notices` to surface degraded recall and episode-semantic fallback instead of silently hiding those paths
+- uses `procedureNotices` and `notices` to surface degraded recall paths instead of silently hiding them
 
 ### `agenr_update`
 
@@ -424,7 +425,7 @@ Retired entries are excluded from recall.
 
 ### `agenr_trace`
 
-`agenr_trace` exposes the current v1 provenance view plus a narrow claim-family lineage view.
+`agenr_trace` exposes the current provenance view plus a narrow claim-family lineage view.
 
 Current selectors:
 

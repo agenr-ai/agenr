@@ -1,6 +1,6 @@
 # Evals
 
-`agenr` currently exposes one eval seam: a narrow internal recall-eval HTTP adapter used by `agenr-evals` to run isolated case-local recall requests against real `agenr` behavior, including degraded lexical fallback and unified recall.
+`agenr` currently exposes one eval seam: a narrow internal recall-eval HTTP adapter used by `agenr-evals` to run isolated case-local recall requests against real `agenr` behavior, including degraded lexical fallback, unified recall, and procedure-aware auto routing inside unified recall.
 
 The current contract is intentionally shaped around production parity rather than backward compatibility. The seam distinguishes:
 
@@ -150,6 +150,7 @@ Important request semantics:
 - `recallPath` is optional and defaults to `"core"`
 - `sandbox` is optional and controls where the isolated database lives and whether it is preserved
 - `memoryPool` is required but may be an empty array
+- the current HTTP boundary does not yet accept `procedurePool`, even though the app-layer eval contracts include procedure fixtures for direct-service tests
 - `recallRequest` is required
 - `unified` is optional and is only valid when `recallPath: "unified"`
 - `options.includeDiagnostics` enables structured diagnostics
@@ -160,7 +161,7 @@ Important request semantics:
 ### Supported `recallPath` values
 
 - `"core"` - run the real core recall pipeline
-- `"unified"` - run the higher-level unified recall router and return its entry results
+- `"unified"` - run the higher-level unified recall router and return its entry results plus unified metadata
 
 `"core"` is still the default path.
 
@@ -255,6 +256,8 @@ Boundary validation details:
 - `memoryPolicy.slotPolicies.attributeHeads` must be an object keyed by canonical attribute-head labels
 - each attribute-head policy must be `exclusive` or `multivalued`
 - the `unified` block is rejected unless `recallPath` is `"unified"`
+
+Even without an explicit `procedures` mode at the HTTP boundary, `mode: "auto"` can still route into procedures when the query text looks procedural.
 
 ### Boundary strictness
 
@@ -388,10 +391,10 @@ When `recallPath: "unified"`, the app service calls `runUnifiedRecall()` from [s
 
 Important unified-path behavior:
 
-- the unified router may query both entries and episodes internally
+- the unified router may query procedures, entries, episodes, or a supported combination internally
 - the eval response still returns only `result.entries` and `result.entryIds`
-- episode results are not surfaced in the top-level eval `result`
-- unified routing metadata is surfaced in `diagnostics.unifiedRecall`
+- procedure and episode results are not surfaced in the top-level eval `result`
+- unified routing metadata is surfaced in `metadata.unified`
 
 ## Diagnostics and timings
 
@@ -510,6 +513,9 @@ Current `metadata` fields:
 - `unified.routing` for unified-path cases
 - `unified.timeWindow` when unified recall resolved one
 - `unified.asOf` when unified recall echoed one
+- `unified.procedure` when unified recall returned a canonical procedure
+- `unified.procedureCandidates` when procedures were queried
+- `unified.procedureNotices` when the procedure path emitted notices
 - `unified.notices`
 - `unified.episodeCount`
 

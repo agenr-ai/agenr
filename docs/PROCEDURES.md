@@ -2,7 +2,7 @@
 
 Procedures are agenr's durable how-to memory layer. Entries capture reusable facts and decisions. Episodes capture what happened in a session. Procedures capture the canonical method for doing something in this repository or runtime.
 
-Current implemented behavior spans Phase 2 write-side sync, the dedicated Phase 3 retrieval service, and the Phase 4 unified-routing integration:
+Implemented behavior today:
 
 - procedures are authored in repo-owned YAML under `procedures/`
 - `agenr ingest procedures [path]` validates and syncs them into the database
@@ -10,7 +10,7 @@ Current implemented behavior spans Phase 2 write-side sync, the dedicated Phase 
 - `src/app/procedures/recall/` provides a dedicated internal procedure recall pipeline
 - `src/app/recall/` can route generic how-to and checklist-style asks into `procedures`
 - OpenClaw `agenr_recall` can return a structured canonical procedure answer plus supporting entries and episodes
-- the internal recall-eval seam can seed procedure fixtures and assert canonical unified procedure answers
+- the app-layer recall-eval runtime can seed procedure fixtures and assert canonical unified procedure answers
 
 That means procedures now have both a dedicated read path and a live unified read path for OpenClaw and eval-driven callers. The standalone CLI `agenr recall` command still targets entry recall only.
 
@@ -66,16 +66,17 @@ Current behavior:
 - real execution requires embeddings to be configured and available
 - invalid procedure files block real writes
 
-This command is the canonical Phase 2 sync path for procedural memory.
+This command is the canonical sync path for procedural memory.
 
 ## Current Live Read Surfaces
 
-Procedures are now live through unified recall consumers:
+Procedures are now live through these read surfaces:
 
+- `src/app/procedures/recall/service.ts` exposes dedicated procedure retrieval for app-layer callers
 - OpenClaw `agenr_recall` with `mode=auto` can route generic procedural asks into `procedures`
 - OpenClaw `agenr_recall` with `mode=procedures` forces procedural recall
 - unified recall can return one canonical procedure plus supporting entries and episodes for mixed asks
-- the recall-eval seam can provision `procedurePool` fixtures for unified-path tests
+- the app-layer recall-eval runtime can provision `procedurePool` fixtures for unified-path tests
 
 Current routing semantics:
 
@@ -142,7 +143,7 @@ Current provenance source kinds are:
 - `repo_file`
 - `manual`
 
-The current Phase 2 corpus is explicitly sourced. Agenr does not auto-mine procedure provenance yet.
+The repo corpus is explicitly sourced. Agenr does not auto-mine procedure provenance yet.
 
 ## Stored Procedure Shape
 
@@ -167,7 +168,7 @@ Current storage rules:
 
 ## Sync Pipeline
 
-Phase 2 sync is split into a pure plan step and an execution step.
+The sync workflow is split into a pure plan step and an execution step.
 
 ### 1. Discovery
 
@@ -215,9 +216,9 @@ This staged supersession flow exists because the schema enforces one active row 
 
 ## Important Current Semantics
 
-### Dedicated procedure recall remains the retrieval engine
+### Dedicated procedure recall is the retrieval engine
 
-Phase 3 adds `runProcedureRecall()` under `src/app/procedures/recall/`, and Phase 4 wires it into unified recall.
+`runProcedureRecall()` under `src/app/procedures/recall/` is the retrieval backend that unified recall calls when it routes into procedures.
 
 Current read-side behavior:
 
@@ -238,7 +239,7 @@ If the normalized body changes, `revision_hash` changes. That is treated as a re
 
 ### Missing files are not auto-retired
 
-Phase 2 intentionally does not prune missing procedures. Because the CLI accepts an optional target path, a partial sync must not retire unrelated procedures accidentally.
+The sync command intentionally does not prune missing procedures. Because the CLI accepts an optional target path, a partial sync must not retire unrelated procedures accidentally.
 
 If prune or delete semantics are needed later, they should arrive through an explicit command or flag.
 
@@ -248,7 +249,7 @@ If prune or delete semantics are needed later, they should arrive through an exp
 
 ## Current Seed Corpus
 
-The Phase 2 seed procedures are:
+The seed procedures are:
 
 - `agenr/release`
 - `agenr/surgeon-review`
@@ -266,7 +267,7 @@ These seed files intentionally pressure-test:
 
 ## What Procedures Do Not Do Yet
 
-Current non-goals after the implemented Phase 4 state:
+Current non-goals:
 
 - no dedicated standalone CLI procedure recall command
 - no procedure-aware path in the current `agenr recall` CLI command
@@ -275,4 +276,4 @@ Current non-goals after the implemented Phase 4 state:
 - no deletion or prune semantics for missing files
 - no direct procedure execution engine
 
-Those belong to later phases of the procedural-memory plan.
+Those remain out of scope for the implemented subsystem.

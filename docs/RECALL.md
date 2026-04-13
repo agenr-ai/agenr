@@ -1,17 +1,18 @@
 # Recall
 
-`agenr recall <query>` is a live CLI command backed by the v1 hybrid recall pipeline.
+`agenr recall <query>` is a live CLI command backed by the hybrid recall pipeline.
 
 It embeds the query when possible, retrieves candidates through vector search plus SQLite FTS, degrades to lexical-only entry recall when query embeddings or vector search fail at runtime, scores candidates in core, hydrates full entries, and records recall telemetry.
 
 This document describes the code as it exists now, not just the intended flow.
 
-Current releases also layer a unified agent-facing recall surface and an automatic OpenClaw session-start recall path on top of the base entry pipeline documented here. The standalone CLI in `src/cli/commands/recall.ts` still exposes the entry-recall surface shown below, while `src/app/recall/unified.ts` plus the OpenClaw `agenr_recall` tool add mode routing and episodic recall. Separately, `src/adapters/openclaw/hooks/before-prompt-build.ts` injects continuity context plus core memory at session start without calling the public recall tool.
+The current codebase also layers a unified agent-facing recall surface and an automatic OpenClaw session-start recall path on top of the base entry pipeline documented here. The standalone CLI in `src/cli/commands/recall.ts` still exposes the entry-recall surface shown below, while `src/app/recall/unified.ts`, `src/app/procedures/recall/service.ts`, and the OpenClaw `agenr_recall` tool add procedural routing plus episodic recall. Separately, `src/adapters/openclaw/hooks/before-prompt-build.ts` injects continuity context plus core memory at session start without calling the public recall tool.
 
 ## Code map
 
 - `src/cli/commands/recall.ts` - CLI option parsing, adapter wiring, and result formatting.
-- `src/app/recall/unified.ts` - mode routing, unified result shaping, and orchestration between entry recall and episode recall.
+- `src/app/recall/unified.ts` - mode routing, unified result shaping, and orchestration between entry, procedure, and episode recall.
+- `src/app/procedures/recall/service.ts` - dedicated procedure retrieval and canonical procedure selection.
 - `src/app/recall/types.ts` - agent-facing mode, routing, time-window, and split-result response types.
 - `src/core/recall/search.ts` - top-level recall pipeline orchestration.
 - `src/core/recall/scoring.ts` - vector, lexical, recency, importance, and final-score math.
@@ -83,32 +84,29 @@ agenr recall <query> \
 
 Unlike ingest, recall currently has no `--dry-run` flag.
 
-## Unified routing and episodic recall
+## Unified routing, procedures, and episodic recall
 
-This section covers the newer unified recall layer used by `runUnifiedRecall()` and the OpenClaw `agenr_recall` tool. It sits above the entry-only CLI flow documented later and decides whether to query semantic entries, episodic memory, or both.
+This section covers the unified recall layer used by `runUnifiedRecall()` and the OpenClaw `agenr_recall` tool. It sits above the entry-only CLI flow documented later and decides whether to query semantic entries, procedural memory, episodic memory, or a supported combination.
 
 ### Mode parameter
 
-The unified layer accepts three modes:
+The unified layer accepts four modes:
 
-- `auto` - default routing. The query text is classified and routed to entries, episodes, or both.
+- `auto` - default routing. The query text is classified and routed to entries, procedures, episodes, or a supported combination.
 - `entries` - force semantic entry recall only. This is the right mode for exact facts, decisions, thresholds, versions, and preferences.
 - `episodes` - force episodic recall only. With a resolved time window this becomes temporal episode search; without a time window it falls back to pure semantic episode search when embeddings are available.
+- `procedures` - force procedural recall only. This bypasses auto routing and runs the dedicated procedure retrieval service directly.
 
 `mode` is currently implemented in the unified app/tool layer, not in `src/cli/commands/recall.ts` yet.
 
 ### Auto-routing rules
 
-`routeRecall()` uses a simple four-band router:
-
-- **historical state -> entries and episodes**
-- **temporal narrative -> episodes**
-- **factual -> entries**
-- **mixed -> both**
+`routeRecall()` uses a heuristic router across factual, procedural, historical-state, temporal-narrative, and mixed signals.
 
 Current detection is deliberately heuristic, not LLM-based:
 
 - historical-state phrases are matched with conservative composite cues like `what was the previous`, `what was the earlier`, `what did we use before`, `what changed`, `changed from`, `before we switched`, and `before we migrated`
+- procedural phrases are matched with cues like `how do I`, `what steps`, `walk me through`, `step by step`, `checklist for`, `procedure for`, and `method for`
 - factual phrases are matched with regexes like `when did`, `when was`, `what decision`, `what preference`, `what's the default`, `which version`, and `what threshold`
 - narrative phrases are matched with regexes like `what happened`, `what were we doing`, `what was going on`, `summarize`, and `catch me up`
 - a **topic anchor** is detected when the query includes entry-only filters or wording like `about`, `regarding`, `with`, or `on <token>`
@@ -116,8 +114,13 @@ Current detection is deliberately heuristic, not LLM-based:
 
 That yields these concrete routing behaviors:
 
+- explicit `mode=procedures` -> `procedures`
+- procedural + no supported time window or topic anchor -> `procedures`
+- procedural + topic anchor -> `procedures` and `entries`
+- procedural + supported time window -> `procedures` and `episodes`
+- procedural + supported time window + topic anchor -> `procedures`, `episodes`, and `entries`
 - historical-state + no supported time window -> `entries` and `episodes`
-- historical-state + supported time window -> `entries` and `episodes`
+- historical-state + procedural -> `procedures`, `entries`, and `episodes`
 - factual + no supported time window -> `entries`
 - factual + supported time window -> `entries` and `episodes`
 - narrative + supported time window + no topic anchor -> `episodes`
@@ -131,6 +134,7 @@ Explicit overrides still win:
 
 - `mode=entries` always queries entries only
 - `mode=episodes` always queries episodes only
+- `mode=procedures` always queries procedures only
 
 ### Temporal window parser
 
@@ -218,23 +222,27 @@ If the router wants semantic episode search but query embeddings are unavailable
 
 ### How results are returned
 
-Unified recall does **not** merge episodes and entries into one ranked list. `UnifiedRecallResult` returns them separately:
+Unified recall does **not** merge procedures, episodes, and entries into one ranked list. `UnifiedRecallResult` returns them separately:
 
 - `routing` - requested mode, detected intent, queried backends, and routing reason
 - optional `parsedTimeWindow` - the internal resolved temporal window object used by the app layer
 - optional `timeWindow` - resolved start/end/timezone/resolvedFrom metadata
 - optional `asOf` - explicit current-vs-prior reference point applied to entry recall
+- optional `procedure` - one canonical procedure answer when the dedicated procedure service found a stable leader
+- `procedureCandidates` - ranked procedure candidates preserved separately from entry and episode results
+- `procedureNotices` - degraded-mode or lexical-only notices from the dedicated procedure retrieval path
 - `episodes` - episode matches
 - `entries` - semantic entry matches
 - `claimTransitions` - compact read-side change summaries built from recalled claim families plus any nearby episode context
 - `notices` - fallback and scope notes
-- `count` - total across both sections
+- `count` - total across all returned sections
 
 The OpenClaw formatter preserves that separation in text output:
 
 - `Recall Route` first
 - then optional `Resolved Time Window`
 - then optional `As Of`
+- then `Procedure Matches` whenever procedures were queried or procedure data was returned
 - then claim-aware `Entry Matches` before `Episode Matches` when the detected intent is `historical_state`
 - then optional `Claim Transitions`
 - otherwise `Episode Matches` before `Entry Matches`
@@ -520,7 +528,7 @@ All component scores and the final score are clamped into `0-1`.
 
 ### Historical-state expansion and claim-key shaping
 
-Entry recall has one important ranking variant that the old v1-only docs did not cover: `rankingProfile: "historical_state"`.
+Entry recall has one important ranking variant that older docs did not cover: `rankingProfile: "historical_state"`.
 
 Today that profile is set by unified recall when the router detects a prior-state question such as "what was the previous approach". The core pipeline then changes behavior in four ways:
 

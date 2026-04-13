@@ -211,8 +211,8 @@ Current procedure characteristics:
 - current write behavior supports create, source-only update, semantic supersession, unchanged, and invalid planning outcomes
 - procedures store deterministic `recall_text`, `revision_hash`, `source_hash`, optional embeddings, and lifecycle state
 - the current public sync surface is `agenr ingest procedures [path]`
-
-Dedicated procedure recall and unified recall routing are not live yet. The current implemented subsystem is authoring, storage, and sync.
+- dedicated procedure recall runs through `src/app/procedures/recall/`
+- unified recall can route procedural asks into procedures and return a canonical procedure with supporting entries and episodes
 
 ### 5.4 Surgeon runs and proposals
 
@@ -357,7 +357,7 @@ Current behavior:
 
 One repo-specific feature matters here: historical-state expansion. The adapter can reintroduce inactive lineage-linked predecessors when the query appears to ask about an earlier or previous state.
 
-Another Phase 3 feature now lives at the same read boundary: a lightweight runtime slot-policy registry. Claim keys still identify exact slots, but read-time shaping can now distinguish `exclusive` slots from `multivalued` slots so same-key siblings are not always treated as mutually competing current truth.
+The same read boundary also carries a lightweight runtime slot-policy registry. Claim keys still identify exact slots, but read-time shaping can now distinguish `exclusive` slots from `multivalued` slots so same-key siblings are not always treated as mutually competing current truth.
 
 ### 7.3 Unified recall
 
@@ -367,16 +367,18 @@ It can query:
 
 - entries only
 - episodes only
-- both
+- procedures only
+- any supported combination of procedures, entries, and episodes
 
 Routing uses actual heuristics in code, including:
 
 - factual versus narrative phrasing
+- procedural phrasing such as how-to, steps, method, checklist, and walkthrough asks
 - resolved temporal windows
 - topic anchors
 - historical-state patterns such as "what changed" or "what did we use before"
 
-The router also emits user-facing notices about entry-only filters, episode freshness, and semantic episode fallback behavior. Its Phase 3 response shape now includes explicit `asOf` metadata when requested plus compact claim-transition summaries that can attach nearby episode context without collapsing durable entries and episodes into one undifferentiated result list.
+The router also emits user-facing notices about entry-only filters, episode freshness, semantic episode fallback behavior, and lexical-only procedure fallback. Its response shape includes explicit `asOf` metadata when requested, canonical procedure and procedure-candidate sections when procedures were queried, plus compact claim-transition summaries that can attach nearby episode context without collapsing the different memory types into one undifferentiated result list.
 
 ### 7.4 Episode ingest
 
