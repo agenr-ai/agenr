@@ -17,12 +17,13 @@ The goal is corpus health, not aggressive deletion. The surgeon is designed to p
 - `src/app/surgeon/runtime.ts` - top-level runtime wiring: config loading, model selection, recall-port creation, DB backup, and status/history/actions loaders
 - `src/app/surgeon/service.ts` - run lifecycle for single passes and autonomous runs, budget checks, prompt construction, agent-loop orchestration, and final persistence
 - `src/app/surgeon/claim-key-quality.ts` - deterministic `claim_key_quality` workflow
+- `src/app/surgeon/proposal-review.ts` - shared proposal-application helpers used by proposal resolution and manual review
 - `src/app/surgeon/budget.ts` - cost and context tracking
 - `src/app/surgeon/completion-guard.ts` - pagination and adjudication state for `complete_pass`
 - `src/app/surgeon/progress.ts` - structured progress events
 - `src/app/surgeon/prompts.ts` - system prompt plus pass-specific prompts
 - `src/app/surgeon/trace-logger.ts` - verbose event logging and optional trace-file output
-- `src/app/surgeon/tools/*.ts` - tool implementations for `retirement` and `supersession`
+- `src/app/surgeon/tools/*.ts` - tool implementations for `retirement` and `supersession`, including `update_entry`
 - `src/app/surgeon/ports.ts` - `SurgeonPort` interface
 - `src/adapters/db/surgeon-port.ts` - DB-backed `SurgeonPort`
 - `src/adapters/db/surgeon-queries.ts` - health, candidate, inspection, supersession-cluster, and claim-key-quality working-set queries
@@ -125,7 +126,8 @@ The pass is claim-key first:
 
 - the initial prompt tells the model to sweep `claim_key` clusters first
 - continuation prompts keep pushing it to finish the claim-key sweep before widening to `subject`
-- completion can be rejected if it widens too early or has not adjudicated enough claim-key work
+- `complete_pass` is only accepted early when both claim-key and subject sweeps are exhausted, or when budget pressure or the rejection safety valve forces a stop
+- widening into `subject` before claim-key exhaustion still counts against completion and is explicitly rejected while budget remains
 
 The current tool surface lets it:
 
@@ -426,7 +428,9 @@ High-level phases:
 
 `claim_key_quality` also emits bounded stage progress snapshots, including preview counters, cumulative repair counts, processed-entry counts, and elapsed time. The CLI turns these into terse stderr lines, with richer detail in `--verbose` mode.
 
-For agent-loop passes, `load_pass_context_complete` now reports the active-entry count plus pass-specific remaining work. That means eligible proposal backlog for `proposal_resolution`, claim-key and subject clusters for `supersession`, and actionable vs widened all-scope retirement counts for `retirement`.
+`proposal_resolution` emits its own `proposal_resolution_progress` events with processed counts plus applied, inactive, invalid, no-op, and targeted-entry totals.
+
+`load_pass_context_complete` reports the active-entry count plus pass-specific remaining work. That means eligible proposal backlog for `proposal_resolution`, claim-key and subject clusters for `supersession`, and actionable vs widened all-scope retirement counts for `retirement`.
 
 ## Budget, completion, and bounded slices
 
@@ -467,14 +471,14 @@ Supersession completion currently tracks:
 - viewed subject clusters
 - whether the run widened into subject review before claim-key exhaustion
 
-It can reject completion when:
+In normal-budget conditions it rejects completion unless both the claim-key sweep and the subject sweep are exhausted. Before that point it rejects completion when:
 
 - the claim-key sweep is not actually complete
 - too few claim-key clusters were reviewed
 - no meaningful adjudication happened
 - the pass widened to subject review too early
 
-Both passes use a 50-rejection safety valve.
+Both passes use a 50-rejection safety valve. Supersession can also accept an early stop when budget usage crosses the 75% threshold.
 
 ### Bounded slices
 
@@ -628,9 +632,10 @@ Current action types in play include:
 - `retire`
 - `update_entry`
 - `resolve_conflict`
+- `flag_review`
 - `skip`
 
-Dry-run passes still record action audit rows for would-be retirements and would-be updates.
+Agent-loop dry-runs do not persist hypothetical `retire` or `update_entry` rows - those actions are only audited after a real mutation succeeds. Dry-run `proposal_resolution` still records `update_entry` audit rows against the targeted proposal entries, and `claim_key_quality` records `flag_review` actions when it emits durable proposals.
 
 ### `surgeon_run_proposals`
 
@@ -648,6 +653,10 @@ Unresolved claim-key-quality work is persisted separately as proposals with:
 - confidence
 - source
 - `eligible_for_apply`
+- `review_status`
+- `reviewed_at`
+- `review_reason`
+- `applied_action_count`
 - timestamp
 
 ## Practical workflow
