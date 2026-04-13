@@ -606,6 +606,7 @@ function createServices(
     dbPath: "test.db",
     entries: database,
     episodes: database,
+    procedures: database,
     memory: createOpenClawRepository(database),
     embedding,
     recall,

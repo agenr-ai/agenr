@@ -9,6 +9,7 @@ import { createInstrumentedRecallPorts } from "./instrumented-recall-ports.js";
 import { buildRecallEvalErrorResponse, buildRecallEvalSuccessResponse } from "./normalize-response.js";
 import type { RecallEvalSandboxContext } from "./ports.js";
 import { provisionRecallEvalFixtures } from "./provision-fixtures.js";
+import { provisionRecallEvalProcedureFixtures } from "./provision-procedure-fixtures.js";
 import { setupRecallEvalSandbox } from "./sandbox.js";
 
 /**
@@ -87,17 +88,32 @@ export async function runRecallEvalCase(request: RecallEvalCaseRequest): Promise
       });
     }
 
-    if (request.memoryPool.length > 0) {
+    if (request.memoryPool.length > 0 || (request.procedurePool?.length ?? 0) > 0) {
       const provisionStartedAt = Date.now();
       try {
-        const provisionResult = await provisionRecallEvalFixtures({
-          caseId: request.caseId,
-          memoryPool: request.memoryPool,
-          store: sandbox.fixtureStore,
-          embedding: getEmbeddingPort(),
-          provisionedAt,
-        });
-        diagnostics.recordProvision(provisionResult, elapsedMs(provisionStartedAt));
+        let entryProvisionResult: Awaited<ReturnType<typeof provisionRecallEvalFixtures>> | undefined;
+        if (request.memoryPool.length > 0) {
+          entryProvisionResult = await provisionRecallEvalFixtures({
+            caseId: request.caseId,
+            memoryPool: request.memoryPool,
+            store: sandbox.fixtureStore,
+            embedding: getEmbeddingPort(),
+            provisionedAt,
+          });
+        }
+        if ((request.procedurePool?.length ?? 0) > 0) {
+          await provisionRecallEvalProcedureFixtures({
+            caseId: request.caseId,
+            procedurePool: request.procedurePool ?? [],
+            store: sandbox.fixtureStore,
+            provisionedAt,
+          });
+        }
+        if (entryProvisionResult) {
+          diagnostics.recordProvision(entryProvisionResult, elapsedMs(provisionStartedAt));
+        } else {
+          diagnostics.recordFixtureProvisionTiming(elapsedMs(provisionStartedAt));
+        }
       } catch (error) {
         diagnostics.recordFixtureProvisionTiming(elapsedMs(provisionStartedAt));
         return buildRecallEvalErrorResponse({
@@ -141,6 +157,7 @@ export async function runRecallEvalCase(request: RecallEvalCaseRequest): Promise
               },
               {
                 database: sandbox.episodeDatabase,
+                procedures: sandbox.procedureDatabase,
                 recall: recallPorts,
                 embeddingAvailable: embeddingSupport.available,
                 ...(embeddingSupport.error ? { embeddingError: embeddingSupport.error } : {}),

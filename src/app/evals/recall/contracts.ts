@@ -1,6 +1,6 @@
 import type { RecallInput, RecallOutput } from "../../../core/recall/types.js";
 import type { RecallClaimKeyTrace, RecallDegradedTrace, RecallNoResultReason } from "../../../core/recall/trace.js";
-import type { ClaimKeySource, ClaimKeyStatus, ClaimSupportMode, EntryType, Expiry } from "../../../core/types.js";
+import type { ClaimKeySource, ClaimKeyStatus, ClaimSupportMode, EntryType, Expiry, ProcedureSource, ProcedureStep } from "../../../core/types.js";
 import type { ClaimSlotPolicy, ClaimSlotPolicyConfig } from "../../../core/claim-slot-policy.js";
 import type {
   ClaimCentricClaimStatus,
@@ -85,6 +85,48 @@ export interface RecallEvalFixtureEntry {
 }
 
 /**
+ * Explicit fixture procedure schema for seeding a recall eval procedure pool.
+ */
+export interface RecallEvalFixtureProcedure {
+  /** Optional stable procedure identifier supplied by the eval harness. */
+  id?: string;
+  /** Stable procedure key used for active revision lookup. */
+  procedure_key: string;
+  /** Human-readable procedure title. */
+  title: string;
+  /** Short goal statement for the authored procedure. */
+  goal: string;
+  /** Applicability guidance for when this procedure should be used. */
+  when_to_use?: string[];
+  /** Applicability guidance for when this procedure should not be used. */
+  when_not_to_use?: string[];
+  /** Ordered prerequisite checklist. */
+  prerequisites?: string[];
+  /** Ordered authored procedure steps. */
+  steps: ProcedureStep[];
+  /** Verification checks for the procedure. */
+  verification?: string[];
+  /** Expected failure modes for the procedure. */
+  failure_modes?: string[];
+  /** Explicit authored provenance for the procedure. */
+  sources?: ProcedureSource[];
+  /** Optional source file path attached to the stored procedure. */
+  source_file?: string;
+  /** Optional retirement flag for inactive procedure fixtures. */
+  retired?: boolean;
+  /** Optional retirement timestamp when the fixture is retired. */
+  retired_at?: string;
+  /** Optional retirement reason attached to the fixture. */
+  retired_reason?: string;
+  /** Optional successor procedure ID when the fixture is superseded. */
+  superseded_by?: string;
+  /** Optional creation timestamp for deterministic ordering. */
+  created_at?: string;
+  /** Optional update timestamp for deterministic ordering. */
+  updated_at?: string;
+}
+
+/**
  * Recall query payload aligned with the real core recall input shape.
  */
 export type RecallEvalQueryRequest = Pick<
@@ -150,6 +192,8 @@ export interface RecallEvalCaseRequest {
   sandbox?: RecallEvalSandboxRequest;
   /** Explicit memory fixtures to provision for the isolated case. */
   memoryPool: RecallEvalFixtureEntry[];
+  /** Optional procedure fixtures to provision for unified procedural cases. */
+  procedurePool?: RecallEvalFixtureProcedure[];
   /** Recall query configuration for the case under test. */
   recallRequest: RecallEvalQueryRequest;
   /** Unified-only caller context used when the seam exercises unified recall. */
@@ -289,6 +333,24 @@ export interface RecallEvalUnifiedMetadata {
   timeWindow?: UnifiedRecallTimeWindow;
   /** Optional explicit as-of reference point echoed by unified recall. */
   asOf?: string;
+  /** Canonical procedure answer when unified recall returned one. */
+  procedure?: {
+    id: string;
+    procedureKey: string;
+    title: string;
+    goal: string;
+  };
+  /** Ranked procedure candidates preserved for unified eval assertions. */
+  procedureCandidates: Array<{
+    id: string;
+    procedureKey: string;
+    title: string;
+    score: number;
+    lexicalScore: number;
+    vectorScore: number;
+  }>;
+  /** Procedure-specific degraded-mode or routing notices. */
+  procedureNotices: string[];
   /** User-facing notices returned by unified recall. */
   notices: string[];
   /** Number of episode results returned alongside entries. */

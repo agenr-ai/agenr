@@ -31,7 +31,7 @@ const DEFAULT_RECALL_LIMIT = 10;
 /**
  * Supported recall-mode values accepted by `agenr_recall`.
  */
-const RECALL_MODES = ["auto", "entries", "episodes"] as const;
+const RECALL_MODES = ["auto", "entries", "episodes", "procedures"] as const;
 
 export { DEFAULT_RECALL_LIMIT, ENTRY_TYPE_DESCRIPTION, EXPIRY_DESCRIPTION, RECALL_MODES, UPDATE_EXPIRY_DESCRIPTION };
 
@@ -127,7 +127,7 @@ export function parseRecallMode(value: string | undefined): UnifiedRecallMode | 
     return undefined;
   }
 
-  if (value === "auto" || value === "entries" || value === "episodes") {
+  if (value === "auto" || value === "entries" || value === "episodes" || value === "procedures") {
     return value;
   }
 
@@ -449,6 +449,11 @@ export function formatUnifiedRecallResults(result: UnifiedRecallResult): string 
     lines.push("");
   }
 
+  if (result.routing.queried.includes("procedures") || result.procedure || result.procedureCandidates.length > 0 || result.procedureNotices.length > 0) {
+    appendProcedureMatches(lines, result);
+    lines.push("");
+  }
+
   const renderEntriesFirst = result.routing.detectedIntent === "historical_state";
   if (renderEntriesFirst) {
     appendEntryMatches(lines, result);
@@ -473,6 +478,37 @@ export function formatUnifiedRecallResults(result: UnifiedRecallResult): string 
   }
 
   return lines.join("\n");
+}
+
+/** Append the procedure result section in tool-readable text format. */
+function appendProcedureMatches(lines: string[], result: UnifiedRecallResult): void {
+  lines.push("Procedure Matches");
+  if (!result.procedure && result.procedureCandidates.length === 0) {
+    lines.push("None.");
+  } else {
+    if (result.procedure) {
+      appendCanonicalProcedure(lines, result.procedure, result.procedureCandidates);
+    } else {
+      lines.push("Canonical procedure: none.");
+    }
+
+    const additionalCandidates = result.procedureCandidates.filter((candidate) => candidate.procedure.id !== result.procedure?.id);
+    if (additionalCandidates.length > 0) {
+      lines.push("Other Candidates");
+      for (const [index, candidate] of additionalCandidates.entries()) {
+        lines.push(
+          `${index + 1}. ${candidate.procedure.procedure_key} | ${candidate.procedure.title} | score ${candidate.score.toFixed(2)} | lexical=${candidate.scores.lexical.toFixed(2)} | vector=${candidate.scores.vector.toFixed(2)}`,
+        );
+      }
+    }
+  }
+
+  if (result.procedureNotices.length > 0) {
+    lines.push("Procedure Notices");
+    for (const notice of result.procedureNotices) {
+      lines.push(`- ${notice}`);
+    }
+  }
 }
 
 /** Append the entry result section in tool-readable text format. */
@@ -521,6 +557,42 @@ function appendEpisodeMatches(lines: string[], result: UnifiedRecallResult): voi
   }
 }
 
+/** Append one canonical procedure block with structured authored fields. */
+function appendCanonicalProcedure(
+  lines: string[],
+  procedure: NonNullable<UnifiedRecallResult["procedure"]>,
+  candidates: UnifiedRecallResult["procedureCandidates"],
+): void {
+  const leadCandidate = candidates.find((candidate) => candidate.procedure.id === procedure.id);
+  lines.push(
+    leadCandidate
+      ? `Canonical Procedure. ${procedure.procedure_key} | ${procedure.title} | score ${leadCandidate.score.toFixed(2)}`
+      : `Canonical Procedure. ${procedure.procedure_key} | ${procedure.title}`,
+  );
+  lines.push(`   goal=${procedure.goal}`);
+  appendLabeledList(lines, "when_to_use", procedure.when_to_use);
+  appendLabeledList(lines, "when_not_to_use", procedure.when_not_to_use);
+  appendLabeledList(lines, "prerequisites", procedure.prerequisites);
+
+  lines.push("   steps");
+  for (const [index, step] of procedure.steps.entries()) {
+    lines.push(`   ${index + 1}. [${step.kind}] ${step.instruction}`);
+    const stepDetails = formatProcedureStepDetails(step);
+    if (stepDetails.length > 0) {
+      for (const detail of stepDetails) {
+        lines.push(`      ${detail}`);
+      }
+    }
+  }
+
+  appendLabeledList(lines, "verification", procedure.verification);
+  appendLabeledList(lines, "failure_modes", procedure.failure_modes);
+  lines.push("   sources");
+  for (const source of procedure.sources) {
+    lines.push(`   - ${formatProcedureSource(source)}`);
+  }
+}
+
 /** Append the compact claim-transition explanation section. */
 function appendClaimTransitions(lines: string[], result: UnifiedRecallResult): void {
   lines.push("Claim Transitions");
@@ -552,13 +624,65 @@ function appendClaimTransitions(lines: string[], result: UnifiedRecallResult): v
  * @returns Log summary string.
  */
 export function formatUnifiedRecallLogSummary(result: UnifiedRecallResult): string {
+  const procedureCount = result.procedureCandidates.length;
+  const procedureSummary = result.procedure ? ` [procedure: ${JSON.stringify(truncate(result.procedure.title, 80))}]` : "";
   const entrySubjects = result.entries.map((entry) => entry.entry.subject.trim()).filter((subject) => subject.length > 0);
   const displayed = entrySubjects.slice(0, RESULT_SUBJECT_LOG_LIMIT).map((subject) => JSON.stringify(truncate(subject, 80)));
   const remaining = entrySubjects.length - RESULT_SUBJECT_LOG_LIMIT;
   const suffix = displayed.length === 0 ? "" : ` [entry subjects: ${displayed.join(", ")}${remaining > 0 ? `, ... and ${remaining} more` : ""}]`;
-  return `${result.episodes.length} episode${result.episodes.length === 1 ? "" : "s"}, ${result.entries.length} entr${
+  const entryEpisodeSummary = `${result.episodes.length} episode${result.episodes.length === 1 ? "" : "s"}, ${result.entries.length} entr${
     result.entries.length === 1 ? "y" : "ies"
-  }${suffix}`;
+  }`;
+  if (procedureCount === 0 && !result.procedure) {
+    return `${entryEpisodeSummary}${suffix}`;
+  }
+
+  return `${procedureCount} procedure candidate${procedureCount === 1 ? "" : "s"}, ${entryEpisodeSummary}${procedureSummary}${suffix}`;
+}
+
+/** Appends one short labeled string list inside a structured procedure block. */
+function appendLabeledList(lines: string[], label: string, values: string[]): void {
+  lines.push(`   ${label}`);
+  if (values.length === 0) {
+    lines.push("   - none");
+    return;
+  }
+
+  for (const value of values) {
+    lines.push(`   - ${value}`);
+  }
+}
+
+/** Formats the structured details that matter for one authored procedure step. */
+function formatProcedureStepDetails(step: UnifiedRecallResult["procedureCandidates"][number]["procedure"]["steps"][number]): string[] {
+  switch (step.kind) {
+    case "run_command":
+      return [`command=${step.command}`];
+    case "read_reference":
+      return [`ref=${formatProcedureSource(step.ref)}`];
+    case "inspect_state":
+      return [step.target ? `target=${step.target}` : undefined, step.query ? `query=${step.query}` : undefined].filter(
+        (value): value is string => value !== undefined,
+      );
+    case "edit_file":
+      return [`path=${step.path}`, `edit=${step.edit}`];
+    case "ask_user":
+      return [`prompt=${step.prompt}`];
+    case "invoke_tool":
+      return [step.tool ? `tool=${step.tool}` : undefined, step.arguments ? `arguments=${JSON.stringify(step.arguments)}` : undefined].filter(
+        (value): value is string => value !== undefined,
+      );
+    case "verify":
+      return step.checks.map((check) => `check=${check}`);
+    default:
+      return [];
+  }
+}
+
+/** Formats one procedure provenance or reference source into concise text. */
+function formatProcedureSource(source: NonNullable<UnifiedRecallResult["procedure"]>["sources"][number]): string {
+  const parts = [source.kind, source.label, source.path, source.locator].filter((value): value is string => Boolean(value && value.length > 0));
+  return parts.join(" | ");
 }
 
 /**

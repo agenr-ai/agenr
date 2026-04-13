@@ -1,10 +1,11 @@
-import type { EpisodeDatabasePort, RecallPorts } from "../../core/ports.js";
+import type { EpisodeDatabasePort, ProcedureDatabasePort, RecallPorts } from "../../core/ports.js";
 import type { ClaimSlotPolicyConfig } from "../../core/claim-slot-policy.js";
 import { recall } from "../../core/recall/search.js";
 import { parseTemporalWindow } from "../../core/episode/temporal-window.js";
 import { searchEpisodes } from "../../core/episode/search.js";
 import type { RecallExecutionOptions, RecallExecutionTraceSummary, RecallTraceSink } from "../../core/recall/trace.js";
 import type { RecallInput } from "../../core/recall/types.js";
+import { runProcedureRecall } from "../procedures/recall/service.js";
 
 import { flattenClaimCentricRecallFamilies, projectClaimCentricRecallEntries } from "./claim-centric.js";
 import { buildClaimTransitionExplanations } from "./transitions.js";
@@ -13,7 +14,7 @@ import type { UnifiedRecallInput, UnifiedRecallMode, UnifiedRecallResult, Unifie
 const EPISODE_FRESHNESS_NOTICE = "Episodes cover consolidated prior sessions only; the most recent completed session may not appear yet.";
 const EPISODE_SEMANTIC_FALLBACK_NOTICE = "Semantic episode search unavailable - showing temporal results only.";
 const EPISODE_SEMANTIC_UNAVAILABLE_NOTICE = "Semantic episode search unavailable - no semantic episode results could be returned.";
-const ENTRY_FILTER_NOTICE = "Threshold, type filters, and tag filters were applied to entries only.";
+const ENTRY_FILTER_NOTICE = "Type and tag filters were applied to entries only.";
 const HISTORICAL_STATE_PATTERNS = [
   "what was the previous",
   "what was the earlier",
@@ -34,12 +35,42 @@ const HISTORICAL_STATE_REGEX_PATTERNS = [
   /\bwhat\b.*\bplan\b.*\bearlier\b/u,
   /\bwhat\b.*\bplan\b.*\bbefore\b/u,
 ] as const;
+const PROCEDURAL_PATTERNS = [
+  "how do i",
+  "how should i",
+  "how can i",
+  "what steps",
+  "which steps",
+  "walk me through",
+  "guide me through",
+  "step by step",
+  "step-by-step",
+  "checklist for",
+  "process for",
+  "procedure for",
+  "method for",
+  "instructions for",
+  "best way to",
+  "recommended way to",
+] as const;
+const PROCEDURAL_REGEX_PATTERNS = [
+  /\bhow (?:do|should|can) (?:i|we)\b/u,
+  /\bhow to\b/u,
+  /\bwhat (?:are the )?steps\b/u,
+  /\bwhich steps\b/u,
+  /\bwalk me through\b/u,
+  /\bguide me through\b/u,
+  /\bstep(?: |-)?by(?: |-)?step\b/u,
+  /\b(?:checklist|playbook|runbook|procedure|process|instructions?|workflow|method)\b.*\b(?:for|to)\b/u,
+  /\bwhat(?:'s| is) the (?:best|recommended|right) way to\b/u,
+] as const;
 
 /**
  * Dependencies needed by the unified recall orchestration layer.
  */
 export interface UnifiedRecallDeps {
   database: EpisodeDatabasePort;
+  procedures: ProcedureDatabasePort;
   recall: RecallPorts;
   embeddingAvailable: boolean;
   embeddingError?: string;
@@ -64,8 +95,12 @@ export async function runUnifiedRecall(input: UnifiedRecallInput, deps: UnifiedR
   const hasEntryFilters = hasEntryScopedFilters(input);
   const topicAnchor = hasTopicAnchor(input.text, hasEntryFilters);
   const historicalStatePattern = detectHistoricalStatePattern(input.text);
+  const proceduralPattern = detectProceduralPattern(input.text);
   if (historicalStatePattern) {
     deps.debugLog?.(`[agenr] unified recall matched historical-state pattern=${JSON.stringify(historicalStatePattern)} query=${JSON.stringify(input.text)}`);
+  }
+  if (proceduralPattern) {
+    deps.debugLog?.(`[agenr] unified recall matched procedural pattern=${JSON.stringify(proceduralPattern)} query=${JSON.stringify(input.text)}`);
   }
   const routing = routeRecall({
     requested,
@@ -98,6 +133,22 @@ export async function runUnifiedRecall(input: UnifiedRecallInput, deps: UnifiedR
     notices.push(ENTRY_FILTER_NOTICE);
   }
 
+  const procedureResults = routing.queried.includes("procedures")
+    ? await runProcedureRecall(
+        {
+          text: input.text,
+          ...(input.limit !== undefined ? { limit: input.limit } : {}),
+          ...(input.threshold !== undefined ? { threshold: input.threshold } : {}),
+        },
+        {
+          db: deps.procedures,
+          ...(deps.embedQuery ? { embedQuery: deps.embedQuery } : {}),
+        },
+      )
+    : {
+        candidates: [],
+        notices: [],
+      };
   const entries = await maybeRunEntryRecall({
     input,
     deps,
@@ -137,13 +188,16 @@ export async function runUnifiedRecall(input: UnifiedRecallInput, deps: UnifiedR
         }
       : {}),
     ...(input.asOf ? { asOf: input.asOf.trim() } : {}),
+    ...(procedureResults.canonicalProcedure ? { procedure: procedureResults.canonicalProcedure } : {}),
+    procedureCandidates: procedureResults.candidates,
+    procedureNotices: dedupePreservingOrder(procedureResults.notices),
     episodes,
     entries: rawEntries,
     projectedEntries,
     entryFamilies,
     claimTransitions,
     notices: dedupePreservingOrder(notices),
-    count: episodes.length + rawEntries.length,
+    count: procedureResults.candidates.length + episodes.length + rawEntries.length,
   };
 }
 
@@ -158,6 +212,7 @@ export function routeRecall(params: { requested: UnifiedRecallMode; text: string
   const factual = /^(when did|when was|what decision|what preference|what(?:'s| is) the default|which version|what threshold)\b/.test(lower);
   const narrative = /\b(what happened|what were we doing|what was going on|summarize|catch me up)\b/.test(lower);
   const historicalState = detectHistoricalStatePattern(params.text) !== undefined;
+  const procedural = detectProceduralPattern(params.text) !== undefined;
   const topicAnchor = hasTopicAnchor(params.text, params.hasEntryFilters);
 
   if (params.requested === "entries") {
@@ -180,14 +235,27 @@ export function routeRecall(params: { requested: UnifiedRecallMode; text: string
     };
   }
 
+  if (params.requested === "procedures") {
+    return {
+      requested: params.requested,
+      detectedIntent: "procedural",
+      queried: ["procedures"],
+      reason: "Explicit mode=procedures override.",
+    };
+  }
+
   if (historicalState) {
     return {
       requested: params.requested,
       detectedIntent: "historical_state",
-      queried: ["entries", "episodes"],
+      queried: procedural ? ["procedures", "entries", "episodes"] : ["entries", "episodes"],
       reason: params.parsedTimeWindow
-        ? "The query asks about a previous state or transition and includes a supported time expression, so both entries and episodes were queried."
-        : "The query asks about a previous state or transition, so both entries and episodes were queried.",
+        ? procedural
+          ? "The query asks for steps around a previous state or transition and includes a supported time expression, so procedures, entries, and episodes were queried."
+          : "The query asks about a previous state or transition and includes a supported time expression, so both entries and episodes were queried."
+        : procedural
+          ? "The query asks for steps around a previous state or transition, so procedures, entries, and episodes were queried."
+          : "The query asks about a previous state or transition, so both entries and episodes were queried.",
     };
   }
 
@@ -195,8 +263,47 @@ export function routeRecall(params: { requested: UnifiedRecallMode; text: string
     return {
       requested: params.requested,
       detectedIntent: "mixed",
-      queried: ["entries", "episodes"],
-      reason: "The query combines a factual phrase with a supported time expression, so both entries and episodes were queried.",
+      queried: procedural ? ["procedures", "entries", "episodes"] : ["entries", "episodes"],
+      reason: procedural
+        ? "The query combines a procedural ask with factual and time-based signals, so procedures, entries, and episodes were queried."
+        : "The query combines a factual phrase with a supported time expression, so both entries and episodes were queried.",
+    };
+  }
+
+  if (procedural && params.parsedTimeWindow && topicAnchor) {
+    return {
+      requested: params.requested,
+      detectedIntent: "mixed",
+      queried: ["procedures", "episodes", "entries"],
+      reason:
+        "The query asks for steps, includes a supported time expression, and names a topic anchor, so procedures were queried first with supporting episodes and entries.",
+    };
+  }
+
+  if (procedural && params.parsedTimeWindow) {
+    return {
+      requested: params.requested,
+      detectedIntent: "mixed",
+      queried: ["procedures", "episodes"],
+      reason: "The query asks for steps and includes a supported time expression, so procedures were queried first with supporting episodes.",
+    };
+  }
+
+  if (procedural && topicAnchor) {
+    return {
+      requested: params.requested,
+      detectedIntent: "mixed",
+      queried: ["procedures", "entries"],
+      reason: "The query asks for steps and includes a topic anchor, so procedures were queried first with supporting entries.",
+    };
+  }
+
+  if (procedural) {
+    return {
+      requested: params.requested,
+      detectedIntent: "procedural",
+      queried: ["procedures"],
+      reason: "The query asks how to do something or requests a step-by-step method, so procedure recall was used first.",
     };
   }
 
@@ -418,13 +525,30 @@ function detectHistoricalStatePattern(text: string): string | undefined {
 }
 
 /**
+ * Detects whether a query is asking for a method, checklist, or step-by-step workflow.
+ *
+ * @param text - Raw recall query.
+ * @returns Matched cue text, or undefined when the query is not procedural.
+ */
+function detectProceduralPattern(text: string): string | undefined {
+  const lower = text.trim().toLowerCase();
+  const explicitPattern = PROCEDURAL_PATTERNS.find((pattern) => lower.includes(pattern));
+  if (explicitPattern) {
+    return explicitPattern;
+  }
+
+  const regexPattern = PROCEDURAL_REGEX_PATTERNS.find((pattern) => pattern.test(lower));
+  return regexPattern?.source;
+}
+
+/**
  * Normalizes the public recall mode into a supported value.
  *
  * @param value - Optional caller-supplied mode.
  * @returns Normalized recall mode.
  */
 function normalizeMode(value: UnifiedRecallMode | undefined): UnifiedRecallMode {
-  return value === "entries" || value === "episodes" ? value : "auto";
+  return value === "entries" || value === "episodes" || value === "procedures" ? value : "auto";
 }
 
 /**
@@ -434,7 +558,7 @@ function normalizeMode(value: UnifiedRecallMode | undefined): UnifiedRecallMode 
  * @returns True when entry-only filters were supplied.
  */
 function hasEntryScopedFilters(input: UnifiedRecallInput): boolean {
-  return Boolean(input.threshold !== undefined || hasNonEmptyArray(input.types) || hasNonEmptyArray(input.tags));
+  return Boolean(hasNonEmptyArray(input.types) || hasNonEmptyArray(input.tags));
 }
 
 /**

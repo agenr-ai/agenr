@@ -10,6 +10,7 @@ import type { TransactionalDatabasePort } from "./client.js";
 export function createRecallEvalFixtureStore(database: TransactionalDatabasePort): RecallEvalFixtureStore {
   return {
     insertEntry: async (entry, embedding, contentHash) => database.insertEntry(entry, embedding, contentHash),
+    insertProcedure: async (procedure) => database.upsertProcedure(procedure),
     withTransaction: async <T>(fn: (store: RecallEvalFixtureStore) => Promise<T>) =>
       database.withTransaction(async (transaction) => fn(createRecallEvalFixtureStore(transaction))),
   };

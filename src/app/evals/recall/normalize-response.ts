@@ -148,6 +148,23 @@ function buildMetadata(
       routing: results.routing,
       timeWindow: results.timeWindow,
       asOf: results.asOf,
+      procedure: results.procedure
+        ? {
+            id: results.procedure.id,
+            procedureKey: results.procedure.procedure_key,
+            title: results.procedure.title,
+            goal: results.procedure.goal,
+          }
+        : undefined,
+      procedureCandidates: results.procedureCandidates.map((candidate) => ({
+        id: candidate.procedure.id,
+        procedureKey: candidate.procedure.procedure_key,
+        title: candidate.procedure.title,
+        score: candidate.score,
+        lexicalScore: candidate.scores.lexical,
+        vectorScore: candidate.scores.vector,
+      })),
+      procedureNotices: results.procedureNotices,
       notices: results.notices,
       episodeCount: results.episodes.length,
     },

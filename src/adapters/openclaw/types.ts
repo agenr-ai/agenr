@@ -9,7 +9,7 @@ import type {
 import type { OpenClawRepository } from "../../app/openclaw/ports.js";
 import type { AgenrConfig } from "../../config.js";
 import type { ClaimSlotPolicy, ClaimSlotPolicyConfig } from "../../core/claim-slot-policy.js";
-import type { DatabasePort, EmbeddingPort, EpisodeDatabasePort, LlmPort, RecallPorts } from "../../core/ports.js";
+import type { DatabasePort, EmbeddingPort, EpisodeDatabasePort, LlmPort, ProcedureDatabasePort, RecallPorts } from "../../core/ports.js";
 import type { ClaimExtractionConfig } from "../../core/store/claim-extraction.js";
 import type { Entry } from "../../core/types.js";
 
@@ -148,6 +148,7 @@ export interface AgenrOpenClawServices {
   dbPath: string;
   entries: DatabasePort;
   episodes: EpisodeDatabasePort;
+  procedures: ProcedureDatabasePort;
   memory: OpenClawRepository;
   embedding: EmbeddingPort;
   recall: RecallPorts;

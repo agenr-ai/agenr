@@ -21,6 +21,8 @@ import type { Api, AssistantMessage, Model } from "@mariozechner/pi-ai";
 import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";
 import { createOpenClawRepository } from "../../../src/adapters/db/openclaw-repository.js";
 import { createOpenClawLlmClient } from "../../../src/adapters/openclaw/llm/openclaw-llm-client.js";
+import { computeProcedureRevisionHash, computeProcedureSourceHash } from "../../../src/core/procedures/hashing.js";
+import { composeProcedureRecallText } from "../../../src/core/procedures/recall-text.js";
 import {
   createAgenrRecallTool,
   createAgenrRetireTool,
@@ -30,7 +32,7 @@ import {
 } from "../../../src/adapters/openclaw/tools.js";
 import type { AgenrOpenClawHost, AgenrOpenClawServices } from "../../../src/adapters/openclaw/types.js";
 import type { EmbeddingPort, RecallPorts } from "../../../src/core/ports.js";
-import type { Entry } from "../../../src/core/types.js";
+import type { Entry, Procedure } from "../../../src/core/types.js";
 
 const openDatabases: SqlDatabase[] = [];
 const tempDatabasePaths: string[] = [];
@@ -371,7 +373,57 @@ describe("agenr OpenClaw tools", () => {
     expect(result.content[0]?.text).toContain("Resolved Time Window");
     expect(result.content[0]?.text).toContain("Episode Matches");
     expect(result.content[0]?.text).toContain("Entry Matches");
-    expect(result.content[0]?.text).toContain("Threshold, type filters, and tag filters were applied to entries only.");
+    expect(result.content[0]?.text).toContain("Type and tag filters were applied to entries only.");
+  });
+
+  it("renders a structured canonical procedure block for procedural recall", async () => {
+    const database = await createTestDatabase();
+    const logger = createLogger();
+    await database.upsertProcedure(createProcedure());
+    const services = createServices(database, {
+      available: false,
+      recall: createExactRecallPorts([]),
+    });
+    const recallTool = createAgenrRecallTool(createToolContext(), Promise.resolve(services), logger);
+
+    const result = await recallTool.execute("tool-procedure", {
+      query: "how do I rotate the production signing key safely",
+      mode: "procedures",
+      limit: 3,
+    });
+
+    expect(result.details).toMatchObject({
+      status: "ok",
+      count: 1,
+      routing: {
+        requested: "procedures",
+        detectedIntent: "procedural",
+        queried: ["procedures"],
+      },
+      procedure: {
+        procedureKey: "security/signing-key-rotation",
+        title: "Rotate the production signing key",
+      },
+      procedures: [
+        expect.objectContaining({
+          procedureKey: "security/signing-key-rotation",
+          title: "Rotate the production signing key",
+        }),
+      ],
+      procedureNotices: [expect.stringContaining("lexical-only procedure ranking")],
+    });
+    expect(result.content[0]?.text).toContain("Procedure Matches");
+    expect(result.content[0]?.text).toContain("Canonical Procedure. security/signing-key-rotation | Rotate the production signing key");
+    expect(result.content[0]?.text).toContain("goal=Rotate the production signing key safely.");
+    expect(result.content[0]?.text).toContain("steps");
+    expect(result.content[0]?.text).toContain("[inspect_state] Inspect the current signing key state before rotating it.");
+    expect(getMessages(logger.info)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          '[agenr] tool=agenr_recall session=session-1 key=agent:main:webchat:test result: 1 procedure candidate, 0 episodes, 0 entries [procedure: "Rotate the production signing key"]',
+        ),
+      ]),
+    );
   });
 
   it("keeps factual temporal queries entry-first", async () => {
@@ -828,6 +880,7 @@ function createServices(
     dbPath: "test.db",
     entries: database,
     episodes: database,
+    procedures: database,
     memory: createOpenClawRepository(database),
     embedding,
     recall: options.recall,
@@ -1029,6 +1082,45 @@ function createEntry(overrides: Partial<Entry> = {}): Entry {
     retired_at: overrides.retired_at,
     retired_reason: overrides.retired_reason,
     created_at: overrides.created_at ?? now,
+    updated_at: overrides.updated_at ?? now,
+  };
+}
+
+function createProcedure(overrides: Partial<Procedure> = {}): Procedure {
+  const now = overrides.created_at ?? new Date("2026-03-27T12:00:00.000Z").toISOString();
+  const body = {
+    procedure_key: overrides.procedure_key ?? "security/signing-key-rotation",
+    title: overrides.title ?? "Rotate the production signing key",
+    goal: overrides.goal ?? "Rotate the production signing key safely.",
+    when_to_use: overrides.when_to_use ?? ["Use this when the production signing key must be rotated."],
+    when_not_to_use: overrides.when_not_to_use ?? ["Do not use this for a read-only audit."],
+    prerequisites: overrides.prerequisites ?? ["Access to the production key vault."],
+    steps: overrides.steps ?? [
+      {
+        id: "inspect-state",
+        kind: "inspect_state" as const,
+        instruction: "Inspect the current signing key state before rotating it.",
+        target: "signing key state",
+      },
+    ],
+    verification: overrides.verification ?? ["Downstream verification succeeds after rotation."],
+    failure_modes: overrides.failure_modes ?? ["Rotation fails before verification completes."],
+    sources: overrides.sources ?? [{ kind: "manual" as const, label: "fixture" }],
+  };
+
+  return {
+    id: overrides.id ?? randomUUID(),
+    ...body,
+    recall_text: overrides.recall_text ?? composeProcedureRecallText(body),
+    revision_hash: overrides.revision_hash ?? computeProcedureRevisionHash(body),
+    source_hash: overrides.source_hash ?? computeProcedureSourceHash(JSON.stringify(body)),
+    source_file: overrides.source_file,
+    embedding: overrides.embedding,
+    retired: overrides.retired ?? false,
+    retired_at: overrides.retired_at,
+    retired_reason: overrides.retired_reason,
+    superseded_by: overrides.superseded_by,
+    created_at: now,
     updated_at: overrides.updated_at ?? now,
   };
 }

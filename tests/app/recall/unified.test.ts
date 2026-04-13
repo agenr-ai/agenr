@@ -9,7 +9,9 @@ import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/clien
 import { routeRecall, runUnifiedRecall } from "../../../src/app/recall/unified.js";
 import type { EpisodeDatabasePort, RecallPorts } from "../../../src/core/ports.js";
 import type { RecallCandidateEntry } from "../../../src/core/recall/types.js";
-import type { Entry, Episode } from "../../../src/core/types.js";
+import { computeProcedureRevisionHash, computeProcedureSourceHash } from "../../../src/core/procedures/hashing.js";
+import { composeProcedureRecallText } from "../../../src/core/procedures/recall-text.js";
+import type { Entry, Episode, Procedure } from "../../../src/core/types.js";
 
 const databases: SqlDatabase[] = [];
 const databasePaths: string[] = [];
@@ -89,6 +91,33 @@ describe("runUnifiedRecall", () => {
     ).toBe("factual");
   });
 
+  it("routes generic how-to queries to procedures without repo-specific workflow keywords", () => {
+    expect(
+      routeRecall({
+        requested: "auto",
+        text: "how do I rotate the production signing key safely",
+        parsedTimeWindow: false,
+        hasEntryFilters: false,
+      }),
+    ).toEqual({
+      requested: "auto",
+      detectedIntent: "procedural",
+      queried: ["procedures"],
+      reason: "The query asks how to do something or requests a step-by-step method, so procedure recall was used first.",
+    });
+  });
+
+  it("keeps lookalike factual queries out of procedural routing", () => {
+    expect(
+      routeRecall({
+        requested: "auto",
+        text: "what do we use to authenticate API requests",
+        parsedTimeWindow: false,
+        hasEntryFilters: false,
+      }).queried,
+    ).toEqual(["entries"]);
+  });
+
   it("uses pure semantic episode search for explicit episode mode without a time window", async () => {
     const episodeVectorSearch = vi.fn(async () => [
       {
@@ -112,6 +141,7 @@ describe("runUnifiedRecall", () => {
       },
       {
         database,
+        procedures: createProcedureDatabase(),
         recall: createRecallPorts(),
         embeddingAvailable: true,
         embedQuery: async () => [1, 0],
@@ -158,6 +188,7 @@ describe("runUnifiedRecall", () => {
       },
       {
         database,
+        procedures: createProcedureDatabase(),
         recall: createRecallPorts({
           vectorSearch: async () => [
             {
@@ -221,6 +252,7 @@ describe("runUnifiedRecall", () => {
       },
       {
         database,
+        procedures: createProcedureDatabase(),
         recall: createRecallPorts(),
         embeddingAvailable: true,
       },
@@ -245,6 +277,7 @@ describe("runUnifiedRecall", () => {
       },
       {
         database: createEpisodeDatabase(),
+        procedures: createProcedureDatabase(),
         recall: createRecallPorts({
           embed: async () => {
             throw new Error("Embeddings are unavailable.");
@@ -310,6 +343,7 @@ describe("runUnifiedRecall", () => {
       },
       {
         database,
+        procedures: createProcedureDatabase(),
         recall: createRecallPorts({
           vectorSearch: async () => [
             {
@@ -412,6 +446,7 @@ describe("runUnifiedRecall", () => {
       },
       {
         database,
+        procedures: createProcedureDatabase(),
         recall: createRecallPorts(),
         embeddingAvailable: true,
         embedQuery: async () => createEmbedding(0, 1),
@@ -425,6 +460,7 @@ describe("runUnifiedRecall", () => {
       },
       {
         database,
+        procedures: createProcedureDatabase(),
         recall: createRecallPorts(),
         embeddingAvailable: true,
         embedQuery: async () => createEmbedding(0, 1),
@@ -443,6 +479,55 @@ describe("runUnifiedRecall", () => {
     });
     expect(explicitDate.timeWindow?.resolvedFrom).toBe("2026-04-09");
     expect(explicitDate.episodes.map((episode) => episode.episode.sourceId)).toEqual(["episode-apr-9"]);
+  });
+
+  it("returns a canonical procedure alongside supporting episodes for mixed procedural temporal queries", async () => {
+    const database = createEpisodeDatabase({
+      listEpisodesByTimeWindow: vi.fn(async () => [
+        createEpisode({
+          id: "rotation-episode",
+          sourceId: "rotation-episode",
+          startedAt: "2026-03-29T09:00:00.000Z",
+          endedAt: "2026-03-29T10:00:00.000Z",
+          summary: "We rotated the production signing key and verified downstream consumers.",
+          tags: ["security", "signing-key"],
+        }),
+      ]),
+    });
+    const procedure = createProcedure({
+      procedure_key: "security/signing-key-rotation",
+      title: "Rotate the production signing key",
+      goal: "Rotate the production signing key safely.",
+      when_to_use: ["Use this when the production signing key must be rotated."],
+    });
+
+    const result = await runUnifiedRecall(
+      {
+        text: "what steps should I follow to rotate the production signing key on 2026-03-29",
+        limit: 3,
+      },
+      {
+        database,
+        procedures: createProcedureDatabase({
+          procedureFtsSearch: vi.fn(async () => [{ procedure, rank: -0.8 }]),
+        }),
+        recall: createRecallPorts(),
+        embeddingAvailable: true,
+        embedQuery: async () => createEmbedding(0, 1),
+      },
+    );
+
+    expect(result.routing).toMatchObject({
+      requested: "auto",
+      detectedIntent: "mixed",
+      queried: ["procedures", "episodes"],
+    });
+    expect(result.procedure).toMatchObject({
+      procedure_key: "security/signing-key-rotation",
+      title: "Rotate the production signing key",
+    });
+    expect(result.procedureCandidates).toHaveLength(1);
+    expect(result.episodes.map((episode) => episode.episode.id)).toEqual(["rotation-episode"]);
   });
 });
 
@@ -491,6 +576,26 @@ function createRecallPorts(overrides: Partial<RecallPorts> = {}): RecallPorts {
       return;
     },
     ...overrides,
+  };
+}
+
+function createProcedureDatabase(
+  overrides: Partial<{
+    procedureFtsSearch: ReturnType<typeof vi.fn>;
+    procedureVectorSearch: ReturnType<typeof vi.fn>;
+  }> = {},
+) {
+  return {
+    upsertProcedure: vi.fn(),
+    getProcedure: vi.fn(),
+    hydrateProcedures: vi.fn(),
+    findActiveProcedureByKey: vi.fn(),
+    procedureFtsSearch: overrides.procedureFtsSearch ?? vi.fn(async () => []),
+    procedureVectorSearch: overrides.procedureVectorSearch ?? vi.fn(async () => []),
+    listProceduresWithoutEmbeddings: vi.fn(),
+    updateProcedureEmbedding: vi.fn(),
+    retireProcedure: vi.fn(),
+    supersedeProcedure: vi.fn(),
   };
 }
 
@@ -557,6 +662,45 @@ function createEntry(overrides: Partial<Entry> & Pick<Entry, "id" | "subject" | 
     retired_at: overrides.retired_at,
     retired_reason: overrides.retired_reason,
     created_at: overrides.created_at ?? now,
+    updated_at: overrides.updated_at ?? now,
+  };
+}
+
+function createProcedure(overrides: Partial<Procedure> = {}): Procedure {
+  const now = overrides.created_at ?? "2026-03-30T00:00:00.000Z";
+  const body = {
+    procedure_key: overrides.procedure_key ?? "security/signing-key-rotation",
+    title: overrides.title ?? "Rotate the production signing key",
+    goal: overrides.goal ?? "Rotate the production signing key safely.",
+    when_to_use: overrides.when_to_use ?? ["Use this when the signing key must be rotated."],
+    when_not_to_use: overrides.when_not_to_use ?? ["Do not use this for a read-only audit."],
+    prerequisites: overrides.prerequisites ?? ["Access to the production key vault."],
+    steps: overrides.steps ?? [
+      {
+        id: "inspect-state",
+        kind: "inspect_state" as const,
+        instruction: "Inspect the current signing key state before rotating it.",
+        target: "signing key state",
+      },
+    ],
+    verification: overrides.verification ?? ["Downstream verification succeeds after rotation."],
+    failure_modes: overrides.failure_modes ?? ["Rotation fails before verification completes."],
+    sources: overrides.sources ?? [{ kind: "manual" as const, label: "fixture" }],
+  };
+
+  return {
+    id: overrides.id ?? randomUUID(),
+    ...body,
+    recall_text: overrides.recall_text ?? composeProcedureRecallText(body),
+    revision_hash: overrides.revision_hash ?? computeProcedureRevisionHash(body),
+    source_hash: overrides.source_hash ?? computeProcedureSourceHash(JSON.stringify(body)),
+    source_file: overrides.source_file,
+    embedding: overrides.embedding,
+    retired: overrides.retired ?? false,
+    retired_at: overrides.retired_at,
+    retired_reason: overrides.retired_reason,
+    superseded_by: overrides.superseded_by,
+    created_at: now,
     updated_at: overrides.updated_at ?? now,
   };
 }

@@ -1,5 +1,5 @@
-import type { EmbeddingPort, EpisodeDatabasePort, RecallPorts } from "../../../core/ports.js";
-import type { Entry } from "../../../core/types.js";
+import type { EmbeddingPort, EpisodeDatabasePort, ProcedureDatabasePort, RecallPorts } from "../../../core/ports.js";
+import type { Entry, Procedure } from "../../../core/types.js";
 
 /**
  * Narrow write surface used by recall eval fixture provisioning.
@@ -14,6 +14,14 @@ export interface RecallEvalFixtureStore {
    * @returns Persisted entry ID.
    */
   insertEntry(entry: Entry, embedding: number[], contentHash: string): Promise<string>;
+
+  /**
+   * Inserts one exact fixture procedure into isolated eval storage.
+   *
+   * @param procedure - Canonical procedure payload to store.
+   * @returns Persisted procedure row.
+   */
+  insertProcedure(procedure: Procedure): Promise<Procedure>;
 
   /**
    * Runs a callback inside a write transaction.
@@ -38,6 +46,8 @@ export interface RecallEvalSandboxContext {
   fixtureStore: RecallEvalFixtureStore;
   /** Episode database surface backed by the isolated sandbox database. */
   episodeDatabase: EpisodeDatabasePort;
+  /** Procedure database surface backed by the isolated sandbox database. */
+  procedureDatabase: ProcedureDatabasePort;
   /**
    * Creates real recall ports against the isolated database.
    *

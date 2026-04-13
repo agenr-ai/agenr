@@ -40,6 +40,7 @@ export async function setupRecallEvalSandbox(request: RecallEvalSandboxRequest |
       preserved,
       fixtureStore: createRecallEvalFixtureStore(openDatabase),
       episodeDatabase: openDatabase,
+      procedureDatabase: openDatabase,
       createRecallPorts: (embedding) => createRecallAdapter(openDatabase, embedding),
       cleanup: async (): Promise<void> => {
         await openDatabase.close().catch(() => undefined);

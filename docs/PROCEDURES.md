@@ -2,27 +2,29 @@
 
 Procedures are agenr's durable how-to memory layer. Entries capture reusable facts and decisions. Episodes capture what happened in a session. Procedures capture the canonical method for doing something in this repository or runtime.
 
-Current implemented behavior spans Phase 2 write-side sync plus the dedicated Phase 3 read-side service:
+Current implemented behavior spans Phase 2 write-side sync, the dedicated Phase 3 retrieval service, and the Phase 4 unified-routing integration:
 
 - procedures are authored in repo-owned YAML under `procedures/`
 - `agenr ingest procedures [path]` validates and syncs them into the database
 - the database stores canonical normalized procedure revisions plus recall text and optional embeddings
 - `src/app/procedures/recall/` provides a dedicated internal procedure recall pipeline
-- unified recall routing and OpenClaw-specific procedure answers are not live yet
+- `src/app/recall/` can route generic how-to and checklist-style asks into `procedures`
+- OpenClaw `agenr_recall` can return a structured canonical procedure answer plus supporting entries and episodes
+- the internal recall-eval seam can seed procedure fixtures and assert canonical unified procedure answers
 
-That means procedures now have their own internal read path, but they are not yet wired into the public `agenr recall` surface, unified recall routing, or OpenClaw-specific response shaping.
+That means procedures now have both a dedicated read path and a live unified read path for OpenClaw and eval-driven callers. The standalone CLI `agenr recall` command still targets entry recall only.
 
 ## Procedures vs Other Memory
 
-| Dimension                  | Entries                                     | Episodes                       | Procedures                            |
-| -------------------------- | ------------------------------------------- | ------------------------------ | ------------------------------------- |
-| Main question              | What is true?                               | What happened?                 | How do I do this?                     |
-| Granularity                | Atomic durable knowledge                    | One summary per session        | One authored workflow per task        |
-| Source of truth            | Extracted or tool-supplied structured input | Generated session summaries    | Repo-authored YAML                    |
-| Runtime form               | Stored entry rows                           | Stored episode rows            | Stored normalized procedure revisions |
-| Current public write path  | `agenr ingest entries <path>` and tools     | `agenr ingest episodes [path]` | `agenr ingest procedures [path]`      |
-| Current public recall path | Live                                        | Live                           | Not yet live                          |
-| Current internal recall path | Core + unified recall                     | Unified recall                 | Dedicated app-layer recall service    |
+| Dimension                    | Entries                                     | Episodes                       | Procedures                                      |
+| ---------------------------- | ------------------------------------------- | ------------------------------ | ----------------------------------------------- |
+| Main question                | What is true?                               | What happened?                 | How do I do this?                               |
+| Granularity                  | Atomic durable knowledge                    | One summary per session        | One authored workflow per task                  |
+| Source of truth              | Extracted or tool-supplied structured input | Generated session summaries    | Repo-authored YAML                              |
+| Runtime form                 | Stored entry rows                           | Stored episode rows            | Stored normalized procedure revisions           |
+| Current public write path    | `agenr ingest entries <path>` and tools     | `agenr ingest episodes [path]` | `agenr ingest procedures [path]`                |
+| Current public recall path   | Live                                        | Live                           | Live via unified OpenClaw recall and eval seam  |
+| Current internal recall path | Core + unified recall                       | Unified recall                 | Dedicated app-layer recall plus unified routing |
 
 ## Code Map
 
@@ -38,10 +40,17 @@ That means procedures now have their own internal read path, but they are not ye
 - `src/adapters/files/procedure-files.ts` - local YAML discovery and raw file reads
 - `src/app/procedures/sync/` - prepare and execute sync workflow
 - `src/app/procedures/recall/` - dedicated procedure retrieval and canonical-match selection
+- `src/app/recall/` - unified routing that can include procedures alongside entries and episodes
+- `src/adapters/openclaw/tools/recall.ts` - `agenr_recall` tool wiring for procedure-aware unified recall
+- `src/adapters/openclaw/tools/shared.ts` - structured procedure formatter for OpenClaw recall output
+- `src/app/evals/recall/` - unified eval seeding and assertions for procedure-aware recall cases
 - `src/cli/commands/ingest-procedures.ts` - `agenr ingest procedures [path]`
 - `tests/core/procedures/normalization.test.ts` - core parse and normalization coverage
 - `tests/app/procedures/sync/service.test.ts` - sync planning and execution coverage
 - `tests/app/procedures/recall/service.test.ts` - dedicated procedure recall coverage
+- `tests/app/recall/unified.test.ts` - unified routing coverage for generic procedural asks
+- `tests/adapters/openclaw/tools.test.ts` - OpenClaw procedure formatting and routing coverage
+- `tests/app/evals/recall/run-recall-eval-case.test.ts` - unified eval coverage for canonical procedure answers
 
 ## Current CLI Surface
 
@@ -58,6 +67,22 @@ Current behavior:
 - invalid procedure files block real writes
 
 This command is the canonical Phase 2 sync path for procedural memory.
+
+## Current Live Read Surfaces
+
+Procedures are now live through unified recall consumers:
+
+- OpenClaw `agenr_recall` with `mode=auto` can route generic procedural asks into `procedures`
+- OpenClaw `agenr_recall` with `mode=procedures` forces procedural recall
+- unified recall can return one canonical procedure plus supporting entries and episodes for mixed asks
+- the recall-eval seam can provision `procedurePool` fixtures for unified-path tests
+
+Current routing semantics:
+
+- explicit `mode=procedures` bypasses auto routing
+- auto routing uses generic procedural phrasing such as how-to, steps, method, checklist, and walkthrough asks
+- routing does not rely on narrow corpus-specific keywords like release, publish, or review
+- the dedicated procedure service still decides whether a canonical top procedure is stable enough to return
 
 ## Authoring Surface
 
@@ -190,9 +215,9 @@ This staged supersession flow exists because the schema enforces one active row 
 
 ## Important Current Semantics
 
-### Dedicated procedure recall is internal-first
+### Dedicated procedure recall remains the retrieval engine
 
-Phase 3 adds `runProcedureRecall()` under `src/app/procedures/recall/`.
+Phase 3 adds `runProcedureRecall()` under `src/app/procedures/recall/`, and Phase 4 wires it into unified recall.
 
 Current read-side behavior:
 
@@ -201,7 +226,7 @@ Current read-side behavior:
 - embedding or vector-search failures degrade to lexical-only ranking instead of failing the full recall path
 - callers receive ranked candidates plus one canonical top procedure only when the leader clears conservative thresholding and separation rules
 
-This service is intentionally separate from `src/core/recall/search.ts` and does not treat procedures as another `EntryType`.
+This service is intentionally separate from `src/core/recall/search.ts` and does not treat procedures as another `EntryType`. Unified recall calls into it as a sibling backend, not as a variant of entry recall.
 
 ### Source-only updates do not create new revisions
 
@@ -241,13 +266,10 @@ These seed files intentionally pressure-test:
 
 ## What Procedures Do Not Do Yet
 
-Procedures are not yet part of the live public or unified recall path.
+Current non-goals after the implemented Phase 4 state:
 
-Current non-goals for the implemented Phase 3 state:
-
-- no dedicated public procedure recall command
-- no unified recall routing into `procedures`
-- no OpenClaw-specific procedure answer formatting
+- no dedicated standalone CLI procedure recall command
+- no procedure-aware path in the current `agenr recall` CLI command
 - no automatic promotion from entries or episodes into procedures
 - no procedure composition such as `use_procedure`
 - no deletion or prune semantics for missing files

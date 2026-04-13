@@ -1,4 +1,4 @@
-import type { DatabasePort, EmbeddingPort, EpisodeDatabasePort, LlmPort, RecallPorts } from "../../core/ports.js";
+import type { DatabasePort, EmbeddingPort, EpisodeDatabasePort, LlmPort, ProcedureDatabasePort, RecallPorts } from "../../core/ports.js";
 import type { AgenrConfig } from "../../config.js";
 import { readConfig, resolveClaimExtractionConfig, resolveConfigPath, resolveDbPath } from "../../config.js";
 import { createDatabase } from "../../adapters/db/client.js";
@@ -21,6 +21,7 @@ import type { OpenClawRepository } from "./ports.js";
 interface OpenClawRuntimeServices {
   entries: DatabasePort;
   episodes: EpisodeDatabasePort;
+  procedures: ProcedureDatabasePort;
   memory: OpenClawRepository;
   embedding: EmbeddingPort;
   recall: RecallPorts;
@@ -64,6 +65,7 @@ export async function createAgenrOpenClawServices(
     dbPath: resolvedConfig.dbPath,
     entries: runtimeServices.entries,
     episodes: runtimeServices.episodes,
+    procedures: runtimeServices.procedures,
     memory: runtimeServices.memory,
     embedding: runtimeServices.embedding,
     recall: runtimeServices.recall,
@@ -135,6 +137,7 @@ async function createRuntimeServices(
   return {
     entries: database,
     episodes: database,
+    procedures: database,
     memory: createOpenClawRepository(database, {
       claimSlotPolicyConfig: openClawContext.pluginConfig.memoryPolicy?.slotPolicies,
     }),

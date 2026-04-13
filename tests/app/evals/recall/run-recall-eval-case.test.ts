@@ -704,6 +704,88 @@ describe("runRecallEvalCase", () => {
     }
   });
 
+  it("returns canonical procedures for unified eval cases seeded through procedurePool", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    vi.stubGlobal("fetch", createEmbeddingFetchStub());
+
+    const response = await runRecallEvalCase({
+      caseId: "case-unified-procedure-path",
+      recallPath: "unified",
+      memoryPool: [],
+      procedurePool: [
+        {
+          id: "procedure-rotate-key",
+          procedure_key: "security/signing-key-rotation",
+          title: "Rotate the production signing key",
+          goal: "Rotate the production signing key safely.",
+          when_to_use: ["Use this when the production signing key must be rotated."],
+          when_not_to_use: ["Do not use this for a read-only audit."],
+          prerequisites: ["Access to the production key vault."],
+          steps: [
+            {
+              id: "inspect-state",
+              kind: "inspect_state",
+              instruction: "Inspect the current signing key state before rotating it.",
+              target: "signing key state",
+            },
+          ],
+          verification: ["Downstream verification succeeds after rotation."],
+          failure_modes: ["Rotation fails before verification completes."],
+          sources: [{ kind: "manual", label: "fixture" }],
+        },
+      ],
+      recallRequest: {
+        text: "how do I rotate the production signing key safely",
+        limit: 3,
+      },
+      options: {
+        includeDiagnostics: true,
+        faultInjection: {
+          queryEmbeddingFailure: true,
+        },
+      },
+    });
+
+    expect(response).toMatchObject({
+      status: "ok",
+      caseId: "case-unified-procedure-path",
+      result: {
+        entryIds: [],
+      },
+      metadata: {
+        path: "unified",
+        unified: {
+          routing: {
+            requested: "auto",
+            detectedIntent: "procedural",
+            queried: ["procedures"],
+          },
+          procedure: {
+            id: "procedure-rotate-key",
+            procedureKey: "security/signing-key-rotation",
+            title: "Rotate the production signing key",
+          },
+          procedureCandidates: [
+            expect.objectContaining({
+              id: "procedure-rotate-key",
+              procedureKey: "security/signing-key-rotation",
+              title: "Rotate the production signing key",
+            }),
+          ],
+          procedureNotices: [expect.stringContaining("lexical-only procedure ranking")],
+          notices: [],
+          episodeCount: 0,
+        },
+      },
+      diagnostics: {
+        execution: {
+          recallPath: "unified",
+        },
+      },
+    });
+    expect(response.result?.entries).toEqual([]);
+  });
+
   it("forwards the full core recall request shape through the core path", async () => {
     process.env.OPENAI_API_KEY = "test-key";
     vi.stubGlobal("fetch", createEmbeddingFetchStub());
