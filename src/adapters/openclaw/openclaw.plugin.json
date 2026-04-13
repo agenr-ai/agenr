@@ -1,7 +1,7 @@
 {
   "id": "agenr",
   "name": "agenr",
-  "version": "1.8.2",
+  "version": "1.9.0",
   "description": "agenr memory plugin for OpenClaw",
   "kind": "memory",
   "contracts": {

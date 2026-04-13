@@ -2,6 +2,49 @@
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-04-12
+
+Surgeon autonomy, review-flow hardening, and CLI/runtime polish release.
+
+### Added
+
+- **Surgeon autonomy control plane v1.** Agenr now ships the first full surgeon autonomy control plane with stronger proposal-review flow, improved review ownership, and better runtime state handling across autonomous passes.
+- **Architecture review skill.** Added a dedicated architecture review skill to support repository-level structural review work alongside the surgeon and planning toolchain updates in this release window.
+
+### Changed
+
+- **Surgeon architecture and runtime boundaries are cleaner.** Surgeon logic was refactored across app, adapter, and domain seams, with generalized prompts across corpus domains, tighter runtime safeguards, simplified run flow, and more coherent completion/progress accounting.
+- **CLI and trace output are more structured.** Surgeon console output, startup summaries, progress rendering, and trace logging were tightened so autonomous runs are easier to monitor and debug.
+- **Local development scaffolding stays out of git status.** `.gitignore` now excludes the repo-local skills directory to keep local agent tooling from polluting release and day-to-day workflow status.
+
+### Fixed
+
+- **Autonomous surgeon passes recover more reliably.** Fixed proposal-loop stalling, autonomous backup handling, trace directory handling, exhausted-review completion, and repeat supersession-review suppression so long-running surgeon activity can finish cleanly.
+
+### Validation
+
+Changes since last push to `origin/master`:
+
+- Clean up surgeon CLI output with structured progress and chalk formatting
+- Simplify surgeon run flow
+- Fix surgeon trace directory handling
+- Compact surgeon trace logging
+- Implement surgeon autonomy control plane v1
+- Fix surgeon autonomous proposal loop
+- Fix surgeon autonomous backup and progress stalling
+- Stabilize surgeon retirement and proposal passes
+- Generalize surgeon prompts across corpus domains
+- Add first-principles planning skill
+- Tighten surgeon runtime safeguards
+- Update `.gitignore` to include skills directory
+- Remove first-principles planning skill and associated OpenAI agent configuration files
+- Finish supersession completion on exhausted reviews
+- Improve surgeon progress accounting and console output
+- Suppress repeat supersession review and polish surgeon CLI output
+- Add architecture review skill
+- Refactor surgeon architecture boundaries
+- Clarify surgeon pass startup summaries
+
 ## [1.8.2] - 2026-04-12
 
 Temporal parsing and ingest workflow polish patch release.
