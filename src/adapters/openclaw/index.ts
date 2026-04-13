@@ -5,6 +5,7 @@ import { coerceAgenrOpenClawPluginConfig, createAgenrOpenClawPluginConfigSchema,
 import { buildAgenrMemoryPromptSection } from "./format/prompt-section.js";
 import { handleAgenrAfterToolCall } from "./hooks/after-tool-call.js";
 import { handleAgenrBeforePromptBuild } from "./hooks/before-prompt-build.js";
+import { formatErrorMessage } from "./logging.js";
 import { buildAgenrMemoryFlushPlan } from "./memory/flush-plan.js";
 import { createAgenrMemoryRuntime } from "./memory/runtime.js";
 import { createAgenrOpenClawServices } from "./runtime.js";
@@ -31,6 +32,9 @@ export default definePluginEntry({
         },
       },
       resolvePath: api.resolvePath,
+    });
+    void servicesPromise.catch((error) => {
+      api.logger.error(`[agenr] startup failed: ${formatErrorMessage(error)}`);
     });
 
     api.registerMemoryCapability({

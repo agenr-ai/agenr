@@ -53,4 +53,18 @@ describe("createAgenrMemoryRuntime", () => {
     await runtime.closeAllMemorySearchManagers?.();
     expect(services.close).toHaveBeenCalledTimes(1);
   });
+
+  it("returns a stable error payload when startup services fail", async () => {
+    const runtime = createAgenrMemoryRuntime(Promise.reject(new Error('Unsupported agenr database schema version "10".')));
+    const result = await runtime.getMemorySearchManager({
+      agentId: "main",
+      cfg: {} as AgenrOpenClawServices["openClaw"]["config"],
+      purpose: "status",
+    });
+
+    expect(result.manager).toBeNull();
+    expect(result.error).toContain("[agenr] memory runtime unavailable:");
+    expect(result.error).toContain('Unsupported agenr database schema version "10".');
+    await expect(runtime.closeAllMemorySearchManagers?.()).resolves.toBeUndefined();
+  });
 });

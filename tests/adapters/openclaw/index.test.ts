@@ -206,6 +206,39 @@ describe("agenr OpenClaw plugin entry", () => {
     await hookHandlers.get("gateway_stop")?.({}, undefined);
     expect(fakeServices.close).toHaveBeenCalledTimes(1);
   });
+
+  it("logs startup failures without letting the registration promise go unhandled", async () => {
+    const startupError = new Error('Unsupported agenr database schema version "10".');
+    const logger = createLogger();
+
+    coerceAgenrOpenClawPluginConfigMock.mockReturnValue({});
+    resolveStoreNudgeConfigMock.mockReturnValue({
+      enabled: true,
+      threshold: 8,
+      maxPerSession: 5,
+    });
+    createSessionStartTrackerMock.mockReturnValue({
+      rememberSessionStart: vi.fn(),
+    });
+    createMidSessionTrackerMock.mockReturnValue({
+      clear: vi.fn(),
+    });
+    createAgenrOpenClawServicesMock.mockRejectedValue(startupError);
+    createAgenrMemoryRuntimeMock.mockReturnValue({
+      getMemorySearchManager: vi.fn(),
+      resolveMemoryBackendConfig: vi.fn(() => ({ backend: "builtin" as const })),
+    });
+
+    const api = createPluginApi({
+      logger,
+      on: vi.fn(),
+    });
+
+    agenrOpenClawPlugin.register(api);
+    await Promise.resolve();
+
+    expect(logger.error).toHaveBeenCalledWith(`[agenr] startup failed: ${startupError.message}`);
+  });
 });
 
 function createPluginApi(overrides: { logger: ReturnType<typeof createLogger>; on: NonNullable<OpenClawPluginApi["on"]> }): OpenClawPluginApi & {

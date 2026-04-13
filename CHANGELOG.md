@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-04-13
+
+OpenClaw startup-failure handling patch release.
+
+### Fixed
+
+- **OpenClaw plugin startup no longer crashes on agenr service initialization failures.** Startup-time database schema mismatches and similar initialization errors are now logged and surfaced as stable runtime/status failures instead of escaping as an unhandled promise rejection.
+
+### Validation
+
+Changes since last push to `origin/master`:
+
+- Handle OpenClaw startup schema mismatch failures gracefully
+
 ## [2.0.0] - 2026-04-13
 
 Procedural memory foundation, sync and recall pipelines, and unified routing major release.
