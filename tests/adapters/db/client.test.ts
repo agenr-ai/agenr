@@ -7,7 +7,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";
 import { createRecallAdapter } from "../../../src/adapters/db/recall-adapter.js";
-import type { Entry } from "../../../src/core/types.js";
+import { computeProcedureRevisionHash, computeProcedureSourceHash } from "../../../src/core/procedures/hashing.js";
+import { composeProcedureRecallText } from "../../../src/core/procedures/recall-text.js";
+import type { Entry, Procedure } from "../../../src/core/types.js";
 
 describe("createDatabase", () => {
   const databases: SqlDatabase[] = [];
@@ -836,6 +838,119 @@ describe("createDatabase", () => {
     }
   });
 
+  it("upserts a procedure and reads it back through active lookups", async () => {
+    const database = await createTestDatabase();
+    const procedure = createProcedure({
+      procedure_key: "agenr/release",
+      title: "Release agenr and publish packages",
+    });
+
+    const stored = await database.upsertProcedure(procedure);
+    const byId = await database.getProcedure(stored.id);
+    const byKey = await database.findActiveProcedureByKey("agenr/release");
+    const hydrated = await database.hydrateProcedures([stored.id]);
+
+    expect(stored.id).toBe(procedure.id);
+    expect(byId?.procedure_key).toBe("agenr/release");
+    expect(byKey?.id).toBe(procedure.id);
+    expect(hydrated.map((item) => item.id)).toEqual([procedure.id]);
+  });
+
+  it("returns procedure FTS matches for active procedures", async () => {
+    const database = await createTestDatabase();
+    const procedure = createProcedure({
+      procedure_key: "agenr/sandbox-validation",
+      title: "Validate the sandbox plugin locally",
+      goal: "Run the local sandbox plugin validation workflow safely.",
+    });
+
+    await database.upsertProcedure(procedure);
+
+    const results = await database.procedureFtsSearch({ text: "sandbox plugin validation", limit: 5 });
+
+    expect(results.map((result) => result.procedure.id)).toContain(procedure.id);
+  });
+
+  it("returns procedure vector matches when vector search is supported", async () => {
+    const database = await createTestDatabase();
+    const left = createProcedure({
+      procedure_key: "agenr/release",
+      title: "Release agenr",
+      embedding: createEmbedding(0, 1),
+    });
+    const right = createProcedure({
+      procedure_key: "agenr/surgeon-review",
+      title: "Review surgeon proposals",
+      embedding: createEmbedding(1, 1),
+    });
+
+    await database.upsertProcedure(left);
+    await database.upsertProcedure(right);
+
+    try {
+      const results = await database.procedureVectorSearch({
+        embedding: createEmbedding(0, 1),
+        limit: 2,
+      });
+      expect(results.length).toBeGreaterThan(0);
+      expect(results.map((result) => result.procedure.id)).toContain(left.id);
+      expect(results.some((result) => result.vectorSim > 0)).toBe(true);
+    } catch (error) {
+      expect(String(error)).toMatch(/procedure vector search is unavailable/i);
+    }
+  });
+
+  it("lists procedures without embeddings and updates procedure embeddings", async () => {
+    vi.useFakeTimers();
+
+    const database = await createTestDatabase();
+    vi.setSystemTime(new Date("2026-03-30T12:00:00.000Z"));
+    const procedure = createProcedure({
+      procedure_key: "agenr/openclaw-local-plugin-check",
+      embedding: undefined,
+      created_at: "2026-03-30T12:00:00.000Z",
+      updated_at: "2026-03-30T12:00:00.000Z",
+    });
+
+    await database.upsertProcedure(procedure);
+
+    const missing = await database.listProceduresWithoutEmbeddings();
+    expect(missing.map((item) => item.id)).toContain(procedure.id);
+
+    vi.setSystemTime(new Date("2026-03-30T13:00:00.000Z"));
+    await database.updateProcedureEmbedding(procedure.id, createEmbedding(0, 1));
+
+    const updated = await database.getProcedure(procedure.id);
+    expect(updated?.embedding?.[0]).toBeCloseTo(1);
+    expect(updated?.updated_at).toBe("2026-03-30T13:00:00.000Z");
+  });
+
+  it("excludes retired and superseded procedures from active queries", async () => {
+    const database = await createTestDatabase();
+    const retired = createProcedure({
+      id: "procedure-retired",
+      procedure_key: "agenr/sandbox-validation",
+    });
+    const superseded = createProcedure({
+      id: "procedure-superseded",
+      procedure_key: "agenr/release",
+    });
+    const replacement = createProcedure({
+      id: "procedure-replacement",
+      procedure_key: "agenr/release-next",
+    });
+
+    await database.upsertProcedure(retired);
+    await database.upsertProcedure(superseded);
+    await database.upsertProcedure(replacement);
+
+    expect(await database.retireProcedure(retired.id, "obsolete")).toBe(true);
+    expect(await database.supersedeProcedure(superseded.id, replacement.id, "new revision")).toBe(true);
+
+    expect(await database.getProcedure(retired.id)).toBeNull();
+    expect(await database.getProcedure(superseded.id)).toBeNull();
+  });
+
   async function createTestDatabase(): Promise<SqlDatabase> {
     // libSQL opens separate logical connections for transactions, so temp files
     // are more stable than raw :memory: databases for adapter-level tests.
@@ -887,6 +1002,59 @@ function createEntry(overrides: Partial<Entry> = {}): Entry {
     retired: overrides.retired ?? false,
     retired_at: overrides.retired_at,
     retired_reason: overrides.retired_reason,
+    created_at: overrides.created_at ?? now,
+    updated_at: overrides.updated_at ?? now,
+  };
+}
+
+function createProcedure(overrides: Partial<Procedure> = {}): Procedure {
+  const now = new Date().toISOString();
+  const body = {
+    procedure_key: overrides.procedure_key ?? "agenr/release",
+    title: overrides.title ?? "Release agenr and publish packages",
+    goal: overrides.goal ?? "Cut a release and publish packages safely.",
+    when_to_use: overrides.when_to_use ?? ["You need to ship a new agenr release."],
+    when_not_to_use: overrides.when_not_to_use ?? ["You only need a local build or dry-run validation."],
+    prerequisites: overrides.prerequisites ?? ["Publish credentials are configured."],
+    steps: overrides.steps ?? [
+      {
+        id: "read-release-skill",
+        kind: "read_reference" as const,
+        instruction: "Read the local release workflow.",
+        ref: {
+          kind: "manual" as const,
+          label: "release workflow",
+        },
+      },
+      {
+        id: "run-checks",
+        kind: "run_command" as const,
+        instruction: "Run the required repo validation command.",
+        command: "pnpm check",
+      },
+    ],
+    verification: overrides.verification ?? ["Published package versions match the intended release."],
+    failure_modes: overrides.failure_modes ?? ["Validation fails before publish."],
+    sources: overrides.sources ?? [
+      {
+        kind: "manual" as const,
+        label: "procedure fixture",
+      },
+    ],
+  };
+
+  return {
+    id: overrides.id ?? randomUUID(),
+    ...body,
+    recall_text: overrides.recall_text ?? composeProcedureRecallText(body),
+    revision_hash: overrides.revision_hash ?? computeProcedureRevisionHash(body),
+    source_hash: overrides.source_hash ?? computeProcedureSourceHash(JSON.stringify(body)),
+    source_file: overrides.source_file,
+    embedding: overrides.embedding,
+    retired: overrides.retired ?? false,
+    retired_at: overrides.retired_at,
+    retired_reason: overrides.retired_reason,
+    superseded_by: overrides.superseded_by,
     created_at: overrides.created_at ?? now,
     updated_at: overrides.updated_at ?? now,
   };

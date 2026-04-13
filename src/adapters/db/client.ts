@@ -3,9 +3,9 @@ import path from "node:path";
 
 import { createClient, type Client, type InArgs, type InStatement, type ResultSet, type Transaction } from "@libsql/client";
 
-import type { DatabasePort, EpisodeDatabasePort } from "../../core/ports.js";
+import type { DatabasePort, EpisodeDatabasePort, ProcedureDatabasePort } from "../../core/ports.js";
 import type { EpisodeInput, TemporalWindow } from "../../core/episode/types.js";
-import type { Entry, EntryUpdateInput, Episode, EpisodeSource } from "../../core/types.js";
+import type { Entry, EntryUpdateInput, Episode, EpisodeSource, Procedure } from "../../core/types.js";
 import {
   episodeVectorSearch,
   getEpisodeBySourceId,
@@ -15,6 +15,18 @@ import {
   updateEpisodeEmbedding,
   upsertEpisode,
 } from "./episode-queries.js";
+import {
+  findActiveProcedureByKey,
+  getProcedure,
+  hydrateProcedures,
+  listProceduresWithoutEmbeddings,
+  procedureFtsSearch,
+  procedureVectorSearch,
+  retireProcedure,
+  supersedeProcedure,
+  updateProcedureEmbedding,
+  upsertProcedure,
+} from "./procedure-queries.js";
 import {
   findActiveEntriesByClaimKey,
   getClaimKeyEntityPrefixStats,
@@ -39,7 +51,7 @@ const DEFAULT_BUSY_TIMEOUT_MS = 3000;
 /**
  * Database adapter contract exposed by the libSQL implementation.
  */
-export interface TransactionalDatabasePort extends DatabasePort, EpisodeDatabasePort {
+export interface TransactionalDatabasePort extends DatabasePort, EpisodeDatabasePort, ProcedureDatabasePort {
   /**
    * Runs a callback inside a write transaction that begins with `BEGIN IMMEDIATE`.
    *
@@ -138,6 +150,56 @@ class LibsqlDatabase implements SqlDatabase {
   /** Updates only the embedding payload for one episode row. */
   public async updateEpisodeEmbedding(id: string, embedding: number[]): Promise<void> {
     await updateEpisodeEmbedding(this.executor, id, embedding);
+  }
+
+  /** Inserts or updates one procedure revision row. */
+  public async upsertProcedure(procedure: Procedure): Promise<Procedure> {
+    return upsertProcedure(this.executor, procedure);
+  }
+
+  /** Loads one active procedure by primary key. */
+  public async getProcedure(id: string): Promise<Procedure | null> {
+    return getProcedure(this.executor, id);
+  }
+
+  /** Hydrates active procedures by ID while preserving caller order. */
+  public async hydrateProcedures(ids: string[]): Promise<Procedure[]> {
+    return hydrateProcedures(this.executor, ids);
+  }
+
+  /** Loads one active procedure revision by stable procedure key. */
+  public async findActiveProcedureByKey(procedureKey: string): Promise<Procedure | null> {
+    return findActiveProcedureByKey(this.executor, procedureKey);
+  }
+
+  /** Finds active procedures by vector similarity. */
+  public async procedureVectorSearch(params: { embedding: number[]; limit: number }): Promise<Array<{ procedure: Procedure; vectorSim: number }>> {
+    return procedureVectorSearch(this.executor, params);
+  }
+
+  /** Finds active procedures by lexical FTS search. */
+  public async procedureFtsSearch(params: { text: string; limit: number }): Promise<Array<{ procedure: Procedure; rank: number }>> {
+    return procedureFtsSearch(this.executor, params);
+  }
+
+  /** Lists active procedures that still need embeddings. */
+  public async listProceduresWithoutEmbeddings(limit?: number): Promise<Procedure[]> {
+    return listProceduresWithoutEmbeddings(this.executor, limit);
+  }
+
+  /** Updates only the embedding payload for one procedure row. */
+  public async updateProcedureEmbedding(id: string, embedding: number[]): Promise<void> {
+    await updateProcedureEmbedding(this.executor, id, embedding);
+  }
+
+  /** Marks one active procedure revision as retired. */
+  public async retireProcedure(id: string, reason?: string): Promise<boolean> {
+    return retireProcedure(this.executor, id, reason);
+  }
+
+  /** Marks one active procedure revision as superseded by a newer revision. */
+  public async supersedeProcedure(oldId: string, newId: string, reason?: string): Promise<boolean> {
+    return supersedeProcedure(this.executor, oldId, newId, reason);
   }
 
   /** Finds which normalized content hashes already exist in storage. */

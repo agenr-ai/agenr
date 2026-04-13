@@ -68,7 +68,17 @@ const EPISODE_SOURCES = ["openclaw", "codex", "cli", "synthesis"] as const;
 /** Ordered list of supported episode activity levels. */
 const EPISODE_ACTIVITY_LEVELS = ["substantial", "minimal", "none"] as const;
 
+/** Ordered list of supported procedure step kinds. */
+const PROCEDURE_STEP_KINDS = ["run_command", "read_reference", "inspect_state", "edit_file", "ask_user", "invoke_tool", "verify"] as const;
+
+/** Ordered list of supported declarative procedure condition kinds. */
+const PROCEDURE_CONDITION_KINDS = ["harness_is", "tool_available", "file_exists", "path_exists", "env_flag", "repo_state", "user_confirmed"] as const;
+
+/** Ordered list of supported procedure provenance source kinds. */
+const PROCEDURE_SOURCE_KINDS = ["skill", "doc", "entry", "episode", "repo_file", "manual"] as const;
+
 export { EPISODE_ACTIVITY_LEVELS, EPISODE_SOURCES };
+export { PROCEDURE_CONDITION_KINDS, PROCEDURE_SOURCE_KINDS, PROCEDURE_STEP_KINDS };
 
 /**
  * Union of all supported episode sources.
@@ -79,6 +89,21 @@ export type EpisodeSource = (typeof EPISODE_SOURCES)[number];
  * Union of all supported episode activity levels.
  */
 export type EpisodeActivityLevel = (typeof EPISODE_ACTIVITY_LEVELS)[number];
+
+/**
+ * Union of all supported procedure step kinds.
+ */
+export type ProcedureStepKind = (typeof PROCEDURE_STEP_KINDS)[number];
+
+/**
+ * Union of all supported procedure condition kinds.
+ */
+export type ProcedureConditionKind = (typeof PROCEDURE_CONDITION_KINDS)[number];
+
+/**
+ * Union of all supported procedure provenance source kinds.
+ */
+export type ProcedureSourceKind = (typeof PROCEDURE_SOURCE_KINDS)[number];
 
 /**
  * Explicit lifecycle and provenance metadata attached to a stored claim key.
@@ -184,6 +209,214 @@ export interface Episode {
   supersededBy?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+// ── Procedure types ──────────────────────────────────────────────────
+
+/**
+ * Explicit authored provenance attached to a procedure or reference step.
+ */
+export interface ProcedureSource {
+  kind: ProcedureSourceKind;
+  path?: string;
+  locator?: string;
+  label?: string;
+}
+
+/**
+ * Closed JSON-like value space accepted by `invoke_tool.arguments`.
+ */
+export type ProcedureToolArgumentValue = string | number | boolean | null | { [key: string]: ProcedureToolArgumentValue } | ProcedureToolArgumentValue[];
+
+/**
+ * Condition that scopes a step to one supported harness value.
+ */
+export interface ProcedureHarnessCondition {
+  kind: "harness_is";
+  value: string;
+}
+
+/**
+ * Condition that scopes a step to one available tool name.
+ */
+export interface ProcedureToolAvailableCondition {
+  kind: "tool_available";
+  value: string;
+}
+
+/**
+ * Condition that requires one exact file path to exist.
+ */
+export interface ProcedureFileExistsCondition {
+  kind: "file_exists";
+  path: string;
+}
+
+/**
+ * Condition that requires one path to exist.
+ */
+export interface ProcedurePathExistsCondition {
+  kind: "path_exists";
+  path: string;
+}
+
+/**
+ * Condition that checks one environment flag by name and optional value.
+ */
+export interface ProcedureEnvFlagCondition {
+  kind: "env_flag";
+  name: string;
+  value?: string;
+}
+
+/**
+ * Condition that checks one bounded repository-state marker.
+ */
+export interface ProcedureRepoStateCondition {
+  kind: "repo_state";
+  value: string;
+}
+
+/**
+ * Condition that requires one explicit user confirmation token.
+ */
+export interface ProcedureUserConfirmedCondition {
+  kind: "user_confirmed";
+  value: string;
+}
+
+/**
+ * Supported bounded declarative condition union for procedure steps.
+ */
+export type ProcedureCondition =
+  | ProcedureHarnessCondition
+  | ProcedureToolAvailableCondition
+  | ProcedureFileExistsCondition
+  | ProcedurePathExistsCondition
+  | ProcedureEnvFlagCondition
+  | ProcedureRepoStateCondition
+  | ProcedureUserConfirmedCondition;
+
+/**
+ * Shared authored fields carried by every normalized procedure step.
+ */
+export interface ProcedureStepBase {
+  id: string;
+  kind: ProcedureStepKind;
+  instruction: string;
+  conditions?: ProcedureCondition[];
+  stop_if?: ProcedureCondition[];
+}
+
+/**
+ * Step that records one shell command to run.
+ */
+export interface ProcedureRunCommandStep extends ProcedureStepBase {
+  kind: "run_command";
+  command: string;
+}
+
+/**
+ * Step that points readers at an external reference.
+ */
+export interface ProcedureReadReferenceStep extends ProcedureStepBase {
+  kind: "read_reference";
+  ref: ProcedureSource;
+}
+
+/**
+ * Step that asks the agent to inspect current state before continuing.
+ */
+export interface ProcedureInspectStateStep extends ProcedureStepBase {
+  kind: "inspect_state";
+  target?: string;
+  query?: string;
+}
+
+/**
+ * Step that describes one file edit in human-readable terms.
+ */
+export interface ProcedureEditFileStep extends ProcedureStepBase {
+  kind: "edit_file";
+  path: string;
+  edit: string;
+}
+
+/**
+ * Step that asks the agent to collect input from the user.
+ */
+export interface ProcedureAskUserStep extends ProcedureStepBase {
+  kind: "ask_user";
+  prompt: string;
+}
+
+/**
+ * Step that invokes a structured tool with optional arguments.
+ */
+export interface ProcedureInvokeToolStep extends ProcedureStepBase {
+  kind: "invoke_tool";
+  tool: string;
+  arguments?: { [key: string]: ProcedureToolArgumentValue };
+}
+
+/**
+ * Step that checks whether the procedure completed successfully.
+ */
+export interface ProcedureVerifyStep extends ProcedureStepBase {
+  kind: "verify";
+  checks: string[];
+}
+
+/**
+ * Supported authored procedure-step union.
+ */
+export type ProcedureStep =
+  | ProcedureRunCommandStep
+  | ProcedureReadReferenceStep
+  | ProcedureInspectStateStep
+  | ProcedureEditFileStep
+  | ProcedureAskUserStep
+  | ProcedureInvokeToolStep
+  | ProcedureVerifyStep;
+
+/**
+ * Canonical normalized procedure body stored in `body_json`.
+ */
+export interface ProcedureDefinition {
+  procedure_key: string;
+  title: string;
+  goal: string;
+  when_to_use: string[];
+  when_not_to_use: string[];
+  prerequisites: string[];
+  steps: ProcedureStep[];
+  verification: string[];
+  failure_modes: string[];
+  sources: ProcedureSource[];
+}
+
+/**
+ * Lifecycle and revision metadata stored alongside a procedure revision.
+ */
+export interface ProcedureLifecycleMetadata {
+  recall_text: string;
+  revision_hash: string;
+  source_hash: string;
+  retired: boolean;
+  retired_at?: string;
+  retired_reason?: string;
+  superseded_by?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Canonical stored procedural-memory record.
+ */
+export interface Procedure extends ProcedureDefinition, ProcedureLifecycleMetadata {
+  id: string;
+  source_file?: string;
+  embedding?: number[];
 }
 
 // ── Store types ──────────────────────────────────────────────────────

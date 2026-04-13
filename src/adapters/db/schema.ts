@@ -5,7 +5,7 @@ import type { SqlExecutor } from "./queries.js";
 /**
  * Logical schema version stored in the metadata table.
  */
-const SCHEMA_VERSION = "9";
+const SCHEMA_VERSION = "10";
 
 /**
  * libSQL vector index name for entry embeddings.
@@ -16,6 +16,11 @@ const VECTOR_INDEX_NAME = "idx_entries_embedding";
  * libSQL vector index name for episode embeddings.
  */
 const EPISODE_VECTOR_INDEX_NAME = "idx_episodes_embedding";
+
+/**
+ * libSQL vector index name for procedure embeddings.
+ */
+const PROCEDURE_VECTOR_INDEX_NAME = "idx_procedures_embedding";
 
 /**
  * Metadata key used to detect interrupted bulk-write phases.
@@ -158,6 +163,69 @@ const CREATE_EPISODES_TABLE_SQL = `
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   )
+`;
+
+/** SQL statement that creates the canonical procedures table. */
+const CREATE_PROCEDURES_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS procedures (
+    id TEXT PRIMARY KEY,
+    procedure_key TEXT NOT NULL,
+    title TEXT NOT NULL,
+    goal TEXT NOT NULL,
+    body_json TEXT NOT NULL,
+    recall_text TEXT NOT NULL,
+    source_file TEXT,
+    source_hash TEXT NOT NULL,
+    revision_hash TEXT NOT NULL,
+    embedding F32_BLOB(1024),
+    retired INTEGER NOT NULL DEFAULT 0,
+    retired_at TEXT,
+    retired_reason TEXT,
+    superseded_by TEXT REFERENCES procedures(id),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )
+`;
+
+/** SQL statement that creates the FTS shadow table for active procedures. */
+const CREATE_PROCEDURES_FTS_TABLE_SQL = `
+  CREATE VIRTUAL TABLE IF NOT EXISTS procedures_fts USING fts5(
+    title,
+    recall_text,
+    content=procedures,
+    content_rowid=rowid
+  )
+`;
+
+/** SQL statement that recreates the FTS insert trigger for active procedures. */
+const CREATE_PROCEDURES_FTS_INSERT_TRIGGER_SQL = `
+  CREATE TRIGGER IF NOT EXISTS procedures_ai AFTER INSERT ON procedures
+  WHEN new.retired = 0 AND new.superseded_by IS NULL BEGIN
+    INSERT INTO procedures_fts(rowid, title, recall_text)
+    VALUES (new.rowid, new.title, new.recall_text);
+  END
+`;
+
+/** SQL statement that recreates the FTS delete trigger for active procedures. */
+const CREATE_PROCEDURES_FTS_DELETE_TRIGGER_SQL = `
+  CREATE TRIGGER IF NOT EXISTS procedures_ad AFTER DELETE ON procedures
+  WHEN old.retired = 0 AND old.superseded_by IS NULL BEGIN
+    INSERT INTO procedures_fts(procedures_fts, rowid, title, recall_text)
+    VALUES ('delete', old.rowid, old.title, old.recall_text);
+  END
+`;
+
+/** SQL statement that recreates the FTS update trigger for active procedures. */
+const CREATE_PROCEDURES_FTS_UPDATE_TRIGGER_SQL = `
+  CREATE TRIGGER IF NOT EXISTS procedures_au AFTER UPDATE ON procedures BEGIN
+    INSERT INTO procedures_fts(procedures_fts, rowid, title, recall_text)
+    SELECT 'delete', old.rowid, old.title, old.recall_text
+    WHERE old.retired = 0 AND old.superseded_by IS NULL;
+
+    INSERT INTO procedures_fts(rowid, title, recall_text)
+    SELECT new.rowid, new.title, new.recall_text
+    WHERE new.retired = 0 AND new.superseded_by IS NULL;
+  END
 `;
 
 /** SQL statement that records each recall event. */
@@ -361,6 +429,38 @@ const CREATE_EPISODES_SOURCE_SOURCE_ID_UNIQUE_INDEX_SQL = `
   WHERE source_id IS NOT NULL
 `;
 
+const CREATE_PROCEDURES_PROCEDURE_KEY_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_procedures_procedure_key
+  ON procedures(procedure_key)
+`;
+
+const CREATE_PROCEDURES_REVISION_HASH_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_procedures_revision_hash
+  ON procedures(revision_hash)
+`;
+
+const CREATE_PROCEDURES_SOURCE_HASH_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_procedures_source_hash
+  ON procedures(source_hash)
+`;
+
+const CREATE_PROCEDURES_RETIRED_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_procedures_retired
+  ON procedures(retired)
+`;
+
+const CREATE_PROCEDURES_CREATED_AT_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_procedures_created_at
+  ON procedures(created_at)
+`;
+
+const CREATE_PROCEDURES_ACTIVE_KEY_UNIQUE_INDEX_SQL = `
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_procedures_active_procedure_key
+  ON procedures(procedure_key)
+  WHERE retired = 0
+    AND superseded_by IS NULL
+`;
+
 const CREATE_RECALL_EVENTS_ENTRY_ID_INDEX_SQL = `
   CREATE INDEX IF NOT EXISTS idx_recall_events_entry_id
   ON recall_events(entry_id)
@@ -405,6 +505,23 @@ const CREATE_EPISODES_EMBEDDING_INDEX_SQL = `
     AND superseded_by IS NULL
 `;
 
+/**
+ * SQL statement that recreates the libSQL vector index for procedure embeddings.
+ */
+const CREATE_PROCEDURES_EMBEDDING_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_procedures_embedding ON procedures (
+    libsql_vector_idx(
+      embedding,
+      'metric=cosine',
+      'compress_neighbors=float8',
+      'max_neighbors=50'
+    )
+  )
+  WHERE embedding IS NOT NULL
+    AND retired = 0
+    AND superseded_by IS NULL
+`;
+
 const SCHEMA_STATEMENTS = [
   CREATE_ENTRIES_TABLE_SQL,
   CREATE_ENTRIES_FTS_TABLE_SQL,
@@ -413,6 +530,11 @@ const SCHEMA_STATEMENTS = [
   CREATE_ENTRIES_FTS_UPDATE_TRIGGER_SQL,
   CREATE_INGEST_LOG_TABLE_SQL,
   CREATE_EPISODES_TABLE_SQL,
+  CREATE_PROCEDURES_TABLE_SQL,
+  CREATE_PROCEDURES_FTS_TABLE_SQL,
+  CREATE_PROCEDURES_FTS_INSERT_TRIGGER_SQL,
+  CREATE_PROCEDURES_FTS_DELETE_TRIGGER_SQL,
+  CREATE_PROCEDURES_FTS_UPDATE_TRIGGER_SQL,
   CREATE_RECALL_EVENTS_TABLE_SQL,
   CREATE_SURGEON_RUNS_TABLE_SQL,
   CREATE_SURGEON_RUN_ACTIONS_TABLE_SQL,
@@ -441,6 +563,12 @@ const SCHEMA_STATEMENTS = [
   CREATE_EPISODES_SOURCE_ID_INDEX_SQL,
   CREATE_EPISODES_RETIRED_INDEX_SQL,
   CREATE_EPISODES_SOURCE_SOURCE_ID_UNIQUE_INDEX_SQL,
+  CREATE_PROCEDURES_PROCEDURE_KEY_INDEX_SQL,
+  CREATE_PROCEDURES_REVISION_HASH_INDEX_SQL,
+  CREATE_PROCEDURES_SOURCE_HASH_INDEX_SQL,
+  CREATE_PROCEDURES_RETIRED_INDEX_SQL,
+  CREATE_PROCEDURES_CREATED_AT_INDEX_SQL,
+  CREATE_PROCEDURES_ACTIVE_KEY_UNIQUE_INDEX_SQL,
   CREATE_RECALL_EVENTS_ENTRY_ID_INDEX_SQL,
   CREATE_RECALL_EVENTS_RECALLED_AT_INDEX_SQL,
 ] as const;
@@ -453,6 +581,7 @@ export {
   CREATE_ENTRIES_FTS_UPDATE_TRIGGER_SQL,
   CREATE_EPISODES_EMBEDDING_INDEX_SQL,
   EPISODE_VECTOR_INDEX_NAME,
+  PROCEDURE_VECTOR_INDEX_NAME,
   SCHEMA_VERSION,
   VECTOR_INDEX_NAME,
 };
@@ -485,7 +614,12 @@ export async function initSchema(db: Client): Promise<void> {
     await migrateV8ToV9(db);
     currentVersion = "9";
   }
+  if (currentVersion === "9") {
+    await migrateV9ToV10(db);
+    currentVersion = "10";
+  }
   const hadEntriesFts = await tableExists(db, "entries_fts");
+  const hadProceduresFts = await tableExists(db, "procedures_fts");
 
   for (const statement of SCHEMA_STATEMENTS) {
     await db.execute(statement);
@@ -505,7 +639,7 @@ export async function initSchema(db: Client): Promise<void> {
     return;
   }
 
-  if (currentVersion !== SCHEMA_VERSION || !hadEntriesFts) {
+  if (currentVersion !== SCHEMA_VERSION || !hadEntriesFts || !hadProceduresFts) {
     await rebuildFts(db);
   }
 
@@ -525,6 +659,7 @@ async function assertSupportedSchemaState(db: Client, currentVersion: string | n
     currentVersion !== "6" &&
     currentVersion !== "7" &&
     currentVersion !== "8" &&
+    currentVersion !== "9" &&
     currentVersion !== SCHEMA_VERSION
   ) {
     throw new Error(
@@ -655,6 +790,26 @@ async function migrateV8ToV9(db: Client): Promise<void> {
 }
 
 /**
+ * Migrates a v9 database to the v10 procedural-memory schema.
+ *
+ * @param db - libSQL client connected to the target database.
+ * @returns Promise that resolves once the migration completes.
+ */
+async function migrateV9ToV10(db: Client): Promise<void> {
+  await db.execute(CREATE_PROCEDURES_TABLE_SQL);
+  await db.execute(CREATE_PROCEDURES_FTS_TABLE_SQL);
+  await db.execute(CREATE_PROCEDURES_FTS_INSERT_TRIGGER_SQL);
+  await db.execute(CREATE_PROCEDURES_FTS_DELETE_TRIGGER_SQL);
+  await db.execute(CREATE_PROCEDURES_FTS_UPDATE_TRIGGER_SQL);
+  await db.execute(CREATE_PROCEDURES_PROCEDURE_KEY_INDEX_SQL);
+  await db.execute(CREATE_PROCEDURES_REVISION_HASH_INDEX_SQL);
+  await db.execute(CREATE_PROCEDURES_SOURCE_HASH_INDEX_SQL);
+  await db.execute(CREATE_PROCEDURES_RETIRED_INDEX_SQL);
+  await db.execute(CREATE_PROCEDURES_CREATED_AT_INDEX_SQL);
+  await db.execute(CREATE_PROCEDURES_ACTIVE_KEY_UNIQUE_INDEX_SQL);
+}
+
+/**
  * Rebuilds the FTS shadow table from the canonical entries table.
  *
  * @param db - libSQL client connected to the target database.
@@ -662,6 +817,7 @@ async function migrateV8ToV9(db: Client): Promise<void> {
  */
 export async function rebuildFts(db: Client): Promise<void> {
   await db.execute("INSERT INTO entries_fts(entries_fts) VALUES ('rebuild')");
+  await db.execute("INSERT INTO procedures_fts(procedures_fts) VALUES ('rebuild')");
 }
 
 /**
@@ -683,6 +839,9 @@ export async function prepareBulkWrites(db: Client): Promise<void> {
     await db.execute("DROP TRIGGER IF EXISTS entries_ai");
     await db.execute("DROP TRIGGER IF EXISTS entries_ad");
     await db.execute("DROP TRIGGER IF EXISTS entries_au");
+    await db.execute("DROP TRIGGER IF EXISTS procedures_ai");
+    await db.execute("DROP TRIGGER IF EXISTS procedures_ad");
+    await db.execute("DROP TRIGGER IF EXISTS procedures_au");
     await dropVectorIndexes(db);
   });
 }
@@ -698,6 +857,9 @@ export async function finalizeBulkWrites(db: Client): Promise<void> {
     await db.execute(CREATE_ENTRIES_FTS_INSERT_TRIGGER_SQL);
     await db.execute(CREATE_ENTRIES_FTS_DELETE_TRIGGER_SQL);
     await db.execute(CREATE_ENTRIES_FTS_UPDATE_TRIGGER_SQL);
+    await db.execute(CREATE_PROCEDURES_FTS_INSERT_TRIGGER_SQL);
+    await db.execute(CREATE_PROCEDURES_FTS_DELETE_TRIGGER_SQL);
+    await db.execute(CREATE_PROCEDURES_FTS_UPDATE_TRIGGER_SQL);
     await rebuildFts(db);
     await ensureVectorIndexes(db);
     await db.execute({
@@ -805,6 +967,7 @@ async function ensureVectorIndexes(db: Client): Promise<void> {
   try {
     await db.execute(CREATE_ENTRIES_EMBEDDING_INDEX_SQL);
     await db.execute(CREATE_EPISODES_EMBEDDING_INDEX_SQL);
+    await db.execute(CREATE_PROCEDURES_EMBEDDING_INDEX_SQL);
   } catch (error) {
     if (!isVectorUnavailableError(error)) {
       throw error;
@@ -817,6 +980,7 @@ async function dropVectorIndexes(db: Client): Promise<void> {
   try {
     await db.execute(`DROP INDEX IF EXISTS ${VECTOR_INDEX_NAME}`);
     await db.execute(`DROP INDEX IF EXISTS ${EPISODE_VECTOR_INDEX_NAME}`);
+    await db.execute(`DROP INDEX IF EXISTS ${PROCEDURE_VECTOR_INDEX_NAME}`);
   } catch (error) {
     if (!isVectorUnavailableError(error)) {
       throw error;

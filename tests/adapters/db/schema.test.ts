@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   BULK_WRITE_STATE_META_KEY,
+  PROCEDURE_VECTOR_INDEX_NAME,
   VECTOR_INDEX_NAME,
   finalizeBulkWrites,
   getLastBulkIngestAt,
@@ -10,7 +11,7 @@ import {
   prepareBulkWrites,
 } from "../../../src/adapters/db/schema.js";
 
-const FTS_REBUILD_SQL = "INSERT INTO entries_fts(entries_fts) VALUES ('rebuild')";
+const FTS_REBUILD_SQLS = ["INSERT INTO entries_fts(entries_fts) VALUES ('rebuild')", "INSERT INTO procedures_fts(procedures_fts) VALUES ('rebuild')"];
 
 describe("initSchema", () => {
   const clients: Array<ReturnType<typeof createClient>> = [];
@@ -32,7 +33,19 @@ describe("initSchema", () => {
         SELECT name
         FROM sqlite_master
         WHERE type = 'table'
-          AND name IN ('entries', 'entries_fts', 'ingest_log', 'episodes', 'recall_events', 'surgeon_runs', 'surgeon_run_actions', 'surgeon_run_proposals', '_meta')
+          AND name IN (
+            'entries',
+            'entries_fts',
+            'ingest_log',
+            'episodes',
+            'procedures',
+            'procedures_fts',
+            'recall_events',
+            'surgeon_runs',
+            'surgeon_run_actions',
+            'surgeon_run_proposals',
+            '_meta'
+          )
       `,
     });
     const tableNames = new Set(
@@ -43,7 +56,19 @@ describe("initSchema", () => {
     );
 
     expect(tableNames).toEqual(
-      new Set(["entries", "entries_fts", "ingest_log", "episodes", "recall_events", "surgeon_runs", "surgeon_run_actions", "surgeon_run_proposals", "_meta"]),
+      new Set([
+        "entries",
+        "entries_fts",
+        "ingest_log",
+        "episodes",
+        "procedures",
+        "procedures_fts",
+        "recall_events",
+        "surgeon_runs",
+        "surgeon_run_actions",
+        "surgeon_run_proposals",
+        "_meta",
+      ]),
     );
     expect(await tableColumns(client, "entries")).toEqual([
       "id",
@@ -113,12 +138,30 @@ describe("initSchema", () => {
       "created_at",
       "updated_at",
     ]);
+    expect(await tableColumns(client, "procedures")).toEqual([
+      "id",
+      "procedure_key",
+      "title",
+      "goal",
+      "body_json",
+      "recall_text",
+      "source_file",
+      "source_hash",
+      "revision_hash",
+      "embedding",
+      "retired",
+      "retired_at",
+      "retired_reason",
+      "superseded_by",
+      "created_at",
+      "updated_at",
+    ]);
     const triggersResult = await client.execute({
       sql: `
         SELECT name
         FROM sqlite_master
         WHERE type = 'trigger'
-          AND name IN ('entries_ai', 'entries_ad', 'entries_au')
+          AND name IN ('entries_ai', 'entries_ad', 'entries_au', 'procedures_ai', 'procedures_ad', 'procedures_au')
       `,
     });
     const triggerNames = new Set(
@@ -128,7 +171,7 @@ describe("initSchema", () => {
       }),
     );
 
-    expect(triggerNames).toEqual(new Set(["entries_ai", "entries_ad", "entries_au"]));
+    expect(triggerNames).toEqual(new Set(["entries_ai", "entries_ad", "entries_au", "procedures_ai", "procedures_ad", "procedures_au"]));
     expect(await tableColumns(client, "surgeon_runs")).toEqual([
       "id",
       "pass_type",
@@ -196,6 +239,12 @@ describe("initSchema", () => {
     expect(await indexExists(client, "idx_episodes_source_id")).toBe(true);
     expect(await indexExists(client, "idx_episodes_retired")).toBe(true);
     expect(await indexExists(client, "idx_episodes_source_source_id")).toBe(true);
+    expect(await indexExists(client, "idx_procedures_procedure_key")).toBe(true);
+    expect(await indexExists(client, "idx_procedures_revision_hash")).toBe(true);
+    expect(await indexExists(client, "idx_procedures_source_hash")).toBe(true);
+    expect(await indexExists(client, "idx_procedures_retired")).toBe(true);
+    expect(await indexExists(client, "idx_procedures_created_at")).toBe(true);
+    expect(await indexExists(client, "idx_procedures_active_procedure_key")).toBe(true);
   });
 
   it("is idempotent when episode vector index creation runs more than once", async () => {
@@ -206,8 +255,18 @@ describe("initSchema", () => {
     await expect(initSchema(client)).resolves.toBeUndefined();
 
     const version = await client.execute("SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1");
-    expect(version.rows[0]?.value).toBe("9");
+    expect(version.rows[0]?.value).toBe("10");
     expect(await indexExists(client, "idx_episodes_started_at")).toBe(true);
+  });
+
+  it("enforces one active procedure revision per procedure key", async () => {
+    const client = createClient({ url: ":memory:" });
+    clients.push(client);
+
+    await initSchema(client);
+    await insertTestProcedure(client, "procedure-a", "First active revision.", "agenr/release");
+
+    await expect(insertTestProcedure(client, "procedure-b", "Second active revision.", "agenr/release")).rejects.toThrow();
   });
 
   it("migrates a v5 database to the current schema version", async () => {
@@ -366,7 +425,7 @@ describe("initSchema", () => {
     });
 
     const version = await client.execute("SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1");
-    expect(version.rows[0]?.value).toBe("9");
+    expect(version.rows[0]?.value).toBe("10");
   });
 
   it("migrates a v7 database to the current schema version", async () => {
@@ -520,7 +579,40 @@ describe("initSchema", () => {
     });
 
     const version = await client.execute("SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1");
-    expect(version.rows[0]?.value).toBe("9");
+    expect(version.rows[0]?.value).toBe("10");
+  });
+
+  it("migrates a v9 database to the current schema version", async () => {
+    const client = createClient({ url: ":memory:" });
+    clients.push(client);
+
+    await client.execute("CREATE TABLE _meta (key TEXT PRIMARY KEY, value TEXT)");
+    await client.execute("INSERT INTO _meta (key, value) VALUES ('schema_version', '9')");
+
+    await initSchema(client);
+
+    expect(await tableColumns(client, "procedures")).toEqual([
+      "id",
+      "procedure_key",
+      "title",
+      "goal",
+      "body_json",
+      "recall_text",
+      "source_file",
+      "source_hash",
+      "revision_hash",
+      "embedding",
+      "retired",
+      "retired_at",
+      "retired_reason",
+      "superseded_by",
+      "created_at",
+      "updated_at",
+    ]);
+    expect(await indexExists(client, "idx_procedures_active_procedure_key")).toBe(true);
+
+    const version = await client.execute("SELECT value FROM _meta WHERE key = 'schema_version' LIMIT 1");
+    expect(version.rows[0]?.value).toBe("10");
   });
 
   for (const version of ["2", "3", "4"] as const) {
@@ -566,7 +658,7 @@ describe("initSchema", () => {
 
     await initSchema(tracker.trackedClient);
 
-    expect(tracker.rebuildCount()).toBe(1);
+    expect(tracker.rebuildCount()).toBe(2);
   });
 
   it("skips the FTS rebuild when the schema version is unchanged", async () => {
@@ -664,23 +756,31 @@ describe("initSchema", () => {
 
     await initSchema(client);
     const vectorIndexExisted = await indexExists(client, VECTOR_INDEX_NAME);
+    const procedureVectorIndexExisted = await indexExists(client, PROCEDURE_VECTOR_INDEX_NAME);
 
     await prepareBulkWrites(client);
 
     expect(await triggerNames(client)).toEqual(new Set());
     expect(await indexExists(client, VECTOR_INDEX_NAME)).toBe(false);
+    expect(await indexExists(client, PROCEDURE_VECTOR_INDEX_NAME)).toBe(false);
 
     await insertTestEntry(client, "entry-1", "Bulk finalize restores FTS searchability.");
+    await insertTestProcedure(client, "procedure-1", "Bulk finalize restores procedure FTS searchability.");
 
     const beforeFinalize = await client.execute({
       sql: "SELECT rowid FROM entries_fts WHERE entries_fts MATCH 'searchability'",
     });
     expect(beforeFinalize.rows).toHaveLength(0);
+    const procedureBeforeFinalize = await client.execute({
+      sql: "SELECT rowid FROM procedures_fts WHERE procedures_fts MATCH 'searchability'",
+    });
+    expect(procedureBeforeFinalize.rows).toHaveLength(0);
 
     await finalizeBulkWrites(client);
 
-    expect(await triggerNames(client)).toEqual(new Set(["entries_ai", "entries_ad", "entries_au"]));
+    expect(await triggerNames(client)).toEqual(new Set(["entries_ai", "entries_ad", "entries_au", "procedures_ai", "procedures_ad", "procedures_au"]));
     expect(await indexExists(client, VECTOR_INDEX_NAME)).toBe(vectorIndexExisted);
+    expect(await indexExists(client, PROCEDURE_VECTOR_INDEX_NAME)).toBe(procedureVectorIndexExisted);
     const lastBulkIngestAt = await getLastBulkIngestAt(client);
     expect(lastBulkIngestAt).toEqual(expect.any(String));
     expect(Date.parse(lastBulkIngestAt ?? "")).not.toBeNaN();
@@ -689,6 +789,10 @@ describe("initSchema", () => {
       sql: "SELECT rowid FROM entries_fts WHERE entries_fts MATCH 'searchability'",
     });
     expect(afterFinalize.rows).toHaveLength(1);
+    const procedureAfterFinalize = await client.execute({
+      sql: "SELECT rowid FROM procedures_fts WHERE procedures_fts MATCH 'searchability'",
+    });
+    expect(procedureAfterFinalize.rows).toHaveLength(1);
   });
 
   it("recovers and finalizes an interrupted bulk-write state during schema init", async () => {
@@ -698,15 +802,20 @@ describe("initSchema", () => {
     await initSchema(client);
     await prepareBulkWrites(client);
     await insertTestEntry(client, "entry-2", "Crash recovery should rebuild FTS and clear dirty bulk state.");
+    await insertTestProcedure(client, "procedure-2", "Crash recovery should rebuild procedure FTS and clear dirty bulk state.");
 
     await initSchema(client);
 
-    expect(await triggerNames(client)).toEqual(new Set(["entries_ai", "entries_ad", "entries_au"]));
+    expect(await triggerNames(client)).toEqual(new Set(["entries_ai", "entries_ad", "entries_au", "procedures_ai", "procedures_ad", "procedures_au"]));
 
     const recovered = await client.execute({
       sql: "SELECT rowid FROM entries_fts WHERE entries_fts MATCH 'dirty'",
     });
     expect(recovered.rows).toHaveLength(1);
+    const recoveredProcedure = await client.execute({
+      sql: "SELECT rowid FROM procedures_fts WHERE procedures_fts MATCH 'dirty'",
+    });
+    expect(recoveredProcedure.rows).toHaveLength(1);
 
     const meta = await client.execute({
       sql: "SELECT value FROM _meta WHERE key = ?",
@@ -731,7 +840,7 @@ function createTrackedClient(): {
   const trackedClient = {
     execute: async (statement: InStatement | string, args?: InArgs) => {
       const sql = typeof statement === "string" ? statement : statement.sql;
-      if (sql.includes(FTS_REBUILD_SQL)) {
+      if (FTS_REBUILD_SQLS.some((rebuildSql) => sql.includes(rebuildSql))) {
         rebuilds += 1;
       }
 
@@ -810,13 +919,75 @@ async function insertTestEntry(client: Client, id: string, content: string): Pro
   });
 }
 
+async function insertTestProcedure(client: Client, id: string, content: string, procedureKey = `agenr/${id}`): Promise<void> {
+  await client.execute({
+    sql: `
+      INSERT INTO procedures (
+        id,
+        procedure_key,
+        title,
+        goal,
+        body_json,
+        recall_text,
+        source_file,
+        source_hash,
+        revision_hash,
+        embedding,
+        retired,
+        retired_at,
+        retired_reason,
+        superseded_by,
+        created_at,
+        updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    args: [
+      id,
+      procedureKey,
+      "Bulk procedure",
+      "Exercise procedure FTS rebuilds.",
+      JSON.stringify({
+        procedure_key: procedureKey,
+        title: "Bulk procedure",
+        goal: "Exercise procedure FTS rebuilds.",
+        when_to_use: [],
+        when_not_to_use: [],
+        prerequisites: [],
+        steps: [
+          {
+            id: "step-1",
+            kind: "run_command",
+            instruction: "Rebuild procedure searchability.",
+            command: "pnpm check",
+          },
+        ],
+        verification: ["Procedure searchability is restored."],
+        failure_modes: ["FTS rebuild is skipped."],
+        sources: [{ kind: "manual", label: "bulk write fixture" }],
+      }),
+      content,
+      "/tmp/procedures/bulk.yaml",
+      `source-${id}`,
+      `revision-${id}`,
+      null,
+      0,
+      null,
+      null,
+      null,
+      "2026-03-26T00:00:00.000Z",
+      "2026-03-26T00:00:00.000Z",
+    ],
+  });
+}
+
 async function triggerNames(client: Client): Promise<Set<string>> {
   const result = await client.execute({
     sql: `
       SELECT name
       FROM sqlite_master
       WHERE type = 'trigger'
-        AND name IN ('entries_ai', 'entries_ad', 'entries_au')
+        AND name IN ('entries_ai', 'entries_ad', 'entries_au', 'procedures_ai', 'procedures_ad', 'procedures_au')
     `,
   });
 

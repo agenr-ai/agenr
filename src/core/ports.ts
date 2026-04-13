@@ -5,7 +5,7 @@
  * Adapters implement these interfaces to connect core to infrastructure.
  */
 
-import type { EntryUpdateInput, Episode, EpisodeSource, Entry } from "./types.js";
+import type { EntryUpdateInput, Episode, EpisodeSource, Entry, Procedure } from "./types.js";
 import type { ClaimKeyEntityPrefixStats } from "./claim-key-entity-family.js";
 import type { EpisodeInput, EpisodeUpsertResult, TemporalWindow } from "./episode/types.js";
 import type { EntryFilters, FtsCandidate, HistoricalPredecessorLookupParams, RecallCandidateEntry, VectorCandidate } from "./recall/types.js";
@@ -95,6 +95,41 @@ export interface EpisodeDatabasePort {
 
   /** Update only the embedding payload for an existing episode row. */
   updateEpisodeEmbedding(id: string, embedding: number[]): Promise<void>;
+}
+
+/**
+ * Storage contract for persisting and querying procedural-memory revisions.
+ */
+export interface ProcedureDatabasePort {
+  /** Insert or update one procedure revision row. */
+  upsertProcedure(procedure: Procedure): Promise<Procedure>;
+
+  /** Get one active procedure by primary key. */
+  getProcedure(id: string): Promise<Procedure | null>;
+
+  /** Hydrate active procedures by ID while preserving caller order. */
+  hydrateProcedures(ids: string[]): Promise<Procedure[]>;
+
+  /** Get the currently active procedure revision for one stable key. */
+  findActiveProcedureByKey(procedureKey: string): Promise<Procedure | null>;
+
+  /** Find procedures by vector similarity to a query embedding. */
+  procedureVectorSearch(params: { embedding: number[]; limit: number }): Promise<Array<{ procedure: Procedure; vectorSim: number }>>;
+
+  /** Find procedures by lexical search over the procedure FTS index. */
+  procedureFtsSearch(params: { text: string; limit: number }): Promise<Array<{ procedure: Procedure; rank: number }>>;
+
+  /** List active procedures that still need embeddings. */
+  listProceduresWithoutEmbeddings(limit?: number): Promise<Procedure[]>;
+
+  /** Update only the embedding payload for an existing procedure row. */
+  updateProcedureEmbedding(id: string, embedding: number[]): Promise<void>;
+
+  /** Mark one active procedure revision as retired. */
+  retireProcedure(id: string, reason?: string): Promise<boolean>;
+
+  /** Supersede one active procedure revision with a new revision. */
+  supersedeProcedure(oldId: string, newId: string, reason?: string): Promise<boolean>;
 }
 
 // ── Embeddings ───────────────────────────────────────────────────────
