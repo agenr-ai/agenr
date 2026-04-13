@@ -90,11 +90,14 @@ export function createQuerySupersessionCandidatesTool(deps: SurgeonToolDeps): Ag
             ? pendingSubjectClusters
             : [...pendingClaimKeyClusters, ...pendingSubjectClusters];
       const clusters = allClusters.slice(offset, offset + limit);
+      const remainingClusters = allClusters.slice(Math.min(allClusters.length, offset + clusters.length));
+      const claimKeyRemaining = scope === "subject" ? claimKeyClusterCount : countClustersByGrouping(remainingClusters, "claim_key");
+      const subjectRemaining = scope === "claim_key" ? subjectClusterCount : countClustersByGrouping(remainingClusters, "subject");
 
       deps.completionGuards?.supersession.recordPage({
         scope,
-        claimKeyTotal: claimKeyClusterCount,
-        subjectTotal: subjectClusterCount,
+        claimKeyRemaining,
+        subjectRemaining,
         clusters,
       });
 
@@ -220,4 +223,22 @@ function normalizeScope(value: string | undefined): SupersessionCandidateScope {
 function normalizeOptionalString(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized ? normalized : undefined;
+}
+
+/**
+ * Counts clusters grouped by the requested supersession family.
+ *
+ * @param clusters - Cluster page or remainder window to count.
+ * @param groupedBy - Grouping family to count.
+ * @returns Number of clusters in the requested grouping family.
+ */
+function countClustersByGrouping(clusters: Array<{ groupedBy: "claim_key" | "subject" }>, groupedBy: "claim_key" | "subject"): number {
+  let count = 0;
+  for (const cluster of clusters) {
+    if (cluster.groupedBy === groupedBy) {
+      count += 1;
+    }
+  }
+
+  return count;
 }

@@ -97,9 +97,14 @@ export interface SurgeonSupersessionReviewTracker {
   /**
    * Records one observed supersession-candidate page.
    *
-   * @param input - Scope, totals, and returned clusters for the page.
+   * @param input - Scope, remaining unpaged counts after this page, and returned clusters for the page.
    */
-  recordPage(input: { scope: "claim_key" | "subject" | "all"; claimKeyTotal: number; subjectTotal: number; clusters: SurgeonSupersessionCluster[] }): void;
+  recordPage(input: {
+    scope: "claim_key" | "subject" | "all";
+    claimKeyRemaining: number;
+    subjectRemaining: number;
+    clusters: SurgeonSupersessionCluster[];
+  }): void;
 
   /**
    * Drops clusters already adjudicated earlier in the same run.
@@ -292,9 +297,9 @@ export function createSupersessionReviewTracker(input: { claimKeyTotal: number; 
       entryToClusterKeys = new Map<string, Set<string>>();
     },
 
-    recordPage({ scope, claimKeyTotal, subjectTotal, clusters }): void {
-      const normalizedClaimKeyRemaining = normalizeCount(claimKeyTotal);
-      const normalizedSubjectRemaining = normalizeCount(subjectTotal);
+    recordPage({ scope, claimKeyRemaining, subjectRemaining, clusters }): void {
+      const normalizedClaimKeyRemaining = normalizeCount(claimKeyRemaining);
+      const normalizedSubjectRemaining = normalizeCount(subjectRemaining);
       const nextClaimKeyViewed = new Set(progress.claimKeyViewedKeys);
       const nextSubjectViewed = new Set(progress.subjectViewedKeys);
       const nextEntryMap = cloneEntryClusterMap(entryToClusterKeys);

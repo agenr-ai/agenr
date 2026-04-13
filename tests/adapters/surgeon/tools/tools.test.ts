@@ -235,9 +235,9 @@ describe("surgeon tools", () => {
     expect(completionGuards.supersession.snapshot()).toEqual({
       claimKeyClustersViewed: 1,
       claimKeyClustersTotal: 1,
-      claimKeyClustersRemaining: 1,
+      claimKeyClustersRemaining: 0,
       claimKeyClustersAdjudicated: 0,
-      claimKeyScopeExhausted: false,
+      claimKeyScopeExhausted: true,
       subjectClustersViewed: 0,
       subjectClustersTotal: 1,
       subjectClustersRemaining: 1,
@@ -399,8 +399,8 @@ describe("surgeon tools", () => {
     });
     completionGuards.supersession.recordPage({
       scope: "claim_key",
-      claimKeyTotal: 1,
-      subjectTotal: 0,
+      claimKeyRemaining: 0,
+      subjectRemaining: 0,
       clusters: [
         {
           groupKey: "jim/home_city",
@@ -505,6 +505,82 @@ describe("surgeon tools", () => {
       subjectClustersAdjudicated: 0,
       subjectScopeExhausted: false,
       adjudicatedClusters: 0,
+      widenedBeforeClaimKeyExhausted: false,
+    });
+  });
+
+  it("unblocks the subject supersession sweep after an exhausted claim_key page in the same run", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "claim-entry-1",
+      subject: "Unique claim subject",
+      claim_key: "jim/home_city",
+      created_at: daysAgoIso(40),
+    });
+    await insertEntry(client, {
+      id: "claim-entry-2",
+      subject: "Unique claim subject update",
+      claim_key: "jim/home_city",
+      created_at: daysAgoIso(20),
+    });
+    await insertEntry(client, {
+      id: "subject-entry-1",
+      subject: "Shared subject",
+      created_at: daysAgoIso(30),
+    });
+    await insertEntry(client, {
+      id: "subject-entry-2",
+      subject: "Shared subject",
+      created_at: daysAgoIso(10),
+    });
+
+    const completionGuards = createSurgeonCompletionGuardState({
+      totalEntries: 4,
+      supersessionClaimKeyClusters: 1,
+      supersessionSubjectClusters: 1,
+    });
+    const tool = createQuerySupersessionCandidatesTool(
+      createToolDeps(client, {
+        passType: "supersession",
+        completionGuards,
+      }),
+    );
+
+    const claimKeyResult = await tool.execute("tool-query-supersession-claim-key-exhausted", {
+      scope: "claim_key",
+      limit: 10,
+      offset: 0,
+    });
+
+    expect(claimKeyResult.details).toMatchObject({
+      count: 1,
+      scope: "claim_key",
+      exhausted: true,
+      claimKeyClusterCount: 1,
+    });
+    expect(completionGuards.supersession.snapshot()).toMatchObject({
+      claimKeyClustersViewed: 1,
+      claimKeyClustersRemaining: 0,
+      claimKeyScopeExhausted: true,
+    });
+
+    const subjectResult = await tool.execute("tool-query-supersession-subject-after-claim-key-exhaustion", {
+      scope: "subject",
+      limit: 10,
+      offset: 0,
+    });
+
+    expect(subjectResult.details).toMatchObject({
+      count: 1,
+      scope: "subject",
+      subjectClusterCount: 1,
+    });
+    expect(completionGuards.supersession.snapshot()).toMatchObject({
+      claimKeyClustersRemaining: 0,
+      claimKeyScopeExhausted: true,
+      subjectClustersViewed: 1,
+      subjectClustersRemaining: 0,
+      subjectScopeExhausted: true,
       widenedBeforeClaimKeyExhausted: false,
     });
   });
@@ -1085,8 +1161,8 @@ describe("surgeon tools", () => {
     });
     completionGuards.supersession.recordPage({
       scope: "claim_key",
-      claimKeyTotal: 1,
-      subjectTotal: 0,
+      claimKeyRemaining: 0,
+      subjectRemaining: 0,
       clusters: [
         {
           groupKey: "jim/home_city",
@@ -1320,8 +1396,8 @@ describe("surgeon tools", () => {
     });
     completionGuards.supersession.recordPage({
       scope: "claim_key",
-      claimKeyTotal: 1,
-      subjectTotal: 0,
+      claimKeyRemaining: 0,
+      subjectRemaining: 0,
       clusters: [
         {
           groupKey: "claim-target-slot",
@@ -1445,8 +1521,8 @@ describe("surgeon tools", () => {
     });
     completionGuards.supersession.recordPage({
       scope: "subject",
-      claimKeyTotal: 0,
-      subjectTotal: 1,
+      claimKeyRemaining: 0,
+      subjectRemaining: 0,
       clusters: [
         {
           groupKey: "validity-target::fact",
@@ -1801,8 +1877,8 @@ describe("surgeon tools", () => {
 
     completionGuards.supersession.recordPage({
       scope: "claim_key",
-      claimKeyTotal: 5,
-      subjectTotal: 0,
+      claimKeyRemaining: 4,
+      subjectRemaining: 0,
       clusters: [
         {
           groupKey: "slot-1",
@@ -1848,14 +1924,14 @@ describe("surgeon tools", () => {
       rejected: true,
       claimKeyClustersViewed: 1,
       claimKeyClustersTotal: 5,
-      claimKeyClustersRemaining: 4,
+      claimKeyClustersRemaining: 3,
     });
     expect(completionState.isComplete).toBe(false);
 
     completionGuards.supersession.recordPage({
       scope: "claim_key",
-      claimKeyTotal: 4,
-      subjectTotal: 0,
+      claimKeyRemaining: 0,
+      subjectRemaining: 0,
       clusters: [
         {
           groupKey: "slot-2",
@@ -1997,8 +2073,8 @@ describe("surgeon tools", () => {
     });
     completionGuards.supersession.recordPage({
       scope: "claim_key",
-      claimKeyTotal: 1,
-      subjectTotal: 0,
+      claimKeyRemaining: 0,
+      subjectRemaining: 0,
       clusters: [
         {
           groupKey: "mixed-slot",
@@ -2049,8 +2125,8 @@ describe("surgeon tools", () => {
     });
     completionGuards.supersession.recordPage({
       scope: "claim_key",
-      claimKeyTotal: 1,
-      subjectTotal: 0,
+      claimKeyRemaining: 0,
+      subjectRemaining: 0,
       clusters: [
         {
           groupKey: "slot-1",

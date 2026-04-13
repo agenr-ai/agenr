@@ -172,8 +172,8 @@ describe("createSupersessionReviewTracker", () => {
 
     tracker.recordPage({
       scope: "claim_key",
-      claimKeyTotal: 2,
-      subjectTotal: 1,
+      claimKeyRemaining: 1,
+      subjectRemaining: 1,
       clusters: [
         {
           groupKey: "jim/home_city",
@@ -185,8 +185,8 @@ describe("createSupersessionReviewTracker", () => {
     tracker.markAdjudicated(["entry-a"]);
     tracker.recordPage({
       scope: "subject",
-      claimKeyTotal: 1,
-      subjectTotal: 1,
+      claimKeyRemaining: 1,
+      subjectRemaining: 0,
       clusters: [
         {
           groupKey: "shared subject::fact",
@@ -204,11 +204,11 @@ describe("createSupersessionReviewTracker", () => {
       claimKeyScopeExhausted: false,
       subjectClustersViewed: 1,
       subjectClustersTotal: 1,
-      subjectClustersRemaining: 1,
+      subjectClustersRemaining: 0,
       subjectClustersAdjudicated: 0,
-      subjectScopeExhausted: false,
+      subjectScopeExhausted: true,
       adjudicatedClusters: 1,
-      widenedBeforeClaimKeyExhausted: true,
+      widenedBeforeClaimKeyExhausted: false,
     });
     expect(tracker.hasSeenEntry("entry-a")).toBe(true);
     expect(tracker.hasSeenEntry("entry-c")).toBe(true);
@@ -223,8 +223,8 @@ describe("createSupersessionReviewTracker", () => {
 
     tracker.recordPage({
       scope: "claim_key",
-      claimKeyTotal: 2,
-      subjectTotal: 1,
+      claimKeyRemaining: 1,
+      subjectRemaining: 1,
       clusters: [
         {
           groupKey: "slot-1",
@@ -236,8 +236,8 @@ describe("createSupersessionReviewTracker", () => {
     tracker.markAdjudicated(["entry-a"]);
     tracker.recordPage({
       scope: "claim_key",
-      claimKeyTotal: 1,
-      subjectTotal: 1,
+      claimKeyRemaining: 0,
+      subjectRemaining: 1,
       clusters: [
         {
           groupKey: "slot-2",
@@ -250,9 +250,9 @@ describe("createSupersessionReviewTracker", () => {
     expect(tracker.snapshot()).toEqual({
       claimKeyClustersViewed: 2,
       claimKeyClustersTotal: 2,
-      claimKeyClustersRemaining: 1,
+      claimKeyClustersRemaining: 0,
       claimKeyClustersAdjudicated: 1,
-      claimKeyScopeExhausted: false,
+      claimKeyScopeExhausted: true,
       subjectClustersViewed: 0,
       subjectClustersTotal: 1,
       subjectClustersRemaining: 1,
@@ -275,6 +275,6 @@ describe("createSupersessionReviewTracker", () => {
       adjudicatedClusters: 2,
       widenedBeforeClaimKeyExhausted: false,
     });
-    expect(tracker.snapshot().claimKeyClustersRemaining).toBe(1);
+    expect(tracker.snapshot().claimKeyClustersRemaining).toBe(0);
   });
 });
