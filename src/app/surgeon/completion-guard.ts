@@ -5,15 +5,18 @@ import type { SurgeonSupersessionCluster } from "./ports.js";
  */
 export interface PaginatedQueryProgress {
   queryCalls: number;
+  reviewedEntryCount: number;
   actionable: {
     maxWindowEnd: number;
     totalCount: number | null;
     sawExhaustedPage: boolean;
+    nextOffset: number | null;
   };
   all: {
     maxWindowEnd: number;
     totalCount: number | null;
     sawExhaustedPage: boolean;
+    nextOffset: number | null;
   };
 }
 
@@ -31,7 +34,15 @@ export interface PaginatedQueryTracker {
    *
    * @param input - Pagination metadata for the page.
    */
-  recordPage(input: { scope: "actionable" | "all"; offset: number; returnedCount: number; totalCount?: number; exhausted: boolean; entryIds?: string[] }): void;
+  recordPage(input: {
+    scope: "actionable" | "all";
+    offset: number;
+    returnedCount: number;
+    totalCount?: number;
+    exhausted: boolean;
+    nextOffset?: number | null;
+    entryIds?: string[];
+  }): void;
 
   /**
    * Checks whether an entry ID appeared in a previously paged result.
@@ -40,6 +51,13 @@ export interface PaginatedQueryTracker {
    * @returns True when the entry was observed in this run.
    */
   hasSeenEntry(entryId: string): boolean;
+
+  /**
+   * Marks one or more paged entries as explicitly reviewed in the current run.
+   *
+   * @param entryIds - Entry IDs that were inspected or otherwise reviewed.
+   */
+  recordReviewedEntries(entryIds: string[]): void;
 
   /**
    * Returns an immutable snapshot of current progress.
@@ -147,11 +165,13 @@ export interface SurgeonCompletionGuardState {
 export function createPaginatedQueryTracker(): PaginatedQueryTracker {
   let progress = createEmptyProgress();
   let seenEntryIds = new Set<string>();
+  let reviewedEntryIds = new Set<string>();
 
   return {
     reset(): void {
       progress = createEmptyProgress();
       seenEntryIds = new Set<string>();
+      reviewedEntryIds = new Set<string>();
     },
 
     recordPage(input): void {
@@ -160,15 +180,18 @@ export function createPaginatedQueryTracker(): PaginatedQueryTracker {
       const returnedCount = normalizeCount(input.returnedCount);
       const totalCount = input.totalCount === undefined ? null : normalizeCount(input.totalCount);
       const scopedProgress = progress[scope];
+      const nextOffset = input.exhausted || input.nextOffset === null || input.nextOffset === undefined ? null : normalizeCount(input.nextOffset);
 
       progress = {
         queryCalls: progress.queryCalls + 1,
+        reviewedEntryCount: reviewedEntryIds.size,
         actionable:
           scope === "actionable"
             ? {
                 maxWindowEnd: Math.max(scopedProgress.maxWindowEnd, offset + returnedCount),
                 totalCount: totalCount ?? scopedProgress.totalCount,
                 sawExhaustedPage: scopedProgress.sawExhaustedPage || input.exhausted,
+                nextOffset,
               }
             : progress.actionable,
         all:
@@ -177,6 +200,7 @@ export function createPaginatedQueryTracker(): PaginatedQueryTracker {
                 maxWindowEnd: Math.max(scopedProgress.maxWindowEnd, offset + returnedCount),
                 totalCount: totalCount ?? scopedProgress.totalCount,
                 sawExhaustedPage: scopedProgress.sawExhaustedPage || input.exhausted,
+                nextOffset,
               }
             : progress.all,
       };
@@ -192,8 +216,27 @@ export function createPaginatedQueryTracker(): PaginatedQueryTracker {
       return seenEntryIds.has(entryId.trim());
     },
 
+    recordReviewedEntries(entryIds: string[]): void {
+      for (const entryId of entryIds) {
+        const normalizedEntryId = entryId.trim();
+        if (!normalizedEntryId || !seenEntryIds.has(normalizedEntryId)) {
+          continue;
+        }
+        reviewedEntryIds.add(normalizedEntryId);
+      }
+      progress = {
+        ...progress,
+        reviewedEntryCount: reviewedEntryIds.size,
+      };
+    },
+
     snapshot(): PaginatedQueryProgress {
-      return { ...progress };
+      return {
+        queryCalls: progress.queryCalls,
+        reviewedEntryCount: progress.reviewedEntryCount,
+        actionable: { ...progress.actionable },
+        all: { ...progress.all },
+      };
     },
   };
 }
@@ -319,15 +362,18 @@ export function createSupersessionReviewTracker(input: { claimKeyTotal: number; 
 function createEmptyProgress(): PaginatedQueryProgress {
   return {
     queryCalls: 0,
+    reviewedEntryCount: 0,
     actionable: {
       maxWindowEnd: 0,
       totalCount: null,
       sawExhaustedPage: false,
+      nextOffset: null,
     },
     all: {
       maxWindowEnd: 0,
       totalCount: null,
       sawExhaustedPage: false,
+      nextOffset: null,
     },
   };
 }

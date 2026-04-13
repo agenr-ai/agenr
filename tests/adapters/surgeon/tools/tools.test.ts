@@ -154,15 +154,18 @@ describe("surgeon tools", () => {
     });
     expect(completionGuards.retirement.snapshot()).toEqual({
       queryCalls: 1,
+      reviewedEntryCount: 0,
       actionable: {
         maxWindowEnd: 1,
         totalCount: 1,
         sawExhaustedPage: true,
+        nextOffset: null,
       },
       all: {
         maxWindowEnd: 0,
         totalCount: null,
         sawExhaustedPage: false,
+        nextOffset: null,
       },
     });
   });

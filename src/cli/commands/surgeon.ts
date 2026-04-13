@@ -335,7 +335,7 @@ function renderSingleRunResult(
     `${ui.label("Status")}   ${colorizeStatus(result.status)}`,
     `${ui.label("Actions")}  ${result.actionsTaken} total, ${result.entriesRetired} retired`,
     `${ui.label("Usage")}    in ${result.inputTokens} / out ${result.outputTokens} / cost ${formatUsd(result.estimatedCostUsd)}`,
-    `${ui.label("Summary")}  ${result.summary ?? ui.dim("n/a")}`,
+    ...renderSummaryLines(result.summary),
     "",
   ].join("\n");
 }
@@ -370,9 +370,23 @@ function renderAutonomousRunResult(
     `${ui.label("Status")}   ${colorizeStatus(result.status)}`,
     `${ui.label("Actions")}  ${result.actionsTaken} total, ${result.entriesRetired} retired`,
     `${ui.label("Usage")}    in ${result.inputTokens} / out ${result.outputTokens} / cost ${formatUsd(result.estimatedCostUsd)}`,
-    `${ui.label("Summary")}  ${result.summary ?? ui.dim("n/a")}`,
+    ...renderSummaryLines(result.summary),
     "",
   ].join("\n");
+}
+
+/**
+ * Expands a summary string into one or more aligned CLI lines.
+ *
+ * @param summary - Summary text that may already contain line breaks.
+ * @returns Rendered summary lines for the final CLI block.
+ */
+function renderSummaryLines(summary: string | null): string[] {
+  if (!summary) {
+    return [`${ui.label("Summary")}  ${ui.dim("n/a")}`];
+  }
+  const lines = summary.split("\n");
+  return [`${ui.label("Summary")}  ${lines[0] ?? ""}`, ...lines.slice(1).map((line) => `          ${line}`)];
 }
 
 /**
@@ -692,7 +706,12 @@ function createSurgeonRunDisplay(verbose: boolean): SurgeonRunDisplay {
       return;
     }
 
-    handleClaimKeyQualityEvent(event, verbose);
+    if (event.kind === "claim_key_quality_progress") {
+      handleClaimKeyQualityEvent(event, verbose);
+      return;
+    }
+
+    handleProposalResolutionEvent(event, verbose);
   };
 
   const logger: Logger = createDisplayLogger(verbose);
@@ -777,11 +796,12 @@ function handleClaimKeyQualityEvent(event: Extract<SurgeonProgressEvent, { kind:
 
   const appliedTotal =
     event.counts.appliedNormalizations + event.counts.appliedBackfills + event.counts.appliedMetadataRewrites + event.counts.appliedEntityFamilyConvergences;
+  const skippedSummary = formatClaimKeyQualitySkippedSummary(event.counts, verbose);
 
   if (event.status === "completed") {
     const completedMsg =
       `${stageLabel}: ${event.completed}/${event.total} ${event.unitLabel}, ` +
-      `${appliedTotal} applied, ${event.counts.proposalsEmitted} proposals, ${formatElapsed(event.elapsedMs)}`;
+      `${appliedTotal} applied, ${event.counts.proposalsEmitted} proposals${skippedSummary}, ${formatElapsed(event.elapsedMs)}`;
 
     if (verbose) {
       const detail =
@@ -802,7 +822,7 @@ function handleClaimKeyQualityEvent(event: Extract<SurgeonProgressEvent, { kind:
   const previewSuffix = previewTotal > 0 ? `, preview ${previewCompleted}/${previewTotal}` : "";
   const progressMsg =
     `${stageLabel}: ${event.completed}/${event.total} ${event.unitLabel}${previewSuffix}, ` +
-    `${appliedTotal} applied, ${event.counts.proposalsEmitted} proposals, ${formatElapsed(event.elapsedMs)}`;
+    `${appliedTotal} applied, ${event.counts.proposalsEmitted} proposals${skippedSummary}, ${formatElapsed(event.elapsedMs)}`;
 
   if (verbose) {
     const detail =
@@ -813,6 +833,43 @@ function handleClaimKeyQualityEvent(event: Extract<SurgeonProgressEvent, { kind:
     writeStderr(`  ${ui.dim(progressMsg + detail)}`);
   } else {
     writeStderr(`  ${ui.dim(progressMsg)}`);
+  }
+}
+
+/**
+ * Handles one proposal-resolution progress event with concise operator detail.
+ *
+ * @param event - Proposal-resolution progress snapshot.
+ * @param verbose - Whether verbose detail is enabled.
+ */
+function handleProposalResolutionEvent(event: Extract<SurgeonProgressEvent, { kind: "proposal_resolution_progress" }>, verbose: boolean): void {
+  switch (event.status) {
+    case "no_work":
+      writeStderr(`  ${ui.dim("proposal_resolution: 0 eligible proposals")}`);
+      return;
+    case "started":
+      writeStderr(`  ${ui.label("Proposal backlog:")} ${event.totalProposals} eligible proposal${event.totalProposals === 1 ? "" : "s"}`);
+      return;
+    case "proposal_processed": {
+      const outcome = event.outcome ? `, ${formatProposalResolutionOutcome(event.outcome)}` : "";
+      const verboseSuffix = verbose && event.proposalId ? ` ${ui.dim(`(${event.proposalId}${event.issueKind ? `, ${event.issueKind}` : ""})`)}` : "";
+      writeStderr(
+        `  ${ui.dim(`proposal_resolution: ${event.processedProposals}/${event.totalProposals} proposals, applied ${event.appliedCount}, inactive ${event.rejectedInactiveCount}, no-op ${event.noChangeCount}, targeted ${event.targetedEntryCount}${outcome}`)}${verboseSuffix}`,
+      );
+      return;
+    }
+    case "completed":
+      writeStderr(
+        `  ${ui.success(`proposal_resolution: ${event.processedProposals}/${event.totalProposals} proposals, applied ${event.appliedCount}, inactive ${event.rejectedInactiveCount}, no-op ${event.noChangeCount}, targeted ${event.targetedEntryCount}`)}`,
+      );
+      return;
+    case "stalled":
+      writeStderr(
+        `  ${ui.warn(`proposal_resolution: ${event.processedProposals}/${event.totalProposals} proposals, applied ${event.appliedCount}, inactive ${event.rejectedInactiveCount}, no-op ${event.noChangeCount}, targeted ${event.targetedEntryCount}`)}`,
+      );
+      return;
+    default:
+      return;
   }
 }
 
@@ -828,12 +885,13 @@ function createDisplayLogger(verbose: boolean): Logger {
 
   return {
     info(message: string): void {
+      const sanitized = stripLineItemCostDetails(message);
       if (verbose) {
-        writeStderr(`    ${ui.dim(message)}`);
+        writeStderr(`    ${ui.dim(sanitized)}`);
         return;
       }
 
-      const compact = formatCompactTraceLine(message, turnState);
+      const compact = formatCompactTraceLine(sanitized, turnState);
       if (compact) {
         writeStderr(`    ${ui.dim(compact)}`);
       }
@@ -889,10 +947,8 @@ function formatCompactTraceLine(message: string, state: TurnTrackingState): stri
 
   // Emit a compact turn summary at turn end
   if (message.startsWith("turn end")) {
-    const costMatch = message.match(/costUsed=(\$[\d.]+)/);
-    const cost = costMatch?.[1] ?? "";
     const toolList = state.tools.length > 0 ? state.tools.join(", ") : "no tools";
-    return `Turn ${state.turnNumber}: ${toolList}${cost ? ` (${cost})` : ""}`;
+    return `Turn ${state.turnNumber}: ${toolList}`;
   }
 
   // Emit surgeon actions as compact one-liners
@@ -906,6 +962,16 @@ function formatCompactTraceLine(message: string, state: TurnTrackingState): stri
   }
 
   return message;
+}
+
+/**
+ * Removes per-turn dollar telemetry from console trace lines while preserving other detail.
+ *
+ * @param message - Raw trace line destined for console output.
+ * @returns Sanitized trace line without line-item cost detail.
+ */
+function stripLineItemCostDetails(message: string): string {
+  return message.replace(/ cost=\$[\d.]+/g, "").replace(/ costUsed=\$[\d.]+\/\$?[\w.-]+/g, "");
 }
 
 /**
@@ -930,6 +996,54 @@ function formatClaimKeyQualityStage(stage: Extract<SurgeonProgressEvent, { kind:
       return "mixed-key groups";
     default:
       return stage;
+  }
+}
+
+/**
+ * Formats the claim-key-quality skip counters for one progress snapshot.
+ *
+ * @param counts - Cumulative stage counters.
+ * @param verbose - Whether verbose detail is enabled.
+ * @returns Human-readable skip summary suffix.
+ */
+function formatClaimKeyQualitySkippedSummary(
+  counts: Extract<SurgeonProgressEvent, { kind: "claim_key_quality_progress" }>["counts"],
+  verbose: boolean,
+): string {
+  const skippedTotal = counts.skippedNoClaim + counts.skippedLowConfidence + counts.skippedCollision + counts.skippedAmbiguous;
+  if (skippedTotal === 0) {
+    return "";
+  }
+  if (!verbose) {
+    return `, skips ${skippedTotal}`;
+  }
+  const parts = [
+    counts.skippedNoClaim > 0 ? `${counts.skippedNoClaim} no-claim` : null,
+    counts.skippedLowConfidence > 0 ? `${counts.skippedLowConfidence} low-confidence` : null,
+    counts.skippedCollision > 0 ? `${counts.skippedCollision} collision` : null,
+    counts.skippedAmbiguous > 0 ? `${counts.skippedAmbiguous} ambiguous` : null,
+  ].filter((value): value is string => value !== null);
+  return parts.length > 0 ? `, skips ${skippedTotal} (${parts.join(", ")})` : `, skips ${skippedTotal}`;
+}
+
+/**
+ * Maps a proposal-resolution outcome code to a user-facing label.
+ *
+ * @param outcome - Structured proposal-resolution outcome.
+ * @returns Short operator-facing label.
+ */
+function formatProposalResolutionOutcome(outcome: Extract<SurgeonProgressEvent, { kind: "proposal_resolution_progress" }>["outcome"]): string {
+  switch (outcome) {
+    case "applied":
+      return "applied";
+    case "dry_run":
+      return "previewed";
+    case "rejected_inactive":
+      return "rejected inactive";
+    case "no_change":
+      return "no change";
+    default:
+      return "updated";
   }
 }
 

@@ -24,6 +24,9 @@ export function createInspectEntryTool(deps: SurgeonToolDeps): AgentTool<typeof 
     description: "Inspect one entry in detail, including same-subject, same-cluster, and reverse-supersession context.",
     parameters: INSPECT_ENTRY_SCHEMA,
     async execute(_toolCallId, params: InspectEntryParams) {
+      if (deps.passType === "retirement") {
+        deps.completionGuards?.retirement.recordReviewedEntries([params.entry_id]);
+      }
       const inspection = await deps.port.inspectEntry(params.entry_id);
 
       return toolResult({

@@ -71,11 +71,14 @@ export interface SurgeonRunResult {
   status: SurgeonRunStatus;
   passType: string;
   actionsTaken: number;
+  actionsSkipped?: number;
   entriesRetired: number;
+  reviewedEntries?: number;
   inputTokens: number;
   outputTokens: number;
   estimatedCostUsd: number;
   summary: string | null;
+  completionSummary?: SurgeonCompletionSummary | null;
 }
 
 /**
@@ -115,6 +118,9 @@ export interface SurgeonWorkflowDeps {
   logger?: Logger;
 }
 
+/**
+ * Preflight counts captured before one surgeon pass starts.
+ */
 interface SurgeonPassStartContext {
   retirementRawActionableCandidates: number;
   retirementAvailableActionableCandidates: number;
@@ -124,6 +130,7 @@ interface SurgeonPassStartContext {
   supersessionSubjectClusters: number;
 }
 
+/** Agent-loop surgeon passes that use bounded continuation slices. */
 type AgentSurgeonPass = Extract<SurgeonPassType, "retirement" | "supersession">;
 
 /**
@@ -230,10 +237,8 @@ export async function runAutonomousSurgeon(options: SurgeonAutonomousRunOptions,
         now: deps.now ? deps.now() : new Date(),
       });
 
-      if (
-        pass === "retirement" &&
-        retirementContextBefore &&
-        (await shouldStopAfterLowYieldRetirementPass({
+      if (pass === "retirement" && retirementContextBefore) {
+        const retirementTailDisposition = await shouldStopAfterLowYieldRetirementPass({
           result,
           cycleWorkBefore: workBeforePass,
           cycleWorkAfter: pendingWork,
@@ -245,14 +250,18 @@ export async function runAutonomousSurgeon(options: SurgeonAutonomousRunOptions,
             skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
             now: deps.now ? deps.now() : new Date(),
           },
-        }))
-      ) {
-        return finalizeAutonomousRun({
-          cyclesCompleted,
-          passes: results,
-          status: "stalled",
-          summaryOverride: "Autonomous retirement tail stopped making direct progress.",
         });
+        if (retirementTailDisposition) {
+          return finalizeAutonomousRun({
+            cyclesCompleted,
+            passes: results,
+            status: retirementTailDisposition,
+            summaryOverride:
+              retirementTailDisposition === "completed"
+                ? "Autonomous retirement review exhausted after conservative no-op coverage."
+                : "Autonomous retirement tail stopped making direct progress.",
+          });
+        }
       }
     }
 
@@ -518,6 +527,7 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
           runId,
           apply: options.apply,
           now: nowFn,
+          reportProgress: deps.reportProgress,
         },
         {
           port: deps.port,
@@ -589,10 +599,11 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
   let terminalStatus: SurgeonRunStatus | null = null;
   let terminalError: string | null = null;
   let traceLogger: SurgeonTraceLogger | null = null;
+  let completionGuards: ReturnType<typeof createSurgeonCompletionGuardState> | null = null;
 
   try {
     const systemPrompt = buildSystemPrompt(options.pass, deps.config);
-    const completionGuards = createSurgeonCompletionGuardState({
+    completionGuards = createSurgeonCompletionGuardState({
       totalEntries: health.total,
       retirementCandidates: passStartContext.retirementRawActionableCandidates,
       retirementAvailableActionableCandidates: passStartContext.retirementAvailableActionableCandidates,
@@ -824,6 +835,7 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
       actionMetrics,
       budgetTracker,
       error: terminalError,
+      reviewedEntries: agentPass === "retirement" ? completionGuards?.retirement.snapshot().reviewedEntryCount : undefined,
       summaryOverride:
         finalStatus === "aborted" ? USER_ABORT_SUMMARY : finalStatus === "stalled" ? buildStalledRunSummary(agentPass, actionMetrics) : undefined,
       port: deps.port,
@@ -840,6 +852,7 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
         budgetTracker,
         error: USER_ABORT_ERROR,
         summaryOverride: USER_ABORT_SUMMARY,
+        reviewedEntries: agentPass === "retirement" ? completionGuards?.retirement.snapshot().reviewedEntryCount : undefined,
         port: deps.port,
         now: nowFn,
       });
@@ -854,6 +867,7 @@ export async function runSurgeon(options: SurgeonRunOptions, deps: SurgeonWorkfl
       actionMetrics,
       budgetTracker,
       error: terminalError ?? message,
+      reviewedEntries: agentPass === "retirement" ? completionGuards?.retirement.snapshot().reviewedEntryCount : undefined,
       port: deps.port,
       now: nowFn,
     });
@@ -1122,18 +1136,26 @@ function buildContinuationPrompt(input: {
             : `You stopped without calling complete_pass and still have about ${formatUsd(input.remainingCostUsd)} of run budget remaining. The latest turn context size was ${input.currentContextTokens} tokens.`,
           "Continue the retirement pass.",
           progressReminder,
-          "Keep paginating candidates. If the actionable scope is exhausted and meaningful budget remains, widen to scope = 'all'.",
+          "Resume from the next unpaged candidate window instead of restarting earlier offsets. If the actionable scope is exhausted and meaningful budget remains, widen to scope = 'all'.",
           "Do not call complete_pass until candidates are genuinely exhausted or budget constraints force you to stop.",
         ];
 
   return lines.join(" ");
 }
 
+/**
+ * Resolves automatically eligible proposal backlog entries without invoking the agent loop.
+ *
+ * @param input - Run metadata and progress reporter.
+ * @param deps - Backlog storage and action-recording dependencies.
+ * @returns Terminal proposal-resolution outcome for this pass.
+ */
 async function runProposalResolutionPass(
   input: {
     runId: string;
     apply: boolean;
     now: () => Date;
+    reportProgress?: SurgeonProgressReporter;
   },
   deps: {
     port: SurgeonPort;
@@ -1152,6 +1174,22 @@ async function runProposalResolutionPass(
     offset: 0,
   });
 
+  let appliedCount = 0;
+  let rejectedInactiveCount = 0;
+  let noChangeCount = 0;
+  const updatedEntryIds = new Set<string>();
+
+  emitProposalResolutionProgress(input.reportProgress, {
+    apply: input.apply,
+    status: backlog.length === 0 ? "no_work" : "started",
+    totalProposals: backlog.length,
+    processedProposals: 0,
+    appliedCount,
+    rejectedInactiveCount,
+    noChangeCount,
+    targetedEntryCount: updatedEntryIds.size,
+  });
+
   if (backlog.length === 0) {
     return {
       status: "no_work",
@@ -1161,11 +1199,7 @@ async function runProposalResolutionPass(
     };
   }
 
-  let appliedCount = 0;
-  let rejectedInactiveCount = 0;
-  const updatedEntryIds = new Set<string>();
-
-  for (const item of backlog) {
+  for (const [index, item] of backlog.entries()) {
     const proposal = item.proposal;
     const targetClaimKey = normalizeProposalApplyTarget(proposal);
     const reasoning = buildProposalReviewReason(proposal, "Autonomous eligible proposal resolution.");
@@ -1205,6 +1239,34 @@ async function runProposalResolutionPass(
             appliedActionCount: 0,
           });
           rejectedInactiveCount += 1;
+          emitProposalResolutionProgress(input.reportProgress, {
+            apply: input.apply,
+            status: "proposal_processed",
+            totalProposals: backlog.length,
+            processedProposals: index + 1,
+            appliedCount,
+            rejectedInactiveCount,
+            noChangeCount,
+            targetedEntryCount: updatedEntryIds.size,
+            proposalId: proposal.id,
+            issueKind: proposal.issueKind,
+            outcome: "rejected_inactive",
+          });
+        } else {
+          noChangeCount += 1;
+          emitProposalResolutionProgress(input.reportProgress, {
+            apply: input.apply,
+            status: "proposal_processed",
+            totalProposals: backlog.length,
+            processedProposals: index + 1,
+            appliedCount,
+            rejectedInactiveCount,
+            noChangeCount,
+            targetedEntryCount: updatedEntryIds.size,
+            proposalId: proposal.id,
+            issueKind: proposal.issueKind,
+            outcome: "no_change",
+          });
         }
         continue;
       }
@@ -1240,9 +1302,32 @@ async function runProposalResolutionPass(
       createdAt: input.now().toISOString(),
     });
     appliedCount += 1;
+    emitProposalResolutionProgress(input.reportProgress, {
+      apply: input.apply,
+      status: "proposal_processed",
+      totalProposals: backlog.length,
+      processedProposals: index + 1,
+      appliedCount,
+      rejectedInactiveCount,
+      noChangeCount,
+      targetedEntryCount: updatedEntryIds.size,
+      proposalId: proposal.id,
+      issueKind: proposal.issueKind,
+      outcome: input.apply ? "applied" : "dry_run",
+    });
   }
 
   if (appliedCount === 0 && rejectedInactiveCount === 0) {
+    emitProposalResolutionProgress(input.reportProgress, {
+      apply: input.apply,
+      status: "stalled",
+      totalProposals: backlog.length,
+      processedProposals: backlog.length,
+      appliedCount,
+      rejectedInactiveCount,
+      noChangeCount,
+      targetedEntryCount: updatedEntryIds.size,
+    });
     return {
       status: "stalled",
       completion: null,
@@ -1251,6 +1336,16 @@ async function runProposalResolutionPass(
     };
   }
 
+  emitProposalResolutionProgress(input.reportProgress, {
+    apply: input.apply,
+    status: "completed",
+    totalProposals: backlog.length,
+    processedProposals: backlog.length,
+    appliedCount,
+    rejectedInactiveCount,
+    noChangeCount,
+    targetedEntryCount: updatedEntryIds.size,
+  });
   return {
     status: "completed",
     completion: {
@@ -1269,10 +1364,62 @@ async function runProposalResolutionPass(
   };
 }
 
+/**
+ * Builds the persisted rationale for one autonomously reviewed proposal.
+ *
+ * @param proposal - Proposal being applied or rejected.
+ * @param reviewReason - Operator-facing reason to append.
+ * @returns Joined review rationale string.
+ */
 function buildProposalReviewReason(proposal: { id: string; rationale: string }, reviewReason: string): string {
   return `Approved surgeon proposal ${proposal.id}: ${proposal.rationale} Review note: ${reviewReason}`.trim();
 }
 
+/**
+ * Emits one structured proposal-resolution progress event when a reporter is configured.
+ *
+ * @param reporter - Optional progress callback supplied by the caller.
+ * @param input - Snapshot of proposal-resolution progress counters.
+ */
+function emitProposalResolutionProgress(
+  reporter: SurgeonProgressReporter | undefined,
+  input: {
+    apply: boolean;
+    status: "started" | "proposal_processed" | "completed" | "no_work" | "stalled";
+    totalProposals: number;
+    processedProposals: number;
+    appliedCount: number;
+    rejectedInactiveCount: number;
+    noChangeCount: number;
+    targetedEntryCount: number;
+    proposalId?: string;
+    issueKind?: string;
+    outcome?: "applied" | "dry_run" | "rejected_inactive" | "no_change";
+  },
+): void {
+  emitSurgeonProgress(reporter, {
+    kind: "proposal_resolution_progress",
+    passType: "proposal_resolution",
+    apply: input.apply,
+    status: input.status,
+    totalProposals: input.totalProposals,
+    processedProposals: input.processedProposals,
+    appliedCount: input.appliedCount,
+    rejectedInactiveCount: input.rejectedInactiveCount,
+    noChangeCount: input.noChangeCount,
+    targetedEntryCount: input.targetedEntryCount,
+    proposalId: input.proposalId,
+    issueKind: input.issueKind,
+    outcome: input.outcome,
+  });
+}
+
+/**
+ * Validates and returns the single claim key targeted by an eligible proposal.
+ *
+ * @param proposal - Proposal selected for autonomous application.
+ * @returns Normalized target claim key.
+ */
 function normalizeProposalApplyTarget(proposal: { id: string; eligibleForApply: boolean; proposedClaimKeys: string[] }): string {
   if (!proposal.eligibleForApply) {
     throw new Error(`Proposal ${proposal.id} is not eligible for autonomous apply.`);
@@ -1289,6 +1436,15 @@ function normalizeProposalApplyTarget(proposal: { id: string; eligibleForApply: 
   return targetClaimKey;
 }
 
+/**
+ * Serializes bounded-slice progress into a stable fingerprint for stall detection.
+ *
+ * @param pass - Active agent-loop pass.
+ * @param completionGuards - Completion-guard state for the current run.
+ * @param actionMetrics - Persisted non-skip action counters.
+ * @param completionState - Mutable completion marker for the pass.
+ * @returns Stable fingerprint string describing semantic progress.
+ */
 function createPassProgressFingerprint(
   pass: AgentSurgeonPass,
   completionGuards: ReturnType<typeof createSurgeonCompletionGuardState>,
@@ -1304,12 +1460,15 @@ function createPassProgressFingerprint(
       completed: completionState.isComplete,
       actionsTaken: actionMetrics.actionsTaken,
       entriesRetired: actionMetrics.entriesRetired,
+      reviewedEntryCount: progress.reviewedEntryCount,
       actionableMaxWindowEnd: progress.actionable.maxWindowEnd,
       actionableTotalCount: progress.actionable.totalCount,
       actionableExhausted: progress.actionable.sawExhaustedPage,
+      actionableNextOffset: progress.actionable.nextOffset,
       allMaxWindowEnd: progress.all.maxWindowEnd,
       allTotalCount: progress.all.totalCount,
       allExhausted: progress.all.sawExhaustedPage,
+      allNextOffset: progress.all.nextOffset,
     });
   }
 
@@ -1348,8 +1507,21 @@ function buildContinuationProgressReminder(
 ): string {
   if (pass === "retirement") {
     const progress = completionGuards.retirement.snapshot();
-    const pagedCandidates = progress.all.maxWindowEnd > 0 ? progress.all.maxWindowEnd : progress.actionable.maxWindowEnd;
-    return `Persisted actions so far: ${actionMetrics.actionsTaken} (${actionMetrics.entriesRetired} retired). Candidates skipped or updated earlier in this run are suppressed from later candidate queries. Pages explored so far: ${pagedCandidates}.`;
+    const actionableStatus =
+      progress.actionable.sawExhaustedPage || progress.actionable.nextOffset === null ? "exhausted" : `next offset ${progress.actionable.nextOffset}`;
+    const allStatus =
+      progress.all.maxWindowEnd === 0
+        ? "not started"
+        : progress.all.sawExhaustedPage || progress.all.nextOffset === null
+          ? "exhausted"
+          : `next offset ${progress.all.nextOffset}`;
+    return (
+      `Persisted actions so far: ${actionMetrics.actionsTaken} (${actionMetrics.entriesRetired} retired). ` +
+      `Unique reviewed candidates so far: ${progress.reviewedEntryCount}. ` +
+      `Actionable scope explored through ${progress.actionable.maxWindowEnd} candidates (${actionableStatus}). ` +
+      `All-scope explored through ${progress.all.maxWindowEnd} candidates (${allStatus}). ` +
+      "Candidates skipped or updated earlier in this run are suppressed from later candidate queries."
+    );
   }
 
   const progress = completionGuards.supersession.snapshot();
@@ -1549,7 +1721,9 @@ function autonomousCycleMadeDirectProgress(input: {
     return false;
   }
 
-  return input.cycleResults.some((result) => result.actionsTaken > 0 || result.entriesRetired > 0);
+  return input.cycleResults.some(
+    (result) => result.actionsTaken > 0 || result.entriesRetired > 0 || (result.actionsSkipped ?? 0) > 0 || (result.reviewedEntries ?? 0) > 0,
+  );
 }
 
 /**
@@ -1608,9 +1782,9 @@ async function shouldStopAfterLowYieldRetirementPass(input: {
     skipRecentlyEvaluatedDays: number;
     now: Date;
   };
-}): Promise<boolean> {
+}): Promise<"completed" | "stalled" | null> {
   if (input.result.status !== "completed" || input.result.actionsTaken > 0 || input.result.entriesRetired > 0) {
-    return false;
+    return null;
   }
 
   if (
@@ -1619,18 +1793,22 @@ async function shouldStopAfterLowYieldRetirementPass(input: {
     input.cycleWorkAfter.supersession > 0 ||
     input.cycleWorkAfter.retirement <= 0
   ) {
-    return false;
+    return null;
   }
 
   if (input.cycleWorkBefore.claim_key_quality > 0 || input.cycleWorkBefore.proposal_resolution > 0 || input.cycleWorkBefore.supersession > 0) {
-    return false;
+    return null;
   }
 
   const retirementContextAfter = await loadPassStartContext("retirement", input.port, input.protection);
-  return (
+  const candidateSurfaceUnchanged =
     retirementContextAfter.retirementAvailableActionableCandidates === input.retirementContextBefore.retirementAvailableActionableCandidates &&
-    retirementContextAfter.retirementAvailableAllCandidates === input.retirementContextBefore.retirementAvailableAllCandidates
-  );
+    retirementContextAfter.retirementAvailableAllCandidates === input.retirementContextBefore.retirementAvailableAllCandidates;
+  if (!candidateSurfaceUnchanged) {
+    return null;
+  }
+
+  return (input.result.actionsSkipped ?? 0) > 0 || (input.result.reviewedEntries ?? 0) > 0 ? "completed" : "stalled";
 }
 
 /**
@@ -1738,6 +1916,7 @@ async function finalizeRun(input: {
   };
   error: string | null;
   summaryOverride?: string;
+  reviewedEntries?: number;
   port: SurgeonPort;
   now: () => Date;
 }): Promise<SurgeonRunResult> {
@@ -1747,8 +1926,10 @@ async function finalizeRun(input: {
     outputTokens: input.usageTotals?.outputTokens ?? trackerTotals?.outputTokens ?? 0,
     costUsd: input.usageTotals?.estimatedCostUsd ?? trackerTotals?.costUsd ?? 0,
   };
-  const summary = input.summaryOverride ?? summarizeCompletion(input.completionState.summary);
+  const completionSummary = reconcileCompletionSummary(input.completionState.summary, input.actionMetrics);
+  const summary = input.summaryOverride ?? summarizeCompletion(completionSummary);
   const actualActionsTaken = input.actionMetrics.actionsTaken;
+  const actionsSkipped = completionSummary?.entries_skipped.length ?? 0;
 
   await input.port.completeRun(input.runId, {
     status: input.status,
@@ -1756,9 +1937,9 @@ async function finalizeRun(input: {
     outputTokens: totals.outputTokens,
     estimatedCostUsd: totals.costUsd,
     actionsTaken: actualActionsTaken,
-    actionsSkipped: input.completionState.summary?.entries_skipped.length ?? 0,
+    actionsSkipped,
     entriesRetired: input.actionMetrics.entriesRetired,
-    summaryJson: input.completionState.summary,
+    summaryJson: completionSummary,
     error: input.error,
     completedAt: input.now().toISOString(),
   });
@@ -1768,11 +1949,14 @@ async function finalizeRun(input: {
     status: input.status,
     passType: input.passType,
     actionsTaken: actualActionsTaken,
+    actionsSkipped,
     entriesRetired: input.actionMetrics.entriesRetired,
+    reviewedEntries: input.reviewedEntries,
     inputTokens: totals.inputTokens,
     outputTokens: totals.outputTokens,
     estimatedCostUsd: totals.costUsd,
     summary,
+    completionSummary,
   };
 }
 
@@ -1808,13 +1992,73 @@ function finalizeAutonomousRun(input: {
  * @returns Joined summary text, or null when none was produced.
  */
 function buildAutonomousSummary(passes: SurgeonRunResult[]): string | null {
-  const summary = passes
-    .map((pass) => pass.summary)
-    .filter((value): value is string => Boolean(value))
-    .join(" ")
-    .trim();
+  const sections = passes.map((pass) => buildAutonomousSummarySection(pass)).filter((value): value is string => value !== null && value.length > 0);
+  return sections.length > 0 ? sections.join("\n") : null;
+}
 
-  return summary.length > 0 ? summary : null;
+/**
+ * Formats one pass summary as a labeled multiline block for autonomous output.
+ *
+ * @param pass - Completed pass result.
+ * @returns Summary block, or null when the pass has nothing meaningful to show.
+ */
+function buildAutonomousSummarySection(pass: SurgeonRunResult): string | null {
+  const lines = pass.completionSummary?.observations.length ? pass.completionSummary.observations : splitSummaryText(pass.summary);
+  if (lines.length === 0) {
+    return null;
+  }
+  return [`${pass.passType}:`, ...lines.map((line) => `- ${line}`)].join("\n");
+}
+
+/**
+ * Splits a freeform summary paragraph into readable lines for CLI rendering.
+ *
+ * @param summary - Freeform summary text.
+ * @returns Trimmed summary lines.
+ */
+function splitSummaryText(summary: string | null): string[] {
+  if (!summary) {
+    return [];
+  }
+  return summary
+    .split(/\n+/)
+    .flatMap((line) => line.split(/(?<=[a-z0-9)])\.\s+(?=[A-Z0-9])/))
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
+/**
+ * Reconciles model-reported completion counts with the actions actually persisted.
+ *
+ * @param summary - Model-reported completion summary.
+ * @param actionMetrics - Persisted action counters gathered during the run.
+ * @returns Normalized completion summary aligned with persisted work.
+ */
+function reconcileCompletionSummary(
+  summary: SurgeonCompletionSummary | null,
+  actionMetrics: {
+    actionsTaken: number;
+    entriesRetired: number;
+  },
+): SurgeonCompletionSummary | null {
+  if (!summary) {
+    return null;
+  }
+  if (summary.actions_taken === actionMetrics.actionsTaken) {
+    return summary;
+  }
+  const observations =
+    actionMetrics.actionsTaken > 0
+      ? [`Persisted ${actionMetrics.actionsTaken} non-skip action${actionMetrics.actionsTaken === 1 ? "" : "s"} earlier in this pass.`, ...summary.observations]
+      : [...summary.observations];
+  return {
+    ...summary,
+    actions_taken: actionMetrics.actionsTaken,
+    entries_skipped: [...summary.entries_skipped],
+    observations,
+    recommendations: [...summary.recommendations],
+    ...(summary.claim_key_quality ? { claim_key_quality: summary.claim_key_quality } : {}),
+  };
 }
 
 /**
@@ -2022,16 +2266,6 @@ function asRecord(value: unknown): Record<string, unknown> {
   }
 
   return value as Record<string, unknown>;
-}
-
-/**
- * Returns whether an unknown value is a non-empty plain record.
- *
- * @param value - Unknown value to inspect.
- * @returns True when the value is a plain record with at least one key.
- */
-function hasNonEmptyRecord(value: unknown): boolean {
-  return Object.keys(asRecord(value)).length > 0;
 }
 
 /**

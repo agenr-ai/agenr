@@ -508,6 +508,130 @@ describe("runSurgeon", () => {
     ]);
   });
 
+  it("reconciles supersession summary_json action counts with persisted actions", async () => {
+    const db = await createDatabase(":memory:");
+    databases.push(db);
+    await insertEntry(db, {
+      id: "policy-old",
+      subject: "Mac mini update policy",
+      type: "preference",
+      claim_key: "mac_mini/manual_update_policy",
+      created_at: daysAgoIso(120),
+      updated_at: daysAgoIso(120),
+    });
+    await insertEntry(db, {
+      id: "policy-new",
+      subject: "Mac mini update policy clarified",
+      type: "preference",
+      claim_key: "mac_mini/manual_update_policy",
+      created_at: daysAgoIso(20),
+      updated_at: daysAgoIso(20),
+    });
+    runAgentLoopMock.mockImplementation(
+      async (
+        prompts: AgentMessage[],
+        context: AgentContext,
+        config: AgentLoopConfig,
+        emit: (event: AgentEvent) => void,
+        signal?: AbortSignal,
+      ): Promise<AgentMessage[]> => {
+        const queryArgs = {
+          scope: "claim_key",
+          limit: 20,
+          offset: 0,
+        };
+        const queryAssistantMessage = createAssistantToolMessage({
+          id: "tool-query-supersession-misaligned",
+          name: "query_supersession_candidates",
+          arguments: queryArgs,
+          reasoning: "Load the claim_key supersession cluster.",
+          usage: TEST_USAGE,
+        });
+        await executeToolCall({
+          context,
+          config,
+          emit,
+          signal,
+          assistantMessage: queryAssistantMessage,
+          args: queryArgs,
+        });
+
+        const linkArgs = {
+          old_entry_id: "policy-old",
+          new_entry_id: "policy-new",
+          kind: "duplicate",
+          reason: "These preferences say the same thing. Keep the newer wording as the survivor.",
+        };
+        const linkAssistantMessage = createAssistantToolMessage({
+          id: "tool-link-supersession-misaligned",
+          name: "link_supersession",
+          arguments: linkArgs,
+          reasoning: "This is a clear duplicate pair.",
+        });
+        await executeToolCall({
+          context,
+          config,
+          emit,
+          signal,
+          assistantMessage: linkAssistantMessage,
+          args: linkArgs,
+        });
+
+        const completeArgs = {
+          actions_taken: 0,
+          entries_skipped: [],
+          observations: ["Claim-key sweep complete."],
+          recommendations: ["No lower-confidence subject sweep was needed."],
+        };
+        const completeAssistantMessage = createAssistantToolMessage({
+          id: "tool-complete-supersession-misaligned",
+          name: "complete_pass",
+          arguments: completeArgs,
+          reasoning: "The sweep is complete.",
+        });
+        await executeToolCall({
+          context,
+          config,
+          emit,
+          signal,
+          assistantMessage: completeAssistantMessage,
+          args: completeArgs,
+        });
+
+        return [...prompts, queryAssistantMessage, linkAssistantMessage, completeAssistantMessage];
+      },
+    );
+
+    const result = await runSurgeon(
+      createRunOptions({
+        pass: "supersession",
+        apply: true,
+        budget: 0.1,
+      }),
+      {
+        port: createSurgeonPort(db),
+        config: null,
+        model: TEST_MODEL,
+        now: () => TEST_NOW,
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: "completed",
+      passType: "supersession",
+      actionsTaken: 1,
+      summary: expect.stringContaining("Persisted 1 non-skip action earlier in this pass."),
+    });
+    expect(await getLastSurgeonRun(db)).toMatchObject({
+      status: "completed",
+      actionsTaken: 1,
+      summaryJson: expect.objectContaining({
+        actions_taken: 1,
+        observations: expect.arrayContaining(["Persisted 1 non-skip action earlier in this pass.", "Claim-key sweep complete."]),
+      }),
+    });
+  });
+
   it("appends custom surgeon instructions to the system prompt", async () => {
     const db = await createTestDatabase(databases);
     runAgentLoopMock.mockImplementation(async (prompts: AgentMessage[]) => prompts);
@@ -754,7 +878,8 @@ describe("runSurgeon", () => {
       actionsTaken: 1,
       entriesRetired: 1,
       summaryJson: expect.objectContaining({
-        actions_taken: 9,
+        actions_taken: 1,
+        observations: expect.arrayContaining(["Persisted 1 non-skip action earlier in this pass.", "One retirement was persisted."]),
       }),
     });
   });
@@ -775,6 +900,142 @@ describe("runSurgeon", () => {
       passType: "retirement",
     });
     expect(runAgentLoopMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("counts reviewed retirement entries as bounded-slice progress", async () => {
+    const db = await createDatabase(":memory:");
+    databases.push(db);
+    for (const entryId of ["review-candidate-a", "review-candidate-b", "review-candidate-c"]) {
+      await insertEntry(db, {
+        id: entryId,
+        subject: `Retirement review ${entryId}`,
+        type: "fact",
+        importance: 4,
+        expiry: "permanent",
+        recall_count: 0,
+        created_at: daysAgoIso(180),
+        updated_at: daysAgoIso(120),
+      });
+    }
+
+    const reviewTargets = ["review-candidate-a", "review-candidate-b", "review-candidate-c"];
+    let sliceCalls = 0;
+    runAgentLoopMock.mockImplementation(
+      async (
+        prompts: AgentMessage[],
+        context: AgentContext,
+        config: AgentLoopConfig,
+        emit: (event: AgentEvent) => void,
+        signal?: AbortSignal,
+      ): Promise<AgentMessage[]> => {
+        sliceCalls += 1;
+
+        const actionableQueryArgs = {
+          limit: 20,
+          offset: 0,
+        };
+        const actionableQueryAssistantMessage = createAssistantToolMessage({
+          id: `tool-query-reviewed-actionable-${sliceCalls}`,
+          name: "query_candidates",
+          arguments: actionableQueryArgs,
+          reasoning: "Load the actionable pool again before reviewing the next entry.",
+          usage: TEST_USAGE,
+        });
+        await executeToolCall({
+          context,
+          config,
+          emit,
+          signal,
+          assistantMessage: actionableQueryAssistantMessage,
+          args: actionableQueryArgs,
+        });
+
+        const allScopeQueryArgs = {
+          scope: "all",
+          limit: 20,
+          offset: 0,
+        };
+        const allScopeQueryAssistantMessage = createAssistantToolMessage({
+          id: `tool-query-reviewed-all-${sliceCalls}`,
+          name: "query_candidates",
+          arguments: allScopeQueryArgs,
+          reasoning: "Confirm the broader pool before deciding what to do next.",
+        });
+        await executeToolCall({
+          context,
+          config,
+          emit,
+          signal,
+          assistantMessage: allScopeQueryAssistantMessage,
+          args: allScopeQueryArgs,
+        });
+
+        if (sliceCalls <= reviewTargets.length) {
+          const inspectArgs = {
+            entry_id: reviewTargets[sliceCalls - 1] ?? reviewTargets[0],
+          };
+          const inspectAssistantMessage = createAssistantToolMessage({
+            id: `tool-inspect-reviewed-${sliceCalls}`,
+            name: "inspect_entry",
+            arguments: inspectArgs,
+            reasoning: "Review one more candidate before deciding whether the pass is complete.",
+          });
+          await executeToolCall({
+            context,
+            config,
+            emit,
+            signal,
+            assistantMessage: inspectAssistantMessage,
+            args: inspectArgs,
+          });
+          return [...prompts, actionableQueryAssistantMessage, allScopeQueryAssistantMessage, inspectAssistantMessage];
+        }
+
+        const completeArgs = {
+          actions_taken: 0,
+          entries_skipped: reviewTargets.map((entryId) => ({
+            entry_id: entryId,
+            reason: "Reviewed during the bounded slice and kept active.",
+          })),
+          observations: ["Reviewed all same-page retirement candidates without finding a safe mutation."],
+          recommendations: [],
+        };
+        const completeAssistantMessage = createAssistantToolMessage({
+          id: "tool-complete-reviewed-retirement",
+          name: "complete_pass",
+          arguments: completeArgs,
+          reasoning: "All reviewed candidates were intentionally kept.",
+        });
+        await executeToolCall({
+          context,
+          config,
+          emit,
+          signal,
+          assistantMessage: completeAssistantMessage,
+          args: completeArgs,
+        });
+        return [...prompts, actionableQueryAssistantMessage, allScopeQueryAssistantMessage, completeAssistantMessage];
+      },
+    );
+
+    const result = await runSurgeon(createRunOptions(), {
+      port: createSurgeonPort(db),
+      config: null,
+      model: TEST_MODEL,
+      now: () => TEST_NOW,
+    });
+
+    expect(result).toMatchObject({
+      status: "completed",
+      passType: "retirement",
+    });
+    expect(result.actionsSkipped).toBe(3);
+    expect(result.reviewedEntries).toBe(3);
+    expect(sliceCalls).toBe(4);
+    expect(await getLastSurgeonRun(db)).toMatchObject({
+      status: "completed",
+      actionsSkipped: 3,
+    });
   });
 
   it("reports when a stalled pass already persisted meaningful work", async () => {
@@ -956,6 +1217,86 @@ describe("runSurgeon", () => {
       review_status: "applied",
       applied_action_count: 1,
     });
+  });
+
+  it("emits operator-visible proposal resolution progress", async () => {
+    const db = await createDatabase(":memory:");
+    databases.push(db);
+    const progress: SurgeonProgressEvent[] = [];
+    await insertEntry(db, {
+      id: "proposal-entry",
+      subject: "Pager owner",
+      type: "fact",
+      importance: 8,
+      expiry: "permanent",
+      created_at: daysAgoIso(40),
+      updated_at: daysAgoIso(40),
+    });
+    const proposalRunId = await createSurgeonRun(db, {
+      passType: "claim_key_quality",
+      dryRun: true,
+      startedAt: daysAgoIso(2),
+    });
+    await logSurgeonProposal(db, {
+      id: "proposal-eligible-progress-1",
+      runId: proposalRunId,
+      groupId: "group-eligible-progress-1",
+      issueKind: "missing_claim_key",
+      scope: "single_entry",
+      entryIds: ["proposal-entry"],
+      currentClaimKeys: [],
+      proposedClaimKeys: ["ops/pager_owner"],
+      rationale: "The subject clearly identifies the pager owner slot.",
+      confidence: 0.93,
+      source: "mixed_group_consensus",
+      eligibleForApply: true,
+      createdAt: daysAgoIso(2),
+    });
+
+    const result = await runSurgeon(
+      createRunOptions({
+        pass: "proposal_resolution",
+        apply: true,
+      }),
+      {
+        port: createSurgeonPort(db),
+        config: null,
+        model: TEST_MODEL,
+        now: () => TEST_NOW,
+        reportProgress: (event) => progress.push(event),
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: "completed",
+      passType: "proposal_resolution",
+      actionsTaken: 1,
+    });
+    expect(progress).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "proposal_resolution_progress",
+          status: "started",
+          totalProposals: 1,
+          processedProposals: 0,
+        }),
+        expect.objectContaining({
+          kind: "proposal_resolution_progress",
+          status: "proposal_processed",
+          processedProposals: 1,
+          appliedCount: 1,
+          outcome: "applied",
+          targetedEntryCount: 1,
+        }),
+        expect.objectContaining({
+          kind: "proposal_resolution_progress",
+          status: "completed",
+          processedProposals: 1,
+          appliedCount: 1,
+          targetedEntryCount: 1,
+        }),
+      ]),
+    );
   });
 
   it("rejects stale eligible proposals when all target entries are already inactive", async () => {

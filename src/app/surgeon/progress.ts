@@ -61,9 +61,28 @@ export interface ClaimKeyQualityProgressEvent {
 }
 
 /**
+ * One bounded progress snapshot emitted during proposal resolution.
+ */
+export interface ProposalResolutionProgressEvent {
+  kind: "proposal_resolution_progress";
+  passType: "proposal_resolution";
+  apply: boolean;
+  status: "started" | "proposal_processed" | "completed" | "no_work" | "stalled";
+  totalProposals: number;
+  processedProposals: number;
+  appliedCount: number;
+  rejectedInactiveCount: number;
+  noChangeCount: number;
+  targetedEntryCount: number;
+  proposalId?: string;
+  issueKind?: string;
+  outcome?: "applied" | "dry_run" | "rejected_inactive" | "no_change";
+}
+
+/**
  * Structured progress event union emitted by surgeon runtime helpers.
  */
-export type SurgeonProgressEvent = SurgeonPhaseProgressEvent | ClaimKeyQualityProgressEvent;
+export type SurgeonProgressEvent = SurgeonPhaseProgressEvent | ClaimKeyQualityProgressEvent | ProposalResolutionProgressEvent;
 
 /**
  * Optional callback that receives structured progress events during a run.

@@ -24,15 +24,18 @@ describe("createPaginatedQueryTracker", () => {
 
     expect(tracker.snapshot()).toEqual({
       queryCalls: 2,
+      reviewedEntryCount: 0,
       actionable: {
         maxWindowEnd: 35,
         totalCount: 55,
         sawExhaustedPage: true,
+        nextOffset: null,
       },
       all: {
         maxWindowEnd: 0,
         totalCount: null,
         sawExhaustedPage: false,
+        nextOffset: null,
       },
     });
     expect(tracker.hasSeenEntry("entry-a")).toBe(true);
@@ -55,18 +58,53 @@ describe("createPaginatedQueryTracker", () => {
 
     expect(tracker.snapshot()).toEqual({
       queryCalls: 0,
+      reviewedEntryCount: 0,
       actionable: {
         maxWindowEnd: 0,
         totalCount: null,
         sawExhaustedPage: false,
+        nextOffset: null,
       },
       all: {
         maxWindowEnd: 0,
         totalCount: null,
         sawExhaustedPage: false,
+        nextOffset: null,
       },
     });
     expect(tracker.hasSeenEntry("entry-a")).toBe(false);
+  });
+
+  it("tracks reviewed entries only after they were paged", () => {
+    const tracker = createPaginatedQueryTracker();
+
+    tracker.recordPage({
+      scope: "all",
+      offset: 20,
+      returnedCount: 10,
+      totalCount: 40,
+      exhausted: false,
+      nextOffset: 30,
+      entryIds: ["entry-a", "entry-b"],
+    });
+    tracker.recordReviewedEntries(["entry-a", "missing-entry"]);
+
+    expect(tracker.snapshot()).toEqual({
+      queryCalls: 1,
+      reviewedEntryCount: 1,
+      actionable: {
+        maxWindowEnd: 0,
+        totalCount: null,
+        sawExhaustedPage: false,
+        nextOffset: null,
+      },
+      all: {
+        maxWindowEnd: 30,
+        totalCount: 40,
+        sawExhaustedPage: false,
+        nextOffset: 30,
+      },
+    });
   });
 });
 
@@ -94,15 +132,18 @@ describe("createSurgeonCompletionGuardState", () => {
     expect(state.rejectionCounts.get("already-reviewed")).toBe(2);
     expect(state.retirement.snapshot()).toEqual({
       queryCalls: 0,
+      reviewedEntryCount: 0,
       actionable: {
         maxWindowEnd: 0,
         totalCount: null,
         sawExhaustedPage: false,
+        nextOffset: null,
       },
       all: {
         maxWindowEnd: 0,
         totalCount: null,
         sawExhaustedPage: false,
+        nextOffset: null,
       },
     });
     expect(state.supersession.snapshot()).toEqual({

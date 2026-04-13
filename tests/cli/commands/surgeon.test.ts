@@ -128,7 +128,7 @@ describe("registerSurgeonCommand", () => {
     expect(stderrText).toContain("Creating DB backup...");
     expect(stderrText).toContain("Backup complete");
     expect(stderrText).toContain("/tmp/knowledge.db.surgeon-backup");
-    expect(stderrText).toContain("missing: 0/200 entries, preview 120/200, 15 applied, 8 proposals, 12s");
+    expect(stderrText).toContain("missing: 0/200 entries, preview 120/200, 15 applied, 8 proposals, skips 12, 12s");
     expect(stderrText).not.toContain("skipped no-claim");
     const stdoutText = stripAnsi(stdout.join(""));
     expect(stdoutText).toContain("Surgeon Run run-1");
@@ -187,10 +187,101 @@ describe("registerSurgeonCommand", () => {
     await program.parseAsync(["surgeon", "run", "--pass", "claim_key_quality", "--verbose"], { from: "user" });
 
     const stderrText = stripAnsi(stderr.join(""));
-    expect(stderrText).toContain("missing: 50/120 entries, preview 120/120, 11 applied, 5 proposals, 9s");
+    expect(stderrText).toContain(
+      "missing: 50/120 entries, preview 120/120, 11 applied, 5 proposals, skips 10 (2 no-claim, 4 low-confidence, 1 collision, 3 ambiguous), 9s",
+    );
     expect(stderrText).toContain("normalize 3/4");
     expect(stderrText).toContain("backfill 7/10");
     expect(stderrText).toContain("metadata 1/2");
+  });
+
+  it("renders proposal resolution progress in stderr", async () => {
+    const { program, stderr } = createProgramWithCapturedOutput();
+    runSurgeonRuntimeMock.mockImplementation(async (input: { onProgress?: (event: SurgeonProgressEvent) => void }) => {
+      input.onProgress?.({
+        kind: "phase",
+        phase: "start",
+        passType: "proposal_resolution",
+        apply: true,
+      });
+      input.onProgress?.({
+        kind: "phase",
+        phase: "load_pass_context_start",
+        passType: "proposal_resolution",
+        apply: true,
+      });
+      input.onProgress?.({
+        kind: "phase",
+        phase: "load_pass_context_complete",
+        passType: "proposal_resolution",
+        apply: true,
+        workingSetSize: 102,
+      });
+      input.onProgress?.({
+        kind: "phase",
+        phase: "pass_start",
+        passType: "proposal_resolution",
+        apply: true,
+      });
+      input.onProgress?.({
+        kind: "proposal_resolution_progress",
+        passType: "proposal_resolution",
+        apply: true,
+        status: "started",
+        totalProposals: 3,
+        processedProposals: 0,
+        appliedCount: 0,
+        rejectedInactiveCount: 0,
+        noChangeCount: 0,
+        targetedEntryCount: 0,
+      });
+      input.onProgress?.({
+        kind: "proposal_resolution_progress",
+        passType: "proposal_resolution",
+        apply: true,
+        status: "proposal_processed",
+        totalProposals: 3,
+        processedProposals: 1,
+        appliedCount: 1,
+        rejectedInactiveCount: 0,
+        noChangeCount: 0,
+        targetedEntryCount: 2,
+        proposalId: "proposal-1",
+        issueKind: "missing_claim_key",
+        outcome: "applied",
+      });
+      input.onProgress?.({
+        kind: "proposal_resolution_progress",
+        passType: "proposal_resolution",
+        apply: true,
+        status: "completed",
+        totalProposals: 3,
+        processedProposals: 3,
+        appliedCount: 2,
+        rejectedInactiveCount: 1,
+        noChangeCount: 0,
+        targetedEntryCount: 3,
+      });
+      return {
+        runId: "run-1",
+        status: "completed",
+        passType: "proposal_resolution",
+        actionsTaken: 2,
+        entriesRetired: 0,
+        inputTokens: 42,
+        outputTokens: 7,
+        estimatedCostUsd: 0.01,
+        summary: "Proposal resolution complete.",
+      };
+    });
+
+    await program.parseAsync(["surgeon", "run", "--pass", "proposal_resolution", "--apply"], { from: "user" });
+
+    const stderrText = stripAnsi(stderr.join(""));
+    expect(stderrText).toContain("Surgeon run: proposal_resolution");
+    expect(stderrText).toContain("Proposal backlog: 3 eligible proposals");
+    expect(stderrText).toContain("proposal_resolution: 1/3 proposals, applied 1, inactive 0, no-op 0, targeted 2, applied");
+    expect(stderrText).toContain("proposal_resolution: 3/3 proposals, applied 2, inactive 1, no-op 0, targeted 3");
   });
 
   it("keeps JSON mode coherent by sending progress to stderr and JSON to stdout", async () => {
@@ -254,6 +345,57 @@ describe("registerSurgeonCommand", () => {
     expect(stdoutText).toContain("2");
     expect(stdoutText).toContain("claim_key_quality -> supersession -> retirement -> retirement");
     expect(stdoutText).toContain("Autonomous cleanup complete.");
+  });
+
+  it("renders multiline summaries without collapsing them into one paragraph", async () => {
+    const { program, stdout } = createProgramWithCapturedOutput();
+    runSurgeonRuntimeMock.mockResolvedValue({
+      cyclesCompleted: 1,
+      passes: [{ passType: "claim_key_quality" }, { passType: "proposal_resolution" }, { passType: "retirement" }],
+      status: "completed",
+      actionsTaken: 2,
+      entriesRetired: 1,
+      inputTokens: 120,
+      outputTokens: 12,
+      estimatedCostUsd: 0.02,
+      summary: "claim_key_quality:\n- emitted 3 proposals\nproposal_resolution:\n- applied 2 proposals\nretirement:\n- reviewed 4 entries conservatively",
+    });
+
+    await program.parseAsync(["surgeon", "run"], { from: "user" });
+
+    const stdoutText = stripAnsi(stdout.join(""));
+    expect(stdoutText).toContain("Summary  claim_key_quality:");
+    expect(stdoutText).toContain("\n          - emitted 3 proposals\n");
+    expect(stdoutText).toContain("\n          proposal_resolution:\n");
+    expect(stdoutText).toContain("\n          - applied 2 proposals\n");
+    expect(stdoutText).toContain("\n          retirement:\n");
+  });
+
+  it("omits per-turn line-item costs from compact trace output", async () => {
+    const { program, stderr } = createProgramWithCapturedOutput();
+    runSurgeonRuntimeMock.mockImplementation(async (input: { logger: { info(message: string): void } }) => {
+      input.logger.info("surgeon turn started");
+      input.logger.info("tool query_candidates start args={}");
+      input.logger.info("turn end cumulative in=1200 out=300 costUsed=$0.0042/$1.0000 contextUsed=1024/4096");
+      return {
+        runId: "run-1",
+        status: "completed",
+        passType: "retirement",
+        actionsTaken: 0,
+        entriesRetired: 0,
+        inputTokens: 1200,
+        outputTokens: 300,
+        estimatedCostUsd: 0.04,
+        summary: "Dry-run sweep complete.",
+      };
+    });
+
+    await program.parseAsync(["surgeon", "run", "--pass", "retirement"], { from: "user" });
+
+    const stderrText = stripAnsi(stderr.join(""));
+    expect(stderrText).toContain("Turn 1: query_candidates");
+    expect(stderrText).not.toContain("$0.0042");
+    expect(stderrText).not.toContain("costUsed=");
   });
 
   it("normalizes run arguments before invoking the runtime", async () => {
