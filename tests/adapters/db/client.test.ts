@@ -925,6 +925,43 @@ describe("createDatabase", () => {
     expect(updated?.updated_at).toBe("2026-03-30T13:00:00.000Z");
   });
 
+  it("updates procedure source metadata in place when the row id stays the same", async () => {
+    vi.useFakeTimers();
+
+    const database = await createTestDatabase();
+    vi.setSystemTime(new Date("2026-03-31T09:00:00.000Z"));
+    const original = createProcedure({
+      id: "procedure-release",
+      procedure_key: "agenr/release",
+      source_file: "procedures/agenr-release.yaml",
+      source_hash: "source-hash-a",
+      created_at: "2026-03-31T09:00:00.000Z",
+      updated_at: "2026-03-31T09:00:00.000Z",
+    });
+
+    await database.upsertProcedure(original);
+
+    vi.setSystemTime(new Date("2026-03-31T10:00:00.000Z"));
+    await database.upsertProcedure({
+      ...original,
+      source_hash: "source-hash-b",
+      source_file: "procedures/release.yaml",
+      updated_at: "2026-03-31T10:00:00.000Z",
+    });
+
+    const stored = await database.getProcedure(original.id);
+    const byKey = await database.findActiveProcedureByKey("agenr/release");
+
+    expect(stored).toMatchObject({
+      id: "procedure-release",
+      source_hash: "source-hash-b",
+      source_file: "procedures/release.yaml",
+      created_at: "2026-03-31T09:00:00.000Z",
+      updated_at: "2026-03-31T10:00:00.000Z",
+    });
+    expect(byKey?.id).toBe("procedure-release");
+  });
+
   it("excludes retired and superseded procedures from active queries", async () => {
     const database = await createTestDatabase();
     const retired = createProcedure({

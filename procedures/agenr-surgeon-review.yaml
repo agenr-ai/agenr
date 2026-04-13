@@ -1,0 +1,64 @@
+procedure_key: agenr/surgeon-review
+title: Review surgeon proposals and apply or reject them safely
+goal: Inspect surgeon backlog or run-scoped proposals, choose the right proposal, and record an explicit apply or reject decision with a review reason.
+when_to_use:
+  - You need to inspect current surgeon proposals before mutating the durable-memory corpus.
+  - You need the review sequence for an open proposal that may be eligible to apply.
+when_not_to_use:
+  - You need to start a new surgeon run instead of reviewing existing proposals.
+  - You only need a high-level health summary and do not plan to inspect or review proposals.
+prerequisites:
+  - The knowledge database already contains surgeon runs or proposal backlog to inspect.
+  - You have a run ID or proposal ID, or you can discover one from the backlog commands.
+steps:
+  - id: read-surgeon-guide
+    kind: read_reference
+    instruction: Read the surgeon documentation section that explains backlog, proposals, and review semantics.
+    ref:
+      kind: doc
+      path: docs/SURGEON.md
+  - id: inspect-surgeon-status
+    kind: run_command
+    instruction: Start with the global health and backlog summary to understand what reviewable work exists.
+    command: agenr surgeon status
+  - id: inspect-backlog
+    kind: run_command
+    instruction: List open proposals across runs before narrowing to one run or one proposal.
+    command: agenr surgeon backlog --state open --eligible-only
+  - id: collect-review-target
+    kind: ask_user
+    instruction: Decide whether the review should proceed from a run-scoped proposal list or a specific known proposal ID.
+    prompt: Ask the user which run or proposal should be reviewed and whether they expect to apply or reject it.
+  - id: inspect-run-proposals
+    kind: run_command
+    instruction: Review the full proposal list for one surgeon run when you have the run ID.
+    command: agenr surgeon proposals <runId>
+  - id: inspect-run-actions
+    kind: run_command
+    instruction: Inspect the originating surgeon actions when you need extra context for how the proposal was generated.
+    command: agenr surgeon actions <runId>
+  - id: review-proposal
+    kind: run_command
+    instruction: Record an explicit apply or reject decision with a non-empty review reason.
+    command: agenr surgeon review <proposalId> --decision <apply|reject> --reason <text>
+  - id: verify-review-result
+    kind: verify
+    instruction: Confirm the review result and any applied action are now durable.
+    checks:
+      - The reviewed proposal no longer appears as an unresolved open item for the same decision path.
+      - The review output shows the stored decision and review reason.
+      - Apply decisions only succeed when the proposal is still open, eligible to apply, and resolves to one proposed claim key.
+verification:
+  - The proposal review recorded a durable apply or reject decision with a reason.
+  - Any apply path used the canonical surgeon review flow instead of an ad hoc direct database mutation.
+failure_modes:
+  - The proposal ID or run ID is wrong, so the review targets the wrong work item.
+  - The operator tries to apply a proposal that is not open or not eligible to apply.
+  - The review omits the required reason and the CLI rejects the action.
+sources:
+  - kind: doc
+    path: docs/SURGEON.md
+  - kind: repo_file
+    path: src/cli/commands/surgeon.ts
+  - kind: doc
+    path: README.md

@@ -4,7 +4,7 @@
 
 ## What is agenr?
 
-Memory infrastructure for AI agents. The current system stores durable entries, generates episodic session summaries, runs hybrid entry recall plus time-aware episode recall, exposes a live OpenClaw memory plugin, maintains corpus health through surgeon, and keeps a narrow internal recall-eval HTTP seam for `agenr-evals`.
+Memory infrastructure for AI agents. The current system stores durable entries, generates episodic session summaries, syncs repo-authored procedural memory, runs hybrid entry recall plus time-aware episode recall, exposes a live OpenClaw memory plugin, maintains corpus health through surgeon, and keeps a narrow internal recall-eval HTTP seam for `agenr-evals`.
 
 Claim-key lifecycle management is a first-class part of the product. Durable memory, surgeon maintenance, and the repo-local claim-key scenario harness all depend on it.
 
@@ -18,6 +18,7 @@ When you need subsystem detail, use the docs that already own it:
 - Durable ingest and episode ingest: [`docs/INGEST.md`](./docs/INGEST.md)
 - Recall and unified recall: [`docs/RECALL.md`](./docs/RECALL.md)
 - Episodic memory model: [`docs/EPISODES.md`](./docs/EPISODES.md)
+- Procedural memory model and sync pipeline: [`docs/PROCEDURES.md`](./docs/PROCEDURES.md)
 - Store pipeline and direct write paths: [`docs/STORE.md`](./docs/STORE.md)
 - Surgeon runtime, passes, and safety model: [`docs/SURGEON.md`](./docs/SURGEON.md)
 - OpenClaw integration and plugin behavior: [`docs/OPENCLAW-PLUGIN.md`](./docs/OPENCLAW-PLUGIN.md)
@@ -62,6 +63,7 @@ Do not re-derive subsystem behavior from memory. Start from the owning doc:
 - Claim-key-aware store pipeline details: [`docs/STORE.md`](./docs/STORE.md)
 - Entry recall, episode recall, unified routing, and telemetry: [`docs/RECALL.md`](./docs/RECALL.md)
 - Episode lifecycle and historical-memory semantics: [`docs/EPISODES.md`](./docs/EPISODES.md)
+- Procedure authoring, storage, and sync semantics: [`docs/PROCEDURES.md`](./docs/PROCEDURES.md)
 - Surgeon passes, presets, safety guards, and runtime flow: [`docs/SURGEON.md`](./docs/SURGEON.md)
 - OpenClaw hooks, tools, prompt injection, continuity, and memory runtime behavior: [`docs/OPENCLAW-PLUGIN.md`](./docs/OPENCLAW-PLUGIN.md)
 - Eval transport boundaries and non-goals: [`docs/EVALS.md`](./docs/EVALS.md)
@@ -98,6 +100,7 @@ agenr setup
 agenr ingest <path>
 agenr ingest entries <path>
 agenr ingest episodes [path]
+agenr ingest procedures [path]
 agenr recall <query>
 agenr trace
 agenr surgeon run

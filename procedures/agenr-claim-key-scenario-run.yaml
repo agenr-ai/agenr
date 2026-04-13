@@ -1,0 +1,62 @@
+procedure_key: agenr/claim-key-scenario-run
+title: Run the claim-key scenario harness
+goal: List, select, and run the repo-local claim-key scenario harness in a repeatable way so ingest, store, or surgeon behavior can be validated in isolated sandboxes.
+when_to_use:
+  - You need deterministic regression coverage for claim-key ingest, store, or surgeon behavior.
+  - You want to debug one scenario kind or one scenario ID without touching the shared sandbox database.
+when_not_to_use:
+  - You need to exercise the shared sandbox database instead of isolated scenario sandboxes.
+  - You only need the normal production CLI behavior and not the deterministic scenario harness.
+prerequisites:
+  - The repository dependencies are installed and the scenario fixtures are available.
+  - You know whether you want ingest, store, or surgeon scenarios, or you can list them first.
+steps:
+  - id: read-scenario-guide
+    kind: read_reference
+    instruction: Read the scenario CLI and debugging references before running the harness.
+    ref:
+      kind: doc
+      path: docs/DEBUGGING.md
+  - id: list-scenarios
+    kind: run_command
+    instruction: List the available claim-key scenarios before narrowing to one kind or one scenario ID.
+    command: agenr scenarios list
+  - id: choose-scenario-scope
+    kind: ask_user
+    instruction: Decide whether to run a whole kind, one or more tags, or one exact scenario ID.
+    prompt: Ask the user which scenario kind, tag set, or exact scenario ID should be run.
+  - id: run-scenario-kind
+    kind: run_command
+    instruction: Run one class of deterministic scenario with preserved sandbox artifacts and verbose output.
+    command: agenr scenarios run --kind <ingest|store|surgeon> --preserve --verbose
+  - id: run-specific-scenario
+    kind: run_command
+    instruction: Run a single deterministic scenario by exact ID when you need narrow reproduction.
+    command: agenr scenarios run --id <scenarioId> --preserve --verbose
+  - id: inspect-preserved-artifacts
+    kind: inspect_state
+    instruction: Inspect preserved sandbox artifacts when a scenario fails or when you need to understand the resulting diff.
+    target: preserved scenario sandbox
+    query: Review the preserved sandbox path and diff summary reported by the scenario runner.
+  - id: verify-scenario-summary
+    kind: verify
+    instruction: Confirm the scenario summary is actionable and points to the right isolated artifacts.
+    checks:
+      - The selected scenario count and pass or fail summary match the intended scope.
+      - Failures report preserved sandbox paths or diff summaries when preservation was requested.
+      - The run stayed inside isolated scenario sandboxes instead of the shared sandbox DB.
+verification:
+  - The harness ran the intended scenario kind or exact ID.
+  - The summary clearly reports passed and failed counts plus the artifact root.
+  - Any preserved sandbox output is available for follow-up debugging.
+failure_modes:
+  - The operator runs the wrong scenario kind and does not reproduce the target behavior.
+  - The run omits preservation and loses the isolated sandbox needed for debugging a failure.
+  - The user expects the scenario harness to reuse the shared sandbox DB, but it uses isolated sandboxes by design.
+sources:
+  - kind: repo_file
+    path: src/cli/commands/scenarios.ts
+  - kind: doc
+    path: docs/DEBUGGING.md
+  - kind: doc
+    path: README.md

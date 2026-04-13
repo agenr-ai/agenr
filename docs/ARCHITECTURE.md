@@ -4,14 +4,15 @@ This document describes the architecture that is implemented in the repository t
 
 ## 1. System overview
 
-agenr is a local-first memory system for agent runtimes. The current codebase centers on six connected capabilities:
+agenr is a local-first memory system for agent runtimes. The current codebase centers on seven connected capabilities:
 
 1. durable knowledge storage in `entries`
 2. episodic session summaries in `episodes`
-3. hybrid entry recall plus time-aware episode recall
-4. a unified recall router for agent-facing host integrations
-5. live OpenClaw integration for prompt injection, continuity, and memory tools
-6. maintenance and repair workflows through surgeon
+3. repo-authored procedural memory synced into `procedures`
+4. hybrid entry recall plus time-aware episode recall
+5. a unified recall router for agent-facing host integrations
+6. live OpenClaw integration for prompt injection, continuity, and memory tools
+7. maintenance and repair workflows through surgeon
 
 SQLite or libSQL is the system of record. LLMs and embeddings support extraction, summarization, ranking, and repair, but durable state lives in the database.
 
@@ -28,12 +29,14 @@ src/
 │   ├── supersession.ts
 │   ├── store/
 │   ├── ingestion/
+│   ├── procedures/
 │   ├── recall/
 │   ├── episode/
 │   └── surgeon/
 ├── app/
 │   ├── ingestion/
 │   ├── episode-ingest/
+│   ├── procedures/
 │   ├── recall/
 │   ├── openclaw/
 │   ├── surgeon/
@@ -63,17 +66,20 @@ src/
 packages/
 └── openclaw-plugin/
 
+procedures/
+
 tests/
 └── mirrors the major feature areas above
 ```
 
 Important points about the current tree:
 
-- `src/core/` contains the main domain model, claim-key lifecycle logic, entry recall, episode search, ingest parsing, and pure port interfaces.
-- `src/app/` owns orchestration for durable ingest, episode ingest, unified recall, surgeon execution, OpenClaw runtime composition, the narrow recall-eval seam, and the repo-local claim-key scenario harness.
-- `src/adapters/` implements libSQL persistence, transcript discovery, config parsing, external model clients, OpenClaw host translation, and the internal HTTP adapter.
+- `src/core/` contains the main domain model, claim-key lifecycle logic, procedure normalization and hashing, entry recall, episode search, ingest parsing, and pure port interfaces.
+- `src/app/` owns orchestration for durable ingest, episode ingest, procedure sync, unified recall, surgeon execution, OpenClaw runtime composition, the narrow recall-eval seam, and the repo-local claim-key scenario harness.
+- `src/adapters/` implements libSQL persistence, transcript and procedure-file discovery, config parsing, external model clients, OpenClaw host translation, and the internal HTTP adapter.
 - `src/config.ts`, `src/logger.ts`, `src/ui.ts`, and `src/version.ts` are shared runtime infrastructure, not domain logic.
 - `packages/openclaw-plugin/` is a packaging wrapper that re-exports the built plugin entry from `dist/`.
+- `procedures/` holds the repo-authored procedural-memory corpus that is synced into the database.
 
 ## 3. Layering and dependency boundaries
 
@@ -92,6 +98,7 @@ That shape is materially true in the current codebase.
 - claim-key normalization, lifecycle, family, and slot-resonance helpers
 - store-time validation, hashing, claim extraction support, and embedding text construction
 - transcript extraction, chunking, parsing, dedup, and claim-key preservation logic
+- procedure validation, normalization, deterministic recall-text generation, and revision hashing
 - hybrid entry recall ranking and temporal helpers
 - episode search, temporal window parsing, transcript rendering, and summary generation helpers
 - surgeon domain types, pass types, protection rules, and run presets
@@ -104,6 +111,7 @@ Core is infrastructure-agnostic. It still depends on ports for embeddings, LLM c
 
 - durable transcript ingest over discovered file sets
 - episode ingest preflight, planning, execution, and embedding backfill
+- repo-authored procedure discovery, planning, and sync execution
 - unified routing between entry and episode recall
 - shared OpenClaw runtime service composition
 - surgeon run execution, budgets, prompts, progress, and completion guards
@@ -116,7 +124,7 @@ Core is infrastructure-agnostic. It still depends on ports for embeddings, LLM c
 
 - `db/` is the main persistence adapter and query layer
 - `config/` owns adapter-boundary config parsing, validation, canonicalization, and resolved-default shaping
-- `files/` discovers transcript files from the local filesystem
+- `files/` discovers transcript files and procedure YAML files from the local filesystem
 - `embeddings.ts` and `llm.ts` resolve external model providers for the CLI and generic runtimes
 - `openclaw/` translates host hooks, session state, transcript parsing, formatting, memory runtime hooks, and agent tools
 - `api/` exposes the single internal recall-eval HTTP route
@@ -138,6 +146,7 @@ The CLI currently exposes:
 - `agenr setup`
 - `agenr ingest entries <path>` with `agenr ingest <path>` as the default durable-ingest form
 - `agenr ingest episodes [path]`
+- `agenr ingest procedures [path]`
 - `agenr recall <query>`
 - `agenr surgeon run|status|history|backlog|actions|proposals|review`
 - `agenr trace`
@@ -191,7 +200,21 @@ Current episode characteristics:
 - episodes store summary text, tags, activity level, timing, optional embeddings, and lifecycle state
 - episodic retrieval is distinct from durable entry recall
 
-### 5.3 Surgeon runs and proposals
+### 5.3 Procedures
+
+Procedural-memory revisions are modeled by `Procedure` in `src/core/types.ts`.
+
+Current procedure characteristics:
+
+- repo-authored YAML is the source of truth and normalized JSON is the stored runtime form
+- procedures live in their own `procedures` table and are not another `EntryType`
+- current write behavior supports create, source-only update, semantic supersession, unchanged, and invalid planning outcomes
+- procedures store deterministic `recall_text`, `revision_hash`, `source_hash`, optional embeddings, and lifecycle state
+- the current public sync surface is `agenr ingest procedures [path]`
+
+Dedicated procedure recall and unified recall routing are not live yet. The current implemented subsystem is authoring, storage, and sync.
+
+### 5.4 Surgeon runs and proposals
 
 Surgeon state is persisted in:
 
@@ -213,26 +236,29 @@ The storage adapter lives in `src/adapters/db/`.
 
 ### 6.1 Database adapter shape
 
-`createDatabase()` in `src/adapters/db/client.ts` returns a single libSQL-backed adapter that implements both `DatabasePort` and `EpisodeDatabasePort`, plus transaction and raw SQL helpers used by other adapters.
+`createDatabase()` in `src/adapters/db/client.ts` returns a single libSQL-backed adapter that implements `DatabasePort`, `EpisodeDatabasePort`, and `ProcedureDatabasePort`, plus transaction and raw SQL helpers used by other adapters.
 
 The adapter is responsible for:
 
 - schema initialization
 - durable entry CRUD and ingest log writes
 - episode upsert and embedding backfill writes
+- procedure upsert, active-key lookup, lexical/vector lookup, embedding backfill, and lifecycle writes
 - recall queries
 - surgeon persistence and reporting support
 - transaction-scoped execution where the backend supports it
 
 ### 6.2 Schema
 
-The current logical schema version is `8`.
+The current logical schema version is `10`.
 
 Key tables:
 
 - `entries`
 - `entries_fts`
 - `episodes`
+- `procedures`
+- `procedures_fts`
 - `ingest_log`
 - `recall_events`
 - `surgeon_runs`
@@ -240,16 +266,18 @@ Key tables:
 - `surgeon_run_proposals`
 - `_meta`
 
-The `entries` table now carries claim-key lifecycle fields, validity windows, supersession metadata, quality and recall tracking, project and user scoping, and retirement state. The `episodes` table carries source identity, transcript and summary hashes, timing, summary metadata, embeddings, and lifecycle state.
+The `entries` table now carries claim-key lifecycle fields, validity windows, supersession metadata, quality and recall tracking, project and user scoping, and retirement state. The `episodes` table carries source identity, transcript and summary hashes, timing, summary metadata, embeddings, and lifecycle state. The `procedures` table carries canonical normalized body JSON, deterministic recall text, authored-source and revision hashes, optional embeddings, and lifecycle state.
 
 ### 6.3 Search and indexing
 
 Current indexing behavior:
 
 - active entries participate in FTS5 through `entries_fts`
+- active procedures participate in FTS5 through `procedures_fts`
 - retired or superseded entries are excluded from active FTS triggers
-- entries and episodes both store embeddings as `F32_BLOB(1024)`
-- libSQL vector indexes are created for entries and episodes when vector support is available
+- retired or superseded procedures are excluded from active FTS triggers
+- entries, episodes, and procedures all store embeddings as `F32_BLOB(1024)`
+- libSQL vector indexes are created for entries, episodes, and procedures when vector support is available
 - the code tolerates missing vector support and degrades gracefully
 
 Episodes do not currently use FTS. Episode retrieval is time-window and vector based.
@@ -258,7 +286,7 @@ Episodes do not currently use FTS. Episode retrieval is time-window and vector b
 
 `src/adapters/db/schema.ts` owns more than table creation. It also manages:
 
-- migrations up to schema version `8`
+- migrations up to schema version `10`
 - FTS trigger creation and rebuilds
 - vector index creation and feature probing
 - interrupted bulk-write recovery via `_meta`

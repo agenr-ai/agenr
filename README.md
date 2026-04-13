@@ -24,6 +24,7 @@ What makes agenr different is the combination of local-first storage, semantic e
 
 - Hybrid recall for durable knowledge: vector similarity, lexical FTS, temporal awareness, recency decay, and importance weighting.
 - Episodic memory: session-level summaries with temporal filtering and optional semantic episode search for questions like "what happened yesterday?"
+- Procedural memory: repo-authored YAML procedures synced into durable structured runbooks for repeatable how-to workflows.
 - LLM-powered knowledge extraction from conversation transcripts.
 - Semantic deduplication using exact hashes, normalized hashes, embeddings, and within-run clustering.
 - Session continuity with predecessor resolution, recent transcript tails, and LLM-generated continuity summaries.
@@ -137,19 +138,20 @@ Compatibility policy:
 
 The CLI surface is still intentionally compact, but it now covers setup, recall, ingest, and corpus maintenance.
 
-| Command                         | What it does                                                                                                                                                      |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `agenr init`                    | Interactive first-run wizard: auth, model selection, OpenClaw detection, plugin install, and optional initial ingestion.                                          |
-| `agenr setup`                   | Configure auth, model defaults, embeddings, and the agenr database path.                                                                                          |
-| `agenr recall <query>`          | Run the hybrid recall pipeline with optional temporal and type/tag filters.                                                                                       |
-| `agenr ingest <path>`           | Default durable-entry ingest shorthand. Equivalent to `agenr ingest entries <path>`.                                                                              |
-| `agenr ingest entries <path>`   | Bulk-ingest one file or directory of OpenClaw transcript files into durable knowledge entries.                                                                    |
-| `agenr ingest episodes [path]`  | Backfill episodic summaries from OpenClaw session transcripts, including rotated `.reset.*` and `.deleted.*` files.                                               |
-| `agenr surgeon run`             | Execute a surgeon maintenance pass. Defaults to retirement; use `--pass supersession` for lineage review. Dry-run by default; add `--apply` to mutate the corpus. |
-| `agenr surgeon status`          | Show corpus health, claim-key lifecycle counts, proposal backlog, and the latest surgeon run summary.                                                             |
-| `agenr surgeon history`         | Show recent surgeon runs.                                                                                                                                         |
-| `agenr surgeon actions <runId>` | Show the audit trail for one surgeon run.                                                                                                                         |
-| `agenr db reset`                | Delete and recreate the knowledge database.                                                                                                                       |
+| Command                          | What it does                                                                                                                                                      |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agenr init`                     | Interactive first-run wizard: auth, model selection, OpenClaw detection, plugin install, and optional initial ingestion.                                          |
+| `agenr setup`                    | Configure auth, model defaults, embeddings, and the agenr database path.                                                                                          |
+| `agenr recall <query>`           | Run the hybrid recall pipeline with optional temporal and type/tag filters.                                                                                       |
+| `agenr ingest <path>`            | Default durable-entry ingest shorthand. Equivalent to `agenr ingest entries <path>`.                                                                              |
+| `agenr ingest entries <path>`    | Bulk-ingest one file or directory of OpenClaw transcript files into durable knowledge entries.                                                                    |
+| `agenr ingest episodes [path]`   | Backfill episodic summaries from OpenClaw session transcripts, including rotated `.reset.*` and `.deleted.*` files.                                               |
+| `agenr ingest procedures [path]` | Sync repo-authored YAML procedures into procedural-memory revisions stored in the knowledge database.                                                             |
+| `agenr surgeon run`              | Execute a surgeon maintenance pass. Defaults to retirement; use `--pass supersession` for lineage review. Dry-run by default; add `--apply` to mutate the corpus. |
+| `agenr surgeon status`           | Show corpus health, claim-key lifecycle counts, proposal backlog, and the latest surgeon run summary.                                                             |
+| `agenr surgeon history`          | Show recent surgeon runs.                                                                                                                                         |
+| `agenr surgeon actions <runId>`  | Show the audit trail for one surgeon run.                                                                                                                         |
+| `agenr db reset`                 | Delete and recreate the knowledge database.                                                                                                                       |
 
 The OpenClaw plugin also gives the agent five tools directly inside the runtime: `agenr_store`, `agenr_recall`, `agenr_retire`, `agenr_update`, and `agenr_trace`.
 
@@ -164,6 +166,9 @@ agenr ingest ~/.openclaw/agents/main/sessions/
 
 # Backfill episodic summaries
 agenr ingest episodes ~/.openclaw/agents/main/sessions/ --recent 30d
+
+# Preview procedure sync changes
+agenr ingest procedures --dry-run
 
 # Run the surgeon retirement pass (dry-run by default)
 agenr surgeon run --budget 2.00
@@ -189,12 +194,17 @@ Recall is a hybrid pipeline. Agenr embeds the query, retrieves candidates throug
 
 ## How Ingestion Works
 
-Agenr has two ingest pipelines over the same transcript corpus:
+Agenr has two transcript-ingest pipelines plus one repo-authored procedure sync path:
 
 - `agenr ingest entries <path>` extracts durable typed knowledge such as facts, decisions, preferences, lessons, milestones, and relationships.
 - `agenr ingest episodes [path]` generates one narrative summary per session so the brain can answer temporal questions like "what happened last week?"
+- `agenr ingest procedures [path]` validates and syncs repo-authored procedural workflows from `procedures/` into the database.
 
-Both paths parse OpenClaw transcripts first, but they optimize for different outputs: entry ingest distills durable knowledge and runs semantic dedup across the whole ingest batch, while episode ingest does a session-by-session preflight pass, uses `sessions.json` metadata when available, reconstructs missing surface metadata for rotated files, and writes episodic summaries. Details: [docs/INGEST.md](./docs/INGEST.md) and [docs/STORE.md](./docs/STORE.md).
+The two transcript paths parse OpenClaw transcripts first, but they optimize for different outputs: entry ingest distills durable knowledge and runs semantic dedup across the whole ingest batch, while episode ingest does a session-by-session preflight pass, uses `sessions.json` metadata when available, reconstructs missing surface metadata for rotated files, and writes episodic summaries. Procedure sync is different: it reads strict YAML authoring files, normalizes them into canonical stored revisions, and writes only when a procedure is new or semantically changed. Details: [docs/INGEST.md](./docs/INGEST.md), [docs/STORE.md](./docs/STORE.md), and [docs/PROCEDURES.md](./docs/PROCEDURES.md).
+
+## How Procedures Work
+
+Procedures are the durable how-to layer. They are authored in `procedures/` as reviewed YAML, normalized into canonical stored procedure revisions, and synced with `agenr ingest procedures [path]`. Phase 2 ships the authoring and sync path, including source-only updates and semantic supersession, but not yet procedure recall. For the current model, storage shape, and sync semantics, see [docs/PROCEDURES.md](./docs/PROCEDURES.md).
 
 ## How Episodes Work
 

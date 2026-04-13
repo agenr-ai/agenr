@@ -1,0 +1,71 @@
+procedure_key: agenr/sandbox-validation
+title: Validate agenr changes against the local sandbox
+goal: Run a focused end-to-end validation flow against the isolated sandbox database and config before wider rollout or release work.
+when_to_use:
+  - You changed runtime behavior and want to validate it against the local sandbox.
+  - You need a repeatable repo-local check that uses sandbox wrappers instead of the default user database.
+when_not_to_use:
+  - You only need unit tests or static checks and do not need sandbox-backed runtime validation.
+  - You are specifically validating OpenClaw plugin loading and tool registration, which should use the local plugin check procedure.
+prerequisites:
+  - The sandbox wrappers are available in your shell.
+  - The local sandbox config and database paths are set up under ~/.openclaw-sandbox.
+  - You know which transcript root or query to use for the validation pass.
+steps:
+  - id: read-sandbox-guide
+    kind: read_reference
+    instruction: Read the repo-owned sandbox guidance before running validation commands.
+    ref:
+      kind: doc
+      path: AGENTS.md
+  - id: inspect-sandbox-state
+    kind: inspect_state
+    instruction: Confirm which database and config paths the sandbox wrappers target before you mutate or inspect anything.
+    target: sandbox environment
+    query: Verify that sandbox-agenr points at ~/.openclaw-sandbox/agenr-data/knowledge.db and the matching sandbox config.json.
+  - id: build-repo
+    kind: run_command
+    instruction: Build the current repository before exercising the sandbox CLI.
+    command: pnpm build
+  - id: collect-validation-inputs
+    kind: ask_user
+    instruction: Choose the transcript corpus or recall query that best exercises the change you want to validate.
+    prompt: Ask the user which sandbox transcript path, episode path, or recall query should be used for this validation run.
+  - id: reset-sandbox-db
+    kind: run_command
+    instruction: Start from a clean sandbox database when the validation depends on fresh state.
+    command: sandbox-agenr db reset --yes
+  - id: ingest-sandbox-entries
+    kind: run_command
+    instruction: Ingest durable entries into the sandbox when the change affects transcript extraction or store behavior.
+    command: sandbox-agenr ingest entries <path> --verbose
+  - id: ingest-sandbox-episodes
+    kind: run_command
+    instruction: Backfill episodic summaries when the change affects episode ingest or mixed recall behavior.
+    command: sandbox-agenr ingest episodes <path> --recent 30d
+  - id: validate-sandbox-recall
+    kind: run_command
+    instruction: Run at least one targeted recall query against the sandbox database to verify the visible behavior.
+    command: sandbox-agenr recall <query>
+  - id: verify-sandbox-results
+    kind: verify
+    instruction: Confirm the sandbox run exercised the intended code path and produced usable output.
+    checks:
+      - The repo built successfully before the sandbox validation commands ran.
+      - The validation commands targeted the sandbox database and config, not the default agenr instance.
+      - The final recall or status output reflects the changes you intended to validate.
+verification:
+  - The validation run used the isolated sandbox DB and config from ~/.openclaw-sandbox.
+  - The selected ingest or recall commands completed against freshly built code.
+  - The observed output is enough to judge the specific change under test.
+failure_modes:
+  - The validation accidentally targets the default agenr database instead of the sandbox.
+  - The repository was not rebuilt before running sandbox commands.
+  - The chosen transcript path or recall query does not actually exercise the changed behavior.
+sources:
+  - kind: doc
+    path: AGENTS.md
+  - kind: doc
+    path: docs/DEBUGGING.md
+  - kind: doc
+    path: docs/INGEST.md

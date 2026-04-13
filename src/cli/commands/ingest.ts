@@ -28,6 +28,7 @@ import { setVerbose } from "../../logger.js";
 import { banner, formatLabel, ui } from "../../ui.js";
 import { InvalidArgumentError, Option, type Command } from "commander";
 import { registerIngestEpisodesCommand } from "./ingest-episodes.js";
+import { registerIngestProceduresCommand } from "./ingest-procedures.js";
 
 const MIN_INGEST_CONCURRENCY = 1;
 const MAX_INGEST_CONCURRENCY = 50;
@@ -78,6 +79,7 @@ export function registerIngestCommand(program: Command): void {
 
   registerIngestEntriesCommand(ingestCommand);
   registerIngestEpisodesCommand(ingestCommand);
+  registerIngestProceduresCommand(ingestCommand);
 }
 
 /** Registers the default `agenr ingest [path]` durable-entry ingest subcommand. */

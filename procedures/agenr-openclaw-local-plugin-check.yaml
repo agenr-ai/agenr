@@ -1,0 +1,64 @@
+procedure_key: agenr/openclaw-local-plugin-check
+title: Check the local OpenClaw plugin build
+goal: Build the local plugin package, point OpenClaw at the local package directory, and confirm the agenr memory plugin loads with the expected runtime identity and tools.
+when_to_use:
+  - You changed the OpenClaw integration and need to verify local plugin loading before publishing.
+  - OpenClaw is not picking up the local agenr plugin and you need the canonical local-check sequence.
+when_not_to_use:
+  - You only need normal sandbox CLI validation and do not need to launch the OpenClaw gateway.
+  - You are validating the published npm plugin instead of the local package directory.
+prerequisites:
+  - OpenClaw is installed and available on PATH.
+  - The local OpenClaw configuration can point at the built packages/openclaw-plugin directory.
+  - The sandbox-openclaw wrapper is available for local gateway checks.
+steps:
+  - id: read-plugin-guide
+    kind: read_reference
+    instruction: Read the repo-owned plugin packaging and local development guidance.
+    ref:
+      kind: doc
+      path: docs/OPENCLAW-PLUGIN.md
+  - id: build-local-plugin
+    kind: run_command
+    instruction: Build the repository so the publishable plugin package points at fresh local output.
+    command: pnpm build
+  - id: inspect-openclaw-config
+    kind: inspect_state
+    instruction: Confirm the OpenClaw config is pointing at the local package directory and still uses the stable agenr plugin identity.
+    target: OpenClaw plugin config
+    query: Verify plugins.load.paths includes packages/openclaw-plugin, plugins.slots.memory is agenr, and plugins.allow contains agenr.
+  - id: launch-local-gateway
+    kind: run_command
+    instruction: Start the local sandbox-backed OpenClaw gateway with the built agenr plugin package loaded.
+    command: sandbox-openclaw
+  - id: check-plugin-tools
+    kind: inspect_state
+    instruction: Confirm the running gateway exposes the expected agenr memory tools and runtime identity.
+    target: running OpenClaw gateway
+    query: Confirm the plugin id is agenr and the agenr_store, agenr_recall, agenr_update, agenr_retire, and agenr_trace tools are available.
+  - id: ask-for-runtime-smoke-test
+    kind: ask_user
+    instruction: Choose one lightweight runtime check to prove the local plugin build is the one that loaded.
+    prompt: Ask the user which OpenClaw memory action or smoke test should be used to confirm the local plugin build is active.
+  - id: verify-plugin-check
+    kind: verify
+    instruction: Confirm the local gateway is using the built plugin package rather than a stale published install.
+    checks:
+      - pnpm build completed before the gateway check.
+      - plugins.load.paths points at the local packages/openclaw-plugin directory.
+      - The gateway exposes the expected agenr memory tools under the stable agenr plugin id.
+verification:
+  - The local OpenClaw config points at the built packages/openclaw-plugin directory.
+  - The gateway loads agenr as the memory plugin and exposes the expected tool set.
+  - The final smoke test confirms the local build is active rather than a stale plugin install.
+failure_modes:
+  - OpenClaw loads a published plugin instead of the local package path.
+  - The config omits plugins.slots.memory or plugins.allow for agenr.
+  - The repo is not rebuilt before the gateway restart, so the check validates stale code.
+sources:
+  - kind: doc
+    path: docs/OPENCLAW-PLUGIN.md
+  - kind: doc
+    path: README.md
+  - kind: doc
+    path: AGENTS.md

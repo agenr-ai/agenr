@@ -20,7 +20,7 @@ describe("registerIngestCommand", () => {
     const ingestCommand = findIngestCommand(program);
 
     expect(ingestCommand).toBeDefined();
-    expect(ingestCommand?.commands.map((command) => command.name())).toEqual(expect.arrayContaining(["entries", "episodes"]));
+    expect(ingestCommand?.commands.map((command) => command.name())).toEqual(expect.arrayContaining(["entries", "episodes", "procedures"]));
   });
 
   it("requires the entries path argument", async () => {
