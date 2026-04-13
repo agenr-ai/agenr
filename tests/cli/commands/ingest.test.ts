@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { IngestPathOptions } from "../../../src/app/ingestion/service.js";
 import { pluralize, registerIngestCommand } from "../../../src/cli/commands/ingest.js";
 import { createProgram } from "../../../src/cli/main.js";
 import { APP_VERSION } from "../../../src/version.js";
@@ -244,7 +245,7 @@ describe("registerIngestCommand", () => {
 
   it("updates the non-verbose spinner with in-phase dedup and claim-extraction progress", async () => {
     const clackMock = createClackMock();
-    const ingestDiscoveredFilesMock = vi.fn(async (_files: string[], _ports: unknown, options: any) => {
+    const ingestDiscoveredFilesMock = vi.fn(async (_files: string[], _ports: unknown, options: IngestPathOptions) => {
       options.onExtractionProgress?.(2, 2);
       options.onStageProgress?.({ phase: "dedup_start", totalEntries: 4 });
       options.onDedupProgress?.({

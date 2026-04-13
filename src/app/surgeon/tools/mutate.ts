@@ -13,6 +13,8 @@ const RETIRE_ENTRY_SCHEMA = Type.Object({
 
 /** Validated parameter payload for the retire tool. */
 type RetireEntryParams = Static<typeof RETIRE_ENTRY_SCHEMA>;
+
+/** Same-run actions that suppress a later contradictory retirement decision. */
 type RetirementSuppressionAction = SurgeonRunAction & {
   actionType: "skip" | "retire" | "update_entry";
 };

@@ -5,7 +5,7 @@ import {
   getSurgeonRetirementPassPrompt,
   getSurgeonSupersessionPassPrompt,
   getSurgeonSystemPrompt,
-} from "../../../src/adapters/surgeon/prompts.js";
+} from "../../../src/app/surgeon/prompts.js";
 
 describe("surgeon prompts", () => {
   it("system prompt contains the v1 corpus field glossary", () => {

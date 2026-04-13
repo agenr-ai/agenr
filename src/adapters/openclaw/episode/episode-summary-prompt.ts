@@ -8,7 +8,7 @@ export {
 /**
  * Fixed generator version stored on episodic-memory rows written by the
  * OpenClaw adapter.
- *
- * @type {string}
  */
-export const OPENCLAW_EPISODE_GENERATOR_VERSION = "openclaw-episodic-summary-v1";
+const OPENCLAW_EPISODE_GENERATOR_VERSION = "openclaw-episodic-summary-v1";
+
+export { OPENCLAW_EPISODE_GENERATOR_VERSION };

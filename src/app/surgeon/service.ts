@@ -14,17 +14,18 @@ import {
   DEFAULT_SURGEON_SKIP_RECENTLY_EVALUATED_DAYS,
   type AgenrConfig,
 } from "../../config.js";
-import { buildClaimKeyLifecycleUpdateFields, buildSurgeonAppliedClaimKeyLifecycleBundle } from "../../core/claim-key-lifecycle.js";
 import type { Logger } from "../../logger.js";
 import type { LlmPort, RecallPorts } from "../../core/ports.js";
 import type { SurgeonRunAction } from "../../core/surgeon/domain/action-types.js";
 import type { SurgeonPassType } from "../../core/surgeon/domain/pass-types.js";
+import { buildSurgeonProposalReviewReason, resolveSurgeonProposalApplyTarget } from "../../core/surgeon/domain/proposal-review.js";
 import { getAutonomousSurgeonPassSequence, type ImplementedSurgeonPass } from "../../core/surgeon/domain/run-presets.js";
 import type { SurgeonCompletionSummary, SurgeonRunStatus } from "../../core/surgeon/types.js";
 import { createBudgetTracker } from "./budget.js";
 import { runClaimKeyQualityPass } from "./claim-key-quality.js";
 import { createSurgeonCompletionGuardState } from "./completion-guard.js";
 import { emitSurgeonProgress, type SurgeonProgressReporter } from "./progress.js";
+import { applyProposalToEntries, loadActiveProposalEntries } from "./proposal-review.js";
 import { createTraceLogger, type SurgeonTraceLogger } from "./trace-logger.js";
 import { getSurgeonClaimKeyQualityPassPrompt, getSurgeonRetirementPassPrompt, getSurgeonSupersessionPassPrompt, getSurgeonSystemPrompt } from "./prompts.js";
 import type { SurgeonPort } from "./ports.js";
@@ -1201,32 +1202,30 @@ async function runProposalResolutionPass(
 
   for (const [index, item] of backlog.entries()) {
     const proposal = item.proposal;
-    const targetClaimKey = normalizeProposalApplyTarget(proposal);
-    const reasoning = buildProposalReviewReason(proposal, "Autonomous eligible proposal resolution.");
+    const targetClaimKey = resolveSurgeonProposalApplyTarget(proposal);
+    const reasoning = buildSurgeonProposalReviewReason(proposal, "Autonomous eligible proposal resolution.");
     const proposalEntryIds: string[] = [];
-    let sawActiveEntry = false;
 
     if (input.apply) {
-      for (const entryId of proposal.entryIds) {
-        const entry = await deps.port.getEntry(entryId);
-        if (!entry) {
-          continue;
-        }
-        sawActiveEntry = true;
-
-        const lifecycle = buildSurgeonAppliedClaimKeyLifecycleBundle({
-          targetClaimKey,
-          priorClaimKey: entry.claim_key ?? null,
-          priorClaimKeyRaw: entry.claim_key_raw,
-          source: proposal.source,
-          confidence: proposal.confidence,
-          rationale: reasoning,
-        });
-        const updated = await deps.port.updateEntry(entry.id, buildClaimKeyLifecycleUpdateFields(lifecycle));
-        if (updated) {
-          proposalEntryIds.push(entry.id);
-          updatedEntryIds.add(entry.id);
-        }
+      const { activeEntries } = await loadActiveProposalEntries(proposal, (entryId) => deps.port.getEntry(entryId));
+      const sawActiveEntry = activeEntries.length > 0;
+      const applied = await applyProposalToEntries(
+        {
+          proposal,
+          activeEntries,
+          reviewReason: "Autonomous eligible proposal resolution.",
+          reviewedAt: input.now().toISOString(),
+          actionReviewStatus: "applied",
+          actionRunId: input.runId,
+        },
+        {
+          updateEntry: (entryId, fields) => deps.port.updateEntry(entryId, fields),
+          logRunAction: deps.recordRunAction,
+        },
+      );
+      proposalEntryIds.push(...applied.updatedEntryIds);
+      for (const entryId of applied.updatedEntryIds) {
+        updatedEntryIds.add(entryId);
       }
 
       if (proposalEntryIds.length === 0) {
@@ -1285,22 +1284,24 @@ async function runProposalResolutionPass(
       }
     }
 
-    await deps.recordRunAction({
-      id: randomUUID(),
-      runId: input.runId,
-      actionType: "update_entry",
-      entryIds: proposalEntryIds,
-      reasoning,
-      recallDelta: null,
-      details: {
-        proposal_id: proposal.id,
-        proposal_issue_kind: proposal.issueKind,
-        proposal_source: proposal.source,
-        proposal_review_status: input.apply ? "applied" : "dry_run",
-        target_claim_key: targetClaimKey,
-      },
-      createdAt: input.now().toISOString(),
-    });
+    if (!input.apply) {
+      await deps.recordRunAction({
+        id: randomUUID(),
+        runId: input.runId,
+        actionType: "update_entry",
+        entryIds: proposalEntryIds,
+        reasoning,
+        recallDelta: null,
+        details: {
+          proposal_id: proposal.id,
+          proposal_issue_kind: proposal.issueKind,
+          proposal_source: proposal.source,
+          proposal_review_status: "dry_run",
+          target_claim_key: targetClaimKey,
+        },
+        createdAt: input.now().toISOString(),
+      });
+    }
     appliedCount += 1;
     emitProposalResolutionProgress(input.reportProgress, {
       apply: input.apply,
@@ -1365,17 +1366,6 @@ async function runProposalResolutionPass(
 }
 
 /**
- * Builds the persisted rationale for one autonomously reviewed proposal.
- *
- * @param proposal - Proposal being applied or rejected.
- * @param reviewReason - Operator-facing reason to append.
- * @returns Joined review rationale string.
- */
-function buildProposalReviewReason(proposal: { id: string; rationale: string }, reviewReason: string): string {
-  return `Approved surgeon proposal ${proposal.id}: ${proposal.rationale} Review note: ${reviewReason}`.trim();
-}
-
-/**
  * Emits one structured proposal-resolution progress event when a reporter is configured.
  *
  * @param reporter - Optional progress callback supplied by the caller.
@@ -1412,28 +1402,6 @@ function emitProposalResolutionProgress(
     issueKind: input.issueKind,
     outcome: input.outcome,
   });
-}
-
-/**
- * Validates and returns the single claim key targeted by an eligible proposal.
- *
- * @param proposal - Proposal selected for autonomous application.
- * @returns Normalized target claim key.
- */
-function normalizeProposalApplyTarget(proposal: { id: string; eligibleForApply: boolean; proposedClaimKeys: string[] }): string {
-  if (!proposal.eligibleForApply) {
-    throw new Error(`Proposal ${proposal.id} is not eligible for autonomous apply.`);
-  }
-  if (proposal.proposedClaimKeys.length !== 1) {
-    throw new Error(`Proposal ${proposal.id} cannot be applied automatically because it does not resolve to exactly one proposed claim key.`);
-  }
-
-  const targetClaimKey = proposal.proposedClaimKeys[0]?.trim();
-  if (!targetClaimKey) {
-    throw new Error(`Proposal ${proposal.id} is missing a valid proposed claim key.`);
-  }
-
-  return targetClaimKey;
 }
 
 /**
@@ -1547,26 +1515,18 @@ async function loadPassStartContext(
   },
 ): Promise<SurgeonPassStartContext> {
   if (pass === "supersession") {
-    const [claimKeyClusters, subjectClusters] = await Promise.all([
-      port.listSupersessionCandidates({
-        scope: "claim_key",
-        skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
-        now: protection.now,
-      }),
-      port.listSupersessionCandidates({
-        scope: "subject",
-        skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
-        now: protection.now,
-      }),
-    ]);
+    const counts = await port.countSupersessionCandidates({
+      skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
+      now: protection.now,
+    });
 
     return {
       retirementRawActionableCandidates: 0,
       retirementAvailableActionableCandidates: 0,
       retirementAvailableAllCandidates: 0,
       retirementRecentlyEvaluatedCandidates: 0,
-      supersessionClaimKeyClusters: claimKeyClusters.length,
-      supersessionSubjectClusters: subjectClusters.length,
+      supersessionClaimKeyClusters: counts.claimKeyCount,
+      supersessionSubjectClusters: counts.subjectCount,
     };
   }
 

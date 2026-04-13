@@ -1,7 +1,11 @@
 import type { Expiry } from "../../types.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-export const SURGEON_PERMANENT_ENTRY_DEMOTION_FLOOR = 4;
+
+/** Lowest importance surgeon may demote a permanent entry to. */
+const SURGEON_PERMANENT_ENTRY_DEMOTION_FLOOR = 4;
+
+export { SURGEON_PERMANENT_ENTRY_DEMOTION_FLOOR };
 
 /**
  * Entry fields used by retirement protection guards.

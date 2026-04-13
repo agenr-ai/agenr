@@ -1,16 +1,14 @@
 /**
  * Minimum cleaned-message count required for episode generation.
- *
- * @type {number}
  */
-export const MIN_EPISODE_MESSAGES = 4;
+const MIN_EPISODE_MESSAGES = 4;
 
 /**
  * Maximum transcript size retained for one episode-generation prompt.
- *
- * @type {number}
  */
-export const MAX_EPISODE_TRANSCRIPT_CHARS = 14_000;
+const MAX_EPISODE_TRANSCRIPT_CHARS = 14_000;
+
+export { MAX_EPISODE_TRANSCRIPT_CHARS, MIN_EPISODE_MESSAGES };
 
 /**
  * Renders cleaned transcript messages into prompt text for episode generation.

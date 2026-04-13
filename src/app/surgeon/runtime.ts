@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { copyFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,7 +9,7 @@ import { createSurgeonPort } from "../../adapters/db/surgeon-port.js";
 import { createRecallAdapter } from "../../adapters/db/recall-adapter.js";
 import { createEmbeddingClient, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../../adapters/embeddings.js";
 import { createLlmClient, resolveLlmCredentials, resolveModel } from "../../adapters/llm.js";
-import { buildClaimKeyLifecycleUpdateFields, buildSurgeonAppliedClaimKeyLifecycleBundle } from "../../core/claim-key-lifecycle.js";
+import { applyProposalToEntries, loadActiveProposalEntries } from "./proposal-review.js";
 import type { Logger } from "../../logger.js";
 import {
   DEFAULT_SURGEON_RETIREMENT_PROTECT_MIN_IMPORTANCE,
@@ -287,49 +286,25 @@ export async function reviewSurgeonProposalRuntime(input: {
     await database.execute("BEGIN IMMEDIATE");
     try {
       if (input.decision === "apply") {
-        const targetClaimKey = normalizeProposalApplyTarget(proposal);
-        const entries = await Promise.all(
-          proposal.entryIds.map(async (entryId) => {
-            const entry = await port.getEntry(entryId);
-            if (!entry) {
-              throw new Error(`Proposal ${proposal.id} can no longer update missing or inactive entry ${entryId}.`);
-            }
-            return entry;
-          }),
-        );
-
-        for (const entry of entries) {
-          const lifecycle = buildSurgeonAppliedClaimKeyLifecycleBundle({
-            targetClaimKey,
-            priorClaimKey: entry.claim_key ?? null,
-            priorClaimKeyRaw: entry.claim_key_raw,
-            source: proposal.source,
-            confidence: proposal.confidence,
-            rationale: buildProposalReviewReason(proposal, reviewReason),
-          });
-          const updated = await port.updateEntry(entry.id, buildClaimKeyLifecycleUpdateFields(lifecycle));
-          if (!updated) {
-            throw new Error(`Failed to apply proposal ${proposal.id} to entry ${entry.id}.`);
-          }
-          updatedEntryIds.push(entry.id);
+        const { activeEntries, inactiveEntryIds } = await loadActiveProposalEntries(proposal, (entryId) => port.getEntry(entryId));
+        if (inactiveEntryIds.length > 0) {
+          throw new Error(`Proposal ${proposal.id} can no longer update missing or inactive entry ${inactiveEntryIds[0]}.`);
         }
-
-        await port.logRunAction({
-          id: randomUUID(),
-          runId: proposal.runId,
-          actionType: "update_entry",
-          entryIds: [...updatedEntryIds],
-          reasoning: buildProposalReviewReason(proposal, reviewReason),
-          recallDelta: null,
-          details: {
-            proposal_id: proposal.id,
-            proposal_issue_kind: proposal.issueKind,
-            proposal_source: proposal.source,
-            proposal_review_status: "applied",
-            target_claim_key: targetClaimKey,
+        const applied = await applyProposalToEntries(
+          {
+            proposal,
+            activeEntries,
+            reviewReason,
+            reviewedAt,
+            actionReviewStatus: "applied",
+            requireAllUpdates: true,
           },
-          createdAt: reviewedAt,
-        });
+          {
+            updateEntry: (entryId, fields) => port.updateEntry(entryId, fields),
+            logRunAction: (action) => port.logRunAction(action),
+          },
+        );
+        updatedEntryIds.push(...applied.updatedEntryIds);
       }
 
       const reviewed = await port.reviewProposal({
@@ -510,39 +485,6 @@ function resolveFilesystemPath(value: string): string {
  */
 function isMissingFileError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
-}
-
-/**
- * Builds the persisted rationale used for operator-reviewed proposal application.
- *
- * @param proposal - Proposal being reviewed.
- * @param reviewReason - Operator-supplied review note.
- * @returns Durable rationale string used for persistence and audit logs.
- */
-function buildProposalReviewReason(proposal: SurgeonRunProposal, reviewReason: string): string {
-  return `Approved surgeon proposal ${proposal.id}: ${proposal.rationale} Review note: ${reviewReason}`.trim();
-}
-
-/**
- * Resolves the only safe apply target supported by the first review-loop slice.
- *
- * @param proposal - Open proposal selected for application.
- * @returns Stable claim key that should be written to the target entries.
- */
-function normalizeProposalApplyTarget(proposal: SurgeonRunProposal): string {
-  if (!proposal.eligibleForApply) {
-    throw new Error(`Proposal ${proposal.id} is reviewable but not eligible for direct apply.`);
-  }
-  if (proposal.proposedClaimKeys.length !== 1) {
-    throw new Error(`Proposal ${proposal.id} cannot be applied automatically because it does not resolve to exactly one proposed claim key.`);
-  }
-
-  const targetClaimKey = normalizeOptionalString(proposal.proposedClaimKeys[0]);
-  if (!targetClaimKey) {
-    throw new Error(`Proposal ${proposal.id} is missing a valid proposed claim key.`);
-  }
-
-  return targetClaimKey;
 }
 
 /**

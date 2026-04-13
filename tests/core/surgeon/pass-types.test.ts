@@ -16,6 +16,7 @@ describe("surgeon pass types", () => {
 
   it("marks every supported surgeon pass as implemented", () => {
     expect(isImplementedSurgeonPass("claim_key_quality")).toBe(true);
+    expect(isImplementedSurgeonPass("proposal_resolution")).toBe(true);
     expect(isImplementedSurgeonPass("retirement")).toBe(true);
     expect(isImplementedSurgeonPass("supersession")).toBe(true);
   });

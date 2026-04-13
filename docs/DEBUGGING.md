@@ -51,7 +51,7 @@ Sandbox-backed shared DB/config commands:
 - `agenr: ingest entries (sandbox)`
 - `agenr: ingest episodes (sandbox)`
 - `agenr: recall (sandbox)`
-- `agenr: surgeon run structural (sandbox)`
+- `agenr: surgeon run (sandbox)`
 - `agenr: surgeon status (sandbox)`
 - `agenr: surgeon history (sandbox)`
 - `agenr: surgeon actions (sandbox)`

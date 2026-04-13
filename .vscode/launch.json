@@ -91,12 +91,12 @@
       "preLaunchTask": "pnpm: build:debug"
     },
     {
-      "name": "agenr: surgeon run structural (sandbox)",
+      "name": "agenr: surgeon run (sandbox)",
       "type": "node",
       "request": "launch",
       "runtimeExecutable": "node",
       "program": "${workspaceFolder}/dist/cli.js",
-      "args": ["surgeon", "run", "--preset", "structural", "--verbose"],
+      "args": ["surgeon", "run", "--verbose"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",

@@ -450,19 +450,17 @@ The surgeon subsystem spans:
 Implemented passes:
 
 - `claim_key_quality`
+- `proposal_resolution`
 - `supersession`
 - `retirement`
-
-Implemented presets:
-
-- `claim-key-only`
-- `structural`
-- `full`
 
 The execution model is mixed:
 
 - `claim_key_quality` is deterministic app logic
+- `proposal_resolution` is deterministic app logic that applies already-eligible claim-key proposals
 - `supersession` and `retirement` run through `pi-agent-core` loops with tool sets
+
+The active prompt and tool surfaces live in `src/app/surgeon/`. The repo no longer keeps a separate production `src/adapters/surgeon/` compatibility layer.
 
 Runtime safeguards include:
 

@@ -16,6 +16,7 @@ import {
   reviewSurgeonProposal,
 } from "./surgeon-run-log.js";
 import {
+  countSupersessionCandidates,
   countRetirementCandidates,
   getSurgeonHealthStats,
   inspectSurgeonEntry,
@@ -48,6 +49,7 @@ export function createSurgeonPort(executor: SqlExecutor): SurgeonPort {
     countRetirementCandidates: async (options) => countRetirementCandidates(executor, options),
     listRetirementCandidates: async (query) => listRetirementCandidates(executor, query),
     listSupersessionCandidates: async (query) => listSupersessionCandidates(executor, query),
+    countSupersessionCandidates: async (query) => countSupersessionCandidates(executor, query),
     listClaimKeyQualityEntries: async (query) => listClaimKeyQualityEntries(executor, query),
     inspectEntry: async (entryId) => inspectSurgeonEntry(executor, entryId),
     getEntry: async (entryId) => getEntry(executor, entryId),

@@ -2,6 +2,13 @@ import type { Row } from "@libsql/client";
 
 import type { Entry } from "../../core/types.js";
 import {
+  compareRetirementCandidates,
+  isActionableRetirementCandidate,
+  SURGEON_RETIREMENT_RECENT_EVALUATION_ACTION_TYPES,
+  SURGEON_RETIREMENT_SAME_RUN_SUPPRESSION_ACTION_TYPES,
+} from "../../core/surgeon/domain/retirement-policy.js";
+import { filterSupersessionClustersBySkippedEntryIds } from "../../core/surgeon/domain/supersession-policy.js";
+import {
   buildActiveEntryClause,
   deserializeTags,
   ENTRY_SELECT_COLUMNS,
@@ -117,6 +124,14 @@ export interface SurgeonCandidatePage {
   offset: number;
   scopeExhausted: boolean;
   nextOffset: number | null;
+}
+
+/**
+ * Current supersession-cluster counts across claim-key and subject scopes.
+ */
+export interface SurgeonSupersessionCandidateCounts {
+  claimKeyCount: number;
+  subjectCount: number;
 }
 
 /**
@@ -356,7 +371,7 @@ export async function listRetirementCandidates(executor: SqlExecutor, query: Sur
     ...query,
     skipRecentlyEvaluatedDays: undefined,
   });
-  const [availableResult, rawCountResult] = await Promise.all([
+  const [availableResult, rawResult] = await Promise.all([
     executor.execute({
       sql: `
         SELECT
@@ -379,22 +394,43 @@ export async function listRetirementCandidates(executor: SqlExecutor, query: Sur
     }),
     executor.execute({
       sql: `
-        SELECT COUNT(*) AS candidate_count
+        SELECT
+          e.id,
+          e.subject,
+          e.type,
+          e.importance,
+          e.quality_score,
+          e.expiry,
+          e.created_at,
+          e.updated_at,
+          e.recall_count,
+          e.last_recalled_at,
+          e.tags
         FROM entries AS e
         WHERE ${rawFilter.whereClauses.join("\n          AND ")}
+        ORDER BY e.updated_at ASC
       `,
       args: rawFilter.args,
     }),
   ]);
 
-  const candidates = availableResult.rows.map((row) => mapCandidateRow(row));
-  candidates.sort(compareCandidates);
+  const allAvailableCandidates = availableResult.rows.map((row) => mapCandidateRow(row));
+  const availableCandidates =
+    normalizeScope(query.scope) === "actionable"
+      ? allAvailableCandidates.filter((candidate) => isActionableRetirementCandidate(candidate))
+      : allAvailableCandidates;
+  availableCandidates.sort(compareRetirementCandidates);
+
+  const allRawCandidates = rawResult.rows.map((row) => mapCandidateRow(row));
+  const totalMatching =
+    normalizeScope(query.scope) === "actionable"
+      ? allRawCandidates.filter((candidate) => isActionableRetirementCandidate(candidate)).length
+      : allRawCandidates.length;
 
   const offset = normalizeOffset(query.offset);
   const limit = normalizeLimit(query.limit);
-  const pagedCandidates = candidates.slice(offset, offset + limit);
-  const availableCount = candidates.length;
-  const totalMatching = rawCountResult.rows[0] ? readNumber(rawCountResult.rows[0], "candidate_count", 0) : availableCount;
+  const pagedCandidates = availableCandidates.slice(offset, offset + limit);
+  const availableCount = availableCandidates.length;
   const scopeExhausted = offset + pagedCandidates.length >= availableCount;
 
   return {
@@ -437,6 +473,40 @@ export async function listSupersessionCandidates(executor: SqlExecutor, query: S
 }
 
 /**
+ * Counts visible supersession clusters across claim-key and subject scopes.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @param query - Optional type filter and recent-evaluation window.
+ * @returns Current cluster counts for both grouping scopes.
+ */
+export async function countSupersessionCandidates(
+  executor: SqlExecutor,
+  query: {
+    type?: string;
+    skipRecentlyEvaluatedDays?: number;
+    now?: Date;
+  },
+): Promise<SurgeonSupersessionCandidateCounts> {
+  const type = normalizeOptionalString(query.type);
+  const skippedEntryIds =
+    typeof query.skipRecentlyEvaluatedDays === "number" && Number.isFinite(query.skipRecentlyEvaluatedDays) && query.skipRecentlyEvaluatedDays > 0
+      ? await loadRecentlySkippedSupersessionEntryIds(executor, {
+          now: query.now ?? new Date(),
+          skipRecentlyEvaluatedDays: query.skipRecentlyEvaluatedDays,
+        })
+      : new Set<string>();
+
+  const [claimKeyRows, subjectRows] = await Promise.all([loadClaimKeySupersessionRows(executor, type), loadSubjectSupersessionRows(executor, type)]);
+  const visibleClaimKeyClusters = filterSupersessionClustersBySkippedEntryIds(groupClaimKeySupersessionRows(claimKeyRows), skippedEntryIds);
+  const visibleSubjectClusters = filterSupersessionClustersBySkippedEntryIds(groupSubjectSupersessionRows(subjectRows), skippedEntryIds);
+
+  return {
+    claimKeyCount: visibleClaimKeyClusters.length,
+    subjectCount: visibleSubjectClusters.length,
+  };
+}
+
+/**
  * Suppresses supersession clusters when every member was skipped in a recent
  * supersession run. This avoids repeatedly re-reviewing known non-actionable
  * cross-type clusters while still surfacing clusters that gained a new member.
@@ -469,7 +539,7 @@ async function suppressRecentlySkippedSupersessionClusters(
     return clusters;
   }
 
-  return clusters.filter((cluster) => cluster.entries.some((entry) => !skippedEntryIds.has(entry.id)));
+  return filterSupersessionClustersBySkippedEntryIds(clusters, skippedEntryIds);
 }
 
 /**
@@ -536,20 +606,13 @@ export async function countRetirementCandidates(
 ): Promise<SurgeonRetirementCandidateCounts> {
   const now = options.now ?? new Date();
 
-  const rawActionableFilter = buildCandidateFilter({
-    scope: "actionable",
+  const rawFilter = buildCandidateFilter({
+    scope: "all",
     protectRecalledDays: options.protectRecalledDays,
     protectMinImportance: options.protectMinImportance,
     now,
   });
 
-  const availableActionableFilter = buildCandidateFilter({
-    scope: "actionable",
-    protectRecalledDays: options.protectRecalledDays,
-    protectMinImportance: options.protectMinImportance,
-    skipRecentlyEvaluatedDays: options.skipRecentlyEvaluatedDays,
-    now,
-  });
   const availableAllFilter = buildCandidateFilter({
     scope: "all",
     protectRecalledDays: options.protectRecalledDays,
@@ -558,36 +621,54 @@ export async function countRetirementCandidates(
     now,
   });
 
-  const [rawActionableResult, availableActionableResult, availableAllResult] = await Promise.all([
+  const [rawResult, availableAllResult] = await Promise.all([
     executor.execute({
       sql: `
-        SELECT COUNT(*) AS candidate_count
+        SELECT
+          e.id,
+          e.subject,
+          e.type,
+          e.importance,
+          e.quality_score,
+          e.expiry,
+          e.created_at,
+          e.updated_at,
+          e.recall_count,
+          e.last_recalled_at,
+          e.tags
         FROM entries AS e
-        WHERE ${rawActionableFilter.whereClauses.join("\n        AND ")}
+        WHERE ${rawFilter.whereClauses.join("\n        AND ")}
+        ORDER BY e.updated_at ASC
       `,
-      args: rawActionableFilter.args,
+      args: rawFilter.args,
     }),
     executor.execute({
       sql: `
-        SELECT COUNT(*) AS candidate_count
-        FROM entries AS e
-        WHERE ${availableActionableFilter.whereClauses.join("\n        AND ")}
-      `,
-      args: availableActionableFilter.args,
-    }),
-    executor.execute({
-      sql: `
-        SELECT COUNT(*) AS candidate_count
+        SELECT
+          e.id,
+          e.subject,
+          e.type,
+          e.importance,
+          e.quality_score,
+          e.expiry,
+          e.created_at,
+          e.updated_at,
+          e.recall_count,
+          e.last_recalled_at,
+          e.tags
         FROM entries AS e
         WHERE ${availableAllFilter.whereClauses.join("\n        AND ")}
+        ORDER BY e.updated_at ASC
       `,
       args: availableAllFilter.args,
     }),
   ]);
 
-  const rawActionableCount = rawActionableResult.rows[0] ? readNumber(rawActionableResult.rows[0], "candidate_count", 0) : 0;
-  const availableActionableCount = availableActionableResult.rows[0] ? readNumber(availableActionableResult.rows[0], "candidate_count", 0) : 0;
-  const availableAllCount = availableAllResult.rows[0] ? readNumber(availableAllResult.rows[0], "candidate_count", 0) : 0;
+  const rawCandidates = rawResult.rows.map((row) => mapCandidateRow(row));
+  const availableCandidates = availableAllResult.rows.map((row) => mapCandidateRow(row));
+  const rawActionableCount = rawCandidates.filter((candidate) => isActionableRetirementCandidate(candidate)).length;
+  const availableActionableCount = availableCandidates.filter((candidate) => isActionableRetirementCandidate(candidate)).length;
+  const availableAllCount = availableCandidates.length;
 
   return {
     rawActionableCount,
@@ -773,7 +854,6 @@ interface CandidateFilterState {
  */
 function buildCandidateFilter(query: SurgeonCandidateQuery): CandidateFilterState {
   const now = query.now ?? new Date();
-  const scope = normalizeScope(query.scope);
   const protectMinImportance = normalizeNonNegativeInteger(query.protectMinImportance);
   const protectRecalledDays = normalizeNonNegativeInteger(query.protectRecalledDays);
   const protectRecalledCutoffIso = new Date(now.getTime() - protectRecalledDays * DAY_MS).toISOString();
@@ -787,10 +867,10 @@ function buildCandidateFilter(query: SurgeonCandidateQuery): CandidateFilterStat
       SELECT 1
       FROM surgeon_run_actions AS sra
       WHERE sra.run_id = ?
-        AND sra.action_type IN ('skip', 'retire', 'update_entry')
+        AND sra.action_type IN (${SURGEON_RETIREMENT_SAME_RUN_SUPPRESSION_ACTION_TYPES.map(() => "?").join(", ")})
         AND (sra.entry_id = e.id OR (json_valid(sra.entry_ids) AND EXISTS (SELECT 1 FROM json_each(sra.entry_ids) AS je WHERE je.value = e.id)))
     )`);
-    args.push(currentRunId);
+    args.push(currentRunId, ...SURGEON_RETIREMENT_SAME_RUN_SUPPRESSION_ACTION_TYPES);
   }
 
   const project = normalizeOptionalString(query.project);
@@ -803,14 +883,6 @@ function buildCandidateFilter(query: SurgeonCandidateQuery): CandidateFilterStat
   if (type) {
     whereClauses.push("e.type = ?");
     args.push(type);
-  }
-
-  if (scope === "actionable") {
-    whereClauses.push(`(
-      e.expiry = 'temporary'
-      OR (e.type = 'milestone' AND (e.importance <= 6 OR e.expiry = 'permanent'))
-      OR (e.type = 'fact' AND e.importance <= 5 AND COALESCE(e.recall_count, 0) = 0)
-    )`);
   }
 
   if (Number.isFinite(query.importanceMax)) {
@@ -830,11 +902,11 @@ function buildCandidateFilter(query: SurgeonCandidateQuery): CandidateFilterStat
       SELECT 1
       FROM surgeon_run_actions AS sra
       INNER JOIN surgeon_runs AS sr ON sr.id = sra.run_id
-      WHERE sra.action_type IN ('skip', 'retire', 'update_entry')
+      WHERE sra.action_type IN (${SURGEON_RETIREMENT_RECENT_EVALUATION_ACTION_TYPES.map(() => "?").join(", ")})
         AND (sra.entry_id = e.id OR (json_valid(sra.entry_ids) AND EXISTS (SELECT 1 FROM json_each(sra.entry_ids) AS je WHERE je.value = e.id)))
         AND sr.started_at > ?
     )`);
-    args.push(skipCutoffIso);
+    args.push(...SURGEON_RETIREMENT_RECENT_EVALUATION_ACTION_TYPES, skipCutoffIso);
   }
 
   return { whereClauses, args };
@@ -1071,94 +1143,6 @@ function mapCandidateRow(row: Row): SurgeonCandidateSummary {
     lastRecalledAt: readOptionalString(row, "last_recalled_at") ?? null,
     tags: deserializeTags(row.tags),
   };
-}
-
-/**
- * Compares two candidate summaries using the surgeon prioritization rules.
- *
- * @param left - Left candidate.
- * @param right - Right candidate.
- * @returns Sort comparator value.
- */
-function compareCandidates(left: SurgeonCandidateSummary, right: SurgeonCandidateSummary): number {
-  const tierDelta = candidatePriorityTier(left) - candidatePriorityTier(right);
-  if (tierDelta !== 0) {
-    return tierDelta;
-  }
-
-  const leftNeverRecalled = left.recallCount === 0;
-  const rightNeverRecalled = right.recallCount === 0;
-  if (leftNeverRecalled !== rightNeverRecalled) {
-    return leftNeverRecalled ? -1 : 1;
-  }
-
-  const createdDelta = parseTimestamp(left.createdAt) - parseTimestamp(right.createdAt);
-  if (createdDelta !== 0) {
-    return createdDelta;
-  }
-
-  if (left.importance !== right.importance) {
-    return left.importance - right.importance;
-  }
-
-  const updatedDelta = left.updatedAt.localeCompare(right.updatedAt);
-  if (updatedDelta !== 0) {
-    return updatedDelta;
-  }
-
-  return left.id.localeCompare(right.id);
-}
-
-/**
- * Assigns a candidate priority tier used for surgeon ordering.
- *
- * @param candidate - Candidate to classify.
- * @returns Tier number where lower values sort first.
- */
-function candidatePriorityTier(candidate: SurgeonCandidateSummary): number {
-  if (candidate.expiry === "temporary") {
-    return 0;
-  }
-
-  if (candidate.type === "milestone" && candidate.importance <= 4) {
-    return 1;
-  }
-
-  if (looksLikeStatusArtifact(candidate.subject)) {
-    return 2;
-  }
-
-  return 3;
-}
-
-/**
- * Detects whether a subject looks like a status-artifact memory.
- *
- * @param subject - Candidate subject text.
- * @returns True when the subject matches status-artifact heuristics.
- */
-function looksLikeStatusArtifact(subject: string): boolean {
-  const normalized = subject.trim().toLowerCase();
-  return (
-    normalized.includes("session handoff") ||
-    normalized.includes("status update") ||
-    normalized.includes("progress snapshot") ||
-    normalized.includes("session summary") ||
-    normalized.includes("next steps") ||
-    normalized.includes("in progress") ||
-    normalized.startsWith("handoff")
-  );
-}
-
-/**
- * Parses an ISO timestamp into a sortable numeric value.
- *
- * @param value - Timestamp text.
- * @returns Parsed timestamp or a max sentinel for invalid input.
- */
-function parseTimestamp(value: string): number {
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) ? timestamp : Number.MAX_SAFE_INTEGER;
 }
 
 /**

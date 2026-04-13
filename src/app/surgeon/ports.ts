@@ -189,6 +189,14 @@ export interface SurgeonSupersessionCluster {
 }
 
 /**
+ * Current supersession-cluster counts across claim-key and subject scopes.
+ */
+export interface SurgeonSupersessionCandidateCounts {
+  claimKeyCount: number;
+  subjectCount: number;
+}
+
+/**
  * Minimal entry summary used in surgeon inspection responses.
  */
 export interface SurgeonEntrySummary {
@@ -368,6 +376,14 @@ export interface SurgeonPort {
    * @returns Candidate clusters ordered oldest-first within each cluster.
    */
   listSupersessionCandidates(query: SurgeonSupersessionCandidateQuery): Promise<SurgeonSupersessionCluster[]>;
+
+  /**
+   * Counts visible supersession clusters across claim-key and subject scopes.
+   *
+   * @param query - Optional grouping filters and recent-evaluation window.
+   * @returns Visible cluster counts for both supersession scopes.
+   */
+  countSupersessionCandidates(query: { type?: string; skipRecentlyEvaluatedDays?: number; now?: Date }): Promise<SurgeonSupersessionCandidateCounts>;
 
   /**
    * Loads detailed inspection context for one entry.

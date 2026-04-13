@@ -4,6 +4,7 @@ import type { Row } from "@libsql/client";
 
 import type { SurgeonRunAction } from "../../core/surgeon/domain/action-types.js";
 import { isSurgeonPassType, type SurgeonPassType } from "../../core/surgeon/domain/pass-types.js";
+import { normalizeSurgeonProposalIssueIdentity } from "../../core/surgeon/domain/proposal-review.js";
 import type { SurgeonCompletionSummary, SurgeonProposalReviewStatus, SurgeonRunProposal, SurgeonRunStatus } from "../../core/surgeon/types.js";
 import { readBoolean, readNumber, readOptionalString, readRequiredString } from "./row-mapping.js";
 import type { SqlExecutor } from "./queries.js";
@@ -226,13 +227,15 @@ export async function logSurgeonProposal(executor: SqlExecutor, proposal: Persis
   const reviewedAt = "reviewedAt" in proposal ? proposal.reviewedAt : null;
   const reviewReason = "reviewReason" in proposal ? proposal.reviewReason : null;
   const appliedActionCount = "appliedActionCount" in proposal ? proposal.appliedActionCount : 0;
-  const normalizedGroupId = proposal.groupId.trim();
-  const normalizedIssueKind = proposal.issueKind.trim();
+  const logicalIssue = normalizeSurgeonProposalIssueIdentity({
+    groupId: proposal.groupId,
+    issueKind: proposal.issueKind,
+  });
 
   if (reviewStatus === "open") {
     const existingOpenProposal = await findOpenProposalIssue(executor, {
-      groupId: normalizedGroupId,
-      issueKind: normalizedIssueKind,
+      groupId: logicalIssue.groupId,
+      issueKind: logicalIssue.issueKind,
     });
 
     if (existingOpenProposal) {
@@ -297,8 +300,8 @@ export async function logSurgeonProposal(executor: SqlExecutor, proposal: Persis
     args: [
       proposal.id.trim().length > 0 ? proposal.id.trim() : randomUUID(),
       proposal.runId.trim(),
-      normalizedGroupId,
-      normalizedIssueKind,
+      logicalIssue.groupId,
+      logicalIssue.issueKind,
       proposal.scope,
       JSON.stringify(normalizeEntryIds(proposal.entryIds)),
       JSON.stringify(normalizeStringArray(proposal.currentClaimKeys)),

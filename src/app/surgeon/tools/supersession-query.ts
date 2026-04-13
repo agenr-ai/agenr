@@ -38,24 +38,36 @@ export function createQuerySupersessionCandidatesTool(deps: SurgeonToolDeps): Ag
       const limit = normalizeLimit(params.limit);
       const offset = normalizeOffset(params.offset);
       const type = normalizeOptionalString(params.type);
+      const counts = await deps.port.countSupersessionCandidates({
+        type,
+        skipRecentlyEvaluatedDays: deps.skipRecentlyEvaluatedDays,
+        now: deps.now(),
+      });
+      const progress = deps.completionGuards?.supersession.snapshot();
 
-      const [claimKeyClusters, subjectClusters] = await Promise.all([
-        deps.port.listSupersessionCandidates({
-          scope: "claim_key",
-          type,
-          skipRecentlyEvaluatedDays: deps.skipRecentlyEvaluatedDays,
-          now: deps.now(),
-        }),
-        deps.port.listSupersessionCandidates({
-          scope: "subject",
-          type,
-          skipRecentlyEvaluatedDays: deps.skipRecentlyEvaluatedDays,
-          now: deps.now(),
-        }),
-      ]);
+      const claimKeyClusters =
+        scope === "subject"
+          ? []
+          : await deps.port.listSupersessionCandidates({
+              scope: "claim_key",
+              type,
+              skipRecentlyEvaluatedDays: deps.skipRecentlyEvaluatedDays,
+              now: deps.now(),
+            });
+      const subjectClusters =
+        scope === "claim_key"
+          ? []
+          : await deps.port.listSupersessionCandidates({
+              scope: "subject",
+              type,
+              skipRecentlyEvaluatedDays: deps.skipRecentlyEvaluatedDays,
+              now: deps.now(),
+            });
 
       const pendingClaimKeyClusters = deps.completionGuards?.supersession.filterPendingClusters(claimKeyClusters) ?? claimKeyClusters;
       const pendingSubjectClusters = deps.completionGuards?.supersession.filterPendingClusters(subjectClusters) ?? subjectClusters;
+      const claimKeyClusterCount = scope === "subject" ? (progress?.claimKeyClustersRemaining ?? counts.claimKeyCount) : pendingClaimKeyClusters.length;
+      const subjectClusterCount = scope === "claim_key" ? (progress?.subjectClustersRemaining ?? counts.subjectCount) : pendingSubjectClusters.length;
       const allClusters =
         scope === "claim_key"
           ? pendingClaimKeyClusters
@@ -66,8 +78,8 @@ export function createQuerySupersessionCandidatesTool(deps: SurgeonToolDeps): Ag
 
       deps.completionGuards?.supersession.recordPage({
         scope,
-        claimKeyTotal: pendingClaimKeyClusters.length,
-        subjectTotal: pendingSubjectClusters.length,
+        claimKeyTotal: claimKeyClusterCount,
+        subjectTotal: subjectClusterCount,
         clusters,
       });
 
@@ -78,8 +90,8 @@ export function createQuerySupersessionCandidatesTool(deps: SurgeonToolDeps): Ag
           scope,
           limit,
           offset,
-          claimKeyClusterCount: pendingClaimKeyClusters.length,
-          subjectClusterCount: pendingSubjectClusters.length,
+          claimKeyClusterCount,
+          subjectClusterCount,
           message: buildEmptyResultMessage(scope),
         });
       }
@@ -90,8 +102,8 @@ export function createQuerySupersessionCandidatesTool(deps: SurgeonToolDeps): Ag
         scope,
         limit,
         offset,
-        claimKeyClusterCount: pendingClaimKeyClusters.length,
-        subjectClusterCount: pendingSubjectClusters.length,
+        claimKeyClusterCount,
+        subjectClusterCount,
         exhausted: offset + clusters.length >= allClusters.length,
       });
     },

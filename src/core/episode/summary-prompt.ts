@@ -24,10 +24,8 @@ export interface EpisodeSummaryOutput {
 
 /**
  * System prompt used for episodic summary generation.
- *
- * @type {string}
  */
-export const EPISODE_SUMMARY_SYSTEM_PROMPT = [
+const EPISODE_SUMMARY_SYSTEM_PROMPT = [
   "You write strict JSON episode summaries for historical recall.",
   "The transcript can be about any topic - technical work, casual conversation, planning, research, creative projects, life events, or anything else.",
   "Do not assume any particular domain.",
@@ -45,6 +43,8 @@ export const EPISODE_SUMMARY_SYSTEM_PROMPT = [
   "- activityLevel: use substantial when meaningful discussion or work occurred, minimal when the session was brief or lightweight, none when essentially nothing happened",
   "- do not include Markdown fences or extra commentary",
 ].join("\n");
+
+export { EPISODE_SUMMARY_SYSTEM_PROMPT };
 
 /**
  * Builds the user prompt for one episodic summary generation call.

@@ -42,10 +42,8 @@ export interface SetupModelStageDefinition {
 
 /**
  * Single registry for every setup model stage.
- *
- * @type {readonly SetupModelStageDefinition[]}
  */
-export const SETUP_MODEL_STAGES: readonly SetupModelStageDefinition[] = [
+const SETUP_MODEL_STAGES: readonly SetupModelStageDefinition[] = [
   {
     id: "extraction",
     label: "Extraction",
@@ -97,6 +95,8 @@ export const SETUP_MODEL_STAGES: readonly SetupModelStageDefinition[] = [
     }),
   },
 ] as const;
+
+export { SETUP_MODEL_STAGES };
 
 /**
  * Reads the current stage overrides from one config snapshot.

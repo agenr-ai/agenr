@@ -5,23 +5,18 @@ import { createSurgeonPort } from "../../../../src/adapters/db/surgeon-port.js";
 import { createSurgeonRun } from "../../../../src/adapters/db/surgeon-run-log.js";
 import { serializeTags } from "../../../../src/adapters/db/row-mapping.js";
 import { finalizeBulkWrites, initSchema, prepareBulkWrites } from "../../../../src/adapters/db/schema.js";
-import { createCompletePassTool } from "../../../../src/adapters/surgeon/tools/complete.js";
-import { createHealthStatsTool } from "../../../../src/adapters/surgeon/tools/health.js";
-import { createInspectEntryTool } from "../../../../src/adapters/surgeon/tools/inspect.js";
-import {
-  createSupersessionTools,
-  createSurgeonTools,
-  type SurgeonToolCompletionState,
-  type SurgeonToolDeps,
-} from "../../../../src/adapters/surgeon/tools/index.js";
-import { createRetireEntryTool } from "../../../../src/adapters/surgeon/tools/mutate.js";
-import { createQueryCandidatesTool } from "../../../../src/adapters/surgeon/tools/query.js";
-import { createSimulateRecallTool } from "../../../../src/adapters/surgeon/tools/recall-sim.js";
-import { createAssignClaimKeyTool } from "../../../../src/adapters/surgeon/tools/supersession-claim.js";
-import { createLinkSupersessionTool } from "../../../../src/adapters/surgeon/tools/supersession-link.js";
-import { createQuerySupersessionCandidatesTool } from "../../../../src/adapters/surgeon/tools/supersession-query.js";
-import { createSetValidityTool } from "../../../../src/adapters/surgeon/tools/supersession-validity.js";
-import { createUpdateEntryTool } from "../../../../src/adapters/surgeon/tools/update-entry.js";
+import { createCompletePassTool } from "../../../../src/app/surgeon/tools/complete.js";
+import { createHealthStatsTool } from "../../../../src/app/surgeon/tools/health.js";
+import { createInspectEntryTool } from "../../../../src/app/surgeon/tools/inspect.js";
+import { createSupersessionTools, createSurgeonTools, type SurgeonToolCompletionState, type SurgeonToolDeps } from "../../../../src/app/surgeon/tools/index.js";
+import { createRetireEntryTool } from "../../../../src/app/surgeon/tools/mutate.js";
+import { createQueryCandidatesTool } from "../../../../src/app/surgeon/tools/query.js";
+import { createSimulateRecallTool } from "../../../../src/app/surgeon/tools/recall-sim.js";
+import { createAssignClaimKeyTool } from "../../../../src/app/surgeon/tools/supersession-claim.js";
+import { createLinkSupersessionTool } from "../../../../src/app/surgeon/tools/supersession-link.js";
+import { createQuerySupersessionCandidatesTool } from "../../../../src/app/surgeon/tools/supersession-query.js";
+import { createSetValidityTool } from "../../../../src/app/surgeon/tools/supersession-validity.js";
+import { createUpdateEntryTool } from "../../../../src/app/surgeon/tools/update-entry.js";
 import { createSurgeonCompletionGuardState } from "../../../../src/app/surgeon/completion-guard.js";
 import { SURGEON_PERMANENT_ENTRY_DEMOTION_FLOOR } from "../../../../src/core/surgeon/domain/protection-rules.js";
 import type { RecallPorts } from "../../../../src/core/ports.js";
@@ -245,9 +240,9 @@ describe("surgeon tools", () => {
       claimKeyScopeExhausted: false,
       subjectClustersViewed: 0,
       subjectClustersTotal: 1,
-      subjectClustersRemaining: 0,
+      subjectClustersRemaining: 1,
       subjectClustersAdjudicated: 0,
-      subjectScopeExhausted: true,
+      subjectScopeExhausted: false,
       adjudicatedClusters: 0,
       widenedBeforeClaimKeyExhausted: false,
     });
