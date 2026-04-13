@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+## [1.9.1] - 2026-04-12
+
+Supersession stall-recovery and review-order guard patch release.
+
+### Changed
+
+- **Supersession review order is now enforced at the tool boundary.** The supersession query tool now blocks widening into lower-confidence subject sweeps until the same run has actually exhausted claim-key work, keeping the pass aligned with its intended review order.
+
+### Fixed
+
+- **Supersession passes no longer self-poison completion state by widening too early.** The surgeon now avoids the stuck `widenedBeforeClaimKeyExhausted` path that could leave a run unable to complete cleanly after later claim-key review caught up.
+- **Supersession completion feedback is more actionable.** Rejected `complete_pass` calls now tell the model how to count reviewed-but-intentionally-unlinked clusters via `entries_skipped`, reducing repeated no-progress bounded slices.
+
+### Validation
+
+Changes since last push to `origin/master`:
+
+- Fix surgeon supersession stall handling
+
 ## [1.9.0] - 2026-04-12
 
 Surgeon autonomy, review-flow hardening, and CLI/runtime polish release.
