@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [1.9.3] - 2026-04-12
+
+Supersession sweep-exhaustion and plugin-manifest alignment patch release.
+
+### Fixed
+
+- **Supersession claim-key sweeps no longer strand the pass in a false remaining-work state.** Exhausted claim-key pages now record the actual unpaged remainder, which lets same-run subject review unblock correctly instead of tripping the autonomous semantic-stall guard.
+- **OpenClaw plugin manifests stay version-aligned across release artifacts.** The shared adapter manifest now tracks the published package/plugin version again, avoiding package-metadata skew during validation and release packaging.
+
+### Validation
+
+Changes since last push to `origin/master`:
+
+- Fix supersession claim-key sweep exhaustion
+
 ## [1.9.2] - 2026-04-12
 
 Surgeon proposal-resolution hardening and claim-key progress-output patch release.
