@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-04-13
+
+Procedural memory foundation, sync and recall pipelines, and unified routing major release.
+
+### Added
+
+- **Procedural memory ships as a first-class corpus lane.** Agenr now includes the procedural memory model, repo-authored procedure assets, CLI ingest support, sync plumbing, and fixture-backed validation coverage for procedure-aware workflows.
+- **Dedicated procedure recall and eval support.** The release adds a procedure-specific recall pipeline plus recall-eval fixture provisioning so procedural knowledge can be exercised independently from durable entries and episodes.
+
+### Changed
+
+- **Unified recall is now procedure-aware.** Recall routing can now surface procedural memory alongside the existing durable and episodic paths, tightening the retrieval model for task and workflow queries.
+- **Repository guidance now documents procedural-memory ownership more explicitly.** Architecture and subsystem docs were refreshed to explain where procedural behavior belongs and how it fits the broader memory stack.
+
+### Validation
+
+Changes since last push to `origin/master`:
+
+- docs: refresh surgeon markdown
+- Add procedural memory v1 design spec
+- Add procedural memory phase 1 foundation
+- Add procedural memory phase 2 sync pipeline
+- Add dedicated procedure recall pipeline
+- Add procedure-aware unified recall routing
+
 ## [1.9.3] - 2026-04-12
 
 Supersession sweep-exhaustion and plugin-manifest alignment patch release.
