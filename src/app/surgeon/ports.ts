@@ -160,6 +160,8 @@ export interface SurgeonSupersessionCandidateQuery {
   type?: string;
   limit?: number;
   offset?: number;
+  skipRecentlyEvaluatedDays?: number;
+  now?: Date;
 }
 
 /**

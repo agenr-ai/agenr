@@ -281,7 +281,7 @@ describe("registerSurgeonCommand", () => {
     expect(stderrText).toContain("Surgeon run: proposal_resolution");
     expect(stderrText).toContain("Proposal backlog: 3 eligible proposals");
     expect(stderrText).toContain("proposal_resolution: 1/3 proposals, applied 1, inactive 0, no-op 0, targeted 2, applied");
-    expect(stderrText).toContain("proposal_resolution: 3/3 proposals, applied 2, inactive 1, no-op 0, targeted 3");
+    expect(stderrText).toContain("proposal_resolution complete: applied 2, inactive 1, no-op 0, targeted 3");
   });
 
   it("keeps JSON mode coherent by sending progress to stderr and JSON to stdout", async () => {
@@ -323,7 +323,12 @@ describe("registerSurgeonCommand", () => {
     const { program, stdout } = createProgramWithCapturedOutput();
     runSurgeonRuntimeMock.mockResolvedValue({
       cyclesCompleted: 2,
-      passes: [{ passType: "claim_key_quality" }, { passType: "supersession" }, { passType: "retirement" }, { passType: "retirement" }],
+      passes: [
+        { passType: "claim_key_quality", actionsTaken: 0, entriesRetired: 0, summary: "Emitted proposals for missing keys." },
+        { passType: "supersession", actionsTaken: 1, entriesRetired: 0, summary: "Linked one duplicate cluster." },
+        { passType: "retirement", actionsTaken: 1, entriesRetired: 1, summary: "Retired one stale milestone." },
+        { passType: "retirement", actionsTaken: 1, entriesRetired: 1, summary: "Retired another stale milestone." },
+      ],
       status: "completed",
       actionsTaken: 3,
       entriesRetired: 2,
@@ -343,15 +348,21 @@ describe("registerSurgeonCommand", () => {
     const stdoutText = stripAnsi(stdout.join(""));
     expect(stdoutText).toContain("Surgeon Run (autonomous)");
     expect(stdoutText).toContain("2");
-    expect(stdoutText).toContain("claim_key_quality -> supersession -> retirement -> retirement");
-    expect(stdoutText).toContain("Autonomous cleanup complete.");
+    expect(stdoutText).toContain("claim_key_quality x1 -> supersession x1 -> retirement x2");
+    expect(stdoutText).toContain("Outcome  Autonomous cleanup complete.");
+    expect(stdoutText).toContain("By pass  claim_key_quality: 1 pass, 0 actions - Emitted proposals for missing keys.");
+    expect(stdoutText).toContain("retirement: 2 passes, 2 actions, 2 retired - Retired another stale milestone.");
   });
 
   it("renders multiline summaries without collapsing them into one paragraph", async () => {
     const { program, stdout } = createProgramWithCapturedOutput();
     runSurgeonRuntimeMock.mockResolvedValue({
       cyclesCompleted: 1,
-      passes: [{ passType: "claim_key_quality" }, { passType: "proposal_resolution" }, { passType: "retirement" }],
+      passes: [
+        { passType: "claim_key_quality", actionsTaken: 0, entriesRetired: 0, summary: "claim_key_quality:\n- emitted 3 proposals" },
+        { passType: "proposal_resolution", actionsTaken: 2, entriesRetired: 0, summary: "proposal_resolution:\n- applied 2 proposals" },
+        { passType: "retirement", actionsTaken: 0, entriesRetired: 0, summary: "retirement:\n- reviewed 4 entries conservatively" },
+      ],
       status: "completed",
       actionsTaken: 2,
       entriesRetired: 1,
@@ -396,6 +407,30 @@ describe("registerSurgeonCommand", () => {
     expect(stderrText).toContain("Turn 1: query_candidates");
     expect(stderrText).not.toContain("$0.0042");
     expect(stderrText).not.toContain("costUsed=");
+  });
+
+  it("suppresses empty turn summaries in compact trace output", async () => {
+    const { program, stderr } = createProgramWithCapturedOutput();
+    runSurgeonRuntimeMock.mockImplementation(async (input: { logger: { info(message: string): void } }) => {
+      input.logger.info("surgeon turn started");
+      input.logger.info("turn end cumulative in=1200 out=300 contextUsed=1024/4096");
+      return {
+        runId: "run-1",
+        status: "completed",
+        passType: "retirement",
+        actionsTaken: 0,
+        entriesRetired: 0,
+        inputTokens: 1200,
+        outputTokens: 300,
+        estimatedCostUsd: 0.04,
+        summary: "Dry-run sweep complete.",
+      };
+    });
+
+    await program.parseAsync(["surgeon", "run", "--pass", "retirement"], { from: "user" });
+
+    const stderrText = stripAnsi(stderr.join(""));
+    expect(stderrText).not.toContain("no tools");
   });
 
   it("normalizes run arguments before invoking the runtime", async () => {

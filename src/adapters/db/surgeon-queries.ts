@@ -127,6 +127,8 @@ export interface SurgeonSupersessionCandidateQuery {
   type?: string;
   limit?: number;
   offset?: number;
+  skipRecentlyEvaluatedDays?: number;
+  now?: Date;
 }
 
 /**
@@ -427,10 +429,93 @@ export async function listSupersessionCandidates(executor: SqlExecutor, query: S
       }),
     )
   ).flat();
+  const filteredClusters = await suppressRecentlySkippedSupersessionClusters(executor, clusters, query);
 
   const offset = normalizeOffset(query.offset);
   const limit = normalizeOptionalLimit(query.limit);
-  return limit === null ? clusters.slice(offset) : clusters.slice(offset, offset + limit);
+  return limit === null ? filteredClusters.slice(offset) : filteredClusters.slice(offset, offset + limit);
+}
+
+/**
+ * Suppresses supersession clusters when every member was skipped in a recent
+ * supersession run. This avoids repeatedly re-reviewing known non-actionable
+ * cross-type clusters while still surfacing clusters that gained a new member.
+ *
+ * @param executor - SQL executor used for recent action lookups.
+ * @param clusters - Candidate clusters assembled for the current query.
+ * @param query - Current supersession query options.
+ * @returns Clusters that still need operator or model attention.
+ */
+async function suppressRecentlySkippedSupersessionClusters(
+  executor: SqlExecutor,
+  clusters: SurgeonSupersessionCluster[],
+  query: SurgeonSupersessionCandidateQuery,
+): Promise<SurgeonSupersessionCluster[]> {
+  if (
+    typeof query.skipRecentlyEvaluatedDays !== "number" ||
+    !Number.isFinite(query.skipRecentlyEvaluatedDays) ||
+    query.skipRecentlyEvaluatedDays <= 0 ||
+    clusters.length === 0
+  ) {
+    return clusters;
+  }
+
+  const now = query.now ?? new Date();
+  const skippedEntryIds = await loadRecentlySkippedSupersessionEntryIds(executor, {
+    now,
+    skipRecentlyEvaluatedDays: query.skipRecentlyEvaluatedDays,
+  });
+  if (skippedEntryIds.size === 0) {
+    return clusters;
+  }
+
+  return clusters.filter((cluster) => cluster.entries.some((entry) => !skippedEntryIds.has(entry.id)));
+}
+
+/**
+ * Loads entry IDs that were recently skipped by supersession runs.
+ *
+ * @param executor - SQL executor used for the lookup.
+ * @param input - Recent-evaluation window parameters.
+ * @returns Entry IDs that were skipped recently enough to suppress repeat review.
+ */
+async function loadRecentlySkippedSupersessionEntryIds(
+  executor: SqlExecutor,
+  input: {
+    now: Date;
+    skipRecentlyEvaluatedDays: number;
+  },
+): Promise<Set<string>> {
+  const skipCutoffIso = new Date(input.now.getTime() - normalizeNonNegativeInteger(input.skipRecentlyEvaluatedDays) * DAY_MS).toISOString();
+  const result = await executor.execute({
+    sql: `
+      SELECT DISTINCT skipped.entry_id
+      FROM (
+        SELECT sra.entry_id AS entry_id
+        FROM surgeon_run_actions AS sra
+        INNER JOIN surgeon_runs AS sr ON sr.id = sra.run_id
+        WHERE sra.action_type = 'skip'
+          AND sr.pass_type = 'supersession'
+          AND sr.started_at > ?
+          AND sra.entry_id IS NOT NULL
+
+        UNION
+
+        SELECT je.value AS entry_id
+        FROM surgeon_run_actions AS sra
+        INNER JOIN surgeon_runs AS sr ON sr.id = sra.run_id
+        INNER JOIN json_each(sra.entry_ids) AS je
+        WHERE sra.action_type = 'skip'
+          AND sr.pass_type = 'supersession'
+          AND sr.started_at > ?
+          AND json_valid(sra.entry_ids)
+      ) AS skipped
+      WHERE skipped.entry_id IS NOT NULL
+    `,
+    args: [skipCutoffIso, skipCutoffIso],
+  });
+
+  return new Set(result.rows.map((row) => readOptionalString(row, "entry_id") ?? "").filter((entryId) => entryId.length > 0));
 }
 
 /**

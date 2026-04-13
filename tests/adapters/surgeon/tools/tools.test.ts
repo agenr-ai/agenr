@@ -253,6 +253,135 @@ describe("surgeon tools", () => {
     });
   });
 
+  it("suppresses supersession clusters that were recently skipped in prior supersession runs", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "claim-entry-1",
+      subject: "Jim home city",
+      claim_key: "jim/home_city",
+      created_at: daysAgoIso(40),
+    });
+    await insertEntry(client, {
+      id: "claim-entry-2",
+      subject: "Jim home city update",
+      claim_key: "jim/home_city",
+      created_at: daysAgoIso(20),
+    });
+
+    const port = createSurgeonPort(client);
+    const priorRunId = await createSurgeonRun(client, {
+      passType: "supersession",
+      dryRun: false,
+      startedAt: daysAgoIso(1),
+    });
+    await port.logRunAction({
+      id: "skip-action-1",
+      runId: priorRunId,
+      actionType: "skip",
+      entryIds: ["claim-entry-1"],
+      reasoning: "Cross-type pairing cannot be linked safely.",
+      recallDelta: null,
+      createdAt: TEST_NOW.toISOString(),
+    });
+    await port.logRunAction({
+      id: "skip-action-2",
+      runId: priorRunId,
+      actionType: "skip",
+      entryIds: ["claim-entry-2"],
+      reasoning: "Cross-type pairing cannot be linked safely.",
+      recallDelta: null,
+      createdAt: TEST_NOW.toISOString(),
+    });
+
+    const tool = createQuerySupersessionCandidatesTool(
+      createToolDeps(client, {
+        passType: "supersession",
+        port,
+        skipRecentlyEvaluatedDays: 7,
+      }),
+    );
+
+    const result = await tool.execute("tool-query-supersession-recent-skip", {
+      scope: "claim_key",
+      limit: 10,
+      offset: 0,
+    });
+
+    expect(result.details).toMatchObject({
+      count: 0,
+      scope: "claim_key",
+      claimKeyClusterCount: 0,
+      message: "No more claim_key clusters remain. If budget allows, widen to scope = 'subject'.",
+    });
+  });
+
+  it("keeps supersession clusters visible when a new member joins after a recent skip", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "claim-entry-1",
+      subject: "Jim home city",
+      claim_key: "jim/home_city",
+      created_at: daysAgoIso(40),
+    });
+    await insertEntry(client, {
+      id: "claim-entry-2",
+      subject: "Jim home city update",
+      claim_key: "jim/home_city",
+      created_at: daysAgoIso(20),
+    });
+    await insertEntry(client, {
+      id: "claim-entry-3",
+      subject: "Jim home city canonical",
+      claim_key: "jim/home_city",
+      created_at: daysAgoIso(2),
+    });
+
+    const port = createSurgeonPort(client);
+    const priorRunId = await createSurgeonRun(client, {
+      passType: "supersession",
+      dryRun: false,
+      startedAt: daysAgoIso(1),
+    });
+    await port.logRunAction({
+      id: "skip-action-3",
+      runId: priorRunId,
+      actionType: "skip",
+      entryIds: ["claim-entry-1"],
+      reasoning: "Cross-type pairing cannot be linked safely.",
+      recallDelta: null,
+      createdAt: TEST_NOW.toISOString(),
+    });
+    await port.logRunAction({
+      id: "skip-action-4",
+      runId: priorRunId,
+      actionType: "skip",
+      entryIds: ["claim-entry-2"],
+      reasoning: "Cross-type pairing cannot be linked safely.",
+      recallDelta: null,
+      createdAt: TEST_NOW.toISOString(),
+    });
+
+    const tool = createQuerySupersessionCandidatesTool(
+      createToolDeps(client, {
+        passType: "supersession",
+        port,
+        skipRecentlyEvaluatedDays: 7,
+      }),
+    );
+
+    const result = await tool.execute("tool-query-supersession-new-member", {
+      scope: "claim_key",
+      limit: 10,
+      offset: 0,
+    });
+
+    expect(result.details).toMatchObject({
+      count: 1,
+      scope: "claim_key",
+      claimKeyClusterCount: 1,
+    });
+  });
+
   it("suppresses supersession clusters already adjudicated earlier in the same run", async () => {
     const client = await createTestClient(clients);
     await insertEntry(client, {

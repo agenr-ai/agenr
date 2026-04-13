@@ -1548,8 +1548,16 @@ async function loadPassStartContext(
 ): Promise<SurgeonPassStartContext> {
   if (pass === "supersession") {
     const [claimKeyClusters, subjectClusters] = await Promise.all([
-      port.listSupersessionCandidates({ scope: "claim_key" }),
-      port.listSupersessionCandidates({ scope: "subject" }),
+      port.listSupersessionCandidates({
+        scope: "claim_key",
+        skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
+        now: protection.now,
+      }),
+      port.listSupersessionCandidates({
+        scope: "subject",
+        skipRecentlyEvaluatedDays: protection.skipRecentlyEvaluatedDays,
+        now: protection.now,
+      }),
     ]);
 
     return {

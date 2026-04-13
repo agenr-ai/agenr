@@ -43,10 +43,14 @@ export function createQuerySupersessionCandidatesTool(deps: SurgeonToolDeps): Ag
         deps.port.listSupersessionCandidates({
           scope: "claim_key",
           type,
+          skipRecentlyEvaluatedDays: deps.skipRecentlyEvaluatedDays,
+          now: deps.now(),
         }),
         deps.port.listSupersessionCandidates({
           scope: "subject",
           type,
+          skipRecentlyEvaluatedDays: deps.skipRecentlyEvaluatedDays,
+          now: deps.now(),
         }),
       ]);
 

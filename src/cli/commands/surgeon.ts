@@ -84,6 +84,7 @@ export function registerSurgeonCommand(program: Command): void {
     .action(async (options: SurgeonRunCommandOptions) => {
       const abortController = new AbortController();
       let abortRequested = false;
+      let display: SurgeonRunDisplay | null = null;
 
       const onSigint = () => {
         if (abortRequested) {
@@ -99,7 +100,7 @@ export function registerSurgeonCommand(program: Command): void {
 
       try {
         const commandInput = normalizeSurgeonRunCommand(options);
-        const display = createSurgeonRunDisplay(commandInput.verbose);
+        display = createSurgeonRunDisplay(commandInput.verbose);
         const result = await runSurgeonRuntime({
           ...commandInput,
           signal: abortController.signal,
@@ -114,6 +115,7 @@ export function registerSurgeonCommand(program: Command): void {
         process.exitCode = 1;
         process.stderr.write(`Surgeon run failed: ${formatUnknownError(error)}\n`);
       } finally {
+        display?.dispose();
         process.off("SIGINT", onSigint);
       }
     });
@@ -335,7 +337,7 @@ function renderSingleRunResult(
     `${ui.label("Status")}   ${colorizeStatus(result.status)}`,
     `${ui.label("Actions")}  ${result.actionsTaken} total, ${result.entriesRetired} retired`,
     `${ui.label("Usage")}    in ${result.inputTokens} / out ${result.outputTokens} / cost ${formatUsd(result.estimatedCostUsd)}`,
-    ...renderSummaryLines(result.summary),
+    ...renderLabeledTextLines("Summary", result.summary),
     "",
   ].join("\n");
 }
@@ -350,7 +352,7 @@ function renderSingleRunResult(
 function renderAutonomousRunResult(
   result: {
     cyclesCompleted: number;
-    passes: Array<{ passType: string }>;
+    passes: Array<{ passType: string; actionsTaken?: number; entriesRetired?: number; summary?: string | null }>;
     status: string;
     actionsTaken: number;
     entriesRetired: number;
@@ -361,32 +363,196 @@ function renderAutonomousRunResult(
   },
   apply: boolean,
 ): string {
+  const autonomousOutcome = extractAutonomousOutcome(result.summary);
   return [
     ui.header("Surgeon Run (autonomous)"),
     "",
     `${ui.label("Cycles")}   ${result.cyclesCompleted}`,
-    `${ui.label("Passes")}   ${result.passes.map((pass) => pass.passType).join(" -> ") || ui.dim("none")}`,
+    `${ui.label("Passes")}   ${formatAutonomousPassSequence(result.passes)}`,
     `${ui.label("Mode")}     ${apply ? ui.warn("apply") : ui.dim("dry-run")}`,
     `${ui.label("Status")}   ${colorizeStatus(result.status)}`,
     `${ui.label("Actions")}  ${result.actionsTaken} total, ${result.entriesRetired} retired`,
     `${ui.label("Usage")}    in ${result.inputTokens} / out ${result.outputTokens} / cost ${formatUsd(result.estimatedCostUsd)}`,
-    ...renderSummaryLines(result.summary),
+    ...(autonomousOutcome ? renderLabeledTextLines("Outcome", autonomousOutcome) : renderLabeledTextLines("Summary", result.summary)),
+    ...renderAutonomousPassBreakdown(result.passes),
     "",
   ].join("\n");
 }
 
 /**
- * Expands a summary string into one or more aligned CLI lines.
+ * Expands a labeled text block into one or more aligned CLI lines.
  *
- * @param summary - Summary text that may already contain line breaks.
- * @returns Rendered summary lines for the final CLI block.
+ * @param label - Display label shown on the first line.
+ * @param value - Text that may already contain line breaks.
+ * @returns Rendered lines for the final CLI block.
  */
-function renderSummaryLines(summary: string | null): string[] {
-  if (!summary) {
-    return [`${ui.label("Summary")}  ${ui.dim("n/a")}`];
+function renderLabeledTextLines(label: string, value: string | null): string[] {
+  if (!value) {
+    return [`${ui.label(label)}  ${ui.dim("n/a")}`];
   }
-  const lines = summary.split("\n");
-  return [`${ui.label("Summary")}  ${lines[0] ?? ""}`, ...lines.slice(1).map((line) => `          ${line}`)];
+  const lines = value.split("\n");
+  return [`${ui.label(label)}  ${lines[0] ?? ""}`, ...lines.slice(1).map((line) => `          ${line}`)];
+}
+
+/**
+ * Compresses the autonomous pass list into count-oriented display text.
+ *
+ * @param passes - Per-pass autonomous results.
+ * @returns Short readable sequence for the header block.
+ */
+function formatAutonomousPassSequence(passes: Array<{ passType: string }>): string {
+  if (passes.length === 0) {
+    return ui.dim("none");
+  }
+
+  const aggregates = aggregatePasses(passes);
+  return aggregates.map((aggregate) => `${aggregate.passType} x${aggregate.runs}`).join(" -> ");
+}
+
+/**
+ * Renders one compact pass breakdown section for autonomous output.
+ *
+ * @param passes - Per-pass autonomous results.
+ * @returns Labeled CLI lines describing pass-level work.
+ */
+function renderAutonomousPassBreakdown(passes: Array<{ passType: string; actionsTaken?: number; entriesRetired?: number; summary?: string | null }>): string[] {
+  if (passes.length === 0) {
+    return [`${ui.label("By pass")}  ${ui.dim("n/a")}`];
+  }
+
+  const aggregates = aggregatePasses(passes).map((aggregate) => formatPassAggregateLine(aggregate));
+  return [`${ui.label("By pass")}  ${aggregates[0] ?? ui.dim("n/a")}`, ...aggregates.slice(1).map((line) => `          ${line}`)];
+}
+
+/**
+ * Extracts the overview sentence from an autonomous summary block.
+ *
+ * @param summary - Raw autonomous summary text.
+ * @returns Outcome sentence when present, otherwise the first summary line.
+ */
+function extractAutonomousOutcome(summary: string | null): string | null {
+  if (!summary) {
+    return null;
+  }
+
+  const lines = summary
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  if (lines.length === 0) {
+    return null;
+  }
+
+  const sectionStart = lines.findIndex((line) => line.endsWith(":"));
+  if (sectionStart === 0) {
+    return null;
+  }
+
+  return (sectionStart > 0 ? lines.slice(0, sectionStart) : [lines[0] ?? ""]).join(" ");
+}
+
+/**
+ * Aggregates repeated autonomous passes by pass type while preserving the first
+ * observed pass order.
+ *
+ * @param passes - Per-pass autonomous results.
+ * @returns Aggregated pass rows for display.
+ */
+function aggregatePasses(
+  passes: Array<{ passType: string; actionsTaken?: number; entriesRetired?: number; summary?: string | null }>,
+): Array<{ passType: string; runs: number; actionsTaken: number; entriesRetired: number; latestSummary: string | null }> {
+  const order: string[] = [];
+  const aggregates = new Map<string, { passType: string; runs: number; actionsTaken: number; entriesRetired: number; latestSummary: string | null }>();
+
+  for (const pass of passes) {
+    const existing = aggregates.get(pass.passType);
+    if (existing) {
+      existing.runs += 1;
+      existing.actionsTaken += typeof pass.actionsTaken === "number" ? pass.actionsTaken : 0;
+      existing.entriesRetired += typeof pass.entriesRetired === "number" ? pass.entriesRetired : 0;
+      if (pass.summary) {
+        existing.latestSummary = pass.summary;
+      }
+      continue;
+    }
+
+    order.push(pass.passType);
+    aggregates.set(pass.passType, {
+      passType: pass.passType,
+      runs: 1,
+      actionsTaken: typeof pass.actionsTaken === "number" ? pass.actionsTaken : 0,
+      entriesRetired: typeof pass.entriesRetired === "number" ? pass.entriesRetired : 0,
+      latestSummary: pass.summary ?? null,
+    });
+  }
+
+  return order.map((passType) => aggregates.get(passType)).filter((value): value is NonNullable<typeof value> => value !== undefined);
+}
+
+/**
+ * Formats one aggregated autonomous pass line.
+ *
+ * @param aggregate - Aggregated pass metrics and latest summary.
+ * @returns Readable one-line breakdown for the final CLI output.
+ */
+function formatPassAggregateLine(aggregate: {
+  passType: string;
+  runs: number;
+  actionsTaken: number;
+  entriesRetired: number;
+  latestSummary: string | null;
+}): string {
+  const metricParts = [`${aggregate.runs} ${pluralize(aggregate.runs, "pass")}`, `${aggregate.actionsTaken} ${pluralize(aggregate.actionsTaken, "action")}`];
+  if (aggregate.entriesRetired > 0) {
+    metricParts.push(`${aggregate.entriesRetired} retired`);
+  }
+
+  const summarySnippet = extractPassSummarySnippet(aggregate.latestSummary);
+  return `${aggregate.passType}: ${metricParts.join(", ")}${summarySnippet ? ` - ${summarySnippet}` : ""}`;
+}
+
+/**
+ * Pulls one short snippet from a possibly structured pass summary.
+ *
+ * @param summary - Raw per-pass summary text.
+ * @returns One concise snippet for CLI aggregation.
+ */
+function extractPassSummarySnippet(summary: string | null): string | null {
+  if (!summary) {
+    return null;
+  }
+
+  const lines = summary
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  if (lines.length === 0) {
+    return null;
+  }
+
+  const candidate =
+    lines.find((line) => !line.endsWith(":") && !line.startsWith("- ")) ?? lines.find((line) => line.startsWith("- "))?.slice(2) ?? lines[0] ?? null;
+  return candidate ? truncateDisplayText(candidate, 100) : null;
+}
+
+/**
+ * Formats a simple singular/plural count label.
+ *
+ * @param count - Numeric quantity.
+ * @param singular - Singular noun.
+ * @param plural - Optional explicit plural form.
+ * @returns Singular or pluralized noun phrase.
+ */
+function pluralize(count: number, singular: string, plural?: string): string {
+  if (count === 1) {
+    return singular;
+  }
+
+  if (plural) {
+    return plural;
+  }
+
+  return singular.endsWith("s") ? `${singular}es` : `${singular}s`;
 }
 
 /**
@@ -681,6 +847,123 @@ interface SurgeonRunDisplay {
   dispose(): void;
 }
 
+/** Shared mutable state for one active surgeon CLI display. */
+interface ActiveSurgeonDisplayState {
+  currentPassType: string | null;
+  waitingMessage: string | null;
+  spinner: InlineSpinner | null;
+}
+
+let activeSurgeonDisplayState: ActiveSurgeonDisplayState | null = null;
+
+/**
+ * Lightweight inline spinner used to keep long-running surgeon passes from
+ * appearing stalled between explicit progress messages.
+ */
+class InlineSpinner {
+  private static readonly FRAMES = ["-", "\\", "|", "/"];
+
+  private frameIndex = 0;
+  private timer: ReturnType<typeof setInterval> | null = null;
+  private message: string | null = null;
+  private renderedWidth = 0;
+
+  /**
+   * Starts the spinner or updates it with a new message.
+   *
+   * @param message - Operator-facing wait text.
+   */
+  start(message: string): void {
+    this.message = message;
+    this.render();
+    if (this.timer === null) {
+      this.timer = setInterval(() => {
+        this.frameIndex = (this.frameIndex + 1) % InlineSpinner.FRAMES.length;
+        this.render();
+      }, 80);
+    }
+  }
+
+  /**
+   * Updates the active spinner message without resetting the animation.
+   *
+   * @param message - Operator-facing wait text.
+   */
+  messageUpdate(message: string): void {
+    this.start(message);
+  }
+
+  /**
+   * Removes any currently rendered spinner frame from stderr.
+   */
+  clear(): void {
+    if (this.renderedWidth > 0) {
+      process.stderr.write(`\r${" ".repeat(this.renderedWidth)}\r`);
+      this.renderedWidth = 0;
+    }
+  }
+
+  /**
+   * Stops the spinner animation and clears the rendered frame.
+   */
+  stop(): void {
+    if (this.timer !== null) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+    this.clear();
+    this.message = null;
+  }
+
+  /**
+   * Renders the current spinner frame and message inline on stderr.
+   */
+  private render(): void {
+    if (!this.message) {
+      return;
+    }
+
+    const frame = InlineSpinner.FRAMES[this.frameIndex] ?? "-";
+    const text = `  ${frame} ${this.message}`;
+    const padded = this.renderedWidth > text.length ? text.padEnd(this.renderedWidth, " ") : text;
+    process.stderr.write(`\r${padded}`);
+    this.renderedWidth = Math.max(this.renderedWidth, text.length);
+  }
+}
+
+/**
+ * Returns whether the current stderr stream supports inline spinner updates.
+ *
+ * @returns True when interactive spinner frames are safe to render.
+ */
+function canRenderInlineSpinner(): boolean {
+  return process.stderr.isTTY === true;
+}
+
+/**
+ * Sets the message shown by the active inline spinner.
+ *
+ * @param message - Human-readable wait message, or null to pause the spinner.
+ */
+function setActiveWaitingMessage(message: string | null): void {
+  const state = activeSurgeonDisplayState;
+  if (!state) {
+    return;
+  }
+
+  state.waitingMessage = message;
+  if (!state.spinner) {
+    return;
+  }
+
+  if (!message) {
+    state.spinner.stop();
+    return;
+  }
+
+  state.spinner.messageUpdate(message);
+}
+
 /**
  * Writes one formatted line to stderr. All surgeon progress uses this
  * instead of the shared logger so the output format is under CLI control.
@@ -688,7 +971,12 @@ interface SurgeonRunDisplay {
  * @param message - Pre-formatted message to write.
  */
 function writeStderr(message: string): void {
+  activeSurgeonDisplayState?.spinner?.clear();
   process.stderr.write(`${message}\n`);
+  const waitingMessage = activeSurgeonDisplayState?.waitingMessage;
+  if (waitingMessage) {
+    activeSurgeonDisplayState?.spinner?.start(waitingMessage);
+  }
 }
 
 /**
@@ -700,6 +988,12 @@ function writeStderr(message: string): void {
  * @returns Display with progress reporter, logger, and cleanup handle.
  */
 function createSurgeonRunDisplay(verbose: boolean): SurgeonRunDisplay {
+  activeSurgeonDisplayState = {
+    currentPassType: null,
+    waitingMessage: null,
+    spinner: !verbose && canRenderInlineSpinner() ? new InlineSpinner() : null,
+  };
+
   const progressReporter: SurgeonProgressReporter = (event: SurgeonProgressEvent): void => {
     if (event.kind === "phase") {
       handlePhaseEvent(event);
@@ -720,7 +1014,8 @@ function createSurgeonRunDisplay(verbose: boolean): SurgeonRunDisplay {
     progressReporter,
     logger,
     dispose(): void {
-      /* no cleanup needed for line-based output */
+      activeSurgeonDisplayState?.spinner?.stop();
+      activeSurgeonDisplayState = null;
     },
   };
 }
@@ -731,29 +1026,43 @@ function createSurgeonRunDisplay(verbose: boolean): SurgeonRunDisplay {
  * @param event - Phase progress event.
  */
 function handlePhaseEvent(event: Extract<SurgeonProgressEvent, { kind: "phase" }>): void {
+  if (event.phase === "start") {
+    if (activeSurgeonDisplayState) {
+      activeSurgeonDisplayState.currentPassType = event.passType;
+    }
+    setActiveWaitingMessage(null);
+  }
+
   switch (event.phase) {
     case "start":
       writeStderr(`\n${ui.bold(`Surgeon run: ${event.passType}`)} ${ui.dim(`(${event.apply ? "apply" : "dry-run"})`)}`);
       return;
     case "backup_start":
+      setActiveWaitingMessage("Creating DB backup...");
       writeStderr(`  ${ui.dim("Creating DB backup...")}`);
       return;
     case "backup_complete":
+      setActiveWaitingMessage(null);
       writeStderr(`  ${ui.success("Backup complete")}${event.backupPath ? ` ${ui.dim(event.backupPath)}` : ""}`);
       return;
     case "load_working_set_start":
+      setActiveWaitingMessage("Loading working set...");
       writeStderr(`  ${ui.dim("Loading working set...")}`);
       return;
     case "load_working_set_complete":
+      setActiveWaitingMessage(null);
       writeStderr(`  ${ui.success("Working set loaded:")} ${formatOptionalCount(event.workingSetSize)} entries`);
       return;
     case "load_pass_context_start":
+      setActiveWaitingMessage(`Loading ${event.passType} pass context...`);
       writeStderr(`  ${ui.dim(`Loading ${event.passType} pass context...`)}`);
       return;
     case "load_pass_context_complete":
+      setActiveWaitingMessage(null);
       writeStderr(`  ${ui.success("Pass context ready:")} ${formatOptionalCount(event.workingSetSize)} entries in scope`);
       return;
     case "pass_start":
+      setActiveWaitingMessage(describePassWait(event.passType));
       writeStderr(`  ${ui.bold(`Starting ${event.passType} pass`)}`);
       return;
     default:
@@ -768,6 +1077,8 @@ function handlePhaseEvent(event: Extract<SurgeonProgressEvent, { kind: "phase" }
  * @param verbose - Whether verbose detail is enabled.
  */
 function handleClaimKeyQualityEvent(event: Extract<SurgeonProgressEvent, { kind: "claim_key_quality_progress" }>, verbose: boolean): void {
+  setActiveWaitingMessage(describePassWait(event.passType));
+
   if (event.stage === "health" && event.health) {
     const summary =
       `${event.health.totalEntries} entries, ` +
@@ -843,6 +1154,8 @@ function handleClaimKeyQualityEvent(event: Extract<SurgeonProgressEvent, { kind:
  * @param verbose - Whether verbose detail is enabled.
  */
 function handleProposalResolutionEvent(event: Extract<SurgeonProgressEvent, { kind: "proposal_resolution_progress" }>, verbose: boolean): void {
+  setActiveWaitingMessage(event.status === "completed" || event.status === "stalled" ? null : describePassWait(event.passType));
+
   switch (event.status) {
     case "no_work":
       writeStderr(`  ${ui.dim("proposal_resolution: 0 eligible proposals")}`);
@@ -860,12 +1173,12 @@ function handleProposalResolutionEvent(event: Extract<SurgeonProgressEvent, { ki
     }
     case "completed":
       writeStderr(
-        `  ${ui.success(`proposal_resolution: ${event.processedProposals}/${event.totalProposals} proposals, applied ${event.appliedCount}, inactive ${event.rejectedInactiveCount}, no-op ${event.noChangeCount}, targeted ${event.targetedEntryCount}`)}`,
+        `  ${ui.success(`proposal_resolution complete: applied ${event.appliedCount}, inactive ${event.rejectedInactiveCount}, no-op ${event.noChangeCount}, targeted ${event.targetedEntryCount}`)}`,
       );
       return;
     case "stalled":
       writeStderr(
-        `  ${ui.warn(`proposal_resolution: ${event.processedProposals}/${event.totalProposals} proposals, applied ${event.appliedCount}, inactive ${event.rejectedInactiveCount}, no-op ${event.noChangeCount}, targeted ${event.targetedEntryCount}`)}`,
+        `  ${ui.warn(`proposal_resolution stalled: ${event.processedProposals}/${event.totalProposals} proposals, applied ${event.appliedCount}, inactive ${event.rejectedInactiveCount}, no-op ${event.noChangeCount}, targeted ${event.targetedEntryCount}`)}`,
       );
       return;
     default:
@@ -886,6 +1199,9 @@ function createDisplayLogger(verbose: boolean): Logger {
   return {
     info(message: string): void {
       const sanitized = stripLineItemCostDetails(message);
+      if (activeSurgeonDisplayState?.currentPassType) {
+        setActiveWaitingMessage(describePassWait(activeSurgeonDisplayState.currentPassType));
+      }
       if (verbose) {
         writeStderr(`    ${ui.dim(sanitized)}`);
         return;
@@ -947,13 +1263,15 @@ function formatCompactTraceLine(message: string, state: TurnTrackingState): stri
 
   // Emit a compact turn summary at turn end
   if (message.startsWith("turn end")) {
-    const toolList = state.tools.length > 0 ? state.tools.join(", ") : "no tools";
-    return `Turn ${state.turnNumber}: ${toolList}`;
+    if (state.tools.length === 0) {
+      return null;
+    }
+    return `Turn ${state.turnNumber}: ${state.tools.join(", ")}`;
   }
 
   // Emit surgeon actions as compact one-liners
   if (message.startsWith("action ")) {
-    return message;
+    return formatCompactActionLine(message);
   }
 
   // Suppress assistant messages and agent end in compact mode
@@ -962,6 +1280,60 @@ function formatCompactTraceLine(message: string, state: TurnTrackingState): stri
   }
 
   return message;
+}
+
+/**
+ * Formats the spinner wait text for the active pass.
+ *
+ * @param passType - Active pass identifier.
+ * @returns Operator-facing spinner text.
+ */
+function describePassWait(passType: string): string {
+  switch (passType) {
+    case "claim_key_quality":
+      return "Claim-key review in progress...";
+    case "proposal_resolution":
+      return "Resolving surgeon proposals...";
+    case "supersession":
+      return "Reviewing supersession clusters...";
+    case "retirement":
+      return "Reviewing retirement candidates...";
+    default:
+      return "Surgeon pass in progress...";
+  }
+}
+
+/**
+ * Shortens verbose action trace lines so the compact display stays readable.
+ *
+ * @param message - Raw compact action line.
+ * @returns Truncated action line suitable for terminal display.
+ */
+function formatCompactActionLine(message: string): string {
+  const reasonMatch = message.match(/\sreason="([\s\S]*)"$/);
+  if (!reasonMatch || typeof reasonMatch.index !== "number") {
+    return truncateDisplayText(message, 180);
+  }
+
+  const prefix = message.slice(0, reasonMatch.index).trimEnd();
+  const reason = truncateDisplayText(reasonMatch[1] ?? "", 140);
+  return `${prefix} reason="${reason}"`;
+}
+
+/**
+ * Truncates a display string to the requested width with an ASCII ellipsis.
+ *
+ * @param value - Raw display text.
+ * @param maxLength - Maximum desired length.
+ * @returns Truncated string when necessary.
+ */
+function truncateDisplayText(value: string, maxLength: number): string {
+  const normalized = value.trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
 }
 
 /**
