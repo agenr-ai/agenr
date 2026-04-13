@@ -1287,12 +1287,14 @@ describe("runSurgeon", () => {
           status: "started",
           totalProposals: 1,
           processedProposals: 0,
+          rejectedInvalidCount: 0,
         }),
         expect.objectContaining({
           kind: "proposal_resolution_progress",
           status: "proposal_processed",
           processedProposals: 1,
           appliedCount: 1,
+          rejectedInvalidCount: 0,
           outcome: "applied",
           targetedEntryCount: 1,
         }),
@@ -1301,6 +1303,108 @@ describe("runSurgeon", () => {
           status: "completed",
           processedProposals: 1,
           appliedCount: 1,
+          rejectedInvalidCount: 0,
+          targetedEntryCount: 1,
+        }),
+      ]),
+    );
+  });
+
+  it("rejects malformed eligible proposals and continues resolving the remaining backlog", async () => {
+    const db = await createDatabase(":memory:");
+    databases.push(db);
+    const progress: SurgeonProgressEvent[] = [];
+    await insertEntry(db, {
+      id: "proposal-valid-entry",
+      subject: "Pager owner",
+      type: "fact",
+      importance: 8,
+      expiry: "permanent",
+      created_at: daysAgoIso(40),
+      updated_at: daysAgoIso(40),
+    });
+    const proposalRunId = await createSurgeonRun(db, {
+      passType: "claim_key_quality",
+      dryRun: true,
+      startedAt: daysAgoIso(2),
+    });
+    await logSurgeonProposal(db, {
+      id: "proposal-malformed-eligible-1",
+      runId: proposalRunId,
+      groupId: "group-malformed-eligible-1",
+      issueKind: "entity_family_convergence",
+      scope: "cluster",
+      entryIds: ["proposal-valid-entry"],
+      currentClaimKeys: [],
+      proposedClaimKeys: ["ops/pager_owner", "ops/oncall_owner"],
+      rationale: "Ambiguous family convergence target.",
+      confidence: 0.93,
+      source: "entity_family_canonical_candidate",
+      eligibleForApply: true,
+      createdAt: daysAgoIso(2),
+    });
+    await logSurgeonProposal(db, {
+      id: "proposal-valid-eligible-1",
+      runId: proposalRunId,
+      groupId: "group-valid-eligible-1",
+      issueKind: "missing_claim_key",
+      scope: "single_entry",
+      entryIds: ["proposal-valid-entry"],
+      currentClaimKeys: [],
+      proposedClaimKeys: ["ops/pager_owner"],
+      rationale: "The subject clearly identifies the pager owner slot.",
+      confidence: 0.93,
+      source: "mixed_group_consensus",
+      eligibleForApply: true,
+      createdAt: daysAgoIso(2),
+    });
+
+    const result = await runSurgeon(
+      createRunOptions({
+        pass: "proposal_resolution",
+        apply: true,
+      }),
+      {
+        port: createSurgeonPort(db),
+        config: null,
+        model: TEST_MODEL,
+        now: () => TEST_NOW,
+        reportProgress: (event) => progress.push(event),
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: "completed",
+      passType: "proposal_resolution",
+      actionsTaken: 1,
+    });
+    await expect(readClaimKey(db, "proposal-valid-entry")).resolves.toBe("ops/pager_owner");
+
+    const malformedProposal = await db.execute({
+      sql: "SELECT review_status, review_reason, applied_action_count FROM surgeon_run_proposals WHERE id = ?",
+      args: ["proposal-malformed-eligible-1"],
+    });
+    expect(malformedProposal.rows[0]).toEqual({
+      review_status: "rejected",
+      review_reason: "Proposal proposal-malformed-eligible-1 cannot be applied automatically because it does not resolve to exactly one proposed claim key.",
+      applied_action_count: 0,
+    });
+    expect(progress).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "proposal_resolution_progress",
+          status: "proposal_processed",
+          processedProposals: 1,
+          appliedCount: 0,
+          rejectedInvalidCount: 1,
+          outcome: "rejected_invalid",
+        }),
+        expect.objectContaining({
+          kind: "proposal_resolution_progress",
+          status: "completed",
+          processedProposals: 2,
+          appliedCount: 1,
+          rejectedInvalidCount: 1,
           targetedEntryCount: 1,
         }),
       ]),

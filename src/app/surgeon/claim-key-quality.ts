@@ -1056,7 +1056,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
         rationale: buildProposalLifecycleRationale(buildEntityFamilyConvergenceRationale(candidate), proposalLifecycle),
         confidence: candidate.confidence,
         source: canonicalEntityPrefix ? "entity_family_canonical_candidate" : "entity_family_ambiguous",
-        eligibleForApply: canonicalEntityPrefix !== null,
+        eligibleForApply: proposedClaimKeys.length === 1,
         createdAt: options.now().toISOString(),
       });
       await persistProposal(proposal, {
@@ -1103,7 +1103,7 @@ export async function runClaimKeyQualityPass(options: ClaimKeyQualityRunOptions,
           ),
           confidence: candidate.confidence,
           source: "entity_family_collision",
-          eligibleForApply: true,
+          eligibleForApply: false,
           createdAt: options.now().toISOString(),
         });
         await persistProposal(proposal, {

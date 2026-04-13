@@ -1184,6 +1184,7 @@ async function runProposalResolutionPass(
 
   let appliedCount = 0;
   let rejectedInactiveCount = 0;
+  let rejectedInvalidCount = 0;
   let noChangeCount = 0;
   const updatedEntryIds = new Set<string>();
 
@@ -1194,6 +1195,7 @@ async function runProposalResolutionPass(
     processedProposals: 0,
     appliedCount,
     rejectedInactiveCount,
+    rejectedInvalidCount,
     noChangeCount,
     targetedEntryCount: updatedEntryIds.size,
   });
@@ -1209,7 +1211,35 @@ async function runProposalResolutionPass(
 
   for (const [index, item] of backlog.entries()) {
     const proposal = item.proposal;
-    const targetClaimKey = resolveSurgeonProposalApplyTarget(proposal);
+    let targetClaimKey: string;
+    try {
+      targetClaimKey = resolveSurgeonProposalApplyTarget(proposal);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await deps.port.reviewProposal({
+        proposalId: proposal.id,
+        status: "rejected",
+        reason: message,
+        reviewedAt: input.now().toISOString(),
+        appliedActionCount: 0,
+      });
+      rejectedInvalidCount += 1;
+      emitProposalResolutionProgress(input.reportProgress, {
+        apply: input.apply,
+        status: "proposal_processed",
+        totalProposals: backlog.length,
+        processedProposals: index + 1,
+        appliedCount,
+        rejectedInactiveCount,
+        rejectedInvalidCount,
+        noChangeCount,
+        targetedEntryCount: updatedEntryIds.size,
+        proposalId: proposal.id,
+        issueKind: proposal.issueKind,
+        outcome: "rejected_invalid",
+      });
+      continue;
+    }
     const reasoning = buildSurgeonProposalReviewReason(proposal, "Autonomous eligible proposal resolution.");
     const proposalEntryIds: string[] = [];
 
@@ -1252,6 +1282,7 @@ async function runProposalResolutionPass(
             processedProposals: index + 1,
             appliedCount,
             rejectedInactiveCount,
+            rejectedInvalidCount,
             noChangeCount,
             targetedEntryCount: updatedEntryIds.size,
             proposalId: proposal.id,
@@ -1267,6 +1298,7 @@ async function runProposalResolutionPass(
             processedProposals: index + 1,
             appliedCount,
             rejectedInactiveCount,
+            rejectedInvalidCount,
             noChangeCount,
             targetedEntryCount: updatedEntryIds.size,
             proposalId: proposal.id,
@@ -1317,6 +1349,7 @@ async function runProposalResolutionPass(
       processedProposals: index + 1,
       appliedCount,
       rejectedInactiveCount,
+      rejectedInvalidCount,
       noChangeCount,
       targetedEntryCount: updatedEntryIds.size,
       proposalId: proposal.id,
@@ -1325,7 +1358,7 @@ async function runProposalResolutionPass(
     });
   }
 
-  if (appliedCount === 0 && rejectedInactiveCount === 0) {
+  if (appliedCount === 0 && rejectedInactiveCount === 0 && rejectedInvalidCount === 0) {
     emitProposalResolutionProgress(input.reportProgress, {
       apply: input.apply,
       status: "stalled",
@@ -1333,6 +1366,7 @@ async function runProposalResolutionPass(
       processedProposals: backlog.length,
       appliedCount,
       rejectedInactiveCount,
+      rejectedInvalidCount,
       noChangeCount,
       targetedEntryCount: updatedEntryIds.size,
     });
@@ -1351,6 +1385,7 @@ async function runProposalResolutionPass(
     processedProposals: backlog.length,
     appliedCount,
     rejectedInactiveCount,
+    rejectedInvalidCount,
     noChangeCount,
     targetedEntryCount: updatedEntryIds.size,
   });
@@ -1364,6 +1399,11 @@ async function runProposalResolutionPass(
         `${updatedEntryIds.size} entr${updatedEntryIds.size === 1 ? "y was" : "ies were"} targeted by proposal resolution.`,
         ...(rejectedInactiveCount > 0
           ? [`Rejected ${rejectedInactiveCount} stale eligible proposal${rejectedInactiveCount === 1 ? "" : "s"} whose target entries were no longer active.`]
+          : []),
+        ...(rejectedInvalidCount > 0
+          ? [
+              `Rejected ${rejectedInvalidCount} malformed eligible proposal${rejectedInvalidCount === 1 ? "" : "s"} that did not resolve to exactly one safe claim-key target.`,
+            ]
           : []),
       ],
       recommendations: ["Leave non-eligible surgeon proposals on the manual review path."],
@@ -1387,11 +1427,12 @@ function emitProposalResolutionProgress(
     processedProposals: number;
     appliedCount: number;
     rejectedInactiveCount: number;
+    rejectedInvalidCount: number;
     noChangeCount: number;
     targetedEntryCount: number;
     proposalId?: string;
     issueKind?: string;
-    outcome?: "applied" | "dry_run" | "rejected_inactive" | "no_change";
+    outcome?: "applied" | "dry_run" | "rejected_inactive" | "rejected_invalid" | "no_change";
   },
 ): void {
   emitSurgeonProgress(reporter, {
@@ -1403,6 +1444,7 @@ function emitProposalResolutionProgress(
     processedProposals: input.processedProposals,
     appliedCount: input.appliedCount,
     rejectedInactiveCount: input.rejectedInactiveCount,
+    rejectedInvalidCount: input.rejectedInvalidCount,
     noChangeCount: input.noChangeCount,
     targetedEntryCount: input.targetedEntryCount,
     proposalId: input.proposalId,

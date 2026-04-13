@@ -78,11 +78,12 @@ export interface ProposalResolutionProgressEvent {
   processedProposals: number;
   appliedCount: number;
   rejectedInactiveCount: number;
+  rejectedInvalidCount: number;
   noChangeCount: number;
   targetedEntryCount: number;
   proposalId?: string;
   issueKind?: string;
-  outcome?: "applied" | "dry_run" | "rejected_inactive" | "no_change";
+  outcome?: "applied" | "dry_run" | "rejected_inactive" | "rejected_invalid" | "no_change";
 }
 
 /**

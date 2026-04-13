@@ -2073,6 +2073,57 @@ describe("claim_key_quality surgeon pass", () => {
     );
   });
 
+  it("keeps multi-target entity family proposals off the autonomous apply path", async () => {
+    const client = await createTestClient(clients);
+    await insertEntry(client, {
+      id: "macbook-sandbox",
+      subject: "MacBook sandbox environment separation",
+      type: "fact",
+      claim_key: "macbook/sandbox_environment_separation",
+      tags: ["macbook", "workflow"],
+      source_context: "User asked about sandbox workflow setup.",
+    });
+    await insertEntry(client, {
+      id: "macbook-source",
+      subject: "MacBook source of truth",
+      type: "fact",
+      claim_key: "macbook/source_of_truth",
+      tags: ["macbook", "workflow"],
+      source_context: "User asked about sandbox workflow setup.",
+    });
+    await insertEntry(client, {
+      id: "macbook-repos-sandbox",
+      subject: "MacBook repos sandbox environment separation",
+      type: "fact",
+      claim_key: "macbook_repos/sandbox_environment_separation",
+      tags: ["macbook", "workflow"],
+      source_context: "User asked about sandbox workflow setup.",
+    });
+    await insertEntry(client, {
+      id: "macbook-repos-source",
+      subject: "MacBook repos source of truth",
+      type: "fact",
+      claim_key: "macbook_repos/source_of_truth",
+      tags: ["macbook", "workflow"],
+      source_context: "User asked about sandbox workflow setup.",
+    });
+
+    const result = await runClaimKeyPass(client, {
+      apply: true,
+    });
+
+    const proposals = await getSurgeonRunProposals(client, result.runId);
+    expect(proposals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          issueKind: "entity_family_convergence",
+          proposedClaimKeys: ["macbook_repos/sandbox_environment_separation", "macbook_repos/source_of_truth"],
+          eligibleForApply: false,
+        }),
+      ]),
+    );
+  });
+
   it("uses trusted cleanup hints only and does not propagate same-run repairs into later hints", async () => {
     const client = await createTestClient(clients);
     await insertEntry(client, { id: "trusted-seed", subject: "Timezone seed", type: "fact", claim_key: "jim/timezone" });

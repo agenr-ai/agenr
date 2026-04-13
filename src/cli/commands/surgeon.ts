@@ -1132,10 +1132,12 @@ function handleClaimKeyQualityEvent(event: Extract<SurgeonProgressEvent, { kind:
   const previewCompleted = formatOptionalCount(event.previewCompleted);
   const previewSuffix = previewTotal > 0 ? `, preview ${previewCompleted}/${previewTotal}` : "";
   const progressMsg =
-    `${stageLabel}: ${event.completed}/${event.total} ${event.unitLabel}${previewSuffix}, ` +
-    `${appliedTotal} applied, ${event.counts.proposalsEmitted} proposals${skippedSummary}, ${formatElapsed(event.elapsedMs)}`;
+    event.status === "preview_progress"
+      ? `${stageLabel}: ${event.completed}/${event.total} ${event.unitLabel}${previewSuffix}${skippedSummary}, ${formatElapsed(event.elapsedMs)}`
+      : `${stageLabel}: ${event.completed}/${event.total} ${event.unitLabel}${previewSuffix}, ` +
+        `${appliedTotal} applied, ${event.counts.proposalsEmitted} proposals${skippedSummary}, ${formatElapsed(event.elapsedMs)}`;
 
-  if (verbose) {
+  if (verbose && event.status !== "preview_progress") {
     const detail =
       ` (normalize ${event.counts.appliedNormalizations}/${event.counts.identifiedNormalizations}, ` +
       `backfill ${event.counts.appliedBackfills}/${event.counts.identifiedBackfills}, ` +
@@ -1167,18 +1169,18 @@ function handleProposalResolutionEvent(event: Extract<SurgeonProgressEvent, { ki
       const outcome = event.outcome ? `, ${formatProposalResolutionOutcome(event.outcome)}` : "";
       const verboseSuffix = verbose && event.proposalId ? ` ${ui.dim(`(${event.proposalId}${event.issueKind ? `, ${event.issueKind}` : ""})`)}` : "";
       writeStderr(
-        `  ${ui.dim(`proposal_resolution: ${event.processedProposals}/${event.totalProposals} proposals, applied ${event.appliedCount}, inactive ${event.rejectedInactiveCount}, no-op ${event.noChangeCount}, targeted ${event.targetedEntryCount}${outcome}`)}${verboseSuffix}`,
+        `  ${ui.dim(`proposal_resolution: ${event.processedProposals}/${event.totalProposals} proposals, applied ${event.appliedCount}, inactive ${event.rejectedInactiveCount}, invalid ${event.rejectedInvalidCount}, no-op ${event.noChangeCount}, targeted ${event.targetedEntryCount}${outcome}`)}${verboseSuffix}`,
       );
       return;
     }
     case "completed":
       writeStderr(
-        `  ${ui.success(`proposal_resolution complete: applied ${event.appliedCount}, inactive ${event.rejectedInactiveCount}, no-op ${event.noChangeCount}, targeted ${event.targetedEntryCount}`)}`,
+        `  ${ui.success(`proposal_resolution complete: applied ${event.appliedCount}, inactive ${event.rejectedInactiveCount}, invalid ${event.rejectedInvalidCount}, no-op ${event.noChangeCount}, targeted ${event.targetedEntryCount}`)}`,
       );
       return;
     case "stalled":
       writeStderr(
-        `  ${ui.warn(`proposal_resolution stalled: ${event.processedProposals}/${event.totalProposals} proposals, applied ${event.appliedCount}, inactive ${event.rejectedInactiveCount}, no-op ${event.noChangeCount}, targeted ${event.targetedEntryCount}`)}`,
+        `  ${ui.warn(`proposal_resolution stalled: ${event.processedProposals}/${event.totalProposals} proposals, applied ${event.appliedCount}, inactive ${event.rejectedInactiveCount}, invalid ${event.rejectedInvalidCount}, no-op ${event.noChangeCount}, targeted ${event.targetedEntryCount}`)}`,
       );
       return;
     default:
@@ -1412,6 +1414,8 @@ function formatProposalResolutionOutcome(outcome: Extract<SurgeonProgressEvent, 
       return "previewed";
     case "rejected_inactive":
       return "rejected inactive";
+    case "rejected_invalid":
+      return "rejected invalid";
     case "no_change":
       return "no change";
     default:

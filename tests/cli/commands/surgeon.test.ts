@@ -128,7 +128,8 @@ describe("registerSurgeonCommand", () => {
     expect(stderrText).toContain("Creating DB backup...");
     expect(stderrText).toContain("Backup complete");
     expect(stderrText).toContain("/tmp/knowledge.db.surgeon-backup");
-    expect(stderrText).toContain("missing: 0/200 entries, preview 120/200, 15 applied, 8 proposals, skips 12, 12s");
+    expect(stderrText).toContain("missing: 0/200 entries, preview 120/200, skips 12, 12s");
+    expect(stderrText).not.toContain("15 applied, 8 proposals");
     expect(stderrText).not.toContain("skipped no-claim");
     const stdoutText = stripAnsi(stdout.join(""));
     expect(stdoutText).toContain("Surgeon Run run-1");
@@ -233,6 +234,7 @@ describe("registerSurgeonCommand", () => {
         processedProposals: 0,
         appliedCount: 0,
         rejectedInactiveCount: 0,
+        rejectedInvalidCount: 0,
         noChangeCount: 0,
         targetedEntryCount: 0,
       });
@@ -245,6 +247,7 @@ describe("registerSurgeonCommand", () => {
         processedProposals: 1,
         appliedCount: 1,
         rejectedInactiveCount: 0,
+        rejectedInvalidCount: 0,
         noChangeCount: 0,
         targetedEntryCount: 2,
         proposalId: "proposal-1",
@@ -260,6 +263,7 @@ describe("registerSurgeonCommand", () => {
         processedProposals: 3,
         appliedCount: 2,
         rejectedInactiveCount: 1,
+        rejectedInvalidCount: 0,
         noChangeCount: 0,
         targetedEntryCount: 3,
       });
@@ -282,8 +286,8 @@ describe("registerSurgeonCommand", () => {
     expect(stderrText).toContain("Surgeon run: proposal_resolution");
     expect(stderrText).toContain("Pass context ready: 102 active entries | Proposal backlog: 3 eligible proposals");
     expect(stderrText).toContain("Proposal backlog: 3 eligible proposals");
-    expect(stderrText).toContain("proposal_resolution: 1/3 proposals, applied 1, inactive 0, no-op 0, targeted 2, applied");
-    expect(stderrText).toContain("proposal_resolution complete: applied 2, inactive 1, no-op 0, targeted 3");
+    expect(stderrText).toContain("proposal_resolution: 1/3 proposals, applied 1, inactive 0, invalid 0, no-op 0, targeted 2, applied");
+    expect(stderrText).toContain("proposal_resolution complete: applied 2, inactive 1, invalid 0, no-op 0, targeted 3");
   });
 
   it("renders retirement context with remaining candidate counts in stderr", async () => {
