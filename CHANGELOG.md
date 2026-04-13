@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+## [1.9.2] - 2026-04-12
+
+Surgeon proposal-resolution hardening and claim-key progress-output patch release.
+
+### Changed
+
+- **Claim-key preview progress output is less misleading.** Preview-only `claim_key_quality` lines no longer print applied or proposal counts before entry adjudication has actually started.
+
+### Fixed
+
+- **Malformed eligible proposals no longer fail the whole autonomous run.** Proposal resolution now rejects invalid auto-apply candidates per proposal and continues through the rest of the backlog.
+- **Ambiguous entity-family convergence proposals stay on the manual-review path.** Multi-target family-convergence proposals are no longer marked eligible for autonomous apply.
+
+### Validation
+
+Changes since last push to `origin/master`:
+
+- Fix surgeon proposal resolution and progress output
+
 ## [1.9.1] - 2026-04-12
 
 Supersession stall-recovery and review-order guard patch release.
