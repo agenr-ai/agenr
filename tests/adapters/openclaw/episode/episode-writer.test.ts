@@ -16,6 +16,7 @@ vi.mock("../../../../src/adapters/openclaw/llm/openclaw-llm-client.js", () => ({
 
 import { createDatabase, type SqlDatabase } from "../../../../src/adapters/db/client.js";
 import { createOpenClawRepository } from "../../../../src/adapters/db/openclaw-repository.js";
+import { createSessionStartRepository } from "../../../../src/adapters/db/session-start-repository.js";
 import { writeOpenClawPredecessorEpisode } from "../../../../src/adapters/openclaw/episode/episode-writer.js";
 import type { AgenrOpenClawHost, AgenrOpenClawServices } from "../../../../src/adapters/openclaw/types.js";
 import type { EmbeddingPort, LlmPort, RecallPorts } from "../../../../src/core/ports.js";
@@ -608,6 +609,10 @@ function createServices(
     episodes: database,
     procedures: database,
     memory: createOpenClawRepository(database),
+    sessionStart: {
+      repository: createSessionStartRepository(database),
+      recall,
+    },
     embedding,
     recall,
     embeddingStatus: {

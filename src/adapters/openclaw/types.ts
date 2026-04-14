@@ -7,11 +7,11 @@ import type {
 } from "openclaw/plugin-sdk/memory-core-host-engine-storage";
 
 import type { OpenClawRepository } from "../../app/openclaw/ports.js";
+import type { SessionStartDeps } from "../../app/session-start/index.js";
 import type { AgenrConfig } from "../../config.js";
 import type { ClaimSlotPolicy, ClaimSlotPolicyConfig } from "../../core/claim-slot-policy.js";
 import type { DatabasePort, EmbeddingPort, EpisodeDatabasePort, LlmPort, ProcedureDatabasePort, RecallPorts } from "../../core/ports.js";
 import type { ClaimExtractionConfig } from "../../core/store/claim-extraction.js";
-import type { Entry } from "../../core/types.js";
 
 /**
  * Resolved store-nudge settings used by mid-session prompting.
@@ -150,6 +150,7 @@ export interface AgenrOpenClawServices {
   episodes: EpisodeDatabasePort;
   procedures: ProcedureDatabasePort;
   memory: OpenClawRepository;
+  sessionStart: SessionStartDeps;
   embedding: EmbeddingPort;
   recall: RecallPorts;
   claimExtraction?: {
@@ -158,29 +159,6 @@ export interface AgenrOpenClawServices {
   };
   embeddingStatus: AgenrOpenClawEmbeddingStatus;
   close(): Promise<void>;
-}
-
-/**
- * Entry rendered inside an injected OpenClaw prompt section.
- */
-export interface OpenClawPromptMemoryEntry {
-  entry: Entry;
-  score?: number;
-}
-
-/**
- * One labeled memory section injected into the system prompt.
- */
-export interface OpenClawPromptMemorySection {
-  title: string;
-  entries: OpenClawPromptMemoryEntry[];
-}
-
-/**
- * Structured session-start recall result before formatting for prompt injection.
- */
-export interface OpenClawSessionStartRecall {
-  core: Entry[];
 }
 
 /**

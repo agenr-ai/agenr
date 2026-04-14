@@ -26,9 +26,11 @@ The adapter is intentionally not a second memory brain. Durable memory, recall r
 - `src/adapters/openclaw/index.ts` - plugin entry, hook registration, tool registration, memory-runtime wiring, and shutdown cleanup.
 - `src/adapters/openclaw/openclaw.plugin.json` and `src/adapters/openclaw/config.ts` - manifest-backed config schema, validation, UI hints, and store-nudge defaults.
 - `packages/openclaw-plugin/package.json`, `packages/openclaw-plugin/openclaw.plugin.json`, and `packages/openclaw-plugin/src/index.ts` - publishable plugin package metadata and entrypoint.
-- `src/app/openclaw/runtime.ts` - shared runtime composition: config resolution, DB open, OpenClaw repository wiring, recall adapter creation, embedding availability, and optional claim-extraction LLM wiring.
+- `src/app/openclaw/runtime.ts` - shared runtime composition: config resolution, DB open, OpenClaw repository wiring, session-start dependency wiring, recall adapter creation, embedding availability, and optional claim-extraction LLM wiring.
+- `src/app/session-start/` - host-neutral session-start patch contract and selection service.
 - `src/app/openclaw/ports.ts` - OpenClaw-owned read-model contracts for trace and memory status.
 - `src/adapters/openclaw/runtime.ts` - thin re-export of the app-owned runtime composition function.
+- `src/adapters/db/session-start-repository.ts` - DB-backed session-start repository for always-on core-memory lookup.
 - `src/adapters/openclaw/tools/` - one file per OpenClaw tool plus shared parsing, logging, and target-resolution helpers.
 - `src/adapters/openclaw/format/prompt-section.ts` - static system-prompt doctrine for memory recall and storage.
 - `src/adapters/openclaw/format/recall-format.ts` - session-start recall rendering.
@@ -42,7 +44,7 @@ The adapter is intentionally not a second memory brain. Durable memory, recall r
 - `src/adapters/openclaw/llm/openclaw-llm-client.ts` - lightweight OpenClaw-authenticated LLM client used for continuity, episode summaries, and optional claim extraction.
 - `src/adapters/openclaw/memory/runtime.ts` and `src/adapters/openclaw/memory/flush-plan.ts` - thin memory-runtime bridge and no-op flush-plan behavior.
 - `src/adapters/openclaw/transcript/` - OpenClaw JSONL parsing, cleanup, timestamp repair, tool summarization, and transcript-safe filtering.
-- `src/adapters/db/openclaw-repository.ts` - DB-backed OpenClaw repository for session-start core memory, trace, subject lookup, and status probes.
+- `src/adapters/db/openclaw-repository.ts` - DB-backed OpenClaw repository for trace, subject lookup, and status probes.
 
 ## Packaging and identity
 
@@ -128,7 +130,7 @@ The plugin currently wires:
 Current lifecycle behavior:
 
 - `session_start` only remembers `resumedFrom` by new `sessionId`
-- `before_prompt_build` performs session-start recall once per tracked session identity
+- `before_prompt_build` performs session-start patch selection once per tracked session identity
 - repeated `before_prompt_build` calls for the same session can inject store nudges instead of session-start memory
 - `after_tool_call` updates mid-session tracker state after memory tool use
 - `session_end` clears mid-session state
@@ -142,6 +144,7 @@ Current composition includes:
 
 - the libSQL database adapter
 - the OpenClaw-specific repository read model
+- the app-layer session-start dependency bundle
 - an embedding client when embedding config is valid
 - an always-throwing embedding port when embeddings are unavailable
 - the recall adapter used by unified recall
@@ -193,25 +196,38 @@ On the first run, the hook:
 
 1. resolves predecessor continuity
 2. starts a best-effort background predecessor episode write
-3. loads current agenr core entries through `services.memory.listCoreEntries(4)`
-4. renders any non-empty sections into `prependContext`
+3. calls the app-layer `runSessionStart(...)` service with normalized predecessor artifacts plus bounded policy hints
+4. renders the returned structured patch into `prependContext`
 
-Current session-start memory behavior is intentionally narrow:
+Current session-start memory behavior is now a bounded hybrid patch:
 
-- fixed limit of `4` core entries
-- only active `expiry = "core"` entries
-- no session-start semantic search against non-core entries
-- no embedding call on this path
+- up to `4` always-on core entries are loaded through the feature-scoped session-start repository
+- up to `3` additional durable candidates can be selected through artifact-grounded durable recall
+- the final durable-memory set is capped to `5` items after dedupe and ranking
+- durable memory stays visibly separate from predecessor continuity and transcript-tail context
+- artifact-grounded recall runs only when a predecessor continuity summary or recent-session tail exists
+- procedure suggestion is still out of scope for this v1 slice
 
 The formatted prompt can include:
 
 - `## Previous session summary`
 - `## Recent session`
 - `## Agenr Session Recall`
+- `### Core Memory`
+- `### Relevant Durable Memory`
 
 If all sections are empty, the hook returns `undefined`.
 
 Any unexpected failure is logged and swallowed so prompt building can continue.
+
+### Session-start ownership split
+
+The hybrid session-start slice keeps the ownership boundary explicit:
+
+- OpenClaw owns predecessor file discovery, transcript-tail extraction, lifecycle timing, prompt injection, and background predecessor-episode ingest.
+- Agenr app code owns the bounded decision about which durable memories should surface at session start.
+- The app service consumes normalized text artifacts and policy hints, then returns a structured patch rather than rendered prompt text.
+- The adapter remains responsible for turning that patch into OpenClaw prompt sections.
 
 ### 2. Mid-session store nudges
 

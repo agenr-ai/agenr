@@ -1,3 +1,4 @@
+import { runSessionStart } from "../../../app/session-start/index.js";
 import { resolveStoreNudgeConfig } from "../config.js";
 import { writeOpenClawPredecessorEpisode } from "../episode/episode-writer.js";
 import { buildStoreNudgeMessage } from "../format/nudge-format.js";
@@ -10,12 +11,15 @@ import type {
   AgenrOpenClawBeforePromptBuildEvent,
   AgenrOpenClawBeforePromptBuildResult,
   AgenrOpenClawHookContext,
-  AgenrOpenClawServices,
-  OpenClawSessionStartRecall,
   StoreNudgeConfig,
 } from "../types.js";
 
-const CORE_ENTRY_LIMIT = 4;
+const SESSION_START_POLICY = {
+  maxCoreEntries: 4,
+  maxArtifactRecallEntries: 3,
+  maxDurableEntries: 5,
+  maxArtifactChars: 1_200,
+} as const;
 const NON_USER_TRIGGER_SET = new Set(["heartbeat", "cron", "memory"]);
 const DEFAULT_STORE_NUDGE_CONFIG = resolveStoreNudgeConfig(undefined);
 
@@ -58,17 +62,34 @@ export async function handleAgenrBeforePromptBuild(
       services,
       logger: params.logger,
     });
-    const sessionStartRecall = await runAgenrSessionStartRecall(services);
-    const memoryContext = formatAgenrSessionStartRecall(sessionStartRecall);
-    const sections = [
-      continuity.continuitySummaryContent && `## Previous session summary\n${continuity.continuitySummaryContent}`,
-      continuity.recentSessionContent && `## Recent session\n${continuity.recentSessionContent}`,
-      memoryContext,
-    ].filter((value): value is string => Boolean(value && value.trim().length > 0));
-    const prependContext = sections.join("\n\n");
+    const sessionStartPatch = await runSessionStart(
+      {
+        sessionKey: ctx.sessionKey,
+        continuitySummaryText: continuity.continuitySummaryContent,
+        recentSessionText: continuity.recentSessionContent,
+        policy: SESSION_START_POLICY,
+      },
+      services.sessionStart,
+    );
+    const prependContext = formatAgenrSessionStartRecall(sessionStartPatch);
 
-    params.logger.info(`[agenr] session-start recall: ${sessionStartRecall.core.length} core entries for ${sessionContext}`);
-    params.logger.debug?.(`[agenr] before_prompt_build: session-start core entries for ${sessionContext}: ${formatEntryRefs(sessionStartRecall.core)}`);
+    params.logger.info(
+      `[agenr] session-start recall: ${sessionStartPatch.durableMemory.length} durable entries for ${sessionContext} ` +
+        `(core_candidates=${sessionStartPatch.diagnostics.coreCandidateCount} artifact_candidates=${sessionStartPatch.diagnostics.artifactRecallCandidateCount})`,
+    );
+    if (sessionStartPatch.diagnostics.artifactRecallUsed) {
+      params.logger.debug?.(
+        `[agenr] before_prompt_build: session-start artifact recall for ${sessionContext} query_length=${
+          sessionStartPatch.diagnostics.artifactRecallQuery?.length ?? 0
+        } notices=${sessionStartPatch.diagnostics.notices.length}`,
+      );
+    }
+    if (sessionStartPatch.diagnostics.notices.length > 0) {
+      params.logger.info(`[agenr] session-start recall notices for ${sessionContext}: ${sessionStartPatch.diagnostics.notices.join(" | ")}`);
+    }
+    params.logger.debug?.(
+      `[agenr] before_prompt_build: session-start durable entries for ${sessionContext}: ${formatEntryRefs(sessionStartPatch.durableMemory.map((item) => item.entry))}`,
+    );
     params.logger.debug?.(`[agenr] before_prompt_build: session-start prependContext length for ${sessionContext}: ${prependContext.length} chars`);
     if (prependContext.length === 0) {
       params.logger.info(`[agenr] session-start recall: nothing to inject for ${sessionContext}`);
@@ -145,21 +166,11 @@ function resolveStoreNudgeResult(
 }
 
 /**
- * Composes the session-start recall payload from always-on agenr core entries.
- *
- * @param services - Shared agenr adapters used by the plugin.
- * @returns Structured session-start recall data ready for prompt formatting.
- */
-export async function runAgenrSessionStartRecall(services: AgenrOpenClawServices): Promise<OpenClawSessionStartRecall> {
-  return { core: await services.memory.listCoreEntries(CORE_ENTRY_LIMIT) };
-}
-
-/**
  * Formats a concise entry reference list for debug logging.
  *
- * @param entries - Core session-start recall entries.
+ * @param entries - Session-start durable entries.
  * @returns Stable debug text listing subjects and ids.
  */
-function formatEntryRefs(entries: OpenClawSessionStartRecall["core"]): string {
+function formatEntryRefs(entries: Array<{ id: string; subject: string }>): string {
   return entries.length === 0 ? "none" : entries.map((entry) => `${entry.subject} [${entry.id}]`).join(", ");
 }

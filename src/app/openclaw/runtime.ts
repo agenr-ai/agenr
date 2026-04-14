@@ -3,6 +3,7 @@ import type { AgenrConfig } from "../../config.js";
 import { readConfig, resolveClaimExtractionConfig, resolveConfigPath, resolveDbPath } from "../../config.js";
 import { createDatabase } from "../../adapters/db/client.js";
 import { createOpenClawRepository } from "../../adapters/db/openclaw-repository.js";
+import { createSessionStartRepository } from "../../adapters/db/session-start-repository.js";
 import { createRecallAdapter } from "../../adapters/db/recall-adapter.js";
 import { createEmbeddingClient, EMBEDDING_MODEL, resolveEmbeddingApiKey, resolveEmbeddingModel } from "../../adapters/embeddings.js";
 import { createOpenClawLlmClient } from "../../adapters/openclaw/llm/openclaw-llm-client.js";
@@ -14,6 +15,7 @@ import type {
   ResolvedAgenrOpenClawPluginConfig,
 } from "../../adapters/openclaw/types.js";
 import type { OpenClawRepository } from "./ports.js";
+import type { SessionStartDeps } from "../session-start/index.js";
 
 /**
  * Shared OpenClaw runtime services composed outside the adapter package.
@@ -23,6 +25,7 @@ interface OpenClawRuntimeServices {
   episodes: EpisodeDatabasePort;
   procedures: ProcedureDatabasePort;
   memory: OpenClawRepository;
+  sessionStart: SessionStartDeps;
   embedding: EmbeddingPort;
   recall: RecallPorts;
   claimExtraction?: {
@@ -67,6 +70,7 @@ export async function createAgenrOpenClawServices(
     episodes: runtimeServices.episodes,
     procedures: runtimeServices.procedures,
     memory: runtimeServices.memory,
+    sessionStart: runtimeServices.sessionStart,
     embedding: runtimeServices.embedding,
     recall: runtimeServices.recall,
     claimExtraction: runtimeServices.claimExtraction,
@@ -131,6 +135,7 @@ async function createRuntimeServices(
   const embedding = embeddingStatus.available
     ? createEmbeddingClient(requireApiKey(embeddingStatus), embeddingStatus.model)
     : createUnavailableEmbeddingPort(embeddingStatus.error ?? "Embeddings are unavailable.");
+  const recall = createRecallAdapter(database, embedding);
   const claimExtraction = await createClaimExtractionRuntime(config, openClawContext.openClaw, openClawContext.pluginConfig);
   let closed = false;
 
@@ -141,8 +146,13 @@ async function createRuntimeServices(
     memory: createOpenClawRepository(database, {
       claimSlotPolicyConfig: openClawContext.pluginConfig.memoryPolicy?.slotPolicies,
     }),
+    sessionStart: {
+      repository: createSessionStartRepository(database),
+      recall,
+      slotPolicyConfig: openClawContext.pluginConfig.memoryPolicy?.slotPolicies,
+    },
     embedding,
-    recall: createRecallAdapter(database, embedding),
+    recall,
     claimExtraction,
     async close() {
       if (closed) {

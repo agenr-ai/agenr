@@ -49,14 +49,6 @@ export interface OpenClawMemoryStatusSnapshot {
  */
 export interface OpenClawRepository {
   /**
-   * Lists active core entries for session-start prompt injection.
-   *
-   * @param limit - Maximum number of entries to return.
-   * @returns Core entries ordered for prompt use.
-   */
-  listCoreEntries(limit: number): Promise<Entry[]>;
-
-  /**
    * Finds the most recent entry matching a subject string.
    *
    * @param subject - Free-form subject text to resolve.

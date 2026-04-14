@@ -1,28 +1,39 @@
-import type { Entry } from "../../../core/types.js";
-import type { OpenClawPromptMemoryEntry, OpenClawPromptMemorySection, OpenClawSessionStartRecall } from "../types.js";
+import type { SessionStartPatch, SessionStartPatchItem } from "../../../app/session-start/index.js";
 
-const MAX_CONTENT_CHARS = 280;
+const MAX_CONTENT_CHARS = 220;
 
 /**
  * Formats session-start recall results into prompt text for OpenClaw injection.
  *
- * @param recall - Structured session-start recall payload.
+ * @param patch - Structured session-start patch returned by the app layer.
  * @returns Prompt-ready text, or an empty string when nothing should be injected.
  */
-export function formatAgenrSessionStartRecall(recall: OpenClawSessionStartRecall): string {
-  const sections = buildSections(recall);
-  if (sections.length === 0) {
+export function formatAgenrSessionStartRecall(patch: SessionStartPatch): string {
+  if (patch.contextSections.length === 0 && patch.durableMemory.length === 0) {
     return "";
   }
 
-  const lines = ["## Agenr Session Recall", "Use this as prior context. Confirm anything important if the current conversation conflicts with it.", ""];
+  const lines: string[] = [];
 
-  for (const section of sections) {
+  for (const section of patch.contextSections) {
+    lines.push(`## ${section.title}`);
+    lines.push(section.content);
+    lines.push("");
+  }
+
+  const durableSections = buildSections(patch);
+  if (durableSections.length > 0) {
+    lines.push("## Agenr Session Recall");
+    lines.push("Use this as prior context. Confirm anything important if the current conversation conflicts with it.");
+    lines.push("");
+  }
+
+  for (const section of durableSections) {
     lines.push(`### ${section.title}`);
 
     for (const item of section.entries) {
       lines.push(formatEntryHeader(item));
-      lines.push(formatEntryBody(item.entry));
+      lines.push(...formatEntryBodyLines(item));
     }
 
     lines.push("");
@@ -34,23 +45,29 @@ export function formatAgenrSessionStartRecall(recall: OpenClawSessionStartRecall
 /**
  * Builds the ordered memory sections that should appear in the system prompt.
  *
- * @param recall - Structured recall payload grouped by purpose.
+ * @param patch - Structured patch payload grouped by source kind.
  * @returns Non-empty prompt sections ready for rendering.
  */
-export function buildSections(recall: OpenClawSessionStartRecall): OpenClawPromptMemorySection[] {
-  const sections: OpenClawPromptMemorySection[] = [];
+export function buildSections(patch: SessionStartPatch): Array<{ title: string; entries: SessionStartPatchItem[] }> {
+  const sections: Array<{ title: string; entries: SessionStartPatchItem[] }> = [];
 
-  const coreEntries = recall.core.map((entry) => ({ entry }));
+  const coreEntries = patch.durableMemory.filter((item) => item.sourceKind === "core");
   if (coreEntries.length > 0) {
     sections.push({ title: "Core Memory", entries: coreEntries });
+  }
+
+  const artifactRecallEntries = patch.durableMemory.filter((item) => item.sourceKind === "artifact_recall");
+  if (artifactRecallEntries.length > 0) {
+    sections.push({ title: "Relevant Durable Memory", entries: artifactRecallEntries });
   }
 
   return sections;
 }
 
 /** Formats one memory entry header line for prompt injection. */
-function formatEntryHeader(item: OpenClawPromptMemoryEntry): string {
+function formatEntryHeader(item: SessionStartPatchItem): string {
   const metadata = [
+    `rank ${item.rank}`,
     item.entry.id,
     item.entry.type,
     item.entry.expiry,
@@ -61,19 +78,21 @@ function formatEntryHeader(item: OpenClawPromptMemoryEntry): string {
   return `- [${metadata.join(" | ")}] ${item.entry.subject}`;
 }
 
-/** Formats one memory entry body line for prompt injection. */
-function formatEntryBody(entry: Entry): string {
-  const content = truncate(entry.content.trim(), MAX_CONTENT_CHARS);
-  const extra = [
-    entry.tags.length > 0 ? `tags: ${entry.tags.join(", ")}` : undefined,
-    entry.created_at ? `created: ${entry.created_at.slice(0, 10)}` : undefined,
-  ].filter((value): value is string => value !== undefined);
+/** Formats one memory entry body block for prompt injection. */
+function formatEntryBodyLines(item: SessionStartPatchItem): string[] {
+  const lines = [`  ${truncate(item.entry.content.trim(), MAX_CONTENT_CHARS)}`];
+  lines.push(`  why: ${item.whySurfaced.summary}`);
 
-  if (extra.length === 0) {
-    return `  ${content}`;
+  const metadata = [
+    item.entry.tags.length > 0 ? `tags: ${item.entry.tags.join(", ")}` : undefined,
+    item.freshnessLabel ? `freshness: ${item.freshnessLabel}` : undefined,
+    item.provenanceSummary ? `provenance: ${truncate(item.provenanceSummary, MAX_CONTENT_CHARS)}` : undefined,
+  ].filter((value): value is string => value !== undefined);
+  if (metadata.length > 0) {
+    lines.push(`  ${metadata.join(" | ")}`);
   }
 
-  return `  ${content} (${extra.join(" | ")})`;
+  return lines;
 }
 
 /** Truncates long memory content to keep prompt injection bounded. */

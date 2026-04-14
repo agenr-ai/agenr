@@ -20,6 +20,7 @@ import type { Api, AssistantMessage, Model } from "@mariozechner/pi-ai";
 
 import { createDatabase, type SqlDatabase } from "../../../src/adapters/db/client.js";
 import { createOpenClawRepository } from "../../../src/adapters/db/openclaw-repository.js";
+import { createSessionStartRepository } from "../../../src/adapters/db/session-start-repository.js";
 import { createOpenClawLlmClient } from "../../../src/adapters/openclaw/llm/openclaw-llm-client.js";
 import { computeProcedureRevisionHash, computeProcedureSourceHash } from "../../../src/core/procedures/hashing.js";
 import { composeProcedureRecallText } from "../../../src/core/procedures/recall-text.js";
@@ -882,6 +883,10 @@ function createServices(
     episodes: database,
     procedures: database,
     memory: createOpenClawRepository(database),
+    sessionStart: {
+      repository: createSessionStartRepository(database),
+      recall: options.recall,
+    },
     embedding,
     recall: options.recall,
     claimExtraction: options.claimExtraction,

@@ -6,7 +6,7 @@ It embeds the query when possible, retrieves candidates through vector search pl
 
 This document describes the code as it exists now, not just the intended flow.
 
-The current codebase also layers a unified agent-facing recall surface and an automatic OpenClaw session-start recall path on top of the base entry pipeline documented here. The standalone CLI in `src/cli/commands/recall.ts` still exposes the entry-recall surface shown below, while `src/app/recall/unified.ts`, `src/app/procedures/recall/service.ts`, and the OpenClaw `agenr_recall` tool add procedural routing plus episodic recall. Separately, `src/adapters/openclaw/hooks/before-prompt-build.ts` injects continuity context plus core memory at session start without calling the public recall tool.
+The current codebase also layers a unified agent-facing recall surface and an automatic OpenClaw session-start recall path on top of the base entry pipeline documented here. The standalone CLI in `src/cli/commands/recall.ts` still exposes the entry-recall surface shown below, while `src/app/recall/unified.ts`, `src/app/procedures/recall/service.ts`, and the OpenClaw `agenr_recall` tool add procedural routing plus episodic recall. Separately, `src/adapters/openclaw/hooks/before-prompt-build.ts` now injects continuity context plus a bounded session-start durable-memory patch through the app-layer `src/app/session-start/` service without calling the public recall tool directly.
 
 ## Code map
 
@@ -30,8 +30,10 @@ The current codebase also layers a unified agent-facing recall surface and an au
 - `src/adapters/db/queries.ts` - `recordRecallEvent()` write path that updates counters and inserts `recall_events` rows.
 - `src/adapters/openclaw/tools/recall.ts` - `agenr_recall` schema, unified recall execution, and structured tool result shaping.
 - `src/adapters/openclaw/tools/shared.ts` - human-readable unified recall formatter used by the OpenClaw tool.
-- `src/adapters/openclaw/hooks/before-prompt-build.ts` - automatic session-start recall injection, continuity composition, and store-nudge gating.
-- `src/adapters/openclaw/format/recall-format.ts` - prompt formatter for the automatic session-start core-memory injection path.
+- `src/app/session-start/service.ts` - host-neutral session-start patch selection that merges always-on core memory with artifact-grounded durable recall.
+- `src/app/session-start/types.ts` and `src/app/session-start/ports.ts` - structured session-start patch contract and feature-scoped dependency types.
+- `src/adapters/openclaw/hooks/before-prompt-build.ts` - automatic session-start patch injection, continuity composition, and store-nudge gating.
+- `src/adapters/openclaw/format/recall-format.ts` - prompt formatter for the automatic session-start patch path.
 - `tests/cli/commands/recall.test.ts`, `tests/core/recall/search.integration.test.ts`, and `tests/app/recall/unified.test.ts` - CLI surface, end-to-end pipeline, unified routing, historical-state behavior, tracing, telemetry, and concurrency coverage.
 - `tests/core/episode/temporal-window.test.ts` and `tests/adapters/openclaw/tools.test.ts` - parser coverage, tool schema, split-result formatting, and episode recall behavior.
 
@@ -273,15 +275,17 @@ Current behavior in `handleAgenrBeforePromptBuild()` is:
 1. consume the session-start tracker so the recall injection runs only once per session
 2. resolve predecessor continuity and recent-session content through the OpenClaw continuity helpers
 3. kick off a background predecessor-episode write when a predecessor session exists
-4. fetch up to `4` core entries through `services.memory.listCoreEntries()`
-5. format those core entries as an `## Agenr Session Recall` prompt section
-6. prepend continuity summary, recent-session context, and core memory to the prompt in that order
+4. call the app-layer `runSessionStart()` service with normalized predecessor artifacts and bounded policy hints
+5. let that service merge up to `4` always-on core entries with up to `3` artifact-grounded durable recall candidates, capped to `5` durable items after dedupe
+6. format the returned patch as visibly separate continuity and durable-memory prompt sections
 
 Important boundaries:
 
-- this path injects only always-on core memory from agenr itself, not general entry recall results
+- this path still depends on adapter-supplied predecessor artifacts rather than pretending Agenr can reconstruct continuity from DB state alone
+- any non-core durable memory on this path must be artifact-grounded, not a blind global session-start search
 - continuity summaries and recent-session snippets stay visibly separate from durable memory
 - duplicate session-start injections are blocked by in-memory tracker state
+- procedure suggestion is still out of scope for this v1 session-start slice
 - non-user follow-up turns may receive a separate store nudge, but that is not recall
 
 ## Memory authority levels
@@ -746,6 +750,8 @@ Notes:
 - `src/cli/commands/recall.ts`
 - `src/app/recall/unified.ts`
 - `src/app/recall/types.ts`
+- `src/app/session-start/service.ts`
+- `src/app/session-start/types.ts`
 - `src/core/recall/search.ts`
 - `src/core/recall/scoring.ts`
 - `src/core/recall/lexical.ts`

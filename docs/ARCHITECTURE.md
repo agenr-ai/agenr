@@ -38,6 +38,7 @@ src/
 │   ├── episode-ingest/
 │   ├── procedures/
 │   ├── recall/
+│   ├── session-start/
 │   ├── openclaw/
 │   ├── surgeon/
 │   ├── evals/recall/
@@ -75,7 +76,7 @@ tests/
 Important points about the current tree:
 
 - `src/core/` contains the main domain model, claim-key lifecycle logic, procedure normalization and hashing, entry recall, episode search, ingest parsing, and pure port interfaces.
-- `src/app/` owns orchestration for durable ingest, episode ingest, procedure sync, unified recall, surgeon execution, OpenClaw runtime composition, the narrow recall-eval seam, and the repo-local claim-key scenario harness.
+- `src/app/` owns orchestration for durable ingest, episode ingest, procedure sync, unified recall, session-start patch selection, surgeon execution, OpenClaw runtime composition, the narrow recall-eval seam, and the repo-local claim-key scenario harness.
 - `src/adapters/` implements libSQL persistence, transcript and procedure-file discovery, config parsing, external model clients, OpenClaw host translation, and the internal HTTP adapter.
 - `src/config.ts`, `src/logger.ts`, `src/ui.ts`, and `src/version.ts` are shared runtime infrastructure, not domain logic.
 - `packages/openclaw-plugin/` is a packaging wrapper that re-exports the built plugin entry from `dist/`.
@@ -113,6 +114,7 @@ Core is infrastructure-agnostic. It still depends on ports for embeddings, LLM c
 - episode ingest preflight, planning, execution, and embedding backfill
 - repo-authored procedure discovery, planning, and sync execution
 - unified routing between entry and episode recall
+- host-neutral session-start patch selection from predecessor artifacts plus durable memory
 - shared OpenClaw runtime service composition
 - surgeon run execution, budgets, prompts, progress, and completion guards
 - internal recall-eval execution
@@ -443,6 +445,7 @@ The OpenClaw integration spans:
 - `src/adapters/openclaw/episode/*`
 - `src/adapters/openclaw/llm/*`
 - `src/app/openclaw/runtime.ts`
+- `src/app/session-start/*`
 
 The plugin is not just tool exposure. It implements live session behavior.
 
@@ -457,7 +460,7 @@ Current plugin registration includes:
 Implemented behaviors include:
 
 - process-lifetime shared service composition in `src/app/openclaw/runtime.ts`
-- session-start injection of active `core` entries
+- app-layer session-start patch selection that merges predecessor artifacts with bounded durable memory
 - predecessor resolution through `resumedFrom` and `sessions.json` fallbacks
 - continuity summary reads and on-demand generation
 - recent-session transcript rendering
@@ -549,6 +552,7 @@ The main formal seams are still the ports in `src/core/ports.ts`:
 Feature-scoped seams also matter:
 
 - `OpenClawRepository` in `src/app/openclaw/ports.ts`
+- `SessionStartRepository` in `src/app/session-start/ports.ts`
 - surgeon runtime and persistence ports in `src/app/surgeon/ports.ts`
 - episode-ingest support ports in `src/app/episode-ingest/ports.ts`
 

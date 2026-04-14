@@ -28,41 +28,12 @@ export function createOpenClawRepository(
   } = {},
 ): OpenClawRepository {
   return {
-    listCoreEntries: async (limit) => listCoreEntries(executor, limit),
     findEntryBySubject: async (subject) => findEntryBySubject(executor, subject),
     findMostRecentEntry: async () => findMostRecentEntry(executor),
     getEntryTrace: async (entryId) => getEntryTrace(executor, entryId, options.claimSlotPolicyConfig),
     getMemoryStatusSnapshot: async () => getMemoryStatusSnapshot(executor),
     probeVectorAvailability: async () => probeVectorAvailability(executor),
   };
-}
-
-/**
- * Lists high-priority core entries for session-start prompt injection.
- *
- * @param executor - SQL executor used for the lookup.
- * @param limit - Maximum number of entries to return.
- * @returns Active core entries ordered by importance and recency.
- */
-async function listCoreEntries(executor: SqlExecutor, limit: number): Promise<Entry[]> {
-  if (limit <= 0) {
-    return [];
-  }
-
-  const result = await executor.execute({
-    sql: `
-      SELECT
-        ${ENTRY_SELECT_COLUMNS}
-      FROM entries
-      WHERE ${buildActiveEntryClause()}
-        AND expiry = 'core'
-      ORDER BY importance DESC, created_at DESC
-      LIMIT ?
-    `,
-    args: [limit],
-  });
-
-  return result.rows.map((row) => mapEntryRow(row));
 }
 
 /**
