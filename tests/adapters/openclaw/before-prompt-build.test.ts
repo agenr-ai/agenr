@@ -130,6 +130,7 @@ describe("handleAgenrBeforePromptBuild", () => {
       },
     );
 
+    expect(result?.prependContext).toContain("<agenr-memory-context>");
     expect(result?.prependContext).toContain("Agenr Session Recall");
     expect(result?.prependContext).toContain("Core Memory");
     expect(result?.prependContext).toContain("master branch workflow");
@@ -140,8 +141,8 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(result?.prependContext).not.toContain("## Recent session");
     expect(result?.prependContext).not.toContain("Recent Handoffs");
     expect(secondResult).toBeUndefined();
-    expect(recall.embed).toHaveBeenCalledOnce();
-    expect(recall.ftsSearch).toHaveBeenCalledOnce();
+    expect(recall.embed).not.toHaveBeenCalled();
+    expect(recall.ftsSearch).not.toHaveBeenCalled();
     expect(listExecutedSql(executeSpy.mock.calls).some((sql) => sql.includes("expiry != 'core'"))).toBe(false);
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
@@ -276,7 +277,6 @@ describe("handleAgenrBeforePromptBuild", () => {
         tracker,
       },
     );
-
     const result = await handleAgenrBeforePromptBuild(
       {
         prompt: "How do I implement the before turn memory patch?",
@@ -302,12 +302,20 @@ describe("handleAgenrBeforePromptBuild", () => {
           createServices(database, {
             available: true,
             recall,
+            pluginConfig: {
+              memoryPolicy: {
+                beforeTurn: {
+                  recallThreshold: 0,
+                },
+              },
+            },
           }),
         ),
         tracker,
       },
     );
 
+    expect(result?.prependContext).toContain("<agenr-memory-context>");
     expect(result?.prependContext).toContain("## Agenr Before-Turn Recall");
     expect(result?.prependContext).toContain("### Relevant Durable Memory");
     expect(result?.prependContext).toContain("before-turn patch pattern");
@@ -353,7 +361,6 @@ describe("handleAgenrBeforePromptBuild", () => {
         tracker,
       },
     );
-
     const result = await handleAgenrBeforePromptBuild(
       {
         prompt: "Should before-turn run here?",
@@ -431,6 +438,7 @@ describe("handleAgenrBeforePromptBuild", () => {
               memoryPolicy: {
                 beforeTurn: {
                   procedureSuggestion: false,
+                  recallThreshold: 0,
                 },
               },
             },
@@ -460,6 +468,7 @@ describe("handleAgenrBeforePromptBuild", () => {
               memoryPolicy: {
                 beforeTurn: {
                   procedureSuggestion: false,
+                  recallThreshold: 0,
                 },
               },
             },
@@ -469,6 +478,7 @@ describe("handleAgenrBeforePromptBuild", () => {
       },
     );
 
+    expect(result?.prependContext).toContain("<agenr-memory-context>");
     expect(result?.prependContext).toContain("## Agenr Before-Turn Recall");
     expect(result?.prependContext).toContain("### Relevant Durable Memory");
     expect(result?.prependContext).not.toContain("### Suggested Procedure");

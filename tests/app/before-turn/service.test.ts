@@ -29,7 +29,7 @@ describe("runBeforeTurn", () => {
     expect(deps.procedures.procedureFtsSearch).not.toHaveBeenCalled();
   });
 
-  it("abstains before recall runs for short social greetings", async () => {
+  it("skips short social turns before recall runs", async () => {
     const deps = createDeps();
 
     const result = await runBeforeTurn(
@@ -42,11 +42,94 @@ describe("runBeforeTurn", () => {
     expect(result.durableMemory).toEqual([]);
     expect(result.procedure).toBeUndefined();
     expect(result.diagnostics.abstained).toBe(true);
-    expect(result.diagnostics.abstentionReasons).toContain("Current turn was a short social greeting, so before-turn recall abstained.");
-    expect(result.diagnostics.durableRecallUsed).toBe(false);
-    expect(result.diagnostics.procedureRecallUsed).toBe(false);
+    expect(result.diagnostics.suppressedTurnCategory).toBe("short_social");
+    expect(result.diagnostics.abstentionReasons).toContain("Current turn was short or social without clear factual, procedural, or task intent.");
     expect(deps.recall.embed).not.toHaveBeenCalled();
     expect(deps.procedures.procedureFtsSearch).not.toHaveBeenCalled();
+  });
+
+  it("requires factual, procedural, or task signal before recall runs", async () => {
+    const deps = createDeps();
+
+    const result = await runBeforeTurn(
+      {
+        currentTurnText: "This feels a bit noisy overall and I am thinking aloud.",
+      },
+      deps,
+    );
+
+    expect(result.durableMemory).toEqual([]);
+    expect(result.procedure).toBeUndefined();
+    expect(result.diagnostics.abstained).toBe(true);
+    expect(result.diagnostics.suppressedTurnCategory).toBe("low_signal");
+    expect(result.diagnostics.abstentionReasons).toContain("Current turn lacked clear factual, procedural, or task signal, so before-turn recall abstained.");
+    expect(deps.recall.embed).not.toHaveBeenCalled();
+    expect(deps.procedures.procedureFtsSearch).not.toHaveBeenCalled();
+  });
+
+  it("treats non-code action requests as task signal", async () => {
+    const deps = createDeps();
+
+    const result = await runBeforeTurn(
+      {
+        currentTurnText: "Can you draft an email to my landlord about the lease renewal?",
+        policy: {
+          enableProcedureSuggestion: false,
+          recallThreshold: 1,
+        },
+      },
+      deps,
+    );
+
+    expect(result.diagnostics.suppressedTurnCategory).toBeUndefined();
+    expect(result.diagnostics.turnSignalLabels).toContain("task");
+    expect(result.diagnostics.abstentionReasons).toContain("No durable memory entries cleared the before-turn threshold.");
+    expect(deps.recall.embed).toHaveBeenCalledOnce();
+  });
+
+  it("treats non-code factual questions as factual signal", async () => {
+    const deps = createDeps();
+
+    const result = await runBeforeTurn(
+      {
+        currentTurnText: "What time is my dentist appointment on Friday?",
+        policy: {
+          enableProcedureSuggestion: false,
+          recallThreshold: 1,
+        },
+      },
+      deps,
+    );
+
+    expect(result.diagnostics.suppressedTurnCategory).toBeUndefined();
+    expect(result.diagnostics.turnSignalLabels).toContain("factual");
+    expect(result.diagnostics.abstentionReasons).toContain("No durable memory entries cleared the before-turn threshold.");
+    expect(deps.recall.embed).toHaveBeenCalledOnce();
+  });
+
+  it("treats non-code how-to requests as procedural signal", async () => {
+    const deps = createDeps();
+
+    const result = await runBeforeTurn(
+      {
+        currentTurnText: "Walk me through the best way to prepare for a visa interview.",
+        policy: {
+          recallThreshold: 1,
+          procedureThreshold: 1,
+        },
+      },
+      deps,
+    );
+
+    expect(result.diagnostics.suppressedTurnCategory).toBeUndefined();
+    expect(result.diagnostics.turnSignalLabels).toContain("procedural");
+    expect(result.diagnostics.abstentionReasons).toEqual(
+      expect.arrayContaining([
+        "No durable memory entries cleared the before-turn threshold.",
+        "No canonical procedure suggestion cleared the before-turn threshold.",
+      ]),
+    );
+    expect(deps.recall.embed).toHaveBeenCalledOnce();
   });
 
   it("returns a bounded durable-only patch when procedure suggestion is disabled", async () => {
@@ -234,6 +317,78 @@ describe("runBeforeTurn", () => {
     expect(result.durableMemory.map((item) => item.entry.id)).toEqual(["entry-1", "entry-2"]);
     expect(result.durableMemory.map((item) => item.rank)).toEqual([1, 2]);
     expect(result.diagnostics.durableRecallCandidateCount).toBe(2);
+  });
+
+  it("keeps only one durable item unless additional candidates are very high confidence", async () => {
+    const first = createEntry({
+      id: "entry-1",
+      subject: "first durable match",
+      content: "First ranked durable result.",
+      importance: 9,
+    });
+    const second = createEntry({
+      id: "entry-2",
+      subject: "second durable match",
+      content: "Second ranked durable result.",
+      importance: 8,
+    });
+    const deps = createDeps({
+      ftsCandidates: [toRecallCandidateEntry(first), toRecallCandidateEntry(second)],
+      hydratedEntries: [first, second],
+    });
+
+    const result = await runBeforeTurn(
+      {
+        currentTurnText: "What durable decisions should I reuse for this implementation?",
+        policy: {
+          enableProcedureSuggestion: false,
+          recallThreshold: 0,
+          maxDurableEntries: 1,
+          maxHighConfidenceDurableEntries: 2,
+          highConfidenceRecallThreshold: 1,
+        },
+      },
+      deps,
+    );
+
+    expect(result.durableMemory.map((item) => item.entry.id)).toEqual(["entry-1"]);
+    expect(result.diagnostics.notices).toContain("Before-turn durable recall kept the top 1 item because additional candidates were not high confidence.");
+  });
+
+  it("expands to a second durable item when all surfaced candidates are very high confidence", async () => {
+    const first = createEntry({
+      id: "entry-1",
+      subject: "first durable match",
+      content: "First ranked durable result.",
+      importance: 9,
+    });
+    const second = createEntry({
+      id: "entry-2",
+      subject: "second durable match",
+      content: "Second ranked durable result.",
+      importance: 8,
+    });
+    const deps = createDeps({
+      ftsCandidates: [toRecallCandidateEntry(first), toRecallCandidateEntry(second)],
+      hydratedEntries: [first, second],
+    });
+
+    const result = await runBeforeTurn(
+      {
+        currentTurnText: "What durable decisions should I reuse for this implementation?",
+        policy: {
+          enableProcedureSuggestion: false,
+          recallThreshold: 0,
+          maxDurableEntries: 1,
+          maxHighConfidenceDurableEntries: 2,
+          highConfidenceRecallThreshold: 0,
+        },
+      },
+      deps,
+    );
+
+    expect(result.durableMemory.map((item) => item.entry.id)).toEqual(["entry-1", "entry-2"]);
+    expect(result.diagnostics.notices).toContain("Before-turn durable recall expanded to 2 high-confidence items.");
   });
 });
 

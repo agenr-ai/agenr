@@ -1,5 +1,7 @@
 import type { SessionStartPatch, SessionStartPatchItem } from "../../../app/session-start/index.js";
 
+import { wrapAgenrMemoryContext } from "./memory-context.js";
+
 const MAX_CONTENT_CHARS = 220;
 
 /**
@@ -23,20 +25,24 @@ export function formatAgenrSessionStartRecall(patch: SessionStartPatch): string 
 
   const durableSections = buildSections(patch);
   if (durableSections.length > 0) {
-    lines.push("## Agenr Session Recall");
-    lines.push("Use this as prior context. Confirm anything important if the current conversation conflicts with it.");
-    lines.push("");
-  }
+    const recallLines: string[] = [
+      "## Agenr Session Recall",
+      "Use this as prior context. Confirm anything important if the current conversation conflicts with it.",
+      "",
+    ];
 
-  for (const section of durableSections) {
-    lines.push(`### ${section.title}`);
+    for (const section of durableSections) {
+      recallLines.push(`### ${section.title}`);
 
-    for (const item of section.entries) {
-      lines.push(formatEntryHeader(item));
-      lines.push(...formatEntryBodyLines(item));
+      for (const item of section.entries) {
+        recallLines.push(formatEntryHeader(item));
+        recallLines.push(...formatEntryBodyLines(item));
+      }
+
+      recallLines.push("");
     }
 
-    lines.push("");
+    lines.push(wrapAgenrMemoryContext(recallLines.join("\n").trim()));
   }
 
   return lines.join("\n").trim();

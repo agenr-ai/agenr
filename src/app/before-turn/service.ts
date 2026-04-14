@@ -12,16 +12,30 @@ import type {
   BeforeTurnPolicy,
   BeforeTurnProcedureSuggestion,
   BeforeTurnRecentTurn,
+  BeforeTurnSignalLabel,
+  BeforeTurnSuppressedTurnCategory,
 } from "./types.js";
 
-const DEFAULT_MAX_DURABLE_ENTRIES = 3;
-const DEFAULT_MAX_RECENT_TURNS = 4;
-const DEFAULT_MAX_QUERY_CHARS = 900;
+const DEFAULT_MAX_DURABLE_ENTRIES = 1;
+const DEFAULT_MAX_HIGH_CONFIDENCE_DURABLE_ENTRIES = 2;
+const DEFAULT_MAX_RECENT_TURNS = 2;
+const DEFAULT_MAX_QUERY_CHARS = 450;
 const DEFAULT_MAX_PROCEDURE_CANDIDATES = 3;
-const DEFAULT_RECALL_THRESHOLD = 0.2;
-const DEFAULT_PROCEDURE_THRESHOLD = 0.6;
-const SHORT_SOCIAL_TURN_RE =
+const DEFAULT_RECALL_THRESHOLD = 0.6;
+const DEFAULT_HIGH_CONFIDENCE_RECALL_THRESHOLD = 0.85;
+const DEFAULT_PROCEDURE_THRESHOLD = 0.72;
+const DEFAULT_SKIP_TRIVIAL_TURNS = true;
+const DEFAULT_REQUIRE_TURN_SIGNAL = true;
+const SHORT_TURN_MAX_WORDS = 4;
+const SHORT_TURN_MAX_CHARS = 24;
+const SOCIAL_TURN_RE =
   /^(?:hi|hello|hey|hey there|hello there|thanks|thank you|ok|okay|cool|sounds good|got it|yep|yes|no|nice|great|awesome|perfect|ping)(?:[.!?]+)?$/iu;
+const TASK_SIGNAL_RE =
+  /\b(?:do|make|create|draft|write|send|schedule|book|reserve|organize|arrange|prepare|plan|choose|decide|contact|call|email|message|buy|order|find|search|check|compare|review|explain|summarize|investigate|research|use|apply|remember|recall|assist|help|should|need to|help me)\b/iu;
+const FACTUAL_SIGNAL_RE =
+  /\b(?:what(?:'s|\s+is|\s+was|\s+were)?|which|where|who|when|how much|how many|what time|what day|did we|do we|previous|prior|earlier|before|last|again|decision|preference|fact|rule|policy|status|availability|location|address|phone|email|price|cost|budget|deadline|date|time|name|called|uses|used|change(?:d)?|order|reservation|appointment|account|contact)\b/iu;
+const PROCEDURAL_SIGNAL_RE =
+  /\b(?:how do i|how should i|how can i|how to|what should i do|what do i need to do|steps|procedure|process|workflow|runbook|playbook|guide|guidance|instructions|checklist|recipe|template|walk me through|step by step|best way to|planning|arrange|prepare|book|reserve|schedule|rollout|migration|incident response)\b/iu;
 
 /**
  * Builds one structured bounded before-turn patch from the current user turn
@@ -37,6 +51,7 @@ export async function runBeforeTurn(input: BeforeTurnInput, deps: BeforeTurnDeps
   const recentTurns = normalizeRecentTurns(input.recentTurns, policy.maxRecentTurns, currentTurnText);
   const diagnostics: BeforeTurnPatchDiagnostics = {
     recentTurnCount: recentTurns.length,
+    turnSignalLabels: [],
     durableRecallUsed: false,
     durableRecallCandidateCount: 0,
     procedureRecallUsed: false,
@@ -55,9 +70,24 @@ export async function runBeforeTurn(input: BeforeTurnInput, deps: BeforeTurnDeps
     };
   }
 
-  if (SHORT_SOCIAL_TURN_RE.test(normalizeWhitespace(currentTurnText))) {
+  const turnSignal = inspectTurnSignal(currentTurnText);
+  diagnostics.turnSignalLabels = turnSignal.signalLabels;
+  if (turnSignal.suppressedTurnCategory) {
+    diagnostics.suppressedTurnCategory = turnSignal.suppressedTurnCategory;
+  }
+
+  if (policy.skipTrivialTurns && turnSignal.suppressedTurnCategory && turnSignal.suppressedTurnCategory !== "low_signal") {
     diagnostics.abstained = true;
-    diagnostics.abstentionReasons.push("Current turn was a short social greeting, so before-turn recall abstained.");
+    diagnostics.abstentionReasons.push(turnSignal.reason);
+    return {
+      durableMemory: [],
+      diagnostics,
+    };
+  }
+
+  if (policy.requireTurnSignal && turnSignal.signalLabels.length === 0) {
+    diagnostics.abstained = true;
+    diagnostics.abstentionReasons.push(turnSignal.reason);
     return {
       durableMemory: [],
       diagnostics,
@@ -121,13 +151,14 @@ async function runDurableRecallSelection(
   diagnostics: BeforeTurnPatchDiagnostics,
 ): Promise<BeforeTurnPatchItem[]> {
   diagnostics.durableRecallUsed = true;
+  const durableRecallLimit = Math.max(policy.maxDurableEntries, policy.maxHighConfidenceDurableEntries);
 
   let durableRecallTrace: RecallExecutionTraceSummary | undefined;
   try {
     const recalled = await recall(
       {
         text: query,
-        limit: policy.maxDurableEntries,
+        limit: durableRecallLimit,
         threshold: policy.recallThreshold,
         sessionKey,
       },
@@ -148,7 +179,12 @@ async function runDurableRecallSelection(
       diagnostics.notices.push(...durableRecallTrace.degraded.notices);
     }
 
-    return recalled.map((item) => buildDurablePatchItem(item, deps));
+    const selected = selectDurablePatchItems(
+      recalled.map((item) => buildDurablePatchItem(item, deps)),
+      policy,
+      diagnostics,
+    );
+    return selected;
   } catch (error) {
     diagnostics.durableRecallTrace = durableRecallTrace;
     diagnostics.notices.push(`Before-turn durable recall failed: ${formatErrorMessage(error)}`);
@@ -315,6 +351,111 @@ function buildProcedureQuery(currentTurnText: string, recentTurns: BeforeTurnRec
 }
 
 /**
+ * Internal summary of whether the current turn looks worth proactive recall.
+ */
+type TurnSignalInspection = {
+  signalLabels: BeforeTurnSignalLabel[];
+  suppressedTurnCategory?: BeforeTurnSuppressedTurnCategory;
+  reason: string;
+};
+
+/**
+ * Applies the normal one-item cap and only expands the durable set when every
+ * extra item clears the very-high-confidence threshold.
+ *
+ * @param items - Ranked durable items returned from recall.
+ * @param policy - Effective before-turn policy.
+ * @param diagnostics - Mutable diagnostics sink updated in place.
+ * @returns Final bounded durable set for prompt rendering.
+ */
+function selectDurablePatchItems(
+  items: BeforeTurnPatchItem[],
+  policy: Required<BeforeTurnPolicy>,
+  diagnostics: BeforeTurnPatchDiagnostics,
+): BeforeTurnPatchItem[] {
+  if (policy.maxDurableEntries <= 0 || items.length === 0) {
+    return [];
+  }
+
+  const boundedItems = items.slice(0, policy.maxDurableEntries);
+  const expandedLimit = Math.max(policy.maxDurableEntries, policy.maxHighConfidenceDurableEntries);
+  if (expandedLimit <= policy.maxDurableEntries || items.length <= policy.maxDurableEntries) {
+    return boundedItems;
+  }
+
+  const expansionCandidates = items.slice(0, expandedLimit);
+  const canExpand =
+    expansionCandidates.length > policy.maxDurableEntries && expansionCandidates.every((item) => item.score >= policy.highConfidenceRecallThreshold);
+  if (canExpand) {
+    diagnostics.notices.push(`Before-turn durable recall expanded to ${expansionCandidates.length} high-confidence items.`);
+    return expansionCandidates;
+  }
+
+  diagnostics.notices.push(
+    `Before-turn durable recall kept the top ${boundedItems.length} item${
+      boundedItems.length === 1 ? "" : "s"
+    } because additional candidates were not high confidence.`,
+  );
+  return boundedItems;
+}
+
+/**
+ * Inspects the current turn for strong proactive-recall signal and obvious
+ * low-value chatter/testing patterns.
+ *
+ * @param currentTurnText - Normalized current user turn.
+ * @returns Signal labels plus an early-skip reason when recall should abstain.
+ */
+function inspectTurnSignal(currentTurnText: string): TurnSignalInspection {
+  const normalizedTurn = normalizeWhitespace(currentTurnText);
+  const lowerTurn = normalizedTurn.toLowerCase();
+  const signalLabels = collectTurnSignalLabels(lowerTurn);
+  const wordCount = normalizedTurn.split(/\s+/u).filter((token) => token.length > 0).length;
+  const isShortTurn = wordCount <= SHORT_TURN_MAX_WORDS || normalizedTurn.length <= SHORT_TURN_MAX_CHARS;
+
+  if (signalLabels.length === 0 && (SOCIAL_TURN_RE.test(lowerTurn) || isShortTurn)) {
+    return {
+      signalLabels,
+      suppressedTurnCategory: "short_social",
+      reason: "Current turn was short or social without clear factual, procedural, or task intent.",
+    };
+  }
+
+  if (signalLabels.length === 0) {
+    return {
+      signalLabels,
+      suppressedTurnCategory: "low_signal",
+      reason: "Current turn lacked clear factual, procedural, or task signal, so before-turn recall abstained.",
+    };
+  }
+
+  return {
+    signalLabels,
+    reason: `Current turn showed ${signalLabels.join(", ")} recall signal.`,
+  };
+}
+
+/**
+ * Collects stable signal labels from the normalized current turn text.
+ *
+ * @param lowerTurn - Lowercased current turn text.
+ * @returns Stable signal labels used for diagnostics and gating.
+ */
+function collectTurnSignalLabels(lowerTurn: string): BeforeTurnSignalLabel[] {
+  const labels: BeforeTurnSignalLabel[] = [];
+  if (TASK_SIGNAL_RE.test(lowerTurn)) {
+    labels.push("task");
+  }
+  if (FACTUAL_SIGNAL_RE.test(lowerTurn)) {
+    labels.push("factual");
+  }
+  if (PROCEDURAL_SIGNAL_RE.test(lowerTurn)) {
+    labels.push("procedural");
+  }
+  return labels;
+}
+
+/**
  * Assigns stable one-based ranks to the final durable-memory items.
  *
  * @param items - Final bounded durable-memory set.
@@ -334,15 +475,24 @@ function assignRanks(items: BeforeTurnPatchItem[]): BeforeTurnPatchItem[] {
  * @returns Concrete effective policy.
  */
 function normalizePolicy(policy: BeforeTurnPolicy | undefined): Required<BeforeTurnPolicy> {
+  const maxDurableEntries = normalizeCount(policy?.maxDurableEntries, DEFAULT_MAX_DURABLE_ENTRIES);
+  const maxHighConfidenceDurableEntries = Math.max(
+    maxDurableEntries,
+    normalizeCount(policy?.maxHighConfidenceDurableEntries, DEFAULT_MAX_HIGH_CONFIDENCE_DURABLE_ENTRIES),
+  );
   return {
     enableDurableRecall: policy?.enableDurableRecall !== false,
     enableProcedureSuggestion: policy?.enableProcedureSuggestion !== false,
     maxRecentTurns: normalizeCount(policy?.maxRecentTurns, DEFAULT_MAX_RECENT_TURNS),
     maxQueryChars: normalizeCount(policy?.maxQueryChars, DEFAULT_MAX_QUERY_CHARS),
-    maxDurableEntries: normalizeCount(policy?.maxDurableEntries, DEFAULT_MAX_DURABLE_ENTRIES),
+    maxDurableEntries,
+    maxHighConfidenceDurableEntries,
     maxProcedureCandidates: normalizeCount(policy?.maxProcedureCandidates, DEFAULT_MAX_PROCEDURE_CANDIDATES),
     recallThreshold: normalizeThreshold(policy?.recallThreshold, DEFAULT_RECALL_THRESHOLD),
+    highConfidenceRecallThreshold: normalizeThreshold(policy?.highConfidenceRecallThreshold, DEFAULT_HIGH_CONFIDENCE_RECALL_THRESHOLD),
     procedureThreshold: normalizeThreshold(policy?.procedureThreshold, DEFAULT_PROCEDURE_THRESHOLD),
+    skipTrivialTurns: policy?.skipTrivialTurns ?? DEFAULT_SKIP_TRIVIAL_TURNS,
+    requireTurnSignal: policy?.requireTurnSignal ?? DEFAULT_REQUIRE_TURN_SIGNAL,
   };
 }
 

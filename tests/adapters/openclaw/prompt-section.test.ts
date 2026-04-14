@@ -15,6 +15,7 @@ describe("buildAgenrMemoryPromptSection", () => {
 
     expect(lines.join("\n")).toContain("## Memory Recall");
     expect(lines.join("\n")).toContain("call agenr_recall first");
+    expect(lines.join("\n")).toContain("injected background context");
     expect(lines.join("\n")).toContain("historical and episodic recall");
     expect(lines.join("\n")).toContain("mode=entries");
     expect(lines.join("\n")).toContain("mode=auto");
@@ -23,6 +24,7 @@ describe("buildAgenrMemoryPromptSection", () => {
     expect(lines.join("\n")).toContain("what changed from X to Y");
     expect(lines.join("\n")).toContain("Memory authority");
     expect(lines.join("\n")).toContain("One focused agenr_recall call with the right scope beats several broad ones.");
+    expect(lines.join("\n")).toContain("non-user background context");
     expect(lines.join("\n")).toContain("future-session test");
     expect(lines.join("\n")).toContain("canonical record");
     expect(lines.join("\n")).toContain("version control");

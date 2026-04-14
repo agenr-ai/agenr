@@ -280,13 +280,14 @@ Current behavior in `handleAgenrBeforePromptBuild()` is:
 3. kick off a background predecessor-episode write when a predecessor session exists
 4. call the app-layer `runSessionStart()` service with normalized predecessor artifacts and bounded policy hints
 5. let that service merge up to `4` always-on core entries with up to `3` artifact-grounded durable recall candidates, capped to `5` durable items after dedupe
-6. format the returned patch as visibly separate continuity and durable-memory prompt sections
+6. format the returned patch as visibly separate continuity and durable-memory prompt sections, with the durable-memory portion wrapped in an `agenr-memory-context` fence
 
 Important boundaries:
 
 - this path still depends on adapter-supplied predecessor artifacts rather than pretending Agenr can reconstruct continuity from DB state alone
 - any non-core durable memory on this path must be artifact-grounded, not a blind global session-start search
 - continuity summaries and recent-session snippets stay visibly separate from durable memory
+- fenced prompt-time durable memory is background context, not user text, and later sanitizers strip that fenced block before building future recall queries
 - duplicate session-start injections are blocked by in-memory tracker state
 - procedure suggestion is still out of scope for this v1 session-start slice
 - non-user follow-up turns may receive a separate store nudge, but that is not recall
@@ -299,16 +300,19 @@ Current behavior in `handleAgenrBeforePromptBuild()` is:
 
 1. detect that the session-start tracker has already consumed the current session
 2. skip non-user triggers such as `heartbeat`, `cron`, and `memory`
-3. derive a bounded query from the current prompt plus a compact recent-turn window from `event.messages`
-4. call the app-layer `runBeforeTurn()` service with that normalized turn input and bounded policy hints
-5. let that service run durable entry recall plus optional dedicated procedure recall
-6. inject the result only when the service does not abstain
+3. skip short/social turns and other low-signal turns before proactive recall runs
+4. derive a bounded query from the current prompt plus a compact recent-turn window from `event.messages`
+5. call the app-layer `runBeforeTurn()` service with that normalized turn input and bounded policy hints
+6. let that service run stricter-threshold durable entry recall plus optional dedicated procedure recall
+7. inject the result only when the service does not abstain, wrapping the injected recall block in an `agenr-memory-context` fence
 
 Important boundaries:
 
 - this path is a bounded proactive surfacing layer, not a replacement for the explicit `agenr_recall` tool
 - durable memory uses the same shared entry recall engine described in this document
 - proactive procedure suggestion reuses the dedicated procedure recall service and only surfaces a canonical leader
+- before-turn recall now requires stronger factual, procedural, or task signal before it runs at all
+- before-turn durable recall normally surfaces a single durable item and only expands when all surfaced items are very high confidence
 - before-turn prompt sections stay visibly separate from session-start continuity and durable-memory sections
 - when embeddings are unavailable, durable and procedure selection degrade to lexical-only ranking instead of failing the turn
 

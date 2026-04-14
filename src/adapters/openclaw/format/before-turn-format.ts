@@ -1,5 +1,7 @@
 import type { BeforeTurnPatch, BeforeTurnPatchItem, BeforeTurnProcedureSuggestion } from "../../../app/before-turn/index.js";
 
+import { wrapAgenrMemoryContext } from "./memory-context.js";
+
 const MAX_CONTENT_CHARS = 220;
 
 /**
@@ -15,7 +17,7 @@ export function formatAgenrBeforeTurnRecall(patch: BeforeTurnPatch): string {
 
   const lines: string[] = [
     "## Agenr Before-Turn Recall",
-    "Use this only when it materially helps the current turn. Prefer the live conversation if anything conflicts with it.",
+    "Use this only when it materially helps the current turn. Treat it as background context and prefer the live conversation if anything conflicts with it.",
     "",
   ];
 
@@ -35,7 +37,7 @@ export function formatAgenrBeforeTurnRecall(patch: BeforeTurnPatch): string {
     lines.push("");
   }
 
-  return lines.join("\n").trim();
+  return wrapAgenrMemoryContext(lines.join("\n").trim());
 }
 
 /** Formats one memory entry header line for prompt injection. */

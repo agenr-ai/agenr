@@ -3,6 +3,16 @@ import type { ClaimCentricClaimStatus, ClaimCentricMemoryState } from "../recall
 import type { Entry, Procedure } from "../../core/types.js";
 
 /**
+ * High-level category explaining why a turn was suppressed before recall ran.
+ */
+export type BeforeTurnSuppressedTurnCategory = "short_social" | "low_signal";
+
+/**
+ * High-level label describing why a turn looked recall-worthy.
+ */
+export type BeforeTurnSignalLabel = "task" | "factual" | "procedural";
+
+/**
  * Normalized recent conversational turn supplied by the host adapter.
  */
 export interface BeforeTurnRecentTurn {
@@ -26,12 +36,20 @@ export interface BeforeTurnPolicy {
   maxQueryChars?: number;
   /** Maximum durable-memory rows to return. */
   maxDurableEntries?: number;
+  /** Maximum durable-memory rows allowed when all surfaced items are very high confidence. */
+  maxHighConfidenceDurableEntries?: number;
   /** Maximum procedure candidates to consider before canonical selection. */
   maxProcedureCandidates?: number;
   /** Optional score threshold used for durable-memory recall. */
   recallThreshold?: number;
+  /** Optional score threshold required before expanding beyond the normal durable-item cap. */
+  highConfidenceRecallThreshold?: number;
   /** Optional score threshold used for canonical procedure selection. */
   procedureThreshold?: number;
+  /** Enables or disables early skips for short or social turns. */
+  skipTrivialTurns?: boolean;
+  /** Enables or disables the stronger factual/procedural/task signal gate. */
+  requireTurnSignal?: boolean;
 }
 
 /**
@@ -113,6 +131,10 @@ export interface BeforeTurnPatchDiagnostics {
   query?: string;
   /** Number of recent turns actually used while building the query. */
   recentTurnCount: number;
+  /** High-level labels describing the turn signal observed before recall. */
+  turnSignalLabels: BeforeTurnSignalLabel[];
+  /** Optional category explaining why the current turn was suppressed early. */
+  suppressedTurnCategory?: BeforeTurnSuppressedTurnCategory;
   /** Whether durable-memory recall was attempted. */
   durableRecallUsed: boolean;
   /** Count of durable-memory candidates considered before final shaping. */

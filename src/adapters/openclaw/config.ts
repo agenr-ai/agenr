@@ -318,8 +318,23 @@ function normalizeBeforeTurnMemoryPolicyConfig(
   const errors: string[] = [];
   const enabled = normalizeOptionalBoolean(value.enabled, "memoryPolicy.beforeTurn.enabled", errors);
   const procedureSuggestion = normalizeOptionalBoolean(value.procedureSuggestion, "memoryPolicy.beforeTurn.procedureSuggestion", errors);
+  const maxDurableEntries = normalizeOptionalPositiveInteger(value.maxDurableEntries, "memoryPolicy.beforeTurn.maxDurableEntries", errors);
+  const recallThreshold = normalizeOptionalUnitInterval(value.recallThreshold, "memoryPolicy.beforeTurn.recallThreshold", errors);
+  const highConfidenceRecallThreshold = normalizeOptionalUnitInterval(
+    value.highConfidenceRecallThreshold,
+    "memoryPolicy.beforeTurn.highConfidenceRecallThreshold",
+    errors,
+  );
+  const procedureThreshold = normalizeOptionalUnitInterval(value.procedureThreshold, "memoryPolicy.beforeTurn.procedureThreshold", errors);
 
-  const allowedKeys = new Set(["enabled", "procedureSuggestion"]);
+  const allowedKeys = new Set([
+    "enabled",
+    "procedureSuggestion",
+    "maxDurableEntries",
+    "recallThreshold",
+    "highConfidenceRecallThreshold",
+    "procedureThreshold",
+  ]);
   for (const key of Object.keys(value)) {
     if (!allowedKeys.has(key)) {
       errors.push(`unknown config field: memoryPolicy.beforeTurn.${key}`);
@@ -333,10 +348,19 @@ function normalizeBeforeTurnMemoryPolicyConfig(
   return {
     ok: true,
     value:
-      enabled !== undefined || procedureSuggestion !== undefined
+      enabled !== undefined ||
+      procedureSuggestion !== undefined ||
+      maxDurableEntries !== undefined ||
+      recallThreshold !== undefined ||
+      highConfidenceRecallThreshold !== undefined ||
+      procedureThreshold !== undefined
         ? {
             ...(enabled !== undefined ? { enabled } : {}),
             ...(procedureSuggestion !== undefined ? { procedureSuggestion } : {}),
+            ...(maxDurableEntries !== undefined ? { maxDurableEntries } : {}),
+            ...(recallThreshold !== undefined ? { recallThreshold } : {}),
+            ...(highConfidenceRecallThreshold !== undefined ? { highConfidenceRecallThreshold } : {}),
+            ...(procedureThreshold !== undefined ? { procedureThreshold } : {}),
           }
         : undefined,
   };
@@ -449,6 +473,27 @@ function normalizeOptionalPositiveInteger(value: unknown, label: string, errors:
 
   if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
     errors.push(`${label} must be a positive integer when provided`);
+    return undefined;
+  }
+
+  return value;
+}
+
+/**
+ * Parses one optional unit-interval plugin-config field.
+ *
+ * @param value - Raw field value.
+ * @param label - Stable validation label.
+ * @param errors - Mutable validation error collection.
+ * @returns Numeric value when valid, otherwise `undefined`.
+ */
+function normalizeOptionalUnitInterval(value: unknown, label: string, errors: string[]): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
+    errors.push(`${label} must be a number between 0 and 1 when provided`);
     return undefined;
   }
 

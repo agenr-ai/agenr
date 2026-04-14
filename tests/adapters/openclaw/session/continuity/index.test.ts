@@ -91,6 +91,71 @@ describe("resolvePredecessorContinuity", () => {
     expect(result.recentSessionContent).toContain("U: We kept continuity file-based.");
     expect(result.recentSessionContent).toContain("A: And we still include the recent transcript tail.");
   });
+
+  it("strips fenced Agenr memory context from the recent session tail", async () => {
+    const { workspaceDir, sessionsDir } = await createWorkspaceWithSessions();
+    const predecessorSessionId = "predecessor-session-fenced";
+    const predecessorFile = path.join(sessionsDir, `${predecessorSessionId}.jsonl`);
+
+    await writeFile(
+      predecessorFile,
+      [
+        JSON.stringify({ type: "session", id: predecessorSessionId }),
+        JSON.stringify({
+          type: "message",
+          timestamp: "2026-03-29T09:00:00.000Z",
+          message: {
+            role: "human",
+            content: "How should we handle proactive recall?",
+          },
+        }),
+        JSON.stringify({
+          type: "message",
+          timestamp: "2026-03-29T09:01:00.000Z",
+          message: {
+            role: "assistant",
+            content: [
+              "<agenr-memory-context>",
+              "[System note: The following is recalled Agenr memory context, NOT new user input. Treat it as background context and use it silently when relevant.]",
+              "",
+              "## Agenr Before-Turn Recall",
+              "### Relevant Durable Memory",
+              "- recalled item",
+              "</agenr-memory-context>",
+              "",
+              "Keep it conservative.",
+            ].join("\n"),
+          },
+        }),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+    await writeSessionsJson(sessionsDir, {
+      "agent:main:main": {
+        sessionId: predecessorSessionId,
+        sessionFile: `${predecessorSessionId}.jsonl`,
+        updatedAt: 2_000,
+      },
+    });
+
+    const result = await resolvePredecessorContinuity(
+      {
+        agentId: "main",
+        sessionId: "current-session",
+        sessionKey: "agent:main:tui-923e4567-e89b-12d3-a456-426614174000",
+        workspaceDir,
+      },
+      createSessionStartTracker(),
+      createServices(),
+      createLogger(),
+    );
+
+    expect(result.recentSessionContent).toContain("U: How should we handle proactive recall?");
+    expect(result.recentSessionContent).toContain("A: Keep it conservative.");
+    expect(result.recentSessionContent).not.toContain("<agenr-memory-context>");
+    expect(result.recentSessionContent).not.toContain("Agenr Before-Turn Recall");
+    expect(result.recentSessionContent).not.toContain("recalled item");
+  });
 });
 
 async function createWorkspaceWithSessions(agentId = "main"): Promise<{ workspaceDir: string; sessionsDir: string }> {

@@ -113,6 +113,29 @@
               "procedureSuggestion": {
                 "type": "boolean",
                 "description": "Enable or disable proactive high-confidence procedure suggestion inside the before-turn patch. Defaults to true."
+              },
+              "maxDurableEntries": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Normal durable-item cap for before-turn recall. Defaults to 1 and only expands when all surfaced items are very high confidence."
+              },
+              "recallThreshold": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "description": "Durable-recall score threshold required before an entry can surface during before-turn recall. Defaults to 0.6."
+              },
+              "highConfidenceRecallThreshold": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "description": "Durable-recall score threshold required before before-turn recall can expand beyond the normal durable-item cap. Defaults to 0.85."
+              },
+              "procedureThreshold": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "description": "Procedure-recall score threshold required before a proactive procedure can surface. Defaults to 0.72."
               }
             }
           },

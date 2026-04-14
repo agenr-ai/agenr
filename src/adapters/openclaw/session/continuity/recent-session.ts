@@ -1,5 +1,6 @@
 import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
 
+import { containsAgenrMemoryContext, stripAgenrMemoryContext } from "../../format/memory-context.js";
 import { openClawTranscriptParser } from "../../transcript/parser.js";
 
 const RECENT_SESSION_MESSAGE_LIMIT = 6;
@@ -83,8 +84,8 @@ function capRecentSession(value: string, maxChars: number): string {
  * @returns Cleaned recent-session text suitable for prompt injection.
  */
 function sanitizeRecentSessionMessage(text: string, role: "user" | "assistant"): string {
-  const wrapperDetected = SESSION_START_SECTION_HEADINGS.some((heading) => text.includes(heading));
-  let cleaned = text;
+  const wrapperDetected = containsAgenrMemoryContext(text) || SESSION_START_SECTION_HEADINGS.some((heading) => text.includes(heading));
+  let cleaned = stripAgenrMemoryContext(text);
 
   for (const heading of SESSION_START_SECTION_HEADINGS) {
     cleaned = cleaned.split(heading).join(" ");

@@ -4,6 +4,7 @@ import type { BeforeTurnRecentTurn } from "../../../app/before-turn/index.js";
 import { resolveStoreNudgeConfig } from "../config.js";
 import { writeOpenClawPredecessorEpisode } from "../episode/episode-writer.js";
 import { formatAgenrBeforeTurnRecall } from "../format/before-turn-format.js";
+import { containsAgenrMemoryContext, stripAgenrMemoryContext } from "../format/memory-context.js";
 import { buildStoreNudgeMessage } from "../format/nudge-format.js";
 import { formatAgenrSessionStartRecall } from "../format/recall-format.js";
 import { formatErrorMessage, formatSessionContext } from "../logging.js";
@@ -24,10 +25,14 @@ const DEFAULT_SESSION_START_POLICY = {
   maxArtifactChars: 1_200,
 } as const;
 const DEFAULT_BEFORE_TURN_POLICY = {
-  maxDurableEntries: 3,
-  maxRecentTurns: 4,
-  maxQueryChars: 900,
+  maxDurableEntries: 1,
+  maxHighConfidenceDurableEntries: 2,
+  maxRecentTurns: 2,
+  maxQueryChars: 450,
   maxProcedureCandidates: 3,
+  recallThreshold: 0.6,
+  highConfidenceRecallThreshold: 0.85,
+  procedureThreshold: 0.72,
 } as const;
 const NON_USER_TRIGGER_SET = new Set(["heartbeat", "cron", "memory"]);
 const DEFAULT_STORE_NUDGE_CONFIG = resolveStoreNudgeConfig(undefined);
@@ -199,7 +204,11 @@ async function resolveBeforeTurnResult(
     }
     if (beforeTurnPatch.diagnostics.abstained) {
       params.logger.debug?.(
-        `[agenr] before_prompt_build: before-turn abstained for ${sessionContext}: ${beforeTurnPatch.diagnostics.abstentionReasons.join(" | ") || "none"}`,
+        `[agenr] before_prompt_build: before-turn abstained for ${sessionContext}: category=${
+          beforeTurnPatch.diagnostics.suppressedTurnCategory ?? "none"
+        } signals=${
+          beforeTurnPatch.diagnostics.turnSignalLabels.join(",") || "none"
+        } reasons=${beforeTurnPatch.diagnostics.abstentionReasons.join(" | ") || "none"}`,
       );
     }
     params.logger.debug?.(
@@ -314,6 +323,18 @@ function resolveBeforeTurnPolicy(services: Awaited<AgenrOpenClawBeforePromptBuil
   return {
     ...DEFAULT_BEFORE_TURN_POLICY,
     enableProcedureSuggestion: services.pluginConfig.memoryPolicy?.beforeTurn?.procedureSuggestion !== false,
+    ...(services.pluginConfig.memoryPolicy?.beforeTurn?.maxDurableEntries !== undefined
+      ? { maxDurableEntries: services.pluginConfig.memoryPolicy.beforeTurn.maxDurableEntries }
+      : {}),
+    ...(services.pluginConfig.memoryPolicy?.beforeTurn?.recallThreshold !== undefined
+      ? { recallThreshold: services.pluginConfig.memoryPolicy.beforeTurn.recallThreshold }
+      : {}),
+    ...(services.pluginConfig.memoryPolicy?.beforeTurn?.highConfidenceRecallThreshold !== undefined
+      ? { highConfidenceRecallThreshold: services.pluginConfig.memoryPolicy.beforeTurn.highConfidenceRecallThreshold }
+      : {}),
+    ...(services.pluginConfig.memoryPolicy?.beforeTurn?.procedureThreshold !== undefined
+      ? { procedureThreshold: services.pluginConfig.memoryPolicy.beforeTurn.procedureThreshold }
+      : {}),
   };
 }
 
@@ -401,9 +422,13 @@ function sanitizeRecentTurnText(text: string, role: "user" | "assistant"): strin
     return "";
   }
 
-  const wrapperDetected = text.includes("## Agenr Session Recall") || text.includes("## Agenr Before-Turn Recall") || text.includes("[MEMORY CHECK]");
+  const wrapperDetected =
+    containsAgenrMemoryContext(text) ||
+    text.includes("## Agenr Session Recall") ||
+    text.includes("## Agenr Before-Turn Recall") ||
+    text.includes("[MEMORY CHECK]");
 
-  let cleaned = text;
+  let cleaned = stripAgenrMemoryContext(text);
   const headings = [
     "## Previous session summary",
     "## Recent session",
@@ -423,7 +448,7 @@ function sanitizeRecentTurnText(text: string, role: "user" | "assistant"): strin
     return cleaned;
   }
 
-  const segments = text
+  const segments = stripAgenrMemoryContext(text)
     .split(/\n\s*\n/gu)
     .map((segment) => collapseWhitespace(segment))
     .filter((segment) => segment.length > 0);

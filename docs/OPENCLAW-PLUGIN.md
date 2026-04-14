@@ -91,6 +91,10 @@ The runtime config is currently:
 - `storeNudge` - optional nested config with `enabled`, `threshold`, and `maxPerSession`
 - `memoryPolicy.beforeTurn.enabled` - optional toggle for the proactive before-turn patch path
 - `memoryPolicy.beforeTurn.procedureSuggestion` - optional toggle for the before-turn procedure section
+- `memoryPolicy.beforeTurn.maxDurableEntries` - optional normal durable-item cap for before-turn recall
+- `memoryPolicy.beforeTurn.recallThreshold` - optional durable-recall score floor for before-turn recall
+- `memoryPolicy.beforeTurn.highConfidenceRecallThreshold` - optional score floor required before before-turn recall can expand beyond the normal durable-item cap
+- `memoryPolicy.beforeTurn.procedureThreshold` - optional score floor for proactive procedure suggestion
 - `memoryPolicy.slotPolicies.attributeHeads` - optional attribute-head overrides for read-time claim-slot policy classes
 
 Unknown keys are rejected.
@@ -178,6 +182,7 @@ Current guidance covers:
 - `mode=episodes` for explicit session-narrative recall
 - put time phrases directly in the recall query for temporal questions
 - memory authority ordering: durable entries, then episodes, then continuity/handoffs, then live verification
+- automatically injected Agenr memory is background context, not user text, and should be used silently when relevant
 - storage doctrine, type boundaries, and what not to store when `agenr_store` is available
 - fix contradicted memory with `agenr_update` or `agenr_retire`
 - use `agenr_trace` for provenance or supersession questions
@@ -222,6 +227,8 @@ The formatted prompt can include:
 - `### Core Memory`
 - `### Relevant Durable Memory`
 
+Only the recalled durable-memory portion is fenced. Continuity sections stay outside the fence so they still read like restart context rather than recalled durable memory.
+
 If all sections are empty, the hook returns `undefined`.
 
 Any unexpected failure is logged and swallowed so prompt building can continue.
@@ -245,6 +252,10 @@ Current behavior:
 - Agenr app code decides whether to surface anything at all
 - durable memory comes from the shared entry `recall()` path
 - at most one canonical procedure suggestion can surface through the dedicated procedure recall service
+- the adapter skips short/social turns and other low-signal turns before injecting anything
+- durable recall now defaults to a substantially stricter threshold and normally surfaces at most one durable item
+- the durable section only expands beyond the normal cap when every surfaced item clears a very-high-confidence threshold
+- the adapter renders recalled memory inside an `agenr-memory-context` fence so later prompt-building passes can strip it cleanly
 - the adapter renders the result into a separate `## Agenr Before-Turn Recall` block with `### Relevant Durable Memory` and optional `### Suggested Procedure`
 - non-user triggers `heartbeat`, `cron`, and `memory` still abstain
 - empty or low-signal turns can abstain cleanly without injecting anything

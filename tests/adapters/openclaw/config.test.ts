@@ -51,6 +51,10 @@ describe("agenr OpenClaw plugin config", () => {
           beforeTurn: {
             enabled: true,
             procedureSuggestion: false,
+            maxDurableEntries: 1,
+            recallThreshold: 0.6,
+            highConfidenceRecallThreshold: 0.85,
+            procedureThreshold: 0.72,
           },
           sessionStart: {
             relevantDurableMemory: false,
@@ -78,6 +82,10 @@ describe("agenr OpenClaw plugin config", () => {
         beforeTurn: {
           enabled: true,
           procedureSuggestion: false,
+          maxDurableEntries: 1,
+          recallThreshold: 0.6,
+          highConfidenceRecallThreshold: 0.85,
+          procedureThreshold: 0.72,
         },
         sessionStart: {
           relevantDurableMemory: false,
@@ -150,6 +158,10 @@ describe("agenr OpenClaw plugin config", () => {
         beforeTurn: {
           enabled: "yes",
           procedureSuggestion: "sometimes",
+          maxDurableEntries: 0,
+          recallThreshold: 2,
+          highConfidenceRecallThreshold: -1,
+          procedureThreshold: "strict",
           extra: true,
         },
         slotPolicies: {
@@ -170,6 +182,10 @@ describe("agenr OpenClaw plugin config", () => {
         "unknown config field: memoryPolicy.sessionStart.extra",
         "memoryPolicy.beforeTurn.enabled must be a boolean when provided",
         "memoryPolicy.beforeTurn.procedureSuggestion must be a boolean when provided",
+        "memoryPolicy.beforeTurn.maxDurableEntries must be a positive integer when provided",
+        "memoryPolicy.beforeTurn.recallThreshold must be a number between 0 and 1 when provided",
+        "memoryPolicy.beforeTurn.highConfidenceRecallThreshold must be a number between 0 and 1 when provided",
+        "memoryPolicy.beforeTurn.procedureThreshold must be a number between 0 and 1 when provided",
         "unknown config field: memoryPolicy.beforeTurn.extra",
         "memoryPolicy.slotPolicies.attributeHeads.bad key! must use a canonical attribute-head label",
         'memoryPolicy.slotPolicies.attributeHeads.support must be "exclusive" or "multivalued"',
