@@ -130,7 +130,7 @@ describe("runBeforeTurnEvalCase", () => {
         durableRecallUsed: false,
         procedureRecallUsed: false,
         abstained: true,
-        abstentionReasons: ["Current turn was a short social greeting, so before-turn recall abstained."],
+        abstentionReasons: ["Current turn was short or social without clear factual, procedural, or task intent."],
       },
     });
   });
