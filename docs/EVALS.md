@@ -1,17 +1,21 @@
 # Evals
 
-`agenr` currently exposes one eval seam: a narrow internal recall-eval HTTP adapter used by `agenr-evals` to run isolated case-local recall requests against real `agenr` behavior, including degraded lexical fallback, unified recall, and procedure-aware auto routing inside unified recall.
+`agenr` currently exposes two internal eval seams on one local-only HTTP server:
 
-The current contract is intentionally shaped around production parity rather than backward compatibility. The seam distinguishes:
+- a recall seam used by `agenr-evals` to run isolated case-local recall requests against real `agenr` behavior, including degraded lexical fallback, unified recall, and procedure-aware auto routing inside unified recall
+- a before-turn seam used by `agenr-evals` to run isolated case-local `runBeforeTurn()` requests against the real app-layer selector and prompt renderer
+
+The current contract is intentionally shaped around production parity rather than backward compatibility. The recall seam distinguishes:
 
 - core-path evals that exercise the same `recall()` path as the CLI
 - unified-path evals that exercise the same `runUnifiedRecall()` path and caller context as the OpenClaw recall tool
 
-This seam is intentionally small:
+These seams are intentionally small:
 
-- one transport: `POST /internal/evals/recall/run`
-- one eval family: recall
-- one case shape: one request in, one response out
+- one transport host: the internal eval dev server
+- two routes: `POST /internal/evals/recall/run` and `POST /internal/evals/before-turn/run`
+- two eval families: recall and before-turn
+- one case shape per family: one request in, one response out
 - one provisioning mode: exact fixture seeding into an isolated SQLite sandbox
 
 It is not a general eval platform. `agenr-evals` owns manifests, suite orchestration, artifacts, comparisons, summaries, and reporting. `agenr` owns the execution seam.
@@ -20,10 +24,18 @@ This document describes the code as it exists today.
 
 ## Code map
 
-- `package.json` - `internal:recall-eval-server` dev script
-- `src/internal-recall-eval-server.ts` - dev-only entry point that resolves host and port, starts the server, and handles shutdown
-- `src/adapters/api/internal-recall-eval-server.ts` - tiny Node HTTP server with exactly one internal route
+- `package.json` - `internal:eval-server` preferred dev script plus `internal:recall-eval-server` compatibility alias
+- `src/internal-eval-server.ts` - dev-only entry point that resolves host and port, starts the shared server, and handles shutdown
+- `src/internal-recall-eval-server.ts` - compatibility entry point that forwards to the shared server
+- `src/adapters/api/internal-eval-server.ts` - tiny Node HTTP server with the internal eval route set
+- `src/adapters/api/internal-eval-routes.ts` - deterministic route registry for the internal eval server
+- `src/adapters/api/routes/internal-before-turn-eval.ts` - thin `POST /internal/evals/before-turn/run` route and boundary error mapping
 - `src/adapters/api/routes/internal-recall-eval.ts` - thin `POST /internal/evals/recall/run` route and boundary error mapping
+- `src/adapters/api/validation/before-turn-eval-request.ts` - strict JSON request validation for before-turn eval cases
+- `src/adapters/api/validation/internal-eval-shared.ts` - shared sandbox and fixture validation helpers
+- `src/app/evals/before-turn/contracts.ts` - stable before-turn request, response, output, and timing types
+- `src/app/evals/before-turn/run-before-turn-eval-case.ts` - top-level app service that sets up the sandbox, provisions fixtures, runs `runBeforeTurn()`, and normalizes the response
+- `src/app/evals/before-turn/normalize-response.ts` - stable success and error envelope shaping for before-turn evals
 - `src/adapters/api/validation/recall-eval-request.ts` - strict JSON request validation and unexpected-field rejection
 - `src/app/evals/recall/contracts.ts` - stable request, response, diagnostics, timing, sandbox, and execution-path types
 - `src/app/evals/recall/run-recall-eval-case.ts` - top-level app service that sets up the sandbox, provisions fixtures, runs recall, and normalizes the response
@@ -41,6 +53,7 @@ This document describes the code as it exists today.
 The split is deliberate:
 
 - `core/` owns real recall behavior and trace summaries
+- `app/evals/before-turn/` owns isolated sandbox execution for the app-layer before-turn selector
 - `app/evals/recall/` owns sandbox setup, exact fixture provisioning, diagnostics assembly, and response normalization
 - `app/recall/` owns unified recall routing when the eval request selects that path
 - `adapters/api/` owns JSON parsing, request validation, and HTTP mapping
@@ -54,7 +67,7 @@ Current explicit non-goals:
 - no benchmark scoring or pass/fail policy inside `agenr`
 - no trace-file or candidate-snapshot artifact system
 - no fixture CRUD API
-- no second transport layer
+- no second transport layer beyond the shared internal eval server
 
 ## Surface
 
@@ -63,20 +76,27 @@ There is no user-facing eval CLI command.
 The current developer surface is:
 
 ```bash
+pnpm internal:eval-server
+```
+
+Compatibility alias:
+
+```bash
 pnpm internal:recall-eval-server
 ```
 
-That script currently runs:
+The preferred script currently runs:
 
 ```bash
 pnpm run build:root
-node dist/internal-recall-eval-server.js
+node dist/internal-eval-server.js
 ```
 
-The local server exposes exactly one route:
+The local server exposes exactly two routes:
 
 ```txt
 POST /internal/evals/recall/run
+POST /internal/evals/before-turn/run
 ```
 
 Defaults:
@@ -84,7 +104,12 @@ Defaults:
 - host: `127.0.0.1`
 - port: `4010`
 
-Optional overrides:
+Preferred optional overrides:
+
+- `AGENR_INTERNAL_EVAL_HOST`
+- `AGENR_INTERNAL_EVAL_PORT`
+
+Compatibility overrides still honored by the shared server entrypoint:
 
 - `AGENR_INTERNAL_RECALL_EVAL_HOST`
 - `AGENR_INTERNAL_RECALL_EVAL_PORT`
@@ -92,7 +117,70 @@ Optional overrides:
 Server behavior is intentionally tiny:
 
 - any other path returns `404 Not found.`
-- any other method on the route returns `405` with `Allow: POST`
+- any other method on either route returns `405` with `Allow: POST`
+
+## Before-turn seam
+
+The before-turn seam is the primary feature seam for selector-quality testing. It exercises the real `runBeforeTurn()` app service against isolated seeded state instead of inferring behavior from recall-only output.
+
+The local route is:
+
+```txt
+POST /internal/evals/before-turn/run
+```
+
+Top-level request shape:
+
+```json
+{
+  "caseId": "duke-identity-01",
+  "memoryPool": [],
+  "procedurePool": [],
+  "beforeTurnInput": {
+    "sessionKey": "agent:main:test",
+    "currentTurnText": "who is Duke?",
+    "recentTurns": [
+      {
+        "role": "assistant",
+        "text": "We were just talking about dogs."
+      }
+    ],
+    "trigger": "user",
+    "policy": {
+      "enableDurableRecall": true,
+      "enableProcedureSuggestion": false,
+      "maxRecentTurns": 2,
+      "maxQueryChars": 450,
+      "maxDurableEntries": 1,
+      "maxProcedureCandidates": 3,
+      "recallThreshold": 0.25,
+      "procedureThreshold": 0.7
+    }
+  },
+  "options": {
+    "includeDiagnostics": true,
+    "includeRenderedPatch": true,
+    "includeTimings": true
+  }
+}
+```
+
+Successful responses include:
+
+- `output.abstained`
+- `output.selectedEntryIds`
+- `output.selectedProcedureKey`
+- `output.patch`
+- optional `output.renderedPatchText`
+- optional `diagnostics`
+- optional `timings`
+- `sandbox`
+
+Current explicit non-goals for this seam:
+
+- no OpenClaw `before_prompt_build` eval route
+- no raw candidate dumps
+- no scoring, manifests, or answer-lift logic inside `agenr`
 
 ## Request contract
 
@@ -280,13 +368,13 @@ Invalid JSON or invalid request shapes return a structured `400` response with:
 
 ### 1. Local server startup
 
-`pnpm internal:recall-eval-server` builds `dist/internal-recall-eval-server.js` from the root package, then starts the tiny dev server.
+`pnpm internal:eval-server` builds `dist/internal-eval-server.js` from the root package, then starts the shared internal eval dev server. The compatibility alias `pnpm internal:recall-eval-server` starts the same server.
 
 The runtime entry point:
 
 - resolves host and port from the environment
 - starts the local-only HTTP server
-- prints the base URL plus route path
+- prints the base URL plus served route paths
 - installs `SIGINT` and `SIGTERM` handlers for graceful shutdown
 
 ### 2. HTTP boundary validation
@@ -568,7 +656,7 @@ The intended local flow is:
 
 ```bash
 cd /path/to/agenr
-pnpm internal:recall-eval-server
+pnpm internal:eval-server
 ```
 
 Then from `agenr-evals`:
@@ -578,7 +666,7 @@ cd /path/to/agenr-evals
 ./bin/evals run --manifest agenr-recall-http --adapter agenr-recall-http
 ```
 
-That manifest exists today at `manifests/agenr-recall-http.json` in the `agenr-evals` repo and points at the same internal route.
+That manifest exists today at `manifests/agenr-recall-http.json` in the `agenr-evals` repo and points at the shared internal eval server's recall route.
 
 If you override the local server URL, point `agenr-evals` at it with:
 

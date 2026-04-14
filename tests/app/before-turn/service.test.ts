@@ -29,6 +29,26 @@ describe("runBeforeTurn", () => {
     expect(deps.procedures.procedureFtsSearch).not.toHaveBeenCalled();
   });
 
+  it("abstains before recall runs for short social greetings", async () => {
+    const deps = createDeps();
+
+    const result = await runBeforeTurn(
+      {
+        currentTurnText: "hello",
+      },
+      deps,
+    );
+
+    expect(result.durableMemory).toEqual([]);
+    expect(result.procedure).toBeUndefined();
+    expect(result.diagnostics.abstained).toBe(true);
+    expect(result.diagnostics.abstentionReasons).toContain("Current turn was a short social greeting, so before-turn recall abstained.");
+    expect(result.diagnostics.durableRecallUsed).toBe(false);
+    expect(result.diagnostics.procedureRecallUsed).toBe(false);
+    expect(deps.recall.embed).not.toHaveBeenCalled();
+    expect(deps.procedures.procedureFtsSearch).not.toHaveBeenCalled();
+  });
+
   it("returns a bounded durable-only patch when procedure suggestion is disabled", async () => {
     const entry = createEntry({
       id: "entry-decision",

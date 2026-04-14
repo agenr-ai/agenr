@@ -15,6 +15,7 @@ export type {
   RecallEvalFaultInjectionRequest,
   RecallEvalFilteringDiagnostics,
   RecallEvalFixtureEntry,
+  RecallEvalFixtureProcedure,
   RecallEvalPath,
   RecallEvalProjectedEntryMetadata,
   RecallEvalProvisionDiagnostics,

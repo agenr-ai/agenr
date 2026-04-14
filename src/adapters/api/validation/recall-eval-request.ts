@@ -9,12 +9,22 @@ import type {
   RecallEvalUnifiedRequest,
 } from "../../../app/evals/recall/index.js";
 import type { ClaimSlotPolicyConfig, ClaimSlotPolicy } from "../../../core/claim-slot-policy.js";
-import { CLAIM_KEY_SOURCES, CLAIM_KEY_STATUSES, CLAIM_SUPPORT_MODES, ENTRY_TYPES, EXPIRY_LEVELS } from "../../../core/types.js";
+import { ENTRY_TYPES } from "../../../core/types.js";
+import {
+  extractParseableCaseId,
+  mapFixtureEntryDto as mapSharedFixtureEntryDto,
+  mapSandboxRequestDto as mapSharedSandboxRequestDto,
+  parseMemoryPool,
+  parseObject,
+  parseOptionalStringArray,
+  parseOptionalThreshold,
+  parseSandbox,
+  type InternalEvalFixtureEntryDto,
+} from "./internal-eval-shared.js";
 import {
   isRecord,
   parseOptionalBoolean,
   parseOptionalIntegerInRange,
-  parseOptionalTimestampString,
   parseOptionalTrimmedString,
   parseRequiredTrimmedString,
   pushIssue,
@@ -23,35 +33,6 @@ import {
 } from "../../shared/validation.js";
 
 const ROOT_REQUEST_KEYS = new Set<string>(["caseId", "description", "recallPath", "sandbox", "memoryPool", "recallRequest", "unified", "options"]);
-const SANDBOX_REQUEST_KEYS = new Set<string>(["root", "preserve"]);
-const FIXTURE_ENTRY_KEYS = new Set<string>([
-  "id",
-  "type",
-  "subject",
-  "content",
-  "importance",
-  "expiry",
-  "tags",
-  "source_file",
-  "source_context",
-  "created_at",
-  "updated_at",
-  "retired",
-  "retired_at",
-  "retired_reason",
-  "superseded_by",
-  "claim_key",
-  "claim_key_status",
-  "claim_key_source",
-  "claim_support_source_kind",
-  "claim_support_locator",
-  "claim_support_observed_at",
-  "claim_support_mode",
-  "valid_from",
-  "valid_to",
-  "supersession_kind",
-  "supersession_reason",
-]);
 const RECALL_REQUEST_KEYS = new Set<string>([
   "text",
   "limit",
@@ -98,7 +79,7 @@ export interface RecallEvalFixtureEntryDto {
   /** Optional stable entry identifier. */
   id?: string;
   /** Durable entry type. */
-  type: RecallEvalFixtureEntry["type"];
+  type: InternalEvalFixtureEntryDto["type"];
   /** Fixture subject line. */
   subject: string;
   /** Fixture content body. */
@@ -106,7 +87,7 @@ export interface RecallEvalFixtureEntryDto {
   /** Optional importance override. */
   importance?: number;
   /** Optional expiry override. */
-  expiry?: RecallEvalFixtureEntry["expiry"];
+  expiry?: InternalEvalFixtureEntryDto["expiry"];
   /** Optional normalized tag list. */
   tags?: string[];
   /** Optional source file path. */
@@ -128,9 +109,9 @@ export interface RecallEvalFixtureEntryDto {
   /** Optional canonical claim key. */
   claim_key?: string;
   /** Optional claim-key lifecycle status. */
-  claim_key_status?: RecallEvalFixtureEntry["claim_key_status"];
+  claim_key_status?: InternalEvalFixtureEntryDto["claim_key_status"];
   /** Optional claim-key provenance source. */
-  claim_key_source?: RecallEvalFixtureEntry["claim_key_source"];
+  claim_key_source?: InternalEvalFixtureEntryDto["claim_key_source"];
   /** Optional claim support source kind. */
   claim_support_source_kind?: string;
   /** Optional claim support locator. */
@@ -138,7 +119,7 @@ export interface RecallEvalFixtureEntryDto {
   /** Optional claim support observed-at timestamp. */
   claim_support_observed_at?: string;
   /** Optional claim support normalization mode. */
-  claim_support_mode?: RecallEvalFixtureEntry["claim_support_mode"];
+  claim_support_mode?: InternalEvalFixtureEntryDto["claim_support_mode"];
   /** Optional validity lower bound. */
   valid_from?: string;
   /** Optional validity upper bound. */
@@ -329,122 +310,6 @@ export function mapRecallEvalCaseRequestDto(dto: RecallEvalCaseRequestDto): Reca
 }
 
 /**
- * Extracts a confidently parseable case identifier from a raw request envelope.
- *
- * @param value - Raw request value.
- * @returns Trimmed case identifier when available.
- */
-function extractParseableCaseId(value: unknown): string | undefined {
-  if (!isRecord(value) || typeof value.caseId !== "string") {
-    return undefined;
-  }
-
-  const normalized = value.caseId.trim();
-  return normalized.length > 0 ? normalized : undefined;
-}
-
-/**
- * Parses an optional sandbox request object.
- *
- * @param value - Raw sandbox field.
- * @param issues - Mutable validation issue collection.
- * @returns Normalized sandbox DTO when valid.
- */
-function parseSandbox(value: unknown, issues: RecallEvalValidationIssue[]): RecallEvalSandboxRequestDto | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  const sandbox = parseObject(value, "sandbox", issues);
-  if (sandbox === undefined) {
-    return undefined;
-  }
-
-  pushUnexpectedFields(sandbox, SANDBOX_REQUEST_KEYS, "sandbox", issues);
-
-  return {
-    root: parseOptionalTrimmedString(sandbox.root, "sandbox.root", issues),
-    preserve: parseOptionalBoolean(sandbox.preserve, "sandbox.preserve", issues),
-  };
-}
-
-/**
- * Parses the explicit memory fixture array.
- *
- * @param value - Raw memory-pool field.
- * @param issues - Mutable validation issue collection.
- * @returns Normalized fixture DTO list when valid.
- */
-function parseMemoryPool(value: unknown, issues: RecallEvalValidationIssue[]): RecallEvalFixtureEntryDto[] | undefined {
-  if (!Array.isArray(value)) {
-    pushIssue(issues, "memoryPool", "Expected an array of fixture entries.");
-    return undefined;
-  }
-
-  return value.flatMap((entry, index) => {
-    const parsed = parseFixtureEntry(entry, index, issues);
-    return parsed ? [parsed] : [];
-  });
-}
-
-/**
- * Parses a single explicit memory fixture entry.
- *
- * @param value - Raw fixture value.
- * @param index - Stable fixture index within the request.
- * @param issues - Mutable validation issue collection.
- * @returns Normalized fixture DTO when valid.
- */
-function parseFixtureEntry(value: unknown, index: number, issues: RecallEvalValidationIssue[]): RecallEvalFixtureEntryDto | undefined {
-  const basePath = `memoryPool[${index}]`;
-  const fixture = parseObject(value, basePath, issues);
-  if (fixture === undefined) {
-    return undefined;
-  }
-
-  pushUnexpectedFields(fixture, FIXTURE_ENTRY_KEYS, basePath, issues);
-
-  const type = parseEntryType(fixture.type, `${basePath}.type`, issues);
-  const subject = parseRequiredTrimmedString(fixture.subject, `${basePath}.subject`, issues);
-  const content = parseRequiredTrimmedString(fixture.content, `${basePath}.content`, issues);
-
-  if (type === undefined || subject === undefined || content === undefined) {
-    return undefined;
-  }
-
-  return {
-    id: parseOptionalTrimmedString(fixture.id, `${basePath}.id`, issues),
-    type,
-    subject,
-    content,
-    importance: parseOptionalIntegerInRange(fixture.importance, `${basePath}.importance`, issues, {
-      min: 1,
-      max: 10,
-    }),
-    expiry: parseOptionalExpiry(fixture.expiry, `${basePath}.expiry`, issues),
-    tags: parseOptionalStringArray(fixture.tags, `${basePath}.tags`, issues),
-    source_file: parseOptionalTrimmedString(fixture.source_file, `${basePath}.source_file`, issues),
-    source_context: parseOptionalTrimmedString(fixture.source_context, `${basePath}.source_context`, issues),
-    created_at: parseOptionalTimestampString(fixture.created_at, `${basePath}.created_at`, issues),
-    updated_at: parseOptionalTimestampString(fixture.updated_at, `${basePath}.updated_at`, issues),
-    retired: parseOptionalBoolean(fixture.retired, `${basePath}.retired`, issues),
-    retired_at: parseOptionalTimestampString(fixture.retired_at, `${basePath}.retired_at`, issues),
-    retired_reason: parseOptionalTrimmedString(fixture.retired_reason, `${basePath}.retired_reason`, issues),
-    superseded_by: parseOptionalTrimmedString(fixture.superseded_by, `${basePath}.superseded_by`, issues),
-    claim_key: parseOptionalTrimmedString(fixture.claim_key, `${basePath}.claim_key`, issues),
-    claim_key_status: parseOptionalClaimKeyStatus(fixture.claim_key_status, `${basePath}.claim_key_status`, issues),
-    claim_key_source: parseOptionalClaimKeySource(fixture.claim_key_source, `${basePath}.claim_key_source`, issues),
-    claim_support_source_kind: parseOptionalTrimmedString(fixture.claim_support_source_kind, `${basePath}.claim_support_source_kind`, issues),
-    claim_support_locator: parseOptionalTrimmedString(fixture.claim_support_locator, `${basePath}.claim_support_locator`, issues),
-    claim_support_observed_at: parseOptionalTimestampString(fixture.claim_support_observed_at, `${basePath}.claim_support_observed_at`, issues),
-    claim_support_mode: parseOptionalClaimSupportMode(fixture.claim_support_mode, `${basePath}.claim_support_mode`, issues),
-    valid_from: parseOptionalTimestampString(fixture.valid_from, `${basePath}.valid_from`, issues),
-    valid_to: parseOptionalTimestampString(fixture.valid_to, `${basePath}.valid_to`, issues),
-    supersession_kind: parseOptionalTrimmedString(fixture.supersession_kind, `${basePath}.supersession_kind`, issues),
-    supersession_reason: parseOptionalTrimmedString(fixture.supersession_reason, `${basePath}.supersession_reason`, issues),
-  };
-}
-
 /**
  * Parses the recall query request aligned to the core recall input.
  *
@@ -597,13 +462,13 @@ function parseUnifiedMemoryPolicy(value: unknown, issues: RecallEvalValidationIs
  * @param issues - Mutable validation issue collection.
  * @returns Valid entry type when recognized.
  */
-function parseEntryType(value: unknown, path: string, issues: RecallEvalValidationIssue[]): RecallEvalFixtureEntry["type"] | undefined {
+function parseEntryType(value: unknown, path: string, issues: RecallEvalValidationIssue[]): InternalEvalFixtureEntryDto["type"] | undefined {
   if (typeof value !== "string" || !ENTRY_TYPES.includes(value as RecallEvalFixtureEntry["type"])) {
     pushIssue(issues, path, `Expected one of: ${ENTRY_TYPES.join(", ")}.`);
     return undefined;
   }
 
-  return value as RecallEvalFixtureEntry["type"];
+  return value as InternalEvalFixtureEntryDto["type"];
 }
 
 /**
@@ -670,122 +535,6 @@ function parseOptionalRankingProfile(value: unknown, path: string, issues: Recal
 }
 
 /**
- * Parses an optional expiry enum member.
- *
- * @param value - Raw expiry value.
- * @param path - Stable validation path.
- * @param issues - Mutable validation issue collection.
- * @returns Valid expiry when recognized.
- */
-function parseOptionalExpiry(value: unknown, path: string, issues: RecallEvalValidationIssue[]): RecallEvalFixtureEntry["expiry"] | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (typeof value !== "string" || !EXPIRY_LEVELS.includes(value as NonNullable<RecallEvalFixtureEntry["expiry"]>)) {
-    pushIssue(issues, path, `Expected one of: ${EXPIRY_LEVELS.join(", ")}.`);
-    return undefined;
-  }
-
-  return value as NonNullable<RecallEvalFixtureEntry["expiry"]>;
-}
-
-/**
- * Parses an optional claim-key lifecycle status.
- *
- * @param value - Raw claim-status value.
- * @param path - Stable validation path.
- * @param issues - Mutable validation issue collection.
- * @returns Valid lifecycle status when recognized.
- */
-function parseOptionalClaimKeyStatus(
-  value: unknown,
-  path: string,
-  issues: RecallEvalValidationIssue[],
-): RecallEvalFixtureEntry["claim_key_status"] | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (typeof value !== "string" || !CLAIM_KEY_STATUSES.includes(value as NonNullable<RecallEvalFixtureEntry["claim_key_status"]>)) {
-    pushIssue(issues, path, `Expected one of: ${CLAIM_KEY_STATUSES.join(", ")}.`);
-    return undefined;
-  }
-
-  return value as NonNullable<RecallEvalFixtureEntry["claim_key_status"]>;
-}
-
-/**
- * Parses an optional claim-key provenance source.
- *
- * @param value - Raw claim-source value.
- * @param path - Stable validation path.
- * @param issues - Mutable validation issue collection.
- * @returns Valid provenance source when recognized.
- */
-function parseOptionalClaimKeySource(
-  value: unknown,
-  path: string,
-  issues: RecallEvalValidationIssue[],
-): RecallEvalFixtureEntry["claim_key_source"] | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (typeof value !== "string" || !CLAIM_KEY_SOURCES.includes(value as NonNullable<RecallEvalFixtureEntry["claim_key_source"]>)) {
-    pushIssue(issues, path, `Expected one of: ${CLAIM_KEY_SOURCES.join(", ")}.`);
-    return undefined;
-  }
-
-  return value as NonNullable<RecallEvalFixtureEntry["claim_key_source"]>;
-}
-
-/**
- * Parses an optional claim-support normalization mode.
- *
- * @param value - Raw support-mode value.
- * @param path - Stable validation path.
- * @param issues - Mutable validation issue collection.
- * @returns Valid support mode when recognized.
- */
-function parseOptionalClaimSupportMode(
-  value: unknown,
-  path: string,
-  issues: RecallEvalValidationIssue[],
-): RecallEvalFixtureEntry["claim_support_mode"] | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (typeof value !== "string" || !CLAIM_SUPPORT_MODES.includes(value as NonNullable<RecallEvalFixtureEntry["claim_support_mode"]>)) {
-    pushIssue(issues, path, `Expected one of: ${CLAIM_SUPPORT_MODES.join(", ")}.`);
-    return undefined;
-  }
-
-  return value as NonNullable<RecallEvalFixtureEntry["claim_support_mode"]>;
-}
-
-/**
- * Parses an optional array of non-empty trimmed strings.
- *
- * @param value - Raw string-array field.
- * @param path - Stable validation path.
- * @param issues - Mutable validation issue collection.
- * @returns Trimmed string array when valid.
- */
-function parseOptionalStringArray(value: unknown, path: string, issues: RecallEvalValidationIssue[]): string[] | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
-    pushIssue(issues, path, "Expected an array of strings.");
-    return undefined;
-  }
-
-  return value.map((item) => item.trim()).filter((item) => item.length > 0);
-}
-
 /**
  * Parses an optional array of valid entry type enum members.
  *
@@ -816,26 +565,6 @@ function parseOptionalEntryTypeArray(value: unknown, path: string, issues: Recal
 }
 
 /**
- * Parses an optional recall threshold constrained to the 0-1 range.
- *
- * @param value - Raw threshold field.
- * @param path - Stable validation path.
- * @param issues - Mutable validation issue collection.
- * @returns Threshold when valid.
- */
-function parseOptionalThreshold(value: unknown, path: string, issues: RecallEvalValidationIssue[]): number | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (typeof value !== "number" || Number.isNaN(value) || value < 0 || value > 1) {
-    pushIssue(issues, path, "Expected a number from 0 to 1.");
-    return undefined;
-  }
-
-  return value;
-}
-
 /**
  * Parses one optional slot-policy config block keyed by canonical attribute head.
  *
@@ -901,22 +630,6 @@ function parseClaimSlotPolicyAttributeHeads(
 }
 
 /**
- * Parses one required object field.
- *
- * @param value - Raw field value.
- * @param path - Stable validation path.
- * @param issues - Mutable validation issue collection.
- * @returns Object record when valid.
- */
-function parseObject(value: unknown, path: string, issues: RecallEvalValidationIssue[]): Record<string, unknown> | undefined {
-  if (!isRecord(value)) {
-    pushIssue(issues, path, "Expected an object.");
-    return undefined;
-  }
-
-  return value;
-}
-
 /**
  * Enforces path-specific request rules so the seam mirrors real callers.
  *
@@ -970,14 +683,7 @@ function validatePathSpecificRequest(
  * @returns App sandbox request or `undefined`.
  */
 function mapSandboxRequestDto(dto: RecallEvalSandboxRequestDto | undefined): RecallEvalSandboxRequest | undefined {
-  if (dto === undefined) {
-    return undefined;
-  }
-
-  return {
-    root: dto.root,
-    preserve: dto.preserve,
-  };
+  return mapSharedSandboxRequestDto(dto) as RecallEvalSandboxRequest | undefined;
 }
 
 /**
@@ -987,34 +693,7 @@ function mapSandboxRequestDto(dto: RecallEvalSandboxRequestDto | undefined): Rec
  * @returns App fixture request.
  */
 function mapFixtureEntryDto(dto: RecallEvalFixtureEntryDto): RecallEvalFixtureEntry {
-  return {
-    id: dto.id,
-    type: dto.type,
-    subject: dto.subject,
-    content: dto.content,
-    importance: dto.importance,
-    expiry: dto.expiry,
-    tags: dto.tags,
-    source_file: dto.source_file,
-    source_context: dto.source_context,
-    created_at: dto.created_at,
-    updated_at: dto.updated_at,
-    retired: dto.retired,
-    retired_at: dto.retired_at,
-    retired_reason: dto.retired_reason,
-    superseded_by: dto.superseded_by,
-    claim_key: dto.claim_key,
-    claim_key_status: dto.claim_key_status,
-    claim_key_source: dto.claim_key_source,
-    claim_support_source_kind: dto.claim_support_source_kind,
-    claim_support_locator: dto.claim_support_locator,
-    claim_support_observed_at: dto.claim_support_observed_at,
-    claim_support_mode: dto.claim_support_mode,
-    valid_from: dto.valid_from,
-    valid_to: dto.valid_to,
-    supersession_kind: dto.supersession_kind,
-    supersession_reason: dto.supersession_reason,
-  };
+  return mapSharedFixtureEntryDto(dto) as RecallEvalFixtureEntry;
 }
 
 /**

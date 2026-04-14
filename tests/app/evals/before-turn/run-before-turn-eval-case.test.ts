@@ -1,0 +1,294 @@
+import { createHash } from "node:crypto";
+import { access, mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { createDatabase } from "../../../../src/adapters/db/client.js";
+import { runBeforeTurnEvalCase } from "../../../../src/app/evals/before-turn/index.js";
+
+const tempPaths: string[] = [];
+
+afterEach(async () => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+
+  delete process.env.OPENAI_API_KEY;
+  delete process.env.AGENR_DB_PATH;
+  delete process.env.AGENR_CONFIG_DIR;
+  delete process.env.AGENR_CONFIG_PATH;
+
+  while (tempPaths.length > 0) {
+    await rm(tempPaths.pop() ?? "", { recursive: true, force: true });
+  }
+});
+
+describe("runBeforeTurnEvalCase", () => {
+  it("returns the selected durable entry id and rendered patch text for an inject case", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    vi.stubGlobal("fetch", createEmbeddingFetchStub());
+
+    const response = await runBeforeTurnEvalCase({
+      caseId: "before-turn-inject",
+      memoryPool: [
+        {
+          id: "duke-identity",
+          type: "fact",
+          subject: "duke identity",
+          content: "Duke is Jim's dog.",
+          tags: ["dogs", "identity"],
+        },
+      ],
+      beforeTurnInput: {
+        currentTurnText: "who is Duke?",
+        policy: {
+          recallThreshold: 0,
+          enableProcedureSuggestion: false,
+        },
+      },
+      options: {
+        includeDiagnostics: true,
+        includeRenderedPatch: true,
+        includeTimings: true,
+      },
+    });
+
+    expect(response).toMatchObject({
+      status: "ok",
+      caseId: "before-turn-inject",
+      output: {
+        abstained: false,
+        selectedEntryIds: ["duke-identity"],
+        selectedProcedureKey: null,
+        patch: {
+          durableMemory: [
+            expect.objectContaining({
+              rank: 1,
+              entry: expect.objectContaining({
+                id: "duke-identity",
+              }),
+            }),
+          ],
+        },
+        renderedPatchText: expect.stringContaining("Relevant Durable Memory"),
+      },
+      diagnostics: {
+        durableRecallUsed: true,
+        procedureRecallUsed: false,
+        abstained: false,
+      },
+      timings: {
+        totalMs: expect.any(Number),
+        sandboxSetupMs: expect.any(Number),
+        fixtureProvisionMs: expect.any(Number),
+        beforeTurnMs: expect.any(Number),
+        renderPatchMs: expect.any(Number),
+      },
+      sandbox: {
+        root: expect.any(String),
+        dbPath: expect.any(String),
+        preserved: false,
+      },
+    });
+    expect(response.output?.renderedPatchText).toContain("Duke is Jim's dog.");
+  });
+
+  it("returns an abstain response with an empty rendered patch for greeting turns", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    vi.stubGlobal("fetch", createEmbeddingFetchStub());
+
+    const response = await runBeforeTurnEvalCase({
+      caseId: "before-turn-greeting-abstain",
+      memoryPool: [
+        {
+          id: "noise-entry",
+          type: "fact",
+          subject: "unrelated note",
+          content: "This should not surface for a greeting.",
+        },
+      ],
+      beforeTurnInput: {
+        currentTurnText: "hello",
+      },
+      options: {
+        includeDiagnostics: true,
+        includeRenderedPatch: true,
+      },
+    });
+
+    expect(response).toMatchObject({
+      status: "ok",
+      caseId: "before-turn-greeting-abstain",
+      output: {
+        abstained: true,
+        selectedEntryIds: [],
+        selectedProcedureKey: null,
+        renderedPatchText: "",
+      },
+      diagnostics: {
+        durableRecallUsed: false,
+        procedureRecallUsed: false,
+        abstained: true,
+        abstentionReasons: ["Current turn was a short social greeting, so before-turn recall abstained."],
+      },
+    });
+  });
+
+  it("returns the selected procedure key for a procedural turn", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    vi.stubGlobal("fetch", createEmbeddingFetchStub());
+
+    const response = await runBeforeTurnEvalCase({
+      caseId: "before-turn-procedure",
+      memoryPool: [],
+      procedurePool: [
+        {
+          id: "procedure-rotate-key",
+          procedure_key: "security/signing-key-rotation",
+          title: "Rotate the production signing key",
+          goal: "Rotate the production signing key safely.",
+          when_to_use: ["Use this when the production signing key must be rotated."],
+          verification: ["Downstream verification succeeds after rotation."],
+          failure_modes: ["Rotation fails before verification completes."],
+          steps: [
+            {
+              id: "inspect-state",
+              kind: "inspect_state",
+              instruction: "Inspect the current signing key state before rotating it.",
+              target: "signing key state",
+            },
+          ],
+          sources: [{ kind: "manual", label: "fixture" }],
+        },
+      ],
+      beforeTurnInput: {
+        currentTurnText: "How do I rotate the production signing key safely?",
+        policy: {
+          enableDurableRecall: false,
+        },
+      },
+      options: {
+        includeDiagnostics: true,
+      },
+    });
+
+    expect(response).toMatchObject({
+      status: "ok",
+      caseId: "before-turn-procedure",
+      output: {
+        abstained: false,
+        selectedEntryIds: [],
+        selectedProcedureKey: "security/signing-key-rotation",
+      },
+      diagnostics: {
+        durableRecallUsed: false,
+        procedureRecallUsed: true,
+        abstained: false,
+      },
+    });
+  });
+
+  it("keeps isolated eval state from leaking live database entries into results", async () => {
+    const tempRoot = await createTempDirectory("agenr-before-turn-live-");
+    const liveDbPath = path.join(tempRoot, "live.sqlite");
+    await seedLiveEntry(liveDbPath, {
+      id: "live-only",
+      type: "fact",
+      subject: "live state leak",
+      content: "Morgan is on call in the live database only.",
+      importance: 8,
+      expiry: "permanent",
+      tags: [],
+      quality_score: 0.8,
+      recall_count: 0,
+      retired: false,
+      created_at: "2026-04-01T00:00:00.000Z",
+      updated_at: "2026-04-01T00:00:00.000Z",
+    });
+
+    process.env.OPENAI_API_KEY = "test-key";
+    process.env.AGENR_DB_PATH = liveDbPath;
+    vi.stubGlobal("fetch", createEmbeddingFetchStub());
+
+    const response = await runBeforeTurnEvalCase({
+      caseId: "before-turn-isolated",
+      memoryPool: [
+        {
+          id: "fixture-entry",
+          type: "fact",
+          subject: "sandbox-only",
+          content: "Taylor is on call in the eval sandbox.",
+        },
+      ],
+      beforeTurnInput: {
+        currentTurnText: "who is on call in the eval sandbox?",
+        policy: {
+          recallThreshold: 0,
+          enableProcedureSuggestion: false,
+        },
+      },
+    });
+
+    expect(response.status).toBe("ok");
+    expect(response.output?.selectedEntryIds).toEqual(["fixture-entry"]);
+    expect(response.output?.selectedEntryIds).not.toContain("live-only");
+    await expect(access(response.sandbox?.dbPath ?? "")).rejects.toBeDefined();
+  });
+});
+
+/** Creates a temp directory and tracks it for cleanup. */
+async function createTempDirectory(prefix: string): Promise<string> {
+  const directory = await mkdtemp(path.join(os.tmpdir(), prefix));
+  tempPaths.push(directory);
+  return directory;
+}
+
+/** Seeds one entry into a standalone live database used to detect state leaks. */
+async function seedLiveEntry(dbPath: string, entry: Parameters<Awaited<ReturnType<typeof createDatabase>>["insertEntry"]>[0]): Promise<void> {
+  const database = await createDatabase(dbPath);
+  try {
+    await database.insertEntry(entry, hashToVector(`${entry.subject} ${entry.content}`, 1024), entry.id);
+  } finally {
+    await database.close();
+  }
+}
+
+/** Creates a deterministic embeddings API stub for eval tests. */
+function createEmbeddingFetchStub(): (url: string | URL | Request, init?: RequestInit) => Promise<Response> {
+  return async (_url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const body = JSON.parse(String(init?.body)) as { input: string[] };
+    return new Response(
+      JSON.stringify({
+        data: body.input.map((text, index) => ({
+          index,
+          embedding: hashToVector(text, 1024),
+        })),
+      }),
+      { status: 200 },
+    );
+  };
+}
+
+/** Converts input text into a deterministic normalized vector. */
+function hashToVector(text: string, dimensions: number): number[] {
+  const vector: number[] = [];
+  let counter = 0;
+
+  while (vector.length < dimensions) {
+    const block = createHash("sha256").update(text).update(String(counter)).digest();
+
+    for (let offset = 0; offset + 4 <= block.length && vector.length < dimensions; offset += 4) {
+      vector.push(block.readInt32LE(offset) / 0x7fffffff);
+    }
+
+    counter += 1;
+  }
+
+  const magnitude = Math.sqrt(vector.reduce((total, value) => total + value * value, 0));
+  if (magnitude === 0) {
+    return Array.from({ length: dimensions }, (_, index) => (index === 0 ? 1 : 0));
+  }
+
+  return vector.map((value) => value / magnitude);
+}

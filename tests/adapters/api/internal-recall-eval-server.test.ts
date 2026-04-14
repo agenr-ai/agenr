@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { InternalApiRoute } from "../../../src/adapters/api/internal-api-route.js";
 import { startInternalRecallEvalServer, type InternalRecallEvalServerHandle } from "../../../src/adapters/api/internal-recall-eval-server.js";
 
 const servers: InternalRecallEvalServerHandle[] = [];
@@ -14,19 +15,69 @@ afterEach(async () => {
 });
 
 describe("startInternalRecallEvalServer", () => {
-  it("hosts the existing internal recall eval route on localhost", async () => {
-    const runner = vi.fn(async (request) => ({
-      status: "ok" as const,
-      caseId: request.caseId,
-      result: {
-        entries: [],
-        entryIds: [],
-      },
-    }));
+  it("hosts the recall route on the shared internal eval server and preserves the compatibility handle", async () => {
+    const recallRoute: InternalApiRoute = {
+      method: "POST",
+      path: "/internal/evals/recall/run",
+      handler: vi.fn(
+        async (request) =>
+          new Response(
+            JSON.stringify({
+              status: "ok",
+              caseId: ((await request.json()) as { caseId: string }).caseId,
+              result: {
+                entries: [],
+                entryIds: [],
+              },
+            }),
+            {
+              status: 200,
+              headers: {
+                "content-type": "application/json; charset=utf-8",
+              },
+            },
+          ),
+      ),
+    };
+    const beforeTurnRoute: InternalApiRoute = {
+      method: "POST",
+      path: "/internal/evals/before-turn/run",
+      handler: async () =>
+        new Response(
+          JSON.stringify({
+            status: "ok",
+            caseId: "before-turn",
+            output: {
+              abstained: true,
+              selectedEntryIds: [],
+              selectedProcedureKey: null,
+              patch: {
+                durableMemory: [],
+                diagnostics: {
+                  recentTurnCount: 0,
+                  durableRecallUsed: false,
+                  durableRecallCandidateCount: 0,
+                  procedureRecallUsed: false,
+                  procedureCandidateCount: 0,
+                  abstained: true,
+                  abstentionReasons: [],
+                  notices: [],
+                },
+              },
+            },
+          }),
+          {
+            status: 200,
+            headers: {
+              "content-type": "application/json; charset=utf-8",
+            },
+          },
+        ),
+    };
     const server = await startInternalRecallEvalServer({
       host: "127.0.0.1",
       port: 0,
-      runner,
+      routes: [recallRoute, beforeTurnRoute],
     });
     servers.push(server);
 
@@ -53,23 +104,27 @@ describe("startInternalRecallEvalServer", () => {
         entryIds: [],
       },
     });
-    expect(runner).toHaveBeenCalledTimes(1);
     expect(server.baseUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/u);
     expect(server.routePath).toBe("/internal/evals/recall/run");
+    expect(server.routePaths).toEqual(["/internal/evals/recall/run", "/internal/evals/before-turn/run"]);
   });
 
-  it("does not expose extra routes beyond the internal recall eval seam", async () => {
+  it("still serves 404 and 405 responses through the compatibility wrapper", async () => {
     const server = await startInternalRecallEvalServer({
       host: "127.0.0.1",
       port: 0,
-      runner: async (request) => ({
-        status: "ok",
-        caseId: request.caseId,
-        result: {
-          entries: [],
-          entryIds: [],
+      routes: [
+        {
+          method: "POST",
+          path: "/internal/evals/recall/run",
+          handler: async () => new Response(JSON.stringify({ status: "ok", caseId: "compat" }), { status: 200 }),
         },
-      }),
+        {
+          method: "POST",
+          path: "/internal/evals/before-turn/run",
+          handler: async () => new Response(JSON.stringify({ status: "ok", caseId: "before-turn" }), { status: 200 }),
+        },
+      ],
     });
     servers.push(server);
 

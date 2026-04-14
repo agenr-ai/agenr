@@ -20,6 +20,8 @@ const DEFAULT_MAX_QUERY_CHARS = 900;
 const DEFAULT_MAX_PROCEDURE_CANDIDATES = 3;
 const DEFAULT_RECALL_THRESHOLD = 0.2;
 const DEFAULT_PROCEDURE_THRESHOLD = 0.6;
+const SHORT_SOCIAL_TURN_RE =
+  /^(?:hi|hello|hey|hey there|hello there|thanks|thank you|ok|okay|cool|sounds good|got it|yep|yes|no|nice|great|awesome|perfect|ping)(?:[.!?]+)?$/iu;
 
 /**
  * Builds one structured bounded before-turn patch from the current user turn
@@ -47,6 +49,15 @@ export async function runBeforeTurn(input: BeforeTurnInput, deps: BeforeTurnDeps
   if (!currentTurnText) {
     diagnostics.abstained = true;
     diagnostics.abstentionReasons.push("Current turn text was empty after normalization.");
+    return {
+      durableMemory: [],
+      diagnostics,
+    };
+  }
+
+  if (SHORT_SOCIAL_TURN_RE.test(normalizeWhitespace(currentTurnText))) {
+    diagnostics.abstained = true;
+    diagnostics.abstentionReasons.push("Current turn was a short social greeting, so before-turn recall abstained.");
     return {
       durableMemory: [],
       diagnostics,
