@@ -34,7 +34,7 @@
     },
     "memoryPolicy": {
       "label": "Memory policy",
-      "help": "Optional runtime overrides for claim-aware read behavior such as slot-policy classes."
+      "help": "Optional runtime overrides for claim-aware read behavior and session-start memory injection."
     }
   },
   "configSchema": {
@@ -90,6 +90,17 @@
         "additionalProperties": false,
         "description": "Optional runtime overrides for claim-aware read behavior exposed by the OpenClaw adapter.",
         "properties": {
+          "sessionStart": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Optional session-start overrides for prompt-time memory injection behavior.",
+            "properties": {
+              "relevantDurableMemory": {
+                "type": "boolean",
+                "description": "Enable or disable artifact-grounded Relevant Durable Memory injection at session start. Defaults to true."
+              }
+            }
+          },
           "slotPolicies": {
             "type": "object",
             "additionalProperties": false,

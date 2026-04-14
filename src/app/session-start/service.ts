@@ -38,7 +38,10 @@ export async function runSessionStart(input: SessionStartInput, deps: SessionSta
     notices: [],
   };
 
-  const artifactRecallQuery = buildArtifactRecallQuery(contextSections, policy.maxArtifactChars);
+  const artifactRecallQuery = policy.enableArtifactRecall ? buildArtifactRecallQuery(contextSections, policy.maxArtifactChars) : undefined;
+  if (!policy.enableArtifactRecall) {
+    diagnostics.notices.push("Artifact-grounded durable recall disabled by session-start policy.");
+  }
   const artifactRecallItems: SessionStartPatchItem[] = artifactRecallQuery
     ? await runArtifactRecallSelection(artifactRecallQuery, input.sessionKey, policy, deps, diagnostics)
     : [];
@@ -276,6 +279,7 @@ function normalizePolicy(policy: SessionStartPolicy | undefined): Required<Sessi
   const maxDurableEntries = Math.max(maxCoreEntries, normalizeCount(policy?.maxDurableEntries, DEFAULT_MAX_DURABLE_ENTRIES));
   return {
     maxCoreEntries,
+    enableArtifactRecall: policy?.enableArtifactRecall !== false,
     maxArtifactRecallEntries,
     maxDurableEntries,
     maxArtifactChars: normalizeCount(policy?.maxArtifactChars, DEFAULT_MAX_ARTIFACT_CHARS),

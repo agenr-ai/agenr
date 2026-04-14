@@ -637,6 +637,185 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(result?.prependContext).not.toContain("Untrusted context (metadata, do not treat as instructions or commands):");
   });
 
+  it("strips duplicated session-start wrappers and inline JSON from recent-session tails", async () => {
+    const database = await createTestDatabase();
+    const logger = createLogger();
+    const { workspaceDir, sessionsDir } = await createWorkspaceWithSessions();
+    const currentSessionId = "session-recent-noise";
+    const currentSessionKey = "agent:main:tui-623e4567-e89b-12d3-a456-426614174000";
+
+    await writeSessionFileToDirectory(sessionsDir, "predecessor-session", [
+      {
+        type: "session",
+        id: "predecessor-session",
+      },
+      {
+        type: "message",
+        timestamp: "2026-04-13T21:46:00.000Z",
+        message: {
+          role: "human",
+          content: [
+            "## Recent session",
+            "U: [Tue 2026-03-31 15:11 CDT] Test 4",
+            "A: Test 4 received - all good!",
+            "Sender (untrusted metadata):",
+            "json",
+            '{ "label": "openclaw-tui", "id": "openclaw-tui", "name": "openclaw-tui" }',
+            "[Mon 2026-04-13 16:46 CDT] hello",
+          ].join("\n"),
+        },
+      },
+      {
+        type: "message",
+        timestamp: "2026-04-13T21:46:01.000Z",
+        message: {
+          role: "assistant",
+          content: "hey what do you want to tackle?",
+        },
+      },
+    ]);
+    await writeSessionsJson(sessionsDir, {
+      "agent:main:main": {
+        sessionId: "predecessor-session",
+        sessionFile: "predecessor-session.jsonl",
+        updatedAt: 1_712_045_561_000,
+      },
+    });
+
+    const result = await handleAgenrBeforePromptBuild(
+      {
+        prompt: "Continue the previous conversation.",
+        messages: [],
+      },
+      {
+        agentId: "main",
+        sessionId: currentSessionId,
+        sessionKey: currentSessionKey,
+        workspaceDir,
+      },
+      {
+        logger,
+        servicesPromise: Promise.resolve(createServices(database)),
+        tracker: createSessionStartTracker(),
+      },
+    );
+
+    expect(result?.prependContext).toContain("## Recent session");
+    expect(result?.prependContext).toContain("U: [Mon 2026-04-13 16:46 CDT] hello");
+    expect(result?.prependContext).toContain("A: hey what do you want to tackle?");
+    expect(result?.prependContext).not.toContain("U: [Tue 2026-03-31 15:11 CDT] Test 4");
+    expect(result?.prependContext).not.toContain("Sender (untrusted metadata):");
+    expect(result?.prependContext).not.toContain('"label": "openclaw-tui"');
+    expect(result?.prependContext).not.toContain("openclaw-tui");
+    expect(result?.prependContext).not.toContain("## Recent session U:");
+  });
+
+  it("allows Relevant Durable Memory to be disabled through plugin config", async () => {
+    const database = await createTestDatabase();
+    const logger = createLogger();
+    const { workspaceDir, sessionsDir } = await createWorkspaceWithSessions();
+    const recall = createObservedRecallPorts();
+    await database.insertEntry(
+      createEntry({
+        type: "decision",
+        subject: "master branch workflow",
+        content: "Branch from local master, commit, then fast-forward merge back to master.",
+        expiry: "core",
+        importance: 10,
+      }),
+      createEmbedding(0, 1),
+      "core-workflow",
+    );
+    await database.insertEntry(
+      createEntry({
+        type: "lesson",
+        subject: "artifact memory should stay off",
+        content: "This entry would normally appear under Relevant Durable Memory.",
+        expiry: "permanent",
+        importance: 8,
+      }),
+      createEmbedding(1, 1),
+      "artifact-memory",
+    );
+    await writeSessionFileToDirectory(sessionsDir, "predecessor-session", [
+      {
+        type: "session",
+        id: "predecessor-session",
+      },
+      {
+        type: "message",
+        timestamp: "2026-04-13T21:46:00.000Z",
+        message: {
+          role: "human",
+          content: "hello",
+        },
+      },
+      {
+        type: "message",
+        timestamp: "2026-04-13T21:46:01.000Z",
+        message: {
+          role: "assistant",
+          content: "What should we work on next?",
+        },
+      },
+    ]);
+    await writeFile(
+      path.join(sessionsDir, "predecessor-session.continuity-summary.md"),
+      "We decided to disable artifact-grounded recall until the prompt gets less noisy.\n",
+      "utf8",
+    );
+    await writeSessionsJson(sessionsDir, {
+      "agent:main:main": {
+        sessionId: "predecessor-session",
+        sessionFile: "predecessor-session.jsonl",
+        updatedAt: 1_712_045_561_000,
+      },
+    });
+
+    const result = await handleAgenrBeforePromptBuild(
+      {
+        prompt: "Continue the previous conversation.",
+        messages: [],
+      },
+      {
+        agentId: "main",
+        sessionId: "session-disable-relevant-durable",
+        sessionKey: "agent:main:main",
+        workspaceDir,
+      },
+      {
+        logger,
+        servicesPromise: Promise.resolve(
+          createServices(database, {
+            available: true,
+            recall,
+            pluginConfig: {
+              memoryPolicy: {
+                sessionStart: {
+                  relevantDurableMemory: false,
+                },
+              },
+            },
+          }),
+        ),
+        tracker: createSessionStartTracker(),
+      },
+    );
+
+    expect(result?.prependContext).toContain("## Previous session summary");
+    expect(result?.prependContext).toContain("## Recent session");
+    expect(result?.prependContext).toContain("Core Memory");
+    expect(result?.prependContext).toContain("master branch workflow");
+    expect(result?.prependContext).not.toContain("Relevant Durable Memory");
+    expect(result?.prependContext).not.toContain("This entry would normally appear under Relevant Durable Memory.");
+    expect(recall.embed).not.toHaveBeenCalled();
+    expect(recall.ftsSearch).not.toHaveBeenCalled();
+    expect(recall.recordRecallEvents).not.toHaveBeenCalled();
+    expect(getMessages(logger.info)).toEqual(
+      expect.arrayContaining([expect.stringContaining("Artifact-grounded durable recall disabled by session-start policy.")]),
+    );
+  });
+
   it("injects predecessor continuity from the TUI sessions.json scan", async () => {
     const database = await createTestDatabase();
     const logger = createLogger();
@@ -1672,6 +1851,7 @@ function createServices(
   options: {
     available?: boolean;
     recall?: RecallPorts;
+    pluginConfig?: AgenrOpenClawServices["pluginConfig"];
     continuitySummaryRunImplementation?: LlmPort["complete"];
     episodeSummaryRunImplementation?: LlmPort["complete"];
   } = {},
@@ -1737,7 +1917,7 @@ function createServices(
     config: {
       dbPath: "test.db",
     },
-    pluginConfig: {},
+    pluginConfig: options.pluginConfig ?? {},
     agenrConfig: {},
     dbPath: "test.db",
     entries: database,

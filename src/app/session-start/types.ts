@@ -8,6 +8,8 @@ import type { Entry } from "../../core/types.js";
 export interface SessionStartPolicy {
   /** Maximum always-on core entries to load before hybrid selection. */
   maxCoreEntries?: number;
+  /** Enables or disables artifact-grounded durable recall for this pass. */
+  enableArtifactRecall?: boolean;
   /** Maximum artifact-grounded recall candidates to consider. */
   maxArtifactRecallEntries?: number;
   /** Maximum durable memory items to return after merging and dedupe. */

@@ -39,6 +39,11 @@ export interface AgenrOpenClawClaimSlotPolicyConfig extends ClaimSlotPolicyConfi
 export interface AgenrOpenClawMemoryPolicyConfig {
   /** Read-time slot-policy overrides used by recall and trace surfaces. */
   slotPolicies?: AgenrOpenClawClaimSlotPolicyConfig;
+  /** Session-start overrides for prompt-time memory injection behavior. */
+  sessionStart?: {
+    /** Enables or disables artifact-grounded "Relevant Durable Memory" injection. */
+    relevantDurableMemory?: boolean;
+  };
 }
 
 /**

@@ -14,7 +14,7 @@ import type {
   StoreNudgeConfig,
 } from "../types.js";
 
-const SESSION_START_POLICY = {
+const DEFAULT_SESSION_START_POLICY = {
   maxCoreEntries: 4,
   maxArtifactRecallEntries: 3,
   maxDurableEntries: 5,
@@ -67,7 +67,7 @@ export async function handleAgenrBeforePromptBuild(
         sessionKey: ctx.sessionKey,
         continuitySummaryText: continuity.continuitySummaryContent,
         recentSessionText: continuity.recentSessionContent,
-        policy: SESSION_START_POLICY,
+        policy: resolveSessionStartPolicy(services),
       },
       services.sessionStart,
     );
@@ -173,4 +173,17 @@ function resolveStoreNudgeResult(
  */
 function formatEntryRefs(entries: Array<{ id: string; subject: string }>): string {
   return entries.length === 0 ? "none" : entries.map((entry) => `${entry.subject} [${entry.id}]`).join(", ");
+}
+
+/**
+ * Resolves effective session-start policy from static defaults plus plugin overrides.
+ *
+ * @param services - Shared adapter services with plugin-config overrides.
+ * @returns Effective session-start policy for one prompt build.
+ */
+function resolveSessionStartPolicy(services: Awaited<AgenrOpenClawBeforePromptBuildDeps["servicesPromise"]>) {
+  return {
+    ...DEFAULT_SESSION_START_POLICY,
+    enableArtifactRecall: services.pluginConfig.memoryPolicy?.sessionStart?.relevantDurableMemory !== false,
+  };
 }

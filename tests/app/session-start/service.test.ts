@@ -177,6 +177,57 @@ describe("runSessionStart", () => {
     ]);
     expect(result.diagnostics.notices).toEqual(expect.arrayContaining(["Artifact-grounded durable recall failed: fts is unavailable"]));
   });
+
+  it("skips artifact-grounded recall when the session-start policy disables it", async () => {
+    const coreEntry = createEntry({
+      id: "core-only",
+      subject: "core-only workflow",
+      content: "Core memory should still render when relevant durable memory is disabled.",
+      expiry: "core",
+      importance: 10,
+    });
+    const recalledEntry = createEntry({
+      id: "artifact-entry",
+      subject: "artifact-grounded lesson",
+      content: "This entry would have surfaced through artifact-grounded recall.",
+      expiry: "permanent",
+      importance: 8,
+    });
+    const deps = createDeps({
+      coreEntries: [coreEntry],
+      ftsCandidates: [toRecallCandidateEntry(recalledEntry)],
+      hydratedEntries: [recalledEntry],
+    });
+
+    const result = await runSessionStart(
+      {
+        continuitySummaryText: "Continue the previous runtime work.",
+        recentSessionText: "U: hello\nA: hi",
+        policy: {
+          enableArtifactRecall: false,
+        },
+      },
+      deps,
+    );
+
+    expect(result.durableMemory).toMatchObject([
+      {
+        rank: 1,
+        entry: {
+          id: "core-only",
+        },
+        sourceKind: "core",
+      },
+    ]);
+    expect(result.diagnostics).toMatchObject({
+      artifactRecallCandidateCount: 0,
+      artifactRecallUsed: false,
+    });
+    expect(result.diagnostics.notices).toContain("Artifact-grounded durable recall disabled by session-start policy.");
+    expect(deps.recall.embed).not.toHaveBeenCalled();
+    expect(deps.recall.ftsSearch).not.toHaveBeenCalled();
+    expect(deps.recall.recordRecallEvents).not.toHaveBeenCalled();
+  });
 });
 
 function createDeps(

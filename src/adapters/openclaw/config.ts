@@ -225,8 +225,12 @@ function normalizeMemoryPolicyConfig(value: unknown): { ok: true; value: AgenrOp
   if (!slotPoliciesResult.ok) {
     errors.push(...slotPoliciesResult.errors);
   }
+  const sessionStartResult = normalizeSessionStartMemoryPolicyConfig(value.sessionStart);
+  if (!sessionStartResult.ok) {
+    errors.push(...sessionStartResult.errors);
+  }
 
-  const allowedKeys = new Set(["slotPolicies"]);
+  const allowedKeys = new Set(["slotPolicies", "sessionStart"]);
   for (const key of Object.keys(value)) {
     if (!allowedKeys.has(key)) {
       errors.push(`unknown config field: memoryPolicy.${key}`);
@@ -240,11 +244,49 @@ function normalizeMemoryPolicyConfig(value: unknown): { ok: true; value: AgenrOp
   return {
     ok: true,
     value:
-      slotPoliciesResult.ok && slotPoliciesResult.value
+      (slotPoliciesResult.ok && slotPoliciesResult.value) || (sessionStartResult.ok && sessionStartResult.value)
         ? {
-            slotPolicies: slotPoliciesResult.value,
+            ...(slotPoliciesResult.ok && slotPoliciesResult.value ? { slotPolicies: slotPoliciesResult.value } : {}),
+            ...(sessionStartResult.ok && sessionStartResult.value ? { sessionStart: sessionStartResult.value } : {}),
           }
         : undefined,
+  };
+}
+
+/**
+ * Validates and normalizes session-start overrides nested under `memoryPolicy`.
+ *
+ * @param value - Raw nested config value.
+ * @returns Normalized session-start overrides or stable validation errors.
+ */
+function normalizeSessionStartMemoryPolicyConfig(
+  value: unknown,
+): { ok: true; value: AgenrOpenClawMemoryPolicyConfig["sessionStart"] | undefined } | { ok: false; errors: string[] } {
+  if (value === undefined) {
+    return { ok: true, value: undefined };
+  }
+
+  if (!isRecord(value)) {
+    return { ok: false, errors: ["memoryPolicy.sessionStart must be an object when provided"] };
+  }
+
+  const errors: string[] = [];
+  const relevantDurableMemory = normalizeOptionalBoolean(value.relevantDurableMemory, "memoryPolicy.sessionStart.relevantDurableMemory", errors);
+
+  const allowedKeys = new Set(["relevantDurableMemory"]);
+  for (const key of Object.keys(value)) {
+    if (!allowedKeys.has(key)) {
+      errors.push(`unknown config field: memoryPolicy.sessionStart.${key}`);
+    }
+  }
+
+  if (errors.length > 0) {
+    return { ok: false, errors };
+  }
+
+  return {
+    ok: true,
+    value: relevantDurableMemory !== undefined ? { relevantDurableMemory } : undefined,
   };
 }
 

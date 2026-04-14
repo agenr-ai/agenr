@@ -48,6 +48,9 @@ describe("agenr OpenClaw plugin config", () => {
           threshold: 10,
         },
         memoryPolicy: {
+          sessionStart: {
+            relevantDurableMemory: false,
+          },
           slotPolicies: {
             attributeHeads: {
               integration: "exclusive",
@@ -68,6 +71,9 @@ describe("agenr OpenClaw plugin config", () => {
         maxPerSession: 5,
       },
       memoryPolicy: {
+        sessionStart: {
+          relevantDurableMemory: false,
+        },
         slotPolicies: {
           attributeHeads: {
             integration: "exclusive",
@@ -129,6 +135,10 @@ describe("agenr OpenClaw plugin config", () => {
   it("rejects invalid nested memory-policy settings", () => {
     const parsed = normalizeAgenrOpenClawPluginConfig({
       memoryPolicy: {
+        sessionStart: {
+          relevantDurableMemory: "no",
+          extra: true,
+        },
         slotPolicies: {
           attributeHeads: {
             "bad key!": "exclusive",
@@ -143,6 +153,8 @@ describe("agenr OpenClaw plugin config", () => {
     expect(parsed.ok).toBe(false);
     expect(parsed.ok ? [] : parsed.errors).toEqual(
       expect.arrayContaining([
+        "memoryPolicy.sessionStart.relevantDurableMemory must be a boolean when provided",
+        "unknown config field: memoryPolicy.sessionStart.extra",
         "memoryPolicy.slotPolicies.attributeHeads.bad key! must use a canonical attribute-head label",
         'memoryPolicy.slotPolicies.attributeHeads.support must be "exclusive" or "multivalued"',
         "unknown config field: memoryPolicy.slotPolicies.extra",
