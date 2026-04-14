@@ -230,7 +230,12 @@ function normalizeMemoryPolicyConfig(value: unknown): { ok: true; value: AgenrOp
     errors.push(...sessionStartResult.errors);
   }
 
-  const allowedKeys = new Set(["slotPolicies", "sessionStart"]);
+  const beforeTurnResult = normalizeBeforeTurnMemoryPolicyConfig(value.beforeTurn);
+  if (!beforeTurnResult.ok) {
+    errors.push(...beforeTurnResult.errors);
+  }
+
+  const allowedKeys = new Set(["slotPolicies", "sessionStart", "beforeTurn"]);
   for (const key of Object.keys(value)) {
     if (!allowedKeys.has(key)) {
       errors.push(`unknown config field: memoryPolicy.${key}`);
@@ -244,10 +249,13 @@ function normalizeMemoryPolicyConfig(value: unknown): { ok: true; value: AgenrOp
   return {
     ok: true,
     value:
-      (slotPoliciesResult.ok && slotPoliciesResult.value) || (sessionStartResult.ok && sessionStartResult.value)
+      (slotPoliciesResult.ok && slotPoliciesResult.value) ||
+      (sessionStartResult.ok && sessionStartResult.value) ||
+      (beforeTurnResult.ok && beforeTurnResult.value)
         ? {
             ...(slotPoliciesResult.ok && slotPoliciesResult.value ? { slotPolicies: slotPoliciesResult.value } : {}),
             ...(sessionStartResult.ok && sessionStartResult.value ? { sessionStart: sessionStartResult.value } : {}),
+            ...(beforeTurnResult.ok && beforeTurnResult.value ? { beforeTurn: beforeTurnResult.value } : {}),
           }
         : undefined,
   };
@@ -287,6 +295,50 @@ function normalizeSessionStartMemoryPolicyConfig(
   return {
     ok: true,
     value: relevantDurableMemory !== undefined ? { relevantDurableMemory } : undefined,
+  };
+}
+
+/**
+ * Validates and normalizes before-turn overrides nested under `memoryPolicy`.
+ *
+ * @param value - Raw nested config value.
+ * @returns Normalized before-turn overrides or stable validation errors.
+ */
+function normalizeBeforeTurnMemoryPolicyConfig(
+  value: unknown,
+): { ok: true; value: AgenrOpenClawMemoryPolicyConfig["beforeTurn"] | undefined } | { ok: false; errors: string[] } {
+  if (value === undefined) {
+    return { ok: true, value: undefined };
+  }
+
+  if (!isRecord(value)) {
+    return { ok: false, errors: ["memoryPolicy.beforeTurn must be an object when provided"] };
+  }
+
+  const errors: string[] = [];
+  const enabled = normalizeOptionalBoolean(value.enabled, "memoryPolicy.beforeTurn.enabled", errors);
+  const procedureSuggestion = normalizeOptionalBoolean(value.procedureSuggestion, "memoryPolicy.beforeTurn.procedureSuggestion", errors);
+
+  const allowedKeys = new Set(["enabled", "procedureSuggestion"]);
+  for (const key of Object.keys(value)) {
+    if (!allowedKeys.has(key)) {
+      errors.push(`unknown config field: memoryPolicy.beforeTurn.${key}`);
+    }
+  }
+
+  if (errors.length > 0) {
+    return { ok: false, errors };
+  }
+
+  return {
+    ok: true,
+    value:
+      enabled !== undefined || procedureSuggestion !== undefined
+        ? {
+            ...(enabled !== undefined ? { enabled } : {}),
+            ...(procedureSuggestion !== undefined ? { procedureSuggestion } : {}),
+          }
+        : undefined,
   };
 }
 

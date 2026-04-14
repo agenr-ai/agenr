@@ -10,6 +10,8 @@ const SESSION_START_SECTION_HEADINGS = [
   "## Agenr Session Recall",
   "### Core Memory",
   "### Relevant Durable Memory",
+  "## Agenr Before-Turn Recall",
+  "### Suggested Procedure",
 ] as const;
 const INLINE_METADATA_SENTINELS = [
   "Sender (untrusted metadata):",

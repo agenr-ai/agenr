@@ -1,0 +1,144 @@
+import type { RecallExecutionTraceSummary } from "../../core/recall/index.js";
+import type { ClaimCentricClaimStatus, ClaimCentricMemoryState } from "../recall/claim-centric.js";
+import type { Entry, Procedure } from "../../core/types.js";
+
+/**
+ * Normalized recent conversational turn supplied by the host adapter.
+ */
+export interface BeforeTurnRecentTurn {
+  /** Role for one recent turn. */
+  role: "user" | "assistant";
+  /** Plain-text turn body after adapter-side normalization. */
+  text: string;
+}
+
+/**
+ * Policy hints that shape one before-turn selection pass.
+ */
+export interface BeforeTurnPolicy {
+  /** Enables or disables durable-memory recall for this pass. */
+  enableDurableRecall?: boolean;
+  /** Enables or disables proactive procedure suggestion for this pass. */
+  enableProcedureSuggestion?: boolean;
+  /** Maximum recent turns to consider while building the turn query. */
+  maxRecentTurns?: number;
+  /** Maximum total characters preserved in the derived turn query. */
+  maxQueryChars?: number;
+  /** Maximum durable-memory rows to return. */
+  maxDurableEntries?: number;
+  /** Maximum procedure candidates to consider before canonical selection. */
+  maxProcedureCandidates?: number;
+  /** Optional score threshold used for durable-memory recall. */
+  recallThreshold?: number;
+  /** Optional score threshold used for canonical procedure selection. */
+  procedureThreshold?: number;
+}
+
+/**
+ * Host-neutral input accepted by the before-turn service.
+ */
+export interface BeforeTurnInput {
+  /** Optional session key used for telemetry attribution. */
+  sessionKey?: string;
+  /** Current user-turn text that should anchor the selection pass. */
+  currentTurnText: string;
+  /** Optional bounded recent conversational turns. */
+  recentTurns?: BeforeTurnRecentTurn[];
+  /** Optional host trigger hint preserved for future routing. */
+  trigger?: string;
+  /** Optional policy hints that bound the returned patch. */
+  policy?: BeforeTurnPolicy;
+}
+
+/**
+ * Concise explanation of why one patch component surfaced.
+ */
+export interface BeforeTurnSurfacingExplanation {
+  /** One-line explanation suitable for prompt or UI surfaces. */
+  summary: string;
+  /** Stable reason fragments preserved for tests and traces. */
+  reasons: string[];
+}
+
+/**
+ * One ranked durable-memory item returned by the before-turn service.
+ */
+export interface BeforeTurnPatchItem {
+  /** Stable final rank in the bounded durable-memory set. */
+  rank: number;
+  /** Hydrated durable entry selected for the active turn. */
+  entry: Entry;
+  /** Source channel for this surfaced item. */
+  sourceKind: "turn_recall";
+  /** Final ranking score from durable-memory recall. */
+  score: number;
+  /** Concise explanation of why the item surfaced. */
+  whySurfaced: BeforeTurnSurfacingExplanation;
+  /** High-level memory-state label for inspection surfaces. */
+  memoryState: ClaimCentricMemoryState;
+  /** Claim-lifecycle label when available. */
+  claimStatus: ClaimCentricClaimStatus;
+  /** Compact freshness summary useful to adapters and traces. */
+  freshnessLabel: string;
+  /** Compact provenance summary when supporting metadata is available. */
+  provenanceSummary?: string;
+}
+
+/**
+ * One proactive procedure suggestion returned by the before-turn service.
+ */
+export interface BeforeTurnProcedureSuggestion {
+  /** Canonical stored procedure selected for the active turn. */
+  procedure: Procedure;
+  /** Final leader score from dedicated procedure recall. */
+  score: number;
+  /** Score components preserved for inspection and tests. */
+  scores: {
+    /** Blended relevance signal across lexical and vector evidence. */
+    relevance: number;
+    /** Lexical overlap score between the query and the procedure. */
+    lexical: number;
+    /** Vector similarity score when semantic retrieval was available. */
+    vector: number;
+  };
+  /** Concise explanation of why the procedure surfaced. */
+  whySurfaced: BeforeTurnSurfacingExplanation;
+}
+
+/**
+ * Compact diagnostics emitted alongside one before-turn patch.
+ */
+export interface BeforeTurnPatchDiagnostics {
+  /** Effective bounded query text derived from the turn context. */
+  query?: string;
+  /** Number of recent turns actually used while building the query. */
+  recentTurnCount: number;
+  /** Whether durable-memory recall was attempted. */
+  durableRecallUsed: boolean;
+  /** Count of durable-memory candidates considered before final shaping. */
+  durableRecallCandidateCount: number;
+  /** Typed trace emitted by the shared durable recall pipeline. */
+  durableRecallTrace?: RecallExecutionTraceSummary;
+  /** Whether procedure recall was attempted. */
+  procedureRecallUsed: boolean;
+  /** Count of procedure candidates considered before canonical selection. */
+  procedureCandidateCount: number;
+  /** Whether the service abstained from surfacing any patch content. */
+  abstained: boolean;
+  /** Stable reasons explaining why the service abstained. */
+  abstentionReasons: string[];
+  /** Stable degraded-mode or failure notices relevant to the selection pass. */
+  notices: string[];
+}
+
+/**
+ * Structured before-turn output returned by the app-layer service.
+ */
+export interface BeforeTurnPatch {
+  /** Ranked bounded durable-memory selection for adapter rendering. */
+  durableMemory: BeforeTurnPatchItem[];
+  /** Optional high-confidence proactive procedure suggestion. */
+  procedure?: BeforeTurnProcedureSuggestion;
+  /** Compact diagnostics describing how the patch was built. */
+  diagnostics: BeforeTurnPatchDiagnostics;
+}

@@ -1,6 +1,9 @@
+import { runBeforeTurn } from "../../../app/before-turn/index.js";
 import { runSessionStart } from "../../../app/session-start/index.js";
+import type { BeforeTurnRecentTurn } from "../../../app/before-turn/index.js";
 import { resolveStoreNudgeConfig } from "../config.js";
 import { writeOpenClawPredecessorEpisode } from "../episode/episode-writer.js";
+import { formatAgenrBeforeTurnRecall } from "../format/before-turn-format.js";
 import { buildStoreNudgeMessage } from "../format/nudge-format.js";
 import { formatAgenrSessionStartRecall } from "../format/recall-format.js";
 import { formatErrorMessage, formatSessionContext } from "../logging.js";
@@ -19,6 +22,12 @@ const DEFAULT_SESSION_START_POLICY = {
   maxArtifactRecallEntries: 3,
   maxDurableEntries: 5,
   maxArtifactChars: 1_200,
+} as const;
+const DEFAULT_BEFORE_TURN_POLICY = {
+  maxDurableEntries: 3,
+  maxRecentTurns: 4,
+  maxQueryChars: 900,
+  maxProcedureCandidates: 3,
 } as const;
 const NON_USER_TRIGGER_SET = new Set(["heartbeat", "cron", "memory"]);
 const DEFAULT_STORE_NUDGE_CONFIG = resolveStoreNudgeConfig(undefined);
@@ -46,7 +55,7 @@ export async function handleAgenrBeforePromptBuild(
     params.logger.debug?.(`[agenr] before_prompt_build: session tracker duplicate blocked for ${sessionContext}`);
     params.logger.debug?.(`[agenr] before_prompt_build: session tracker active count=${trackerState.activeCount}`);
     params.logger.info(`[agenr] session-start recall skipped (already ran) for ${sessionContext}`);
-    return resolveStoreNudgeResult(event, ctx, sessionContext, params);
+    return await resolveNonFirstTurnResult(event, ctx, sessionContext, params);
   }
 
   params.logger.debug?.(`[agenr] before_prompt_build: session tracker first start for ${sessionContext}`);
@@ -99,6 +108,113 @@ export async function handleAgenrBeforePromptBuild(
     return { prependContext };
   } catch (error) {
     params.logger.warn(`[agenr] session-start recall failed for ${sessionContext}: ${formatErrorMessage(error)}`);
+    return undefined;
+  }
+}
+
+/**
+ * Resolves one non-first prompt-build turn by trying before-turn recall first,
+ * then falling back to the mid-session store nudge path when appropriate.
+ *
+ * @param event - Current prompt-build payload from OpenClaw.
+ * @param ctx - Hook context with session identity and trigger facts.
+ * @param sessionContext - Stable formatted session label for logs.
+ * @param params - Shared logger, config, services, and tracker state.
+ * @returns Prompt mutation payload when a patch or nudge should be injected.
+ */
+async function resolveNonFirstTurnResult(
+  event: AgenrOpenClawBeforePromptBuildEvent,
+  ctx: AgenrOpenClawHookContext,
+  sessionContext: string,
+  params: AgenrOpenClawBeforePromptBuildDeps & {
+    midSessionTracker?: MidSessionTracker;
+    storeNudgeConfig?: StoreNudgeConfig;
+  },
+): Promise<AgenrOpenClawBeforePromptBuildResult | undefined> {
+  const beforeTurnResult = await resolveBeforeTurnResult(event, ctx, sessionContext, params);
+  if (beforeTurnResult) {
+    return beforeTurnResult;
+  }
+
+  return resolveStoreNudgeResult(event, ctx, sessionContext, params);
+}
+
+/**
+ * Runs proactive before-turn selection for eligible user turns.
+ *
+ * @param event - Current prompt-build payload from OpenClaw.
+ * @param ctx - Hook context with session identity and trigger facts.
+ * @param sessionContext - Stable formatted session label for logs.
+ * @param params - Shared logger and runtime services.
+ * @returns Prompt mutation payload when a before-turn patch should be injected.
+ */
+async function resolveBeforeTurnResult(
+  event: AgenrOpenClawBeforePromptBuildEvent,
+  ctx: AgenrOpenClawHookContext,
+  sessionContext: string,
+  params: AgenrOpenClawBeforePromptBuildDeps,
+): Promise<AgenrOpenClawBeforePromptBuildResult | undefined> {
+  const normalizedTrigger = ctx.trigger?.trim().toLowerCase();
+  if (normalizedTrigger && NON_USER_TRIGGER_SET.has(normalizedTrigger)) {
+    params.logger.debug?.(`[agenr] before_prompt_build: before-turn skipped for ${sessionContext} reason=non_user_trigger trigger=${normalizedTrigger}`);
+    return undefined;
+  }
+
+  const services = await params.servicesPromise;
+  if (services.pluginConfig.memoryPolicy?.beforeTurn?.enabled === false) {
+    params.logger.debug?.(`[agenr] before_prompt_build: before-turn skipped for ${sessionContext} reason=disabled`);
+    return undefined;
+  }
+
+  const currentTurnText = normalizePromptText(event.prompt);
+  if (!currentTurnText) {
+    params.logger.debug?.(`[agenr] before_prompt_build: before-turn skipped for ${sessionContext} reason=empty_prompt`);
+    return undefined;
+  }
+
+  try {
+    const beforeTurnPatch = await runBeforeTurn(
+      {
+        sessionKey: ctx.sessionKey,
+        currentTurnText,
+        recentTurns: extractRecentTurns(event.messages),
+        trigger: ctx.trigger,
+        policy: resolveBeforeTurnPolicy(services),
+      },
+      services.beforeTurn,
+    );
+    const prependContext = formatAgenrBeforeTurnRecall(beforeTurnPatch);
+
+    params.logger.info(
+      `[agenr] before-turn recall: ${beforeTurnPatch.durableMemory.length} durable entries for ${sessionContext} ` +
+        `(durable_candidates=${beforeTurnPatch.diagnostics.durableRecallCandidateCount} procedure_candidates=${beforeTurnPatch.diagnostics.procedureCandidateCount})`,
+    );
+    if (beforeTurnPatch.procedure) {
+      params.logger.info(
+        `[agenr] before-turn procedure suggestion for ${sessionContext}: ${beforeTurnPatch.procedure.procedure.procedure_key} score=${beforeTurnPatch.procedure.score.toFixed(2)}`,
+      );
+    }
+    if (beforeTurnPatch.diagnostics.notices.length > 0) {
+      params.logger.info(`[agenr] before-turn recall notices for ${sessionContext}: ${beforeTurnPatch.diagnostics.notices.join(" | ")}`);
+    }
+    if (beforeTurnPatch.diagnostics.abstained) {
+      params.logger.debug?.(
+        `[agenr] before_prompt_build: before-turn abstained for ${sessionContext}: ${beforeTurnPatch.diagnostics.abstentionReasons.join(" | ") || "none"}`,
+      );
+    }
+    params.logger.debug?.(
+      `[agenr] before_prompt_build: before-turn durable entries for ${sessionContext}: ${formatEntryRefs(
+        beforeTurnPatch.durableMemory.map((item: (typeof beforeTurnPatch.durableMemory)[number]) => item.entry),
+      )}`,
+    );
+    params.logger.debug?.(`[agenr] before_prompt_build: before-turn prependContext length for ${sessionContext}: ${prependContext.length} chars`);
+    if (prependContext.length === 0) {
+      return undefined;
+    }
+
+    return { prependContext };
+  } catch (error) {
+    params.logger.warn(`[agenr] before-turn recall failed for ${sessionContext}: ${formatErrorMessage(error)}`);
     return undefined;
   }
 }
@@ -186,4 +302,156 @@ function resolveSessionStartPolicy(services: Awaited<AgenrOpenClawBeforePromptBu
     ...DEFAULT_SESSION_START_POLICY,
     enableArtifactRecall: services.pluginConfig.memoryPolicy?.sessionStart?.relevantDurableMemory !== false,
   };
+}
+
+/**
+ * Resolves effective before-turn policy from static defaults plus plugin overrides.
+ *
+ * @param services - Shared adapter services with plugin-config overrides.
+ * @returns Effective before-turn policy for one prompt build.
+ */
+function resolveBeforeTurnPolicy(services: Awaited<AgenrOpenClawBeforePromptBuildDeps["servicesPromise"]>) {
+  return {
+    ...DEFAULT_BEFORE_TURN_POLICY,
+    enableProcedureSuggestion: services.pluginConfig.memoryPolicy?.beforeTurn?.procedureSuggestion !== false,
+  };
+}
+
+/**
+ * Extracts a compact recent-turn window from OpenClaw's message payload.
+ *
+ * @param messages - Raw session messages prepared for the current run.
+ * @returns Ordered recent turns suitable for the before-turn app service.
+ */
+function extractRecentTurns(messages: unknown[]): BeforeTurnRecentTurn[] {
+  const turns: BeforeTurnRecentTurn[] = [];
+  for (const message of messages) {
+    if (!message || typeof message !== "object") {
+      continue;
+    }
+
+    const typed = message as { role?: unknown; content?: unknown };
+    const role = typed.role === "user" || typed.role === "assistant" ? typed.role : undefined;
+    if (!role) {
+      continue;
+    }
+
+    const text = sanitizeRecentTurnText(extractMessageText(typed.content), role);
+    if (!text) {
+      continue;
+    }
+
+    turns.push({ role, text });
+  }
+
+  return turns;
+}
+
+/**
+ * Extracts plain text from one OpenClaw message content payload.
+ *
+ * @param content - Raw message content from the OpenClaw session store.
+ * @returns Plain-text content, or an empty string when absent.
+ */
+function extractMessageText(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  const blocks: string[] = [];
+  for (const block of content) {
+    if (typeof block === "string") {
+      blocks.push(block);
+      continue;
+    }
+
+    if (!block || typeof block !== "object") {
+      continue;
+    }
+
+    const typed = block as { type?: unknown; text?: unknown; content?: unknown };
+    if (typeof typed.text === "string") {
+      blocks.push(typed.text);
+      continue;
+    }
+
+    const type = typeof typed.type === "string" ? typed.type.trim().toLowerCase() : "";
+    if (typeof typed.content === "string" && (type === "text" || type === "input_text" || type === "output_text")) {
+      blocks.push(typed.content);
+    }
+  }
+
+  return blocks.join("\n");
+}
+
+/**
+ * Removes prior injected memory wrappers so they do not recursively pollute the
+ * next before-turn query.
+ *
+ * @param text - Raw message text.
+ * @param role - Message role used for wrapper unrolling.
+ * @returns Sanitized recent-turn text.
+ */
+function sanitizeRecentTurnText(text: string, role: "user" | "assistant"): string {
+  if (!text.trim()) {
+    return "";
+  }
+
+  const wrapperDetected = text.includes("## Agenr Session Recall") || text.includes("## Agenr Before-Turn Recall") || text.includes("[MEMORY CHECK]");
+
+  let cleaned = text;
+  const headings = [
+    "## Previous session summary",
+    "## Recent session",
+    "## Agenr Session Recall",
+    "### Core Memory",
+    "### Relevant Durable Memory",
+    "## Agenr Before-Turn Recall",
+    "### Suggested Procedure",
+  ];
+  for (const heading of headings) {
+    cleaned = cleaned.split(heading).join(" ");
+  }
+
+  cleaned = cleaned.replace(/\[MEMORY CHECK\][^\n]*/gu, " ");
+  cleaned = collapseWhitespace(cleaned);
+  if (!wrapperDetected) {
+    return cleaned;
+  }
+
+  const segments = text
+    .split(/\n\s*\n/gu)
+    .map((segment) => collapseWhitespace(segment))
+    .filter((segment) => segment.length > 0);
+  const fallbackSegment = segments.at(-1);
+  if (fallbackSegment) {
+    return role === "user" ? fallbackSegment : collapseWhitespace(cleaned);
+  }
+
+  return cleaned;
+}
+
+/**
+ * Normalizes one current-turn prompt into compact single-space text.
+ *
+ * @param prompt - Raw current prompt text from OpenClaw.
+ * @returns Normalized prompt text, or undefined when empty.
+ */
+function normalizePromptText(prompt: string): string | undefined {
+  const normalized = collapseWhitespace(prompt);
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+/**
+ * Collapses repeated whitespace while preserving single-line readability.
+ *
+ * @param value - Raw text block.
+ * @returns Trimmed single-space text.
+ */
+function collapseWhitespace(value: string): string {
+  return value.replace(/\s+/gu, " ").trim();
 }

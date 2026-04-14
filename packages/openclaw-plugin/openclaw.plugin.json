@@ -34,7 +34,7 @@
     },
     "memoryPolicy": {
       "label": "Memory policy",
-      "help": "Optional runtime overrides for claim-aware read behavior and session-start memory injection."
+      "help": "Optional runtime overrides for claim-aware read behavior, session-start memory injection, and proactive before-turn surfacing."
     }
   },
   "configSchema": {
@@ -98,6 +98,21 @@
               "relevantDurableMemory": {
                 "type": "boolean",
                 "description": "Enable or disable artifact-grounded Relevant Durable Memory injection at session start. Defaults to true."
+              }
+            }
+          },
+          "beforeTurn": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Optional before-turn overrides for proactive prompt-time memory injection behavior.",
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "Enable or disable the proactive before-turn memory patch. Defaults to true."
+              },
+              "procedureSuggestion": {
+                "type": "boolean",
+                "description": "Enable or disable proactive high-confidence procedure suggestion inside the before-turn patch. Defaults to true."
               }
             }
           },

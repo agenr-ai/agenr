@@ -875,6 +875,7 @@ function createServices(
     openClaw,
     config: {
       dbPath: "test.db",
+      configPath: "test-config.json",
     },
     pluginConfig: {},
     agenrConfig: {},
@@ -886,6 +887,18 @@ function createServices(
     sessionStart: {
       repository: createSessionStartRepository(database),
       recall: options.recall,
+    },
+    beforeTurn: {
+      recall: options.recall,
+      procedures: database,
+      ...(options.available
+        ? {
+            embedQuery: async (text: string) => {
+              const vectors = await embedding.embed([text]);
+              return vectors[0] ?? [];
+            },
+          }
+        : {}),
     },
     embedding,
     recall: options.recall,

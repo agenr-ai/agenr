@@ -48,6 +48,10 @@ describe("agenr OpenClaw plugin config", () => {
           threshold: 10,
         },
         memoryPolicy: {
+          beforeTurn: {
+            enabled: true,
+            procedureSuggestion: false,
+          },
           sessionStart: {
             relevantDurableMemory: false,
           },
@@ -71,6 +75,10 @@ describe("agenr OpenClaw plugin config", () => {
         maxPerSession: 5,
       },
       memoryPolicy: {
+        beforeTurn: {
+          enabled: true,
+          procedureSuggestion: false,
+        },
         sessionStart: {
           relevantDurableMemory: false,
         },
@@ -139,6 +147,11 @@ describe("agenr OpenClaw plugin config", () => {
           relevantDurableMemory: "no",
           extra: true,
         },
+        beforeTurn: {
+          enabled: "yes",
+          procedureSuggestion: "sometimes",
+          extra: true,
+        },
         slotPolicies: {
           attributeHeads: {
             "bad key!": "exclusive",
@@ -155,6 +168,9 @@ describe("agenr OpenClaw plugin config", () => {
       expect.arrayContaining([
         "memoryPolicy.sessionStart.relevantDurableMemory must be a boolean when provided",
         "unknown config field: memoryPolicy.sessionStart.extra",
+        "memoryPolicy.beforeTurn.enabled must be a boolean when provided",
+        "memoryPolicy.beforeTurn.procedureSuggestion must be a boolean when provided",
+        "unknown config field: memoryPolicy.beforeTurn.extra",
         "memoryPolicy.slotPolicies.attributeHeads.bad key! must use a canonical attribute-head label",
         'memoryPolicy.slotPolicies.attributeHeads.support must be "exclusive" or "multivalued"',
         "unknown config field: memoryPolicy.slotPolicies.extra",

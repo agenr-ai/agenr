@@ -7,6 +7,7 @@ import type {
 } from "openclaw/plugin-sdk/memory-core-host-engine-storage";
 
 import type { OpenClawRepository } from "../../app/openclaw/ports.js";
+import type { BeforeTurnDeps } from "../../app/before-turn/index.js";
 import type { SessionStartDeps } from "../../app/session-start/index.js";
 import type { AgenrConfig } from "../../config.js";
 import type { ClaimSlotPolicy, ClaimSlotPolicyConfig } from "../../core/claim-slot-policy.js";
@@ -43,6 +44,13 @@ export interface AgenrOpenClawMemoryPolicyConfig {
   sessionStart?: {
     /** Enables or disables artifact-grounded "Relevant Durable Memory" injection. */
     relevantDurableMemory?: boolean;
+  };
+  /** Before-turn overrides for proactive prompt-time memory injection behavior. */
+  beforeTurn?: {
+    /** Enables or disables the proactive before-turn patch path. */
+    enabled?: boolean;
+    /** Enables or disables proactive procedure suggestion inside the patch. */
+    procedureSuggestion?: boolean;
   };
 }
 
@@ -156,6 +164,7 @@ export interface AgenrOpenClawServices {
   procedures: ProcedureDatabasePort;
   memory: OpenClawRepository;
   sessionStart: SessionStartDeps;
+  beforeTurn: BeforeTurnDeps;
   embedding: EmbeddingPort;
   recall: RecallPorts;
   claimExtraction?: {

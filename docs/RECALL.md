@@ -6,7 +6,7 @@ It embeds the query when possible, retrieves candidates through vector search pl
 
 This document describes the code as it exists now, not just the intended flow.
 
-The current codebase also layers a unified agent-facing recall surface and an automatic OpenClaw session-start recall path on top of the base entry pipeline documented here. The standalone CLI in `src/cli/commands/recall.ts` still exposes the entry-recall surface shown below, while `src/app/recall/unified.ts`, `src/app/procedures/recall/service.ts`, and the OpenClaw `agenr_recall` tool add procedural routing plus episodic recall. Separately, `src/adapters/openclaw/hooks/before-prompt-build.ts` now injects continuity context plus a bounded session-start durable-memory patch through the app-layer `src/app/session-start/` service without calling the public recall tool directly.
+The current codebase also layers a unified agent-facing recall surface plus two automatic OpenClaw prompt-time recall paths on top of the base entry pipeline documented here. The standalone CLI in `src/cli/commands/recall.ts` still exposes the entry-recall surface shown below, while `src/app/recall/unified.ts`, `src/app/procedures/recall/service.ts`, and the OpenClaw `agenr_recall` tool add procedural routing plus episodic recall. Separately, `src/adapters/openclaw/hooks/before-prompt-build.ts` now injects continuity context plus a bounded session-start durable-memory patch through `src/app/session-start/`, and can inject a bounded proactive turn-time patch through `src/app/before-turn/`, without calling the public recall tool directly.
 
 ## Code map
 
@@ -32,8 +32,11 @@ The current codebase also layers a unified agent-facing recall surface and an au
 - `src/adapters/openclaw/tools/shared.ts` - human-readable unified recall formatter used by the OpenClaw tool.
 - `src/app/session-start/service.ts` - host-neutral session-start patch selection that merges always-on core memory with artifact-grounded durable recall.
 - `src/app/session-start/types.ts` and `src/app/session-start/ports.ts` - structured session-start patch contract and feature-scoped dependency types.
-- `src/adapters/openclaw/hooks/before-prompt-build.ts` - automatic session-start patch injection, continuity composition, and store-nudge gating.
+- `src/app/before-turn/service.ts` - host-neutral before-turn patch selection that merges bounded durable recall with optional canonical procedure suggestion.
+- `src/app/before-turn/types.ts` and `src/app/before-turn/ports.ts` - structured before-turn patch contract and feature-scoped dependency types.
+- `src/adapters/openclaw/hooks/before-prompt-build.ts` - automatic session-start patch injection, proactive before-turn patch injection, continuity composition, and store-nudge gating.
 - `src/adapters/openclaw/format/recall-format.ts` - prompt formatter for the automatic session-start patch path.
+- `src/adapters/openclaw/format/before-turn-format.ts` - prompt formatter for the automatic before-turn patch path.
 - `tests/cli/commands/recall.test.ts`, `tests/core/recall/search.integration.test.ts`, and `tests/app/recall/unified.test.ts` - CLI surface, end-to-end pipeline, unified routing, historical-state behavior, tracing, telemetry, and concurrency coverage.
 - `tests/core/episode/temporal-window.test.ts` and `tests/adapters/openclaw/tools.test.ts` - parser coverage, tool schema, split-result formatting, and episode recall behavior.
 
@@ -287,6 +290,27 @@ Important boundaries:
 - duplicate session-start injections are blocked by in-memory tracker state
 - procedure suggestion is still out of scope for this v1 session-start slice
 - non-user follow-up turns may receive a separate store nudge, but that is not recall
+
+## Automatic OpenClaw before-turn recall
+
+The same `before_prompt_build` hook also has a second automatic path for later user-facing turns after session start.
+
+Current behavior in `handleAgenrBeforePromptBuild()` is:
+
+1. detect that the session-start tracker has already consumed the current session
+2. skip non-user triggers such as `heartbeat`, `cron`, and `memory`
+3. derive a bounded query from the current prompt plus a compact recent-turn window from `event.messages`
+4. call the app-layer `runBeforeTurn()` service with that normalized turn input and bounded policy hints
+5. let that service run durable entry recall plus optional dedicated procedure recall
+6. inject the result only when the service does not abstain
+
+Important boundaries:
+
+- this path is a bounded proactive surfacing layer, not a replacement for the explicit `agenr_recall` tool
+- durable memory uses the same shared entry recall engine described in this document
+- proactive procedure suggestion reuses the dedicated procedure recall service and only surfaces a canonical leader
+- before-turn prompt sections stay visibly separate from session-start continuity and durable-memory sections
+- when embeddings are unavailable, durable and procedure selection degrade to lexical-only ranking instead of failing the turn
 
 ## Memory authority levels
 
@@ -752,6 +776,8 @@ Notes:
 - `src/app/recall/types.ts`
 - `src/app/session-start/service.ts`
 - `src/app/session-start/types.ts`
+- `src/app/before-turn/service.ts`
+- `src/app/before-turn/types.ts`
 - `src/core/recall/search.ts`
 - `src/core/recall/scoring.ts`
 - `src/core/recall/lexical.ts`

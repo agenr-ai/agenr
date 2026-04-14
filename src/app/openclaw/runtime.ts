@@ -15,6 +15,7 @@ import type {
   ResolvedAgenrOpenClawPluginConfig,
 } from "../../adapters/openclaw/types.js";
 import type { OpenClawRepository } from "./ports.js";
+import type { BeforeTurnDeps } from "../before-turn/index.js";
 import type { SessionStartDeps } from "../session-start/index.js";
 
 /**
@@ -26,6 +27,7 @@ interface OpenClawRuntimeServices {
   procedures: ProcedureDatabasePort;
   memory: OpenClawRepository;
   sessionStart: SessionStartDeps;
+  beforeTurn: BeforeTurnDeps;
   embedding: EmbeddingPort;
   recall: RecallPorts;
   claimExtraction?: {
@@ -71,6 +73,7 @@ export async function createAgenrOpenClawServices(
     procedures: runtimeServices.procedures,
     memory: runtimeServices.memory,
     sessionStart: runtimeServices.sessionStart,
+    beforeTurn: runtimeServices.beforeTurn,
     embedding: runtimeServices.embedding,
     recall: runtimeServices.recall,
     claimExtraction: runtimeServices.claimExtraction,
@@ -149,6 +152,17 @@ async function createRuntimeServices(
     sessionStart: {
       repository: createSessionStartRepository(database),
       recall,
+      slotPolicyConfig: openClawContext.pluginConfig.memoryPolicy?.slotPolicies,
+    },
+    beforeTurn: {
+      recall,
+      procedures: database,
+      embedQuery: embeddingStatus.available
+        ? async (text: string) => {
+            const vectors = await embedding.embed([text]);
+            return vectors[0] ?? [];
+          }
+        : undefined,
       slotPolicyConfig: openClawContext.pluginConfig.memoryPolicy?.slotPolicies,
     },
     embedding,

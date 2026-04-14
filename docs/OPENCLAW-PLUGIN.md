@@ -26,16 +26,18 @@ The adapter is intentionally not a second memory brain. Durable memory, recall r
 - `src/adapters/openclaw/index.ts` - plugin entry, hook registration, tool registration, memory-runtime wiring, and shutdown cleanup.
 - `src/adapters/openclaw/openclaw.plugin.json` and `src/adapters/openclaw/config.ts` - manifest-backed config schema, validation, UI hints, and store-nudge defaults.
 - `packages/openclaw-plugin/package.json`, `packages/openclaw-plugin/openclaw.plugin.json`, and `packages/openclaw-plugin/src/index.ts` - publishable plugin package metadata and entrypoint.
-- `src/app/openclaw/runtime.ts` - shared runtime composition: config resolution, DB open, OpenClaw repository wiring, session-start dependency wiring, recall adapter creation, embedding availability, and optional claim-extraction LLM wiring.
+- `src/app/openclaw/runtime.ts` - shared runtime composition: config resolution, DB open, OpenClaw repository wiring, session-start and before-turn dependency wiring, recall adapter creation, embedding availability, and optional claim-extraction LLM wiring.
 - `src/app/session-start/` - host-neutral session-start patch contract and selection service.
+- `src/app/before-turn/` - host-neutral before-turn patch contract and selection service.
 - `src/app/openclaw/ports.ts` - OpenClaw-owned read-model contracts for trace and memory status.
 - `src/adapters/openclaw/runtime.ts` - thin re-export of the app-owned runtime composition function.
 - `src/adapters/db/session-start-repository.ts` - DB-backed session-start repository for always-on core-memory lookup.
 - `src/adapters/openclaw/tools/` - one file per OpenClaw tool plus shared parsing, logging, and target-resolution helpers.
 - `src/adapters/openclaw/format/prompt-section.ts` - static system-prompt doctrine for memory recall and storage.
 - `src/adapters/openclaw/format/recall-format.ts` - session-start recall rendering.
+- `src/adapters/openclaw/format/before-turn-format.ts` - before-turn recall rendering.
 - `src/adapters/openclaw/format/nudge-format.ts` - mid-session `[MEMORY CHECK]` prompt generation.
-- `src/adapters/openclaw/hooks/before-prompt-build.ts` - session-start recall, predecessor continuity injection, background predecessor episode write, and mid-session store nudge logic.
+- `src/adapters/openclaw/hooks/before-prompt-build.ts` - session-start recall, before-turn recall, predecessor continuity injection, background predecessor episode write, and mid-session store nudge logic.
 - `src/adapters/openclaw/hooks/after-tool-call.ts` - mid-session tracker updates after `agenr_store`, `agenr_update`, and `agenr_retire`.
 - `src/adapters/openclaw/session/state.ts` - in-process session-start dedup plus per-session mid-session state.
 - `src/adapters/openclaw/session/continuity/` - predecessor resolution, continuity summary read/write, and recent-session tail rendering.
@@ -87,6 +89,8 @@ The runtime config is currently:
 - `episodeModel` - optional `provider/model` override for predecessor episode summaries
 - `claimExtractionModel` - optional `provider/model` override for claim-key extraction during store calls
 - `storeNudge` - optional nested config with `enabled`, `threshold`, and `maxPerSession`
+- `memoryPolicy.beforeTurn.enabled` - optional toggle for the proactive before-turn patch path
+- `memoryPolicy.beforeTurn.procedureSuggestion` - optional toggle for the before-turn procedure section
 - `memoryPolicy.slotPolicies.attributeHeads` - optional attribute-head overrides for read-time claim-slot policy classes
 
 Unknown keys are rejected.
@@ -131,7 +135,7 @@ Current lifecycle behavior:
 
 - `session_start` only remembers `resumedFrom` by new `sessionId`
 - `before_prompt_build` performs session-start patch selection once per tracked session identity
-- repeated `before_prompt_build` calls for the same session can inject store nudges instead of session-start memory
+- repeated `before_prompt_build` calls for the same session can inject a before-turn patch or store nudges instead of session-start memory
 - `after_tool_call` updates mid-session tracker state after memory tool use
 - `session_end` clears mid-session state
 - `gateway_stop` awaits `services.close()` and ignores startup failures during shutdown
@@ -145,6 +149,7 @@ Current composition includes:
 - the libSQL database adapter
 - the OpenClaw-specific repository read model
 - the app-layer session-start dependency bundle
+- the app-layer before-turn dependency bundle
 - an embedding client when embedding config is valid
 - an always-throwing embedding port when embeddings are unavailable
 - the recall adapter used by unified recall
@@ -156,6 +161,7 @@ Important current behavior:
 - embedding availability is resolved from config without a startup network probe
 - `agenr_recall` stays available even when embeddings are unavailable and can degrade entry recall into lexical-only mode
 - session-start core-memory injection does not need embeddings
+- before-turn procedure suggestion degrades to lexical-only ranking when query embeddings are unavailable
 - claim extraction is only wired when agenr claim-extraction config is enabled and the OpenClaw LLM client can be created
 
 ## Static prompt guidance
@@ -206,7 +212,7 @@ Current session-start memory behavior is now a bounded hybrid patch:
 - the final durable-memory set is capped to `5` items after dedupe and ranking
 - durable memory stays visibly separate from predecessor continuity and transcript-tail context
 - artifact-grounded recall runs only when a predecessor continuity summary or recent-session tail exists
-- procedure suggestion is still out of scope for this v1 slice
+- procedure suggestion is intentionally still out of scope for this session-start slice
 
 The formatted prompt can include:
 
@@ -229,9 +235,28 @@ The hybrid session-start slice keeps the ownership boundary explicit:
 - The app service consumes normalized text artifacts and policy hints, then returns a structured patch rather than rendered prompt text.
 - The adapter remains responsible for turning that patch into OpenClaw prompt sections.
 
-### 2. Mid-session store nudges
+### 2. Before-turn recall
 
-When `before_prompt_build` is called again for an already-started session, the plugin does not rerun session-start recall. Instead it may inject a `[MEMORY CHECK]` nudge.
+When `before_prompt_build` is called again for an already-started session on a user-facing turn, the plugin can run the app-layer `runBeforeTurn(...)` service instead of repeating session-start recall.
+
+Current behavior:
+
+- the adapter derives input from the current prompt plus a compact recent-turn window from `event.messages`
+- Agenr app code decides whether to surface anything at all
+- durable memory comes from the shared entry `recall()` path
+- at most one canonical procedure suggestion can surface through the dedicated procedure recall service
+- the adapter renders the result into a separate `## Agenr Before-Turn Recall` block with `### Relevant Durable Memory` and optional `### Suggested Procedure`
+- non-user triggers `heartbeat`, `cron`, and `memory` still abstain
+- empty or low-signal turns can abstain cleanly without injecting anything
+
+Ownership split stays the same as session start:
+
+- OpenClaw owns turn extraction, prompt injection, and trigger gating
+- Agenr app code owns bounded ranking, abstention, claim-aware shaping, and procedure applicability decisions
+
+### 3. Mid-session store nudges
+
+When a non-first `before_prompt_build` call does not inject a before-turn patch, the plugin may still inject a `[MEMORY CHECK]` nudge.
 
 Current nudge rules:
 
@@ -250,7 +275,7 @@ Current nudge copy changes depending on:
 
 The nudge is a prompt reminder only. It does not write memory on its own.
 
-### 3. Mid-session tracker updates
+### 4. Mid-session tracker updates
 
 `after_tool_call` updates the same per-session tracker after these tools:
 

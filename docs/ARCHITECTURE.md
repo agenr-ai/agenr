@@ -39,6 +39,7 @@ src/
 │   ├── procedures/
 │   ├── recall/
 │   ├── session-start/
+│   ├── before-turn/
 │   ├── openclaw/
 │   ├── surgeon/
 │   ├── evals/recall/
@@ -446,6 +447,7 @@ The OpenClaw integration spans:
 - `src/adapters/openclaw/llm/*`
 - `src/app/openclaw/runtime.ts`
 - `src/app/session-start/*`
+- `src/app/before-turn/*`
 
 The plugin is not just tool exposure. It implements live session behavior.
 
@@ -461,6 +463,7 @@ Implemented behaviors include:
 
 - process-lifetime shared service composition in `src/app/openclaw/runtime.ts`
 - app-layer session-start patch selection that merges predecessor artifacts with bounded durable memory
+- app-layer before-turn patch selection that merges bounded durable recall with optional canonical procedure suggestion
 - predecessor resolution through `resumedFrom` and `sessions.json` fallbacks
 - continuity summary reads and on-demand generation
 - recent-session transcript rendering
@@ -553,6 +556,7 @@ Feature-scoped seams also matter:
 
 - `OpenClawRepository` in `src/app/openclaw/ports.ts`
 - `SessionStartRepository` in `src/app/session-start/ports.ts`
+- before-turn dependency bundle in `src/app/before-turn/ports.ts`
 - surgeon runtime and persistence ports in `src/app/surgeon/ports.ts`
 - episode-ingest support ports in `src/app/episode-ingest/ports.ts`
 
@@ -575,9 +579,9 @@ This cuts across ingest, direct updates, recall, supersession, surgeon, and scen
 
 `src/adapters/db/schema.ts`, `row-mapping.ts`, `queries.ts`, `episode-queries.ts`, and `recall-adapter.ts` encode a large amount of actual system behavior.
 
-### 9.3 OpenClaw continuity
+### 9.3 OpenClaw continuity and proactive surfacing
 
-The `before_prompt_build` path combines session tracking, predecessor lookup, continuity summaries, prompt injection, transcript rendering, and background episode work.
+The `before_prompt_build` path combines session tracking, predecessor lookup, continuity summaries, proactive before-turn selection, prompt injection, transcript rendering, and background episode work.
 
 ### 9.4 Dual recall systems plus router
 

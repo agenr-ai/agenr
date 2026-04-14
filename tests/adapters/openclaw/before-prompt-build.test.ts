@@ -22,8 +22,11 @@ import { handleAgenrAfterToolCall } from "../../../src/adapters/openclaw/hooks/a
 import { handleAgenrBeforePromptBuild } from "../../../src/adapters/openclaw/hooks/before-prompt-build.js";
 import { createMidSessionTracker, createSessionStartTracker } from "../../../src/adapters/openclaw/session/state.js";
 import type { AgenrOpenClawHost, AgenrOpenClawServices } from "../../../src/adapters/openclaw/types.js";
+import { computeProcedureRevisionHash, computeProcedureSourceHash } from "../../../src/core/procedures/hashing.js";
+import { composeProcedureRecallText } from "../../../src/core/procedures/recall-text.js";
 import type { EmbeddingPort, LlmPort, RecallPorts } from "../../../src/core/ports.js";
-import type { Entry } from "../../../src/core/types.js";
+import type { RecallCandidateEntry } from "../../../src/core/recall/types.js";
+import type { Entry, Procedure } from "../../../src/core/types.js";
 
 const openDatabases: SqlDatabase[] = [];
 const tempPaths: string[] = [];
@@ -57,7 +60,7 @@ afterEach(async () => {
 });
 
 describe("handleAgenrBeforePromptBuild", () => {
-  it("injects only core session-start memory once per session and skips speculative recall", async () => {
+  it("injects only core session-start memory once per session and does not rerun session-start recall later", async () => {
     const database = await createTestDatabase();
     const executeSpy = vi.spyOn(database, "execute");
     const logger = createLogger();
@@ -137,7 +140,8 @@ describe("handleAgenrBeforePromptBuild", () => {
     expect(result?.prependContext).not.toContain("## Recent session");
     expect(result?.prependContext).not.toContain("Recent Handoffs");
     expect(secondResult).toBeUndefined();
-    expectRecallPortsUnused(recall);
+    expect(recall.embed).toHaveBeenCalledOnce();
+    expect(recall.ftsSearch).toHaveBeenCalledOnce();
     expect(listExecutedSql(executeSpy.mock.calls).some((sql) => sql.includes("expiry != 'core'"))).toBe(false);
     expect(getMessages(logger.info)).toEqual(
       expect.arrayContaining([
@@ -145,6 +149,7 @@ describe("handleAgenrBeforePromptBuild", () => {
         "[agenr] session-start predecessor continuity summary not found for session=session-1 key=agent:main:webchat:test reason=no_predecessor",
         "[agenr] session-start recall: 1 durable entries for session=session-1 key=agent:main:webchat:test (core_candidates=1 artifact_candidates=0)",
         "[agenr] session-start recall skipped (already ran) for session=session-1 key=agent:main:webchat:test",
+        "[agenr] before-turn recall: 0 durable entries for session=session-1 key=agent:main:webchat:test (durable_candidates=0 procedure_candidates=0)",
       ]),
     );
     expect(getMessages(logger.debug)).toEqual(
@@ -226,6 +231,247 @@ describe("handleAgenrBeforePromptBuild", () => {
           path.join(sessionsDir, "predecessor-session.continuity-summary.md"),
       ]),
     );
+  });
+
+  it("injects a before-turn patch with durable memory and a procedure suggestion on a later user turn", async () => {
+    const database = await createTestDatabase();
+    const logger = createLogger();
+    const durableEntry = createEntry({
+      id: "entry-before-turn",
+      type: "lesson",
+      subject: "before-turn patch pattern",
+      content: "Inject a bounded patch through prependContext rather than rebuilding a large persistent prompt block.",
+      importance: 9,
+    });
+    await database.upsertProcedure(
+      createProcedure({
+        procedure_key: "agenr/before-turn-patch",
+        title: "Implement the before turn memory patch",
+        goal: "Add the app contract, OpenClaw hook wiring, and tests for the before turn slice.",
+      }),
+    );
+    const recall = createObservedRecallPorts({
+      ftsCandidates: [toRecallCandidateEntry(durableEntry)],
+      hydratedEntries: [durableEntry],
+    });
+    const tracker = createSessionStartTracker();
+
+    await handleAgenrBeforePromptBuild(
+      {
+        prompt: "Start the session.",
+        messages: [],
+      },
+      {
+        sessionId: "session-before-turn",
+        sessionKey: "agent:main:webchat:test",
+      },
+      {
+        logger,
+        servicesPromise: Promise.resolve(
+          createServices(database, {
+            available: true,
+            recall,
+          }),
+        ),
+        tracker,
+      },
+    );
+
+    const result = await handleAgenrBeforePromptBuild(
+      {
+        prompt: "How do I implement the before turn memory patch?",
+        messages: [
+          {
+            role: "user",
+            content: "We already landed session-start and now need the next lifecycle slice.",
+          },
+          {
+            role: "assistant",
+            content: "The next slice should stay bounded and inspectable.",
+          },
+        ],
+      },
+      {
+        sessionId: "session-before-turn",
+        sessionKey: "agent:main:webchat:test",
+        trigger: "user",
+      },
+      {
+        logger,
+        servicesPromise: Promise.resolve(
+          createServices(database, {
+            available: true,
+            recall,
+          }),
+        ),
+        tracker,
+      },
+    );
+
+    expect(result?.prependContext).toContain("## Agenr Before-Turn Recall");
+    expect(result?.prependContext).toContain("### Relevant Durable Memory");
+    expect(result?.prependContext).toContain("before-turn patch pattern");
+    expect(result?.prependContext).toContain("### Suggested Procedure");
+    expect(result?.prependContext).toContain("Implement the before turn memory patch");
+    expect(getMessages(logger.info)).toEqual(
+      expect.arrayContaining([
+        "[agenr] before-turn recall: 1 durable entries for session=session-before-turn key=agent:main:webchat:test (durable_candidates=1 procedure_candidates=1)",
+      ]),
+    );
+  });
+
+  it("disables before-turn injection when the plugin config turns it off", async () => {
+    const database = await createTestDatabase();
+    const logger = createLogger();
+    const recall = createObservedRecallPorts();
+    const tracker = createSessionStartTracker();
+
+    await handleAgenrBeforePromptBuild(
+      {
+        prompt: "Start the session.",
+        messages: [],
+      },
+      {
+        sessionId: "session-before-turn-disabled",
+        sessionKey: "agent:main:webchat:test",
+      },
+      {
+        logger,
+        servicesPromise: Promise.resolve(
+          createServices(database, {
+            available: true,
+            recall,
+            pluginConfig: {
+              memoryPolicy: {
+                beforeTurn: {
+                  enabled: false,
+                },
+              },
+            },
+          }),
+        ),
+        tracker,
+      },
+    );
+
+    const result = await handleAgenrBeforePromptBuild(
+      {
+        prompt: "Should before-turn run here?",
+        messages: [],
+      },
+      {
+        sessionId: "session-before-turn-disabled",
+        sessionKey: "agent:main:webchat:test",
+        trigger: "user",
+      },
+      {
+        logger,
+        servicesPromise: Promise.resolve(
+          createServices(database, {
+            available: true,
+            recall,
+            pluginConfig: {
+              memoryPolicy: {
+                beforeTurn: {
+                  enabled: false,
+                },
+              },
+            },
+          }),
+        ),
+        tracker,
+      },
+    );
+
+    expect(result).toBeUndefined();
+    expect(getMessages(logger.debug)).toEqual(
+      expect.arrayContaining([
+        "[agenr] before_prompt_build: before-turn skipped for session=session-before-turn-disabled key=agent:main:webchat:test reason=disabled",
+      ]),
+    );
+  });
+
+  it("keeps durable before-turn injection while suppressing the procedure section when configured", async () => {
+    const database = await createTestDatabase();
+    const logger = createLogger();
+    const durableEntry = createEntry({
+      id: "entry-durable-only",
+      subject: "durable before-turn reminder",
+      content: "Keep the patch inspectable and bounded.",
+      importance: 8,
+    });
+    await database.upsertProcedure(
+      createProcedure({
+        procedure_key: "agenr/before-turn-slice",
+        title: "Implement the before-turn memory patch",
+      }),
+    );
+    const recall = createObservedRecallPorts({
+      ftsCandidates: [toRecallCandidateEntry(durableEntry)],
+      hydratedEntries: [durableEntry],
+    });
+    const tracker = createSessionStartTracker();
+
+    await handleAgenrBeforePromptBuild(
+      {
+        prompt: "Start the session.",
+        messages: [],
+      },
+      {
+        sessionId: "session-before-turn-no-procedure",
+        sessionKey: "agent:main:webchat:test",
+      },
+      {
+        logger,
+        servicesPromise: Promise.resolve(
+          createServices(database, {
+            available: true,
+            recall,
+            pluginConfig: {
+              memoryPolicy: {
+                beforeTurn: {
+                  procedureSuggestion: false,
+                },
+              },
+            },
+          }),
+        ),
+        tracker,
+      },
+    );
+
+    const result = await handleAgenrBeforePromptBuild(
+      {
+        prompt: "What should this before-turn slice do?",
+        messages: [],
+      },
+      {
+        sessionId: "session-before-turn-no-procedure",
+        sessionKey: "agent:main:webchat:test",
+        trigger: "user",
+      },
+      {
+        logger,
+        servicesPromise: Promise.resolve(
+          createServices(database, {
+            available: true,
+            recall,
+            pluginConfig: {
+              memoryPolicy: {
+                beforeTurn: {
+                  procedureSuggestion: false,
+                },
+              },
+            },
+          }),
+        ),
+        tracker,
+      },
+    );
+
+    expect(result?.prependContext).toContain("## Agenr Before-Turn Recall");
+    expect(result?.prependContext).toContain("### Relevant Durable Memory");
+    expect(result?.prependContext).not.toContain("### Suggested Procedure");
   });
 
   it("injects predecessor continuity summary and transcript tail alongside core memory only", async () => {
@@ -1916,6 +2162,7 @@ function createServices(
     openClaw,
     config: {
       dbPath: "test.db",
+      configPath: "test-config.json",
     },
     pluginConfig: options.pluginConfig ?? {},
     agenrConfig: {},
@@ -1927,6 +2174,18 @@ function createServices(
     sessionStart: {
       repository: createSessionStartRepository(database),
       recall,
+    },
+    beforeTurn: {
+      recall,
+      procedures: database,
+      ...(available
+        ? {
+            embedQuery: async (text: string) => {
+              const vectors = await embedding.embed([text]);
+              return vectors[0] ?? [];
+            },
+          }
+        : {}),
     },
     embedding,
     recall,
@@ -2060,22 +2319,26 @@ function createLlmPort(complete: LlmPort["complete"]): LlmPort {
   };
 }
 
-function createObservedRecallPorts() {
+function createObservedRecallPorts(
+  options: {
+    ftsCandidates?: RecallCandidateEntry[];
+    hydratedEntries?: Entry[];
+  } = {},
+) {
+  const hydratedEntriesById = new Map((options.hydratedEntries ?? []).map((entry) => [entry.id, entry]));
   return {
     embed: vi.fn(async (): Promise<number[]> => createEmbedding(0, 1)),
     vectorSearch: vi.fn(async () => []),
-    ftsSearch: vi.fn(async () => []),
-    hydrateEntries: vi.fn(async () => []),
+    ftsSearch: vi.fn(async () =>
+      (options.ftsCandidates ?? []).map((entry) => ({
+        entry,
+        rank: -1,
+        tier: "all_tokens" as const,
+      })),
+    ),
+    hydrateEntries: vi.fn(async (ids: string[]) => ids.flatMap((id) => hydratedEntriesById.get(id) ?? [])),
     recordRecallEvents: vi.fn(async () => undefined),
   } satisfies RecallPorts;
-}
-
-function expectRecallPortsUnused(recall: ReturnType<typeof createObservedRecallPorts>): void {
-  expect(recall.embed).not.toHaveBeenCalled();
-  expect(recall.vectorSearch).not.toHaveBeenCalled();
-  expect(recall.ftsSearch).not.toHaveBeenCalled();
-  expect(recall.hydrateEntries).not.toHaveBeenCalled();
-  expect(recall.recordRecallEvents).not.toHaveBeenCalled();
 }
 
 function createLogger() {
@@ -2176,6 +2439,72 @@ function createEntry(overrides: Partial<Entry> = {}): Entry {
     retired_reason: overrides.retired_reason,
     created_at: overrides.created_at ?? now,
     updated_at: overrides.updated_at ?? now,
+  };
+}
+
+function createProcedure(overrides: Partial<Procedure> = {}): Procedure {
+  const now = overrides.created_at ?? "2026-04-01T00:00:00.000Z";
+  const body = {
+    procedure_key: overrides.procedure_key ?? "agenr/release",
+    title: overrides.title ?? "Release agenr and publish packages",
+    goal: overrides.goal ?? "Cut a release and publish packages safely.",
+    when_to_use: overrides.when_to_use ?? ["Use this when you need to ship a new agenr release."],
+    when_not_to_use: overrides.when_not_to_use ?? ["Do not use this for a local dry run."],
+    prerequisites: overrides.prerequisites ?? ["A clean repo state is available."],
+    steps: overrides.steps ?? [
+      {
+        id: "read-doc",
+        kind: "read_reference" as const,
+        instruction: "Read the release procedure reference.",
+        ref: {
+          kind: "manual" as const,
+          label: "release docs",
+        },
+      },
+    ],
+    verification: overrides.verification ?? ["The workflow completed successfully."],
+    failure_modes: overrides.failure_modes ?? ["Validation fails before publish."],
+    sources: overrides.sources ?? [
+      {
+        kind: "manual" as const,
+        label: "fixture",
+      },
+    ],
+  };
+
+  return {
+    id: overrides.id ?? randomUUID(),
+    ...body,
+    recall_text: overrides.recall_text ?? composeProcedureRecallText(body),
+    revision_hash: overrides.revision_hash ?? computeProcedureRevisionHash(body),
+    source_hash: overrides.source_hash ?? computeProcedureSourceHash(JSON.stringify(body)),
+    source_file: overrides.source_file,
+    embedding: overrides.embedding,
+    retired: overrides.retired ?? false,
+    retired_at: overrides.retired_at,
+    retired_reason: overrides.retired_reason,
+    superseded_by: overrides.superseded_by,
+    created_at: now,
+    updated_at: overrides.updated_at ?? now,
+  };
+}
+
+function toRecallCandidateEntry(entry: Entry): RecallCandidateEntry {
+  return {
+    id: entry.id,
+    subject: entry.subject,
+    content: entry.content,
+    importance: entry.importance,
+    expiry: entry.expiry,
+    created_at: entry.created_at,
+    embedding: entry.embedding,
+    superseded_by: entry.superseded_by,
+    claim_key: entry.claim_key,
+    claim_key_status: entry.claim_key_status,
+    claim_support_observed_at: entry.claim_support_observed_at,
+    valid_from: entry.valid_from,
+    valid_to: entry.valid_to,
+    retired: entry.retired,
   };
 }
 
