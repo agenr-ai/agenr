@@ -1,0 +1,91 @@
+procedure_key: agenr/obsidian-llm-wiki
+title: Maintain the Obsidian LLM Wiki
+goal: Maintain the dedicated LLM-managed Obsidian wiki as a persistent, compounding knowledge base while preserving scope boundaries, uncertainty, and durable synthesis.
+when_to_use:
+  - You need to ingest new source material into the Obsidian LLM Wiki.
+  - You need to answer a question grounded in existing wiki notes and save the durable result.
+  - You need to run wiki maintenance such as lint, health checks, or structural cleanup.
+when_not_to_use:
+  - The requested work falls outside /Users/jmartin/Obsidian/Main Vault/LLM Wiki.
+  - You are making ordinary repository documentation edits that belong in this repo instead of the wiki.
+  - You plan to do destructive vault-wide rewrites instead of targeted note maintenance.
+prerequisites:
+  - The Obsidian wiki exists at /Users/jmartin/Obsidian/Main Vault/LLM Wiki.
+  - "The requested task fits one of the supported workflows: ingest, query, or lint."
+  - You are prepared to preserve human notes, use Obsidian wikilinks, and keep uncertainty explicit.
+steps:
+  - id: read-wiki-skill
+    kind: read_reference
+    instruction: Read the source skill before making wiki changes so the repo procedure stays aligned with the intended workflow and boundaries.
+    ref:
+      kind: skill
+      path: /Users/jmartin/.codex/skills/obsidian-llm-wiki/SKILL.md
+  - id: inspect-wiki-boundary
+    kind: inspect_state
+    instruction: Confirm the task stays inside the dedicated wiki subtree and review the core navigation surfaces before editing notes.
+    target: Obsidian LLM Wiki
+    query: Review /Users/jmartin/Obsidian/Main Vault/LLM Wiki/00 Meta/index.md first, then confirm that edits will stay inside /Users/jmartin/Obsidian/Main Vault/LLM Wiki.
+  - id: choose-workflow
+    kind: ask_user
+    instruction: Make the workflow explicit when the request does not already make the path and target obvious.
+    prompt: Ask whether this run is an ingest, query, or lint workflow and which source file, note set, or topic should be the focus.
+  - id: inspect-workflow-target
+    kind: inspect_state
+    instruction: Gather the minimum relevant context for the chosen workflow before writing.
+    target: workflow target
+    query: For ingest, inspect /Users/jmartin/Obsidian/Main Vault/LLM Wiki/05 Inbox/ and the target source plus nearby notes. For query, identify and read the most relevant source, entity, concept, and synthesis notes after the index. For lint, inspect duplicates, weakly linked notes, unresolved contradictions, stale syntheses, and inbox leftovers.
+  - id: pause-on-high-signal-source
+    kind: ask_user
+    instruction: Pause before finalizing synthesis updates when the source is substantial, ambiguous, high-signal, or likely to change broader understanding.
+    prompt: Ask what matters most, what to emphasize or deprioritize, what conflicts with prior understanding, what feels novel or suspicious, and what durable insight is worth preserving.
+  - id: update-source-notes
+    kind: edit_file
+    instruction: Record source-grounded ingest work in the canonical source-note area instead of leaving the result trapped in chat.
+    path: /Users/jmartin/Obsidian/Main Vault/LLM Wiki/01 Sources/Source Notes/
+    edit: For ingest workflows, create or update one source note using the wiki template conventions and include summary, key claims, evidence or quotations, related entities, related concepts, contradictions or tensions, open questions, and provenance.
+  - id: update-linked-notes
+    kind: edit_file
+    instruction: Update the durable note graph with concise, explicit changes rather than creating duplicate pages.
+    path: /Users/jmartin/Obsidian/Main Vault/LLM Wiki/
+    edit: Update relevant entity notes under 02 Entities and concept notes under 03 Concepts, then create or update synthesis notes under 04 Syntheses when the source or answer changes broader understanding. Prefer existing notes, preserve contradictions, and use Obsidian wikilinks generously but deliberately.
+  - id: write-lint-report
+    kind: edit_file
+    instruction: Save maintenance findings as a durable report when the workflow is lint or structural cleanup.
+    path: /Users/jmartin/Obsidian/Main Vault/LLM Wiki/06 Reports/
+    edit: Write lint or health-check findings into 06 Reports, covering duplicate pages, near-duplicate concepts, orphan notes, unresolved contradictions, evidence-free claims, stale syntheses, underdeveloped notes, inbox leftovers, and opportunities for better hub syntheses.
+  - id: update-index
+    kind: edit_file
+    instruction: Keep the curated index current after meaningful note additions or structural changes.
+    path: /Users/jmartin/Obsidian/Main Vault/LLM Wiki/00 Meta/index.md
+    edit: Update the index with a short wiki description, major folders, recent high-value sources, major syntheses, notable entities and concepts, and active reports without turning it into a dump of every page.
+  - id: append-log
+    kind: edit_file
+    instruction: Record meaningful maintenance or ingest work in the append-only log.
+    path: /Users/jmartin/Obsidian/Main Vault/LLM Wiki/00 Meta/log.md
+    edit: Append a concise dated log entry describing the operation type, affected source or topic, and a short grep-friendly summary of what changed.
+  - id: archive-ingested-source
+    kind: run_command
+    instruction: Preserve the raw source under Imported after ingest unless the user explicitly wants to keep it elsewhere.
+    command: mv <sourceFile> /Users/jmartin/Obsidian/Main\ Vault/LLM\ Wiki/01\ Sources/Imported/
+  - id: verify-wiki-update
+    kind: verify
+    instruction: Confirm the final state preserves the wiki's operating rules and leaves a durable trail.
+    checks:
+      - All edits stayed inside /Users/jmartin/Obsidian/Main Vault/LLM Wiki unless the user explicitly expanded scope.
+      - Ingest or query work updated the durable notes instead of leaving the answer only in chat.
+      - Existing notes were preferred over duplicate note creation where a stable entity, concept, or synthesis note already existed.
+      - Contradictions and uncertainty were preserved explicitly instead of being flattened into fake certainty.
+      - The index and log reflect any meaningful new note, report, or synthesis work.
+verification:
+  - The wiki remains the durable home for the result, with updated notes, index, and log where appropriate.
+  - The workflow stayed inside the declared LLM Wiki boundary and preserved human-authored material.
+  - High-signal ingest, grounded query answers, and lint findings all leave durable artifacts in the correct wiki areas.
+failure_modes:
+  - The work edits files outside /Users/jmartin/Obsidian/Main Vault/LLM Wiki without explicit user approval.
+  - A durable answer is delivered in chat but never saved into a source note or synthesis note.
+  - New entity or concept pages are created when an existing stable note should have been updated.
+  - Contradictions, tensions, or uncertainty are erased to produce false certainty.
+  - The index becomes a page dump or the log is rewritten instead of appended to.
+sources:
+  - kind: skill
+    path: /Users/jmartin/.codex/skills/obsidian-llm-wiki/SKILL.md
